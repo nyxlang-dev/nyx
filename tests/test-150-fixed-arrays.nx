@@ -1,0 +1,32 @@
+// test-150: fixed-size arrays [T: N]
+
+const MAX_SIZE: int = 5
+
+fn square(x: int) -> int {
+    return x * x
+}
+
+fn main() -> int {
+    // Test 1: declare and use fixed-size array with literal initializer
+    var arr: [int: 5] = [10, 20, 30, 40, 50]
+    print(arr[0])   // 10
+    print(arr[4])   // 50
+
+    // Test 2: initialize with fibonacci
+    var fib: [int: 5] = [1, 1, 2, 3, 5]
+    print(fib[0])   // 1
+    print(fib[4])   // 5
+
+    // Test 3: write to fixed-size array
+    arr[2] = 99
+    print(arr[2])   // 99
+
+    // Test 4: const value
+    print(MAX_SIZE)    // 5
+
+    // Test 5: function call with result
+    print(square(7))   // 49
+
+    print("fixed-size ok")
+    return 0
+}

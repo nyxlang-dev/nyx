@@ -1,0 +1,13 @@
+// TEST 6: Bucle While
+fn main() {
+    print("=== TEST 6: WHILE LOOP ===")
+
+    var i = 0
+    while i < 5 {
+        print(i)
+        i = i + 1
+    }
+
+    print("✅ Test 6 completado")
+    return 0
+}

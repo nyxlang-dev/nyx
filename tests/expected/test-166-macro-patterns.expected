@@ -1,0 +1,31 @@
+macro patterns test
+--- Assert Macros ---
+ok: 10 == 10
+ok: 1 != 2
+ok: 1+1 == 2
+ok: hello != world
+--- Array Macros ---
+size: 3
+nums: 5
+0
+1
+2
+3
+4
+--- Control Macros ---
+not done yet
+x is small
+hello!
+hello!
+hello!
+--- Log Macros ---
+[INFO] system started
+[WARN] memory usage high
+[INFO] processing complete
+--- Try Or Default ---
+result: 42
+r2: 100
+--- Timed ---
+timing: test operation
+elapsed ok
+macro patterns ok

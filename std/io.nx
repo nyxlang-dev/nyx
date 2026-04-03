@@ -1,0 +1,5 @@
+// std/io.nx — Funciones de entrada/salida de la Standard Library v0.21
+
+fn println(s: String) {
+    print(s)
+}

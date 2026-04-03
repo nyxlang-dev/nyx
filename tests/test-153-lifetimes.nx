@@ -1,0 +1,45 @@
+// test-153: Lifetime annotations — parsed and ignored (no enforcement)
+
+// Lifetime in function generic params
+fn longest<'a>(x: String, y: String) -> String {
+    if x.length() > y.length() {
+        return x
+    }
+    return y
+}
+
+// Multiple lifetime params mixed with type params
+fn pick_longer<'a, 'b>(x: String, y: String) -> String {
+    if x.length() >= y.length() {
+        return x
+    }
+    return y
+}
+
+// Lifetime in reference type annotation (stripped to &String)
+fn get_first<'a>(items: Array<String>) -> String {
+    if items.length() > 0 {
+        let s: String = items[0]
+        return s
+    }
+    return ""
+}
+
+fn main() -> int {
+    let a: String = "hello world"
+    let b: String = "hi"
+    let r: String = longest(a, b)
+    print(r)
+
+    let r2: String = pick_longer("rust", "go")
+    print(r2)
+
+    var items: Array<String> = []
+    items.push("first")
+    items.push("second")
+    let first: String = get_first(items)
+    print(first)
+
+    print("lifetimes ok")
+    return 0
+}

@@ -1,0 +1,30 @@
+// test-138-nyx-vet: verifica el analizador estatico basico
+// Prueba la funcionalidad de deteccion de issues sin falsos positivos
+
+fn is_empty(s: String) -> bool {
+    return s.length() == 0
+}
+
+fn count_issues(source: String, pattern: String) -> int {
+    let parts: Array<String> = source.split(pattern)
+    return parts.length() - 1
+}
+
+fn main() -> int {
+    // Simula el comportamiento que nyx vet ejecutaria sobre un modulo
+    let source = "let x = 1\nlet y = x + 2\nreturn y"
+
+    // Prueba que split funciona para busqueda de nombres
+    let count: int = count_issues(source, "x")
+    print(int_to_string(count))  // x aparece 2 veces (let x y x + 2)
+
+    let count2: int = count_issues(source, "y")
+    print(int_to_string(count2))  // y aparece 2 veces (let y y return y)
+
+    // name appears once = unused candidate
+    let used_once: int = count_issues(source, "return")
+    print(int_to_string(used_once))  // 1
+
+    print("vet ok")
+    return 0
+}

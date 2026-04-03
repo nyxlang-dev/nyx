@@ -1,0 +1,45 @@
+// test-119-unicode.nx — Verificar soporte Unicode real (v0.9.0)
+// .length() debe contar codepoints UTF-8
+// .byte_length() debe contar bytes
+// str_byte_length() es el builtin equivalente a .byte_length()
+
+fn main() -> int {
+    // ASCII: codepoints == bytes
+    let ascii = "hello"
+    if ascii.length() != 5 {
+        print("FAIL: ascii.length() should be 5, got " + int_to_string(ascii.length()))
+        return 1
+    }
+    if ascii.byte_length() != 5 {
+        print("FAIL: ascii.byte_length() should be 5, got " + int_to_string(ascii.byte_length()))
+        return 1
+    }
+
+    // str_byte_length builtin
+    if str_byte_length(ascii) != 5 {
+        print("FAIL: str_byte_length(ascii) should be 5, got " + int_to_string(str_byte_length(ascii)))
+        return 1
+    }
+
+    // UTF-8: codepoints < bytes (para caracteres multibyte)
+    // "café" = 4 codepoints: c, a, f, é (é = U+00E9 = 2 bytes en UTF-8)
+    let utf8_str = "café"
+    let cp_count = utf8_str.length()
+    let byte_count = utf8_str.byte_length()
+
+    if cp_count != 4 {
+        print("FAIL: 'café'.length() should be 4 codepoints, got " + int_to_string(cp_count))
+        return 1
+    }
+    if byte_count != 5 {
+        print("FAIL: 'café'.byte_length() should be 5 bytes, got " + int_to_string(byte_count))
+        return 1
+    }
+    if str_byte_length(utf8_str) != 5 {
+        print("FAIL: str_byte_length('café') should be 5, got " + int_to_string(str_byte_length(utf8_str)))
+        return 1
+    }
+
+    print("test-119-unicode: PASS")
+    return 0
+}

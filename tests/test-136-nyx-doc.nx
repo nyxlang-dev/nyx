@@ -1,0 +1,41 @@
+// test-136-nyx-doc: verifica extraccion de doc comments ///
+
+fn starts_with_triple_slash(line: String) -> bool {
+    if line.length() < 3 { return false }
+    let c0: char = line.charAt(0)
+    let c1: char = line.charAt(1)
+    let c2: char = line.charAt(2)
+    return c0 == '/' and c1 == '/' and c2 == '/'
+}
+
+fn extract_doc_text(line: String) -> String {
+    let trimmed: String = line.trim()
+    if trimmed.length() < 3 { return "" }
+    let rest: String = trimmed.substring(3, trimmed.length())
+    return rest.trim()
+}
+
+fn main() -> int {
+    let line0 = "/// Calcula la suma de dos enteros."
+    let is_doc: bool = starts_with_triple_slash(line0)
+    if is_doc { print("true") } else { print("false") }
+
+    let doc_text: String = extract_doc_text(line0)
+    print(doc_text)
+
+    // title extraction from path
+    let path = "std/math.nx"
+    var last_slash = -1
+    var i = 0
+    while i < path.length() {
+        let c: char = path.charAt(i)
+        if c == '/' { last_slash = i }
+        i = i + 1
+    }
+    let base: String = path.substring(last_slash + 1, path.length())
+    let title: String = base.substring(0, base.length() - 3)
+    print(title)
+
+    print("doc ok")
+    return 0
+}

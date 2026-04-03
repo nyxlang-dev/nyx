@@ -1,0 +1,8 @@
+import "tests/vislib" as vl
+
+fn main() {
+    let x: int = vl.public_add(3, 4)
+    print(x)
+    print(vl.public_greet())
+    print("visibility OK")
+}

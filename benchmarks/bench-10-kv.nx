@@ -1,0 +1,43 @@
+fn main() {
+    let N: int = 500000
+
+    // Pre-generate keys
+    var keys: Array = []
+    var i: int = 0
+    while i < N {
+        keys.push("key:" + int_to_string(i))
+        i = i + 1
+    }
+
+    // SET benchmark
+    var m = Map.new()
+    let start_set: int = time_us()
+    i = 0
+    while i < N {
+        let k: String = keys[i]
+        m.insert(k, i)
+        i = i + 1
+    }
+    let end_set: int = time_us()
+    let set_time: int = end_set - start_set
+
+    // GET benchmark
+    var sum: int = 0
+    let start_get: int = time_us()
+    i = 0
+    while i < N {
+        let k: String = keys[i]
+        let v: int = m.get(k)
+        sum = sum + v
+        i = i + 1
+    }
+    let end_get: int = time_us()
+    let get_time: int = end_get - start_get
+
+    print("SET " + int_to_string(N) + "x: " + int_to_string(set_time) + " us")
+    print("GET " + int_to_string(N) + "x: " + int_to_string(get_time) + " us")
+    print("SET: " + int_to_string(N * 1000000 / set_time) + " ops/s")
+    print("GET: " + int_to_string(N * 1000000 / get_time) + " ops/s")
+    print("sum: " + int_to_string(sum))
+    return 0
+}

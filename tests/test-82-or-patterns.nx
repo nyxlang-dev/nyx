@@ -1,0 +1,15 @@
+enum Color { Red, Green, Blue }
+
+fn describe(c: Color) -> String {
+    return match c {
+        Color.Red | Color.Blue => "not green",
+        Color.Green => "green"
+    }
+}
+
+fn main() {
+    print(describe(Color.Red))
+    print(describe(Color.Blue))
+    print(describe(Color.Green))
+    print("or patterns OK")
+}

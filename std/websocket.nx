@@ -1,0 +1,65 @@
+// std/websocket.nx — WebSocket protocol for Nyx (v5.1.0)
+// RFC 6455 framing + SHA-1 handshake + base64 key computation
+
+extern "C" fn nyx_ws_accept_key(key: String) -> String
+extern "C" fn nyx_ws_handshake_response(ws_key: String) -> String
+extern "C" fn nyx_ws_extract_key(headers: String) -> String
+extern "C" fn nyx_ws_build_frame(payload: String) -> String
+extern "C" fn nyx_ws_parse_frame(data: String) -> String
+extern "C" fn nyx_ws_is_close(data: String) -> bool
+extern "C" fn nyx_ws_close_frame() -> String
+
+// ── Handshake ─────────────────────────────────────────────────────────────────
+
+// Compute Sec-WebSocket-Accept from a Sec-WebSocket-Key
+// Used by WebSocket server to complete the upgrade handshake
+pub fn ws_accept_key(key: String) -> String {
+    return nyx_ws_accept_key(key)
+}
+
+// Generate the full HTTP 101 Upgrade response for a WebSocket handshake
+pub fn ws_handshake_response(ws_key: String) -> String {
+    return nyx_ws_handshake_response(ws_key)
+}
+
+// Extract Sec-WebSocket-Key from raw HTTP upgrade request headers
+pub fn ws_extract_key(headers: String) -> String {
+    return nyx_ws_extract_key(headers)
+}
+
+// ── Framing ───────────────────────────────────────────────────────────────────
+
+// Build a WebSocket text frame for sending (server → client, unmasked)
+pub fn ws_frame(payload: String) -> String {
+    return nyx_ws_build_frame(payload)
+}
+
+// Parse a received WebSocket frame, return payload text
+// Returns "__CLOSE__" if close frame received
+pub fn ws_parse(data: String) -> String {
+    return nyx_ws_parse_frame(data)
+}
+
+// Check if data is a WebSocket close frame
+pub fn ws_is_close(data: String) -> bool {
+    return nyx_ws_is_close(data)
+}
+
+// Build a WebSocket close frame
+pub fn ws_close() -> String {
+    return nyx_ws_close_frame()
+}
+
+// ── Convenience ───────────────────────────────────────────────────────────────
+
+// Check if an HTTP request string is a WebSocket upgrade request
+pub fn ws_is_upgrade(request: String) -> bool {
+    return request.indexOf("Upgrade: websocket") >= 0 or
+           request.indexOf("Upgrade: WebSocket") >= 0
+}
+
+// Frame size in bytes (for use with tcp_write)
+pub fn ws_frame_size(frame: String) -> int {
+    if frame.length() < 2 { return 0 }
+    return frame.length()
+}

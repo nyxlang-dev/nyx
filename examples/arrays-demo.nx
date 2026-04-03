@@ -1,0 +1,20 @@
+// arrays-demo.nx
+// Demostración de arrays en Nyx
+
+fn main() {
+    // TEST 1: Arrays Básicos
+    let numeros = [10, 20, 30, 40, 50]
+    print(numeros[0])
+    print(numeros[4])
+    
+    // TEST 2: Modificación
+    var valores = [1, 2, 3, 4, 5]
+    print(valores[2])
+    valores[2] = 99
+    print(valores[2])
+    
+    // TEST 3: Operaciones
+    let a = [5, 10, 15]
+    let suma = a[0] + a[1]
+    print(suma)
+}

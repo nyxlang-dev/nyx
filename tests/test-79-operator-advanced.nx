@@ -1,0 +1,53 @@
+// Test 79: Advanced operator overloading (Sub, Neg, PartialOrd, chaining)
+
+struct Money { cents: int }
+
+impl Add for Money {
+    fn add(self, other: Money) -> Money {
+        return Money { cents: self.cents + other.cents }
+    }
+}
+
+impl Sub for Money {
+    fn sub(self, other: Money) -> Money {
+        return Money { cents: self.cents - other.cents }
+    }
+}
+
+impl Neg for Money {
+    fn neg(self) -> Money {
+        return Money { cents: 0 - self.cents }
+    }
+}
+
+impl PartialOrd for Money {
+    fn lt(self, other: Money) -> bool {
+        return self.cents < other.cents
+    }
+}
+
+fn main() {
+    let a = Money { cents: 500 }
+    let b = Money { cents: 300 }
+    let c: Money = a + b
+    print(c.cents)
+    let d: Money = a - b
+    print(d.cents)
+    let e: Money = -a
+    print(e.cents)
+    // Chaining: a + b + b
+    let f: Money = a + b + b
+    print(f.cents)
+    if a > b {
+        print("gt ok")
+    }
+    if b < a {
+        print("lt ok")
+    }
+    if a >= a {
+        print("ge ok")
+    }
+    if b <= a {
+        print("le ok")
+    }
+}

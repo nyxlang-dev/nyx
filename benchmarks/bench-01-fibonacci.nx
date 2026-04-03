@@ -1,0 +1,15 @@
+// bench-01-fibonacci.nx — Recursive fibonacci (CPU bound, call overhead)
+fn fib(n: int) -> int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    let start: int = time_us()
+    let result: int = fib(40)
+    let end: int = time_us()
+    let elapsed: int = end - start
+    print("fibonacci(40) = " + int_to_string(result))
+    print("time_us: " + int_to_string(elapsed))
+    return 0
+}

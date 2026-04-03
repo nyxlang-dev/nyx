@@ -1,0 +1,40 @@
+// test-123-full-asm.nx — GCC-style inline asm (v1.7.0)
+fn main() -> int {
+    // 1. GCC-style con secciones vacías (nop)
+    unsafe {
+        asm("nop" : : :)
+    }
+
+    // 2. Input constraint genérico "r"
+    let x: i64 = 42
+    unsafe {
+        asm("nop" : : "r"(x) :)
+    }
+
+    // 3. Output asignado a variable — leer RSP
+    var sp: i64 = 0
+    unsafe {
+        asm("mov %rsp, $0" : "=r"(sp) : :)
+    }
+    if sp == 0 { return 1 }   // RSP nunca es 0
+
+    // 4. Input con named register "D" (rdi)
+    var result: i64 = 0
+    unsafe {
+        asm("mov %rdi, $0" : "=r"(result) : "D"(x) :)
+    }
+    if result != 42 { return 2 }
+
+    // 5. Clobber "memory"
+    unsafe {
+        asm("mfence" : : : "memory")
+    }
+
+    // 6. asm volatile con secciones vacías
+    unsafe {
+        asm volatile("nop" : : :)
+    }
+
+    print("test-123-full-asm: PASS")
+    return 0
+}

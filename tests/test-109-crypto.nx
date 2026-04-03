@@ -1,0 +1,48 @@
+// Test 109: Crypto — SHA-256 and MD5 hashing
+
+fn main() {
+    // Test 1: SHA-256 of empty string
+    // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    let h1: String = sha256("")
+    print(h1)
+
+    // Test 2: SHA-256 of "hello"
+    // SHA-256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+    let h2: String = sha256("hello")
+    print(h2)
+
+    // Test 3: SHA-256 of "abc"
+    // SHA-256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    let h3: String = sha256("abc")
+    print(h3)
+
+    // Test 4: SHA-256 length is always 64 hex chars
+    let h4: String = sha256("test string with spaces")
+    print(h4.length() == 64)
+
+    // Test 5: Same input produces same hash
+    let h5a: String = sha256("deterministic")
+    let h5b: String = sha256("deterministic")
+    print(h5a == h5b)
+
+    // Test 6: Different input produces different hash
+    let h6a: String = sha256("aaa")
+    let h6b: String = sha256("bbb")
+    print(h6a != h6b)
+
+    // Test 7: MD5 of empty string
+    // MD5("") = d41d8cd98f00b204e9800998ecf8427e
+    let m1: String = md5("")
+    print(m1)
+
+    // Test 8: MD5 of "hello"
+    // MD5("hello") = 5d41402abc4b2a76b9719d911017c592
+    let m2: String = md5("hello")
+    print(m2)
+
+    // Test 9: MD5 length is always 32 hex chars
+    let m3: String = md5("test")
+    print(m3.length() == 32)
+
+    print("All crypto tests passed!")
+}

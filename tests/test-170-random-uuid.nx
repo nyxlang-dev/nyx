@@ -1,0 +1,137 @@
+// test-170-random-uuid.nx — Random number generation + UUID v4 (v4.5.0)
+import "std/random"
+import "std/uuid"
+
+fn test_random_basics() {
+    print("--- Random Basics ---")
+
+    // Seeded random for reproducibility
+    random_seed(42)
+    let r1 = random_int()
+    let r2 = random_int()
+    // With same seed, same sequence
+    random_seed(42)
+    let r3 = random_int()
+    if r1 == r3 {
+        print("seed reproducibility ok")
+    }
+    if r1 != r2 {
+        print("consecutive values differ ok")
+    }
+
+    // Float in [0.0, 1.0)
+    random_seed(100)
+    let f = random_float()
+    if f >= 0.0 {
+        print("float >= 0.0 ok")
+    }
+
+    // random_range
+    random_seed(7)
+    var all_in_range = true
+    var ri = 0
+    while ri < 20 {
+        let v = random_range(1, 10)
+        if v < 1 { all_in_range = false }
+        if v > 10 { all_in_range = false }
+        ri = ri + 1
+    }
+    if all_in_range {
+        print("random_range [1,10] ok")
+    }
+
+    // random_bool
+    random_seed(3)
+    let b1 = random_bool()
+    let b2 = random_bool()
+    print("random_bool: values generated ok")
+}
+
+fn test_shuffle() {
+    print("--- Shuffle ---")
+
+    random_seed(99)
+    var arr: Array<int> = [1, 2, 3, 4, 5, 6, 7, 8]
+    let original_len = arr.length()
+    let shuffled = random_shuffle(arr)
+
+    // Length preserved
+    if shuffled.length() == original_len {
+        print("shuffle length preserved ok")
+    }
+
+    // Sum preserved (same elements, just reordered)
+    let orig_sum = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8
+    let shuf_sum = array_sum(shuffled)
+    if shuf_sum == orig_sum {
+        print("shuffle elements preserved ok")
+    }
+}
+
+fn test_uuid() {
+    print("--- UUID v4 ---")
+
+    let id1 = uuid_v4()
+    let id2 = uuid_v4()
+
+    // Length = 36
+    if id1.length() == 36 {
+        print("uuid length 36 ok")
+    }
+
+    // Format check
+    if uuid_is_valid(id1) {
+        print("uuid format valid ok")
+    }
+
+    // Uniqueness
+    if id1 != id2 {
+        print("uuid uniqueness ok")
+    }
+
+    // Version = 4
+    let ver = uuid_version(id1)
+    if ver == 4 {
+        print("uuid version 4 ok")
+    }
+
+    // Invalid UUID detection
+    let invalid = "not-a-uuid"
+    if !uuid_is_valid(invalid) {
+        print("invalid uuid detected ok")
+    }
+
+    print(format("uuid sample: {}", id1))
+}
+
+fn test_random_bytes() {
+    print("--- Random Bytes ---")
+
+    random_seed(55)
+    let b = random_bytes(8)
+    // random_bytes returns binary data — verify it's non-empty
+    if b.length() > 0 {
+        print("random_bytes non-empty ok")
+    }
+
+    // Different calls produce different data
+    let b2 = random_bytes(8)
+    if b != b2 {
+        print("random_bytes differ ok")
+    }
+
+    // random_bytes(0) returns empty string
+    let b0 = random_bytes(0)
+    if b0.length() == 0 {
+        print("random_bytes empty ok")
+    }
+}
+
+fn main() {
+    print("random+uuid test")
+    test_random_basics()
+    test_shuffle()
+    test_uuid()
+    test_random_bytes()
+    print("random+uuid ok")
+}

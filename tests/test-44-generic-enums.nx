@@ -1,0 +1,72 @@
+// Test 44: Generic Enums
+// Tests enum definitions with type parameters
+
+enum Option<T> {
+    Some(T),
+    None
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E)
+}
+
+fn main() {
+    // Test 1: Option<int> with Some
+    let x = Option<int>.Some(42)
+    match x {
+        Option.Some(val) => {
+            print(int_to_string(val))
+        },
+        Option.None => {
+            print("none")
+        }
+    }
+
+    // Test 2: Option<int> with None
+    let y = Option<int>.None
+    match y {
+        Option.Some(val) => {
+            print("some")
+        },
+        Option.None => {
+            print("None")
+        }
+    }
+
+    // Test 3: Option<String> with Some
+    let z = Option<String>.Some("hello")
+    match z {
+        Option.Some(s) => {
+            print(s)
+        },
+        Option.None => {
+            print("none")
+        }
+    }
+
+    // Test 4: Result<int, String>
+    let r = Result<int, String>.Ok(100)
+    match r {
+        Result.Ok(v) => {
+            print(int_to_string(v))
+        },
+        Result.Err(e) => {
+            print(e)
+        }
+    }
+
+    // Test 5: Result<int, String> with Err
+    let r2 = Result<int, String>.Err("error")
+    match r2 {
+        Result.Ok(v) => {
+            print(int_to_string(v))
+        },
+        Result.Err(e) => {
+            print(e)
+        }
+    }
+
+    print("OK")
+    return 0
+}

@@ -1,0 +1,54 @@
+import "std/web"
+
+fn main() -> int {
+    // Test 1: route_match — match con param
+    let params1: Map<String> = route_match("/users/{id}", "/users/42")
+    print(params1.get("id"))
+
+    // Test 2: route_match — no match
+    let params2: Map<String> = route_match("/users/{id}", "/posts/42")
+    if params2.contains("_matched") {
+        print("1")
+    } else {
+        print("0")
+    }
+
+    // Test 3: route_match — exact match sin params (IS a valid match now)
+    let params3: Map<String> = route_match("/health", "/health")
+    if params3.contains("_matched") {
+        print("1")
+    } else {
+        print("0")
+    }
+
+    // Test 4: parse_query_string
+    let q: Map<String> = parse_query_string("/search?q=hello&page=2")
+    print(q.get("q"))
+    print(q.get("page"))
+
+    // Test 5: parse_form_data
+    let f: Map<String> = parse_form_data("name=John&age=30", "application/x-www-form-urlencoded")
+    print(f.get("name"))
+
+    // Test 6: parse_cookies
+    let fake_headers: Array = ["Cookie", "session=abc; user=john"]
+    let c: Map<String> = parse_cookies(fake_headers)
+    print(c.get("session"))
+    print(c.get("user"))
+
+    // Test 7: response status
+    let resp: Response = response_new(200, "OK")
+    print(int_to_string(resp.status))
+
+    // Test 8: route_match — dos params
+    let params8: Map<String> = route_match("/users/{uid}/posts/{pid}", "/users/1/posts/99")
+    print(params8.get("uid"))
+    print(params8.get("pid"))
+
+    // Test 9: app_new + app_get (verifica que routes se actualiza)
+    let app: App = app_new()
+    app_get(app, "/users/{id}", fn(req: Request) -> Response { return response_new(200, "ok") })
+    print(int_to_string(app.routes.length()))
+
+    return 0
+}

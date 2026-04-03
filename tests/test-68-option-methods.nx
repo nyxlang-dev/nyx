@@ -1,0 +1,28 @@
+// Test 68: Option builtin methods — is_some, is_none, unwrap, unwrap_or
+
+fn find_positive(x: int) -> Option<int> {
+    if x > 0 { return Option<int>.Some(x) }
+    return Option<int>.None()
+}
+
+fn main() -> int {
+    let some_val: Option<int> = find_positive(42)
+    let none_val: Option<int> = find_positive(-1)
+
+    // is_some / is_none
+    if some_val.is_some() { print("some is_some: true") }
+    if none_val.is_none() { print("none is_none: true") }
+
+    // unwrap on Some
+    let v: int = some_val.unwrap()
+    print(v)
+
+    // unwrap_or
+    let v2: int = some_val.unwrap_or(0)
+    print(v2)
+    let v3: int = none_val.unwrap_or(99)
+    print(v3)
+
+    print("option methods passed")
+    return 0
+}

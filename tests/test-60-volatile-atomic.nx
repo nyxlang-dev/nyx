@@ -1,0 +1,34 @@
+// Test 60: Volatile and atomic operations
+
+fn main() -> int {
+    // Volatile load/store
+    var x: int = 42
+    unsafe {
+        let p: *int = &x
+        volatile_store(p, 100)
+        let val: int = volatile_load(p)
+        print(val)  // 100
+    }
+
+    // Atomic add
+    var counter: int = 0
+    unsafe {
+        let cp: *int = &counter
+        atomic_add(cp, 5)
+        print(counter)  // 5
+
+        atomic_sub(cp, 2)
+        print(counter)  // 3
+    }
+
+    // Atomic CAS
+    var flag: int = 0
+    unsafe {
+        let fp: *int = &flag
+        let old: int = atomic_cas(fp, 0, 1)
+        print(old)   // 0 (old value)
+        print(flag)  // 1 (new value after CAS)
+    }
+
+    return 0
+}

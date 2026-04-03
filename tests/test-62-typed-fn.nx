@@ -1,0 +1,60 @@
+// Test 61: Typed closures — Fn(T1, T2) -> R
+// Verifies that typed Fn annotations work correctly
+
+fn double(x: int) -> int {
+    return x * 2
+}
+
+fn triple(x: int) -> int {
+    return x * 3
+}
+
+fn to_str(x: int) -> String {
+    if x == 10 {
+        return "ten"
+    }
+    if x == 15 {
+        return "fifteen"
+    }
+    return "other"
+}
+
+fn apply_int(f: Fn(int) -> int, x: int) -> int {
+    return f(x)
+}
+
+fn apply_to_string(f: Fn(int) -> String, x: int) -> String {
+    return f(x)
+}
+
+fn make_adder(n: int) -> Fn(int) -> int {
+    fn add(x: int) -> int {
+        return n + x
+    }
+    return add
+}
+
+fn main() -> int {
+    // Basic typed Fn as parameter
+    print(apply_int(double, 5))
+    print(apply_int(triple, 5))
+
+    // Typed Fn with String return
+    print(apply_to_string(to_str, 10))
+    print(apply_to_string(to_str, 15))
+
+    // Typed Fn as variable
+    let f: Fn(int) -> int = double
+    print(f(7))
+
+    // Typed closure returning typed Fn
+    let add5: Fn(int) -> int = make_adder(5)
+    print(add5(10))
+
+    // Bare Fn still works (backward compat)
+    let g: Fn = triple
+    print(g(4))
+
+    print("All typed fn tests passed!")
+    return 0
+}

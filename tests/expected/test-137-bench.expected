@@ -1,0 +1,3 @@
+=== Nyx Benchmarks ===
+bench fibonacci: __TIMING__
+bench string_concat: __TIMING__

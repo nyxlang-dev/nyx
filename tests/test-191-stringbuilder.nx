@@ -1,0 +1,36 @@
+// test-191-stringbuilder.nx — StringBuilder for O(n) string concatenation
+fn main() {
+    // Basic usage
+    let sb: StringBuilder = StringBuilder.new(64)
+    sb.append("Hello")
+    sb.append(" ")
+    sb.append("World")
+    let result: String = sb.to_string()
+    print("basic: " + result)
+
+    // Append int
+    let sb2: StringBuilder = StringBuilder.new(64)
+    sb2.append("count: ")
+    sb2.append_int(42)
+    let result2: String = sb2.to_string()
+    print("int: " + result2)
+
+    // Clear and reuse
+    sb.clear()
+    sb.append("reused")
+    let result3: String = sb.to_string()
+    print("clear: " + result3)
+
+    // Loop concatenation (the main use case)
+    let sb3: StringBuilder = StringBuilder.new(1024)
+    var i: int = 0
+    while i < 10 {
+        sb3.append("x")
+        i = i + 1
+    }
+    let result4: String = sb3.to_string()
+    print("loop: " + result4)
+    print("length: " + int_to_string(result4.length()))
+
+    return 0
+}

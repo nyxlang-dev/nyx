@@ -1,0 +1,50 @@
+// Test 74: Iterator terminals — collect, sum, count, fold, any, all
+fn is_positive(x: int) -> bool { return x > 0 }
+fn is_negative(x: int) -> bool { return x < 0 }
+fn add(a: int, b: int) -> int { return a + b }
+
+fn main() {
+    let arr = [1, 2, 3, 4, 5]
+
+    // sum
+    let s = arr.iter().sum()
+    print(s)  // 15
+
+    // count
+    let c = arr.iter().count()
+    print(c)  // 5
+
+    // fold
+    let folded = arr.iter().fold(0, add)
+    print(folded)  // 15
+
+    // fold with initial value
+    let folded2 = arr.iter().fold(100, add)
+    print(folded2)  // 115
+
+    // any: at least one positive?
+    let has_pos = arr.iter().any(is_positive)
+    print(has_pos)  // true
+
+    // any: at least one negative?
+    let has_neg = arr.iter().any(is_negative)
+    print(has_neg)  // false
+
+    // all: all positive?
+    let all_pos = arr.iter().all(is_positive)
+    print(all_pos)  // true
+
+    // all: all negative?
+    let all_neg = arr.iter().all(is_negative)
+    print(all_neg)  // false
+
+    // empty iterator
+    let empty = [1, 2, 3]
+    let empty_sum = empty.iter().take(0).sum()
+    print(empty_sum)  // 0
+
+    let empty_count = empty.iter().take(0).count()
+    print(empty_count)  // 0
+
+    print("iter terminals ok")
+}

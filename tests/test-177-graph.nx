@@ -1,0 +1,168 @@
+// test-177-graph.nx — Graph data structures and algorithms (v5.2.0)
+import "std/graph"
+
+fn test_construction() {
+    print("--- Construction ---")
+
+    let g = graph_new(5)
+    if graph_node_count(g) == 5 {
+        print("node count ok")
+    }
+    if graph_edge_count(g) == 0 {
+        print("initial edges 0 ok")
+    }
+
+    graph_add_edge(g, 0, 1, 10)
+    graph_add_edge(g, 0, 2, 5)
+    graph_add_edge(g, 1, 3, 1)
+    graph_add_edge(g, 2, 3, 8)
+
+    if graph_edge_count(g) == 4 {
+        print("edge count ok")
+    }
+    if graph_has_edge(g, 0, 1) {
+        print("has edge ok")
+    }
+    if !graph_has_edge(g, 1, 0) {
+        print("no reverse edge ok")
+    }
+}
+
+fn test_bfs() {
+    print("--- BFS ---")
+
+    // 0→1→2, 0→3, 3→4
+    let g = graph_new(5)
+    graph_add_edge(g, 0, 1, 1)
+    graph_add_edge(g, 1, 2, 1)
+    graph_add_edge(g, 0, 3, 1)
+    graph_add_edge(g, 3, 4, 1)
+
+    let order = graph_bfs(g, 0)
+    // All 5 nodes should be visited
+    if order.length() == 5 {
+        print("bfs visits all ok")
+    }
+    // First visited should be 0
+    let first: int = order[0]
+    if first == 0 {
+        print("bfs starts at 0 ok")
+    }
+
+    // BFS path from 0 to 4
+    let path = graph_bfs_path(g, 0, 4)
+    if path.length() == 3 {
+        print("bfs path length ok")
+    }
+    let p0: int = path[0]
+    let p2: int = path[2]
+    if p0 == 0 and p2 == 4 {
+        print("bfs path endpoints ok")
+    }
+
+    // No path between disconnected nodes
+    let g2 = graph_new(4)
+    graph_add_edge(g2, 0, 1, 1)
+    graph_add_edge(g2, 2, 3, 1)
+    let no_path = graph_bfs_path(g2, 0, 3)
+    if no_path.length() == 0 {
+        print("bfs no path ok")
+    }
+}
+
+fn test_dfs() {
+    print("--- DFS ---")
+
+    let g = graph_new(4)
+    graph_add_edge(g, 0, 1, 1)
+    graph_add_edge(g, 0, 2, 1)
+    graph_add_edge(g, 1, 3, 1)
+    graph_add_edge(g, 2, 3, 1)
+
+    let order = graph_dfs(g, 0)
+    if order.length() == 4 {
+        print("dfs visits all ok")
+    }
+    let first: int = order[0]
+    if first == 0 {
+        print("dfs starts at 0 ok")
+    }
+}
+
+fn test_cycle() {
+    print("--- Cycle Detection ---")
+
+    // DAG (no cycle)
+    let dag = graph_new(3)
+    graph_add_edge(dag, 0, 1, 1)
+    graph_add_edge(dag, 1, 2, 1)
+    if !graph_has_cycle(dag) {
+        print("dag no cycle ok")
+    }
+
+    // Graph with cycle
+    let cyclic = graph_new(3)
+    graph_add_edge(cyclic, 0, 1, 1)
+    graph_add_edge(cyclic, 1, 2, 1)
+    graph_add_edge(cyclic, 2, 0, 1)
+    if graph_has_cycle(cyclic) {
+        print("cyclic graph detected ok")
+    }
+}
+
+fn test_dijkstra() {
+    print("--- Dijkstra ---")
+
+    //  0 --1-- 1
+    //  |       |
+    //  4       2
+    //  |       |
+    //  3 --1-- 2
+    let g = graph_new(4)
+    graph_add_undirected(g, 0, 1, 1)
+    graph_add_undirected(g, 0, 3, 4)
+    graph_add_undirected(g, 1, 2, 2)
+    graph_add_undirected(g, 2, 3, 1)
+
+    let dist = graph_dijkstra(g, 0)
+
+    let d0 = graph_dist(dist, 0)
+    let d1 = graph_dist(dist, 1)
+    let d2 = graph_dist(dist, 2)
+    let d3 = graph_dist(dist, 3)
+
+    if d0 == 0 { print("dist to self ok") }
+    if d1 == 1 { print("dist 0→1 = 1 ok") }
+    if d2 == 3 { print("dist 0→2 = 3 ok") }
+    if d3 == 4 { print("dist 0→3 = 4 ok") }
+
+    // Dijkstra on directed weighted graph
+    //  0 --10--> 1
+    //  0 --5---> 2
+    //  2 --2---> 1
+    //  1 --1---> 3
+    //  2 --8---> 3
+    let g2 = graph_new(4)
+    graph_add_edge(g2, 0, 1, 10)
+    graph_add_edge(g2, 0, 2, 5)
+    graph_add_edge(g2, 2, 1, 2)
+    graph_add_edge(g2, 1, 3, 1)
+    graph_add_edge(g2, 2, 3, 8)
+
+    let dist2 = graph_dijkstra(g2, 0)
+    // 0→2 = 5, 0→2→1 = 7, 0→2→1→3 = 8
+    let d2_1 = graph_dist(dist2, 1)
+    let d2_3 = graph_dist(dist2, 3)
+    if d2_1 == 7 { print("directed dist to 1 = 7 ok") }
+    if d2_3 == 8 { print("directed dist to 3 = 8 ok") }
+}
+
+fn main() {
+    print("graph test")
+    test_construction()
+    test_bfs()
+    test_dfs()
+    test_cycle()
+    test_dijkstra()
+    print("graph ok")
+}

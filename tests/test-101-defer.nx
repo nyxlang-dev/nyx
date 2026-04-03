@@ -1,0 +1,67 @@
+// Test 101: defer statement (v0.6.0)
+
+var log: Array = []
+
+fn test_basic_defer() -> int {
+    defer {
+        log.push("deferred")
+    }
+    log.push("before return")
+    return 42
+}
+
+fn test_multiple_defer() -> int {
+    defer {
+        log.push("defer3")
+    }
+    defer {
+        log.push("defer2")
+    }
+    defer {
+        log.push("defer1")
+    }
+    log.push("body")
+    return 0
+}
+
+fn test_defer_implicit_return() {
+    defer {
+        log.push("implicit_defer")
+    }
+    log.push("implicit_body")
+}
+
+fn main() {
+    // Test 1: basic defer runs after body, before return
+    let r1: int = test_basic_defer()
+    assert(r1 == 42)
+    let l0: String = log[0]
+    let l1: String = log[1]
+    assert(l0 == "before return")
+    assert(l1 == "deferred")
+    print("Basic defer: OK")
+
+    // Test 2: multiple defers run in LIFO order
+    log = []
+    test_multiple_defer()
+    let m0: String = log[0]
+    let m1: String = log[1]
+    let m2: String = log[2]
+    let m3: String = log[3]
+    assert(m0 == "body")
+    assert(m1 == "defer1")
+    assert(m2 == "defer2")
+    assert(m3 == "defer3")
+    print("LIFO defer order: OK")
+
+    // Test 3: defer on implicit return
+    log = []
+    test_defer_implicit_return()
+    let i0: String = log[0]
+    let i1: String = log[1]
+    assert(i0 == "implicit_body")
+    assert(i1 == "implicit_defer")
+    print("Implicit return defer: OK")
+
+    print("✅ Test 101 completado")
+}

@@ -1,0 +1,17 @@
+// TEST 12: Iteración de Arrays
+fn main() {
+    print("=== TEST 12: ARRAY ITERATION ===")
+
+    let valores = [100, 200, 300, 400, 500]
+    var suma = 0
+
+    for v in valores {
+        suma = suma + v
+    }
+
+    print("Suma de elementos:")
+    print(suma)
+
+    print("✅ Test 12 completado")
+    return 0
+}

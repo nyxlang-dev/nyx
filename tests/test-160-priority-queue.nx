@@ -1,0 +1,53 @@
+// test-160: PriorityQueue — min-heap operations
+import "std/linkedlist"
+
+fn main() -> int {
+    let pq = pq_new()
+
+    // Push with priorities (lower = higher priority)
+    pq_push(pq, "critical", 1)
+    pq_push(pq, "low", 10)
+    pq_push(pq, "high", 2)
+    pq_push(pq, "medium", 5)
+    pq_push(pq, "urgent", 0)
+
+    print(pq_size(pq))
+    print(pq_peek(pq))
+
+    // Pop in priority order (min-heap: lowest number first)
+    let p1: String = pq_pop(pq)
+    print(p1)
+    let p2: String = pq_pop(pq)
+    print(p2)
+    let p3: String = pq_pop(pq)
+    print(p3)
+
+    print(pq_size(pq))
+
+    // Build from scratch — task scheduler simulation
+    let tasks = pq_new()
+    pq_push(tasks, "render_frame", 3)
+    pq_push(tasks, "network_poll", 1)
+    pq_push(tasks, "garbage_collect", 5)
+    pq_push(tasks, "handle_input", 2)
+    pq_push(tasks, "update_physics", 4)
+
+    var order = ""
+    var done = false
+    while not done {
+        if pq_is_empty(tasks) {
+            done = true
+        } else {
+            let task: String = pq_pop(tasks)
+            if order == "" {
+                order = task
+            } else {
+                order = order + "," + task
+            }
+        }
+    }
+    print(order)
+
+    print("priority queue ok")
+    return 0
+}

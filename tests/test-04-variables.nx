@@ -1,0 +1,19 @@
+// TEST 4: Variables Mutables
+fn main() {
+    print("=== TEST 4: VARIABLES ===")
+
+    var contador = 0
+    print("Contador inicial:")
+    print(contador)
+
+    contador = 5
+    print("Después de asignar 5:")
+    print(contador)
+
+    contador = contador + 10
+    print("Después de sumar 10:")
+    print(contador)
+
+    print("✅ Test 4 completado")
+    return 0
+}

@@ -1,0 +1,27 @@
+// Structs and methods in Nyx
+struct Point {
+    x: int,
+    y: int,
+}
+
+fn point_new(x: int, y: int) -> Point {
+    return Point { x: x, y: y }
+}
+
+fn point_add(a: Point, b: Point) -> Point {
+    return Point { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn point_to_string(p: Point) -> String {
+    return "(" + int_to_string(p.x) + ", " + int_to_string(p.y) + ")"
+}
+
+fn main() {
+    let a: Point = point_new(3, 4)
+    let b: Point = point_new(10, 20)
+    let c: Point = point_add(a, b)
+
+    print("Point A: " + point_to_string(a))
+    print("Point B: " + point_to_string(b))
+    print("A + B  = " + point_to_string(c))
+}

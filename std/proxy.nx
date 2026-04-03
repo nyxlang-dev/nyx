@@ -1,0 +1,237 @@
+// std/proxy.nx — HTTP Reverse Proxy for Nyx (v0.12.0)
+// Round-robin load balancing, health checks, header rewriting
+
+import "std/http"
+
+// === Types ===
+
+struct Backend {
+    host: String,
+    port: int,
+}
+
+struct ProxyConfig {
+    listen_port: int,
+    backends: Array,
+    healthy: Array,
+    next_idx: Array,
+}
+
+// === Config ===
+
+pub fn proxy_new(port: int) -> ProxyConfig {
+    let backends: Array = []
+    let healthy: Array = []
+    let next_idx: Array = [0]
+    return ProxyConfig { listen_port: port, backends: backends, healthy: healthy, next_idx: next_idx }
+}
+
+pub fn proxy_add_backend(config: ProxyConfig, host: String, port: int) {
+    let b: Backend = Backend { host: host, port: port }
+    config.backends.push(b)
+    config.healthy.push(true)
+}
+
+// === Load Balancing (round-robin) ===
+
+fn select_backend(config: ProxyConfig) -> Backend {
+    let n: int = config.backends.length()
+    if n == 0 {
+        return Backend { host: "", port: 0 }
+    }
+
+    // Try each backend in round-robin order, skipping unhealthy ones
+    var attempts: int = 0
+    while attempts < n {
+        let idx: int = config.next_idx[0]
+        config.next_idx[0] = (idx + 1) % n
+        let is_healthy: bool = config.healthy[idx]
+        if is_healthy {
+            let b: Backend = config.backends[idx]
+            return b
+        }
+        attempts = attempts + 1
+    }
+
+    // All unhealthy — return first anyway
+    let fallback: Backend = config.backends[0]
+    return fallback
+}
+
+// === Health Check ===
+
+pub fn proxy_check_health(config: ProxyConfig) -> Array {
+    var results: Array = []
+    var i: int = 0
+    while i < config.backends.length() {
+        let b: Backend = config.backends[i]
+        let fd: int = tcp_connect(b.host, b.port)
+        if fd >= 0 {
+            config.healthy[i] = true
+            tcp_close(fd)
+            results.push(true)
+        } else {
+            config.healthy[i] = false
+            results.push(false)
+        }
+        i = i + 1
+    }
+    return results
+}
+
+// Mark a backend as unhealthy by index
+pub fn proxy_set_unhealthy(config: ProxyConfig, idx: int) {
+    config.healthy[idx] = false
+}
+
+// Mark a backend as healthy by index
+pub fn proxy_set_healthy(config: ProxyConfig, idx: int) {
+    config.healthy[idx] = true
+}
+
+// === Request Forwarding ===
+
+fn forward_request(method: String, path: String, headers: Array, body: String, backend: Backend) -> String {
+    let fd: int = tcp_connect(backend.host, backend.port)
+    if fd < 0 {
+        return http_response(502, "Bad Gateway: cannot connect to upstream")
+    }
+
+    // Build HTTP request to upstream
+    let crlf: String = "\r\n"
+    var req: String = method + " " + path + " HTTP/1.1" + crlf
+    req = req + "Host: " + backend.host + ":" + int_to_string(backend.port) + crlf
+
+    // Forward original headers (skip Host, add X-Forwarded-*)
+    var hi: int = 0
+    while hi + 1 < headers.length() {
+        let hk: String = headers[hi]
+        let hv: String = headers[hi + 1]
+        if hk != "Host" and hk != "Connection" {
+            req = req + hk + ": " + hv + crlf
+        }
+        hi = hi + 2
+    }
+
+    // Add proxy headers
+    req = req + "X-Forwarded-Proto: http" + crlf
+    req = req + "Connection: close" + crlf
+
+    if body.length() > 0 {
+        req = req + "Content-Length: " + int_to_string(str_byte_length(body)) + crlf
+    }
+
+    req = req + crlf + body
+
+    // Send to upstream
+    tcp_write(fd, req)
+
+    // Read response from upstream
+    let status_line: String = tcp_read_line(fd)
+
+    // Read response headers
+    var resp_headers: Array = []
+    var content_length: int = 0
+    while 1 > 0 {
+        let line: String = tcp_read_line(fd)
+        if line.length() == 0 {
+            // End of headers (empty line)
+            break
+        }
+        let colon_idx: int = line.indexOf(": ")
+        if colon_idx >= 0 {
+            let key: String = line.substring(0, colon_idx)
+            let val: String = line.substring(colon_idx + 2, line.length())
+            resp_headers.push(key)
+            resp_headers.push(val)
+            if key == "Content-Length" {
+                content_length = parse_content_length(val)
+            }
+        }
+    }
+
+    // Read response body
+    var resp_body: String = ""
+    if content_length > 0 {
+        resp_body = tcp_read(fd, content_length)
+    } else {
+        // Try to read whatever is available
+        resp_body = tcp_read(fd, 65536)
+    }
+
+    tcp_close(fd)
+
+    // Build response to client
+    let crlf2: String = "\r\n"
+    var response: String = status_line + crlf2
+
+    // Forward upstream response headers
+    var ri: int = 0
+    while ri + 1 < resp_headers.length() {
+        let rk: String = resp_headers[ri]
+        let rv: String = resp_headers[ri + 1]
+        if rk != "Connection" {
+            response = response + rk + ": " + rv + crlf2
+        }
+        ri = ri + 2
+    }
+
+    response = response + "Connection: close" + crlf2
+    response = response + "X-Proxy: nyx-proxy/0.12.0" + crlf2
+    response = response + crlf2 + resp_body
+
+    return response
+}
+
+fn parse_content_length(s: String) -> int {
+    var result: int = 0
+    var i: int = 0
+    while i < s.length() {
+        let c: char = s.charAt(i)
+        if c >= '0' and c <= '9' {
+            let d: int = c - '0'
+            result = result * 10 + d
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// === Proxy Handler ===
+
+fn make_proxy_handler(config: ProxyConfig) -> Fn {
+    return fn(request: Array) -> String {
+        let method: String = request[1]
+        let path: String = request[2]
+        let headers: Array = request[3]
+        let body: String = request[4]
+
+        // Select backend
+        let backend: Backend = select_backend(config)
+        if backend.host == "" {
+            return http_response(503, "Service Unavailable: no backends configured")
+        }
+
+        // Forward
+        let response: String = forward_request(method, path, headers, body, backend)
+        return response
+    }
+}
+
+// === Start Proxy ===
+
+pub fn proxy_start(config: ProxyConfig) {
+    print("=== Nyx Reverse Proxy v0.12.0 ===")
+    print("Listening on port " + int_to_string(config.listen_port))
+
+    var i: int = 0
+    while i < config.backends.length() {
+        let b: Backend = config.backends[i]
+        print("  Backend: " + b.host + ":" + int_to_string(b.port))
+        i = i + 1
+    }
+    print("")
+
+    let handler: Fn = make_proxy_handler(config)
+    http_serve(config.listen_port, handler)
+}

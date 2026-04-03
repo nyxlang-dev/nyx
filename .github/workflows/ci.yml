@@ -1,0 +1,64 @@
+name: Nyx CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────
+  #  Linux (Ubuntu)
+  # ─────────────────────────────────────────────
+  test-linux:
+    name: Test (Linux / Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libgc-dev libssl-dev
+
+      - name: Build bootstrap compiler
+        run: make bootstrap
+
+      - name: Run regression tests (138/138)
+        run: make test
+
+      - name: Run advanced tests (30/30)
+        run: bash tests/advanced/run_advanced_tests.sh
+
+      - name: Run stdlib tests
+        run: make test-stdlib
+
+  # ─────────────────────────────────────────────
+  #  macOS (x86_64 + ARM64 via Rosetta)
+  # ─────────────────────────────────────────────
+  test-macos:
+    name: Test (macOS / ARM64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install bdw-gc openssl llvm
+          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+
+      - name: Set OpenSSL paths (macOS)
+        run: |
+          echo "LDFLAGS=-L$(brew --prefix openssl)/lib" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I$(brew --prefix openssl)/include" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl)/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Build bootstrap compiler
+        run: make bootstrap
+
+      - name: Run regression tests (138/138)
+        run: make test
+
+      - name: Run advanced tests (30/30)
+        run: bash tests/advanced/run_advanced_tests.sh

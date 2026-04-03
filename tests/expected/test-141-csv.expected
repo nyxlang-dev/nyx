@@ -1,0 +1,9 @@
+rows: 4
+cols: 3
+header: name,age,city
+row0: Alice,30
+bob city: Milan
+id,value
+1,hello
+2,world
+csv ok

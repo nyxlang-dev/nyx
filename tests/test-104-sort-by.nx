@@ -1,0 +1,73 @@
+// Test 104: sort_by — custom comparator sorting
+
+fn cmp_asc(a: int, b: int) -> int {
+    return a - b
+}
+
+fn cmp_desc(a: int, b: int) -> int {
+    return b - a
+}
+
+fn main() {
+    // Test 1: Sort ascending
+    var arr1 = [5, 3, 8, 1, 9, 2, 7]
+    sort_by(arr1, cmp_asc)
+    var i = 0
+    var s1 = ""
+    while i < arr1.length() {
+        let v: int = arr1[i]
+        if i > 0 { s1 = s1 + "," }
+        s1 = s1 + int_to_string(v)
+        i = i + 1
+    }
+    print(s1)
+
+    // Test 2: Sort descending
+    var arr2 = [5, 3, 8, 1, 9, 2, 7]
+    sort_by(arr2, cmp_desc)
+    i = 0
+    var s2 = ""
+    while i < arr2.length() {
+        let v: int = arr2[i]
+        if i > 0 { s2 = s2 + "," }
+        s2 = s2 + int_to_string(v)
+        i = i + 1
+    }
+    print(s2)
+
+    // Test 3: Already sorted
+    var arr3 = [1, 2, 3, 4, 5]
+    sort_by(arr3, cmp_asc)
+    let first: int = arr3[0]
+    let last: int = arr3[4]
+    print(int_to_string(first))
+    print(int_to_string(last))
+
+    // Test 4: sort_str
+    var names = ["Charlie", "Alice", "Bob", "David"]
+    sort_str(names)
+    let n0: String = names[0]
+    let n1: String = names[1]
+    let n2: String = names[2]
+    let n3: String = names[3]
+    print(n0)
+    print(n1)
+    print(n2)
+    print(n3)
+
+    // Test 5: Single element
+    var arr5 = [42]
+    sort_by(arr5, cmp_asc)
+    let v5: int = arr5[0]
+    print(int_to_string(v5))
+
+    // Test 6: sort_int (existing)
+    var arr6 = [4, 2, 7, 1, 9]
+    sort_int(arr6)
+    let f6: int = arr6[0]
+    let l6: int = arr6[4]
+    print(int_to_string(f6))
+    print(int_to_string(l6))
+
+    print("All sort tests passed!")
+}

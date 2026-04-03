@@ -1,0 +1,21 @@
+// test-params.nx
+// Prueba de funciones con parámetros
+
+fn suma(a, b) {
+    return a + b
+}
+
+fn multiplicar(x, y) {
+    return x * y
+}
+
+fn main() {
+    let resultado1 = suma(10, 20)
+    print(resultado1)
+    
+    let resultado2 = multiplicar(5, 6)
+    print(resultado2)
+    
+    let combinado = suma(multiplicar(2, 3), 10)
+    print(combinado)
+}

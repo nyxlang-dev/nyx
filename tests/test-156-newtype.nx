@@ -1,0 +1,45 @@
+// test-156: Newtype/tuple structs — struct Name(Type) syntax
+// Declares a struct with a single positional field _0
+
+// Tuple struct syntax: struct Name(BaseType) → struct Name { _0: BaseType }
+struct Meters(int)
+struct Kilograms(float)
+struct Label(String)
+
+fn add_meters(a: Meters, b: Meters) -> Meters {
+    return Meters { _0: a._0 + b._0 }
+}
+
+fn scale_kg(w: Kilograms, factor: float) -> Kilograms {
+    return Kilograms { _0: w._0 * factor }
+}
+
+fn greet(name: Label) -> String {
+    return "Hello, " + name._0 + "!"
+}
+
+fn meters_to_string(m: Meters) -> String {
+    return int_to_string(m._0) + "m"
+}
+
+fn main() -> int {
+    let m1 = Meters { _0: 100 }
+    let m2 = Meters { _0: 200 }
+    let m3 = add_meters(m1, m2)
+    print(m3._0)
+    print(meters_to_string(m3))
+
+    let w = Kilograms { _0: 70.5 }
+    let w2 = scale_kg(w, 1.5)
+    print(w2._0)
+
+    let lbl = Label { _0: "World" }
+    print(greet(lbl))
+
+    // Verify _0 is accessible
+    let m4 = Meters { _0: 50 }
+    print(m4._0)
+
+    print("newtype ok")
+    return 0
+}

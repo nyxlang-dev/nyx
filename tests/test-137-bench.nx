@@ -1,0 +1,21 @@
+// test-137-bench: verifica que bench "name" { body } compila y ejecuta
+// El bench runner genera main() automaticamente y llama cada bench
+
+bench "fibonacci" 1000 {
+    // Calcula fib(20) como carga representativa
+    var a = 0
+    var b = 1
+    var i = 0
+    while i < 20 {
+        let tmp = a + b
+        a = b
+        b = tmp
+        i = i + 1
+    }
+}
+
+bench "string_concat" 100 {
+    var s = "hello"
+    s = s + " world"
+    s = s + " nyx"
+}

@@ -1,0 +1,7 @@
+verbose: true
+output: result.txt
+count: 10
+positional: positional1
+no error
+short output: short.txt
+args ok

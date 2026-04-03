@@ -1,0 +1,67 @@
+// Test 108: DateTime — date/time builtins via FFI
+
+fn main() {
+    // Test 1: time_epoch returns a positive number
+    let epoch: int = time_epoch()
+    let valid: bool = epoch > 1000000000
+    print(valid)
+
+    // Test 2: datetime_now returns a non-empty string
+    let now: String = datetime_now()
+    let has_len: bool = now.length() > 10
+    print(has_len)
+
+    // Test 3: datetime_format with custom format
+    let formatted: String = datetime_format("%Y")
+    let year_len: bool = formatted.length() == 4
+    print(year_len)
+
+    // Test 4: datetime_from_epoch — known epoch
+    // 2020-01-01 00:00:00 UTC = 1577836800
+    let dt: String = datetime_from_epoch(1577836800)
+    print(dt.length() > 10)
+
+    // Test 5: datetime_year/month/day from epoch
+    // Use current epoch to extract components — just verify ranges
+    let cur: int = time_epoch()
+    let y: int = datetime_year(cur)
+    print(y >= 2024)
+
+    let m: int = datetime_month(cur)
+    print(m >= 1)
+
+    let d: int = datetime_day(cur)
+    print(d >= 1)
+
+    // Test 6: datetime_hour/minute/second
+    let h: int = datetime_hour(1577836800)
+    print(h >= 0)
+
+    let mi: int = datetime_minute(1577836800)
+    print(mi >= 0)
+
+    let s: int = datetime_second(1577836800)
+    print(s >= 0)
+
+    // Test 7: datetime_weekday
+    let wd: int = datetime_weekday(1577836800)
+    print(wd >= 0)
+    print(wd < 7)
+
+    // Test 8: datetime_parse with known date
+    let parsed: int = datetime_parse("2020-06-15 12:30:00", "%Y-%m-%d %H:%M:%S")
+    print(parsed > 0)
+
+    // Test 9: round-trip: epoch -> string -> parse
+    let epoch2: int = time_epoch()
+    let str2: String = datetime_from_epoch(epoch2)
+    let parsed2: int = datetime_parse(str2, "%Y-%m-%d %H:%M:%S")
+    // Should be within 1 second
+    let diff: int = epoch2 - parsed2
+    if diff < 0 {
+        diff = 0 - diff
+    }
+    print(diff <= 1)
+
+    print("All datetime tests passed!")
+}

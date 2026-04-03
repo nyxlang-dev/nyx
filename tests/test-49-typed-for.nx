@@ -1,0 +1,31 @@
+// Test 49: for-in with type annotation
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() -> int {
+    // Typed for with structs
+    let points: Array = [Point{x: 1, y: 2}, Point{x: 3, y: 4}]
+    var sum = 0
+    for p: Point in points {
+        sum = sum + p.x + p.y
+    }
+    print(sum)
+
+    // Typed for with strings
+    let names: Array = ["alice", "bob", "charlie"]
+    for name: String in names {
+        print(name)
+    }
+
+    // Regular for (no annotation) still works
+    var total = 0
+    for i in 0..3 {
+        total = total + i
+    }
+    print(total)
+
+    return 0
+}

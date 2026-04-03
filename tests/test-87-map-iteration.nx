@@ -1,0 +1,20 @@
+// Test 87: Map Iteration — keys() and values()
+
+fn main() {
+    let m: Map = Map.new()
+    m.insert("a", 10)
+    m.insert("b", 20)
+    m.insert("c", 30)
+
+    let vals: Array = m.values()
+    var sum: int = 0
+    for v: int in vals {
+        sum = sum + v
+    }
+    print(sum)  // 60
+
+    let ks: Array = m.keys()
+    print(ks.length())  // 3
+
+    print("done")
+}

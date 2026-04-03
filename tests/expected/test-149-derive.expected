@@ -1,0 +1,6 @@
+true
+false
+true
+false
+Point { x: 3, y: 4 }
+derive ok

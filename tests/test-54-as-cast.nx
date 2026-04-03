@@ -1,0 +1,39 @@
+// Test 54: Cast operator 'as'
+
+fn main() -> int {
+    // int → float
+    let a = 42
+    let b: float = a as float
+    print(b)  // 42.000000
+
+    // float → int
+    let c = 3.14
+    let d: int = c as int
+    print(d)  // 3
+
+    // int → i32 (narrowing)
+    let e = 1000
+    let f: i32 = e as i32
+    print(f)  // 1000
+
+    // i32 → int (widening)
+    let g: i32 = 42i32
+    let h: int = g as int
+    print(h)  // 42
+
+    // i32 → i16 (narrowing)
+    let i: i16 = g as i16
+    print(i)  // 42
+
+    // int → i8
+    let j: int = 65
+    let k = j as i32
+    print(k)  // 65
+
+    // Chained casts
+    let m = 100
+    let n = m as i32 as int
+    print(n)  // 100
+
+    return 0
+}

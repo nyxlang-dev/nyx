@@ -1,0 +1,44 @@
+math ext test
+--- Number Theory ---
+2 is prime
+17 is prime
+15 not prime
+1 not prime
+primes to 30: 10
+2
+3
+5
+7
+11
+13
+17
+19
+23
+29
+--- Modular Arithmetic ---
+24
+2
+gcd(48,18)=6
+--- Combinatorics ---
+0
+1
+55
+610
+10
+120
+1
+1
+--- Array Ops ---
+sum: 31
+min: 1
+max: 9
+range: 8
+--- Statistics ---
+mean: 5
+median: 4
+variance: 4
+--- Geometry ---
+dist (0,0)-(3,4): 5
+clamp(15, 0, 10): 10
+lerp(0,100,0.25): 25
+math ext ok

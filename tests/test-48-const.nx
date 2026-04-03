@@ -1,0 +1,22 @@
+// Test 48: const declarations with compile-time evaluation
+
+const MAX = 100
+const PI = 3.14
+const DEBUG = true
+
+fn main() -> int {
+    print(MAX)
+
+    let area: float = PI * 2.0
+    print(area)
+
+    if DEBUG {
+        print("debug mode on")
+    }
+
+    // Const in function scope
+    const LOCAL_VAL = 42
+    print(LOCAL_VAL)
+
+    return 0
+}

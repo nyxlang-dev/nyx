@@ -1,0 +1,59 @@
+// Test: try-catch exception handling
+
+fn main() -> int {
+    // Test 1: basic try-catch with throw
+    var caught = ""
+    try {
+        throw("test error")
+        print("should not reach here")
+    } catch(e: String) {
+        caught = e
+    }
+    print(caught)
+
+    // Test 2: try block completes normally (no throw)
+    var result = "ok"
+    try {
+        result = "completed"
+    } catch(e: String) {
+        result = "caught"
+    }
+    print(result)
+
+    // Test 3: panic inside try block is caught
+    var panic_caught = ""
+    try {
+        panic("panic msg")
+    } catch(e: String) {
+        panic_caught = e
+    }
+    print(panic_caught)
+
+    // Test 4: nested try-catch
+    var outer_msg = ""
+    try {
+        try {
+            throw("inner error")
+        } catch(e: String) {
+            outer_msg = "inner caught: " + e
+        }
+    } catch(e: String) {
+        outer_msg = "outer caught"
+    }
+    print(outer_msg)
+
+    // Test 5: throw propagates to outer try
+    var propagated = ""
+    try {
+        try {
+            throw("deep error")
+        } catch(e: String) {
+            throw("rethrown: " + e)
+        }
+    } catch(e: String) {
+        propagated = e
+    }
+    print(propagated)
+
+    return 0
+}

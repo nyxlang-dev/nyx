@@ -1,0 +1,164 @@
+// test-164-pool-streams.nx — Connection Pool + Async Streams (v4.1.0)
+import "std/pool"
+
+fn test_pool_basic() {
+    print("--- Pool Basic ---")
+    let pool = pool_new(3, 100)
+
+    print(format("capacity: {}", pool_capacity(pool)))
+    print(format("available: {}", pool_available_count(pool)))
+    print(format("in_use: {}", pool_in_use_count(pool)))
+    print(format("created: {}", pool_created_count(pool)))
+
+    // Acquire handles
+    let h1 = pool_acquire(pool)
+    let h2 = pool_acquire(pool)
+    let h3 = pool_acquire(pool)
+
+    print(format("h1={} h2={} h3={}", h1, h2, h3))
+    print(format("in_use: {}", pool_in_use_count(pool)))
+    print(format("available: {}", pool_available_count(pool)))
+
+    // Exhausted
+    let h4 = pool_acquire(pool)
+    if h4 == -1 {
+        print("pool exhausted ok")
+    }
+
+    // Release one
+    pool_release(pool, h2)
+    print(format("after release: available={}", pool_available_count(pool)))
+
+    // Acquire again — should reuse released handle
+    let h5 = pool_acquire(pool)
+    print(format("reused: h5={}", h5))
+
+    // Release all
+    pool_release(pool, h1)
+    pool_release(pool, h3)
+    pool_release(pool, h5)
+    print(format("final: available={} in_use={}", pool_available_count(pool), pool_in_use_count(pool)))
+}
+
+fn test_pool_capacity() {
+    print("--- Pool Capacity ---")
+    let pool = pool_new(5, 0)
+    var i = 0
+    var handles = []
+    while i < 5 {
+        let h = pool_acquire(pool)
+        handles.push(h)
+        i = i + 1
+    }
+    print(format("created: {}", pool_created_count(pool)))
+    print(format("in_use: {}", pool_in_use_count(pool)))
+
+    // Release all
+    var j = 0
+    while j < handles.length() {
+        let h: int = handles[j]
+        pool_release(pool, h)
+        j = j + 1
+    }
+    print(format("available after release: {}", pool_available_count(pool)))
+}
+
+fn test_stream_basic() {
+    print("--- Stream Basic ---")
+    let s = stream_new()
+
+    stream_push(s, "hello")
+    stream_push(s, "world")
+    stream_push(s, "nyx")
+    stream_close(s)
+
+    print(format("pending: {}", stream_pending(s)))
+
+    let v1 = stream_poll(s)
+    let v2 = stream_poll(s)
+    print(v1)
+    print(v2)
+    print(format("pending: {}", stream_pending(s)))
+
+    let v3 = stream_poll(s)
+    print(v3)
+
+    if stream_is_done(s) {
+        print("stream done")
+    }
+}
+
+fn test_stream_collect() {
+    print("--- Stream Collect ---")
+    let s = stream_new()
+
+    var i = 0
+    while i < 5 {
+        stream_push(s, format("item{}", i))
+        i = i + 1
+    }
+    stream_close(s)
+
+    let items = stream_collect(s)
+    print(format("collected: {}", items.length()))
+
+    var j = 0
+    while j < items.length() {
+        let item: String = items[j]
+        print(item)
+        j = j + 1
+    }
+}
+
+fn test_stream_pipeline() {
+    print("--- Stream Pipeline ---")
+    // Producer → filter → consumer pattern
+    let source = stream_new()
+    let filtered = stream_new()
+
+    // Push even-tagged items explicitly
+    stream_push(source, "odd:apple")
+    stream_push(source, "even:banana")
+    stream_push(source, "odd:cherry")
+    stream_push(source, "even:date")
+    stream_push(source, "odd:elderberry")
+    stream_push(source, "even:fig")
+    stream_close(source)
+
+    // Filter: keep only items starting with "even:"
+    var going = true
+    while going {
+        let val = stream_poll(source)
+        if val == "" {
+            stream_close(filtered)
+            going = false
+        } else {
+            if val.length() > 5 {
+                let prefix = val.substring(0, 5)
+                if prefix == "even:" {
+                    let item = val.substring(5, val.length())
+                    stream_push(filtered, item)
+                }
+            }
+        }
+    }
+
+    let evens = stream_collect(filtered)
+    print(format("evens: {}", evens.length()))
+    var j = 0
+    while j < evens.length() {
+        let v: String = evens[j]
+        print(v)
+        j = j + 1
+    }
+}
+
+fn main() {
+    print("pool + streams test")
+    test_pool_basic()
+    test_pool_capacity()
+    test_stream_basic()
+    test_stream_collect()
+    test_stream_pipeline()
+    print("pool + streams ok")
+}

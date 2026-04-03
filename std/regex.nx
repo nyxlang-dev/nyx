@@ -1,0 +1,7 @@
+// std/regex.nx — Regular expressions via POSIX regex
+// Funciones implementadas como builtins en codegen, backed by runtime/regex.c
+// Import this module to use regex functions:
+//   regex_match(text, pattern) -> String
+//   regex_is_match(text, pattern) -> bool
+//   regex_replace(text, pattern, replacement) -> String
+//   regex_replace_all(text, pattern, replacement) -> String

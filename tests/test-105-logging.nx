@@ -1,0 +1,27 @@
+// Test 105: Logging framework
+
+import "std/log"
+
+fn main() {
+    // Default level is INFO (1), so DEBUG should be suppressed
+    log_debug("this should NOT appear")
+    log_info("info message")
+    log_warn("warn message")
+    log_error("error message")
+
+    // Change to DEBUG level
+    log_set_level(0)
+    log_debug("debug now visible")
+
+    // Change to ERROR only
+    log_set_level(3)
+    log_info("this should NOT appear")
+    log_warn("this should NOT appear")
+    log_error("only errors now")
+
+    // Verify level getter
+    let lvl = log_get_level()
+    print(int_to_string(lvl))
+
+    print("Logging tests passed!")
+}

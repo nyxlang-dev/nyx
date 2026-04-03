@@ -1,0 +1,39 @@
+// Test 53: Sized numeric types (i8, i16, i32, u8, f32, usize)
+
+fn main() -> int {
+    // i32 with type annotation
+    let a: i32 = 42
+    let b: i32 = 10
+    let c: i32 = a + b
+    print(c)  // 52
+
+    // i32 with suffix literal
+    let d: i32 = 100i32
+    let e: i32 = 3i32
+    let f: i32 = d / e
+    print(f)  // 33
+
+    // i16
+    let g: i16 = 100
+    let h: i16 = 200
+    let i: i16 = g + h
+    print(i)  // 300
+
+    // i32 negation
+    let neg: i32 = -a
+    print(neg)  // -42
+
+    // i32 multiplication
+    let mul: i32 = a * b
+    print(mul)  // 420
+
+    // Bitwise on i32
+    let bw: i32 = ~0i32
+    print(bw)  // -1
+
+    // usize (maps to i64)
+    let sz: usize = 1024
+    print(sz)  // 1024
+
+    return 0
+}

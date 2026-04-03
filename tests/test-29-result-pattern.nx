@@ -1,0 +1,76 @@
+// Test 29: Result pattern — error handling with enum + String params
+// Demonstrates idiomatic error handling in Nyx
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+fn safe_divide(a: int, b: int) -> Result {
+    if b == 0 {
+        return Result.Err("division by zero")
+    }
+    return Result.Ok(a / b)
+}
+
+fn safe_sqrt(n: int) -> Result {
+    if n < 0 {
+        return Result.Err("negative input")
+    }
+    // Simple integer sqrt
+    var i = 0
+    while i * i <= n {
+        i = i + 1
+    }
+    return Result.Ok(i - 1)
+}
+
+fn unwrap_or(r: Result, default_val: int) -> int {
+    return match r {
+        Result.Ok(v) => v,
+        Result.Err(e) => default_val
+    }
+}
+
+fn is_ok(r: Result) -> bool {
+    return match r {
+        Result.Ok(v) => true,
+        Result.Err(e) => false
+    }
+}
+
+fn main() {
+    // Success cases
+    let r1 = safe_divide(100, 4)
+    print("100/4 = ${unwrap_or(r1, 0)}")
+
+    let r2 = safe_sqrt(16)
+    print("sqrt(16) = ${unwrap_or(r2, 0)}")
+
+    // Error cases
+    let r3 = safe_divide(10, 0)
+    match r3 {
+        Result.Ok(v) => { print("unexpected") },
+        Result.Err(msg) => { print("caught: ${msg}") }
+    }
+
+    let r4 = safe_sqrt(-5)
+    match r4 {
+        Result.Ok(v) => { print("unexpected") },
+        Result.Err(msg) => { print("caught: ${msg}") }
+    }
+
+    // Chaining results
+    let a = safe_divide(100, 5)
+    if is_ok(a) {
+        let val = unwrap_or(a, 0)
+        let b = safe_sqrt(val)
+        print("sqrt(100/5) = ${unwrap_or(b, 0)}")
+    }
+
+    // is_ok check
+    print("is_ok(Ok(1)): ${is_ok(Result.Ok(1))}")
+    print("is_ok(Err): ${is_ok(Result.Err("fail"))}")
+}
+
+main()

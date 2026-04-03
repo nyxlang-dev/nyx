@@ -1,0 +1,26 @@
+fn main() {
+    let N: int = 100000
+    let start: int = time_us()
+
+    var m = Map.new()
+    var i: int = 0
+    while i < N {
+        m.insert(int_to_string(i), i)
+        i = i + 1
+    }
+
+    // Lookups
+    var sum: int = 0
+    i = 0
+    while i < N {
+        let v: int = m.get(int_to_string(i))
+        sum = sum + v
+        i = i + 1
+    }
+
+    let end: int = time_us()
+    let elapsed: int = end - start
+    print("map ops (100K insert + 100K get): sum=" + int_to_string(sum))
+    print("time_us: " + int_to_string(elapsed))
+    return 0
+}

@@ -1,0 +1,90 @@
+// Test A29: Type System Workout
+// Combines: type aliases, const, sized types, as cast, bitwise, compound assignment, match guards
+
+type Score = int
+type Name = String
+type Flag = bool
+
+const MAX_SCORE: int = 1000
+const THRESHOLD: int = 500
+const MASK: int = 255
+
+fn grade(score: Score) -> Name {
+    if score >= 900 { return "A" }
+    if score >= 700 { return "B" }
+    if score >= 500 { return "C" }
+    return "F"
+}
+
+fn clamp_score(s: Score) -> Score {
+    if s > MAX_SCORE { return MAX_SCORE }
+    if s < 0 { return 0 }
+    return s
+}
+
+fn pack_rgb(r: int, g: int, b: int) -> int {
+    return (r & MASK) << 16 | (g & MASK) << 8 | (b & MASK)
+}
+
+fn unpack_r(rgb: int) -> int {
+    return (rgb >> 16) & MASK
+}
+
+fn unpack_g(rgb: int) -> int {
+    return (rgb >> 8) & MASK
+}
+
+fn unpack_b(rgb: int) -> int {
+    return rgb & MASK
+}
+
+fn main() -> int {
+    let s: Score = 750
+    let n: Name = "Alice"
+    print("${n}: ${grade(s)}")
+
+    print(MAX_SCORE)
+
+    print(clamp_score(1500))
+    print(clamp_score(-50))
+    print(clamp_score(600))
+
+    print(grade(950))
+    print(grade(700))
+    print(grade(500))
+    print(grade(200))
+
+    let x: i32 = 42i32
+    let y: int = x as int
+    print(y)
+
+    let big: int = 1000
+    let small: i32 = big as i32
+    print(small)
+
+    let rgb = pack_rgb(255, 128, 64)
+    print(unpack_r(rgb))
+    print(unpack_g(rgb))
+    print(unpack_b(rgb))
+
+    var flags = 0
+    flags |= 1 << 0
+    flags |= 1 << 3
+    print(flags)
+
+    flags &= ~(1 << 0)
+    print(flags)
+
+    flags ^= 1 << 3
+    print(flags)
+
+    var counter = 0
+    counter += 10
+    counter *= 3
+    counter -= 5
+    counter /= 5
+    print(counter)
+
+    print("A29 passed")
+    return 0
+}

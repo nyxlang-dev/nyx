@@ -1,0 +1,42 @@
+// Test A15: Funciones que operan sobre structs (simulando métodos)
+// Prueba: pasar structs, retornar structs, modificar campos
+
+struct Stack {
+    data: Array,
+    size: int
+}
+
+fn stack_new() -> Stack {
+    return Stack { data: [], size: 0 }
+}
+
+fn stack_push(s: Stack, val: int) -> Stack {
+    s.data.push(val)
+    return Stack { data: s.data, size: s.size + 1 }
+}
+
+fn stack_peek(s: Stack) -> int {
+    return s.data[s.size - 1]
+}
+
+fn stack_is_empty(s: Stack) -> bool {
+    return s.size == 0
+}
+
+fn main() {
+    var s = stack_new()
+    s = stack_push(s, 10)
+    s = stack_push(s, 20)
+    s = stack_push(s, 30)
+
+    print(s.size)           // 3
+    print(stack_peek(s))    // 30
+
+    if stack_is_empty(s) {
+        print(1)
+    } else {
+        print(0)            // 0
+    }
+
+    return 0
+}

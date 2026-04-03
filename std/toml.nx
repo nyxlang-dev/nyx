@@ -1,0 +1,193 @@
+// std/toml.nx — TOML configuration file parser for Nyx (v4.9.0)
+// Supports: key = "value", key = 42, key = true, [section], [section.sub]
+// Returns nested Map<String> with dot-notation keys: "section.key" = "value"
+
+// ── Tokenizer ─────────────────────────────────────────────────────────────────
+
+fn toml_skip_whitespace(line: String, pos: int) -> int {
+    var i = pos
+    while i < line.length() {
+        let ch = line.charAt(i)
+        if ch != ' ' and ch != '\t' { return i }
+        i = i + 1
+    }
+    return i
+}
+
+fn toml_read_key(line: String, pos: int) -> String {
+    var i = pos
+    var key = ""
+    while i < line.length() {
+        let ch = line.charAt(i)
+        if ch == '=' or ch == ' ' or ch == '\t' { return key }
+        key = key + line.substring(i, i + 1)
+        i = i + 1
+    }
+    return key
+}
+
+fn toml_read_string_value(line: String, pos: int) -> String {
+    // pos points to opening quote
+    var i = pos + 1
+    var result = ""
+    while i < line.length() {
+        let ch = line.charAt(i)
+        if ch == '"' { return result }
+        if ch == '\\' and i + 1 < line.length() {
+            let next = line.charAt(i + 1)
+            if next == 'n' { result = result + "\n"  i = i + 2 }
+            else if next == 't' { result = result + "\t"  i = i + 2 }
+            else if next == '"' { result = result + "\""  i = i + 2 }
+            else if next == '\\' { result = result + "\\"  i = i + 2 }
+            else { result = result + line.substring(i, i + 1)  i = i + 1 }
+        } else {
+            result = result + line.substring(i, i + 1)
+            i = i + 1
+        }
+    }
+    return result
+}
+
+fn toml_read_value(line: String, pos: int) -> String {
+    let i = toml_skip_whitespace(line, pos)
+    if i >= line.length() { return "" }
+    let ch = line.charAt(i)
+    if ch == '"' {
+        return toml_read_string_value(line, i)
+    }
+    // Read until end of line or comment
+    var result = ""
+    var j = i
+    while j < line.length() {
+        let c = line.charAt(j)
+        if c == '#' { return result.trim() }
+        result = result + line.substring(j, j + 1)
+        j = j + 1
+    }
+    return result.trim()
+}
+
+fn toml_is_section(line: String) -> bool {
+    let trimmed = line.trim()
+    if trimmed.length() == 0 { return false }
+    return trimmed.charAt(0) == '['
+}
+
+fn toml_parse_section(line: String) -> String {
+    let trimmed = line.trim()
+    let n = trimmed.length()
+    if n < 2 { return "" }
+    // Find closing ]
+    var end = 1
+    while end < n and trimmed.charAt(end) != ']' {
+        end = end + 1
+    }
+    return trimmed.substring(1, end).trim()
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+// Parse a TOML string and return a Map<String> with dot-notation keys
+// e.g. [server]\nhost = "localhost"\nport = 8080
+// → "server.host" = "localhost", "server.port" = "8080"
+pub fn toml_parse(content: String) -> Map<String> {
+    var result: Map<String> = map_new()
+    let lines = content.split("\n")
+    var section = ""
+    var i = 0
+    while i < lines.length() {
+        let line: String = lines[i]
+        let trimmed = line.trim()
+
+        // Skip blank lines and comments
+        if trimmed.length() == 0 {
+            i = i + 1
+        } else if trimmed.charAt(0) == '#' {
+            i = i + 1
+        } else if toml_is_section(trimmed) {
+            section = toml_parse_section(trimmed)
+            i = i + 1
+        } else {
+            // Find = sign
+            let eq_idx = trimmed.indexOf("=")
+            if eq_idx > 0 {
+                let raw_key = trimmed.substring(0, eq_idx).trim()
+                let raw_val = trimmed.substring(eq_idx + 1, trimmed.length()).trim()
+                let val = toml_read_value(raw_val, 0)
+                var full_key = raw_key
+                if section.length() > 0 {
+                    full_key = section + "." + raw_key
+                }
+                result.insert(full_key, val)
+            }
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// Get a string value from parsed TOML (returns default if not found)
+pub fn toml_get(parsed: Map<String>, key: String, default_val: String) -> String {
+    if parsed.contains(key) {
+        return parsed.get(key)
+    }
+    return default_val
+}
+
+// Get an int value from parsed TOML
+pub fn toml_get_int(parsed: Map<String>, key: String, default_val: int) -> int {
+    if parsed.contains(key) {
+        let s = parsed.get(key)
+        return string_to_int(s)
+    }
+    return default_val
+}
+
+// Get a bool value ("true" → true, anything else → false)
+pub fn toml_get_bool(parsed: Map<String>, key: String, default_val: bool) -> bool {
+    if parsed.contains(key) {
+        let s = parsed.get(key)
+        return s == "true"
+    }
+    return default_val
+}
+
+// Check if a key exists
+pub fn toml_has(parsed: Map<String>, key: String) -> bool {
+    return parsed.contains(key)
+}
+
+// Helper: convert string to int (simple, no error handling)
+fn string_to_int(s: String) -> int {
+    var result = 0
+    var neg = false
+    var i = 0
+    if s.length() > 0 and s.charAt(0) == '-' {
+        neg = true
+        i = 1
+    }
+    while i < s.length() {
+        let ch = s.charAt(i)
+        let d = char_to_digit(ch)
+        if d >= 0 {
+            result = result * 10 + d
+        }
+        i = i + 1
+    }
+    if neg { return -result }
+    return result
+}
+
+fn char_to_digit(ch: char) -> int {
+    if ch == '0' { return 0 }
+    if ch == '1' { return 1 }
+    if ch == '2' { return 2 }
+    if ch == '3' { return 3 }
+    if ch == '4' { return 4 }
+    if ch == '5' { return 5 }
+    if ch == '6' { return 6 }
+    if ch == '7' { return 7 }
+    if ch == '8' { return 8 }
+    if ch == '9' { return 9 }
+    return -1
+}

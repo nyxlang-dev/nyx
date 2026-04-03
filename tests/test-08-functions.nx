@@ -1,0 +1,21 @@
+// TEST 8: Funciones
+fn duplicar(x: int) -> int {
+    return x * 2
+}
+
+fn saludar(nombre: String) -> String {
+    return "Hola " + nombre
+}
+
+fn main() {
+    print("=== TEST 8: FUNCIONES ===")
+
+    print("Duplicar 5:")
+    print(duplicar(5))
+
+    print("Saludar:")
+    print(saludar("Nyx"))
+
+    print("✅ Test 8 completado")
+    return 0
+}

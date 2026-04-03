@@ -1,0 +1,36 @@
+// Test 72: for-in with iterators + backward compat with arrays
+fn main() {
+    let arr = [1, 2, 3, 4, 5]
+
+    // for-in over iterator
+    var sum = 0
+    for x in arr.iter() {
+        sum = sum + x
+    }
+    print(sum)  // 15
+
+    // for-in over plain array (backward compat)
+    var sum2 = 0
+    for x in arr {
+        sum2 = sum2 + x
+    }
+    print(sum2)  // 15
+
+    // for-in over iterator with type annotation
+    let names = ["hello", "world", "nyx"]
+    var count = 0
+    for s: String in names.iter() {
+        print(s)
+        count = count + 1
+    }
+    print(count)  // 3
+
+    // for-in with chained iterator
+    var total = 0
+    for x in arr.iter().take(3) {
+        total = total + x
+    }
+    print(total)  // 6 (1+2+3)
+
+    print("iter for-in ok")
+}

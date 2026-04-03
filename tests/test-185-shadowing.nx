@@ -1,0 +1,13 @@
+// Test 185: Variable shadowing
+// Bug: "let z: int = 5; let z: String = 'shadow'" → error "ya declarada"
+
+fn main() {
+    let x: int = 42
+    print(x)
+
+    let x: String = "shadow"
+    print(x)
+
+    let x: int = 100
+    print(x)
+}

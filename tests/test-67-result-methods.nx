@@ -1,0 +1,33 @@
+// Test 67: Result builtin methods — is_ok, is_err, unwrap, unwrap_or, unwrap_err
+
+fn divide(a: int, b: int) -> Result<int, String> {
+    if b == 0 { return Result<int, String>.Err("division by zero") }
+    return Result<int, String>.Ok(a / b)
+}
+
+fn main() -> int {
+    let ok_val: Result<int, String> = divide(10, 2)
+    let err_val: Result<int, String> = divide(10, 0)
+
+    // is_ok / is_err
+    if ok_val.is_ok() { print("ok is_ok: true") }
+    if err_val.is_err() { print("err is_err: true") }
+
+    // unwrap on Ok
+    let v: int = ok_val.unwrap()
+    print(v)
+
+    // unwrap_or on Ok and Err
+    let v2: int = ok_val.unwrap_or(99)
+    print(v2)
+    let v3: int = err_val.unwrap_or(42)
+    print(v3)
+
+    // unwrap_err on Err
+    let e: int = err_val.unwrap_err()
+    // e is i64 (pointer to string), convert via inttoptr — just print a marker
+    print("unwrap_err ok")
+
+    print("result methods passed")
+    return 0
+}

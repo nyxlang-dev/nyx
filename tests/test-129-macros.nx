@@ -1,0 +1,50 @@
+// Test v1.4.0 — Declarative macros
+// Tests: macro definitions, invocations, parameter substitution
+
+macro log { (msg) => {
+    print(msg)
+} }
+
+macro assert_eq { (a, b) => {
+    if a != b {
+        print("assert_eq failed")
+    }
+} }
+
+macro swap { (x, y) => {
+    let tmp = x
+    x = y
+    y = tmp
+} }
+
+macro double_print { (val) => {
+    print(val)
+    print(val)
+} }
+
+fn main() -> int {
+    // Basic log macro
+    log!("hello from macro")
+
+    // assert_eq with equal values (should not print)
+    let a = 10
+    let b = 10
+    assert_eq!(a, b)
+
+    // assert_eq with unequal values (should print failure)
+    let c = 1
+    let d = 2
+    assert_eq!(c, d)
+
+    // swap macro
+    var x = 5
+    var y = 99
+    swap!(x, y)
+    print(x)
+    print(y)
+
+    // double_print
+    double_print!(42)
+
+    return 0
+}

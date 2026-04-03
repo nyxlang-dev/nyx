@@ -1,0 +1,17 @@
+proptest test
+  ✓ add commutative (100 cases passed)
+prop add commutative ok
+  ✓ add identity (100 cases passed)
+prop add identity ok
+  ✓ abs >= 0 (200 cases passed)
+prop abs >= 0 ok
+  ✓ max >= both (100 cases passed)
+prop max >= both ok
+  ✓ min <= both (100 cases passed)
+prop min <= both ok
+  ✓ sort produces sorted array (50 cases passed)
+prop sort produces sorted array ok
+--- Generators ---
+gen_string length bound ok
+gen_float >= 0.0 ok
+proptest ok

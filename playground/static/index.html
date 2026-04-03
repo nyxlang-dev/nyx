@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playground — Nyx</title>
+    <meta name="description" content="Try Nyx in your browser. Write, compile, and run Nyx code online.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+    <style>
+    .nav-logo-img { height: 120px; vertical-align: middle; background: transparent !important; border: none !important; box-shadow: none !important; padding: 0 !important; border-radius: 0 !important; }
+    /* ═══════════ PLAYGROUND ═══════════ */
+    .playground-wrapper {
+        margin-top: 80px;
+        display: flex;
+        flex-direction: column;
+    }
+    .playground-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.6rem 1.2rem;
+        background: #1e1e2e;
+        border-bottom: 1px solid #313244;
+    }
+    .playground-title {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #cdd6f4;
+    }
+    .playground-controls {
+        display: flex;
+        gap: 0.6rem;
+        align-items: center;
+    }
+    .playground-controls select {
+        background: #313244;
+        color: #cdd6f4;
+        border: 1px solid #45475a;
+        padding: 0.4rem 0.6rem;
+        border-radius: 6px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 0.85rem;
+        cursor: pointer;
+    }
+    #run-btn {
+        background: #059669;
+        color: #fff;
+        border: none;
+        padding: 0.4rem 1.2rem;
+        border-radius: 6px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-weight: 600;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    #run-btn:hover { background: #047857; }
+    #run-btn:disabled { background: #6b7280; cursor: wait; }
+    .playground-panels {
+        display: flex;
+        height: 70vh;
+    }
+    .playground-editor,
+    .playground-output {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        overflow: hidden;
+    }
+    .playground-editor { border-right: 1px solid #313244; }
+    .playground-panel-header {
+        padding: 0.4rem 1rem;
+        background: #11111b;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #6c7086;
+        border-bottom: 1px solid #313244;
+    }
+    #code {
+        flex: 1;
+        width: 100%;
+        min-height: 300px;
+        background: #1e1e2e !important;
+        color: #cdd6f4 !important;
+        border: none !important;
+        border-radius: 0 !important;
+        padding: 1rem !important;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+        font-size: 14px !important;
+        line-height: 1.6;
+        resize: none;
+        outline: none;
+        tab-size: 4;
+        box-sizing: border-box;
+    }
+    #output {
+        flex: 1;
+        min-height: 200px;
+        background: #11111b !important;
+        color: #a6adc8 !important;
+        padding: 1rem !important;
+        font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+        font-size: 13px !important;
+        line-height: 1.6;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0 !important;
+        border: none !important;
+        border-radius: 0 !important;
+    }
+    #output.error { color: #f38ba8 !important; }
+    #output.success { color: #a6e3a1 !important; }
+    @media (max-width: 768px) {
+        .playground-panels {
+            flex-direction: column;
+            height: auto;
+        }
+        .playground-editor {
+            border-right: none;
+            border-bottom: 1px solid #313244;
+        }
+        .playground-output { min-height: 200px; }
+        #code {
+            min-height: 250px !important;
+            font-size: 13px !important;
+            padding: 0.8rem !important;
+        }
+        #output {
+            min-height: 180px !important;
+            font-size: 12px !important;
+            padding: 0.8rem !important;
+        }
+        .playground-toolbar {
+            flex-direction: column;
+            gap: 0.5rem;
+            padding: 0.5rem 0.8rem;
+        }
+        .playground-controls { width: 100%; }
+        .playground-controls select { flex: 1; }
+        #run-btn { flex-shrink: 0; }
+    }
+    </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+    <a href="/" class="nav-logo">Nyx</a>
+    <div class="nav-right">
+        <a href="/#products">Products</a>
+        <a href="/learn/">Learn</a>
+        <a href="https://github.com/nyxlang-dev/nyx">GitHub</a>
+        <span class="nav-lang"><a href="/" class="active">EN</a> / <a href="/es/">ES</a></span>
+    </div>
+</nav>
+
+<!-- PLAYGROUND -->
+<div class="playground-wrapper">
+    <div class="playground-toolbar">
+        <div class="playground-title">Playground</div>
+        <div class="playground-controls">
+            <select id="examples">
+                <option value="">-- Load Example --</option>
+            </select>
+            <button id="run-btn" onclick="runCode()">Run</button>
+        </div>
+    </div>
+    <div class="playground-panels">
+        <div class="playground-editor">
+            <div class="playground-panel-header">Code</div>
+            <textarea id="code" spellcheck="false">fn main() {
+    print("Hello from Nyx!")
+}</textarea>
+        </div>
+        <div class="playground-output">
+            <div class="playground-panel-header">Output</div>
+            <pre id="output">Click "Run" to execute your code.</pre>
+        </div>
+    </div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+    <div class="footer-grid">
+        <div class="footer-col">
+            <h4>Products</h4>
+            <a href="/#products">nyx-kv</a>
+            <a href="/#products">nyx-serve</a>
+            <a href="/#products">nyx-proxy</a>
+        </div>
+        <div class="footer-col">
+            <h4>Resources</h4>
+            <a href="/learn/">Learn</a>
+            <a href="https://github.com/nyxlang-dev/nyx">GitHub</a>
+            <a href="https://github.com/nyxlang-dev/nyx/blob/main/SPEC.md">Spec</a>
+        </div>
+        <div class="footer-col">
+            <h4>Language</h4>
+            <a href="/">English</a>
+            <a href="/es/">Español</a>
+        </div>
+    </div>
+    <div class="footer-bottom">
+        Built with Nyx. Served by Nyx. Apache 2.0.<br>
+        &copy; 2026 Ottavio Cavallina
+    </div>
+</footer>
+
+<script>
+const BASE = location.pathname.startsWith('/playground') ? '/playground' : '';
+const codeEl = document.getElementById('code');
+const outputEl = document.getElementById('output');
+const runBtn = document.getElementById('run-btn');
+const examplesEl = document.getElementById('examples');
+
+const EXAMPLES = {
+"hello": `// Hello World in Nyx
+fn main() {
+    print("Hello from Nyx!")
+    print("Welcome to the playground.")
+
+    let name: String = "World"
+    print("Hello, " + name + "!")
+}`,
+"fibonacci": `// Fibonacci sequence in Nyx
+fn fibonacci(n: int) -> int {
+    if n <= 1 {
+        return n
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+fn main() {
+    var i: int = 0
+    while i < 15 {
+        print(fibonacci(i))
+        i = i + 1
+    }
+}`,
+"structs": `// Structs and methods in Nyx
+struct Point {
+    x: int,
+    y: int,
+}
+
+fn point_new(x: int, y: int) -> Point {
+    return Point { x: x, y: y }
+}
+
+fn point_add(a: Point, b: Point) -> Point {
+    return Point { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn point_to_string(p: Point) -> String {
+    return "(" + int_to_string(p.x) + ", " + int_to_string(p.y) + ")"
+}
+
+fn main() {
+    let a: Point = point_new(3, 4)
+    let b: Point = point_new(10, 20)
+    let c: Point = point_add(a, b)
+
+    print("Point A: " + point_to_string(a))
+    print("Point B: " + point_to_string(b))
+    print("A + B  = " + point_to_string(c))
+}`,
+"factorial": `// Factorial recursivo
+fn factorial(n) {
+    if n == 0 {
+        return 1
+    } else {
+        return n * factorial(n - 1)
+    }
+}
+
+fn main() {
+    print(factorial(5))
+    print(factorial(6))
+    print(factorial(7))
+    print(factorial(10))
+}`,
+"gcd": `// Greatest Common Divisor (Euclid's algorithm)
+fn gcd(a, b) {
+    if b == 0 {
+        return a
+    } else {
+        let resto = a - b * (a / b)
+        return gcd(b, resto)
+    }
+}
+
+fn main() {
+    print(gcd(48, 18))   // 6
+    print(gcd(100, 50))  // 50
+    print(gcd(17, 13))   // 1
+    print(gcd(270, 192)) // 6
+}`,
+"powers": `// Power function (recursive)
+fn power(base, exp) {
+    if exp == 0 {
+        return 1
+    } else {
+        return base * power(base, exp - 1)
+    }
+}
+
+fn main() {
+    print(power(2, 0))   // 1
+    print(power(2, 1))   // 2
+    print(power(2, 5))   // 32
+    print(power(2, 10))  // 1024
+    print(power(3, 3))   // 27
+    print(power(5, 4))   // 625
+}`,
+"arrays": `// Arrays in Nyx
+fn main() {
+    let numeros = [10, 20, 30, 40, 50]
+    print(numeros[0])
+    print(numeros[4])
+
+    var valores = [1, 2, 3, 4, 5]
+    print(valores[2])
+    valores[2] = 99
+    print(valores[2])
+
+    let a = [5, 10, 15]
+    let suma = a[0] + a[1]
+    print(suma)
+}`,
+"maps": `// Hash maps in Nyx
+fn main() {
+    var m: Map = Map.new()
+    m.insert("name", "Nyx")
+    m.insert("version", "0.12.0")
+    m.insert("type", "compiled")
+
+    print(m.get("name"))
+    print(m.get("version"))
+    print(m.get("type"))
+    print(m.size())
+
+    m.remove("type")
+    print(m.size())
+    print(m.contains("type"))
+    print(m.contains("name"))
+}`,
+"strings": `// Strings in Nyx
+fn main() {
+    print("Hello from Nyx!")
+
+    let mensaje = "Runtime funcionando"
+    print(mensaje)
+}`
+};
+
+Object.keys(EXAMPLES).forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    examplesEl.appendChild(opt);
+});
+
+examplesEl.addEventListener('change', () => {
+    const name = examplesEl.value;
+    if (!name || !EXAMPLES[name]) return;
+    codeEl.value = EXAMPLES[name];
+});
+
+function doRun(code, retry) {
+    return fetch(BASE + '/api/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: code
+    })
+    .then(r => {
+        if (!r.ok) throw new Error('Server returned ' + r.status);
+        return r.json();
+    })
+    .then(data => {
+        outputEl.textContent = data.output || '(no output)';
+        outputEl.className = data.success ? 'success' : 'error';
+    })
+    .catch(err => {
+        if (retry) {
+            outputEl.textContent = 'Retrying...';
+            return new Promise(resolve => setTimeout(resolve, 1000))
+                .then(() => doRun(code, false));
+        }
+        outputEl.textContent = 'Server unavailable. Please try again in a moment.';
+        outputEl.className = 'error';
+    });
+}
+
+function runCode() {
+    const code = codeEl.value;
+    if (!code.trim()) return;
+    runBtn.disabled = true;
+    runBtn.textContent = 'Running...';
+    outputEl.textContent = 'Compiling and running...';
+    outputEl.className = '';
+    doRun(code, true).finally(() => {
+        runBtn.disabled = false;
+        runBtn.textContent = 'Run';
+    });
+}
+
+codeEl.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        runCode();
+    }
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = codeEl.selectionStart;
+        codeEl.value = codeEl.value.substring(0, start) + '    ' + codeEl.value.substring(codeEl.selectionEnd);
+        codeEl.selectionStart = codeEl.selectionEnd = start + 4;
+    }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+// TEST 20: Contador con Estado (inline, sin globals)
+fn main() {
+    print("=== TEST 20: CONTADOR ===")
+
+    var contador_global = 0
+
+    print("Valor inicial:")
+    print(contador_global)
+
+    contador_global = contador_global + 1
+    print("Después de incrementar:")
+    print(contador_global)
+
+    contador_global = contador_global + 1
+    print("Después de incrementar de nuevo:")
+    print(contador_global)
+
+    print("Valor actual:")
+    print(contador_global)
+
+    print("✅ Test 20 completado")
+    return 0
+}

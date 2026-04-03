@@ -1,0 +1,83 @@
+// test-189: SQLite transactions, typed queries, migrations, introspection
+import "std/sqlite"
+
+fn main() -> int {
+    let db = sqlite_open(":memory:")
+
+    // Test migration system
+    sqlite_migrate_init(db)
+    let v0 = sqlite_migrate_version(db)
+    print(v0)
+
+    sqlite_migrate(db, 1, "create_users", "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, score REAL)")
+    sqlite_migrate(db, 2, "create_posts", "CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT)")
+
+    let v2 = sqlite_migrate_version(db)
+    print(v2)
+
+    // Idempotent: re-applying same migration does nothing
+    sqlite_migrate(db, 1, "create_users", "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER, score REAL)")
+    let v2b = sqlite_migrate_version(db)
+    print(v2b)
+
+    // Test table introspection
+    let tables = sqlite_tables(db)
+    print(tables.length())
+
+    let has_users = sqlite_table_exists(db, "users")
+    let has_orders = sqlite_table_exists(db, "orders")
+    if has_users { print("users exists") }
+    if not has_orders { print("orders not exists") }
+
+    // Test transactions
+    sqlite_begin(db)
+    sqlite_exec(db, "INSERT INTO users (name, age, score) VALUES ('Alice', 30, 95.5)")
+    sqlite_exec(db, "INSERT INTO users (name, age, score) VALUES ('Bob', 25, 87.3)")
+    sqlite_commit(db)
+
+    let count = sqlite_count(db, "users")
+    print(count)
+
+    // Rollback test
+    sqlite_begin(db)
+    sqlite_exec(db, "INSERT INTO users (name, age, score) VALUES ('Temp', 99, 0.0)")
+    sqlite_rollback(db)
+
+    let count2 = sqlite_count(db, "users")
+    print(count2)
+
+    // Test typed queries
+    let ages = sqlite_query_int(db, "SELECT age FROM users ORDER BY age")
+    let age0: Array = ages[0]
+    let age1: Array = ages[1]
+    let a0: int = age0[0]
+    let a1: int = age1[0]
+    print(a0)
+    print(a1)
+
+    // Test query_one_int
+    let total_age = sqlite_query_one_int(db, "SELECT SUM(age) FROM users")
+    print(total_age)
+
+    // Test query_one_str
+    let first_name = sqlite_query_one_str(db, "SELECT name FROM users ORDER BY name LIMIT 1")
+    print(first_name)
+
+    // Test parameterized queries
+    let params: Array = ["Bob"]
+    let found = sqlite_query_params(db, "SELECT name, age FROM users WHERE name = ?", params)
+    let found_row: Array = found[0]
+    let found_name: String = found_row[0]
+    let found_age: String = found_row[1]
+    print(found_name + ":" + found_age)
+
+    // Test exec_params
+    let update_params: Array = ["Alice Updated"]
+    sqlite_exec_params(db, "UPDATE users SET name = ? WHERE age = 30", update_params)
+    let updated_name = sqlite_query_one_str(db, "SELECT name FROM users WHERE age = 30")
+    print(updated_name)
+
+    sqlite_close(db)
+    print("sqlite v0.11.0 ok")
+    return 0
+}

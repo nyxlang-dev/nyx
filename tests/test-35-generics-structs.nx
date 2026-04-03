@@ -1,0 +1,21 @@
+struct Pair<A, B> {
+    first: A,
+    second: B
+}
+
+fn make_pair<A, B>(a: A, b: B) -> Pair<A, B> {
+    return Pair<A, B> { first: a, second: b }
+}
+
+fn main() {
+    let p = Pair<int, String> { first: 42, second: "hello" }
+    print("first = " + int_to_string(p.first))
+    print("second = " + p.second)
+
+    let p2 = make_pair<int, int>(10, 20)
+    print("p2.first = " + int_to_string(p2.first))
+    print("p2.second = " + int_to_string(p2.second))
+
+    print("All generic struct tests passed!")
+}
+main()

@@ -1,0 +1,384 @@
+// ============================================
+// HTTP.NX - HTTP Server Library for Nyx v5.2
+// ============================================
+// Pure Nyx implementation over TCP builtins
+// Provides request parsing, response building, and a simple server loop
+
+import "std/json"
+
+// === Multi-threaded server globals (private) ===
+var __http_mt_ch: Map = Map.new()
+var __http_mt_handler: Fn = 0
+
+// === Utilities (private) ===
+
+fn http_parse_int(s: String) -> int {
+    var result: int = 0
+    var i: int = 0
+    let len: int = s.length()
+    while i < len {
+        let c: char = s.charAt(i)
+        if c >= '0' and c <= '9' {
+            let d: int = c - '0'
+            result = result * 10 + d
+        }
+        i = i + 1
+    }
+    return result
+}
+
+pub fn http_status_text(code: int) -> String {
+    if code == 200 { return "OK" }
+    if code == 201 { return "Created" }
+    if code == 204 { return "No Content" }
+    if code == 301 { return "Moved Permanently" }
+    if code == 302 { return "Found" }
+    if code == 304 { return "Not Modified" }
+    if code == 400 { return "Bad Request" }
+    if code == 401 { return "Unauthorized" }
+    if code == 403 { return "Forbidden" }
+    if code == 404 { return "Not Found" }
+    if code == 405 { return "Method Not Allowed" }
+    if code == 500 { return "Internal Server Error" }
+    if code == 502 { return "Bad Gateway" }
+    if code == 503 { return "Service Unavailable" }
+    return "Unknown"
+}
+
+// === Response building ===
+
+pub fn http_response(status: int, body: String) -> String {
+    let crlf: String = "\r\n"
+    let status_str: String = int_to_string(status)
+    let body_len: String = int_to_string(str_byte_length(body))
+    var resp: String = "HTTP/1.1 " + status_str + " " + http_status_text(status) + crlf
+    resp = resp + "Content-Length: " + body_len + crlf
+    resp = resp + "Content-Type: text/plain" + crlf
+    resp = resp + "Connection: close" + crlf
+    resp = resp + crlf + body
+    return resp
+}
+
+// headers_arr: flat array of [key1, val1, key2, val2, ...]
+pub fn http_response_with_headers(status: int, headers_arr: Array, body: String) -> String {
+    let crlf: String = "\r\n"
+    let status_str: String = int_to_string(status)
+    let body_len: String = int_to_string(str_byte_length(body))
+    var resp: String = "HTTP/1.1 " + status_str + " " + http_status_text(status) + crlf
+    resp = resp + "Content-Length: " + body_len + crlf
+    // Add custom headers
+    var i: int = 0
+    let len: int = headers_arr.length()
+    while i + 1 < len {
+        let k: String = headers_arr[i]
+        let v: String = headers_arr[i + 1]
+        resp = resp + k + ": " + v + crlf
+        i = i + 2
+    }
+    resp = resp + "Connection: close" + crlf
+    resp = resp + crlf + body
+    return resp
+}
+
+pub fn http_json_response(status: int, data: Array) -> String {
+    let body: String = json_stringify(data)
+    let headers_arr: Array = ["Content-Type", "application/json"]
+    return http_response_with_headers(status, headers_arr, body)
+}
+
+// === URL parsing ===
+
+pub fn http_parse_url(url: String) -> Array {
+    // Strip "http://" prefix
+    var rest: String = url
+    if url.startsWith("http://") {
+        rest = url.substring(7, url.length())
+    }
+    // Split host+port from path at first "/"
+    let slash_idx: int = rest.indexOf("/")
+    var host_port: String = rest
+    var path: String = "/"
+    if slash_idx >= 0 {
+        host_port = rest.substring(0, slash_idx)
+        path = rest.substring(slash_idx, rest.length())
+    }
+    // Extract port from host
+    let colon_idx: int = host_port.indexOf(":")
+    var host: String = host_port
+    var port: int = 80
+    if colon_idx >= 0 {
+        host = host_port.substring(0, colon_idx)
+        let port_str: String = host_port.substring(colon_idx + 1, host_port.length())
+        port = http_parse_int(port_str)
+    }
+    let result: Array = ["url", host, port, path]
+    return result
+}
+
+// === Client functions ===
+
+fn http_build_request(method: String, host: String, path: String, headers: Array, body: String) -> String {
+    let crlf: String = "\r\n"
+    var req: String = method + " " + path + " HTTP/1.1" + crlf
+    req = req + "Host: " + host + crlf
+    // Custom headers (flat array [k, v, k, v, ...])
+    var i: int = 0
+    let len: int = headers.length()
+    while i + 1 < len {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        req = req + k + ": " + v + crlf
+        i = i + 2
+    }
+    if body.length() > 0 {
+        let body_len: String = int_to_string(str_byte_length(body))
+        req = req + "Content-Length: " + body_len + crlf
+    }
+    req = req + "Connection: close" + crlf
+    req = req + crlf + body
+    return req
+}
+
+fn http_read_response(fd: int) -> Array {
+    // Read status line
+    let status_line: String = tcp_read_line(fd)
+    let parts: Array = status_line.split(" ")
+    var status_code: int = 0
+    if parts.length() >= 2 {
+        let code_str: String = parts[1]
+        status_code = http_parse_int(code_str)
+    }
+    // Read headers
+    let headers: Array = parse_headers(fd)
+    // Read body
+    var body: String = ""
+    let cl_str: String = http_find_header(headers, "Content-Length")
+    if cl_str.length() > 0 {
+        let cl: int = http_parse_int(cl_str)
+        if cl > 0 {
+            body = tcp_read(fd, cl)
+        }
+    } else {
+        body = tcp_read(fd, 65536)
+    }
+    let result: Array = ["response", status_code, headers, body]
+    return result
+}
+
+pub fn http_get(url: String) -> Array {
+    let parsed: Array = http_parse_url(url)
+    let host: String = parsed[1]
+    let port: int = parsed[2]
+    let path: String = parsed[3]
+    let fd: int = tcp_connect(host, port)
+    if fd < 0 {
+        let err: Array = ["response", -1, [], "Connection failed"]
+        return err
+    }
+    let empty_headers: Array = []
+    let req: String = http_build_request("GET", host, path, empty_headers, "")
+    tcp_write(fd, req)
+    let resp: Array = http_read_response(fd)
+    tcp_close(fd)
+    return resp
+}
+
+pub fn http_post(url: String, body: String) -> Array {
+    let parsed: Array = http_parse_url(url)
+    let host: String = parsed[1]
+    let port: int = parsed[2]
+    let path: String = parsed[3]
+    let fd: int = tcp_connect(host, port)
+    if fd < 0 {
+        let err: Array = ["response", -1, [], "Connection failed"]
+        return err
+    }
+    let headers: Array = ["Content-Type", "text/plain"]
+    let req: String = http_build_request("POST", host, path, headers, body)
+    tcp_write(fd, req)
+    let resp: Array = http_read_response(fd)
+    tcp_close(fd)
+    return resp
+}
+
+pub fn http_request(method: String, url: String, headers: Array, body: String) -> Array {
+    let parsed: Array = http_parse_url(url)
+    let host: String = parsed[1]
+    let port: int = parsed[2]
+    let path: String = parsed[3]
+    let fd: int = tcp_connect(host, port)
+    if fd < 0 {
+        let err: Array = ["response", -1, [], "Connection failed"]
+        return err
+    }
+    let req: String = http_build_request(method, host, path, headers, body)
+    tcp_write(fd, req)
+    let resp: Array = http_read_response(fd)
+    tcp_close(fd)
+    return resp
+}
+
+pub fn http_status(resp: Array) -> int {
+    let s: int = resp[1]
+    return s
+}
+
+pub fn http_body(resp: Array) -> String {
+    let b: String = resp[3]
+    return b
+}
+
+pub fn http_headers(resp: Array) -> Array {
+    let h: Array = resp[2]
+    return h
+}
+
+// === Request parsing ===
+
+fn parse_request_line(line: String) -> Array {
+    let parts: Array = line.split(" ")
+    if parts.length() >= 3 {
+        let method: String = parts[0]
+        let path: String = parts[1]
+        let version: String = parts[2]
+        let result: Array = [method, path, version]
+        return result
+    }
+    let empty: Array = ["GET", "/", "HTTP/1.1"]
+    return empty
+}
+
+fn parse_headers(client_fd: int) -> Array {
+    // Returns flat array [key1, val1, key2, val2, ...]
+    let headers: Array = []
+    while 1 > 0 {
+        let line: String = tcp_read_line(client_fd)
+        if line.length() == 0 {
+            return headers
+        }
+        let colon_idx: int = line.indexOf(": ")
+        if colon_idx >= 0 {
+            let key: String = line.substring(0, colon_idx)
+            let val: String = line.substring(colon_idx + 2, line.length())
+            headers.push(key)
+            headers.push(val)
+        }
+    }
+    return headers
+}
+
+// Find a header value by name in headers array, returns "" if not found
+pub fn http_find_header(headers: Array, name: String) -> String {
+    var i: int = 0
+    let len: int = headers.length()
+    while i + 1 < len {
+        let k: String = headers[i]
+        if k == name {
+            let v: String = headers[i + 1]
+            return v
+        }
+        i = i + 2
+    }
+    return ""
+}
+
+pub fn http_parse_request(client_fd: int) -> Array {
+    let request_line: String = tcp_read_line(client_fd)
+    // Empty request line means client disconnected
+    if request_line.length() == 0 {
+        let empty_req: Array = ["request", "", "", [], ""]
+        return empty_req
+    }
+    let rl: Array = parse_request_line(request_line)
+    let method: String = rl[0]
+    let path: String = rl[1]
+    let headers: Array = parse_headers(client_fd)
+
+    // Read body if Content-Length present
+    var body: String = ""
+    let cl_str: String = http_find_header(headers, "Content-Length")
+    if cl_str.length() > 0 {
+        let cl: int = http_parse_int(cl_str)
+        if cl > 0 {
+            body = tcp_read(client_fd, cl)
+        }
+    }
+
+    let request: Array = ["request", method, path, headers, body]
+    return request
+}
+
+// === CORS ===
+
+pub fn http_cors_headers(origin: String) -> Array {
+    let headers: Array = [
+        "Access-Control-Allow-Origin", origin,
+        "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers", "Content-Type, Authorization",
+        "Access-Control-Max-Age", "86400"
+    ]
+    return headers
+}
+
+pub fn http_cors_response(origin: String) -> String {
+    let headers: Array = http_cors_headers(origin)
+    return http_response_with_headers(204, headers, "")
+}
+
+// === Server ===
+
+pub fn http_serve(port: int, handler: Fn) -> int {
+    let server: int = tcp_listen("0.0.0.0", port)
+    if server < 0 {
+        return -1
+    }
+    while 1 > 0 {
+        let client: int = tcp_accept(server)
+        if client >= 0 {
+            let request: Array = http_parse_request(client)
+            let method: String = request[1]
+            if method.length() > 0 {
+                let response: String = handler(request)
+                tcp_write(client, response)
+            }
+            tcp_close(client)
+        }
+    }
+    return 0
+}
+
+// === Multi-threaded Server ===
+
+fn __http_mt_worker() -> int {
+    while 1 > 0 {
+        let client: int = channel_recv(__http_mt_ch)
+        if client < 0 { return 0 }
+        let request: Array = http_parse_request(client)
+        let method: String = request[1]
+        if method.length() > 0 {
+            let response: String = __http_mt_handler(request)
+            tcp_write(client, response)
+        }
+        tcp_close(client)
+    }
+    return 0
+}
+
+pub fn http_serve_mt(port: int, num_workers: int, handler: Fn) -> int {
+    __http_mt_ch = channel_new(512)
+    __http_mt_handler = handler
+    let server: int = tcp_listen("0.0.0.0", port)
+    if server < 0 { return -1 }
+    var i: int = 0
+    while i < num_workers {
+        thread_spawn(__http_mt_worker)
+        i = i + 1
+    }
+    while 1 > 0 {
+        let client: int = tcp_accept(server)
+        if client >= 0 {
+            channel_send(__http_mt_ch, client)
+        }
+    }
+    return 0
+}

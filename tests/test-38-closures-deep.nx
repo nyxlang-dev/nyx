@@ -1,0 +1,20 @@
+fn make_counter(start: int) -> Fn {
+    var count = start
+    fn increment(step: int) -> Fn {
+        fn do_increment() -> int {
+            count = count + step
+            return count
+        }
+        return do_increment
+    }
+    return increment(1)
+}
+
+fn main() {
+    let counter = make_counter(10)
+    print("counter: " + int_to_string(counter()))
+    print("counter: " + int_to_string(counter()))
+    print("counter: " + int_to_string(counter()))
+    print("All deep closure tests passed!")
+}
+main()

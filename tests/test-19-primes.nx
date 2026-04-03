@@ -1,0 +1,36 @@
+// TEST 19: Números Primos
+fn es_primo(n: int) -> bool {
+    if n <= 1 {
+        return false
+    }
+
+    if n <= 3 {
+        return true
+    }
+
+    var i = 2
+    while i * i <= n {
+        if n % i == 0 {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+fn main() {
+    print("=== TEST 19: NÚMEROS PRIMOS ===")
+
+    print("¿Es 7 primo?")
+    print(es_primo(7))
+
+    print("¿Es 10 primo?")
+    print(es_primo(10))
+
+    print("¿Es 17 primo?")
+    print(es_primo(17))
+
+    print("✅ Test 19 completado")
+    return 0
+}

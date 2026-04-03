@@ -1,0 +1,44 @@
+// ===== TEST UNITARIO: PARSER BOOTSTRAP =====
+// Verifica que compiler/parser.nx construye el AST correctamente.
+// Ejecutar: make run FILE=tests/bootstrap-unit/test-parser.nx
+//
+// Resultados esperados:
+//   Test 1: ast[0] == "block" (nodo raíz del programa)
+//   Test 2: ast[0] == "block"
+
+import { tokenize } from "compiler/lexer"
+import { parse } from "compiler/parser"
+
+fn main() {
+    print("=== TEST PARSER BOOTSTRAP ===")
+
+    // Test 1: declaración let simple
+    let src1 = "let x = 42"
+    let toks1 = tokenize(src1)
+    let ast1 = parse(toks1)
+    print("Test 1 - AST de 'let x = 42':")
+    print(ast1[0])
+
+    // Test 2: función simple
+    let src2 = "fn suma(a: int, b: int) -> int { return a + b }"
+    let toks2 = tokenize(src2)
+    let ast2 = parse(toks2)
+    print("Test 2 - AST de función:")
+    print(ast2[0])
+
+    // Test 3: if/else
+    let src3 = "if x > 0 { print(x) } else { print(0) }"
+    let toks3 = tokenize(src3)
+    let ast3 = parse(toks3)
+    print("Test 3 - AST de if/else:")
+    print(ast3[0])
+
+    // Test 4: for loop
+    let src4 = "for i in 0..10 { print(i) }"
+    let toks4 = tokenize(src4)
+    let ast4 = parse(toks4)
+    print("Test 4 - AST de for loop:")
+    print(ast4[0])
+
+    print("✅ Parser tests completados")
+}

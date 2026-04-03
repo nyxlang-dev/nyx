@@ -1,0 +1,33 @@
+// HTTP Server Example — Nyx v0.5.2
+// Run: make run FILE=examples/http_server.nx
+// Test: curl http://localhost:8080/
+//       curl http://localhost:8080/json
+//       curl -X POST -d "hello" http://localhost:8080/echo
+
+import "std/http"
+
+fn handle_request(request: Array) -> String {
+    let method: String = request[1]
+    let path: String = request[2]
+
+    if path == "/" {
+        return http_response(200, "Welcome to Nyx HTTP Server!")
+    }
+
+    if path == "/json" {
+        let data: Array = json_object(["language", "version"], [json_string("Nyx"), json_string("5.2")])
+        return http_json_response(200, data)
+    }
+
+    if path == "/echo" and method == "POST" {
+        let body: String = request[4]
+        return http_response(200, body)
+    }
+
+    return http_response(404, "Not Found")
+}
+
+fn main() {
+    print("Nyx HTTP Server starting on port 8080...")
+    http_serve(8080, handle_request)
+}

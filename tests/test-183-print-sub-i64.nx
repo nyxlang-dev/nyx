@@ -1,0 +1,16 @@
+// Test 183: print() for sub-i64 types (u8, u16, char, i8)
+// Bug: u8 prints corrupted, u16/char/i8 produce no output
+
+fn main() {
+    let u: u8 = 200
+    print(u)
+
+    let w: u16 = 65000
+    print(w)
+
+    let c: char = 'A'
+    print(c)
+
+    let b: i8 = 100
+    print(b)
+}

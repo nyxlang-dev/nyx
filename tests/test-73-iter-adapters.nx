@@ -1,0 +1,53 @@
+// Test 73: Iterator adapters — map, filter, take, skip, chaining
+fn double(x: int) -> int { return x * 2 }
+fn is_even(x: int) -> bool { return x % 2 == 0 }
+
+fn main() {
+    let arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    // map
+    let mapped: Array = arr.iter().map(double).collect()
+    print(mapped.length())  // 10
+    let m0: int = mapped[0]
+    let m9: int = mapped[9]
+    print(m0)   // 2
+    print(m9)   // 20
+
+    // filter
+    let evens: Array = arr.iter().filter(is_even).collect()
+    print(evens.length())  // 5
+    let e0: int = evens[0]
+    let e4: int = evens[4]
+    print(e0)   // 2
+    print(e4)   // 10
+
+    // take
+    let first3: Array = arr.iter().take(3).collect()
+    print(first3.length())  // 3
+    let f2: int = first3[2]
+    print(f2)   // 3
+
+    // skip
+    let after5: Array = arr.iter().skip(5).collect()
+    print(after5.length())  // 5
+    let a0: int = after5[0]
+    print(a0)   // 6
+
+    // chain: map + filter
+    let result: Array = arr.iter().filter(is_even).map(double).collect()
+    print(result.length())  // 5
+    let r0: int = result[0]
+    let r1: int = result[1]
+    let r4: int = result[4]
+    print(r0)   // 4
+    print(r1)   // 8
+    print(r4)   // 20
+
+    // filter + take
+    let ft: Array = arr.iter().filter(is_even).take(3).collect()
+    print(ft.length())  // 3
+    let ft2: int = ft[2]
+    print(ft2)  // 6
+
+    print("iter adapters ok")
+}

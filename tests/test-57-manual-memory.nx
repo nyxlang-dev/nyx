@@ -1,0 +1,26 @@
+// Test 57: Manual memory (alloc/free) and static var
+
+static var counter: int = 0
+
+fn increment() -> int {
+    counter = counter + 1
+    return counter
+}
+
+fn main() -> int {
+    // Test static var
+    print(increment())  // 1
+    print(increment())  // 2
+    print(increment())  // 3
+
+    // Test alloc/free
+    unsafe {
+        let buf: *int = alloc<int>(4)
+        *buf = 42
+        let val: int = *buf
+        print(val)  // 42
+        free(buf)
+    }
+
+    return 0
+}

@@ -1,0 +1,23 @@
+fn log_strings(prefix: String, ...msgs: String) {
+    var i = 0
+    while i < msgs.length() {
+        let m: String = msgs[i]
+        print(prefix + m)
+        i = i + 1
+    }
+}
+
+fn count_args(label: String, ...items: String) -> int {
+    return items.length()
+}
+
+fn main() {
+    let n = count_args("count: ", "a", "b", "c")
+    print(n)
+
+    log_strings(">> ", "hello", "world")
+
+    let n2 = count_args("x:")
+    print(n2)
+    print("done")
+}

@@ -1,0 +1,43 @@
+// Test 88: Buffered File I/O
+// Tests: file_open, file_write_string, file_seek, file_tell, file_read_line, file_close, remove_file
+
+fn main() {
+    // Write lines to a file
+    let f: File = file_open("/tmp/nyx_test_88.txt", "w")
+    file_write_string(f, "hello\n")
+    file_write_string(f, "world\n")
+    file_write_string(f, "nyx\n")
+    file_close(f)
+
+    // Read lines back
+    let f2: File = file_open("/tmp/nyx_test_88.txt", "r")
+    let line1: String = file_read_line(f2)
+    let line2: String = file_read_line(f2)
+    let line3: String = file_read_line(f2)
+    file_close(f2)
+
+    print(line1)  // hello
+    print(line2)  // world
+    print(line3)  // nyx
+
+    // Test seek and tell
+    let f3: File = file_open("/tmp/nyx_test_88.txt", "r")
+    let pos0: int = file_tell(f3)
+    print(pos0)   // 0
+    file_seek(f3, 6, 0)  // seek to "world\n"
+    let line_w: String = file_read_line(f3)
+    print(line_w) // world
+    file_close(f3)
+
+    // Test readdir
+    let entries: Array = readdir("/tmp")
+    let has_entries: bool = entries.length() > 0
+    print(has_entries)  // true
+
+    // Cleanup
+    remove_file("/tmp/nyx_test_88.txt")
+    let exists: bool = file_exists("/tmp/nyx_test_88.txt")
+    print(exists)  // false
+
+    print("done")
+}

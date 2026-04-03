@@ -1,0 +1,120 @@
+// test-167-math-ext.nx — Extended Math Library (v4.3.0)
+import "std/math_ext"
+
+fn test_number_theory() {
+    print("--- Number Theory ---")
+
+    // Primes
+    if is_prime(2) { print("2 is prime") }
+    if is_prime(17) { print("17 is prime") }
+    if not is_prime(15) { print("15 not prime") }
+    if not is_prime(1) { print("1 not prime") }
+
+    // Sieve
+    let primes = primes_up_to(30)
+    print(format("primes to 30: {}", primes.length()))
+    // Should be: 2,3,5,7,11,13,17,19,23,29 = 10 primes
+    var i = 0
+    while i < primes.length() {
+        let p: int = primes[i]
+        print(p)
+        i = i + 1
+    }
+}
+
+fn test_modular_arithmetic() {
+    print("--- Modular Arithmetic ---")
+
+    // pow_mod: (2^10) % 1000 = 1024 % 1000 = 24
+    print(pow_mod(2, 10, 1000))
+
+    // pow_mod: (3^20) % 7
+    print(pow_mod(3, 20, 7))
+
+    // Extended GCD
+    let eg = extended_gcd(48, 18)
+    let g: int = eg[0]
+    print(format("gcd(48,18)={}", g))  // 6
+}
+
+fn test_combinatorics() {
+    print("--- Combinatorics ---")
+
+    // Fibonacci
+    print(fibonacci(0))   // 0
+    print(fibonacci(1))   // 1
+    print(fibonacci(10))  // 55
+    print(fibonacci(15))  // 610
+
+    // Binomial
+    print(binomial(5, 2))  // 10
+    print(binomial(10, 3)) // 120
+    print(binomial(6, 0))  // 1
+    print(binomial(6, 6))  // 1
+}
+
+fn test_array_ops() {
+    print("--- Array Ops ---")
+
+    var nums: Array = []
+    nums.push(3)
+    nums.push(1)
+    nums.push(4)
+    nums.push(1)
+    nums.push(5)
+    nums.push(9)
+    nums.push(2)
+    nums.push(6)
+
+    print(format("sum: {}", int_sum(nums)))
+    print(format("min: {}", int_min_arr(nums)))
+    print(format("max: {}", int_max_arr(nums)))
+    print(format("range: {}", stats_range(nums)))
+}
+
+fn test_statistics() {
+    print("--- Statistics ---")
+
+    var data: Array = []
+    data.push(2)
+    data.push(4)
+    data.push(4)
+    data.push(4)
+    data.push(5)
+    data.push(5)
+    data.push(7)
+    data.push(9)
+
+    let mean = stats_mean(data)
+    print(format("mean: {}", mean as int))   // 5
+
+    let median = stats_median(data)
+    print(format("median: {}", median as int))  // 4 (4+5)/2=4.5→4
+
+    let variance = stats_variance(data)
+    print(format("variance: {}", variance as int))  // 4
+}
+
+fn test_geometry() {
+    print("--- Geometry ---")
+
+    let d = dist_2d(0.0, 0.0, 3.0, 4.0)
+    print(format("dist (0,0)-(3,4): {}", d as int))  // 5
+
+    let c = clamp_float(15.0, 0.0, 10.0)
+    print(format("clamp(15, 0, 10): {}", c as int))  // 10
+
+    let lv = lerp(0.0, 100.0, 0.25)
+    print(format("lerp(0,100,0.25): {}", lv as int))  // 25
+}
+
+fn main() {
+    print("math ext test")
+    test_number_theory()
+    test_modular_arithmetic()
+    test_combinatorics()
+    test_array_ops()
+    test_statistics()
+    test_geometry()
+    print("math ext ok")
+}

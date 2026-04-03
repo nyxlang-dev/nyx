@@ -1,0 +1,119 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nyx",
+  "scopeName": "source.nyx",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#characters" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [{
+        "name": "comment.line.double-slash.nyx",
+        "match": "//.*$"
+      }]
+    },
+    "strings": {
+      "patterns": [{
+        "name": "string.quoted.double.nyx",
+        "begin": "\"",
+        "end": "\"",
+        "patterns": [
+          {
+            "name": "constant.character.escape.nyx",
+            "match": "\\\\."
+          },
+          {
+            "name": "meta.embedded.line.nyx",
+            "begin": "\\$\\{",
+            "end": "\\}",
+            "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.nyx" } },
+            "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.nyx" } },
+            "patterns": [{ "include": "source.nyx" }]
+          }
+        ]
+      }]
+    },
+    "characters": {
+      "patterns": [{
+        "name": "string.quoted.single.nyx",
+        "match": "'[^'\\\\]'"
+      }, {
+        "name": "string.quoted.single.nyx",
+        "match": "'\\\\[nrt\\\\0']'"
+      }]
+    },
+    "numbers": {
+      "patterns": [{
+        "name": "constant.numeric.float.nyx",
+        "match": "\\b[0-9]+\\.[0-9]+\\b"
+      }, {
+        "name": "constant.numeric.integer.nyx",
+        "match": "\\b[0-9]+\\b"
+      }]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.nyx",
+          "match": "\\b(if|else|while|for|in|return|break|continue|match|import|from|export)\\b"
+        },
+        {
+          "name": "keyword.declaration.nyx",
+          "match": "\\b(let|var|const|fn|struct|enum|impl|trait)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.nyx",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "constant.language.boolean.nyx",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [{
+        "name": "support.type.nyx",
+        "match": "\\b(int|float|bool|char|String|Array|Map|Fn|ASTNode)\\b"
+      }]
+    },
+    "functions": {
+      "patterns": [{
+        "match": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+        "captures": {
+          "1": { "name": "keyword.declaration.nyx" },
+          "2": { "name": "entity.name.function.nyx" }
+        }
+      }, {
+        "match": "\\b(struct|enum|trait)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+        "captures": {
+          "1": { "name": "keyword.declaration.nyx" },
+          "2": { "name": "entity.name.type.nyx" }
+        }
+      }]
+    },
+    "operators": {
+      "patterns": [{
+        "name": "keyword.operator.nyx",
+        "match": "(->|=>|==|!=|<=|>=|\\+\\+|\\*\\*|\\?|[+\\-*/%<>=!&|])"
+      }]
+    },
+    "identifiers": {
+      "patterns": [{
+        "name": "variable.other.nyx",
+        "match": "\\b[a-z_][a-zA-Z0-9_]*\\b"
+      }, {
+        "name": "entity.name.type.nyx",
+        "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+      }]
+    }
+  }
+}

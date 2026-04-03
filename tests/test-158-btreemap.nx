@@ -1,0 +1,59 @@
+// test-158: BTreeMap — sorted ordered map operations
+import "std/btreemap"
+
+fn main() -> int {
+    let bt = btree_new()
+
+    // Insert unordered keys
+    btree_set(bt, "banana", "yellow")
+    btree_set(bt, "apple", "red")
+    btree_set(bt, "cherry", "red")
+    btree_set(bt, "date", "brown")
+    btree_set(bt, "elderberry", "purple")
+
+    // Size
+    print(btree_size(bt))
+
+    // Get values
+    print(btree_get(bt, "apple"))
+    print(btree_get(bt, "cherry"))
+
+    // Has
+    if btree_has(bt, "banana") {
+        print("has banana")
+    }
+    if not btree_has(bt, "fig") {
+        print("no fig")
+    }
+
+    // Min/max
+    print(btree_min_key(bt))
+    print(btree_max_key(bt))
+
+    // Sorted keys iteration
+    let sorted: Array = btree_keys_sorted(bt)
+    var i = 0
+    while i < sorted.length() {
+        let k: String = sorted[i]
+        print(k)
+        i = i + 1
+    }
+
+    // Range query
+    let range: Array = btree_range(bt, "banana", "date")
+    print(range.length())
+
+    // Numeric values
+    let prices = btree_new()
+    btree_set_int(prices, "orange", 3)
+    btree_set_int(prices, "apple", 2)
+    btree_set_int(prices, "grape", 5)
+    print(btree_get_int(prices, "grape"))
+
+    let price_keys: Array = btree_keys_sorted(prices)
+    let pk0: String = price_keys[0]
+    print(pk0)
+
+    print("btreemap ok")
+    return 0
+}

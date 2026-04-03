@@ -1,0 +1,48 @@
+// ===== TEST UNITARIO: INTÉRPRETE BOOTSTRAP =====
+// Verifica que compiler/interpreter.nx evalúa programas correctamente.
+// Ejecutar: make run FILE=tests/bootstrap-unit/test-interpreter.nx
+//
+// Resultado esperado:
+//   Imprime "hello from bootstrap" (sin comillas)
+//   Imprime resultado de expresión aritmética: 10
+
+import { tokenize } from "compiler/lexer"
+import { parse } from "compiler/parser"
+import { analyze } from "compiler/semantic"
+import { interpret } from "compiler/interpreter"
+
+fn main() {
+    print("=== TEST INTERPRETER BOOTSTRAP ===")
+
+    // Test 1: print básico
+    let src1 = "print(\"hello from bootstrap\")"
+    let toks1 = tokenize(src1)
+    let ast1 = parse(toks1)
+    let valid1 = analyze(ast1)
+    print("Test 1 - ejecutando print (debe imprimir 'hello from bootstrap'):")
+    if valid1 {
+        interpret(ast1)
+    }
+
+    // Test 2: expresión aritmética
+    let src2 = "let resultado = 3 + 7\nprint(resultado)"
+    let toks2 = tokenize(src2)
+    let ast2 = parse(toks2)
+    let valid2 = analyze(ast2)
+    print("Test 2 - aritmética (debe imprimir 10):")
+    if valid2 {
+        interpret(ast2)
+    }
+
+    // Test 3: condicional
+    let src3 = "let x = 5\nif x > 3 { print(\"mayor\") } else { print(\"menor\") }"
+    let toks3 = tokenize(src3)
+    let ast3 = parse(toks3)
+    let valid3 = analyze(ast3)
+    print("Test 3 - condicional (debe imprimir 'mayor'):")
+    if valid3 {
+        interpret(ast3)
+    }
+
+    print("✅ Interpreter tests completados")
+}

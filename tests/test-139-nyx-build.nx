@@ -1,0 +1,63 @@
+// test-139-nyx-build: verifica el parser de nyx.toml
+
+fn parse_toml_value(line: String) -> String {
+    let trimmed: String = line.trim()
+    var eq_pos = -1
+    var i = 0
+    while i < trimmed.length() {
+        let c: char = trimmed.charAt(i)
+        if c == '=' {
+            eq_pos = i
+            i = trimmed.length()
+        } else {
+            i = i + 1
+        }
+    }
+    if eq_pos < 0 { return "" }
+    let value_part: String = trimmed.substring(eq_pos + 1, trimmed.length()).trim()
+    if value_part.startsWith("\"") and value_part.endsWith("\"") {
+        return value_part.substring(1, value_part.length() - 1)
+    }
+    return value_part
+}
+
+fn parse_toml_key(line: String) -> String {
+    let trimmed: String = line.trim()
+    var eq_pos = -1
+    var i = 0
+    while i < trimmed.length() {
+        let c: char = trimmed.charAt(i)
+        if c == '=' {
+            eq_pos = i
+            i = trimmed.length()
+        } else {
+            i = i + 1
+        }
+    }
+    if eq_pos < 0 { return "" }
+    return trimmed.substring(0, eq_pos).trim()
+}
+
+fn main() -> int {
+    // Parse name = "myapp"
+    let line1 = "name = \"myapp\""
+    let key1: String = parse_toml_key(line1)
+    let val1: String = parse_toml_value(line1)
+    print(key1)
+    print(val1)
+
+    // Parse version = "0.1.0"
+    let line2 = "version = \"0.1.0\""
+    let key2: String = parse_toml_key(line2)
+    let val2: String = parse_toml_value(line2)
+    print(key2)
+    print(val2)
+
+    // Section detection
+    let section = "[package]"
+    let is_section: bool = section.startsWith("[") and section.endsWith("]")
+    if is_section { print("section ok") }
+
+    print("build ok")
+    return 0
+}

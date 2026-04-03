@@ -1,0 +1,42 @@
+// Test 134: Inline lambda expressions as direct function arguments
+// Verifies lambdas passed inline (not pre-assigned) work in various call sites
+
+fn apply(f: Fn, x: int) -> int {
+    return f(x)
+}
+
+fn apply2(f: Fn, g: Fn, x: int) -> int {
+    return g(f(x))
+}
+
+fn main() -> int {
+    // Lambda directly as argument to higher-order function
+    let r1: int = apply(fn(x: int) -> int { return x + 10 }, 5)
+    print(r1)  // 15
+
+    // Two lambdas as arguments
+    let r2: int = apply2(fn(x: int) -> int { return x * 2 }, fn(x: int) -> int { return x + 1 }, 3)
+    print(r2)  // 7 (3*2=6, 6+1=7)
+
+    // Lambda directly in sort_by (same as test-127 but confirmed working)
+    var arr: Array = [5, 1, 4, 2, 8]
+    sort_by(arr, fn(a: int, b: int) -> int { return a - b })
+    var i: int = 0
+    while i < arr.length() {
+        let v: int = arr[i]
+        print(v)
+        i = i + 1
+    }
+
+    // Lambda in iter().map() chain
+    let nums: Array = [10, 20, 30]
+    let doubled: Array = nums.iter().map(fn(x: int) -> int { return x * 2 }).collect()
+    var j: int = 0
+    while j < doubled.length() {
+        let v: int = doubled[j]
+        print(v)
+        j = j + 1
+    }
+
+    return 0
+}

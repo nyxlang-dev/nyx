@@ -1,0 +1,25 @@
+// Test 92: Channel — basic send/recv
+
+fn producer(ch: Map) -> int {
+    channel_send(ch, 10)
+    channel_send(ch, 20)
+    channel_send(ch, 30)
+    channel_send(ch, 40)
+    channel_send(ch, 50)
+    return 0
+}
+
+fn main() {
+    let ch: Map = channel_new(8)
+
+    // Send values from main thread, then receive
+    channel_send(ch, 100)
+    channel_send(ch, 200)
+    let v1: int = channel_recv(ch)
+    let v2: int = channel_recv(ch)
+    print(v1)  // 100
+    print(v2)  // 200
+
+    channel_destroy(ch)
+    print("done")
+}

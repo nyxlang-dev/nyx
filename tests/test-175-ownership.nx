@@ -1,0 +1,122 @@
+// test-175-ownership.nx — Linear types + Ownership (v5.0.0)
+import "std/owned"
+
+fn test_box() {
+    print("--- Box ---")
+
+    let b = box_new(42)
+    let v = box_get(b)
+    if v == 42 {
+        print("box get ok")
+    }
+
+    // Drop marks the box as released
+    box_drop(b)
+    if box_is_dropped(b) {
+        print("box drop ok")
+    }
+
+    // Box with string
+    let b2 = box_new_str("hello")
+    let s = box_get_str(b2)
+    if s == "hello" {
+        print("box string ok")
+    }
+}
+
+fn test_rc() {
+    print("--- Rc ---")
+
+    let rc1 = rc_new(100)
+    if rc_count(rc1) == 1 {
+        print("rc initial count ok")
+    }
+
+    // Clone increases ref count
+    let rc2 = rc_clone(rc1)
+    if rc_count(rc1) == 2 {
+        print("rc clone count ok")
+    }
+
+    // Get value
+    let v = rc_get(rc1)
+    if v == 100 {
+        print("rc get ok")
+    }
+
+    // Drop decreases count
+    let remaining = rc_drop(rc2)
+    if remaining == 1 {
+        print("rc drop count ok")
+    }
+    if rc_is_unique(rc1) {
+        print("rc unique ok")
+    }
+
+    // String rc
+    let rcs = rc_new_str("shared")
+    let s = rc_get_str(rcs)
+    if s == "shared" {
+        print("rc string ok")
+    }
+}
+
+fn test_move_only() {
+    print("--- MoveOnly ---")
+
+    let m = move_new(42)
+    let consumed = move_is_consumed(m)
+    if !consumed {
+        print("move not consumed ok")
+    }
+
+    let val = move_consume(m)
+    if val == 42 {
+        print("move consume ok")
+    }
+    if move_is_consumed(m) {
+        print("move consumed ok")
+    }
+
+    // String version
+    let ms = move_new_str("linear")
+    let str_val = move_consume_str(ms)
+    if str_val == "linear" {
+        print("move string ok")
+    }
+    if move_is_consumed(ms) {
+        print("move string consumed ok")
+    }
+}
+
+fn test_file_guard() {
+    print("--- FileGuard (RAII) ---")
+
+    let path = "/tmp/nyx_ownership_test.txt"
+    let g = file_guard_open(path, "w")
+    if file_guard_is_open(g) {
+        print("file guard open ok")
+    }
+    file_guard_write(g, "hello from ownership test\n")
+    file_guard_close(g)
+    if !file_guard_is_open(g) {
+        print("file guard closed ok")
+    }
+
+    // Read back
+    let g2 = file_guard_open(path, "r")
+    let line = file_guard_read_line(g2)
+    if line.startsWith("hello") {
+        print("file guard read ok")
+    }
+    file_guard_close(g2)
+}
+
+fn main() {
+    print("ownership test")
+    test_box()
+    test_rc()
+    test_move_only()
+    test_file_guard()
+    print("ownership ok")
+}

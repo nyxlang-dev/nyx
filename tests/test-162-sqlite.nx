@@ -1,0 +1,64 @@
+// test-162: SQLite3 bindings — in-memory database operations
+import "std/sqlite"
+
+fn main() -> int {
+    // Open in-memory database
+    let db = sqlite_open(":memory:")
+    print("db opened")
+
+    // Create table
+    let ok1 = sqlite_exec(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+    if ok1 { print("table created") }
+
+    // Insert rows
+    sqlite_exec(db, "INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    sqlite_exec(db, "INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    sqlite_exec(db, "INSERT INTO users (name, age) VALUES ('Carol', 35)")
+
+    // Last insert id
+    let last_id = sqlite_last_id(db)
+    print(last_id)
+
+    // Query all
+    let rows: Array = sqlite_query(db, "SELECT id, name, age FROM users ORDER BY age")
+    print(rows.length())
+
+    var i = 0
+    while i < rows.length() {
+        let row: Array = rows[i]
+        let name: String = row[1]
+        let age: String = row[2]
+        print(name + ":" + age)
+        i = i + 1
+    }
+
+    // Query with named columns
+    let named: Array = sqlite_query_named(db, "SELECT name, age FROM users WHERE age > 28 ORDER BY name")
+    // First element is headers
+    let headers: Array = named[0]
+    let h0: String = headers[0]
+    let h1: String = headers[1]
+    print(h0 + "," + h1)
+
+    let row1: Array = named[1]
+    let row2: Array = named[2]
+    let r1_name: String = row1[0]
+    let r2_name: String = row2[0]
+    print(r1_name)
+    print(r2_name)
+
+    // Affected rows
+    sqlite_exec(db, "DELETE FROM users WHERE age < 30")
+    let affected = sqlite_affected(db)
+    print(affected)
+
+    // Verify count
+    let count_rows: Array = sqlite_query(db, "SELECT COUNT(*) FROM users")
+    let count_row: Array = count_rows[0]
+    let count: String = count_row[0]
+    print(count)
+
+    sqlite_close(db)
+    print("sqlite ok")
+    return 0
+}

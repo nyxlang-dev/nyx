@@ -1,0 +1,39 @@
+// test-149-derive: verifica #[derive(Clone, PartialEq, Debug)]
+
+#[derive(Clone, PartialEq, Debug)]
+struct Point {
+    x: int,
+    y: int
+}
+
+#[derive(Clone, PartialEq)]
+struct Color {
+    r: int,
+    g: int,
+    b: int
+}
+
+fn main() -> int {
+    // Test 1: PartialEq
+    let p1 = Point { x: 3, y: 4 }
+    let p2: Point = p1.clone()
+    let p3 = Point { x: 1, y: 2 }
+
+    print(p1.eq(p2))   // true (1)
+    print(p1.eq(p3))   // false (0)
+
+    // Test 2: Clone still works
+    let c1 = Color { r: 255, g: 0, b: 0 }
+    let c2: Color = c1.clone()
+    print(c1.eq(c2))   // true (1)
+
+    let c3 = Color { r: 0, g: 255, b: 0 }
+    print(c1.eq(c3))   // false (0)
+
+    // Test 3: Debug
+    let s: String = p1.debug_str()
+    print(s)           // Point { x: 3, y: 4 }
+
+    print("derive ok")
+    return 0
+}

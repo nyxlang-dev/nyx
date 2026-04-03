@@ -1,0 +1,22 @@
+fn main() -> int {
+    let a: Option<int> = Option.Some(42)
+    if let Option.Some(x) = a {
+        print(x)
+    } else {
+        print("none")
+    }
+
+    let b: Option<int> = Option.None
+    if let Option.Some(x) = b {
+        print(x)
+    } else {
+        print("none")
+    }
+
+    var opt: Option<int> = Option.Some(10)
+    while let Option.Some(v) = opt {
+        print(v)
+        opt = Option.None
+    }
+    return 0
+}

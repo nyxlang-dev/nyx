@@ -1,0 +1,90 @@
+// test-173-proptest.nx — Property-Based Testing (v4.8.0)
+import "std/proptest"
+
+fn main() {
+    print("proptest test")
+    random_seed(42)
+
+    // Property 1: commutativity of addition
+    // a + b == b + a
+    let r1 = prop_int2(
+        fn(a: int, b: int) -> bool { return a + b == b + a },
+        -1000, 1000, 100
+    )
+    prop_report("add commutative", r1)
+    prop_assert("add commutative", r1)
+
+    // Property 2: identity element
+    // a + 0 == a
+    let r2 = prop_int(
+        fn(a: int) -> bool { return a + 0 == a },
+        -1000, 1000, 100
+    )
+    prop_report("add identity", r2)
+    prop_assert("add identity", r2)
+
+    // Property 3: absolute value >= 0
+    let r3 = prop_int(
+        fn(a: int) -> bool { return abs(a) >= 0 },
+        -10000, 10000, 200
+    )
+    prop_report("abs >= 0", r3)
+    prop_assert("abs >= 0", r3)
+
+    // Property 4: max(a, b) >= a and max(a, b) >= b
+    let r4 = prop_int2(
+        fn(a: int, b: int) -> bool {
+            let m = max(a, b)
+            return m >= a and m >= b
+        },
+        -500, 500, 100
+    )
+    prop_report("max >= both", r4)
+    prop_assert("max >= both", r4)
+
+    // Property 5: min(a, b) <= a and min(a, b) <= b
+    let r5 = prop_int2(
+        fn(a: int, b: int) -> bool {
+            let m = min(a, b)
+            return m <= a and m <= b
+        },
+        -500, 500, 100
+    )
+    prop_report("min <= both", r5)
+    prop_assert("min <= both", r5)
+
+    // Property 6: sort_int produces sorted output
+    let r6 = prop_int(
+        fn(n: int) -> bool {
+            let size = abs(n) % 10 + 2
+            var arr = gen_int_array(size, -100, 100)
+            sort_int(arr)
+            // Check sorted
+            var ok = true
+            var i = 0
+            while i < arr.length() - 1 {
+                let cur: int = arr[i]
+                let nxt: int = arr[i + 1]
+                if cur > nxt { ok = false }
+                i = i + 1
+            }
+            return ok
+        },
+        1, 100, 50
+    )
+    prop_report("sort produces sorted array", r6)
+    prop_assert("sort produces sorted array", r6)
+
+    // Generator tests
+    print("--- Generators ---")
+    let s = gen_string(10)
+    if s.length() <= 10 {
+        print("gen_string length bound ok")
+    }
+    let f = gen_float()
+    if f >= 0.0 {
+        print("gen_float >= 0.0 ok")
+    }
+
+    print("proptest ok")
+}

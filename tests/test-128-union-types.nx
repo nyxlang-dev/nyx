@@ -1,0 +1,34 @@
+// Test 128: Union types — type Name = A | B | C
+// Desugars to enum_def internally
+
+type Value = int | String | bool
+
+fn describe(v: Value) -> String {
+    var result: String = ""
+    match v {
+        Value.int(n)    => { result = "int:" + int_to_string(n) },
+        Value.String(s) => { result = "str:" + s },
+        Value.bool(_)   => { result = "bool:val" }
+    }
+    return result
+}
+
+fn main() -> int {
+    let a: Value = Value.int(42)
+    let b: Value = Value.String("hello")
+    let c: Value = Value.bool(true)
+
+    print(describe(a))
+    print(describe(b))
+    print(describe(c))
+
+    // Direct match on local union var
+    var x: Value = Value.int(10)
+    match x {
+        Value.int(n)    => print(n),
+        Value.String(s) => print(s),
+        Value.bool(_)   => print("bool")
+    }
+
+    return 0
+}

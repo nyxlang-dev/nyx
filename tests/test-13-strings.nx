@@ -1,0 +1,17 @@
+// TEST 13: Operaciones con Strings
+fn main() {
+    print("=== TEST 13: STRINGS ===")
+
+    let nombre = "Nyx"
+    let version = "0.17.1"
+
+    let mensaje = nombre + " v" + version
+    print(mensaje)
+
+    let saludo = "Hola"
+    let mundo = "Mundo"
+    print(saludo + " " + mundo)
+
+    print("✅ Test 13 completado")
+    return 0
+}

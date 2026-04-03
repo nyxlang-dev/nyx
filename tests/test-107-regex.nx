@@ -1,0 +1,39 @@
+// Test 107: Regex — POSIX regex matching and replacement
+
+fn main() {
+    // Test 1: regex_is_match
+    let m1: bool = regex_is_match("hello world 123", "[0-9]+")
+    print(m1)
+
+    let m2: bool = regex_is_match("hello world", "[0-9]+")
+    print(m2)
+
+    // Test 2: regex_match — extract first match
+    let r1: String = regex_match("age: 42, score: 99", "[0-9]+")
+    print(r1)
+
+    let r2: String = regex_match("no numbers here", "[0-9]+")
+    print(int_to_string(r2.length()))
+
+    // Test 3: regex_replace — first occurrence
+    let s1: String = regex_replace("foo bar baz", "bar", "qux")
+    print(s1)
+
+    // Test 4: regex_replace_all — all occurrences
+    let s2: String = regex_replace_all("aaa bbb aaa", "aaa", "xxx")
+    print(s2)
+
+    // Test 5: Regex with character classes
+    let email: bool = regex_is_match("user@example.com", "[a-zA-Z]+@[a-zA-Z]+\\.[a-zA-Z]+")
+    print(email)
+
+    // Test 6: Replace with regex pattern — collapse spaces
+    let s3: String = regex_replace_all("hello   world   foo", " +", " ")
+    print(s3)
+
+    // Test 7: No match returns original
+    let s4: String = regex_replace("hello", "xyz", "abc")
+    print(s4)
+
+    print("All regex tests passed!")
+}

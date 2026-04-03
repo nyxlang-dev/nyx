@@ -1,0 +1,18 @@
+// Test 186: Default parameters
+// Bug: calling with fewer args gives semantic error
+
+fn greet(name: String, greeting: String = "Hello") -> String {
+    return greeting + " " + name
+}
+
+fn add(a: int, b: int = 10, c: int = 20) -> int {
+    return a + b + c
+}
+
+fn main() {
+    print(greet("World"))
+    print(greet("World", "Hi"))
+    print(add(1))
+    print(add(1, 2))
+    print(add(1, 2, 3))
+}

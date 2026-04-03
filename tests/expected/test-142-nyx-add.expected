@@ -1,0 +1,7 @@
+name: myapp
+version: 1.0.0
+deps: 2
+  std-http = 2.0.0
+  nyx-json = 1.5.0
+lockfile ok
+nyx-add ok

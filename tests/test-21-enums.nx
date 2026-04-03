@@ -1,0 +1,35 @@
+// test-21: Enums y pattern matching
+// Verifica: definición de enum, construcción de variantes,
+// match sin bindings (wildcard), match con bindings (args).
+
+enum Color { Red, Green, Blue }
+
+enum Shape { Circle(int), Rect(int, int) }
+
+fn describe_color(c: Color) -> int {
+    return match c {
+        Color.Red => 1,
+        Color.Green => 2,
+        _ => 3
+    }
+}
+
+fn area(s: Shape) -> int {
+    return match s {
+        Shape.Circle(r) => r * r,
+        Shape.Rect(w, h) => w * h
+    }
+}
+
+fn main() -> int {
+    let c1 = Color.Red
+    let c2 = Color.Blue
+    print(describe_color(c1))
+    print(describe_color(c2))
+
+    let s1 = Shape.Circle(5)
+    let s2 = Shape.Rect(3, 4)
+    print(area(s1))
+    print(area(s2))
+    return 0
+}

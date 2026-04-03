@@ -1,0 +1,25 @@
+// TEST 18: Operaciones con Arrays
+fn encontrar_maximo(arr: Array) -> int {
+    var max = arr[0]
+    var i = 1
+
+    while i < 5 {
+        if arr[i] > max {
+            max = arr[i]
+        }
+        i = i + 1
+    }
+
+    return max
+}
+
+fn main() {
+    print("=== TEST 18: ARRAY OPERATIONS ===")
+
+    let numeros = [34, 7, 95, 23, 61]
+    print("Máximo del array:")
+    print(encontrar_maximo(numeros))
+
+    print("✅ Test 18 completado")
+    return 0
+}

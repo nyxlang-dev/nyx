@@ -1,0 +1,43 @@
+// Test 86: Pointer Arithmetic
+// Tests: ptr + n, ptr - n, ptr - ptr, pointer comparisons
+
+fn main() {
+    let arr: *int = alloc<int>(5)
+    unsafe {
+        *arr = 10
+        *(arr + 1) = 20
+        *(arr + 2) = 30
+        *(arr + 3) = 40
+        *(arr + 4) = 50
+
+        // Read back via pointer arithmetic
+        print(*arr)           // 10
+        print(*(arr + 1))     // 20
+        print(*(arr + 2))     // 30
+        print(*(arr + 4))     // 50
+
+        // Pointer subtraction (distance)
+        let diff: int = (arr + 3) - arr
+        print(diff)           // 3
+
+        let diff2: int = (arr + 4) - (arr + 1)
+        print(diff2)          // 3
+
+        // Pointer comparisons
+        let p1: *int = arr + 1
+        let p2: *int = arr + 2
+        print(p1 < p2)       // true
+        print(p2 > p1)       // true
+        print(p1 == p1)      // true
+        print(p1 != p2)      // true
+        print(p1 >= p1)      // true
+        print(p1 <= p2)      // true
+
+        // Pointer subtraction (ptr - n)
+        let p3: *int = arr + 4
+        let p4: *int = p3 - 2
+        print(*p4)            // 30
+    }
+    free(arr)
+    print("done")
+}

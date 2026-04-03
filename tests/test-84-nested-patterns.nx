@@ -1,0 +1,29 @@
+enum Wrapper { Inner(int), Empty }
+enum Outer { Some(Wrapper), None }
+
+fn main() {
+    let a = Outer.Some(Wrapper.Inner(42))
+    let b = Outer.Some(Wrapper.Empty)
+    let c = Outer.None
+
+    let va: String = match a {
+        Outer.Some(Wrapper.Inner(x)) => "got inner",
+        Outer.Some(Wrapper.Empty) => "inner empty",
+        _ => "outer none"
+    }
+    print(va)
+
+    let vb: String = match b {
+        Outer.Some(Wrapper.Inner(x)) => "got inner",
+        Outer.Some(Wrapper.Empty) => "inner empty",
+        _ => "outer none"
+    }
+    print(vb)
+
+    let vc: String = match c {
+        Outer.Some(Wrapper.Inner(x)) => "got inner",
+        _ => "nope"
+    }
+    print(vc)
+    print("nested patterns OK")
+}

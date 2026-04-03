@@ -1,0 +1,53 @@
+// Test 23: Match as statement (not just return match)
+
+enum Color { Red, Green, Blue }
+
+fn describe_color(c: Color) {
+    match c {
+        Color.Red => print("Rojo"),
+        Color.Green => print("Verde"),
+        Color.Blue => print("Azul")
+    }
+}
+
+enum Shape {
+    Circle(int),
+    Rect(int)
+}
+
+fn print_area(s: Shape) {
+    match s {
+        Shape.Circle(r) => {
+            let area = r * r * 3
+            print("Circle area ~" + int_to_string(area))
+        },
+        Shape.Rect(side) => {
+            let area = side * side
+            print("Rect area = " + int_to_string(area))
+        }
+    }
+}
+
+fn main() {
+    print("=== Match as Statement ===")
+
+    describe_color(Color.Red)
+    describe_color(Color.Green)
+    describe_color(Color.Blue)
+
+    print("=== Match with Side Effects ===")
+    print_area(Shape.Circle(5))
+    print_area(Shape.Rect(4))
+
+    // Match as statement directly in main
+    let x = Color.Blue
+    match x {
+        Color.Red => print("Is red"),
+        Color.Green => print("Is green"),
+        Color.Blue => print("Is blue")
+    }
+
+    print("Done")
+}
+
+main()

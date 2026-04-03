@@ -1,0 +1,133 @@
+// test-171-url-html.nx — URL encoding + HTML entities (v4.6.0)
+import "std/url"
+
+fn test_url_encode() {
+    print("--- URL Encode ---")
+
+    // Basic encoding
+    let encoded = url_encode("Hello World!")
+    print(encoded)
+    // Expected: Hello%20World%21
+
+    // Alphanumeric unchanged
+    let plain = url_encode("abc123")
+    if plain == "abc123" {
+        print("alphanumeric unchanged ok")
+    }
+
+    // Special chars encoded
+    let special = url_encode("a=1&b=2")
+    print(special)
+    // Expected: a%3D1%26b%3D2
+
+    // Round-trip
+    let original = "user@example.com/path?q=hello world"
+    let enc = url_encode(original)
+    let dec = url_decode(enc)
+    if dec == original {
+        print("url encode/decode round-trip ok")
+    }
+
+    // Empty string
+    let empty_enc = url_encode("")
+    if empty_enc.length() == 0 {
+        print("empty encode ok")
+    }
+}
+
+fn test_url_decode() {
+    print("--- URL Decode ---")
+
+    // Basic decode
+    let decoded = url_decode("Hello%20World%21")
+    if decoded == "Hello World!" {
+        print("decode spaces ok")
+    }
+
+    // Plus as space
+    let plus_decoded = url_decode("hello+world")
+    if plus_decoded == "hello world" {
+        print("decode plus as space ok")
+    }
+
+    // Hex lowercase
+    let lower = url_decode("a%3db")
+    if lower == "a=b" {
+        print("decode lowercase hex ok")
+    }
+}
+
+fn test_query_string() {
+    print("--- Query String ---")
+
+    var keys: Array<String> = ["name", "city", "age"]
+    var vals: Array<String> = ["John Doe", "New York", "30"]
+    let qs = build_query_string(keys, vals)
+    print(qs)
+    // Expected: name=John%20Doe&city=New%20York&age=30
+
+    // Empty
+    var ek: Array<String> = []
+    var ev: Array<String> = []
+    let empty_qs = build_query_string(ek, ev)
+    if empty_qs.length() == 0 {
+        print("empty query string ok")
+    }
+}
+
+fn test_html_escape() {
+    print("--- HTML Escape ---")
+
+    let escaped = html_escape("<script>alert(\"XSS\")</script>")
+    if escaped == "&lt;script&gt;alert(&quot;XSS&quot;)&lt;/script&gt;" {
+        print("html escape ok")
+    } else {
+        print(format("got: {}", escaped))
+    }
+
+    // & escaping
+    let amp = html_escape("a & b")
+    if amp == "a &amp; b" {
+        print("ampersand escape ok")
+    }
+
+    // Round-trip
+    let original = "Tom & Jerry <stars>"
+    let escaped2 = html_escape(original)
+    let unescaped = html_unescape(escaped2)
+    if unescaped == original {
+        print("html escape round-trip ok")
+    }
+
+    // No change on plain text
+    let plain = html_escape("hello world")
+    if plain == "hello world" {
+        print("plain text unchanged ok")
+    }
+}
+
+fn test_template() {
+    print("--- Template ---")
+
+    var data: Map<String> = map_new()
+    data.insert("name", "World")
+    data.insert("lang", "Nyx")
+
+    let tmpl = "Hello {{name}}! Welcome to {{lang}}."
+    let rendered = render_template(tmpl, data)
+    if rendered == "Hello World! Welcome to Nyx." {
+        print("template render ok")
+    } else {
+        print(format("got: {}", rendered))
+    }
+}
+
+fn main() {
+    print("url+html test")
+    test_url_encode()
+    test_url_decode()
+    test_query_string()
+    test_html_escape()
+    test_template()
+    print("url+html ok")
+}

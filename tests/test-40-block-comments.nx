@@ -1,0 +1,19 @@
+// TEST 40: Block Comments
+fn main() {
+    /* Simple block comment */
+    let x = 42
+    /* Multiline
+       block
+       comment */
+    print(int_to_string(x))
+
+    /* Nested /* block */ comments */
+    let y = 10
+    print(int_to_string(y))
+
+    let z = x + /* inline */ y
+    print(int_to_string(z))
+
+    print("OK")
+    return 0
+}

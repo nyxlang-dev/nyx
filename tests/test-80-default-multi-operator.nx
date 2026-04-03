@@ -1,0 +1,51 @@
+// Test 80: Integration — default methods + multi-bounds + operator overloading
+
+trait Describable {
+    fn describe(self) -> String
+}
+
+trait Summable {
+    fn value(self) -> int
+    fn double_value(self) -> int {
+        return self.value() * 2
+    }
+}
+
+struct Score { points: int, label: String }
+
+impl Describable for Score {
+    fn describe(self) -> String {
+        return self.label
+    }
+}
+
+impl Summable for Score {
+    fn value(self) -> int {
+        return self.points
+    }
+    // double_value() uses default
+}
+
+impl Add for Score {
+    fn add(self, other: Score) -> Score {
+        return Score { points: self.points + other.points, label: self.label + "+" + other.label }
+    }
+}
+
+fn show_sum<T: Describable + Summable>(a: T, b: T) -> int {
+    return a.value() + b.double_value()
+}
+
+fn main() {
+    let a = Score { points: 10, label: "A" }
+    let b = Score { points: 20, label: "B" }
+    // Default method
+    print(a.double_value())
+    // Multi-bounds
+    let sum = show_sum<Score>(a, b)
+    print(sum)
+    // Operator overloading
+    let c: Score = a + b
+    print(c.points)
+    print(c.label)
+}

@@ -1,0 +1,253 @@
+// ============================================================
+// STD/SYNC.NX — Synchronization Primitives (v2.0.0)
+// ============================================================
+// Abstracciones de alto nivel sobre threading primitivos.
+//
+// Uso:
+//   import "std/sync" as sync
+//
+//   // WaitGroup: esperar N goroutines
+//   let wg = sync.wg_new()
+//   sync.wg_add(wg, 3)
+//   thread_spawn(fn() { ...; sync.wg_done(wg) })
+//   sync.wg_wait(wg)
+//
+//   // Semaphore
+//   let sem = sync.sem_new(1)
+//   sync.sem_acquire(sem)
+//   sync.sem_release(sem)
+//
+//   // Once: ejecutar código exactamente una vez
+//   let once = sync.once_new()
+//   sync.once_do(once, fn() { init_code() })
+// ============================================================
+
+// ===== WAIT GROUP =====
+
+/// WaitGroup allows waiting for a collection of threads to finish.
+pub struct WaitGroup {
+    mutex: Map,    // mutex handle (opaque)
+    count: Array   // Array[0] = current count (mutable via pointer)
+}
+
+/// Create a new WaitGroup with count 0.
+pub fn wg_new() -> WaitGroup {
+    var count_arr: Array = []
+    count_arr.push(0)
+    return WaitGroup {
+        mutex: mutex_new(),
+        count: count_arr
+    }
+}
+
+/// Add delta to WaitGroup counter. Call before spawning goroutines.
+pub fn wg_add(wg: WaitGroup, delta: int) {
+    mutex_lock(wg.mutex)
+    let cur: int = wg.count[0]
+    wg.count[0] = cur + delta
+    mutex_unlock(wg.mutex)
+}
+
+/// Decrement WaitGroup counter by 1. Call when goroutine finishes.
+pub fn wg_done(wg: WaitGroup) {
+    mutex_lock(wg.mutex)
+    let cur: int = wg.count[0]
+    if cur > 0 {
+        wg.count[0] = cur - 1
+    }
+    mutex_unlock(wg.mutex)
+}
+
+/// Block until WaitGroup counter reaches 0.
+pub fn wg_wait(wg: WaitGroup) {
+    var done = false
+    while not done {
+        mutex_lock(wg.mutex)
+        let cur: int = wg.count[0]
+        if cur <= 0 { done = true }
+        mutex_unlock(wg.mutex)
+        if not done { sleep(1) }
+    }
+}
+
+/// Get current WaitGroup count.
+pub fn wg_count(wg: WaitGroup) -> int {
+    mutex_lock(wg.mutex)
+    let c: int = wg.count[0]
+    mutex_unlock(wg.mutex)
+    return c
+}
+
+// ===== SEMAPHORE =====
+
+/// Semaphore: controls access to a shared resource with a count limit.
+pub struct Semaphore {
+    mutex: Map,
+    count: Array   // Array[0] = current permits
+}
+
+/// Create a new Semaphore with initial count.
+pub fn sem_new(initial: int) -> Semaphore {
+    var count_arr: Array = []
+    count_arr.push(initial)
+    return Semaphore {
+        mutex: mutex_new(),
+        count: count_arr
+    }
+}
+
+/// Acquire one permit (blocks until available).
+pub fn sem_acquire(sem: Semaphore) {
+    var acquired = false
+    while not acquired {
+        mutex_lock(sem.mutex)
+        let cur: int = sem.count[0]
+        if cur > 0 {
+            sem.count[0] = cur - 1
+            acquired = true
+        }
+        mutex_unlock(sem.mutex)
+        if not acquired { sleep(1) }
+    }
+}
+
+/// Release one permit.
+pub fn sem_release(sem: Semaphore) {
+    mutex_lock(sem.mutex)
+    let cur: int = sem.count[0]
+    sem.count[0] = cur + 1
+    mutex_unlock(sem.mutex)
+}
+
+/// Try to acquire without blocking. Returns true if acquired.
+pub fn sem_try_acquire(sem: Semaphore) -> bool {
+    mutex_lock(sem.mutex)
+    let cur: int = sem.count[0]
+    var ok = false
+    if cur > 0 {
+        sem.count[0] = cur - 1
+        ok = true
+    }
+    mutex_unlock(sem.mutex)
+    return ok
+}
+
+/// Get current semaphore count.
+pub fn sem_count(sem: Semaphore) -> int {
+    mutex_lock(sem.mutex)
+    let c: int = sem.count[0]
+    mutex_unlock(sem.mutex)
+    return c
+}
+
+// ===== ONCE =====
+
+/// Once: ensures a function is executed exactly once, even from multiple threads.
+pub struct Once {
+    mutex: Map,
+    done: Array   // Array[0] = 0 (not done) or 1 (done)
+}
+
+/// Create a new Once.
+pub fn once_new() -> Once {
+    var done_arr: Array = []
+    done_arr.push(0)
+    return Once {
+        mutex: mutex_new(),
+        done: done_arr
+    }
+}
+
+/// Execute fn exactly once. Subsequent calls are no-ops.
+pub fn once_do(o: Once, f: Fn() -> int) {
+    mutex_lock(o.mutex)
+    let d: int = o.done[0]
+    if d == 0 {
+        o.done[0] = 1
+        mutex_unlock(o.mutex)
+        f()
+    } else {
+        mutex_unlock(o.mutex)
+    }
+}
+
+/// Check if once has been executed.
+pub fn once_done(o: Once) -> bool {
+    mutex_lock(o.mutex)
+    let d: int = o.done[0]
+    mutex_unlock(o.mutex)
+    return d != 0
+}
+
+// ===== MUTEX WRAPPER =====
+
+/// MutexGuard: high-level mutex wrapper.
+pub struct MutexGuard {
+    handle: Map
+}
+
+/// Create a new MutexGuard.
+pub fn mutex_guard_new() -> MutexGuard {
+    return MutexGuard { handle: mutex_new() }
+}
+
+/// Lock the mutex.
+pub fn lock(guard: MutexGuard) {
+    mutex_lock(guard.handle)
+}
+
+/// Unlock the mutex.
+pub fn unlock(guard: MutexGuard) {
+    mutex_unlock(guard.handle)
+}
+
+// ===== ATOMIC COUNTER =====
+
+/// AtomicCounter: thread-safe counter using mutex.
+pub struct AtomicCounter {
+    mutex: Map,
+    value: Array
+}
+
+/// Create a new AtomicCounter with initial value.
+pub fn counter_new(initial: int) -> AtomicCounter {
+    var val_arr: Array = []
+    val_arr.push(initial)
+    return AtomicCounter {
+        mutex: mutex_new(),
+        value: val_arr
+    }
+}
+
+/// Atomically increment and return new value.
+pub fn counter_inc(c: AtomicCounter) -> int {
+    mutex_lock(c.mutex)
+    let v: int = c.value[0]
+    c.value[0] = v + 1
+    mutex_unlock(c.mutex)
+    return v + 1
+}
+
+/// Atomically decrement and return new value.
+pub fn counter_dec(c: AtomicCounter) -> int {
+    mutex_lock(c.mutex)
+    let v: int = c.value[0]
+    c.value[0] = v - 1
+    mutex_unlock(c.mutex)
+    return v - 1
+}
+
+/// Get current value atomically.
+pub fn counter_get(c: AtomicCounter) -> int {
+    mutex_lock(c.mutex)
+    let v: int = c.value[0]
+    mutex_unlock(c.mutex)
+    return v
+}
+
+/// Set value atomically.
+pub fn counter_set(c: AtomicCounter, val: int) {
+    mutex_lock(c.mutex)
+    c.value[0] = val
+    mutex_unlock(c.mutex)
+}

@@ -1,0 +1,25 @@
+// Test 71: Iterator basics — .iter(), .collect(), sum
+fn main() {
+    let arr = [10, 20, 30, 40, 50]
+
+    // iter + collect: should produce same array
+    let it: Iterator = arr.iter()
+    let collected: Array = it.collect()
+    print(collected.length())  // 5
+    let v0: int = collected[0]
+    let v4: int = collected[4]
+    print(v0)   // 10
+    print(v4)   // 50
+
+    // iter + sum
+    let it2: Iterator = arr.iter()
+    let total = it2.sum()
+    print(total)  // 150
+
+    // iter + count
+    let it3: Iterator = arr.iter()
+    let n = it3.count()
+    print(n)  // 5
+
+    print("iter basic ok")
+}

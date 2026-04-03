@@ -1,0 +1,10 @@
+// test-122-export-name.nx — Low-level function attribute: export_name (v1.6.0)
+#[export_name = "my_custom_entry"]
+fn internal_fn() -> int {
+    return 77
+}
+
+fn main() -> int {
+    print("test-122-export-name: PASS")
+    return 0
+}

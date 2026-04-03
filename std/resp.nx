@@ -1,0 +1,142 @@
+// resp.nx — RESP protocol parser/serializer (stdlib)
+// RESP2 protocol: https://redis.io/docs/reference/protocol-spec/
+// Used by nyx-kv, nyx-queue, nyx-db
+
+// Parse a RESP request from a client connection.
+// Returns an Array of Strings representing the command and arguments.
+// Returns empty array on connection close or parse error.
+fn resp_read_command(fd: int) -> Array {
+    let result: Array = []
+
+    // Read first line: *N\r\n (array header)
+    let header: String = tcp_read_line(fd)
+    if header.length() == 0 {
+        return result
+    }
+
+    // Must start with '*' (ASCII 42)
+    if header.charAt(0) != 42 {
+        // Inline command (space-separated, e.g. "PING\r\n")
+        if header.length() > 0 {
+            let parts: Array = header.split(" ")
+            return parts
+        }
+        return result
+    }
+
+    // Parse count
+    let count_str: String = header.substring(1, header.length())
+    let count: int = string_to_int(count_str)
+    if count <= 0 {
+        return result
+    }
+
+    // Read count bulk strings
+    var i: int = 0
+    while i < count {
+        // Read $N\r\n (skip the length, we read until \r\n anyway)
+        let bulk_header: String = tcp_read_line(fd)
+        if bulk_header.length() == 0 {
+            return []
+        }
+        if bulk_header.charAt(0) != 36 {
+            return []
+        }
+
+        // Read the actual data line
+        let data: String = tcp_read_line(fd)
+        result.push(data)
+        i = i + 1
+    }
+
+    return result
+}
+
+// === RESP Serializers ===
+
+fn resp_simple_string(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("+")
+    sb.append(s)
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_error(msg: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("-ERR ")
+    sb.append(msg)
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_integer(n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append(":")
+    sb.append(int_to_string(n))
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_bulk_string(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("$")
+    sb.append(int_to_string(s.length()))
+    sb.append("\r\n")
+    sb.append(s)
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_null_bulk() -> String {
+    return "$-1\r\n"
+}
+
+fn resp_array_header(count: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(count))
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+// Serialize an array of bulk strings
+fn resp_bulk_array(items: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(items.length()))
+    sb.append("\r\n")
+    for item: String in items {
+        sb.append("$")
+        sb.append(int_to_string(item.length()))
+        sb.append("\r\n")
+        sb.append(item)
+        sb.append("\r\n")
+    }
+    return sb.to_string()
+}
+
+// Serialize an array with mixed types (bulk strings and nulls)
+// Uses a parallel flags array: 1 = valid bulk string, 0 = null
+fn resp_mixed_array(items: Array, flags: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(items.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < items.length() {
+        let flag: int = flags[i]
+        if flag == 1 {
+            let item: String = items[i]
+            sb.append("$")
+            sb.append(int_to_string(item.length()))
+            sb.append("\r\n")
+            sb.append(item)
+            sb.append("\r\n")
+        } else {
+            sb.append("$-1\r\n")
+        }
+        i = i + 1
+    }
+    return sb.to_string()
+}

@@ -1,0 +1,357 @@
+// std/web.nx — Framework web tipo Flask para Nyx v1.7.1
+// Map API: parse functions return Map<String> for real key-value access
+
+import "std/json"
+
+struct Request {
+    method: String,
+    path: String,
+    query: Map,
+    headers_flat: Array,
+    body: String,
+    form: Map,
+    cookies: Map,
+    params: Map,
+}
+
+struct Response {
+    status: int,
+    headers_flat: Array,
+    body: String,
+}
+
+struct Route {
+    method: String,
+    pattern: String,
+    handler: Fn,
+}
+
+struct App {
+    routes: Array,
+    before_hooks: Array,
+    after_hooks: Array,
+    middlewares: Array,
+    static_dir: String,
+}
+
+pub fn url_decode(s: String) -> String {
+    return s.replace("+", " ")
+}
+
+// Returns Map<String> with extracted query params.
+// Keys are the param names, values are the param values.
+pub fn parse_query_string(path: String) -> Map {
+    var result: Map = map_new()
+    let qpos: int = path.indexOf("?")
+    if qpos < 0 { return result }
+    let qs: String = path.substring(qpos + 1, path.length())
+    let pairs: Array = qs.split("&")
+    var i: int = 0
+    while i < pairs.length() {
+        let pair: String = pairs[i]
+        let eq: int = pair.indexOf("=")
+        if eq > 0 {
+            let key: String = url_decode(pair.substring(0, eq))
+            let val: String = url_decode(pair.substring(eq + 1, pair.length()))
+            result.insert(key, val)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Returns Map<String> with form field key-value pairs.
+// Supports application/x-www-form-urlencoded content type.
+pub fn parse_form_data(body: String, content_type: String) -> Map {
+    var result: Map = map_new()
+    if content_type.indexOf("application/x-www-form-urlencoded") < 0 { return result }
+    let pairs: Array = body.split("&")
+    var i: int = 0
+    while i < pairs.length() {
+        let pair: String = pairs[i]
+        let eq: int = pair.indexOf("=")
+        if eq > 0 {
+            let key: String = url_decode(pair.substring(0, eq))
+            let val: String = url_decode(pair.substring(eq + 1, pair.length()))
+            result.insert(key, val)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Returns Map<String> with cookie name-value pairs.
+// headers_flat is an interleaved [header_name, header_value, ...] array.
+pub fn parse_cookies(headers_flat: Array) -> Map {
+    var result: Map = map_new()
+    var i: int = 0
+    while i < headers_flat.length() - 1 {
+        let hkey: String = headers_flat[i]
+        let hval: String = headers_flat[i + 1]
+        if hkey == "Cookie" {
+            let parts: Array = hval.split("; ")
+            var j: int = 0
+            while j < parts.length() {
+                let part: String = parts[j]
+                let eq: int = part.indexOf("=")
+                if eq > 0 {
+                    let cname: String = part.substring(0, eq)
+                    let cval: String = part.substring(eq + 1, part.length())
+                    result.insert(cname, cval)
+                }
+                j = j + 1
+            }
+        }
+        i = i + 2
+    }
+    return result
+}
+
+// Returns Map<String> with route params extracted from path segments.
+// If the route matches, the map contains "_matched" = "true" plus any
+// captured params (e.g. "{id}" → key "id").
+// If no match, returns an empty map (no "_matched" key).
+pub fn route_match(pattern: String, path: String) -> Map {
+    var params: Map = map_new()
+    var clean_path: String = path
+    let qp: int = path.indexOf("?")
+    if qp >= 0 { clean_path = path.substring(0, qp) }
+    let pseg: Array = pattern.split("/")
+    let rseg: Array = clean_path.split("/")
+    // Wildcard: pattern ending in * matches any suffix
+    let last_pseg: String = pseg[pseg.length() - 1]
+    if last_pseg == "*" {
+        // Path must have at least as many segments as pattern (minus the *)
+        let prefix_len: int = pseg.length() - 1
+        if rseg.length() < prefix_len { return params }
+        var wi: int = 0
+        var wmatch: bool = true
+        while wi < prefix_len {
+            let wps: String = pseg[wi]
+            let wrs: String = rseg[wi]
+            if wps != wrs { wmatch = false }
+            wi = wi + 1
+        }
+        if wmatch {
+            params.insert("_matched", "true")
+        }
+        return params
+    }
+
+    if pseg.length() != rseg.length() { return params }
+    var i: int = 0
+    var matched: bool = true
+    while i < pseg.length() {
+        let ps: String = pseg[i]
+        let rs: String = rseg[i]
+        if ps.startsWith("{") and ps.endsWith("}") {
+            let pname: String = ps.substring(1, ps.length() - 1)
+            params.insert(pname, rs)
+        } else {
+            if ps != rs { matched = false }
+        }
+        i = i + 1
+    }
+    if matched {
+        params.insert("_matched", "true")
+    }
+    return params
+}
+
+pub fn response_new(status: int, body: String) -> Response {
+    var hdrs: Array = []
+    return Response { status: status, headers_flat: hdrs, body: body }
+}
+
+pub fn response_html(status: int, html: String) -> Response {
+    var hdrs: Array = []
+    return Response { status: status, headers_flat: hdrs, body: html }
+}
+
+pub fn response_json(status: int, json: String) -> Response {
+    let hdrs: Array = ["Content-Type", "application/json; charset=utf-8"]
+    return Response { status: status, headers_flat: hdrs, body: json }
+}
+
+// Build a JSON response from a Map of string key-value pairs.
+// Serializes Map keys/values as a JSON object with string values.
+pub fn response_json_map(status: int, data: Map) -> Response {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("{")
+    let keys: Array = data.keys()
+    var i: int = 0
+    while i < keys.length() {
+        if i > 0 { sb.append(",") }
+        let k: String = keys[i]
+        let v: String = data.get(k)
+        sb.append("\"")
+        sb.append(json_escape(k))
+        sb.append("\":\"")
+        sb.append(json_escape(v))
+        sb.append("\"")
+        i = i + 1
+    }
+    sb.append("}")
+    let hdrs: Array = ["Content-Type", "application/json; charset=utf-8"]
+    return Response { status: status, headers_flat: hdrs, body: sb.to_string() }
+}
+
+// Parse request body as JSON string key-value pairs into a Map.
+// Returns empty Map if body is not valid JSON or not an object.
+pub fn req_json(req: Request) -> Map {
+    let result: Map = map_new()
+    let body: String = req.body
+    if body.length() == 0 { return result }
+    let parsed: Array = json_parse(body)
+    if parsed.length() == 0 { return result }
+    let tag: String = parsed[0]
+    if tag != "object" { return result }
+    let entries: Array = parsed[1]
+    var i: int = 0
+    while i < entries.length() {
+        let entry: Array = entries[i]
+        let key: String = entry[0]
+        let val_node: Array = entry[1]
+        let val_tag: String = val_node[0]
+        if val_tag == "string" {
+            let val: String = val_node[1]
+            result.insert(key, val)
+        } else if val_tag == "number" {
+            let num: String = int_to_string(val_node[1])
+            result.insert(key, num)
+        } else if val_tag == "bool" {
+            if val_node[1] == 1 {
+                result.insert(key, "true")
+            } else {
+                result.insert(key, "false")
+            }
+        } else if val_tag == "null" {
+            result.insert(key, "null")
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Escape a string for JSON output
+fn json_escape(s: String) -> String {
+    var result: String = ""
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c == 34 {
+            result = result + "\\\""
+        } else if c == 92 {
+            result = result + "\\\\"
+        } else if c == 10 {
+            result = result + "\\n"
+        } else if c == 13 {
+            result = result + "\\r"
+        } else if c == 9 {
+            result = result + "\\t"
+        } else {
+            let ch: String = s.substring(i, i + 1)
+            result = result + ch
+        }
+        i = i + 1
+    }
+    return result
+}
+
+pub fn response_redirect(url: String) -> Response {
+    var hdrs: Array = []
+    return Response { status: 302, headers_flat: hdrs, body: url }
+}
+
+pub fn response_text(status: int, text: String) -> Response {
+    var hdrs: Array = []
+    return Response { status: status, headers_flat: hdrs, body: text }
+}
+
+pub fn app_new() -> App {
+    var routes: Array = []
+    var before_hooks: Array = []
+    var after_hooks: Array = []
+    var middlewares: Array = []
+    return App { routes: routes, before_hooks: before_hooks, after_hooks: after_hooks, middlewares: middlewares, static_dir: "" }
+}
+
+pub fn app_route(app: App, method: String, pattern: String, handler: Fn) {
+    let r: Route = Route { method: method, pattern: pattern, handler: handler }
+    app.routes.push(r)
+}
+
+pub fn app_get(app: App, pattern: String, handler: Fn) {
+    app_route(app, "GET", pattern, handler)
+}
+
+pub fn app_post(app: App, pattern: String, handler: Fn) {
+    app_route(app, "POST", pattern, handler)
+}
+
+pub fn app_put(app: App, pattern: String, handler: Fn) {
+    app_route(app, "PUT", pattern, handler)
+}
+
+pub fn app_delete(app: App, pattern: String, handler: Fn) {
+    app_route(app, "DELETE", pattern, handler)
+}
+
+pub fn app_before(app: App, hook: Fn) {
+    app.before_hooks.push(hook)
+}
+
+pub fn app_after(app: App, hook: Fn) {
+    app.after_hooks.push(hook)
+}
+
+// Register a middleware function.
+// Middlewares run in order before the route handler.
+// Each middleware receives (req: Request) and returns a Response.
+// Return a Response with status 0 to continue to the next middleware/handler.
+// Return a non-zero status Response to short-circuit (e.g. 403, 429).
+pub fn app_use(app: App, mw: Fn) {
+    app.middlewares.push(mw)
+}
+
+// ── Built-in middleware: Logging ──
+// Logs: METHOD PATH -> STATUS (latency_ms)
+pub fn mw_logging(req: Request) -> Response {
+    // Logging is handled post-response in the dispatch loop.
+    // This middleware is a no-op marker; the dispatch checks for it.
+    let hdrs: Array = []
+    return Response { status: 0, headers_flat: hdrs, body: "" }
+}
+
+// ── Built-in middleware: CORS ──
+// Responds to OPTIONS with appropriate headers, adds CORS headers to all responses.
+var __cors_origin: String = "*"
+var __cors_methods: String = "GET, POST, PUT, DELETE, OPTIONS"
+var __cors_headers: String = "Content-Type, Authorization"
+
+pub fn cors_configure(origin: String, methods: String, headers: String) {
+    __cors_origin = origin
+    __cors_methods = methods
+    __cors_headers = headers
+}
+
+pub fn mw_cors(req: Request) -> Response {
+    if req.method == "OPTIONS" {
+        let hdrs: Array = [
+            "Access-Control-Allow-Origin", __cors_origin,
+            "Access-Control-Allow-Methods", __cors_methods,
+            "Access-Control-Allow-Headers", __cors_headers,
+            "Access-Control-Max-Age", "86400"
+        ]
+        return Response { status: 204, headers_flat: hdrs, body: "" }
+    }
+    let hdrs: Array = []
+    return Response { status: 0, headers_flat: hdrs, body: "" }
+}
+
+// Add CORS headers to a response
+fn __add_cors_headers(resp: Response) -> Response {
+    resp.headers_flat.push("Access-Control-Allow-Origin")
+    resp.headers_flat.push(__cors_origin)
+    return resp
+}

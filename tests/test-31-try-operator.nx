@@ -1,0 +1,39 @@
+// Test 31: Try operator (?)
+// expr? extracts Ok value or returns Err from current function
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+fn safe_divide(a: int, b: int) -> Result {
+    if b == 0 {
+        return Result.Err("division by zero")
+    }
+    return Result.Ok(a / b)
+}
+
+fn compute(x: int, y: int) -> Result {
+    // ? extracts the Ok value, or returns Err immediately
+    let a = safe_divide(x, y)?
+    let b = safe_divide(a, 2)?
+    return Result.Ok(b)
+}
+
+fn main() {
+    // Success case
+    let r1 = compute(100, 5)
+    match r1 {
+        Result.Ok(v) => { print("compute(100,5) = ${v}") },
+        Result.Err(e) => { print("error: ${e}") }
+    }
+
+    // Error case — division by zero propagates
+    let r2 = compute(100, 0)
+    match r2 {
+        Result.Ok(v) => { print("unexpected: ${v}") },
+        Result.Err(e) => { print("caught: ${e}") }
+    }
+}
+
+main()

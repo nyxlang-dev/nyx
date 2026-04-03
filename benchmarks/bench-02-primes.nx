@@ -1,0 +1,29 @@
+// bench-02-primes.nx — Sieve of Eratosthenes (loop, arithmetic)
+fn main() {
+    let N: int = 100000
+    let start: int = time_us()
+
+    var count: int = 0
+    var i: int = 2
+    while i <= N {
+        var is_prime: bool = true
+        var j: int = 2
+        while j * j <= i {
+            if i % j == 0 {
+                is_prime = false
+                break
+            }
+            j = j + 1
+        }
+        if is_prime {
+            count = count + 1
+        }
+        i = i + 1
+    }
+
+    let end: int = time_us()
+    let elapsed: int = end - start
+    print("primes up to " + int_to_string(N) + ": " + int_to_string(count))
+    print("time_us: " + int_to_string(elapsed))
+    return 0
+}

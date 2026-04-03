@@ -1,0 +1,11 @@
+// Test 59: Inline assembly (x86_64)
+
+fn main() -> int {
+    // Simple inline asm: nop (no-op)
+    unsafe {
+        asm("nop")
+    }
+
+    print(1)  // 1 - confirms asm didn't crash
+    return 0
+}

@@ -1,0 +1,54 @@
+// Test 106: Collections — Set
+
+import "std/collections"
+
+fn main() {
+    // Test 1: Basic set operations
+    let s = set_new()
+    set_add(s, "apple")
+    set_add(s, "banana")
+    set_add(s, "cherry")
+
+    print(set_has(s, "apple"))
+    print(set_has(s, "grape"))
+    print(int_to_string(set_size(s)))
+
+    // Test 2: Duplicate add
+    set_add(s, "apple")
+    print(int_to_string(set_size(s)))
+
+    // Test 3: Remove
+    set_remove(s, "banana")
+    print(set_has(s, "banana"))
+    print(int_to_string(set_size(s)))
+
+    // Test 4: set_to_array
+    let s2 = set_new()
+    set_add(s2, "x")
+    set_add(s2, "y")
+    let arr: Array = set_to_array(s2)
+    print(int_to_string(arr.length()))
+
+    // Test 5: Set union
+    let a = set_new()
+    set_add(a, "1")
+    set_add(a, "2")
+    let b = set_new()
+    set_add(b, "2")
+    set_add(b, "3")
+    let u = set_union(a, b)
+    print(int_to_string(set_size(u)))
+
+    // Test 6: Set intersection
+    let inter = set_intersection(a, b)
+    print(int_to_string(set_size(inter)))
+
+    // Test 7: Integer set
+    let si = set_new()
+    set_add_int(si, 42)
+    set_add_int(si, 99)
+    print(set_has_int(si, 42))
+    print(set_has_int(si, 100))
+
+    print("Collection tests passed!")
+}

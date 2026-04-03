@@ -1,0 +1,28 @@
+// TEST 14: Múltiples Funciones
+fn suma(a: int, b: int) -> int {
+    return a + b
+}
+
+fn resta(a: int, b: int) -> int {
+    return a - b
+}
+
+fn multiplicar(a: int, b: int) -> int {
+    return a * b
+}
+
+fn main() {
+    print("=== TEST 14: MÚLTIPLES FUNCIONES ===")
+
+    print("Suma(10, 5):")
+    print(suma(10, 5))
+
+    print("Resta(10, 5):")
+    print(resta(10, 5))
+
+    print("Multiplicar(10, 5):")
+    print(multiplicar(10, 5))
+
+    print("✅ Test 14 completado")
+    return 0
+}

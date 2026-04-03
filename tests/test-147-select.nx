@@ -1,0 +1,42 @@
+// test-147-select: verifica select { case ch => body; default => body }
+
+fn main() -> int {
+    // Test 1: select with default (no channels ready → default runs)
+    let ch1: Map = channel_new(4)
+    let ch2: Map = channel_new(4)
+
+    // Both channels empty — default should run
+    select {
+        case ch1 => {
+            print("ch1 ready")
+        }
+        case ch2 => {
+            print("ch2 ready")
+        }
+        default => {
+            print("default case")
+        }
+    }
+
+    // Test 2: send to ch1, then select — ch1 should win
+    channel_send(ch1, 42)
+    select {
+        case ch1 => {
+            print("ch1 received")
+        }
+        default => {
+            print("unexpected default")
+        }
+    }
+
+    // Test 3: send to ch2, then select
+    channel_send(ch2, 100)
+    select {
+        case ch1 => { print("ch1 wrong") }
+        case ch2 => { print("ch2 received") }
+        default => { print("unexpected default 2") }
+    }
+
+    print("select ok")
+    return 0
+}

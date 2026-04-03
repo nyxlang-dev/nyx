@@ -1,0 +1,5 @@
+fn main() {
+    write_file("test.txt", "Hello Nyx!")
+    let content = read_file("test.txt")
+    print(content)
+}

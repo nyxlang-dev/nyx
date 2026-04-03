@@ -1,0 +1,17 @@
+// Test 180: .length property access on arrays and strings
+// Bug: arr.length and str.length always return 0
+// Expected: should return actual length like .length() method
+
+fn main() {
+    let arr = [10, 20, 30, 40, 50]
+    print(arr.length)
+
+    let s: String = "hello"
+    print(s.length)
+
+    let empty = []
+    print(empty.length)
+
+    let es: String = ""
+    print(es.length)
+}

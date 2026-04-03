@@ -1,0 +1,32 @@
+// Test 77: Multi-bounds T: A + B
+
+trait Display {
+    fn show(self) -> String
+}
+
+trait Printable {
+    fn label(self) -> String
+}
+
+struct Item { name: String, value: int }
+
+impl Display for Item {
+    fn show(self) -> String {
+        return self.name
+    }
+}
+
+impl Printable for Item {
+    fn label(self) -> String {
+        return "Item:" + self.name
+    }
+}
+
+fn show_with_label<T: Display + Printable>(x: T) -> String {
+    return x.show() + " (" + x.label() + ")"
+}
+
+fn main() {
+    let item = Item { name: "Nyx", value: 42 }
+    print(show_with_label<Item>(item))
+}

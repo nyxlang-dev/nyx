@@ -1,0 +1,21 @@
+// Test 90: Thread Basic — spawn, join, result
+
+fn compute_value() -> int {
+    return 42
+}
+
+fn compute_sum() -> int {
+    return 100 + 23
+}
+
+fn main() {
+    let handle: int = thread_spawn(compute_value)
+    let result: int = thread_join(handle)
+    print(result)  // 42
+
+    let h2: int = thread_spawn(compute_sum)
+    let r2: int = thread_join(h2)
+    print(r2)  // 123
+
+    print("done")
+}

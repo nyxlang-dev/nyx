@@ -1,0 +1,54 @@
+// test-140-args: verifica el parser de argumentos CLI (std/args)
+
+import "std/args" as args
+
+fn main() -> int {
+    // Crear parser
+    let parser = args.new_parser("myapp", "Test application")
+    args.add_flag(parser, "verbose", "v", "Verbose mode", false)
+    args.add_option(parser, "output", "o", "Output file", "out.txt")
+    args.add_option(parser, "count", "n", "Count", "10")
+
+    // Simular: myapp --verbose --output=result.txt positional1
+    var argv: Array = []
+    argv.push("myapp")
+    argv.push("--verbose")
+    argv.push("--output=result.txt")
+    argv.push("positional1")
+
+    let parsed = args.parse(parser, argv)
+
+    // Verificar flag verbose
+    let v: bool = args.get_flag(parsed, "verbose")
+    if v { print("verbose: true") }
+
+    // Verificar opcion output
+    let out: String = args.get_option(parsed, "output")
+    print("output: " + out)
+
+    // Verificar default de count
+    let cnt: String = args.get_option(parsed, "count")
+    print("count: " + cnt)
+
+    // Verificar argumentos posicionales
+    let pos: Array = args.get_positional(parsed)
+    let p0: String = pos[0]
+    print("positional: " + p0)
+
+    // Verificar sin error
+    let has_err: bool = args.has_error(parsed)
+    if not has_err { print("no error") }
+
+    // Probar short option: -o value
+    var argv2: Array = []
+    argv2.push("myapp")
+    argv2.push("-o")
+    argv2.push("short.txt")
+
+    let parsed2 = args.parse(parser, argv2)
+    let out2: String = args.get_option(parsed2, "output")
+    print("short output: " + out2)
+
+    print("args ok")
+    return 0
+}

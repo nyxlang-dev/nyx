@@ -1,0 +1,42 @@
+{
+  "name": "nyx-language",
+  "displayName": "Nyx Language",
+  "description": "Language support for NyxLang — syntax highlighting, diagnostics, and document symbols",
+  "version": "0.1.0",
+  "publisher": "nyx-lang",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:nyx"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "nyx",
+      "aliases": ["Nyx", "nyx"],
+      "extensions": [".nx"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "nyx",
+      "scopeName": "source.nyx",
+      "path": "./syntaxes/nyx.tmLanguage.json"
+    }],
+    "themes": [
+      { "label": "Nyx Dark", "uiTheme": "vs-dark", "path": "./themes/nyx-dark-color-theme.json" },
+      { "label": "Nyx Light", "uiTheme": "vs", "path": "./themes/nyx-light-color-theme.json" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}

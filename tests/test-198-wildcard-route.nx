@@ -1,0 +1,35 @@
+import "std/web"
+
+fn main() {
+    // Test 1: wildcard matches 1-level path
+    let m1: Map = route_match("/learn/*", "/learn/01.html")
+    print(m1.contains("_matched"))
+
+    // Test 2: wildcard matches 2+ level path
+    let m2: Map = route_match("/learn/*", "/learn/part1/01.html")
+    print(m2.contains("_matched"))
+
+    // Test 3: wildcard does not match wrong prefix
+    let m3: Map = route_match("/learn/*", "/api/health")
+    print(m3.contains("_matched"))
+
+    // Test 4: exact route still works
+    let m4: Map = route_match("/", "/")
+    print(m4.contains("_matched"))
+
+    // Test 5: exact route does not match different path
+    let m5: Map = route_match("/", "/about")
+    print(m5.contains("_matched"))
+
+    // Test 6: {param} route still works
+    let m6: Map = route_match("/test/{id}", "/test/123")
+    print(m6.contains("_matched"))
+
+    // Test 7: wildcard with longer prefix
+    let m7: Map = route_match("/es/learn/*", "/es/learn/apendice-a.html")
+    print(m7.contains("_matched"))
+
+    // Test 8: wildcard prefix mismatch
+    let m8: Map = route_match("/es/learn/*", "/en/learn/01.html")
+    print(m8.contains("_matched"))
+}

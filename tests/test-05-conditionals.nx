@@ -1,0 +1,26 @@
+// TEST 5: Condicionales
+fn main() {
+    print("=== TEST 5: CONDICIONALES ===")
+
+    let edad = 18
+
+    if edad >= 18 {
+        print("Mayor de edad")
+    } else {
+        print("Menor de edad")
+    }
+
+    let numero = 7
+    if numero > 10 {
+        print("Mayor que 10")
+    } else {
+        if numero > 5 {
+            print("Entre 6 y 10")
+        } else {
+            print("5 o menor")
+        }
+    }
+
+    print("✅ Test 5 completado")
+    return 0
+}

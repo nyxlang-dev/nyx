@@ -1,0 +1,84 @@
+// test-174-toml.nx — TOML config file parser (v4.9.0)
+import "std/toml"
+
+fn main() {
+    print("toml test")
+
+    // Simple key-value pairs
+    let simple = "name = \"Nyx\"\nversion = \"2.2.0\"\nport = 8080\ndebug = true"
+    let p1: Map<String> = toml_parse(simple)
+
+    let name = toml_get(p1, "name", "")
+    if name == "Nyx" {
+        print("simple string ok")
+    }
+
+    let version = toml_get(p1, "version", "")
+    if version == "2.2.0" {
+        print("version string ok")
+    }
+
+    let port = toml_get_int(p1, "port", 0)
+    if port == 8080 {
+        print("int value ok")
+    }
+
+    let debug = toml_get_bool(p1, "debug", false)
+    if debug == true {
+        print("bool value ok")
+    }
+
+    // Sections
+    let sectioned = "[server]\nhost = \"localhost\"\nport = 3000\n\n[database]\nurl = \"postgres://localhost/mydb\"\nmax_connections = 10"
+    let p2: Map<String> = toml_parse(sectioned)
+
+    let host = toml_get(p2, "server.host", "")
+    if host == "localhost" {
+        print("section string ok")
+    }
+
+    let db_port = toml_get_int(p2, "server.port", 0)
+    if db_port == 3000 {
+        print("section int ok")
+    }
+
+    let db_url = toml_get(p2, "database.url", "")
+    if db_url == "postgres://localhost/mydb" {
+        print("section url ok")
+    }
+
+    let max_conn = toml_get_int(p2, "database.max_connections", 0)
+    if max_conn == 10 {
+        print("nested int ok")
+    }
+
+    // Comments
+    let with_comments = "# Main config\napp = \"myapp\"  # app name\n# more comments\nworkers = 4"
+    let p3: Map<String> = toml_parse(with_comments)
+
+    let app = toml_get(p3, "app", "")
+    if app == "myapp" {
+        print("comment skip ok")
+    }
+
+    let workers = toml_get_int(p3, "workers", 0)
+    if workers == 4 {
+        print("after comment int ok")
+    }
+
+    // Missing key with default
+    let missing = toml_get(p1, "nonexistent", "default")
+    if missing == "default" {
+        print("missing key default ok")
+    }
+
+    // toml_has
+    if toml_has(p1, "name") {
+        print("has existing key ok")
+    }
+    if !toml_has(p1, "missing") {
+        print("not has missing key ok")
+    }
+
+    print("toml ok")
+}

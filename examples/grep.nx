@@ -1,0 +1,196 @@
+// grep.nx — clon de grep en Nyx v1.0
+// Uso: grep [OPCIONES] PATRÓN [ARCHIVOS...]
+//   Sin archivos: lee stdin
+// Opciones:
+//   -v  Invertir match (mostrar líneas SIN el patrón)
+//   -c  Contar líneas que coinciden (no imprimirlas)
+//   -n  Mostrar número de línea antes de cada match
+//   -i  Case-insensitive
+//   -l  Solo mostrar nombres de archivos con matches
+//   -E  Usar regex POSIX (por defecto: búsqueda literal)
+//   -F  Forzar búsqueda literal (fixed string)
+//   -q  Silencioso: no imprimir, solo exit code
+
+extern "C" fn putchar(c: int) -> int
+
+var g_invert:     bool = false
+var g_count:      bool = false
+var g_lineno:     bool = false
+var g_nocase:     bool = false
+var g_list_files: bool = false
+var g_regex:      bool = true
+var g_quiet:      bool = false
+var g_found_any:  bool = false
+
+fn color_on(code: String) {
+    putchar(27)
+    print_no_newline(code)
+}
+
+fn matches(line: String, pattern: String) -> bool {
+    var haystack: String = line
+    var needle: String = pattern
+    if g_nocase {
+        haystack = haystack.toLower()
+        needle = needle.toLower()
+    }
+    if g_regex {
+        return regex_is_match(haystack, needle)
+    }
+    return haystack.contains(needle)
+}
+
+fn print_match_line(filename: String, lineno: int, line: String, show_fname: bool) {
+    if g_quiet { return 0 }
+    if show_fname and filename.length() > 0 {
+        color_on("[35m")
+        print_no_newline(filename)
+        color_on("[0m")
+        print_no_newline(":")
+    }
+    if g_lineno {
+        color_on("[32m")
+        print_no_newline(format("{}", lineno))
+        color_on("[0m")
+        print_no_newline(":")
+    }
+    print(line)
+}
+
+fn grep_lines(lines: Array, pattern: String, filename: String, show_fname: bool) -> int {
+    var count: int = 0
+    var lineno: int = 0
+    var i: int = 0
+    while i < lines.length() {
+        let line: String = lines[i]
+        lineno = lineno + 1
+        let hit: bool = matches(line, pattern)
+        let show: bool = (hit and not g_invert) or (not hit and g_invert)
+        if show {
+            count = count + 1
+            g_found_any = true
+            if not g_count and not g_list_files {
+                print_match_line(filename, lineno, line, show_fname)
+            }
+        }
+        i = i + 1
+    }
+    return count
+}
+
+fn grep_file(filename: String, pattern: String, show_fname: bool) -> int {
+    if not file_exists(filename) {
+        print("grep: " + filename + ": No such file")
+        return 0
+    }
+    let f: File = file_open(filename, "r")
+    var lines: Array = []
+    var done: bool = false
+    while not done {
+        let line: String = file_read_line(f)
+        if line == ":EOF:" {
+            done = true
+        } else {
+            lines.push(line)
+        }
+    }
+    file_close(f)
+    let cnt: int = grep_lines(lines, pattern, filename, show_fname)
+    if g_list_files and cnt > 0 {
+        print(filename)
+    }
+    if g_count {
+        if show_fname {
+            print(filename + ":" + format("{}", cnt))
+        } else {
+            print(format("{}", cnt))
+        }
+    }
+    return cnt
+}
+
+fn grep_stdin(pattern: String) -> int {
+    var lines: Array = []
+    var done: bool = false
+    while not done {
+        let line: String = read_line()
+        if line == ":EOF:" {
+            done = true
+        } else {
+            lines.push(line)
+        }
+    }
+    let cnt: int = grep_lines(lines, pattern, "", false)
+    if g_count { print(format("{}", cnt)) }
+    return cnt
+}
+
+fn is_flag(s: String) -> bool {
+    return s.length() > 1 and s.substring(0, 1) == "-"
+}
+
+fn parse_flag_char(c: String) {
+    if c == "v" { g_invert = true }
+    if c == "c" { g_count = true }
+    if c == "n" { g_lineno = true }
+    if c == "i" { g_nocase = true }
+    if c == "l" { g_list_files = true }
+    if c == "E" { g_regex = true }
+    if c == "F" { g_regex = false }
+    if c == "q" { g_quiet = true }
+}
+
+fn main() -> int {
+    let args: Array = get_args()
+    if args.length() < 2 {
+        print("Uso: grep [OPCIONES] PATRÓN [ARCHIVOS...]")
+        print("Opciones: -v -c -n -i -l -E -F -q")
+        return 2
+    }
+
+    var pattern: String = ""
+    var files: Array = []
+    var got_pattern: bool = false
+    var i: int = 1
+
+    while i < args.length() {
+        let arg: String = args[i]
+        if not got_pattern and is_flag(arg) {
+            var fi: int = 1
+            while fi < arg.length() {
+                let ch: String = arg.substring(fi, fi + 1)
+                parse_flag_char(ch)
+                fi = fi + 1
+            }
+        } else if not got_pattern {
+            pattern = arg
+            got_pattern = true
+        } else {
+            files.push(arg)
+        }
+        i = i + 1
+    }
+
+    if not got_pattern {
+        print("grep: falta el patrón")
+        return 2
+    }
+
+    let show_fname: bool = files.length() > 1
+
+    if files.length() == 0 {
+        grep_stdin(pattern)
+    } else {
+        var fi: int = 0
+        while fi < files.length() {
+            let fname: String = files[fi]
+            grep_file(fname, pattern, show_fname)
+            fi = fi + 1
+        }
+    }
+
+    if g_found_any {
+        return 0
+    }
+    return 1
+}

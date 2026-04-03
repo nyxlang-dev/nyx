@@ -1,0 +1,20 @@
+// Test 65: Module import with namespace access
+
+// Module import with alias
+import "tests/mylib" as lib
+
+// Module import of std library (already loaded via prelude)
+import "std/math" as math
+
+fn main() -> int {
+    // Call via namespace
+    let x: int = lib.add(3, 4)
+    print(int_to_string(x))
+    let y: int = lib.mul(5, 6)
+    print(int_to_string(y))
+    // Call std/math via namespace
+    print(int_to_string(math.abs(-42)))
+    print(int_to_string(math.min(3, 7)))
+    print(int_to_string(math.max(3, 7)))
+    return 0
+}

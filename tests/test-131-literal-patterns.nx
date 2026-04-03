@@ -1,0 +1,34 @@
+fn classify(n: int) -> String {
+    match n {
+        0 => { return "zero" },
+        1 => { return "one" },
+        2 => { return "two" },
+        _ => { return "many" }
+    }
+}
+
+fn greet(name: String) -> String {
+    match name {
+        "Alice" => { return "Hi Alice!" },
+        "Bob"   => { return "Hey Bob!" },
+        _       => { return "Hello stranger" }
+    }
+}
+
+fn bool_desc(b: bool) -> String {
+    match b {
+        true  => { return "yes" },
+        false => { return "no" }
+    }
+}
+
+fn main() -> int {
+    print(classify(0))
+    print(classify(1))
+    print(classify(5))
+    print(greet("Alice"))
+    print(greet("Charlie"))
+    print(bool_desc(true))
+    print(bool_desc(false))
+    return 0
+}

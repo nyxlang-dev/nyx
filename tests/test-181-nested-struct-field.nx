@@ -1,0 +1,23 @@
+// Test 181: Nested struct field access
+// Bug: line.end_pt.y returns 0 instead of correct value
+
+struct Vec2 {
+    x: int
+    y: int
+}
+
+struct Line {
+    start: Vec2
+    end_pt: Vec2
+}
+
+fn main() {
+    let a = Vec2 { x: 1, y: 2 }
+    let b = Vec2 { x: 3, y: 4 }
+    let line = Line { start: a, end_pt: b }
+
+    print(line.start.x)
+    print(line.start.y)
+    print(line.end_pt.x)
+    print(line.end_pt.y)
+}

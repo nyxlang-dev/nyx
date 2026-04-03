@@ -1,0 +1,8 @@
+loop created
+pipe created
+1
+correct fd fired
+hello from async
+1
+second message
+event loop ok

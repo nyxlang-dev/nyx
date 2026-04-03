@@ -1,0 +1,28 @@
+// Test 56: Raw pointers and unsafe blocks
+
+fn main() -> int {
+    // Basic pointer: address-of and dereference
+    var x: int = 42
+    unsafe {
+        let p: *int = &x
+        let val: int = *p
+        print(val)  // 42
+
+        // Write through pointer
+        *p = 100
+    }
+    print(x)  // 100
+
+    // Pointer to i32
+    var y: i32 = 10i32
+    unsafe {
+        let q: *i32 = &y
+        let v: i32 = *q
+        print(v)  // 10
+
+        *q = 20i32
+    }
+    print(y)  // 20
+
+    return 0
+}

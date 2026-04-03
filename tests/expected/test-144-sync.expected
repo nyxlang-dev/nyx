@@ -1,0 +1,17 @@
+wg count: 1
+wg after done: 0
+wg after 3 done: 0
+sem count: 2
+after acquire: 1
+try_acquire: ok
+try_acquire empty: ok
+after 2 release: 2
+counter inc: 1
+counter inc: 2
+counter dec: 1
+counter get: 1
+counter set 42: 42
+once: not done
+once ran
+once: done
+sync ok

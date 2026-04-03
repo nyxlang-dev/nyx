@@ -1,0 +1,14 @@
+// TEST 7: Bucle For
+fn main() {
+    print("=== TEST 7: FOR LOOP ===")
+
+    let numeros = [1, 2, 3, 4, 5]
+
+    print("Iterando array:")
+    for n in numeros {
+        print(n)
+    }
+
+    print("✅ Test 7 completado")
+    return 0
+}

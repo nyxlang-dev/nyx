@@ -1,0 +1,188 @@
+// ============================================
+// Nyx Playground Server v0.10.0
+// ============================================
+// Web-based code editor that compiles and runs Nyx code
+// Usage: make playground (starts on port 8080)
+
+import "std/http"
+import "std/json"
+
+// Base directory for static files (relative to project root)
+let STATIC_DIR: String = "playground/static"
+let EXAMPLES_DIR: String = "playground/examples"
+let PORT: int = 8081
+
+// Runtime sources needed for compilation
+let RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c"
+let LIBS: String = "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+
+fn content_type_for(path: String) -> String {
+    if path.endsWith(".html") { return "text/html; charset=utf-8" }
+    if path.endsWith(".css") { return "text/css; charset=utf-8" }
+    if path.endsWith(".js") { return "application/javascript; charset=utf-8" }
+    if path.endsWith(".nx") { return "text/plain; charset=utf-8" }
+    if path.endsWith(".json") { return "application/json" }
+    return "text/plain"
+}
+
+fn serve_static(file_path: String) -> String {
+    if file_exists(file_path) {
+        let content: String = read_file(file_path)
+        let ct: String = content_type_for(file_path)
+        let headers: Array = ["Content-Type", ct]
+        return http_response_with_headers(200, headers, content)
+    }
+    return http_response(404, "Not Found")
+}
+
+fn handle_run(body: String) -> String {
+    // Write source to temp file
+    let src_path: String = "/tmp/nyx_playground_src.nx"
+    let ll_path: String = "/tmp/nyx_playground_src.ll"
+    let bin_path: String = "/tmp/nyx_playground_bin"
+    let out_path: String = "/tmp/nyx_playground_out.txt"
+    let err_path: String = "/tmp/nyx_playground_err.txt"
+
+    write_file(src_path, body)
+
+    // Step 1: Copy source to script.nx for nyx_bootstrap
+    let cp_cmd: String = "cp " + src_path + " script.nx"
+    exec(cp_cmd)
+
+    // Step 2: Compile with nyx_bootstrap
+    let compile_cmd: String = "NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap > " + err_path + " 2>&1"
+    let compile_rc: int = exec(compile_cmd)
+
+    if compile_rc != 0 {
+        let err_output: String = read_file(err_path)
+        let json_body: String = "{\"success\":false,\"output\":\"Compilation error:\\n" + json_escape(err_output) + "\"}"
+        let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+        return http_response_with_headers(200, headers, json_body)
+    }
+
+    // Step 3: Link with clang
+    let link_cmd: String = "clang script.ll " + RUNTIME_SRCS + " " + LIBS + " -o " + bin_path + " > " + err_path + " 2>&1"
+    let link_rc: int = exec(link_cmd)
+
+    if link_rc != 0 {
+        let err_output: String = read_file(err_path)
+        let json_body: String = "{\"success\":false,\"output\":\"Link error:\\n" + json_escape(err_output) + "\"}"
+        let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+        return http_response_with_headers(200, headers, json_body)
+    }
+
+    // Step 4: Execute with timeout
+    let run_cmd: String = "timeout 10 " + bin_path + " > " + out_path + " 2>&1"
+    let run_rc: int = exec(run_cmd)
+
+    var output: String = ""
+    if file_exists(out_path) {
+        output = read_file(out_path)
+    }
+
+    var success: bool = run_rc == 0
+    if run_rc == 124 {
+        output = output + "\n[Timeout: execution exceeded 10 seconds]"
+        success = false
+    }
+
+    var success_str: String = "false"
+    if success { success_str = "true" }
+    let json_body: String = "{\"success\":" + success_str + ",\"output\":\"" + json_escape(output) + "\"}"
+    let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+    return http_response_with_headers(200, headers, json_body)
+}
+
+fn json_escape(s: String) -> String {
+    var result: String = ""
+    var i: int = 0
+    while i < s.length() {
+        let c: char = s.charAt(i)
+        if c == '"' {
+            result = result + "\\\""
+        } else if c == '\\' {
+            result = result + "\\\\"
+        } else if c == '\n' {
+            result = result + "\\n"
+        } else if c == '\r' {
+            result = result + "\\r"
+        } else if c == '\t' {
+            result = result + "\\t"
+        } else {
+            result = result + char_to_string(c)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn handle_examples_list() -> String {
+    let json_body: String = "[\"hello\",\"fibonacci\",\"structs\",\"factorial\",\"gcd\",\"powers\",\"arrays\",\"maps\",\"strings\"]"
+    let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+    return http_response_with_headers(200, headers, json_body)
+}
+
+fn handle_example(name: String) -> String {
+    let file_path: String = EXAMPLES_DIR + "/" + name + ".nx"
+    if file_exists(file_path) {
+        let content: String = read_file(file_path)
+        let json_body: String = "{\"name\":\"" + name + "\",\"code\":\"" + json_escape(content) + "\"}"
+        let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+        return http_response_with_headers(200, headers, json_body)
+    }
+    let headers: Array = ["Content-Type", "application/json"]
+    return http_response_with_headers(404, headers, "{\"error\":\"Example not found\"}")
+}
+
+fn playground_handler(request: Array) -> String {
+    let method: String = request[1]
+    let path: String = request[2]
+    let body: String = request[4]
+
+    // Root -> serve index.html
+    if method == "GET" and path == "/" {
+        return serve_static(STATIC_DIR + "/index.html")
+    }
+
+    // Static files
+    if method == "GET" and path.startsWith("/static/") {
+        let file_name: String = path.substring(8, path.length())
+        return serve_static(STATIC_DIR + "/" + file_name)
+    }
+
+    // API: compile and run
+    if method == "POST" and path == "/api/run" {
+        return handle_run(body)
+    }
+
+    // API: list examples
+    if method == "GET" and path == "/api/examples" {
+        return handle_examples_list()
+    }
+
+    // API: get example by name
+    if method == "GET" and path.startsWith("/api/example/") {
+        let name: String = path.substring(13, path.length())
+        return handle_example(name)
+    }
+
+    // CORS preflight
+    if method == "OPTIONS" {
+        let headers: Array = [
+            "Access-Control-Allow-Origin", "*",
+            "Access-Control-Allow-Methods", "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers", "Content-Type"
+        ]
+        return http_response_with_headers(204, headers, "")
+    }
+
+    return http_response(404, "Not Found")
+}
+
+fn main() {
+    print("=== Nyx Playground Server ===")
+    print("Listening on http://localhost:" + int_to_string(PORT))
+    print("Press Ctrl+C to stop")
+    print("")
+    http_serve(PORT, playground_handler)
+}

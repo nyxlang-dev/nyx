@@ -1,0 +1,41 @@
+// Test A09: Closures — captura de variables del scope exterior
+// NOTA: Retornar closures como valores NO soportado aún
+// Lo que SÍ funciona: funciones anidadas que leen/escriben vars del scope exterior
+
+fn counter_test() -> int {
+    var count = 0
+    fn increment() {
+        count = count + 1
+    }
+    fn get_count() -> int {
+        return count
+    }
+    increment()
+    increment()
+    increment()
+    return get_count()
+}
+
+fn transform_array(arr: Array, factor: int) {
+    fn scale(idx: int) {
+        arr[idx] = arr[idx] * factor
+    }
+    var i = 0
+    while i < arr.length() {
+        scale(i)
+        i = i + 1
+    }
+}
+
+fn main() {
+    // Counter
+    print(counter_test())  // 3
+
+    // Transform array
+    var data = [1, 2, 3, 4, 5]
+    transform_array(data, 10)
+    print(data[0])  // 10
+    print(data[4])  // 50
+
+    return 0
+}

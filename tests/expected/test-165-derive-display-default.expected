@@ -1,0 +1,15 @@
+derive display/default test
+--- Display ---
+Point(3, 7)
+Person(Alice, 30, 9.5)
+Config(1920, 1080, 1)
+--- Default ---
+Point(0, 0)
+Config(0, 0, 0)
+--- Combined ---
+default: Point(0, 0)
+c1 == c2 ok
+c1 != c3 ok
+Config(800, 600, 0)
+Config(1024, 768, 1)
+derive display/default ok

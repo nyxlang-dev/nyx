@@ -1,0 +1,18 @@
+// TEST 15: Llamadas Anidadas
+fn cuadrado(x: int) -> int {
+    return x * x
+}
+
+fn suma_cuadrados(a: int, b: int) -> int {
+    return cuadrado(a) + cuadrado(b)
+}
+
+fn main() {
+    print("=== TEST 15: LLAMADAS ANIDADAS ===")
+
+    print("Suma de cuadrados(3, 4):")
+    print(suma_cuadrados(3, 4))
+
+    print("✅ Test 15 completado")
+    return 0
+}

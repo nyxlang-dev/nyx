@@ -1,0 +1,84 @@
+// Test A23: Enum-based Expression Tree
+// Combines: array-based tree, match expression, match guards, string interpolation
+
+fn make_num(val: int) -> Array {
+    return [0, val, 0]
+}
+
+fn make_add(left: Array, right: Array) -> Array {
+    var nodes = []
+    nodes.push(left)
+    nodes.push(right)
+    return [1, nodes, 0]
+}
+
+fn make_mul(left: Array, right: Array) -> Array {
+    var nodes = []
+    nodes.push(left)
+    nodes.push(right)
+    return [2, nodes, 0]
+}
+
+fn make_sub(left: Array, right: Array) -> Array {
+    var nodes = []
+    nodes.push(left)
+    nodes.push(right)
+    return [3, nodes, 0]
+}
+
+fn eval_expr(node: Array) -> int {
+    let kind = node[0]
+    if kind == 0 {
+        return node[1]
+    }
+    let children: Array = node[1]
+    let left: Array = children[0]
+    let right: Array = children[1]
+    if kind == 1 {
+        return eval_expr(left) + eval_expr(right)
+    }
+    if kind == 2 {
+        return eval_expr(left) * eval_expr(right)
+    }
+    if kind == 3 {
+        return eval_expr(left) - eval_expr(right)
+    }
+    return 0
+}
+
+fn classify_result(val: int) -> String {
+    if val > 100 { return "big: ${val}" }
+    if val > 0 { return "positive: ${val}" }
+    if val == 0 { return "zero" }
+    return "negative: ${val}"
+}
+
+fn main() -> int {
+    // Build: (3 + 4) * (10 - 2)
+    let three = make_num(3)
+    let four = make_num(4)
+    let ten = make_num(10)
+    let two = make_num(2)
+
+    let sum = make_add(three, four)
+    let diff = make_sub(ten, two)
+    let product = make_mul(sum, diff)
+
+    let result = eval_expr(product)
+    print(result)
+    print(classify_result(result))
+
+    let a = eval_expr(make_num(42))
+    print(a)
+
+    let b = eval_expr(make_add(make_num(100), make_num(50)))
+    print(b)
+    print(classify_result(b))
+
+    let c = eval_expr(make_sub(make_num(5), make_num(10)))
+    print(c)
+    print(classify_result(c))
+
+    print("A23 passed")
+    return 0
+}

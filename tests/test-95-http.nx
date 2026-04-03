@@ -1,0 +1,29 @@
+// Test 95: HTTP — response building and status text
+
+import "std/json"
+import "std/http"
+
+fn main() {
+    // Test response building
+    let resp: String = http_response(200, "hello")
+    print(resp.contains("200 OK"))
+    print(resp.contains("Content-Length: 5"))
+    print(resp.contains("hello"))
+
+    // Test status text
+    print(http_status_text(200))
+    print(http_status_text(404))
+
+    // Test response with headers (flat array: [key, val, key, val, ...])
+    let headers: Array = ["X-Custom", "test"]
+    let resp2: String = http_response_with_headers(200, headers, "ok")
+    print(resp2.contains("X-Custom: test"))
+
+    // Test JSON response
+    let data: Array = json_object(["key"], [json_string("val")])
+    let jresp: String = http_json_response(200, data)
+    print(jresp.contains("application/json"))
+    print(jresp.contains("{\"key\":\"val\"}"))
+
+    print("done")
+}

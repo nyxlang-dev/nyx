@@ -1,0 +1,15 @@
+toml test
+simple string ok
+version string ok
+int value ok
+bool value ok
+section string ok
+section int ok
+section url ok
+nested int ok
+comment skip ok
+after comment int ok
+missing key default ok
+has existing key ok
+not has missing key ok
+toml ok

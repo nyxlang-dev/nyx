@@ -1,0 +1,24 @@
+// TEST 17: Condiciones Complejas
+fn clasificar(edad: int, tiene_licencia: bool) -> String {
+    if edad >= 18 and tiene_licencia {
+        return "Puede conducir"
+    } else {
+        if edad >= 18 {
+            return "Mayor pero sin licencia"
+        } else {
+            return "Menor de edad"
+        }
+    }
+    return ""
+}
+
+fn main() {
+    print("=== TEST 17: CONDICIONES COMPLEJAS ===")
+
+    print(clasificar(20, true))
+    print(clasificar(20, false))
+    print(clasificar(16, false))
+
+    print("✅ Test 17 completado")
+    return 0
+}

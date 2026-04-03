@@ -1,0 +1,25 @@
+// Test 116: async/await — closure desugaring (v0.7.2)
+// async fn retorna un closure pair (i8*)
+// await/run llama al closure
+
+async fn add_async(a: int, b: int) -> int {
+    return a + b
+}
+
+async fn double_async(x: int) -> int {
+    let sum: int = await add_async(x, x)
+    return sum
+}
+
+fn main() {
+    let r1: int = run(add_async(3, 4))
+    assert(r1 == 7)
+
+    let r2: int = run(double_async(5))
+    assert(r2 == 10)
+
+    let r3: int = run(double_async(10))
+    assert(r3 == 20)
+
+    print("ok")
+}

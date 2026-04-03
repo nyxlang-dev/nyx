@@ -1,0 +1,162 @@
+// test-166-macro-patterns.nx — Advanced Macro Patterns (v4.2.0)
+// Demonstrates: iterating patterns, builder macros, assertion macros,
+// and control-flow macros using Nyx's declarative macro system.
+
+// ── Assertion macros ─────────────────────────────────────────────────────────
+
+macro assert_true { (expr) => {
+    if not expr {
+        print("FAIL: assert_true failed")
+    }
+} }
+
+macro assert_eq { (a, b, msg) => {
+    if a != b {
+        print("FAIL: " + msg)
+    } else {
+        print("ok: " + msg)
+    }
+} }
+
+macro assert_ne { (a, b, msg) => {
+    if a == b {
+        print("FAIL: " + msg)
+    } else {
+        print("ok: " + msg)
+    }
+} }
+
+// ── Array builder macros ──────────────────────────────────────────────────────
+
+macro push3 { (arr, a, b, c) => {
+    arr.push(a)
+    arr.push(b)
+    arr.push(c)
+} }
+
+macro fill_range { (arr, start, end_val) => {
+    var fill_i = start
+    while fill_i < end_val {
+        arr.push(fill_i)
+        fill_i = fill_i + 1
+    }
+} }
+
+// ── Control-flow macros ───────────────────────────────────────────────────────
+
+macro unless { (cond, body_val) => {
+    if not cond {
+        print(body_val)
+    }
+} }
+
+macro repeat { (n, body_val) => {
+    var repeat_i = 0
+    while repeat_i < n {
+        print(body_val)
+        repeat_i = repeat_i + 1
+    }
+} }
+
+macro try_or_default { (expr, default_val, result) => {
+    result = expr
+    if result == -1 {
+        result = default_val
+    }
+} }
+
+// ── Timing macro ──────────────────────────────────────────────────────────────
+
+macro timed { (label) => {
+    let t0 = time_ms()
+    print("timing: " + label)
+    let t1 = time_ms()
+    let elapsed = t1 - t0
+    if elapsed >= 0 { print("elapsed ok") }
+} }
+
+// ── Log macros ────────────────────────────────────────────────────────────────
+
+macro log_info { (msg) => {
+    print("[INFO] " + msg)
+} }
+
+macro log_warn { (msg) => {
+    print("[WARN] " + msg)
+} }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+fn test_assert_macros() {
+    print("--- Assert Macros ---")
+    assert_eq!(10, 10, "10 == 10")
+    assert_ne!(1, 2, "1 != 2")
+    assert_eq!(1 + 1, 2, "1+1 == 2")
+    assert_ne!("hello", "world", "hello != world")
+
+    let x = 42
+    assert_true!(x > 0)
+    assert_true!(x == 42)
+}
+
+fn test_array_macros() {
+    print("--- Array Macros ---")
+    var arr: Array = []
+    push3!(arr, "alpha", "beta", "gamma")
+    print(format("size: {}", arr.length()))
+
+    var nums: Array = []
+    fill_range!(nums, 0, 5)
+    print(format("nums: {}", nums.length()))
+    var i = 0
+    while i < nums.length() {
+        let n: int = nums[i]
+        print(n)
+        i = i + 1
+    }
+}
+
+fn test_control_macros() {
+    print("--- Control Macros ---")
+    let done = false
+    unless!(done, "not done yet")
+
+    let x = 5
+    unless!(x > 10, "x is small")
+
+    repeat!(3, "hello!")
+}
+
+fn test_log_macros() {
+    print("--- Log Macros ---")
+    log_info!("system started")
+    log_warn!("memory usage high")
+    log_info!("processing complete")
+}
+
+fn test_try_macro() {
+    print("--- Try Or Default ---")
+    var result = 0
+    try_or_default!(-1, 42, result)
+    print(format("result: {}", result))
+
+    var r2 = 0
+    try_or_default!(100, 42, r2)
+    print(format("r2: {}", r2))
+}
+
+fn test_timed_macro() {
+    print("--- Timed ---")
+    timed!("test operation")
+}
+
+fn main() {
+    print("macro patterns test")
+    test_assert_macros()
+    test_array_macros()
+    test_control_macros()
+    test_log_macros()
+    test_try_macro()
+    test_timed_macro()
+    print("macro patterns ok")
+}

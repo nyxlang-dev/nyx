@@ -1,0 +1,317 @@
+// std/graph.nx — Graph data structures and algorithms for Nyx (v5.2.0)
+// Directed weighted graph via adjacency list
+// Graph layout: [node_count, edges: Array<Array>]
+// Edge format: [from, to, weight]
+
+// ── Construction ──────────────────────────────────────────────────────────────
+
+// Create a new empty graph with n nodes (0..n-1)
+pub fn graph_new(n: int) -> Array {
+    var edges: Array = []
+    var g: Array = [n, edges]
+    return g
+}
+
+pub fn graph_node_count(g: Array) -> int {
+    let n: int = g[0]
+    return n
+}
+
+pub fn graph_edge_count(g: Array) -> int {
+    let edges: Array = g[1]
+    return edges.length()
+}
+
+// Add a directed edge from → to with given weight
+pub fn graph_add_edge(g: Array, src: int, dst: int, weight: int) {
+    let edges: Array = g[1]
+    var edge: Array<int> = [src, dst, weight]
+    edges.push(edge)
+}
+
+// Add an undirected edge (both directions)
+pub fn graph_add_undirected(g: Array, a: int, b: int, weight: int) {
+    graph_add_edge(g, a, b, weight)
+    graph_add_edge(g, b, a, weight)
+}
+
+// Get all neighbors of node v (returns Array of [to, weight] pairs)
+pub fn graph_neighbors(g: Array, v: int) -> Array {
+    let edges: Array = g[1]
+    var result: Array = []
+    var i = 0
+    while i < edges.length() {
+        let edge: Array = edges[i]
+        let esrc: int = edge[0]
+        if esrc == v {
+            let to: int = edge[1]
+            let w: int = edge[2]
+            var nb: Array<int> = [to, w]
+            result.push(nb)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Check if edge exists from → to
+pub fn graph_has_edge(g: Array, src: int, dst: int) -> bool {
+    let edges: Array = g[1]
+    var i = 0
+    while i < edges.length() {
+        let edge: Array = edges[i]
+        let ef: int = edge[0]
+        let et: int = edge[1]
+        if ef == src and et == dst { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// ── BFS ───────────────────────────────────────────────────────────────────────
+
+// BFS traversal from start node. Returns visited nodes in BFS order.
+pub fn graph_bfs(g: Array, start: int) -> Array {
+    let n = graph_node_count(g)
+    var visited: Array<int> = []
+    var queue: Array<int> = [start]
+    var seen: Array<int> = []
+    var i = 0
+    while i < n { seen.push(0)  i = i + 1 }
+    seen[start] = 1
+
+    var qi = 0
+    while qi < queue.length() {
+        let v: int = queue[qi]
+        visited.push(v)
+        qi = qi + 1
+
+        let neighbors = graph_neighbors(g, v)
+        var ni = 0
+        while ni < neighbors.length() {
+            let nb: Array = neighbors[ni]
+            let to: int = nb[0]
+            let already: int = seen[to]
+            if already == 0 {
+                seen[to] = 1
+                queue.push(to)
+            }
+            ni = ni + 1
+        }
+    }
+    return visited
+}
+
+// BFS shortest path (unweighted) from start to end. Returns path or [] if none.
+pub fn graph_bfs_path(g: Array, start: int, end_node: int) -> Array {
+    let n = graph_node_count(g)
+    var prev: Array<int> = []
+    var i = 0
+    while i < n { prev.push(-1)  i = i + 1 }
+
+    var seen: Array<int> = []
+    var j = 0
+    while j < n { seen.push(0)  j = j + 1 }
+    seen[start] = 1
+
+    var queue: Array<int> = [start]
+    var qi = 0
+    var found = false
+
+    while qi < queue.length() {
+        let v: int = queue[qi]
+        qi = qi + 1
+        if v == end_node { found = true }
+        let neighbors = graph_neighbors(g, v)
+        var ni = 0
+        while ni < neighbors.length() {
+            let nb: Array = neighbors[ni]
+            let to: int = nb[0]
+            let already: int = seen[to]
+            if already == 0 {
+                seen[to] = 1
+                prev[to] = v
+                queue.push(to)
+            }
+            ni = ni + 1
+        }
+    }
+
+    if !found { return [] }
+
+    // Reconstruct path
+    var path: Array<int> = []
+    var cur = end_node
+    while cur != -1 {
+        path.push(cur)
+        let p: int = prev[cur]
+        cur = p
+    }
+    // Reverse
+    var reversed: Array<int> = []
+    var ri = path.length() - 1
+    while ri >= 0 {
+        let node: int = path[ri]
+        reversed.push(node)
+        ri = ri - 1
+    }
+    return reversed
+}
+
+// ── DFS ───────────────────────────────────────────────────────────────────────
+
+// DFS traversal from start. Returns visited nodes in DFS order.
+pub fn graph_dfs(g: Array, start: int) -> Array {
+    let n = graph_node_count(g)
+    var visited: Array<int> = []
+    var seen: Array<int> = []
+    var i = 0
+    while i < n { seen.push(0)  i = i + 1 }
+
+    // Iterative DFS using stack
+    var stack: Array<int> = [start]
+    while stack.length() > 0 {
+        // Pop from stack
+        let top_idx = stack.length() - 1
+        let v: int = stack[top_idx]
+        var new_stack: Array<int> = []
+        var si = 0
+        while si < top_idx {
+            let sv: int = stack[si]
+            new_stack.push(sv)
+            si = si + 1
+        }
+        stack = new_stack
+
+        let s: int = seen[v]
+        if s == 0 {
+            seen[v] = 1
+            visited.push(v)
+            let neighbors = graph_neighbors(g, v)
+            var ni = neighbors.length() - 1
+            while ni >= 0 {
+                let nb: Array = neighbors[ni]
+                let to: int = nb[0]
+                let already: int = seen[to]
+                if already == 0 {
+                    stack.push(to)
+                }
+                ni = ni - 1
+            }
+        }
+    }
+    return visited
+}
+
+// Cycle detection (directed graph) via DFS color marking
+// Returns true if cycle exists
+pub fn graph_has_cycle(g: Array) -> bool {
+    let n = graph_node_count(g)
+    // Colors: 0=white, 1=gray(in-stack), 2=black(done)
+    var color: Array<int> = []
+    var i = 0
+    while i < n { color.push(0)  i = i + 1 }
+
+    var v = 0
+    while v < n {
+        let c: int = color[v]
+        if c == 0 {
+            // DFS from v
+            var stack: Array<int> = [v]
+            while stack.length() > 0 {
+                let top_idx = stack.length() - 1
+                let cur: int = stack[top_idx]
+                let cur_color: int = color[cur]
+
+                if cur_color == 0 {
+                    color[cur] = 1  // gray
+                    let neighbors = graph_neighbors(g, cur)
+                    var ni = 0
+                    while ni < neighbors.length() {
+                        let nb: Array = neighbors[ni]
+                        let to: int = nb[0]
+                        let to_color: int = color[to]
+                        if to_color == 1 { return true }
+                        if to_color == 0 { stack.push(to) }
+                        ni = ni + 1
+                    }
+                } else {
+                    // Pop from stack
+                    var new_stack: Array<int> = []
+                    var si = 0
+                    while si < top_idx {
+                        let sv: int = stack[si]
+                        new_stack.push(sv)
+                        si = si + 1
+                    }
+                    stack = new_stack
+                    if cur_color == 1 { color[cur] = 2 }
+                }
+            }
+        }
+        v = v + 1
+    }
+    return false
+}
+
+// ── Dijkstra ──────────────────────────────────────────────────────────────────
+
+// Dijkstra's shortest path from start to all nodes.
+// Returns Array<int> of distances (2^30 = infinity for unreachable nodes)
+pub fn graph_dijkstra(g: Array, start: int) -> Array {
+    let n = graph_node_count(g)
+    let INF = 1073741824  // 2^30
+
+    var dist: Array<int> = []
+    var visited: Array<int> = []
+    var i = 0
+    while i < n {
+        dist.push(INF)
+        visited.push(0)
+        i = i + 1
+    }
+    dist[start] = 0
+
+    var remaining = n
+    while remaining > 0 {
+        // Find unvisited node with minimum distance
+        var u = -1
+        var min_d = INF + 1
+        var j = 0
+        while j < n {
+            let dj: int = dist[j]
+            let vj: int = visited[j]
+            if vj == 0 and dj < min_d {
+                min_d = dj
+                u = j
+            }
+            j = j + 1
+        }
+        if u == -1 { remaining = 0 }
+        else {
+            visited[u] = 1
+            let du: int = dist[u]
+            let neighbors = graph_neighbors(g, u)
+            var ni = 0
+            while ni < neighbors.length() {
+                let nb: Array = neighbors[ni]
+                let to: int = nb[0]
+                let w: int = nb[1]
+                let dv: int = dist[to]
+                let new_d = du + w
+                if new_d < dv {
+                    dist[to] = new_d
+                }
+                ni = ni + 1
+            }
+            remaining = remaining - 1
+        }
+    }
+    return dist
+}
+
+// Get shortest distance from start to end (after dijkstra)
+pub fn graph_dist(dijkstra_result: Array, end_node: int) -> int {
+    let d: int = dijkstra_result[end_node]
+    return d
+}

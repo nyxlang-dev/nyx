@@ -1,0 +1,25 @@
+// Test 110: TLS/HTTPS — basic TLS support verification
+
+fn main() {
+    // Test 1: tls_connect to invalid host returns 0 (error)
+    let handle: int = tls_connect("invalid.host.example", 443)
+    print(handle == 0)
+
+    // Test 2: tls_close with 0 handle should not crash
+    tls_close(0)
+    print(true)
+
+    // Test 3: https_get with invalid URL returns empty string
+    let resp: String = https_get("https://invalid.host.example/")
+    print(resp.length() == 0)
+
+    // Test 4: tls_read with 0 handle returns empty string
+    let data: String = tls_read(0, 1024)
+    print(data.length() == 0)
+
+    // Test 5: tls_write with 0 handle returns error (<= 0)
+    let written: int = tls_write(0, "test")
+    print(written <= 0)
+
+    print("All TLS tests passed!")
+}

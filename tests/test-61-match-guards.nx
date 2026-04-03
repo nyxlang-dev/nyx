@@ -1,0 +1,26 @@
+// Test 61: Match guards
+// Verifica pattern matching con guards: pattern if condition => body
+
+enum Color { Red, Green, Blue }
+
+fn describe(c: Color, bright: bool) -> String {
+    return match c {
+        Color.Red if bright => "bright red",
+        Color.Red => "dark red",
+        Color.Green if bright => "bright green",
+        Color.Green => "dark green",
+        Color.Blue => "blue",
+        _ => "unknown"
+    }
+}
+
+fn main() -> int {
+    print(describe(Color.Red, true))
+    print(describe(Color.Red, false))
+    print(describe(Color.Green, true))
+    print(describe(Color.Green, false))
+    print(describe(Color.Blue, false))
+    return 0
+}
+
+main()

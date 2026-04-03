@@ -1,0 +1,19 @@
+// test-145-spawn: verifica la sintaxis spawn { body } para goroutines
+// spawn { } desugars to thread_spawn — body runs in a separate thread
+
+fn main() -> int {
+    // Test: spawn is syntactically valid
+    // spawn desugars to thread_spawn with hoisted lambda
+
+    // Simple spawn: fire-and-forget goroutines
+    spawn { print("goroutine 1"); return 0 }
+    spawn { print("goroutine 2"); return 0 }
+    spawn { print("goroutine 3"); return 0 }
+
+    // Give goroutines time to run
+    sleep(50)
+
+    print("spawn syntax ok")
+    print("spawn ok")
+    return 0
+}

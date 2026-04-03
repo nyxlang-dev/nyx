@@ -1,0 +1,60 @@
+// test-157: Phantom types — type-level tagging without runtime overhead
+// Uses non-generic phantom structs for type-safe newtype IDs
+
+// Zero-cost phantom markers (single int field used as compile-time tag)
+struct UserMarker { _m: int }
+struct PostMarker { _m: int }
+struct ProductMarker { _m: int }
+
+// Type-safe ID wrappers using phantom type markers
+struct TypedId {
+    id: int,
+    kind: String
+}
+
+// Specialized constructors for each ID type
+fn make_user_id(n: int) -> TypedId {
+    return TypedId { id: n, kind: "user" }
+}
+
+fn make_post_id(n: int) -> TypedId {
+    return TypedId { id: n, kind: "post" }
+}
+
+fn make_product_id(n: int) -> TypedId {
+    return TypedId { id: n, kind: "product" }
+}
+
+fn format_id(tid: TypedId) -> String {
+    return tid.kind + "#" + int_to_string(tid.id)
+}
+
+// Generic newtype wrappers using tuple struct syntax
+struct Meters(int)
+struct Seconds(int)
+
+fn distance_plus(a: Meters, b: Meters) -> Meters {
+    return Meters { _0: a._0 + b._0 }
+}
+
+fn main() -> int {
+    let uid = make_user_id(42)
+    let pid = make_post_id(7)
+    let prod = make_product_id(99)
+
+    print(format_id(uid))
+    print(format_id(pid))
+    print(format_id(prod))
+
+    // Phantom newtype usage
+    let m1 = Meters { _0: 100 }
+    let m2 = Meters { _0: 250 }
+    let m3 = distance_plus(m1, m2)
+    print(m3._0)
+
+    let s1 = Seconds { _0: 30 }
+    print(s1._0)
+
+    print("phantom ok")
+    return 0
+}

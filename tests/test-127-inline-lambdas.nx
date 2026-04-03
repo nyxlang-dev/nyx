@@ -1,0 +1,24 @@
+// Test 127: Inline lambda expressions
+// fn(params) -> ret { body } syntax in expression context
+
+fn main() -> int {
+    // Basic lambda assigned to variable
+    let add = fn(a: int, b: int) -> int { return a + b }
+    print(add(3, 4))
+
+    // Lambda in sort_by
+    var arr: Array = [5, 2, 8, 1, 9, 3]
+    sort_by(arr, fn(a: int, b: int) -> int { return a - b })
+    var i = 0
+    while i < arr.length() {
+        let v: int = arr[i]
+        print(v)
+        i = i + 1
+    }
+
+    // Lambda passed to function directly
+    let double = fn(x: int) -> int { return x * 2 }
+    print(double(21))
+
+    return 0
+}

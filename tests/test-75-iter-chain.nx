@@ -1,0 +1,54 @@
+// Test 75: Complex iterator chains + chain adapter
+fn square(x: int) -> int { return x * x }
+fn is_big(x: int) -> bool { return x > 10 }
+fn double(x: int) -> int { return x * 2 }
+
+fn main() {
+    // Complex chain: map + filter + collect
+    let arr = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let result: Array = arr.iter().map(square).filter(is_big).collect()
+    print(result.length())  // 7 (16,25,36,49,64,81,100)
+    let r0: int = result[0]
+    let r5: int = result[5]
+    print(r0)   // 16
+    print(r5)   // 81
+
+    // filter + map + sum
+    let total = arr.iter().map(square).filter(is_big).sum()
+    print(total)  // 16+25+36+49+64+81+100 = 371
+
+    // skip + take + collect
+    let middle: Array = arr.iter().skip(2).take(5).collect()
+    print(middle.length())  // 5
+    let m0: int = middle[0]
+    let m4: int = middle[4]
+    print(m0)   // 3
+    print(m4)   // 7
+
+    // chain: two arrays
+    let a = [1, 2, 3]
+    let b = [4, 5, 6]
+    let it_a: Iterator = a.iter()
+    let it_b: Iterator = b.iter()
+    let chained: Array = it_a.chain(it_b).collect()
+    print(chained.length())  // 6
+    let c0: int = chained[0]
+    let c5: int = chained[5]
+    print(c0)   // 1
+    print(c5)   // 6
+
+    // chain + map
+    let it_a2: Iterator = a.iter()
+    let it_b2: Iterator = b.iter()
+    let chained_sum = it_a2.chain(it_b2).map(double).sum()
+    print(chained_sum)  // (1+2+3+4+5+6)*2 = 42
+
+    // for-in over complex chain
+    var acc2 = 0
+    for x in arr.iter().map(square).take(4) {
+        acc2 = acc2 + x
+    }
+    print(acc2)  // 1+4+9+16 = 30
+
+    print("iter chain ok")
+}

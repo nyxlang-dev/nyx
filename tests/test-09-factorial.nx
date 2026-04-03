@@ -1,0 +1,23 @@
+// TEST 9: Recursión - Factorial
+fn factorial(n: int) -> int {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+fn main() {
+    print("=== TEST 9: FACTORIAL ===")
+
+    print("Factorial de 5:")
+    print(factorial(5))
+
+    print("Factorial de 7:")
+    print(factorial(7))
+
+    print("Factorial de 10:")
+    print(factorial(10))
+
+    print("✅ Test 9 completado")
+    return 0
+}

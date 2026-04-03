@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# nyx — wrapper script for running Nyx programs directly
+# Usage: nyx script.nx [args...]
+#        #!/usr/bin/env nyx  (shebang in .nx files)
+#
+# Requires: nyx_bootstrap in PATH or in the same directory as this script
+
+set -e
+
+# Resolve symlinks so SCRIPT_DIR points to the real location
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+NYX_HOME="${NYX_HOME:-$SCRIPT_DIR/..}"
+
+# Find nyx_bootstrap
+if command -v nyx_bootstrap &>/dev/null; then
+    NYX_BOOTSTRAP="nyx_bootstrap"
+elif [ -x "$NYX_HOME/nyx_bootstrap" ]; then
+    NYX_BOOTSTRAP="$NYX_HOME/nyx_bootstrap"
+else
+    echo "error: nyx_bootstrap not found. Run 'make bootstrap' first." >&2
+    exit 1
+fi
+
+# Route PM subcommands to nyx_build
+case "${1:-}" in
+    init|add|build|run|info)
+        NYX_BUILD="$NYX_HOME/nyx_build"
+        if [ ! -x "$NYX_BUILD" ]; then
+            echo "error: nyx_build not found. Run: cd $NYX_HOME && make build-nyx-build" >&2
+            exit 1
+        fi
+        export NYX_HOME
+        exec "$NYX_BUILD" "$@"
+        ;;
+esac
+
+if [ $# -lt 1 ]; then
+    echo "Usage: nyx <file.nx> [args...]" >&2
+    exit 1
+fi
+
+INPUT_FILE="$1"
+shift
+
+if [ ! -f "$INPUT_FILE" ]; then
+    echo "error: file not found: $INPUT_FILE" >&2
+    exit 1
+fi
+
+# Runtime sources (relative to NYX_HOME)
+RUNTIME_SRCS="$NYX_HOME/runtime/runtime.c $NYX_HOME/runtime/strings.c \
+  $NYX_HOME/runtime/runtime-arrays.c $NYX_HOME/runtime/maps.c \
+  $NYX_HOME/runtime/file-io.c $NYX_HOME/runtime/iterators.c \
+  $NYX_HOME/runtime/net.c $NYX_HOME/runtime/thread.c \
+  $NYX_HOME/runtime/regex.c $NYX_HOME/runtime/time.c \
+  $NYX_HOME/runtime/crypto.c $NYX_HOME/runtime/tls.c \
+  $NYX_HOME/runtime/scheduler.c $NYX_HOME/runtime/event_loop.c \
+  $NYX_HOME/runtime/sqlite_adapter.c $NYX_HOME/runtime/compress.c \
+  $NYX_HOME/runtime/random.c $NYX_HOME/runtime/url.c \
+  $NYX_HOME/runtime/msgpack.c $NYX_HOME/runtime/websocket.c \
+  $NYX_HOME/runtime/persist.c $NYX_HOME/runtime/http2.c"
+LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+
+# Use a temp directory to avoid polluting CWD
+TMPDIR_NYX="$(mktemp -d /tmp/nyx_run_XXXXXX)"
+trap 'rm -rf "$TMPDIR_NYX"' EXIT
+
+cp "$INPUT_FILE" "$TMPDIR_NYX/script.nx"
+
+# Change to NYX_HOME so the driver can find std/ and compiler/
+(cd "$NYX_HOME" && cp "$TMPDIR_NYX/script.nx" script.nx && \
+  "$NYX_BOOTSTRAP" && \
+  clang script.ll $RUNTIME_SRCS $LIBS -o "$TMPDIR_NYX/prog") 2>/dev/null
+
+"$TMPDIR_NYX/prog" "$@"

@@ -1,0 +1,63 @@
+struct Point { x: int, y: int }
+struct Color { r: int, g: int, b: int }
+
+trait Display {
+    fn to_string(self) -> String
+}
+
+trait Eq {
+    fn equals(self, other: Self) -> bool
+}
+
+impl Display for Point {
+    fn to_string(self) -> String {
+        return "(" + int_to_string(self.x) + ", " + int_to_string(self.y) + ")"
+    }
+}
+
+impl Display for Color {
+    fn to_string(self) -> String {
+        return "rgb(" + int_to_string(self.r) + "," + int_to_string(self.g) + "," + int_to_string(self.b) + ")"
+    }
+}
+
+impl Eq for Point {
+    fn equals(self, other: Point) -> bool {
+        return self.x == other.x and self.y == other.y
+    }
+}
+
+impl Point {
+    fn manhattan(self) -> int {
+        return self.x + self.y
+    }
+}
+
+fn print_it<T: Display>(x: T) -> String {
+    return x.to_string()
+}
+
+fn main() {
+    let p = Point { x: 3, y: 4 }
+    let c = Color { r: 255, g: 128, b: 0 }
+
+    print("point: " + p.to_string())
+    print("color: " + c.to_string())
+
+    let p2 = Point { x: 3, y: 4 }
+    let p3 = Point { x: 1, y: 2 }
+    if p.equals(p2) { print("p == p2: true") }
+    else { print("p == p2: false") }
+    if p.equals(p3) { print("p == p3: true") }
+    else { print("p == p3: false") }
+
+    print("manhattan: " + int_to_string(p.manhattan()))
+
+    let s1 = print_it<Point>(p)
+    print("print_it<Point>: " + s1)
+    let s2 = print_it<Color>(c)
+    print("print_it<Color>: " + s2)
+
+    print("All traits tests passed!")
+}
+main()

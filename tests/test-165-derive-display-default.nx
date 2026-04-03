@@ -1,0 +1,73 @@
+// test-165-derive-display-default.nx — #[derive(Display)] + #[derive(Default)] (v4.2.0)
+
+#[derive(Display, Default)]
+struct Point {
+    x: int,
+    y: int
+}
+
+#[derive(Display, Default)]
+struct Person {
+    name: String,
+    age: int,
+    score: float
+}
+
+#[derive(Display, Default, Clone, PartialEq)]
+struct Config {
+    width: int,
+    height: int,
+    enabled: bool
+}
+
+fn test_display() {
+    print("--- Display ---")
+    let p = Point { x: 3, y: 7 }
+    print(p.to_string())
+
+    let person = Person { name: "Alice", age: 30, score: 9.5 }
+    print(person.to_string())
+
+    let cfg = Config { width: 1920, height: 1080, enabled: true }
+    print(cfg.to_string())
+}
+
+fn test_default() {
+    print("--- Default ---")
+    let dp = Point_default()
+    print(dp.to_string())
+
+    let dcfg = Config_default()
+    print(dcfg.to_string())
+}
+
+fn test_combined() {
+    print("--- Combined ---")
+    // Default then compare
+    let p = Point_default()
+    print(format("default: {}", p.to_string()))
+
+    // PartialEq
+    let c1 = Config { width: 800, height: 600, enabled: false }
+    let c2 = Config { width: 800, height: 600, enabled: false }
+    let c3 = Config { width: 1024, height: 768, enabled: true }
+
+    if c1.eq(c2) {
+        print("c1 == c2 ok")
+    }
+    if not c1.eq(c3) {
+        print("c1 != c3 ok")
+    }
+
+    // Display for all
+    print(c1.to_string())
+    print(c3.to_string())
+}
+
+fn main() {
+    print("derive display/default test")
+    test_display()
+    test_default()
+    test_combined()
+    print("derive display/default ok")
+}

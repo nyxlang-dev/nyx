@@ -1,0 +1,52 @@
+// Test 39: Dynamic Dispatch via vtables
+// Tests dyn Trait for runtime polymorphism
+
+trait Greet {
+    fn hello(self) -> String
+}
+
+struct English {}
+struct Spanish {}
+struct French {
+    formal: bool
+}
+
+impl Greet for English {
+    fn hello(self) -> String {
+        return "Hello!"
+    }
+}
+
+impl Greet for Spanish {
+    fn hello(self) -> String {
+        return "Hola!"
+    }
+}
+
+impl Greet for French {
+    fn hello(self) -> String {
+        return "Bonjour!"
+    }
+}
+
+fn greet_any(g: dyn Greet) -> String {
+    return g.hello()
+}
+
+fn main() -> int {
+    let e = English{}
+    let s = Spanish{}
+    let f = French{ formal: true }
+
+    // Basic dynamic dispatch
+    print(greet_any(e))
+    print(greet_any(s))
+    print(greet_any(f))
+
+    // Static dispatch still works
+    print(e.hello())
+    print(s.hello())
+
+    print("All dynamic dispatch tests passed!")
+    return 0
+}

@@ -1,0 +1,154 @@
+// Test A30: Integration Stress Test
+// Combines: struct+impl, enum+match+guards, trait+dyn, typed closures, typed arrays,
+//           generics, tuples, maps, string interpolation, for-in, const, compound assign
+
+const VERSION: int = 2
+
+trait Printable {
+    fn to_str(self) -> String
+}
+
+struct Employee {
+    name: String,
+    department: String,
+    salary: int
+}
+
+impl Employee {
+    fn annual_salary(self) -> int {
+        return self.salary * 12
+    }
+
+    fn raise(self, pct: int) -> Employee {
+        let new_sal = self.salary + self.salary * pct / 100
+        return Employee { name: self.name, department: self.department, salary: new_sal }
+    }
+}
+
+impl Printable for Employee {
+    fn to_str(self) -> String {
+        return "${self.name} (${self.department}) - ${self.salary}/mo"
+    }
+}
+
+struct Department {
+    name: String,
+    budget: int
+}
+
+impl Printable for Department {
+    fn to_str(self) -> String {
+        return "Dept: ${self.name}, budget=${self.budget}"
+    }
+}
+
+fn print_any(obj: dyn Printable) {
+    print(obj.to_str())
+}
+
+enum Rating {
+    Excellent,
+    Good,
+    Average,
+    Poor
+}
+
+fn rate_salary(salary: int) -> Rating {
+    if salary >= 8000 { return Rating.Excellent }
+    if salary >= 5000 { return Rating.Good }
+    if salary >= 3000 { return Rating.Average }
+    return Rating.Poor
+}
+
+fn rating_name(r: Rating) -> String {
+    return match r {
+        Rating.Excellent => "excellent",
+        Rating.Good => "good",
+        Rating.Average => "average",
+        Rating.Poor => "poor"
+    }
+}
+
+fn sum_salaries(emps: Array, count: int) -> int {
+    var total = 0
+    var i = 0
+    while i < count {
+        let emp: Employee = emps[i]
+        total += emp.salary
+        i += 1
+    }
+    return total
+}
+
+fn make_bonus_fn(pct: int) -> Fn(int) -> int {
+    fn calc(salary: int) -> int {
+        return salary * pct / 100
+    }
+    return calc
+}
+
+fn apply_bonus(f: Fn(int) -> int, salary: int) -> int {
+    return f(salary)
+}
+
+fn main() -> int {
+    print("v${VERSION}")
+
+    let e1 = Employee { name: "Alice", department: "Eng", salary: 8000 }
+    let e2 = Employee { name: "Bob", department: "Sales", salary: 5000 }
+    let e3 = Employee { name: "Carol", department: "Eng", salary: 6000 }
+
+    print_any(e1)
+    print_any(e2)
+
+    print(e1.annual_salary())
+    let e1_raised = e1.raise(10)
+    print(e1_raised.salary)
+
+    let team = [e1, e2, e3]
+    let total_sal = sum_salaries(team, 3)
+    print(total_sal)
+
+    let r1 = rate_salary(e1.salary)
+    let r2 = rate_salary(e2.salary)
+    let r3 = rate_salary(2000)
+    print(rating_name(r1))
+    print(rating_name(r2))
+    print(rating_name(r3))
+
+    let holiday_bonus: Fn(int) -> int = make_bonus_fn(15)
+    let bonus1 = apply_bonus(holiday_bonus, e1.salary)
+    print(bonus1)
+
+    let dept_map = Map.new()
+    dept_map.insert("Eng", 2)
+    dept_map.insert("Sales", 1)
+    let eng_count: int = dept_map.get("Eng")
+    print(eng_count)
+
+    let dept = Department { name: "Engineering", budget: 500000 }
+    print_any(dept)
+
+    let (bonus_pct, label) = (15, "holiday")
+    print("${label} bonus: ${bonus_pct}%")
+
+    let upper_name: String = e1.name.toUpper()
+    print(upper_name)
+
+    var salary_sum = 0
+    for emp: Employee in team {
+        salary_sum += emp.salary
+    }
+    print(salary_sum)
+
+    let nums = [30, 10, 50, 20, 40]
+    let found: int = nums.indexOf(50)
+    print(found)
+
+    let sliced: Array = nums.slice(1, 4)
+    print(sliced.length())
+    print(sliced[0])
+
+    print("A30 passed")
+    return 0
+}

@@ -1,0 +1,6 @@
+tls_server_init: -1 (expected)
+tls_accept: 0 (expected)
+tls_read_line: "" (expected empty)
+tls_write_conn: -1 (expected)
+tls_close_conn: ok (no crash)
+ALL TLS SERVER TESTS PASSED

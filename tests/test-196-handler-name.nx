@@ -1,0 +1,7 @@
+fn handler(x: int) -> int {
+    return x * 2
+}
+
+fn main() {
+    print(handler(21))
+}

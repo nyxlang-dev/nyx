@@ -1,0 +1,8 @@
+// test-strings.nx
+fn main() {
+    print("¡Hola desde Nyx!")
+    print("Esto es una prueba")
+    
+    let mensaje = "Runtime funcionando"
+    print(mensaje)
+}

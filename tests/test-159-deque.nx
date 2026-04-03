@@ -1,0 +1,51 @@
+// test-159: Deque + LinkedList operations
+import "std/linkedlist"
+
+fn main() -> int {
+    // === DEQUE (circular buffer) ===
+    let d = dq_new()
+    dq_push_back(d, "C")
+    dq_push_back(d, "D")
+    dq_push_front(d, "B")
+    dq_push_front(d, "A")
+
+    print(dq_size(d))
+    print(dq_peek_front(d))
+    print(dq_peek_back(d))
+
+    let f1: String = dq_pop_front(d)
+    print(f1)
+    let b1: String = dq_pop_back(d)
+    print(b1)
+    print(dq_size(d))
+
+    // Remaining: [B, C]
+    print(dq_peek_front(d))
+    print(dq_peek_back(d))
+
+    // === LINKED LIST ===
+    let ll = ll_new()
+
+    ll_push_back(ll, "first")
+    ll_push_back(ll, "second")
+    ll_push_back(ll, "third")
+    ll_push_front(ll, "zero")
+
+    print(ll_size(ll))
+    print(ll_peek_front(ll))
+
+    let items: Array = ll_to_array(ll)
+    var i = 0
+    while i < items.length() {
+        let v: String = items[i]
+        print(v)
+        i = i + 1
+    }
+
+    let p1: String = ll_pop_front(ll)
+    print(p1)
+    print(ll_size(ll))
+
+    print("deque linkedlist ok")
+    return 0
+}

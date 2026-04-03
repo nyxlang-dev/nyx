@@ -1,0 +1,34 @@
+// Test 118: task_race + task_cancel (v0.7.4)
+
+async fn instant(x: int) -> int {
+    return x * 2
+}
+
+async fn delayed(x: int) -> int {
+    sleep(500)
+    return x * 3
+}
+
+fn main() {
+    // task_race: primer task en completar gana
+    let t1 = spawn_task(instant(5))
+    let t2 = spawn_task(delayed(5))
+    let result: int = task_race(t1, t2)
+    assert(result == 10)  // instant gana: 5*2=10
+    task_cancel(t2)
+
+    // task_race ambas instantaneas — resultado valido segun quien gane
+    let t3 = spawn_task(instant(3))
+    let t4 = spawn_task(instant(4))
+    let r2: int = task_race(t3, t4)
+    assert(r2 >= 6)
+    assert(r2 <= 8)
+
+    // task_cancel de task ya completada (no-op, no crash)
+    let t5 = spawn_task(instant(1))
+    let r3: int = task_await(t5)
+    assert(r3 == 2)
+    task_cancel(t5)
+
+    print("ok")
+}

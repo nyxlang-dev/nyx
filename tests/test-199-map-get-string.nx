@@ -1,0 +1,27 @@
+// Test: Map.get() returns String when LHS has : String annotation
+// Covers local, global, and field_access paths
+
+struct Config {
+    params: Map
+}
+
+var g_map: Map = Map.new()
+
+fn main() {
+    // Test 1: Local map with String values — tracked via insert
+    var local: Map = Map.new()
+    local.insert("greeting", "hello")
+    let v1: String = local.get("greeting")
+    print(v1)
+
+    // Test 2: Global map with String values — uses expected_type hint
+    g_map.insert("lang", "nyx")
+    let v2: String = g_map.get("lang")
+    print(v2)
+
+    // Test 3: Field access map with String values — uses expected_type hint
+    var cfg: Config = Config { params: Map.new() }
+    cfg.params.insert("mode", "fast")
+    let v3: String = cfg.params.get("mode")
+    print(v3)
+}

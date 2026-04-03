@@ -1,0 +1,33 @@
+// Test A03: Funciones anidadas (closures que capturan scope)
+// NOTA: Higher-order functions (pasar fn como argumento) NO soportado aún
+// Lo que SÍ funciona: funciones anidadas que capturan variables del scope exterior
+
+fn compute_with_offset(base: int, offset: int) -> int {
+    fn add_offset(x: int) -> int {
+        return x + offset
+    }
+    return add_offset(base)
+}
+
+fn accumulate(n: int) -> int {
+    var total = 0
+    fn add_to_total(x: int) {
+        total = total + x
+    }
+    var i = 1
+    while i <= n {
+        add_to_total(i)
+        i = i + 1
+    }
+    return total
+}
+
+fn main() {
+    // compute_with_offset(10, 5) = 15
+    print(compute_with_offset(10, 5))
+
+    // accumulate(10) = 1+2+...+10 = 55
+    print(accumulate(10))
+
+    return 0
+}

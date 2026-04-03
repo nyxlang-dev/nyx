@@ -1,0 +1,68 @@
+// Test 103: Tuple return types — functions returning tuples with destructuring
+
+fn swap(a: int, b: int) -> (int, int) {
+    return (b, a)
+}
+
+fn divide(a: int, b: int) -> (int, int) {
+    let q = a / b
+    let r = a % b
+    return (q, r)
+}
+
+fn min_max(arr: Array) -> (int, int) {
+    var lo: int = arr[0]
+    var hi: int = arr[0]
+    var i = 1
+    while i < arr.length() {
+        let v: int = arr[i]
+        if v < lo { lo = v }
+        if v > hi { hi = v }
+        i = i + 1
+    }
+    return (lo, hi)
+}
+
+fn parse_entry(s: String) -> (String, int) {
+    return ("Alice", 30)
+}
+
+fn triple(x: int) -> (int, int, int) {
+    return (x, x * 2, x * 3)
+}
+
+fn main() {
+    // Test 1: Simple swap
+    let (a, b) = swap(1, 2)
+    print(int_to_string(a))
+    print(int_to_string(b))
+
+    // Test 2: Divide with quotient/remainder
+    let (q, r) = divide(17, 5)
+    print(int_to_string(q))
+    print(int_to_string(r))
+
+    // Test 3: Min/max from array
+    let nums = [3, 1, 4, 1, 5, 9, 2, 6]
+    let (lo, hi) = min_max(nums)
+    print(int_to_string(lo))
+    print(int_to_string(hi))
+
+    // Test 4: Mixed types (String, int)
+    let (name, age) = parse_entry("Alice:30")
+    print(name)
+    print(int_to_string(age))
+
+    // Test 5: Triple (3-element tuple)
+    let (x, y, z) = triple(5)
+    print(int_to_string(x))
+    print(int_to_string(y))
+    print(int_to_string(z))
+
+    // Test 6: Chained use
+    let (q2, r2) = divide(hi, lo)
+    print(int_to_string(q2))
+    print(int_to_string(r2))
+
+    print("All tuple return tests passed!")
+}

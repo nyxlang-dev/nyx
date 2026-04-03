@@ -1,0 +1,44 @@
+// std/log.nx — Logging framework para Nyx
+// Niveles: DEBUG=0, INFO=1, WARN=2, ERROR=3
+
+// Variable global de nivel de log (default: INFO)
+var __log_level = 1
+
+pub fn log_set_level(level: int) {
+    __log_level = level
+}
+
+pub fn log_get_level() -> int {
+    return __log_level
+}
+
+fn __log_level_str(level: int) -> String {
+    if level == 0 { return "DEBUG" }
+    if level == 1 { return "INFO" }
+    if level == 2 { return "WARN" }
+    if level == 3 { return "ERROR" }
+    return "UNKNOWN"
+}
+
+fn __log_msg(level: int, msg: String) {
+    if level >= __log_level {
+        let prefix = "[" + __log_level_str(level) + "] "
+        print(prefix + msg)
+    }
+}
+
+pub fn log_debug(msg: String) {
+    __log_msg(0, msg)
+}
+
+pub fn log_info(msg: String) {
+    __log_msg(1, msg)
+}
+
+pub fn log_warn(msg: String) {
+    __log_msg(2, msg)
+}
+
+pub fn log_error(msg: String) {
+    __log_msg(3, msg)
+}

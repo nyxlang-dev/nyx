@@ -1,0 +1,14 @@
+// Test 66: panic() builtin
+// Tests that panic() works in branches without crashing when not reached
+
+fn safe_div(a: int, b: int) -> int {
+    if b == 0 { panic("division by zero") }
+    return a / b
+}
+
+fn main() -> int {
+    print(safe_div(10, 2))
+    print(safe_div(42, 7))
+    print("panic test passed")
+    return 0
+}

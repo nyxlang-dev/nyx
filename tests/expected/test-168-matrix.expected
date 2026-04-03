@@ -1,0 +1,33 @@
+matrix test
+--- Basic ---
+rows: 2 cols: 3
+[1, 2, 3]
+[4, 5, 6]
+--- Identity ---
+[1, 0, 0]
+[0, 1, 0]
+[0, 0, 1]
+trace: 3
+--- Add/Sub ---
+a + b:
+[6, 8]
+[10, 12]
+b - a:
+[4, 4]
+[4, 4]
+--- Multiply ---
+[58, 64]
+[139, 154]
+--- Transpose ---
+original:
+[1, 2, 3]
+[4, 5, 6]
+transposed:
+[1, 4]
+[2, 5]
+[3, 6]
+--- Scale ---
+[3, 6]
+[9, 12]
+frobenius_sq: 270
+matrix ok

@@ -1,0 +1,48 @@
+// Test 33: Returnable closures
+// Closures can be returned from functions and called later
+
+// === Test 1: make_adder pattern ===
+fn make_adder(n: int) -> Fn {
+    fn add(x: int) -> int {
+        return n + x
+    }
+    return add
+}
+
+// === Test 2: counter factory ===
+fn make_counter(start: int) -> Fn {
+    var count = start
+    fn increment() -> int {
+        count = count + 1
+        return count
+    }
+    return increment
+}
+
+// === Test 3: closure passed as Fn argument ===
+fn apply(f: Fn, x: int) -> int {
+    return f(x)
+}
+
+fn main() {
+    // Test 1: make_adder
+    let add5 = make_adder(5)
+    let add10 = make_adder(10)
+    print("add5(3) = " + int_to_string(add5(3)))
+    print("add10(3) = " + int_to_string(add10(3)))
+    print("add5(0) = " + int_to_string(add5(0)))
+
+    // Test 2: counter factory
+    let c = make_counter(0)
+    print("counter: " + int_to_string(c()))
+    print("counter: " + int_to_string(c()))
+    print("counter: " + int_to_string(c()))
+
+    // Test 3: passing returned closure to apply
+    let double_plus_1 = make_adder(1)
+    print("apply(add1, 99) = " + int_to_string(apply(double_plus_1, 99)))
+
+    print("closures OK")
+}
+
+main()

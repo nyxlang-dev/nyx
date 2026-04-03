@@ -1,0 +1,37 @@
+// TEST 3: Operadores Lógicos
+fn main() {
+    print("=== TEST 3: LÓGICA ===")
+
+    let verdadero = true
+    let falso = false
+
+    print("AND (true and false):")
+    print(verdadero and falso)
+
+    print("OR (true or false):")
+    print(verdadero or falso)
+
+    print("NOT (not true):")
+    print(not verdadero)
+
+    print("Igual (5 == 5):")
+    print(5 == 5)
+
+    print("Diferente (5 != 3):")
+    print(5 != 3)
+
+    print("Menor (3 < 5):")
+    print(3 < 5)
+
+    print("Mayor (5 > 3):")
+    print(5 > 3)
+
+    print("Menor o igual (3 <= 3):")
+    print(3 <= 3)
+
+    print("Mayor o igual (5 >= 5):")
+    print(5 >= 5)
+
+    print("✅ Test 3 completado")
+    return 0
+}
