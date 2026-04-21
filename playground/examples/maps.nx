@@ -1,0 +1,19 @@
+// maps.nx
+// Hash map operations in Nyx
+
+fn main() {
+    var m: Map = Map.new()
+    m.insert("name", "Nyx")
+    m.insert("version", "0.12.0")
+    m.insert("type", "compiled")
+
+    print(m.get("name"))
+    print(m.get("version"))
+    print(m.get("type"))
+    print(m.size())
+
+    m.remove("type")
+    print(m.size())
+    print(m.contains("type"))
+    print(m.contains("name"))
+}

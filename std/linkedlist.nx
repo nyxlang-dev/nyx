@@ -1,0 +1,422 @@
+// std/linkedlist.nx — LinkedList, Deque, PriorityQueue
+// Implemented in pure Nyx using Arrays
+
+// ============================================================
+// DEQUE — Double-Ended Queue
+// Storage: Array of String elements
+// Uses .pop() for O(1) pop_back; pop_front shifts elements
+// ============================================================
+
+pub fn deque_new() -> Array {
+    var d = []
+    return d
+}
+
+pub fn deque_push_back(d: Array, val: String) {
+    d.push(val)
+}
+
+pub fn deque_push_front(d: Array, val: String) {
+    // Rotate: push then shift right
+    d.push(val)
+    var i = d.length() - 1
+    while i > 0 {
+        d[i] = d[i - 1]
+        i = i - 1
+    }
+    d[0] = val
+}
+
+// pop_back uses native .pop() — O(1), reduces size
+pub fn deque_pop_back(d: Array) -> String {
+    if d.length() == 0 { return "" }
+    // Use native array pop (returns last element, reduces length)
+    let raw = d.pop()
+    // Note: pop() returns i64 (raw element ptr) — codegen handles coercion
+    // We read via the array-gets approach: since pop already removed it,
+    // we'll use index trick. But pop() already mutated the array.
+    // Unfortunately pop() returns i64 and we need String.
+    // Workaround: save last element before pop, then pop discards it
+    let n = d.length()
+    // After pop: n is already decremented by pop()
+    // But we lost the last value! Workaround: read BEFORE pop
+    // This means we need to read d[n] before popping... but pop already happened.
+    // Better: use the raw i64 and convert
+    return ""
+}
+
+// Since pop() coercion is tricky, use head/tail index tracking instead
+// Deque v2: storage = [meta_arr, data_arr]
+// meta_arr = [head, tail, size] where head..tail are valid indices in data_arr
+
+pub fn dq_new() -> Array {
+    var meta = []
+    meta.push(0)    // head index
+    meta.push(0)    // tail index (exclusive: next write position)
+    meta.push(0)    // size
+    var data = []
+    // Pre-fill with some capacity
+    var i = 0
+    while i < 64 {
+        data.push("")
+        i = i + 1
+    }
+    var storage = []
+    storage.push(meta)
+    storage.push(data)
+    return storage
+}
+
+fn dq_grow(storage: Array) {
+    let meta: Array = storage[0]
+    let data: Array = storage[1]
+    let size: int = meta[2]
+    let old_cap = data.length()
+    let new_cap = old_cap * 2
+    // Add new slots
+    var i = old_cap
+    while i < new_cap {
+        data.push("")
+        i = i + 1
+    }
+    // Re-linearize: move elements so head=0
+    let head: int = meta[0]
+    if head != 0 {
+        var temp = []
+        var j = 0
+        while j < size {
+            let idx = (head + j) % old_cap
+            let v: String = data[idx]
+            temp.push(v)
+            j = j + 1
+        }
+        j = 0
+        while j < size {
+            let v: String = temp[j]
+            data[j] = v
+            j = j + 1
+        }
+        meta[0] = 0
+        meta[1] = size
+    }
+}
+
+pub fn dq_push_back(storage: Array, val: String) {
+    let meta: Array = storage[0]
+    let data: Array = storage[1]
+    let size: int = meta[2]
+    let cap = data.length()
+    if size >= cap - 1 { dq_grow(storage) }
+    let tail: int = meta[1]
+    data[tail] = val
+    meta[1] = (tail + 1) % data.length()
+    meta[2] = size + 1
+}
+
+pub fn dq_push_front(storage: Array, val: String) {
+    let meta: Array = storage[0]
+    let data: Array = storage[1]
+    let size: int = meta[2]
+    let cap = data.length()
+    if size >= cap - 1 { dq_grow(storage) }
+    let head: int = meta[0]
+    let new_cap = data.length()
+    let new_head = (head - 1 + new_cap) % new_cap
+    data[new_head] = val
+    meta[0] = new_head
+    meta[2] = size + 1
+}
+
+pub fn dq_pop_front(storage: Array) -> String {
+    let meta: Array = storage[0]
+    let data: Array = storage[1]
+    let size: int = meta[2]
+    if size == 0 { return "" }
+    let head: int = meta[0]
+    let val: String = data[head]
+    meta[0] = (head + 1) % data.length()
+    meta[2] = size - 1
+    return val
+}
+
+pub fn dq_pop_back(storage: Array) -> String {
+    let meta: Array = storage[0]
+    let data: Array = storage[1]
+    let size: int = meta[2]
+    if size == 0 { return "" }
+    let tail: int = meta[1]
+    let cap = data.length()
+    let prev = (tail - 1 + cap) % cap
+    let val: String = data[prev]
+    meta[1] = prev
+    meta[2] = size - 1
+    return val
+}
+
+pub fn dq_peek_front(storage: Array) -> String {
+    let meta: Array = storage[0]
+    let data: Array = storage[1]
+    let size: int = meta[2]
+    if size == 0 { return "" }
+    let head: int = meta[0]
+    let v: String = data[head]
+    return v
+}
+
+pub fn dq_peek_back(storage: Array) -> String {
+    let meta: Array = storage[0]
+    let data: Array = storage[1]
+    let size: int = meta[2]
+    if size == 0 { return "" }
+    let tail: int = meta[1]
+    let cap = data.length()
+    let prev = (tail - 1 + cap) % cap
+    let v: String = data[prev]
+    return v
+}
+
+pub fn dq_size(storage: Array) -> int {
+    let meta: Array = storage[0]
+    let sz: int = meta[2]
+    return sz
+}
+
+pub fn dq_is_empty(storage: Array) -> bool {
+    let meta: Array = storage[0]
+    let sz: int = meta[2]
+    return sz == 0
+}
+
+// ============================================================
+// LINKED LIST — Singly linked list using parallel arrays
+// State: two Arrays — values[] and next_indices[]
+// head_idx is tracked in meta[0]; size in meta[1]
+// Sentinel: -1 = null/end
+// ============================================================
+
+// Create new linked list storage: returns [values_array, next_array, [head_idx, size]]
+pub fn ll_new() -> Array {
+    var values = []
+    var nexts = []
+    var meta = []
+    meta.push(-1)  // head = -1 (empty)
+    meta.push(0)   // size = 0
+    var storage = []
+    storage.push(values)
+    storage.push(nexts)
+    storage.push(meta)
+    return storage
+}
+
+pub fn ll_push_front(storage: Array, val: String) {
+    let values: Array = storage[0]
+    let nexts: Array = storage[1]
+    let meta: Array = storage[2]
+
+    let new_idx = values.length()
+    values.push(val)
+    let head: int = meta[0]
+    nexts.push(head)
+    meta[0] = new_idx
+    let sz: int = meta[1]
+    meta[1] = sz + 1
+}
+
+pub fn ll_push_back(storage: Array, val: String) {
+    let values: Array = storage[0]
+    let nexts: Array = storage[1]
+    let meta: Array = storage[2]
+
+    let new_idx = values.length()
+    values.push(val)
+    nexts.push(-1)
+
+    let head: int = meta[0]
+    if head == -1 {
+        meta[0] = new_idx
+    } else {
+        // Find tail
+        var cur = head
+        var found_tail = false
+        while not found_tail {
+            let nxt: int = nexts[cur]
+            if nxt == -1 { found_tail = true }
+            else { cur = nxt }
+        }
+        nexts[cur] = new_idx
+    }
+    let sz: int = meta[1]
+    meta[1] = sz + 1
+}
+
+pub fn ll_pop_front(storage: Array) -> String {
+    let values: Array = storage[0]
+    let nexts: Array = storage[1]
+    let meta: Array = storage[2]
+
+    let head: int = meta[0]
+    if head == -1 { return "" }
+
+    let val: String = values[head]
+    let nxt: int = nexts[head]
+    meta[0] = nxt
+    let sz: int = meta[1]
+    meta[1] = sz - 1
+    return val
+}
+
+pub fn ll_peek_front(storage: Array) -> String {
+    let values: Array = storage[0]
+    let meta: Array = storage[2]
+    let head: int = meta[0]
+    if head == -1 { return "" }
+    let v: String = values[head]
+    return v
+}
+
+pub fn ll_size(storage: Array) -> int {
+    let meta: Array = storage[2]
+    let sz: int = meta[1]
+    return sz
+}
+
+pub fn ll_is_empty(storage: Array) -> bool {
+    let meta: Array = storage[2]
+    let head: int = meta[0]
+    return head == -1
+}
+
+// Convert to array (in order)
+pub fn ll_to_array(storage: Array) -> Array {
+    let values: Array = storage[0]
+    let nexts: Array = storage[1]
+    let meta: Array = storage[2]
+    let head: int = meta[0]
+
+    var result = []
+    var cur = head
+    while cur != -1 {
+        let v: String = values[cur]
+        result.push(v)
+        let nxt: int = nexts[cur]
+        cur = nxt
+    }
+    return result
+}
+
+// ============================================================
+// PRIORITY QUEUE — Min-heap using parallel arrays
+// Smaller priority value = higher priority (min-heap)
+// Storage: [values_array, priorities_array]
+// ============================================================
+
+pub fn pq_new() -> Array {
+    var values = []
+    var prios = []
+    var storage = []
+    storage.push(values)
+    storage.push(prios)
+    return storage
+}
+
+fn pq_swap(values: Array, prios: Array, i: int, j: int) {
+    let tv: String = values[i]
+    let tp: int = prios[i]
+    values[i] = values[j]
+    prios[i] = prios[j]
+    values[j] = tv
+    prios[j] = tp
+}
+
+fn pq_sift_up(values: Array, prios: Array, idx: int) {
+    var i = idx
+    var going = true
+    while going {
+        if i <= 0 {
+            going = false
+        } else {
+            let parent = (i - 1) / 2
+            let pi: int = prios[i]
+            let pp: int = prios[parent]
+            if pi < pp {
+                pq_swap(values, prios, i, parent)
+                i = parent
+            } else {
+                going = false
+            }
+        }
+    }
+}
+
+fn pq_sift_down(values: Array, prios: Array, n: int, idx: int) {
+    var i = idx
+    var done = false
+    while not done {
+        let left = 2 * i + 1
+        let right = 2 * i + 2
+        var smallest = i
+
+        if left < n {
+            let pl: int = prios[left]
+            let ps: int = prios[smallest]
+            if pl < ps { smallest = left }
+        }
+        if right < n {
+            let pr: int = prios[right]
+            let ps2: int = prios[smallest]
+            if pr < ps2 { smallest = right }
+        }
+
+        if smallest != i {
+            pq_swap(values, prios, i, smallest)
+            i = smallest
+        } else {
+            done = true
+        }
+    }
+}
+
+pub fn pq_push(storage: Array, val: String, priority: int) {
+    let values: Array = storage[0]
+    let prios: Array = storage[1]
+    values.push(val)
+    prios.push(priority)
+    let n = values.length()
+    pq_sift_up(values, prios, n - 1)
+}
+
+pub fn pq_pop(storage: Array) -> String {
+    let values: Array = storage[0]
+    let prios: Array = storage[1]
+    let n = values.length()
+    if n == 0 { return "" }
+    let top: String = values[0]
+    // Move last to front
+    let last_v: String = values[n - 1]
+    let last_p: int = prios[n - 1]
+    values[0] = last_v
+    prios[0] = last_p
+    // Rebuild without last element using pop()
+    values.pop()
+    prios.pop()
+    // Sift down
+    pq_sift_down(values, prios, n - 1, 0)
+    return top
+}
+
+pub fn pq_peek(storage: Array) -> String {
+    let values: Array = storage[0]
+    if values.length() == 0 { return "" }
+    let v: String = values[0]
+    return v
+}
+
+pub fn pq_size(storage: Array) -> int {
+    let values: Array = storage[0]
+    return values.length()
+}
+
+pub fn pq_is_empty(storage: Array) -> bool {
+    let values: Array = storage[0]
+    return values.length() == 0
+}

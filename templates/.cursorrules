@@ -1,0 +1,50 @@
+# Nyx Language — AI Coding Rules
+
+You are writing code in **Nyx**, a multiparadigm language that compiles to native via LLVM. File extension: `.nx`.
+
+## Syntax
+
+```nyx
+let x: int = 42; var y = 0; const MAX = 100
+fn add(a: int, b: int) -> int { return a + b }
+print("value = ${x}")  // string interpolation
+
+struct Point { x: int, y: int }
+impl Point { fn dist(self) -> int { return self.x + self.y } }
+
+enum Shape { Circle(int), Rect(int, int) }  // use DOT: Shape.Circle(5)
+return match shape { Shape.Circle(r) => r * r, Shape.Rect(w, h) => w * h }
+
+fn identity<T>(x: T) -> T { return x }  // generics
+trait Display { fn to_string(self) -> String }  // traits
+
+enum Option<T> { Some(T), None }  // built-in
+enum Result<T, E> { Ok(T), Err(E) }  // built-in
+let val = might_fail()?  // try operator
+
+for i in 0..10 { }; for p: Point in points { }
+let evens = [1,2,3,4].iter().filter(fn(x: int) -> bool { return x % 2 == 0 }).collect()
+
+export fn helper() -> int { return 1 }
+import { helper } from "module_name"
+
+var arr = [1, 2, 3]; arr.push(4); arr.length()
+var m = Map.new(); m.insert("k", "v"); m.get("k")
+
+let data: Map = json_parse(text)
+write_file("out.txt", content); read_file("in.txt")
+```
+
+## Critical Traps — ALWAYS follow these
+
+1. `and`/`or` do NOT short-circuit — nest conditions instead
+2. `arr[i].method()` causes SEGV — use intermediate typed variable
+3. `charAt()` returns int (ASCII) — compare with numbers
+4. `for-in` on mixed-type arrays = infinite loop — use while + index
+5. Enum uses `.` not `::` — `Color.Red`
+6. Bare `return` doesn't work — use `return 0`
+7. Never name a function `handler`
+8. Map literal `{}` not supported — use `Map.new()`
+9. HTTP Content-Length: use `str_byte_length()` not `.length()`
+
+## Build: `nyx build`, `nyx run`, `nyx run file.nx`

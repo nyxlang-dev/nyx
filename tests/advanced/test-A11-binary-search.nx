@@ -1,0 +1,30 @@
+// Test A11: Binary search
+// Prueba: algoritmos clásicos, lógica de índices
+
+fn binary_search(arr: Array, target: int) -> int {
+    var lo = 0
+    var hi = arr.length() - 1
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2
+        if arr[mid] == target {
+            return mid
+        }
+        if arr[mid] < target {
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    return -1
+}
+
+fn main() {
+    let sorted = [2, 5, 8, 12, 16, 23, 38, 56, 72, 91]
+
+    print(binary_search(sorted, 23))   // 5
+    print(binary_search(sorted, 2))    // 0
+    print(binary_search(sorted, 91))   // 9
+    print(binary_search(sorted, 50))   // -1 (not found)
+
+    return 0
+}

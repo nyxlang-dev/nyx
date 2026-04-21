@@ -1,0 +1,176 @@
+// std/proptest.nx — Property-Based Testing for Nyx (v4.8.0)
+// QuickCheck-style: generate random inputs, verify properties, report failures
+import "std/random"
+
+// ── Generators ────────────────────────────────────────────────────────────────
+
+// Generate a random int in a range
+pub fn gen_int(min: int, max: int) -> int {
+    return random_range(min, max)
+}
+
+// Generate a random bool
+pub fn gen_bool() -> bool {
+    return random_bool()
+}
+
+// Generate a random string of length [0, max_len]
+pub fn gen_string(max_len: int) -> String {
+    let len = random_range(0, max_len)
+    var result = ""
+    var i = 0
+    while i < len {
+        // Generate printable ASCII chars (32-126)
+        let code = random_range(32, 126)
+        let ch = char_from_code(code)
+        result = result + ch
+        i = i + 1
+    }
+    return result
+}
+
+// Generate an array of random ints
+pub fn gen_int_array(size: int, min: int, max: int) -> Array {
+    var arr: Array<int> = []
+    var i = 0
+    while i < size {
+        arr.push(random_range(min, max))
+        i = i + 1
+    }
+    return arr
+}
+
+// Generate a random float in [0.0, 1.0)
+pub fn gen_float() -> float {
+    return random_float()
+}
+
+// ── Property Runner ───────────────────────────────────────────────────────────
+
+// Result struct: [passed_count, failed_count, failure_input]
+// failure_input: "" if all passed, else description of failure
+
+// Run a property test for integer inputs
+// property: fn(int) -> bool
+// Returns [passed, failed] counts
+pub fn prop_int(
+    property: Fn(int) -> bool,
+    min: int,
+    max: int,
+    num_runs: int
+) -> Array {
+    var passed = 0
+    var failed = 0
+    var fail_val = 0
+    var i = 0
+    while i < num_runs {
+        let v = random_range(min, max)
+        let ok = property(v)
+        if ok {
+            passed = passed + 1
+        } else {
+            failed = failed + 1
+            fail_val = v
+        }
+        i = i + 1
+    }
+    var result: Array<int> = [passed, failed, fail_val]
+    return result
+}
+
+// Run a property test for (int, int) pairs
+pub fn prop_int2(
+    property: Fn(int, int) -> bool,
+    min: int,
+    max: int,
+    num_runs: int
+) -> Array {
+    var passed = 0
+    var failed = 0
+    var i = 0
+    while i < num_runs {
+        let a = random_range(min, max)
+        let b = random_range(min, max)
+        let ok = property(a, b)
+        if ok {
+            passed = passed + 1
+        } else {
+            failed = failed + 1
+        }
+        i = i + 1
+    }
+    var result: Array<int> = [passed, failed]
+    return result
+}
+
+// ── Assertions + Reporting ────────────────────────────────────────────────────
+
+// Print property test result
+pub fn prop_report(name: String, result: Array) {
+    let passed: int = result[0]
+    let failed: int = result[1]
+    if failed == 0 {
+        print(format("  ✓ {} ({} cases passed)", name, passed))
+    } else {
+        print(format("  ✗ {} ({} failed out of {})", name, failed, passed + failed))
+    }
+}
+
+// Assert that all cases passed (for test integration)
+pub fn prop_assert(name: String, result: Array) -> bool {
+    let failed: int = result[1]
+    if failed == 0 {
+        print(format("prop {} ok", name))
+        return true
+    } else {
+        let fail_val: int = result[2]
+        print(format("prop {} FAILED at {}", name, fail_val))
+        return false
+    }
+}
+
+// ── Utility: char_from_code ───────────────────────────────────────────────────
+
+// Convert integer ASCII code to single-char string
+pub fn char_from_code(code: int) -> String {
+    if code == 32 { return " " }
+    if code == 33 { return "!" }
+    if code == 34 { return "\"" }
+    if code == 35 { return "#" }
+    if code == 36 { return "$" }
+    if code == 37 { return "%" }
+    if code == 38 { return "&" }
+    if code == 39 { return "'" }
+    if code == 40 { return "(" }
+    if code == 41 { return ")" }
+    if code == 42 { return "*" }
+    if code == 43 { return "+" }
+    if code == 44 { return "," }
+    if code == 45 { return "-" }
+    if code == 46 { return "." }
+    if code == 47 { return "/" }
+    if code >= 48 { if code <= 57 {
+        let digit = code - 48
+        if digit == 0 { return "0" }
+        if digit == 1 { return "1" }
+        if digit == 2 { return "2" }
+        if digit == 3 { return "3" }
+        if digit == 4 { return "4" }
+        if digit == 5 { return "5" }
+        if digit == 6 { return "6" }
+        if digit == 7 { return "7" }
+        if digit == 8 { return "8" }
+        return "9"
+    }}
+    if code >= 65 { if code <= 90 {
+        let idx = code - 65
+        var upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        return upper.substring(idx, idx + 1)
+    }}
+    if code >= 97 { if code <= 122 {
+        let idx = code - 97
+        var lower = "abcdefghijklmnopqrstuvwxyz"
+        return lower.substring(idx, idx + 1)
+    }}
+    return "?"
+}

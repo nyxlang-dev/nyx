@@ -1,0 +1,24 @@
+// TCP echo server — acepta conexiones, lee datos, responde con los mismos datos
+fn main() {
+    let port: int = 9100
+    let server: int = tcp_listen("0.0.0.0", port)
+    if server < 0 {
+        print("ERROR: no pude escuchar en puerto " + int_to_string(port))
+        return 0
+    }
+    print("TCP echo listening on port " + int_to_string(port))
+
+    var count: int = 0
+    while count < 10000 {
+        let client: int = tcp_accept(server)
+        if client >= 0 {
+            let data: String = tcp_read(client, 4096)
+            tcp_write(client, data)
+            tcp_close(client)
+            count = count + 1
+        }
+    }
+    tcp_close(server)
+    print("handled: " + int_to_string(count))
+    return 0
+}

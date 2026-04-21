@@ -1,0 +1,19 @@
+// Test A01: Recursión profunda — Ackermann (limitado)
+// Prueba: stack depth, recursión mutua implícita
+
+fn ackermann(m: int, n: int) -> int {
+    if m == 0 {
+        return n + 1
+    }
+    if n == 0 {
+        return ackermann(m - 1, 1)
+    }
+    return ackermann(m - 1, ackermann(m, n - 1))
+}
+
+fn main() {
+    // ackermann(3, 4) = 125
+    let result = ackermann(3, 4)
+    print(result)
+    return 0
+}

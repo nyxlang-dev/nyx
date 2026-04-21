@@ -1,0 +1,143 @@
+// std/btreemap.nx — BTreeMap: sorted ordered map (String keys, String values)
+// All values stored as String internally (ints converted via int_to_string)
+
+pub fn btree_new() -> Map {
+    return Map.new()
+}
+
+// Insert/update key with String value
+pub fn btree_set(bt: Map<String>, key: String, val: String) {
+    bt.insert(key, val)
+}
+
+// Insert/update key with int value (stored as string)
+pub fn btree_set_int(bt: Map<String>, key: String, val: int) {
+    bt.insert(key, int_to_string(val))
+}
+
+// Get String value (returns "" if not found)
+pub fn btree_get(bt: Map<String>, key: String) -> String {
+    let v: String = bt.get(key)
+    return v
+}
+
+// Get int value (stored as string, converted back)
+pub fn btree_get_int(bt: Map<String>, key: String) -> int {
+    let s: String = btree_get(bt, key)
+    if s == "" { return 0 }
+    return string_to_int(s)
+}
+
+// Check if key exists
+pub fn btree_has(bt: Map<String>, key: String) -> bool {
+    return bt.contains(key)
+}
+
+// Remove key (mark with sentinel)
+pub fn btree_remove(bt: Map<String>, key: String) {
+    bt.insert(key, "__DELETED__")
+}
+
+fn btmap_is_deleted(val: String) -> bool {
+    return val == "__DELETED__"
+}
+
+// Internal: get all live keys (unordered)
+fn btree_live_keys(bt: Map<String>) -> Array {
+    let raw: Array = bt.keys()
+    var keys = []
+    var i = 0
+    while i < raw.length() {
+        let k: String = raw[i]
+        let v: String = btree_get(bt, k)
+        if not btmap_is_deleted(v) {
+            keys.push(k)
+        }
+        i = i + 1
+    }
+    return keys
+}
+
+// Get all keys in sorted order (ascending)
+pub fn btree_keys_sorted(bt: Map<String>) -> Array {
+    let keys: Array = btree_live_keys(bt)
+    let n = keys.length()
+    // Insertion sort
+    var si = 1
+    while si < n {
+        let pivot: String = keys[si]
+        var j = si - 1
+        // Shift elements greater than pivot rightward
+        var shifting = true
+        while shifting {
+            if j < 0 {
+                shifting = false
+            } else {
+                let cur: String = keys[j]
+                if str_compare(cur, pivot) > 0 {
+                    keys[j + 1] = keys[j]
+                    j = j - 1
+                } else {
+                    shifting = false
+                }
+            }
+        }
+        keys[j + 1] = pivot
+        si = si + 1
+    }
+    return keys
+}
+
+// Minimum key
+pub fn btree_min_key(bt: Map<String>) -> String {
+    let sorted: Array = btree_keys_sorted(bt)
+    if sorted.length() == 0 { return "" }
+    let k: String = sorted[0]
+    return k
+}
+
+// Maximum key
+pub fn btree_max_key(bt: Map<String>) -> String {
+    let sorted: Array = btree_keys_sorted(bt)
+    let n = sorted.length()
+    if n == 0 { return "" }
+    let k: String = sorted[n - 1]
+    return k
+}
+
+// Count of live entries
+pub fn btree_size(bt: Map<String>) -> int {
+    let keys: Array = btree_live_keys(bt)
+    return keys.length()
+}
+
+// Entries in sorted order as "key=value" strings
+pub fn btree_entries(bt: Map<String>) -> Array {
+    let sorted: Array = btree_keys_sorted(bt)
+    var result = []
+    var i = 0
+    while i < sorted.length() {
+        let k: String = sorted[i]
+        let v: String = btree_get(bt, k)
+        result.push(k + "=" + v)
+        i = i + 1
+    }
+    return result
+}
+
+// Range query: keys >= lo and <= hi (sorted)
+pub fn btree_range(bt: Map<String>, lo: String, hi: String) -> Array {
+    let sorted: Array = btree_keys_sorted(bt)
+    var result = []
+    var i = 0
+    while i < sorted.length() {
+        let k: String = sorted[i]
+        if str_compare(k, lo) >= 0 {
+            if str_compare(k, hi) <= 0 {
+                result.push(k)
+            }
+        }
+        i = i + 1
+    }
+    return result
+}

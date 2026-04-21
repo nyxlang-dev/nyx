@@ -1,0 +1,7 @@
+// hello.nx
+// El clásico Hello World en Nyx
+
+fn main() {
+    print("Hello, World!")
+    print("Welcome to Nyx v0.7.4")
+}

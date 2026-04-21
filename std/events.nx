@@ -1,0 +1,156 @@
+// std/events.nx — Observable/Event Bus for Nyx (v5.4.0)
+// Reactive event system: subscribe to named events, emit values
+
+// ── Event Bus ─────────────────────────────────────────────────────────────────
+// Layout: Array = [listeners: Map<String>, history: Array, max_history: int]
+// listeners: "event_name" → Array of handler_ids (int)
+// handlers stored separately in handler_store: Array (global-like)
+
+// Handler store: Array of [handler_fn: Fn(String)->void, id: int]
+
+pub fn event_bus_new() -> Array {
+    var listeners: Map<String> = map_new()
+    var history: Array<String> = []
+    var handlers: Array = []
+    var bus: Array = [listeners, history, handlers, 0]
+    // [0]=listeners(Map<String> event→"h1,h2,h3"), [1]=history, [2]=handlers Array, [3]=next_id
+    return bus
+}
+
+// Subscribe to an event. Returns handler ID for unsubscribing.
+pub fn event_on(bus: Array, event: String, handler: Fn(String) -> bool) -> int {
+    let next_id: int = bus[3]
+    bus[3] = next_id + 1
+
+    // Store handler in handlers array
+    let handlers: Array = bus[2]
+    var entry: Array = [handler, next_id]
+    handlers.push(entry)
+
+    // Register event → handler_id mapping
+    let listeners: Map<String> = bus[0]
+    if listeners.contains(event) {
+        let current = listeners.get(event)
+        let new_ids = current + "," + next_id
+        listeners.insert(event, new_ids)
+    } else {
+        let id_str = format("{}", next_id)
+        listeners.insert(event, id_str)
+    }
+    return next_id
+}
+
+// Emit an event with a string payload. Calls all registered handlers.
+// Returns number of handlers called.
+pub fn event_emit(bus: Array, event: String, payload: String) -> int {
+    let listeners: Map<String> = bus[0]
+    let history: Array = bus[1]
+    let handlers: Array = bus[2]
+
+    // Record in history
+    let entry = event + ":" + payload
+    history.push(entry)
+
+    if !listeners.contains(event) { return 0 }
+
+    let ids_str = listeners.get(event)
+    let ids = ids_str.split(",")
+    var count = 0
+
+    var i = 0
+    while i < ids.length() {
+        let id_str: String = ids[i]
+        // Find handler with this ID
+        var j = 0
+        while j < handlers.length() {
+            let h_entry: Array = handlers[j]
+            let h_id: int = h_entry[1]
+            let h_id_str = format("{}", h_id)
+            if h_id_str == id_str {
+                let h_fn: Fn(String) -> bool = h_entry[0]
+                h_fn(payload)
+                count = count + 1
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+// Remove all listeners for an event
+pub fn event_off(bus: Array, event: String) {
+    let listeners: Map<String> = bus[0]
+    listeners.insert(event, "")
+}
+
+// Get event history
+pub fn event_history(bus: Array) -> Array {
+    let history: Array = bus[1]
+    return history
+}
+
+// Get number of events in history
+pub fn event_history_count(bus: Array) -> int {
+    let history: Array = bus[1]
+    return history.length()
+}
+
+// Check if an event has been emitted at least once
+pub fn event_was_emitted(bus: Array, event: String) -> bool {
+    let history: Array = bus[1]
+    var i = 0
+    while i < history.length() {
+        let entry: String = history[i]
+        if entry.startsWith(event + ":") { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// ── Observable<T> — simple reactive value ─────────────────────────────────────
+// A value that notifies watchers when it changes
+// Layout: Array = [current_value (int), watchers: Array, history: Array<int>]
+
+pub fn observable_new(initial: int) -> Array {
+    var watchers: Array = []
+    var hist: Array<int> = [initial]
+    var obs: Array = [initial, watchers, hist]
+    return obs
+}
+
+pub fn observable_get(obs: Array) -> int {
+    let v: int = obs[0]
+    return v
+}
+
+pub fn observable_set(obs: Array, new_val: int) {
+    let watchers: Array = obs[1]
+    let hist: Array = obs[2]
+    obs[0] = new_val
+    hist.push(new_val)
+    // Notify watchers
+    var i = 0
+    while i < watchers.length() {
+        let w_fn: Fn(int) -> bool = watchers[i]
+        w_fn(new_val)
+        i = i + 1
+    }
+}
+
+pub fn observable_watch(obs: Array, handler: Fn(int) -> bool) {
+    let watchers: Array = obs[1]
+    watchers.push(handler)
+}
+
+pub fn observable_history(obs: Array) -> Array {
+    let hist: Array = obs[2]
+    return hist
+}
+
+// Computed observable: manually update derived from source
+// Usage: when source changes, call observable_set(derived, transform(source_val))
+pub fn observable_computed(source: Array, transform: Fn(int) -> int) -> int {
+    let val = observable_get(source)
+    return transform(val)
+}

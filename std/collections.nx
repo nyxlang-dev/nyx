@@ -1,0 +1,92 @@
+// std/collections.nx — Data structures adicionales
+// Set<T> implementado sobre Map
+
+pub fn set_new() -> Map {
+    return Map.new()
+}
+
+pub fn set_add(s: Map, val: String) {
+    s.insert(val, 1)
+}
+
+pub fn set_add_int(s: Map, val: int) {
+    s.insert(int_to_string(val), 1)
+}
+
+pub fn set_has(s: Map, val: String) -> bool {
+    return s.contains(val)
+}
+
+pub fn set_has_int(s: Map, val: int) -> bool {
+    return s.contains(int_to_string(val))
+}
+
+pub fn set_remove(s: Map, val: String) {
+    // Map no tiene delete, marcamos con 0
+    s.insert(val, 0)
+}
+
+pub fn set_size(s: Map) -> int {
+    let keys: Array = s.keys()
+    var count = 0
+    var i = 0
+    while i < keys.length() {
+        let k: String = keys[i]
+        let v: int = s.get(k)
+        if v != 0 { count = count + 1 }
+        i = i + 1
+    }
+    return count
+}
+
+pub fn set_to_array(s: Map) -> Array {
+    let keys: Array = s.keys()
+    var result = []
+    var i = 0
+    while i < keys.length() {
+        let k: String = keys[i]
+        let v: int = s.get(k)
+        if v != 0 { result.push(k) }
+        i = i + 1
+    }
+    return result
+}
+
+// set_union: retorna un nuevo set con elementos de ambos
+pub fn set_union(a: Map, b: Map) -> Map {
+    let result = Map.new()
+    let ka: Array = a.keys()
+    var i = 0
+    while i < ka.length() {
+        let k: String = ka[i]
+        let v: int = a.get(k)
+        if v != 0 { result.insert(k, 1) }
+        i = i + 1
+    }
+    let kb: Array = b.keys()
+    i = 0
+    while i < kb.length() {
+        let k: String = kb[i]
+        let v: int = b.get(k)
+        if v != 0 { result.insert(k, 1) }
+        i = i + 1
+    }
+    return result
+}
+
+// set_intersection: retorna un nuevo set con elementos en ambos
+pub fn set_intersection(a: Map, b: Map) -> Map {
+    let result = Map.new()
+    let ka: Array = a.keys()
+    var i = 0
+    while i < ka.length() {
+        let k: String = ka[i]
+        let va: int = a.get(k)
+        if va != 0 and b.contains(k) {
+            let vb: int = b.get(k)
+            if vb != 0 { result.insert(k, 1) }
+        }
+        i = i + 1
+    }
+    return result
+}

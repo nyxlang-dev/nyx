@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# nyx — wrapper script for running Nyx programs directly
+# Usage: nyx script.nx [args...]
+#        #!/usr/bin/env nyx  (shebang in .nx files)
+#
+# Requires: nyx_bootstrap in PATH or in the same directory as this script
+
+set -e
+
+# ── Spinner helper ──────────────────────────────────────
+# Usage: spin "message" command arg1 arg2 ...
+spin() {
+    local msg="$1"; shift
+
+    "$@" > /dev/null 2>&1 &
+    local pid=$!
+    local i=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        case $((i % 4)) in
+            0) f="◐" ;; 1) f="◓" ;; 2) f="◑" ;; 3) f="◒" ;;
+        esac
+        printf "\r  \033[1;36m%s\033[0m %s" "$f" "$msg" >&2
+        i=$((i + 1))
+        sleep 0.15
+    done
+
+    wait "$pid"
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
+        printf "\r  \033[1;32m✓\033[0m %s\033[K\n" "$msg" >&2
+    else
+        printf "\r  \033[1;31m✗\033[0m %s\033[K\n" "$msg" >&2
+        return "$rc"
+    fi
+}
+
+# Resolve symlinks so SCRIPT_DIR points to the real location
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+# NYX_HOME resolution: env var → script parent → ~/.nyx/
+if [ -n "${NYX_HOME:-}" ]; then
+    : # already set
+elif [ -f "$SCRIPT_DIR/../nyx_bootstrap" ]; then
+    NYX_HOME="$SCRIPT_DIR/.."
+elif [ -f "$SCRIPT_DIR/../bin/nyx" ] && [ -d "$SCRIPT_DIR/../runtime" ]; then
+    NYX_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
+elif [ -d "$HOME/.nyx/runtime" ]; then
+    NYX_HOME="$HOME/.nyx"
+else
+    NYX_HOME="$SCRIPT_DIR/.."
+fi
+
+# Find nyx compiler binary (nyx_bootstrap or installed bin/nyx)
+if [ -x "$NYX_HOME/nyx_bootstrap" ]; then
+    NYX_BOOTSTRAP="$NYX_HOME/nyx_bootstrap"
+elif [ -x "$NYX_HOME/bin/nyx" ]; then
+    NYX_BOOTSTRAP="$NYX_HOME/bin/nyx"
+elif command -v nyx_bootstrap &>/dev/null; then
+    NYX_BOOTSTRAP="nyx_bootstrap"
+else
+    echo "error: nyx compiler not found." >&2
+    echo "  Install: curl -sSf https://nyxlang.com/install.sh | sh" >&2
+    exit 1
+fi
+
+# ── Update check (once per day, in background) ──────────
+check_for_updates() {
+    local check_file="$NYX_HOME/.last_check"
+    local now
+    now=$(date +%s)
+
+    # Skip if checked in the last 24h
+    if [ -f "$check_file" ]; then
+        local last
+        last=$(cat "$check_file" 2>/dev/null || echo 0)
+        local diff=$((now - last))
+        if [ "$diff" -lt 86400 ]; then
+            return
+        fi
+    fi
+
+    # Save timestamp now (even if check fails)
+    echo "$now" > "$check_file" 2>/dev/null
+
+    # Compare local vs remote hash (needs .git)
+    if [ -d "$NYX_HOME/.git" ]; then
+        local local_hash remote_hash
+        local_hash=$(cd "$NYX_HOME" && git rev-parse HEAD 2>/dev/null)
+        remote_hash=$(cd "$NYX_HOME" && git ls-remote origin HEAD 2>/dev/null | cut -f1)
+        if [ -n "$remote_hash" ] && [ -n "$local_hash" ] && [ "$local_hash" != "$remote_hash" ]; then
+            printf "\033[1;33m  A new version of Nyx is available. Run 'nyx update' to upgrade.\033[0m\n" >&2
+        fi
+    fi
+}
+
+# Run update check (skips if checked in last 24h)
+check_for_updates
+
+# Handle flags
+case "${1:-}" in
+    --version|-v)
+        echo "nyx 0.13.0"
+        exit 0
+        ;;
+    --help|-h)
+        echo "Usage: nyx <file.nx> [args...]"
+        echo "       nyx <command> [options]"
+        echo ""
+        echo "Commands:"
+        echo "  init          Create a new project (nyx.toml + src/main.nx)"
+        echo "  add <pkg>     Add a package dependency"
+        echo "  build         Build the project"
+        echo "  run           Build and run the project"
+        echo "  info          Show project info"
+        echo "  update        Update Nyx to the latest version"
+        echo "  uninstall     Remove Nyx from this system"
+        echo ""
+        echo "Options:"
+        echo "  --version     Show version"
+        echo "  --help        Show this help"
+        exit 0
+        ;;
+esac
+
+# Handle uninstall and update
+case "${1:-}" in
+    uninstall)
+        echo "Uninstalling Nyx..."
+        rm -f "$HOME/.local/bin/nyx"
+        rm -rf "$HOME/.nyx"
+        echo "Nyx has been uninstalled."
+        echo "  Removed: ~/.nyx/"
+        echo "  Removed: ~/.local/bin/nyx"
+        exit 0
+        ;;
+    update)
+        printf "\n  \033[1mUpdating Nyx\033[0m\n\n"
+        cd "$NYX_HOME"
+        if [ ! -d .git ]; then
+            echo "error: $NYX_HOME is not a git repo. Reinstall with:" >&2
+            echo "  curl -sSf https://nyxlang.com/install.sh | sh" >&2
+            exit 1
+        fi
+        spin "Fetching latest version..." bash -c "git fetch origin && git reset --hard origin/main" \
+            || { echo "error: git update failed" >&2; exit 1; }
+        spin "Rebuilding compiler..." make bootstrap \
+            || { echo "error: make bootstrap failed" >&2; exit 1; }
+        spin "Rebuilding package manager..." make build-nyx-build \
+            || { echo "error: make build-nyx-build failed" >&2; exit 1; }
+        # Clean up dev files (git reset restored them)
+        rm -rf compiler/ tests/ examples/ benchmarks/ docs/ playground/ website/
+        rm -rf nyx-vscode/ .github/ .claude/
+        rm -f scripts/build_bootstrap.sh scripts/build-release.sh
+        rm -f scripts/install.sh scripts/run_stdlib_tests.sh
+        rm -rf scripts/testing/
+        rm -f SPEC.md SPEC.es.md ROADMAP.md CHANGELOG.md VERSIONING.md
+        rm -f PROJECT_STATE.md CLAUDE.md CONTRIBUTING.md
+        rm -f README.md LICENSE sync_to_public.sh .cursorrules
+        rm -f script.ll script.nx
+        printf "\n  \033[1;32mNyx updated successfully!\033[0m\n"
+        exec "$NYX_HOME/scripts/nyx" --version
+        ;;
+esac
+
+# Route test subcommand to nyx_test
+case "${1:-}" in
+    test)
+        NYX_TEST="$NYX_HOME/nyx_test"
+        if [ ! -x "$NYX_TEST" ]; then
+            echo "error: nyx_test not found. Run: cd $NYX_HOME && make build-test" >&2
+            exit 1
+        fi
+        export NYX_HOME
+        shift
+        exec "$NYX_TEST" "$@"
+        ;;
+esac
+
+# Route shell subcommand to nyx-shell
+case "${1:-}" in
+    shell)
+        NYX_SHELL="$NYX_HOME/products/shell/nyx-shell"
+        if [ ! -x "$NYX_SHELL" ]; then
+            echo "error: nyx-shell not found. Run: cd $NYX_HOME/products/shell && make build" >&2
+            exit 1
+        fi
+        shift
+        exec "$NYX_SHELL" "$@"
+        ;;
+esac
+
+# Route PM subcommands to nyx_build
+case "${1:-}" in
+    init|add|build|info)
+        NYX_BUILD="$NYX_HOME/nyx_build"
+        [ ! -x "$NYX_BUILD" ] && NYX_BUILD="$NYX_HOME/bin/nyx_build"
+        if [ ! -x "$NYX_BUILD" ]; then
+            echo "error: nyx_build not found." >&2
+            exit 1
+        fi
+        export NYX_HOME
+        exec "$NYX_BUILD" "$@"
+        ;;
+    run)
+        # nyx run file.nx → execute file directly
+        if [ $# -ge 2 ] && echo "$2" | grep -q '\.nx$'; then
+            shift  # remove "run", leave file.nx as $1
+        else
+            # nyx run → PM command (build + execute project)
+            NYX_BUILD="$NYX_HOME/nyx_build"
+            if [ ! -x "$NYX_BUILD" ]; then
+                echo "error: nyx_build not found. Run: cd $NYX_HOME && make build-nyx-build" >&2
+                exit 1
+            fi
+            export NYX_HOME
+            exec "$NYX_BUILD" "$@"
+        fi
+        ;;
+esac
+
+if [ $# -lt 1 ]; then
+    echo "Usage: nyx <file.nx> [args...]" >&2
+    exit 1
+fi
+
+INPUT_FILE="$1"
+shift
+
+if [ ! -f "$INPUT_FILE" ]; then
+    echo "error: file not found: $INPUT_FILE" >&2
+    exit 1
+fi
+
+# Runtime sources (relative to NYX_HOME)
+RUNTIME_SRCS="$NYX_HOME/runtime/runtime.c $NYX_HOME/runtime/strings.c \
+  $NYX_HOME/runtime/runtime-arrays.c $NYX_HOME/runtime/maps.c \
+  $NYX_HOME/runtime/file-io.c $NYX_HOME/runtime/iterators.c \
+  $NYX_HOME/runtime/net.c $NYX_HOME/runtime/thread.c \
+  $NYX_HOME/runtime/regex.c $NYX_HOME/runtime/time.c \
+  $NYX_HOME/runtime/crypto.c $NYX_HOME/runtime/tls.c \
+  $NYX_HOME/runtime/scheduler.c $NYX_HOME/runtime/event_loop.c \
+  $NYX_HOME/runtime/sqlite_adapter.c $NYX_HOME/runtime/compress.c \
+  $NYX_HOME/runtime/random.c $NYX_HOME/runtime/url.c \
+  $NYX_HOME/runtime/msgpack.c $NYX_HOME/runtime/websocket.c \
+  $NYX_HOME/runtime/persist.c $NYX_HOME/runtime/http2.c \
+  $NYX_HOME/runtime/process.c"
+LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+
+# Use a temp directory to avoid polluting CWD
+TMPDIR_NYX="$(mktemp -d /tmp/nyx_run_XXXXXX)"
+trap 'rm -rf "$TMPDIR_NYX"' EXIT
+
+cp "$INPUT_FILE" "$TMPDIR_NYX/script.nx"
+
+# Change to NYX_HOME so the driver can find std/ and compiler/
+if ! (cd "$NYX_HOME" && cp "$TMPDIR_NYX/script.nx" script.nx && \
+  "$NYX_BOOTSTRAP" && \
+  clang script.ll $RUNTIME_SRCS $LIBS -o "$TMPDIR_NYX/prog") > /dev/null 2>&1; then
+    echo "error: compilation failed for $INPUT_FILE" >&2
+    exit 1
+fi
+
+"$TMPDIR_NYX/prog" "$@"

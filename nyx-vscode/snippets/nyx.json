@@ -1,0 +1,165 @@
+{
+  "Main Function": {
+    "prefix": "main",
+    "body": [
+      "fn main() {",
+      "    $0",
+      "}"
+    ],
+    "description": "Main entry point"
+  },
+  "Main with Return": {
+    "prefix": "mainr",
+    "body": [
+      "fn main() -> int {",
+      "    $0",
+      "    return 0",
+      "}"
+    ],
+    "description": "Main entry point with return code"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:params}) -> ${3:int} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Function definition"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "    ${2:field}: ${3:int}",
+      "}"
+    ],
+    "description": "Struct definition"
+  },
+  "Impl Block": {
+    "prefix": "impl",
+    "body": [
+      "impl ${1:Type} {",
+      "    fn ${2:method}(self) -> ${3:int} {",
+      "        $0",
+      "    }",
+      "}"
+    ],
+    "description": "Impl block with method"
+  },
+  "Trait": {
+    "prefix": "trait",
+    "body": [
+      "trait ${1:Name} {",
+      "    fn ${2:method}(self) -> ${3:String}",
+      "}"
+    ],
+    "description": "Trait definition"
+  },
+  "Impl Trait": {
+    "prefix": "impltr",
+    "body": [
+      "impl ${1:Trait} for ${2:Type} {",
+      "    fn ${3:method}(self) -> ${4:String} {",
+      "        $0",
+      "    }",
+      "}"
+    ],
+    "description": "Trait implementation"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} {",
+      "    ${2:Variant1},",
+      "    ${3:Variant2}",
+      "}"
+    ],
+    "description": "Enum definition"
+  },
+  "Match Expression": {
+    "prefix": "match",
+    "body": [
+      "match ${1:value} {",
+      "    ${2:Pattern1} => ${3:expr1},",
+      "    ${4:Pattern2} => ${5:expr2}",
+      "}"
+    ],
+    "description": "Match expression"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "for ${1:i} in ${2:0..10} {",
+      "    $0",
+      "}"
+    ],
+    "description": "For-in loop"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": [
+      "var ${1:i} = 0",
+      "while ${1:i} < ${2:n} {",
+      "    $0",
+      "    ${1:i} = ${1:i} + 1",
+      "}"
+    ],
+    "description": "While loop with counter"
+  },
+  "HTTP Server": {
+    "prefix": "http",
+    "body": [
+      "import \"std/http\" as http",
+      "",
+      "pub fn on_request(req: Map) -> String {",
+      "    let path: String = req.get(\"path\")",
+      "    if path == \"/\" {",
+      "        return http.http_response(200, \"${1:Hello!}\")",
+      "    }",
+      "    return http.http_response(404, \"Not Found\")",
+      "}",
+      "",
+      "fn main() -> int {",
+      "    http.http_serve(${2:8080}, on_request)",
+      "    return 0",
+      "}"
+    ],
+    "description": "HTTP server boilerplate"
+  },
+  "Test Function": {
+    "prefix": "test",
+    "body": [
+      "fn test_${1:name}() {",
+      "    $0",
+      "    print(\"PASS: ${1:name}\")",
+      "}"
+    ],
+    "description": "Test function"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": [
+      "import { ${1:func} } from \"${2:module}\""
+    ],
+    "description": "Import statement"
+  },
+  "Export Function": {
+    "prefix": "export",
+    "body": [
+      "export fn ${1:name}(${2:params}) -> ${3:int} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Exported function"
+  },
+  "If Let": {
+    "prefix": "iflet",
+    "body": [
+      "if let Option.Some(${1:val}) = ${2:maybe} {",
+      "    $0",
+      "}"
+    ],
+    "description": "If-let for Option unwrapping"
+  }
+}

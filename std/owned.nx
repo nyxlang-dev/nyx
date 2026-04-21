@@ -1,0 +1,164 @@
+// std/owned.nx — Ownership semantics + linear types for Nyx (v5.0.0)
+// Provides opt-in ownership tracking via Array-based wrapper types
+// (Generic struct return types not yet supported — uses Array as backing store)
+
+// ── Box<T> — Heap-allocated owned value ──────────────────────────────────────
+// Layout: Array = [value, dropped_flag (int)]
+
+pub fn box_new(val: int) -> Array {
+    var b: Array<int> = [val, 0]
+    return b
+}
+
+pub fn box_new_str(val: String) -> Array {
+    var b: Array = [val, 0]
+    return b
+}
+
+pub fn box_get(b: Array) -> int {
+    let v: int = b[0]
+    return v
+}
+
+pub fn box_get_str(b: Array) -> String {
+    let s: String = b[0]
+    return s
+}
+
+pub fn box_drop(b: Array) {
+    b[1] = 1
+}
+
+pub fn box_is_dropped(b: Array) -> bool {
+    let flag: int = b[1]
+    return flag != 0
+}
+
+// ── Rc<T> — Reference-counted value (single-threaded) ────────────────────────
+// Layout: Array = [value, ref_count]
+
+pub fn rc_new(val: int) -> Array {
+    var rc: Array<int> = [val, 1]
+    return rc
+}
+
+pub fn rc_new_str(val: String) -> Array {
+    var rc: Array = [val, 1]
+    return rc
+}
+
+pub fn rc_clone(rc: Array) -> Array {
+    let count: int = rc[1]
+    rc[1] = count + 1
+    return rc
+}
+
+pub fn rc_get(rc: Array) -> int {
+    let v: int = rc[0]
+    return v
+}
+
+pub fn rc_get_str(rc: Array) -> String {
+    let s: String = rc[0]
+    return s
+}
+
+pub fn rc_count(rc: Array) -> int {
+    let c: int = rc[1]
+    return c
+}
+
+pub fn rc_drop(rc: Array) -> int {
+    let count: int = rc[1]
+    let new_count = count - 1
+    rc[1] = new_count
+    return new_count
+}
+
+pub fn rc_is_unique(rc: Array) -> bool {
+    let c: int = rc[1]
+    return c == 1
+}
+
+// ── MoveOnly — wrapper that prevents double-use ───────────────────────────────
+// Layout: Array = [inner_int, consumed_flag (int)]
+
+pub fn move_new(val: int) -> Array {
+    var m: Array<int> = [val, 0]
+    return m
+}
+
+pub fn move_new_str(val: String) -> Array {
+    var m: Array = [val, 0]
+    return m
+}
+
+// Consume the value (panics on double-consume)
+pub fn move_consume(m: Array) -> int {
+    let consumed: int = m[1]
+    if consumed != 0 {
+        panic("move_consume: value already consumed (use-after-move)")
+    }
+    m[1] = 1
+    let v: int = m[0]
+    return v
+}
+
+pub fn move_consume_str(m: Array) -> String {
+    let consumed: int = m[1]
+    if consumed != 0 {
+        panic("move_consume_str: value already consumed (use-after-move)")
+    }
+    m[1] = 1
+    let s: String = m[0]
+    return s
+}
+
+pub fn move_is_consumed(m: Array) -> bool {
+    let consumed: int = m[1]
+    return consumed != 0
+}
+
+// ── Resource guards (RAII-style) ──────────────────────────────────────────────
+// Layout: Array = [file_handle, path, closed_flag (int)]
+
+pub fn file_guard_open(path: String, mode: String) -> Array {
+    let h = file_open(path, mode)
+    var g: Array = [h, path, 0]
+    return g
+}
+
+pub fn file_guard_write(g: Array, content: String) {
+    let closed: int = g[2]
+    if closed == 0 {
+        let h: Map = g[0]
+        file_write_string(h, content)
+    }
+}
+
+pub fn file_guard_read_line(g: Array) -> String {
+    let closed: int = g[2]
+    if closed != 0 { return "" }
+    let h: Map = g[0]
+    return file_read_line(h)
+}
+
+pub fn file_guard_close(g: Array) {
+    let closed: int = g[2]
+    if closed == 0 {
+        let h: Map = g[0]
+        file_close(h)
+        g[2] = 1
+    }
+}
+
+pub fn file_guard_is_open(g: Array) -> bool {
+    let closed: int = g[2]
+    return closed == 0
+}
+
+// ── Drop trait ────────────────────────────────────────────────────────────────
+
+trait Drop {
+    fn drop(self)
+}

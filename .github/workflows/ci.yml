@@ -1,0 +1,61 @@
+name: Nyx CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─────────────────────────────────────────────
+  #  Linux (Ubuntu)
+  # ─────────────────────────────────────────────
+  test-linux:
+    name: Test (Linux / Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libgc-dev libssl-dev
+
+      - name: Build bootstrap compiler
+        run: make bootstrap
+
+      - name: Run regression tests (204/204 ARM64, 205/205 x86_64)
+        run: make test
+
+      - name: Run advanced tests (30/30)
+        run: bash tests/advanced/run_advanced_tests.sh
+
+      - name: Run stdlib tests
+        run: make test-stdlib
+
+  # ─────────────────────────────────────────────
+  #  macOS
+  #  Re-enabled after fixes in Makefile + scripts/build_bootstrap.sh:
+  #    - brew --prefix lookup for bdw-gc and openssl@3 headers/libs
+  #    - -D_XOPEN_SOURCE=700 for scheduler.c ucontext_t APIs
+  # ─────────────────────────────────────────────
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install bdw-gc openssl@3
+
+      - name: Build bootstrap compiler
+        run: make bootstrap
+
+      - name: Run regression tests
+        run: make test
+
+      - name: Run advanced tests
+        run: bash tests/advanced/run_advanced_tests.sh
+
+      - name: Run stdlib tests
+        run: make test-stdlib

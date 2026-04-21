@@ -1,0 +1,79 @@
+// std/url.nx — URL encoding + HTML entities for Nyx (v4.6.0)
+
+extern "C" fn nyx_url_encode(s: String) -> String
+extern "C" fn nyx_url_decode(s: String) -> String
+
+// ── URL Encoding ──────────────────────────────────────────────────────────────
+
+// Percent-encode a string for use in URLs (RFC 3986 unreserved chars are left as-is)
+pub fn url_encode(s: String) -> String {
+    return nyx_url_encode(s)
+}
+
+// Decode a percent-encoded URL string (also decodes + as space)
+pub fn url_decode(s: String) -> String {
+    return nyx_url_decode(s)
+}
+
+// Build a query string from key/value pairs
+// keys and values arrays must have the same length
+pub fn build_query_string(keys: Array, values: Array) -> String {
+    let n = keys.length()
+    if n == 0 { return "" }
+    var result = ""
+    var i = 0
+    while i < n {
+        let k: String = keys[i]
+        let v: String = values[i]
+        let pair = nyx_url_encode(k) + "=" + nyx_url_encode(v)
+        if i == 0 {
+            result = pair
+        } else {
+            result = result + "&" + pair
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// ── HTML Entities ─────────────────────────────────────────────────────────────
+
+// Escape HTML special characters: & < > " '
+pub fn html_escape(s: String) -> String {
+    let s1 = s.replace("&", "&amp;")
+    let s2 = s1.replace("<", "&lt;")
+    let s3 = s2.replace(">", "&gt;")
+    let s4 = s3.replace("\"", "&quot;")
+    let s5 = s4.replace("'", "&#x27;")
+    return s5
+}
+
+// Unescape HTML entities (common ones)
+pub fn html_unescape(s: String) -> String {
+    let s1 = s.replace("&amp;", "&")
+    let s2 = s1.replace("&lt;", "<")
+    let s3 = s2.replace("&gt;", ">")
+    let s4 = s3.replace("&quot;", "\"")
+    let s5 = s4.replace("&#x27;", "'")
+    let s6 = s5.replace("&apos;", "'")
+    let s7 = s6.replace("&nbsp;", " ")
+    return s7
+}
+
+// ── Simple template ───────────────────────────────────────────────────────────
+
+// Render a simple template by replacing {{key}} with values from the map
+// Example: render_template("Hello {{name}}!", m) where m["name"] = "World"
+pub fn render_template(tmpl: String, data: Map<String>) -> String {
+    let keys = data.keys()
+    var result = tmpl
+    var i = 0
+    while i < keys.length() {
+        let k: String = keys[i]
+        let placeholder = "{{" + k + "}}"
+        let v = data.get(k)
+        result = result.replace(placeholder, v)
+        i = i + 1
+    }
+    return result
+}

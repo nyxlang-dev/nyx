@@ -1,0 +1,124 @@
+// std/base64.nx — Base64 and Base64URL encode/decode
+// RFC 4648 standard and URL-safe alphabets
+
+var __b64_chars: String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+var __b64url_chars: String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+fn __b64_encode_with(input: String, alphabet: String, pad: bool) -> String {
+    let len: int = input.length()
+    if len == 0 { return "" }
+
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < len {
+        let b0: int = input.charAt(i)
+        var b1: int = 0
+        var b2: int = 0
+        let remaining: int = len - i
+
+        if remaining >= 2 { b1 = input.charAt(i + 1) }
+        if remaining >= 3 { b2 = input.charAt(i + 2) }
+
+        let idx0: int = b0 / 4
+        let idx1: int = (b0 % 4) * 16 + b1 / 16
+        let idx2: int = (b1 % 16) * 4 + b2 / 64
+        let idx3: int = b2 % 64
+
+        sb.append(alphabet.substring(idx0, idx0 + 1))
+        sb.append(alphabet.substring(idx1, idx1 + 1))
+
+        if remaining >= 2 {
+            sb.append(alphabet.substring(idx2, idx2 + 1))
+        } else if pad {
+            sb.append("=")
+        }
+
+        if remaining >= 3 {
+            sb.append(alphabet.substring(idx3, idx3 + 1))
+        } else if pad {
+            sb.append("=")
+        }
+
+        i = i + 3
+    }
+    return sb.to_string()
+}
+
+fn __b64_char_value(c: int, alphabet: String) -> int {
+    var i: int = 0
+    while i < 64 {
+        if alphabet.charAt(i) == c { return i }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn __b64_decode_with(input: String, alphabet: String) -> String {
+    let len: int = input.length()
+    if len == 0 { return "" }
+
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < len {
+        let c0: int = input.charAt(i)
+        if c0 == 61 { break }  // '='
+        let v0: int = __b64_char_value(c0, alphabet)
+        if v0 < 0 { break }
+
+        var v1: int = 0
+        var v2: int = 0 - 1
+        var v3: int = 0 - 1
+
+        if i + 1 < len {
+            let c1: int = input.charAt(i + 1)
+            if c1 != 61 { v1 = __b64_char_value(c1, alphabet) }
+        }
+        if i + 2 < len {
+            let c2: int = input.charAt(i + 2)
+            if c2 != 61 { v2 = __b64_char_value(c2, alphabet) }
+        }
+        if i + 3 < len {
+            let c3: int = input.charAt(i + 3)
+            if c3 != 61 { v3 = __b64_char_value(c3, alphabet) }
+        }
+
+        // First byte: v0[5:0] << 2 | v1[5:4]
+        let byte0: int = v0 * 4 + v1 / 16
+        sb.append(char_to_string(byte0))
+
+        // Second byte (if v2 valid)
+        if v2 >= 0 {
+            let byte1: int = (v1 % 16) * 16 + v2 / 4
+            sb.append(char_to_string(byte1))
+        }
+
+        // Third byte (if v3 valid)
+        if v3 >= 0 {
+            let byte2: int = (v2 % 4) * 64 + v3
+            sb.append(char_to_string(byte2))
+        }
+
+        i = i + 4
+    }
+    return sb.to_string()
+}
+
+// Standard Base64 encode (with padding)
+pub fn base64_encode(input: String) -> String {
+    return __b64_encode_with(input, __b64_chars, true)
+}
+
+// Standard Base64 decode
+pub fn base64_decode(input: String) -> String {
+    return __b64_decode_with(input, __b64_chars)
+}
+
+// Base64URL encode (no padding, URL-safe chars)
+pub fn base64url_encode(input: String) -> String {
+    return __b64_encode_with(input, __b64url_chars, false)
+}
+
+// Base64URL decode
+pub fn base64url_decode(input: String) -> String {
+    return __b64_decode_with(input, __b64url_chars)
+}

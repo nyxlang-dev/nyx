@@ -1,0 +1,19 @@
+// bench-05-strings.nx — String operations (StringBuilder, O(n) amortized)
+fn main() {
+    let N: int = 100000
+    let start: int = time_us()
+
+    let sb: StringBuilder = StringBuilder.new(N)
+    var i: int = 0
+    while i < N {
+        sb.append("a")
+        i = i + 1
+    }
+    let result: String = sb.to_string()
+
+    let end: int = time_us()
+    let elapsed: int = end - start
+    print("length: " + int_to_string(result.length()))
+    print("time_us: " + int_to_string(elapsed))
+    return 0
+}

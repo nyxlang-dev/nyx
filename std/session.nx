@@ -1,0 +1,149 @@
+// std/session.nx — Cookie-based sessions backed by nyx-kv
+// Sessions are stored as key-value pairs in nyx-kv via RESP over TCP
+// Each session gets a unique ID stored in a "nyx_session" cookie
+
+import "std/web"
+import "std/random"
+
+var __session_host: String = "127.0.0.1"
+var __session_port: int = 6380
+var __session_ttl: int = 3600  // 1 hour default
+
+// Configure session backend
+pub fn session_configure(host: String, port: int, ttl: int) {
+    __session_host = host
+    __session_port = port
+    __session_ttl = ttl
+}
+
+// Generate a random session ID (32 hex chars)
+fn __session_gen_id() -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < 16 {
+        let b: int = random_range(0, 255)
+        let hi: int = b / 16
+        let lo: int = b % 16
+        sb.append(__hex_char(hi))
+        sb.append(__hex_char(lo))
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn __hex_char(n: int) -> String {
+    if n < 10 { return int_to_string(n) }
+    if n == 10 { return "a" }
+    if n == 11 { return "b" }
+    if n == 12 { return "c" }
+    if n == 13 { return "d" }
+    if n == 14 { return "e" }
+    return "f"
+}
+
+// Send a RESP command to nyx-kv and read the response
+fn __kv_cmd(parts: Array) -> String {
+    let fd: int = tcp_connect(__session_host, __session_port)
+    if fd < 0 { return "" }
+
+    // Build RESP array
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+
+    tcp_write(fd, sb.to_string())
+    let resp: String = tcp_read_line(fd)
+    // For bulk strings, read the data line too
+    if resp.length() > 0 {
+        let first: int = resp.charAt(0)
+        if first == 36 {
+            // $N — bulk string
+            let len_str: String = resp.substring(1, resp.length())
+            let len: int = string_to_int(len_str)
+            if len < 0 {
+                tcp_close(fd)
+                return ""
+            }
+            let data: String = tcp_read_line(fd)
+            tcp_close(fd)
+            return data
+        }
+    }
+    tcp_close(fd)
+    // Simple string (+OK) or integer (:N) — return as-is minus prefix
+    if resp.length() > 1 {
+        return resp.substring(1, resp.length())
+    }
+    return resp
+}
+
+// Get session ID from request cookies. Returns "" if no session.
+fn __get_session_id(req: Request) -> String {
+    if req.cookies.contains("nyx_session") {
+        return req.cookies.get("nyx_session")
+    }
+    return ""
+}
+
+// Start or resume a session. Returns the session ID.
+// Sets the nyx_session cookie on the response.
+pub fn session_start(req: Request, resp: Response) -> String {
+    var sid: String = __get_session_id(req)
+    if sid.length() == 0 {
+        sid = __session_gen_id()
+    }
+
+    // Set cookie header
+    var cookie: String = "nyx_session=" + sid + "; Path=/; HttpOnly; SameSite=Lax"
+    if __session_ttl > 0 {
+        cookie = cookie + "; Max-Age=" + int_to_string(__session_ttl)
+    }
+    resp.headers_flat.push("Set-Cookie")
+    resp.headers_flat.push(cookie)
+
+    return sid
+}
+
+// Get a session value by key
+pub fn session_get(req: Request, key: String) -> String {
+    let sid: String = __get_session_id(req)
+    if sid.length() == 0 { return "" }
+
+    let store_key: String = "sess:" + sid + ":" + key
+    let parts: Array = ["GET", store_key]
+    return __kv_cmd(parts)
+}
+
+// Set a session value
+pub fn session_set(req: Request, key: String, value: String) {
+    let sid: String = __get_session_id(req)
+    if sid.length() == 0 { return 0 }
+
+    let store_key: String = "sess:" + sid + ":" + key
+    let parts: Array = ["SETEX", store_key, int_to_string(__session_ttl), value]
+    __kv_cmd(parts)
+    return 0
+}
+
+// Destroy a session (delete all keys, expire cookie)
+pub fn session_destroy(req: Request, resp: Response) {
+    let sid: String = __get_session_id(req)
+    if sid.length() == 0 { return 0 }
+
+    // We can't enumerate session keys easily, just expire the cookie
+    // Individual keys will expire via TTL
+    resp.headers_flat.push("Set-Cookie")
+    resp.headers_flat.push("nyx_session=; Path=/; HttpOnly; Max-Age=0")
+    return 0
+}

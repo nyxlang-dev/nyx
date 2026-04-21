@@ -1,0 +1,25 @@
+// bench-04-alloc.nx — Struct allocation (GC pressure)
+struct Point { x: int, y: int, z: int }
+
+fn make_point(i: int) -> Point {
+    return Point { x: i, y: i * 2, z: i * 3 }
+}
+
+fn main() {
+    let N: int = 1000000
+    let start: int = time_us()
+
+    var sum: int = 0
+    var i: int = 0
+    while i < N {
+        let p: Point = make_point(i)
+        sum = sum + p.x + p.y + p.z
+        i = i + 1
+    }
+
+    let end: int = time_us()
+    let elapsed: int = end - start
+    print("sum: " + int_to_string(sum))
+    print("time_us: " + int_to_string(elapsed))
+    return 0
+}

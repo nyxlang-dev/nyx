@@ -1,0 +1,36 @@
+import "std/json"
+
+fn main() {
+    let N: int = 10000
+    let json_str: String = "{\"name\":\"test\",\"value\":42,\"active\":true,\"tags\":[\"a\",\"b\",\"c\"]}"
+
+    // Parse benchmark
+    let start_parse: int = time_us()
+    var i: int = 0
+    while i < N {
+        let obj: Array = json_parse(json_str)
+        i = i + 1
+    }
+    let end_parse: int = time_us()
+    let parse_time: int = end_parse - start_parse
+
+    // Serialize benchmark — build JSON object using std/json API
+    let keys: Array = ["name", "value", "active"]
+    let vals: Array = [json_string("test"), json_number(42), json_bool(true)]
+    let obj: Array = json_object(keys, vals)
+
+    let start_ser: int = time_us()
+    i = 0
+    while i < N {
+        let s: String = json_stringify(obj)
+        i = i + 1
+    }
+    let end_ser: int = time_us()
+    let ser_time: int = end_ser - start_ser
+
+    print("JSON parse " + int_to_string(N) + "x: " + int_to_string(parse_time) + " us")
+    print("JSON serialize " + int_to_string(N) + "x: " + int_to_string(ser_time) + " us")
+    print("parse: " + int_to_string(N * 1000000 / parse_time) + " ops/s")
+    print("serialize: " + int_to_string(N * 1000000 / ser_time) + " ops/s")
+    return 0
+}

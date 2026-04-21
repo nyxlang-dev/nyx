@@ -1,0 +1,10 @@
+// my_math.nx — ejemplo de módulo importable
+
+export fn cube(x: int) -> int {
+    return x * x * x
+}
+
+export fn factorial(n: int) -> int {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}

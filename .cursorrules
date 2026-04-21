@@ -1,0 +1,106 @@
+# Nyx Language — Cursor AI Rules
+
+You are working on **Nyx**, a multiparadigm language with gradual typing that compiles to native code via LLVM. File extension: `.nx`.
+
+## Quick Reference
+
+Read `docs/CHEATSHEET.md` for complete syntax reference. Read `SPEC.md` for the full language specification.
+
+## Syntax Essentials
+
+```nyx
+// Variables
+let x: int = 42        // immutable
+var y = 0               // mutable
+const MAX = 100         // compile-time
+
+// Functions
+fn add(a: int, b: int) -> int { return a + b }
+
+// Structs + methods
+struct Point { x: int, y: int }
+impl Point {
+    fn magnitude(self) -> int { return self.x + self.y }
+}
+
+// Enums (use DOT, not ::)
+enum Shape { Circle(int), Rect(int, int) }
+let s = Shape.Circle(5)
+
+// Pattern matching
+return match s {
+    Shape.Circle(r) => r * r,
+    Shape.Rect(w, h) => w * h
+}
+
+// Generics
+fn identity<T>(x: T) -> T { return x }
+
+// Traits
+trait Display { fn to_string(self) -> String }
+impl Display for Point { fn to_string(self) -> String { return "${self.x},${self.y}" } }
+
+// String interpolation
+print("value = ${x * 2}")
+
+// Iterators
+let evens = [1,2,3,4].iter().filter(fn(x: int) -> bool { return x % 2 == 0 }).collect()
+
+// Closures
+fn make_adder(n: int) -> Fn {
+    fn add(x: int) -> int { return x + n }
+    return add
+}
+
+// Modules
+export fn my_func() -> int { return 42 }
+import { my_func } from "my_module"
+
+// Error handling
+enum Result<T, E> { Ok(T), Err(E) }   // built-in
+enum Option<T> { Some(T), None }       // built-in
+let val = risky_call()?                // try operator
+```
+
+## Critical Traps — NEVER do these
+
+1. **`and`/`or` do NOT short-circuit.** Both sides always evaluate. Nest conditions:
+   ```nyx
+   // WRONG: while i < len and arr[i] > 0
+   // RIGHT: while i < len { if arr[i] <= 0 { break } ... }
+   ```
+
+2. **`arr[i].method()` causes SEGV.** Always use intermediate variable:
+   ```nyx
+   let elem: String = arr[i]
+   let result = elem.toUpper()
+   ```
+
+3. **`charAt()` returns int (ASCII code)**, not char. Compare with numbers: `if c == 65`.
+
+4. **`for-in` on mixed-type arrays** causes infinite loop. Use `while` + index.
+
+5. **Enum syntax uses `.`** not `::`: `Color.Red`, not `Color::Red`.
+
+6. **Bare `return`** without value doesn't work. Use `return 0`.
+
+7. **`handler` as function name** crashes codegen. Use any other name.
+
+8. **Map literal `{}`** not supported. Use `Map.new()` + `.insert()`.
+
+9. **HTTP Content-Length**: use `str_byte_length(body)`, not `.length()`.
+
+## Code Style
+
+- Use `let` by default, `var` only when mutation is needed
+- Type annotations on function signatures, optional on local variables
+- Use string interpolation `"${expr}"` instead of concatenation when readable
+- Idiomatic error handling: `Result<T, E>` and `Option<T>` with pattern matching
+- Use iterators (`.iter().map().filter().collect()`) over manual loops when possible
+
+## Project Rules
+
+- Tests must pass before commits: `make test` (200/200)
+- Never delete `compiler/*.ll` files (bootstrap seeds)
+- One fix per commit, atomic changes
+- Build: `nyx run file.nx` or `nyx build` for projects with `nyx.toml`

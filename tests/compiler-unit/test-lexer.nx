@@ -1,0 +1,46 @@
+// ===== TEST UNITARIO: LEXER BOOTSTRAP =====
+// Verifica que compiler/lexer.nx tokeniza correctamente.
+// Ejecutar: make run FILE=tests/bootstrap-unit/test-lexer.nx
+//
+// Resultados esperados:
+//   Test 1: 5 tokens  (LET, IDENT, EQUALS, NUMBER, EOF)
+//   Test 2: > 4 tokens (IDENT, LPAREN, STRING, RPAREN, EOF)
+//   Test 3: 1 token   (solo EOF)
+
+import { tokenize } from "compiler/lexer"
+
+fn main() {
+    print("=== TEST LEXER BOOTSTRAP ===")
+
+    // Test 1: declaración let simple
+    let src1 = "let x = 42"
+    let toks1 = tokenize(src1)
+    print("Test 1 - 'let x = 42' → tokens:")
+    print(toks1.length())
+
+    // Test 2: llamada con string literal
+    let src2 = "print(\"hola\")"
+    let toks2 = tokenize(src2)
+    print("Test 2 - 'print(\"hola\")' → tokens:")
+    print(toks2.length())
+
+    // Test 3: código vacío — solo debe generar EOF
+    let src3 = ""
+    let toks3 = tokenize(src3)
+    print("Test 3 - código vacío → tokens (esperado 1):")
+    print(toks3.length())
+
+    // Test 4: palabras clave
+    let src4 = "fn if else while for return"
+    let toks4 = tokenize(src4)
+    print("Test 4 - keywords → tokens (esperado 7 incluyendo EOF):")
+    print(toks4.length())
+
+    // Test 5: operadores — x, +, y, *, z, -, 1, EOF = 8
+    let src5 = "x + y * z - 1"
+    let toks5 = tokenize(src5)
+    print("Test 5 - operadores → tokens (esperado 8 incluyendo EOF):")
+    print(toks5.length())
+
+    print("✅ Lexer tests completados")
+}

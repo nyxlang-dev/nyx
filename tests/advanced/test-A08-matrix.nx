@@ -1,0 +1,45 @@
+// Test A08: Simulación de matriz 2D con arrays
+// Prueba: arrays de arrays, indexación doble
+
+fn matrix_new(rows: int, cols: int) -> Array {
+    var matrix = []
+    var r = 0
+    while r < rows {
+        var row = []
+        var c = 0
+        while c < cols {
+            row.push(0)
+            c = c + 1
+        }
+        matrix.push(row)
+        r = r + 1
+    }
+    return matrix
+}
+
+fn matrix_set(matrix: Array, row: int, col: int, val: int) {
+    let r: Array = matrix[row]
+    r[col] = val
+}
+
+fn matrix_get(matrix: Array, row: int, col: int) -> int {
+    let r: Array = matrix[row]
+    return r[col]
+}
+
+fn main() {
+    // Crear matriz 3x3 identidad
+    let m = matrix_new(3, 3)
+    matrix_set(m, 0, 0, 1)
+    matrix_set(m, 1, 1, 1)
+    matrix_set(m, 2, 2, 1)
+
+    // Verificar diagonal
+    print(matrix_get(m, 0, 0))  // 1
+    print(matrix_get(m, 1, 1))  // 1
+    print(matrix_get(m, 2, 2))  // 1
+    print(matrix_get(m, 0, 1))  // 0
+    print(matrix_get(m, 1, 0))  // 0
+
+    return 0
+}

@@ -1,0 +1,17 @@
+// factorial.nx
+// Factorial recursivo - solo enteros
+
+fn factorial(n) {
+    if n == 0 {
+        return 1
+    } else {
+        return n * factorial(n - 1)
+    }
+}
+
+fn main() {
+    print(factorial(5))
+    print(factorial(6))
+    print(factorial(7))
+    print(factorial(10))
+}

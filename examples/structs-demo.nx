@@ -1,0 +1,133 @@
+// structs-demo.nx
+// Demostración de Structs en Nyx
+
+// ===== DECLARACIÓN DE STRUCTS =====
+
+struct Point {
+    x: int,
+    y: int,
+    z: int
+}
+
+struct User {
+    id: int,
+    name: String,
+    email: String,
+    age: int
+}
+
+// ===== FUNCIONES QUE OPERAN SOBRE STRUCTS =====
+
+fn distance_squared(p: Point) -> int {
+    return p.x * p.x + p.y * p.y + p.z * p.z
+}
+
+fn new_point(x: int, y: int, z: int) -> Point {
+    return Point { x: x, y: y, z: z }
+}
+
+fn print_point(p: Point) {
+    print("Point:")
+    print(p.x)
+    print(p.y)
+    print(p.z)
+}
+
+fn print_user(u: User) {
+    print("User Info:")
+    print(u.name)
+    print(u.email)
+    print(u.age)
+}
+
+// ===== MAIN =====
+
+fn main() {
+    print("╔════════════════════════════════════════╗")
+    print("║  🧬 Nyx v0.7.4 - Structs Demo      ║")
+    print("╚════════════════════════════════════════╝")
+    print("")
+    
+    // TEST 1: Construcción básica
+    print("=== TEST 1: Construcción Básica ===")
+    let p1 = Point { x: 3, y: 4, z: 0 }
+    print_point(p1)
+    print("")
+    
+    // TEST 2: Orden flexible
+    print("=== TEST 2: Orden Flexible ===")
+    let p2 = Point { z: 5, x: 1, y: 2 }
+    print_point(p2)
+    print("")
+    
+    // TEST 3: Acceso a campos
+    print("=== TEST 3: Acceso a Campos ===")
+    print("p1.x =")
+    print(p1.x)
+    print("p1.y =")
+    print(p1.y)
+    print("")
+    
+    // TEST 4: Expresiones con campos
+    print("=== TEST 4: Expresiones ===")
+    let sum = p1.x + p1.y
+    print("suma x + y =")
+    print(sum)
+    print("")
+    
+    // TEST 5: Mutabilidad con operadores compuestos
+    print("=== TEST 5: Mutabilidad y Operadores ===")
+    var p3 = Point { x: 10, y: 20, z: 30 }
+    print("Antes:")
+    print_point(p3)
+    
+    p3.x = 100
+    p3.y += 50
+    p3.z *= 2
+    print("Después de x=100, y+=50, z*=2:")
+    print_point(p3)
+    print("")
+    
+    // TEST 6: Más operadores compuestos
+    print("=== TEST 6: Todos los Operadores ===")
+    var p4 = Point { x: 100, y: 50, z: 10 }
+    print("Inicial:")
+    print_point(p4)
+    
+    p4.x -= 20
+    p4.y /= 5
+    p4.z %= 3
+    print("Después de x-=20, y/=5, z%=3:")
+    print_point(p4)
+    print("")
+    
+    // TEST 7: Struct como tipo de dato
+    print("=== TEST 7: Struct User ===")
+    let user = User {
+        id: 1,
+        name: "Alice",
+        email: "alice@example.com",
+        age: 25
+    }
+    print_user(user)
+    print("")
+    
+    // TEST 8: Función con struct
+    print("=== TEST 8: Funciones ===")
+    let p5 = new_point(1, 2, 3)
+    print("Punto creado con función:")
+    print_point(p5)
+    print("")
+    
+    // TEST 9: Distance squared
+    print("=== TEST 9: Distance Squared ===")
+    let p6 = Point { x: 3, y: 4, z: 0 }
+    let dist = distance_squared(p6)
+    print("Distancia al cuadrado:")
+    print(dist)
+    print("")
+    
+    print("╔════════════════════════════════════════╗")
+    print("║  ✅ DEMO COMPLETADA                   ║")
+    print("╚════════════════════════════════════════╝")
+}
