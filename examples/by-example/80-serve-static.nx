@@ -1,0 +1,35 @@
+// nyx-serve static files — serving CSS, JS, images from a directory
+// Archivos estáticos nyx-serve — servir CSS, JS, imágenes desde directorio
+
+import "std/http"
+import "std/web"
+
+fn home(req: Request) -> Response {
+    let html: String = "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"/assets/style.css\"></head><body><h1>Home</h1></body></html>"
+    return response_html(200, html)
+}
+
+fn main() -> int {
+    let app: App = app_new()
+
+    // Register dynamic routes first
+    app_get(app, "/", home)
+
+    // Static file serving via app_static (from nyx-serve product):
+    //   app_static(app, "/assets/", "./public/")
+    //
+    // When a request path starts with "/assets/", the rest is looked up
+    // in ./public/. For example: GET /assets/style.css serves ./public/style.css
+    //
+    // The serve_app runtime auto-detects MIME types:
+    //   .css -> text/css
+    //   .js  -> application/javascript
+    //   .png -> image/png
+    //   .svg -> image/svg+xml
+
+    print("static file serving pattern:")
+    print("  app_static(app, \"/assets/\", \"./public/\")")
+    print("  GET /assets/style.css -> ./public/style.css")
+    print("  GET /assets/app.js    -> ./public/app.js")
+    return 0
+}

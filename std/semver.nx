@@ -1,0 +1,202 @@
+// ============================================================
+// STD/SEMVER.NX — Semantic Versioning (v1.9.0)
+// ============================================================
+// Parsea y compara versiones semver (MAJOR.MINOR.PATCH).
+//
+// Uso:
+//   import "std/semver" as semver
+//
+//   let v = semver.parse("1.2.3")
+//   let ok: bool = semver.satisfies("1.2.3", ">=1.0.0")
+//   let cmp: int = semver.compare("1.2.3", "1.3.0")  // -1, 0, 1
+// ============================================================
+
+pub struct Version {
+    major: int,
+    minor: int,
+    patch: int,
+    pre: String,   // pre-release label (e.g. "alpha.1") or ""
+    raw: String    // original string
+}
+
+// Parse an integer from a string, return -1 on failure
+fn parse_int_safe(s: String) -> int {
+    if s.length() == 0 { return -1 }
+    var result = 0
+    var i = 0
+    while i < s.length() {
+        let c: char = s.charAt(i)
+        let d: int = c as int - 48   // '0' = 48
+        if d < 0 or d > 9 { return -1 }
+        result = result * 10 + d
+        i = i + 1
+    }
+    return result
+}
+
+/// Parse a semver string into a Version struct.
+/// Supports: "1.2.3", "1.2.3-alpha.1", "v1.2.3"
+pub fn parse(s: String) -> Version {
+    var raw = s
+    // Strip leading 'v'
+    if s.startsWith("v") or s.startsWith("V") {
+        raw = s.substring(1, s.length())
+    }
+
+    // Split off pre-release label
+    var pre = ""
+    var version_part = raw
+    if raw.contains("-") {
+        let dash_parts: Array<String> = raw.split("-")
+        let vp: String = dash_parts[0]
+        version_part = vp
+        // Reconstruct pre (everything after first -)
+        var pre_start = vp.length() + 1
+        if pre_start < raw.length() {
+            pre = raw.substring(pre_start, raw.length())
+        }
+    }
+
+    // Split MAJOR.MINOR.PATCH
+    let parts: Array<String> = version_part.split(".")
+    var major = 0
+    var minor = 0
+    var patch = 0
+
+    if parts.length() >= 1 {
+        let p0: String = parts[0]
+        let m: int = parse_int_safe(p0)
+        if m >= 0 { major = m }
+    }
+    if parts.length() >= 2 {
+        let p1: String = parts[1]
+        let n: int = parse_int_safe(p1)
+        if n >= 0 { minor = n }
+    }
+    if parts.length() >= 3 {
+        let p2: String = parts[2]
+        let p: int = parse_int_safe(p2)
+        if p >= 0 { patch = p }
+    }
+
+    return Version {
+        major: major, minor: minor, patch: patch,
+        pre: pre, raw: s
+    }
+}
+
+/// Compare two semver strings. Returns -1, 0, or 1.
+pub fn compare(a: String, b: String) -> int {
+    let va: Version = parse(a)
+    let vb: Version = parse(b)
+    return compare_versions(va, vb)
+}
+
+/// Compare two Version structs. Returns -1, 0, or 1.
+pub fn compare_versions(a: Version, b: Version) -> int {
+    if a.major < b.major { return -1 }
+    if a.major > b.major { return 1 }
+    if a.minor < b.minor { return -1 }
+    if a.minor > b.minor { return 1 }
+    if a.patch < b.patch { return -1 }
+    if a.patch > b.patch { return 1 }
+    // Both equal in major.minor.patch
+    // Pre-release: version without pre > version with pre (1.0.0 > 1.0.0-alpha)
+    if a.pre == "" and b.pre != "" { return 1 }
+    if a.pre != "" and b.pre == "" { return -1 }
+    // Both have pre or both have no pre
+    return 0
+}
+
+/// Check if version string satisfies a constraint.
+/// Supported constraints: "=1.0.0", ">=1.0.0", ">1.0.0", "<=1.0.0", "<1.0.0", "*", "^1.0.0", "~1.0.0"
+pub fn satisfies(version: String, constraint: String) -> bool {
+    let trimmed: String = constraint.trim()
+    if trimmed == "*" or trimmed == "" { return true }
+
+    // Caret: ^1.2.3 = >=1.2.3 <2.0.0
+    if trimmed.startsWith("^") {
+        let ver_str: String = trimmed.substring(1, trimmed.length())
+        let base: Version = parse(ver_str)
+        let v: Version = parse(version)
+        let cmp_min: int = compare_versions(v, base)
+        if cmp_min < 0 { return false }
+        // Must be < next major
+        if v.major > base.major { return false }
+        if v.major == base.major and base.major == 0 {
+            // 0.x.x: compatible = same minor
+            if v.minor > base.minor { return false }
+        }
+        return true
+    }
+
+    // Tilde: ~1.2.3 = >=1.2.3 <1.3.0
+    if trimmed.startsWith("~") {
+        let ver_str: String = trimmed.substring(1, trimmed.length())
+        let base: Version = parse(ver_str)
+        let v: Version = parse(version)
+        let cmp_min: int = compare_versions(v, base)
+        if cmp_min < 0 { return false }
+        if v.major != base.major { return false }
+        if v.minor > base.minor { return false }
+        return true
+    }
+
+    // >=
+    if trimmed.startsWith(">=") {
+        let ver_str: String = trimmed.substring(2, trimmed.length())
+        let cmp: int = compare(version, ver_str)
+        return cmp >= 0
+    }
+
+    // <=
+    if trimmed.startsWith("<=") {
+        let ver_str: String = trimmed.substring(2, trimmed.length())
+        let cmp: int = compare(version, ver_str)
+        return cmp <= 0
+    }
+
+    // >
+    if trimmed.startsWith(">") {
+        let ver_str: String = trimmed.substring(1, trimmed.length())
+        let cmp: int = compare(version, ver_str)
+        return cmp > 0
+    }
+
+    // <
+    if trimmed.startsWith("<") {
+        let ver_str: String = trimmed.substring(1, trimmed.length())
+        let cmp: int = compare(version, ver_str)
+        return cmp < 0
+    }
+
+    // = or bare version
+    var ver_str = trimmed
+    if trimmed.startsWith("=") {
+        ver_str = trimmed.substring(1, trimmed.length())
+    }
+    let cmp: int = compare(version, ver_str)
+    return cmp == 0
+}
+
+/// Format a Version to string.
+pub fn to_string(v: Version) -> String {
+    var s: String = "" + v.major + "." + v.minor + "." + v.patch
+    if v.pre != "" { s = s + "-" + v.pre }
+    return s
+}
+
+/// Find the best matching version from a list given a constraint.
+/// Returns "" if no match. Versions should be sorted ascending.
+pub fn resolve(versions: Array, constraint: String) -> String {
+    var best = ""
+    var i = 0
+    while i < versions.length() {
+        let ver: String = versions[i]
+        if satisfies(ver, constraint) {
+            best = ver
+        }
+        i = i + 1
+    }
+    return best
+}

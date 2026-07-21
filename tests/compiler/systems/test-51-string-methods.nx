@@ -1,0 +1,47 @@
+// Test new string methods (v0.1.5)
+
+fn main() -> int {
+    // trim
+    let s1: String = "  hello  "
+    let trimmed: String = s1.trim()
+    print(trimmed)  // "hello"
+
+    // toUpper / toLower
+    let s2: String = "Hello World"
+    let upper: String = s2.toUpper()
+    print(upper)  // "HELLO WORLD"
+    let lower: String = s2.toLower()
+    print(lower)  // "hello world"
+
+    // replace
+    let s3: String = "hello world"
+    let replaced: String = s3.replace("world", "nyx")
+    print(replaced)  // "hello nyx"
+
+    // repeat
+    let s4: String = "ab"
+    let repeated: String = s4.repeat(3)
+    print(repeated)  // "ababab"
+
+    // startsWith / endsWith
+    let s5: String = "hello world"
+    if s5.startsWith("hello") {
+        print("starts with hello: yes")
+    }
+    if s5.endsWith("world") {
+        print("ends with world: yes")
+    }
+    if not s5.startsWith("world") {
+        print("starts with world: no")
+    }
+
+    // indexOf
+    let s6: String = "abcdef"
+    let idx: int = s6.indexOf("cd")
+    print(idx)  // 2
+    let idx2: int = s6.indexOf("xyz")
+    print(idx2)  // -1
+
+    print("all string method tests passed")
+    return 0
+}

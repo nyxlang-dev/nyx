@@ -1,0 +1,110 @@
+// test-175-ownership.nx — Linear types + Ownership (v5.0.0)
+import "std/owned"
+
+fn test_box() {
+    print("--- Box ---")
+
+    // inc 4 Etapa 4: Box<T> es un #[affine] con *T heap manual + drop determinista.
+    // box_get(&b) presta (no consume); box_into(b) consume y libera la memoria.
+    let b: Box<int> = box_new(42)
+    let v: int = box_get(&b)
+    if v == 42 {
+        print("box get ok")
+    }
+    let vi: int = box_into(b)   // consume el Box → libera el *int en el drop
+    if vi == 42 {
+        print("box into ok")
+    }
+
+    // Box con String (destructor monomorfizado aparte: Box_String_drop)
+    let b2: Box<String> = box_new("hello")
+    let s: String = box_get(&b2)
+    if s == "hello" {
+        print("box string ok")
+    }
+    let _s2: String = box_into(b2)
+}
+
+fn test_rc() {
+    print("--- Rc ---")
+
+    // inc 4 Etapa 5: Rc<T> es #[affine] con refcount compartido (*int) + drop
+    // refcount-aware. rc_clone(&r) presta e incrementa el count (no consume);
+    // rc_get(&r)/rc_count(&r) prestan. rc1/rc2 se dropean al fin de la fn → el
+    // refcount baja a 0 y libera exactamente una vez.
+    let rc1: Rc<int> = rc_new(100)
+    if rc_count(&rc1) == 1 {
+        print("rc initial count ok")
+    }
+
+    // Clone increases ref count (borrow, no consume)
+    let rc2: Rc<int> = rc_clone(&rc1)
+    if rc_count(&rc1) == 2 {
+        print("rc clone count ok")
+    }
+
+    // Get value
+    let v: int = rc_get(&rc1)
+    if v == 100 {
+        print("rc get ok")
+    }
+
+    // String rc (destructor monomorfizado aparte: Rc_String_drop)
+    let rcs: Rc<String> = rc_new("shared")
+    let s: String = rc_get(&rcs)
+    if s == "shared" {
+        print("rc string ok")
+    }
+}
+
+fn test_move_only() {
+    print("--- MoveOnly ---")
+
+    // inc 4 Etapa 3: MoveOnly<T> ahora es un #[affine] struct con enforcement
+    // COMPILE-TIME. move_consume(m) mueve `m` (by-value); reusar `m` después
+    // gatea NYX1230 en NYX_BORROW=error (ya no hay flag runtime move_is_consumed).
+    let m: MoveOnly<int> = move_new(42)
+    let val: int = move_consume(m)
+    if val == 42 {
+        print("move consume ok")
+    }
+
+    // String version — mismo tipo genérico, T = String.
+    let ms: MoveOnly<String> = move_new("linear")
+    let str_val: String = move_consume(ms)
+    if str_val == "linear" {
+        print("move string ok")
+    }
+}
+
+fn test_file_guard() {
+    print("--- FileGuard (RAII) ---")
+
+    let path = "/tmp/nyx_ownership_test.txt"
+    let g = file_guard_open(path, "w")
+    if file_guard_is_open(g) {
+        print("file guard open ok")
+    }
+    file_guard_write(g, "hello from ownership test\n")
+    file_guard_close(g)
+    if !file_guard_is_open(g) {
+        print("file guard closed ok")
+    }
+
+    // Read back
+    let g2 = file_guard_open(path, "r")
+    let line = file_guard_read_line(g2)
+    if line.startsWith("hello") {
+        print("file guard read ok")
+    }
+    file_guard_close(g2)
+}
+
+fn main() {
+    print("ownership test")
+    test_box()
+    test_rc()
+    test_move_only()
+    test_file_guard()
+    print("ownership ok")
+}

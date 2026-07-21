@@ -1,0 +1,136 @@
+// test-172-msgpack.nx — MessagePack binary serialization (v4.7.0)
+import "std/msgpack"
+
+fn test_pack_int() {
+    print("--- Pack Int ---")
+
+    // Small positive fixint (0-127): 1 byte
+    let p0 = msgpack_int(0)
+    if msgpack_size(p0) == 1 {
+        print("fixint 0: 1 byte ok")
+    }
+    if msgpack_type(p0) == "int" {
+        print("type int ok")
+    }
+    if msgpack_unpack_int(p0) == 0 {
+        print("unpack 0 ok")
+    }
+
+    let p42 = msgpack_int(42)
+    if msgpack_unpack_int(p42) == 42 {
+        print("unpack 42 ok")
+    }
+    if msgpack_size(p42) == 1 {
+        print("fixint 42: 1 byte ok")
+    }
+
+    // uint8 range (128-255): 2 bytes
+    let p200 = msgpack_int(200)
+    if msgpack_size(p200) == 2 {
+        print("uint8 200: 2 bytes ok")
+    }
+    if msgpack_unpack_int(p200) == 200 {
+        print("unpack 200 ok")
+    }
+
+    // Negative fixint (-1 to -32): 1 byte
+    let pneg1 = msgpack_int(-1)
+    if msgpack_size(pneg1) == 1 {
+        print("fixint -1: 1 byte ok")
+    }
+    if msgpack_unpack_int(pneg1) == -1 {
+        print("unpack -1 ok")
+    }
+
+    // Larger negative: int8
+    let pneg100 = msgpack_int(-100)
+    if msgpack_unpack_int(pneg100) == -100 {
+        print("unpack -100 ok")
+    }
+}
+
+fn test_pack_str() {
+    print("--- Pack String ---")
+
+    let hello = msgpack_str("hello")
+    if msgpack_type(hello) == "str" {
+        print("type str ok")
+    }
+    // fixstr "hello" = 1 header + 5 bytes = 6
+    if msgpack_size(hello) == 6 {
+        print("fixstr hello: 6 bytes ok")
+    }
+    let decoded = msgpack_unpack_str(hello)
+    if decoded == "hello" {
+        print("unpack hello ok")
+    }
+
+    // Empty string
+    let empty = msgpack_str("")
+    if msgpack_unpack_str(empty) == "" {
+        print("unpack empty ok")
+    }
+
+    // Round-trip with special chars
+    let special = msgpack_str("hello world!")
+    let decoded2 = msgpack_unpack_str(special)
+    if decoded2 == "hello world!" {
+        print("unpack special ok")
+    }
+}
+
+fn test_pack_bool_nil() {
+    print("--- Pack Bool/Nil ---")
+
+    let t = msgpack_bool(true)
+    if msgpack_type(t) == "bool_true" {
+        print("pack true ok")
+    }
+    if msgpack_unpack_bool(t) == true {
+        print("unpack true ok")
+    }
+
+    let f = msgpack_bool(false)
+    if msgpack_type(f) == "bool_false" {
+        print("pack false ok")
+    }
+    if msgpack_unpack_bool(f) == false {
+        print("unpack false ok")
+    }
+
+    let n = msgpack_nil()
+    if msgpack_is_nil(n) {
+        print("pack nil ok")
+    }
+    if msgpack_size(n) == 1 {
+        print("nil: 1 byte ok")
+    }
+}
+
+fn test_sizes() {
+    print("--- Sizes ---")
+
+    // Verify compact encoding
+    let i0 = msgpack_int(0)
+    let i127 = msgpack_int(127)
+    let i128 = msgpack_int(128)
+
+    print(format("int(0) size: {}", msgpack_size(i0)))
+    print(format("int(127) size: {}", msgpack_size(i127)))
+    print(format("int(128) size: {}", msgpack_size(i128)))
+
+    // String sizes (use msgpack_size for binary correctness)
+    let s5 = msgpack_str("hello")
+    let s32 = msgpack_str("this string is longer than 31 chars!")
+    print(format("str(5) size: {}", msgpack_size(s5)))
+    print(format("str(36) size: {}", msgpack_size(s32)))
+}
+
+fn main() {
+    print("msgpack test")
+    test_pack_int()
+    test_pack_str()
+    test_pack_bool_nil()
+    test_sizes()
+    print("msgpack ok")
+}

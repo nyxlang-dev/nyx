@@ -1,0 +1,54 @@
+// Manejo de errores: try/catch con throw y panic
+
+fn dividir(a: int, b: int) -> int {
+    if b == 0 {
+        throw("division por cero: denominador es 0")
+    }
+    return a / b
+}
+
+fn main() -> int {
+    // Capturar un throw explícito
+    var resultado: String = ""
+    try {
+        let r: int = dividir(10, 0)
+        resultado = int_to_string(r)
+    } catch(e: String) {
+        resultado = "Error capturado: " + e
+    }
+    print(resultado)
+
+    // try normal (sin error)
+    var ok: String = ""
+    try {
+        let r: int = dividir(20, 4)
+        ok = "resultado: " + int_to_string(r)
+    } catch(e: String) {
+        ok = "inesperado: " + e
+    }
+    print(ok)
+
+    // Capturar panic
+    var panic_msg: String = ""
+    try {
+        panic("algo salio muy mal")
+    } catch(e: String) {
+        panic_msg = "panic atrapado: " + e
+    }
+    print(panic_msg)
+
+    // try anidado
+    var externo: String = ""
+    try {
+        try {
+            throw("error interno")
+        } catch(e: String) {
+            externo = "manejado: " + e
+        }
+    } catch(e: String) {
+        externo = "no deberia llegar aqui"
+    }
+    print(externo)
+
+    return 0
+}

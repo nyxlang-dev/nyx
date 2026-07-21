@@ -1,0 +1,55 @@
+// test-155: impl Trait syntax — desugared to dyn Trait (static-dispatch placeholder)
+
+trait Drawable {
+    fn draw(self) -> String
+}
+
+struct Circle {
+    radius: int
+}
+
+struct Square {
+    side: int
+}
+
+impl Drawable for Circle {
+    fn draw(self) -> String {
+        return "Circle(" + int_to_string(self.radius) + ")"
+    }
+}
+
+impl Drawable for Square {
+    fn draw(self) -> String {
+        return "Square(" + int_to_string(self.side) + ")"
+    }
+}
+
+// impl Trait in parameter position (desugared to dyn Trait)
+fn render(item: impl Drawable) -> String {
+    return item.draw()
+}
+
+// impl Trait + impl Trait (intersection, desugared to first trait)
+trait Describable {
+    fn describe(self) -> String
+}
+
+impl Describable for Circle {
+    fn describe(self) -> String {
+        return "A circle with radius " + int_to_string(self.radius)
+    }
+}
+
+fn show(item: impl Describable) -> String {
+    return item.describe()
+}
+
+fn main() -> int {
+    let c = Circle { radius: 5 }
+    let s = Square { side: 3 }
+    print(render(c))
+    print(render(s))
+    print(show(c))
+    print("impl_trait ok")
+    return 0
+}

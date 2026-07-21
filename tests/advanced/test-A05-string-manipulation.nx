@@ -1,0 +1,51 @@
+// Test A05: Manipulación de strings
+// Prueba: concatenación, length, charAt, comparación
+
+fn repeat_string(s: String, n: int) -> String {
+    var result = ""
+    var i = 0
+    while i < n {
+        result = result + s
+        i = i + 1
+    }
+    return result
+}
+
+fn string_equal(a: String, b: String) -> bool {
+    if a.length() != b.length() {
+        return false
+    }
+    var i = 0
+    while i < a.length() {
+        if a.charAt(i) != b.charAt(i) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn main() {
+    let s = repeat_string("ab", 3)
+    // s = "ababab", length = 6
+    print(s.length())
+
+    // Comparación
+    if string_equal("hello", "hello") {
+        print(1)
+    } else {
+        print(0)
+    }
+
+    if string_equal("hello", "world") {
+        print(1)
+    } else {
+        print(0)
+    }
+
+    // charAt
+    let ch = "Nyx".charAt(0)
+    print(ch)
+
+    return 0
+}

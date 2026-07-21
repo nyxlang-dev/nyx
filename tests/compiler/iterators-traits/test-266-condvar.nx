@@ -1,0 +1,49 @@
+// Test 266: Condvar — 2 OS threads exchange a value under mutex+condvar with a
+// predicate (mirrors test-91-mutex.nx / test-92-channel.nx' style). Deterministic
+// output via assert + print, same pattern as by-example/60-producer-consumer.nx.
+
+var g_mtx: Map = Map.new()
+var g_cv: Map = Map.new()
+var g_ready: int = 0
+var g_value: int = 0
+
+fn producer() -> int {
+    mutex_lock(g_mtx)
+    g_value = 99
+    g_ready = 1
+    condvar_signal(g_cv)
+    mutex_unlock(g_mtx)
+    return 0
+}
+
+fn consumer() -> int {
+    mutex_lock(g_mtx)
+    while g_ready == 0 {
+        condvar_wait(g_cv, g_mtx)
+    }
+    let v: int = g_value
+    mutex_unlock(g_mtx)
+    return v
+}
+
+fn main() {
+    g_mtx = mutex_new()
+    g_cv = condvar_new()
+
+    // timedwait sanity: nobody has signaled yet -> times out (1), doesn't hang.
+    mutex_lock(g_mtx)
+    let rc: int = condvar_timedwait(g_cv, g_mtx, 20)
+    mutex_unlock(g_mtx)
+    assert(rc == 1)
+
+    let c: int = thread_spawn(consumer)
+    let p: int = thread_spawn(producer)
+
+    thread_join(p)
+    let result: int = thread_join(c)
+    assert(result == 99)
+    print(result)  // 99
+
+    mutex_destroy(g_mtx)
+    print("done")
+}

@@ -1,0 +1,33 @@
+// CSV creation and serialization with std/csv
+// Creación y serialización CSV con std/csv
+
+import "std/csv"
+
+fn main() -> int {
+    // Create a CSV document with headers
+    let headers: Array = ["name", "age", "city"]
+    let doc: CsvDoc = csv.new_doc(headers)
+
+    // Add data rows
+    csv.add_row(doc, ["Alice", "30", "Buenos Aires"])
+    csv.add_row(doc, ["Bob", "25", "New York"])
+    csv.add_row(doc, ["Charlie", "35", "London"])
+
+    // Serialize to CSV string
+    let output: String = csv.stringify(doc)
+    print(output)
+    print("")
+
+    // Parse it back
+    let parsed: CsvDoc = csv.parse(output)
+    let data: Array = csv.data_rows(parsed)
+    print("rows: " + int_to_string(data.length()))
+    print("cols: " + int_to_string(csv.col_count(parsed)))
+
+    // Access by column name
+    let row0: Array = data[0]
+    let name: String = csv.get_by_name(parsed, row0, "city")
+    print("first city: " + name)
+
+    return 0
+}

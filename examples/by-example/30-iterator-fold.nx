@@ -1,0 +1,48 @@
+// fold: reducir un iterator a un valor acumulando con una función
+
+fn add(acc: int, x: int) -> int {
+    return acc + x
+}
+
+fn multiply(acc: int, x: int) -> int {
+    return acc * x
+}
+
+fn max_val(acc: int, x: int) -> int {
+    if x > acc {
+        return x
+    }
+    return acc
+}
+
+fn is_even(x: int) -> bool {
+    return x % 2 == 0
+}
+
+fn main() -> int {
+    let nums: Array = [1, 2, 3, 4, 5]
+
+    // Suma con fold — equivale a un loop manual con acumulador
+    let suma: int = nums.iter().fold(0, add)
+    print("suma(1..5) = " + int_to_string(suma))         // 15
+
+    // Producto con fold
+    let producto: int = nums.iter().fold(1, multiply)
+    print("producto(1..5) = " + int_to_string(producto)) // 120
+
+    // Máximo con fold
+    let maximo: int = nums.iter().fold(0, max_val)
+    print("max(1..5) = " + int_to_string(maximo))        // 5
+
+    // Sumar solo los pares con filter + fold
+    let nums2: Array = [10, 3, 8, 7, 2, 6]
+    let suma_pares: int = nums2.iter().filter(is_even).fold(0, add)
+    print("suma pares = " + int_to_string(suma_pares))   // 26 (10+8+2+6)
+
+    // fold con valor inicial distinto de cero
+    let nums3: Array = [1, 2, 3]
+    let con_offset: int = nums3.iter().fold(100, add)
+    print("100 + sum(1,2,3) = " + int_to_string(con_offset)) // 106
+
+    return 0
+}

@@ -1,0 +1,13 @@
+// B8-F2: módulo dummy para tests de payloads de enum cross-module.
+// El scan textual de scan_module_types debe capturar nombres de variants
+// Y los tipos de sus payloads.
+
+pub enum Signal {
+    Quit,
+    Move(int, int),
+    Write(String)
+}
+
+pub fn signal_tag(n: int) -> int {
+    return n
+}

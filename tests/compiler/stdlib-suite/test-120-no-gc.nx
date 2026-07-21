@@ -1,0 +1,14 @@
+// test-120-no-gc.nx — No-GC mode (v1.5.0)
+// Este test usa solo aritmética pura (sin heap allocations de structs/closures)
+// para que pueda compilarse con NYX_NO_GC=1 sin necesitar -lgc
+fn main() -> int {
+    var x = 0
+    var i = 0
+    while i < 10 {
+        x = x + i
+        i = i + 1
+    }
+    if x != 45 { return 1 }
+    print("test-120-no-gc: PASS")
+    return 0
+}

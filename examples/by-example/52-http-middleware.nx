@@ -1,0 +1,35 @@
+// Web framework — registering routes and middleware
+// Framework web — registrar rutas y middleware
+
+import "std/http"
+import "std/web"
+
+fn handle_root(req: Request) -> Response {
+    return response_new(200, "Welcome to Nyx!")
+}
+
+fn handle_api(req: Request) -> Response {
+    return response_json(200, "{\"status\": \"ok\"}")
+}
+
+fn main() -> int {
+    // Create an app and register middleware + routes
+    let app: App = app_new()
+
+    // Middleware runs before each request
+    app_use(app, mw_logging)
+    app_use(app, mw_cors)
+
+    // Routes match method + path pattern
+    app_get(app, "/", handle_root)
+    app_get(app, "/api/status", handle_api)
+
+    // The app is ready — in production you would pass it
+    // to serve_app() from nyx-serve to start serving.
+    // Here we just demonstrate the framework API.
+    print("app configured with 2 routes and 2 middlewares")
+    print("routes: GET / and GET /api/status")
+    print("middleware: logging + CORS")
+
+    return 0
+}

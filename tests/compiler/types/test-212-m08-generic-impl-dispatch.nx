@@ -1,0 +1,14 @@
+// Etapa B (Fase 1c): dispatch + instanciacion real de impl-methods genericos.
+// Vec<int> y Vec<String> deben producir DEFINES y LAYOUTS distintos:
+//   @Vec_int_get -> i64, @Vec_String_get -> %nyx_string*.
+struct Vec<T> { data: T }
+impl<T> Vec<T> {
+    fn get(self) -> T { return self.data }
+}
+fn main() {
+    let a: Vec<int> = Vec<int>{ data: 7 }
+    let b: Vec<String> = Vec<String>{ data: "hola" }
+    print(int_to_string(a.get()))   // 7
+    print(b.get())                   // hola
+    print("STAGE-B OK")
+}

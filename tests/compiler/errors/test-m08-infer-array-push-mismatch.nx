@@ -1,0 +1,9 @@
+// M-08 sesion 9 error test: let without annotation still infers the element
+// type from the array literal, so arr.push("x") is caught.
+// Expected stderr (contains): "argument 1 of 'push': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let arr = [1, 2, 3]
+    arr.push("nope")
+    return 0
+}

@@ -1,0 +1,33 @@
+// Test 47: M-08 session 2 — happy path for function arg + return type checking
+//
+// Exercises the type checker across the function boundary: declared param
+// types, declared return types, and calls that must match. Any violation
+// lives in tests/compiler/errors/ (arg-mismatch, return-mismatch,
+// param-unknown-type).
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+fn greet(name: String) -> String {
+    return "hola " + name
+}
+
+fn pick_flag(x: int) -> bool {
+    if x > 0 { return true }
+    return false
+}
+
+// Calls nested inside args: ty_of_expr must resolve the return type of
+// add() so the outer call type-checks against pick_flag's param.
+fn main() -> int {
+    let n: int = add(2, 3)
+    let s: String = greet("Ottavio")
+    let ok: bool = pick_flag(add(10, 20))
+
+    print(int_to_string(n))
+    print(s)
+    if ok { print("true") } else { print("false") }
+    print("OK")
+    return 0
+}

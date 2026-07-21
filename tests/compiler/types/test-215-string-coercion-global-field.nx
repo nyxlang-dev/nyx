@@ -1,0 +1,28 @@
+// Test 215: coerción i64→ptr al leer String/Array/Map CRUDO de globales y
+// campos de struct (fricción dogfooding venezuelainfo.org, 2026-06-30).
+// Regresión: leer g[i] (array global) o r.field.get(k) (Map de campo) sin
+// asignar antes a un `let` tipado devolvía el puntero como i64 → el concat
+// emitía nyx_string_from_int (imprimía un número gigante) en vez de coaccionar
+// a %nyx_string*. El caso real fue req.query.get("ulat") reventando el server.
+
+var g_words: Array = ["alpha", "beta"]
+
+struct Cfg { opts: Map<String, String>, tags: Array<String> }
+
+fn main() -> int {
+    // Array global de String, lectura cruda en concat.
+    assert(("w=" + g_words[0]) == "w=alpha")
+    assert(("w=" + g_words[1]) == "w=beta")
+
+    // Map<String,String> de campo de struct, get crudo en concat.
+    let o: Map<String, String> = {"host": "localhost"}
+    let tg: Array<String> = ["x", "y"]
+    let c: Cfg = Cfg { opts: o, tags: tg }
+    assert(("host=" + c.opts.get("host")) == "host=localhost")
+
+    // Array<String> de campo de struct, índice crudo en concat.
+    assert(("t=" + c.tags[1]) == "t=y")
+
+    print("ok")
+    return 0
+}

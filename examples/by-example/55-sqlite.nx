@@ -1,0 +1,36 @@
+// SQLite — in-memory database with SQL queries
+// SQLite — base de datos en memoria con consultas SQL
+
+import "std/sqlite"
+
+fn main() -> int {
+    // Open an in-memory database. The handle is an opaque pointer (*int);
+    // sqlite_open returns NULL on failure.
+    let db = sqlite_open(":memory:")
+
+    // Create a table
+    sqlite_exec(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+
+    // Insert rows
+    sqlite_exec(db, "INSERT INTO users (name, age) VALUES ('Alice', 30)")
+    sqlite_exec(db, "INSERT INTO users (name, age) VALUES ('Bob', 25)")
+    sqlite_exec(db, "INSERT INTO users (name, age) VALUES ('Charlie', 35)")
+
+    // Query all rows
+    let rows: Array = sqlite_query(db, "SELECT name, age FROM users ORDER BY age")
+    var i: int = 0
+    while i < rows.length() {
+        let row: Array = rows[i]
+        let name: String = row[0]
+        let age: String = row[1]
+        print(name + " is " + age + " years old")
+        i = i + 1
+    }
+
+    // Query with a condition
+    let seniors: Array = sqlite_query(db, "SELECT name FROM users WHERE age >= 30")
+    print("users 30+: " + int_to_string(seniors.length()))
+
+    sqlite_close(db)
+    return 0
+}

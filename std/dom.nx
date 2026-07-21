@@ -1,0 +1,244 @@
+// std/dom.nx — DOM bindings para el target WASM (Escenario B fase 2).
+// SOLO compila bajo NYX_TARGET=wasm32-wasi (extern "js" falla fail-fast en
+// nativo, a propósito). El browser provee los imports js_dom_* — el shim
+// (examples/browser/nyx-wasi-shim.js) trae una implementación estándar:
+// domBindings(). Los handlers de eventos son fns Nyx exportadas con
+// #[export_name = "nombre"] — se registran POR NOMBRE (dom_on recibe el
+// export name; closures como handlers quedan para una fase futura).
+//
+// EN: DOM bindings for the WASM target. Only compiles under
+// NYX_TARGET=wasm32-wasi. Event handlers are Nyx fns exported with
+// #[export_name] and registered BY NAME.
+//
+// Uso / usage:
+//   import "std/dom"
+//   #[export_name = "al_click"]
+//   fn al_click() { dom_set_text("#salida", dom_get_value("#entrada")) }
+//   fn main() { dom_on("#boton", "click", "al_click") }
+
+extern "js" fn js_dom_set_text(sel: String, text: String)
+extern "js" fn js_dom_set_html(sel: String, html: String)
+extern "js" fn js_dom_get_value(sel: String) -> String
+extern "js" fn js_dom_on(sel: String, event: String, handler: String)
+extern "js" fn js_console_log(msg: String)
+// Ampliación 2026-07-02 (handoff venezuelainfo #5): atributos, clases,
+// value y count — reemplazan los externs caseros del loader del portal.
+extern "js" fn js_dom_get_attr(sel: String, name: String) -> String
+extern "js" fn js_dom_set_attr(sel: String, name: String, value: String)
+extern "js" fn js_dom_remove_attr(sel: String, name: String)
+extern "js" fn js_dom_class_add(sel: String, cls: String)
+extern "js" fn js_dom_class_remove(sel: String, cls: String)
+extern "js" fn js_dom_class_toggle(sel: String, cls: String)
+extern "js" fn js_dom_set_value(sel: String, value: String)
+extern "js" fn js_dom_count(sel: String) -> int
+extern "js" fn js_dom_get_attr_all(sel: String, name: String) -> Array
+// Evento ACTUAL (handoff #3a): accesores válidos SOLO dentro de un handler
+// registrado con dom_on — el shim guarda el Event mientras el handler corre.
+// Sin closures ni objeto Event cruzando la frontera: cero marshalling extra.
+extern "js" fn js_ev_type() -> String
+extern "js" fn js_ev_key() -> String
+extern "js" fn js_ev_target_attr(name: String) -> String
+extern "js" fn js_ev_target_value() -> String
+extern "js" fn js_ev_client_x() -> int
+extern "js" fn js_ev_client_y() -> int
+extern "js" fn js_ev_prevent_default()
+// Handler CLOSURE (handoff #3b): el par {fn_ptr, env_ptr} cruza como i8* y
+// el shim lo invoca vía la function table exportada (-Wl,--export-table).
+extern "js" fn js_dom_on_fn(sel: String, event: String, handler: Fn)
+
+// Setea el textContent del primer elemento que matchea el selector CSS
+export fn dom_set_text(sel: String, text: String) {
+    js_dom_set_text(sel, text)
+}
+
+// Setea el innerHTML (¡solo con contenido confiable — no input de usuario!)
+export fn dom_set_html(sel: String, html: String) {
+    js_dom_set_html(sel, html)
+}
+
+// Lee el .value de un input/textarea/select (o "" si no existe)
+export fn dom_get_value(sel: String) -> String {
+    return js_dom_get_value(sel)
+}
+
+// Registra un listener: al dispararse `event` sobre `sel`, el browser llama
+// la fn Nyx exportada cuyo #[export_name] es `handler` (re-entrada post-main)
+export fn dom_on(sel: String, event: String, handler: String) {
+    js_dom_on(sel, event, handler)
+}
+
+// console.log del browser (para debug; print() va al stdout capturado)
+export fn console_log(msg: String) {
+    js_console_log(msg)
+}
+
+// Lee un atributo del primer elemento que matchea ("" si no existe)
+export fn dom_get_attr(sel: String, name: String) -> String {
+    return js_dom_get_attr(sel, name)
+}
+
+// Setea un atributo (crea o reemplaza)
+export fn dom_set_attr(sel: String, name: String, value: String) {
+    js_dom_set_attr(sel, name, value)
+}
+
+// Elimina un atributo si existe
+export fn dom_remove_attr(sel: String, name: String) {
+    js_dom_remove_attr(sel, name)
+}
+
+// classList.add / remove / toggle sobre el primer elemento que matchea
+export fn dom_class_add(sel: String, cls: String) {
+    js_dom_class_add(sel, cls)
+}
+
+export fn dom_class_remove(sel: String, cls: String) {
+    js_dom_class_remove(sel, cls)
+}
+
+export fn dom_class_toggle(sel: String, cls: String) {
+    js_dom_class_toggle(sel, cls)
+}
+
+// Setea el .value de un input/textarea/select
+export fn dom_set_value(sel: String, value: String) {
+    js_dom_set_value(sel, value)
+}
+
+// Cantidad de elementos que matchean el selector (querySelectorAll().length)
+export fn dom_count(sel: String) -> int {
+    return js_dom_count(sel)
+}
+
+// Atributo `name` de TODOS los elementos que matchean → Array<String>
+// ("" para los que no lo tienen). Usa el marshalling de Array del shim.
+export fn dom_get_attr_all(sel: String, name: String) -> Array {
+    return js_dom_get_attr_all(sel, name)
+}
+
+// ── Accesores del evento actual — SOLO dentro de un handler de dom_on ──
+// Fuera de un handler devuelven ""/0 (no hay evento activo).
+
+// Tipo del evento ("click", "keydown", ...)
+export fn ev_type() -> String { return js_ev_type() }
+
+// event.key ("Enter", "a", "Escape", ...; "" si no es evento de teclado)
+export fn ev_key() -> String { return js_ev_key() }
+
+// Atributo del event.target ("" si no existe) — p.ej. ev_target_attr("data-id")
+export fn ev_target_attr(name: String) -> String { return js_ev_target_attr(name) }
+
+// .value del event.target ("" si no tiene)
+export fn ev_target_value() -> String { return js_ev_target_value() }
+
+// Coordenadas del puntero (redondeadas a int; 0 si no es evento de mouse)
+export fn ev_client_x() -> int { return js_ev_client_x() }
+export fn ev_client_y() -> int { return js_ev_client_y() }
+
+// event.preventDefault()
+export fn ev_prevent_default() { js_ev_prevent_default() }
+
+// Registra un listener con un CLOSURE Nyx (captura variables — handoff #3b):
+//   dom_on_fn("#btn", "click", fn() { ... contador[0] += 1 ... })
+// Los accesores ev_* funcionan igual que con dom_on. Requiere módulo linkeado
+// con -Wl,--export-table (el make wasm estándar ya lo hace).
+export fn dom_on_fn(sel: String, event: String, handler: Fn) {
+    js_dom_on_fn(sel, event, handler)
+}
+
+// ── Creación/composición de nodos POR HANDLE (Task 2 del framework VDOM) ──
+// A diferencia de los wrappers de arriba (que operan sobre selectores CSS),
+// estos trabajan sobre un `int` que identifica un nodo DOM en una tabla de
+// handles que vive del lado del shim (examples/browser/nyx-wasi-shim.js:
+// domBindings). Un handle 0 representa "nodo nulo/no encontrado" — la tabla
+// arranca en `[null]` así el índice 0 nunca es un nodo real. El framework
+// VDOM (Task 3, sobre std/vdom.nx) usa estos wrappers para materializar el
+// árbol de datos puro contra el DOM real sin pasar por selectores.
+extern "js" fn js_dom_create(tag: String) -> int
+extern "js" fn js_dom_create_text(s: String) -> int
+extern "js" fn js_dom_append(parent: int, child: int)
+extern "js" fn js_dom_remove_at(parent: int, idx: int)
+extern "js" fn js_dom_replace(parent: int, new_h: int, old_h: int)
+extern "js" fn js_dom_insert_before(parent: int, new_h: int, ref_h: int)
+extern "js" fn js_dom_child_at(parent: int, idx: int) -> int
+extern "js" fn js_dom_set_text_h(h: int, s: String)
+extern "js" fn js_dom_set_attr_h(h: int, k: String, v: String)
+extern "js" fn js_dom_remove_attr_h(h: int, k: String)
+extern "js" fn js_dom_query_handle(sel: String) -> int
+extern "js" fn js_dom_on_h(h: int, evento: String, handler: Fn)
+// Adición Task 2 (router): cantidad de hijos directos de un nodo por handle
+// (childNodes.length) — usada por std/router.nx para limpiar el contenedor
+// de montaje antes de re-renderizar tras un cambio de ruta.
+extern "js" fn js_dom_child_count(h: int) -> int
+
+// Crea un elemento (document.createElement(tag)) y devuelve su handle
+export fn dom_create(tag: String) -> int {
+    return js_dom_create(tag)
+}
+
+// Crea un nodo de texto (document.createTextNode(s)) y devuelve su handle
+export fn dom_create_text(s: String) -> int {
+    return js_dom_create_text(s)
+}
+
+// parent.appendChild(child) — ambos por handle
+export fn dom_append(parent: int, child: int) {
+    js_dom_append(parent, child)
+}
+
+// Elimina el hijo en la posición `idx` de `parent` (childNodes[idx].remove())
+export fn dom_remove_at(parent: int, idx: int) {
+    js_dom_remove_at(parent, idx)
+}
+
+// Reemplaza `old_h` por `new_h` dentro de `parent` (replaceChild)
+export fn dom_replace(parent: int, new_h: int, old_h: int) {
+    js_dom_replace(parent, new_h, old_h)
+}
+
+// Inserta `new_h` antes de `ref_h` dentro de `parent` (insertBefore)
+export fn dom_insert_before(parent: int, new_h: int, ref_h: int) {
+    js_dom_insert_before(parent, new_h, ref_h)
+}
+
+// Handle del hijo en la posición `idx` de `parent` (childNodes[idx]; 0 si no existe)
+export fn dom_child_at(parent: int, idx: int) -> int {
+    return js_dom_child_at(parent, idx)
+}
+
+// Setea el textContent del nodo identificado por `h`
+export fn dom_set_text_h(h: int, s: String) {
+    js_dom_set_text_h(h, s)
+}
+
+// Setea un atributo del nodo identificado por `h`
+export fn dom_set_attr_h(h: int, k: String, v: String) {
+    js_dom_set_attr_h(h, k, v)
+}
+
+// Elimina un atributo del nodo identificado por `h`
+export fn dom_remove_attr_h(h: int, k: String) {
+    js_dom_remove_attr_h(h, k)
+}
+
+// document.querySelector(sel) pero devuelve un HANDLE (0 si no matchea) en
+// vez de operar directo sobre el selector — puente entre el mundo por-CSS
+// (dom_set_text, dom_on, ...) y el mundo por-handle de esta sección.
+export fn dom_query_handle(sel: String) -> int {
+    return js_dom_query_handle(sel)
+}
+
+// Registra un listener CLOSURE sobre el nodo identificado por `h` (mismo
+// mecanismo de function-table que dom_on_fn, pero por handle en vez de
+// selector CSS). Los accesores ev_* funcionan igual dentro del handler.
+export fn dom_on_h(h: int, evento: String, handler: Fn) {
+    js_dom_on_h(h, evento, handler)
+}
+
+// Cantidad de hijos DIRECTOS del nodo identificado por `h` (childNodes.length;
+// 0 si el handle no existe). Adición Task 2 (router): std/router.nx la usa
+// para limpiar el contenedor de montaje (loop descendente + dom_remove_at)
+// antes de re-renderizar la vista tras un cambio de ruta.
+export fn dom_child_count(h: int) -> int {
+    return js_dom_child_count(h)
+}

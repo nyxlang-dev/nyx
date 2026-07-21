@@ -1,0 +1,25 @@
+// Argumentos de CLI: get_args() retorna un Array de Strings (argv)
+
+fn main() -> int {
+    let argv: Array = get_args()
+    let total: int = argv.length()
+
+    print("Total de argumentos: " + int_to_string(total))
+
+    var i: int = 0
+    while i < total {
+        let arg: String = argv[i]
+        if i == 0 {
+            print("  [" + int_to_string(i) + "] programa: " + arg)
+        } else {
+            print("  [" + int_to_string(i) + "] arg: " + arg)
+        }
+        i = i + 1
+    }
+
+    if total < 2 {
+        print("(sin argumentos — ejecutar con: ./programa arg1 arg2)")
+    }
+
+    return 0
+}

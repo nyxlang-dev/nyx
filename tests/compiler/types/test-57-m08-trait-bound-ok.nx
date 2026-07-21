@@ -1,0 +1,31 @@
+// M-08 B8-F1 happy path: el bound `T: Display` se satisface porque Point
+// tiene `impl Display for Point` — compila y corre.
+// Nota: turbofish explícito (`describe<Point>(p)`) porque codegen no
+// monomorfiza calls genéricos implícitos (gap preexistente de S10).
+
+trait Display {
+    fn show(self) -> String
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Display for Point {
+    fn show(self) -> String {
+        return "(" + int_to_string(self.x) + "," + int_to_string(self.y) + ")"
+    }
+}
+
+fn describe<T: Display>(x: T) -> int {
+    return 1
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 3, y: 4 }
+    let r: int = describe<Point>(p)
+    assert(r == 1)
+    print("OK")
+    return 0
+}

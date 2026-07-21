@@ -1,0 +1,43 @@
+// std/compress.nx — Compression and encoding utilities for Nyx (v4.4.0)
+// Wraps runtime/compress.c which uses zlib + pure C base64
+
+extern "C" fn nyx_compress(src: String) -> String
+extern "C" fn nyx_decompress(src: String, original_size: int) -> String
+extern "C" fn nyx_compress_size(src: String) -> int
+extern "C" fn nyx_base64_encode(src: String) -> String
+extern "C" fn nyx_base64_decode(src: String) -> String
+
+// ── High-level compress API ───────────────────────────────────────────────────
+
+pub fn compress(data: String) -> String {
+    return nyx_compress(data)
+}
+
+pub fn decompress(data: String, original_size: int) -> String {
+    return nyx_decompress(data, original_size)
+}
+
+pub fn compress_size(data: String) -> int {
+    return nyx_compress_size(data)
+}
+
+// Returns compression ratio as percentage (0-100): 100 = same size, <100 = compressed
+pub fn compression_ratio(original: String, compressed_size: int) -> int {
+    if original.length() == 0 { return 100 }
+    return (compressed_size * 100) / original.length()
+}
+
+// ── Base64 API ────────────────────────────────────────────────────────────────
+
+pub fn base64_encode(data: String) -> String {
+    return nyx_base64_encode(data)
+}
+
+pub fn base64_decode(encoded: String) -> String {
+    return nyx_base64_decode(encoded)
+}
+
+// Encode a hex string to base64 (convenience)
+pub fn hex_to_b64(hex: String) -> String {
+    return nyx_base64_encode(hex)
+}

@@ -1,0 +1,45 @@
+// WaitGroup — waiting for multiple threads to finish
+// WaitGroup — esperar a que múltiples hilos terminen
+
+import "std/sync"
+
+var wg: WaitGroup = wg_new()
+
+fn task_a() -> int {
+    print("task A running")
+    sleep(10)
+    print("task A done")
+    wg_done(wg)
+    return 0
+}
+
+fn task_b() -> int {
+    print("task B running")
+    sleep(20)
+    print("task B done")
+    wg_done(wg)
+    return 0
+}
+
+fn task_c() -> int {
+    print("task C running")
+    sleep(5)
+    print("task C done")
+    wg_done(wg)
+    return 0
+}
+
+fn main() -> int {
+    // Set the counter to the number of tasks
+    wg_add(wg, 3)
+
+    // Spawn three concurrent tasks
+    thread_spawn(task_a)
+    thread_spawn(task_b)
+    thread_spawn(task_c)
+
+    // Block until all three call wg_done()
+    wg_wait(wg)
+    print("all tasks completed")
+    return 0
+}

@@ -1,0 +1,17 @@
+// M-08 sesion 11 error test: fn sin anotacion, un path retorna, otro no.
+// S11 inferiria `int` del unico return, pero si no todos los paths retornan
+// deberia fallar (paridad con la regla de fns con anotacion explicita).
+// Expected stderr (contains): "infers return type 'int' but not all paths return"
+// Expected exit: non-zero (semantic check fails)
+
+fn maybe(b: bool) {
+    if b {
+        return 1
+    }
+}
+
+fn main() -> int {
+    let n: int = maybe(true)
+    print(int_to_string(n))
+    return 0
+}

@@ -1,0 +1,10 @@
+// M-08 B8-F3: multi-error recovery — los 3 errores independientes deben
+// reportarse en UNA sola compilación (antes solo salía el primero).
+
+fn main() -> int {
+    let a: int = "uno"
+    let b: bool = 42
+    let c: String = true
+    print("no llega")
+    return 0
+}

@@ -1,0 +1,29 @@
+// test-224-map-get-string-inline — Map.get() String usado INLINE en comparación
+// y concatenación. Antes daba SEGV: sin `let` tipado ni <String> en el tipo, el
+// codegen caía al fallback i64 de map.get → basura al tratarlo como %nyx_string*.
+// Fix: el binop propaga expected_type="String" cuando el otro operando es literal.
+// Self-checking con assert().
+
+fn main() {
+    var m: Map = {}
+    m.insert("name", "Ada")
+    m.insert("lang", "Nyx")
+
+    // INLINE en igualdad (la forma que segfaulteaba)
+    assert(m.get("name") == "Ada")
+    assert(m.get("lang") == "Nyx")
+    assert(m.get("name") != "Bob")
+
+    // literal a la izquierda también
+    assert("Ada" == m.get("name"))
+
+    // INLINE en concatenación (mismo fallback i64)
+    let greeting: String = "Hola " + m.get("name")
+    assert(greeting == "Hola Ada")
+
+    // la forma bindeada sigue funcionando (no regresión)
+    let n: String = m.get("lang")
+    assert(n == "Nyx")
+
+    print("map-get-string-inline OK")
+}

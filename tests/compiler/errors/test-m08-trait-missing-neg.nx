@@ -1,0 +1,27 @@
+// M-08 sesion 18 error test: struct con impl Display (otro trait) pero
+// sin impl Neg → el operador unario `-` debe fallar.
+// Como el tipo tiene AL MENOS un impl local, el check estricto aplica.
+// Sin S18 pasaba silencioso (wildcard).
+// Expected stderr (contains): "operand of '-' must implement 'Neg', but 'Money' does not"
+// Expected exit: non-zero (semantic check fails)
+
+trait Display {
+    fn show(self) -> String
+}
+
+struct Money {
+    amount: int
+}
+
+impl Display for Money {
+    fn show(self) -> String {
+        return "$"
+    }
+}
+
+fn main() -> int {
+    let m: Money = Money { amount: 10 }
+    let n: Money = -m
+    print(n.show())
+    return 0
+}

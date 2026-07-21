@@ -1,0 +1,49 @@
+// nyx-db SQL — CREATE, INSERT, SELECT via RESP commands
+// SQL nyx-db — CREATE, INSERT, SELECT vía RESP
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*" + int_to_string(parts.length()) + "\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$" + int_to_string(p.length()) + "\r\n" + p + "\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    // nyx-db listens on port 6382 (SQL engine written in Nyx)
+    let fd: int = tcp_connect("127.0.0.1", 6382)
+    if fd < 0 {
+        print("connection failed (is nyx-db running?)")
+        return 1
+    }
+
+    // Send SQL as a single EXEC command
+    let create: String = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)"
+    tcp_write(fd, resp_cmd(["EXEC", create]))
+    let r1: String = tcp_read_line(fd)
+    print("CREATE -> " + r1.trim())
+
+    // Insert rows
+    tcp_write(fd, resp_cmd(["EXEC", "INSERT INTO users VALUES (1, 'Alice', 30)"]))
+    let r2: String = tcp_read_line(fd)
+    print("INSERT 1 -> " + r2.trim())
+
+    tcp_write(fd, resp_cmd(["EXEC", "INSERT INTO users VALUES (2, 'Bob', 25)"]))
+    tcp_read_line(fd)
+
+    // SELECT returns rows as RESP array
+    tcp_write(fd, resp_cmd(["QUERY", "SELECT name FROM users WHERE age >= 30"]))
+    let sel_hdr: String = tcp_read_line(fd)
+    print("SELECT header -> " + sel_hdr.trim())
+
+    // For embedded use (no daemon), see std/sqlite (recipe 55)
+    print("")
+    print("for embedded SQL (same process), use std/sqlite")
+
+    tcp_close(fd)
+    return 0
+}

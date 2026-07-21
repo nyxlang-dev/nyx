@@ -1,0 +1,25 @@
+// Fork and exec — running external commands
+// Fork y exec — ejecutar comandos externos
+
+fn main() -> int {
+    let pid: int = fork()
+
+    if pid == 0 {
+        // Child process: exec immediately (GC requirement)
+        let args: Array = ["echo", "hello from child"]
+        execvp("echo", args)
+        // execvp replaces the process — this line never runs
+        return 1
+    }
+
+    if pid > 0 {
+        // Parent: wait for child to finish
+        print("parent: spawned child " + int_to_string(pid))
+        let status: int = waitpid(pid, 0)
+        print("parent: child exited with " + int_to_string(status))
+    } else {
+        print("fork failed")
+    }
+
+    return 0
+}

@@ -1,0 +1,81 @@
+// std/arena.nx — Arena (bump) allocator sin GC para Nyx.
+//
+// EN: A no-GC bump allocator over a single raw byte buffer. Hand out aligned
+//     slices; free everything at once (reset) or release the backing buffer
+//     (free). Ideal for the no-GC / systems mode: one malloc, many sub-allocs,
+//     zero per-object bookkeeping.
+// ES: Allocator de tipo "bump" sin GC sobre un único buffer de bytes crudo.
+//     Reparte slices alineados; se libera todo de golpe (reset) o se devuelve
+//     el buffer subyacente (free). Pensado para el modo sin-GC / de sistemas:
+//     un malloc, muchas sub-reservas, cero contabilidad por objeto.
+//
+// Representación / representation:
+//   Arena = holder Array [base_addr:int, offset:int, capacity:int]
+//   - Los Arrays de Nyx tienen semántica de REFERENCIA, así que mutar el offset
+//     dentro de un helper persiste cross-call (sin punteros a la arena; evita el
+//     gap de deref-field-assign de codegen — ver TASKS.md "agregados mutables").
+//   - base_addr guarda el puntero *u8 como int (ptrtoint via `as int`) para
+//     caber en el Array (que almacena i64).
+//
+// Uso / usage (requiere `unsafe` para leer/escribir vía los punteros):
+//   let a: Array = arena_new(1024)
+//   unsafe {
+//       let p: *int = arena_alloc(a, 8, 8) as *int
+//       *p = 42
+//   }
+//   arena_free(a)
+
+// Alinea `n` hacia arriba al múltiplo de `align`. `align` debe ser potencia de 2.
+// EN: round `n` up to a multiple of `align` (align must be a power of two).
+pub fn arena_align_up(n: int, align: int) -> int {
+    let mask: int = align - 1
+    return (n + mask) & (~mask)
+}
+
+// Crea una arena con `capacity` bytes de backing buffer.
+pub fn arena_new(capacity: int) -> Array {
+    let base: *u8 = alloc<u8>(capacity)
+    return [base as int, 0, capacity]
+}
+
+// Bytes totales del backing buffer.
+pub fn arena_capacity(a: Array) -> int {
+    return a[2]
+}
+
+// Bytes ya repartidos (incluye el padding de alineación).
+pub fn arena_used(a: Array) -> int {
+    return a[1]
+}
+
+// Bytes que aún caben (sin contar futuro padding de alineación).
+pub fn arena_remaining(a: Array) -> int {
+    return a[2] - a[1]
+}
+
+// Reserva `size` bytes alineados a `align`. Devuelve un `*u8` al inicio del slice,
+// o el puntero nulo (`0 as *u8`) si no hay espacio suficiente. El llamador debe
+// castear a `*T` con `p as *T` dentro de un bloque `unsafe`.
+// EN: allocate `size` bytes aligned to `align`; returns a `*u8` to the slice, or
+//     the null pointer on out-of-space. Cast to `*T` under `unsafe`.
+pub fn arena_alloc(a: Array, size: int, align: int) -> *u8 {
+    let aligned: int = arena_align_up(a[1], align)
+    let new_off: int = aligned + size
+    if new_off > a[2] {
+        return 0 as *u8
+    }
+    a[1] = new_off
+    return (a[0] + aligned) as *u8
+}
+
+// Resetea el offset a 0: reutiliza el buffer sin liberar memoria. Los punteros
+// entregados antes quedan invalidados (apuntan a memoria reutilizable).
+pub fn arena_reset(a: Array) {
+    a[1] = 0
+}
+
+// Libera el backing buffer. La arena queda inutilizable después de esto.
+pub fn arena_free(a: Array) {
+    let base: *u8 = a[0] as *u8
+    free(base)
+}

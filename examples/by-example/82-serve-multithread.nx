@@ -1,0 +1,33 @@
+// nyx-serve multi-threaded — http_serve_mt for 73K req/s
+// nyx-serve multi-hilo — http_serve_mt alcanza 73K req/s
+
+import "std/http"
+
+fn on_request(req: Array) -> String {
+    let method: String = req[1]
+    let path: String = req[2]
+
+    if path == "/" {
+        return http_response(200, "Hello from worker thread!")
+    }
+    if path == "/health" {
+        return http_response(200, "{\"status\":\"ok\"}")
+    }
+    return http_response(404, "not found")
+}
+
+fn main() -> int {
+    // http_serve_mt spawns N worker threads.
+    // A channel distributes accepted connections to workers.
+    // Workers parse requests and call the handler in parallel.
+    let port: int = 8080
+    let workers: int = 8  // typically: number of CPU cores
+
+    print("multi-threaded server on :" + int_to_string(port))
+    print("worker threads: " + int_to_string(workers))
+    print("benchmark: 73K req/s on 4-core ARM64")
+
+    // Blocks forever, accepting and dispatching connections
+    http_serve_mt(port, workers, on_request)
+    return 0
+}

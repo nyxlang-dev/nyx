@@ -1,0 +1,45 @@
+// if let: destructurar Option sin match completo
+
+fn find_even(nums: Array, start: int) -> Option<int> {
+    let len: int = nums.length()
+    var i: int = start
+    while i < len {
+        let v: int = nums[i]
+        if v % 2 == 0 {
+            return Option.Some(v)
+        }
+        i = i + 1
+    }
+    return Option.None
+}
+
+fn main() -> int {
+    let data: Array = [1, 3, 4, 7, 8, 10]
+
+    // if let extrae el valor si es Some
+    let a: Option<int> = find_even(data, 0)
+    if let Option.Some(v) = a {
+        print("primer par desde 0: " + int_to_string(v))
+    } else {
+        print("no hay pares")
+    }
+
+    // buscar desde índice 4 (8 y 10 son pares)
+    let b: Option<int> = find_even(data, 4)
+    if let Option.Some(v) = b {
+        print("primer par desde 4: " + int_to_string(v))
+    } else {
+        print("no hay pares desde 4")
+    }
+
+    // Array sin pares: retorna None -> ejecuta else
+    let odds: Array = [1, 3, 5, 7]
+    let c: Option<int> = find_even(odds, 0)
+    if let Option.Some(v) = c {
+        print("par encontrado: " + int_to_string(v))
+    } else {
+        print("no hay pares en odds")
+    }
+
+    return 0
+}

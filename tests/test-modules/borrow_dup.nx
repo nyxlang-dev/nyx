@@ -1,0 +1,5 @@
+// Módulo dummy para el test de dangling CROSS-MÓDULO (Track 3 inc 3c).
+// xdup toma prestado del arg y retorna la referencia (elisión: 1 param-ref, ret ref).
+// El borrow checker del archivo importador text-escanea esta firma y registra xdup
+// como una fn de elisión → un `let r = xdup(&local); return r` marca NYX1223 (lint).
+export fn xdup(x: &int) -> &int { return x }

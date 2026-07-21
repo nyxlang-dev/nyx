@@ -1,0 +1,52 @@
+// nyx-kv lists — LPUSH, LPOP, LRANGE, LLEN
+// Listas nyx-kv — operaciones de lista
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 {
+        print("connection failed")
+        return 1
+    }
+
+    // Push items to a list (RPUSH appends to the right)
+    tcp_write(fd, resp_cmd(["RPUSH", "tasks", "build", "test", "deploy"]))
+    let push_reply: String = tcp_read_line(fd)
+    print("RPUSH tasks -> " + push_reply.trim())
+
+    // Get list length
+    tcp_write(fd, resp_cmd(["LLEN", "tasks"]))
+    let len_reply: String = tcp_read_line(fd)
+    print("LLEN -> " + len_reply.trim())
+
+    // LRANGE returns a RESP array. For brevity, just read the header.
+    tcp_write(fd, resp_cmd(["LRANGE", "tasks", "0", "-1"]))
+    let range_hdr: String = tcp_read_line(fd)
+    print("LRANGE header -> " + range_hdr.trim())
+
+    // LPOP removes from the left (FIFO queue pattern)
+    tcp_write(fd, resp_cmd(["LPOP", "tasks"]))
+    let pop_hdr: String = tcp_read_line(fd)
+    let pop_val: String = tcp_read_line(fd)
+    print("LPOP -> " + pop_val.trim())
+
+    tcp_close(fd)
+    return 0
+}

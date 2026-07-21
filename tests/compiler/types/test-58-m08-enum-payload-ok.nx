@@ -1,0 +1,28 @@
+// M-08 B8-F2 happy path: construcción de enum variants con payloads
+// correctos (local) + match con extracción — compila y corre.
+
+enum Color {
+    Red,
+    Rgb(int, int, int),
+    Named(String)
+}
+
+fn brightness(c: Color) -> int {
+    match c {
+        Color.Red => { return 100 }
+        Color.Rgb(r, g, b) => { return (r + g + b) / 3 }
+        Color.Named(n) => { return n.length() }
+    }
+    return 0
+}
+
+fn main() -> int {
+    let plain: Color = Color.Red
+    let mix: Color = Color.Rgb(30, 60, 90)
+    let named: Color = Color.Named("ocre")
+    assert(brightness(plain) == 100)
+    assert(brightness(mix) == 60)
+    assert(brightness(named) == 4)
+    print("OK")
+    return 0
+}

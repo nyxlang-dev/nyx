@@ -1,0 +1,59 @@
+// nyx-serve full-stack — HTTP server + JSON API + nyx-kv backend
+// nyx-serve full-stack — servidor HTTP + API JSON + backend nyx-kv
+
+import "std/http"
+import "std/web"
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$" + int_to_string(p.length()) + "\r\n" + p + "\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Call nyx-kv and return the result (or empty on error)
+fn kv_get(key: String) -> String {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 { return "" }
+    tcp_write(fd, resp_cmd(["GET", key]))
+    let hdr: String = tcp_read_line(fd)
+    let val: String = tcp_read_line(fd)
+    tcp_close(fd)
+    return val.trim()
+}
+
+fn kv_set(key: String, val: String) -> int {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 { return -1 }
+    tcp_write(fd, resp_cmd(["SET", key, val]))
+    tcp_read_line(fd)
+    tcp_close(fd)
+    return 0
+}
+
+// GET /counter — increments and returns a global counter stored in nyx-kv
+fn counter(req: Request) -> Response {
+    let current: String = kv_get("counter")
+    var n: int = 0
+    if current.length() > 0 { n = string_to_int(current) }
+    n = n + 1
+    kv_set("counter", int_to_string(n))
+    return response_json(200, "{\"count\": " + int_to_string(n) + "}")
+}
+
+fn main() -> int {
+    let app: App = app_new()
+    app_get(app, "/counter", counter)
+
+    print("full-stack app: HTTP + JSON + KV backend")
+    print("GET /counter increments a counter stored in nyx-kv")
+    print("this pattern powers nyxlang.com's request analytics")
+    return 0
+}

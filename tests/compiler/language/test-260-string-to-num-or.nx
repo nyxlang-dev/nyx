@@ -1,0 +1,25 @@
+// test-260 — string_to_int_or / string_to_float_or: variantes SEGURAS que
+// devuelven un default en vez de abortar el proceso (exit 1) ante entrada
+// inválida. Motivación: incidente venezuelainfo 2026-07-16 — un byte de red
+// corrupto (framing de chunk) llegó a string_to_float y mató el servicio.
+// Estas variantes degradan a un valor por defecto en vez de tirar el proceso.
+fn main() {
+    // válido → parsea normal
+    assert(string_to_int_or("42", -1) == 42)
+    assert(string_to_int_or("-7", 0) == -7)
+    // vacío → default (antes: abort)
+    assert(string_to_int_or("", 99) == 99)
+    // basura del incidente (framing de chunk crudo) → default, SIN abortar
+    assert(string_to_int_or("2\r\n3d1c\r\n1", 0) == 0)
+    assert(string_to_int_or("abc", 5) == 5)
+    // trailing garbage → default (contrato estricto, como string_to_int)
+    assert(string_to_int_or("42abc", -1) == -1)
+
+    // float
+    assert(string_to_float_or("3.5", 0.0) == 3.5)
+    assert(string_to_float_or("-2.25", 0.0) == -2.25)
+    assert(string_to_float_or("", 1.5) == 1.5)
+    assert(string_to_float_or("not a num", 2.25) == 2.25)
+
+    print("string-to-num-or OK")
+}

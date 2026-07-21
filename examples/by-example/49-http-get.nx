@@ -1,0 +1,25 @@
+// HTTP GET request using std/http
+// Solicitud HTTP GET usando std/http
+
+import "std/http"
+
+fn main() -> int {
+    // http_get returns an Array: ["response", status, headers, body]
+    let resp: Array = http_get("http://example.com/")
+
+    let status: int = http_status(resp)
+    print("status: " + int_to_string(status))
+
+    let body: String = http_body(resp)
+    if body.length() > 100 {
+        print("body (first 100 chars): " + body.substring(0, 100))
+    } else {
+        print("body: " + body)
+    }
+
+    // Access raw headers
+    let hdrs: Array = http_headers(resp)
+    print("header count: " + int_to_string(hdrs.length()))
+
+    return 0
+}

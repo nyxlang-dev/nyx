@@ -1,0 +1,16 @@
+// Flow-merge (Track 3 inc 1, follow-up): el fix NO afloja de más. `r` se reasigna
+// solo en la rama then; en el path else `r` sigue siendo `&x` (local del frame) →
+// `return r` SÍ cuelga en ese path → NYX1222 DEBE dispararse (nombra 'x'). Prueba
+// que el join es OR (frame-bound si en ALGUNA rama), no que suprime todo. NYX_BORROW=error.
+fn g(cond: bool, a: *int) -> *int {
+    let x: int = 5
+    var r: *int = &x
+    if cond { r = a }
+    return r
+}
+
+fn main() {
+    let y: int = 1
+    let p: *int = g(false, &y)
+    print(1)
+}

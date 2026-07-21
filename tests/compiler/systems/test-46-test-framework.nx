@@ -1,0 +1,35 @@
+// Test 46: Native Test Framework
+
+test "basic arithmetic" {
+    assert(1 + 1 == 2)
+    assert(3 * 4 == 12)
+    assert(10 - 3 == 7)
+}
+
+test "string operations" {
+    let s = "hello"
+    assert(s.length() == 5)
+    assert(s == "hello")
+}
+
+test "boolean logic" {
+    assert(true)
+    assert(not false)
+    assert(true and true)
+    assert(true or false)
+}
+
+test "variables and assignment" {
+    let x = 42
+    assert(x == 42)
+    var y = 10
+    y = 20
+    assert(y == 20)
+}
+
+test "arrays" {
+    var arr = [1, 2, 3]
+    assert(arr.length() == 3)
+    arr.push(4)
+    assert(arr.length() == 4)
+}

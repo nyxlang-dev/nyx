@@ -1,0 +1,21 @@
+// DNS resolution — resolve hostnames to IP addresses
+// Resolución DNS — resolver nombres de host a direcciones IP
+
+fn main() -> int {
+    // resolve() returns the IP address as a string
+    let ip: String = resolve("localhost")
+    print("localhost -> " + ip)
+
+    // Resolve a public domain
+    let nyx_ip: String = resolve("nyxlang.com")
+    print("nyxlang.com -> " + nyx_ip)
+
+    // Use the result to connect or display
+    if nyx_ip.length() > 0 {
+        print("resolution successful")
+    } else {
+        print("resolution failed")
+    }
+
+    return 0
+}

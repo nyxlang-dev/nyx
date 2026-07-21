@@ -1,0 +1,36 @@
+// Test 49: M-08 session 4 — happy path for method_call return-type inference.
+//
+// Exercises a cross-section of built-in methods whose return type is known:
+//   length/size/count       → int
+//   is_some/is_none/contains → bool
+//   toUpper/trim/substring   → String
+
+fn main() -> int {
+    let s: String = "  Hola  "
+    let n: int = s.length()
+    let clean: String = s.trim()
+    let upper: String = clean.toUpper()
+    let has_o: bool = clean.contains("o")
+
+    let arr: Array<int> = [1, 2, 3, 4, 5]
+    let size: int = arr.length()
+    let first: int = arr[0]
+
+    // String concat methods
+    let words: Array<String> = ["uno", "dos", "tres"]
+    let joined: String = words.join(", ")
+
+    // .indexOf returns int
+    let idx: int = clean.indexOf("o")
+
+    print(int_to_string(n))
+    print(clean)
+    print(upper)
+    if has_o { print("has-o") }
+    print(int_to_string(size))
+    print(int_to_string(first))
+    print(joined)
+    print(int_to_string(idx))
+    print("OK")
+    return 0
+}

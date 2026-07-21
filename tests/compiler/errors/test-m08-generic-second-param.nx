@@ -1,0 +1,14 @@
+// M-08 sesion 10 error test: two type params, return type uses the second.
+// Verifies the substitution map binds A and B independently, and the let
+// annotation catches the mismatch on the substituted ret type.
+// Expected stderr (contains): "type mismatch in 'n': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+fn second<A, B>(a: A, b: B) -> B {
+    return b
+}
+
+fn main() -> int {
+    let n: int = second(1, "hola")
+    print(int_to_string(n))
+    return 0
+}

@@ -1,0 +1,39 @@
+// Channels — typed message passing between threads
+// Canales — paso de mensajes tipado entre hilos
+
+var ch: Map = Map.new()
+
+fn producer() -> int {
+    var i: int = 0
+    while i < 5 {
+        channel_send(ch, i)
+        i = i + 1
+    }
+    // Send sentinel to signal done
+    channel_send(ch, -1)
+    return 0
+}
+
+fn main() -> int {
+    // Create a buffered channel (capacity 10)
+    ch = channel_new(10)
+
+    // Spawn producer thread
+    let h: int = thread_spawn(producer)
+
+    // Receive messages until sentinel
+    var running: bool = true
+    while running {
+        let val: int = channel_recv(ch)
+        if val == -1 {
+            running = false
+        } else {
+            print("received: " + int_to_string(val))
+        }
+    }
+
+    thread_join(h)
+    channel_destroy(ch)
+    print("done")
+    return 0
+}

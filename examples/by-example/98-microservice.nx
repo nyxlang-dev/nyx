@@ -1,0 +1,60 @@
+// Microservice pattern — nyx-queue consumer with nyx-kv cache
+// Patrón microservicio — consumidor nyx-queue con cache nyx-kv
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*" + int_to_string(parts.length()) + "\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$" + int_to_string(p.length()) + "\r\n" + p + "\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Send a RESP command and read a simple response line
+fn send_cmd(host: String, port: int, cmd: String) -> String {
+    let fd: int = tcp_connect(host, port)
+    if fd < 0 { return "" }
+    tcp_write(fd, cmd)
+    let r: String = tcp_read_line(fd)
+    tcp_close(fd)
+    return r.trim()
+}
+
+// Enrich a raw order event with cached user data
+fn process_order(order_id: String, user_id: String) -> bool {
+    // Check nyx-kv cache for user profile
+    let cache_key: String = "user:" + user_id
+    let cached: String = send_cmd("127.0.0.1", 6380, resp_cmd(["GET", cache_key]))
+
+    if cached.length() > 0 {
+        print("  [cache hit] " + cache_key)
+    } else {
+        // Would fetch from DB and cache here
+        print("  [cache miss] fetching user " + user_id)
+        send_cmd("127.0.0.1", 6380, resp_cmd(["SET", cache_key, "{\"name\":\"Alice\"}"]))
+        send_cmd("127.0.0.1", 6380, resp_cmd(["EXPIRE", cache_key, "3600"]))
+    }
+
+    // Process and store result
+    let result_key: String = "order:" + order_id
+    send_cmd("127.0.0.1", 6380, resp_cmd(["HSET", result_key, "status", "processed", "user", user_id]))
+    print("  [processed] " + order_id)
+    return true
+}
+
+fn main() -> int {
+    // Simulate consuming 3 orders from nyx-queue
+    print("microservice: order processor")
+    process_order("ord_001", "u42")
+    process_order("ord_002", "u42")  // cache hit
+    process_order("ord_003", "u7")
+
+    print("")
+    print("architecture:")
+    print("  API -> ENQUEUE orders -> nyx-queue -> DEQUEUE -> this service")
+    print("  this service <-> nyx-kv (cache) <-> nyx-db (persistent)")
+    return 0
+}

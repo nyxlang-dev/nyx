@@ -1,0 +1,44 @@
+// test-272 — inferencia de elemento vía anotación Array<T> en PARAMS y locales:
+// el idiom que resuelve el gotcha "arr[i] inline en concat da puntero crudo"
+// (dogfooding:serve, TASKS 2026-07-20). Un param `parts: Array` PELADO no tiene
+// tipo de elemento → `pre + parts[i]` cae al fallback i64 (from_int imprime el
+// puntero como número — ambigüedad inherente del slot sin tag, ver TASKS "Array
+// slots i64 SIN TAG"). Con `parts: Array<String>` la inferencia tipa el read y
+// concat/interpolación/args funcionan. Este test FIJA el idiom bueno.
+
+fn concat_var(parts: Array<String>, pre: String) -> String {
+    // RHS de concat con VARIABLE String (sin literal en el binop)
+    let s: String = pre + parts[1]
+    return s
+}
+
+fn concat_interp(parts: Array<String>) -> String {
+    // interpolación (desugar a concat) sobre param anotado
+    return "x=${parts[0]}"
+}
+
+fn concat_expr(parts: Array<String>) -> String {
+    // read inline directamente en el return (sin let intermedio)
+    return "y=" + parts[1] + "!"
+}
+
+fn typed_let_workaround(parts: Array, pre: String) -> String {
+    // El workaround clásico para Array PELADO: let-binding tipado
+    let p: String = parts[1]
+    return pre + p
+}
+
+fn main() {
+    let parts: Array = ["hello", "world"]
+    assert(concat_var(parts, "pre-") == "pre-world")
+    assert(concat_interp(parts) == "x=hello")
+    assert(concat_expr(parts) == "y=world!")
+    assert(typed_let_workaround(parts, "pre-") == "pre-world")
+
+    // local anotado Array<String> también infiere
+    let annotated: Array<String> = ["a", "b"]
+    let joined: String = "z" + annotated[1]
+    assert(joined == "zb")
+
+    print("annot inference OK")
+}

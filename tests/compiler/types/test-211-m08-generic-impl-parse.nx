@@ -1,0 +1,11 @@
+// Etapa A (Fase 1c): impl generico DECLARADO, metodo NO llamado (dispatch = Etapa B).
+// Prueba que el impl generico PARSEA, CHEQUEA y COMPILA sin define prematuro roto.
+struct Vec<T> { data: T }
+impl<T> Vec<T> {
+    fn get(self) -> T { return self.data }
+}
+fn main() {
+    let x: int = 5
+    print(int_to_string(x))
+    print("STAGE-A OK")
+}

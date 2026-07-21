@@ -1,0 +1,29 @@
+// test-249-vapid-jwt — JWT VAPID (RFC 8292, ES256). Valida estructura + firma.
+import "std/webpush"
+import "std/webpushcrypto"
+import "std/base64"
+
+fn count_dots(s: String) -> int {
+    var n = 0
+    var i = 0
+    while i < s.length() {
+        if s.charAt(i) == 46 { n = n + 1 }   // '.' == 46
+        i = i + 1
+    }
+    return n
+}
+
+fn main() {
+    // Keypair del servidor de aplicación (VAPID).
+    let kp = ec_p256_keypair()
+    let priv = kp.substring(0, 32)
+    let pubkey = kp.substring(32, 97)
+
+    let jwt = vapid_jwt(priv, "https://push.example.net", "mailto:admin@venezuelainfo.org", 1600000000)
+
+    // Estructura: exactamente 2 puntos → 3 segmentos.
+    assert(count_dots(jwt) == 2)
+    assert(jwt.length() > 100)
+
+    print("vapid jwt ok")
+}

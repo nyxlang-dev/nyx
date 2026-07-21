@@ -1,0 +1,58 @@
+// inc 4 Etapa 5 — Rc<T> afín con refcount COMPARTIDO + drop refcount-aware.
+// Rc<T> { ptr: *T, cnt: *int }: dos punteros heap manuales; el `cnt` es compartido
+// entre clones. `rc_clone(&r)` presta (no consume) e incrementa el refcount;
+// el drop (monomorfizado por instancia) decrementa y libera value+count EXACTAMENTE
+// cuando el refcount llega a 0 — determinista, sin double-free. `let b = a` sin
+// clone MOVERÍA `a` (afín, use-after-move → NYX1230; ver test-errors).
+var g_frees: int = 0
+
+#[affine]
+struct Rc<T> { ptr: *T, cnt: *int }
+
+impl<T> Rc<T> {
+    fn drop(self) {
+        let c: *int = self.cnt
+        *c = *c - 1
+        if *c == 0 {
+            free(self.ptr)
+            free(self.cnt)
+            g_frees = g_frees + 1
+        }
+    }
+}
+
+fn rc_new<T>(v: T) -> Rc<T> {
+    let p: *T = alloc<T>(1)
+    *p = v
+    let c: *int = alloc<int>(1)
+    *c = 1
+    return Rc<T> { ptr: p, cnt: c }
+}
+
+fn rc_clone<T>(r: &Rc<T>) -> Rc<T> {
+    let c: *int = r.cnt
+    *c = *c + 1
+    return Rc<T> { ptr: r.ptr, cnt: r.cnt }
+}
+
+fn rc_count<T>(r: &Rc<T>) -> int {
+    let c: *int = r.cnt
+    return *c
+}
+
+fn use_clone(a: &Rc<int>) {
+    let b: Rc<int> = rc_clone(a)   // count 1→2; b drop al fin de use_clone → 2→1
+}
+
+fn scope() {
+    let a: Rc<int> = rc_new(42)    // count 1
+    use_clone(&a)                  // clone (→2), b drop (→1)
+    // a drop al fin de scope → count 1→0 → free (g_frees=1)
+}
+
+fn main() {
+    scope()
+    print("frees=" + int_to_string(g_frees))
+    assert(g_frees == 1)           // liberado exactamente una vez (no double, no leak)
+    print("ok")
+}

@@ -1,0 +1,36 @@
+// Test 217: http_parse_url detecta el esquema https:// (fricción dogfooding
+// venezuelainfo.org, 2026-06-30). Habilita el camino TLS de http_get/post/request.
+// Determinista y offline (el round-trip TLS real se verifica a mano contra un
+// endpoint live — no va en la suite de regresión por ser dependiente de red).
+import "std/http"
+
+fn main() -> int {
+    // https:// → secure=1, puerto por defecto 443.
+    let s: Array = http_parse_url("https://api.example.com/v1/data")
+    assert(s[1] == "api.example.com")
+    let s_port: int = s[2]
+    assert(s_port == 443)
+    assert(s[3] == "/v1/data")
+    let s_secure: int = s[4]
+    assert(s_secure == 1)
+
+    // http:// → secure=0, puerto por defecto 80.
+    let h: Array = http_parse_url("http://example.com/")
+    let h_port: int = h[2]
+    assert(h_port == 80)
+    let h_secure: int = h[4]
+    assert(h_secure == 0)
+
+    // Puerto explícito se respeta en ambos esquemas.
+    let hp: Array = http_parse_url("http://localhost:8080/x")
+    let hp_port: int = hp[2]
+    assert(hp_port == 8080)
+    let sp: Array = http_parse_url("https://localhost:8443/y")
+    let sp_port: int = sp[2]
+    assert(sp_port == 8443)
+    let sp_secure: int = sp[4]
+    assert(sp_secure == 1)
+
+    print("ok")
+    return 0
+}

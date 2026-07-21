@@ -1,0 +1,32 @@
+// Test 209: M-08 implicit monomorphization — struct local + tipos no-int.
+//
+// Antes de F2, `boxit<T>(v: T) -> T` llamado sin turbofish con un struct local
+// generaba IR incorrecto (el call quedaba como call regular, no genérico,
+// y el retorno se trataba como i64 en lugar del tipo real).
+//
+// Verifica: struct Point pasado a boxit() sin turbofish con acceso a campo post-call;
+// String pasado directamente; Array<int> pasado con index del resultado.
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn boxit<T>(v: T) -> T {
+    return v
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 5, y: 9 }
+    let p2: Point = boxit(p)
+    print(int_to_string(p2.x))
+
+    let s2: String = boxit("mundo")
+    print(s2)
+
+    let arr2: Array<int> = boxit([1, 2, 3])
+    print(int_to_string(arr2[1]))
+
+    print("OK")
+    return 0
+}

@@ -1,0 +1,43 @@
+// Iterators: filter + map + collect en cadena
+
+fn is_even(x: int) -> bool {
+    return x % 2 == 0
+}
+
+fn double(x: int) -> int {
+    return x * 2
+}
+
+fn square(x: int) -> int {
+    return x * x
+}
+
+fn main() -> int {
+    let nums: Array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    // Filtrar pares y duplicarlos
+    let result: Array = nums.iter().filter(is_even).map(double).collect()
+    print("pares duplicados: " + int_to_string(result.length()) + " elementos")
+    let r0: int = result[0]
+    let r4: int = result[4]
+    print("primero: " + int_to_string(r0))   // 4  (2*2)
+    print("ultimo:  " + int_to_string(r4))   // 20 (10*2)
+
+    // Solo map: elevar al cuadrado todos
+    let squares: Array = nums.iter().map(square).collect()
+    print("cuadrados: " + int_to_string(squares.length()) + " elementos")
+    let s0: int = squares[0]
+    let s9: int = squares[9]
+    print("1^2 = " + int_to_string(s0))
+    print("10^2 = " + int_to_string(s9))
+
+    // Filtrar, mapear y tomar los primeros 3
+    let top3: Array = nums.iter().filter(is_even).map(double).take(3).collect()
+    print("top3 pares*2:")
+    let t0: int = top3[0]
+    let t1: int = top3[1]
+    let t2: int = top3[2]
+    print(int_to_string(t0) + " " + int_to_string(t1) + " " + int_to_string(t2))
+
+    return 0
+}

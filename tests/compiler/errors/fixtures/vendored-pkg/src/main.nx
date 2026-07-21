@@ -1,0 +1,5 @@
+// Proyecto externo que consume el paquete vendoreado "foo".
+import "foo/src/a"
+fn main() {
+    print("foo_a=" + int_to_string(foo_a()))
+}

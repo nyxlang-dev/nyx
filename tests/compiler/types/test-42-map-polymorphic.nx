@@ -1,0 +1,32 @@
+// TEST 42: Polymorphic Maps (string values)
+fn main() {
+    // Map with string values
+    let names = Map.new()
+    names.insert("alice", "Alice Smith")
+    names.insert("bob", "Bob Jones")
+
+    let alice: String = names.get("alice")
+    print(alice)
+
+    let bob: String = names.get("bob")
+    print(bob)
+
+    // Map with int values (existing behavior)
+    let ages = Map.new()
+    ages.insert("alice", 30)
+    ages.insert("bob", 25)
+
+    let age_a: int = ages.get("alice")
+    print(int_to_string(age_a))
+
+    let age_b: int = ages.get("bob")
+    print(int_to_string(age_b))
+
+    // Map contains check
+    if names.contains("alice") {
+        print("has alice")
+    }
+
+    print("OK")
+    return 0
+}

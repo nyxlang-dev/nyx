@@ -1,0 +1,29 @@
+// TCP echo server — listen, accept, echo back
+// Servidor TCP echo — escuchar, aceptar, devolver eco
+
+fn main() -> int {
+    let server: int = tcp_listen("0.0.0.0", 9000)
+    if server < 0 {
+        print("failed to listen on port 9000")
+        return 1
+    }
+    print("echo server listening on :9000")
+
+    // Accept one client for demonstration
+    let client: int = tcp_accept(server)
+    if client < 0 {
+        print("accept failed")
+        return 1
+    }
+    print("client connected")
+
+    // Read a line and echo it back
+    let msg: String = tcp_read_line(client)
+    print("received: " + msg)
+    tcp_write(client, "echo: " + msg + "\n")
+
+    tcp_close(client)
+    tcp_close(server)
+    print("done")
+    return 0
+}

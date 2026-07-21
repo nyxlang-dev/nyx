@@ -1,0 +1,40 @@
+// Test 210: M-08 implicit monomorphization — mezcla turbofish + implícito.
+//
+// La MISMA función genérica llamada de tres formas:
+//   1. turbofish explícito (int)   — comportamiento previo a F2
+//   2. sin turbofish (String)      — nueva capacidad F2
+//   3. turbofish explícito (float) — segunda instancia explícita
+//
+// Verifica que coexistan en el mismo archivo sin colisión de monos ni
+// interferencia entre instancias. También prueba wrap_pair con turbofish
+// y sin él en el mismo scope.
+
+fn identity<T>(x: T) -> T {
+    return x
+}
+
+fn wrap_pair<A, B>(a: A, b: B) -> A {
+    return a
+}
+
+fn main() -> int {
+    // Turbofish explícito
+    let a: int = identity<int>(100)
+    // Implícito (F2)
+    let b: String = identity("test")
+    // Turbofish explícito con otro tipo
+    let c: float = identity<float>(3.14)
+
+    // wrap_pair explícito
+    let d: int = wrap_pair<int, String>(42, "ignored")
+    // wrap_pair implícito (F2)
+    let e: String = wrap_pair("winner", 0)
+
+    print(int_to_string(a))
+    print(b)
+    print(float_to_string(c))
+    print(int_to_string(d))
+    print(e)
+    print("OK")
+    return 0
+}

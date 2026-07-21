@@ -1,0 +1,42 @@
+// examples/http2-server.nx — servidor HTTP/2 (h2c) sobre std/http2
+// (absorbido de products/http2 el 2026-07-05; API completa en docs/HTTP2.md)
+// Usage: make run FILE=examples/http2-server.nx   (binario compilado: ./bin [port], default 3004)
+
+import "std/http2"
+
+fn handle_request(method: String, path: String, headers: Array, body: String) -> Array {
+    if path == "/" {
+        let html: String = "<html><body><h1>Hello from Nyx HTTP/2!</h1><p>Method: " + method + "</p></body></html>"
+        let resp_headers: Array = ["content-type", "text/html; charset=utf-8", "server", "nyx-http2"]
+        let result: Array = [200, resp_headers, html]
+        return result
+    }
+    if path == "/json" {
+        let json_body: String = "{\"status\":\"ok\",\"server\":\"nyx-http2\",\"protocol\":\"h2c\"}"
+        let resp_headers2: Array = ["content-type", "application/json", "server", "nyx-http2"]
+        let result2: Array = [200, resp_headers2, json_body]
+        return result2
+    }
+    if path == "/ping" {
+        let resp_headers3: Array = ["content-type", "text/plain", "server", "nyx-http2"]
+        let result3: Array = [200, resp_headers3, "pong"]
+        return result3
+    }
+    // 404
+    let not_found_body: String = "404 Not Found"
+    let resp_headers4: Array = ["content-type", "text/plain", "server", "nyx-http2"]
+    let result4: Array = [404, resp_headers4, not_found_body]
+    return result4
+}
+
+fn main() -> int {
+    var port: int = 3004
+    let args: Array = get_args()
+    if args.length() > 1 {
+        let port_str: String = args[1]
+        port = string_to_int(port_str)
+    }
+    println("nyx-http2 listening on port " + int_to_string(port))
+    h2_serve(port, 4, handle_request)
+    return 0
+}

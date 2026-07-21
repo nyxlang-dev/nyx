@@ -1,0 +1,22 @@
+// Test 58: FFI structs with #[repr(C)]
+
+#[repr(C)]
+struct Point {
+    x: int,
+    y: int
+}
+
+extern "C" fn labs(n: int) -> int
+
+fn main() -> int {
+    // repr(C) struct init (stack allocated)
+    var p = Point { x: -5, y: 10 }
+    print(labs(p.x))
+    print(p.y)
+
+    // Modify fields
+    p.x = 42
+    print(p.x)
+
+    return 0
+}

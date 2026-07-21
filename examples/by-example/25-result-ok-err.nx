@@ -1,0 +1,47 @@
+// Result: función que retorna Ok o Err, match exhaustivo para manejar ambos
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+fn safe_divide(a: int, b: int) -> Result {
+    if b == 0 {
+        return Result.Err("division por cero")
+    }
+    return Result.Ok(a / b)
+}
+
+fn safe_sqrt(n: int) -> Result {
+    if n < 0 {
+        return Result.Err("raiz de negativo")
+    }
+    var i: int = 0
+    while i * i <= n {
+        i = i + 1
+    }
+    return Result.Ok(i - 1)
+}
+
+fn describe(r: Result) -> String {
+    return match r {
+        Result.Ok(v)  => "ok: " + int_to_string(v),
+        Result.Err(e) => "error: " + e
+    }
+}
+
+fn main() -> int {
+    let r1: Result = safe_divide(100, 4)
+    print(describe(r1))
+
+    let r2: Result = safe_divide(10, 0)
+    print(describe(r2))
+
+    let r3: Result = safe_sqrt(16)
+    print(describe(r3))
+
+    let r4: Result = safe_sqrt(-5)
+    print(describe(r4))
+
+    return 0
+}

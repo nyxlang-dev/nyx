@@ -1,0 +1,16 @@
+compress test
+--- Base64 ---
+SGVsbG8sIE55eCE=
+Hello, Nyx!
+base64 round-trip ok
+empty encode len: 0
+--- Compress ---
+original size: 243
+compressed size: 112
+compression reduced size ok
+compress/decompress round-trip ok
+compression ratio: 46%
+--- Compress Small ---
+small round-trip ok
+small orig: 3 comp: 11
+compress ok

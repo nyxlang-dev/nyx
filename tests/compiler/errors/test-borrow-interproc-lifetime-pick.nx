@@ -1,0 +1,11 @@
+// pick presta de `a` (lifetime 'a), NO de `b`. Con &local en la posición de `a` → gatea.
+let G: int = 9
+fn pick<'a>(a: &'a int, b: &int) -> &'a int { return a }
+
+fn caller() -> &int {
+    let local: int = 5
+    let r: &int = pick(&local, &G)
+    return r
+}
+
+fn main() { print(1) }

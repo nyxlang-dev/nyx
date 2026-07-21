@@ -1,0 +1,148 @@
+// test-179-events.nx — Observable/Event Bus (v5.4.0)
+import "std/events"
+
+// Shared state for handlers
+var received_events: Array<String> = []
+var observable_vals: Array<int> = []
+var calls_a = 0
+var calls_b = 0
+
+fn test_event_bus() {
+    print("--- Event Bus ---")
+
+    let bus = event_bus_new()
+
+    // Subscribe to "click" event
+    event_on(bus, "click", fn(payload: String) -> bool {
+        received_events.push(payload)
+        return true
+    })
+
+    // Emit event
+    let count = event_emit(bus, "click", "button1")
+    if count == 1 {
+        print("emit called 1 handler ok")
+    }
+
+    let count2 = event_emit(bus, "click", "button2")
+
+    if received_events.length() == 2 {
+        print("handler called twice ok")
+    }
+    let p0: String = received_events[0]
+    let p1: String = received_events[1]
+    if p0 == "button1" and p1 == "button2" {
+        print("payloads correct ok")
+    }
+
+    // Emit to unregistered event
+    let c0 = event_emit(bus, "hover", "x")
+    if c0 == 0 {
+        print("unregistered event 0 handlers ok")
+    }
+
+    // History
+    let hist = event_history(bus)
+    if hist.length() == 3 {
+        print("history 3 entries ok")
+    }
+
+    if event_was_emitted(bus, "click") {
+        print("was emitted ok")
+    }
+    if !event_was_emitted(bus, "keypress") {
+        print("not emitted ok")
+    }
+}
+
+fn test_multi_subscriber() {
+    print("--- Multi-Subscriber ---")
+
+    calls_a = 0
+    calls_b = 0
+    let bus2 = event_bus_new()
+
+    event_on(bus2, "data", fn(p: String) -> bool {
+        calls_a = calls_a + 1
+        return true
+    })
+    event_on(bus2, "data", fn(p: String) -> bool {
+        calls_b = calls_b + 1
+        return true
+    })
+
+    event_emit(bus2, "data", "payload")
+    if calls_a == 1 and calls_b == 1 {
+        print("two subscribers both called ok")
+    }
+}
+
+fn test_observable() {
+    print("--- Observable ---")
+
+    let obs = observable_new(10)
+    if observable_get(obs) == 10 {
+        print("initial value ok")
+    }
+
+    observable_watch(obs, fn(v: int) -> bool {
+        observable_vals.push(v)
+        return true
+    })
+
+    observable_set(obs, 20)
+    if observable_get(obs) == 20 {
+        print("set value ok")
+    }
+
+    observable_set(obs, 30)
+
+    if observable_vals.length() == 2 {
+        print("watcher called twice ok")
+    }
+    let v0: int = observable_vals[0]
+    let v1: int = observable_vals[1]
+    if v0 == 20 and v1 == 30 {
+        print("watcher values ok")
+    }
+
+    // History
+    let hist = observable_history(obs)
+    if hist.length() == 3 {
+        print("history length 3 ok")
+    }
+}
+
+fn double(v: int) -> int { return v * 2 }
+
+fn test_observable_computed() {
+    print("--- Observable Computed ---")
+
+    let source = observable_new(5)
+    // Compute derived value: source * 2
+    let c1 = observable_computed(source, double)
+    if c1 == 10 {
+        print("computed initial value ok")
+    }
+
+    observable_set(source, 7)
+    let c2 = observable_computed(source, double)
+    if c2 == 14 {
+        print("computed after set ok")
+    }
+
+    observable_set(source, 0)
+    let c3 = observable_computed(source, double)
+    if c3 == 0 {
+        print("computed zero ok")
+    }
+}
+
+fn main() {
+    print("events test")
+    test_event_bus()
+    test_multi_subscriber()
+    test_observable()
+    test_observable_computed()
+    print("events ok")
+}

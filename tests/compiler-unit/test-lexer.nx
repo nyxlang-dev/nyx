@@ -1,0 +1,44 @@
+// ===== TEST UNITARIO: LEXER BOOTSTRAP =====
+// Verifica que compiler/lexer.nx tokeniza correctamente.
+// Ejecutar: NYX_INLINE_COMPILER=1 make run FILE=tests/compiler-unit/test-lexer.nx
+//
+// NYX_INLINE_COMPILER=1 (ver compiler/nyx.nx): permite que este programa de
+// usuario inlinee `import { tokenize } from "compiler/lexer"` como un import
+// normal (por default esos imports se excluyen — se compilan por separado y
+// se linkean, ver Makefile `recompile`). Habilita testear funciones del
+// compilador con inputs armados en vez de solo end-to-end.
+//
+// Conteos verificados ejecutando (no hardcodeados a ciegas — ver
+// docs/superpowers/plans/2026-07-08-type-system-real-borrow-async.md,
+// tarea P0):
+//   Test 1: "let x = 42"                  → 5 tokens (LET, IDENT, EQUALS, NUMBER, EOF)
+//   Test 2: 'print("hola")'               → 5 tokens (IDENT, LPAREN, STRING, RPAREN, EOF)
+//   Test 3: ""                            → 1 token  (solo EOF)
+//   Test 4: "fn if else while for return" → 7 tokens (6 keywords + EOF)
+//   Test 5: "x + y * z - 1"               → 8 tokens (x,+,y,*,z,-,1,EOF)
+
+import { tokenize } from "compiler/lexer"
+
+fn main() {
+    // Test 1: declaración let simple
+    let toks1 = tokenize("let x = 42")
+    assert(toks1.length() == 5)
+
+    // Test 2: llamada con string literal
+    let toks2 = tokenize("print(\"hola\")")
+    assert(toks2.length() == 5)
+
+    // Test 3: código vacío — solo debe generar EOF
+    let toks3 = tokenize("")
+    assert(toks3.length() == 1)
+
+    // Test 4: palabras clave
+    let toks4 = tokenize("fn if else while for return")
+    assert(toks4.length() == 7)
+
+    // Test 5: operadores
+    let toks5 = tokenize("x + y * z - 1")
+    assert(toks5.length() == 8)
+
+    print("TEST-LEXER: OK")
+}

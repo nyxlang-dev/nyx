@@ -1,0 +1,17 @@
+// Track 4 — use-after-move de un tipo #[affine] → NYX1230 (SOUND/gating).
+// Un tipo afín es single-owner POR CONTRATO (opt-in del usuario): moverlo y
+// volver a usarlo es un bug real (semántica Rust), independiente de que el GC
+// lo mantenga vivo. Por eso NYX1230 gatea en NYX_BORROW=error (a diferencia
+// del move-lint GC NYX1201, que es un hint no-gating).
+
+#[affine]
+struct Handle {
+    fd: int
+}
+
+fn main() {
+    let a: Handle = Handle { fd: 3 }
+    let b: Handle = a       // a se MUEVE a b (afín)
+    let c: Handle = a       // ← use of moved value 'a'  → NYX1230
+    print("unreached")
+}

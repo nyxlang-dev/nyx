@@ -1,0 +1,26 @@
+statemachine test
+--- Basic FSM ---
+initial state red ok
+red→green ok
+green→yellow ok
+yellow→red ok
+invalid transition rejected ok
+state unchanged on invalid ok
+--- Can Check ---
+can go from red ok
+cannot slow from red ok
+cannot stop from red ok
+--- Custom FSM ---
+unlocked ok
+opened ok
+closed ok
+locked ok
+cannot open when locked ok
+--- Traced FSM ---
+traced log 4 entries ok
+log entry 0 ok
+traced final state idle ok
+--- Reset ---
+at yellow ok
+reset to red ok
+statemachine ok

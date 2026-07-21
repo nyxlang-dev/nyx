@@ -1,0 +1,21 @@
+// std/map.nx — Funciones de mapa de la Standard Library v0.21
+
+fn map_new() -> Map {
+    return Map.new()
+}
+
+fn map_put(m: Map, k: String, v: int) {
+    m.insert(k, v)
+}
+
+fn map_get_int(m: Map, k: String) -> int {
+    return m.get(k)
+}
+
+fn map_has(m: Map, k: String) -> bool {
+    return m.contains(k)
+}
+
+fn map_size(m: Map) -> int {
+    return m.length()
+}

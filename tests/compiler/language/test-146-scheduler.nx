@@ -1,0 +1,22 @@
+// test-146-scheduler: verifica el scheduler M:N con goroutines
+
+// Test spawn { } como goroutines con el nuevo scheduler
+// goroutine_yield() permite ceder el control al scheduler
+
+fn fib(n: int) -> int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() -> int {
+    // Test básico: spawn goroutines que ejecutan trabajo
+    spawn { let r: int = fib(10); print("fib(10)=" + r); return 0 }
+    spawn { let r: int = fib(8); print("fib(8)=" + r); return 0 }
+    spawn { print("goroutine simple"); return 0 }
+
+    // Esperar que terminen
+    sleep(100)
+
+    print("scheduler ok")
+    return 0
+}

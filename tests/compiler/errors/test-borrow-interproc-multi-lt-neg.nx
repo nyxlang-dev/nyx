@@ -1,0 +1,14 @@
+// multi-lifetime NEG: Holder<'a,'b> pero AMBOS args son globales → ninguna fuente
+// cuelga → sin marca (no FP).
+let G1: int = 1
+let G2: int = 2
+struct Holder<'a, 'b> { x: &'a int, y: &'b int }
+
+fn mk<'a, 'b>(a: &'a int, b: &'b int) -> Holder<'a, 'b> { return Holder { x: a, y: b } }
+
+fn caller() -> Holder {
+    let h: Holder = mk(&G1, &G2)
+    return h
+}
+
+fn main() { print(1) }

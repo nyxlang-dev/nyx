@@ -1,0 +1,22 @@
+// Leer una línea de stdin con read_line() y saludar al usuario
+// En CI/testing: redirigir stdin con echo "Alice" | ./programa
+
+fn main() -> int {
+    print_no_newline("Ingresa tu nombre: ")
+
+    // read_line() lee hasta '\n' desde stdin
+    let nombre: String = read_line()
+
+    // Eliminar posible '\n' al final con trim
+    let nombre_limpio: String = nombre.trim()
+
+    if nombre_limpio.length() == 0 {
+        print("Hola, desconocido!")
+    } else {
+        print("Hola, " + nombre_limpio + "! Bienvenido a Nyx.")
+    }
+
+    print("Longitud del nombre: " + int_to_string(nombre_limpio.length()))
+
+    return 0
+}

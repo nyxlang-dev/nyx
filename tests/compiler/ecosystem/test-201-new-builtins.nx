@@ -1,0 +1,18 @@
+// test-201: chr(), arr.insert(), arr.remove() builtins
+fn main() {
+    // chr
+    let a: String = chr(65)
+    print(a)
+
+    // arr.insert / arr.remove
+    var nums = [10, 30, 40]
+    nums.insert(1, 20)
+    // nums = [10, 20, 30, 40]
+    print(int_to_string(nums[1]))
+    let removed = nums.remove(2)
+    print(int_to_string(removed))
+    // nums = [10, 20, 40]
+    print(int_to_string(nums.length()))
+    print("done")
+    return 0
+}

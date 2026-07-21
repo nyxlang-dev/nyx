@@ -1,0 +1,26 @@
+// Test A16: File I/O — escribir y leer archivos
+// Prueba: write_file, read_file, file_exists
+
+fn main() {
+    let path = "/tmp/nyx_test_a16.txt"
+    let content = "Hello from Nyx!"
+
+    // Escribir
+    write_file(path, content)
+
+    // Verificar existencia
+    if file_exists(path) {
+        print(1)  // 1
+    } else {
+        print(0)
+    }
+
+    // Leer
+    let read_back = read_file(path)
+    print(read_back)
+
+    // Verificar longitud
+    print(read_back.length())  // 15
+
+    return 0
+}

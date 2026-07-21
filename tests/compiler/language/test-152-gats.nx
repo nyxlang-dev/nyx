@@ -1,0 +1,43 @@
+// test-152: GATs — Generic Associated Types in trait definitions
+// Verifies that type Item<T> and type Output<A> parse correctly in traits
+
+trait Container {
+    type Item<T>
+    fn get_count(self) -> int
+}
+
+trait Transformer {
+    type Output<A>
+    fn transform(self, x: int) -> int
+}
+
+trait Iterable {
+    type Iter<T>
+    fn iter_count(self) -> int
+}
+
+// Regular function — not generic, verifies normal code still works
+fn sum_array(arr: Array<int>) -> int {
+    var total = 0
+    var i = 0
+    while i < arr.length() {
+        let v: int = arr[i]
+        total = total + v
+        i = i + 1
+    }
+    return total
+}
+
+fn main() -> int {
+    var nums: Array<int> = []
+    nums.push(1)
+    nums.push(2)
+    nums.push(3)
+    nums.push(4)
+    nums.push(5)
+    let s = sum_array(nums)
+    print(s)
+    print(nums.length())
+    print("gats ok")
+    return 0
+}

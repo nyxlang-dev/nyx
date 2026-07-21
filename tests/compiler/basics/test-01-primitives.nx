@@ -1,0 +1,17 @@
+// TEST 1: Tipos Primitivos
+fn main() {
+    print("=== TEST 1: PRIMITIVOS ===")
+
+    let entero = 42
+    let booleano = true
+    let texto = "Nyx"
+
+    print("Entero:")
+    print(entero)
+    print("Booleano:")
+    print(booleano)
+    print("String:")
+    print(texto)
+    print("✅ Test 1 completado")
+    return 0
+}

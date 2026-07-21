@@ -1,0 +1,46 @@
+// Select — multiplexing multiple channels
+// Select — multiplexar múltiples canales
+
+var ch1: Map = Map.new()
+var ch2: Map = Map.new()
+
+fn sender1() -> int {
+    sleep(10)
+    channel_send(ch1, 42)
+    return 0
+}
+
+fn sender2() -> int {
+    sleep(20)
+    channel_send(ch2, 99)
+    return 0
+}
+
+fn main() -> int {
+    ch1 = channel_new(1)
+    ch2 = channel_new(1)
+
+    thread_spawn(sender1)
+    thread_spawn(sender2)
+
+    // Select waits for the first channel that has data
+    // and executes the matching case block
+    var received: int = 0
+    while received < 2 {
+        select {
+            case ch1 => {
+                let val: int = channel_recv(ch1)
+                print("from ch1: " + int_to_string(val))
+                received = received + 1
+            }
+            case ch2 => {
+                let val: int = channel_recv(ch2)
+                print("from ch2: " + int_to_string(val))
+                received = received + 1
+            }
+        }
+    }
+
+    print("both received")
+    return 0
+}

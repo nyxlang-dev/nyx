@@ -1,0 +1,52 @@
+// Test 30: impl blocks — methods on structs
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Point {
+    fn manhattan(self) -> int {
+        return self.x + self.y
+    }
+
+    fn add(self, other: Point) -> Point {
+        return Point { x: self.x + other.x, y: self.y + other.y }
+    }
+
+    fn scale(self, factor: int) -> Point {
+        return Point { x: self.x * factor, y: self.y * factor }
+    }
+}
+
+struct Counter {
+    value: int
+}
+
+impl Counter {
+    fn get(self) -> int {
+        return self.value
+    }
+}
+
+fn main() {
+    let p1 = Point { x: 3, y: 4 }
+    let p2 = Point { x: 10, y: 20 }
+
+    // Method with no extra args
+    print("manhattan: ${p1.manhattan()}")
+
+    // Method returning struct
+    let p3 = p1.add(p2)
+    print("add: (${p3.x}, ${p3.y})")
+
+    // Method with primitive arg
+    let p4 = p1.scale(3)
+    print("scale: (${p4.x}, ${p4.y})")
+
+    // Different struct
+    let c = Counter { value: 42 }
+    print("counter: ${c.get()}")
+}
+
+main()

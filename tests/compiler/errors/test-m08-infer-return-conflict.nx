@@ -1,0 +1,18 @@
+// M-08 sesion 11 error test: dos returns con tipos distintos — conflicto
+// que bloquea la inferencia bottom-up.
+// Expected stderr (contains): "conflicting returns int and String"
+// Expected exit: non-zero (semantic check fails)
+
+fn pick(b: bool) {
+    if b {
+        return 1
+    } else {
+        return "hi"
+    }
+}
+
+fn main() -> int {
+    let n: int = pick(true)
+    print(int_to_string(n))
+    return 0
+}

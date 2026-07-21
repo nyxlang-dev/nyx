@@ -1,0 +1,49 @@
+// test-238-global-map-vtype-crossfn — regresión de codegen v0.18 (introducida
+// por f7fd491 "Bug 2b"). Rompía los 4 product-unit tests de nyx-db con
+// "Clave 'bt::1::0' no encontrada en map" (y un "GC 412 TB" en el WAL).
+//
+// Causa: la re-afirmación por-función de `global_var_entries` (al entrar a CADA
+// función, para que un param no pise un global) re-insertaba en ctx.variables
+// una entrada de 2 elementos [@g,"Map"], BORRANDO el 3er elemento que rastrea el
+// tipo de valor del Map ("String"/"int"), aprendido en cada `.insert`. Sin ese
+// tracking, `.get` caía a un hint frágil (expected_type). En
+// `string_to_int(g.get(k))` el expected_type="int" despachaba nyx_map_get_int
+// sobre un Map de Strings → el char* almacenado se devolvía como i64 →
+// string_to_int hacía inttoptr sobre un puntero crudo → basura → 0.
+//
+// Fix: (1) propagar el value-type aprendido al snapshot global
+// (track_global_map_vtype) para que la re-afirmación no lo degrade; (2)
+// string_to_int fija expected_type="String" al codegenear su argumento.
+// Auto-verificable con assert().
+
+var g_str: Map = Map.new()   // valores String
+var g_int: Map = Map.new()   // valores int
+
+fn seed_str() {
+    g_str.insert("root", "7")
+}
+
+fn read_str() -> int {
+    // string_to_int(map.get()) cross-función: el caso exacto de btree.nx:353
+    // (g_bti_roots.get → root_id). Antes devolvía 0 (o SEGV) → "bt::1::0".
+    return string_to_int(g_str.get("root"))
+}
+
+fn seed_int() {
+    g_int.insert("n", 42)
+}
+
+fn read_int() -> int {
+    // Map global de int leído cross-función: ejercita el tracking del value-type
+    // propagado al snapshot (fix primario).
+    return g_int.get("n")
+}
+
+fn main() -> int {
+    seed_str()
+    assert(read_str() == 7)
+    seed_int()
+    assert(read_int() == 42)
+    print("global-map-vtype OK")
+    return 0
+}

@@ -1,0 +1,22 @@
+// M-08 sesion 12a error test: impl method con type-param propio (`fn
+// pair<T>(self, a: T, b: T)`). Los dos args comparten T; pasar `int` y
+// `String` genera conflicto de unificación.
+// Expected stderr (contains): "argument 2 of 'Box.pair': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+
+struct Box {
+    x: int
+}
+
+impl Box {
+    fn pair<T>(self, a: T, b: T) -> T {
+        return a
+    }
+}
+
+fn main() -> int {
+    let b: Box = Box { x: 1 }
+    let r: int = b.pair(1, "mismatch")
+    print(int_to_string(r))
+    return 0
+}

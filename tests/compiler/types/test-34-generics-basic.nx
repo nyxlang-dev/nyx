@@ -1,0 +1,26 @@
+// test-34: Generic functions via monomorphization
+
+fn identity<T>(x: T) -> T {
+    return x
+}
+
+fn max_val<T>(a: T, b: T) -> T {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn main() {
+    let a = identity<int>(42)
+    print("identity<int>(42) = " + int_to_string(a))
+
+    let s = identity<String>("hello generics")
+    print("identity<String> = " + s)
+
+    let m = max_val<int>(10, 20)
+    print("max_val<int>(10, 20) = " + int_to_string(m))
+
+    print("All generics tests passed!")
+}
+main()

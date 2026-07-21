@@ -1,0 +1,29 @@
+// Test A13: String builder pattern — construir strings grandes
+// Prueba: performance de concatenación, strings largos
+
+fn join(arr: Array, sep: String) -> String {
+    var result = ""
+    var i = 0
+    while i < arr.length() {
+        if i > 0 {
+            result = result + sep
+        }
+        let s: String = arr[i]
+        result = result + s
+        i = i + 1
+    }
+    return result
+}
+
+fn main() {
+    let words = ["the", "quick", "brown", "fox", "jumps"]
+    let sentence = join(words, " ")
+    print(sentence)
+    print(sentence.length())
+
+    // Join con coma
+    let csv = join(["a", "b", "c", "d"], ",")
+    print(csv)
+
+    return 0
+}

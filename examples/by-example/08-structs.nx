@@ -1,0 +1,51 @@
+// Structs: definición, campos, impl con métodos, instanciación
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Point {
+    fn distance_from_origin(self) -> int {
+        // distancia Manhattan: |x| + |y|
+        var ax: int = self.x
+        if ax < 0 {
+            ax = ax * -1
+        }
+        var ay: int = self.y
+        if ay < 0 {
+            ay = ay * -1
+        }
+        return ax + ay
+    }
+
+    fn to_string(self) -> String {
+        return "(" + int_to_string(self.x) + ", " + int_to_string(self.y) + ")"
+    }
+}
+
+struct Rectangle {
+    width: int,
+    height: int
+}
+
+impl Rectangle {
+    fn area(self) -> int {
+        return self.width * self.height
+    }
+}
+
+fn main() -> int {
+    let p1: Point = Point { x: 3, y: 4 }
+    print("Punto: " + p1.to_string())
+    print("Distancia al origen: " + int_to_string(p1.distance_from_origin()))
+
+    let p2: Point = Point { x: -2, y: 5 }
+    print("Punto: " + p2.to_string())
+    print("Distancia al origen: " + int_to_string(p2.distance_from_origin()))
+
+    let rect: Rectangle = Rectangle { width: 6, height: 7 }
+    print("Area del rectangulo: " + int_to_string(rect.area()))
+
+    return 0
+}

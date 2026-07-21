@@ -1,0 +1,77 @@
+// Test: trait inheritance
+
+trait Named {
+    fn name(self) -> String
+}
+
+trait Greeter : Named {
+    fn greet(self) -> String {
+        return "Hello, " + self.name()
+    }
+}
+
+struct Person {
+    first: String,
+    age: int
+}
+
+impl Greeter for Person {
+    fn name(self) -> String {
+        return self.first
+    }
+}
+
+// Basic trait
+trait Describable {
+    fn describe(self) -> String
+}
+
+// Multi-level: Animal : Named + Describable
+trait Animal : Named + Describable {
+    fn sound(self) -> String
+}
+
+struct Dog {
+    breed: String
+}
+
+impl Animal for Dog {
+    fn name(self) -> String {
+        return self.breed
+    }
+    fn describe(self) -> String {
+        return "A dog of breed " + self.breed
+    }
+    fn sound(self) -> String {
+        return "Woof"
+    }
+}
+
+fn print_name<T: Named>(x: T) -> String {
+    return x.name()
+}
+
+fn main() -> int {
+    // Test 1: basic trait inheritance with default method
+    let p = Person { first: "Alice", age: 30 }
+    print(p.greet())
+
+    // Test 2: name() method via Named supertrait
+    print(p.name())
+
+    // Test 3: generic function with supertrait bound
+    let n: String = print_name<Person>(p)
+    print(n)
+
+    // Test 4: multi-supertrait
+    let d = Dog { breed: "Labrador" }
+    print(d.name())
+    print(d.describe())
+    print(d.sound())
+
+    // Test 5: Named bound works for Dog (via Animal : Named)
+    let dn: String = print_name<Dog>(d)
+    print(dn)
+
+    return 0
+}

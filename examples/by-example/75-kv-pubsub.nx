@@ -1,0 +1,55 @@
+// nyx-kv Pub/Sub — SUBSCRIBE and PUBLISH for real-time messaging
+// Pub/Sub nyx-kv — mensajería en tiempo real con SUBSCRIBE y PUBLISH
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    // Publisher connection
+    let pub_fd: int = tcp_connect("127.0.0.1", 6380)
+    if pub_fd < 0 {
+        print("publisher connection failed")
+        return 1
+    }
+
+    // Publish a message to a channel
+    tcp_write(pub_fd, resp_cmd(["PUBLISH", "notifications", "user signed up"]))
+    let pub_reply: String = tcp_read_line(pub_fd)
+    print("PUBLISH -> " + pub_reply.trim() + " subscribers received")
+
+    tcp_close(pub_fd)
+
+    // Subscriber connection (usually runs in a separate thread)
+    let sub_fd: int = tcp_connect("127.0.0.1", 6380)
+    if sub_fd < 0 { return 1 }
+
+    // SUBSCRIBE — the connection becomes a message stream
+    tcp_write(sub_fd, resp_cmd(["SUBSCRIBE", "notifications"]))
+    let sub_hdr: String = tcp_read_line(sub_fd)
+    print("SUBSCRIBE header -> " + sub_hdr.trim())
+
+    // In a real app, loop reading messages:
+    //   let msg_type: String = tcp_read_line(sub_fd)   // "$7" then "message"
+    //   let channel: String = tcp_read_line(sub_fd)
+    //   let payload: String = tcp_read_line(sub_fd)
+
+    // UNSUBSCRIBE when done
+    tcp_write(sub_fd, resp_cmd(["UNSUBSCRIBE", "notifications"]))
+    tcp_close(sub_fd)
+    return 0
+}

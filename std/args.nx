@@ -1,0 +1,262 @@
+// ============================================================
+// STD/ARGS.NX — CLI Argument Parser (v1.9.0)
+// ============================================================
+// Parsea argumentos de linea de comandos estilo Unix/POSIX.
+//
+// Uso:
+//   import "std/args" as args
+//
+//   let parser = args.new_parser("mi_programa", "Descripcion del programa")
+//   args.add_flag(parser, "verbose", "v", "Modo verboso", false)
+//   args.add_option(parser, "output", "o", "Archivo de salida", "out.txt")
+//   let parsed = args.parse(parser, get_args())
+//
+//   if args.get_flag(parsed, "verbose") { print("modo verboso") }
+//   let out = args.get_option(parsed, "output")
+// ============================================================
+
+// ===== TYPES =====
+
+/// An argument definition (flag or option with value).
+pub struct ArgDef {
+    name: String,       // long name: --verbose
+    short: String,      // short name: -v
+    description: String,
+    default_value: String,  // "" for flags (bool), default string for options
+    is_flag: bool       // true=boolean flag, false=option with value
+}
+
+/// Result of parsing command-line arguments.
+pub struct ParsedArgs {
+    values: Map<String>,  // name -> value string
+    positional: Array,    // non-flag arguments
+    program: String,      // argv[0]
+    error: String         // "" if no error
+}
+
+/// Argument parser configuration.
+pub struct ArgParser {
+    program: String,
+    description: String,
+    defs: Array         // Array of ArgDef
+}
+
+// ===== CONSTRUCTOR =====
+
+/// Create a new argument parser.
+/// name: program name shown in --help
+/// description: one-line description shown in --help
+pub fn new_parser(name: String, description: String) -> ArgParser {
+    return ArgParser {
+        program: name,
+        description: description,
+        defs: []
+    }
+}
+
+/// Add a boolean flag (--flag / -f) with a default value of false.
+pub fn add_flag(parser: ArgParser, name: String, short: String, description: String, default_val: bool) {
+    var def_str = "false"
+    if default_val { def_str = "true" }
+    let d: ArgDef = ArgDef {
+        name: name, short: short,
+        description: description,
+        default_value: def_str, is_flag: true
+    }
+    parser.defs.push(d)
+}
+
+/// Add an option that takes a value (--option=VALUE / -o VALUE).
+pub fn add_option(parser: ArgParser, name: String, short: String, description: String, default_val: String) {
+    let d: ArgDef = ArgDef {
+        name: name, short: short,
+        description: description,
+        default_value: default_val, is_flag: false
+    }
+    parser.defs.push(d)
+}
+
+// ===== PARSING =====
+
+// Find ArgDef by long name
+fn find_def_by_name(defs: Array, name: String) -> int {
+    var i = 0
+    while i < defs.length() {
+        let d: ArgDef = defs[i]
+        if d.name == name { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// Find ArgDef by short name
+fn find_def_by_short(defs: Array, short: String) -> int {
+    var i = 0
+    while i < defs.length() {
+        let d: ArgDef = defs[i]
+        if d.short == short { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+/// Parse command-line arguments from get_args() result.
+/// Returns ParsedArgs with values, positional args, and any error.
+pub fn parse(parser: ArgParser, argv: Array) -> ParsedArgs {
+    var values: Map<String> = map_new()
+    var positional: Array = []
+    var prog_name = parser.program
+    var error_msg = ""
+
+    // Initialize defaults
+    var di = 0
+    while di < parser.defs.length() {
+        let d: ArgDef = parser.defs[di]
+        values.insert(d.name, d.default_value)
+        di = di + 1
+    }
+
+    // Parse argv (skip argv[0] = program path)
+    var i = 1
+    if argv.length() > 0 {
+        let argv0: String = argv[0]
+        prog_name = argv0
+    }
+
+    while i < argv.length() {
+        let arg: String = argv[i]
+
+        if arg == "--help" or arg == "-h" {
+            // Mark help requested
+            values.insert("help", "true")
+            i = i + 1
+        } else {
+            if arg.startsWith("--") {
+                // Long option: --name or --name=value
+                let rest: String = arg.substring(2, arg.length())
+                if rest.contains("=") {
+                    let parts: Array<String> = rest.split("=")
+                    let opt_name: String = parts[0]
+                    let opt_val: String = parts[1]
+                    let idx: int = find_def_by_name(parser.defs, opt_name)
+                    if idx >= 0 {
+                        let d: ArgDef = parser.defs[idx]
+                        if d.is_flag {
+                            values.insert(opt_name, opt_val)
+                        } else {
+                            values.insert(opt_name, opt_val)
+                        }
+                    } else {
+                        error_msg = "Unknown option: --" + opt_name
+                    }
+                } else {
+                    let idx: int = find_def_by_name(parser.defs, rest)
+                    if idx >= 0 {
+                        let d: ArgDef = parser.defs[idx]
+                        if d.is_flag {
+                            values.insert(rest, "true")
+                        } else {
+                            // Next arg is value
+                            i = i + 1
+                            if i < argv.length() {
+                                let next_val: String = argv[i]
+                                values.insert(rest, next_val)
+                            } else {
+                                error_msg = "Option --" + rest + " requires a value"
+                            }
+                        }
+                    } else {
+                        error_msg = "Unknown option: --" + rest
+                    }
+                }
+                i = i + 1
+            } else {
+                if arg.startsWith("-") and arg.length() == 2 {
+                    // Short option: -v or -o VALUE
+                    let short: String = arg.substring(1, 2)
+                    let idx: int = find_def_by_short(parser.defs, short)
+                    if idx >= 0 {
+                        let d: ArgDef = parser.defs[idx]
+                        if d.is_flag {
+                            values.insert(d.name, "true")
+                            i = i + 1
+                        } else {
+                            i = i + 1
+                            if i < argv.length() {
+                                let next_val2: String = argv[i]
+                                values.insert(d.name, next_val2)
+                                i = i + 1
+                            } else {
+                                error_msg = "Option -" + short + " requires a value"
+                            }
+                        }
+                    } else {
+                        error_msg = "Unknown option: -" + short
+                        i = i + 1
+                    }
+                } else {
+                    // Positional argument
+                    positional.push(arg)
+                    i = i + 1
+                }
+            }
+        }
+    }
+
+    return ParsedArgs {
+        values: values,
+        positional: positional,
+        program: prog_name,
+        error: error_msg
+    }
+}
+
+// ===== ACCESSORS =====
+
+/// Get a boolean flag value. Returns false if not set.
+pub fn get_flag(parsed: ParsedArgs, name: String) -> bool {
+    let m: Map<String> = parsed.values
+    if not m.contains(name) { return false }
+    let val: String = m.get(name)
+    return val == "true"
+}
+
+/// Get a string option value. Returns "" if not set.
+pub fn get_option(parsed: ParsedArgs, name: String) -> String {
+    let m: Map<String> = parsed.values
+    if not m.contains(name) { return "" }
+    let val: String = m.get(name)
+    return val
+}
+
+/// Get positional arguments (non-flag args).
+pub fn get_positional(parsed: ParsedArgs) -> Array {
+    return parsed.positional
+}
+
+/// Check if parsing had an error.
+pub fn has_error(parsed: ParsedArgs) -> bool {
+    return parsed.error != ""
+}
+
+/// Print usage/help text.
+pub fn print_help(parser: ArgParser) {
+    print("Usage: " + parser.program + " [options]")
+    print("")
+    print(parser.description)
+    print("")
+    print("Options:")
+    var i = 0
+    while i < parser.defs.length() {
+        let d: ArgDef = parser.defs[i]
+        var short_str = "  "
+        if d.short != "" { short_str = "-" + d.short + ", " }
+        var default_str = ""
+        if not d.is_flag and d.default_value != "" {
+            default_str = " (default: " + d.default_value + ")"
+        }
+        print("  " + short_str + "--" + d.name + "    " + d.description + default_str)
+        i = i + 1
+    }
+    print("  -h, --help    Show this help")
+}

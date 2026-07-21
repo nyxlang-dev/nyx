@@ -1,0 +1,22 @@
+// TEST 11: Arrays
+fn main() {
+    print("=== TEST 11: ARRAYS ===")
+
+    let frutas = ["manzana", "banana", "naranja"]
+
+    print("Primer elemento:")
+    print(frutas[0])
+
+    print("Segundo elemento:")
+    print(frutas[1])
+
+    print("Tercer elemento:")
+    print(frutas[2])
+
+    let numeros = [10, 20, 30, 40, 50]
+    print("Elemento en índice 3:")
+    print(numeros[3])
+
+    print("✅ Test 11 completado")
+    return 0
+}

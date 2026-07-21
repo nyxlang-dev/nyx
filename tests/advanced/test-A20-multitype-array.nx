@@ -1,0 +1,28 @@
+// Test A20: Arrays con diferentes tipos de datos
+// Prueba: arrays heterogéneos, coerción de tipos
+
+fn main() {
+    // Array de enteros
+    var nums = [10, 20, 30, 40, 50]
+    var sum = 0
+    for n in nums {
+        sum = sum + n
+    }
+    print(sum)  // 150
+
+    // Array de strings
+    var words = ["hello", "world", "nyx"]
+    var concat = ""
+    for w in words {
+        let s: String = w
+        concat = concat + s + " "
+    }
+    print(concat)
+
+    // Nested arrays
+    var matrix = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    let row1: Array = matrix[1]
+    print(row1[2])  // 6
+
+    return 0
+}

@@ -1,0 +1,25 @@
+// nyx-http2 frames — HEADERS, DATA, SETTINGS frame types
+// Frames nyx-http2 — tipos HEADERS, DATA, SETTINGS
+
+import "std/http2"
+
+fn main() -> int {
+    // HTTP/2 is a binary protocol with typed frames.
+    // Each frame has a 9-byte header + payload.
+
+    print("HTTP/2 frame types:")
+    print("  H2_DATA      = " + int_to_string(H2_DATA) + "  — request/response bodies")
+    print("  H2_HEADERS   = " + int_to_string(H2_HEADERS) + "  — HPACK-compressed headers")
+    print("  H2_SETTINGS  = " + int_to_string(H2_SETTINGS) + "  — connection parameters")
+    print("  H2_PING      = " + int_to_string(H2_PING) + "  — keep-alive")
+    print("  H2_GOAWAY    = " + int_to_string(H2_GOAWAY) + "  — graceful shutdown")
+    print("  H2_WINDOW_UPDATE = " + int_to_string(H2_WINDOW_UPDATE) + "  — flow control")
+
+    print("")
+    print("Connection preface: client sends 24-byte magic string")
+    print("\"PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n\" followed by SETTINGS frame.")
+    print("")
+    print("Each request opens a new stream_id (odd for client-initiated).")
+    print("HPACK compresses repeated headers: Host, User-Agent, etc.")
+    return 0
+}

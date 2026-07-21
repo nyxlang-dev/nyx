@@ -1,0 +1,11 @@
+// test-202: bare return in void functions
+fn greet(name: String) {
+    print("hello " + name)
+    return
+}
+
+fn main() {
+    greet("world")
+    print("done")
+    return 0
+}

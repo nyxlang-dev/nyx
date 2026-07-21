@@ -1,0 +1,52 @@
+// test-141-csv: verifica el parser/serializer CSV (std/csv)
+
+import "std/csv" as csv
+
+fn main() -> int {
+    // Parse CSV simple
+    let text = "name,age,city\nAlice,30,Rome\nBob,25,Milan\nCarla,35,Naples"
+    let doc = csv.parse(text)
+
+    // Contar filas y columnas
+    let rows: int = csv.row_count(doc)
+    let cols: int = csv.col_count(doc)
+    print("rows: " + rows)
+    print("cols: " + cols)
+
+    // Obtener headers
+    let hdrs: Array = csv.headers(doc)
+    let h0: String = hdrs[0]
+    let h1: String = hdrs[1]
+    let h2: String = hdrs[2]
+    print("header: " + h0 + "," + h1 + "," + h2)
+
+    // Obtener datos
+    let data: Array = csv.data_rows(doc)
+    let row0: Array = data[0]
+    let name0: String = csv.get_field(row0, 0)
+    let age0: String = csv.get_field(row0, 1)
+    print("row0: " + name0 + "," + age0)
+
+    // Acceso por nombre de columna
+    let row1: Array = data[1]
+    let city1: String = csv.get_by_name(doc, row1, "city")
+    print("bob city: " + city1)
+
+    // Serializar de vuelta
+    let headers_arr: Array = ["id", "value"]
+    let new_doc = csv.new_doc(headers_arr)
+    var r1: Array = []
+    r1.push("1")
+    r1.push("hello")
+    csv.add_row(new_doc, r1)
+    var r2: Array = []
+    r2.push("2")
+    r2.push("world")
+    csv.add_row(new_doc, r2)
+
+    let out: String = csv.stringify(new_doc)
+    print(out)
+
+    print("csv ok")
+    return 0
+}

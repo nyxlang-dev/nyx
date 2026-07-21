@@ -1,0 +1,120 @@
+// std/router.nx — Router cliente sobre hash fragments, integrado con el
+// framework de componentes VDOM (std/component.nx) y el matching puro de
+// std/routematch.nx (Task 1). SOLO compila bajo NYX_TARGET=wasm32-wasi
+// (hereda la restricción de std/dom y std/browser, que declaran los
+// extern "js").
+//
+// EN: client-side hash router wired into the VDOM component framework
+// (std/component.nx) and the pure matcher of std/routematch.nx (Task 1).
+// wasm32-wasi only.
+//
+// Modelo: cada ruta es un patrón (`/detalle/:id`) emparejado 1:1 (por
+// índice, arrays paralelos) con una función "make" — `Fn(Array) -> Array`
+// que recibe los params matcheados (`[[nombre, valor], ...]`) y devuelve un
+// holder de componente ya armado con `component_new` (NO un VNode: el
+// router monta/desmonta componentes completos, no vnodes sueltos).
+//
+// Uso / usage:
+//   import "std/router"
+//   import "std/component"
+//
+//   fn lista_render(state: Array) -> VNode { ... }
+//   fn lista_make(params: Array) -> Array { return component_new([], lista_render) }
+//
+//   fn detalle_render(state: Array) -> VNode { ... }
+//   fn detalle_make(params: Array) -> Array {
+//       let id: String = params[0][1]   // params[0] == ["id", "7"]
+//       return component_new([id], detalle_render)
+//   }
+//
+//   fn main() {
+//       let r: Array = router_new(["/lista", "/detalle/:id"], [lista_make, detalle_make], 0)
+//       router_start(r, "#root")
+//   }
+
+import "std/routematch"
+import "std/component"
+import "std/dom"
+import "std/browser"
+
+// Holder del router: [patterns: Array<String>, makes: Array<Fn(Array)->Array>,
+// default_idx: int, sel: String, comp: Array]. `sel` y `comp` arrancan
+// placeholder ("" / []) — router_start los completa. `r` es un Array
+// (siempre mutable), así que no hace falta un nivel extra de holder-en-holder
+// para mutar `sel`/`comp` después — se reasignan directo (`r[3] = ...`).
+pub fn router_new(patterns: Array, makes: Array, default_idx: int) -> Array {
+    return [patterns, makes, default_idx, "", []]
+}
+
+// Getter tipado para extraer el "make" de un slot de Array — mismo patrón
+// que pick_render/pick_vnode/pick_patch de std/component.nx: un array-get
+// inline o bindeado a un `let` deja el Fn como i64 crudo, rompiendo la
+// firma de la llamada indirecta bajo wasm32 (gotcha catalogado ahí).
+fn pick_make(makes: Array, i: int) -> Fn(Array) -> Array {
+    return makes[i]
+}
+
+// Invoca el "make" ya bien tipado (ver pick_make) — mismo camino verificado
+// que call_render/call_make en std/component.nx: pasar el resultado del
+// getter DIRECTO como parámetro de una función que lo llama adentro, nunca
+// bindearlo a un `let` intermedio.
+fn call_make(mk: Fn(Array) -> Array, params: Array) -> Array {
+    return mk(params)
+}
+
+// Resuelve el hash actual contra los patrones del router.
+// Devuelve [idx: int, params: Array] (ver std/routematch.route_resolve).
+fn router_resolve(r: Array) -> Array {
+    let patterns: Array = r[0]
+    let default_idx: int = r[2]
+    let hash: String = browser_get_hash()
+    return route_resolve(patterns, hash, default_idx)
+}
+
+// Limpia todos los hijos directos del contenedor de montaje (loop
+// descendente + dom_remove_at — descendente porque dom_remove_at opera por
+// índice de childNodes y borrar de adelante hacia atrás correría los
+// índices restantes).
+fn router_container_clear(sel: String) {
+    let container: int = dom_query_handle(sel)
+    var i: int = dom_child_count(container) - 1
+    while i >= 0 {
+        dom_remove_at(container, i)
+        i = i - 1
+    }
+}
+
+// Resuelve la ruta actual, construye el componente correspondiente y lo
+// monta sobre `r[3]` (el selector de montaje) — usada tanto por
+// router_start (primer montaje) como por router_navigate (tras un cambio
+// de hash, sobre el contenedor ya limpiado).
+fn router_mount_current(r: Array) {
+    let resolved: Array = router_resolve(r)
+    let idx: int = resolved[0]
+    let params: Array = resolved[1]
+    let makes: Array = r[1]
+    let comp: Array = call_make(pick_make(makes, idx), params)
+    let sel: String = r[3]
+    mount(comp, sel)
+    r[4] = comp
+}
+
+// Arranca el router: monta la vista correspondiente al hash actual sobre
+// `sel` y se suscribe a `hashchange` para re-navegar automáticamente.
+pub fn router_start(r: Array, sel: String) {
+    r[3] = sel
+    router_mount_current(r)
+    // El closure captura `r` (parámetro de router_start) — soportado desde
+    // el fix de captura de locals en lambdas (2026-07-15, commit 789c881).
+    browser_on_hashchange(fn() { router_navigate(r) })
+}
+
+// Invocado por el handler de hashchange (vía el closure de router_start):
+// limpia el contenedor de montaje y remonta la vista resuelta para el hash
+// nuevo. Interno — no exportado (Task 3 no lo necesita: solo consume
+// router_new/router_start).
+fn router_navigate(r: Array) {
+    let sel: String = r[3]
+    router_container_clear(sel)
+    router_mount_current(r)
+}

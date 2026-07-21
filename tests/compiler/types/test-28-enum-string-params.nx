@@ -1,0 +1,50 @@
+// Test 28: Enum params with non-int types (String, Array, bool, float)
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+fn divide(a: int, b: int) -> Result {
+    if b == 0 {
+        return Result.Err("division by zero")
+    }
+    return Result.Ok(a / b)
+}
+
+fn main() {
+    // Test 1: Ok case
+    let r1 = divide(10, 2)
+    match r1 {
+        Result.Ok(val) => {
+            print("Ok: ${val}")
+        },
+        Result.Err(msg) => {
+            print("Error: ${msg}")
+        }
+    }
+
+    // Test 2: Err case with String
+    let r2 = divide(10, 0)
+    match r2 {
+        Result.Ok(val) => {
+            print("Ok: ${val}")
+        },
+        Result.Err(msg) => {
+            print("Error: ${msg}")
+        }
+    }
+
+    // Test 3: Direct construction
+    let r3 = Result.Err("not found")
+    match r3 {
+        Result.Ok(v) => {
+            print("got value")
+        },
+        Result.Err(e) => {
+            print("got error: ${e}")
+        }
+    }
+}
+
+main()

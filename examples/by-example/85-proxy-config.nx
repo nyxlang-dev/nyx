@@ -1,0 +1,30 @@
+// nyx-proxy config — parsing proxy.toml with std/toml
+// Config nyx-proxy — parsear proxy.toml con std/toml
+
+import "std/toml"
+
+fn main() -> int {
+    // A typical proxy.toml config file
+    let config_text: String = "[server]\nport = 443\ntls = true\n\n[[upstream]]\nname = \"api\"\nhost = \"127.0.0.1\"\nport = 3000\n\n[[upstream]]\nname = \"static\"\nhost = \"127.0.0.1\"\nport = 3001\n\n[health]\ninterval = 5\ntimeout = 2\nthreshold = 3\n\n[ratelimit]\nper_ip_per_sec = 100"
+
+    let parsed: Map = toml_parse(config_text)
+
+    // Read server config
+    let port: int = toml_get_int(parsed, "server.port", 443)
+    let tls: bool = toml_get_bool(parsed, "server.tls", false)
+    print("server: port=" + int_to_string(port) + " tls=" + int_to_string(tls))
+
+    // Read health config
+    let interval: int = toml_get_int(parsed, "health.interval", 10)
+    let threshold: int = toml_get_int(parsed, "health.threshold", 3)
+    print("health: interval=" + int_to_string(interval) + "s threshold=" + int_to_string(threshold))
+
+    // Read rate limit config
+    let rate: int = toml_get_int(parsed, "ratelimit.per_ip_per_sec", 50)
+    print("ratelimit: " + int_to_string(rate) + " req/s per IP")
+
+    // Note: TOML arrays-of-tables ([[upstream]]) are not supported by std/toml
+    // nyx-proxy uses a custom config loader for those
+
+    return 0
+}

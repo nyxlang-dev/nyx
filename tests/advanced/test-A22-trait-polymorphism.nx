@@ -1,0 +1,105 @@
+// Test A22: Trait Polymorphism Stress
+// Combines: traits, dyn Trait, generics+bounds, struct+impl, match guards, string interpolation
+
+trait Describe {
+    fn describe(self) -> String
+}
+
+trait Area {
+    fn area(self) -> int
+}
+
+struct Circle {
+    radius: int
+}
+
+struct Rect {
+    w: int,
+    h: int
+}
+
+struct Triangle {
+    base: int,
+    height: int
+}
+
+impl Describe for Circle {
+    fn describe(self) -> String {
+        return "circle(r=${self.radius})"
+    }
+}
+
+impl Describe for Rect {
+    fn describe(self) -> String {
+        return "rect(${self.w}x${self.h})"
+    }
+}
+
+impl Describe for Triangle {
+    fn describe(self) -> String {
+        return "triangle(b=${self.base},h=${self.height})"
+    }
+}
+
+impl Area for Circle {
+    fn area(self) -> int {
+        return 3 * self.radius * self.radius
+    }
+}
+
+impl Area for Rect {
+    fn area(self) -> int {
+        return self.w * self.h
+    }
+}
+
+impl Area for Triangle {
+    fn area(self) -> int {
+        return self.base * self.height / 2
+    }
+}
+
+fn print_desc(obj: dyn Describe) -> String {
+    return obj.describe()
+}
+
+fn get_area(obj: dyn Area) -> int {
+    return obj.area()
+}
+
+fn format_desc<T: Describe>(obj: T) -> String {
+    return "Shape: " + obj.describe()
+}
+
+fn classify_area(a: int) -> String {
+    if a > 100 { return "large" }
+    if a > 30 { return "medium" }
+    return "small"
+}
+
+fn main() -> int {
+    let c = Circle { radius: 7 }
+    let r = Rect { w: 8, h: 6 }
+    let t = Triangle { base: 10, height: 5 }
+
+    print(print_desc(c))
+    print(print_desc(r))
+    print(print_desc(t))
+
+    let ca = get_area(c)
+    let ra = get_area(r)
+    let ta = get_area(t)
+    print(ca)
+    print(ra)
+    print(ta)
+
+    print(format_desc<Circle>(c))
+    print(format_desc<Rect>(r))
+
+    print(classify_area(ca))
+    print(classify_area(ra))
+    print(classify_area(ta))
+
+    print("A22 passed")
+    return 0
+}

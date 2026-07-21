@@ -1,0 +1,18 @@
+// test-237-global-init-mixed — regresión serve (v0.18.1, eb8673d). __nyx_init_globals
+// mezclaba fresh_temp (init general de un global = f()) con un contador chico init_temp
+// (init especial de un global = Map.new()): un global especial DESPUÉS de uno general
+// emitía %10 tras %4563 → LLVM exige numeración SSA monótona → "instruction expected to
+// be numbered %N or greater" → nyx-serve no compilaba. Ahora todo usa fresh_temp.
+// El ORDEN importa: el global "general" DEBE ir antes del "especial" para reproducir.
+fn make_n() -> int { return 42 }
+
+var g_general: int = make_n()     // init general → fresh_temp (número alto)
+var g_map: Map = Map.new()         // init especial → antes init_temp (%bajo) → rompía
+
+fn main() -> int {
+    g_map.insert("k", 7)
+    assert(g_general == 42)
+    assert(g_map.get("k") == 7)
+    print("global-init-mixed OK")
+    return 0
+}

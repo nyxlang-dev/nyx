@@ -1,0 +1,57 @@
+// Test 32: Exhaustive pattern matching
+// Verifica que el compilador detecta matches no exhaustivos
+
+// === Test 1: Match exhaustivo (debe compilar OK) ===
+enum Color { Red, Green, Blue }
+
+fn color_name(c: Color) -> String {
+    return match c {
+        Color.Red => "red",
+        Color.Green => "green",
+        Color.Blue => "blue"
+    }
+}
+
+// === Test 2: Match con wildcard (debe compilar OK) ===
+fn is_red(c: Color) -> bool {
+    return match c {
+        Color.Red => true,
+        _ => false
+    }
+}
+
+// === Test 3: Enum con params, exhaustivo ===
+enum Shape {
+    Circle(int),
+    Rect(int),
+    Triangle(int)
+}
+
+fn describe(s: Shape) -> String {
+    return match s {
+        Shape.Circle(r) => "circle " + int_to_string(r),
+        Shape.Rect(side) => "rect " + int_to_string(side),
+        Shape.Triangle(base) => "tri " + int_to_string(base)
+    }
+}
+
+fn main() {
+    print(color_name(Color.Red))
+    print(color_name(Color.Green))
+    print(color_name(Color.Blue))
+
+    if is_red(Color.Red) {
+        print("Red is red: true")
+    }
+    if not is_red(Color.Blue) {
+        print("Blue is red: false")
+    }
+
+    print(describe(Shape.Circle(5)))
+    print(describe(Shape.Rect(4)))
+    print(describe(Shape.Triangle(3)))
+
+    print("exhaustive match OK")
+}
+
+main()

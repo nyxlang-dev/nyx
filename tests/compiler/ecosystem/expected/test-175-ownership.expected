@@ -1,0 +1,18 @@
+ownership test
+--- Box ---
+box get ok
+box into ok
+box string ok
+--- Rc ---
+rc initial count ok
+rc clone count ok
+rc get ok
+rc string ok
+--- MoveOnly ---
+move consume ok
+move string ok
+--- FileGuard (RAII) ---
+file guard open ok
+file guard closed ok
+file guard read ok
+ownership ok

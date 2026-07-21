@@ -1,0 +1,7 @@
+// M-08 error test: array element type mismatch.
+// Expected stderr (contains): "type mismatch in 'nums': expected Array<int>, got Array<String>"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let nums: Array<int> = ["a", "b"]
+    return 0
+}

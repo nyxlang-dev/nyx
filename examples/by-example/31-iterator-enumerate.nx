@@ -1,0 +1,29 @@
+// Iteradores: enumerate() para obtener pares (índice, valor)
+
+fn print_pair(idx: int, val: int) {
+    print("[" + int_to_string(idx) + "] = " + int_to_string(val))
+}
+
+fn main() -> int {
+    let frutas: Array = [10, 20, 30, 40, 50]
+
+    // enumerate() retorna un iterador de pares {index, value}
+    // Se puede iterar con for-in desempaquetando idx y val
+    let enumerado: Array = frutas.iter().enumerate().collect()
+
+    // Cada elemento es un array [indice, valor]
+    var i: int = 0
+    while i < enumerado.length() {
+        let par: Array = enumerado[i]
+        let idx: int = par[0]
+        let val: int = par[1]
+        print_pair(idx, val)
+        i = i + 1
+    }
+
+    // También se puede combinar con otros adapters
+    let primeros: Array = frutas.iter().enumerate().take(3).collect()
+    print("primeros 3 enumerados: " + int_to_string(primeros.length()))
+
+    return 0
+}

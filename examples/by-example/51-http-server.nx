@@ -1,0 +1,26 @@
+// Minimal HTTP server using std/http
+// Servidor HTTP mínimo usando std/http
+
+import "std/http"
+
+fn on_request(req: Array) -> String {
+    let method: String = req[1]
+    let path: String = req[2]
+
+    if path == "/" {
+        return http_response(200, "Hello from Nyx!")
+    }
+    if path == "/time" {
+        let t: int = time()
+        return http_response(200, "timestamp: " + int_to_string(t))
+    }
+    return http_response(404, "not found: " + path)
+}
+
+fn main() -> int {
+    print("listening on :8080")
+    // http_serve blocks, accepting connections in a loop
+    // Each request calls on_request and sends the response
+    http_serve(8080, on_request)
+    return 0
+}

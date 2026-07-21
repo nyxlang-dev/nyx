@@ -1,0 +1,9 @@
+fn passthrough(p: *int) -> *int {
+    return p
+}
+
+fn main() {
+    let x: int = 7
+    let q: *int = passthrough(&x)
+    print(1)
+}

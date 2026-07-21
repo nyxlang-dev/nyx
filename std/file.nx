@@ -1,0 +1,9 @@
+// std/file.nx — Funciones de archivo de la Standard Library v0.21
+
+fn read_text(path: String) -> String {
+    return read_file(path)
+}
+
+fn write_text(path: String, content: String) {
+    write_file(path, content)
+}

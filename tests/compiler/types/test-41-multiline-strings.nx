@@ -1,0 +1,29 @@
+// TEST 41: Block Comments, Multiline Strings, Raw Strings
+fn main() {
+    /* block comment */
+    let x = 42
+    print(int_to_string(x))
+
+    /* nested /* block */ comment */
+    let y = 10
+    print(int_to_string(y))
+
+    let z = x + /* inline */ y
+    print(int_to_string(z))
+
+    // Multiline string
+    let msg = """hello
+world"""
+    print(msg)
+
+    // Raw string (no escape processing)
+    let raw = r"hello\nworld"
+    print(raw)
+
+    // Empty string
+    let empty = ""
+    print("len:" + int_to_string(empty.length()))
+
+    print("OK")
+    return 0
+}

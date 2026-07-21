@@ -1,0 +1,10 @@
+// extern "js" fn compilado SIN NYX_TARGET=wasm32-wasi debe fallar con error
+// bilingüe en codegen (fail-fast en la declaración) — en nativo el símbolo no
+// existe y daría un undefined symbol críptico del linker.
+// EN: extern "js" without the wasm target must fail fast with a clear error.
+
+extern "js" fn js_add(a: int, b: int) -> int
+
+fn main() {
+    print(js_add(1, 2))
+}

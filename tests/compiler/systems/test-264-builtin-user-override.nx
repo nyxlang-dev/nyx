@@ -1,0 +1,15 @@
+// test-264 — una fn DE USUARIO homónima de un builtin de la familia
+// c_fn_ptr/string_from_cstr/string_from_bytes GANA sobre el builtin
+// (convención establecida: codegen.nx "Excluye fns de usuario con el mismo
+// nombre — ganan las del usuario", como read_byte/term_write). Antes el case
+// del builtin las interceptaba silenciosamente (finding del code-review
+// 2026-07-17: string_from_cstr(42) llamaba a @nyx_string_from_cstr con un
+// int coercionado a i8* en vez de a la fn del usuario).
+fn string_from_cstr(x: int) -> int { return x + 1 }
+fn c_fn_ptr(x: int) -> int { return x * 3 }
+
+fn main() {
+    assert(string_from_cstr(42) == 43)
+    assert(c_fn_ptr(5) == 15)
+    print("user fns win over builtin names OK")
+}

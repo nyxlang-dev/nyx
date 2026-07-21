@@ -1,0 +1,43 @@
+// Try operator (?): encadenar operaciones que pueden fallar, short-circuit en Err
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+fn parse_positive(s: String) -> Result {
+    let n: int = string_to_int(s)
+    if n <= 0 {
+        return Result.Err("no es positivo: " + s)
+    }
+    return Result.Ok(n)
+}
+
+fn double_it(n: int) -> Result {
+    if n > 1000 {
+        return Result.Err("numero demasiado grande")
+    }
+    return Result.Ok(n * 2)
+}
+
+// ? propaga el Err automáticamente sin match explícito
+fn pipeline(s: String) -> Result {
+    let n: int = parse_positive(s)?
+    let d: int = double_it(n)?
+    return Result.Ok(d + 1)
+}
+
+fn show(r: Result) {
+    match r {
+        Result.Ok(v)  => print("ok: " + int_to_string(v)),
+        Result.Err(e) => print("err: " + e)
+    }
+}
+
+fn main() -> int {
+    show(pipeline("42"))     // ok: 85  (42*2+1)
+    show(pipeline("-5"))     // err: no es positivo
+    show(pipeline("2000"))   // err: numero demasiado grande
+
+    return 0
+}

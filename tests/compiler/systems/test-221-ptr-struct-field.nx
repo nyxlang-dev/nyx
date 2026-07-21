@@ -1,0 +1,31 @@
+// test-221-ptr-struct-field — Camino B paso 7: auto-deref de campos sobre un
+// puntero a struct. `p.campo` (read) y `p.campo = x` (write) sobre `p: *Struct`
+// operan sobre el struct APUNTADO (estilo Go, sin `(*p).campo`). El write muta la
+// memoria del caller → persiste. Self-checking con assert().
+
+struct Arena { base: int, offset: int, cap: int }
+
+// Muta a través del puntero: lee p.offset, avanza, devuelve el offset previo.
+fn arena_bump(p: *Arena, n: int) -> int {
+    let start: int = p.offset          // read auto-deref
+    p.offset = p.offset + n            // write auto-deref (persiste al caller)
+    return start
+}
+
+fn main() {
+    var a: Arena = Arena { base: 1000, offset: 0, cap: 128 }
+
+    let o1: int = arena_bump(&a, 8)
+    assert(o1 == 0)
+    assert(a.offset == 8)              // la mutación vía puntero persistió
+
+    let o2: int = arena_bump(&a, 4)
+    assert(o2 == 8)
+    assert(a.offset == 12)
+
+    // otros campos intactos
+    assert(a.base == 1000)
+    assert(a.cap == 128)
+
+    print("ptr-struct-field OK")
+}

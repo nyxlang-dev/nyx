@@ -1,0 +1,38 @@
+// test-253-resp-read-command-lenbased — resp_read_command lee el bulk por
+// longitud (tcp_read_exact), no line-based: un valor con \r\n crudo se
+// round-tripea intacto. Antes truncaba en el primer \n. Loopback en threads.
+import "std/resp"
+
+let g_port: int = 17253
+var g_got: Array = []
+var g_ready: Map = Map.new()
+var g_done: Map = Map.new()
+
+fn server_thread() -> int {
+    let srv: int = tcp_listen("127.0.0.1", g_port)
+    channel_send(g_ready, 1)
+    let cli: int = tcp_accept(srv)
+    g_got = resp_read_command(cli)
+    channel_send(g_done, 1)
+    tcp_close(cli)
+    tcp_close(srv)
+    return 0
+}
+
+fn main() {
+    g_ready = channel_new(1)
+    g_done = channel_new(1)
+    thread_spawn(server_thread)
+    let _r: int = channel_recv(g_ready)
+    let h: int = tcp_connect("127.0.0.1", g_port)
+    let value: String = "a\r\nb\r\nc\r\nMORE"     // 13 bytes con CRLF crudo
+    tcp_write(h, "*2\r\n$3\r\nSET\r\n$13\r\n" + value + "\r\n")
+    let _d: int = channel_recv(g_done)   // espera a que el server termine de leer (determinista)
+    tcp_close(h)
+    assert(g_got.length() == 2)
+    let cmd: String = g_got[0]
+    let arg: String = g_got[1]
+    assert(cmd == "SET")
+    assert(arg == value)          // byte-exacto, NO truncado en el primer \n
+    print("resp_read_command lenbased ok")
+}

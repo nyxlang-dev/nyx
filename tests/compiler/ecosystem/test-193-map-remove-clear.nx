@@ -1,0 +1,26 @@
+// Test: Map.remove() and Map.clear() methods
+fn main() {
+    let m: Map = Map.new()
+    m.insert("a", 10)
+    m.insert("b", 20)
+    m.insert("c", 30)
+
+    // remove existing key returns 1
+    let r1: int = m.remove("b")
+    print(int_to_string(r1))
+    print(int_to_string(m.size()))
+
+    // remove non-existing key returns 0
+    let r2: int = m.remove("z")
+    print(int_to_string(r2))
+
+    // verify remaining keys
+    print(m.contains("a"))
+    print(m.contains("b"))
+    print(m.contains("c"))
+
+    // clear
+    m.clear()
+    print(int_to_string(m.size()))
+    print("done")
+}

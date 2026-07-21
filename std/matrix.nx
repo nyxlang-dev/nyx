@@ -1,0 +1,206 @@
+// std/matrix.nx — 2D Matrix operations for Nyx (v4.3.0)
+// Matrix stored as Array<Array<int>> (rows of columns)
+// All operations return new matrices (immutable style)
+
+// ── Matrix creation ───────────────────────────────────────────────────────────
+
+// Create rows×cols matrix filled with 0
+pub fn mat_new(rows: int, cols: int) -> Array {
+    var mat: Array = []
+    var r = 0
+    while r < rows {
+        var row: Array = []
+        var c = 0
+        while c < cols {
+            row.push(0)
+            c = c + 1
+        }
+        mat.push(row)
+        r = r + 1
+    }
+    return mat
+}
+
+// Create identity matrix n×n
+pub fn mat_identity(n: int) -> Array {
+    var mat = mat_new(n, n)
+    var i = 0
+    while i < n {
+        let row: Array = mat[i]
+        row[i] = 1
+        i = i + 1
+    }
+    return mat
+}
+
+// ── Matrix access ─────────────────────────────────────────────────────────────
+
+pub fn mat_get(mat: Array, r: int, c: int) -> int {
+    let row: Array = mat[r]
+    let v: int = row[c]
+    return v
+}
+
+pub fn mat_set(mat: Array, r: int, c: int, val: int) {
+    let row: Array = mat[r]
+    row[c] = val
+}
+
+pub fn mat_rows(mat: Array) -> int {
+    return mat.length()
+}
+
+pub fn mat_cols(mat: Array) -> int {
+    if mat.length() == 0 { return 0 }
+    let row: Array = mat[0]
+    return row.length()
+}
+
+// ── Matrix operations ─────────────────────────────────────────────────────────
+
+pub fn mat_add(a: Array, b: Array) -> Array {
+    let rows = mat_rows(a)
+    let cols = mat_cols(a)
+    var result = mat_new(rows, cols)
+    var r = 0
+    while r < rows {
+        var c = 0
+        while c < cols {
+            let va = mat_get(a, r, c)
+            let vb = mat_get(b, r, c)
+            mat_set(result, r, c, va + vb)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return result
+}
+
+pub fn mat_sub(a: Array, b: Array) -> Array {
+    let rows = mat_rows(a)
+    let cols = mat_cols(a)
+    var result = mat_new(rows, cols)
+    var r = 0
+    while r < rows {
+        var c = 0
+        while c < cols {
+            let va = mat_get(a, r, c)
+            let vb = mat_get(b, r, c)
+            mat_set(result, r, c, va - vb)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return result
+}
+
+// Matrix multiplication: A(m×k) × B(k×n) → C(m×n)
+pub fn mat_mul(a: Array, b: Array) -> Array {
+    let m = mat_rows(a)
+    let k = mat_cols(a)
+    let n = mat_cols(b)
+    var result = mat_new(m, n)
+    var r = 0
+    while r < m {
+        var c = 0
+        while c < n {
+            var s = 0
+            var i = 0
+            while i < k {
+                s = s + mat_get(a, r, i) * mat_get(b, i, c)
+                i = i + 1
+            }
+            mat_set(result, r, c, s)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return result
+}
+
+// Scalar multiplication
+pub fn mat_scale(m: Array, scalar: int) -> Array {
+    let rows = mat_rows(m)
+    let cols = mat_cols(m)
+    var result = mat_new(rows, cols)
+    var r = 0
+    while r < rows {
+        var c = 0
+        while c < cols {
+            let v = mat_get(m, r, c)
+            mat_set(result, r, c, v * scalar)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return result
+}
+
+// Transpose
+pub fn mat_transpose(m: Array) -> Array {
+    let rows = mat_rows(m)
+    let cols = mat_cols(m)
+    var result = mat_new(cols, rows)
+    var r = 0
+    while r < rows {
+        var c = 0
+        while c < cols {
+            let v = mat_get(m, r, c)
+            mat_set(result, c, r, v)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return result
+}
+
+// Trace (sum of diagonal elements, for square matrix)
+pub fn mat_trace(m: Array) -> int {
+    let n = mat_rows(m)
+    var s = 0
+    var i = 0
+    while i < n {
+        s = s + mat_get(m, i, i)
+        i = i + 1
+    }
+    return s
+}
+
+// Frobenius norm (sum of squares of all elements)
+pub fn mat_frobenius_sq(m: Array) -> int {
+    let rows = mat_rows(m)
+    let cols = mat_cols(m)
+    var s = 0
+    var r = 0
+    while r < rows {
+        var c = 0
+        while c < cols {
+            let v = mat_get(m, r, c)
+            s = s + v * v
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return s
+}
+
+// ── Matrix printing ───────────────────────────────────────────────────────────
+
+pub fn mat_print(m: Array) {
+    let rows = mat_rows(m)
+    let cols = mat_cols(m)
+    var r = 0
+    while r < rows {
+        var line = "["
+        var c = 0
+        while c < cols {
+            if c > 0 { line = line + ", " }
+            let v = mat_get(m, r, c)
+            line = line + format("{}", v)
+            c = c + 1
+        }
+        line = line + "]"
+        print(line)
+        r = r + 1
+    }
+}

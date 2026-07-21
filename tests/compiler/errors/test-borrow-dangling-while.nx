@@ -1,0 +1,16 @@
+// Flow-merge (cobertura de `while`): `r` se reasigna a externo SOLO dentro del body del
+// loop. Como el body puede correr 0 veces, en ese path r sigue siendo `&x` → `return r`
+// SÍ cuelga → NYX1222 (nombra 'x'). Ancla la dirección del join while (reforigin OR contra
+// el estado de 0-iteraciones). NYX_BORROW=error.
+fn f(c: bool, a: *int) -> *int {
+    let x: int = 5
+    var r: *int = &x
+    while c { r = a }
+    return r
+}
+
+fn main() {
+    let y: int = 1
+    let p: *int = f(false, &y)
+    print(1)
+}

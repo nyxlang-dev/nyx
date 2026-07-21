@@ -1,0 +1,37 @@
+// Production deployment — full Nyx stack: proxy + web + kv + queue
+// Deployment producción — stack Nyx completo: proxy + web + kv + queue
+
+fn main() -> int {
+    // This recipe describes how nyxlang.com is deployed end-to-end
+    // using only Nyx products. No nginx, no Redis, no Postgres.
+
+    print("=== Nyx Production Stack ===")
+    print("")
+    print("Internet")
+    print("   |")
+    print("   v")
+    print("nyx-proxy (services/gateway, :443 HTTPS + SNI)")
+    print("   |")
+    print("   +-> nyxlang.com       -> nyx-serve (:3001)")
+    print("   +-> nyxkv.com         -> nyx-serve (:3002)")
+    print("   +-> serve.nyxlang.com -> nyx-serve (:3003)")
+    print("   +-> proxy.nyxlang.com -> nyx-serve (:3005)")
+    print("")
+    print("Each site is a Nyx binary using nyx-serve as PM dependency.")
+    print("")
+    print("Shared services:")
+    print("   nyx-kv   :6380  (sessions, cache, pub/sub)")
+    print("   nyx-queue:6381  (async jobs)")
+    print("   nyx-db   :6382  (SQL storage)")
+    print("")
+    print("All managed by systemd. HTTPS via Let's Encrypt + cert-renew hooks.")
+    print("")
+    print("Performance (production):")
+    print("   HTTP:  9,971 req/s through gateway")
+    print("   HTTPS: 4,282 req/s (TLS overhead)")
+    print("   KV SET: 82K req/s (253K pipelined)")
+    print("   KV GET: 85K req/s (217K pipelined)")
+    print("")
+    print("Entire stack fits in AWS t4g.micro ARM64 (1GB RAM).")
+    return 0
+}

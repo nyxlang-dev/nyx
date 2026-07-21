@@ -1,0 +1,47 @@
+// test-243: T5b.2 — `spawn { }` re-pointed from an OS thread (thread_spawn)
+// to a DETACHED goroutine (nyx_goroutine_spawn_closure_detached). Real
+// lightweight concurrency: N goroutines run concurrently on the scheduler's
+// worker pool and self-reap (fire-and-forget, no leak) instead of leaking an
+// OS thread per spawn.
+//
+// spawn { } hoists its body into a top-level fn with NO captured environment
+// (env is always null — see codegen_identifier), so shared state must be a
+// global, same convention as the existing thread_spawn examples. std/sync's
+// AtomicCounter (mutex-backed) guards the increment: the M:N scheduler can
+// run goroutines truly in parallel across multiple worker OS threads, so a
+// bare, unguarded `counter = counter + 1` race would be able to lose
+// updates — a good sign this is REAL concurrency, not a single-goroutine
+// cooperative-only illusion.
+
+import "std/sync"
+
+var counter: AtomicCounter = counter_new(0)
+
+fn bump() -> int {
+    return counter_inc(counter)
+}
+
+fn main() {
+    spawn {
+        return bump()
+    }
+    spawn {
+        return bump()
+    }
+    spawn {
+        return bump()
+    }
+    spawn {
+        return bump()
+    }
+    spawn {
+        return bump()
+    }
+
+    // go_sleep suspends cooperatively; wide margin so all 5 goroutines have
+    // certainly finished before we check the counter.
+    go_sleep(50)
+
+    assert(counter_get(counter) == 5)
+    print("test-243 OK")
+}

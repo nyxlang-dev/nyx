@@ -1,0 +1,50 @@
+// nyx-serve sessions — cookie-based sessions backed by nyx-kv
+// Sesiones nyx-serve — sesiones con cookies respaldadas por nyx-kv
+
+import "std/http"
+import "std/web"
+import "std/session"
+
+fn login(req: Request) -> Response {
+    var resp: Response = response_json(200, "{\"logged_in\": true}")
+
+    // session_start reads the nyx_session cookie or creates a new ID
+    // and sets the Set-Cookie header on the response
+    let sid: String = session_start(req, resp)
+
+    // Store data in the session (persisted to nyx-kv with TTL)
+    session_set(req, "user_id", "42")
+    session_set(req, "role", "admin")
+
+    return resp
+}
+
+fn profile(req: Request) -> Response {
+    // Read session data from nyx-kv using the session cookie
+    let user_id: String = session_get(req, "user_id")
+
+    if user_id.length() == 0 {
+        return response_json(401, "{\"error\": \"not logged in\"}")
+    }
+    return response_json(200, "{\"user_id\": \"" + user_id + "\"}")
+}
+
+fn logout(req: Request) -> Response {
+    var resp: Response = response_json(200, "{\"logged_out\": true}")
+    // session_destroy expires the cookie (individual keys expire via TTL)
+    session_destroy(req, resp)
+    return resp
+}
+
+fn main() -> int {
+    // Configure session backend — where nyx-kv is running
+    session_configure("127.0.0.1", 6380, 3600)  // 1 hour TTL
+
+    let app: App = app_new()
+    app_post(app, "/login", login)
+    app_get(app, "/profile", profile)
+    app_post(app, "/logout", logout)
+
+    print("session-based auth configured")
+    return 0
+}

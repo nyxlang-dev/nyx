@@ -1,0 +1,20 @@
+// Escribir y leer un archivo: write_file, read_file
+
+fn main() -> int {
+    let path: String = "/tmp/nyx_example_11.txt"
+    let contenido: String = "Hola desde Nyx!\nSegunda línea.\nTercera línea."
+
+    // Escribir el archivo
+    write_file(path, contenido)
+    print("Archivo escrito en: " + path)
+
+    // Leer el archivo
+    let leido: String = read_file(path)
+    print("Contenido leido:")
+    print(leido)
+
+    // Verificar longitud
+    print("Bytes: " + int_to_string(str_byte_length(leido)))
+
+    return 0
+}

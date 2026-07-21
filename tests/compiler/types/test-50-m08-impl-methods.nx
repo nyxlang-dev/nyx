@@ -1,0 +1,34 @@
+// Test 50: M-08 session 5 — happy path for impl method arg + return typing.
+//
+// Exercises:
+//   - impl method call with correct arg types
+//   - impl method return type used to satisfy a let annotation
+//   - chained impl calls (translate then describe)
+
+struct Point { x: int, y: int }
+
+impl Point {
+    fn translate(self, dx: int, dy: int) -> Point {
+        return Point { x: self.x + dx, y: self.y + dy }
+    }
+
+    fn describe(self) -> String {
+        return "(" + int_to_string(self.x) + "," + int_to_string(self.y) + ")"
+    }
+
+    fn sum(self) -> int {
+        return self.x + self.y
+    }
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 2, y: 3 }
+    let q: Point = p.translate(10, -1)
+    let total: int = q.sum()
+    let label: String = q.describe()
+
+    print(int_to_string(total))
+    print(label)
+    print("OK")
+    return 0
+}

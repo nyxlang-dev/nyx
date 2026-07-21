@@ -1,0 +1,20 @@
+websocket test
+--- WebSocket Handshake ---
+accept key RFC vector ok
+101 response ok
+upgrade header ok
+accept in response ok
+--- Key Extraction ---
+key extraction ok
+--- WS Framing ---
+frame non-empty ok
+frame size ok
+frame parse round-trip ok
+empty frame ok
+--- Close Frame ---
+close frame detected ok
+text not close ok
+--- Upgrade Detection ---
+upgrade request detected ok
+normal request not upgrade ok
+websocket ok

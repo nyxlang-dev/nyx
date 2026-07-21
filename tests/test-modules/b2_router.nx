@@ -1,0 +1,10 @@
+// B2 regression helper: reads g_flag from b2_cache.nx DIRECTLY (no accessor).
+// When this module is imported BEFORE b2_cache, the global must still be in
+// scope thanks to the top-level let/var pre-registration pass.
+import "tests/test-modules/b2_cache" as cache
+pub fn route() -> int {
+    if g_flag == 7 {
+        return 100
+    }
+    return 0
+}

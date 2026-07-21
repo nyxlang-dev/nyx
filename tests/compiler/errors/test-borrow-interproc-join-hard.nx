@@ -1,0 +1,21 @@
+// Minor del review final inc 3b: en state_join, cuando ambas ramas aportan origen, HARD gana.
+// `then` tinta r SOFT (elisión, tricky retorna &G global), `else` tinta r HARD (dup<'a> retorna
+// su arg = &local = dangling cierto). El merge debe quedar HARD → `return r` gatea NYX1222.
+// Sin el fix, el origen de `then` (soft, aparece primero) ganaba → se degradaba a lint NYX1223.
+let G: int = 9
+
+fn tricky(x: &int) -> &int { return &G }        // elisión: 1 param-ref + ret ref → SOFT
+fn dup<'a>(x: &'a int) -> &'a int { return x }  // 'a explícito → HARD
+
+fn caller(c: bool) -> &int {
+    let local: int = 5
+    var r: &int = &G
+    if c {
+        r = tricky(&local)
+    } else {
+        r = dup(&local)
+    }
+    return r
+}
+
+fn main() { print(1) }

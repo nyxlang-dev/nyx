@@ -1,0 +1,78 @@
+// Test A21: Generic Data Pipeline
+// Combines: generics, typed arrays, typed closures, struct+impl, string interpolation
+
+struct Score {
+    name: String,
+    value: int
+}
+
+impl Score {
+    fn display(self) -> String {
+        return "${self.name}: ${self.value}"
+    }
+}
+
+fn array_map_int(arr: Array<int>, f: Fn(int) -> int) -> Array<int> {
+    var result: Array<int> = []
+    var i = 0
+    while i < arr.length() {
+        let val = arr[i]
+        result.push(f(val))
+        i = i + 1
+    }
+    return result
+}
+
+fn array_filter_int(arr: Array<int>, pred: Fn(int) -> int) -> Array<int> {
+    var result: Array<int> = []
+    var i = 0
+    while i < arr.length() {
+        let val = arr[i]
+        if pred(val) == 1 {
+            result.push(val)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn array_reduce_int(arr: Array<int>, initial: int, f: Fn(int, int) -> int) -> int {
+    var acc = initial
+    var i = 0
+    while i < arr.length() {
+        let val = arr[i]
+        acc = f(acc, val)
+        i = i + 1
+    }
+    return acc
+}
+
+fn double(x: int) -> int { return x * 2 }
+fn is_big(x: int) -> int { if x > 50 { return 1 } return 0 }
+fn add(a: int, b: int) -> int { return a + b }
+
+fn identity<T>(x: T) -> T { return x }
+
+fn main() -> int {
+    let nums: Array<int> = [10, 20, 30, 40, 50]
+    let doubled = array_map_int(nums, double)
+    print(doubled[0])
+    print(doubled[4])
+
+    let big = array_filter_int(doubled, is_big)
+    print(big.length())
+
+    let total = array_reduce_int(big, 0, add)
+    print(total)
+
+    let a = identity<int>(42)
+    print(a)
+    let s = identity<String>("hello")
+    print(s)
+
+    let sc = Score { name: "Alice", value: total }
+    print(sc.display())
+
+    print("A21 passed")
+    return 0
+}

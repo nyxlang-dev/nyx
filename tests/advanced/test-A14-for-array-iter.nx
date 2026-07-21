@@ -1,0 +1,40 @@
+// Test A14: For con iteración de arrays y ranges avanzados
+// Prueba: for-in con arrays, ranges inclusivos/exclusivos, break/continue en for
+
+fn sum_range(start: int, end: int) -> int {
+    var total = 0
+    for i in start..end {
+        total = total + i
+    }
+    return total
+}
+
+fn count_even(arr: Array) -> int {
+    var count = 0
+    for num in arr {
+        if num % 2 == 0 {
+            count = count + 1
+        }
+    }
+    return count
+}
+
+fn main() {
+    // sum_range(1, 11) = 1+2+...+10 = 55
+    print(sum_range(1, 11))
+
+    let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    print(count_even(nums))  // 5
+
+    // Break en for
+    var found = -1
+    for i in 0..100 {
+        if i * i > 50 {
+            found = i
+            break
+        }
+    }
+    print(found)  // 8 (8*8=64 > 50)
+
+    return 0
+}

@@ -1,0 +1,54 @@
+// test-154: HKT shallow — higher-kinded style traits (syntax parsed, not enforced)
+
+// Functor-style trait with generic associated type
+trait Functor {
+    type Mapped<B>
+    fn fmap<A, B>(self, f: Fn(A) -> B) -> int
+}
+
+// Monad-style trait
+trait Monad {
+    type Bound<B>
+    fn pure<A>(value: int) -> int
+    fn bind<A, B>(self, f: Fn(A) -> int) -> int
+}
+
+// Simple container
+struct Wrapper {
+    value: int
+}
+
+impl Wrapper {
+    fn apply(self, f: Fn(int) -> int) -> int {
+        return f(self.value)
+    }
+    fn transform(self, delta: int) -> int {
+        return self.value + delta
+    }
+}
+
+fn double(x: int) -> int { return x * 2 }
+fn add_ten(x: int) -> int { return x + 10 }
+fn square(x: int) -> int { return x * x }
+
+fn main() -> int {
+    let w = Wrapper { value: 5 }
+    let r1 = w.apply(double)
+    print(r1)
+
+    let r2 = w.apply(add_ten)
+    print(r2)
+
+    let r3 = w.apply(fn(x: int) -> int { return x * 3 })
+    print(r3)
+
+    let r4 = w.transform(7)
+    print(r4)
+
+    // Test that double-apply composes
+    let r5 = double(square(3))
+    print(r5)
+
+    print("hkt ok")
+    return 0
+}

@@ -1,0 +1,11 @@
+import "std/http"
+
+fn test_handler(request: Array) -> String {
+    return http_response(200, "test")
+}
+
+fn main() {
+    print("http_serve_mt available")
+    print("ok")
+    return 0
+}

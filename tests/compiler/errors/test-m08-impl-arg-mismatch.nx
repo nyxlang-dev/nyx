@@ -1,0 +1,17 @@
+// M-08 sesion 5 error test: impl method arg type mismatch.
+// `p.with_x("no")` — expected int (nx: int), got String.
+// Expected stderr (contains): "argument 1 of 'Point.with_x': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+struct Point { x: int, y: int }
+
+impl Point {
+    fn with_x(self, nx: int) -> Point {
+        return Point { x: nx, y: self.y }
+    }
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 1, y: 2 }
+    let q: Point = p.with_x("no")
+    return 0
+}

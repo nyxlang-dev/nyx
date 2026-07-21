@@ -1,0 +1,56 @@
+// nyx-kv TTL — key expiration for caching and session storage
+// TTL nyx-kv — expiración de keys para cache y sesiones
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 {
+        print("connection failed")
+        return 1
+    }
+
+    // Store a session token that expires in 60 seconds
+    tcp_write(fd, resp_cmd(["SET", "session:abc123", "user42"]))
+    let set_reply: String = tcp_read_line(fd)
+    print("SET -> " + set_reply.trim())
+
+    // Set expiration (in seconds)
+    tcp_write(fd, resp_cmd(["EXPIRE", "session:abc123", "60"]))
+    let expire_reply: String = tcp_read_line(fd)
+    print("EXPIRE 60s -> " + expire_reply.trim())
+
+    // Check remaining TTL
+    tcp_write(fd, resp_cmd(["TTL", "session:abc123"]))
+    let ttl: String = tcp_read_line(fd)
+    print("TTL -> " + ttl.trim() + " seconds")
+
+    // Alternative: SET with EX in one command
+    tcp_write(fd, resp_cmd(["SET", "cache:user:42", "payload", "EX", "300"]))
+    let setex: String = tcp_read_line(fd)
+    print("SET with EX 300 -> " + setex.trim())
+
+    // Remove expiration (make key permanent)
+    tcp_write(fd, resp_cmd(["PERSIST", "session:abc123"]))
+    let persist: String = tcp_read_line(fd)
+    print("PERSIST -> " + persist.trim())
+
+    tcp_close(fd)
+    return 0
+}

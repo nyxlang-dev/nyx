@@ -1,0 +1,35 @@
+// Enums: definición, variantes con datos, match exhaustivo
+
+enum Shape {
+    Circle(int),
+    Square(int),
+    Rectangle(int, int)
+}
+
+fn area(s: Shape) -> int {
+    return match s {
+        Shape.Circle(r)        => r * r * 3,
+        Shape.Square(l)        => l * l,
+        Shape.Rectangle(w, h)  => w * h
+    }
+}
+
+fn describe(s: Shape) -> String {
+    return match s {
+        Shape.Circle(r)        => "circulo de radio " + int_to_string(r),
+        Shape.Square(l)        => "cuadrado de lado " + int_to_string(l),
+        Shape.Rectangle(w, h)  => "rectangulo " + int_to_string(w) + "x" + int_to_string(h)
+    }
+}
+
+fn main() -> int {
+    let c: Shape = Shape.Circle(5)
+    let sq: Shape = Shape.Square(4)
+    let rect: Shape = Shape.Rectangle(3, 7)
+
+    print(describe(c) + " -> area aprox " + int_to_string(area(c)))
+    print(describe(sq) + " -> area " + int_to_string(area(sq)))
+    print(describe(rect) + " -> area " + int_to_string(area(rect)))
+
+    return 0
+}

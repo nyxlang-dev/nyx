@@ -1,0 +1,12 @@
+// test-121-link-section.nx — Low-level function attribute: link_section (v1.6.0)
+#[link_section(".nyx_test")]
+fn special_function() -> int {
+    return 42
+}
+
+fn main() -> int {
+    let r: int = special_function()
+    if r != 42 { return 1 }
+    print("test-121-link-section: PASS")
+    return 0
+}

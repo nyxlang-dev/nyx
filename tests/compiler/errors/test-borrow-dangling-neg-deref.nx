@@ -1,0 +1,9 @@
+fn reref(p: *int) -> *int {
+    return &*p
+}
+
+fn main() {
+    let x: int = 9
+    let q: *int = reref(&x)
+    print(1)
+}

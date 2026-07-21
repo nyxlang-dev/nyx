@@ -1,0 +1,11 @@
+// test-204: arr[i].method() — calling methods on indexed array elements
+fn main() {
+    let words = ["hello", "world", "nyx"]
+    let len = words[1].length()
+    print(int_to_string(len))
+    if words[0].startsWith("he") {
+        print("ok")
+    }
+    print("done")
+    return 0
+}

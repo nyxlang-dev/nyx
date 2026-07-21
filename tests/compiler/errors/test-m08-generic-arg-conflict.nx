@@ -1,0 +1,14 @@
+// M-08 sesion 10 error test: shared type param across two args must hold a
+// single concrete type. `max(1, "x")` binds T=int from the first arg, then
+// re-checks the second arg against the binding and fails.
+// Expected stderr (contains): "argument 2 of 'max': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+fn max<T>(a: T, b: T) -> T {
+    return a
+}
+
+fn main() -> int {
+    let r = max(1, "x")
+    print(int_to_string(r))
+    return 0
+}

@@ -1,0 +1,21 @@
+fn main() {
+    let names: Array = ["Alice", "Bob", "Charlie"]
+
+    // Test 1: arr[0].length()
+    print(names[0].length())
+
+    // Test 2: arr[i].length() with variable
+    var i: int = 1
+    print(names[i].length())
+
+    // Test 3: arr[2].substring(0, 3)
+    print(names[2].substring(0, 3))
+
+    // Test 4: method on element used in expression
+    let len: int = names[0].length() + names[1].length()
+    print(len)
+
+    // Test 5: method on element passed to function
+    let s: String = names[2]
+    print(s.length())
+}

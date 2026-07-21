@@ -1,0 +1,8 @@
+// Hello World in Nyx
+fn main() {
+    print("Hello from Nyx!")
+    print("Welcome to the playground.")
+
+    let name: String = "World"
+    print("Hello, " + name + "!")
+}

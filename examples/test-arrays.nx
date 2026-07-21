@@ -1,0 +1,31 @@
+// test-arrays.nx
+// Prueba de arrays estáticos compilados a LLVM IR
+
+fn main() {
+    // Test 1: Array literal básico
+    let numeros = [10, 20, 30, 40, 50]
+    
+    // Test 2: Acceso por índice
+    print(numeros[0])   // 10
+    print(numeros[2])   // 30
+    print(numeros[4])   // 50
+    
+    // Test 3: Array mutable
+    var valores = [1, 2, 3, 4, 5]
+    print(valores[1])   // 2
+    
+    // Test 4: Modificar elemento
+    valores[1] = 99
+    print(valores[1])   // 99
+    
+    // Test 5: Operaciones con elementos
+    let suma = numeros[0] + numeros[1]
+    print(suma)         // 30
+    
+    // Test 6: Índice con variable
+    let i = 3
+    print(numeros[i])   // 40
+    
+    // Test 7: Índice con expresión
+    print(valores[2 + 1])  // valores[3] = 4
+}

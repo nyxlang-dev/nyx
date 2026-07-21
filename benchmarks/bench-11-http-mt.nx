@@ -1,0 +1,66 @@
+import "std/http"
+
+// Global channel for thread-safe fd dispatch (Map = i8* in LLVM)
+var g_ch: Map = Map.new()
+
+// Pre-built response — constructed ONCE in main(), reused by all workers (zero allocs per request)
+var g_response: String = ""
+
+// Worker: infinite loop, receive fd from channel, serve keep-alive, repeat
+fn pool_worker() -> int {
+    while 1 > 0 {
+        let client: int = channel_recv(g_ch)
+        if client < 0 { return 0 }
+
+        // Keep-alive loop for this connection
+        var keep_alive: bool = true
+        while keep_alive {
+            let request: Array = http_parse_request_fast(client)
+            let method: String = request[1]
+            if method.length() == 0 {
+                keep_alive = false
+            } else {
+                tcp_write(client, g_response)
+                let headers: Array = request[3]
+                let conn: String = http_find_header(headers, "Connection")
+                if conn == "close" {
+                    keep_alive = false
+                }
+            }
+        }
+        tcp_close(client)
+    }
+    return 0
+}
+
+fn main() {
+    print("HTTP MT Pool server on :8091")
+
+    // Pre-build response ONCE — eliminates 5 string concats per request
+    let crlf: String = "\r\n"
+    g_response = "HTTP/1.1 200 OK" + crlf + "Content-Length: 13" + crlf + "Content-Type: text/plain" + crlf + "Connection: keep-alive" + crlf + crlf + "Hello, World!"
+
+    g_ch = channel_new(512)
+    let server: int = tcp_listen("0.0.0.0", 8091)
+    if server < 0 {
+        print("ERROR: cannot listen")
+        return 0
+    }
+
+    // Pre-spawn 128 workers (more than wrk's 100 connections)
+    var i: int = 0
+    while i < 128 {
+        thread_spawn(pool_worker)
+        i = i + 1
+    }
+    print("128 workers spawned, accepting connections...")
+
+    // Accept loop: dispatch fds via channel
+    while 1 > 0 {
+        let client: int = tcp_accept(server)
+        if client >= 0 {
+            channel_send(g_ch, client)
+        }
+    }
+    return 0
+}

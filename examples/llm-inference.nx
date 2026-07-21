@@ -1,0 +1,31 @@
+// llm-inference — demo de inferencia LLM orquestada por Nyx (spec 2026-07-17).
+// DUAL: el mismo programa corre contra el stub de CI y contra llama.cpp REAL.
+//   stub:  NYX_LLAMA_SO=<build>/libllama_stub.so ./llm-inference fake.gguf "hola mundo"
+//   real:  ver scripts/llm-real-demo.sh (máquina local — clona llama.cpp b4689,
+//          buildea libllama.so, baja SmolLM-135M GGUF y corre esto mismo).
+import "std/llm"
+
+fn on_piece(p: *i8) {
+    print_no_newline(string_from_cstr(p))
+}
+
+fn main() {
+    let args: Array = get_args()
+    if args.length() < 2 {
+        print("uso: llm-inference <modelo.gguf> <prompt> [max_tokens]")
+        exit(1)
+    }
+    let model_path: String = args[0]
+    let prompt: String = args[1]
+    var max_tokens: int = 64
+    if args.length() > 2 {
+        let mt: String = args[2]
+        max_tokens = string_to_int_or(mt, 64)
+    }
+    let l: LLM = llm_load(model_path)
+    print("== streaming ==")
+    let out: String = llm_generate_stream(&l, prompt, max_tokens, c_fn_ptr(on_piece))
+    print("")
+    print("== completo ==")
+    print(out)
+}

@@ -1,0 +1,16 @@
+// Flow-merge (Track 3 inc 1, follow-up): regresión del FALSO POSITIVO arreglado.
+// `r` se reasigna a un puntero externo válido en AMBAS ramas → tras el if, r NO
+// es frame-bound en ningún path → `return r` NO debe disparar NYX1222. Antes del
+// flow-merge (state_join sin cablear) esto marcaba espuriamente. Corre NYX_BORROW=error.
+fn f(cond: bool, a: *int) -> *int {
+    let x: int = 5
+    var r: *int = &x
+    if cond { r = a } else { r = a }
+    return r
+}
+
+fn main() {
+    let y: int = 1
+    let p: *int = f(true, &y)
+    print(1)
+}

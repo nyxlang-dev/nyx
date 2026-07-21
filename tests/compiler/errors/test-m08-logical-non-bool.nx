@@ -1,0 +1,9 @@
+// M-08 sesion 3 error test: logical operator with non-bool operand.
+// Expected stderr (contains): "left operand of '&&' must be bool, got int"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let x: int = 1
+    let y: bool = true
+    let bad: bool = x && y
+    return 0
+}

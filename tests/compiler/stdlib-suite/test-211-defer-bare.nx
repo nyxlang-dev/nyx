@@ -1,0 +1,20 @@
+// Test 211: defer sin bloque (fricción F-A, v0.16-dev)
+// `defer expr()` desnudo — el parser sintetiza el bloque. Verifica además
+// el orden LIFO mezclando la forma con bloque y la desnuda.
+
+fn cleanup(tag: String) {
+    print("cleanup " + tag)
+}
+
+fn demo() {
+    defer cleanup("primero-declarado")
+    defer { cleanup("bloque") }
+    defer print("inline")
+    print("body")
+}
+
+fn main() -> int {
+    demo()
+    print("fin")
+    return 0
+}

@@ -1,0 +1,9 @@
+fn make() -> *int {
+    let x: int = 5
+    return &x
+}
+
+fn main() {
+    let p: *int = make()
+    print(1)
+}

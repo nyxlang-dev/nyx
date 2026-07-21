@@ -1,0 +1,32 @@
+// test-222-stack — std/stack: Stack LIFO mutable (demo/uso del Camino B).
+// Verifica cross-module: import de std/stack + dispatch de métodos + mutación
+// `&mut self` que persiste. Self-checking con assert() abortivo.
+
+import "std/stack"
+
+fn main() {
+    var s: Stack = stack_new()
+    assert(s.is_empty())
+    assert(s.len() == 0)
+
+    s.push(10)
+    s.push(20)
+    s.push(30)
+    assert(s.len() == 3)          // push (&mut self) persistió
+    assert(not s.is_empty())
+    assert(s.peek() == 30)        // tope sin desapilar
+
+    assert(s.pop() == 30)         // LIFO
+    assert(s.pop() == 20)
+    assert(s.len() == 1)
+    assert(s.peek() == 10)
+
+    // re-push tras pop (el Array backing sigue coherente)
+    s.push(99)
+    assert(s.len() == 2)
+    assert(s.pop() == 99)
+    assert(s.pop() == 10)
+    assert(s.is_empty())
+
+    print("stack OK")
+}

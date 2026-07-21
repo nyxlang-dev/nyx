@@ -1,0 +1,13 @@
+db opened
+table created
+3
+3
+Bob:25
+Alice:30
+Carol:35
+name,age
+Alice
+Carol
+1
+2
+sqlite ok

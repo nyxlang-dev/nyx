@@ -1,0 +1,68 @@
+// test-268 — familia de búsqueda/comparación de String binary-safe (contrato
+// "strings = bytes" v0.14): ==, indexOf, contains, split, replace, startsWith,
+// endsWith deben operar sobre los length bytes aunque haya NUL (0x00) embebido.
+// Motivación: el multipart de nyx-serve parseaba 24B de más en un part binario
+// con NULs porque indexOf/strstr cortaban en el primer NUL (dogfooding:serve,
+// TASKS.md 2026-07-20). Los NUL se construyen con string_from_bytes (builtin
+// NUL-safe; chr(0) colapsa a "").
+fn main() {
+    // "a\0x" vs "a\0y": difieren DESPUÉS del NUL
+    let bytes_ax: Array = [97, 0, 120]
+    let bytes_ay: Array = [97, 0, 121]
+    let ax: String = string_from_bytes(bytes_ax, 0, 3)
+    let ay: String = string_from_bytes(bytes_ay, 0, 3)
+    let ax2: String = string_from_bytes(bytes_ax, 0, 3)
+    assert(ax.length() == 3)
+    assert(ax == ax2)
+    assert(not (ax == ay))
+
+    // indexOf/contains: needle después de un NUL, y needle con NUL adentro
+    let bytes_hay: Array = [97, 98, 0, 99, 100]  // "ab\0cd"
+    let hay: String = string_from_bytes(bytes_hay, 0, 5)
+    assert(hay.indexOf("cd") == 3)
+    assert(hay.contains("cd"))
+    let bytes_b0c: Array = [98, 0, 99]  // "b\0c" (presente en pos 1)
+    let b0c: String = string_from_bytes(bytes_b0c, 0, 3)
+    assert(hay.indexOf(b0c) == 1)
+    let bytes_b0d: Array = [98, 0, 100]  // "b\0d" (ausente)
+    let b0d: String = string_from_bytes(bytes_b0d, 0, 3)
+    assert(hay.indexOf(b0d) == -1)
+    assert(not hay.contains(b0d))
+
+    // startsWith/endsWith: el NUL no corta la comparación
+    let bytes_a0xz: Array = [97, 0, 120, 122]  // "a\0xz"
+    let a0xz: String = string_from_bytes(bytes_a0xz, 0, 4)
+    assert(a0xz.startsWith(ax))
+    assert(not a0xz.startsWith(ay))
+    let bytes_za0x: Array = [122, 97, 0, 120]  // "za\0x"
+    let za0x: String = string_from_bytes(bytes_za0x, 0, 4)
+    assert(za0x.endsWith(ax))
+    assert(not za0x.endsWith(ay))
+
+    // split: delimitador tras NUL + partes que preservan sus NULs
+    let bytes_csv: Array = [97, 0, 98, 44, 99, 44, 100, 0]  // "a\0b,c,d\0"
+    let csv: String = string_from_bytes(bytes_csv, 0, 8)
+    let parts: Array = csv.split(",")
+    assert(parts.length() == 3)
+    let p0: String = parts[0]
+    let p2: String = parts[2]
+    assert(p0.length() == 3)
+    let bytes_a0b: Array = [97, 0, 98]
+    let a0b: String = string_from_bytes(bytes_a0b, 0, 3)
+    assert(p0 == a0b)
+    assert(p2.length() == 2)
+    let bytes_d0: Array = [100, 0]
+    let d0: String = string_from_bytes(bytes_d0, 0, 2)
+    assert(p2 == d0)
+
+    // replace: ocurrencia después de un NUL
+    let bytes_rep: Array = [97, 0, 98, 45, 99]  // "a\0b-c"
+    let rep_in: String = string_from_bytes(bytes_rep, 0, 5)
+    let rep: String = rep_in.replace("-", "+")
+    assert(rep.length() == 5)
+    let bytes_expected: Array = [97, 0, 98, 43, 99]  // "a\0b+c"
+    let expected: String = string_from_bytes(bytes_expected, 0, 5)
+    assert(rep == expected)
+
+    print("binary-safe OK")
+}

@@ -1,0 +1,21 @@
+// test-240: T5b.1 — await ahora corre en un goroutine real (spawn+join),
+// no una llamada sincrónica. Cubre el camino i64 (int) y el camino puntero
+// (String, vía inttoptr sobre el registro entero de retorno del join).
+
+async fn add_async(a: int, b: int) -> int {
+    return a + b
+}
+
+async fn greet(name: String) -> String {
+    return "hi " + name
+}
+
+fn main() {
+    let sum: int = await add_async(3, 4)
+    assert(sum == 7)
+
+    let greeting: String = await greet("nyx")
+    assert(greeting == "hi nyx")
+
+    print("test-240 OK")
+}

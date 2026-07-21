@@ -1,0 +1,7 @@
+// M-08 error test: unknown type name in annotation.
+// Expected stderr (contains): "unknown type 'Str'"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let x: Str = "hola"
+    return 0
+}

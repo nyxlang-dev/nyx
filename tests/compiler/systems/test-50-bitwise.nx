@@ -1,0 +1,76 @@
+// Test bitwise operators and compound assignment
+
+fn main() -> int {
+    // Bitwise AND
+    let a = 255 & 15
+    print(a)  // 15
+
+    // Bitwise OR
+    let b = 15 | 240
+    print(b)  // 255
+
+    // Bitwise XOR
+    let c = 255 ^ 15
+    print(c)  // 240
+
+    // Shift left
+    let d = 1 << 4
+    print(d)  // 16
+
+    // Shift right
+    let e = 256 >> 3
+    print(e)  // 32
+
+    // Bitwise NOT
+    let f = ~0
+    print(f)  // -1
+
+    let g = ~1
+    print(g)  // -2
+
+    // Compound assignment: +=, -=, *=, /=, %=
+    var x = 10
+    x += 5
+    print(x)  // 15
+
+    x -= 3
+    print(x)  // 12
+
+    x *= 2
+    print(x)  // 24
+
+    x /= 4
+    print(x)  // 6
+
+    x %= 4
+    print(x)  // 2
+
+    // Compound bitwise assignment
+    var flags = 0
+    flags |= 15
+    print(flags)  // 15
+
+    flags &= 3
+    print(flags)  // 3
+
+    flags ^= 1
+    print(flags)  // 2
+
+    var shift_val = 1
+    shift_val <<= 8
+    print(shift_val)  // 256
+
+    shift_val >>= 4
+    print(shift_val)  // 16
+
+    // Precedence: & binds tighter than |
+    let prec = 3 | 1 & 2
+    print(prec)  // 3 | (1 & 2) = 3 | 0 = 3
+
+    // Shift binds tighter than addition
+    let prec2 = 1 + 2 << 3
+    print(prec2)  // 1 + (2 << 3) = 1 + 16 = 17
+
+    print("all bitwise tests passed")
+    return 0
+}

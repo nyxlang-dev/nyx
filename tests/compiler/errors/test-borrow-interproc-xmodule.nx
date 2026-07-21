@@ -1,0 +1,13 @@
+// inc 3c: xdup está en OTRO archivo, pero `resolve_source` INLINA los user imports →
+// xdup queda como fn top-level LOCAL en el AST → sig_build local la registra como elisión,
+// y `let r = xdup(&local); return r` tinta r con origen `local` → NYX1223 lint. Valida que
+// el passthrough a través de una fn importada se detecta (vía inlining, sin scan cross-módulo).
+import "tests/test-modules/borrow_dup"
+
+fn caller() -> &int {
+    let local: int = 5
+    let r: &int = xdup(&local)
+    return r
+}
+
+fn main() { print(1) }

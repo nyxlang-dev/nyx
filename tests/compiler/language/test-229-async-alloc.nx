@@ -1,0 +1,19 @@
+// test-229: async fn que usa alloc<T> COMPILA y corre.
+// Regresión del code-review: el clone body_ctx del cuerpo async omitía el campo
+// ctx.target (quedaba NULL), y emit_alloc/el path de alloc<T> lo leen → el
+// COMPILADOR abortaba con "Array es NULL" al compilar CUALQUIER async fn que
+// alocara (o usara un guard de target). body_ctx ahora hereda ctx.target.
+// El foco del test es que el compilador NO aborte; el async corre y retorna.
+// EN: an async fn using alloc<T> must COMPILE (body_ctx now inherits ctx.target).
+
+async fn make_buffer() -> int {
+    let buf: *u8 = alloc<u8>(64)
+    free(buf)
+    return 42
+}
+
+fn main() {
+    let r: int = await make_buffer()
+    assert(r == 42)
+    print("test-229 OK")
+}

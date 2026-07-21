@@ -1,0 +1,41 @@
+fn classify(n: int) -> String {
+    match n {
+        0       => { return "zero" },
+        1..=9   => { return "single" },
+        10..=99 => { return "double" },
+        _       => { return "large" }
+    }
+}
+
+fn grade(score: int) -> String {
+    match score {
+        90..=100 => { return "A" },
+        80..=89  => { return "B" },
+        70..=79  => { return "C" },
+        _        => { return "F" }
+    }
+}
+
+fn sign(n: int) -> String {
+    match n {
+        -100..=-1 => { return "negative" },
+        0         => { return "zero" },
+        1..100    => { return "positive" },
+        _         => { return "large" }
+    }
+}
+
+fn main() -> int {
+    print(classify(0))
+    print(classify(5))
+    print(classify(42))
+    print(classify(200))
+    print(grade(95))
+    print(grade(83))
+    print(grade(71))
+    print(grade(50))
+    print(sign(-5))
+    print(sign(0))
+    print(sign(50))
+    return 0
+}

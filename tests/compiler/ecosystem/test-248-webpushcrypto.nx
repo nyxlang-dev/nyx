@@ -1,0 +1,41 @@
+// test-248-webpushcrypto — primitivas cripto Web Push (RFC 8291/8292) vía extern "C".
+// Self-checking con assert(): ECDH simétrico + tamaños de las primitivas.
+import "std/webpushcrypto"
+
+fn main() {
+    // Keypair: 32B priv ‖ 65B pub = 97 bytes.
+    let a = ec_p256_keypair()
+    assert(a.length() == 97)
+    let b = ec_p256_keypair()
+    assert(b.length() == 97)
+
+    // Split por bytes (strings=bytes, binary-safe).
+    let a_priv = a.substring(0, 32)
+    let a_pub  = a.substring(32, 97)
+    let b_priv = b.substring(0, 32)
+    let b_pub  = b.substring(32, 97)
+
+    // ECDH es simétrico: ecdh(a_priv,b_pub) == ecdh(b_priv,a_pub).
+    let s1 = ecdh_p256(a_priv, b_pub)
+    let s2 = ecdh_p256(b_priv, a_pub)
+    assert(s1.length() == 32)
+    assert(s1 == s2)
+
+    // CSPRNG: n bytes.
+    let r = csprng_bytes(16)
+    assert(r.length() == 16)
+
+    // HKDF: deriva 16 bytes (info con NUL final vía u8(0), binary-safe).
+    let info = "Content-Encoding: aes128gcm" + u8(0)
+    let okm = hkdf_sha256(r, s1, info, 16)
+    assert(okm.length() == 16)
+
+    // u8(0) es un byte NUL real (length 1), a diferencia de chr(0).
+    assert(u8(0).length() == 1)
+
+    // sha256_bytes: digest raw de 32 bytes.
+    let dg = sha256_bytes("abc")
+    assert(dg.length() == 32)
+
+    print("webpushcrypto ok")
+}

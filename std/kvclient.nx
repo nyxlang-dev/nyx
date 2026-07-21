@@ -1,0 +1,236 @@
+// std/kvclient.nx — cliente RESP2 sobre TLS para nyx-kv (v0.17).
+// Promovido a stdlib desde tools/kv/src/kv_client.nx para que el toolchain
+// (nyx report) y cualquier proyecto puedan hablar con un nyx-kv (p.ej.
+// nyxkv.com:6380). AUTH por token; sin token = tenant anonymous (público).
+// EN: RESP2-over-TLS client for nyx-kv, promoted to stdlib so `nyx report`
+// and user projects can push/pull from a nyx-kv instance.
+//
+import "std/resp"
+
+pub fn kv_connect_auth(host: String, port: int, token: String) -> int {
+    let h: int = tls_connect(host, port)
+    if h == 0 { return -1 }
+    // token vacío = conexión ANÓNIMA (tenant anonymous del server, si el
+    // server lo permite). Con token, AUTH obligatorio y verificado.
+    if token.length() == 0 {
+        return h
+    }
+    let parts: Array = ["AUTH", token]
+    let reply: String = kv_cmd(h, parts)
+    if reply != "OK" {
+        tls_close(h)
+        return -1
+    }
+    return h
+}
+
+pub fn kv_close(h: int) {
+    if h != 0 { tls_close(h) }
+}
+
+// SYNC-CORE:BEGIN
+// Read until CRLF, returning the line without the trailing \r\n. Used only for
+// RESP headers ("$<len>", "*<count>", "+OK", ":<n>") which never contain inner
+// CRLF. Bulk PAYLOADS are read by length via read_bulk, not this.
+fn tls_read_line_local(h: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var saw_cr: bool = false
+    var done: bool = false
+    while !done {
+        let chunk: String = tls_read(h, 1)
+        if chunk.length() == 0 {
+            return sb.to_string()
+        }
+        let c: int = chunk.charAt(0)
+        if saw_cr and c == 10 {
+            done = true
+        } else {
+            if saw_cr {
+                sb.append("\r")
+                saw_cr = false
+            }
+            if c == 13 {
+                saw_cr = true
+            } else {
+                sb.append(chunk)
+            }
+        }
+    }
+    return sb.to_string()
+}
+
+// Dado un header "$<len>" ya leído, lee exactamente <len> bytes + CRLF.
+// Binary/multi-line safe. Parseo sin crash (resp_parse_len), cota anti-DoS,
+// y validación anti-truncamiento: si la lectura queda corta (EOF/caída) NO
+// devuelve un parcial no vacío — devuelve "" (tratado como ausente).
+fn read_bulk(h: int, header: String) -> String {
+    let len: int = resp_parse_len(header.substring(1, header.length()))
+    if len < 0 { return "" }                    // -1 null o -2 malformado
+    if len > RESP_MAX_BULK { return "" }         // cota defensiva
+    if len == 0 {
+        // OJO: no llamar tls_read con 0 — max_bytes<=0 defaultea a 4096
+        let _e: String = tls_read(h, 2)
+        return ""
+    }
+    let body: String = tls_read(h, len)
+    if body.length() != len { return "" }        // short-read → NO parcial
+    let _crlf: String = tls_read(h, 2)
+    return body
+}
+
+// Serialize a RESP2 array command and write it.
+fn send_cmd(h: int, parts: Array) {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+    tls_write(h, sb.to_string())
+}
+
+// Send a command expecting a single reply (bulk/simple/integer/error).
+// Returns the payload without RESP prefix; "" on error/null.
+pub fn kv_cmd(h: int, parts: Array) -> String {
+    send_cmd(h, parts)
+    let header: String = tls_read_line_local(h)
+    if header.length() == 0 { return "" }
+    let first: int = header.charAt(0)
+    if first == 36 {            // '$' bulk string
+        return read_bulk(h, header)
+    }
+    if first == 45 {            // '-' error
+        return ""
+    }
+    if header.length() > 1 {    // '+' simple or ':' integer — strip prefix
+        return header.substring(1, header.length())
+    }
+    return ""
+}
+
+// Send a command expecting a RESP array reply ('*'). Returns the elements as
+// an Array of String. Empty array on error/null.
+pub fn kv_cmd_array(h: int, parts: Array) -> Array {
+    send_cmd(h, parts)
+    let header: String = tls_read_line_local(h)
+    var out: Array = []
+    if header.length() == 0 { return out }
+    let first: int = header.charAt(0)
+    if first != 42 { return out }   // not '*'
+    let count: int = resp_parse_len(header.substring(1, header.length()))
+    if count < 0 { return out }
+    var i: int = 0
+    while i < count {
+        let eh: String = tls_read_line_local(h)
+        if eh.length() > 0 {
+            let f0: int = eh.charAt(0)
+            if f0 == 36 {                        // '$' bulk string
+                out.push(read_bulk(h, eh))
+            } else {
+                // ':' integer / '+' simple string / '-' error: elemento de una
+                // sola línea → se pushea sin el prefijo (antes se DESCARTABA,
+                // perdiendo elementos en arrays de tipo mixto).
+                out.push(eh.substring(1, eh.length()))
+            }
+        } else {
+            out.push("")
+        }
+        i = i + 1
+    }
+    return out
+}
+// SYNC-CORE:END
+
+// ----- Typed command helpers -----
+
+pub fn kv_set(h: int, key: String, value: String) -> bool {
+    let parts: Array = ["SET", key, value]
+    return kv_cmd(h, parts) == "OK"
+}
+
+pub fn kv_setex(h: int, key: String, ttl: int, value: String) -> bool {
+    let parts: Array = ["SETEX", key, int_to_string(ttl), value]
+    return kv_cmd(h, parts) == "OK"
+}
+
+pub fn kv_get(h: int, key: String) -> String {
+    let parts: Array = ["GET", key]
+    return kv_cmd(h, parts)
+}
+
+pub fn kv_del(h: int, key: String) -> int {
+    let parts: Array = ["DEL", key]
+    return string_to_int(kv_cmd(h, parts))
+}
+
+pub fn kv_rpush(h: int, key: String, value: String) -> int {
+    let parts: Array = ["RPUSH", key, value]
+    return string_to_int(kv_cmd(h, parts))
+}
+
+pub fn kv_lrange(h: int, key: String, start: int, stop: int) -> Array {
+    let parts: Array = ["LRANGE", key, int_to_string(start), int_to_string(stop)]
+    return kv_cmd_array(h, parts)
+}
+
+pub fn kv_llen(h: int, key: String) -> int {
+    let parts: Array = ["LLEN", key]
+    return string_to_int(kv_cmd(h, parts))
+}
+
+pub fn kv_sadd(h: int, key: String, member: String) -> int {
+    let parts: Array = ["SADD", key, member]
+    return string_to_int(kv_cmd(h, parts))
+}
+
+pub fn kv_smembers(h: int, key: String) -> Array {
+    let parts: Array = ["SMEMBERS", key]
+    return kv_cmd_array(h, parts)
+}
+
+// WHOAMI — returns the user_id (namespace owner) of the authenticated token.
+// Not privileged: any token can ask its own identity.
+pub fn kv_whoami(h: int) -> String {
+    let parts: Array = ["WHOAMI"]
+    return kv_cmd(h, parts)
+}
+
+// TOKEN_CREATE user_id plan ttl — admin only, localhost only. Returns token.
+pub fn kv_token_create(h: int, user_id: String, plan: String, ttl: int) -> String {
+    let parts: Array = ["TOKEN_CREATE", user_id, plan, int_to_string(ttl)]
+    return kv_cmd(h, parts)
+}
+
+// EXISTS key — true if the key exists.
+pub fn kv_exists(h: int, key: String) -> bool {
+    let parts: Array = ["EXISTS", key]
+    return kv_cmd(h, parts) == "1"
+}
+
+// SREM key member — removes a member from a set. Returns count removed.
+pub fn kv_srem(h: int, key: String, member: String) -> int {
+    let parts: Array = ["SREM", key, member]
+    return string_to_int(kv_cmd(h, parts))
+}
+
+// TOKEN_LIST — admin only. Returns a FLAT array de pares intercalados:
+// [token1, info1, token2, info2, ...], donde info = "user_id:plan:expires_at:status".
+// (Los consumidores iteran de a 2: el elemento par es el token, el impar su metadata.)
+pub fn kv_token_list(h: int) -> Array {
+    let parts: Array = ["TOKEN_LIST"]
+    return kv_cmd_array(h, parts)
+}
+
+// TOKEN_REVOKE token — admin only. True on +OK.
+pub fn kv_token_revoke(h: int, token: String) -> bool {
+    let parts: Array = ["TOKEN_REVOKE", token]
+    return kv_cmd(h, parts) == "OK"
+}

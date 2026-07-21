@@ -1,0 +1,8 @@
+// M-08 sesion 7 error test: Array<int>.push with wrong element type.
+// Expected stderr (contains): "argument 1 of 'push': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let arr: Array<int> = [1, 2, 3]
+    arr.push("nope")
+    return 0
+}

@@ -1,0 +1,67 @@
+// Test 63: Typed Arrays — Array<T>
+// Verifies that Array<T> tracks element types at compile time
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn sum_array(arr: Array<int>) -> int {
+    var total = 0
+    var i = 0
+    while i < arr.length() {
+        let val = arr[i]
+        total = total + val
+        i = i + 1
+    }
+    return total
+}
+
+fn first_name(names: Array<String>) -> String {
+    return names[0]
+}
+
+fn main() -> int {
+    // Array<int>: indexing returns int without annotation
+    let nums: Array<int> = [10, 20, 30]
+    let n = nums[0]
+    print(n)
+    print(nums[1])
+    print(nums[2])
+
+    // Array<String>: indexing returns String without annotation
+    let words: Array<String> = ["hello", "world"]
+    let w = words[0]
+    print(w)
+    print(words[1])
+
+    // Array<float>: indexing returns float without annotation
+    let floats: Array<float> = [1.5, 2.5, 3.5]
+    let f = floats[0]
+    print(f)
+
+    // for-in with Array<String> infers element type
+    let colors: Array<String> = ["red", "green", "blue"]
+    for c in colors {
+        print(c)
+    }
+
+    // Function with Array<int> parameter
+    let arr: Array<int> = [1, 2, 3, 4, 5]
+    print(sum_array(arr))
+
+    // Function with Array<String> parameter
+    let names: Array<String> = ["Alice", "Bob"]
+    print(first_name(names))
+
+    // Array<Point>: indexing returns Point
+    let p1 = Point { x: 1, y: 2 }
+    let p2 = Point { x: 3, y: 4 }
+    let points: Array<Point> = [p1, p2]
+    let pt = points[0]
+    print(pt.x)
+    print(pt.y)
+
+    print("All typed array tests passed!")
+    return 0
+}

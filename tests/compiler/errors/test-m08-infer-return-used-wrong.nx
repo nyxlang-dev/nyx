@@ -1,0 +1,15 @@
+// M-08 sesion 11 error test: fn sin anotacion inferida a int, usada como String.
+// Con S11 `answer()` ya se registra como Fn(()->int; sin S11 devolvia TyUnknown
+// y la asignacion tipada pasaba vacuamente.
+// Expected stderr (contains): "type mismatch in 's': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+
+fn answer() {
+    return 42
+}
+
+fn main() -> int {
+    let s: String = answer()
+    print(s)
+    return 0
+}

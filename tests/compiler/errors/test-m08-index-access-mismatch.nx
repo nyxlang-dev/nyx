@@ -1,0 +1,9 @@
+// M-08 sesion 9 error test: indexing an inferred Array<int> yields int, so
+// assigning the result to a String-typed binding must be flagged.
+// Expected stderr (contains): "type mismatch in 's': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let arr = [10, 20, 30]
+    let s: String = arr[0]
+    return 0
+}

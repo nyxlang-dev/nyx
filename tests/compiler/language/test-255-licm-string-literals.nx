@@ -1,0 +1,80 @@
+// test-255-licm-string-literals — LICM de literales de String: comportamiento
+// preservado. Los literales en loops se hoistean (perf) pero la semántica es
+// idéntica. Cubre: repetidos, anidados, literal en if-en-loop, clave de Map en
+// loop, y CRÍTICO: match con patrón string en loop (la exclusión no lo rompe).
+fn classify(s: String) -> String {
+    // match con patrón string DENTRO de un loop (vía el caller) — el patrón NO
+    // debe hoistearse (rompería el matching).
+    match s {
+        "hot" => { return "H" }
+        "cold" => { return "C" }
+        _ => { return "?" }
+    }
+}
+
+fn main() {
+    // Literal repetido en loop simple
+    let sb: StringBuilder = StringBuilder.new(16)
+    var i: int = 0
+    while i < 5 {
+        sb.append("ab")
+        i = i + 1
+    }
+    assert(sb.to_string() == "ababababab")
+
+    // Loops anidados con el mismo literal (hoist al más externo)
+    var outer: int = 0
+    var total: int = 0
+    while outer < 3 {
+        var inner: int = 0
+        while inner < 4 {
+            if "x" == "x" { total = total + 1 }
+            inner = inner + 1
+        }
+        outer = outer + 1
+    }
+    assert(total == 12)
+
+    // Literal como clave de Map en un loop
+    var m: Map = {}
+    var k: int = 0
+    while k < 3 {
+        m.insert("count", int_to_string(k))
+        k = k + 1
+    }
+    assert(m.get("count") == "2")
+
+    // match con patrón string dentro de un loop (exclusión)
+    let inputs: Array = ["hot", "cold", "warm"]
+    var acc: String = ""
+    var j: int = 0
+    while j < 3 {
+        acc = acc + classify(inputs[j])
+        j = j + 1
+    }
+    assert(acc == "HC?")
+
+    // CRÍTICO: match con patrón string LITERALMENTE dentro del loop body —
+    // ejercita los handlers de match de licm_collect/licm_rewrite: los
+    // literales de los BODIES de los arms se hoistean, los PATRONES no se
+    // tocan. Si el pass reescribiera un patrón a identifier, se volvería un
+    // binding que matchea todo → el primer arm ganaría siempre → acc2="HHH"
+    // y el assert falla.
+    // Endurecimiento: el arm "hot" reusa el literal del patrón en su BODY —
+    // así "hot" SÍ entra al litmap y hasta un bug asimétrico puro (rewrite
+    // visitando patrones con collect correcto) dispararía la trampa.
+    var acc2: String = ""
+    var t: int = 0
+    while t < 3 {
+        let cur: String = inputs[t]
+        match cur {
+            "hot" => { acc2 = acc2 + "hot" }
+            "cold" => { acc2 = acc2 + "C" }
+            _ => { acc2 = acc2 + "?" }
+        }
+        t = t + 1
+    }
+    assert(acc2 == "hotC?")
+
+    print("licm-string-literals OK")
+}

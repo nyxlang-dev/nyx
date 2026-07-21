@@ -1,0 +1,13 @@
+// Test 184: Map.size() and Map.has()
+// Bug: size() always returns 0, has() always returns false
+
+fn main() {
+    let m = Map.new()
+    m.insert("a", "1")
+    m.insert("b", "2")
+    m.insert("c", "3")
+
+    print(m.size())
+    print(m.has("b"))
+    print(m.has("z"))
+}

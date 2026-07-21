@@ -1,0 +1,11 @@
+// M-08 B8-F2: payload equivocado en enum IMPORTADO — el scan cross-module
+// de scan_module_types captura los tipos del payload de Signal.Move(int, int),
+// así que pasar un String debe fallar (NYX1005).
+
+import "tests/test-modules/payload_demo"
+
+fn main() -> int {
+    let s = Signal.Move(10, "abajo")
+    print("no llega")
+    return 0
+}

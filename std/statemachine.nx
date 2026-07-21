@@ -1,0 +1,131 @@
+// std/statemachine.nx — Finite State Machine for Nyx (v5.3.0)
+// Deterministic FSM with string states and events
+// Layout: Array = [current_state, states_arr, transitions_map, on_enter_map, on_exit_map]
+
+// ── Construction ──────────────────────────────────────────────────────────────
+
+// Create a new state machine with initial state
+pub fn fsm_new(initial_state: String) -> Array {
+    var states: Array<String> = [initial_state]
+    var transitions: Map<String> = map_new()  // "state:event" → "next_state"
+    var on_enter: Map<String> = map_new()     // "state" → "handler_name"
+    var on_exit: Map<String> = map_new()      // "state" → "handler_name"
+    var fsm: Array = [initial_state, states, transitions, on_enter, on_exit]
+    return fsm
+}
+
+// Add a state to the FSM
+pub fn fsm_add_state(fsm: Array, state: String) {
+    let states: Array = fsm[1]
+    states.push(state)
+}
+
+// Add a transition: when in 'from_state' and event 'event' fires, go to 'to_state'
+pub fn fsm_add_transition(fsm: Array, from_state: String, event: String, to_state: String) {
+    let transitions: Map<String> = fsm[2]
+    let key = from_state + ":" + event
+    transitions.insert(key, to_state)
+}
+
+// Get current state
+pub fn fsm_state(fsm: Array) -> String {
+    let s: String = fsm[0]
+    return s
+}
+
+// Send an event to the FSM, triggering a transition if one exists
+// Returns true if transition occurred, false if no transition defined
+pub fn fsm_send(fsm: Array, event: String) -> bool {
+    let current: String = fsm[0]
+    let transitions: Map<String> = fsm[2]
+    let key = current + ":" + event
+    if transitions.contains(key) {
+        let next = transitions.get(key)
+        fsm[0] = next
+        return true
+    }
+    return false
+}
+
+// Check if FSM is in a specific state
+pub fn fsm_is(fsm: Array, state: String) -> bool {
+    let current: String = fsm[0]
+    return current == state
+}
+
+// Check if a transition is valid from current state
+pub fn fsm_can(fsm: Array, event: String) -> bool {
+    let current: String = fsm[0]
+    let transitions: Map<String> = fsm[2]
+    let key = current + ":" + event
+    return transitions.contains(key)
+}
+
+// Reset FSM to initial state (first state that was added)
+pub fn fsm_reset(fsm: Array, initial_state: String) {
+    fsm[0] = initial_state
+}
+
+// Get all states of the FSM
+pub fn fsm_states(fsm: Array) -> Array {
+    let states: Array = fsm[1]
+    return states
+}
+
+// ── Event Log ─────────────────────────────────────────────────────────────────
+
+// A traced FSM that logs state transitions
+// Layout: Array = [fsm, log: Array<String>]
+
+pub fn fsm_traced_new(initial_state: String) -> Array {
+    let inner = fsm_new(initial_state)
+    var log: Array<String> = []
+    var traced: Array = [inner, log]
+    return traced
+}
+
+pub fn fsm_traced_add_transition(traced: Array, from_state: String, event: String, to_state: String) {
+    let inner: Array = traced[0]
+    fsm_add_transition(inner, from_state, event, to_state)
+}
+
+pub fn fsm_traced_send(traced: Array, event: String) -> bool {
+    let inner: Array = traced[0]
+    let log: Array = traced[1]
+    let before = fsm_state(inner)
+    let ok = fsm_send(inner, event)
+    if ok {
+        let after = fsm_state(inner)
+        let entry = before + " --" + event + "--> " + after
+        log.push(entry)
+    }
+    return ok
+}
+
+pub fn fsm_traced_state(traced: Array) -> String {
+    let inner: Array = traced[0]
+    return fsm_state(inner)
+}
+
+pub fn fsm_traced_log(traced: Array) -> Array {
+    let log: Array = traced[1]
+    return log
+}
+
+pub fn fsm_traced_is(traced: Array, state: String) -> bool {
+    let inner: Array = traced[0]
+    return fsm_is(inner, state)
+}
+
+// ── Traffic Light FSM helper ──────────────────────────────────────────────────
+
+// Build a standard traffic light FSM: red→green→yellow→red
+pub fn traffic_light_fsm() -> Array {
+    let fsm = fsm_new("red")
+    fsm_add_state(fsm, "green")
+    fsm_add_state(fsm, "yellow")
+    fsm_add_transition(fsm, "red", "go", "green")
+    fsm_add_transition(fsm, "green", "slow", "yellow")
+    fsm_add_transition(fsm, "yellow", "stop", "red")
+    return fsm
+}

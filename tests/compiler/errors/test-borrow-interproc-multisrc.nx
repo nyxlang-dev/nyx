@@ -1,0 +1,12 @@
+// inc 3c-1: 'a compartido entre a y b → el retorno presta de CUALQUIERA (src_indices=[0,1]).
+// &local en la posición 0 → gatea NYX1222.
+let G: int = 9
+fn longest<'a>(a: &'a int, b: &'a int) -> &'a int { return a }
+
+fn caller() -> &int {
+    let local: int = 5
+    let r: &int = longest(&local, &G)
+    return r
+}
+
+fn main() { print(1) }

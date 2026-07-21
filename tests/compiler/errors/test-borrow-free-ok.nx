@@ -1,0 +1,18 @@
+// T3a — caso CORRECTO: memoria manual bien usada. SOUNDNESS de
+// free-safety: NO emite NINGÚN diagnóstico de free (NYX1220/NYX1221),
+// ni siquiera en NYX_BORROW=error. Cubre free-al-final y re-alloc-revive:
+//   - free(p) al final, sin uso posterior → OK.
+//   - re-asignar p (re-alloc) revive el puntero → *p siguiente es OK.
+// (En OFF — lo que corre make test — es totalmente silencioso, exit 0.
+//  El move-lint NYX1201 de T1a sí sobre-marca el prelude bajo error mode
+//  —over-flag documentado, default OFF—, pero eso es ORTOGONAL a free-safety.)
+fn main() {
+    unsafe {
+        var p: *int = alloc<int>(1)
+        *p = 5
+        free(p)
+        p = alloc<int>(1)   // re-alloc: revive p (vuelve a live)
+        *p = 7              // OK: p está live otra vez
+        free(p)             // OK: free al final, sin uso posterior
+    }
+}

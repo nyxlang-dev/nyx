@@ -1,0 +1,30 @@
+// test-236-nested-fn-capture-ptr — regresión Bug 3 (friction report v0.17,
+// dogfooding servidor web + SQLite en laptop i7). Una función anidada que
+// captura un `*int` local (resultado de una FFI) y se pasa como VALOR rompía
+// el codegen con TRES sub-problemas:
+//   P1  — resolución de la nested fn como valor: emitía `load %handler.ptr`
+//         indefinido (bleed de ctx.variables: el param `handler`/`db` de las
+//         funciones de stdlib pisaba el nombre) en vez del closure pair.
+//   P2A — el campo del env se tipaba i64 (no i64*) porque el tipo salía solo de
+//         la anotación; `let db = sqlite_open()` sin `:*int` → i64.
+//   P2B — el store de db al SharedEnv se salteaba por el mismo bleed.
+// Fix: inferencia del tipo de campo desde el callee (function_return_types) +
+// purga de entradas stale de ctx.variables al entrar a cada función con closures.
+// Self-contained (sin http_serve que bloquea): una fn toma `Fn` y la invoca 1 vez.
+import "std/sqlite"
+
+fn run_handler(f: Fn) -> bool {
+    return f()
+}
+
+fn main() -> int {
+    let db = sqlite_open(":memory:")          // *int SIN anotación → P2A
+    fn use_db() -> bool {                       // nested fn captura db (i64*)
+        return sqlite_exec(db, "CREATE TABLE t(x INTEGER)")
+    }
+    let ok: bool = run_handler(use_db)          // nested fn como valor → P1
+    assert(ok)                                   // db capturado bien → P2A/P2B
+    sqlite_close(db)
+    print("nested-fn-capture-ptr OK")
+    return 0
+}

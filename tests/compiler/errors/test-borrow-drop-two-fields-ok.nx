@@ -1,0 +1,21 @@
+// FP fix (2026-07-14): un drop que libera DOS campos puntero DISTINTOS de self
+// (free(self.a) + free(self.b)) NO es double-free. Antes el free-safety usaba
+// place_of (colapsa self.a/self.b → "self") → NYX1221 falso positivo (rompía
+// el drop de Rc<T> en std/owned). Ahora place_path es field-sensitive.
+// Debe compilar limpio bajo NYX_BORROW=error (sin NYX1221).
+#[affine]
+struct Pair {
+    a: *int,
+    b: *int,
+}
+
+impl Pair {
+    fn drop(self) {
+        free(self.a)
+        free(self.b)
+    }
+}
+
+fn main() {
+    print("two-field drop ok")
+}

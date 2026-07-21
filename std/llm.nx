@@ -1,0 +1,75 @@
+// std/llm — inferencia LLM vía llama.cpp (spec 2026-07-17, sub-proyecto (b)
+// GPU/tensores). Nyx ORQUESTA: el trabajo pesado ocurre dentro de libllama.so
+// (dlopen en runtime/llama_adapter.c; override con NYX_LLAMA_SO). La memoria
+// del modelo (GBs) vive del lado C — jamás entra al heap Boehm.
+//
+// LLM es #[affine] + impl Drop: el modelo se libera EXACTAMENTE una vez al
+// salir del scope dueño (RAII). llm_generate* PRESTAN (&LLM) — múltiples
+// generates sobre el mismo handle, sin mover ownership (patrón box_get).
+// ⚠️ NO llamar l.drop() a mano: double-free conocido de #[affine] (CLAUDE.md).
+// ⚠️ Anotar SIEMPRE el tipo: `let l: LLM = llm_load(...)` — un let afín sin
+//    anotación no genera obligación de drop (limitación T4c documentada).
+
+extern "C" fn nyx_llm_open(path: String, n_ctx: int) -> *i8
+extern "C" fn nyx_llm_generate(h: *i8, prompt: String, max_tokens: int, cb: *i8) -> String
+extern "C" fn nyx_llm_free(h: *i8)
+extern "C" fn nyx_llm_last_error() -> String
+
+// NOTA (Task 2, desviación documentada): `pub struct LLM` con #[affine] rompe
+// silenciosamente el registro de la obligación de drop cross-módulo (gap de
+// codegen — is_drop_obligation no reconoce el tipo cuando el struct es `pub`;
+// repro aislado y reportado al controller, NO se parchea compiler/*). El
+// modelo de imports de Nyx INLINA el módulo completo en el archivo que
+// importa (resolve_source), así que un struct sin `pub` es igualmente visible
+// y construible desde afuera — `pub` es hoy solo documentación, no
+// enforcement. Se omite `pub` acá para evitar el gap sin tocar el compilador.
+#[affine]
+struct LLM {
+    ptr: *i8
+}
+
+impl LLM {
+    fn drop(self) {
+        nyx_llm_free(self.ptr)
+    }
+}
+
+/// Carga un modelo GGUF con n_ctx explícito. Aborta con mensaje claro si falla.
+pub fn llm_load_ctx(path: String, n_ctx: int) -> LLM {
+    let h: *i8 = nyx_llm_open(path, n_ctx)
+    if (h as int) == 0 {
+        print("error: llm: " + nyx_llm_last_error())
+        exit(1)
+    }
+    return LLM { ptr: h }
+}
+
+/// Carga un modelo GGUF (n_ctx = 2048 por defecto).
+pub fn llm_load(path: String) -> LLM {
+    return llm_load_ctx(path, 2048)
+}
+
+/// Genera texto (greedy). Presta el handle — no lo consume.
+pub fn llm_generate(l: &LLM, prompt: String, max_tokens: int) -> String {
+    let nocb: *i8 = 0 as *i8
+    let out: String = nyx_llm_generate(l.ptr, prompt, max_tokens, nocb)
+    let err: String = nyx_llm_last_error()
+    if err.length() > 0 {
+        print("error: llm: " + err)
+        exit(1)
+    }
+    return out
+}
+
+/// Genera con STREAMING: cb = c_fn_ptr(mi_cb) donde `fn mi_cb(piece: *i8)`
+/// recibe cada token generado (convertir con string_from_cstr adentro).
+/// Devuelve además el texto completo.
+pub fn llm_generate_stream(l: &LLM, prompt: String, max_tokens: int, cb: *i8) -> String {
+    let out: String = nyx_llm_generate(l.ptr, prompt, max_tokens, cb)
+    let err: String = nyx_llm_last_error()
+    if err.length() > 0 {
+        print("error: llm: " + err)
+        exit(1)
+    }
+    return out
+}

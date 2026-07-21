@@ -1,0 +1,80 @@
+// std/math.nx — Funciones matemáticas de la Standard Library v6.0
+
+// Constants
+const MATH_PI = 3.14159265358979323846
+const MATH_E = 2.71828182845904523536
+const MATH_TAU = 6.28318530717958647692
+
+// Signal constants
+const SIGINT = 2
+const SIGTERM = 15
+const SIGKILL = 9
+const SIGUSR1 = 10
+const SIGUSR2 = 12
+const SIGPIPE = 13
+const SIGALRM = 14
+
+fn abs(n: int) -> int {
+    if n < 0 { return -n }
+    return n
+}
+
+fn min(a: int, b: int) -> int {
+    if a < b { return a }
+    return b
+}
+
+fn max(a: int, b: int) -> int {
+    if a > b { return a }
+    return b
+}
+
+fn clamp(n: int, lo: int, hi: int) -> int {
+    return max(lo, min(n, hi))
+}
+
+fn pow_int(base: int, exp: int) -> int {
+    var result = 1
+    var i = 0
+    while i < exp {
+        result = result * base
+        i = i + 1
+    }
+    return result
+}
+
+fn gcd(a: int, b: int) -> int {
+    var x = abs(a)
+    var y = abs(b)
+    while y != 0 {
+        let temp = y
+        y = x % y
+        x = temp
+    }
+    return x
+}
+
+fn lcm(a: int, b: int) -> int {
+    if a == 0 or b == 0 { return 0 }
+    return abs(a * b) / gcd(a, b)
+}
+
+fn is_even(n: int) -> bool {
+    return n % 2 == 0
+}
+
+fn is_odd(n: int) -> bool {
+    return n % 2 != 0
+}
+
+fn sqrt_int(n: int) -> int {
+    if n < 0 { return -1 }
+    if n == 0 { return 0 }
+    var x = n
+    var y = (x + 1) / 2
+    while y < x {
+        x = y
+        y = (x + n / x) / 2
+    }
+    return x
+}

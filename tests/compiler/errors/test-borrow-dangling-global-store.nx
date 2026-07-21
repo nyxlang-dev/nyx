@@ -1,0 +1,11 @@
+var g: *int = 0 as *int
+
+fn stash() {
+    let x: int = 5
+    g = &x
+}
+
+fn main() {
+    stash()
+    print(1)
+}

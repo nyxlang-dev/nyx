@@ -1,0 +1,39 @@
+// Criptografía: SHA-256, MD5 y HMAC-SHA256
+
+fn main() -> int {
+    // SHA-256
+    let h1: String = sha256("hello world")
+    print("sha256(\"hello world\"):")
+    print("  " + h1)
+    print("  longitud: " + int_to_string(h1.length()) + " chars")
+
+    // SHA-256 de string vacío
+    let h_empty: String = sha256("")
+    print("sha256(\"\"):")
+    print("  " + h_empty)
+
+    // MD5
+    let m1: String = md5("hello world")
+    print("md5(\"hello world\"):")
+    print("  " + m1)
+    print("  longitud: " + int_to_string(m1.length()) + " chars")
+
+    // HMAC-SHA256
+    let key: String = "clave-secreta"
+    let data: String = "mensaje importante"
+    let hmac: String = hmac_sha256(key, data)
+    print("hmac_sha256(key, data):")
+    print("  " + hmac)
+
+    // Verificar determinismo: mismo input -> mismo hash
+    let a: String = sha256("nyx")
+    let b: String = sha256("nyx")
+    print("sha256 es determinista: " + int_to_string(a == b))
+
+    // Verificar que inputs distintos -> hashes distintos
+    let c: String = sha256("aaa")
+    let d: String = sha256("bbb")
+    print("hashes distintos para inputs distintos: " + int_to_string(c != d))
+
+    return 0
+}

@@ -1,0 +1,43 @@
+// Test 54: M-08 session 10 — generic call inference happy path.
+//
+// Exercises: type params in fn signatures (`<T>`, `<A, B>`) get bound to
+// concrete arg types at call sites, the return type is substituted with
+// the inferred binding, and every typed `let` on the LHS matches what the
+// generic function returns. Without S10 the ret type `T` was wildcard and
+// these assignments would type-check vacuously even when the inferred T
+// disagrees.
+//
+// Note: the explicit turbofish (`id<int>(42)`) is required by codegen for
+// monomorphization. Semantic inference also flows from arg types alone;
+// the matching error tests in tests/compiler/errors/test-m08-generic-*
+// cover the "implicit T from arg" path that doesn't reach codegen.
+
+fn id<T>(x: T) -> T {
+    return x
+}
+
+fn pick_first<A, B>(a: A, b: B) -> A {
+    return a
+}
+
+fn first_of<T>(arr: Array<T>) -> T {
+    return arr[0]
+}
+
+fn main() -> int {
+    let n: int = id<int>(42)
+    let s: String = id<String>("hola")
+
+    let pi: int = pick_first<int, String>(7, "ignored")
+    let ps: String = pick_first<String, int>("kept", 9)
+
+    let head: int = first_of<int>([10, 20, 30])
+
+    print(int_to_string(n))
+    print(s)
+    print(int_to_string(pi))
+    print(ps)
+    print(int_to_string(head))
+    print("OK")
+    return 0
+}

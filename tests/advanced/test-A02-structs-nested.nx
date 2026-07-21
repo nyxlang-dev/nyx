@@ -1,0 +1,57 @@
+// Test A02: Structs anidados y funciones con structs
+// Prueba: composición de tipos, acceso a campos anidados
+
+struct Vec2 {
+    x: int,
+    y: int
+}
+
+struct Rect {
+    origin: Vec2,
+    size: Vec2
+}
+
+fn vec2_add(a: Vec2, b: Vec2) -> Vec2 {
+    return Vec2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+fn rect_area(r: Rect) -> int {
+    return r.size.x * r.size.y
+}
+
+fn rect_contains(r: Rect, p: Vec2) -> bool {
+    return p.x >= r.origin.x and p.x < r.origin.x + r.size.x and p.y >= r.origin.y and p.y < r.origin.y + r.size.y
+}
+
+fn main() {
+    let r = Rect {
+        origin: Vec2 { x: 10, y: 20 },
+        size: Vec2 { x: 30, y: 40 }
+    }
+
+    // Area = 30 * 40 = 1200
+    print(rect_area(r))
+
+    // Point inside
+    let p1 = Vec2 { x: 15, y: 25 }
+    if rect_contains(r, p1) {
+        print(1)
+    } else {
+        print(0)
+    }
+
+    // Point outside
+    let p2 = Vec2 { x: 5, y: 5 }
+    if rect_contains(r, p2) {
+        print(1)
+    } else {
+        print(0)
+    }
+
+    // vec2_add
+    let sum = vec2_add(Vec2 { x: 3, y: 4 }, Vec2 { x: 7, y: 6 })
+    print(sum.x)
+    print(sum.y)
+
+    return 0
+}

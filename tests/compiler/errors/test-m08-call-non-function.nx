@@ -1,0 +1,9 @@
+// M-08 sesion 8 (M-04) error test: calling a non-function value.
+// `x` is bound to an int; `x(10)` should be rejected.
+// Expected stderr (contains): "'x' is not callable (type: int)"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let x: int = 42
+    let bad: int = x(10)
+    return 0
+}

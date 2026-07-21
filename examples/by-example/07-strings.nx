@@ -1,0 +1,39 @@
+// Strings: length, substring, split, contains, trim, toUpper, interpolación
+
+fn main() -> int {
+    let texto: String = "  Hola Nyx  "
+
+    // trim elimina espacios al inicio y al final
+    let limpio: String = texto.trim()
+    print("trim: '" + limpio + "'")
+
+    // length
+    print("longitud: " + int_to_string(limpio.length()))
+
+    // substring(inicio, fin)  — fin es exclusivo
+    let sub: String = limpio.substring(0, 4)
+    print("substring(0,4): " + sub)
+
+    // toUpper / toLower
+    print("toUpper: " + limpio.toUpper())
+    print("toLower: " + limpio.toLower())
+
+    // contains
+    print("contains 'Nyx': " + int_to_string(limpio.contains("Nyx")))
+    print("contains 'Go': " + int_to_string(limpio.contains("Go")))
+
+    // split
+    let frase: String = "uno dos tres"
+    let partes: Array = frase.split(" ")
+    print("partes: " + int_to_string(partes.length()))
+    for p in partes {
+        print("  " + p)
+    }
+
+    // interpolación
+    let lang: String = "Nyx"
+    let v: int = 12
+    print("Lenguaje: ${lang} v0.${v}")
+
+    return 0
+}

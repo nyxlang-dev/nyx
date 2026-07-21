@@ -1,0 +1,62 @@
+// Test 205: Process control builtins (fork, waitpid, getcwd, chdir, getpid, isatty, pipe, stat)
+fn main() {
+    // getpid — should return positive
+    let pid: int = getpid()
+    assert(pid > 0)
+    print("getpid: " + int_to_string(pid))
+
+    // getcwd — should return non-empty string
+    let cwd: String = getcwd()
+    assert(cwd.length() > 0)
+    print("getcwd: " + cwd)
+
+    // chdir + getcwd — change to /tmp and back
+    let orig_dir: String = getcwd()
+    let rc: int = chdir("/tmp")
+    assert(rc == 0)
+    let new_dir: String = getcwd()
+    assert(new_dir == "/tmp")
+    chdir(orig_dir)
+    let restored: String = getcwd()
+    assert(restored == orig_dir)
+    print("chdir: OK")
+
+    // isatty — stdin might or might not be a tty depending on how test runs
+    let tty_result: int = isatty(0)
+    assert(tty_result == 0 or tty_result == 1)
+    print("isatty: " + int_to_string(tty_result))
+
+    // stat — stat a file that exists
+    let st: Array = stat("/tmp")
+    assert(st.length() == 5)
+    // /tmp is a directory: is_dir should be 1
+    let is_dir: int = st[3]
+    assert(is_dir == 1)
+    print("stat: OK (is_dir=" + int_to_string(is_dir) + ")")
+
+    // pipe_new — create a pipe
+    let fds: Array = pipe_new()
+    assert(fds.length() == 2)
+    let read_fd: int = fds[0]
+    let write_fd: int = fds[1]
+    assert(read_fd > 0)
+    assert(write_fd > 0)
+    close_fd(read_fd)
+    close_fd(write_fd)
+    print("pipe_new: OK (fds=" + int_to_string(read_fd) + "," + int_to_string(write_fd) + ")")
+
+    // fork + waitpid — fork a child that exits with code 42
+    let child: int = fork()
+    if child == 0 {
+        // child process
+        exit(42)
+    }
+    // parent: wait for child
+    assert(child > 0)
+    let status: int = waitpid(child, 0)
+    assert(status == 42)
+    print("fork+waitpid: OK (child=" + int_to_string(child) + ", exit=" + int_to_string(status) + ")")
+
+    print("All process builtin tests passed")
+    return 0
+}

@@ -1,0 +1,18 @@
+// test-251-dup-extern-imports — importar dos módulos que declaran el MISMO
+// extern "C" (std/web y std/url declaran ambos nyx_url_decode) emitía un
+// `declare` duplicado en el IR → clang: "invalid redefinition of function
+// 'nyx_url_decode'". Rompía cualquier programa que importara web+url juntos
+// (caso real: dashboard de nyx-kv-stack). codegen_extern_fn ahora dedupea por
+// nombre (la primera declaración gana). Self-checking con assert().
+
+import "std/web"
+import "std/url"
+
+fn main() {
+    // Ambos módulos delegan en el mismo extern nyx_url_decode.
+    assert(url_decode("a%20b") == "a b")
+    assert(url_decode("S%C3%A3o") == "São")
+    // url_encode solo existe en std/url (usa el otro extern, no duplicado).
+    assert(url_encode("a b") == "a%20b")
+    print("dup extern imports ok")
+}

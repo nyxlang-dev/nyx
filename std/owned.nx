@@ -1,0 +1,165 @@
+// std/owned.nx — Ownership semantics + linear types for Nyx (v5.0.0)
+// Provides opt-in ownership tracking via Array-based wrapper types
+// (Generic struct return types not yet supported — uses Array as backing store)
+
+// ── Box<T> — puntero heap owned, afín, con drop determinista (RAII) ───────────
+// (inc 4 Etapa 4, 2026-07-13) Box<T> posee un `*T` en heap MANUAL (alloc/free, sin
+// GC). Es `#[affine]`: moverlo (bindear a otro nombre, pasarlo by-value) invalida el
+// binding original (use-after-move → NYX1230). Su `impl Drop` libera la memoria
+// EXACTAMENTE una vez al salir de scope o al ser consumido (drop determinista/RAII,
+// estilo Rust Box<T>). El destructor se monomorfiza por instancia (Box_int_drop,
+// Box_String_drop, ...). Reemplaza el viejo wrapper Array con flag runtime.
+
+#[affine]
+struct Box<T> {
+    ptr: *T
+}
+
+impl<T> Box<T> {
+    fn drop(self) {
+        free(self.ptr)
+    }
+}
+
+pub fn box_new<T>(v: T) -> Box<T> {
+    let p: *T = alloc<T>(1)
+    *p = v
+    return Box<T> { ptr: p }
+}
+
+// Acceso compartido inmutable — NO consume el Box (préstamo `&Box<T>`). Devuelve
+// una copia del valor. Puede llamarse múltiples veces sobre el mismo Box.
+pub fn box_get<T>(b: &Box<T>) -> T {
+    let p: *T = b.ptr
+    return *p
+}
+
+// Consume el Box (Rust `Box::into_inner`): extrae el valor y libera la memoria en
+// el drop del parámetro. Tras esto el Box queda movido (use-after-move → NYX1230).
+pub fn box_into<T>(b: Box<T>) -> T {
+    let p: *T = b.ptr
+    return *p
+}
+
+// ── Rc<T> — reference-counted, afín-con-clone, drop refcount-aware ────────────
+// (inc 4 Etapa 5, 2026-07-13, single-threaded) Rc<T> comparte un valor en heap
+// MANUAL vía refcount. Es `#[affine]`: `let b = a` MUEVE `a` (use-after-move →
+// NYX1230); para COMPARTIR hay que `rc_clone(&a)` EXPLÍCITO (incrementa el refcount,
+// NO consume). El drop es refcount-aware determinista: decrementa y libera la
+// memoria (value + count) cuando el refcount llega a 0. Layout: dos punteros heap
+// (`*T` value + `*int` count COMPARTIDO) — evita un struct interno anidado.
+// NOTA: `rc_clone` es una función que presta (`&Rc<T>`), no un método `.clone()`;
+// prestar es el escape hatch del move-checking afín. Rc cíclico → leak (sin cycle
+// collector, igual que Rust sin Weak). Mutación a través de Rc = fuera de scope v1.
+
+#[affine]
+struct Rc<T> { ptr: *T, cnt: *int }
+
+impl<T> Rc<T> {
+    fn drop(self) {
+        let c: *int = self.cnt
+        *c = *c - 1
+        if *c == 0 {
+            free(self.ptr)
+            free(self.cnt)
+        }
+    }
+}
+
+pub fn rc_new<T>(v: T) -> Rc<T> {
+    let p: *T = alloc<T>(1)
+    *p = v
+    let c: *int = alloc<int>(1)
+    *c = 1
+    return Rc<T> { ptr: p, cnt: c }
+}
+
+// Comparte el Rc: incrementa el refcount y devuelve un owner NUEVO e independiente.
+// NO consume el original (préstamo `&Rc<T>`) — escape hatch del move-checking afín.
+pub fn rc_clone<T>(r: &Rc<T>) -> Rc<T> {
+    let c: *int = r.cnt
+    *c = *c + 1
+    return Rc<T> { ptr: r.ptr, cnt: r.cnt }
+}
+
+// Acceso compartido inmutable (préstamo, no consume).
+pub fn rc_get<T>(r: &Rc<T>) -> T {
+    let p: *T = r.ptr
+    return *p
+}
+
+pub fn rc_count<T>(r: &Rc<T>) -> int {
+    let c: *int = r.cnt
+    return *c
+}
+
+// ── MoveOnly<T> — afín (single-use, move-only), enforcement COMPILE-TIME ───────
+// (inc 4 Etapa 3, 2026-07-12) Un `#[affine]` struct genérico: moverlo (bindear a
+// otro nombre, reasignar o pasarlo by-value) invalida el binding original. Un uso
+// posterior gatea NYX1230 (SOUND/gating en NYX_BORROW=error), en vez del viejo
+// enforcement RUNTIME (flag `consumed` en un Array que solo panicaba en runtime).
+//
+// `move_consume` toma `m` by-value → consumir el MoveOnly LO MUEVE en el caller;
+// un segundo `move_consume(m)` es use-after-move → error de compilación.
+
+#[affine]
+struct MoveOnly<T> {
+    value: T
+}
+
+pub fn move_new<T>(v: T) -> MoveOnly<T> {
+    // Turbofish explícito del type param: el struct_init literal sin turbofish NO
+    // monomorfiza (emitiría el tipo base `%MoveOnly` unsized). Con `MoveOnly<T>` la
+    // sustitución de monomorfización reescribe `<T>` → `<int>`/`<String>` → tipo
+    // concreto `%MoveOnly_int`. (Idiomático, estilo Rust `Box::<T>::new`.)
+    return MoveOnly<T> { value: v }
+}
+
+// Consume el MoveOnly by-value (lo mueve) y devuelve el valor interno.
+pub fn move_consume<T>(m: MoveOnly<T>) -> T {
+    return m.value
+}
+
+// ── Resource guards (RAII-style) ──────────────────────────────────────────────
+// Layout: Array = [file_handle, path, closed_flag (int)]
+
+pub fn file_guard_open(path: String, mode: String) -> Array {
+    let h = file_open(path, mode)
+    var g: Array = [h, path, 0]
+    return g
+}
+
+pub fn file_guard_write(g: Array, content: String) {
+    let closed: int = g[2]
+    if closed == 0 {
+        let h: Map = g[0]
+        file_write_string(h, content)
+    }
+}
+
+pub fn file_guard_read_line(g: Array) -> String {
+    let closed: int = g[2]
+    if closed != 0 { return "" }
+    let h: Map = g[0]
+    return file_read_line(h)
+}
+
+pub fn file_guard_close(g: Array) {
+    let closed: int = g[2]
+    if closed == 0 {
+        let h: Map = g[0]
+        file_close(h)
+        g[2] = 1
+    }
+}
+
+pub fn file_guard_is_open(g: Array) -> bool {
+    let closed: int = g[2]
+    return closed == 0
+}
+
+// ── Drop trait ────────────────────────────────────────────────────────────────
+
+trait Drop {
+    fn drop(self)
+}

@@ -1,0 +1,16 @@
+// test-231: el attribute group de #[naked] se emite en el módulo.
+// Antes del fix iba a ctx.meta_buffer (que NUNCA se vuelca) → el define
+// referenciaba `#N` inexistente y clang rechazaba el IR completo.
+// No llamamos a la fn naked (sin prologue, llamarla es UB): alcanza con
+// que el módulo compile y linkee.
+
+#[naked]
+fn bare_stub() {
+    return
+}
+
+fn main() -> int {
+    assert(1 + 1 == 2)
+    print("naked attr ok")
+    return 0
+}

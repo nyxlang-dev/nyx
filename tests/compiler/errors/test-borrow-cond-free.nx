@@ -1,0 +1,11 @@
+// MAX flow-sensitive: free en UNA rama + uso después → en el path c=true es use-after-free
+// → NYX1220. Hoy (moved/freed pre-rama) era un MISS. Gate-only (correrlo haría un UAF real).
+fn main() {
+    var p: *int = alloc<int>(1)
+    let c: bool = true
+    if c {
+        free(p)
+    }
+    let v: int = *p
+    print(v)
+}

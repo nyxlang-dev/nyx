@@ -1,0 +1,52 @@
+// nyx-kv hashes — HSET, HGET, HGETALL for structured data
+// Hashes nyx-kv — datos estructurados con HSET/HGET/HGETALL
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 {
+        print("connection failed")
+        return 1
+    }
+
+    // Store a user profile as a hash
+    tcp_write(fd, resp_cmd(["HSET", "user:1", "name", "Alice", "age", "30", "city", "Buenos Aires"]))
+    let hset_reply: String = tcp_read_line(fd)
+    print("HSET -> " + hset_reply.trim())
+
+    // Get a single field
+    tcp_write(fd, resp_cmd(["HGET", "user:1", "name"]))
+    let hget_hdr: String = tcp_read_line(fd)
+    let name: String = tcp_read_line(fd)
+    print("HGET name -> " + name.trim())
+
+    // Check if a field exists
+    tcp_write(fd, resp_cmd(["HEXISTS", "user:1", "age"]))
+    let exists: String = tcp_read_line(fd)
+    print("HEXISTS age -> " + exists.trim())
+
+    // Get the number of fields
+    tcp_write(fd, resp_cmd(["HLEN", "user:1"]))
+    let hlen: String = tcp_read_line(fd)
+    print("HLEN -> " + hlen.trim())
+
+    tcp_close(fd)
+    return 0
+}

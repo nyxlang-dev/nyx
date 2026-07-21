@@ -1,0 +1,32 @@
+// nyx-proxy TLS with SNI — multi-domain HTTPS on port 443
+// TLS con SNI nyx-proxy — HTTPS multi-dominio en puerto 443
+
+fn main() -> int {
+    // SNI (Server Name Indication) lets one IP:443 serve multiple domains
+    // with different TLS certificates. The client sends the hostname in
+    // the TLS handshake, and the server picks the matching cert.
+
+    // Primary certificate (default)
+    let default_cert: String = "/etc/letsencrypt/live/nyxlang.com/fullchain.pem"
+    let default_key: String = "/etc/letsencrypt/live/nyxlang.com/privkey.pem"
+
+    // Initialize TLS server with default cert
+    // tls_server_init(default_cert, default_key)
+
+    // Add additional certs for other domains
+    // tls_server_add_cert("/etc/letsencrypt/live/nyxkv.com/fullchain.pem",
+    //                     "/etc/letsencrypt/live/nyxkv.com/privkey.pem")
+    // tls_server_add_cert("/etc/letsencrypt/live/serve.nyxlang.com/fullchain.pem",
+    //                     "/etc/letsencrypt/live/serve.nyxlang.com/privkey.pem")
+
+    print("SNI config example:")
+    print("  default: nyxlang.com")
+    print("  +cert: nyxkv.com")
+    print("  +cert: serve.nyxlang.com")
+    print("  +cert: proxy.nyxlang.com")
+    print("")
+    print("OpenSSL selects the cert based on the client's SNI hint.")
+    print("This is how nyx-proxy serves 4 domains on one port :443.")
+
+    return 0
+}

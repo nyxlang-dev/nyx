@@ -1,0 +1,26 @@
+// test-235-mut-ref — &mut expr como nodo addr_of_mut (Track 2, T2a).
+// `&mut x` es un nodo DISTINTO de `&x` (superficie del borrow checker
+// estricto: Track 3b lo usará para la exclusividad de &mut). En IR baja
+// igual que `&x` (T*), así que `*p = v` muta el original. Se verifica el
+// nodo nuevo como binding local y como argumento de función.
+// Auto-verificable con assert() abortivo.
+
+fn set_to(p: &mut int, v: int) {
+    *p = v
+}
+
+fn main() -> int {
+    // &mut x en un binding local
+    var x: int = 10
+    let p: &mut int = &mut x
+    *p = 42
+    assert(x == 42)
+
+    // &mut y como argumento de función
+    var y: int = 1
+    set_to(&mut y, 99)
+    assert(y == 99)
+
+    print("mut-ref OK")
+    return 0
+}

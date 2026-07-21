@@ -1,0 +1,25 @@
+// Test A12: Recursión mutua
+// Prueba: funciones que se llaman mutuamente
+
+fn my_is_even(n: int) -> bool {
+    if n == 0 {
+        return true
+    }
+    return my_is_odd(n - 1)
+}
+
+fn my_is_odd(n: int) -> bool {
+    if n == 0 {
+        return false
+    }
+    return my_is_even(n - 1)
+}
+
+fn main() {
+    if my_is_even(10) { print(1) } else { print(0) }   // 1
+    if my_is_odd(10) { print(1) } else { print(0) }     // 0
+    if my_is_even(7) { print(1) } else { print(0) }     // 0
+    if my_is_odd(7) { print(1) } else { print(0) }      // 1
+
+    return 0
+}

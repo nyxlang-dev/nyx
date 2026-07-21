@@ -1,0 +1,113 @@
+// ===== TEST UNITARIO: MOTOR DE UNIFICACION POR-ID (Fase 1a) =====
+// Verifica compiler/types.nx: TyVar + subst mutable + occurs-check +
+// unify_var + freshen_params — infra ADITIVA, no cableada al pipeline
+// existente (ver docs/superpowers/plans/2026-07-08-type-system-real-borrow-async.md).
+// Ejecutar: NYX_INLINE_COMPILER=1 make run FILE=tests/compiler-unit/test-types-unify.nx
+//
+// NYX_INLINE_COMPILER=1 (ver compiler/nyx.nx): permite inlinear
+// `import { ... } from "compiler/types"` como import normal en vez de
+// excluirlo (P0, commit c8053e7).
+
+import { ty_var, ty_int, ty_string, ty_array, ty_generic, ty_fn, subst_new, subst_resolve, unify_var, occurs_check, freshen_params, subst_apply, ty_kind, subst_resolve_deep, ty_to_call_ann, ty_to_str, ty_parse, ty_ref_region, ty_eq } from "compiler/types"
+
+fn main() {
+    // ---- Grupo 1: occurs-check dispara en T = Array<T> ----
+    // TyVar(0) NO puede bindear a Array<TyVar(0)> — tipo infinito.
+    let s1 = subst_new()
+    let inner1 = ty_array(ty_var(0))
+    assert(occurs_check(0, inner1, s1) == true)
+    assert(unify_var(ty_var(0), inner1, s1) == false)
+
+    // ---- Grupo 2: Array<T> vs Array<int> bindea T=int ----
+    let s2 = subst_new()
+    let ok2 = unify_var(ty_array(ty_var(0)), ty_array(ty_int()), s2)
+    assert(ok2 == true)
+    let resolved2 = subst_resolve(s2, ty_var(0))
+    assert(ty_kind(resolved2) == "TyInt")
+
+    // ---- Grupo 3: T=int luego T=String falla (conflicto) ----
+    let s3 = subst_new()
+    let ok3a = unify_var(ty_var(0), ty_int(), s3)
+    assert(ok3a == true)
+    let ok3b = unify_var(ty_var(0), ty_string(), s3)
+    assert(ok3b == false)
+
+    // ---- Grupo 4: cadena de TyVar (T0 -> T1 -> int) ----
+    let s4 = subst_new()
+    let ok4a = unify_var(ty_var(0), ty_var(1), s4)
+    assert(ok4a == true)
+    let ok4b = unify_var(ty_var(1), ty_int(), s4)
+    assert(ok4b == true)
+    let resolved4 = subst_resolve(s4, ty_var(0))
+    assert(ty_kind(resolved4) == "TyInt")
+
+    // ---- Grupo 5: freshen_params + subst_apply reemplaza TyGeneric ----
+    // Firma genérica fn f<T, U>(T) -> U representada como
+    // ty_fn([ty_generic("T")], ty_generic("U")).
+    let counter = [0]
+    let fresh = freshen_params(["T", "U"], counter)
+    let names: Array = fresh[0]
+    let types: Array = fresh[1]
+    assert(names.length() == 2)
+    assert(types.length() == 2)
+    // Los dos TyVar frescos tienen ids distintos.
+    let v0: Array = types[0]
+    let v1: Array = types[1]
+    assert(ty_kind(v0) == "TyVar")
+    assert(ty_kind(v1) == "TyVar")
+    let id0: int = v0[1]
+    let id1: int = v1[1]
+    assert(id0 != id1)
+
+    let sig = ty_fn([ty_generic("T")], ty_generic("U"))
+    let sig_fresh = subst_apply(sig, names, types)
+    assert(ty_kind(sig_fresh) == "TyFn")
+    let sig_params: Array = sig_fresh[1]
+    let sig_ret: Array = sig_fresh[2]
+    let p0: Array = sig_params[0]
+    assert(ty_kind(p0) == "TyVar")
+    assert(ty_kind(sig_ret) == "TyVar")
+
+    // ---- Grupo 6 (1b): subst_resolve_deep + ty_to_call_ann por-id ----
+    // Array<TyVar(0)> con 0->int bindeado debe resolver PROFUNDO a
+    // Array<int> (subst_resolve, shallow, no atraviesa containers).
+    let s6 = subst_new()
+    let ok6 = unify_var(ty_var(0), ty_int(), s6)
+    assert(ok6 == true)
+    let deep6 = subst_resolve_deep(s6, ty_array(ty_var(0)))
+    assert(ty_kind(deep6) == "TyArray")
+    assert(ty_to_str(deep6) == "Array<int>")
+
+    // ty_to_call_ann sobre un TyVar sin bindear (subst vacío) -> "" (no
+    // concreto: el caller no debe transformar el call).
+    let s7 = subst_new()
+    assert(ty_to_call_ann(ty_var(9), s7) == "")
+
+    // ty_to_call_ann sobre un TyVar bindeado a int -> "int".
+    let s8 = subst_new()
+    let ok8 = unify_var(ty_var(0), ty_int(), s8)
+    assert(ok8 == true)
+    assert(ty_to_call_ann(ty_var(0), s8) == "int")
+
+    // ---- Grupo 9 (3c-full fundación): TyRef gana slot de REGIÓN ----
+    // ty_parse extrae el lifetime de un &'a T (future-proof; el parser real
+    // strippea los lifetimes de refs, pero la fundación queda funcional y testeada).
+    let rt = ty_parse("&'a int")
+    assert(ty_kind(rt) == "TyRef")
+    assert(ty_ref_region(rt) == "a")
+    let rtm = ty_parse("&mut 'b String")
+    assert(ty_kind(rtm) == "TyRefMut")
+    assert(ty_ref_region(rtm) == "b")
+    // &int sin lifetime → región "".
+    let rt0 = ty_parse("&int")
+    assert(ty_kind(rt0) == "TyRef")
+    assert(ty_ref_region(rt0) == "")
+    // La región se PRESERVA a través de subst_resolve_deep (cascada).
+    let s9 = subst_new()
+    let deep9 = subst_resolve_deep(s9, ty_parse("&'a int"))
+    assert(ty_ref_region(deep9) == "a")
+    // ty_eq IGNORA la región: &'a int == &int (cero cambio de comportamiento).
+    assert(ty_eq(ty_parse("&'a int"), ty_parse("&int")) == true)
+
+    print("TEST-TYPES-UNIFY: OK")
+}

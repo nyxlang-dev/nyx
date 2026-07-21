@@ -1,0 +1,20 @@
+// TEST 16: Scope (parámetro en lugar de global)
+fn test_scope(global: int) -> int {
+    let local = 50
+    return global + local
+}
+
+fn main() {
+    print("=== TEST 16: SCOPE ===")
+
+    let global = 100
+
+    print("Resultado de test_scope:")
+    print(test_scope(global))
+
+    print("Variable global:")
+    print(global)
+
+    print("✅ Test 16 completado")
+    return 0
+}

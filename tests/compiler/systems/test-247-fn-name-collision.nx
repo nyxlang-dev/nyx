@@ -1,0 +1,28 @@
+// codegen (2026-07-13): una función nombrada usada como valor `Fn` (p.ej. un
+// handler pasado a http_serve) NO debe colisionar con un LOCAL homónimo de OTRA
+// función. Antes `ctx.variables` no se limpiaba entre funciones → la entrada
+// stale `handler`→<alloca de scope_with_local> sobrevivía, y en `main`
+// codegen_identifier tomaba el load stale CROSS-FUNCTION en vez del closure pair
+// → IR inválido (`use of undefined value`). El reporter de http_serve tropezó
+// con esto al llamar su handler `h` (colisiona con `let h` de std/http).
+// Fix: limpiar ctx.variables al entrar a cada función top-level.
+
+fn scope_with_local() -> int {
+    let handler: int = 42      // local 'handler' — dejaba entrada stale en ctx.variables
+    return handler
+}
+
+fn invoke(f: Fn) -> int {
+    return 99
+}
+
+// función top-level llamada 'handler' (homónima del local de arriba)
+fn handler(req: int) -> int {
+    return req + 1
+}
+
+fn main() {
+    let x: int = scope_with_local()
+    let y: int = invoke(handler)   // 'handler' como Fn arg → antes: IR inválido
+    print(int_to_string(x + y))    // 42 + 99 = 141
+}

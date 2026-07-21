@@ -1,0 +1,49 @@
+// test-190: Reverse proxy — config, backend selection, health check
+import "std/proxy"
+
+fn main() {
+    // Test config creation
+    let config = proxy_new(8080)
+    print("port:" + int_to_string(config.listen_port))
+
+    // Add backends
+    proxy_add_backend(config, "localhost", 3001)
+    proxy_add_backend(config, "localhost", 3002)
+    proxy_add_backend(config, "localhost", 3003)
+    print("backends:" + int_to_string(config.backends.length()))
+
+    // Test round-robin selection
+    let b1: Backend = select_backend(config)
+    print(b1.host + ":" + int_to_string(b1.port))
+
+    let b2: Backend = select_backend(config)
+    print(b2.host + ":" + int_to_string(b2.port))
+
+    let b3: Backend = select_backend(config)
+    print(b3.host + ":" + int_to_string(b3.port))
+
+    // Wraps around
+    let b4: Backend = select_backend(config)
+    print(b4.host + ":" + int_to_string(b4.port))
+
+    // Test marking backends unhealthy
+    proxy_set_unhealthy(config, 0)
+    let h0: bool = config.healthy[0]
+    if not h0 {
+        print("backend unhealthy")
+    }
+
+    // Round-robin skips unhealthy backends
+    config.next_idx[0] = 0
+    let b5: Backend = select_backend(config)
+    print("skip to:" + b5.host + ":" + int_to_string(b5.port))
+
+    // Restore healthy
+    proxy_set_healthy(config, 0)
+
+    // Test parse_content_length
+    let cl = parse_content_length("12345")
+    print(cl)
+
+    print("proxy config ok")
+}

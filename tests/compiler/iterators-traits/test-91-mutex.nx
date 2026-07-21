@@ -1,0 +1,35 @@
+// Test 91: Mutex — basic lock/unlock and channel aggregation
+
+fn worker_a() -> int {
+    return 10
+}
+
+fn worker_b() -> int {
+    return 20
+}
+
+fn worker_c() -> int {
+    return 30
+}
+
+fn main() {
+    let mtx: Map = mutex_new()
+
+    // Simple mutex test: lock, unlock
+    mutex_lock(mtx)
+    mutex_unlock(mtx)
+
+    // Spawn 3 threads, each returns a value
+    let t1: int = thread_spawn(worker_a)
+    let t2: int = thread_spawn(worker_b)
+    let t3: int = thread_spawn(worker_c)
+
+    let v1: int = thread_join(t1)
+    let v2: int = thread_join(t2)
+    let v3: int = thread_join(t3)
+    let total: int = v1 + v2 + v3
+    print(total)  // 60
+
+    mutex_destroy(mtx)
+    print("done")
+}

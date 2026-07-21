@@ -1,0 +1,43 @@
+// Test A18: Closures con estado mutable
+// Prueba: múltiples closures compartiendo estado
+// NOTA: Closures de 3+ niveles NO soportadas
+
+fn with_state(init: int) -> int {
+    var state = init
+    fn modify(delta: int) {
+        state = state + delta
+    }
+    fn read() -> int {
+        return state
+    }
+    modify(10)
+    modify(20)
+    modify(-5)
+    return read()
+}
+
+fn filter_count(arr: Array, threshold: int) -> int {
+    var count = 0
+    fn check(val: int) {
+        if val > threshold {
+            count = count + 1
+        }
+    }
+    var i = 0
+    while i < arr.length() {
+        check(arr[i])
+        i = i + 1
+    }
+    return count
+}
+
+fn main() {
+    // with_state(100) = 100 + 10 + 20 - 5 = 125
+    print(with_state(100))
+
+    // filter_count: count elements > 5 in [1,3,7,2,9,4,8]
+    let data = [1, 3, 7, 2, 9, 4, 8]
+    print(filter_count(data, 5))  // 3 (7, 9, 8)
+
+    return 0
+}

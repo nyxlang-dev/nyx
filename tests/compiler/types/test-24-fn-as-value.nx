@@ -1,0 +1,30 @@
+// test-24: Funciones asignadas a variables
+// Verifica: let f: Fn = my_function, luego f(x)
+
+fn double(n: int) -> int { return n * 2 }
+fn triple(n: int) -> int { return n * 3 }
+fn negate(n: int) -> int { return 0 - n }
+
+fn compose(f: Fn, g: Fn, x: int) -> int {
+    return f(g(x))
+}
+
+fn main() {
+    // Asignar función a variable
+    let f: Fn = double
+    print(f(7))  // 14
+
+    // Reasignar (con var)
+    var op: Fn = double
+    print(op(5))   // 10
+    op = triple
+    print(op(5))   // 15
+    op = negate
+    print(op(5))   // -5
+
+    // Composición
+    print(compose(double, triple, 4))  // double(triple(4)) = double(12) = 24
+    print(compose(negate, double, 3))  // negate(double(3)) = negate(6) = -6
+
+    return 0
+}

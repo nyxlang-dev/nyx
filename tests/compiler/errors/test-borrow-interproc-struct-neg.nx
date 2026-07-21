@@ -1,0 +1,13 @@
+// inc 3c-2a NEG: Plain NO tiene lifetime → no está en struct_lt_set → el retorno de make
+// NO es ref-like → h no se tinta → sin marca. (Distingue struct-con-'a de struct común.)
+struct Plain { r: int }
+
+fn make(x: &int) -> Plain { return Plain { r: *x } }
+
+fn caller() -> Plain {
+    let local: int = 5
+    let h: Plain = make(&local)
+    return h
+}
+
+fn main() { print(1) }

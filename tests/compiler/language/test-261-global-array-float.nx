@@ -1,0 +1,27 @@
+// test-261 — literal FLOAT en un array GLOBAL. Antes: el path de init de
+// globales (__nyx_init_globals) emitía `nyx_array_push(..., i64 1.5)` — i64 con
+// constante float → clang abortaba en el link ("floating point constant invalid
+// for type"). El path in-function (codegen_array_literal) sí bitcasteaba double→i64.
+// Fix: el handler de array global bitcastea los literales float igual.
+// (Reportado por venezuelainfo: `var __ve_lon: Array = [0.0]` no compilaba.)
+var coords: Array = [1.5, 2.25, 0.0]
+var nums: Array = [10, 20, 30]
+
+fn main() {
+    // Lo que arreglaba el fix: que ESTO COMPILE (antes: `i64 1.5` → clang aborta
+    // en el link). La lectura se hace bindeando a un local tipado `float` (patrón
+    // normal; el read INLINE de un elemento float de un array GLOBAL sin anotación
+    // no infiere el tipo todavía — gap ortogonal catalogado en TASKS.md). Los
+    // literales NEGATIVOS en array global (`[-2.25]`) son nodo `unary`, no `number`
+    // → el handler los saltea (otro gap catalogado); acá se usan positivos.
+    let c0: float = coords[0]
+    let c1: float = coords[1]
+    let c2: float = coords[2]
+    assert(c0 == 1.5)
+    assert(c1 == 2.25)
+    assert(c2 == 0.0)
+    // los int en array global siguen funcionando (no regresión)
+    let n0: int = nums[0]
+    assert(n0 == 10)
+    print("global-array-float OK")
+}

@@ -1,0 +1,12 @@
+// inc 3c cross-módulo NEG: xdup (importada) presta del arg, pero el arg es un GLOBAL
+// (no frame-bound) → r no se tinta → sin marca.
+import "tests/test-modules/borrow_dup"
+
+let G: int = 7
+
+fn caller() -> &int {
+    let r: &int = xdup(&G)
+    return r
+}
+
+fn main() { print(1) }

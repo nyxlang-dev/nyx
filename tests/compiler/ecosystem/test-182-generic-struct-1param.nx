@@ -1,0 +1,14 @@
+// Test 182: Generic struct with 1 type parameter
+// Bug: Box<T>, Wrapper<T> cause GEP sizing error
+
+struct Wrapper<T> {
+    value: T
+}
+
+fn main() {
+    let w = Wrapper<int> { value: 42 }
+    print(w.value)
+
+    let ws = Wrapper<String> { value: "hello" }
+    print(ws.value)
+}

@@ -1,0 +1,33 @@
+// M-08 B8-F1: trait bounds reales en calls genéricos.
+// Point implementa Other (hay impls locales → check estricto) pero NO
+// Display, así que show_it(p) debe fallar con NYX1020.
+
+trait Display {
+    fn show(self) -> String
+}
+
+trait Other {
+    fn tag(self) -> int
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Other for Point {
+    fn tag(self) -> int {
+        return 1
+    }
+}
+
+fn show_it<T: Display>(x: T) -> int {
+    return 0
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 1, y: 2 }
+    let r: int = show_it(p)
+    print(r)
+    return 0
+}

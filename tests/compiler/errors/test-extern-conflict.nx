@@ -1,0 +1,12 @@
+// test-extern-conflict — dos módulos declararían el mismo extern "C" con
+// firmas DISTINTAS. Hoy el dedup "primera gana" de codegen_extern_fn descarta
+// la segunda en SILENCIO (el programa compila) → los call-sites de la segunda
+// firma se codegenean con la primera = miscompile. El fix aborta con error.
+// (Aquí se declaran en un solo archivo; el parser acepta dos externs homónimos
+//  top-level — verificado — y codegen procesa ambos nodos.)
+extern "C" fn dup_sig(x: int) -> int
+extern "C" fn dup_sig(s: String) -> String
+
+fn main() {
+    print("no debería compilar")
+}

@@ -1,0 +1,10 @@
+port:8080
+backends:3
+localhost:3001
+localhost:3002
+localhost:3003
+localhost:3001
+backend unhealthy
+skip to:localhost:3002
+12345
+proxy config ok

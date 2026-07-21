@@ -1,0 +1,16 @@
+// multi-lifetime: Holder<'a,'b> con DOS lifetimes distintos.
+// mk<'a,'b>(a:&'a,b:&'b)->Holder<'a,'b>. El &local está en la posición del SEGUNDO
+// lifetime 'b → verifica que el matching considera TODOS los lifetimes del ret-type
+// (no solo el primero, como hacía extract_first_lifetime). Gatea NYX1222.
+let G: int = 4
+struct Holder<'a, 'b> { x: &'a int, y: &'b int }
+
+fn mk<'a, 'b>(a: &'a int, b: &'b int) -> Holder<'a, 'b> { return Holder { x: a, y: b } }
+
+fn caller() -> Holder {
+    let local: int = 5
+    let h: Holder = mk(&G, &local)
+    return h
+}
+
+fn main() { print(1) }

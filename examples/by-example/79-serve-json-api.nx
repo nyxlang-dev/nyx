@@ -1,0 +1,40 @@
+// nyx-serve JSON API — request parsing and response_json_map
+// API JSON nyx-serve — parseo de request y response_json_map
+
+import "std/http"
+import "std/web"
+import "std/json"
+
+fn echo_json(req: Request) -> Response {
+    // req.body contains the raw request body as a String
+    // Use std/json to parse structured input
+    let data: String = req.body
+
+    // response_json_map builds a JSON object from a Map
+    var result: Map = Map.new()
+    result.insert("received", data)
+    result.insert("method", req.method)
+    result.insert("path", req.path)
+    return response_json_map(200, result)
+}
+
+fn health_check(req: Request) -> Response {
+    // response_json takes a raw JSON string
+    return response_json(200, "{\"status\": \"ok\", \"service\": \"api\"}")
+}
+
+fn not_found(req: Request) -> Response {
+    return response_json(404, "{\"error\": \"not found\"}")
+}
+
+fn main() -> int {
+    let app: App = app_new()
+
+    app_get(app, "/health", health_check)
+    app_post(app, "/echo", echo_json)
+
+    print("JSON API configured")
+    print("  GET  /health -> {\"status\": \"ok\"}")
+    print("  POST /echo   -> echoes request body as JSON")
+    return 0
+}

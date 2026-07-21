@@ -1,0 +1,21 @@
+// test-207: a module function may read a `var`/`let` global declared in
+// another module even when its module is imported BEFORE the declaring one.
+//
+// Regression for the order-dependent cross-module forward-ref bug: the
+// semantic checker only registered fns/structs/enums/aliases in its pre-pass,
+// not top-level globals, so an importer whose `import` line preceded the
+// declaring module saw "g_X not declared". register_declarations now
+// pre-registers top-level let/var names.
+//
+// b2_router (reads g_flag) is imported BEFORE b2_cache (declares g_flag).
+// If the bug is present, the semantic check fails to compile (no binary).
+import "tests/test-modules/b2_router" as router
+import "tests/test-modules/b2_cache" as cache
+
+fn main() -> int {
+    if route() != 100 {
+        return 1
+    }
+    print("cross-module-global-forward-ref ok")
+    return 0
+}

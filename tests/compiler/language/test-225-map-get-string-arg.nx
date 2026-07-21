@@ -1,0 +1,35 @@
+// test-225-map-get-string-arg — Map.get() String pasado como ARGUMENTO de función
+// (sin `let` tipado ni literal que fije el hint). Antes daba GC-OOM/SEGV: el arg
+// caía al fallback i64 de map.get y se trataba como puntero basura. Fue el crash
+// real de venezuelainfo (shout(req.query.get(...))). Fix: codegen_call_expr propaga
+// el tipo del parámetro como expected_type al generar cada arg. Self-checking.
+
+struct Req { query: Map, path: String }
+
+fn shout(s: String) -> String {
+    return s + "!"
+}
+fn first_char(s: String) -> String {
+    return s.substring(0, 1)
+}
+
+fn main() {
+    var q: Map = {}
+    q.insert("name", "Ada")
+    q.insert("lang", "Nyx")
+
+    // Map local: get() directo como arg (sin hint)
+    assert(shout(q.get("name")) == "Ada!")
+    assert(first_char(q.get("lang")) == "N")
+
+    // Map que es CAMPO de struct: get() como arg (el caso venezuelainfo)
+    var r: Req = Req { query: q, path: "/" }
+    assert(shout(r.query.get("name")) == "Ada!")
+
+    // no regresión: bound y comparación inline siguen bien
+    let b: String = r.query.get("lang")
+    assert(b == "Nyx")
+    assert(r.query.get("name") == "Ada")
+
+    print("map-get-string-arg OK")
+}

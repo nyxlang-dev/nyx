@@ -1,0 +1,36 @@
+// JSON con std/json: construir objetos, arrays y serializar/parsear números
+
+import "std/json"
+
+fn main() -> int {
+    // Construir un objeto JSON programáticamente
+    let keys: Array = ["name", "age", "activo"]
+    let vals: Array = []
+    vals.push(json_string("Alice"))
+    vals.push(json_number(30))
+    vals.push(json_bool(true))
+
+    let obj: Array = json_object(keys, vals)
+    let serializado: String = json_stringify(obj)
+    print("Objeto: " + serializado)
+
+    // Construir un array JSON
+    let items: Array = []
+    items.push(json_number(10))
+    items.push(json_number(20))
+    items.push(json_number(30))
+    let arr: Array = json_array(items)
+    print("Array:  " + json_stringify(arr))
+
+    // Parsear un número
+    let parsed: Array = json_parse("42")
+    print("Tipo: " + json_type(parsed))
+    let val: int = parsed[1]
+    print("Valor: " + int_to_string(val))
+
+    // Parsear un array de números
+    let parsed2: Array = json_parse("[1,2,3]")
+    print("Array parseado: " + json_stringify(parsed2))
+
+    return 0
+}

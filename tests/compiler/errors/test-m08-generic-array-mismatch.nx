@@ -1,0 +1,14 @@
+// M-08 sesion 10 error test: T inside Array<T> param. Passing Array<int>
+// binds T=int; declaring the let as String must mismatch the substituted
+// return type.
+// Expected stderr (contains): "type mismatch in 'n': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+fn first_of<T>(arr: Array<T>) -> T {
+    return arr[0]
+}
+
+fn main() -> int {
+    let n: String = first_of([1, 2, 3])
+    print(n)
+    return 0
+}

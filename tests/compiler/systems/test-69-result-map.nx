@@ -1,0 +1,40 @@
+// Test 69: Result closure methods — map, map_err, and_then
+
+fn parse_int(s: int) -> Result<int, String> {
+    if s >= 0 { return Result<int, String>.Ok(s) }
+    return Result<int, String>.Err("negative")
+}
+
+fn double_val(x: int) -> int {
+    return x * 2
+}
+
+fn double_result(x: int) -> Result<int, String> {
+    return Result<int, String>.Ok(x * 2)
+}
+
+fn main() -> int {
+    let ok_val: Result<int, String> = parse_int(5)
+    let err_val: Result<int, String> = parse_int(-1)
+
+    // map on Ok: applies fn, wraps in Ok
+    let doubled: Result<int, String> = ok_val.map(double_val)
+    let d_val: int = doubled.unwrap()
+    print(d_val)
+
+    // map on Err: passes through
+    let still_err: Result<int, String> = err_val.map(double_val)
+    if still_err.is_err() { print("map on err: still err") }
+
+    // and_then on Ok: applies fn that returns Result
+    let chained: Result<int, String> = ok_val.and_then(double_result)
+    let c_val: int = chained.unwrap()
+    print(c_val)
+
+    // and_then on Err: passes through
+    let still_err2: Result<int, String> = err_val.and_then(double_result)
+    if still_err2.is_err() { print("and_then on err: still err") }
+
+    print("result map passed")
+    return 0
+}

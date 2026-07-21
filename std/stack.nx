@@ -1,0 +1,59 @@
+// std/stack.nx — Stack LIFO mutable para Nyx.
+//
+// EN: A last-in-first-out stack of ints backed by a dynamic Array. Uses the
+//     v0.17 in-place mutation feature (`&mut self` methods that persist to the
+//     caller) — the first stdlib data structure written in the idiomatic
+//     struct+impl style instead of the older free-function-over-holder pattern
+//     (cf. std/linkedlist.nx).
+// ES: Stack LIFO de int respaldado por un Array dinámico. Usa la mutación
+//     in-place de v0.17 (métodos `&mut self` que persisten al caller) — la
+//     primera estructura de datos de la stdlib en el estilo idiomático
+//     struct+impl, en vez del patrón viejo de funciones libres sobre un holder
+//     Array (cf. std/linkedlist.nx).
+//
+// Uso / usage:
+//   var s: Stack = stack_new()
+//   s.push(10)
+//   s.push(20)
+//   let top: int = s.pop()   // 20
+
+pub struct Stack {
+    items: Array,
+    size: int,
+}
+
+// Crea un stack vacío.
+pub fn stack_new() -> Stack {
+    return Stack { items: [], size: 0 }
+}
+
+impl Stack {
+    // Apila un valor en el tope. Muta in-place (persiste al caller).
+    fn push(&mut self, x: int) {
+        self.items.push(x)
+        self.size = self.size + 1
+    }
+
+    // Desapila y devuelve el valor del tope. Precondición: no vacío.
+    fn pop(&mut self) -> int {
+        let last: int = self.items[self.size - 1]
+        self.items.remove(self.size - 1)
+        self.size = self.size - 1
+        return last
+    }
+
+    // Devuelve el tope sin desapilar. Precondición: no vacío.
+    fn peek(self) -> int {
+        return self.items[self.size - 1]
+    }
+
+    // Cantidad de elementos.
+    fn len(self) -> int {
+        return self.size
+    }
+
+    // ¿Está vacío?
+    fn is_empty(self) -> bool {
+        return self.size == 0
+    }
+}

@@ -1,0 +1,75 @@
+// std/webpush.nx — Web Push: VAPID (RFC 8292) + cifrado aes128gcm (RFC 8291).
+// Orquesta las primitivas de std/webpushcrypto reusando base64url.
+import "std/webpushcrypto"
+import "std/base64"
+import "std/http"
+
+// ── VAPID (RFC 8292) ────────────────────────────────────────────────────────
+
+// Firma un JWT VAPID ES256. `priv` = clave privada P-256 (32B raw).
+// `audience` = origen del endpoint push (esquema+host). `subject` = mailto:/https:.
+// `exp` = expiración UNIX (segundos). Devuelve "header.payload.signature" (base64url).
+pub fn vapid_jwt(priv: String, audience: String, subject: String, exp: int) -> String {
+    let header = "{\"typ\":\"JWT\",\"alg\":\"ES256\"}"
+    let claims = "{\"aud\":\"" + audience + "\",\"exp\":" + exp.to_string() + ",\"sub\":\"" + subject + "\"}"
+    let signing_input = base64url_encode(header) + "." + base64url_encode(claims)
+    let digest = sha256_bytes(signing_input)          // 32B raw (std/webpushcrypto)
+    let sig = ecdsa_p256_sign(priv, digest)
+    return signing_input + "." + base64url_encode(sig)
+}
+
+// ── Cifrado aes128gcm (RFC 8291) ────────────────────────────────────────────
+
+// Núcleo determinístico. Todos los materiales aleatorios (salt, keypair
+// efímero as_*) se pasan como parámetros → reproducible para los test vectors.
+// client_p256dh = clave pública P-256 del navegador (65B). auth = 16B.
+// Devuelve el body aes128gcm: salt(16) ‖ rs(4=4096 BE) ‖ idlen(1=65) ‖ as_pub(65) ‖ ct.
+pub fn webpush_encrypt_with_keys(payload: String, client_p256dh: String, auth: String,
+                                 salt: String, as_priv: String, as_pub: String) -> String {
+    // ECDH: secreto compartido con la clave del navegador.
+    let ecdh = ecdh_p256(as_priv, client_p256dh)
+
+    // IKM = HKDF(salt=auth, ikm=ecdh, info="WebPush: info\0" ‖ client_pub ‖ as_pub, 32).
+    let ikm_info = "WebPush: info" + u8(0) + client_p256dh + as_pub
+    let ikm = hkdf_sha256(auth, ecdh, ikm_info, 32)
+
+    // CEK = HKDF(salt, IKM, "Content-Encoding: aes128gcm\0", 16).
+    let cek = hkdf_sha256(salt, ikm, "Content-Encoding: aes128gcm" + u8(0), 16)
+    // nonce = HKDF(salt, IKM, "Content-Encoding: nonce\0", 12).
+    let nonce = hkdf_sha256(salt, ikm, "Content-Encoding: nonce" + u8(0), 12)
+
+    // Padding delimiter para el único record: 0x02.
+    let ct = aes128gcm_encrypt(cek, nonce, payload + u8(2), "")
+
+    // Header aes128gcm (RFC 8188 §2.1): salt(16) rs(4) idlen(1) keyid(=as_pub 65).
+    // rs = 4096 = 0x00001000 big-endian.
+    let rs = u8(0) + u8(0) + u8(16) + u8(0)
+    let idlen = u8(65)
+    return salt + rs + idlen + as_pub + ct
+}
+
+// Cifra un payload generando salt (16B) y keypair efímero P-256.
+pub fn webpush_encrypt(payload: String, client_p256dh: String, auth: String) -> String {
+    let salt = csprng_bytes(16)
+    let kp = ec_p256_keypair()
+    let as_priv = kp.substring(0, 32)
+    let as_pub  = kp.substring(32, 97)
+    return webpush_encrypt_with_keys(payload, client_p256dh, auth, salt, as_priv, as_pub)
+}
+
+// ── Envío ───────────────────────────────────────────────────────────────────
+
+// POST del body cifrado al endpoint con los headers VAPID + aes128gcm.
+// vapid_pub = clave pública P-256 del servidor (65B raw). `ttl` = segundos que
+// el push service retiene el mensaje si el device está offline (default 86400 =
+// 24h; para una alerta SÍSMICA usar un TTL corto, p.ej. 300, para que un device
+// que reconecta tarde NO reciba un aviso viejo como si fuera de ahora). Devuelve
+// la respuesta de http_request: ["response", code, headers, body].
+pub fn webpush_send(endpoint: String, jwt: String, vapid_pub: String, encrypted: String, ttl: int = 86400) -> Array {
+    let headers: Array = [
+        "Authorization", "vapid t=" + jwt + ",k=" + base64url_encode(vapid_pub),
+        "Content-Encoding", "aes128gcm",
+        "TTL", int_to_string(ttl)
+    ]
+    return http_request("POST", endpoint, headers, encrypted)
+}

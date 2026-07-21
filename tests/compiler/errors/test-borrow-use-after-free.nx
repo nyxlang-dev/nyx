@@ -1,0 +1,14 @@
+// T3a — use-after-free (NYX1220). Corre con NYX_BORROW=error.
+// 'p' es un puntero crudo alocado con alloc<int>; tras free(p) el
+// puntero queda dangling. Escribir *p después es un use-after-free.
+// Bajo NYX_BORROW=error el build falla (exit != 0). SOUND: solo se
+// activa porque el programa llama free() sobre memoria manual — el
+// código GC nunca dispara este check. (Sin NYX_BORROW = modo OFF.)
+fn main() {
+    unsafe {
+        let p: *int = alloc<int>(1)
+        *p = 5
+        free(p)
+        *p = 9              // ← use of freed value 'p'
+    }
+}

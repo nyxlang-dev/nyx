@@ -1,0 +1,33 @@
+// nyx-serve CORS — cross-origin headers for frontend APIs
+// CORS nyx-serve — headers cross-origin para APIs de frontend
+
+import "std/http"
+import "std/web"
+
+fn api_data(req: Request) -> Response {
+    return response_json(200, "{\"data\": [1, 2, 3]}")
+}
+
+fn main() -> int {
+    let app: App = app_new()
+
+    // Configure CORS policy — who can call the API, what methods, headers
+    cors_configure(
+        "https://myapp.com",
+        "GET, POST, PUT, DELETE",
+        "Content-Type, Authorization, X-API-Key"
+    )
+
+    // Register CORS middleware — handles OPTIONS preflight + adds headers
+    app_use(app, mw_cors)
+
+    // Also register logging middleware
+    app_use(app, mw_logging)
+
+    app_get(app, "/api/data", api_data)
+
+    print("CORS configured for https://myapp.com")
+    print("middleware chain: logging -> cors -> route handler")
+    print("OPTIONS preflight requests return 204 with appropriate headers")
+    return 0
+}

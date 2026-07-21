@@ -1,0 +1,10 @@
+// Driver error: un import que no resuelve a ningún archivo debe ABORTAR la
+// compilación con exit != 0 (antes se descartaba en silencio → undefined
+// reference críptico en el linker o build verde engañoso). El path correcto
+// sería "src/..." dentro de un proyecto PM, o "std/..." para la stdlib.
+import "definitivamente_inexistente_xyz"
+
+fn main() -> int {
+    print("no debería compilar")
+    return 0
+}

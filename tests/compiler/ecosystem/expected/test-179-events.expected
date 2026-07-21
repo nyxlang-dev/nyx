@@ -1,0 +1,22 @@
+events test
+--- Event Bus ---
+emit called 1 handler ok
+handler called twice ok
+payloads correct ok
+unregistered event 0 handlers ok
+history 3 entries ok
+was emitted ok
+not emitted ok
+--- Multi-Subscriber ---
+two subscribers both called ok
+--- Observable ---
+initial value ok
+set value ok
+watcher called twice ok
+watcher values ok
+history length 3 ok
+--- Observable Computed ---
+computed initial value ok
+computed after set ok
+computed zero ok
+events ok

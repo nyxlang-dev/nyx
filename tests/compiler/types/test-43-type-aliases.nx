@@ -1,0 +1,29 @@
+// TEST 43: Type Aliases
+type Integer = int
+type Text = String
+type Flag = bool
+
+fn add(a: Integer, b: Integer) -> Integer {
+    return a + b
+}
+
+fn greet(name: Text) -> Text {
+    return "Hello, " + name
+}
+
+fn main() {
+    let x: Integer = 42
+    let y: Integer = 10
+    print(int_to_string(add(x, y)))
+
+    let msg: Text = greet("World")
+    print(msg)
+
+    let flag: Flag = true
+    if flag {
+        print("flag is true")
+    }
+
+    print("OK")
+    return 0
+}

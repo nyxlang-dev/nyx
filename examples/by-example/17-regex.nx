@@ -1,0 +1,36 @@
+// Expresiones regulares: regex_is_match, regex_match, regex_replace
+
+import "std/regex"
+
+fn validar_email(email: String) -> bool {
+    // Patrón POSIX básico para email
+    return regex_is_match(email, "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$")
+}
+
+fn main() -> int {
+    // Validar emails
+    let email1: String = "alice@example.com"
+    let email2: String = "no-es-email"
+    let email3: String = "bob.dev@nyx-lang.org"
+
+    print("Email: " + email1 + " -> " + int_to_string(validar_email(email1)))
+    print("Email: " + email2 + " -> " + int_to_string(validar_email(email2)))
+    print("Email: " + email3 + " -> " + int_to_string(validar_email(email3)))
+
+    // regex_match: retorna la primera coincidencia o ""
+    let texto: String = "Nyx version 0.12.0 released"
+    let resultado: String = regex_match(texto, "[0-9]+\\.[0-9]+\\.[0-9]+")
+    print("Version encontrada: " + resultado)
+
+    // regex_replace: reemplaza primera coincidencia
+    let frase: String = "Hola   mundo   Nyx"
+    let limpio: String = regex_replace(frase, "  +", " ")
+    print("Sin espacios dobles: " + limpio)
+
+    // regex_replace_all: reemplaza todas las coincidencias
+    let html: String = "<b>nyx</b> es <i>rapido</i>"
+    let sin_tags: String = regex_replace_all(html, "<[^>]+>", "")
+    print("Sin HTML: " + sin_tags)
+
+    return 0
+}

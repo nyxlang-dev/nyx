@@ -1,0 +1,41 @@
+// Ordenamiento: sort_int() de std/array + bubble sort manual
+import "std/array"
+
+fn print_array(arr: Array) {
+    var s: String = "["
+    var i: int = 0
+    while i < arr.length() {
+        let v: int = arr[i]
+        s = s + int_to_string(v)
+        if i < arr.length() - 1 {
+            s = s + ", "
+        }
+        i = i + 1
+    }
+    s = s + "]"
+    print(s)
+}
+
+fn main() -> int {
+    var nums: Array = [64, 25, 12, 22, 11, 90, 3, 47, 8, 55]
+
+    print("Antes de ordenar:")
+    print_array(nums)
+
+    // sort_int ordena in-place y retorna el array
+    let ordenado: Array = sort_int(nums)
+
+    print("Despues de ordenar:")
+    print_array(ordenado)
+
+    // Otro ejemplo: strings
+    var palabras: Array = ["manzana", "banana", "cereza", "aguacate"]
+    print("Strings antes:")
+    print_array(palabras)
+
+    let ord_str: Array = sort_str(palabras)
+    print("Strings despues:")
+    print_array(ord_str)
+
+    return 0
+}

@@ -1,0 +1,30 @@
+// M-08 sesion 21 error test: struct con impl Display asignado a
+// dyn Writer (trait que NO implementa). S21 valida el trait impl
+// en lugar de wildcardearlo (ty_eq lo dejaba pasar).
+// Expected stderr (contains): "'Point' does not implement 'dyn Writer' required by 'd'"
+// Expected exit: non-zero (semantic check fails)
+
+trait Display {
+    fn show(self) -> String
+}
+
+trait Writer {
+    fn write(self) -> int
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Display for Point {
+    fn show(self) -> String {
+        return "pt"
+    }
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 1, y: 2 }
+    let d: dyn Writer = p   // Point no implementa Writer
+    return 0
+}

@@ -1,0 +1,50 @@
+// inc 4 Etapa 4 (pre-2 drop monomorfizado) — drop determinista de un tipo
+// #[affine] GENÉRICO con `impl<T> ... { fn drop }`. El destructor se monomorfiza
+// por instancia (Box_int_drop) y corre EXACTAMENTE una vez al salir de scope o
+// al ser consumido por move (sin double-free). Box<T> { ptr: *T } con alloc/free
+// manual: el drop libera memoria REAL (razón de ser de Box, estilo Rust).
+var g_frees: int = 0
+
+#[affine]
+struct Box<T> { ptr: *T }
+
+impl<T> Box<T> {
+    fn drop(self) {
+        free(self.ptr)
+        g_frees = g_frees + 1
+    }
+}
+
+fn box_new<T>(v: T) -> Box<T> {
+    let p: *T = alloc<T>(1)
+    *p = v
+    return Box<T> { ptr: p }
+}
+
+// Consume el Box by-value (lo mueve), lee el valor y libera la memoria en el drop
+// del parámetro (Box::into_inner de Rust). El call-site apaga el drop flag del
+// caller → sin double-free.
+fn box_into<T>(b: Box<T>) -> T {
+    let p: *T = b.ptr
+    return *p
+}
+
+fn scope_drop() {
+    let b: Box<int> = box_new(7)
+    // b sale de scope → drop determinista: free(ptr) + g_frees++
+}
+
+fn scope_move() {
+    let b: Box<int> = box_new(99)
+    let v: int = box_into(b)   // b movido a box_into → box_into dropea (1 free)
+    assert(v == 99)
+}
+
+fn main() {
+    scope_drop()
+    assert(g_frees == 1)       // drop al salir de scope
+    scope_move()
+    assert(g_frees == 2)       // consume-move liberó exactamente una vez (no double)
+    print("frees=" + int_to_string(g_frees))
+    print("ok")
+}

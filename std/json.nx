@@ -1,0 +1,442 @@
+// ============================================
+// JSON.NX - JSON Parser/Serializer for Nyx v5.2
+// ============================================
+// Pure Nyx implementation — recursive descent parser
+
+// JSON value types represented as tagged arrays:
+// ["null"]
+// ["bool", 0/1]
+// ["number", int_value]
+// ["string", string_value]
+// ["array", [values...]]
+// ["object", keys_array, values_array]
+
+pub fn json_null() -> Array {
+    let arr: Array = ["null"]
+    return arr
+}
+
+pub fn json_bool(val: bool) -> Array {
+    let arr: Array = ["bool"]
+    if val {
+        arr.push(1)
+    } else {
+        arr.push(0)
+    }
+    return arr
+}
+
+pub fn json_number(val: int) -> Array {
+    let arr: Array = ["number", val]
+    return arr
+}
+
+// ["float", text] — el valor se guarda como el TEXTO numérico original
+// ("10.5", "4.2e3"), no como un double crudo: los Arrays de Nyx almacenan
+// i64, así que un double necesitaría bitcast manual al leerlo; preservar el
+// texto evita ese footgun y además da round-trip exacto en json_stringify.
+pub fn json_float(val: float) -> Array {
+    let arr: Array = ["float", float_to_string(val)]
+    return arr
+}
+
+pub fn json_string(val: String) -> Array {
+    let arr: Array = ["string"]
+    arr.push(val)
+    return arr
+}
+
+pub fn json_array(items: Array) -> Array {
+    let arr: Array = ["array"]
+    arr.push(items)
+    return arr
+}
+
+pub fn json_object(keys: Array, vals: Array) -> Array {
+    let arr: Array = ["object"]
+    arr.push(keys)
+    arr.push(vals)
+    return arr
+}
+
+// Get the type tag of a JSON value
+pub fn json_type(val: Array) -> String {
+    let tag: String = val[0]
+    return tag
+}
+
+// Look up a field in a JSON object value. Returns its JSON value, or json_null
+// if the value is not an object or the key is absent.
+pub fn json_get(obj: Array, key: String) -> Array {
+    let tag: String = obj[0]
+    if tag != "object" { return json_null() }
+    let keys: Array = obj[1]
+    let vals: Array = obj[2]
+    var i: int = 0
+    while i < keys.length() {
+        let k: String = keys[i]
+        if k == key {
+            let v: Array = vals[i]
+            return v
+        }
+        i = i + 1
+    }
+    return json_null()
+}
+
+// Extract the underlying String of a ["string", s] JSON value ("" otherwise).
+pub fn json_as_string(val: Array) -> String {
+    let tag: String = val[0]
+    if tag == "string" {
+        let s: String = val[1]
+        return s
+    }
+    return ""
+}
+
+// Extract the underlying int of a ["number", n] JSON value (0 otherwise).
+// Para ["float", text] trunca a entero (string_to_int corta en el punto).
+pub fn json_as_int(val: Array) -> int {
+    let tag: String = val[0]
+    if tag == "number" {
+        let n: int = val[1]
+        return n
+    }
+    if tag == "float" {
+        let s: String = val[1]
+        return float_to_int(string_to_float(s))
+    }
+    return 0
+}
+
+// Extract the underlying float of a ["float", text] o ["number", n] JSON value
+// (0.0 otherwise). Es el accesor correcto para coordenadas/magnitudes.
+pub fn json_as_float(val: Array) -> float {
+    let tag: String = val[0]
+    if tag == "float" {
+        let s: String = val[1]
+        return string_to_float(s)
+    }
+    if tag == "number" {
+        let n: int = val[1]
+        return int_to_float(n)
+    }
+    return 0.0
+}
+
+// Extrae el i-ésimo elemento de un `["array", [...]]` JSON (json_null si `arr` no
+// es array o `i` está fuera de rango). El accesor que faltaba para recorrer arrays
+// JSON — coordenadas de GeoJSON, listas de resultados, etc. — sin desempacar a mano.
+pub fn json_array_get(arr: Array, i: int) -> Array {
+    let tag: String = arr[0]
+    if tag != "array" { return json_null() }
+    let items: Array = arr[1]
+    if i < 0 or i >= items.length() { return json_null() }
+    let v: Array = items[i]
+    return v
+}
+
+// Longitud de un `["array", [...]]` JSON (0 si no es un array).
+pub fn json_array_len(arr: Array) -> int {
+    let tag: String = arr[0]
+    if tag != "array" { return 0 }
+    let items: Array = arr[1]
+    return items.length()
+}
+
+// Stringify a JSON value to a string
+pub fn json_stringify(val: Array) -> String {
+    let tag: String = val[0]
+
+    if tag == "null" {
+        return "null"
+    }
+
+    if tag == "bool" {
+        let bv: int = val[1]
+        if bv == 1 {
+            return "true"
+        }
+        return "false"
+    }
+
+    if tag == "number" {
+        let nv: int = val[1]
+        return int_to_string(nv)
+    }
+
+    if tag == "float" {
+        // El texto original se preservó al parsear → round-trip exacto.
+        let fv: String = val[1]
+        return fv
+    }
+
+    if tag == "string" {
+        let sv: String = val[1]
+        return "\"" + sv + "\""
+    }
+
+    if tag == "array" {
+        let items: Array = val[1]
+        var result: String = "["
+        var i: int = 0
+        let len: int = items.length()
+        while i < len {
+            if i > 0 {
+                result = result + ","
+            }
+            let item: Array = items[i]
+            result = result + json_stringify(item)
+            i = i + 1
+        }
+        return result + "]"
+    }
+
+    if tag == "object" {
+        let keys: Array = val[1]
+        let vals: Array = val[2]
+        var result: String = "{"
+        var i: int = 0
+        let len: int = keys.length()
+        while i < len {
+            if i > 0 {
+                result = result + ","
+            }
+            let k: String = keys[i]
+            let v: Array = vals[i]
+            result = result + "\"" + k + "\":" + json_stringify(v)
+            i = i + 1
+        }
+        return result + "}"
+    }
+
+    return "null"
+}
+
+// ===== JSON PARSER =====
+// Recursive descent parser using a position counter in an array
+
+pub fn json_parse(input: String) -> Array {
+    let pos: Array = [0]
+    let result: Array = parse_value(input, pos)
+    return result
+}
+
+fn skip_whitespace(input: String, pos: Array) {
+    let len: int = input.length()
+    var p: int = pos[0]
+    while p < len {
+        let c: char = input.charAt(p)
+        if c == ' ' or c == '\n' or c == '\r' or c == '\t' {
+            p = p + 1
+        } else {
+            pos[0] = p
+            return 0
+        }
+    }
+    pos[0] = p
+    return 0
+}
+
+fn parse_value(input: String, pos: Array) -> Array {
+    skip_whitespace(input, pos)
+    let p: int = pos[0]
+    let len: int = input.length()
+    if p >= len {
+        return json_null()
+    }
+
+    let c: char = input.charAt(p)
+
+    // String
+    if c == '"' {
+        return parse_string(input, pos)
+    }
+
+    // Number (digit or minus)
+    if c == '-' or (c >= '0' and c <= '9') {
+        return parse_number(input, pos)
+    }
+
+    // Array
+    if c == '[' {
+        return parse_array(input, pos)
+    }
+
+    // Object
+    if c == '{' {
+        return parse_object(input, pos)
+    }
+
+    // true
+    if c == 't' {
+        pos[0] = p + 4
+        return json_bool(true)
+    }
+
+    // false
+    if c == 'f' {
+        pos[0] = p + 5
+        return json_bool(false)
+    }
+
+    // null
+    if c == 'n' {
+        pos[0] = p + 4
+        return json_null()
+    }
+
+    return json_null()
+}
+
+fn parse_string(input: String, pos: Array) -> Array {
+    var p: int = pos[0] + 1  // skip opening quote
+    let len: int = input.length()
+    var result: String = ""
+    while p < len {
+        let c: char = input.charAt(p)
+        if c == '"' {
+            pos[0] = p + 1
+            return json_string(result)
+        }
+        if c == '\\' {
+            p = p + 1
+            if p < len {
+                let esc: char = input.charAt(p)
+                if esc == 'n' {
+                    result = result + "\n"
+                } else if esc == 't' {
+                    result = result + "\t"
+                } else if esc == '"' {
+                    result = result + "\""
+                } else if esc == '\\' {
+                    result = result + "\\"
+                } else {
+                    result = result + char_to_string(esc)
+                }
+            }
+        } else {
+            result = result + char_to_string(c)
+        }
+        p = p + 1
+    }
+    pos[0] = p
+    return json_string(result)
+}
+
+fn parse_number(input: String, pos: Array) -> Array {
+    let len: int = input.length()
+    let start: int = pos[0]
+    var p: int = start
+    if p < len {
+        if input.charAt(p) == '-' { p = p + 1 }
+    }
+    var is_float: bool = false
+    // Parte entera
+    while p < len {
+        let c: char = input.charAt(p)
+        if c >= '0' and c <= '9' { p = p + 1 } else { break }
+    }
+    // Fracción
+    if p < len {
+        if input.charAt(p) == '.' {
+            is_float = true
+            p = p + 1
+            while p < len {
+                let cf: char = input.charAt(p)
+                if cf >= '0' and cf <= '9' { p = p + 1 } else { break }
+            }
+        }
+    }
+    // Exponente
+    if p < len {
+        let ce: char = input.charAt(p)
+        if ce == 'e' or ce == 'E' {
+            is_float = true
+            p = p + 1
+            if p < len {
+                let cs: char = input.charAt(p)
+                if cs == '+' or cs == '-' { p = p + 1 }
+            }
+            while p < len {
+                let cd: char = input.charAt(p)
+                if cd >= '0' and cd <= '9' { p = p + 1 } else { break }
+            }
+        }
+    }
+    pos[0] = p
+    let text: String = input.substring(start, p)
+    if is_float {
+        let farr: Array = ["float", text]
+        return farr
+    }
+    return json_number(string_to_int(text))
+}
+
+fn parse_array(input: String, pos: Array) -> Array {
+    pos[0] = pos[0] + 1  // skip [
+    skip_whitespace(input, pos)
+    let items: Array = []
+    if pos[0] < input.length() and input.charAt(pos[0]) == ']' {
+        pos[0] = pos[0] + 1
+        return json_array(items)
+    }
+
+    // Parse first element
+    let first: Array = parse_value(input, pos)
+    items.push(first)
+
+    skip_whitespace(input, pos)
+    while pos[0] < input.length() and input.charAt(pos[0]) == ',' {
+        pos[0] = pos[0] + 1  // skip comma
+        let elem: Array = parse_value(input, pos)
+        items.push(elem)
+        skip_whitespace(input, pos)
+    }
+
+    if pos[0] < input.length() and input.charAt(pos[0]) == ']' {
+        pos[0] = pos[0] + 1
+    }
+    return json_array(items)
+}
+
+fn parse_object(input: String, pos: Array) -> Array {
+    pos[0] = pos[0] + 1  // skip {
+    skip_whitespace(input, pos)
+    let keys: Array = []
+    let vals: Array = []
+
+    if pos[0] < input.length() and input.charAt(pos[0]) == '}' {
+        pos[0] = pos[0] + 1
+        return json_object(keys, vals)
+    }
+
+    // Parse first key:value
+    skip_whitespace(input, pos)
+    let k1: Array = parse_string(input, pos)
+    let k1v: String = k1[1]
+    keys.push(k1v)
+    skip_whitespace(input, pos)
+    pos[0] = pos[0] + 1  // skip :
+    let v1: Array = parse_value(input, pos)
+    vals.push(v1)
+
+    skip_whitespace(input, pos)
+    while pos[0] < input.length() and input.charAt(pos[0]) == ',' {
+        pos[0] = pos[0] + 1
+        skip_whitespace(input, pos)
+        let k: Array = parse_string(input, pos)
+        let kv: String = k[1]
+        keys.push(kv)
+        skip_whitespace(input, pos)
+        pos[0] = pos[0] + 1  // skip :
+        let v: Array = parse_value(input, pos)
+        vals.push(v)
+        skip_whitespace(input, pos)
+    }
+
+    if pos[0] < input.length() and input.charAt(pos[0]) == '}' {
+        pos[0] = pos[0] + 1
+    }
+    return json_object(keys, vals)
+}

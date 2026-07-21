@@ -1,0 +1,35 @@
+// Test 27: String interpolation
+// "hello ${expr}" desugars to "hello " + (expr)
+
+fn main() {
+    let name = "World"
+    print("Hello ${name}!")
+
+    let age = 25
+    print("Age: ${age}")
+
+    let pi = 3.14
+    print("Pi is ${pi}")
+
+    let flag = true
+    print("Flag: ${flag}")
+
+    // Multiple interpolations
+    let a = 10
+    let b = 20
+    print("${a} + ${b} = ${a + b}")
+
+    // Nested expression
+    print("Double: ${a * 2}")
+
+    // Only interpolation
+    print("${name}")
+
+    // Adjacent interpolations
+    print("${a}${b}")
+
+    // No interpolation (should still work)
+    print("plain string")
+}
+
+main()

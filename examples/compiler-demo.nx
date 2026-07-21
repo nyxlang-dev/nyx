@@ -1,0 +1,149 @@
+// ============================================
+// compiler-demo.nx - Demo de File I/O
+// ============================================
+// Simulación simple de un compilador usando File I/O
+
+// Función para verificar si un archivo existe y leerlo
+fn read_source(input_path) {
+    let exists = file_exists(input_path)
+    
+    if exists {
+        print("📂 Leyendo archivo...")
+        print(input_path)
+        return read_file(input_path)
+    } else {
+        print("💥 Error: Archivo no encontrado")
+        print(input_path)
+        return ""
+    }
+}
+
+// Función para "compilar" (placeholder simple)
+fn compile_to_llvm(source_code) {
+    print("🔨 Compilando código fuente...")
+    
+    // Por ahora, solo generamos LLVM IR básico
+    let llvm_ir = "; Nyx Compiler Output
+; Generated from source
+
+define i64 @main() {
+entry:
+  ; Source code:
+  ; " + source_code + "
+  
+  ret i64 0
+}
+"
+    
+    return llvm_ir
+}
+
+// Función para escribir el resultado
+fn write_output(output_path, llvm_ir) {
+    print("💾 Escribiendo resultado...")
+    print(output_path)
+    
+    let success = write_file(output_path, llvm_ir)
+    
+    if success {
+        print("✅ Compilación exitosa")
+        return true
+    } else {
+        print("❌ Error al escribir archivo")
+        return false
+    }
+}
+
+// Pipeline completo de compilación
+fn compile_nyx_file(input_path, output_path) {
+    print("╔════════════════════════════════════════╗")
+    print("║  🧬 Nyx Compiler v0.7.4             ║")
+    print("╚════════════════════════════════════════╝")
+    print("")
+    
+    // Fase 1: Leer código fuente
+    let source = read_source(input_path)
+    
+    if source == "" {
+        return
+    }
+    
+    print("")
+    print("📝 Código fuente:")
+    print(source)
+    print("")
+    
+    // Fase 2: Compilar
+    let llvm_ir = compile_to_llvm(source)
+    
+    print("")
+    
+    // Fase 3: Escribir resultado
+    let success = write_output(output_path, llvm_ir)
+    
+    print("")
+    
+    if success {
+        print("🎉 Pipeline completado")
+        print("")
+        print("Archivos generados:")
+        print("  Input:  " + input_path)
+        print("  Output: " + output_path)
+    }
+}
+
+// Función para crear archivo de prueba
+fn create_test_file() {
+    let test_code = "fn main() {
+    let x = 10
+    let y = 20
+    let suma = x + y
+    print(suma)
+}"
+    
+    write_file("example.nx", test_code)
+    print("📄 Archivo de prueba creado: example.nx")
+    print("")
+}
+
+// Función para mostrar estadísticas
+fn show_stats(filename) {
+    if !file_exists(filename) {
+        return
+    }
+    
+    print("📊 Estadísticas del archivo:")
+    
+    let lines = read_lines(filename)
+    let line_count = lines.length()
+    
+    print("  Líneas: " + line_count)
+    
+    let content = read_file(filename)
+    // Note: En una implementación real, tendríamos String.length()
+    print("  Contenido leído exitosamente")
+}
+
+// Main entry point
+fn main() {
+    // Crear archivo de prueba
+    create_test_file()
+    
+    // Compilar
+    compile_nyx_file("example.nx", "example.ll")
+    
+    print("")
+    
+    // Mostrar estadísticas
+    show_stats("example.ll")
+    
+    print("")
+    print("╔════════════════════════════════════════╗")
+    print("║  ✅ Demo completada                   ║")
+    print("╚════════════════════════════════════════╝")
+}
+
+// ============================================
+// PARA EJECUTAR:
+// make run FILE=examples/compiler-demo.nx
+// ============================================

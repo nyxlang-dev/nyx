@@ -1,0 +1,188 @@
+// ============================================
+// Nyx Playground Server v0.10.0
+// ============================================
+// Web-based code editor that compiles and runs Nyx code
+// Usage: make playground (starts on port 8080)
+
+import "std/http"
+import "std/json"
+
+// Base directory for static files (relative to project root)
+let STATIC_DIR: String = "playground/static"
+let EXAMPLES_DIR: String = "playground/examples"
+let PORT: int = 8081
+
+// Runtime sources needed for compilation
+let RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c"
+let LIBS: String = "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+
+// WASM target (v0.19.0): el playground compila el código del usuario a wasm32-wasi
+// y lo manda al browser para correrlo SANDBOXEADO — el server NUNCA ejecuta código
+// de usuario. Subset portable del runtime (sin net/tls/thread/etc, que WASI no tiene).
+let WASM_CFLAGS: String = "--target=wasm32-wasi --sysroot=/usr -O2 -Iruntime/wasi -Wl,-z,stack-size=1048576 -Wl,--export-table"
+let WASM_RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/iterators.c runtime/file-io.c runtime/time.c runtime/random.c runtime/url.c runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c"
+
+fn content_type_for(path: String) -> String {
+    if path.endsWith(".html") { return "text/html; charset=utf-8" }
+    if path.endsWith(".css") { return "text/css; charset=utf-8" }
+    if path.endsWith(".js") { return "application/javascript; charset=utf-8" }
+    if path.endsWith(".nx") { return "text/plain; charset=utf-8" }
+    if path.endsWith(".json") { return "application/json" }
+    return "text/plain"
+}
+
+fn serve_static(file_path: String) -> String {
+    if file_exists(file_path) {
+        let content: String = read_file(file_path)
+        let ct: String = content_type_for(file_path)
+        let headers: Array = ["Content-Type", ct]
+        return http_response_with_headers(200, headers, content)
+    }
+    return http_response(404, "Not Found")
+}
+
+fn run_error_response(err_output: String, label: String) -> String {
+    let json_body: String = "{\"success\":false,\"output\":\"" + label + ":\\n" + json_escape(err_output) + "\"}"
+    let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+    return http_response_with_headers(200, headers, json_body)
+}
+
+// Compila el código del usuario a wasm32-wasi y devuelve el .wasm en base64.
+// SEGURIDAD: el server NUNCA ejecuta código de usuario — el browser corre el wasm
+// sandboxeado (nyx-wasi-shim.js / runNyxWasm). Programas que usan red/threads NO
+// compilan bajo wasm (codegen_target_guard) → el error se devuelve y el frontend
+// lo muestra amable ("no corre en el sandbox del browser").
+fn handle_run(body: String) -> String {
+    let src_path: String = "/tmp/nyx_playground_src.nx"
+    let wasm_path: String = "/tmp/nyx_playground.wasm"
+    let b64_path: String = "/tmp/nyx_playground.b64"
+    let err_path: String = "/tmp/nyx_playground_err.txt"
+
+    write_file(src_path, body)
+
+    // Step 1: source → script.nx
+    exec("cp " + src_path + " script.nx")
+
+    // Step 2: compilar a IR wasm32-wasi (guard de red/threads dispara acá)
+    let compile_cmd: String = "NYX_PROJECT_DIR=playground NYX_TARGET=wasm32-wasi NYX_NO_GC=1 ./nyx_bootstrap > " + err_path + " 2>&1"
+    let compile_rc: int = exec(compile_cmd)
+    if compile_rc != 0 {
+        return run_error_response(read_file(err_path), "Compilation error")
+    }
+
+    // Step 3: linkear a .wasm (subset portable del runtime)
+    let link_cmd: String = "clang " + WASM_CFLAGS + " script.ll " + WASM_RUNTIME_SRCS + " -o " + wasm_path + " > " + err_path + " 2>&1"
+    let link_rc: int = exec(link_cmd)
+    if link_rc != 0 {
+        return run_error_response(read_file(err_path), "WASM link error")
+    }
+
+    // Step 4: base64 del .wasm (ASCII seguro para JSON; -w0 = sin saltos de línea).
+    // NUNCA ejecutamos el wasm en el server: lo corre el browser.
+    exec("base64 -w0 " + wasm_path + " > " + b64_path)
+    var wasm_b64: String = ""
+    if file_exists(b64_path) {
+        wasm_b64 = read_file(b64_path)
+    }
+    if wasm_b64.length() == 0 {
+        return run_error_response("no se pudo generar el .wasm", "Internal error")
+    }
+
+    let json_body: String = "{\"success\":true,\"mode\":\"wasm\",\"wasm_b64\":\"" + wasm_b64 + "\"}"
+    let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+    return http_response_with_headers(200, headers, json_body)
+}
+
+fn json_escape(s: String) -> String {
+    var result: String = ""
+    var i: int = 0
+    while i < s.length() {
+        let c: char = s.charAt(i)
+        if c == '"' {
+            result = result + "\\\""
+        } else if c == '\\' {
+            result = result + "\\\\"
+        } else if c == '\n' {
+            result = result + "\\n"
+        } else if c == '\r' {
+            result = result + "\\r"
+        } else if c == '\t' {
+            result = result + "\\t"
+        } else {
+            result = result + char_to_string(c)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn handle_examples_list() -> String {
+    let json_body: String = "[\"hello\",\"fibonacci\",\"structs\",\"factorial\",\"gcd\",\"powers\",\"arrays\",\"maps\",\"strings\"]"
+    let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+    return http_response_with_headers(200, headers, json_body)
+}
+
+fn handle_example(name: String) -> String {
+    let file_path: String = EXAMPLES_DIR + "/" + name + ".nx"
+    if file_exists(file_path) {
+        let content: String = read_file(file_path)
+        let json_body: String = "{\"name\":\"" + name + "\",\"code\":\"" + json_escape(content) + "\"}"
+        let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
+        return http_response_with_headers(200, headers, json_body)
+    }
+    let headers: Array = ["Content-Type", "application/json"]
+    return http_response_with_headers(404, headers, "{\"error\":\"Example not found\"}")
+}
+
+fn playground_handler(request: Array) -> String {
+    let method: String = request[1]
+    let path: String = request[2]
+    let body: String = request[4]
+
+    // Root -> serve index.html
+    if method == "GET" and path == "/" {
+        return serve_static(STATIC_DIR + "/index.html")
+    }
+
+    // Static files
+    if method == "GET" and path.startsWith("/static/") {
+        let file_name: String = path.substring(8, path.length())
+        return serve_static(STATIC_DIR + "/" + file_name)
+    }
+
+    // API: compile and run
+    if method == "POST" and path == "/api/run" {
+        return handle_run(body)
+    }
+
+    // API: list examples
+    if method == "GET" and path == "/api/examples" {
+        return handle_examples_list()
+    }
+
+    // API: get example by name
+    if method == "GET" and path.startsWith("/api/example/") {
+        let name: String = path.substring(13, path.length())
+        return handle_example(name)
+    }
+
+    // CORS preflight
+    if method == "OPTIONS" {
+        let headers: Array = [
+            "Access-Control-Allow-Origin", "*",
+            "Access-Control-Allow-Methods", "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers", "Content-Type"
+        ]
+        return http_response_with_headers(204, headers, "")
+    }
+
+    return http_response(404, "Not Found")
+}
+
+fn main() {
+    print("=== Nyx Playground Server ===")
+    print("Listening on http://localhost:" + int_to_string(PORT))
+    print("Press Ctrl+C to stop")
+    print("")
+    http_serve(PORT, playground_handler)
+}

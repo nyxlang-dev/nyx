@@ -1,0 +1,7 @@
+// Tests helper module — a user function whose name collides with the
+// zero-arg terminal builtin `read_byte()`. Used by test-206 to guard against
+// the codegen builtin-shortcut hijacking user/module calls.
+// (Reproduces the persist.read_byte(arr, offset) scenario from nyx-db.)
+pub fn read_byte(arr: Array, offset: int) -> int {
+    return arr[offset]
+}

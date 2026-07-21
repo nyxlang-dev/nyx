@@ -1,0 +1,28 @@
+// test-262 — rework del handler de array en __nyx_init_globals: reusar
+// codegen_array_literal (dispatch completo de tipos) en vez del hand-rolled
+// parcial. Cierra el gap: literales NEGATIVOS (nodo `unary`, no `number`) se
+// saltaban silenciosamente → el array quedaba más corto. Ahora todos los tipos
+// que soporta un array literal in-function funcionan también en globales.
+var negs: Array = [-5, -10, 3]        // ints negativos (antes: saltados)
+var fnegs: Array = [-1.5, 2.5]        // float negativo
+var bools: Array = [true, false]      // bool
+var strs: Array = ["a", "b", "c"]     // strings (no regresión)
+
+fn main() {
+    // length correcta: los negativos ya NO se saltan
+    assert(negs.length() == 3)
+    assert(fnegs.length() == 2)
+    assert(bools.length() == 2)
+    assert(strs.length() == 3)
+    // Read INLINE (sin anotación) de elementos de array GLOBAL — funciona por el
+    // float-hint del binop, igual que in-function. (El "gap #2 de read inline"
+    // catalogado en su momento fue un MAL DIAGNÓSTICO: el síntoma real era el
+    // negativo saltado del write que corría los índices, ya cerrado por el rework.)
+    assert(negs[0] == -5)
+    assert(negs[1] == -10)
+    assert(negs[2] == 3)
+    assert(fnegs[0] == -1.5)
+    assert(fnegs[1] == 2.5)
+    assert(strs[2] == "c")
+    print("global-array-rework OK")
+}

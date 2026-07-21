@@ -1,0 +1,13 @@
+// test-265 — struct GENÉRICO capturado en el SharedEnv (clase i64 del
+// pre_scan, finding del code-review 2026-07-17): `let w = Wrapper<int>{..}`
+// SIN anotación + nested fn que lo lee. Antes: vtype quedaba "Wrapper" pelado
+// → campo i64 → `ptrtoint %Wrapper_int to i64` = IR inválido (invalid cast
+// opcode en el link). Ahora: el campo tipa %Wrapper_int (nombre monomorfizado).
+struct Wrapper<T> { val: T }
+
+fn main() {
+    let w = Wrapper<int> { val: 5 }
+    fn peek() -> int { return w.val }
+    assert(peek() == 5)
+    print("generic struct captured OK")
+}

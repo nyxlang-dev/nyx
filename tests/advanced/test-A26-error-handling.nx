@@ -1,0 +1,80 @@
+// Test A26: Error Handling Pipeline
+// Combines: Result enum, ? operator, match, match guards, string interpolation
+
+enum Result {
+    Ok(int),
+    Err(String)
+}
+
+fn safe_divide(a: int, b: int) -> Result {
+    if b == 0 {
+        return Result.Err("division by zero")
+    }
+    return Result.Ok(a / b)
+}
+
+fn safe_sqrt_int(n: int) -> Result {
+    if n < 0 {
+        return Result.Err("negative input")
+    }
+    var guess = 0
+    while guess * guess <= n {
+        guess += 1
+    }
+    return Result.Ok(guess - 1)
+}
+
+fn pipeline(a: int, b: int) -> Result {
+    let div = safe_divide(a, b)?
+    let root = safe_sqrt_int(div)?
+    return Result.Ok(root)
+}
+
+fn unwrap_or(r: Result, default_val: int) -> int {
+    return match r {
+        Result.Ok(v) => v,
+        Result.Err(e) => default_val
+    }
+}
+
+fn describe_result(r: Result) -> String {
+    return match r {
+        Result.Ok(v) if v > 100 => "big success: ${v}",
+        Result.Ok(v) if v > 0 => "success: ${v}",
+        Result.Ok(v) => "zero or negative: ${v}",
+        Result.Err(e) => "error: ${e}"
+    }
+}
+
+fn chain_ops(x: int) -> Result {
+    let a = safe_divide(x, 2)?
+    let b = safe_divide(a * 10, 3)?
+    let c = safe_divide(b, 2)?
+    return Result.Ok(c)
+}
+
+fn main() -> int {
+    let r1 = pipeline(100, 4)
+    print(describe_result(r1))
+
+    let r2 = pipeline(100, 0)
+    print(describe_result(r2))
+
+    let r3 = safe_sqrt_int(-5)
+    print(describe_result(r3))
+
+    let r4 = chain_ops(100)
+    print(describe_result(r4))
+
+    let r5 = chain_ops(1)
+    print(describe_result(r5))
+
+    print(unwrap_or(r1, -1))
+    print(unwrap_or(r2, -1))
+
+    let r6 = Result.Ok(200)
+    print(describe_result(r6))
+
+    print("A26 passed")
+    return 0
+}

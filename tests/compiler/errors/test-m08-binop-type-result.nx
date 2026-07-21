@@ -1,0 +1,8 @@
+// M-08 sesion 3 error test: inferred binop result type clashes with annotation.
+// `1 + 2` infers to int; annotation says String → mismatch.
+// Expected stderr (contains): "type mismatch in 's': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let s: String = 1 + 2
+    return 0
+}

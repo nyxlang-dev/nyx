@@ -1,0 +1,25 @@
+// test-230: to_string sobre bool y f32 (además de int/double del test-226).
+// Regresión del code-review: el fix de to_string cubría solo i64/double; bool
+// (i1) y f32 (float) seguían cayendo al fallback mudo que devuelve 0. Helper
+// compartido codegen_to_string_prim cubre los 4 en ambos caminos del method_call.
+// EN: to_string on bool (i1) and f32 (float) receivers, variable and expression.
+
+fn main() {
+    // bool — variable y expresión
+    let t: bool = true
+    let f: bool = false
+    assert(t.to_string() == "true")
+    assert(f.to_string() == "false")
+    assert((1 < 2).to_string() == "true")
+
+    // f32 — variable y expresión
+    let x: f32 = 2.5
+    let xs: String = x.to_string()
+    assert(xs.startsWith("2.5"))
+
+    // concat inline (el caso real)
+    let msg: String = "ok=" + t.to_string()
+    assert(msg == "ok=true")
+
+    print("test-230 OK")
+}

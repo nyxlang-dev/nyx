@@ -1,0 +1,17 @@
+// M-08 sesion 5 error test: impl method return type vs let annotation.
+// c.value() returns int; annotation says String.
+// Expected stderr (contains): "type mismatch in 's': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+struct Counter { n: int }
+
+impl Counter {
+    fn value(self) -> int {
+        return self.n
+    }
+}
+
+fn main() -> int {
+    let c: Counter = Counter { n: 42 }
+    let s: String = c.value()
+    return 0
+}

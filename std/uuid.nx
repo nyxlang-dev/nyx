@@ -1,0 +1,28 @@
+// std/uuid.nx — UUID v4 generation for Nyx (v4.5.0)
+
+extern "C" fn nyx_uuid_v4() -> String
+extern "C" fn nyx_uuid_is_valid(s: String) -> bool
+
+// ── UUID v4 ───────────────────────────────────────────────────────────────────
+
+// Generate a random UUID v4: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+pub fn uuid_v4() -> String {
+    return nyx_uuid_v4()
+}
+
+// Check if a string is a valid UUID format
+pub fn uuid_is_valid(s: String) -> bool {
+    return nyx_uuid_is_valid(s)
+}
+
+// Extract the version number from a UUID string (4 for v4)
+pub fn uuid_version(s: String) -> int {
+    if s.length() != 36 { return -1 }
+    // version is at index 14
+    let ch = s.charAt(14)
+    if ch == '4' { return 4 }
+    if ch == '1' { return 1 }
+    if ch == '3' { return 3 }
+    if ch == '5' { return 5 }
+    return -1
+}

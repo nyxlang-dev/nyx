@@ -1,0 +1,18 @@
+// Test 89: TCP Basic — listen, connect, write, read, close
+// Uses loopback (127.0.0.1) with a high port to avoid conflicts
+
+fn main() {
+    // Test DNS resolution
+    let ip: String = resolve("localhost")
+    print(ip)  // 127.0.0.1
+
+    // Test TCP listen (just verify we can bind)
+    let server_fd: int = tcp_listen("127.0.0.1", 19876)
+    let ok: bool = server_fd >= 0
+    print(ok)  // true
+
+    // Close the server
+    tcp_close(server_fd)
+
+    print("done")
+}

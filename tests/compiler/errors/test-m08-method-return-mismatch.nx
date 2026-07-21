@@ -1,0 +1,9 @@
+// M-08 sesion 4 error test: method return type clashes with annotation.
+// `arr.length()` infers to int; annotation says String → mismatch.
+// Expected stderr (contains): "type mismatch in 'n': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let arr: Array<int> = [1, 2, 3]
+    let n: String = arr.length()
+    return 0
+}

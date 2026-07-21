@@ -1,0 +1,333 @@
+// std/vdom.nx — VNode + Patch + vdiff. Capa 1 del framework VDOM del frontend WASM.
+// 100% DATA PURA: sin externs ni import de std/dom — testeable NATIVO.
+// Las capas de aplicación de patches al DOM real vienen en tasks siguientes.
+
+pub enum VNode {
+    Text(String),
+    Elem(String, String, Array, Array, Array)   // tag, key, attrs, handlers, children
+}
+
+pub enum Patch {
+    SetText(Array, String),
+    SetAttr(Array, String, String),
+    RemoveAttr(Array, String),
+    Replace(Array, VNode),
+    AppendChild(Array, VNode),
+    RemoveChild(Array, int),
+    SetHandler(Array, String, Fn)
+}
+
+pub fn text(s: String) -> VNode {
+    return VNode.Text(s)
+}
+
+pub fn h(tag: String, attrs: Array, children: Array) -> VNode {
+    return VNode.Elem(tag, "", attrs, [], children)
+}
+
+pub fn h_keyed(tag: String, key: String, attrs: Array, children: Array) -> VNode {
+    return VNode.Elem(tag, key, attrs, [], children)
+}
+
+// Arma el VNode.Elem con el par [evento, handler] agregado a handlers.
+// Función APARTE (no block-arm de match) a propósito: un match-arm cuyo
+// bloque tiene una sentencia (`var new_handlers = ...`) antes de la
+// construcción final del enum dispara un bug de codegen preexistente
+// (generalización del gotcha "block-arm con statements pierde el valor",
+// catalogado en TASKS.md junto a T3/T4 del framework VDOM) — el enum
+// resultante queda con el discriminante de la PRIMERA variante (Text) en
+// vez de Elem, silenciosamente. Repro aislado + detalle en el catálogo.
+// Con la construcción en una función llamada DIRECTA desde el arm (sin
+// statements intermedios en el bloque), el valor viaja bien.
+fn on_elem(tag: String, key: String, attrs: Array, handlers: Array, children: Array, evento: String, handler: Fn) -> VNode {
+    // Array es tipo REFERENCIA: `var new_handlers: Array = handlers` aliasea
+    // el MISMO array del caller en vez de clonarlo — el push de abajo mutaría
+    // en sitio los handlers del VNode viejo (mismo gotcha que path_child, ver
+    // el comentario de bug real más abajo en este archivo). Copiar elemento a
+    // elemento a un array nuevo antes de pushear.
+    var new_handlers: Array = []
+    var i = 0
+    while i < handlers.length() {
+        new_handlers.push(handlers[i])
+        i = i + 1
+    }
+    new_handlers.push([evento, handler])
+    return VNode.Elem(tag, key, attrs, new_handlers, children)
+}
+
+// on(): reconstruye el Elem con el par [evento, handler] agregado a handlers.
+// Sobre un VNode.Text no tiene sentido — se devuelve intacto (no-op conservador).
+pub fn on(vnode: VNode, evento: String, handler: Fn) -> VNode {
+    return match vnode {
+        VNode.Text(s) => VNode.Text(s),
+        VNode.Elem(tag, key, attrs, handlers, children) => on_elem(tag, key, attrs, handlers, children, evento, handler)
+    }
+}
+
+pub fn patch_kind(p: Patch) -> String {
+    return match p {
+        Patch.SetText(path, s) => "SetText",
+        Patch.SetAttr(path, k, v) => "SetAttr",
+        Patch.RemoveAttr(path, k) => "RemoveAttr",
+        Patch.Replace(path, vnode) => "Replace",
+        Patch.AppendChild(path, vnode) => "AppendChild",
+        Patch.RemoveChild(path, idx) => "RemoveChild",
+        Patch.SetHandler(path, evento, handler) => "SetHandler"
+    }
+}
+
+pub fn patch_path(p: Patch) -> Array {
+    return match p {
+        Patch.SetText(path, s) => path,
+        Patch.SetAttr(path, k, v) => path,
+        Patch.RemoveAttr(path, k) => path,
+        Patch.Replace(path, vnode) => path,
+        Patch.AppendChild(path, vnode) => path,
+        Patch.RemoveChild(path, idx) => path,
+        Patch.SetHandler(path, evento, handler) => path
+    }
+}
+
+// --- vdiff: recorrido top-down old vs new, acumulando Patch en acc. ---
+
+// ⚠️ BUG NUEVO cazado en esta task (Task 4, demo contador con 2+ children
+// en el nivel raíz — test-258 nunca lo ejercita porque sus árboles no
+// tienen dos hijos hermanos que diverjan en la recursión): `Array` en Nyx
+// es tipo REFERENCIA — `var p: Array = path` alias-ea el MISMO array, no
+// lo clona. Con el `p.push(i)` de abajo, cada llamada a path_child sobre
+// el `path` de un nivel mutaba EN SITIO el array del padre — y como
+// diff_children_positional/keyed invocan path_child(path, i) una vez POR
+// HIJO reusando la misma variable `path` del padre, el push de un hijo
+// dejaba el array creciendo y el SIGUIENTE hijo heredaba (y seguía
+// mutando) el MISMO array ya alargado, en vez de partir de una copia
+// fresca de `path`. Resultado: todos los Patch de una misma pasada de
+// vdiff terminaban compartiendo el mismo array (y el mismo contenido
+// final, el más largo) como `path` — divergía de curioso a incorrecto
+// recién con 2+ hijos en un nivel (repro: div con [span, button] al
+// tope). Fix: copiar los elementos a un array NUEVO antes de pushear.
+fn path_child(path: Array, i: int) -> Array {
+    var p: Array = []
+    var k = 0
+    while k < path.length() {
+        p.push(path[k])
+        k = k + 1
+    }
+    p.push(i)
+    return p
+}
+
+// Getter tipado para VNodes guardados en Arrays. ⚠️ NECESARIO bajo wasm32:
+// `let c: VNode = arr[i]` deja el valor como i64 crudo (codegen_let no
+// coerciona enums) y pasarlo a una función (vnode_key, vdiff_at) emite la
+// llamada DIRECTA con firma i64 contra un define i8* — en nativo la ABI lo
+// tolera (puntero e i64 comparten el registro de retorno), en wasm32
+// wasm-ld detecta el mismatch y genera un stub que trapea (RuntimeError:
+// unreachable). El ret-type declarado fuerza la coerción i64→i8* en el
+// return, así el call-site que consume el resultado queda con la firma
+// exacta. Mismo patrón que pick_vnode/pick_render en std/component.nx.
+fn vnode_at(arr: Array, i: int) -> VNode {
+    return arr[i]
+}
+
+// diff de un par de listas de atributos (cada attr = [k, v] : Array).
+fn diff_attrs(path: Array, old_attrs: Array, new_attrs: Array, acc: Array) {
+    // nuevo o cambiado: para cada attr de new_attrs, buscar en old_attrs.
+    var ni = 0
+    while ni < new_attrs.length() {
+        let npair: Array = new_attrs[ni]
+        let nk: String = npair[0]
+        let nv: String = npair[1]
+        var found = false
+        var old_v: String = ""
+        var oi = 0
+        while oi < old_attrs.length() {
+            let opair: Array = old_attrs[oi]
+            let ok: String = opair[0]
+            if ok == nk {
+                found = true
+                old_v = opair[1]
+            }
+            oi = oi + 1
+        }
+        if not found {
+            acc.push(Patch.SetAttr(path, nk, nv))
+        } else {
+            if old_v != nv {
+                acc.push(Patch.SetAttr(path, nk, nv))
+            }
+        }
+        ni = ni + 1
+    }
+    // ausente en new → RemoveAttr
+    var oi2 = 0
+    while oi2 < old_attrs.length() {
+        let opair2: Array = old_attrs[oi2]
+        let ok2: String = opair2[0]
+        var still_present = false
+        var nj = 0
+        while nj < new_attrs.length() {
+            let npair2: Array = new_attrs[nj]
+            let nk2: String = npair2[0]
+            if nk2 == ok2 { still_present = true }
+            nj = nj + 1
+        }
+        if not still_present {
+            acc.push(Patch.RemoveAttr(path, ok2))
+        }
+        oi2 = oi2 + 1
+    }
+}
+
+// handlers: siempre SetHandler de los del new — re-bind en cada update; el
+// shim dedupea por (nodo,evento) → idempotente (ver js_dom_on_h/js_dom_on_fn
+// en examples/browser/nyx-wasi-shim.js).
+fn diff_handlers(path: Array, new_handlers: Array, acc: Array) {
+    var i = 0
+    while i < new_handlers.length() {
+        let pair: Array = new_handlers[i]
+        let evento: String = pair[0]
+        let handler: Fn = pair[1]
+        acc.push(Patch.SetHandler(path, evento, handler))
+        i = i + 1
+    }
+}
+
+fn vnode_key(v: VNode) -> String {
+    return match v {
+        VNode.Text(s) => "",
+        VNode.Elem(tag, key, attrs, handlers, children) => key
+    }
+}
+
+fn all_keyed(children: Array) -> bool {
+    if children.length() == 0 { return false }
+    var i = 0
+    while i < children.length() {
+        // children[i] vía vnode_at (firma exacta bajo wasm32, ver arriba)
+        if vnode_key(vnode_at(children, i)) == "" { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// diff de listas de children — decide keyed vs posicional.
+fn diff_children(path: Array, old_children: Array, new_children: Array, acc: Array) {
+    if all_keyed(old_children) and all_keyed(new_children) {
+        diff_children_keyed(path, old_children, new_children, acc)
+    } else {
+        diff_children_positional(path, old_children, new_children, acc)
+    }
+}
+
+fn diff_children_positional(path: Array, old_children: Array, new_children: Array, acc: Array) {
+    var i = 0
+    let old_len: int = old_children.length()
+    let new_len: int = new_children.length()
+    let common: int = min(old_len, new_len)
+    while i < common {
+        // extracción vía vnode_at (firma exacta bajo wasm32, ver arriba)
+        vdiff_at(vnode_at(old_children, i), vnode_at(new_children, i), path_child(path, i), acc)
+        i = i + 1
+    }
+    // extras del new → AppendChild
+    var j = common
+    while j < new_len {
+        acc.push(Patch.AppendChild(path, vnode_at(new_children, j)))
+        j = j + 1
+    }
+    // extras del old → RemoveChild, índices DESCENDENTES para no invalidar
+    var k = old_len - 1
+    while k >= common {
+        acc.push(Patch.RemoveChild(path, k))
+        k = k - 1
+    }
+}
+
+// Asume keys ÚNICAS dentro de la lista (keys duplicadas hacen que
+// `old_idx_by_key` se quede con el ÚLTIMO índice repetido → algún old sin
+// match real termina emitiendo un RemoveChild espurio pero benigno, no crash
+// ni corrupción). NO reordena — sin MoveChild en v1: `[A,B]` → `[B,A]`
+// (mismas keys, orden invertido) produce 0 patches porque cada key matchea
+// contra su índice ORIGINAL en el old, y un reorden con cambio de contenido
+// direcciona el patch por el índice NUEVO sin mover el nodo DOM existente.
+// Reordenar de verdad (MoveChild real) queda fuera de alcance v1.
+fn diff_children_keyed(path: Array, old_children: Array, new_children: Array, acc: Array) {
+    // mapa key -> idx del old
+    var old_idx_by_key: Map<int> = map_new()
+    var oi = 0
+    while oi < old_children.length() {
+        // extracción vía vnode_at (firma exacta bajo wasm32, ver arriba)
+        old_idx_by_key.insert(vnode_key(vnode_at(old_children, oi)), oi)
+        oi = oi + 1
+    }
+    // marca de qué índices del old fueron matcheados (para saber cuáles sobran)
+    var matched: Array = []
+    var mi = 0
+    while mi < old_children.length() {
+        matched.push(false)
+        mi = mi + 1
+    }
+    // recorre new: matcheado -> recursión con el path del slot NUEVO;
+    // no matcheado -> AppendChild.
+    var ni = 0
+    while ni < new_children.length() {
+        // extracción vía vnode_at (firma exacta bajo wasm32, ver arriba)
+        let nk: String = vnode_key(vnode_at(new_children, ni))
+        if old_idx_by_key.contains(nk) {
+            let old_i: int = old_idx_by_key.get(nk)
+            matched[old_i] = true
+            vdiff_at(vnode_at(old_children, old_i), vnode_at(new_children, ni), path_child(path, ni), acc)
+        } else {
+            acc.push(Patch.AppendChild(path, vnode_at(new_children, ni)))
+        }
+        ni = ni + 1
+    }
+    // old sin match -> RemoveChild, índices DESCENDENTES
+    var ri = old_children.length() - 1
+    while ri >= 0 {
+        let was_matched: bool = matched[ri]
+        if not was_matched {
+            acc.push(Patch.RemoveChild(path, ri))
+        }
+        ri = ri - 1
+    }
+}
+
+fn vdiff_at(old: VNode, new: VNode, path: Array, acc: Array) {
+    match old {
+        VNode.Text(old_s) => {
+            match new {
+                VNode.Text(new_s) => {
+                    if old_s != new_s {
+                        acc.push(Patch.SetText(path, new_s))
+                    }
+                },
+                VNode.Elem(tag2, key2, attrs2, handlers2, children2) => {
+                    acc.push(Patch.Replace(path, new))
+                }
+            }
+        },
+        VNode.Elem(old_tag, old_key, old_attrs, old_handlers, old_children) => {
+            match new {
+                VNode.Text(new_s2) => {
+                    acc.push(Patch.Replace(path, new))
+                },
+                VNode.Elem(new_tag, new_key, new_attrs, new_handlers, new_children) => {
+                    if old_tag != new_tag {
+                        acc.push(Patch.Replace(path, new))
+                    } else {
+                        diff_attrs(path, old_attrs, new_attrs, acc)
+                        diff_handlers(path, new_handlers, acc)
+                        diff_children(path, old_children, new_children, acc)
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn vdiff(old: VNode, new: VNode) -> Array {
+    var acc: Array = []
+    vdiff_at(old, new, [], acc)
+    return acc
+}

@@ -1,0 +1,32 @@
+// test-203: short-circuit evaluation for and/or
+var counter = 0
+
+fn side_effect() -> bool {
+    counter = counter + 1
+    return true
+}
+
+fn main() {
+    // false and X → should NOT evaluate X
+    counter = 0
+    let r1 = false and side_effect()
+    print(int_to_string(counter))
+
+    // true and X → SHOULD evaluate X
+    counter = 0
+    let r2 = true and side_effect()
+    print(int_to_string(counter))
+
+    // true or X → should NOT evaluate X
+    counter = 0
+    let r3 = true or side_effect()
+    print(int_to_string(counter))
+
+    // false or X → SHOULD evaluate X
+    counter = 0
+    let r4 = false or side_effect()
+    print(int_to_string(counter))
+
+    print("done")
+    return 0
+}

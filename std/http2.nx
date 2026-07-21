@@ -1,0 +1,255 @@
+// std/http2.nx — HTTP/2 server for Nyx (h2c cleartext)
+// Binary framing, HPACK compression, stream multiplexing
+// C runtime: runtime/http2.c (frame I/O, HPACK encode/decode)
+
+extern "C" fn nyx_h2_read_frame(fd: int) -> Array
+extern "C" fn nyx_h2_write_frame(fd: int, ftype: int, flags: int, sid: int, payload: String) -> int
+extern "C" fn nyx_h2_decode_headers(payload: String) -> Array
+extern "C" fn nyx_h2_encode_headers(hdrs: Array) -> String
+extern "C" fn nyx_h2_build_settings(max_conc: int, win_size: int, max_frame: int) -> String
+// nyx_tcp_read_exact is a codegen builtin, accessed via tcp_read_exact()
+
+// Frame types
+let H2_DATA: int = 0
+let H2_HEADERS: int = 1
+let H2_RST_STREAM: int = 3
+let H2_SETTINGS: int = 4
+let H2_PING: int = 6
+let H2_GOAWAY: int = 7
+let H2_WINDOW_UPDATE: int = 8
+
+// Flags
+let H2_FLAG_END_STREAM: int = 1
+let H2_FLAG_END_HEADERS: int = 4
+let H2_FLAG_ACK: int = 1
+
+// Connection preface (24 bytes)
+let H2_PREFACE: String = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+// Multi-threaded server globals
+var __h2_ch: Map = Map.new()
+var __h2_cb: Fn = 0
+
+// ── Connection Preface ───────────────────────────────────────────────────────
+
+fn h2_send_server_preface(fd: int) -> int {
+    let settings_payload: String = nyx_h2_build_settings(100, 65535, 16384)
+    return nyx_h2_write_frame(fd, H2_SETTINGS, 0, 0, settings_payload)
+}
+
+fn h2_validate_preface(fd: int) -> bool {
+    let magic: String = tcp_read_exact(fd, 24)
+    if magic.length() < 24 { return false }
+    // Compare byte by byte (first 3 chars "PRI" is enough for validation)
+    let c0: int = magic.charAt(0)
+    let c1: int = magic.charAt(1)
+    let c2: int = magic.charAt(2)
+    if c0 != 80 { return false }
+    if c1 != 82 { return false }
+    if c2 != 73 { return false }
+    return true
+}
+
+// ── h2c Upgrade Detection ────────────────────────────────────────────────────
+
+pub fn h2_check_upgrade(request: String) -> bool {
+    if request.indexOf("Upgrade: h2c") >= 0 { return true }
+    if request.indexOf("upgrade: h2c") >= 0 { return true }
+    return false
+}
+
+fn h2_send_upgrade_response(fd: int) -> int {
+    let resp: String = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n"
+    return tcp_write(fd, resp)
+}
+
+// ── Response Sending ─────────────────────────────────────────────────────────
+
+pub fn h2_send_response(fd: int, stream_id: int, status: int, resp_headers: Array, body: String) -> int {
+    // Build header list with :status pseudo-header
+    var hdrs: Array = []
+    hdrs.push(":status")
+    let status_str: String = int_to_string(status)
+    hdrs.push(status_str)
+
+    // Add user headers
+    var hi: int = 0
+    while hi < resp_headers.length() {
+        let hk: String = resp_headers[hi]
+        hdrs.push(hk)
+        let next_hi: int = hi + 1
+        let hv: String = resp_headers[next_hi]
+        hdrs.push(hv)
+        hi = hi + 2
+    }
+
+    // Add content-length
+    hdrs.push("content-length")
+    let cl_str: String = int_to_string(body.length())
+    hdrs.push(cl_str)
+
+    // Encode and send HEADERS frame
+    let hpack_block: String = nyx_h2_encode_headers(hdrs)
+    let hdr_flags: int = H2_FLAG_END_HEADERS
+    nyx_h2_write_frame(fd, H2_HEADERS, hdr_flags, stream_id, hpack_block)
+
+    // Send DATA frame(s) with END_STREAM
+    let body_len: int = body.length()
+    if body_len <= 16384 {
+        nyx_h2_write_frame(fd, H2_DATA, H2_FLAG_END_STREAM, stream_id, body)
+    } else {
+        // Split into chunks
+        var offset: int = 0
+        while offset < body_len {
+            var chunk_size: int = 16384
+            let remaining: int = body_len - offset
+            if remaining < chunk_size {
+                chunk_size = remaining
+            }
+            let chunk: String = body.substring(offset, offset + chunk_size)
+            let next_offset: int = offset + chunk_size
+            if next_offset >= body_len {
+                nyx_h2_write_frame(fd, H2_DATA, H2_FLAG_END_STREAM, stream_id, chunk)
+            } else {
+                nyx_h2_write_frame(fd, H2_DATA, 0, stream_id, chunk)
+            }
+            offset = next_offset
+        }
+    }
+    return 0
+}
+
+// ── Frame Dispatch Loop ──────────────────────────────────────────────────────
+
+fn h2_connection_loop(fd: int, cb: Fn) -> int {
+    // Read client preface SETTINGS
+    let first_frame: Array = nyx_h2_read_frame(fd)
+    if first_frame.length() < 4 { tcp_close(fd); return -1 }
+
+    let first_type: int = first_frame[0]
+    if first_type == H2_SETTINGS {
+        // ACK client settings
+        let empty: String = ""
+        nyx_h2_write_frame(fd, H2_SETTINGS, H2_FLAG_ACK, 0, empty)
+    }
+
+    // Main frame loop
+    var running: int = 1
+    while running > 0 {
+        let frame: Array = nyx_h2_read_frame(fd)
+        if frame.length() < 4 {
+            running = 0
+        } else {
+            let ftype: int = frame[0]
+            let flags: int = frame[1]
+            let stream_id: int = frame[2]
+            let payload: String = frame[3]
+
+            if ftype == H2_SETTINGS {
+                let f_flags: int = flags
+                // If not ACK, send ACK
+                let is_ack: int = f_flags
+                if is_ack != H2_FLAG_ACK {
+                    let empty2: String = ""
+                    nyx_h2_write_frame(fd, H2_SETTINGS, H2_FLAG_ACK, 0, empty2)
+                }
+            }
+            if ftype == H2_HEADERS {
+                // Decode HPACK headers
+                let decoded: Array = nyx_h2_decode_headers(payload)
+                // Extract :method, :path, and other headers
+                var method: String = "GET"
+                var path: String = "/"
+                var req_headers: Array = []
+                var di: int = 0
+                while di < decoded.length() {
+                    let dk: String = decoded[di]
+                    let di_next: int = di + 1
+                    let dv: String = decoded[di_next]
+                    if dk == ":method" {
+                        method = dv
+                    }
+                    if dk == ":path" {
+                        path = dv
+                    }
+                    // Skip pseudo-headers for user headers
+                    let first_ch: int = dk.charAt(0)
+                    if first_ch != 58 {
+                        req_headers.push(dk)
+                        req_headers.push(dv)
+                    }
+                    di = di + 2
+                }
+
+                // Invoke callback: fn(method, path, headers, body) -> Array [status, resp_headers, body]
+                let req_body: String = ""
+                let result: Array = cb(method, path, req_headers, req_body)
+                let resp_status: int = result[0]
+                let resp_hdrs: Array = result[1]
+                let resp_body: String = result[2]
+                h2_send_response(fd, stream_id, resp_status, resp_hdrs, resp_body)
+            }
+            if ftype == H2_PING {
+                // Echo ping with ACK
+                nyx_h2_write_frame(fd, H2_PING, H2_FLAG_ACK, 0, payload)
+            }
+            if ftype == H2_WINDOW_UPDATE {
+                // Accept window update, no action needed for basic impl
+                let _wu: int = 0
+            }
+            if ftype == H2_GOAWAY {
+                running = 0
+            }
+            if ftype == H2_RST_STREAM {
+                // Stream reset, continue accepting other streams
+                let _rst: int = 0
+            }
+        }
+    }
+    tcp_close(fd)
+    return 0
+}
+
+// ── Worker ───────────────────────────────────────────────────────────────────
+
+fn __h2_worker() -> int {
+    while 1 > 0 {
+        let client: int = channel_recv(__h2_ch)
+        if client < 0 { return 0 }
+
+        // Read first bytes to detect h2c upgrade vs prior knowledge
+        // For simplicity, assume prior knowledge (direct HTTP/2 preface)
+        let valid: bool = h2_validate_preface(client)
+        if valid {
+            h2_send_server_preface(client)
+            h2_connection_loop(client, __h2_cb)
+        } else {
+            tcp_close(client)
+        }
+    }
+    return 0
+}
+
+// ── Public Server API ────────────────────────────────────────────────────────
+
+// Start HTTP/2 server (h2c cleartext, prior knowledge mode)
+// Callback signature: fn(method: String, path: String, headers: Array, body: String) -> Array
+// Return: [status: int, headers: Array, body: String]
+pub fn h2_serve(port: int, num_workers: int, cb: Fn) -> int {
+    __h2_ch = channel_new(512)
+    __h2_cb = cb
+    let server: int = tcp_listen("0.0.0.0", port)
+    if server < 0 { return -1 }
+    var i: int = 0
+    while i < num_workers {
+        thread_spawn(__h2_worker)
+        i = i + 1
+    }
+    while 1 > 0 {
+        let client: int = tcp_accept(server)
+        if client >= 0 {
+            channel_send(__h2_ch, client)
+        }
+    }
+    return 0
+}

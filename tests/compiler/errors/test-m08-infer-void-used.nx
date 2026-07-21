@@ -1,0 +1,14 @@
+// M-08 sesion 11 error test: fn sin returns inferida como (), usada como int.
+// S11 infiere TyUnit para fns vacias; asignarla a un int debe fallar.
+// Expected stderr (contains): "type mismatch in 'n': expected int, got ()"
+// Expected exit: non-zero (semantic check fails)
+
+fn logit(x: int) {
+    print(int_to_string(x))
+}
+
+fn main() -> int {
+    let n: int = logit(1)
+    print(int_to_string(n))
+    return 0
+}

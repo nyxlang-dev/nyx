@@ -1,0 +1,39 @@
+// M-08 B8-F1b: trait bounds en impl-method generics.
+// Item implementa Other (impls locales → estricto) pero NO Show, así que
+// b.wrap(it) debe fallar con NYX1020.
+
+trait Show {
+    fn show(self) -> String
+}
+
+trait Other {
+    fn tag(self) -> int
+}
+
+struct Box {
+    v: int
+}
+
+struct Item {
+    n: int
+}
+
+impl Other for Item {
+    fn tag(self) -> int {
+        return 1
+    }
+}
+
+impl Box {
+    fn wrap<T: Show>(self, x: T) -> int {
+        return self.v
+    }
+}
+
+fn main() -> int {
+    let b: Box = Box { v: 1 }
+    let it: Item = Item { n: 2 }
+    let r: int = b.wrap(it)
+    print(r)
+    return 0
+}

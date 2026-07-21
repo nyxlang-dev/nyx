@@ -1,0 +1,23 @@
+// test-233: genérico con param `Array` BARE (sin <T>) y retorno genérico
+// ligado por otro arg — `first(nums, 0)` sin turbofish debe monomorfizar.
+// Era el gap S10-variante catalogado en TASKS.md; quedó resuelto por la
+// monomorfización implícita F2 (unify trata Array bare como wildcard y
+// T se liga por el segundo arg). Este test lo fija.
+
+fn first<T>(a: Array, fb: T) -> T {
+    return a[0]
+}
+
+fn main() -> int {
+    let nums = [10, 20, 30]
+    let f = first(nums, 0)
+    assert(f == 10)
+
+    // mismo template, otra instancia: T=String ligado por el fallback
+    let words = ["nyx", "lang"]
+    let w = first(words, "x")
+    assert(w == "nyx")
+
+    print("s10 variant ok")
+    return 0
+}

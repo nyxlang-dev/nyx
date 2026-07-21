@@ -1,0 +1,38 @@
+// Test 216: std/json parsea floats (fracción + exponente) sin truncar
+// (fricción dogfooding venezuelainfo.org, 2026-06-30).
+// Regresión: parse_number se detenía en el punto decimal → cualquier JSON con
+// floats (coordenadas, magnitudes) quedaba truncado y el objeto se cortaba.
+// Fix: parse_number consume fracción/exponente y emite ["float", texto];
+// json_as_float/json_stringify nuevos. Valores exactos en binario (.5, .25, e1).
+import "std/json"
+
+fn main() -> int {
+    let v: Array = json_parse("{\"lat\": -10.5, \"mag\": 4.2e1, \"q\": 0.25, \"n\": 7, \"name\": \"sismo\"}")
+
+    // Floats: tipo "float" y valor correcto (no truncado).
+    let lat: Array = json_get(v, "lat")
+    assert(json_type(lat) == "float")
+    assert(json_as_float(lat) == 0.0 - 10.5)
+
+    let mag: Array = json_get(v, "mag")
+    assert(json_type(mag) == "float")
+    assert(json_as_float(mag) == 42.0)   // 4.2e1
+
+    let q: Array = json_get(v, "q")
+    assert(json_as_float(q) == 0.25)
+
+    // El parseo NO se corta tras un float: campos posteriores presentes.
+    let n: Array = json_get(v, "n")
+    assert(json_type(n) == "number")
+    assert(json_as_int(n) == 7)
+    assert(json_as_string(json_get(v, "name")) == "sismo")
+
+    // Round-trip exacto (se preserva el texto numérico original).
+    assert(json_stringify(v) == "{\"lat\":-10.5,\"mag\":4.2e1,\"q\":0.25,\"n\":7,\"name\":\"sismo\"}")
+
+    // json_as_int sobre float trunca.
+    assert(json_as_int(lat) == 0 - 10)
+
+    print("ok")
+    return 0
+}

@@ -1,0 +1,214 @@
+// test-dynamic-arrays.nx
+// Demostración completa de arrays dinámicos en Nyx
+
+fn test_basic_arrays() {
+    print("=== TEST 1: Arrays Básicos ===")
+    
+    // Crear array con elementos
+    var nums = [10, 20, 30, 40, 50]
+    print(nums)
+    
+    // Acceso por índice
+    print(nums[0])
+    print(nums[2])
+    print(nums[4])
+}
+
+fn test_push_pop() {
+    print("=== TEST 2: Push y Pop ===")
+    
+    // Crear array vacío
+    var lista = []
+    print(lista)
+    
+    // Push elementos
+    lista.push(100)
+    lista.push(200)
+    lista.push(300)
+    print(lista)
+    
+    // Pop elementos
+    let ultimo = lista.pop()
+    print(ultimo)
+    print(lista)
+}
+
+fn test_length() {
+    print("=== TEST 3: Length ===")
+    
+    var arr = [1, 2, 3, 4, 5]
+    print(arr.length())
+    
+    arr.push(6)
+    print(arr.length())
+    
+    arr.pop()
+    print(arr.length())
+}
+
+fn test_modification() {
+    print("=== TEST 4: Modificación ===")
+    
+    var valores = [10, 20, 30]
+    print(valores)
+    
+    valores[1] = 99
+    print(valores)
+    
+    valores[0] = valores[2]
+    print(valores)
+}
+
+fn test_dynamic_construction() {
+    print("=== TEST 5: Construcción Dinámica ===")
+    
+    var numeros = []
+    
+    // Construir array dinámicamente
+    var i = 1
+    while i <= 5 {
+        numeros.push(i * 10)
+        i = i + 1
+    }
+    
+    print(numeros)
+    print(numeros.length())
+}
+
+fn test_slice() {
+    print("=== TEST 6: Slicing ===")
+    
+    let original = [10, 20, 30, 40, 50]
+    print(original)
+    
+    // Slice exclusivo [1..4) = [20, 30, 40]
+    let sub1 = original[1..4]
+    print(sub1)
+    
+    // Slice inclusivo [0..=2] = [10, 20, 30]
+    let sub2 = original[0..=2]
+    print(sub2)
+}
+
+fn sumar_array(arr) {
+    var total = 0
+    var i = 0
+    
+    while i < arr.length() {
+        total = total + arr[i]
+        i = i + 1
+    }
+    
+    return total
+}
+
+fn test_sum_function() {
+    print("=== TEST 7: Función Suma ===")
+    
+    let datos = [5, 10, 15, 20, 25]
+    let suma = sumar_array(datos)
+    print(suma)
+}
+
+fn test_stack_behavior() {
+    print("=== TEST 8: Comportamiento de Stack ===")
+    
+    var stack = []
+    
+    // Push varios elementos
+    stack.push(1)
+    stack.push(2)
+    stack.push(3)
+    stack.push(4)
+    stack.push(5)
+    
+    print(stack)
+    
+    // Pop todos (LIFO)
+    print(stack.pop())
+    print(stack.pop())
+    print(stack.pop())
+    print(stack.pop())
+    print(stack.pop())
+}
+
+fn test_large_array() {
+    print("=== TEST 9: Array Grande ===")
+    
+    var grandes = []
+    
+    // Agregar 100 elementos
+    var i = 0
+    while i < 100 {
+        grandes.push(i)
+        i = i + 1
+    }
+    
+    print(grandes.length())
+    print(grandes[0])
+    print(grandes[50])
+    print(grandes[99])
+}
+
+fn test_complex_operations() {
+    print("=== TEST 10: Operaciones Complejas ===")
+    
+    var numeros = [1, 2, 3, 4, 5]
+    
+    // Duplicar todos los elementos
+    var i = 0
+    while i < numeros.length() {
+        numeros[i] = numeros[i] * 2
+        i = i + 1
+    }
+    
+    print(numeros)
+    
+    // Agregar suma de primeros dos
+    let suma = numeros[0] + numeros[1]
+    numeros.push(suma)
+    
+    print(numeros)
+}
+
+fn main() {
+    print("╔════════════════════════════════════════╗")
+    print("║  🧬 Nyx v0.7.4                      ║")
+    print("║  Arrays Dinámicos Compilados          ║")
+    print("╚════════════════════════════════════════╝")
+    print("")
+    
+    test_basic_arrays()
+    print("")
+    
+    test_push_pop()
+    print("")
+    
+    test_length()
+    print("")
+    
+    test_modification()
+    print("")
+    
+    test_dynamic_construction()
+    print("")
+    
+    test_slice()
+    print("")
+    
+    test_sum_function()
+    print("")
+    
+    test_stack_behavior()
+    print("")
+    
+    test_large_array()
+    print("")
+    
+    test_complex_operations()
+    print("")
+    
+    print("╔════════════════════════════════════════╗")
+    print("║  ✅ TODOS LOS TESTS COMPLETADOS       ║")
+    print("╚════════════════════════════════════════╝")
+}

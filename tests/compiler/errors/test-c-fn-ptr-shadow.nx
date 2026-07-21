@@ -1,0 +1,11 @@
+// c_fn_ptr sobre un nombre que ES una variable local (shadowea una fn
+// top-level homónima) → error del compilador. Antes: tomaba silenciosamente
+// la dirección de la fn GLOBAL ignorando el local (silently-wrong — finding
+// del code-review 2026-07-17). Convención: locals primero (codegen_identifier).
+fn target(x: int) -> int { return x * 2 }
+
+fn main() {
+    let target: int = 5
+    let p: *i8 = c_fn_ptr(target)
+    print("no debería compilar")
+}
