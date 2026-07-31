@@ -1,0 +1,28 @@
+// test-274 — Map.remove() sobre FIELD-ACCESS (obj.campo.remove(k)): el
+// dispatch de método sobre field-access implementaba contains/get/insert/size
+// para Map pero NO remove → compilaba como no-op SILENCIOSO (catalogado en el
+// Bug 3 del friction report 2026-07-03). El workaround era bindear a un local.
+struct Registry {
+    entries: Map
+}
+
+fn main() {
+    var r: Registry = Registry { entries: Map.new() }
+    r.entries.insert("a", 1)
+    r.entries.insert("b", 2)
+    assert(r.entries.size() == 2)
+    assert(r.entries.contains("a"))
+
+    // El bug: esto compilaba y NO removía nada
+    r.entries.remove("a")
+    assert(not r.entries.contains("a"))
+    assert(r.entries.size() == 1)
+    assert(r.entries.contains("b"))
+
+    // El camino con local (workaround histórico) sigue funcionando
+    var m: Map = r.entries
+    m.remove("b")
+    assert(r.entries.size() == 0)
+
+    print("map remove field-access OK")
+}

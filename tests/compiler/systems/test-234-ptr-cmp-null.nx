@@ -1,0 +1,20 @@
+// test-234-ptr-cmp-null — regresión Bug 1 (friction report v0.17, dogfooding
+// servidor web + SQLite en laptop i7). Comparar un puntero crudo (*T) contra
+// el literal 0 rompía el codegen: emitía `icmp ne i64* %p, 0` → clang aborta
+// con "integer constant must have integer type". El literal 0 ahora se
+// normaliza a `null` en las ramas de puntero de == y != (codegen.nx).
+// Auto-verificable con assert() abortivo.
+
+fn main() -> int {
+    var x: int = 42
+    var ok: int = 0
+    unsafe {
+        let p: *int = &x
+        // Puntero no-nulo comparado contra 0 (ambas direcciones)
+        if p != 0 { ok = ok + 1 }     // true  → +1
+        if p == 0 { ok = ok + 100 }   // false → nada
+    }
+    assert(ok == 1)
+    print("ptr-cmp-null OK")
+    return 0
+}

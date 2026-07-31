@@ -1,0 +1,11 @@
+// M-08 sesion 2 error test: argument type mismatch against function signature.
+// Expected stderr (contains): "argument 1 of 'greet': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+fn greet(name: String) -> String {
+    return "hola " + name
+}
+
+fn main() -> int {
+    let msg: String = greet(42)
+    return 0
+}

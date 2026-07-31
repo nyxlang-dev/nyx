@@ -1,0 +1,15 @@
+// inc 3c-2b: struct-con-lifetime con 'a EXPLÍCITO en param y retorno → GATING NYX1222.
+// El MISMO patrón que 3c-2a (soft/lint) pero con 'a declarado (make<'a>(x:&'a)->Ref<'a>)
+// → el usuario afirma la relación → hard/gating. El 'a del ret-type se extrae del string
+// "Ref<'a>" (el parser lo preserva; el sentinel __retlt__ solo cubre &'a T desnudo).
+struct Ref<'a> { r: &'a int }
+
+fn make<'a>(x: &'a int) -> Ref<'a> { return Ref { r: x } }
+
+fn caller() -> Ref {
+    let local: int = 5
+    let h: Ref = make(&local)
+    return h
+}
+
+fn main() { print(1) }

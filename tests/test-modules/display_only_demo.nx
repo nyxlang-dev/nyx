@@ -1,0 +1,17 @@
+// Tests helper module para S19: struct con solo impl Display (NO Neg).
+// Usado para verificar que cross-module impl scanning habilita el
+// endurecimiento de validate_unop para tipos importados.
+
+pub trait Display {
+    fn show(self) -> String
+}
+
+pub struct Coin {
+    value: int
+}
+
+impl Display for Coin {
+    fn show(self) -> String {
+        return "coin"
+    }
+}

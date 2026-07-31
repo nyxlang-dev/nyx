@@ -1,0 +1,24 @@
+// Variables de entorno: getenv(), getenv_default()
+
+fn main() -> int {
+    // getenv retorna el valor o "" si no existe
+    let home: String = getenv("HOME")
+    print("HOME=" + home)
+
+    let path: String = getenv("PATH")
+    // Mostrar solo los primeros 40 chars para no saturar la salida
+    if path.length() > 40 {
+        print("PATH=" + path.substring(0, 40) + "...")
+    } else {
+        print("PATH=" + path)
+    }
+
+    // getenv_default: retorna el segundo argumento si la variable no existe
+    let mi_var: String = getenv_default("MI_VAR_NX", "valor_por_defecto")
+    print("MI_VAR_NX=" + mi_var)
+
+    let usuario: String = getenv_default("USER", "desconocido")
+    print("USER=" + usuario)
+
+    return 0
+}

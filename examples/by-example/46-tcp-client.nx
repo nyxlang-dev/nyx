@@ -1,0 +1,32 @@
+// TCP client — connect, send a request, read a response
+// Cliente TCP — conectar, enviar una solicitud, leer una respuesta
+
+fn main() -> int {
+    // Connect to a TCP server
+    let fd: int = tcp_connect("example.com", 80)
+    if fd < 0 {
+        print("connection failed")
+        return 1
+    }
+
+    // Send an HTTP request manually over TCP
+    let req: String = "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n"
+    tcp_write(fd, req)
+
+    // Read the response line by line
+    let status_line: String = tcp_read_line(fd)
+    print("status: " + status_line)
+
+    // Read headers until empty line
+    var line: String = tcp_read_line(fd)
+    while line.length() > 0 and line != "\r" {
+        line = tcp_read_line(fd)
+    }
+
+    // Read body
+    let body: String = tcp_read(fd, 256)
+    print("body (first 256 bytes): " + body.substring(0, 100))
+
+    tcp_close(fd)
+    return 0
+}

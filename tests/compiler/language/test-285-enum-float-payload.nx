@@ -1,0 +1,26 @@
+// test-285 — read de payload FLOAT de un enum (campaña 2026-07-22, diferido
+// de A4/test-278): el constructor guarda el double como BITS (bitcast), pero
+// unwrap()/unwrap_or() devolvían i64 → la coerción posterior hacía sitofp
+// sobre los bits (1.5 se leía como ~4.6e18). Ahora, cuando el enum
+// monomorfizado declara payload float, el read devuelve double vía bitcast.
+fn main() {
+    let g: Option<float> = Option.Some(1.5)
+    let fv: float = g.unwrap()
+    assert(fv > 1.4)
+    assert(fv < 1.6)
+
+    let d: Option<float> = Option.None
+    let dv: float = d.unwrap_or(2.5)
+    assert(dv > 2.4)
+    assert(dv < 2.6)
+
+    let g2: Option<float> = Option.Some(3.25)
+    let gv: float = g2.unwrap_or(9.9)
+    assert(gv > 3.2)
+    assert(gv < 3.3)
+
+    // no-regresión: payload int sigue i64
+    let i: Option<int> = Option.Some(42)
+    assert(i.unwrap() == 42)
+    print("enum float payload OK")
+}

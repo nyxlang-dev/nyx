@@ -1,0 +1,8 @@
+// Aux de los tests SP4 T3b: módulo trivial ESCANEABLE, importado con la forma
+// `import "..." as alias`. Su única función es hacer que `scan_module_types`
+// devuelva 1 (módulo leído) y por lo tanto que el gate de NYX1001 quede
+// ABIERTO — que es lo que destapaba el FP de `pub struct` en la combinación
+// mixta de los dos estilos de import.
+pub fn helper_bonus() -> int {
+    return 7
+}

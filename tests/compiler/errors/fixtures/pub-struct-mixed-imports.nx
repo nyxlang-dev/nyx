@@ -1,0 +1,13 @@
+// SP4 T3b (positivo, REGRESIÓN de la Task 3): mezcla los DOS estilos de
+// import — con llaves (trae el `pub struct`, que hasta T3b no se registraba
+// como tipo) y `as alias` (módulo escaneable, que desde la Task 3 deja el
+// gate de NYX1001 ABIERTO). Antes de la Task 3 compilaba porque el gate
+// tapaba todo; después fallaba con 10 errores. Debe compilar y ejecutar.
+import { make_tag, tag_label } from "tests/support/aux_pub_struct"
+import "tests/support/aux_scan_helper" as helper
+
+fn main() -> int {
+    let t: Tag = make_tag(2, "beta")
+    print(tag_label(t))
+    return helper_bonus() - 7
+}

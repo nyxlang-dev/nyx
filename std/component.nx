@@ -1,0 +1,278 @@
+// std/component.nx — Modelo de componente + aplicación de vdiff al DOM real
+// (Task 3 del framework VDOM, sobre std/vdom.nx + std/dom.nx).
+//
+// component_new(state, render) arma un holder [state, render, prev_vnode,
+// root_handle]. mount() renderiza por primera vez (vrender: construye el
+// subárbol nuevo por creación de nodos) y lo cuelga del selector dado.
+// update() re-ejecuta render(state), calcula vdiff(prev, next) y aplica los
+// patches sobre el DOM real (vpatch, navegando paths con dom_child_at desde
+// la raíz) — SOLO toca lo que cambió (quirúrgico, sin recrear nodos).
+//
+// EN: component model + vdiff-to-real-DOM application. mount() does a full
+// vrender; update() re-renders, diffs against prev, and applies only the
+// resulting patches (surgical DOM updates, no node re-creation).
+//
+// SOLO compila bajo NYX_TARGET=wasm32-wasi (hereda la restricción de
+// std/dom, que declara los extern "js").
+
+import "std/vdom"
+import "std/dom"
+
+// Arma el holder del componente. `render` recibe el `state` y devuelve el
+// VNode actual — se re-invoca en cada update().
+//
+// ⚠️ `render` DEBE declararse con el Fn TIPADO `Fn(Array) -> VNode` (no un
+// `Fn` pelado): bajo wasm32 `call_indirect` valida la firma del callee
+// EXACTA contra la tabla de tipos del módulo, y un Fn pelado no le da al
+// codegen el tipo de retorno en el call-site → default i64 → trap
+// "indirect call type mismatch" cuando el retorno real es un puntero
+// (VNode). Con la anotación tipada el codegen emite la firma real y la
+// llamada indirecta funciona (cobertura: test-wasm-21-fn-indirect-ptr).
+pub fn component_new(state: Array, render: Fn(Array) -> VNode) -> Array {
+    var prev_vnode_holder: Array = []
+    var root_handle_holder: Array = []
+    return [state, render, prev_vnode_holder, root_handle_holder]
+}
+
+// ⚠️ GOTCHAS de Fn-en-contenedor (encontrados en esta task, y por qué la
+// extracción del render pasa por pick_render + call_render):
+//
+// 1. Un `Fn` leído de un slot de Array y bindeado a un local para llamarlo
+//    ahí mismo (`let f: Fn(Array) -> VNode = comp[1]; f(st)`) rompe el link
+//    con "use of undefined value '@f'" — el codegen trata la llamada
+//    indirecta como si `f` fuera una función NOMBRADA global (misma clase
+//    que el gotcha de Task 1 con Fn extraído de un match, generalizado a
+//    cualquier extracción desde contenedor; pasa con Fn pelado Y tipado).
+//
+// 2. Pasar `comp[1]` INLINE como arg de una fn con parámetro Fn TIPADO
+//    tampoco alcanza: el array-get sale como i64 crudo y la post-coerción
+//    de args de codegen_call_expr solo cubre String/Array (no Fn) → la
+//    llamada DIRECTA se emite con firma i64 contra un define i8*. En
+//    nativo la ABI lo tolera (puntero e i64 comparten el registro de
+//    retorno); en wasm32 wasm-ld detecta el mismatch y genera un stub que
+//    trapea (`.L<fn>_bitcast_invalid` → RuntimeError: unreachable).
+//
+// El camino VERIFICADO (nativo + wasm32, repro aislado): extraer el slot a
+// través de una función GETTER cuyo ret-type es el Fn tipado —
+// codegen_return SÍ coerciona el i64 del array-get a i8* por el ret-type
+// declarado — y pasar el RESULTADO del getter (ya i8* bien tipado) a una
+// función que reciba el Fn tipado como PARÁMETRO y lo invoque ahí adentro.
+fn pick_render(comp: Array) -> Fn(Array) -> VNode {
+    return comp[1]
+}
+
+fn call_render(render: Fn(Array) -> VNode, state: Array) -> VNode {
+    return render(state)
+}
+
+// Getter tipado para VNodes guardados en Arrays — mismo mecanismo que
+// pick_render: el ret-type declarado fuerza la coerción i64→i8* en el
+// return, así el call-site que recibe el resultado queda con la firma
+// exacta (imprescindible bajo wasm32; ver gotcha #2 de arriba, que aplica
+// igual a los enums: `let c: VNode = arr[i]` deja el valor como i64 crudo).
+fn pick_vnode(arr: Array, i: int) -> VNode {
+    return arr[i]
+}
+
+// (pick_patch se retiró 2026-07-21: `let p: Patch = arr[i]` coerciona
+// i64→i8* desde el fix de codegen_let para enums — test-275 — así que
+// vpatch bindea directo. pick_vnode/pick_handler siguen: cubren OTROS
+// gotchas — receiver de method-call y Fn de par — no el let anotado.)
+
+// Ídem para el Fn de un par [evento, handler] (handlers de VNode.Elem).
+// Puede quedar como Fn PELADO: nunca se invoca desde Nyx — lo invoca el
+// shim JS por function-table vía dom_on_h (nyx.callClosure), que no pisa
+// el call_indirect tipado de wasm. Solo importa que el VALOR viaje como
+// i8* para que la firma de la llamada directa a dom_on_h sea exacta.
+fn pick_handler(pair: Array) -> Fn {
+    return pair[1]
+}
+
+// (patch_handler_of y su gotcha se retiraron 2026-07-21: los bindings Fn de
+// un patrón match salen TIPADOS del destructuring — fix de codegen A6,
+// test-279 — así que apply_one_patch usa `handler` directo.)
+
+// Materializa un VNode contra el DOM real por creación de nodos y devuelve
+// el handle de la raíz del subárbol construido. Recursivo: Text → nodo de
+// texto; Elem → elemento + attrs + handlers (dom_on_h) + children (append).
+//
+// ⚠️ El caso Elem vive en vrender_elem (función aparte) y NO como block-arm
+// del match: un match-EXPRESIÓN cuyo arm es un block que termina en un
+// identifier (`{ let el = ...; ...; el }`) devuelve 0 en vez del valor
+// (bug de codegen preexistente, verificado nativo Y wasm con repro
+// aislado). Con el arm como LLAMADA directa el valor llega bien.
+fn vrender(v: VNode) -> int {
+    return match v {
+        VNode.Text(s) => dom_create_text(s),
+        VNode.Elem(tag, key, attrs, handlers, children) => vrender_elem(tag, attrs, handlers, children)
+    }
+}
+
+fn vrender_elem(tag: String, attrs: Array, handlers: Array, children: Array) -> int {
+    let el: int = dom_create(tag)
+    var ai = 0
+    while ai < attrs.length() {
+        let pair: Array = attrs[ai]
+        let k: String = pair[0]
+        let val: String = pair[1]
+        dom_set_attr_h(el, k, val)
+        ai = ai + 1
+    }
+    var hi = 0
+    while hi < handlers.length() {
+        let hpair: Array = handlers[hi]
+        let evento: String = hpair[0]
+        // hpair[1] vía pick_handler: un `let handler: Fn = ...` dejaría
+        // i64 crudo → firma rota de dom_on_h bajo wasm32.
+        dom_on_h(el, evento, pick_handler(hpair))
+        hi = hi + 1
+    }
+    var ci = 0
+    while ci < children.length() {
+        // children[ci] vía pick_vnode: un `let child: VNode = ...` dejaría
+        // i64 crudo → firma rota en la recursión bajo wasm32.
+        let child_h: int = vrender(pick_vnode(children, ci))
+        dom_append(el, child_h)
+        ci = ci + 1
+    }
+    return el
+}
+
+// path[0..len-2] — todo el path salvo el último índice (para Replace, que
+// necesita el HANDLE DEL PADRE para llamar dom_replace).
+fn path_init(path: Array) -> Array {
+    var out: Array = []
+    var i = 0
+    let n: int = path.length() - 1
+    while i < n {
+        out.push(path[i])
+        i = i + 1
+    }
+    return out
+}
+
+// último índice del path (para Replace).
+fn path_last(path: Array) -> int {
+    return path[path.length() - 1]
+}
+
+// Navega desde `root` (el handle del nodo raíz renderizado por vrender)
+// siguiendo los índices de `path` vía dom_child_at. path=[] → root mismo.
+fn resolve_path(root: int, path: Array) -> int {
+    var cur: int = root
+    var i = 0
+    while i < path.length() {
+        let idx: int = path[i]
+        cur = dom_child_at(cur, idx)
+        i = i + 1
+    }
+    return cur
+}
+
+// Aplica cada Patch de vdiff() sobre el DOM real, navegando su path desde
+// `root`. SetText/SetAttr/RemoveAttr/SetHandler: el path apunta AL NODO
+// mismo. AppendChild/RemoveChild: el path apunta al PADRE (vdiff ya lo arma
+// así — ver diff_children en std/vdom.nx). Replace: el path apunta al nodo
+// reemplazado — se separa en (padre, índice) para llamar dom_replace.
+//
+// ⚠️ GOTCHA NUEVO (encontrado en esta task, distinto del ya catalogado
+// para Fn — ver call_render arriba): `let p: Patch = patches[i]` seguido de
+// un `match p {...}` DIRECTO en el MISMO scope rompe el link ("defined with
+// type 'i64' but expected 'ptr'") — el codegen de `let` con anotación de
+// tipo enum no hace el inttoptr i64→i8* que sí hace para String/Array/
+// ASTNode, y el match subsiguiente asume que la variable ya es puntero.
+// Verificado con repro aislado: el resto de std/vdom.nx nunca pisa esta
+// combinación porque SIEMPRE pasa el valor leído de un Array por una
+// llamada de función antes de matchear (los PARÁMETROS de función sí
+// quedan bien tipados). Mismo patrón acá: pasar `patches[i]` INLINE como
+// argumento de `apply_one_patch` — nunca bindearlo a un `let` antes.
+fn vpatch(patches: Array, root: int) {
+    var i = 0
+    while i < patches.length() {
+        // `let p: Patch = patches[i]` coerciona i64→i8* (fix de codegen_let
+        // para enums, test-275) — la firma de la llamada directa queda
+        // exacta también bajo wasm32; el getter pick_patch ya no hace falta.
+        let p: Patch = patches[i]
+        apply_one_patch(p, root)
+        i = i + 1
+    }
+}
+
+fn apply_one_patch(p: Patch, root: int) {
+    match p {
+        Patch.SetText(pth, s) => {
+            let target: int = resolve_path(root, pth)
+            dom_set_text_h(target, s)
+        },
+        Patch.SetAttr(pth, k, v) => {
+            let target: int = resolve_path(root, pth)
+            dom_set_attr_h(target, k, v)
+        },
+        Patch.RemoveAttr(pth, k) => {
+            let target: int = resolve_path(root, pth)
+            dom_remove_attr_h(target, k)
+        },
+        Patch.Replace(pth, vnode) => {
+            if pth.length() == 0 {
+                // Replace de la raíz del componente: v1 no tiene el
+                // handle del CONTENEDOR de montaje acá (fuera de
+                // scope — ver design spec, "path inválido → log +
+                // skip, no abortar el frame").
+                console_log("vpatch: Replace en la raiz del componente no soportado en v1 - patch descartado")
+            } else {
+                let parent_path: Array = path_init(pth)
+                let idx: int = path_last(pth)
+                let parent: int = resolve_path(root, parent_path)
+                let old_h: int = dom_child_at(parent, idx)
+                let new_h: int = vrender(vnode)
+                dom_replace(parent, new_h, old_h)
+            }
+        },
+        Patch.AppendChild(pth, vnode) => {
+            let target: int = resolve_path(root, pth)
+            let new_h: int = vrender(vnode)
+            dom_append(target, new_h)
+        },
+        Patch.RemoveChild(pth, idx) => {
+            let target: int = resolve_path(root, pth)
+            dom_remove_at(target, idx)
+        },
+        Patch.SetHandler(pth, evento, handler) => {
+            let target: int = resolve_path(root, pth)
+            // `handler` sale TIPADO del destructuring (i8*) desde el fix de
+            // codegen de bindings Fn (campaña A6, test-279) — la firma de la
+            // llamada a dom_on_h queda exacta también bajo wasm32; el getter
+            // exhaustivo patch_handler_of ya no hace falta.
+            dom_on_h(target, evento, handler)
+        }
+    }
+}
+
+// Renderiza por primera vez y cuelga el resultado del selector `sel`.
+pub fn mount(comp: Array, sel: String) {
+    let state: Array = comp[0]
+    // NO bindear comp[1] a un `let render: ...` ni pasarlo inline crudo
+    // (gotchas de arriba) — extraer vía pick_render (getter tipado) y
+    // pasar el resultado a call_render, que lo invoca como parámetro.
+    let vnode: VNode = call_render(pick_render(comp), state)
+    let root_h: int = vrender(vnode)
+    let container: int = dom_query_handle(sel)
+    dom_append(container, root_h)
+    comp[2] = vnode
+    comp[3] = root_h
+}
+
+// Re-renderiza contra el `state` actual, diffea contra el vnode previo y
+// aplica solo los patches resultantes (quirúrgico — no recrea nodos que no
+// cambiaron).
+pub fn update(comp: Array) {
+    let state: Array = comp[0]
+    let root_h: int = comp[3]
+    // Mismo camino tipado que en mount (ver gotchas en pick_render). El
+    // prev-vnode también se extrae vía pick_vnode — un `let prev: VNode =
+    // comp[2]` dejaría i64 crudo y rompería la firma de vdiff bajo wasm.
+    let next: VNode = call_render(pick_render(comp), state)
+    let patches: Array = vdiff(pick_vnode(comp, 2), next)
+    vpatch(patches, root_h)
+    comp[2] = next
+}

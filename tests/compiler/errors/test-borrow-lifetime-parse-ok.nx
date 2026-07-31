@@ -1,0 +1,8 @@
+// Canario Etapa 2: 'a posicional se parsea; el programa compila+corre igual.
+fn dup<'a>(x: &'a int) -> &'a int { return x }
+
+fn main() {
+    let n: int = 5
+    let r: &int = dup(&n)
+    print(1)
+}

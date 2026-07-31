@@ -1,0 +1,29 @@
+// test-227: substring con índice negativo no lee fuera del buffer.
+// Regresión del code-review: al pasar size_t→int64_t en nyx_string_substring,
+// un start negativo (típico de s.substring(s.indexOf("x"), n) cuando indexOf
+// devuelve -1) dejaba de clamparse → lectura OOB. El clamp inferior lo repara
+// devolviendo "" de forma segura. Afecta target nativo.
+// EN: substring with a negative index must clamp to "" instead of reading OOB.
+
+fn main() {
+    let s: String = "hola mundo"
+
+    // indexOf de algo ausente → -1; usado como start no debe segfaultear.
+    // start negativo clampea a 0 → substring(0, 3) = "hol" (seguro, no OOB).
+    let idx: int = s.indexOf("z")
+    assert(idx == -1)
+    let sub: String = s.substring(idx, 3)
+    assert(sub == "hol")
+
+    // end negativo clampea a 0 → substring(0, 0) = ""
+    assert(s.substring(0, -1) == "")
+
+    // ambos negativos → ""
+    assert(s.substring(-5, -2) == "")
+
+    // caso normal sigue intacto
+    assert(s.substring(0, 4) == "hola")
+    assert(s.substring(5, 10) == "mundo")
+
+    print("test-227 OK")
+}

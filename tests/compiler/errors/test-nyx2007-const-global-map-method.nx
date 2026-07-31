@@ -1,0 +1,12 @@
+// NYX2007 (S1): un método del trío de Map (contains/insert/get) sobre un
+// global NO registrado en ctx.variables — en la práctica, un const primitivo
+// de const_values. La rama asumía "global = Map = i8*" y emitía
+// `load i8*, i8** @N` + nyx_map_get_int sobre un @N que ni siquiera se declara
+// como global real. Los métodos FUERA del trío siguen dando NYX2002.
+// Expected stderr (contains): "NYX2007"
+const N: int = 5
+
+fn main() -> int {
+    print(N.get("a"))
+    return 0
+}

@@ -1,0 +1,47 @@
+// test-306-module-global-homonyms.nx — globales homónimas en módulos distintos (A2)
+//
+// Dos módulos importados juntos, cada uno con su `var g_counter` top-level:
+// (1) el link fallaba con "redefinition of global '@g_counter'" (dos
+//     `@g_counter = global` en el mismo módulo LLVM);
+// (2) MÁS GRAVE y silencioso: el registro de globales del codegen se keyea por
+//     nombre pelado, así que el segundo módulo PISABA al primero — las fns del
+//     módulo A terminaban leyendo/escribiendo la global del módulo B.
+// Fix: mangle por módulo (`<modulo>__<global>`) con marcador //#module que
+// resolve_source emite al inlinear y que el codegen trackea.
+// Este test verifica el SCOPING, no solo que linkee.
+
+import "tests/support/aux_a2_mod_a"
+import "tests/support/aux_a2_mod_b"
+
+var g_counter: int = 7    // homónima TAMBIÉN en el archivo principal
+
+fn main() {
+    // Cada módulo arranca de SU propio valor inicial (100 / 200 / 7)
+    let a1: int = a_bump()        // 100 + 1
+    let b1: int = b_bump()        // 200 + 10
+    assert(a1 == 101)
+    assert(b1 == 210)
+
+    // Segunda vuelta: cada contador avanza independiente
+    let a2: int = a_bump()        // 102
+    let b2: int = b_bump()        // 220
+    assert(a2 == 102)
+    assert(b2 == 220)
+
+    // La global del archivo principal es OTRA distinta, intacta
+    assert(g_counter == 7)
+    g_counter = g_counter + 1
+    assert(g_counter == 8)
+
+    // Y mutarla no tocó las de los módulos
+    let a3: int = a_bump()        // 103
+    assert(a3 == 103)
+    let b3: int = b_bump()        // 230
+    assert(b3 == 230)
+
+    // Lectores dedicados: confirman el valor desde adentro de cada módulo
+    assert(a_get() == 103)
+    assert(b_get() == 230)
+
+    print("test-306-module-global-homonyms ok")
+}

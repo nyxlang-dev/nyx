@@ -1,0 +1,11 @@
+// E3 NEG: turbofish que NO coincide con el receiver monomorfizado → error
+// bilingüe fail-fast (nunca ignorado en silencio).
+struct Vec<T> { data: T }
+impl<T> Vec<T> {
+    fn get(self) -> T { return self.data }
+}
+fn main() {
+    let a: Vec<int> = Vec<int>{ data: 7 }
+    let x: String = a.get<String>()
+    print(x)
+}

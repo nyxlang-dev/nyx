@@ -1,0 +1,52 @@
+// nyx-kv AUTH — multi-tenant authentication with tokens
+// AUTH nyx-kv — autenticación multi-tenant con tokens
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 {
+        print("connection failed")
+        return 1
+    }
+
+    // Authenticate with a token — subsequent commands are scoped to this tenant
+    let token: String = "my-api-token-123"
+    tcp_write(fd, resp_cmd(["AUTH", token]))
+    let auth_reply: String = tcp_read_line(fd)
+    print("AUTH -> " + auth_reply.trim())
+
+    // After auth, SET/GET operate in the tenant's namespace
+    tcp_write(fd, resp_cmd(["SET", "config:db", "postgres://localhost"]))
+    let set_reply: String = tcp_read_line(fd)
+    print("SET (authed) -> " + set_reply.trim())
+
+    // List all tokens (admin command, requires privileged AUTH)
+    tcp_write(fd, resp_cmd(["TOKEN_LIST"]))
+    let list_hdr: String = tcp_read_line(fd)
+    print("TOKEN_LIST header -> " + list_hdr.trim())
+
+    // Revoke a token (also admin-only)
+    tcp_write(fd, resp_cmd(["TOKEN_REVOKE", "old-token"]))
+    let revoke: String = tcp_read_line(fd)
+    print("TOKEN_REVOKE -> " + revoke.trim())
+
+    tcp_close(fd)
+    return 0
+}

@@ -1,0 +1,16 @@
+// E3 follow-up NEG: llamar un método con type params propios SIN turbofish →
+// error bilingüe accionable (v1 sin inferencia), nunca más el segfault del
+// compilador.
+struct Conv { base: int }
+
+impl Conv {
+    fn wrap<U>(self, x: U) -> U {
+        return x
+    }
+}
+
+fn main() {
+    let c: Conv = Conv { base: 1 }
+    let s: String = c.wrap("hola")
+    print(s)
+}

@@ -1,0 +1,18 @@
+// Task 1: mismo fallo silencioso, pero sobre el resultado de una llamada a
+// función (f().campo_malo) en lugar de un identificador. ty_of_expr debe
+// resolver el TyStruct vía el tipo de retorno declarado de f().
+// Expected stderr (contains): "field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
+// Expected exit: non-zero (semantic check fails)
+
+struct Usuario {
+    nombre: String
+}
+
+fn make_usuario() -> Usuario {
+    return Usuario { nombre: "Ada" }
+}
+
+fn main() -> int {
+    let x: String = make_usuario().nombree
+    return 0
+}

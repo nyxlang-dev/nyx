@@ -1,0 +1,6 @@
+// Task 2 (sub-proyecto 4): string sin cerrar — el lexer imprimía y seguía
+// sin contar el error. Antes de este fix, si el parser lograba armar un AST
+// igual, el driver emitía binario con la fuente truncada silenciosamente.
+fn main() {
+    let s = "unterminated
+}

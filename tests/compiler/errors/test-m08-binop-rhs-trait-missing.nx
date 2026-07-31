@@ -1,0 +1,26 @@
+// M-08 sesion 23a error test: rhs check en validate_binop. `1 + point`
+// con lhs primitivo (int, no requiere trait) pero rhs Point sin impl Add.
+// Expected stderr (contains): "right operand of '+' must implement 'Add', but 'Point' does not"
+// Expected exit: non-zero (semantic check fails)
+
+trait Show {
+    fn show(self) -> String
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Show for Point {
+    fn show(self) -> String {
+        return "pt"
+    }
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 1, y: 2 }
+    let r: int = 1 + p
+    print(int_to_string(r))
+    return 0
+}

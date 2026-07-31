@@ -1,0 +1,27 @@
+import "std/owned"
+
+var g_drops: int = 0
+
+#[affine]
+struct Res {
+    id: int
+}
+
+impl Drop for Res {
+    fn drop(self) {
+        g_drops = g_drops + 1
+    }
+}
+
+fn make_and_use() {
+    let r: Res = Res { id: 7 }
+    print("using " + int_to_string(r.id))
+    // r sale de scope al fin de la fn → drop determinista
+}
+
+fn main() {
+    make_and_use()
+    print("drops=" + int_to_string(g_drops))
+    assert(g_drops == 1)
+    print("ok")
+}

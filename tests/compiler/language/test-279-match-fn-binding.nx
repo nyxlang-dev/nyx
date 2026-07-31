@@ -1,0 +1,34 @@
+// test-279 — un `Fn` extraído por DESTRUCTURING de un patrón `match` debe
+// quedar tipado (i8*) e invocable/pasable como argumento. Antes el dispatch
+// de bindings no tenía rama Fn → caía al else i64 crudo, y pasar el binding a
+// una llamada emitía firma i64 (bajo wasm32: trap "indirect call type
+// mismatch" — gotcha del framework VDOM que obligó al getter exhaustivo
+// patch_handler_of en std/component).
+enum Ev {
+    Noop(int),
+    Handler(String, Fn)
+}
+
+fn call_it(f: Fn) -> int {
+    return f()
+}
+
+fn make_seven() -> int { return 7 }
+
+fn main() {
+    let e: Ev = Ev.Handler("click", make_seven)
+    let r: int = match e {
+        Ev.Noop(n) => n,
+        // El binding `h` debe salir tipado del destructuring: se pasa como
+        // arg Fn (firma exacta) Y se invoca vía la función auxiliar
+        Ev.Handler(nombre, h) => call_it(h)
+    }
+    assert(r == 7)
+
+    // if-let con binding Fn (sitio 4 del dispatch)
+    if let Ev.Handler(nm2, h2) = e {
+        assert(call_it(h2) == 7)
+    }
+
+    print("match fn binding OK")
+}

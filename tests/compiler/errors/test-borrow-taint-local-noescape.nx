@@ -1,0 +1,12 @@
+// T3 inc 3a (soundness): `v` recibe `&x` pero NUNCA escapa (no se retorna ni se guarda en un
+// destino que sobrevive) → tintar un local que se queda local NO debe marcar. NYX_BORROW=error.
+fn f() {
+    let x: int = 5
+    var v: Array = [0]
+    v[0] = &x
+    print(v.length())
+}
+
+fn main() {
+    f()
+}

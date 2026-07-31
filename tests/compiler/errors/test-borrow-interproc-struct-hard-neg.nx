@@ -1,0 +1,13 @@
+// inc 3c-2b NEG: struct-con-lifetime con 'a explícito, pero el arg es un GLOBAL
+// (no frame-bound) → ninguna fuente cuelga → sin marca aun siendo hard.
+let G: int = 3
+struct Ref<'a> { r: &'a int }
+
+fn make<'a>(x: &'a int) -> Ref<'a> { return Ref { r: x } }
+
+fn caller() -> Ref {
+    let h: Ref = make(&G)
+    return h
+}
+
+fn main() { print(1) }

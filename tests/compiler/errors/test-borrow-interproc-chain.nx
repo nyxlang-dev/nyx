@@ -1,0 +1,11 @@
+// Passthrough encadenado: r presta de local, s presta de r → s arrastra el origen.
+fn id(x: &int) -> &int { return x }
+
+fn caller() -> &int {
+    let local: int = 7
+    let r: &int = id(&local)
+    let s: &int = id(r)
+    return s
+}
+
+fn main() { print(1) }

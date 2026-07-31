@@ -1,0 +1,32 @@
+// Test 64: pub keyword as synonym for export
+
+pub fn greet(name: String) -> String {
+    return "hello " + name
+}
+
+pub struct Color {
+    r: int,
+    g: int,
+    b: int
+}
+
+pub enum Direction {
+    North,
+    South,
+    East,
+    West
+}
+
+fn main() -> int {
+    print(greet("world"))
+    let c = Color { r: 255, g: 0, b: 0 }
+    print(int_to_string(c.r))
+    let d = Direction.North
+    match d {
+        Direction.North => print("north")
+        Direction.South => print("south")
+        Direction.East => print("east")
+        Direction.West => print("west")
+    }
+    return 0
+}

@@ -1,0 +1,14 @@
+// T3 inc 3a: `v` es un Array LOCAL que recibe `&x` (frame-bound) en v[0] → v queda "tintado".
+// `return v` hace escapar la ref adentro → NYX1222. Hoy era un MISS (inc 2 solo marca stores a
+// destinos que sobreviven, no el taint de un local que luego escapa).
+fn make() -> Array {
+    let x: int = 5
+    var v: Array = [0]
+    v[0] = &x
+    return v
+}
+
+fn main() {
+    let a: Array = make()
+    print(1)
+}

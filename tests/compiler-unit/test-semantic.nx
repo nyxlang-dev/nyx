@@ -1,0 +1,42 @@
+// ===== TEST UNITARIO: SEMANTIC ANALYZER BOOTSTRAP =====
+// Verifica que compiler/semantic.nx valida programas correctos
+// e identifica errores en programas inválidos.
+// Ejecutar: make run FILE=tests/bootstrap-unit/test-semantic.nx
+//
+// Resultados esperados:
+//   Test 1: true  (programa válido)
+//   Test 2: true  (función con tipos válida)
+
+import { tokenize } from "compiler/lexer"
+import { parse } from "compiler/parser"
+import { analyze } from "compiler/semantic"
+
+fn main() {
+    print("=== TEST SEMANTIC BOOTSTRAP ===")
+
+    // Test 1: programa simple válido
+    let src1 = "let x = 42\nprint(x)"
+    let toks1 = tokenize(src1)
+    let ast1 = parse(toks1)
+    let valid1 = analyze(ast1)
+    print("Test 1 - programa válido (esperado true):")
+    print(valid1)
+
+    // Test 2: función bien tipada
+    let src2 = "fn doble(n: int) -> int { return n * 2 }\nprint(doble(5))"
+    let toks2 = tokenize(src2)
+    let ast2 = parse(toks2)
+    let valid2 = analyze(ast2)
+    print("Test 2 - función bien tipada (esperado true):")
+    print(valid2)
+
+    // Test 3: uso de variable antes de declarar (si semantic lo detecta)
+    let src3 = "let y = 10"
+    let toks3 = tokenize(src3)
+    let ast3 = parse(toks3)
+    let valid3 = analyze(ast3)
+    print("Test 3 - declaración sola (esperado true):")
+    print(valid3)
+
+    print("✅ Semantic tests completados")
+}

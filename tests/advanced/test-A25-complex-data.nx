@@ -1,0 +1,98 @@
+// Test A25: Complex Data Structures
+// Combines: struct+impl, typed arrays, generics, tuples, for-in, string interpolation
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Point {
+    fn manhattan(self) -> int {
+        return self.x + self.y
+    }
+
+    fn scale(self, factor: int) -> Point {
+        return Point { x: self.x * factor, y: self.y * factor }
+    }
+
+    fn to_string(self) -> String {
+        return "(${self.x}, ${self.y})"
+    }
+}
+
+struct Pair<A, B> {
+    first: A,
+    second: B
+}
+
+fn make_pair<A, B>(a: A, b: B) -> Pair<A, B> {
+    return Pair<A, B> { first: a, second: b }
+}
+
+struct BoundingBox {
+    min_pt: Point,
+    max_pt: Point
+}
+
+impl BoundingBox {
+    fn width(self) -> int {
+        return self.max_pt.x - self.min_pt.x
+    }
+
+    fn height(self) -> int {
+        return self.max_pt.y - self.min_pt.y
+    }
+
+    fn area(self) -> int {
+        return self.width() * self.height()
+    }
+}
+
+fn sum_points(points: Array<Point>) -> int {
+    var total = 0
+    for p: Point in points {
+        total = total + p.manhattan()
+    }
+    return total
+}
+
+fn main() -> int {
+    let p1 = Point { x: 3, y: 4 }
+    print(p1.to_string())
+    print(p1.manhattan())
+
+    let p2 = p1.scale(3)
+    print(p2.to_string())
+
+    let points: Array<Point> = [
+        Point { x: 1, y: 2 },
+        Point { x: 3, y: 4 },
+        Point { x: 5, y: 6 }
+    ]
+    let total = sum_points(points)
+    print(total)
+
+    for pt: Point in points {
+        print(pt.to_string())
+    }
+
+    let pair = make_pair<int, String>(42, "hello")
+    print(pair.first)
+    print(pair.second)
+
+    let bbox = BoundingBox {
+        min_pt: Point { x: 0, y: 0 },
+        max_pt: Point { x: 10, y: 5 }
+    }
+    print(bbox.width())
+    print(bbox.height())
+    print(bbox.area())
+
+    let t = (100, "world")
+    let (val, txt) = t
+    print(val)
+    print(txt)
+
+    print("A25 passed")
+    return 0
+}

@@ -1,0 +1,115 @@
+// Test 22: Float support (f64)
+// Tests: float literals, arithmetic, comparisons, conversions, print
+
+fn test_float_literals() {
+    let pi = 3.14159
+    let e = 2.71828
+    print("=== Float Literals ===")
+    print(pi)
+    print(e)
+}
+
+fn test_float_arithmetic() {
+    print("=== Float Arithmetic ===")
+    let a = 10.5
+    let b = 3.2
+
+    // Basic ops
+    let sum = a + b
+    let diff = a - b
+    let prod = a * b
+    let quot = a / b
+
+    print(sum)
+    print(diff)
+    print(prod)
+    print(quot)
+
+    // Negation
+    let neg = -a
+    print(neg)
+}
+
+fn test_float_comparisons() {
+    print("=== Float Comparisons ===")
+    let x = 3.14
+    let y = 2.71
+
+    if x > y {
+        print("3.14 > 2.71: true")
+    }
+    if y < x {
+        print("2.71 < 3.14: true")
+    }
+    if x == x {
+        print("x == x: true")
+    }
+    if x != y {
+        print("x != y: true")
+    }
+    if x >= 3.14 {
+        print("x >= 3.14: true")
+    }
+    if y <= 2.71 {
+        print("y <= 2.71: true")
+    }
+}
+
+fn test_float_conversions() {
+    print("=== Float Conversions ===")
+    let i = 42
+    let f = int_to_float(i)
+    print(f)
+
+    let g = 3.99
+    let j = float_to_int(g)
+    print(j)
+
+    let s = float_to_string(1.5)
+    print("float as string: " + s)
+}
+
+fn test_float_string_concat() {
+    print("=== Float + String ===")
+    let val = 9.81
+    print("gravity = " + val)
+}
+
+fn test_float_vars() {
+    print("=== Float Variables ===")
+    var x: float = 1.0
+    print(x)
+    x = 2.5
+    print(x)
+    x = x + 0.5
+    print(x)
+}
+
+fn test_float_in_function() -> float {
+    return 42.0
+}
+
+fn add_floats(a: float, b: float) -> float {
+    return a + b
+}
+
+fn main() {
+    test_float_literals()
+    test_float_arithmetic()
+    test_float_comparisons()
+    test_float_conversions()
+    test_float_string_concat()
+    test_float_vars()
+
+    print("=== Float Functions ===")
+    let r = test_float_in_function()
+    print(r)
+    let s = add_floats(1.5, 2.5)
+    print(s)
+
+    print("=== Float Power ===")
+    let p = 2.0 ** 10.0
+    print(p)
+}
+
+main()

@@ -1,0 +1,12 @@
+// aux A2 (test-306): módulo con global propia homónima a la de aux_a2_mod_b
+// y a la del archivo principal. Su identidad debe sobrevivir al inlining.
+var g_counter: int = 100
+
+pub fn a_bump() -> int {
+    g_counter = g_counter + 1
+    return g_counter
+}
+
+pub fn a_get() -> int {
+    return g_counter
+}

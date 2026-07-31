@@ -1,0 +1,100 @@
+// test-168-matrix.nx — Matrix Operations (v4.3.0)
+import "std/matrix"
+
+fn test_basic() {
+    print("--- Basic ---")
+    let m = mat_new(2, 3)
+    print(format("rows: {} cols: {}", mat_rows(m), mat_cols(m)))
+
+    mat_set(m, 0, 0, 1)
+    mat_set(m, 0, 1, 2)
+    mat_set(m, 0, 2, 3)
+    mat_set(m, 1, 0, 4)
+    mat_set(m, 1, 1, 5)
+    mat_set(m, 1, 2, 6)
+
+    mat_print(m)
+}
+
+fn test_identity() {
+    print("--- Identity ---")
+    let id = mat_identity(3)
+    mat_print(id)
+    print(format("trace: {}", mat_trace(id)))
+}
+
+fn test_add_sub() {
+    print("--- Add/Sub ---")
+    let a = mat_new(2, 2)
+    mat_set(a, 0, 0, 1)
+    mat_set(a, 0, 1, 2)
+    mat_set(a, 1, 0, 3)
+    mat_set(a, 1, 1, 4)
+
+    let b = mat_new(2, 2)
+    mat_set(b, 0, 0, 5)
+    mat_set(b, 0, 1, 6)
+    mat_set(b, 1, 0, 7)
+    mat_set(b, 1, 1, 8)
+
+    print("a + b:")
+    let s = mat_add(a, b)
+    mat_print(s)
+
+    print("b - a:")
+    let d = mat_sub(b, a)
+    mat_print(d)
+}
+
+fn test_multiply() {
+    print("--- Multiply ---")
+    // 2x3 × 3x2 = 2x2
+    let a = mat_new(2, 3)
+    mat_set(a, 0, 0, 1) mat_set(a, 0, 1, 2) mat_set(a, 0, 2, 3)
+    mat_set(a, 1, 0, 4) mat_set(a, 1, 1, 5) mat_set(a, 1, 2, 6)
+
+    let b = mat_new(3, 2)
+    mat_set(b, 0, 0, 7)  mat_set(b, 0, 1, 8)
+    mat_set(b, 1, 0, 9)  mat_set(b, 1, 1, 10)
+    mat_set(b, 2, 0, 11) mat_set(b, 2, 1, 12)
+
+    let c = mat_mul(a, b)
+    mat_print(c)
+    // [1*7+2*9+3*11, 1*8+2*10+3*12] = [58, 64]
+    // [4*7+5*9+6*11, 4*8+5*10+6*12] = [139, 154]
+}
+
+fn test_transpose() {
+    print("--- Transpose ---")
+    let m = mat_new(2, 3)
+    mat_set(m, 0, 0, 1) mat_set(m, 0, 1, 2) mat_set(m, 0, 2, 3)
+    mat_set(m, 1, 0, 4) mat_set(m, 1, 1, 5) mat_set(m, 1, 2, 6)
+
+    print("original:")
+    mat_print(m)
+    print("transposed:")
+    let t = mat_transpose(m)
+    mat_print(t)
+}
+
+fn test_scale() {
+    print("--- Scale ---")
+    let m = mat_new(2, 2)
+    mat_set(m, 0, 0, 1) mat_set(m, 0, 1, 2)
+    mat_set(m, 1, 0, 3) mat_set(m, 1, 1, 4)
+
+    let s = mat_scale(m, 3)
+    mat_print(s)
+    print(format("frobenius_sq: {}", mat_frobenius_sq(s)))
+}
+
+fn main() {
+    print("matrix test")
+    test_basic()
+    test_identity()
+    test_add_sub()
+    test_multiply()
+    test_transpose()
+    test_scale()
+    print("matrix ok")
+}

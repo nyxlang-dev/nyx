@@ -1,0 +1,46 @@
+// Test 55: M-08 session 11 — return-type inference sin anotacion (happy path).
+//
+// Funciones sin `-> T` declarado: el compilador recoge los `return X` del
+// body, los reduce a un LUB y actualiza g_fn_sig_returns. Los call sites
+// que bindean a un `let` tipado deben validar correctamente contra el
+// tipo inferido. Sin S11, cada llamada a estas fns devolvia TyUnknown y
+// los let tipados pasaban vacuamente aunque el tipo real no coincidiera.
+//
+// Limitacion: codegen asume `i64` para fns sin anotacion explicita. Por
+// eso el happy path solo ejercita retornos int — los casos que infieren
+// String/bool/Array<T> viven en tests/compiler/errors/ (validan la capa
+// semantic sin llegar al codegen).
+
+fn answer() {
+    return 42
+}
+
+fn add1(x: int) {
+    return x + 1
+}
+
+fn first(xs: Array<int>) {
+    return xs[0]
+}
+
+fn pick(b: bool) {
+    if b {
+        return 10
+    } else {
+        return 20
+    }
+}
+
+fn main() -> int {
+    let n: int = answer()
+    let inc: int = add1(5)
+    let head: int = first([10, 20, 30])
+    let p: int = pick(true)
+
+    print(int_to_string(n))
+    print(int_to_string(inc))
+    print(int_to_string(head))
+    print(int_to_string(p))
+    print("OK")
+    return 0
+}

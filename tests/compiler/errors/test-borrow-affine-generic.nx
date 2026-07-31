@@ -1,0 +1,15 @@
+// inc 4 pre-2: use-after-move de un tipo #[affine] GENÉRICO → NYX1230 (SOUND/gating).
+// tm_type_is_affine strippea los generic-args (`Boxx<int>` → `Boxx`) → el binding se
+// reconoce como afín aunque la anotación lleve `<int>`. Turbofish en el literal para que
+// el struct genérico monomorfice (limitación conocida del literal sin turbofish).
+#[affine]
+struct Boxx<T> {
+    value: T
+}
+
+fn main() {
+    let a: Boxx<int> = Boxx<int> { value: 5 }
+    let b: Boxx<int> = a
+    print(b.value)
+    print(a.value)
+}

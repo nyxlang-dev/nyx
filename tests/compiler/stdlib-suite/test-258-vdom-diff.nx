@@ -1,0 +1,35 @@
+// test-258 — vdiff de std/vdom: data pura, sin WASM.
+import "std/vdom"
+fn main() {
+    // idéntico → 0 patches
+    let a = h("div", [["class","x"]], [text("hola")])
+    let b = h("div", [["class","x"]], [text("hola")])
+    assert(vdiff(a, b).length() == 0)
+    // texto cambia → 1 SetText
+    let c = h("div", [], [text("uno")])
+    let d = h("div", [], [text("dos")])
+    let p1: Array = vdiff(c, d)
+    assert(p1.length() == 1)
+    assert(patch_kind(p1[0]) == "SetText")
+    // attr agrega + cambia + quita
+    let e = h("div", [["id","a"],["class","x"]], [])
+    let f = h("div", [["id","b"],["title","t"]], [])
+    let p2: Array = vdiff(e, f)
+    assert(p2.length() == 3)   // SetAttr id, SetAttr title, RemoveAttr class
+    // child append / remove
+    let g = h("ul", [], [h("li", [], [text("1")])])
+    let i2 = h("ul", [], [h("li", [], [text("1")]), h("li", [], [text("2")])])
+    assert(patch_kind(vdiff(g, i2)[0]) == "AppendChild")
+    assert(patch_kind(vdiff(i2, g)[0]) == "RemoveChild")
+    // tag distinto → Replace
+    assert(patch_kind(vdiff(h("div", [], []), h("span", [], []))[0]) == "Replace")
+    // keyed reorder: [A,B] → [B,A] NO debe producir Replace de contenido (usa keys)
+    let ka = h("ul", [], [h_keyed("li","A",[],[text("A")]), h_keyed("li","B",[],[text("B")])])
+    let kb = h("ul", [], [h_keyed("li","B",[],[text("B")]), h_keyed("li","A",[],[text("A")])])
+    let p3: Array = vdiff(ka, kb)
+    var has_settext = false
+    var pi = 0
+    while pi < p3.length() { if patch_kind(p3[pi]) == "SetText" { has_settext = true }; pi = pi + 1 }
+    assert(not has_settext)    // reorden por movimiento, no por reescritura de texto
+    print("vdom-diff OK")
+}

@@ -1,0 +1,20 @@
+// Test 47: FFI — extern "C" fn
+// Tests calling C library functions from Nyx
+
+extern "C" fn llabs(x: int) -> int
+
+fn main() -> int {
+    let result: int = llabs(-42)
+    print(result)
+    assert(result == 42)
+
+    let result2: int = llabs(0)
+    print(result2)
+    assert(result2 == 0)
+
+    let result3: int = llabs(-100)
+    print(result3)
+    assert(result3 == 100)
+
+    return 0
+}

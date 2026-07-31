@@ -1,0 +1,9 @@
+fn main() {
+    var xs: Array = []
+    xs.push("hola")
+    let s: String = "v: " + xs[0]
+    print(s)
+    let ts: Array<String> = ["a"]
+    let t: String = "w: " + ts[0]
+    print(t)
+}

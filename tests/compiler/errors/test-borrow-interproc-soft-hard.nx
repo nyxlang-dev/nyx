@@ -1,0 +1,17 @@
+// T3 inc 3b (fix Crítico de la review): softness monotónica. `tricky` es elisión
+// (SOFT) y en realidad retorna un global (no dangling). Pasar ese origen SOFT por
+// `dup<'a>` (HARD) NO debe volverse HARD — sigue SOFT (NYX1223, no-gating). Antes
+// del fix, strippear el prefijo "?" en el camino is_hard==1 promovía a HARD y
+// gateaba NYX1222 sobre código seguro (falso positivo).
+let G: int = 9
+fn tricky(x: &int) -> &int { return &G }
+fn dup<'a>(x: &'a int) -> &'a int { return x }
+
+fn caller() -> &int {
+    let local: int = 5
+    let r: &int = tricky(&local)
+    let s: &int = dup(r)
+    return s
+}
+
+fn main() { print(1) }

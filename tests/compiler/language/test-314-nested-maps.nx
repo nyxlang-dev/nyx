@@ -1,0 +1,11 @@
+// test-314-nested-maps.nx — un Map como VALOR de otro Map.
+// El insert nunca crasheó; el SEGV era al LEERLO de vuelta.
+fn main() {
+    let inner: Map = {"k": "v"}
+    var outer: Map = {}
+    outer.insert("i", inner)
+    let got: Map = outer.get("i")
+    let v: String = got.get("k")
+    assert(v == "v")
+    print("test-314-nested-maps ok")
+}

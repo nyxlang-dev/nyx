@@ -1,0 +1,117 @@
+// test-176-websocket.nx — WebSocket protocol (v5.1.0)
+import "std/websocket"
+
+fn test_handshake() {
+    print("--- WebSocket Handshake ---")
+
+    // Standard test vector from RFC 6455
+    let key = "dGhlIHNhbXBsZSBub25jZQ=="
+    let accept = ws_accept_key(key)
+    // RFC 6455 known answer
+    if accept == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" {
+        print("accept key RFC vector ok")
+    } else {
+        print(format("accept key: {}", accept))
+    }
+
+    // Handshake response contains all required headers
+    let response = ws_handshake_response(key)
+    if response.indexOf("101 Switching Protocols") >= 0 {
+        print("101 response ok")
+    }
+    if response.indexOf("Upgrade: websocket") >= 0 {
+        print("upgrade header ok")
+    }
+    if response.indexOf("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") >= 0 {
+        print("accept in response ok")
+    }
+}
+
+fn test_key_extraction() {
+    print("--- Key Extraction ---")
+
+    let headers = "GET /chat HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    let extracted = ws_extract_key(headers)
+    if extracted == "dGhlIHNhbXBsZSBub25jZQ==" {
+        print("key extraction ok")
+    } else {
+        print(format("extracted: '{}'", extracted))
+    }
+}
+
+fn test_framing() {
+    print("--- WS Framing ---")
+
+    // Build a text frame
+    let payload = "Hello, WebSocket!"
+    let frame = ws_frame(payload)
+
+    // Frame must start with 0x81 (FIN + text opcode)
+    if frame.length() > 0 {
+        print("frame non-empty ok")
+    }
+
+    // Short payload (<=125): header is 2 bytes
+    // Total = 2 + 17 = 19 bytes
+    // Can't use .length() for binary frame, use ws_frame_size
+    let fsize = ws_frame_size(frame)
+    if fsize == 19 {
+        print("frame size ok")
+    } else {
+        print(format("frame size: {}", fsize))
+    }
+
+    // Parse the frame back
+    let parsed = ws_parse(frame)
+    if parsed == payload {
+        print("frame parse round-trip ok")
+    } else {
+        print(format("parsed: {}", parsed))
+    }
+
+    // Empty payload
+    let empty_frame = ws_frame("")
+    let empty_parsed = ws_parse(empty_frame)
+    if empty_parsed == "" {
+        print("empty frame ok")
+    }
+}
+
+fn test_close_frame() {
+    print("--- Close Frame ---")
+
+    let close = ws_close()
+    if ws_is_close(close) {
+        print("close frame detected ok")
+    }
+
+    // Regular frame is not a close
+    let text_frame = ws_frame("hello")
+    if !ws_is_close(text_frame) {
+        print("text not close ok")
+    }
+}
+
+fn test_upgrade_detection() {
+    print("--- Upgrade Detection ---")
+
+    let upgrade_req = "GET /ws HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+    if ws_is_upgrade(upgrade_req) {
+        print("upgrade request detected ok")
+    }
+
+    let normal_req = "GET / HTTP/1.1\r\nHost: localhost\r\n"
+    if !ws_is_upgrade(normal_req) {
+        print("normal request not upgrade ok")
+    }
+}
+
+fn main() {
+    print("websocket test")
+    test_handshake()
+    test_key_extraction()
+    test_framing()
+    test_close_frame()
+    test_upgrade_detection()
+    print("websocket ok")
+}

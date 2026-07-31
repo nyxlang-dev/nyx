@@ -1,0 +1,4 @@
+// Import relativo INTERNO del paquete: debe reescribirse a "foo/src/b".
+// Regresión: marker_len/src_marker off-by-N rompían la reescritura.
+import "src/b"
+fn foo_a() -> int { return foo_b() + 1 }

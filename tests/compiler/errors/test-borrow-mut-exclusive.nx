@@ -1,0 +1,15 @@
+// Track 3b — exclusividad de &mut (statement-scoped). Dos &mut al MISMO
+// place dentro de un statement (`combine(&mut x, &mut x)`) → NYX1210.
+// Es un LINT no-gating: el lowering de &mut baja a T* sin noalias, así que
+// el aliasing no es UB de memoria; es un hint de corrección. Se ve en
+// NYX_BORROW=warn, se suprime en =error. El programa es válido y corre.
+
+fn combine(a: &mut int, b: &mut int) {
+    *a = *b
+}
+
+fn main() {
+    var x: int = 5
+    combine(&mut x, &mut x)
+    print("done")
+}

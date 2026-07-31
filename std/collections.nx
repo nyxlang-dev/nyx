@@ -1,0 +1,75 @@
+// std/collections.nx — Data structures adicionales
+// Set<T> implementado sobre Map
+
+pub fn set_new() -> Map {
+    return Map.new()
+}
+
+pub fn set_add(s: Map, val: String) {
+    s.insert(val, 1)
+}
+
+pub fn set_add_int(s: Map, val: int) {
+    s.insert(int_to_string(val), 1)
+}
+
+pub fn set_has(s: Map, val: String) -> bool {
+    return s.contains(val)
+}
+
+pub fn set_has_int(s: Map, val: int) -> bool {
+    return s.contains(int_to_string(val))
+}
+
+pub fn set_remove(s: Map, val: String) {
+    // remove() real: el tombstone (insert val,0) dejaba contains()==true, así
+    // que set_has devolvía true para algo ya borrado mientras set_size, que sí
+    // filtraba el tombstone, reportaba un tamaño menor. Además nunca liberaba
+    // la entrada.
+    s.remove(val)
+}
+
+pub fn set_size(s: Map) -> int {
+    let keys: Array = s.keys()
+    return keys.length()
+}
+
+pub fn set_to_array(s: Map) -> Array {
+    let keys: Array = s.keys()
+    return keys
+}
+
+// set_union: retorna un nuevo set con elementos de ambos
+pub fn set_union(a: Map, b: Map) -> Map {
+    let result = Map.new()
+    let ka: Array = a.keys()
+    var i = 0
+    while i < ka.length() {
+        let k: String = ka[i]
+        result.insert(k, 1)
+        i = i + 1
+    }
+    let kb: Array = b.keys()
+    i = 0
+    while i < kb.length() {
+        let k: String = kb[i]
+        result.insert(k, 1)
+        i = i + 1
+    }
+    return result
+}
+
+// set_intersection: retorna un nuevo set con elementos en ambos
+pub fn set_intersection(a: Map, b: Map) -> Map {
+    let result = Map.new()
+    let ka: Array = a.keys()
+    var i = 0
+    while i < ka.length() {
+        let k: String = ka[i]
+        if b.contains(k) {
+            result.insert(k, 1)
+        }
+        i = i + 1
+    }
+    return result
+}

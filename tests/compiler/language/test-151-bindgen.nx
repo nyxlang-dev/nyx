@@ -1,0 +1,85 @@
+// test-151: bindgen — C type mapping + declaration parsing logic
+
+fn map_c_type_simple(raw: String) -> String {
+    var t: String = raw.trim()
+    if t.startsWith("const ") { t = t.substring(6, t.length()).trim() }
+
+    // Pointer: ends with *
+    if t.endsWith("*") {
+        let inner: String = t.substring(0, t.length() - 1).trim()
+        if inner == "void" or inner == "const void" { return "*i8" }
+        let mapped: String = map_c_type_simple(inner)
+        return "*" + mapped
+    }
+
+    if t == "void" { return "()" }
+    if t == "int" or t == "int32_t" { return "i32" }
+    if t == "char" or t == "int8_t" { return "i8" }
+    if t == "short" or t == "int16_t" { return "i16" }
+    if t == "long" or t == "int64_t" { return "i64" }
+    if t == "unsigned char" or t == "uint8_t" { return "u8" }
+    if t == "unsigned short" or t == "uint16_t" { return "u16" }
+    if t == "unsigned int" or t == "uint32_t" { return "u32" }
+    if t == "unsigned long" or t == "uint64_t" { return "u64" }
+    if t == "float" { return "f32" }
+    if t == "double" { return "float" }
+    if t == "size_t" { return "usize" }
+    return t
+}
+
+// Find index of substring (returns -1 if not found)
+fn index_of_str(s: String, sub: String) -> int {
+    var i = 0
+    while i <= s.length() - sub.length() {
+        if s.substring(i, i + sub.length()) == sub { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// Strip // line comment
+fn strip_line_comment(line: String) -> String {
+    let pos: int = index_of_str(line, "//")
+    if pos >= 0 {
+        return line.substring(0, pos).trim()
+    }
+    return line
+}
+
+fn main() -> int {
+    // Test 1: Basic C type mapping
+    print(map_c_type_simple("int"))           // i32
+    print(map_c_type_simple("char"))          // i8
+    print(map_c_type_simple("double"))        // float
+    print(map_c_type_simple("size_t"))        // usize
+    print(map_c_type_simple("uint8_t"))       // u8
+    print(map_c_type_simple("void"))          // ()
+
+    // Test 2: Pointer types
+    print(map_c_type_simple("char*"))         // *i8
+    print(map_c_type_simple("void*"))         // *i8
+    print(map_c_type_simple("int*"))          // *i32
+    print(map_c_type_simple("const char*"))   // *i8
+
+    // Test 3: Comment stripping
+    let line1: String = strip_line_comment("int foo; // this is a comment")
+    print(line1)                              // int foo;
+
+    let line2: String = strip_line_comment("double pi; // 3.14")
+    print(line2)                              // double pi;
+
+    // Test 4: index_of_str
+    let s1: String = "int foo(int x);"
+    let p1: int = index_of_str(s1, "(")
+    print(p1)                                 // 7
+    let p2: int = index_of_str(s1, ")")
+    print(p2)                                 // 13
+
+    // Test 5: typedef-style mapping
+    print(map_c_type_simple("unsigned int"))   // u32
+    print(map_c_type_simple("long"))           // i64
+    print(map_c_type_simple("float"))          // f32
+
+    print("bindgen ok")
+    return 0
+}

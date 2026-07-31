@@ -1,0 +1,39 @@
+// test-250-webpush-encrypt — cifrado aes128gcm (RFC 8291 §5, vector oficial).
+// webpush_encrypt_with_keys es determinístico: mismos inputs → mismo body.
+// Los valores del vector están publicados en base64url en el RFC — se decodifican
+// directamente con base64url_decode (sin helper hex intermedio).
+import "std/webpush"
+import "std/webpushcrypto"
+import "std/base64"
+
+fn main() {
+    // Vector RFC 8291 §5 "Push Message Encryption Example" + Apéndice A.
+    let payload = "When I grow up, I want to be a watermelon"
+
+    // Receiver (user agent): clave pública P-256 (65B) + auth secret (16B).
+    let client_pub = base64url_decode("BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4")
+    let auth = base64url_decode("BTBZMqHH6r4Tts7J_aSIgg")
+
+    // Salt (16B) + keypair efímero del application server (sender), del vector.
+    let salt = base64url_decode("DGv6ra1nlYgDCS1FRnbzlw")
+    let as_priv = base64url_decode("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw")
+    let as_pub = base64url_decode("BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8")
+
+    // Sanity check de tamaños (contrato binario del vector).
+    assert(client_pub.length() == 65)
+    assert(auth.length() == 16)
+    assert(salt.length() == 16)
+    assert(as_priv.length() == 32)
+    assert(as_pub.length() == 65)
+
+    let body = webpush_encrypt_with_keys(payload, client_pub, auth, salt, as_priv, as_pub)
+    let got = base64url_encode(body)
+
+    let expected = "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27ml" +
+                   "mlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPT" +
+                   "pK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN"
+
+    assert(got == expected)
+
+    print("webpush encrypt ok")
+}

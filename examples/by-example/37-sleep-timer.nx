@@ -1,0 +1,31 @@
+// Timer y sleep: medir tiempo transcurrido con time_ms() y pausar con sleep()
+
+fn main() -> int {
+    print("start")
+
+    let t0: int = time_ms()
+
+    // Pausar 500 milisegundos
+    sleep(500)
+
+    let t1: int = time_ms()
+    let elapsed: int = t1 - t0
+
+    print("500ms passed")
+    print("tiempo real: " + int_to_string(elapsed) + "ms")
+
+    // Medir una operacion costosa
+    let t2: int = time_ms()
+    var suma: int = 0
+    var i: int = 0
+    while i < 1000000 {
+        suma = suma + i
+        i = i + 1
+    }
+    let t3: int = time_ms()
+    let dur: int = t3 - t2
+    print("suma de 0..1M = " + int_to_string(suma))
+    print("duracion loop: " + int_to_string(dur) + "ms")
+
+    return 0
+}

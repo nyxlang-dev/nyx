@@ -1,0 +1,102 @@
+// test-302-html-unescape.nx — std/url: html_unescape completo (D3 friction-browser)
+//
+// El html_unescape previo era una cadena de replace() — dos bugs de contrato:
+// (1) doble-decode: "&amp;lt;" pasaba por "&lt;" y terminaba en "<" (debe quedar
+//     "&lt;" literal — una PASADA única, cada entidad se decodifica una vez);
+// (2) sin referencias numéricas: &#233; / &#xE9; quedaban crudas (la fricción
+//     real del navegador; consumidor directo de utf8_encode, D2).
+// Contrato: pasada única izquierda→derecha; numéricas dec/hex → utf8_encode
+// (inválidas/surrogates → U+FFFD, semántica HTML); nombradas de tabla curada;
+// lo malformado o desconocido queda LITERAL (como los browsers con &unknown;).
+// Self-checking con assert() (abortivo).
+
+import "std/url"
+import "std/unicode"   // utf8_encode directo en asserts; además ejercita el dedup
+                       // de inlining cuando std/url también lo importe (D3)
+
+fn test_named_basicas() {
+    assert(html_unescape("&amp;") == "&")
+    assert(html_unescape("&lt;div&gt;") == "<div>")
+    assert(html_unescape("&quot;hola&quot;") == "\"hola\"")
+    assert(html_unescape("&apos;") == "'")
+    assert(html_unescape("&nbsp;") == " ")
+    print("nombradas basicas ok")
+}
+
+fn test_no_doble_decode() {
+    // La entidad decodificada NO se re-escanea: &amp;lt; -> "&lt;" literal.
+    assert(html_unescape("&amp;lt;") == "&lt;")
+    assert(html_unescape("&amp;amp;") == "&amp;")
+    assert(html_unescape("&amp;#233;") == "&#233;")
+    print("pasada unica sin doble-decode ok")
+}
+
+fn test_numericas_decimales() {
+    assert(html_unescape("&#233;") == "é")
+    assert(html_unescape("&#65;") == "A")
+    assert(html_unescape("caf&#233;") == "café")
+    assert(html_unescape("&#8364;") == "€")
+    print("numericas decimales ok")
+}
+
+fn test_numericas_hex() {
+    assert(html_unescape("&#xE9;") == "é")
+    assert(html_unescape("&#xe9;") == "é")
+    assert(html_unescape("&#XE9;") == "é")
+    assert(html_unescape("&#x20AC;") == "€")
+    assert(html_unescape("&#x1F600;") == utf8_encode(0x1F600))
+    print("numericas hex ok")
+}
+
+fn test_numericas_invalidas_fffd() {
+    // Fuera de rango o surrogate -> U+FFFD (misma semantica que utf8_encode/HTML)
+    let fffd: String = utf8_encode(0xFFFD)
+    assert(html_unescape("&#xD800;") == fffd)
+    assert(html_unescape("&#x110000;") == fffd)
+    assert(html_unescape("&#1114112;") == fffd)
+    print("numericas invalidas -> U+FFFD ok")
+}
+
+fn test_malformadas_quedan_literales() {
+    assert(html_unescape("&#;") == "&#;")
+    assert(html_unescape("&#zzz;") == "&#zzz;")
+    assert(html_unescape("&#xG9;") == "&#xG9;")
+    assert(html_unescape("&desconocida;") == "&desconocida;")
+    assert(html_unescape("& suelto") == "& suelto")
+    assert(html_unescape("&amp") == "&amp")            // sin ';' -> literal
+    assert(html_unescape("fin&") == "fin&")
+    print("malformadas literales ok")
+}
+
+fn test_named_extendidas() {
+    assert(html_unescape("&eacute;") == "é")
+    assert(html_unescape("&ntilde;") == "ñ")
+    assert(html_unescape("&uuml;") == "ü")
+    assert(html_unescape("&copy;") == "©")
+    assert(html_unescape("&mdash;") == "—")
+    assert(html_unescape("&hellip;") == "…")
+    assert(html_unescape("&euro;") == "€")
+    assert(html_unescape("&laquo;citas&raquo;") == "«citas»")
+    print("nombradas extendidas ok")
+}
+
+fn test_mezcla_realista() {
+    let src = "Caf&eacute; &amp; t&#233; &#x2014; men&uacute; &lt;b&gt;hoy&lt;/b&gt;"
+    assert(html_unescape(src) == "Café & té — menú <b>hoy</b>")
+    // Texto sin entidades pasa intacto
+    assert(html_unescape("sin entidades") == "sin entidades")
+    assert(html_unescape("") == "")
+    print("mezcla realista ok")
+}
+
+fn main() {
+    test_named_basicas()
+    test_no_doble_decode()
+    test_numericas_decimales()
+    test_numericas_hex()
+    test_numericas_invalidas_fffd()
+    test_malformadas_quedan_literales()
+    test_named_extendidas()
+    test_mezcla_realista()
+    print("test-302-html-unescape ok")
+}

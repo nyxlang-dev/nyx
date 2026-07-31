@@ -1,0 +1,38 @@
+// nyx-proxy virtual host routing — match Host header to upstream
+// Routing nyx-proxy — mapear Host header a upstream
+
+fn route_for_host(host: String) -> String {
+    // Map each domain to an upstream IP:port
+    if host == "nyxlang.com" { return "127.0.0.1:3001" }
+    if host == "nyxkv.com" { return "127.0.0.1:3002" }
+    if host == "serve.nyxlang.com" { return "127.0.0.1:3003" }
+    if host == "proxy.nyxlang.com" { return "127.0.0.1:3005" }
+    // Default upstream
+    return "127.0.0.1:3001"
+}
+
+fn parse_host_header(request: String) -> String {
+    // Find "Host: " in the request headers
+    let idx: int = request.indexOf("Host: ")
+    if idx < 0 { return "" }
+    let start: int = idx + 6
+    let end: int = request.indexOf("\r\n", start)
+    if end < 0 { return "" }
+    return request.substring(start, end)
+}
+
+fn main() -> int {
+    // Simulate reading an HTTP request
+    let request: String = "GET / HTTP/1.1\r\nHost: nyxkv.com\r\nUser-Agent: test\r\n\r\n"
+
+    let host: String = parse_host_header(request)
+    let upstream: String = route_for_host(host)
+
+    print("incoming Host: " + host)
+    print("route to -> " + upstream)
+
+    // In production, nyx-proxy tls_accept() reads SNI, matches the cert,
+    // then Host header matches the vhost config, forwards the request
+    // via tcp_connect to the upstream, and pipes bytes bidirectionally.
+    return 0
+}

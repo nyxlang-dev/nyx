@@ -1,0 +1,16 @@
+// M-08 sesion 15 error test: field typo en struct importado.
+// S15 escanea fields de structs importados, asi que un nombre
+// inexistente debe caerse con did-you-mean.
+// Expected stderr (contains): "field 'programm' does not exist in struct 'ArgParser'"
+// Expected exit: non-zero (semantic check fails)
+
+import "std/args" as args
+
+fn main() -> int {
+    let p: ArgParser = ArgParser {
+        programm: "myapp",     // typo: program → programm
+        description: "",
+        defs: []
+    }
+    return 0
+}

@@ -1,0 +1,36 @@
+// Test new array methods (v0.1.5)
+
+fn main() -> int {
+    // slice
+    let arr = [10, 20, 30, 40, 50]
+    let sliced: Array = arr.slice(1, 4)
+    print(sliced.length())  // 3
+    print(sliced[0])  // 20
+    print(sliced[1])  // 30
+    print(sliced[2])  // 40
+
+    // reverse
+    var nums = [1, 2, 3, 4, 5]
+    nums.reverse()
+    print(nums[0])  // 5
+    print(nums[4])  // 1
+
+    // indexOf
+    let data = [10, 20, 30, 40]
+    let found: int = data.indexOf(30)
+    print(found)  // 2
+    let not_found: int = data.indexOf(99)
+    print(not_found)  // -1
+
+    // join
+    let words = ["hello", "beautiful", "world"]
+    let joined: String = words.join(" ")
+    print(joined)  // "hello beautiful world"
+
+    let csv = ["a", "b", "c"]
+    let csv_str: String = csv.join(",")
+    print(csv_str)  // "a,b,c"
+
+    print("all array method tests passed")
+    return 0
+}

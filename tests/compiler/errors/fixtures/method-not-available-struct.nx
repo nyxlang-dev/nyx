@@ -1,0 +1,18 @@
+// Fixture (Task 2, ronda de review): cobertura del catch-all real de
+// codegen_method_call (codegen.nx ~9377). El receiver es un struct de
+// usuario — kind NO catalogado por methods_for_kind (devuelve [], tipado
+// gradual), así que NYX1022 nunca objeta este caso y el método inexistente
+// solo puede cazarse acá, en la fase 'gen'. Sin este fixture el catch-all
+// quedaba sin ningún test que lo alcance.
+struct Punto {
+    x: int,
+    y: int
+}
+
+fn mk_struct() -> Punto {
+    return Punto { x: 1, y: 2 }
+}
+
+fn main() {
+    print(mk_struct().metodo_que_no_existe().to_string())
+}

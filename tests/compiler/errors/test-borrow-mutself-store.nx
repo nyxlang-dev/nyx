@@ -1,0 +1,19 @@
+// D2(a) inc2-menor (campaña FASE D): el receiver `&mut self` viaja POR
+// PUNTERO (Camino B) → `self.p = &x` escribe en la struct del caller, que
+// sobrevive al frame del método = la ref a `x` (local del método) ESCAPA →
+// NYX1222 (vector B). Antes: self se registraba solo como frame-local
+// (conservador) → miss. NYX_BORROW=error.
+struct Holder { p: *int }
+
+impl Holder {
+    fn stash(&mut self) {
+        var x: int = 5
+        self.p = &x
+    }
+}
+
+fn main() {
+    var h: Holder = Holder { p: 0 as *int }
+    h.stash()
+    print(1)
+}

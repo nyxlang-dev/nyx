@@ -1,0 +1,15 @@
+struct Box {
+    val: int
+}
+
+impl Box {
+    fn peek(self) -> *int {
+        return &self.val
+    }
+}
+
+fn main() {
+    let b: Box = Box { val: 42 }
+    let p: *int = b.peek()
+    print(1)
+}

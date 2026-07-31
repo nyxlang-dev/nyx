@@ -1,0 +1,12 @@
+// T3a — double-free (NYX1221). Corre con NYX_BORROW=error.
+// free(p) dos veces sobre el mismo puntero: la segunda liberación es
+// un double-free (bug C-class real). Bajo NYX_BORROW=error el build
+// falla (exit != 0). SOUND (solo con free() en el programa).
+fn main() {
+    unsafe {
+        let p: *int = alloc<int>(1)
+        *p = 5
+        free(p)
+        free(p)             // ← double free of 'p'
+    }
+}

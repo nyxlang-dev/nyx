@@ -1,0 +1,14 @@
+// Task 1: mismo fallo silencioso en el camino de ESCRITURA (field_assign).
+// `u.nombree = "x"` con campo inexistente hoy compila mudo (escribe en la nada).
+// Expected stderr (contains): "field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
+// Expected exit: non-zero (semantic check fails)
+
+struct Usuario {
+    nombre: String
+}
+
+fn main() -> int {
+    var u: Usuario = Usuario { nombre: "Ada" }
+    u.nombree = "Bee"
+    return 0
+}

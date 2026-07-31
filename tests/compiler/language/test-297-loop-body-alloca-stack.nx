@@ -1,0 +1,38 @@
+// Regresión A9 (friction-browser P0): un `let` dentro del cuerpo de un loop
+// emitía un `alloca` por vuelta que solo se liberaba al retornar la función →
+// el stack crecía ~16 bytes/vuelta y desbordaba el límite de 8MB a ~500k
+// vueltas → SIGSEGV seco, sin diagnóstico. El fix (stacksave pre-loop +
+// stackrestore al tope del cuerpo) reclama esos allocas cada vuelta.
+//
+// Este test corre 1.2M vueltas: PRE-fix, a -O0 (como linkea el runner) con el
+// stack por defecto de 8MB, desbordaba a ~500k → exit 139 (el runner lo cuenta
+// como FALLO). POST-fix el stack queda acotado y las 1.2M vueltas corren, y el
+// assert verifica que la semántica no cambió (mismo checksum).
+fn main() -> int {
+    // Array<int> FIJO escrito por índice (patrón exacto del reporte).
+    var w: Array<int> = []
+    var i = 0
+    while i < 256 { w.push(0)  i = i + 1 }
+
+    var t = 0
+    var checksum = 0
+    while t < 1200000 {
+        let s: String = chr(65 + (t % 26))   // allocación + `let` en el cuerpo
+        w[t % 256] = s.charAt(0)             // escritura indexada, array fijo
+        checksum = checksum + s.charAt(0)
+        t = t + 1
+    }
+
+    assert(checksum == 92999956)
+
+    // for-in sobre rango con `let` en el cuerpo (misma clase de bug).
+    var acc = 0
+    for j in 0..600000 {
+        let c: String = chr(97 + (j % 26))
+        acc = acc + c.charAt(0)
+    }
+    assert(acc == 65699976)
+
+    print("A9 loop-body alloca no desborda el stack")
+    return 0
+}

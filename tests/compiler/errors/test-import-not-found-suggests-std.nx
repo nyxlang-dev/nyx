@@ -1,0 +1,11 @@
+// Driver error (Task 10, Fase 4, campaña "Primer intento verde"): un import
+// que no resuelve pero es un typo cercano a un módulo real de std/ debe
+// sugerir el candidato REAL (Levenshtein contra los nombres de std/), no
+// solo el hint fijo "src/<path>" de antes. "jso" está a distancia 1 de
+// "json" (std/json.nx existe) — bajo el umbral min(3, len/2)=1.
+import "jso"
+
+fn main() -> int {
+    print("no debería compilar")
+    return 0
+}

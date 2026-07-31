@@ -1,0 +1,29 @@
+// Fase 1d error test: struct con impl Display (algun trait)
+// pero sin impl PartialOrd, usado con operador `<`. Espejo exacto de
+// test-m08-binop-trait-missing-add.nx (S20) pero para operadores de orden.
+// Expected stderr (contains): "left operand of '<' must implement 'PartialOrd', but 'Point' does not"
+// (using op_symbol; LESS -> "<")
+// Expected exit: non-zero (semantic check fails)
+
+trait Show {
+    fn show(self) -> String
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Show for Point {
+    fn show(self) -> String {
+        return "point"
+    }
+}
+
+fn main() -> int {
+    let a: Point = Point { x: 1, y: 2 }
+    let b: Point = Point { x: 3, y: 4 }
+    let c: bool = a < b
+    print(b.show())
+    return 0
+}

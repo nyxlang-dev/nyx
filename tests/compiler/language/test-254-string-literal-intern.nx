@@ -1,0 +1,52 @@
+// test-254-string-literal-intern — internado de literales de String.
+// Los literales de String se construyen UNA vez (caché internal por-literal +
+// nyx_intern_cstr) en vez de re-alocarse en cada evaluación. Este test verifica
+// que el internado NO cambia la semántica observable: igualdad por valor,
+// concatenación que no muta el literal, uso repetido en loops, y StringBuilder
+// que copia bytes (no aliasa el literal). Self-checking con assert().
+
+fn main() {
+    // Igualdad por valor (no por puntero) — el mismo literal usado 2 veces
+    let a: String = "hello"
+    let b: String = "hello"
+    assert(a == b)
+    assert("hello" == "hello")
+
+    // Concatenación produce un string NUEVO, no muta el literal compartido
+    let c: String = "hello" + " world"
+    assert(c == "hello world")
+    assert("hello" == a)           // el literal sigue intacto tras el concat
+
+    // Uso repetido del MISMO literal en un loop (el caso que re-alocaba 100K veces)
+    var count: int = 0
+    var i: int = 0
+    while i < 1000 {
+        if "x" == "x" { count = count + 1 }
+        i = i + 1
+    }
+    assert(count == 1000)
+
+    // StringBuilder appendeando un literal en loop: copia bytes, no aliasa
+    let sb: StringBuilder = StringBuilder.new(16)
+    var j: int = 0
+    while j < 5 {
+        sb.append("ab")
+        j = j + 1
+    }
+    let built: String = sb.to_string()
+    assert(built == "ababababab")
+    assert(built.length() == 10)
+    assert("ab" == "ab")           // el literal "ab" no quedó corrupto por el SB
+
+    // Literal como clave de Map (usa el literal en insert y get)
+    var m: Map = {}
+    m.insert("key", "val")
+    assert(m.get("key") == "val")
+
+    // Literal vacío (path del empty-string singleton)
+    let e: String = ""
+    assert(e == "")
+    assert(e.length() == 0)
+
+    print("string-literal-intern OK")
+}

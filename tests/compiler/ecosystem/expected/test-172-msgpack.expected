@@ -1,0 +1,32 @@
+msgpack test
+--- Pack Int ---
+fixint 0: 1 byte ok
+type int ok
+unpack 0 ok
+unpack 42 ok
+fixint 42: 1 byte ok
+uint8 200: 2 bytes ok
+unpack 200 ok
+fixint -1: 1 byte ok
+unpack -1 ok
+unpack -100 ok
+--- Pack String ---
+type str ok
+fixstr hello: 6 bytes ok
+unpack hello ok
+unpack empty ok
+unpack special ok
+--- Pack Bool/Nil ---
+pack true ok
+unpack true ok
+pack false ok
+unpack false ok
+pack nil ok
+nil: 1 byte ok
+--- Sizes ---
+int(0) size: 1
+int(127) size: 1
+int(128) size: 2
+str(5) size: 6
+str(36) size: 38
+msgpack ok

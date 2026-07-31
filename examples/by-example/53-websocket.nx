@@ -1,0 +1,24 @@
+// WebSocket framing — build and parse frames (RFC 6455)
+// Framing WebSocket — construir y parsear frames
+
+import "std/websocket"
+
+fn main() -> int {
+    // Build a WebSocket text frame
+    let payload: String = "Hello, WebSocket!"
+    let frame: String = ws_frame(payload)
+    print("frame length: " + int_to_string(frame.length()) + " bytes")
+    print("payload length: " + int_to_string(payload.length()) + " bytes")
+
+    // Parse a frame back to its payload
+    let parsed: String = ws_parse(frame)
+    print("parsed: " + parsed)
+
+    // Generate a handshake response for a given Sec-WebSocket-Key
+    let ws_key: String = "dGhlIHNhbXBsZSBub25jZQ=="
+    let handshake: String = ws_handshake_response(ws_key)
+    print("handshake response:")
+    print(handshake)
+
+    return 0
+}

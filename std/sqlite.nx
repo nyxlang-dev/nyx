@@ -1,0 +1,312 @@
+// std/sqlite.nx — SQLite3 bindings for Nyx (v0.11.0)
+// Requires: runtime/sqlite_adapter.c, -ldl in link flags
+
+// FFI declarations — sqlite adapter bridge
+extern "C" fn nyx_sqlite_open(path: String) -> *int
+extern "C" fn nyx_sqlite_close(db: *int)
+extern "C" fn nyx_sqlite_exec(db: *int, sql: String) -> int
+extern "C" fn nyx_sqlite_prepare(db: *int, sql: String) -> *int
+extern "C" fn nyx_sqlite_step(stmt: *int) -> int
+extern "C" fn nyx_sqlite_finalize(stmt: *int)
+extern "C" fn nyx_sqlite_column_count(stmt: *int) -> int
+extern "C" fn nyx_sqlite_column_str(stmt: *int, col: int) -> String
+extern "C" fn nyx_sqlite_column_name(stmt: *int, col: int) -> String
+extern "C" fn nyx_sqlite_column_int(stmt: *int, col: int) -> int
+extern "C" fn nyx_sqlite_bind_str(stmt: *int, idx: int, val: String) -> int
+extern "C" fn nyx_sqlite_bind_int(stmt: *int, idx: int, val: int) -> int
+extern "C" fn nyx_sqlite_bind_double(stmt: *int, idx: int, val: float) -> int
+extern "C" fn nyx_sqlite_column_float(stmt: *int, col: int) -> float
+extern "C" fn nyx_sqlite_last_insert_id(db: *int) -> int
+extern "C" fn nyx_sqlite_changes(db: *int) -> int
+extern "C" fn nyx_sqlite_errmsg(db: *int) -> String
+
+// High-level wrappers
+
+// Open database (":memory:" for in-memory)
+pub fn sqlite_open(path: String) -> *int {
+    return nyx_sqlite_open(path)
+}
+
+pub fn sqlite_close(db: *int) {
+    nyx_sqlite_close(db)
+}
+
+// Execute DDL/DML with no result — returns true on success
+pub fn sqlite_exec(db: *int, sql: String) -> bool {
+    let rc = nyx_sqlite_exec(db, sql)
+    return rc == 0
+}
+
+// Query: returns Array of rows, each row is an Array of String values
+pub fn sqlite_query(db: *int, sql: String) -> Array {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    var rows = []
+    var done = false
+    while not done {
+        let rc = nyx_sqlite_step(stmt)
+        if rc == 1 {
+            let ncols = nyx_sqlite_column_count(stmt)
+            var row = []
+            var c = 0
+            while c < ncols {
+                let val: String = nyx_sqlite_column_str(stmt, c)
+                row.push(val)
+                c = c + 1
+            }
+            rows.push(row)
+        } else {
+            done = true
+        }
+    }
+    nyx_sqlite_finalize(stmt)
+    return rows
+}
+
+// Query returning column names (first call) then rows
+pub fn sqlite_query_named(db: *int, sql: String) -> Array {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    var result = []
+
+    // Get column names first
+    // We need at least one step to know col count... actually col count available before step
+    let ncols = nyx_sqlite_column_count(stmt)
+    var headers = []
+    var ci = 0
+    while ci < ncols {
+        let name: String = nyx_sqlite_column_name(stmt, ci)
+        headers.push(name)
+        ci = ci + 1
+    }
+    result.push(headers)
+
+    var done = false
+    while not done {
+        let rc = nyx_sqlite_step(stmt)
+        if rc == 1 {
+            var row = []
+            var c = 0
+            while c < ncols {
+                let val: String = nyx_sqlite_column_str(stmt, c)
+                row.push(val)
+                c = c + 1
+            }
+            result.push(row)
+        } else {
+            done = true
+        }
+    }
+    nyx_sqlite_finalize(stmt)
+    return result
+}
+
+// Execute with one int binding
+pub fn sqlite_exec_int(db: *int, sql: String, val: int) -> bool {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    nyx_sqlite_bind_int(stmt, 1, val)
+    nyx_sqlite_step(stmt)
+    nyx_sqlite_finalize(stmt)
+    return true
+}
+
+// Execute with one string binding
+pub fn sqlite_exec_str(db: *int, sql: String, val: String) -> bool {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    nyx_sqlite_bind_str(stmt, 1, val)
+    nyx_sqlite_step(stmt)
+    nyx_sqlite_finalize(stmt)
+    return true
+}
+
+// Last inserted row id
+pub fn sqlite_last_id(db: *int) -> int {
+    return nyx_sqlite_last_insert_id(db)
+}
+
+// Number of rows affected by last INSERT/UPDATE/DELETE
+pub fn sqlite_affected(db: *int) -> int {
+    return nyx_sqlite_changes(db)
+}
+
+pub fn sqlite_error(db: *int) -> String {
+    return nyx_sqlite_errmsg(db)
+}
+
+// === Transactions ===
+
+pub fn sqlite_begin(db: *int) -> bool {
+    return sqlite_exec(db, "BEGIN TRANSACTION")
+}
+
+pub fn sqlite_commit(db: *int) -> bool {
+    return sqlite_exec(db, "COMMIT")
+}
+
+pub fn sqlite_rollback(db: *int) -> bool {
+    return sqlite_exec(db, "ROLLBACK")
+}
+
+// === Typed query results ===
+
+// Query returning rows of int values
+pub fn sqlite_query_int(db: *int, sql: String) -> Array {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    var rows = []
+    var done = false
+    while not done {
+        let rc = nyx_sqlite_step(stmt)
+        if rc == 1 {
+            let ncols = nyx_sqlite_column_count(stmt)
+            var row = []
+            var c = 0
+            while c < ncols {
+                let val: int = nyx_sqlite_column_int(stmt, c)
+                row.push(val)
+                c = c + 1
+            }
+            rows.push(row)
+        } else {
+            done = true
+        }
+    }
+    nyx_sqlite_finalize(stmt)
+    return rows
+}
+
+// Query returning single int value (first column of first row)
+pub fn sqlite_query_one_int(db: *int, sql: String) -> int {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    let rc = nyx_sqlite_step(stmt)
+    var result: int = 0
+    if rc == 1 {
+        result = nyx_sqlite_column_int(stmt, 0)
+    }
+    nyx_sqlite_finalize(stmt)
+    return result
+}
+
+// Query returning single string value (first column of first row)
+pub fn sqlite_query_one_str(db: *int, sql: String) -> String {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    let rc = nyx_sqlite_step(stmt)
+    var result: String = ""
+    if rc == 1 {
+        result = nyx_sqlite_column_str(stmt, 0)
+    }
+    nyx_sqlite_finalize(stmt)
+    return result
+}
+
+// === Multi-parameter binding ===
+
+// Execute with int + string parameters (e.g., UPDATE ... SET name=? WHERE id=?)
+pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    var i: int = 0
+    while i < params.length() {
+        // Bind all params as strings (most flexible)
+        let val: String = params[i]
+        nyx_sqlite_bind_str(stmt, i + 1, val)
+        i = i + 1
+    }
+    nyx_sqlite_step(stmt)
+    nyx_sqlite_finalize(stmt)
+    return true
+}
+
+// Query with string parameters
+pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array {
+    let stmt = nyx_sqlite_prepare(db, sql)
+    var i: int = 0
+    while i < params.length() {
+        let val: String = params[i]
+        nyx_sqlite_bind_str(stmt, i + 1, val)
+        i = i + 1
+    }
+    var rows = []
+    var done = false
+    while not done {
+        let rc = nyx_sqlite_step(stmt)
+        if rc == 1 {
+            let ncols = nyx_sqlite_column_count(stmt)
+            var row = []
+            var c = 0
+            while c < ncols {
+                let val: String = nyx_sqlite_column_str(stmt, c)
+                row.push(val)
+                c = c + 1
+            }
+            rows.push(row)
+        } else {
+            done = true
+        }
+    }
+    nyx_sqlite_finalize(stmt)
+    return rows
+}
+
+// === Schema migration ===
+
+// Initialize migration tracking table
+pub fn sqlite_migrate_init(db: *int) -> bool {
+    return sqlite_exec(db, "CREATE TABLE IF NOT EXISTS _nyx_migrations (version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+}
+
+// Get current schema version
+pub fn sqlite_migrate_version(db: *int) -> int {
+    return sqlite_query_one_int(db, "SELECT COALESCE(MAX(version), 0) FROM _nyx_migrations")
+}
+
+// Apply a migration if not already applied
+pub fn sqlite_migrate(db: *int, version: int, name: String, sql: String) -> bool {
+    let current = sqlite_migrate_version(db)
+    if version <= current {
+        return true
+    }
+    sqlite_begin(db)
+    let ok = sqlite_exec(db, sql)
+    if ok {
+        let stmt = nyx_sqlite_prepare(db, "INSERT INTO _nyx_migrations (version, name) VALUES (?, ?)")
+        nyx_sqlite_bind_int(stmt, 1, version)
+        nyx_sqlite_bind_str(stmt, 2, name)
+        nyx_sqlite_step(stmt)
+        nyx_sqlite_finalize(stmt)
+        sqlite_commit(db)
+        return true
+    }
+    sqlite_rollback(db)
+    return false
+}
+
+// === Table introspection ===
+
+// List all tables in the database
+pub fn sqlite_tables(db: *int) -> Array {
+    let rows = sqlite_query(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    var names = []
+    var i = 0
+    while i < rows.length() {
+        let row: Array = rows[i]
+        let name: String = row[0]
+        names.push(name)
+        i = i + 1
+    }
+    return names
+}
+
+// Check if a table exists
+pub fn sqlite_table_exists(db: *int, name: String) -> bool {
+    let stmt = nyx_sqlite_prepare(db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
+    nyx_sqlite_bind_str(stmt, 1, name)
+    let rc = nyx_sqlite_step(stmt)
+    var count: int = 0
+    if rc == 1 {
+        count = nyx_sqlite_column_int(stmt, 0)
+    }
+    nyx_sqlite_finalize(stmt)
+    return count > 0
+}
+
+// Count rows in a table
+pub fn sqlite_count(db: *int, table: String) -> int {
+    return sqlite_query_one_int(db, "SELECT COUNT(*) FROM " + table)
+}

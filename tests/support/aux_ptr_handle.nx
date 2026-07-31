@@ -1,0 +1,12 @@
+// aux module para test-316-ptr-return-corruption.nx — fn de módulo que
+// retorna un handle *int (mimetiza std/sqlite::sqlite_open, el shape del
+// reporte de fricción 20260728-anon-1). El let ANOTADO de acá adentro no
+// dispara el bug: el gatillo vive en el CALLER que guarda el retorno de una
+// llamada alias.fn() en un local sin anotación y lo retorna.
+import "std/owned"
+
+pub fn make_handle() -> *int {
+    let p: *int = alloc<int>(1)
+    *p = 4242
+    return p
+}

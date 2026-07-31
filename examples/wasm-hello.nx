@@ -1,0 +1,24 @@
+// wasm-hello.nx — Nyx compilado a WebAssembly (wasm32-wasi)
+// EN: Nyx compiled to WebAssembly (wasm32-wasi).
+//
+// Compilar / build:   make wasm FILE=examples/wasm-hello.nx
+// Ejecutar / run:     wasmtime wasm-hello.wasm
+//
+// El target wasm corre sin GC (leak-by-design, pensado para cómputo batch)
+// y sin red/threads/procesos — strings, arrays, maps e iterators funcionan.
+
+fn fib(n: int) -> int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    print("¡Hola desde Nyx en WebAssembly!")
+    let quien: String = "wasm32-wasi"
+    print("target: " + quien)
+    print("fib(20) = " + fib(20).to_string())
+    var frutas = ["manzana", "banana", "cereza"]
+    for f in frutas {
+        print("- " + f)
+    }
+}

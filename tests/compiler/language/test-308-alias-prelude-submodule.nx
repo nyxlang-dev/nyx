@@ -1,0 +1,27 @@
+// test-308-alias-prelude-submodule.nx — alias de std/prelude en un SUBMÓDULO (P1)
+//
+// `import "std/prelude" as p` dentro de un módulo que a su vez es importado por
+// el archivo principal daba link error: "use of undefined value '@p'" — el
+// codegen trataba el alias como un global. Bisección del reporte: prelude SIN
+// alias OK; otro std CON alias OK; prelude-con-alias en el main de UN archivo
+// OK. Fallaba SOLO alias-de-prelude + submódulo, porque prelude viene
+// auto-cargado (su path ya está en `imported`) y el loop transitivo del
+// resolver solo emitía el `module <alias> = [...]` para módulos NO importados.
+// Self-checking con assert() (abortivo).
+
+import "tests/support/aux_alias_prelude_sub"
+
+fn main() {
+    let xs: Array = [3, 1, 2]
+    let ordenado: Array = ordenar_via_alias(xs)
+    assert(ordenado[0] == 1)
+    assert(ordenado[1] == 2)
+    assert(ordenado[2] == 3)
+    print("sort via alias de prelude en submodulo ok")
+
+    let mx: int = maximo_via_alias([5, 9, 4])
+    assert(mx == 9)
+    print("segunda fn del mismo alias ok")
+
+    print("test-308-alias-prelude-submodule ok")
+}

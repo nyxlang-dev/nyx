@@ -1,0 +1,62 @@
+// test-325 — invariancia por FORMA del receptor para `contains` sobre un campo
+// Array (épica dispatch 2026-07-31, bug 4 de `tests/dispatch-repro/`).
+//
+// El síntoma original era un error de clang: `s.f.contains(2)` emitía la rama
+// de Map (`nyx_map_contains_str(i8*, i8*)`) para un receptor Array, pasando el
+// entero 2 como si fuera un puntero — "integer constant must have integer type".
+// O sea: el arreglo del 2026-07-26 (codegen.nx:8511) cubrió el camino de
+// IDENTIFICADOR y dejó afuera el de CAMPO. Las tareas 2 y 3 de esta épica
+// (NYX1022 en semantic, NYX2007 en codegen) hicieron que el caso caiga al
+// camino genérico, que lo resuelve BIEN: hoy da true por las dos formas.
+//
+// Por qué este test vive en systems/ y no en errors/: el objetivo de la épica
+// es que el código correcto FUNCIONE, no que falle ruidosamente. Y por qué con
+// `expected/` + `assert()`: la cobertura que dejó la tarea 3 para los casos
+// arreglados era compile-only, así que si el camino genérico volviera a emitir
+// una llamada válida-pero-equivocada (la rama Map sobre un Array devuelve
+// false en silencio, no crashea), la suite seguiría verde. Acá se blinda el
+// VALOR, incluyendo el negativo — un `contains` que devolviera siempre true
+// también pasaría un test que solo mire el caso positivo.
+
+struct S { f: Array<int> }
+struct SS { f: Array<String> }
+struct Anidada { dentro: S }
+
+fn main() -> int {
+    var a: Array<int> = [1, 2, 3]
+    let s: S = S { f: a }
+
+    // Las dos formas del MISMO dato tienen que coincidir, en positivo…
+    let v: Array<int> = s.f
+    assert(v.contains(2))
+    assert(s.f.contains(2))
+    // …y en negativo (una rama equivocada que devuelve false siempre pasaría
+    // un test que solo asierte el positivo, y viceversa).
+    assert(not v.contains(99))
+    assert(not s.f.contains(99))
+    if s.f.contains(2) { print("si") } else { print("no") }
+    if s.f.contains(99) { print("si") } else { print("no") }
+
+    // indexOf y length sobre el mismo campo: los tres homónimos String/Array
+    // que comparten el dispatch por nombre.
+    assert(s.f.indexOf(3) == 2)
+    assert(s.f.length() == 3)
+    print(int_to_string(s.f.indexOf(3)))
+
+    // Campo Array<String>: la otra mitad del homónimo, donde despachar a la
+    // rama de String en vez de la de Array es el error simétrico.
+    let ss: SS = SS { f: ["alfa", "beta"] }
+    assert(ss.f.contains("beta"))
+    assert(not ss.f.contains("gamma"))
+    assert(ss.f.length() == 2)
+    if ss.f.contains("beta") { print("si") } else { print("no") }
+
+    // Receptor anidado (a.b.c): el campo se alcanza a través de otro campo.
+    let n: Anidada = Anidada { dentro: S { f: [7, 8] } }
+    assert(n.dentro.f.contains(8))
+    assert(not n.dentro.f.contains(5))
+    if n.dentro.f.contains(8) { print("si") } else { print("no") }
+
+    print("ok")
+    return 0
+}

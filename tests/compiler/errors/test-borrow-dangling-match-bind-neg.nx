@@ -1,0 +1,15 @@
+// Fix soundness inc 2: `n` es un binding de patrón match → frame-local → guardar `&x`
+// en `n.p` NO escapa (n muere con el frame). No debe marcar NYX1222. NYX_BORROW=error.
+struct Node { p: *int }
+enum Opt { Has(Node), Empty }
+
+fn f(o: Opt) {
+    var x: int = 5
+    match o {
+        Opt.Has(n) => { n.p = &x }
+        Opt.Empty => {}
+    }
+    print(1)
+}
+
+fn main() { f(Opt.Empty) }

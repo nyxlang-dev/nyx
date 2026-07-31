@@ -1,0 +1,17 @@
+major: 1
+minor: 2
+patch: 3
+v2 major: 2
+pre: alpha.1
+1.2.3 vs 1.3.0: -1
+2.0.0 vs 1.9.9: 1
+1.0.0 vs 1.0.0: 0
+>=1.0.0: ok
+0.9.0 fails >=1.0.0: ok
+^1.0.0: ok
+2.0.0 fails ^1.0.0: ok
+~1.2.0: ok
+1.3.0 fails ~1.2.0: ok
+best ^1.0.0: 1.2.0
+to_string: 1.2.3
+semver ok

@@ -1,0 +1,13 @@
+// M-08 sesion 17 error test: alias importado resolvido a int.
+// S17 escanea `type Score = int` del modulo y lo registra con target TyInt,
+// asi que `let s: Score = "x"` debe detectarse como mismatch.
+// Expected stderr (contains): "type mismatch in 's': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+
+import "tests/test-modules/alias_demo" as alias_demo
+
+fn main() -> int {
+    let s: Score = "x"
+    print(s)
+    return 0
+}

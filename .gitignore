@@ -1,0 +1,14 @@
+nyx_bootstrap
+nyx_bootstrap_dbg
+bin/
+script.ll
+script.nx
+script_bin
+*.o
+*.bc
+*.nx.orig
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

@@ -1,0 +1,48 @@
+// Test 94: JSON — parse and stringify
+
+import "std/json"
+
+fn main() {
+    // Test stringify
+    let n: Array = json_number(42)
+    print(json_stringify(n))  // 42
+
+    let s: Array = json_string("hello")
+    print(json_stringify(s))  // "hello"
+
+    let b: Array = json_bool(true)
+    print(json_stringify(b))  // true
+
+    let nl: Array = json_null()
+    print(json_stringify(nl))  // null
+
+    // Test array stringify
+    let items: Array = []
+    items.push(json_number(1))
+    items.push(json_number(2))
+    items.push(json_number(3))
+    let arr: Array = json_array(items)
+    print(json_stringify(arr))  // [1,2,3]
+
+    // Test object stringify
+    let keys: Array = []
+    keys.push("name")
+    keys.push("age")
+    let vals: Array = []
+    vals.push(json_string("nyx"))
+    vals.push(json_number(1))
+    let obj: Array = json_object(keys, vals)
+    print(json_stringify(obj))  // {"name":"nyx","age":1}
+
+    // Test parse
+    let parsed: Array = json_parse("42")
+    let pt: String = json_type(parsed)
+    print(pt)  // number
+    let pv: int = parsed[1]
+    print(pv)  // 42
+
+    let parsed2: Array = json_parse("[10,20,30]")
+    print(json_stringify(parsed2))  // [10,20,30]
+
+    print("done")
+}

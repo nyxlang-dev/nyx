@@ -1,0 +1,54 @@
+// Test 85: Nested generic enum construction and matching
+// Uses Option<T> from prelude
+
+fn main() {
+    // Test 1: Basic nested Option construction with explicit types
+    let inner: Option<int> = Option<int>.Some(42)
+    let outer: Option<Option<int>> = Option<Option<int>>.Some(inner)
+
+    match outer {
+        Option.Some(inner_val) => {
+            match inner_val {
+                Option.Some(n) => {
+                    print(n)
+                }
+                Option.None => {
+                    print("inner none")
+                }
+            }
+        }
+        Option.None => {
+            print("outer none")
+        }
+    }
+
+    // Test 2: Nested None
+    let outer2: Option<Option<int>> = Option<Option<int>>.None
+    match outer2 {
+        Option.Some(iv) => {
+            print("unexpected")
+        }
+        Option.None => {
+            print("outer_none_ok")
+        }
+    }
+
+    // Test 3: Inner None, outer Some
+    let inner3: Option<int> = Option<int>.None
+    let outer3: Option<Option<int>> = Option<Option<int>>.Some(inner3)
+    match outer3 {
+        Option.Some(inner_val3) => {
+            match inner_val3 {
+                Option.Some(n3) => {
+                    print("unexpected2")
+                }
+                Option.None => {
+                    print("inner_none_ok")
+                }
+            }
+        }
+        Option.None => {
+            print("unexpected3")
+        }
+    }
+}

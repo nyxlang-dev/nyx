@@ -1,0 +1,203 @@
+// resp.nx — RESP protocol parser/serializer (stdlib)
+// RESP2 protocol: https://redis.io/docs/reference/protocol-spec/
+// Used by nyx-kv, nyx-queue, nyx-db
+
+// Cotas de protocolo (anti-DoS). RESP_MAX_BULK = 16 MB: tope operativo del KV
+// (memoria de agente, sesiones, tokens — todos << 16MB). Es DELIBERADAMENTE
+// más bajo que el 512MB de Redis porque los lectores PRE-ALOCAN eager el tamaño
+// anunciado (tls_read/tcp_read_exact hacen GC_malloc(N+1) antes de recibir el
+// cuerpo) → un tope grande sería amplificación de memoria pre-auth (N conexiones
+// × tamaño anunciado). RESP_MAX_ARRAY = 1M elementos (cota del conteo *N).
+const RESP_MAX_BULK: int = 16777216
+const RESP_MAX_ARRAY: int = 1048576
+
+// Parsea la longitud de un header RESP ("$<n>" o "*<n>", sin el prefijo).
+// Contrato de tres estados en un int: >=0 longitud válida, -1 null bulk
+// ($-1, legítimo), -2 MALFORMADO (no-numérico, vacío, cola no numérica,
+// negativo != -1). NUNCA crashea — reemplaza a string_to_int, que hace
+// exit(1) sobre input controlado por el peer (DoS del daemon).
+pub fn resp_parse_len(s: String) -> int {
+    let n: int = s.length()
+    if n == 0 { return -2 }
+    // Caso null: exactamente "-1"
+    if s.charAt(0) == 45 {            // '-'
+        if n == 2 and s.charAt(1) == 49 { return -1 }   // "-1"
+        return -2
+    }
+    // Todos los caracteres deben ser dígitos 0-9 (ASCII 48..57)
+    var val: int = 0
+    var i: int = 0
+    while i < n {
+        let c: int = s.charAt(i)
+        if c < 48 or c > 57 { return -2 }
+        val = val * 10 + (c - 48)
+        if val > RESP_MAX_BULK { return -2 }   // supera la cota máxima → malformado (evita overflow i64)
+        i = i + 1
+    }
+    return val
+}
+
+// Lectura por transporte: branch por is_tls (fd y ssl son ambos int en Nyx →
+// sin closures ni handles abstractos). Fns TOP-LEVEL (no nested → evitan el
+// gotcha de mangle de nested-fns).
+fn resp_rl(handle: int, is_tls: bool) -> String {
+    if is_tls { return tls_read_line(handle) }
+    return tcp_read_line(handle)
+}
+fn resp_rx(handle: int, is_tls: bool, n: int) -> String {
+    if is_tls { return tls_read(handle, n) }
+    return tcp_read_exact(handle, n)
+}
+
+// Lector RESP server-side COMPARTIDO: el loop de framing (conteo *N, bulks $N,
+// cotas RESP_MAX_ARRAY/RESP_MAX_BULK, validación de short-read) en UN solo lugar.
+// TCP (is_tls=false) y TLS (is_tls=true) difieren SOLO en resp_rl/resp_rx.
+// Reemplaza la duplicación entre resp_read_command y el resp_read_tls del daemon.
+// (n<=0 nunca ocurre: read_exact solo se llama con dlen>0 guardado o 2.)
+//
+// Contrato: devuelve un Array de Strings con el comando y sus argumentos.
+// Devuelve un Array vacío ante cierre de conexión, frame malformado, o
+// short-read/EOF (nunca un valor parcial). Un comando inline (no empieza con
+// '*') se parte por espacios.
+// Contract: returns an Array of Strings (command + args). Returns an empty
+// Array on connection close, malformed frame, or short-read/EOF (never a
+// partial value). An inline command (not starting with '*') is split on spaces.
+pub fn resp_read_framed(handle: int, is_tls: bool) -> Array {
+    let result: Array = []
+
+    let header: String = resp_rl(handle, is_tls)
+    if header.length() == 0 {
+        return result
+    }
+
+    // Inline command (no empieza con '*')
+    if header.charAt(0) != 42 {
+        return header.split(" ")
+    }
+
+    // Conteo del array — parseo seguro + cota
+    let count: int = resp_parse_len(header.substring(1, header.length()))
+    if count < 0 { return result }                 // -2 malformado o -1 (no válido como conteo)
+    if count == 0 { return result }
+    if count > RESP_MAX_ARRAY { return result }
+
+    var i: int = 0
+    while i < count {
+        let bulk_header: String = resp_rl(handle, is_tls)
+        if bulk_header.length() == 0 { return [] }
+        if bulk_header.charAt(0) != 36 { return [] }   // '$'
+        let dlen: int = resp_parse_len(bulk_header.substring(1, bulk_header.length()))
+        if dlen == -2 { return [] }                    // malformado
+        if dlen > RESP_MAX_BULK { return [] }          // cota antes de alocar
+        if dlen < 0 {
+            // $-1 null bulk: sin sección de datos
+            result.push("")
+        } else {
+            var data: String = ""
+            if dlen > 0 {
+                data = resp_rx(handle, is_tls, dlen)
+                if data.length() != dlen { return [] }  // short-read/EOF
+            }
+            let crlf: String = resp_rx(handle, is_tls, 2)    // CRLF final
+            if crlf.length() != 2 { return [] }
+            result.push(data)
+        }
+        i = i + 1
+    }
+
+    return result
+}
+
+// Wrapper TCP (compat: firma pública sin cambios; el loop vive en resp_read_framed).
+fn resp_read_command(fd: int) -> Array {
+    return resp_read_framed(fd, false)
+}
+
+// === RESP Serializers ===
+
+fn resp_simple_string(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("+")
+    sb.append(s)
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_error(msg: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("-ERR ")
+    sb.append(msg)
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_integer(n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append(":")
+    sb.append(int_to_string(n))
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_bulk_string(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("$")
+    sb.append(int_to_string(s.length()))
+    sb.append("\r\n")
+    sb.append(s)
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn resp_null_bulk() -> String {
+    return "$-1\r\n"
+}
+
+fn resp_array_header(count: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(count))
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+// Serialize an array of bulk strings
+fn resp_bulk_array(items: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(items.length()))
+    sb.append("\r\n")
+    for item: String in items {
+        sb.append("$")
+        sb.append(int_to_string(item.length()))
+        sb.append("\r\n")
+        sb.append(item)
+        sb.append("\r\n")
+    }
+    return sb.to_string()
+}
+
+// Serialize an array with mixed types (bulk strings and nulls)
+// Uses a parallel flags array: 1 = valid bulk string, 0 = null
+fn resp_mixed_array(items: Array, flags: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(items.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < items.length() {
+        let flag: int = flags[i]
+        if flag == 1 {
+            let item: String = items[i]
+            sb.append("$")
+            sb.append(int_to_string(item.length()))
+            sb.append("\r\n")
+            sb.append(item)
+            sb.append("\r\n")
+        } else {
+            sb.append("$-1\r\n")
+        }
+        i = i + 1
+    }
+    return sb.to_string()
+}

@@ -1,0 +1,64 @@
+// test-161: Async I/O event loop — epoll-based non-blocking I/O
+// Tests pipe creation, fd registration, wait, and data transfer
+
+extern "C" fn nyx_create_event_loop() -> *int
+extern "C" fn nyx_destroy_event_loop(loop: *int)
+extern "C" fn nyx_event_loop_wait(loop: *int, timeout_ms: int) -> int
+extern "C" fn nyx_ev_create_pipe() -> int
+extern "C" fn nyx_ev_write_pipe(write_fd: int, msg: String)
+extern "C" fn nyx_ev_read_pipe(read_fd: int) -> String
+extern "C" fn nyx_ev_close_pipe(fd: int)
+extern "C" fn nyx_ev_register_fd(loop: *int, fd: int, events: int) -> int
+extern "C" fn nyx_ev_unregister_fd(loop: *int, fd: int)
+extern "C" fn nyx_ev_last_event_fd(loop: *int) -> int
+extern "C" fn nyx_ev_last_events(loop: *int) -> int
+
+const EV_READ = 1
+const EV_WRITE = 2
+
+fn main() -> int {
+    // Create event loop
+    let loop = nyx_create_event_loop()
+    print("loop created")
+
+    // Create a pipe (returns read_fd; write_fd = read_fd + 1 stored internally)
+    let read_fd = nyx_ev_create_pipe()
+    let write_fd = read_fd + 1
+    print("pipe created")
+
+    // Register read end for read events
+    nyx_ev_register_fd(loop, read_fd, EV_READ)
+
+    // Write data to write end
+    nyx_ev_write_pipe(write_fd, "hello from async")
+
+    // Wait for events (100ms timeout)
+    let n_events = nyx_event_loop_wait(loop, 100)
+    print(n_events)
+
+    // Check which fd fired
+    let fired_fd = nyx_ev_last_event_fd(loop)
+    if fired_fd == read_fd {
+        print("correct fd fired")
+    }
+
+    // Read the data
+    let data: String = nyx_ev_read_pipe(read_fd)
+    print(data)
+
+    // Second round: write + wait
+    nyx_ev_write_pipe(write_fd, "second message")
+    let n2 = nyx_event_loop_wait(loop, 100)
+    print(n2)
+    let data2: String = nyx_ev_read_pipe(read_fd)
+    print(data2)
+
+    // Cleanup
+    nyx_ev_unregister_fd(loop, read_fd)
+    nyx_ev_close_pipe(read_fd)
+    nyx_ev_close_pipe(write_fd)
+    nyx_destroy_event_loop(loop)
+
+    print("event loop ok")
+    return 0
+}

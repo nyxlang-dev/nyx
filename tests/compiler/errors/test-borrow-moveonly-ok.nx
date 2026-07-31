@@ -1,0 +1,9 @@
+// inc 4 Etapa 3 NEG: MoveOnly<T> consumido UNA sola vez → NO gatea NYX1230.
+// El move es legítimo (single-use); el binding no se reusa tras consumirlo.
+import "std/owned"
+
+fn main() {
+    let m: MoveOnly<int> = move_new(5)
+    let x: int = move_consume(m)
+    print(x)
+}

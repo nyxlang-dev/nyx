@@ -1,0 +1,36 @@
+// Process control — pid, working directory, environment
+// Control de procesos — pid, directorio de trabajo, entorno
+
+fn main() -> int {
+    // Get current process ID
+    let pid: int = getpid()
+    print("my pid: " + int_to_string(pid))
+
+    // Get current working directory
+    let cwd: String = getcwd()
+    print("cwd: " + cwd)
+
+    // Check if stdout is a terminal
+    let is_tty: bool = isatty(1)
+    if is_tty {
+        print("stdout is a terminal")
+    } else {
+        print("stdout is not a terminal (piped)")
+    }
+
+    // File stat
+    let info: Array = stat("/tmp")
+    let is_dir: int = info[3]
+    if is_dir == 1 {
+        print("/tmp is a directory")
+    }
+
+    // Change directory and back
+    let original: String = getcwd()
+    chdir("/tmp")
+    print("changed to: " + getcwd())
+    chdir(original)
+    print("back to: " + getcwd())
+
+    return 0
+}

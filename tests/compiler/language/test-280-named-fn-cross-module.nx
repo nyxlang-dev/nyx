@@ -1,0 +1,21 @@
+// test-280 — Fn NOMBRADA top-level pasada como argumento `Fn` a una función
+// IMPORTADA de otro módulo (el SEGV catalogado del framework VDOM: on(btn,
+// "click", dummy) vía std/vdom segfaulteaba nativo mientras la misma lógica
+// local o una lambda funcionaban). RE-VERIFICADO RESUELTO 2026-07-21
+// (campaña A7) por los fixes acumulados (pending-lambdas 789c881,
+// ctx.variables por-función, paths tipados A5/A6) — este test FIJA el caso.
+import "std/vdom"
+
+fn dummy() -> int { return 1 }
+
+fn main() {
+    let btn: VNode = h("button", [], [text("go")])
+    // named fn top-level → Fn arg de fn importada (el repro exacto)
+    let btn2: VNode = on(btn, "click", dummy)
+    // el handler agregado debe producir exactamente 1 patch en el diff
+    let d: Array = vdiff(btn, btn2)
+    assert(d.length() == 1)
+    let p0: Patch = d[0]
+    assert(patch_kind(p0) == "SetHandler")
+    print("named fn cross-module OK")
+}

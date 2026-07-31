@@ -1,0 +1,2 @@
+// Módulo interno del paquete vendoreado "foo".
+fn foo_b() -> int { return 42 }

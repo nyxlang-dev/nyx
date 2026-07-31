@@ -1,0 +1,32 @@
+// Parsing TOML configuration strings
+// Parseo de cadenas de configuración TOML
+
+import "std/toml"
+
+fn main() -> int {
+    let config: String = "[server]\nhost = \"localhost\"\nport = 8080\ndebug = true\n\n[database]\npath = \"/var/data/app.db\"\nmax_connections = 50"
+
+    let parsed: Map = toml_parse(config)
+
+    // Get string values with defaults
+    let host: String = toml_get(parsed, "server.host", "0.0.0.0")
+    print("host: " + host)
+
+    // Get integer values
+    let port: int = toml_get_int(parsed, "server.port", 3000)
+    print("port: " + int_to_string(port))
+
+    // Get boolean values
+    let debug: bool = toml_get_bool(parsed, "server.debug", false)
+    if debug {
+        print("debug mode enabled")
+    }
+
+    // Check if a key exists
+    if toml_has(parsed, "database.path") {
+        let db_path: String = toml_get(parsed, "database.path", "")
+        print("db: " + db_path)
+    }
+
+    return 0
+}

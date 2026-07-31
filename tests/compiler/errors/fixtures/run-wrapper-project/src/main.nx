@@ -1,0 +1,7 @@
+// Fixture B2 (friction-browser): `nyx run src/main.nx` dentro de un proyecto
+// debe resolver `import "src/..."` SIN NYX_PROJECT_DIR (deducción del wrapper).
+import "src/greet"
+
+fn main() {
+    print(greet("mundo"))
+}

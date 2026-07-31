@@ -1,0 +1,78 @@
+// std/compress.nx — Compression and encoding utilities for Nyx (v4.4.0)
+// Wraps runtime/compress.c which uses zlib + pure C base64
+
+extern "C" fn nyx_compress(src: String) -> String
+extern "C" fn nyx_decompress(src: String, original_size: int) -> String
+extern "C" fn nyx_compress_size(src: String) -> int
+extern "C" fn nyx_base64_encode(src: String) -> String
+extern "C" fn nyx_base64_decode(src: String) -> String
+extern "C" fn nyx_inflate(src: String, mode: int) -> String
+
+// ── High-level compress API ───────────────────────────────────────────────────
+
+pub fn compress(data: String) -> String {
+    return nyx_compress(data)
+}
+
+pub fn decompress(data: String, original_size: int) -> String {
+    return nyx_decompress(data, original_size)
+}
+
+pub fn compress_size(data: String) -> int {
+    return nyx_compress_size(data)
+}
+
+// ── Streaming inflate (gzip/deflate/zlib) — for HTTP Content-Encoding ────────
+//
+// Unlike decompress() above (which needs original_size up front — something
+// an HTTP response never gives you), these use zlib's streaming API and grow
+// the output buffer as needed. On corrupt/truncated/wrong-format input they
+// return "" instead of aborting — callers with a non-empty input that get ""
+// back know it failed (an empty *input* trivially decompresses to "" too, so
+// only check failure when `data` itself was non-empty).
+//
+// HTTP note: `Content-Encoding: gzip` -> use gunzip(). `Content-Encoding:
+// deflate` is ambiguous in practice: most servers actually send a zlib
+// stream (RFC 1950) despite the header name, a minority send truly raw
+// deflate (RFC 1951, no header) — try inflate() first (auto zlib/gzip), and
+// if that comes back "", fall back to inflate_raw().
+
+// Auto-detects zlib (RFC 1950) or gzip (RFC 1952) framing and decompresses.
+// General-purpose entry point; also what decodes anything nyx_compress()
+// (zlib format) produced.
+pub fn inflate(data: String) -> String {
+    return nyx_inflate(data, 0)
+}
+
+// Decompresses a gzip stream (RFC 1952) — what `Content-Encoding: gzip` uses.
+pub fn gunzip(data: String) -> String {
+    return nyx_inflate(data, 1)
+}
+
+// Decompresses raw deflate data (RFC 1951, no zlib/gzip header). Fallback
+// for the rare `Content-Encoding: deflate` server that sends truly raw
+// deflate instead of a zlib-wrapped stream.
+pub fn inflate_raw(data: String) -> String {
+    return nyx_inflate(data, 2)
+}
+
+// Returns compression ratio as percentage (0-100): 100 = same size, <100 = compressed
+pub fn compression_ratio(original: String, compressed_size: int) -> int {
+    if original.length() == 0 { return 100 }
+    return (compressed_size * 100) / original.length()
+}
+
+// ── Base64 API ────────────────────────────────────────────────────────────────
+
+pub fn base64_encode(data: String) -> String {
+    return nyx_base64_encode(data)
+}
+
+pub fn base64_decode(encoded: String) -> String {
+    return nyx_base64_decode(encoded)
+}
+
+// Encode a hex string to base64 (convenience)
+pub fn hex_to_b64(hex: String) -> String {
+    return nyx_base64_encode(hex)
+}

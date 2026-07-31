@@ -1,0 +1,28 @@
+// Test A06: Enums con datos + pattern matching avanzado
+// Prueba: enums paramétricos, match como expresión
+
+enum Shape {
+    Circle(int),
+    Rectangle(int, int),
+    Triangle(int, int, int)
+}
+
+fn perimeter(s: Shape) -> int {
+    return match s {
+        Shape.Circle(r) => 2 * 3 * r,
+        Shape.Rectangle(w, h) => 2 * (w + h),
+        Shape.Triangle(a, b, c) => a + b + c
+    }
+}
+
+fn main() {
+    let c = Shape.Circle(5)
+    let r = Shape.Rectangle(3, 4)
+    let t = Shape.Triangle(3, 4, 5)
+
+    print(perimeter(c))
+    print(perimeter(r))
+    print(perimeter(t))
+
+    return 0
+}

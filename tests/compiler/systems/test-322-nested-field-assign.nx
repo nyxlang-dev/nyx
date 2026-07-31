@@ -1,0 +1,123 @@
+// test-322-nested-field-assign — `a.b.c = x` deja de descartarse en silencio.
+//
+// Bug de raíz (sub-proyecto 4, task 5): `codegen_field_assign` arrancaba
+// rechazando todo objeto que no fuera un identificador simple:
+//
+//     if object.node_type != "identifier" {
+//         print("Error: field_assign solo soporta identificadores como objeto")
+//         return 0
+//     }
+//
+// El parser SÍ produce el nodo (object = un field_access) y semantic lo APRUEBA
+// (validate_field_assign solo verifica que el campo exista). Así que
+// `self.config.port = 8080`, con todos los campos válidos, imprimía una línea y
+// la asignación DESAPARECÍA del programa: el binario corría con el valor viejo
+// y la compilación retornaba 0. La LECTURA anidada, en cambio, ya estaba
+// implementada — el peor modo de fallo posible.
+//
+// Ahora la escritura anidada baja a una cadena de GEPs sobre la memoria REAL
+// del struct raíz (nada de copias a un alloca temporal), así que la mutación
+// persiste. Structs NO genéricos a propósito: [sp4-bug-3] (monomorfización
+// lazy ordenada por posición) es un bug vivo y separado.
+//
+// Self-checking con assert() abortivo.
+
+struct Inner  { port: int, host: String }
+struct Config { inner: Inner, debug: int }
+struct App    { config: Config, id: int }
+
+type Cfg = Inner
+struct WithAlias { c: Cfg, id: int }
+struct Holder    { c: *Cfg, id: int }
+
+fn main() -> int {
+    // --- 1. dos niveles: a.b.c = x ---
+    var app: App = App {
+        config: Config {
+            inner: Inner { port: 80, host: "old" },
+            debug: 0
+        },
+        id: 7
+    }
+
+    // control positivo: la LECTURA anidada ya andaba
+    assert(app.config.debug == 0)
+    assert(app.config.inner.port == 80)
+
+    app.config.debug = 5
+    assert(app.config.debug == 5)   // ANTES: 0 (escritura descartada)
+    assert(app.id == 7)             // campo vecino de la raíz intacto
+
+    // --- 2. tres niveles: a.b.c.d = x ---
+    app.config.inner.port = 8080
+    assert(app.config.inner.port == 8080)   // ANTES: 80
+    assert(app.config.debug == 5)           // el nivel de arriba no se pisó
+    assert(app.id == 7)
+
+    // campo String en el nivel más profundo
+    app.config.inner.host = "new"
+    assert(app.config.inner.host == "new")
+    assert(app.config.inner.port == 8080)
+
+    // --- 3. persistencia: la escritura sobrevive a leerla por otro camino ---
+    let c: Config = app.config
+    assert(c.debug == 5)
+    assert(c.inner.port == 8080)
+
+    // --- 4. control positivo: la asignación SIMPLE sigue funcionando ---
+    var p: Inner = Inner { port: 1, host: "h" }
+    p.port = 2
+    assert(p.port == 2)
+    assert(p.host == "h")
+
+    app.id = 99
+    assert(app.id == 99)
+    assert(app.config.inner.port == 8080)
+
+    // --- 5. el caso del brief: `self.config.port = 8080` con &mut self ---
+    // El eslabón raíz de la cadena es un receiver por referencia; funciona
+    // porque cada eslabón pasa por normalize_struct_type_symbol (Task 4).
+    var app2: App = App {
+        config: Config { inner: Inner { port: 1, host: "h" }, debug: 0 },
+        id: 1
+    }
+    app2.set_port(8080)
+    assert(app2.config.inner.port == 8080)   // muta y PERSISTE al caller
+    assert(app2.id == 1)
+
+    // --- 6. type-alias intermedio: la ESCRITURA no puede quedar atrás de la
+    // LECTURA. `nyx_type_to_llvm` resuelve `__alias__<T>`, así que el tipo
+    // LLVM del campo ya decía %Inner y la lectura anidada (que deriva el
+    // nombre DEL TIPO LLVM) andaba; el símbolo Nyx quedaba "Cfg" y la clave
+    // "Cfg:port" no existía → la escritura abortaba con NYX2005 diciéndole al
+    // usuario "anotá los tipos intermedios" cuando YA los había anotado.
+    // Ahora el alias se resuelve en normalize_struct_type_symbol_ex (paso 0).
+    var wa: WithAlias = WithAlias { c: Inner { port: 2, host: "h" }, id: 1 }
+    assert(wa.c.port == 2)      // lectura (ya andaba)
+    wa.c.port = 9
+    assert(wa.c.port == 9)      // escritura anidada con alias
+    assert(wa.id == 1)
+
+    // y sobre una variable declarada DIRECTAMENTE con el alias (un nivel)
+    var da: Cfg = Inner { port: 1, host: "h" }
+    da.port = 7
+    assert(da.port == 7)
+
+    // eslabón `*Cfg` (puntero A UN ALIAS): el alias hay que resolverlo también
+    // ADENTRO de `*T`/`&T`, porque el nombre resuelto es el que va en el tipo
+    // LLVM del load (`load %Inner*, %Inner** ...`, no `%Cfg*`). Y la escritura
+    // atraviesa el puntero: muta la variable apuntada.
+    var target: Inner = Inner { port: 1, host: "h" }
+    var hold: Holder = Holder { c: &target, id: 0 }
+    hold.c.port = 5
+    assert(target.port == 5)
+
+    print("test-322 OK")
+    return 0
+}
+
+impl App {
+    fn set_port(&mut self, p: int) {
+        self.config.inner.port = p
+    }
+}

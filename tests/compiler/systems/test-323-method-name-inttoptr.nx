@@ -1,0 +1,138 @@
+// test-323 — el `inttoptr` de un receptor i64 NO se decide por el NOMBRE del
+// método (sub-proyecto 4, Task 6).
+//
+// El bug: en codegen_method_call, un receptor de tipo LLVM `i64` (el caso
+// típico: `arr[i]`) se reinterpretaba como `%nyx_string*` con SOLO mirar el
+// nombre del método. `length`, `indexOf`, `contains` y `split` son HOMÓNIMOS
+// String/Array, así que:
+//   - `nums[0].contains("x")` con nums[0] = 42 hacía `inttoptr 42` y
+//     dereferenciaba → SEGV (evidencia original de la task).
+//   - `outer[0].contains("alfa")` sobre un array anidado leía la struct del
+//     Array como si fuera un nyx_string → false SIEMPRE, en silencio.
+//
+// Ahora decide el TIPO (ver mc_is_string_named_method / los comentarios en
+// codegen.nx): elemento `Array<...>` → puntero a Array (único caso decidible
+// en compilación); TODO el resto → lectura chequeada por TAG del slot, que es
+// por-elemento (un slot int aborta ordenado en vez de segfaultear — cubierto
+// por run_silent_failure_checks.sh).
+//
+// Por qué el tag y no el tipo estático (review round 1): el tipo de elemento
+// que guarda ctx.variables puede MENTIR. `[1, "dos"]` se infiere `Array<int>`
+// mirando solo el primer elemento, y anotar no salva (`var a: Array =
+// [1,"dos"]` cae en la misma inferencia). Un abort en compilación sobre ese
+// tipo rompía `a[1].contains("d")`, que ES un String y funcionaba. Caso 4.
+//
+// El guard real son los assert: `make test` no diffea stdout, así que un test
+// que solo compila y corre no guardaría nada.
+//
+// LÍMITE CONOCIDO, a propósito sin test de "correcto": con el array externo
+// declarado `Array` PELADO y el slot con tag UNKNOWN (un array pusheado adentro
+// de otro array no lleva tag de tipo), `outer[0].contains(..)` sigue leyendo el
+// Array como texto. Se cierra con el dispatch por tag en runtime (Task 7); acá
+// lo importante es que ya no hay lectura de memoria arbitraria en los casos con
+// tipo o tag conocidos.
+
+struct Caja { data: Array }
+
+fn uno() -> int { return 1 }
+
+fn main() {
+    // --- Caso 1: array anidado con tipo declarado (antes: basura silenciosa)
+    var inner: Array = []
+    inner.push("alfa")
+    inner.push("beta")
+    var outer: Array<Array> = []
+    outer.push(inner)
+
+    assert(outer[0].length() == 2)
+    assert(outer[0].contains("alfa"))
+    assert(outer[0].indexOf("beta") == 1)
+
+    // --- Caso 2 (control positivo): elemento String sigue tratándose como String
+    var words: Array<String> = []
+    words.push("hola mundo")
+    assert(words[0].length() == 10)
+    assert(words[0].contains("mundo"))
+    assert(words[0].substring(0, 4) == "hola")
+    assert(words[0].indexOf("mundo") == 5)
+
+    // --- Caso 3 (control positivo, camino LOAD-BEARING): `m.get(k).metodo()`.
+    // nyx_map_get_int devuelve el puntero del valor como i64 y NO hay tag que
+    // consultar: ahí la reinterpretación histórica a String se conserva. Si
+    // alguien la saca de raíz, esto se pone rojo.
+    var m: Map = {}
+    m.insert("k", "hola mundo")
+    assert(m.get("k").contains("mundo"))
+    assert(m.get("k").substring(0, 4) == "hola")
+
+    // --- Caso 4 (REGRESIÓN de la review round 1): literal HETEROGÉNEO.
+    // `[1, "dos"]` infiere `Array<int>` por el primer elemento — el tipo
+    // estático MIENTE sobre el slot 1, que es un String de verdad (su tag lo
+    // dice). La primera versión de este fix abortaba en compilación con ese
+    // tipo inferido y rompía código que funcionaba. Manda el tag, no el tipo.
+    var mixed = [1, "dos"]
+    assert(mixed[1].contains("d"))
+    assert(mixed[1].length() == 3)
+    // Lo mismo con la anotación pelada, que TAMPOCO desactiva la inferencia.
+    var mixed2: Array = [7, "tres"]
+    assert(mixed2[1].indexOf("res") == 1)
+
+    // --- Caso 5 (REGRESIÓN de la review round 2): el TAG tiene que existir.
+    // `push` de una VARIABLE (no un literal) sobre un `Array<int>` guardaba
+    // UNKNOWN, y como get_checked deja pasar UNKNOWN, `nums[0].contains(..)`
+    // volvía a ser SEGV. Ahora el tipo de elemento declarado del receptor es
+    // evidencia suficiente para taguear INT (ver push_tag_for_arg), así que el
+    // slot sabe lo que guarda. Acá se verifica la MITAD SANA — que taguear de
+    // más no rompe nada: el int sigue leyéndose como int, y el mismo array
+    // pelado con un String adentro sigue funcionando. El abort del slot int
+    // leído como String lo cubre run_silent_failure_checks.sh (necesita
+    // exit≠0, no entra en un test de assert).
+    var tagged: Array<int> = []
+    var tv: int = 42
+    tagged.push(tv)
+    assert(tagged[0] == 42)
+    assert("v=" + tagged[0].to_string() == "v=42")
+    var bare: Array = []
+    var bs: String = "texto"
+    bare.push(bs)
+    assert(bare[0].contains("ext"))
+
+    // --- Caso 6 (REGRESIÓN de la review round 3): re-pushear un SLOT.
+    // El tag por slot en runtime es mejor evidencia que cualquier tipo
+    // estático, así que cuando el arg del push viene de un índice manda el
+    // slot de ORIGEN. La regla estática del caso 5 (tipo de elemento del
+    // receptor) pisaba el tag propagado y tagueaba INT un puntero a String:
+    // abort espurio, o —peor— salida cambiada en silencio.
+    var src = [1, "dos"]
+    var dst = [9]
+    dst.push(src[1])
+    assert(dst[1].contains("d"))
+    assert(dst[1] == "dos")
+    var un = [9]
+    un.unshift(src[1])
+    assert(un[0] == "dos")
+    var ins = [5]
+    ins.insert(1, src[1])
+    assert(ins[1] == "dos")
+
+    // --- Caso 7: el mismo principio cuando el tag de origen NO se puede leer.
+    // emit_propagated_tag se abstiene si el array de origen es un CAMPO, si el
+    // índice tiene efectos secundarios o si el origen está anidado. En esos
+    // casos la respuesta correcta es UNKNOWN (lo que el compilador sabe), NO
+    // el tipo de elemento del receptor: caer a la regla estática tagueaba INT
+    // un String y abortaba de mentira.
+    let caja: Caja = Caja { data: src }
+    var d2 = [9]
+    d2.push(caja.data[1])
+    assert(d2[1].contains("d"))
+    var d3 = [9]
+    d3.push(src[uno()])
+    assert(d3[1].contains("d"))
+    var nested: Array<Array> = []
+    nested.push(src)
+    var d4 = [9]
+    d4.push(nested[0][1])
+    assert(d4[1].contains("d"))
+
+    print("done")
+}

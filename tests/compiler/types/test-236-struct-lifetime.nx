@@ -1,0 +1,28 @@
+// test-236-struct-lifetime — `struct S<'a>` parsea (Track 2, T2c).
+// Antes daba parse error: parse_struct hacía expect(IDENTIFIER) sobre los
+// type-params y el token LIFETIME ('a) fallaba. Ahora acepta lifetimes
+// (decorativos, como en fn): empiezan con ' → los filtros de
+// monomorfización en codegen/semantic los saltan.
+// Auto-verificable con assert() abortivo.
+
+// Lifetime-only: tras filtrar 'a queda un struct no-genérico.
+struct Ref<'a> {
+    r: int
+}
+
+// Lifetime + type param mezclados: filtra a <T> (el turbofish da 1 arg,
+// que debe alinear con T y no con 'a).
+struct Slot<'a, T> {
+    val: T
+}
+
+fn main() -> int {
+    let x: Ref = Ref { r: 42 }
+    assert(x.r == 42)
+
+    let s: Slot<int> = Slot<int> { val: 7 }
+    assert(s.val == 7)
+
+    print("struct-lifetime ok")
+    return 0
+}

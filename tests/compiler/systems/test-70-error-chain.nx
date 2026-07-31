@@ -1,0 +1,53 @@
+// Test 70: Error handling chain — unwrap_or, map, and_then together
+
+fn validate(x: int) -> Result<int, String> {
+    if x < 0 { return Result<int, String>.Err("negative") }
+    if x > 100 { return Result<int, String>.Err("too large") }
+    return Result<int, String>.Ok(x)
+}
+
+fn double_if_even(x: int) -> Result<int, String> {
+    if x % 2 != 0 { return Result<int, String>.Err("odd") }
+    return Result<int, String>.Ok(x * 2)
+}
+
+fn add_one(x: int) -> int {
+    return x + 1
+}
+
+fn triple(x: int) -> int {
+    return x * 3
+}
+
+fn process(x: int) -> Result<int, String> {
+    let v: Result<int, String> = validate(x)
+    let result: Result<int, String> = v.and_then(double_if_even)
+    return result
+}
+
+fn main() -> int {
+    // Success chain: 10 → validate OK → double_if_even(10) = Ok(20)
+    let r1: Result<int, String> = process(10)
+    print(r1.unwrap())
+
+    // Fail at validate: -5 → Err("negative")
+    let r2: Result<int, String> = process(-5)
+    print(r2.unwrap_or(-1))
+
+    // Fail at double_if_even: 7 → validate OK → odd → Err
+    let r3: Result<int, String> = process(7)
+    print(r3.unwrap_or(-2))
+
+    // map + unwrap_or chain
+    let r4: Result<int, String> = validate(50)
+    let mapped: Result<int, String> = r4.map(add_one)
+    print(mapped.unwrap_or(0))
+
+    // Option test in chain
+    let opt: Option<int> = Option<int>.Some(10)
+    let mapped_opt: Option<int> = opt.map(triple)
+    print(mapped_opt.unwrap_or(0))
+
+    print("error chain passed")
+    return 0
+}

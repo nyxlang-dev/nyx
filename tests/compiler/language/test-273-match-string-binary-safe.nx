@@ -1,0 +1,33 @@
+// test-273 — patrones string de `match` binary-safe (cierra el follow-up del
+// fix b04fff2): el compare de un arm-pattern literal usaba strcmp sobre cstr,
+// así que un scrutinee con NUL embebido ("a\0x") matcheaba INCORRECTAMENTE el
+// patrón "a" (strcmp corta en el NUL). Ahora usa nyx_string_equals (por
+// longitud). Los literales de patrón nunca traen NUL (el lexer no los
+// produce) — solo el scrutinee binario estaba expuesto.
+fn classify(s: String) -> String {
+    return match s {
+        "a" => "solo-a",
+        "b" => "solo-b",
+        _ => "otro"
+    }
+}
+
+fn main() {
+    // camino normal intacto
+    assert(classify("a") == "solo-a")
+    assert(classify("b") == "solo-b")
+    assert(classify("c") == "otro")
+
+    // scrutinee con NUL embebido: NO debe matchear "a" (antes: strcmp cortaba
+    // en el NUL y devolvía "solo-a")
+    let bytes_a0x: Array = [97, 0, 120]  // "a\0x"
+    let a0x: String = string_from_bytes(bytes_a0x, 0, 3)
+    assert(classify(a0x) == "otro")
+
+    // y el binario que SÍ es exactamente "a" (1 byte) sigue matcheando
+    let bytes_a: Array = [97]
+    let just_a: String = string_from_bytes(bytes_a, 0, 1)
+    assert(classify(just_a) == "solo-a")
+
+    print("match binary-safe OK")
+}

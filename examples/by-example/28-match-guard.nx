@@ -1,0 +1,38 @@
+// Match guards: condiciones adicionales dentro de los brazos del match
+
+fn classify(n: int) -> String {
+    return match n {
+        x if x > 100  => "muy grande (" + int_to_string(x) + ")",
+        x if x > 10   => "grande (" + int_to_string(x) + ")",
+        x if x > 0    => "positivo (" + int_to_string(x) + ")",
+        x if x == 0   => "cero",
+        x if x > -10  => "negativo pequeno (" + int_to_string(x) + ")",
+        x              => "muy negativo (" + int_to_string(x) + ")"
+    }
+}
+
+fn grade(score: int) -> String {
+    return match score {
+        s if s >= 90 => "A",
+        s if s >= 80 => "B",
+        s if s >= 70 => "C",
+        s if s >= 60 => "D",
+        _            => "F"
+    }
+}
+
+fn main() -> int {
+    print(classify(200))
+    print(classify(50))
+    print(classify(5))
+    print(classify(0))
+    print(classify(-3))
+    print(classify(-99))
+
+    print("nota 95: " + grade(95))
+    print("nota 82: " + grade(82))
+    print("nota 71: " + grade(71))
+    print("nota 55: " + grade(55))
+
+    return 0
+}

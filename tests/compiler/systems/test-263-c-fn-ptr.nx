@@ -1,0 +1,12 @@
+// test-263 — c_fn_ptr(fn) devuelve el puntero C-callable crudo de una fn
+// top-level (dirección de @fn, no el closure pair). Prueba que compila y que
+// la dirección es no-nula. El uso end-to-end a través de C real vive en el
+// test de integración tests/integration/ffi_callback (Task 2).
+fn target(x: int) -> int { return x * 2 }
+
+fn main() {
+    let p: *i8 = c_fn_ptr(target)
+    // la dirección de una fn definida nunca es nula
+    assert((p as int) != 0)
+    print("c_fn_ptr OK")
+}

@@ -1,0 +1,208 @@
+// std/url.nx — URL encoding + HTML entities for Nyx (v4.6.0)
+
+import "std/unicode"
+
+extern "C" fn nyx_url_encode(s: String) -> String
+extern "C" fn nyx_url_decode(s: String) -> String
+
+// ── URL Encoding ──────────────────────────────────────────────────────────────
+
+// Percent-encode a string for use in URLs (RFC 3986 unreserved chars are left as-is)
+pub fn url_encode(s: String) -> String {
+    return nyx_url_encode(s)
+}
+
+// Decode a percent-encoded URL string (also decodes + as space)
+pub fn url_decode(s: String) -> String {
+    return nyx_url_decode(s)
+}
+
+// Build a query string from key/value pairs
+// keys and values arrays must have the same length
+pub fn build_query_string(keys: Array, values: Array) -> String {
+    let n = keys.length()
+    if n == 0 { return "" }
+    var result = ""
+    var i = 0
+    while i < n {
+        let k: String = keys[i]
+        let v: String = values[i]
+        let pair = nyx_url_encode(k) + "=" + nyx_url_encode(v)
+        if i == 0 {
+            result = pair
+        } else {
+            result = result + "&" + pair
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// ── HTML Entities ─────────────────────────────────────────────────────────────
+
+// Escape HTML special characters: & < > " '
+pub fn html_escape(s: String) -> String {
+    let s1 = s.replace("&", "&amp;")
+    let s2 = s1.replace("<", "&lt;")
+    let s3 = s2.replace(">", "&gt;")
+    let s4 = s3.replace("\"", "&quot;")
+    let s5 = s4.replace("'", "&#x27;")
+    return s5
+}
+
+// Named-entity table (curated common set). "" = unknown -> caller leaves literal.
+fn __html_named_entity(name: String) -> String {
+    if name == "amp"    { return "&" }
+    if name == "lt"     { return "<" }
+    if name == "gt"     { return ">" }
+    if name == "quot"   { return "\"" }
+    if name == "apos"   { return "'" }
+    if name == "nbsp"   { return " " }
+    if name == "copy"   { return "©" }
+    if name == "reg"    { return "®" }
+    if name == "trade"  { return "™" }
+    if name == "deg"    { return "°" }
+    if name == "middot" { return "·" }
+    if name == "sect"   { return "§" }
+    if name == "para"   { return "¶" }
+    if name == "bull"   { return "•" }
+    if name == "hellip" { return "…" }
+    if name == "mdash"  { return "—" }
+    if name == "ndash"  { return "–" }
+    if name == "lsquo"  { return "‘" }
+    if name == "rsquo"  { return "’" }
+    if name == "ldquo"  { return "“" }
+    if name == "rdquo"  { return "”" }
+    if name == "laquo"  { return "«" }
+    if name == "raquo"  { return "»" }
+    if name == "times"  { return "×" }
+    if name == "divide" { return "÷" }
+    if name == "plusmn" { return "±" }
+    if name == "euro"   { return "€" }
+    if name == "pound"  { return "£" }
+    if name == "yen"    { return "¥" }
+    if name == "cent"   { return "¢" }
+    if name == "iexcl"  { return "¡" }
+    if name == "iquest" { return "¿" }
+    if name == "aacute" { return "á" }
+    if name == "agrave" { return "à" }
+    if name == "acirc"  { return "â" }
+    if name == "auml"   { return "ä" }
+    if name == "atilde" { return "ã" }
+    if name == "ccedil" { return "ç" }
+    if name == "eacute" { return "é" }
+    if name == "egrave" { return "è" }
+    if name == "ecirc"  { return "ê" }
+    if name == "euml"   { return "ë" }
+    if name == "iacute" { return "í" }
+    if name == "ntilde" { return "ñ" }
+    if name == "oacute" { return "ó" }
+    if name == "ograve" { return "ò" }
+    if name == "ocirc"  { return "ô" }
+    if name == "ouml"   { return "ö" }
+    if name == "otilde" { return "õ" }
+    if name == "oslash" { return "ø" }
+    if name == "szlig"  { return "ß" }
+    if name == "uacute" { return "ú" }
+    if name == "uuml"   { return "ü" }
+    return ""
+}
+
+// Numeric reference body ("#233", "#xE9") -> codepoint; -1 = malformed.
+// Accumulator clamps at 0x110000 so absurdly long digit runs can't overflow —
+// anything clamped is > U+10FFFF and utf8_encode turns it into U+FFFD (HTML
+// semantics for out-of-range references).
+fn __html_numeric_cp(body: String) -> int {
+    let n: int = body.length()
+    if n < 2 { return 0 - 1 }
+    var i: int = 1
+    var hex: bool = false
+    let c1: int = body.charAt(1)
+    if c1 == 120 or c1 == 88 {        // 'x' | 'X'
+        hex = true
+        i = 2
+        if n < 3 { return 0 - 1 }
+    }
+    var cp: int = 0
+    while i < n {
+        let c: int = body.charAt(i)
+        var d: int = 0 - 1
+        if c >= 48 and c <= 57 { d = c - 48 }                       // 0-9
+        if hex and c >= 97 and c <= 102 { d = c - 97 + 10 }         // a-f
+        if hex and c >= 65 and c <= 70 { d = c - 65 + 10 }          // A-F
+        if d < 0 { return 0 - 1 }
+        if hex { cp = cp * 16 + d } else { cp = cp * 10 + d }
+        if cp > 0x110000 { cp = 0x110000 }
+        i = i + 1
+    }
+    return cp
+}
+
+// Unescape HTML entities — single left-to-right pass (decoded output is never
+// re-scanned, so "&amp;lt;" yields "&lt;", not "<"). Numeric references
+// (&#233; / &#xE9;) go through utf8_encode (invalid -> U+FFFD, HTML semantics);
+// named entities come from the curated table above; anything malformed or
+// unknown (including a bare "&" or a missing ";") stays literal, like browsers
+// treat unknown named references.
+pub fn html_unescape(s: String) -> String {
+    let n: int = s.length()
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < n {
+        let c: int = s.charAt(i)
+        if c != 38 {                                  // '&'
+            sb.append(s.substring(i, i + 1))
+            i = i + 1
+            continue
+        }
+        // Find ';' in a bounded window (longest named entity is well under 32)
+        var semi: int = 0 - 1
+        var j: int = i + 1
+        let limit: int = i + 32
+        while j < n and j < limit {
+            if s.charAt(j) == 59 { semi = j; break }  // ';'
+            j = j + 1
+        }
+        if semi < 0 {
+            sb.append("&")
+            i = i + 1
+            continue
+        }
+        let body: String = s.substring(i + 1, semi)
+        var decoded: String = ""
+        if body.length() > 0 and body.charAt(0) == 35 {   // '#'
+            let cp: int = __html_numeric_cp(body)
+            if cp >= 0 { decoded = utf8_encode(cp) }
+        } else {
+            decoded = __html_named_entity(body)
+        }
+        if decoded.length() == 0 {
+            // Malformed/unknown: emit the '&' alone and rescan from the next
+            // byte — "&&amp;" still decodes its second entity correctly.
+            sb.append("&")
+            i = i + 1
+            continue
+        }
+        sb.append(decoded)
+        i = semi + 1
+    }
+    return sb.to_string()
+}
+
+// ── Simple template ───────────────────────────────────────────────────────────
+
+// Render a simple template by replacing {{key}} with values from the map
+// Example: render_template("Hello {{name}}!", m) where m["name"] = "World"
+pub fn render_template(tmpl: String, data: Map<String>) -> String {
+    let keys = data.keys()
+    var result = tmpl
+    var i = 0
+    while i < keys.length() {
+        let k: String = keys[i]
+        let placeholder = "{{" + k + "}}"
+        let v = data.get(k)
+        result = result.replace(placeholder, v)
+        i = i + 1
+    }
+    return result
+}

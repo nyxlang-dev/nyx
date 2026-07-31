@@ -1,0 +1,39 @@
+// test-317 — json_stringify escapa los caracteres que JSON exige escapar.
+// Antes: emitía el string crudo entre comillas, así que una comilla o un
+// salto de línea producían JSON inválido. El parser SÍ decodifica \n y \",
+// así que el round-trip estaba roto en una sola dirección.
+import "std/json"
+
+fn main() {
+    // Comilla interna
+    let s1: Array = json_string("dice \"hola\"")
+    print(json_stringify(s1))
+
+    // Barra invertida
+    let s2: Array = json_string("C:\\ruta")
+    print(json_stringify(s2))
+
+    // Salto de línea y tab
+    let s3: Array = json_string("linea1\nlinea2\tfin")
+    print(json_stringify(s3))
+
+    // Clave de objeto con comilla (el otro sitio sin escapar)
+    let keys: Array = []
+    keys.push("con\"comilla")
+    let vals: Array = []
+    vals.push(json_number(1))
+    let obj: Array = json_object(keys, vals)
+    print(json_stringify(obj))
+
+    // ROUND-TRIP: parse(stringify(x)) devuelve el valor original
+    let original: String = "tiene \"comillas\" y \\ y\nsalto"
+    let wrapped: Array = json_string(original)
+    let serialized: String = json_stringify(wrapped)
+    let reparsed: Array = json_parse(serialized)
+    let recovered: String = reparsed[1]
+    assert(recovered == original)
+
+    // Control positivo: un string sin caracteres especiales no cambia
+    print(json_stringify(json_string("simple")))
+    print("ok")
+}

@@ -1,0 +1,23 @@
+// TEST 10: Recursión - Fibonacci
+fn fib(n: int) -> int {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    print("=== TEST 10: FIBONACCI ===")
+
+    print("Fibonacci de 0:")
+    print(fib(0))
+
+    print("Fibonacci de 5:")
+    print(fib(5))
+
+    print("Fibonacci de 10:")
+    print(fib(10))
+
+    print("✅ Test 10 completado")
+    return 0
+}

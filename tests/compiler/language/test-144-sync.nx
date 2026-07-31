@@ -1,0 +1,80 @@
+// test-144-sync: verifica primitivas de sincronización (std/sync)
+
+import "std/sync" as sync
+
+fn main() -> int {
+    // WaitGroup test
+    let wg = sync.wg_new()
+    sync.wg_add(wg, 1)
+    let c0: int = sync.wg_count(wg)
+    print("wg count: " + c0)
+
+    sync.wg_done(wg)
+    let c1: int = sync.wg_count(wg)
+    print("wg after done: " + c1)
+
+    // Double add/done
+    sync.wg_add(wg, 3)
+    sync.wg_done(wg)
+    sync.wg_done(wg)
+    sync.wg_done(wg)
+    let c2: int = sync.wg_count(wg)
+    print("wg after 3 done: " + c2)
+
+    // Semaphore test
+    let sem = sync.sem_new(2)
+    let sc0: int = sync.sem_count(sem)
+    print("sem count: " + sc0)
+
+    sync.sem_acquire(sem)
+    let sc1: int = sync.sem_count(sem)
+    print("after acquire: " + sc1)
+
+    let ok: bool = sync.sem_try_acquire(sem)
+    if ok { print("try_acquire: ok") }
+
+    let ok2: bool = sync.sem_try_acquire(sem)
+    if not ok2 { print("try_acquire empty: ok") }
+
+    sync.sem_release(sem)
+    sync.sem_release(sem)
+    let sc2: int = sync.sem_count(sem)
+    print("after 2 release: " + sc2)
+
+    // AtomicCounter test
+    let counter = sync.counter_new(0)
+    let v1: int = sync.counter_inc(counter)
+    print("counter inc: " + v1)
+    let v2: int = sync.counter_inc(counter)
+    print("counter inc: " + v2)
+    let v3: int = sync.counter_dec(counter)
+    print("counter dec: " + v3)
+    let v4: int = sync.counter_get(counter)
+    print("counter get: " + v4)
+
+    sync.counter_set(counter, 42)
+    let v5: int = sync.counter_get(counter)
+    print("counter set 42: " + v5)
+
+    // Once test
+    let once = sync.once_new()
+    let done_before: bool = sync.once_done(once)
+    if not done_before { print("once: not done") }
+
+    sync.once_do(once, fn() -> int {
+        print("once ran")
+        return 0
+    })
+
+    let done_after: bool = sync.once_done(once)
+    if done_after { print("once: done") }
+
+    // Call once_do again - should not run
+    sync.once_do(once, fn() -> int {
+        print("once second - SHOULD NOT PRINT")
+        return 0
+    })
+
+    print("sync ok")
+    return 0
+}

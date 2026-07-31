@@ -1,0 +1,60 @@
+// test-119-unicode.nx — Verificar el contrato de strings (v0.14)
+// .length() cuenta BYTES — contrato unificado con substring/indexOf/charAt
+// .byte_length() es alias de length()
+// .char_length() cuenta codepoints UTF-8
+// str_byte_length() es el builtin equivalente a .byte_length()
+
+fn main() -> int {
+    // ASCII: codepoints == bytes
+    let ascii = "hello"
+    if ascii.length() != 5 {
+        print("FAIL: ascii.length() should be 5, got " + int_to_string(ascii.length()))
+        return 1
+    }
+    if ascii.byte_length() != 5 {
+        print("FAIL: ascii.byte_length() should be 5, got " + int_to_string(ascii.byte_length()))
+        return 1
+    }
+    if ascii.char_length() != 5 {
+        print("FAIL: ascii.char_length() should be 5, got " + int_to_string(ascii.char_length()))
+        return 1
+    }
+
+    // str_byte_length builtin
+    if str_byte_length(ascii) != 5 {
+        print("FAIL: str_byte_length(ascii) should be 5, got " + int_to_string(str_byte_length(ascii)))
+        return 1
+    }
+
+    // UTF-8: "café" = 4 codepoints, 5 bytes (é = U+00E9 = 2 bytes en UTF-8)
+    let utf8_str = "café"
+
+    // v0.14: length() = BYTES — el mismo espacio que substring/indexOf/charAt.
+    // s.substring(0, s.length()) ya NO trunca contenido multi-byte.
+    if utf8_str.length() != 5 {
+        print("FAIL: 'café'.length() should be 5 bytes (v0.14 contract), got " + int_to_string(utf8_str.length()))
+        return 1
+    }
+    if utf8_str.byte_length() != 5 {
+        print("FAIL: 'café'.byte_length() should be 5 bytes, got " + int_to_string(utf8_str.byte_length()))
+        return 1
+    }
+    if utf8_str.char_length() != 4 {
+        print("FAIL: 'café'.char_length() should be 4 codepoints, got " + int_to_string(utf8_str.char_length()))
+        return 1
+    }
+    if str_byte_length(utf8_str) != 5 {
+        print("FAIL: str_byte_length('café') should be 5, got " + int_to_string(str_byte_length(utf8_str)))
+        return 1
+    }
+
+    // El footgun histórico, ahora correcto: slicing con length()
+    let sliced = utf8_str.substring(0, utf8_str.length())
+    if sliced != "café" {
+        print("FAIL: substring(0, length()) should be identity, got '" + sliced + "'")
+        return 1
+    }
+
+    print("test-119-unicode: PASS")
+    return 0
+}

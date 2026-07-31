@@ -1,0 +1,12 @@
+// inc 3c-1: mismo 'a compartido, pero el &local está en la SEGUNDA posición.
+// Verifica que el call-site itera TODAS las fuentes (no solo la primera) → NYX1222.
+let G: int = 9
+fn longest<'a>(a: &'a int, b: &'a int) -> &'a int { return b }
+
+fn caller() -> &int {
+    let local: int = 5
+    let r: &int = longest(&G, &local)
+    return r
+}
+
+fn main() { print(1) }

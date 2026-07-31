@@ -1,0 +1,68 @@
+// test-324 — invariancia por FORMA del receptor para la propiedad builtin
+// `.length` (épica dispatch 2026-07-31, bug 2 de `tests/dispatch-repro/`).
+//
+// El bug: el mismo dato, tres formas sintácticas, dos respuestas.
+//     let v: String = s.f
+//     v.length()     -> 4   (camino identificador simple)
+//     s.f.length     -> 0   ← MUDO
+//     s.f.length()   -> 4   (camino método sobre field_access)
+//
+// La causa NO era la rama faltante que sugería el análisis estático: la rama
+// `if type_symbol == "String"` de `codegen_field_access` (que emite
+// `nyx_string_byte_length`) existía desde siempre. Lo que pasaba es que
+// `s.f.length` entra a `codegen_field_access` con `object.node_type ==
+// "field_access"`, y el bloque de acceso ANIDADO (a.b.c) hace `return` mucho
+// antes de llegar a esa rama: buscaba la clave inexistente
+// "nyx_string*:length" en `struct_field_index`, imprimía un "Error:" mudo por
+// stdout (que nadie mira en un build normal) y devolvía el literal `i64 0`.
+// Confirmado leyendo el IR, no por inspección: `call @nyx_string_from_int(i64 0)`.
+//
+// Este test blinda el VALOR en runtime, no la compilación. El repro original
+// COMPILABA limpio — el `expected/` y los `assert()` son lo único que distingue
+// "emite la llamada correcta" de "emite una llamada válida pero equivocada".
+// Sin eso, el camino genérico podría volver a emitir 0 y la suite seguiría verde.
+
+struct S { f: String }
+struct Caja { items: Array<int> }
+struct Anidada { dentro: S }
+
+fn main() -> int {
+    let s: S = S { f: "hola" }
+
+    // Las tres formas del MISMO dato tienen que coincidir.
+    let v: String = s.f
+    assert(v.length() == 4)
+    assert(s.f.length == 4)
+    assert(s.f.length() == 4)
+    print(int_to_string(v.length()))
+    print(int_to_string(s.f.length))
+    print(int_to_string(s.f.length()))
+
+    // La misma invariancia para Array: `.length` como propiedad sobre un campo
+    // caía al mismo lookup fallido ("{ i64, i8* }*:length").
+    let c: Caja = Caja { items: [1, 2, 3] }
+    let a: Array<int> = c.items
+    assert(a.length() == 3)
+    assert(c.items.length == 3)
+    assert(c.items.length() == 3)
+    print(int_to_string(c.items.length))
+
+    // Anidamiento de verdad (a.b.c): el receptor del `.length` es un campo
+    // alcanzado a través de otro campo. Es el caso que motivó el bloque de
+    // acceso anidado, y donde la propiedad builtin tiene que seguir andando.
+    let n: Anidada = Anidada { dentro: S { f: "abcdefg" } }
+    assert(n.dentro.f.length == 7)
+    assert(n.dentro.f.length() == 7)
+    print(int_to_string(n.dentro.f.length))
+
+    // Control negativo de "0 mudo": una cadena vacía SÍ mide 0, y tiene que
+    // seguir midiendo 0 por las tres formas. Si el arreglo hubiera consistido
+    // en devolver cualquier cosa menos 0, esto se pondría rojo.
+    let vacia: S = S { f: "" }
+    assert(vacia.f.length == 0)
+    assert(vacia.f.length() == 0)
+    print(int_to_string(vacia.f.length))
+
+    print("ok")
+    return 0
+}

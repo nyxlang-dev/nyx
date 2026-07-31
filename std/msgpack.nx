@@ -1,0 +1,101 @@
+// std/msgpack.nx — MessagePack binary serialization for Nyx (v4.7.0)
+// Compact binary format, ~30% smaller than JSON for typical data
+
+extern "C" fn nyx_msgpack_pack_int(v: int) -> String
+extern "C" fn nyx_msgpack_pack_str(s: String) -> String
+extern "C" fn nyx_msgpack_pack_bool(v: bool) -> String
+extern "C" fn nyx_msgpack_pack_nil() -> String
+extern "C" fn nyx_msgpack_type(data: String) -> String
+extern "C" fn nyx_msgpack_unpack_int(data: String) -> int
+extern "C" fn nyx_msgpack_unpack_str(data: String) -> String
+extern "C" fn nyx_msgpack_packed_size(data: String) -> int
+
+// ── Packing (serialization) ───────────────────────────────────────────────────
+
+pub fn msgpack_nil() -> String {
+    return nyx_msgpack_pack_nil()
+}
+
+pub fn msgpack_bool(v: bool) -> String {
+    return nyx_msgpack_pack_bool(v)
+}
+
+pub fn msgpack_int(v: int) -> String {
+    return nyx_msgpack_pack_int(v)
+}
+
+pub fn msgpack_str(s: String) -> String {
+    return nyx_msgpack_pack_str(s)
+}
+
+// Pack multiple values into a MessagePack array
+pub fn msgpack_array(items: Array) -> String {
+    let n = items.length()
+    // Encode array header
+    var header = ""
+    if n <= 15 {
+        // fixarray: 0x90 | n
+        let byte_val = 144 + n   // 0x90 = 144
+        header = msgpack_pack_byte(byte_val)
+    } else {
+        // array16: 0xdc + 2 bytes
+        header = msgpack_pack_byte(220) + msgpack_pack_uint16(n)
+    }
+    var body = ""
+    var i = 0
+    while i < n {
+        let item: String = items[i]
+        body = body + item
+        i = i + 1
+    }
+    return header + body
+}
+
+// ── Unpacking (deserialization) ───────────────────────────────────────────────
+
+pub fn msgpack_type(data: String) -> String {
+    return nyx_msgpack_type(data)
+}
+
+pub fn msgpack_unpack_int(data: String) -> int {
+    return nyx_msgpack_unpack_int(data)
+}
+
+pub fn msgpack_unpack_str(data: String) -> String {
+    return nyx_msgpack_unpack_str(data)
+}
+
+pub fn msgpack_unpack_bool(data: String) -> bool {
+    let t = nyx_msgpack_type(data)
+    return t == "bool_true"
+}
+
+pub fn msgpack_packed_size(data: String) -> int {
+    return nyx_msgpack_packed_size(data)
+}
+
+// ── Utility ────────────────────────────────────────────────────────────────────
+
+// Pack a single byte as a 1-char String (for header construction)
+pub fn msgpack_pack_byte(v: int) -> String {
+    return nyx_msgpack_pack_int(v + 0)
+}
+
+// Pack uint16 as 2 bytes big-endian
+pub fn msgpack_pack_uint16(v: int) -> String {
+    let hi = v / 256
+    let lo = v - (hi * 256)
+    let packed_hi = nyx_msgpack_pack_int(hi)
+    let packed_lo = nyx_msgpack_pack_int(lo)
+    return packed_hi + packed_lo
+}
+
+// Get the size in bytes of a packed msgpack value
+pub fn msgpack_size(data: String) -> int {
+    return nyx_msgpack_packed_size(data)
+}
+
+// Check if data is nil
+pub fn msgpack_is_nil(data: String) -> bool {
+    return nyx_msgpack_type(data) == "nil"
+}

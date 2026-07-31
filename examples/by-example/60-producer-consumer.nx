@@ -1,0 +1,39 @@
+// Producer-consumer pattern with bounded channel
+// Patrón productor-consumidor con canal acotado
+
+var items_ch: Map = Map.new()
+
+fn produce() -> int {
+    var i: int = 0
+    while i < 5 {
+        let item: int = (i + 1) * 10
+        print("produced: " + int_to_string(item))
+        channel_send(items_ch, item)
+        i = i + 1
+    }
+    channel_send(items_ch, -1)
+    return 0
+}
+
+fn consume() -> int {
+    while true {
+        let item: int = channel_recv(items_ch)
+        if item < 0 { return 0 }
+        print("consumed: " + int_to_string(item))
+    }
+    return 0
+}
+
+fn main() -> int {
+    // Bounded channel — producer blocks if buffer is full
+    items_ch = channel_new(3)
+
+    let p: int = thread_spawn(produce)
+    let c: int = thread_spawn(consume)
+
+    thread_join(p)
+    thread_join(c)
+    channel_destroy(items_ch)
+    print("pipeline complete")
+    return 0
+}

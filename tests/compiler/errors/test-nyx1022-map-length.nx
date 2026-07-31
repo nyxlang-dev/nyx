@@ -1,0 +1,9 @@
+// NYX1022: Map no tiene length(). Antes de este chequeo, esto compilaba y
+// imprimía un puntero leído como entero (281473395465504) — silencioso.
+// Expected stderr (contains): "has no method 'length'" (default lang: EN —
+// g_lang default es "" != "es" pese al comentario en msg(), ver semantic.nx)
+fn main() -> int {
+    var m: Map<String, int> = {"a": 1}
+    let n: int = m.length()
+    return 0
+}

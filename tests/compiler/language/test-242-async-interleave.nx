@@ -1,0 +1,21 @@
+// test-242: T5b.1 — go_sleep(ms) suspends without blocking the OS thread
+// (falls back to a real sleep when called off-goroutine, e.g. from a
+// legacy `spawn { }` thread). S sleeps 40ms then prints "S"; main sleeps
+// 20ms then prints "M". Wide margin (20 vs 40ms) to avoid flakiness:
+// "M" must print before "S".
+
+fn main() {
+    spawn {
+        go_sleep(40)
+        print("S")
+        return 0
+    }
+
+    go_sleep(20)
+    print("M")
+
+    // Give S time to finish so both prints land before the process exits.
+    sleep(100)
+
+    print("test-242 OK")
+}

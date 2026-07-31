@@ -1,0 +1,61 @@
+// test-316 — retornar un puntero crudo (*T) NO lo dereferencia de más
+// (P1 friction 20260728-anon-1: el handle *int de sqlite_open retornado
+// desde una fn wrapper llegaba corrupto al caller — last_id daba basura
+// tipo puntero y nada persistía).
+//
+// Causa raíz (codegen_return, fallback i64→tipo-de-retorno): para un tipo
+// esperado que TERMINA en "*" (puntero crudo/ref) el i64 genérico YA ES el
+// puntero — la coerción correcta es inttoptr a secas. El fallback viejo
+// ("struct u otro puntero compuesto") hacía inttoptr + LOAD, devolviendo
+// *(T**)handle = los primeros 8 bytes del objeto apuntado. El load queda
+// SOLO para composites by-value (expected sin "*" final, ej. %ASTNode —
+// load-bearing para el propio bootstrap).
+//
+// Dos formas cubiertas:
+// (a) el shape EXACTO del reporte: `let h = m.make_handle()` — la llamada
+//     calificada por alias de módulo registra h como "int" genérico (gap de
+//     inferencia hermano, mismo reporte) y `return h` engancha el fallback.
+//     Sin el fix: SEGV / basura. Con el fix: inttoptr a secas.
+// (b) guarda del camino que NO debía cambiar: `return arr[0]` de un array
+//     LITERAL con elemento puntero — ese slot viene BOXEADO (celda GC +
+//     TAG_PTR, ver codegen_array_literal), el i64 es la dirección de la
+//     celda y el inttoptr+load histórico es el unbox correcto. El fix decide
+//     por AST (value != index) y este caso conserva el load. (Residuo
+//     catalogado aparte: array construido con push(p) guarda bits crudos —
+//     ese `return arr[0]` sigue corrupto como siempre, familia
+//     slot-convención.)
+//
+// El guard real son los asserts sobre el VALOR apuntado: con el bug, *h lee
+// memoria basura (SEGV o valor ≠ 4242) — un test que solo compila+corre no
+// cazaría nada.
+import "tests/support/aux_ptr_handle" as m
+// std/owned llega transitivo vía el aux (alloc/free quedan inlineados en la
+// unidad); importarlo TAMBIÉN directo acá dispara un FP de NYX1017 sobre
+// Rc.cnt (campo real) — colateral catalogado en TASKS.md, mismo reporte.
+
+// (a) shape del reporte: wrapper que retorna el handle vía local sin anotación
+fn open_handle() -> *int {
+    let h = m.make_handle()
+    return h
+}
+
+// (b) slot de array (i64 crudo real) retornado como *int
+fn passthrough(p: *int) -> *int {
+    let arr = [p]
+    return arr[0]
+}
+
+fn main() {
+    let h = open_handle()
+    let hv: int = *h
+    assert(hv == 4242)
+    free(h)
+
+    let q: *int = alloc<int>(1)
+    *q = 7
+    let r = passthrough(q)
+    let rv: int = *r
+    assert(rv == 7)
+    free(q)
+    print("done")
+}

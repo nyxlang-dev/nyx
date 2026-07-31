@@ -1,0 +1,47 @@
+fn main() {
+    // Hex lowercase
+    let h1: String = format("{:x}", 255)
+    assert(h1 == "ff")
+    let h2: String = format("{:x}", 0)
+    assert(h2 == "0")
+
+    // Hex uppercase
+    let h3: String = format("{:X}", 255)
+    assert(h3 == "FF")
+
+    // Octal
+    let o1: String = format("{:o}", 255)
+    assert(o1 == "377")
+    let o2: String = format("{:o}", 8)
+    assert(o2 == "10")
+
+    // Binary
+    let b1: String = format("{:b}", 10)
+    assert(b1 == "1010")
+    let b2: String = format("{:b}", 0)
+    assert(b2 == "0")
+
+    // Float precision
+    let f1: String = format("{:.2f}", 3.14159)
+    assert(f1 == "3.14")
+    let f2: String = format("{:.4f}", 3.14159)
+    assert(f2 == "3.1416")
+    let f3: String = format("{:.0f}", 2.7)
+    assert(f3 == "3")
+
+    // Integer width + zero-pad
+    let w1: String = format("{:5d}", 42)
+    assert(w1 == "   42")
+    let w2: String = format("{:05d}", 42)
+    assert(w2 == "00042")
+
+    // Mix of specifiers
+    let mix: String = format("hex={:x} oct={:o} bin={:b}", 10, 10, 10)
+    assert(mix == "hex=a oct=12 bin=1010")
+
+    // Backward compat: {} still works
+    let bc: String = format("n={} f={}", 42, 1.5)
+    assert(bc == "n=42 f=1.5")
+
+    print("ok")
+}

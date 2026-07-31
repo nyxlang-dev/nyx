@@ -1,0 +1,20 @@
+// NYX2007 (residuo de la campaña cerrar-silently-wrong, cerrado post-v0.24.0):
+// `.length` como PROPIEDAD (sin paréntesis) sobre una VARIABLE local Map.
+// Gemelo del camino de identificador de test-nyx2007-nested-map-length-property
+// (que cubre el receptor field_access, cerrado en la T4): acá el receptor es un
+// identificador simple, y codegen_field_access — tras los bloques de propiedad
+// builtin de String/Array — caía derecho al lookup de struct_field_index con la
+// clave inexistente "Map:length", imprimía «Error: campo no encontrado» MUDO
+// por stdout y devolvía `i64 0` con exit 0: un Map de 2 elementos medía 0.
+// Se corre SIN NYX_SKIP_SEMANTIC a propósito: NYX1022 mira LLAMADAS a métodos,
+// la forma-propiedad pasa semantic limpia — este es camino NORMAL, no backstop.
+// Ese print mudo general NO puede volverse abort (es el fallback load-bearing
+// del bootstrap: parser.nx dispara "Array:node_type" al auto-compilarse); el
+// guard es SOLO para receptor Map, por match exacto (`Map`/`Map<`), para que un
+// struct de usuario llamado MapEntry no caiga adentro.
+// Expected stderr (contains): "NYX2007"
+fn main() -> int {
+    var m: Map<String, String> = {"a": "uno", "b": "dos"}
+    print(int_to_string(m.length))
+    return 0
+}

@@ -1,0 +1,7 @@
+// c_fn_ptr sobre algo que NO es un identificador de fn (un literal) → error
+// de compilación del compilador, no IR inválido. (El caso "variable local"
+// tiene su propio mensaje más preciso — ver test-c-fn-ptr-shadow.nx.)
+fn main() {
+    let p: *i8 = c_fn_ptr(42)
+    print("no debería compilar")
+}

@@ -1,0 +1,28 @@
+// test-269 — aliases snake_case de métodos String: starts_with/ends_with/
+// to_upper/to_lower deben comportarse igual que startsWith/endsWith/toUpper/
+// toLower. Antes compilaban y devolvían 0 EN SILENCIO (sin dispatch en
+// codegen; semantic ya los tipaba — dogfooding:serve, TASKS.md 2026-07-20).
+fn main() {
+    // receiver identificador (dispatch de variable String conocida)
+    let s: String = "hello world"
+    assert(s.starts_with("hello"))
+    assert(not s.starts_with("world"))
+    assert(s.ends_with("world"))
+    assert(not s.ends_with("hello"))
+    assert(s.to_upper() == "HELLO WORLD")
+    let u: String = "HeLLo"
+    assert(u.to_lower() == "hello")
+
+    // receiver expresión (path fallback: método sobre el resultado de otro método)
+    assert(s.substring(0, 5).starts_with("he"))
+    assert(s.substring(6, 11).ends_with("ld"))
+    assert(s.substring(0, 5).to_upper() == "HELLO")
+    assert(u.substring(0, 5).to_lower() == "hello")
+
+    // receiver arr[i] (path de coerción i64 → %nyx_string*)
+    let parts: Array = s.split(" ")
+    assert(parts[0].starts_with("he"))
+    assert(parts[1].ends_with("ld"))
+
+    print("snake aliases OK")
+}

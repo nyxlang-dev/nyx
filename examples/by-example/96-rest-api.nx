@@ -1,0 +1,68 @@
+// Full REST API — CRUD with nyx-serve + nyx-kv
+// API REST completa — CRUD con nyx-serve + nyx-kv
+
+import "std/http"
+import "std/web"
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*" + int_to_string(parts.length()) + "\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$" + int_to_string(p.length()) + "\r\n" + p + "\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn kv_hset(key: String, field: String, val: String) -> int {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 { return -1 }
+    tcp_write(fd, resp_cmd(["HSET", key, field, val]))
+    tcp_read_line(fd)
+    tcp_close(fd)
+    return 0
+}
+
+fn list_users(req: Request) -> Response {
+    return response_json(200, "[{\"id\": 1, \"name\": \"Alice\"}]")
+}
+
+fn create_user(req: Request) -> Response {
+    // Parse JSON body (simplified — use std/json in real code)
+    let name: String = "from_body"
+    kv_hset("user:1", "name", name)
+    return response_json(201, "{\"id\": 1, \"created\": true}")
+}
+
+fn get_user(req: Request) -> Response {
+    let id: String = req.params.get("id")
+    return response_json(200, "{\"id\": " + id + "}")
+}
+
+fn update_user(req: Request) -> Response {
+    let id: String = req.params.get("id")
+    kv_hset("user:" + id, "updated_at", int_to_string(time()))
+    return response_json(200, "{\"updated\": true}")
+}
+
+fn delete_user(req: Request) -> Response {
+    return response_new(204, "")
+}
+
+fn main() -> int {
+    let app: App = app_new()
+    app_use(app, mw_logging)
+    app_use(app, mw_cors)
+
+    // RESTful CRUD
+    app_get(app, "/api/users", list_users)
+    app_post(app, "/api/users", create_user)
+    app_get(app, "/api/users/{id}", get_user)
+    app_put(app, "/api/users/{id}", update_user)
+    app_delete(app, "/api/users/{id}", delete_user)
+
+    print("REST API with 5 endpoints + middleware + nyx-kv backend")
+    return 0
+}

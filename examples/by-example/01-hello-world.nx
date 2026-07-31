@@ -1,0 +1,7 @@
+// Programa mínimo: imprime un saludo al mundo
+
+fn main() -> int {
+    print("Hello, world!")
+    print("Bienvenido a Nyx")
+    return 0
+}

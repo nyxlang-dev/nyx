@@ -1,0 +1,18 @@
+// Task 1 (campaña "Primer intento verde", Fase 2): un campo inexistente en
+// LECTURA (field_access) hoy compila mudo y evalúa a 0 — el peor modo de
+// fallo posible para un agente AI-first. Debe caer con NYX1017 (mismo
+// diagnóstico que ya existe para struct_init). Typo de un solo carácter
+// (nombre -> nombree) para caer dentro del umbral de suggest_similar_name
+// y disparar el hint did-you-mean (misma forma que test-m08-imported-field-typo).
+// Expected stderr (contains): "field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
+// Expected exit: non-zero (semantic check fails)
+
+struct Usuario {
+    nombre: String
+}
+
+fn main() -> int {
+    let u: Usuario = Usuario { nombre: "Ada" }
+    let x: String = u.nombree
+    return 0
+}

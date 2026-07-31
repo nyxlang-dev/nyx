@@ -1,0 +1,41 @@
+// Test 46: M-08 session 1 — happy path for let/var type annotations
+//
+// Exercises the type checker's "annotation matches literal" path. These all
+// must compile cleanly; mismatches are covered by tests/compiler/errors/.
+
+fn main() {
+    // Primitives
+    let i: int = 42
+    let f: float = 3.14
+    let s: String = "hola"
+    let b: bool = true
+    let c: char = 'x'
+
+    // Var (mutable)
+    var counter: int = 0
+    counter = counter + 1
+
+    // Identifier inference: second binding uses the first's inferred type
+    let a = 10
+    let aa: int = a
+
+    // Arrays with element inference
+    let nums: Array<int> = [1, 2, 3]
+    let words: Array<String> = ["uno", "dos"]
+
+    // Annotation without annotation — stays unchecked
+    let free = "libre"
+
+    print(int_to_string(i))
+    print(float_to_string(f))
+    print(s)
+    if b { print("true") }
+    print(char_to_string(c))
+    print(int_to_string(counter))
+    print(int_to_string(aa))
+    print(int_to_string(nums[0]))
+    print(words[0])
+    print(free)
+    print("OK")
+    return 0
+}

@@ -1,0 +1,45 @@
+// ============================================
+// test-fileio.nx - Test de File I/O Compilado
+// ============================================
+
+fn main() {
+    print("🧬 Nyx File I/O Test")
+    print("")
+    
+    // Test 1: Write & Read
+    print("Test 1: Write & Read")
+    write_file("test_compiled.txt", "Hello from compiled Nyx!")
+    let content = read_file("test_compiled.txt")
+    print(content)
+    print("")
+    
+    // Test 2: file_exists
+    print("Test 2: file_exists")
+    if file_exists("test_compiled.txt") {
+        print("✅ Archivo existe")
+    } else {
+        print("❌ Archivo no existe")
+    }
+    print("")
+    
+    // Test 3: Overwrite
+    print("Test 3: Sobrescribir archivo")
+    write_file("test_compiled.txt", "Contenido actualizado!")
+    let updated = read_file("test_compiled.txt")
+    print(updated)
+    print("")
+    
+    // Test 4: Multiple files
+    print("Test 4: Múltiples archivos")
+    write_file("file1.txt", "Archivo 1")
+    write_file("file2.txt", "Archivo 2")
+    
+    let f1 = read_file("file1.txt")
+    let f2 = read_file("file2.txt")
+    
+    print(f1)
+    print(f2)
+    print("")
+    
+    print("✅ Todos los tests completados!")
+}

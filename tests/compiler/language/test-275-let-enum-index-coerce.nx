@@ -1,0 +1,38 @@
+// test-275 — `let p: Patch = arr[i]` con anotación de tipo ENUM debe coercionar
+// i64→ptr como ya hace con String/Array/ASTNode, y el `match p` subsiguiente
+// debe funcionar en el MISMO scope (catalogado en el framework VDOM: rompía el
+// link con "defined with type i64 but expected ptr"; workaround histórico:
+// getter tipado o pasar arr[i] inline — documentado en std/component::vpatch).
+enum Patch {
+    SetText(String),
+    Remove(int)
+}
+
+fn apply(p: Patch) -> String {
+    return match p {
+        Patch.SetText(s) => "text:" + s,
+        Patch.Remove(n) => "remove:" + n.to_string()
+    }
+}
+
+fn main() {
+    var patches: Array = []
+    patches.push(Patch.SetText("hola"))
+    patches.push(Patch.Remove(7))
+
+    // El bug: bindear a un let ANOTADO enum y matchear en el mismo scope
+    let p0: Patch = patches[0]
+    let r0: String = match p0 {
+        Patch.SetText(s) => "text:" + s,
+        Patch.Remove(n) => "remove:" + n.to_string()
+    }
+    assert(r0 == "text:hola")
+
+    let p1: Patch = patches[1]
+    assert(apply(p1) == "remove:7")
+
+    // El camino inline (workaround histórico) sigue funcionando
+    assert(apply(patches[0]) == "text:hola")
+
+    print("let-enum coerce OK")
+}

@@ -1,0 +1,39 @@
+// Test TLS server builtins exist and return expected values
+// tls_server_init with non-existent cert should return -1
+
+fn main() {
+    // Init with non-existent files should fail gracefully
+    let r1: int = tls_server_init("nonexistent.pem", "nonexistent.key")
+    if r1 == -1 {
+        print("tls_server_init: -1 (expected)")
+    } else {
+        print("tls_server_init: unexpected " + int_to_string(r1))
+    }
+
+    // tls_accept with invalid fd should return 0 (no server ctx initialized)
+    let r2: int = tls_accept(-1)
+    if r2 == 0 {
+        print("tls_accept: 0 (expected)")
+    } else {
+        print("tls_accept: unexpected " + int_to_string(r2))
+    }
+
+    // tls_read_line with null handle should return empty string
+    let r3: String = tls_read_line(0)
+    print("tls_read_line: \"" + r3 + "\" (expected empty)")
+
+    // tls_write_conn with null handle should return -1
+    let r4: int = tls_write_conn(0, "test")
+    if r4 == -1 {
+        print("tls_write_conn: -1 (expected)")
+    } else {
+        print("tls_write_conn: unexpected " + int_to_string(r4))
+    }
+
+    // tls_close_conn with null handle should not crash
+    tls_close_conn(0)
+    print("tls_close_conn: ok (no crash)")
+
+    print("ALL TLS SERVER TESTS PASSED")
+    return 0
+}

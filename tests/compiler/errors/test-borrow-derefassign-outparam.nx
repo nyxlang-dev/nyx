@@ -1,0 +1,14 @@
+// D2(b) inc2-menor: `*p = &x` a través de un ptr-PARAM escribe en memoria
+// del caller (sobrevive al frame) → la ref a `x` escapa → NYX1222 (vector B
+// en el handler deref_assign, que antes solo walkeaba sin check).
+// NYX_BORROW=error.
+fn stash(p: *int) {
+    var x: int = 5
+    *p = &x
+}
+
+fn main() {
+    var slot: int = 0
+    stash(&mut slot)
+    print(1)
+}

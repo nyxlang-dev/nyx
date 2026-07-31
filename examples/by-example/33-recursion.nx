@@ -1,0 +1,25 @@
+// Recursión: fibonacci recursivo clásico
+
+fn fib(n: int) -> int {
+    if n <= 1 {
+        return n
+    }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() -> int {
+    // Imprimir la secuencia de fibonacci del 0 al 10
+    print("Secuencia fibonacci (0..10):")
+    var i: int = 0
+    while i <= 10 {
+        let resultado: int = fib(i)
+        print("fib(" + int_to_string(i) + ") = " + int_to_string(resultado))
+        i = i + 1
+    }
+
+    // Calcular fib(20)
+    let f20: int = fib(20)
+    print("fib(20) = " + int_to_string(f20))
+
+    return 0
+}

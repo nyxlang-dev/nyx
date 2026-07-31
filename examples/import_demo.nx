@@ -1,0 +1,12 @@
+// import_demo.nx — demo del sistema de imports
+import { cube, factorial } from "examples/my_math"
+
+fn main() {
+    print("cube(3) = " + int_to_string(cube(3)))
+    print("cube(5) = " + int_to_string(cube(5)))
+    print("5! = " + int_to_string(factorial(5)))
+    print("10! = " + int_to_string(factorial(10)))
+    print("import system works!")
+}
+
+main()

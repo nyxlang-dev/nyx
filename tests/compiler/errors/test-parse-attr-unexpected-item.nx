@@ -1,0 +1,10 @@
+// T14: `#[attr]` seguido de un item que no es fn/struct/enum (ni pub
+// fn/struct/enum) caía antes al fallback SILENCIOSO del dispatcher de
+// atributos (make_astnode("error", ...) sin p_diag) — el nodo desaparecía
+// del AST sin error de compilación contado. Ahora es NYX0105 contado.
+#[affine]
+let x = 1
+
+fn main() {
+    print("unreachable")
+}

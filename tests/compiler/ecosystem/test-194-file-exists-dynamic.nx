@@ -1,0 +1,55 @@
+// test-194-file-exists-dynamic: file_exists() con path literal, path armado
+// por concatenación dinámica, y path con subdirectorio (el caso que falló
+// originalmente en try_serve_static del proxy).
+//
+// AUTOSUFICIENTE (2026-07-30): la versión original consultaba
+// `tests/test-01-primitives.nx` y `sites/nyxlang.com/static/...`, dos fixtures
+// del árbol que YA NO EXISTEN (el primero se movió a
+// tests/compiler/basics/ en el layout v0.13; el segundo desapareció con el
+// split del monorepo — `sites/` se fue a ~/nyx/web/sites). El test devolvía
+// `false` en los tres chequeos y su expected/ (correcto: true/true/true/false)
+// lo delataba. Ahora el test CREA sus propios fixtures, así que verifica
+// file_exists() y no el contenido del repo.
+
+fn main() {
+    // Fixtures propios, fuera del árbol del repo para no ensuciarlo.
+    let root: String = "/tmp/nyx-test-194"
+    let base_dir: String = root + "/static"
+    mkdir(root)      // -1 si ya existe: irrelevante, solo queremos que exista
+    mkdir(base_dir)
+    mkdir(base_dir + "/learn")
+    write_file("/tmp/nyx-test-194/static/index.html", "<h1>nyx</h1>")
+    write_file(base_dir + "/learn/book.css", "body{}")
+
+    // Test 1: literal string
+    if file_exists("/tmp/nyx-test-194/static/index.html") {
+        print("literal: true")
+    } else {
+        print("literal: false")
+    }
+
+    // Test 2: dynamic string via concatenation (like try_serve_static)
+    let url_path: String = "/index.html"
+    let file_path: String = base_dir + url_path
+    if file_exists(file_path) {
+        print("dynamic: true")
+    } else {
+        print("dynamic: false")
+    }
+
+    // Test 3: subdirectory path (the failing case)
+    let sub_path: String = "/learn/book.css"
+    let sub_file: String = base_dir + sub_path
+    if file_exists(sub_file) {
+        print("subdir: true")
+    } else {
+        print("subdir: false")
+    }
+
+    // Test 4: non-existent file
+    if file_exists(base_dir + "/nonexistent.html") {
+        print("missing: true")
+    } else {
+        print("missing: false")
+    }
+}

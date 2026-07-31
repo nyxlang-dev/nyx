@@ -1,0 +1,22 @@
+// D3 (campaña 2026-07-22) NEG — FP residual pre-existente cazado por la
+// re-review de Opus (inc 2): una fn ANIDADA que hace `captured.f = &x` sobre
+// una variable CAPTURADA del scope externo marcaba NYX1222 (la captura no
+// estaba en el tmap de la lambda → bc_dest_outlives la trataba como
+// "sobrevive al frame"). Una captura vive en el SharedEnv — es la tercera
+// categoría (slot 6 del tmap): ni sobrevive-al-frame ni frame-bound.
+// NYX_BORROW=error debe compilar limpio.
+struct Holder { p: *int }
+
+fn outer() {
+    var h: Holder = Holder { p: 0 as *int }
+    fn inner() {
+        var x: int = 5
+        h.p = &x
+    }
+    inner()
+    print(1)
+}
+
+fn main() {
+    outer()
+}

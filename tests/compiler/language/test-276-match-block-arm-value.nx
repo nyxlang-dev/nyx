@@ -1,0 +1,64 @@
+// test-276 — match-EXPRESIÓN con block-arm: el VALOR de la última expresión
+// del bloque debe ser el valor del arm. Antes el body block iba por
+// codegen_statement y NUNCA almacenaba en el slot del resultado → el match
+// devolvía 0/basura (variante enum: SEGV por IR inválido — repro del gotcha
+// VDOM que obligó a extraer construcciones a funciones aparte, std/vdom
+// on_elem). Cubre las 3 variantes catalogadas:
+enum V {
+    A(String),
+    B(String, int)
+}
+
+fn describe(v: V) -> String {
+    return match v {
+        V.A(s) => "A:" + s,
+        V.B(s, n) => "B:" + s + ":" + n.to_string()
+    }
+}
+
+// Variante 1 (el SEGV del catálogo): block-arm con statement previo +
+// construcción de enum como expresión final
+fn make_b(v: V, n: int) -> V {
+    return match v {
+        V.A(s2) => {
+            var extra: int = n + 1
+            V.B(s2, extra)
+        },
+        V.B(s2, n2) => V.B(s2, n2)
+    }
+}
+
+// Variante 2 (el "devuelve 0" del catálogo): block-arm terminado en IDENTIFIER
+fn pick_int(v: V) -> int {
+    return match v {
+        V.A(s) => {
+            var base: int = 10
+            base
+        },
+        V.B(s, n) => n
+    }
+}
+
+// Variante 3: block-arm en match de VALORES (subject String) terminado en call
+fn label_of(s: String) -> String {
+    return match s {
+        "a" => {
+            var pre: String = "es-"
+            pre + "a"
+        },
+        _ => "otro"
+    }
+}
+
+fn main() {
+    let b: V = make_b(V.A("hola"), 41)
+    assert(describe(b) == "B:hola:42")
+
+    assert(pick_int(V.A("x")) == 10)
+    assert(pick_int(V.B("y", 7)) == 7)
+
+    assert(label_of("a") == "es-a")
+    assert(label_of("z") == "otro")
+
+    print("match block-arm value OK")
+}

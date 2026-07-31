@@ -1,0 +1,13 @@
+// Test 293: exec() honra su contrato String (captura stdout) + exec_code()
+// para el exit code. Fricción cerrada 2026-07-24 (TASKS.md "exec() viola su
+// contrato String" — SEGV con exit != 0, stdout jamás capturado). Runner es
+// crash-only (sin .expected) — assert() SIEMPRE (lección test-291).
+
+fn main() {
+    assert(exec("echo hola") == "hola")
+    assert(exec_code("true") == 0)
+    assert(exec_code("false") == 1)
+    let empty: String = exec("ls /nyx_test293_no_existe 2>/dev/null")
+    assert(empty == "")
+    print("done")
+}

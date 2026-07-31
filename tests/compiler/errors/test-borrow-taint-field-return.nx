@@ -1,0 +1,15 @@
+// T3 inc 3a: `s` es un struct LOCAL; `s.f = &x` lo tinta (field-insensitive); `return s` escapa
+// la ref → NYX1222.
+struct S { f: *int }
+
+fn make() -> S {
+    let x: int = 5
+    var s: S = S { f: 0 as *int }
+    s.f = &x
+    return s
+}
+
+fn main() {
+    let r: S = make()
+    print(1)
+}

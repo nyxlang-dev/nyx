@@ -1,0 +1,25 @@
+// Test: type inference para split() — v1.1.0
+// split() debe inferir Array<String> sin necesidad de anotación explícita
+
+fn main() -> int {
+    // Sin anotación: partes deben ser String directamente
+    let csv = "alpha,beta,gamma"
+    let parts = csv.split(",")
+    let a = parts[0]
+    let b = parts[1]
+    let c = parts[2]
+    print(a)
+    print(b)
+    print(c)
+
+    // Con for-in también debe funcionar
+    let words = "uno dos tres".split(" ")
+    var i = 0
+    while i < words.length() {
+        let w: String = words[i]
+        print(w)
+        i = i + 1
+    }
+
+    return 0
+}

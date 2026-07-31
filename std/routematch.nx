@@ -1,0 +1,97 @@
+// std/routematch.nx — Matching de rutas hash, 100% puro.
+//
+// EN: Pure route matching over hash-fragment strings (`#/foo/:id`). No
+//     imports, no externs — testable natively without a browser/wasm target.
+//     The integration router (hooking into std/dom's hashchange, dispatch)
+//     lives in a separate module; this one only decides "does this pattern
+//     match this hash, and what params does it bind".
+// ES: Matching de rutas puro sobre strings de hash fragment (`#/foo/:id`).
+//     Sin imports ni externs — testeable nativo sin browser/wasm. El router
+//     de integración (hashchange de std/dom, dispatch) vive en otro módulo;
+//     este solo resuelve "¿matchea este patrón con este hash, y qué params
+//     captura".
+//
+// Uso / usage:
+//   let m: Array = route_match("/detalle/:id", "#/detalle/7")
+//   // m[0] == 1 (matched), m[1] == [["id", "7"]]
+//
+//   let r: Array = route_resolve(["/lista", "/detalle/:id"], "#/detalle/9", 0)
+//   // r[0] == idx del patrón que matcheó (o default_idx si ninguno)
+
+// Quita el "#" inicial del hash, si está presente.
+fn rm_norm(hash: String) -> String {
+    if hash.length() > 0 {
+        if hash.charAt(0) == 35 { // '#'
+            return hash.substring(1, hash.length())
+        }
+    }
+    return hash
+}
+
+// Separa un string por "/" descartando segmentos vacíos (bordes o "//").
+fn rm_segs(s: String) -> Array {
+    let raw: Array = s.split("/")
+    var out: Array = []
+    var i: int = 0
+    while i < raw.length() {
+        let seg: String = raw[i]
+        if seg.length() > 0 {
+            out.push(seg)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Matchea un patrón de ruta (`/a/:x/b`) contra un hash (`#/a/1/b`).
+// Devuelve [matched: int, params: Array] — params = Array de pares [nombre, valor].
+pub fn route_match(pattern: String, hash: String) -> Array {
+    let norm: String = rm_norm(hash)
+    let pat_segs: Array = rm_segs(pattern)
+    let hash_segs: Array = rm_segs(norm)
+
+    if pat_segs.length() != hash_segs.length() {
+        return [0, []]
+    }
+
+    var params: Array = []
+    var i: int = 0
+    while i < pat_segs.length() {
+        let p: String = pat_segs[i]
+        let h: String = hash_segs[i]
+        if p.length() > 0 {
+            if p.charAt(0) == 58 { // ':'
+                let name: String = p.substring(1, p.length())
+                params.push([name, h])
+            } else {
+                if p != h {
+                    return [0, []]
+                }
+            }
+        } else {
+            if p != h {
+                return [0, []]
+            }
+        }
+        i = i + 1
+    }
+
+    return [1, params]
+}
+
+// Resuelve el primer patrón que matchea contra el hash.
+// Devuelve [idx: int, params: Array] — sin match, [default_idx, []].
+pub fn route_resolve(routes_patterns: Array, hash: String, default_idx: int) -> Array {
+    var i: int = 0
+    while i < routes_patterns.length() {
+        let pattern: String = routes_patterns[i]
+        let m: Array = route_match(pattern, hash)
+        let matched: int = m[0]
+        if matched == 1 {
+            let params: Array = m[1]
+            return [i, params]
+        }
+        i = i + 1
+    }
+    return [default_idx, []]
+}

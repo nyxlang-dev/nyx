@@ -1,0 +1,17 @@
+// D3 (campaña 2026-07-22) POS — `while_let` NO tenía handler en bc_walk: su
+// body no se borrow-checkeaba (miss seguro). Ahora espeja a while (body sobre
+// copia + join con 0 iteraciones) → un double-free DENTRO del body marca
+// NYX1221. Gate-only (double-free real en runtime).
+fn f() {
+    var p: *int = alloc<int>(1)
+    var opt: Option<int> = Option.Some(10)
+    while let Option.Some(v) = opt {
+        free(p)
+        free(p)
+        opt = Option.None
+    }
+}
+
+fn main() {
+    f()
+}

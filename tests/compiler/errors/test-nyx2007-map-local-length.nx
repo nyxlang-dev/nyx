@@ -1,0 +1,11 @@
+// NYX2007 (S3): `length` sobre una variable local Map. La rama de codegen
+// preguntaba `var_vtype == "%nyx_string*"` y su else caía a nyx_array_length
+// SIN verificar el tipo, así que un Map (i8*) se leía como Array → basura.
+// Se corre con NYX_SKIP_SEMANTIC=1 a propósito: con semantic activo lo caza
+// NYX1022, y este backstop existe justamente para cuando semantic no corre.
+// Expected stderr (contains): "NYX2007"
+fn main() -> int {
+    let m: Map<String, int> = {"a": 1}
+    print(m.length())
+    return 0
+}

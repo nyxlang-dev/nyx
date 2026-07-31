@@ -1,0 +1,25 @@
+// aux module para test-291-affine-pub-cross-module.nx — struct #[affine] PUB
+// consumida desde otro archivo (repro cross-módulo del gap T14). Contador
+// global (patrón test-283) para que el test principal pueda ASSERT sobre el
+// número real de drops — un test que solo compila+corre sin comparar output
+// es decorativo (pasaría igual con drops=0, como el runner de make test no
+// diffea output; ver review de T14).
+import "std/owned"
+
+var g_res_drops: int = 0
+
+#[affine]
+pub struct Res {
+    id: int
+}
+
+impl Drop for Res {
+    fn drop(self) {
+        g_res_drops = g_res_drops + 1
+        print("drop:res")
+    }
+}
+
+pub fn res_drops() -> int {
+    return g_res_drops
+}

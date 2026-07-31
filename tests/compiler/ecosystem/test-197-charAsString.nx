@@ -1,0 +1,20 @@
+fn main() {
+    let s: String = "Hello"
+
+    // char_to_string converts charAt result to a 1-char String
+    let c: String = char_to_string(s.charAt(0))
+    print(c)
+
+    // charAt still returns int (backward compatible)
+    let code: int = s.charAt(0)
+    print(code)
+
+    // char_to_string with variable index
+    var i: int = 4
+    let c2: String = char_to_string(s.charAt(i))
+    print(c2)
+
+    // char_to_string in concatenation
+    let greeting: String = char_to_string(s.charAt(0)) + char_to_string(s.charAt(1))
+    print(greeting)
+}

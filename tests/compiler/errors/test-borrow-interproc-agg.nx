@@ -1,0 +1,10 @@
+// Retorno de agregado con una llamada passthrough adentro → bc_aggregate_escaping_origin
+// delega en bc_escaping_origin(call) → tinta.
+fn id(x: &int) -> &int { return x }
+
+fn caller() -> Array {
+    let local: int = 3
+    return [id(&local)]
+}
+
+fn main() { print(1) }

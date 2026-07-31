@@ -1,0 +1,47 @@
+// nyx-db transactions — BEGIN, COMMIT, ROLLBACK
+// Transacciones nyx-db — BEGIN, COMMIT, ROLLBACK
+
+import "std/sqlite"
+
+fn main() -> int {
+    // Use embedded SQLite for the demo (recipe 55 shows basic usage).
+    // The handle is an opaque pointer (*int); NULL on failure.
+    let db = sqlite_open(":memory:")
+
+    sqlite_exec(db, "CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
+    sqlite_exec(db, "INSERT INTO accounts VALUES (1, 1000)")
+    sqlite_exec(db, "INSERT INTO accounts VALUES (2, 500)")
+
+    // Atomic money transfer using a transaction
+    sqlite_exec(db, "BEGIN TRANSACTION")
+
+    // Debit account 1
+    sqlite_exec(db, "UPDATE accounts SET balance = balance - 100 WHERE id = 1")
+
+    // Credit account 2
+    sqlite_exec(db, "UPDATE accounts SET balance = balance + 100 WHERE id = 2")
+
+    // Commit atomically
+    sqlite_exec(db, "COMMIT")
+    print("transfer committed")
+
+    // Verify balances
+    let rows: Array = sqlite_query(db, "SELECT id, balance FROM accounts ORDER BY id")
+    var i: int = 0
+    while i < rows.length() {
+        let row: Array = rows[i]
+        let id: String = row[0]
+        let bal: String = row[1]
+        print("  account " + id + ": " + bal)
+        i = i + 1
+    }
+
+    // Rollback example
+    sqlite_exec(db, "BEGIN TRANSACTION")
+    sqlite_exec(db, "UPDATE accounts SET balance = 0 WHERE id = 1")
+    sqlite_exec(db, "ROLLBACK")
+    print("rolled back — balance unchanged")
+
+    sqlite_close(db)
+    return 0
+}

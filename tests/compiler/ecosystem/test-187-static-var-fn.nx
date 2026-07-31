@@ -1,0 +1,14 @@
+// Test 187: static var inside function
+// Bug: generates invalid IR (@counter undefined)
+
+fn counter() -> int {
+    static var count: int = 0
+    count = count + 1
+    return count
+}
+
+fn main() {
+    print(counter())
+    print(counter())
+    print(counter())
+}

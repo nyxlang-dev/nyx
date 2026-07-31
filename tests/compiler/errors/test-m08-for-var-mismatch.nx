@@ -1,0 +1,11 @@
+// M-08 sesion 9 error test: the loop variable inherits the element type of the
+// iterable, so inside the body `let s: String = x` must be flagged.
+// Expected stderr (contains): "type mismatch in 's': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let arr = [1, 2, 3]
+    for x in arr {
+        let s: String = x
+    }
+    return 0
+}

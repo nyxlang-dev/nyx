@@ -1,0 +1,32 @@
+// test-289 — genéricos a NIVEL DE MÉTODO vía turbofish (follow-up de E3,
+// 2026-07-22): `fn wrap<U>(self, x: U) -> U` dentro de un impl CONCRETO.
+// Antes: la LLAMADA (con o sin turbofish) SEGFAULTEABA al compilador (el
+// registro trataba el método como concreto y U no resolvía). Ahora es un
+// template method-level: el turbofish instancia Conv_wrap_String /
+// Conv_wrap_int por la misma maquinaria Etapa B (self = struct concreto).
+// v1 SIN inferencia: llamar sin turbofish da error bilingüe accionable.
+struct Conv { base: int }
+
+impl Conv {
+    fn wrap<U>(self, x: U) -> U {
+        return x
+    }
+    fn suma(self, n: int) -> int {
+        return self.base + n
+    }
+}
+
+fn main() {
+    let c: Conv = Conv { base: 10 }
+
+    let s: String = c.wrap<String>("hola")
+    assert(s == "hola")
+
+    let n: int = c.wrap<int>(42)
+    assert(n == 42)
+
+    // los métodos NO genéricos del mismo impl siguen despachando normal
+    assert(c.suma(5) == 15)
+
+    print("method level generics OK")
+}

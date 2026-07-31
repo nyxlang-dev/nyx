@@ -1,0 +1,31 @@
+// Test 45: Tuples
+
+fn main() {
+    // Test 1: Basic tuple construction
+    let t = (1, 2, 3)
+    print("tuple created")
+
+    // Test 2: Tuple with mixed types
+    let t2 = (42, "hello", true)
+    print("mixed tuple")
+
+    // Test 3: Tuple field access
+    let a = t2.0
+    let b: String = t2.1
+    print(int_to_string(a))
+    print(b)
+
+    // Test 4: Tuple destructuring
+    let (x, y, z) = (10, 20, 30)
+    print(int_to_string(x))
+    print(int_to_string(y))
+    print(int_to_string(z))
+
+    // Test 5: Tuple destructuring with mixed types
+    let (name, age) = ("Alice", 30)
+    print(name)
+    print(int_to_string(age))
+
+    print("OK")
+    return 0
+}

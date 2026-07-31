@@ -1,0 +1,14 @@
+// M-08 sesion 9 error test: field access resolves via struct registry so the
+// RHS of `let n: String = p.x` is typed as int and flagged.
+// Expected stderr (contains): "type mismatch in 'n': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() -> int {
+    let p = Point { x: 1, y: 2 }
+    let n: String = p.x
+    return 0
+}

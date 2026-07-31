@@ -1,0 +1,19 @@
+// Fix de soundness inc 2 (cazado por la review final de Opus): `row` es una variable de
+// loop `for` → es un frame-local (muere con el frame igual que `x`). Guardar `&x` en
+// `row.p` NO escapa la función → NO debe marcar NYX1222. Sin el fix (registrar la for-var
+// como frame-local), bc_dest_outlives(row) daba true (no estaba en tmap[3]) → FALSO
+// POSITIVO en un diagnóstico GATING. NYX_BORROW=error.
+struct Node { p: *int }
+
+fn f() {
+    var x: int = 5
+    var nodes: Array = []
+    for row in nodes {
+        row.p = &x
+    }
+    print(1)
+}
+
+fn main() {
+    f()
+}

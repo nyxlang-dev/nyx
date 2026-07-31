@@ -1,0 +1,60 @@
+// test-311-array-slot-tags.nx — concatenación de `arr[i]` según el TAG del slot
+//
+// Un slot de Array es un int64 crudo, así que el codegen tenía que ADIVINAR qué
+// contenía — y adivinaba DISTINTO según el orden de los operandos:
+//     "x" + a[1]  →  x187651589208848   (el PUNTERO impreso como número)
+//     a[1] + "y"  →  dosy               (correcto)
+// El mismo valor con dos resultados. Desde slots-tag (Etapa 3) el slot lleva su
+// tipo y la conversión lo consulta en runtime en vez de suponerlo.
+//
+// Cubre además el caso que rompió la primera versión del fix: los literales de
+// array se construyen por la familia `_ptr` del runtime, que armaba el struct a
+// mano y NO reservaba el buffer de tags — todo slot leía UNKNOWN.
+// Self-checking con assert() (abortivo).
+
+fn test_ambos_ordenes_coinciden() {
+    let a: Array = [1, "dos"]
+    let izq: String = "x" + a[1]
+    let der: String = a[1] + "y"
+    assert(izq == "xdos")
+    assert(der == "dosy")
+    print("ambos ordenes coinciden ok")
+}
+
+fn test_cuatro_tipos_en_array_heterogeneo() {
+    let a: Array = [1, "dos", 3.5, true]
+    assert(("i=" + a[0]) == "i=1")
+    assert(("s=" + a[1]) == "s=dos")
+    assert(("f=" + a[2]) == "f=3.5")
+    assert(("b=" + a[3]) == "b=true")
+    print("cuatro tipos heterogeneos ok")
+}
+
+fn test_anotado_sigue_igual() {
+    // El camino con tipo estático conocido (Array<T>) NO pasa por los tags:
+    // regresión de que sigue funcionando igual que siempre.
+    let tipado: Array<String> = ["x", "y"]
+    assert(("a=" + tipado[0]) == "a=x")
+    let nums: Array<int> = [7, 8]
+    assert(("n=" + nums[1]) == "n=8")
+    print("camino anotado intacto ok")
+}
+
+fn test_indice_calculado() {
+    // El índice puede ser una expresión: el helper debe evaluarla UNA sola vez
+    // (interceptar después de codegen_expr duplicaría la evaluación).
+    let a: Array = [10, "once", 12]
+    var i: int = 0
+    i = i + 1
+    assert(("v=" + a[i]) == "v=once")
+    assert(("w=" + a[i + 1]) == "w=12")
+    print("indice calculado ok")
+}
+
+fn main() {
+    test_ambos_ordenes_coinciden()
+    test_cuatro_tipos_en_array_heterogeneo()
+    test_anotado_sigue_igual()
+    test_indice_calculado()
+    print("test-311-array-slot-tags ok")
+}

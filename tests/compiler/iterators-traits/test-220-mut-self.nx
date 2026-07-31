@@ -1,0 +1,48 @@
+// test-220-mut-self — Camino B: métodos `&mut self` mutan in-place y el cambio
+// PERSISTE al caller. Antes de v0.16.3-dev los structs eran value types: `self`
+// se copiaba y `self.campo = x` se perdía al retornar. Ahora `&mut self` pasa
+// self por puntero (%Type*). Self-checking con assert() abortivo.
+
+struct Counter { n: int }
+
+impl Counter {
+    fn bump(&mut self, k: int) {
+        self.n = self.n + k
+    }
+    fn reset(&mut self) {
+        self.n = 0
+    }
+    fn get(self) -> int {          // coexistencia: método `self` por-valor
+        return self.n
+    }
+}
+
+// Un segundo struct con varios campos, para probar el GEP al campo correcto.
+struct Rect { w: int, h: int }
+impl Rect {
+    fn grow(&mut self, dw: int, dh: int) {
+        self.w = self.w + dw
+        self.h = self.h + dh
+    }
+    fn area(self) -> int {
+        return self.w * self.h
+    }
+}
+
+fn main() {
+    var c: Counter = Counter { n: 0 }
+    c.bump(5)
+    c.bump(3)
+    assert(c.n == 8)          // mutación persiste al caller (antes: 0)
+    assert(c.get() == 8)      // el método por-valor sigue funcionando
+    c.reset()
+    assert(c.n == 0)          // &mut self sin args también persiste
+
+    var r: Rect = Rect { w: 2, h: 3 }
+    r.grow(1, 2)
+    assert(r.w == 3)
+    assert(r.h == 5)
+    assert(r.area() == 15)    // campos correctos tras mutar ambos
+
+    print("mut-self OK")
+}

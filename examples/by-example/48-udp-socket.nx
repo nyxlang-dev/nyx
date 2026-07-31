@@ -1,0 +1,24 @@
+// UDP send and receive — connectionless datagrams
+// Envío y recepción UDP — datagramas sin conexión
+
+fn main() -> int {
+    // Bind a UDP socket to a local port
+    let sock: int = udp_bind("127.0.0.1", 9001)
+    if sock < 0 {
+        print("failed to bind UDP socket")
+        return 1
+    }
+    print("UDP socket bound to :9001")
+
+    // Send a datagram to a remote address
+    let msg: String = "hello via UDP"
+    udp_sendto(sock, msg, "127.0.0.1", 9001)
+    print("sent: " + msg)
+
+    // Receive a datagram (blocks until one arrives)
+    let received: String = udp_recvfrom(sock, 1024)
+    print("received: " + received)
+
+    tcp_close(sock)
+    return 0
+}

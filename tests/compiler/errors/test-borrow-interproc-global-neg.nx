@@ -1,0 +1,12 @@
+// `glob` NO tiene param-ref → elisión no infiere origen → r NO se tinta.
+// Sin este comportamiento habría FP (el ref no viene de ningún local del caller).
+let G: int = 99
+
+fn glob() -> &int { return &G }
+
+fn caller() -> &int {
+    let r: &int = glob()
+    return r
+}
+
+fn main() { print(1) }

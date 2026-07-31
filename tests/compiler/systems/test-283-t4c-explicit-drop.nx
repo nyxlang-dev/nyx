@@ -1,0 +1,49 @@
+// test-283 — T4c hardening (campaña D1): `x.drop()` EXPLÍCITO consumía el
+// valor pero NO apagaba el drop flag del receiver → el cleanup de la fn
+// dueña lo dropeaba DE NUEVO (doble-drop; double-free/UB si el destructor
+// libera un puntero raw — era el ÚNICO caso unsound de T4c). Fix: un método
+// de receiver `self` PLANO (consuming) sobre un local afín-con-Drop apaga el
+// flag del caller en el call-site, igual que un arg by-value (test-245).
+// `&self` (modo "ref") NO consume → el drop determinista al salir se
+// conserva intacto.
+import "std/owned"
+
+var g_drops: int = 0
+
+#[affine]
+struct Res {
+    id: int
+}
+
+impl Drop for Res {
+    fn drop(self) {
+        g_drops = g_drops + 1
+    }
+}
+
+impl Res {
+    fn peek(&self) -> int {
+        return self.id
+    }
+}
+
+fn explicit_drop() {
+    let r: Res = Res { id: 1 }
+    r.drop()
+    // ANTES del fix: drop explícito + cleanup de la fn = 2 drops
+}
+
+fn reader_keeps_drop() {
+    let r: Res = Res { id: 2 }
+    let v: int = r.peek()
+    assert(v == 2)
+    // &self no consume → drop determinista al salir de la fn
+}
+
+fn main() {
+    explicit_drop()
+    assert(g_drops == 1)
+    reader_keeps_drop()
+    assert(g_drops == 2)
+    print("t4c explicit drop OK")
+}

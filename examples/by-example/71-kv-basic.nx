@@ -1,0 +1,49 @@
+// nyx-kv client — basic SET/GET/DEL operations
+// Cliente nyx-kv — operaciones SET/GET/DEL básicas
+
+// Build a RESP array command from string parts
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*")
+    sb.append(int_to_string(parts.length()))
+    sb.append("\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$")
+        sb.append(int_to_string(p.length()))
+        sb.append("\r\n")
+        sb.append(p)
+        sb.append("\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    // Connect to nyx-kv on default port 6380
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 {
+        print("connection failed (is nyx-kv running?)")
+        return 1
+    }
+
+    // SET name "Nyx"
+    tcp_write(fd, resp_cmd(["SET", "name", "Nyx"]))
+    let set_reply: String = tcp_read_line(fd)
+    print("SET -> " + set_reply.trim())
+
+    // GET name
+    tcp_write(fd, resp_cmd(["GET", "name"]))
+    let hdr: String = tcp_read_line(fd)
+    let val: String = tcp_read_line(fd)
+    print("GET name -> " + val.trim())
+
+    // DEL name
+    tcp_write(fd, resp_cmd(["DEL", "name"]))
+    let del_reply: String = tcp_read_line(fd)
+    print("DEL -> " + del_reply.trim())
+
+    tcp_close(fd)
+    return 0
+}

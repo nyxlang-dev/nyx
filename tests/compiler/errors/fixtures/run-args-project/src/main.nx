@@ -1,0 +1,12 @@
+// Fixture del test run-wrapper-args (portscan P1): imprime los args recibidos
+// para verificar que `nyx run` en modo PROYECTO los reenvía al binario.
+fn main() {
+    let args: Array = get_args()
+    var i: int = 1
+    while i < args.length() {
+        let a: String = args[i]
+        print("ARG[" + i.to_string() + "]=" + a)
+        i = i + 1
+    }
+    print("COUNT=" + (args.length() - 1).to_string())
+}

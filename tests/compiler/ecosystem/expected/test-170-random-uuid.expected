@@ -1,0 +1,22 @@
+random+uuid test
+--- Random Basics ---
+seed reproducibility ok
+consecutive values differ ok
+float >= 0.0 ok
+random_range [1,10] ok
+random_bool: values generated ok
+--- Shuffle ---
+shuffle length preserved ok
+shuffle elements preserved ok
+--- UUID v4 ---
+uuid length 36 ok
+uuid format valid ok
+uuid uniqueness ok
+uuid version 4 ok
+invalid uuid detected ok
+uuid sample: 5504a441-1d0e-415f-9df9-96603c86b438
+--- Random Bytes ---
+random_bytes non-empty ok
+random_bytes differ ok
+random_bytes empty ok
+random+uuid ok

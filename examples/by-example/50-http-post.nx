@@ -1,0 +1,27 @@
+// HTTP POST request with a body
+// Solicitud HTTP POST con cuerpo
+
+import "std/http"
+
+fn main() -> int {
+    // http_post sends a POST with Content-Type: text/plain
+    let resp: Array = http_post("http://httpbin.org/post", "hello from Nyx")
+
+    let status: int = http_status(resp)
+    print("status: " + int_to_string(status))
+
+    let body: String = http_body(resp)
+    if body.length() > 200 {
+        print("body (first 200 chars): " + body.substring(0, 200))
+    } else {
+        print("body: " + body)
+    }
+
+    // For custom headers and methods, use http_request:
+    let headers: Array = ["Content-Type", "application/json"]
+    let json_body: String = "{\"key\": \"value\"}"
+    let resp2: Array = http_request("PUT", "http://httpbin.org/put", headers, json_body)
+    print("PUT status: " + int_to_string(http_status(resp2)))
+
+    return 0
+}

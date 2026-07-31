@@ -1,0 +1,32 @@
+// Test 213: map literal { "k": v } y {} (fricción F-C, v0.16-dev)
+// Claves SOLO strings (JSON-style). Cubre: valores int, valores String
+// (incluido get inline sin anotación — usa el hint del literal), map
+// vacío + insert/get posterior, size, y paso como argumento.
+
+fn sum_ab(m: Map) -> int {
+    return m.get("a") + m.get("b")
+}
+
+fn main() -> int {
+    // Valores int
+    let nums = {"a": 10, "b": 32}
+    print(int_to_string(nums.get("a") + nums.get("b")))
+
+    // Valores String — get inline reconstituye el String vía el hint
+    let saludos = {"es": "hola", "en": "hello"}
+    print(saludos.get("es") + " / " + saludos.get("en"))
+
+    // Map vacío
+    let vacio = {}
+    vacio.insert("x", 7)
+    print(int_to_string(vacio.get("x")))
+
+    // size() y trailing comma
+    let con_trailing = {"uno": 1, "dos": 2,}
+    print(int_to_string(con_trailing.size()))
+
+    // Literal como argumento directo
+    print(int_to_string(sum_ab({"a": 5, "b": 6})))
+
+    return 0
+}

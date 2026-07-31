@@ -1,0 +1,10 @@
+// 'a explícito: el retorno declara prestar de x. HARD → NYX1222 gatea (error mode rechaza).
+fn dup<'a>(x: &'a int) -> &'a int { return x }
+
+fn caller() -> &int {
+    let local: int = 5
+    let r: &int = dup(&local)
+    return r
+}
+
+fn main() { print(1) }

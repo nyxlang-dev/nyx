@@ -1,0 +1,56 @@
+// test-292: nested fns homónimas en outers distintos NO deben colisionar.
+// Antes de la mangle <outer>__<inner>: "invalid redefinition of function 'helper'"
+// (dos `define internal @helper` en el mismo módulo) al linkear.
+// Cubre: (1) captura de un local distinto por cada homónima, (2) nested homónima
+// RECURSIVA en dos outers (self-call), (3) NEG: una fn top-level con el mismo
+// nombre que una nested se resuelve por el fallback crudo.
+
+fn alpha() -> int {
+    let secret = 100
+    fn helper() -> int {
+        return secret + 5
+    }
+    return helper()
+}
+
+fn beta() -> int {
+    let secret = 200
+    fn helper() -> int {
+        return secret + 7
+    }
+    return helper()
+}
+
+// Nested homónima RECURSIVA en dos outers, cada una capturando un local distinto.
+fn fa() -> int {
+    let base = 10
+    fn fact_in(n: int) -> int {
+        if n <= 1 { return base }
+        return n * fact_in(n - 1)
+    }
+    return fact_in(4)
+}
+
+fn fb() -> int {
+    let base = 1
+    fn fact_in(n: int) -> int {
+        if n <= 1 { return base }
+        return n + fact_in(n - 1)
+    }
+    return fact_in(4)
+}
+
+// NEG: fn top-level llamada igual que una nested de otra fn — el fallback crudo
+// (@helper sin env) la resuelve; no debe romperse ni resolver a la nested.
+fn helper() -> int {
+    return 999
+}
+
+fn main() {
+    assert(alpha() == 105)   // 100 + 5
+    assert(beta() == 207)    // 200 + 7
+    assert(fa() == 240)      // 4*3*2*base(10)
+    assert(fb() == 10)       // 4+3+2+base(1)
+    assert(helper() == 999)  // top-level, no la nested
+    print("nested homonyms ok")
+}

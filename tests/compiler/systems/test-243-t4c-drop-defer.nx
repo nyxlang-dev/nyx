@@ -1,0 +1,15 @@
+import "std/owned"
+var g_log: String = ""
+#[affine]
+struct Res { id: int }
+impl Drop for Res { fn drop(self) { g_log = g_log + "D" } }
+fn run() {
+    let r: Res = Res { id: 1 }
+    defer { g_log = g_log + "F" }
+    print("body " + int_to_string(r.id))
+}
+fn main() {
+    run()
+    print("log=" + g_log)
+    print("ok")
+}

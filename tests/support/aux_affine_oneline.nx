@@ -1,0 +1,9 @@
+// Aux de los tests SP4 T3b: el atributo y el `pub struct` en la MISMA línea.
+// `scan_module_types` strippeaba sólo el `pub ` inicial, así que esta forma
+// era invisible para el scanner textual (con `#[affine]` en línea propia sí
+// lo veía) y el tipo quedaba sin registrar → `unknown type` espurio.
+#[affine] pub struct Holder { v: int }
+
+pub fn holder_value(v: int) -> int {
+    return v
+}

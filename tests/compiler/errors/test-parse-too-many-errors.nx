@@ -1,0 +1,28 @@
+fn main() -> int {
+  let match: int = 1
+  let enum: int = 2
+  let while: int = 3
+  let for: int = 4
+  let if: int = 5
+  let else: int = 6
+  let return: int = 7
+  let fn: int = 8
+  let let: int = 9
+  let struct: int = 10
+  let trait: int = 11
+  let impl: int = 12
+  let type: int = 13
+  let pub: int = 14
+  let import: int = 15
+  let true: int = 16
+  let false: int = 17
+  let in: int = 18
+  let as: int = 19
+  let break: int = 20
+  let continue: int = 21
+  let spawn: int = 22
+  let unsafe: int = 23
+  let async: int = 24
+  let await: int = 25
+  return 0
+}

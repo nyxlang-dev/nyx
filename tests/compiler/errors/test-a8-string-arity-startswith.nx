@@ -1,0 +1,8 @@
+// A8: startsWith(prefix) toma 1 arg — pasar un 2do (offset inexistente)
+// debe ser error, no aceptarse en silencio.
+// Expected stderr (contains): "'startsWith' accepts at most 1 argument(s), got 2"
+fn main() -> int {
+    let s: String = "hola mundo"
+    let r: bool = s.startsWith("hola", 99)
+    return 0
+}

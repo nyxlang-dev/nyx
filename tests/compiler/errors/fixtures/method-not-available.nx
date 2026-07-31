@@ -1,0 +1,11 @@
+// Fixture: método inexistente sobre un receiver que el camino de expresión no
+// reconoce. ANTES compilaba y evaluaba a 0 en silencio (catch-all mudo de
+// codegen_method_call); ahora debe ser un error accionable.
+fn tres() -> Array {
+    let a: Array = [1, 2, 3]
+    return a
+}
+
+fn main() {
+    print(tres().metodo_que_no_existe().to_string())
+}

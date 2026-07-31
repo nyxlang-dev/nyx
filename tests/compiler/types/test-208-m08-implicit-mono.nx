@@ -1,0 +1,38 @@
+// Test 208: M-08 implicit monomorphization — variante sin turbofish de test-54.
+//
+// Ejercita que calls genéricos SIN turbofish (`id(42)`, `pick_first(7, "ignored")`,
+// `first_of([10,20,30])`) sean promovidos a generic_call sintético por semantic
+// (try_promote_implicit_generic_call) y monomorfizados correctamente por codegen
+// sin cambios en el generador de código.
+//
+// test-54 requería turbofish explícito; este test verifica el gap S10→F2 cerrado.
+
+fn id<T>(x: T) -> T {
+    return x
+}
+
+fn pick_first<A, B>(a: A, b: B) -> A {
+    return a
+}
+
+fn first_of<T>(arr: Array<T>) -> T {
+    return arr[0]
+}
+
+fn main() -> int {
+    let n: int = id(42)
+    let s: String = id("hola")
+
+    let pi: int = pick_first(7, "ignored")
+    let ps: String = pick_first("kept", 9)
+
+    let head: int = first_of([10, 20, 30])
+
+    print(int_to_string(n))
+    print(s)
+    print(int_to_string(pi))
+    print(ps)
+    print(int_to_string(head))
+    print("OK")
+    return 0
+}

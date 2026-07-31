@@ -1,0 +1,31 @@
+// MessagePack binary serialization — compact alternative to JSON
+// Serialización binaria MessagePack — alternativa compacta a JSON
+
+import "std/msgpack"
+
+fn main() -> int {
+    // Pack individual values
+    let packed_int: String = msgpack_int(42)
+    let packed_str: String = msgpack_str("hello")
+    let packed_bool: String = msgpack_bool(true)
+    let packed_nil: String = msgpack_nil()
+
+    // Check types
+    print("int type:  " + msgpack_type(packed_int))
+    print("str type:  " + msgpack_type(packed_str))
+    print("bool type: " + msgpack_type(packed_bool))
+    print("nil type:  " + msgpack_type(packed_nil))
+
+    // Unpack values
+    let val_int: int = msgpack_unpack_int(packed_int)
+    let val_str: String = msgpack_unpack_str(packed_str)
+    print("unpacked int: " + int_to_string(val_int))
+    print("unpacked str: " + val_str)
+
+    // Pack an array of msgpack values
+    let items: Array = [msgpack_int(1), msgpack_str("two"), msgpack_bool(false)]
+    let packed_arr: String = msgpack_array(items)
+    print("array type: " + msgpack_type(packed_arr))
+
+    return 0
+}

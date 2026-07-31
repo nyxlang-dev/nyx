@@ -1,0 +1,25 @@
+// Test 212: const con String (fricción F-B, v0.16-dev)
+// Históricamente `const NAME = "string"` a nivel top-level crasheaba el gen:
+// el Pass -1 tipaba el global como i64 y el init de __nyx_init_globals
+// desempacaba el nodo const con el shape de let (nombre en data[0] como
+// node, valor en data[2]) — leía basura. Verifica top-level, local y mezcla
+// con const numéricos.
+
+const GREETING = "hola const global"
+const ANSWER = 42
+const RATIO = 2.5
+
+fn main() -> int {
+    print(GREETING)
+    print(int_to_string(ANSWER))
+
+    const LOCAL_MSG = "hola const local"
+    print(LOCAL_MSG)
+
+    // Uso en expresiones
+    let combined: String = GREETING + " / " + LOCAL_MSG
+    print(combined)
+    print(int_to_string(ANSWER + 8))
+
+    return 0
+}

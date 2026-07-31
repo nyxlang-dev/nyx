@@ -1,0 +1,14 @@
+// T3 inc 3b Etapa 1: `id` tiene 1 solo param-ref y retorna ref → elisión asume
+// que el retorno presta de `x`. `r = id(&local)` tinta r (SOFT). `return r` escapa
+// → NYX1223 (lint no-gating: se ve en warn, se suprime en error).
+fn id(x: &int) -> &int { return x }
+
+fn caller() -> &int {
+    let local: int = 5
+    let r: &int = id(&local)
+    return r
+}
+
+fn main() {
+    print(1)
+}

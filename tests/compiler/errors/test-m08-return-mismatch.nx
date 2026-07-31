@@ -1,0 +1,11 @@
+// M-08 sesion 2 error test: return value type mismatch against declared return.
+// Expected stderr (contains): "return type mismatch in 'pick': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+fn pick() -> int {
+    return "no"
+}
+
+fn main() -> int {
+    let n: int = pick()
+    return 0
+}

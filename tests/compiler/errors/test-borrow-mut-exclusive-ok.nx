@@ -1,0 +1,14 @@
+// Track 3b — caso CORRECTO de exclusividad de &mut: dos &mut a places
+// DISTINTOS (`combine(&mut x, &mut y)`) NO conflictúan. Ni en warn debe
+// aparecer NYX1210 (sin falsos positivos). El programa es válido y corre.
+
+fn combine(a: &mut int, b: &mut int) {
+    *a = *b
+}
+
+fn main() {
+    var x: int = 5
+    var y: int = 9
+    combine(&mut x, &mut y)
+    print("done")
+}

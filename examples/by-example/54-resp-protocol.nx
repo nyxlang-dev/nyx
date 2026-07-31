@@ -1,0 +1,33 @@
+// RESP protocol — Redis serialization format
+// Protocolo RESP — formato de serialización de Redis
+
+fn main() -> int {
+    // RESP (REdis Serialization Protocol) uses simple text framing
+    // Each type has a prefix character:
+    //   + Simple String    - Error    : Integer
+    //   $ Bulk String      * Array
+
+    // Simple string: +OK\r\n
+    let simple: String = "+OK\r\n"
+    print("simple string: " + simple.trim())
+
+    // Error: -ERR unknown command\r\n
+    let error: String = "-ERR unknown command\r\n"
+    print("error: " + error.trim())
+
+    // Integer: :42\r\n
+    let integer: String = ":" + int_to_string(42) + "\r\n"
+    print("integer: " + integer.trim())
+
+    // Bulk string: $5\r\nhello\r\n
+    let data: String = "hello"
+    let bulk: String = "$" + int_to_string(data.length()) + "\r\n" + data + "\r\n"
+    print("bulk string: " + bulk.trim())
+
+    // Array (e.g., SET key value command):
+    // *3\r\n$3\r\nSET\r\n$4\r\nname\r\n$3\r\nNyx\r\n
+    let cmd: String = "*3\r\n$3\r\nSET\r\n$4\r\nname\r\n$3\r\nNyx\r\n"
+    print("SET command: " + cmd.replace("\r\n", " ").trim())
+
+    return 0
+}

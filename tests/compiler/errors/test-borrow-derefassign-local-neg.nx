@@ -1,0 +1,14 @@
+// D2(b) NEG: `*p = &x` donde p es un puntero LOCAL apuntando a memoria del
+// propio frame — no escapa nada → NO debe marcar (marcar sería FP gating).
+// NYX_BORROW=error debe compilar limpio.
+fn f() {
+    var slot: int = 0
+    var x: int = 5
+    let p: *int = &slot
+    *p = &x
+    print(slot)
+}
+
+fn main() {
+    f()
+}

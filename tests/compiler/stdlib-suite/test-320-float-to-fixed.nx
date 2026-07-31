@@ -1,0 +1,49 @@
+// test-320 — float_to_fixed: formateo con cantidad fija de decimales.
+// El gap que costó un run entero del banco de primer intento: no existía
+// forma de emitir "8.50" sin fabricar la aritmética a mano.
+import "std/math_ext"
+
+fn main() {
+    print(float_to_fixed(8.5, 2))
+    assert(float_to_fixed(8.5, 2) == "8.50")
+
+    print(float_to_fixed(3.14159, 2))
+    assert(float_to_fixed(3.14159, 2) == "3.14")
+
+    print(float_to_fixed(2.0, 2))
+    assert(float_to_fixed(2.0, 2) == "2.00")
+
+    print(float_to_fixed(0.125, 2))       // redondeo half-up: 0.13
+    assert(float_to_fixed(0.125, 2) == "0.13")
+
+    print(float_to_fixed(-4.567, 2))
+    assert(float_to_fixed(-4.567, 2) == "-4.57")
+
+    print(float_to_fixed(10.0, 0))
+    assert(float_to_fixed(10.0, 0) == "10")
+
+    print(float_to_fixed(1.005, 1))
+    assert(float_to_fixed(1.005, 1) == "1.0")
+
+    print(float_to_fixed(99.999, 2))      // acarreo: 100.00
+    assert(float_to_fixed(99.999, 2) == "100.00")
+
+    print(float_to_fixed(-0.001, 2))      // cero negativo: 0.00 sin signo
+    assert(float_to_fixed(-0.001, 2) == "0.00")
+
+    print(float_to_fixed(5.0, 20))        // decimals fuera de rango: clamp a 15
+    assert(float_to_fixed(5.0, 20) == "5.000000000000000")
+
+    // Overflow: decimals=15 (clamp) escala tanto que valores grandes
+    // desbordan i64 al multiplicar por 10^15. Antes de este fix devolvía
+    // el saturado de i64 formateado como decimal plausible pero falso
+    // ("9223.372036854775807"). Ahora cae a float_to_string(x), honesto.
+    print(float_to_fixed(1000000.0, 15))
+    assert(float_to_fixed(1000000.0, 15) == "1e+06")
+
+    // Mismo problema con decimals chico pero x enorme (1e18).
+    print(float_to_fixed(1000000000000000000.0, 2))
+    assert(float_to_fixed(1000000000000000000.0, 2) == "1e+18")
+
+    print("ok")
+}

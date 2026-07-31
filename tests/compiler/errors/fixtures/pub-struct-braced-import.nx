@@ -1,0 +1,11 @@
+// SP4 T3b (positivo): `import { } from` de un módulo con `pub struct` +
+// `pub type`. Antes de T3b esto NO compilaba: 10+ `unknown type` dentro del
+// propio módulo inlineado. Debe compilar y ejecutar (salida "alfa").
+import { make_tag, tag_label } from "tests/support/aux_pub_struct"
+
+fn main() -> int {
+    let t: Tag = make_tag(1, "alfa")
+    let id: TagId = t.id
+    print(tag_label(t))
+    return id - 1
+}

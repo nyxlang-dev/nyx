@@ -1,0 +1,30 @@
+// test-252-resp-parse-len — resp_parse_len parsea longitudes RESP sin crashear.
+// Contrato: >=0 longitud válida, -1 null ($-1), -2 malformado. Reemplaza el
+// string_to_int que hacía exit(1) en no-numérico/vacío (DoS del daemon).
+import "std/resp"
+
+fn main() {
+    // Longitudes válidas
+    assert(resp_parse_len("0") == 0)
+    assert(resp_parse_len("123") == 123)
+    assert(resp_parse_len("16777216") == 16777216)     // == RESP_MAX_BULK, válido
+    // Null bulk
+    assert(resp_parse_len("-1") == -1)
+    // Malformado → -2 (nunca crashea)
+    assert(resp_parse_len("") == -2)
+    assert(resp_parse_len("abc") == -2)
+    assert(resp_parse_len("12x") == -2)      // cola no numérica
+    assert(resp_parse_len("-2") == -2)       // negativo distinto de -1
+    assert(resp_parse_len("-") == -2)
+    assert(resp_parse_len("1 ") == -2)       // espacio de cola
+    // Ceros a la izquierda: numérico válido
+    assert(resp_parse_len("007") == 7)
+    // Cotas expuestas
+    assert(RESP_MAX_BULK == 16777216)
+    assert(RESP_MAX_ARRAY == 1048576)
+    // Overflow / sobre-cota → -2 (no envuelve a un positivo chico)
+    assert(resp_parse_len("99999999999999999999") == -2)   // 20 dígitos, desbordaría i64
+    assert(resp_parse_len("16777217") == -2)               // RESP_MAX_BULK + 1
+    assert(resp_parse_len("536870912") == -2)              // el viejo 512MB ahora sobre-cota
+    print("resp_parse_len ok")
+}

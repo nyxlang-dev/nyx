@@ -1,0 +1,32 @@
+// Semaphore — limiting concurrent access to a resource
+// Semáforo — limitar acceso concurrente a un recurso
+
+import "std/sync"
+
+var sem: Semaphore = sem_new(2)
+var done: WaitGroup = wg_new()
+
+fn access_resource() -> int {
+    sem_acquire(sem)
+    print("acquired (count: " + int_to_string(sem_count(sem)) + ")")
+    sleep(50)
+    sem_release(sem)
+    print("released")
+    wg_done(done)
+    return 0
+}
+
+fn main() -> int {
+    // Allow at most 2 concurrent accesses
+    wg_add(done, 5)
+
+    var i: int = 0
+    while i < 5 {
+        thread_spawn(access_resource)
+        i = i + 1
+    }
+
+    wg_wait(done)
+    print("all done")
+    return 0
+}

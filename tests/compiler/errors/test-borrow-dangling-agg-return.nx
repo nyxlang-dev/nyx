@@ -1,0 +1,9 @@
+fn make() -> Array {
+    let x: int = 5
+    return [&x]
+}
+
+fn main() {
+    let a: Array = make()
+    print(1)
+}

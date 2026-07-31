@@ -1,0 +1,5 @@
+// B2 regression helper: declares a module-level global. Paired with
+// b2_router.nx (which reads it) to exercise the order-dependent
+// cross-module forward-ref fix in register_declarations.
+var g_flag: int = 7
+pub fn set_flag(v: int) { g_flag = v }

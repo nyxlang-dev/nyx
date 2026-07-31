@@ -1,0 +1,7 @@
+// Fixture B1 (friction-browser): error de semantic en un archivo suelto.
+// `nyx run broken.nx` debe PROPAGAR el diagnóstico (texto + NYX_DIAG=json
+// NDJSON), no tragarlo con una línea muda. Ver scripts/nyx.
+fn main() {
+    let x: int = "not an int"
+    print(x)
+}

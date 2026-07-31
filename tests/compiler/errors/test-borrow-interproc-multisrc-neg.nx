@@ -1,0 +1,12 @@
+// inc 3c-1 NEG: 'a compartido, pero AMBOS args son globales (no frame-bound).
+// Ninguna fuente cuelga → sin marca en ningún modo.
+let G1: int = 1
+let G2: int = 2
+fn longest<'a>(a: &'a int, b: &'a int) -> &'a int { return a }
+
+fn caller() -> &int {
+    let r: &int = longest(&G1, &G2)
+    return r
+}
+
+fn main() { print(1) }

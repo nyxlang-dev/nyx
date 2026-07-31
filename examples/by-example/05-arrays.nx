@@ -1,0 +1,31 @@
+// Arrays: crear, push, length, acceso por índice, iterar
+
+fn main() -> int {
+    // Crear array literal
+    let numeros: Array = [10, 20, 30]
+
+    // Acceso por índice
+    print("primer: " + int_to_string(numeros[0]))
+    print("ultimo: " + int_to_string(numeros[2]))
+
+    // length
+    print("longitud: " + int_to_string(numeros.length()))
+
+    // Array mutable con push
+    var lista: Array = [1, 2, 3]
+    lista.push(4)
+    lista.push(5)
+    print("tras push, longitud: " + int_to_string(lista.length()))
+
+    // Iterar con for-in
+    print("elementos:")
+    for n: int in lista {
+        print("  " + int_to_string(n))
+    }
+
+    // Modificar elemento
+    lista[0] = 99
+    print("lista[0] tras modificar: " + int_to_string(lista[0]))
+
+    return 0
+}

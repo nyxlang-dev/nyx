@@ -1,0 +1,90 @@
+// test-305-http-find-headers.nx — std/http: http_find_headers plural (D6 friction-browser)
+//
+// Set-Cookie aparece MÚLTIPLES veces en una respuesta real; http_find_header
+// (singular) devuelve solo el primero → el navegador perdía cookies. Contrato
+// del plural: devuelve TODOS los valores en orden de aparición, con matching
+// case-insensitive de nombre (RFC 9110: los nombres de header no distinguen
+// mayúsculas; los servers HTTP/2 los mandan en minúscula). El singular queda
+// intacto (exact-match, primer valor) — sanity checks incluidos.
+// Self-checking con assert() (abortivo).
+
+import "std/http"
+
+fn mk_headers() -> Array {
+    // Array plano [k, v, k, v, ...] como lo arma http_parse_raw_response
+    let h: Array = ["Content-Type", "text/html",
+                    "Set-Cookie", "sid=abc; Path=/",
+                    "content-length", "42",
+                    "set-cookie", "theme=dark",
+                    "Set-Cookie", "lang=es; HttpOnly"]
+    return h
+}
+
+fn test_plural_todos_en_orden() {
+    let h: Array = mk_headers()
+    let cookies: Array = http_find_headers(h, "Set-Cookie")
+    assert(cookies.length() == 3)
+    let c0: String = cookies[0]
+    let c1: String = cookies[1]
+    let c2: String = cookies[2]
+    assert(c0 == "sid=abc; Path=/")
+    assert(c1 == "theme=dark")
+    assert(c2 == "lang=es; HttpOnly")
+    print("plural todos en orden ok")
+}
+
+fn test_plural_case_insensitive() {
+    let h: Array = mk_headers()
+    // consulta en cualquier caso encuentra los tres (mezcla Set-Cookie/set-cookie).
+    // NOTA: bindear SIEMPRE el resultado antes de .length() — el encadenado
+    // `http_find_headers(...).length()` da 0 silencioso (bug de codegen
+    // catalogado en TASKS.md: método sobre el retorno Array de una user fn).
+    let a: Array = http_find_headers(h, "SET-COOKIE")
+    assert(a.length() == 3)
+    let b: Array = http_find_headers(h, "set-cookie")
+    assert(b.length() == 3)
+    let c: Array = http_find_headers(h, "Content-Length")
+    assert(c.length() == 1)
+    let cl: Array = http_find_headers(h, "CONTENT-LENGTH")
+    let v: String = cl[0]
+    assert(v == "42")
+    print("plural case-insensitive ok")
+}
+
+fn test_plural_ausente_y_vacio() {
+    let h: Array = mk_headers()
+    let r1: Array = http_find_headers(h, "X-No-Existe")
+    assert(r1.length() == 0)
+    let vacio: Array = []
+    let r2: Array = http_find_headers(vacio, "Set-Cookie")
+    assert(r2.length() == 0)
+    print("plural ausente/vacio ok")
+}
+
+fn test_plural_array_impar_seguro() {
+    // clave final sin valor (array malformado): no crashea, la ignora
+    let h: Array = ["Set-Cookie", "a=1", "Set-Cookie"]
+    let r: Array = http_find_headers(h, "Set-Cookie")
+    assert(r.length() == 1)
+    let v: String = r[0]
+    assert(v == "a=1")
+    print("plural array impar seguro ok")
+}
+
+fn test_singular_intacto() {
+    // el singular sigue: exact-match, primer valor, "" si no está
+    let h: Array = mk_headers()
+    assert(http_find_header(h, "Set-Cookie") == "sid=abc; Path=/")
+    assert(http_find_header(h, "set-cookie") == "theme=dark")   // exact: salta los "Set-Cookie"
+    assert(http_find_header(h, "X-No-Existe") == "")
+    print("singular intacto ok")
+}
+
+fn main() {
+    test_plural_todos_en_orden()
+    test_plural_case_insensitive()
+    test_plural_ausente_y_vacio()
+    test_plural_array_impar_seguro()
+    test_singular_intacto()
+    print("test-305-http-find-headers ok")
+}

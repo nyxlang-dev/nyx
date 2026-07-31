@@ -1,0 +1,23 @@
+// Test 267: fsync/fdatasync — durability builtins (flush fd to disk).
+// Consumidor: snapshot durable del daemon nyx-kv (T2b).
+fn main() {
+    let path: String = "/tmp/nyx_test_267_fsync.tmp"
+    let fd: int = open_fd(path, 1)
+    assert(fd >= 0)
+
+    let rc: int = fsync(fd)
+    assert(rc == 0)
+
+    let rc2: int = fdatasync(fd)
+    assert(rc2 == 0)
+
+    assert(close_fd(fd) == 0)
+
+    // Invalid fd -> -1, not a crash.
+    assert(fsync(-1) == -1)
+    assert(fdatasync(-1) == -1)
+
+    remove_file(path)
+    print("fsync/fdatasync: OK")
+    return 0
+}

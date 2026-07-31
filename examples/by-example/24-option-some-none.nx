@@ -1,0 +1,38 @@
+// Option: función que retorna Some o None, match exhaustivo para manejar ambos
+
+fn find_positive(nums: Array, index: int) -> Option<int> {
+    let val: int = nums[index]
+    if val > 0 {
+        return Option.Some(val)
+    }
+    return Option.None
+}
+
+fn describe(opt: Option<int>) -> String {
+    return match opt {
+        Option.Some(v) => "encontrado: " + int_to_string(v),
+        Option.None    => "no encontrado"
+    }
+}
+
+fn main() -> int {
+    let nums: Array = [10, -5, 3, -1, 7]
+
+    // Caso Some: index 0 es positivo
+    let a: Option<int> = find_positive(nums, 0)
+    print(describe(a))
+
+    // Caso None: index 1 es negativo
+    let b: Option<int> = find_positive(nums, 1)
+    print(describe(b))
+
+    // if let para extraer el valor directamente
+    let c: Option<int> = find_positive(nums, 4)
+    if let Option.Some(v) = c {
+        print("if let Some: valor es " + int_to_string(v))
+    } else {
+        print("if let: ningun valor")
+    }
+
+    return 0
+}

@@ -1,0 +1,8 @@
+// Clave numérica en un map literal: debe dar un error CONTADO y accionable.
+// Antes de este fix, `parse_primary` caía a un fallback que imprimía un
+// mensaje sin contarlo -> el compile "pasaba" y emitía un binario que no
+// ejecutaba nada (silently-wrong, el peor modo de fallo para una IA).
+fn main() {
+    let m: Map = {1: "uno"}
+    print("no deberia llegar")
+}

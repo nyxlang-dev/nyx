@@ -1,0 +1,32 @@
+// test-206: a module function `read_byte(arr, offset)` must NOT be hijacked
+// by the zero-arg terminal builtin `read_byte()` in codegen.
+//
+// Regression for the bug long misdiagnosed in products/db/src/wal.nx as a
+// "cross-module return-type inference bug": codegen had an unguarded shortcut
+// `if name == "read_byte"` that rewrote every call to `@nyx_read_byte()` (stdin),
+// discarding args. The guard now requires zero args AND no user definition.
+//
+// If the bug is present, read_byte(buf, 1) returns stdin garbage (e.g. -1),
+// the assertion fails, and the program exits non-zero (test FAILS).
+import "tests/test-modules/read_byte_shadow" as rb
+
+fn main() -> int {
+    let buf: Array = [42, 7, 99]
+
+    // Unqualified call (the form that triggered the bug)
+    let v: int = read_byte(buf, 1)
+    print(int_to_string(v))
+    if v != 7 {
+        return 1
+    }
+
+    // First byte too, to exercise offset 0
+    let w: int = read_byte(buf, 0)
+    print(int_to_string(w))
+    if w != 42 {
+        return 1
+    }
+
+    print("read-byte-shadow ok")
+    return 0
+}

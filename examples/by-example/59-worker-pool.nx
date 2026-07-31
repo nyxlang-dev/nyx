@@ -1,0 +1,57 @@
+// Worker pool — dispatching tasks to N threads via channels
+// Pool de workers — despachar tareas a N hilos via canales
+
+var work_ch: Map = Map.new()
+var done_ch: Map = Map.new()
+
+fn worker() -> int {
+    while true {
+        let task: int = channel_recv(work_ch)
+        if task < 0 { return 0 }
+        // Simulate work: compute square
+        let result: int = task * task
+        channel_send(done_ch, result)
+    }
+    return 0
+}
+
+fn main() -> int {
+    work_ch = channel_new(20)
+    done_ch = channel_new(20)
+
+    // Spawn 4 workers
+    let num_workers: int = 4
+    var handles: Array = []
+    var i: int = 0
+    while i < num_workers {
+        let h: int = thread_spawn(worker)
+        handles.push(h)
+        i = i + 1
+    }
+
+    // Send 8 tasks
+    let num_tasks: int = 8
+    i = 0
+    while i < num_tasks {
+        channel_send(work_ch, i + 1)
+        i = i + 1
+    }
+
+    // Collect results
+    i = 0
+    while i < num_tasks {
+        let result: int = channel_recv(done_ch)
+        print("result: " + int_to_string(result))
+        i = i + 1
+    }
+
+    // Send stop signals
+    i = 0
+    while i < num_workers {
+        channel_send(work_ch, -1)
+        i = i + 1
+    }
+
+    print("all tasks completed")
+    return 0
+}

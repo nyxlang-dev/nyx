@@ -1,0 +1,28 @@
+// Test 55: sizeof operator
+
+fn main() -> int {
+    let s1 = sizeof(int)
+    print(s1)  // 8
+
+    let s2 = sizeof(i32)
+    print(s2)  // 4
+
+    let s3 = sizeof(i16)
+    print(s3)  // 2
+
+    let s4 = sizeof(i8)
+    print(s4)  // 1
+
+    let s5 = sizeof(float)
+    print(s5)  // 8 (double)
+
+    let s6 = sizeof(bool)
+    print(s6)  // 1
+
+    // sizeof in arithmetic
+    let count = 10
+    let total = count * sizeof(i32)
+    print(total)  // 40
+
+    return 0
+}

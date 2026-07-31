@@ -1,0 +1,3 @@
+=== Nyx Benchmarks ===
+bench fibonacci: __ANY__
+bench string_concat: __ANY__

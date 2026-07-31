@@ -1,0 +1,33 @@
+bindgen test
+--- Type Mapping ---
+i32
+i64
+f32
+f64
+void
+usize
+i64
+--- Pointer Detection ---
+int* is pointer
+char* is pointer
+int is not pointer
+void is not pointer
+--- Extern Fn Format ---
+extern "C" fn add(a: i32, b: i32) -> i32
+extern "C" fn greet(name: *i8) -> *i8
+extern "C" fn free(ptr: *i8) -> void
+--- Repr C Struct ---
+#[repr(C)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+--- Define Constants ---
+const MAX_SIZE: i32 = 1024
+const VERSION: i32 = 42
+const PI_APPROX: i32 = 3
+--- Enum to Const ---
+const RED: i32 = 0
+const GREEN: i32 = 1
+const BLUE: i32 = 2
+bindgen ok

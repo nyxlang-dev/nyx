@@ -1,0 +1,13 @@
+// M-08 B8-F2: aridad equivocada en construcción de enum local.
+// Rgb espera 3 argumentos — pasar 1 debe fallar (NYX1006).
+
+enum Color {
+    Red,
+    Rgb(int, int, int)
+}
+
+fn main() -> int {
+    let c = Color.Rgb(255)
+    print("no llega")
+    return 0
+}

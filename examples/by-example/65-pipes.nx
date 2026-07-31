@@ -1,0 +1,37 @@
+// Pipes — connecting two processes via pipe
+// Pipes — conectar dos procesos via pipe
+
+fn main() -> int {
+    // pipe_new() returns [read_fd, write_fd]
+    let fds: Array = pipe_new()
+    let read_fd: int = fds[0]
+    let write_fd: int = fds[1]
+
+    let pid: int = fork()
+
+    if pid == 0 {
+        // Child: redirect stdout to write end of pipe
+        close_fd(read_fd)
+        dup2(write_fd, 1)
+        close_fd(write_fd)
+        // exec ls — output goes into pipe
+        let args: Array = ["ls", "/tmp"]
+        execvp("ls", args)
+        return 1
+    }
+
+    // Parent: read from pipe
+    close_fd(write_fd)
+    let output: String = tcp_read(read_fd, 4096)
+    close_fd(read_fd)
+
+    waitpid(pid, 0)
+    print("ls output (first 200 chars):")
+    if output.length() > 200 {
+        print(output.substring(0, 200))
+    } else {
+        print(output)
+    }
+
+    return 0
+}

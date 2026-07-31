@@ -1,0 +1,57 @@
+// Real-time updates — WebSocket + nyx-kv Pub/Sub
+// Actualizaciones en tiempo real — WebSocket + Pub/Sub nyx-kv
+
+import "std/websocket"
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*" + int_to_string(parts.length()) + "\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$" + int_to_string(p.length()) + "\r\n" + p + "\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Publish an event to all subscribers
+fn broadcast_event(channel: String, payload: String) -> int {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 { return -1 }
+    tcp_write(fd, resp_cmd(["PUBLISH", channel, payload]))
+    let reply: String = tcp_read_line(fd)
+    print("broadcast to " + channel + ": " + reply.trim() + " subscribers")
+    tcp_close(fd)
+    return 0
+}
+
+// Forward nyx-kv messages to a WebSocket client
+fn ws_stream_events(ws_fd: int, channel: String) -> int {
+    let kv_fd: int = tcp_connect("127.0.0.1", 6380)
+    if kv_fd < 0 { return -1 }
+
+    // Subscribe to the channel
+    tcp_write(kv_fd, resp_cmd(["SUBSCRIBE", channel]))
+
+    // Read messages and forward as WebSocket frames
+    // (simplified — real impl needs proper RESP parsing)
+    let frame: String = ws_frame("{\"type\":\"connected\"}")
+    tcp_write(ws_fd, frame)
+
+    tcp_close(kv_fd)
+    return 0
+}
+
+fn main() -> int {
+    // Broadcast a user event — nyx-kv relays to all subscribers
+    broadcast_event("user_events", "{\"type\":\"signup\",\"user\":\"alice\"}")
+    broadcast_event("user_events", "{\"type\":\"login\",\"user\":\"alice\"}")
+
+    print("real-time pattern:")
+    print("  1. Web client connects via WebSocket")
+    print("  2. Server SUBSCRIBEs to nyx-kv channel")
+    print("  3. Backend PUBLISHes events to nyx-kv")
+    print("  4. Server forwards messages as WS frames to client")
+    return 0
+}

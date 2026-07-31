@@ -1,0 +1,79 @@
+// test-304-legacy-encodings.nx — std/unicode: latin1/windows1252 → UTF-8 (D5 friction-browser)
+//
+// Páginas legacy declaran ISO-8859-1 o windows-1252; sus bytes ≥ 0x80 son
+// ilegibles como UTF-8. Contrato: latin1_to_utf8 mapea byte→codepoint 1:1
+// (ISO-8859-1 es el prefijo Latin-1 de Unicode); windows1252_to_utf8 ídem
+// salvo 0x80-0x9F que va por la tabla cp1252 (€ ' ' " " — – ™ ...), con los
+// 5 slots indefinidos (0x81/0x8D/0x8F/0x90/0x9D) pasando como su codepoint C1
+// — la semántica WHATWG que usan los browsers. Ambas totales: nunca fallan,
+// todo byte tiene salida. ASCII puro es identidad en las dos.
+// Self-checking con assert() (abortivo).
+
+import "std/unicode"
+
+fn test_latin1_ascii_identidad() {
+    assert(latin1_to_utf8("") == "")
+    assert(latin1_to_utf8("hola mundo 123") == "hola mundo 123")
+    print("latin1 ascii identidad ok")
+}
+
+fn test_latin1_altos() {
+    // bytes latin-1 crudos -> UTF-8 real
+    assert(latin1_to_utf8("caf" + chr(0xE9)) == "café")
+    assert(latin1_to_utf8(chr(0xF1)) == "ñ")
+    assert(latin1_to_utf8(chr(0xFC)) == "ü")
+    assert(latin1_to_utf8(chr(0xA1) + "Hola!") == "¡Hola!")
+    assert(latin1_to_utf8(chr(0xFF)) == "ÿ")
+    // el resultado es UTF-8 válido: 1 codepoint, 2 bytes
+    let r: String = latin1_to_utf8(chr(0xE9))
+    assert(r.length() == 2)
+    assert(r.char_length() == 1)
+    print("latin1 altos ok")
+}
+
+fn test_cp1252_tabla() {
+    assert(windows1252_to_utf8(chr(0x80)) == "€")
+    assert(windows1252_to_utf8(chr(0x85)) == "…")
+    assert(windows1252_to_utf8(chr(0x91) + chr(0x92)) == "‘’")
+    assert(windows1252_to_utf8(chr(0x93) + "cita" + chr(0x94)) == "“cita”")
+    assert(windows1252_to_utf8(chr(0x96)) == "–")
+    assert(windows1252_to_utf8(chr(0x97)) == "—")
+    assert(windows1252_to_utf8(chr(0x99)) == "™")
+    assert(windows1252_to_utf8(chr(0x8C)) == "Œ")
+    assert(windows1252_to_utf8(chr(0x9F)) == "Ÿ")
+    print("cp1252 tabla ok")
+}
+
+fn test_cp1252_indefinidos_c1() {
+    // WHATWG: los 5 slots sin asignar pasan como su codepoint C1
+    assert(windows1252_to_utf8(chr(0x81)) == utf8_encode(0x81))
+    assert(windows1252_to_utf8(chr(0x8D)) == utf8_encode(0x8D))
+    assert(windows1252_to_utf8(chr(0x9D)) == utf8_encode(0x9D))
+    print("cp1252 indefinidos C1 ok")
+}
+
+fn test_cp1252_resto_como_latin1() {
+    // Fuera de 0x80-0x9F, cp1252 == latin1
+    assert(windows1252_to_utf8("caf" + chr(0xE9)) == "café")
+    assert(windows1252_to_utf8(chr(0xA1) + "Hola!") == "¡Hola!")
+    assert(windows1252_to_utf8("ascii puro") == "ascii puro")
+    print("cp1252 resto como latin1 ok")
+}
+
+fn test_mezcla_realista() {
+    // Título típico de página cp1252: comillas tipográficas + acentos + euro
+    let src: String = chr(0x93) + "Men" + chr(0xFA) + " del d" + chr(0xED) + "a" +
+                      chr(0x94) + " " + chr(0x97) + " 5" + chr(0x80)
+    assert(windows1252_to_utf8(src) == "“Menú del día” — 5€")
+    print("mezcla realista ok")
+}
+
+fn main() {
+    test_latin1_ascii_identidad()
+    test_latin1_altos()
+    test_cp1252_tabla()
+    test_cp1252_indefinidos_c1()
+    test_cp1252_resto_como_latin1()
+    test_mezcla_realista()
+    print("test-304-legacy-encodings ok")
+}

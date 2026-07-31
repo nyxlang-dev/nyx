@@ -1,0 +1,27 @@
+graph test
+--- Construction ---
+node count ok
+initial edges 0 ok
+edge count ok
+has edge ok
+no reverse edge ok
+--- BFS ---
+bfs visits all ok
+bfs starts at 0 ok
+bfs path length ok
+bfs path endpoints ok
+bfs no path ok
+--- DFS ---
+dfs visits all ok
+dfs starts at 0 ok
+--- Cycle Detection ---
+dag no cycle ok
+cyclic graph detected ok
+--- Dijkstra ---
+dist to self ok
+dist 0→1 = 1 ok
+dist 0→2 = 3 ok
+dist 0→3 = 4 ok
+directed dist to 1 = 7 ok
+directed dist to 3 = 8 ok
+graph ok

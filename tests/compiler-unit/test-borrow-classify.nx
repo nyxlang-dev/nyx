@@ -1,0 +1,58 @@
+// ===== TEST UNITARIO: CLASIFICACION MOVE/COPY + PLACES + ESTADO (Fase 2 S2) =====
+// Verifica compiler/borrow.nx: is_copy_type, place_of, y el contenedor de
+// estado threadeado (state_new/place_ensure/mark_moved/is_moved/revive/
+// set_borrow/get_borrow/state_copy/state_join) — infra ADITIVA, NO cableada
+// a bc_walk/borrow_check todavía (eso es S3).
+// Ejecutar: NYX_INLINE_COMPILER=1 make run FILE=tests/compiler-unit/test-borrow-classify.nx
+//
+// NYX_INLINE_COMPILER=1 (ver compiler/nyx.nx): permite inlinear
+// `import { ... } from "compiler/borrow"` como import normal en vez de
+// excluirlo (P0, commit c8053e7). borrow.nx no importa nada → inlinear
+// solo borrow es limpio, sin colisión de nested-fns.
+// GOTCHA (heredado de test-types-unify): el import va en UNA sola línea —
+// is_user_import/is_module_import escanean línea por línea.
+
+import { is_copy_type, place_of, state_new, mark_moved, is_moved, state_join } from "compiler/borrow"
+
+fn main() {
+    // ---- Grupo 1: is_copy_type ----
+    assert(is_copy_type(["TyInt"]) == true)
+    assert(is_copy_type(["TyString"]) == false)
+    assert(is_copy_type(["TyArray", ["TyInt"]]) == false)
+    assert(is_copy_type(["TyUnknown"]) == true)
+    assert(is_copy_type(["TyRef", ["TyString"]]) == true)
+
+    // ---- Grupo 2: estado — mark_moved / is_moved ----
+    let s = state_new()
+    mark_moved(s, "x")
+    assert(is_moved(s, "x") == true)
+    assert(is_moved(s, "y") == false)
+
+    // ---- Grupo 3: state_join — moved con MAX (may-consumed) ----
+    // Desde el cambio MIN→MAX (cc28a0c, 2026-07-11): un place se considera movido
+    // tras el join si lo está en ALGUNA rama (dirección SOUND para use-after-X:
+    // NYX1220/1221/1230). Antes era AND (movido solo si en AMBAS) — este test
+    // asertaba la semántica vieja y quedó stale (se corría make test/errors/stacks,
+    // no test-unit).
+    let branch_a = state_new()
+    mark_moved(branch_a, "x")
+    mark_moved(branch_a, "z")
+    let branch_b = state_new()
+    mark_moved(branch_b, "z")
+    // "x": movido en A, live en B -> MAX -> SIGUE movido tras join.
+    // "z": movido en AMBAS -> movido tras join.
+    let joined = state_join(branch_a, branch_b)
+    assert(is_moved(joined, "x") == true)
+    assert(is_moved(joined, "z") == true)
+
+    // ---- Grupo 4: place_of sobre un ASTNode "identifier" construido a mano ----
+    // Holder idiom: array [node_type, data, line, column] -> push a holder ->
+    // extraer como ASTNode (ver codegen.nx:11564 y sesión previa de mono).
+    var holder = []
+    let id_node_arr = ["identifier", ["x"], 0, 0]
+    holder.push(id_node_arr)
+    let id_node: ASTNode = holder[0]
+    assert(place_of(id_node) == "x")
+
+    print("TEST-BORROW-CLASSIFY: OK")
+}

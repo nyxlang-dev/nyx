@@ -1,0 +1,20 @@
+// 19: Date and time — timestamps, formatting, sleep
+fn main() -> int {
+    // Current Unix timestamp
+    let now: int = time()
+    print("Unix timestamp: " + int_to_string(now))
+
+    // Millisecond precision
+    let ms: int = time_ms()
+    print("Milliseconds: " + int_to_string(ms))
+
+    // Formatted datetime
+    let dt: String = datetime_now()
+    print("Current datetime: " + dt)
+
+    // From epoch
+    let formatted: String = datetime_from_epoch(now)
+    print("From epoch: " + formatted)
+
+    return 0
+}

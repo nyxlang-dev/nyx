@@ -1,0 +1,62 @@
+// test-219-arena — sonda Track A (bajo nivel): arena/bump allocator sin GC.
+// Ejercita end-to-end: alloc<u8>, aritmética de punteros, bitcast *u8->*T via
+// `as`, alineación bitwise, y semántica de referencia de Array (mutación de
+// offset cross-call). Self-checking con assert() abortivo.
+
+import "std/arena"
+
+fn main() {
+    // Alineación bitwise
+    assert(arena_align_up(0, 8) == 0)
+    assert(arena_align_up(1, 8) == 8)
+    assert(arena_align_up(8, 8) == 8)
+    assert(arena_align_up(9, 8) == 16)
+    assert(arena_align_up(3, 4) == 4)
+
+    let a: Array = arena_new(128)
+    assert(arena_capacity(a) == 128)
+    assert(arena_used(a) == 0)
+    assert(arena_remaining(a) == 128)
+
+    unsafe {
+        // Reservar y escribir un int (8 bytes, alineado a 8)
+        let p1: *int = arena_alloc(a, 8, 8) as *int
+        *p1 = 111
+        assert(*p1 == 111)
+        assert(arena_used(a) == 8)   // la mutación persistió cross-call
+
+        // Reservar otro int; el offset avanza otros 8
+        let p2: *int = arena_alloc(a, 8, 8) as *int
+        *p2 = 222
+        assert(*p2 == 222)
+        assert(arena_used(a) == 16)
+
+        // El primero sigue intacto (no hay aliasing)
+        assert(*p1 == 111)
+
+        // Reserva desalineada: 3 bytes tras offset 16 → alinea a 8 (queda en 16)
+        let p3: *u8 = arena_alloc(a, 3, 8)
+        *p3 = 65
+        assert(*p3 == 65)
+        assert(arena_used(a) == 19)  // 16 + 3
+
+        // Out-of-space: pedir más de lo que queda devuelve el puntero nulo
+        let big: *u8 = arena_alloc(a, 1000, 8)
+        assert((big as int) == 0)
+        assert(arena_used(a) == 19)  // no avanzó
+    }
+
+    // Reset reutiliza el buffer
+    arena_reset(a)
+    assert(arena_used(a) == 0)
+    assert(arena_remaining(a) == 128)
+
+    unsafe {
+        let q: *int = arena_alloc(a, 8, 8) as *int
+        *q = 999
+        assert(*q == 999)
+    }
+
+    arena_free(a)
+    print("arena OK")
+}

@@ -1,0 +1,7 @@
+// NYX1022: push es de Array, no de String.
+// Expected stderr (contains): "has no method 'push'" (default lang: EN)
+fn main() -> int {
+    let s: String = "hola"
+    s.push(1)
+    return 0
+}

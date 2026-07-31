@@ -1,0 +1,10 @@
+// SP4 T3b (positivo): `#[affine] pub struct X { ... }` en UNA línea dentro
+// de un módulo importado con `import "..." as alias`. Debe ser visible para
+// scan_module_types (que ahora strippea un `#[...]` inicial además del `pub `).
+import "tests/support/aux_affine_oneline" as aux
+
+fn main() -> int {
+    let h: Holder = Holder { v: 5 }
+    print(holder_value(h.v))
+    return h.v - 5
+}

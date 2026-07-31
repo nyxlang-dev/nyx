@@ -1,0 +1,26 @@
+// bench-05-strings.nx — String operations (StringBuilder, O(n) amortized)
+//
+// GC warmup ANTES de start (hallazgo 2026-07-15): la PRIMERA allocación del
+// programa dispara la init lazy de Boehm GC (~7.5ms en la dev box) — sin el
+// warmup, el bench medía GC-init + strings y reportaba ~11-18x C cuando el
+// trabajo de strings real es ~1.2x. El warmup saca la init una-vez de la
+// región medida; el bench de C no tiene init equivalente que excluir.
+fn main() {
+    let N: int = 100000
+    let warm: String = "w"
+    let start: int = time_us()
+
+    let sb: StringBuilder = StringBuilder.new(N)
+    var i: int = 0
+    while i < N {
+        sb.append("a")
+        i = i + 1
+    }
+    let result: String = sb.to_string()
+
+    let end: int = time_us()
+    let elapsed: int = end - start
+    print("length: " + int_to_string(result.length()))
+    print("time_us: " + int_to_string(elapsed))
+    return 0
+}

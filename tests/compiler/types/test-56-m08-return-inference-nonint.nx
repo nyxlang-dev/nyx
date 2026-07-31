@@ -1,0 +1,38 @@
+// Test 56: M-08 session 12b — return-type inference con tipos no-int.
+//
+// S11 inferia el return type de fns sin `-> T` pero codegen asumia i64
+// para la signature LLVM, rompiendo casos String/Array/bool.
+//
+// S12b muta node.data[2] con la anotacion inferida cuando es un tipo
+// distinto de int/unit/unknown. nyx_type_to_llvm entonces emite la
+// signature correcta. Este test cubre los casos rotos antes de S12b.
+
+fn greet() {
+    return "hola"
+}
+
+fn is_even(n: int) {
+    return n % 2 == 0
+}
+
+fn make_arr() {
+    return [10, 20, 30]
+}
+
+fn main() -> int {
+    let s: String = greet()
+    let b: bool = is_even(4)
+    let xs: Array<int> = make_arr()
+
+    print(s)
+    if b {
+        print("even")
+    } else {
+        print("odd")
+    }
+    print(int_to_string(xs[0]))
+    print(int_to_string(xs[1]))
+    print(int_to_string(xs[2]))
+    print("OK")
+    return 0
+}

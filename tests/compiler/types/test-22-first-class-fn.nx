@@ -1,0 +1,26 @@
+// test-22: First-class functions — pasar funciones como argumentos
+// Verifica: función como parámetro, indirect call
+
+fn double(n: int) -> int {
+    return n * 2
+}
+
+fn square(n: int) -> int {
+    return n * n
+}
+
+fn apply(f: Fn, x: int) -> int {
+    return f(x)
+}
+
+fn apply_twice(f: Fn, x: int) -> int {
+    return f(f(x))
+}
+
+fn main() {
+    print(apply(double, 5))        // 10
+    print(apply(square, 4))        // 16
+    print(apply_twice(double, 3))  // 12
+    print(apply_twice(square, 2))  // 16
+    return 0
+}

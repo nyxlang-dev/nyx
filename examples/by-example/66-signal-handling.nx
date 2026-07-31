@@ -1,0 +1,35 @@
+// Signal handling — reacting to OS signals
+// Manejo de señales — reaccionar a señales del SO
+
+var got_signal: int = 0
+
+fn on_sigusr1() -> int {
+    got_signal = 1
+    return 0
+}
+
+fn main() -> int {
+    // Register a handler for SIGUSR1 (signal 10)
+    signal_handle(10, on_sigusr1)
+    print("handler registered for SIGUSR1")
+
+    // Send SIGUSR1 to ourselves
+    let my_pid: int = getpid()
+    print("my pid: " + int_to_string(my_pid))
+    kill_process(my_pid, 10)
+
+    // Give time for signal delivery
+    sleep(10)
+
+    if got_signal == 1 {
+        print("signal received!")
+    } else {
+        print("no signal yet")
+    }
+
+    // Reset signal to default behavior
+    signal_reset(10)
+    print("handler reset to default")
+
+    return 0
+}

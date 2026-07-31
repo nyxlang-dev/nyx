@@ -1,0 +1,12 @@
+struct Holder { r: *int }
+
+fn f() {
+    let x: int = 5
+    var h: Holder = Holder { r: 0 as *int }
+    h.r = &x
+    print(1)
+}
+
+fn main() {
+    f()
+}

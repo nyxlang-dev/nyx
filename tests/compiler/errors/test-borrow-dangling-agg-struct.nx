@@ -1,0 +1,11 @@
+struct Holder { r: *int }
+
+fn make() -> Holder {
+    let x: int = 5
+    return Holder { r: &x }
+}
+
+fn main() {
+    let h: Holder = make()
+    print(1)
+}

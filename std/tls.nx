@@ -1,0 +1,201 @@
+// std/tls.nx — introspección TLS: qué presenta el otro extremo de la conexión.
+//
+// ⚠️ Este módulo SOLO AGREGA introspección. Abrir, leer, escribir y cerrar una
+// conexión TLS ya son BUILTINS del compilador y NO viven acá:
+//     tls_connect(host, port) -> int      (handle; 0 = falló el handshake)
+//     tls_read(h, max) -> String
+//     tls_write(h, data) -> int
+//     tls_close(h)
+// Este archivo responde la otra mitad: "¿qué me está presentando el peer?"
+// — versión, cifrado, y el certificado completo (emisor, vigencia, huella,
+// SANs). Con eso un escáner de red puede reportar "TLS débil" y "certificado
+// vencido" sin bajar a FFI.
+//
+// Se expone por `extern "C"` en vez de builtins A PROPÓSITO: no toca el
+// compilador y por lo tanto no toca el fixed point del bootstrap. Los `extern`
+// son el borde crudo; el usuario llama SIEMPRE al wrapper `pub fn`, que sí
+// recibe chequeo semántico completo (mismo patrón que std/webpushcrypto.nx).
+//
+// TOTALIDAD: nada de esto puede romper a un caller que no chequeó. Un handle
+// inválido o un handshake fallido dan "" / -1 / Array vacío, y TODOS los
+// accessors de certificado son totales sobre un Array vacío ("" / 0 / false).
+// Un escáner itera sobre miles de hosts y la mayoría falla el handshake.
+//
+// Runtime: runtime/tls.c (la forma normativa del Array está en runtime/tls.h).
+
+extern "C" fn nyx_tls_version(h: int) -> String
+extern "C" fn nyx_tls_cipher(h: int) -> String
+extern "C" fn nyx_tls_cipher_bits(h: int) -> int
+extern "C" fn nyx_tls_verify_result(h: int) -> int
+extern "C" fn nyx_tls_verify_error(code: int) -> String
+extern "C" fn nyx_tls_peer_cert(h: int) -> Array
+extern "C" fn nyx_tls_peer_chain(h: int) -> Array
+extern "C" fn nyx_tls_peer_cert_pem(h: int) -> String
+extern "C" fn nyx_tls_set_ca_file(path: String) -> int
+extern "C" fn nyx_tls_connect_ex(host: String, port: int, verify_mode: int) -> int
+
+// ── Forma del Array de certificado (copia normativa: runtime/tls.h) ─────────
+// Array PLANO de 8 slots, sin Map ni anidamiento:
+//   0 String subject (RFC2253)   4 String serial (hex MAYÚSCULA)
+//   1 String issuer  (RFC2253)   5 String algoritmo de firma
+//   2 int    not_before (epoch)  6 String huella SHA-256 (hex minúscula, 64)
+//   3 int    not_after  (epoch)  7 String SANs separados por coma
+// Nadie debería escribir esos índices a mano: para eso están los cert_* de
+// más abajo.
+const TLS_CERT_SUBJECT: int = 0
+const TLS_CERT_ISSUER: int = 1
+const TLS_CERT_NOT_BEFORE: int = 2
+const TLS_CERT_NOT_AFTER: int = 3
+const TLS_CERT_SERIAL: int = 4
+const TLS_CERT_SIG_ALG: int = 5
+const TLS_CERT_FINGERPRINT: int = 6
+const TLS_CERT_SANS: int = 7
+
+// Cantidad de slots de un certificado bien formado.
+const TLS_CERT_SLOTS: int = 8
+
+// ── Parámetros de la sesión ────────────────────────────────────────────────
+
+// Versión del protocolo negociada, p.ej. "TLSv1.3". "" si el handle no sirve.
+pub fn tls_version(h: int) -> String { return nyx_tls_version(h) }
+
+// Nombre de la suite de cifrado negociada. "" si el handle no sirve.
+pub fn tls_cipher(h: int) -> String { return nyx_tls_cipher(h) }
+
+// Bits de clave simétrica de la suite negociada. -1 si el handle no sirve.
+pub fn tls_cipher_bits(h: int) -> int { return nyx_tls_cipher_bits(h) }
+
+// Resultado de la verificación de la cadena, como código X509_V_*: 0 es OK.
+// -1 si el handle no sirve.
+// ⚠️ tls_connect NO verifica la cadena (el runtime corre sin CA bundle), pero
+// OpenSSL igual calcula y guarda este resultado — o sea que sirve para
+// INSPECCIONAR, no para confiar.
+pub fn tls_verify_result(h: int) -> int { return nyx_tls_verify_result(h) }
+
+// Texto legible de un código X509_V_* ("ok", "certificate has expired", ...).
+pub fn tls_verify_error(code: int) -> String { return nyx_tls_verify_error(code) }
+
+// ── Certificado del peer ───────────────────────────────────────────────────
+
+// Certificado de la hoja del peer como Array de 8 slots. Longitud 0 si el
+// handle no sirve o el peer no presentó certificado.
+pub fn tls_peer_cert(h: int) -> Array { return nyx_tls_peer_cert(h) }
+
+// Cadena del peer como Array PLANO de pares: [subject0, issuer0, subject1, ...].
+// Longitud siempre par; 0 si no hay cadena.
+pub fn tls_peer_chain(h: int) -> Array { return nyx_tls_peer_chain(h) }
+
+// Certificado de la hoja en PEM. "" si no hay.
+pub fn tls_peer_cert_pem(h: int) -> String { return nyx_tls_peer_cert_pem(h) }
+
+// ── Accessors con nombre (todos TOTALES sobre un Array vacío) ──────────────
+
+fn cert_str(cert: Array, idx: int) -> String {
+    if cert.length() < TLS_CERT_SLOTS { return "" }
+    let s: String = cert[idx]
+    return s
+}
+
+fn cert_int(cert: Array, idx: int) -> int {
+    if cert.length() < TLS_CERT_SLOTS { return 0 }
+    let n: int = cert[idx]
+    return n
+}
+
+// Sujeto en formato RFC2253, p.ej. "CN=example.com,O=Example Inc".
+pub fn cert_subject(cert: Array) -> String { return cert_str(cert, TLS_CERT_SUBJECT) }
+
+// Emisor en formato RFC2253.
+pub fn cert_issuer(cert: Array) -> String { return cert_str(cert, TLS_CERT_ISSUER) }
+
+// Inicio de validez, en segundos epoch. 0 = desconocido.
+pub fn cert_not_before(cert: Array) -> int { return cert_int(cert, TLS_CERT_NOT_BEFORE) }
+
+// Fin de validez, en segundos epoch. 0 = desconocido.
+pub fn cert_not_after(cert: Array) -> int { return cert_int(cert, TLS_CERT_NOT_AFTER) }
+
+// Número de serie en hex mayúscula, sin separadores.
+pub fn cert_serial(cert: Array) -> String { return cert_str(cert, TLS_CERT_SERIAL) }
+
+// Algoritmo de firma, p.ej. "sha256WithRSAEncryption".
+pub fn cert_sig_alg(cert: Array) -> String { return cert_str(cert, TLS_CERT_SIG_ALG) }
+
+// Huella SHA-256 en hex minúscula (64 caracteres), sin separadores.
+pub fn cert_fingerprint_sha256(cert: Array) -> String { return cert_str(cert, TLS_CERT_FINGERPRINT) }
+
+// SANs separados por coma, p.ej. "DNS:example.com,DNS:www.example.com".
+// "" si el certificado no tiene la extensión.
+pub fn cert_sans(cert: Array) -> String { return cert_str(cert, TLS_CERT_SANS) }
+
+// ── Verificación de certificados (OPT-IN) ──────────────────────────────────
+//
+// El builtin `tls_connect` NO verifica nada y NO cambia: sigue abriendo la
+// conexión contra el contexto compartido de todo el runtime. Las tres funciones
+// de acá abajo trabajan sobre un contexto SEPARADO, con su propio almacén de
+// CAs, así que activarlas no altera el comportamiento de ninguna conexión
+// existente (ni de http_get/https_get, ni del proxy).
+
+// Carga anclas de confianza para las conexiones verificadas.
+// path == "" usa el almacén del sistema. Devuelve true si cargó.
+// Llamarla ANTES del primer tls_connect_checked / tls_connect_verified.
+pub fn tls_set_ca_file(path: String) -> bool {
+    return nyx_tls_set_ca_file(path) == 0
+}
+
+// Conexión "chequeada" (modo BLANDO — el que quiere un escáner):
+// el handshake SIEMPRE tiene éxito, aun con un certificado vencido, de una CA
+// desconocida o con el nombre equivocado; después se pregunta con
+// tls_verify_result(h) qué habría pasado (0 = habría verificado). Devuelve un
+// handle usable con tls_read/tls_write/tls_close, o 0 si la conexión falló de
+// verdad (red, TLS roto).
+pub fn tls_connect_checked(host: String, port: int) -> int {
+    return nyx_tls_connect_ex(host, port, 1)
+}
+
+// Conexión VERIFICADA (modo ESTRICTO): la cadena tiene que validar contra las
+// CAs cargadas Y el nombre del host tiene que corresponder al certificado.
+// Devuelve 0 si algo de eso falla — no hay conexión insegura silenciosa.
+pub fn tls_connect_verified(host: String, port: int) -> int {
+    return nyx_tls_connect_ex(host, port, 2)
+}
+
+// ── Las respuestas de una línea a lo que el usuario no podía hacer ─────────
+
+// true si el certificado ya venció (not_after en el pasado).
+// Un certificado ausente o con fecha desconocida (not_after == 0) NO es
+// "vencido": es "no sé", y devolver true ahí sería un falso positivo en cada
+// host que ni siquiera completó el handshake.
+pub fn cert_is_expired(cert: Array) -> bool {
+    let na: int = cert_not_after(cert)
+    if na == 0 { return false }
+    return na < time()
+}
+
+// Días que faltan para el vencimiento. Negativo si ya venció, 0 si no se sabe.
+pub fn cert_days_to_expiry(cert: Array) -> int {
+    let na: int = cert_not_after(cert)
+    if na == 0 { return 0 }
+    return (na - time()) / 86400
+}
+
+// true si el certificado se firmó a sí mismo (emisor == sujeto). Un
+// certificado ausente no es autofirmado — sin esta guarda, dos "" darían true.
+pub fn cert_is_self_signed(cert: Array) -> bool {
+    if cert.length() < TLS_CERT_SLOTS { return false }
+    return cert_subject(cert) == cert_issuer(cert)
+}
+
+// true si la conexión es TLS DÉBIL: versión anterior a TLS 1.2, o menos de 128
+// bits de clave simétrica. Un handle inválido no es "débil" (es "no hay
+// conexión"), así que devuelve false y el caller distingue por tls_version().
+pub fn tls_is_weak(h: int) -> bool {
+    let v: String = tls_version(h)
+    if v.length() == 0 { return false }
+    if v == "SSLv2" { return true }
+    if v == "SSLv3" { return true }
+    if v == "TLSv1" { return true }
+    if v == "TLSv1.1" { return true }
+    let bits: int = tls_cipher_bits(h)
+    if bits < 0 { return false }
+    return bits < 128
+}

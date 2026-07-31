@@ -1,0 +1,5 @@
+[package]
+name = "hello_nyx"
+version = "0.1.0"
+description = "Hello World project usando nyx build"
+main = "examples/hello.nx"

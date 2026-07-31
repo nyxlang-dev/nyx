@@ -1,0 +1,44 @@
+// test-218-newline-paren-stmt — regresión del footgun de frontera de sentencia.
+//
+// Antes: una expresión que termina en identificador seguida de una sentencia
+// que EMPIEZA con '(' se fusionaba en una llamada `ident(...)` (el postfix del
+// parser trataba cualquier '(' siguiente como call, sin importar la línea).
+// Rompía el patrón idiomático de bajo nivel `(*p) = x` tras `let v = ... n`.
+//
+// Fix (parser.nx parse_postfix): un '(' al inicio de una línea nueva NO es
+// call — es una sentencia nueva (semántica ASI de Go/Swift/Kotlin). La call
+// legítima pone el '(' en la misma línea que el callee.
+//
+// Este test FALLA a parsear sin el fix (`'n' is not callable`).
+
+fn main() {
+    let buf: *int = alloc<int>(4)
+    var n: int = 2
+    unsafe {
+        *buf = 10
+        // línea que TERMINA en identificador 'n'
+        let v: int = *buf + n
+        // línea que EMPIEZA con '(' — deref-assign, NO una llamada a 'n'
+        (*(buf + 1)) = v
+        assert(v == 12)
+        assert(*(buf + 1) == 12)
+
+        // segunda variante: expr termina en ')', siguiente empieza con '('
+        let w: int = (v + 1)
+        (*(buf + 2)) = w
+        assert(*(buf + 2) == 13)
+    }
+    free(buf)
+
+    // multi-línea de args sigue siendo call válida (el '(' va pegado al callee)
+    let s: int = add3(1,
+        2,
+        3)
+    assert(s == 6)
+
+    print("newline-paren stmt OK")
+}
+
+fn add3(a: int, b: int, c: int) -> int {
+    return a + b + c
+}

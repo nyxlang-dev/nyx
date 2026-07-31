@@ -1,0 +1,24 @@
+// Fixture (sub-proyecto 4, Task 5): cadena `a.b.c = x` en la que un eslabón
+// intermedio NO es un struct (acá `opts` es un Map). semantic la aprueba
+// (validate_field_assign solo mira el último campo), así que llega a codegen.
+// Antes: print mudo y la asignación desaparecía con exit 0. Ahora: NYX2005,
+// que NOMBRA el eslabón culpable y su tipo ('a.cfg.opts' es 'Map<String,int>')
+// y recomienda lo que realmente arregla el programa —`.insert("n", <valor>)`—
+// en vez del consejo genérico "anotá los tipos intermedios", que para este
+// caso es falso: bindear `let o: Map = a.cfg.opts` no habilita `o.n = 5`.
+// El gap de semantic que deja llegar esto a codegen: TASKS.md [sp4-bug-4].
+struct Cfg {
+    opts: Map<String,int>,
+    n: int,
+}
+
+struct App {
+    cfg: Cfg,
+    id: int,
+}
+
+fn main() {
+    var a: App = App { cfg: Cfg { opts: {}, n: 1 }, id: 2 }
+    a.cfg.opts.n = 5
+    print(a.id)
+}

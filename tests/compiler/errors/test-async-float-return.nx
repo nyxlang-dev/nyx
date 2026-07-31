@@ -1,0 +1,14 @@
+// T5b.1 error test: async fn declaring a float return type is rejected.
+// Expected stderr (contains): NYX1021 / "async fn with float return type not yet supported"
+// Reason (ABI hazard): await joins via nyx_goroutine_join, which returns the
+// body's result as i64 — a float result would share that int64 register and
+// corrupt the value.
+// Expected exit: non-zero (semantic check fails)
+async fn f() -> float {
+    return 1.5
+}
+
+fn main() {
+    let x: float = await f()
+    print(x)
+}

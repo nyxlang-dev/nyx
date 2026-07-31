@@ -1,0 +1,27 @@
+// Camino B — fuera de scope v1: un método '&mut self' NO puede despacharse
+// vía dyn Trait. El thunk de la vtable carga self BY-VALUE, pero el impl fue
+// emitido con firma %Type* → mutación perdida o type-mismatch en el IR.
+// Debe fallar con error bilingüe en codegen (fail-fast), no emitir IR roto.
+// Expected stderr (contains): "cannot be dispatched via 'dyn Bumper'"
+// Expected exit: non-zero
+
+trait Bumper {
+    fn bump(self)
+}
+
+struct Counter {
+    n: int
+}
+
+impl Bumper for Counter {
+    fn bump(&mut self) {
+        self.n = self.n + 1
+    }
+}
+
+fn main() -> int {
+    let c = Counter { n: 0 }
+    let b: dyn Bumper = c
+    b.bump()
+    return 0
+}

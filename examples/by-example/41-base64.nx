@@ -1,0 +1,25 @@
+// Base64 encoding and decoding (RFC 4648)
+// Codificación y decodificación Base64
+
+import "std/base64"
+
+fn main() -> int {
+    // Encode a string to Base64
+    let original: String = "Hello, Nyx!"
+    let encoded: String = base64_encode(original)
+    print("original: " + original)
+    print("encoded:  " + encoded)
+
+    // Decode it back
+    let decoded: String = base64_decode(encoded)
+    print("decoded:  " + decoded)
+
+    // URL-safe Base64 (no padding, - and _ instead of + and /)
+    let url_enc: String = base64url_encode("https://nyxlang.com/?q=hello world")
+    print("url-safe: " + url_enc)
+
+    let url_dec: String = base64url_decode(url_enc)
+    print("url-dec:  " + url_dec)
+
+    return 0
+}

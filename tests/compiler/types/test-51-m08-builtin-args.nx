@@ -1,0 +1,28 @@
+// Test 51: M-08 session 6 — happy path for built-in method arg typing.
+//
+// Exercises a cross-section of String methods where arg types are now
+// validated against the method signature. Each call here passes correct
+// types; tests/compiler/errors/ covers the mismatched variants.
+
+fn main() -> int {
+    let s: String = "Hola mundo"
+    let part: String = s.substring(0, 4)
+    let sub: String = s.replace("mundo", "Nyx")
+    let n: int = s.indexOf("m")
+    let present: bool = s.contains("ola")
+    let prefix: bool = s.startsWith("Hola")
+    let suffix: bool = s.endsWith("do")
+    let banner: String = "-".repeat(5)
+    let c: int = s.charAt(0)
+
+    print(part)
+    print(sub)
+    print(int_to_string(n))
+    if present { print("present") }
+    if prefix  { print("prefix") }
+    if suffix  { print("suffix") }
+    print(banner)
+    print(int_to_string(c))
+    print("OK")
+    return 0
+}

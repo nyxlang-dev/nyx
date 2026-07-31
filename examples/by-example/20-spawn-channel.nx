@@ -1,0 +1,27 @@
+// 20: Concurrency — spawn thread + channel communication
+fn main() -> int {
+    let ch: Map = channel_new(5)
+
+    fn producer() {
+        var i: int = 0
+        while i < 5 {
+            channel_send(ch, i * 10)
+            i = i + 1
+        }
+    }
+
+    thread_spawn(producer)
+
+    // Receive 5 values from the channel
+    var total: int = 0
+    var n: int = 0
+    while n < 5 {
+        let val: int = channel_recv(ch)
+        print("received: " + int_to_string(val))
+        total = total + val
+        n = n + 1
+    }
+    print("total: " + int_to_string(total))
+
+    return 0
+}

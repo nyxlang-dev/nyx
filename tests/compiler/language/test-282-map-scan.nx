@@ -1,0 +1,44 @@
+// test-282 — builtin map_scan(m, cursor): SCAN de Map con cursor estable ante
+// resize (dictScan de Redis adaptado a Robin Hood — spec 2026-07-21, campaña
+// FASE B). Devuelve Array [next_cursor, keys...]; cursor 0 = inicio, 0
+// devuelto = fin. La garantía de resize la cubre la suite C (test_maps, +5
+// tests); acá se fija el contrato del builtin end-to-end.
+fn main() {
+    var m: Map = Map.new()
+    var i: int = 0
+    while i < 40 {
+        m.insert("k" + i.to_string(), i)
+        i = i + 1
+    }
+
+    var total: int = 0
+    var seen_k7: bool = false
+    var cur: int = 0
+    var guard: int = 0
+    var done: bool = false
+    while not done {
+        let page: Array = map_scan(m, cur)
+        cur = page[0]
+        var pi: int = 1
+        while pi < page.length() {
+            let k: String = page[pi]
+            if k == "k7" { seen_k7 = true }
+            total = total + 1
+            pi = pi + 1
+        }
+        guard = guard + 1
+        if cur == 0 { done = true }
+        if guard > 4096 { done = true }
+    }
+    assert(guard <= 4096)
+    assert(total == 40)
+    assert(seen_k7)
+
+    // map vacío: primera página ya devuelve cursor 0 y cero keys
+    var vacio: Map = Map.new()
+    let page_v: Array = map_scan(vacio, 0)
+    assert(page_v[0] == 0)
+    assert(page_v.length() == 1)
+
+    print("map scan OK")
+}

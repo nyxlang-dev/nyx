@@ -1,0 +1,33 @@
+// File watcher — polling for file changes with stat()
+// Vigilante de archivos — polling de cambios con stat()
+
+fn main() -> int {
+    let path: String = "/tmp/nyx_watch_test.txt"
+
+    // Create a test file
+    write_file(path, "initial content")
+    print("watching: " + path)
+
+    // stat() returns [size, mode, mtime, is_dir, is_regular]
+    let info: Array = stat(path)
+    let initial_mtime: int = info[2]
+    print("initial mtime: " + int_to_string(initial_mtime))
+    print("file size: " + int_to_string(info[0]) + " bytes")
+
+    // Modify the file
+    sleep(1100)
+    write_file(path, "modified content!")
+
+    // Check again
+    let info2: Array = stat(path)
+    let new_mtime: int = info2[2]
+
+    if new_mtime > initial_mtime {
+        print("file changed! new mtime: " + int_to_string(new_mtime))
+        print("new size: " + int_to_string(info2[0]) + " bytes")
+    } else {
+        print("no change detected")
+    }
+
+    return 0
+}

@@ -1,0 +1,10 @@
+// M-08 sesion 2 error test: param annotation references an unknown type.
+// Expected stderr (contains): "unknown type 'Str'"
+// Expected exit: non-zero (semantic check fails)
+fn f(x: Str) -> int {
+    return 0
+}
+
+fn main() -> int {
+    return 0
+}

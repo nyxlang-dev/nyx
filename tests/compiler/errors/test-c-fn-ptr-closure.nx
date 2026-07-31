@@ -1,0 +1,10 @@
+// c_fn_ptr sobre un closure con entorno capturado → error (no es C-callable
+// sin su env). `inner` captura `cap`.
+fn outer() {
+    let cap: int = 5
+    fn inner(x: int) -> int { return x + cap }
+    let p: *i8 = c_fn_ptr(inner)
+    print("no debería compilar")
+}
+
+fn main() { outer() }

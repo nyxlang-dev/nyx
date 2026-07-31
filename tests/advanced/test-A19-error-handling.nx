@@ -1,0 +1,34 @@
+// Test A19: Error handling simulado con enums
+// Prueba: Result pattern manual con match expresión
+
+enum MyResult {
+    Ok(int),
+    Err(int)
+}
+
+fn safe_divide(a: int, b: int) -> MyResult {
+    if b == 0 {
+        return MyResult.Err(1)
+    }
+    return MyResult.Ok(a / b)
+}
+
+fn unwrap_or(r: MyResult, default_val: int) -> int {
+    return match r {
+        MyResult.Ok(val) => val,
+        MyResult.Err(code) => default_val
+    }
+}
+
+fn main() {
+    let r1 = safe_divide(10, 2)
+    print(unwrap_or(r1, -1))
+
+    let r2 = safe_divide(10, 0)
+    print(unwrap_or(r2, -1))
+
+    let r3 = safe_divide(100, 5)
+    print(unwrap_or(r3, -1))
+
+    return 0
+}

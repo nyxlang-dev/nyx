@@ -1,0 +1,37 @@
+pool + streams test
+--- Pool Basic ---
+capacity: 3
+available: 0
+in_use: 0
+created: 0
+h1=1 h2=2 h3=3
+in_use: 3
+available: 0
+pool exhausted ok
+after release: available=1
+reused: h5=2
+final: available=3 in_use=0
+--- Pool Capacity ---
+created: 5
+in_use: 5
+available after release: 5
+--- Stream Basic ---
+pending: 3
+hello
+world
+pending: 1
+nyx
+stream done
+--- Stream Collect ---
+collected: 5
+item0
+item1
+item2
+item3
+item4
+--- Stream Pipeline ---
+evens: 3
+banana
+date
+fig
+pool + streams ok

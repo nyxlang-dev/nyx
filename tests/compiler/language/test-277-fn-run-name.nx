@@ -1,0 +1,14 @@
+// test-277 — una fn de usuario llamada `run(...)` NO debe miscompilarse como
+// nyx_goroutine_spawn_closure (colisión con el desugar de spawn/await, T5b —
+// VERIFICADO 2026-07-10: `fn run(f: bool)` emitía bitcast i1→i8* + spawn =
+// IR inválido "invalid cast opcode"; workaround histórico: renombrar).
+fn run(flag: bool) -> int {
+    if flag { return 7 }
+    return 3
+}
+
+fn main() {
+    assert(run(true) == 7)
+    assert(run(false) == 3)
+    print("fn run OK")
+}

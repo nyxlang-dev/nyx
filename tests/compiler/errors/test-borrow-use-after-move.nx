@@ -1,0 +1,9 @@
+// T1a — use-after-move (NYX1201). Corre con NYX_BORROW=error.
+// 'a' (String, tipo move) se mueve a 'b'; usar 'a' después es un
+// use-of-moved-value. Bajo NYX_BORROW=error el build falla (exit != 0).
+// (Sin NYX_BORROW = modo OFF: compila y corre, sin emitir nada.)
+fn main() {
+    let a: String = "hola"
+    let b: String = a       // a se mueve a b
+    print(a)                // ← use of moved value 'a'
+}

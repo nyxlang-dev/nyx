@@ -1,0 +1,29 @@
+// Threads: thread_spawn() para crear un hilo, thread_join() para esperar
+
+fn tarea_hilo() -> int {
+    print("from thread")
+    return 42
+}
+
+fn calcular_cuadrado() -> int {
+    let n: int = 7
+    return n * n
+}
+
+fn main() -> int {
+    print("from main (antes de spawn)")
+
+    // Crear un thread y esperar su resultado
+    let handle: int = thread_spawn(tarea_hilo)
+    let resultado: int = thread_join(handle)
+    print("thread retorno: " + int_to_string(resultado))
+
+    // Segundo thread con cálculo
+    let h2: int = thread_spawn(calcular_cuadrado)
+    let r2: int = thread_join(h2)
+    print("7^2 = " + int_to_string(r2))
+
+    print("from main (despues de join)")
+
+    return 0
+}

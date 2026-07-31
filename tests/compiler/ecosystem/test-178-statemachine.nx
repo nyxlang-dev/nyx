@@ -1,0 +1,133 @@
+// test-178-statemachine.nx — Finite State Machine (v5.3.0)
+import "std/statemachine"
+
+fn test_basic_fsm() {
+    print("--- Basic FSM ---")
+
+    // Traffic light: red → green → yellow → red
+    let tl = traffic_light_fsm()
+    if fsm_is(tl, "red") {
+        print("initial state red ok")
+    }
+
+    let ok1 = fsm_send(tl, "go")
+    if ok1 and fsm_is(tl, "green") {
+        print("red→green ok")
+    }
+
+    let ok2 = fsm_send(tl, "slow")
+    if ok2 and fsm_is(tl, "yellow") {
+        print("green→yellow ok")
+    }
+
+    let ok3 = fsm_send(tl, "stop")
+    if ok3 and fsm_is(tl, "red") {
+        print("yellow→red ok")
+    }
+
+    // Invalid transition
+    let bad = fsm_send(tl, "slow")
+    if !bad {
+        print("invalid transition rejected ok")
+    }
+    // State unchanged after invalid transition
+    if fsm_is(tl, "red") {
+        print("state unchanged on invalid ok")
+    }
+}
+
+fn test_can_check() {
+    print("--- Can Check ---")
+
+    let tl = traffic_light_fsm()
+    if fsm_can(tl, "go") {
+        print("can go from red ok")
+    }
+    if !fsm_can(tl, "slow") {
+        print("cannot slow from red ok")
+    }
+    if !fsm_can(tl, "stop") {
+        print("cannot stop from red ok")
+    }
+}
+
+fn test_custom_fsm() {
+    print("--- Custom FSM ---")
+
+    // Door lock FSM: locked → unlocked ←→ open
+    let fsm = fsm_new("locked")
+    fsm_add_state(fsm, "unlocked")
+    fsm_add_state(fsm, "open")
+    fsm_add_transition(fsm, "locked", "unlock", "unlocked")
+    fsm_add_transition(fsm, "unlocked", "open_door", "open")
+    fsm_add_transition(fsm, "open", "close_door", "unlocked")
+    fsm_add_transition(fsm, "unlocked", "lock", "locked")
+
+    // Sequence: unlock → open → close → lock
+    fsm_send(fsm, "unlock")
+    if fsm_is(fsm, "unlocked") { print("unlocked ok") }
+    fsm_send(fsm, "open_door")
+    if fsm_is(fsm, "open") { print("opened ok") }
+    fsm_send(fsm, "close_door")
+    if fsm_is(fsm, "unlocked") { print("closed ok") }
+    fsm_send(fsm, "lock")
+    if fsm_is(fsm, "locked") { print("locked ok") }
+
+    // Cannot open when locked
+    let blocked = fsm_send(fsm, "open_door")
+    if !blocked { print("cannot open when locked ok") }
+}
+
+fn test_traced_fsm() {
+    print("--- Traced FSM ---")
+
+    let traced = fsm_traced_new("idle")
+    fsm_traced_add_transition(traced, "idle", "start", "running")
+    fsm_traced_add_transition(traced, "running", "pause", "paused")
+    fsm_traced_add_transition(traced, "paused", "resume", "running")
+    fsm_traced_add_transition(traced, "running", "stop", "idle")
+
+    fsm_traced_send(traced, "start")
+    fsm_traced_send(traced, "pause")
+    fsm_traced_send(traced, "resume")
+    fsm_traced_send(traced, "stop")
+
+    let log = fsm_traced_log(traced)
+    if log.length() == 4 {
+        print("traced log 4 entries ok")
+    }
+
+    let entry0: String = log[0]
+    if entry0 == "idle --start--> running" {
+        print("log entry 0 ok")
+    }
+
+    if fsm_traced_is(traced, "idle") {
+        print("traced final state idle ok")
+    }
+}
+
+fn test_reset() {
+    print("--- Reset ---")
+
+    let fsm = traffic_light_fsm()
+    fsm_send(fsm, "go")
+    fsm_send(fsm, "slow")
+    if fsm_is(fsm, "yellow") {
+        print("at yellow ok")
+    }
+    fsm_reset(fsm, "red")
+    if fsm_is(fsm, "red") {
+        print("reset to red ok")
+    }
+}
+
+fn main() {
+    print("statemachine test")
+    test_basic_fsm()
+    test_can_check()
+    test_custom_fsm()
+    test_traced_fsm()
+    test_reset()
+    print("statemachine ok")
+}

@@ -1,0 +1,44 @@
+// Serializar datos a JSON con std/json: json_object, json_array, json_stringify
+
+import "std/json"
+
+fn build_persona(nombre: String, edad: int, activo: bool) -> Array {
+    let keys: Array = ["nombre", "edad", "activo"]
+    let vals: Array = []
+    vals.push(json_string(nombre))
+    vals.push(json_number(edad))
+    vals.push(json_bool(activo))
+    return json_object(keys, vals)
+}
+
+fn main() -> int {
+    // Objeto simple
+    let persona: Array = build_persona("Bob", 25, true)
+    print(json_stringify(persona))
+
+    // Array de objetos
+    let lista: Array = []
+    lista.push(build_persona("Ana", 30, true))
+    lista.push(build_persona("Carlos", 40, false))
+    lista.push(build_persona("Dina", 22, true))
+
+    let arr: Array = json_array(lista)
+    print(json_stringify(arr))
+
+    // Objeto anidado
+    let meta_keys: Array = ["version", "total"]
+    let meta_vals: Array = []
+    meta_vals.push(json_number(1))
+    meta_vals.push(json_number(3))
+    let meta: Array = json_object(meta_keys, meta_vals)
+
+    let resp_keys: Array = ["meta", "data"]
+    let resp_vals: Array = []
+    resp_vals.push(meta)
+    resp_vals.push(arr)
+    let resp: Array = json_object(resp_keys, resp_vals)
+
+    print(json_stringify(resp))
+
+    return 0
+}

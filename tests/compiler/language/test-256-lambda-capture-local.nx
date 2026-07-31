@@ -1,0 +1,18 @@
+// test-256 — lambda literal captura un LOCAL (no solo params).
+// Bug: el parser prependeaba la lambda hoisteada en posición 0 del body y
+// pre_scan_closure_env corta el scan de locals en la primera nested fn →
+// env vacío → el body caía al path @global ("use of undefined value @c").
+// Fix: insertar la lambda hoisteada ANTES de su primer uso (tras los locals).
+fn main() {
+    let c: int = 42
+    let f = fn(x: int) -> int { return x + c }
+    print(int_to_string(f(1)))
+
+    // Retornada desde otra fn, capturando local (variante a1)
+    let g = mk()
+    print(int_to_string(g(1)))
+}
+fn mk() -> Fn(int) -> int {
+    let base: int = 100
+    return fn(x: int) -> int { return x + base }
+}

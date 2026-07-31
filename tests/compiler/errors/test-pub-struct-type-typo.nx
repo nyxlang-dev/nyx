@@ -1,0 +1,11 @@
+// SP4 T3b (control positivo): registrar los `pub struct` NO puede ablandar
+// NYX1001. Un typo de tipo real, en un archivo que además importa un módulo
+// con `pub struct`, sigue siendo un error con did-you-mean.
+// Expected stderr (contains): "unknown type 'Tagg'"
+// Expected exit: check FAILED
+import { make_tag } from "tests/support/aux_pub_struct"
+
+fn main() -> int {
+    let t: Tagg = make_tag(3, "gamma")
+    return t.id - 3
+}

@@ -1,0 +1,60 @@
+// Rate-limited API — token bucket per user in nyx-kv
+// API con rate limit — token bucket por usuario en nyx-kv
+
+import "std/http"
+import "std/web"
+
+fn resp_cmd(parts: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("*" + int_to_string(parts.length()) + "\r\n")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        sb.append("$" + int_to_string(p.length()) + "\r\n" + p + "\r\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Check if user has remaining quota, decrement if allowed
+// Uses INCR + EXPIRE for atomic per-window counting
+fn rate_check(user_id: String, max_per_minute: int) -> bool {
+    let fd: int = tcp_connect("127.0.0.1", 6380)
+    if fd < 0 { return false }
+
+    let key: String = "rate:" + user_id
+    // Atomic increment
+    tcp_write(fd, resp_cmd(["INCR", key]))
+    let reply: String = tcp_read_line(fd)
+    let count: int = string_to_int(reply.substring(1, reply.length()).trim())
+
+    // Set 60s expiration on first request
+    if count == 1 {
+        tcp_write(fd, resp_cmd(["EXPIRE", key, "60"]))
+        tcp_read_line(fd)
+    }
+    tcp_close(fd)
+
+    return count <= max_per_minute
+}
+
+fn api_handler(req: Request) -> Response {
+    let user: String = req.headers_flat[0]  // in real code: extract from JWT
+    let allowed: bool = rate_check(user, 60)
+
+    if not allowed {
+        let hdrs: Array = ["Retry-After", "60"]
+        return Response { status: 429, headers_flat: hdrs, body: "{\"error\":\"rate limit exceeded\"}" }
+    }
+    return response_json(200, "{\"data\": \"result\"}")
+}
+
+fn main() -> int {
+    let app: App = app_new()
+    app_get(app, "/api/data", api_handler)
+
+    print("rate-limited API: 60 req/min per user")
+    print("state stored in nyx-kv with 60s TTL")
+    print("atomic INCR ensures no race conditions under concurrency")
+    return 0
+}

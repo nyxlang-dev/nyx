@@ -1,0 +1,18 @@
+// M-08 sesion 16 error test: type mismatch en field de struct importado.
+// S16 parsea tipos de fields cross-module, asi que inicializar con el
+// tipo equivocado debe caerse con el mensaje de field type mismatch.
+// Expected stderr (contains): "type mismatch in field 'Version.major': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+
+import "std/semver" as semver
+
+fn main() -> int {
+    let v: Version = Version {
+        major: "one",    // debe ser int
+        minor: 0,
+        patch: 0,
+        pre: "",
+        raw: "1.0.0"
+    }
+    return 0
+}

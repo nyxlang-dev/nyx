@@ -1,0 +1,5 @@
+test error
+completed
+panic msg
+inner caught: inner error
+rethrown: deep error

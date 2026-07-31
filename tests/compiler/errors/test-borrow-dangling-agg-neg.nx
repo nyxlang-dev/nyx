@@ -1,0 +1,11 @@
+struct Point { x: int, y: int }
+
+fn make(p: *Point) -> Array {
+    return [&p.x]
+}
+
+fn main() {
+    var pt: Point = Point { x: 1, y: 2 }
+    let a: Array = make(&mut pt)
+    print(1)
+}

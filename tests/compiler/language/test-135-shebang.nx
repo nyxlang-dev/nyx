@@ -1,0 +1,10 @@
+#!/usr/bin/env nyx
+// test-135-shebang: verifica que la linea shebang se ignora correctamente
+// El compilador debe stripear #!/... antes de procesar el archivo
+
+fn main() -> int {
+    print("shebang ok")
+    let x = 42
+    print(int_to_string(x))
+    return 0
+}

@@ -1,0 +1,26 @@
+// test-228: Map.get sobre un map de ints usado inline con literal string.
+// Regresión del code-review: el hint expected_type="String" que introdujo el fix
+// de test-224 (para maps de String) enrutaba TODO get inline a nyx_map_get_str,
+// incluso maps de ints → el i64 se casteaba a char* → SEGV. El value-type
+// trackeado del map ahora manda sobre el hint del binop.
+// EN: int-valued Map.get used inline with a string literal must return the int,
+// not route to map_get_str (SEGV). Tracked map value-type overrides the hint.
+
+fn main() {
+    let m: Map<String, int> = Map.new()
+    m.insert("n", 5)
+    m.insert("otro", 42)
+
+    // Uso inline en concat con literal string — antes daba SEGV
+    let msg: String = "n=" + m.get("n").to_string()
+    assert(msg == "n=5")
+
+    // get directo sigue devolviendo int
+    let v: int = m.get("otro")
+    assert(v == 42)
+
+    // suma inline
+    assert(m.get("n") + m.get("otro") == 47)
+
+    print("test-228 OK")
+}

@@ -1,0 +1,82 @@
+// test-301-utf8-encode.nx — std/unicode: utf8_encode(codepoint) -> String (D2 friction-browser)
+//
+// chr() es byte-level (gotcha 11/22 de LLM.md); utf8_encode es la mitad codepoint
+// que faltaba: codifica un codepoint Unicode a sus 1-4 bytes UTF-8.
+// Inválidos (negativo, > U+10FFFF, surrogates D800-DFFF) -> U+FFFD (replacement),
+// función total — misma semántica que el parsing de referencias numéricas en HTML,
+// su consumidor real (html_unescape, D3).
+// Self-checking con assert() (abortivo).
+
+import "std/unicode"
+
+fn assert_bytes(s: String, expected: Array<int>, label: String) {
+    assert(s.length() == expected.length())
+    var i: int = 0
+    while i < expected.length() {
+        assert(s.charAt(i) == expected[i])
+        i = i + 1
+    }
+    print(label + " ok")
+}
+
+fn test_ascii() {
+    assert_bytes(utf8_encode(65), [65], "ascii A")
+    assert_bytes(utf8_encode(0), [0], "NUL byte real")       // depende del fix chr(0) v0.22.3
+    assert_bytes(utf8_encode(0x7F), [0x7F], "borde 1-byte 0x7F")
+    assert(utf8_encode(65) == "A")
+    print("ascii round-trip literal ok")
+}
+
+fn test_two_bytes() {
+    assert_bytes(utf8_encode(0x80), [0xC2, 0x80], "borde 2-bytes 0x80")
+    assert_bytes(utf8_encode(0xE9), [0xC3, 0xA9], "e acute 0xE9")
+    assert(utf8_encode(0xE9) == "é")                          // literal fuente es UTF-8
+    assert_bytes(utf8_encode(0x7FF), [0xDF, 0xBF], "borde 2-bytes 0x7FF")
+    print("2-bytes ok")
+}
+
+fn test_three_bytes() {
+    assert_bytes(utf8_encode(0x800), [0xE0, 0xA0, 0x80], "borde 3-bytes 0x800")
+    assert_bytes(utf8_encode(0x20AC), [0xE2, 0x82, 0xAC], "euro 0x20AC")
+    assert(utf8_encode(0x20AC) == "€")
+    assert_bytes(utf8_encode(0xFFFF), [0xEF, 0xBF, 0xBF], "borde 3-bytes 0xFFFF")
+    print("3-bytes ok")
+}
+
+fn test_four_bytes() {
+    assert_bytes(utf8_encode(0x10000), [0xF0, 0x90, 0x80, 0x80], "borde 4-bytes 0x10000")
+    assert_bytes(utf8_encode(0x1F600), [0xF0, 0x9F, 0x98, 0x80], "emoji 0x1F600")
+    assert_bytes(utf8_encode(0x10FFFF), [0xF4, 0x8F, 0xBF, 0xBF], "maximo 0x10FFFF")
+    print("4-bytes ok")
+}
+
+fn test_invalid_to_replacement() {
+    let fffd: Array<int> = [0xEF, 0xBF, 0xBD]
+    assert_bytes(utf8_encode(0 - 1), fffd, "negativo")
+    assert_bytes(utf8_encode(0x110000), fffd, "sobre el maximo")
+    assert_bytes(utf8_encode(0xD800), fffd, "surrogate low bound")
+    assert_bytes(utf8_encode(0xDFFF), fffd, "surrogate high bound")
+    // los vecinos de la zona surrogate SI son validos
+    assert_bytes(utf8_encode(0xD7FF), [0xED, 0x9F, 0xBF], "vecino pre-surrogate")
+    assert_bytes(utf8_encode(0xE000), [0xEE, 0x80, 0x80], "vecino post-surrogate")
+    print("invalidos -> U+FFFD ok")
+}
+
+fn test_char_length_consistency() {
+    // Cada resultado valido es EXACTAMENTE 1 codepoint segun char_length()
+    assert(utf8_encode(65).char_length() == 1)
+    assert(utf8_encode(0xE9).char_length() == 1)
+    assert(utf8_encode(0x20AC).char_length() == 1)
+    assert(utf8_encode(0x1F600).char_length() == 1)
+    print("char_length consistencia ok")
+}
+
+fn main() {
+    test_ascii()
+    test_two_bytes()
+    test_three_bytes()
+    test_four_bytes()
+    test_invalid_to_replacement()
+    test_char_length_consistency()
+    print("test-301-utf8-encode ok")
+}

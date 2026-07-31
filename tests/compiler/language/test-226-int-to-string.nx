@@ -1,0 +1,36 @@
+// test-226: to_string() sobre primitivos int/float — variable Y expresión.
+// Antes NO existía branch en codegen_method_call para receivers i64/double:
+// caía al fallback mudo y devolvía 0 (destapado por dogfooding WASM 2026-07-01).
+// EN: to_string() on int/float primitives (variable and expression receivers)
+// used to silently return 0 — no codegen branch existed.
+
+fn fib(n: int) -> int {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() {
+    // Receiver variable int
+    let n: int = 42
+    let s: String = n.to_string()
+    assert(s == "42")
+
+    // Receiver expresión (call) — camino distinto en codegen_method_call
+    let f: String = fib(10).to_string()
+    assert(f == "55")
+
+    // Receiver expresión aritmética
+    assert((40 + 2).to_string() == "42")
+
+    // Concat con el resultado (el caso real de wasm-hello / venezuelainfo)
+    let msg: String = "respuesta=" + n.to_string()
+    assert(msg == "respuesta=42")
+
+    // float: variable y expresión
+    let x: float = 2.5
+    let xs: String = x.to_string()
+    assert(xs.length() > 0)
+    assert(xs.startsWith("2.5"))
+
+    print("test-226 OK")
+}

@@ -1,0 +1,18 @@
+// NYX2007 (S9, ronda 3): `contains` sobre un campo que no es String/Array/Map.
+// Este test blinda una REGRESIÓN introducida por la ronda 2: `contains` se
+// gateó con la forma conjunta (`and fa_type == "i8*"` en el if) en vez de la
+// forma de `length` (gate positivo, o abort). Con la forma conjunta, un campo
+// int se escapaba al camino genérico, donde `contains` es string-named y se
+// hace `inttoptr i64 → %nyx_string*` INCONDICIONAL.
+// Medido con clang: antes de la ronda 2 esto era un error duro
+// ("'%430' defined with type 'i64' but expected 'ptr'"); con la forma conjunta
+// pasó a ser IR VÁLIDO que segfaultea. O sea: un error de compilación
+// convertido en un crash de runtime, justo lo contrario de este backstop.
+// Expected stderr (contains): "NYX2007"
+struct S { count: int }
+
+fn main() -> int {
+    let s: S = S { count: 5 }
+    print(s.count.contains("x"))
+    return 0
+}

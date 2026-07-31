@@ -1,0 +1,78 @@
+// Test 99: Time, Math, and Signal builtins (v0.6.0)
+
+fn main() {
+    // Test time()
+    let t: int = time()
+    assert(t > 0)
+    print("time() > 0: OK")
+
+    // Test time_ms()
+    let ms1: int = time_ms()
+    assert(ms1 > 0)
+    print("time_ms() > 0: OK")
+
+    // Test sleep + time_ms delta
+    let before: int = time_ms()
+    sleep(50)
+    let after: int = time_ms()
+    let delta: int = after - before
+    assert(delta >= 40)
+    print("sleep(50ms) delta >= 40ms: OK")
+
+    // Test math functions
+    let s: float = math_sin(0.0)
+    assert(s == 0.0)
+    print("sin(0) = 0: OK")
+
+    let c: float = math_cos(0.0)
+    assert(c == 1.0)
+    print("cos(0) = 1: OK")
+
+    let sq: float = math_sqrt(4.0)
+    assert(sq == 2.0)
+    print("sqrt(4) = 2: OK")
+
+    let lg: float = math_log(1.0)
+    assert(lg == 0.0)
+    print("log(1) = 0: OK")
+
+    let ex: float = math_exp(0.0)
+    assert(ex == 1.0)
+    print("exp(0) = 1: OK")
+
+    let fl: float = math_floor(3.7)
+    assert(fl == 3.0)
+    print("floor(3.7) = 3: OK")
+
+    let cl: float = math_ceil(3.2)
+    assert(cl == 4.0)
+    print("ceil(3.2) = 4: OK")
+
+    let rn: float = math_round(3.5)
+    assert(rn == 4.0)
+    print("round(3.5) = 4: OK")
+
+    let fa: float = math_fabs(-5.0)
+    assert(fa == 5.0)
+    print("fabs(-5) = 5: OK")
+
+    let fm: float = math_fmod(7.0, 3.0)
+    assert(fm == 1.0)
+    print("fmod(7,3) = 1: OK")
+
+    let at: float = math_atan2(1.0, 1.0)
+    assert(at > 0.0)
+    print("atan2(1,1) > 0: OK")
+
+    // Test MATH_PI constant
+    assert(MATH_PI > 3.14)
+    assert(MATH_PI < 3.15)
+    print("MATH_PI in range: OK")
+
+    // Test auto-convert int to float
+    let sq2: float = math_sqrt(9)
+    assert(sq2 == 3.0)
+    print("sqrt(9 as int) = 3: OK")
+
+    print("✅ Test 99 completado")
+}

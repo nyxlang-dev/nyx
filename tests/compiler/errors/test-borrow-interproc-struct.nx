@@ -1,0 +1,13 @@
+// inc 3c-2a: un constructor que devuelve un struct-con-lifetime (Ref<'a>) presta del
+// arg vía elisión (1 param-ref). let h = make(&local) tinta h (SOFT) → return h → NYX1223 lint.
+struct Ref<'a> { r: &'a int }
+
+fn make(x: &int) -> Ref { return Ref { r: x } }
+
+fn caller() -> Ref {
+    let local: int = 5
+    let h: Ref = make(&local)
+    return h
+}
+
+fn main() { print(1) }

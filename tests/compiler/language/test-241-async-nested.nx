@@ -1,0 +1,19 @@
+// test-241: T5b.1 — await dentro de un async fn (nested await). El join desde
+// DENTRO de un goroutine debe ceder cooperativamente (no bloquear el worker)
+// para no interbloquear el scheduler M:N.
+
+async fn double_async(x: int) -> int {
+    return x * 2
+}
+
+async fn quadruple_async(x: int) -> int {
+    let doubled: int = await double_async(x)
+    let result: int = await double_async(doubled)
+    return result
+}
+
+fn main() {
+    let r: int = await quadruple_async(5)
+    assert(r == 20)
+    print("test-241 OK")
+}

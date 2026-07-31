@@ -1,0 +1,18 @@
+// Fixture (sub-proyecto 4, Task 5): asignación a campo cuyo receiver NO es ni
+// un identificador ni una cadena de campos — acá un índice (`arr[0].x = 9`).
+// La cadena `a.b.c = x` SÍ se implementó en esta task; este caso sigue sin
+// soporte de codegen, pero ahora aborta con NYX2006 en vez de descartar la
+// escritura en silencio y compilar con exit 0. Workaround verificado (el que
+// sugiere el propio mensaje): `var p: Punto = arr[0]  p.x = 9  arr[0] = p`.
+// Soporte real: TASKS.md [sp4-bug-5].
+struct Punto {
+    x: int,
+    y: int,
+}
+
+fn main() {
+    var arr: Array<Punto> = []
+    arr.push(Punto { x: 1, y: 2 })
+    arr[0].x = 9
+    print(arr[0].x)
+}

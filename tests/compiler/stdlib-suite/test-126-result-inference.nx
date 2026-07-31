@@ -1,0 +1,53 @@
+// Test 126: Result<T,E> and Option<T> type inference
+// Result.Ok(x) / Result.Err(e) shorthand without explicit type params
+
+fn safe_div(a: int, b: int) -> Result<int, String> {
+    if b == 0 {
+        return Result.Err("division by zero")
+    }
+    return Result.Ok(a / b)
+}
+
+fn find_positive(n: int) -> Option<int> {
+    if n > 0 {
+        return Option.Some(n)
+    }
+    return Option.None
+}
+
+fn main() -> int {
+    // Result inference from function return type
+    let r1 = safe_div(10, 2)
+    match r1 {
+        Result.Ok(v) => print(v),
+        Result.Err(e) => print(e)
+    }
+
+    let r2 = safe_div(10, 0)
+    match r2 {
+        Result.Ok(v) => print(v),
+        Result.Err(e) => print(e)
+    }
+
+    // Option inference from function return type
+    let o1 = find_positive(42)
+    match o1 {
+        Option.Some(v) => print(v),
+        Option.None => print("none")
+    }
+
+    let o2 = find_positive(-5)
+    match o2 {
+        Option.Some(v) => print(v),
+        Option.None => print("none")
+    }
+
+    // Result with explicit type annotation on let
+    let r3: Result<int, String> = Result.Ok(99)
+    match r3 {
+        Result.Ok(v) => print(v),
+        Result.Err(e) => print(e)
+    }
+
+    return 0
+}

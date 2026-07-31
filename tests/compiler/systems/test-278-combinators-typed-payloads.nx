@@ -1,0 +1,57 @@
+// test-278 — combinators map/map_err/and_then con payloads NO-int y callback
+// de fn NOMBRADA: la llamada indirecta por par-closure con firma i64(i64)
+// corrompía payloads float (los bits viajan por registro entero pero la fn
+// los espera en d0 — probe A4 de la campaña: half(3.0) daba 4.6e18). Ahora,
+// cuando el callback es una fn nombrada top-level de firma conocida, se emite
+// una llamada DIRECTA TIPADA (bitcast i64↔double / inttoptr/ptrtoint) —
+// también deja la firma exacta para wasm32. Lambdas/Fn variables siguen por
+// el par-closure (int/punteros OK; float con lambda sigue catalogado).
+
+fn double_val(x: int) -> int { return x * 2 }
+fn shout(s: String) -> String { return s + "!" }
+// El assert vive DENTRO del callback: prueba que el payload float llega
+// TIPADO de verdad (antes llegaba basura por la firma i64(i64)). El READ
+// posterior del payload float (unwrap + let) sigue roto por otra causa
+// (sitofp sobre bits en codegen_let — familia "Array slots sin tag",
+// catalogada) — por eso el resultado se verifica estructural (is_some).
+fn halve(f: float) -> float {
+    assert(f == 3.0)
+    return f / 2.0
+}
+fn describe_err(e: String) -> String { return "err=" + e }
+fn to_result(x: int) -> Result<int, String> {
+    return Result<int, String>.Ok(x + 100)
+}
+
+fn main() -> int {
+    // map con int (no-regresión del camino de siempre)
+    let a: Option<int> = Option<int>.Some(21)
+    let b: Option<int> = a.map(double_val)
+    assert(b.unwrap() == 42)
+
+    // map con String (funcionaba por accidente de ABI — ahora tipado)
+    let s: Option<String> = Option<String>.Some("hola")
+    let t: Option<String> = s.map(shout)
+    let sv: String = t.unwrap()
+    assert(sv == "hola!")
+
+    // map con FLOAT: el callback recibe 3.0 REAL (assert adentro de halve;
+    // antes la firma i64(i64) le entregaba basura). Resultado: estructural.
+    let f: Option<float> = Option<float>.Some(3.0)
+    let g: Option<float> = f.map(halve)
+    assert(g.is_some())
+
+    // map_err con String sobre Result
+    let e: Result<int, String> = Result<int, String>.Err("boom")
+    let e2: Result<int, String> = e.map_err(describe_err)
+    let ev: String = e2.unwrap_err()
+    assert(ev == "err=boom")
+
+    // and_then encadenando Results
+    let r: Result<int, String> = Result<int, String>.Ok(5)
+    let r2: Result<int, String> = r.and_then(to_result)
+    assert(r2.unwrap() == 105)
+
+    print("combinators typed OK")
+    return 0
+}

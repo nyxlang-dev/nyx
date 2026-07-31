@@ -1,0 +1,38 @@
+// Traits: definir Display, implementar para struct, llamar método
+
+trait Display {
+    fn to_string(self) -> String
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Display for Point {
+    fn to_string(self) -> String {
+        return "(" + int_to_string(self.x) + ", " + int_to_string(self.y) + ")"
+    }
+}
+
+struct Color {
+    r: int,
+    g: int,
+    b: int
+}
+
+impl Display for Color {
+    fn to_string(self) -> String {
+        return "rgb(" + int_to_string(self.r) + ", " + int_to_string(self.g) + ", " + int_to_string(self.b) + ")"
+    }
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 3, y: 4 }
+    print("Punto: " + p.to_string())
+
+    let c: Color = Color { r: 255, g: 128, b: 0 }
+    print("Color: " + c.to_string())
+
+    return 0
+}

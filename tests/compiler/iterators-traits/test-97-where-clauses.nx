@@ -1,0 +1,50 @@
+// Test: where clauses (syntactic sugar for trait bounds)
+
+trait Showable {
+    fn show(self) -> String
+}
+
+trait Describable {
+    fn describe(self) -> String
+}
+
+struct Item { name: String }
+
+impl Showable for Item {
+    fn show(self) -> String {
+        return self.name
+    }
+}
+
+struct Thing { label: String }
+
+impl Showable for Thing {
+    fn show(self) -> String {
+        return self.label
+    }
+}
+
+impl Describable for Thing {
+    fn describe(self) -> String {
+        return "Thing: " + self.label
+    }
+}
+
+// Where clause — single bound
+fn display<T>(x: T) -> String where T: Showable {
+    return x.show()
+}
+
+// Where clause — multi-bound
+fn display_both<T>(x: T) -> String where T: Showable + Describable {
+    return x.show() + " | " + x.describe()
+}
+
+fn main() {
+    let item = Item { name: "test" }
+    print(display<Item>(item))
+
+    let thing = Thing { label: "hello" }
+    print(display_both<Thing>(thing))
+    print("Where clauses OK")
+}

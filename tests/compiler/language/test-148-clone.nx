@@ -1,0 +1,50 @@
+// test-148-clone: verifica Clone trait + #[derive(Clone)] + &T reference types
+
+#[derive(Clone)]
+struct Point {
+    x: int,
+    y: int
+}
+
+#[derive(Clone)]
+struct Color {
+    r: int,
+    g: int,
+    b: int
+}
+
+fn translate(p: Point, dx: int, dy: int) -> Point {
+    let c: Point = p.clone()
+    return Point { x: c.x + dx, y: c.y + dy }
+}
+
+fn main() -> int {
+    // Test 1: basic clone
+    let p1 = Point { x: 10, y: 20 }
+    let p2: Point = p1.clone()
+    print(p1.x)   // 10 (original unmodified)
+    print(p2.x)   // 10 (cloned copy)
+
+    // Test 2: clone in function call
+    let moved = translate(p1, 5, 3)
+    print(moved.x)  // 15
+    print(moved.y)  // 23
+
+    // Test 3: clone Color struct
+    let red = Color { r: 255, g: 0, b: 0 }
+    let red2: Color = red.clone()
+    print(red2.r)   // 255
+    print(red2.g)   // 0
+
+    // Test 4: &T reference type (alias for *T in IR)
+    let ref_x: &int = &p1.x
+    print(*ref_x)   // 10
+
+    // Test 5: &mut T mutable reference
+    var n = 42
+    let rm: &mut int = &n
+    print(*rm)      // 42
+
+    print("clone ok")
+    return 0
+}

@@ -1,0 +1,16 @@
+// M-08 sesion 19 error test: tipo IMPORTADO con impl Display pero sin
+// impl Neg. S19 scanea el modulo y registra `impl Display for Coin`,
+// asi que `type_has_any_local_impl(Coin) == true` y el endurecimiento
+// de S18 aplica → `-c` debe fallar.
+// Sin S19 (solo S18), Coin no tenia impls locales → wildcard silencioso.
+// Expected stderr (contains): "operand of '-' must implement 'Neg', but 'Coin' does not"
+// Expected exit: non-zero (semantic check fails)
+
+import "tests/test-modules/display_only_demo" as demo
+
+fn main() -> int {
+    let c: Coin = Coin { value: 10 }
+    let n: Coin = -c
+    print(n.show())
+    return 0
+}

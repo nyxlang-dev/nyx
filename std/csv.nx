@@ -1,0 +1,232 @@
+// ============================================================
+// STD/CSV.NX — CSV Parser/Serializer (v1.9.0)
+// ============================================================
+// Parsea y genera archivos CSV con soporte para:
+//   - Delimitadores configurables (default: coma)
+//   - Quoted fields con comillas dobles
+//   - Headers opcionales
+//
+// Uso:
+//   import "std/csv" as csv
+//
+//   let rows: Array = csv.parse("a,b,c\n1,2,3\n4,5,6")
+//   let headers: Array = csv.headers(rows)
+//   let data: Array = csv.data_rows(rows)
+//
+//   let row0: Array = csv.get_row(rows, 0)
+//   let val: String = csv.get_field(row0, 1)
+//
+//   let out: String = csv.stringify(rows)
+// ============================================================
+
+// ===== TYPES =====
+
+/// CSV document: array of rows, each row is an Array of String fields.
+pub struct CsvDoc {
+    rows: Array,      // Array of Array (each row = Array of String fields)
+    has_header: bool  // true if first row is a header
+}
+
+// ===== PARSING =====
+
+// Parse a single CSV line into fields, handling quoted fields
+fn parse_line(line: String, delimiter: String) -> Array {
+    var fields: Array = []
+    var current = ""
+    var in_quotes = false
+    var i = 0
+
+    while i < line.length() {
+        let c: char = line.charAt(i)
+
+        if in_quotes {
+            // Inside quoted field
+            let c_str = "" + c
+            if c_str == "\"" {
+                // Check for escaped quote ""
+                if i + 1 < line.length() {
+                    let next: char = line.charAt(i + 1)
+                    let next_str = "" + next
+                    if next_str == "\"" {
+                        current = current + "\""
+                        i = i + 2
+                    } else {
+                        in_quotes = false
+                        i = i + 1
+                    }
+                } else {
+                    in_quotes = false
+                    i = i + 1
+                }
+            } else {
+                current = current + c_str
+                i = i + 1
+            }
+        } else {
+            let c_str = "" + c
+            if c_str == "\"" {
+                in_quotes = true
+                i = i + 1
+            } else {
+                if c_str == delimiter {
+                    fields.push(current)
+                    current = ""
+                    i = i + 1
+                } else {
+                    current = current + c_str
+                    i = i + 1
+                }
+            }
+        }
+    }
+
+    // Push the last field
+    fields.push(current)
+    return fields
+}
+
+/// Parse CSV text into a CsvDoc (auto-detect headers: first row is headers).
+pub fn parse(text: String) -> CsvDoc {
+    return parse_with_delimiter(text, ",", true)
+}
+
+/// Parse CSV text with custom delimiter and header setting.
+pub fn parse_with_delimiter(text: String, delimiter: String, has_header: bool) -> CsvDoc {
+    var rows: Array = []
+    var lines: Array<String> = text.split("\n")
+    var i = 0
+    while i < lines.length() {
+        let line: String = lines[i]
+        let trimmed: String = line.trim()
+        if trimmed.length() > 0 {
+            let fields: Array = parse_line(trimmed, delimiter)
+            rows.push(fields)
+        }
+        i = i + 1
+    }
+    return CsvDoc { rows: rows, has_header: has_header }
+}
+
+// ===== ACCESSORS =====
+
+/// Get all rows (including header if present).
+pub fn get_all_rows(doc: CsvDoc) -> Array {
+    return doc.rows
+}
+
+/// Get header row (first row). Returns empty Array if no header.
+pub fn headers(doc: CsvDoc) -> Array {
+    if not doc.has_header { return [] }
+    if doc.rows.length() == 0 { return [] }
+    let r: Array = doc.rows[0]
+    return r
+}
+
+/// Get data rows (skip header if present).
+pub fn data_rows(doc: CsvDoc) -> Array {
+    var result: Array = []
+    var start = 0
+    if doc.has_header { start = 1 }
+    var i = start
+    while i < doc.rows.length() {
+        let row: Array = doc.rows[i]
+        result.push(row)
+        i = i + 1
+    }
+    return result
+}
+
+/// Get a specific row by index (0-based, counting from header if present).
+pub fn get_row(doc: CsvDoc, idx: int) -> Array {
+    if idx < 0 or idx >= doc.rows.length() { return [] }
+    let r: Array = doc.rows[idx]
+    return r
+}
+
+/// Get a field value from a row by column index.
+pub fn get_field(row: Array, col: int) -> String {
+    if col < 0 or col >= row.length() { return "" }
+    let f: String = row[col]
+    return f
+}
+
+/// Get a field value from a data row by column name (using header).
+pub fn get_by_name(doc: CsvDoc, row: Array, col_name: String) -> String {
+    if not doc.has_header { return "" }
+    if doc.rows.length() == 0 { return "" }
+    let hdr: Array = doc.rows[0]
+    var col_idx = -1
+    var i = 0
+    while i < hdr.length() {
+        let h: String = hdr[i]
+        if h == col_name { col_idx = i }
+        i = i + 1
+    }
+    if col_idx < 0 { return "" }
+    return get_field(row, col_idx)
+}
+
+/// Get number of rows (including header if present).
+pub fn row_count(doc: CsvDoc) -> int {
+    return doc.rows.length()
+}
+
+/// Get number of columns (from first row).
+pub fn col_count(doc: CsvDoc) -> int {
+    if doc.rows.length() == 0 { return 0 }
+    let r: Array = doc.rows[0]
+    return r.length()
+}
+
+// ===== SERIALIZATION =====
+
+// Escape a field value for CSV output
+fn escape_field(field: String) -> String {
+    // If field contains comma, newline, or quote, wrap in quotes
+    if field.contains(",") or field.contains("\n") or field.contains("\"") {
+        let escaped: String = field.replace("\"", "\"\"")
+        return "\"" + escaped + "\""
+    }
+    return field
+}
+
+/// Serialize a CsvDoc back to CSV text.
+pub fn stringify(doc: CsvDoc) -> String {
+    return stringify_with_delimiter(doc, ",")
+}
+
+/// Serialize with custom delimiter.
+pub fn stringify_with_delimiter(doc: CsvDoc, delimiter: String) -> String {
+    var result = ""
+    var i = 0
+    while i < doc.rows.length() {
+        let row: Array = doc.rows[i]
+        var line = ""
+        var j = 0
+        while j < row.length() {
+            let field: String = row[j]
+            let escaped: String = escape_field(field)
+            if j > 0 { line = line + delimiter }
+            line = line + escaped
+            j = j + 1
+        }
+        if i > 0 { result = result + "\n" }
+        result = result + line
+        i = i + 1
+    }
+    return result
+}
+
+// ===== BUILDER =====
+
+/// Create an empty CsvDoc with given headers.
+pub fn new_doc(header_names: Array) -> CsvDoc {
+    var rows: Array = []
+    rows.push(header_names)
+    return CsvDoc { rows: rows, has_header: true }
+}
+
+/// Add a row to an existing CsvDoc.
+pub fn add_row(doc: CsvDoc, row: Array) {
+    doc.rows.push(row)
+}

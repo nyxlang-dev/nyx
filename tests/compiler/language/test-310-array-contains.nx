@@ -1,0 +1,55 @@
+// test-310-array-contains.nx — `contains` sobre Array (bindeado y encadenado)
+//
+// Estaba roto en AMBOS caminos: el codegen despachaba `contains` por la rama de
+// MAP sin chequear que el receiver fuera Array, y emitía
+// `nyx_map_contains_str(i8* <array>, i8* 2)` — el Array tratado como Map y el
+// int como puntero → IR inválido ("integer constant must have integer type").
+// Encadenado daba 0 silencioso hasta v0.22.13 y error accionable desde v0.22.14.
+// El runtime YA tenía `nyx_array_contains` (runtime-arrays.c:225); faltaba
+// declararlo y ramificar por tipo de receiver.
+//
+// ALCANCE: `nyx_array_contains` compara SLOTS i64 crudos, así que es correcto
+// para arrays de int/bool/char. La limitación histórica con Strings (comparaba
+// PUNTEROS, no contenido) quedó CERRADA en la Etapa 4 de slots-tag: un needle
+// String despacha la variante tagged por contenido — ver test-312.
+// Self-checking con assert() (abortivo).
+
+fn nums() -> Array {
+    let a: Array = [10, 20, 30]
+    return a
+}
+
+fn test_bindeado() {
+    let a: Array = [10, 20, 30]
+    assert(a.contains(20))
+    assert(a.contains(10))
+    assert(a.contains(30))
+    assert(not a.contains(99))
+    print("contains bindeado ok")
+}
+
+fn test_encadenado() {
+    // Antes: 0 silencioso (v0.22.12-) → error de compilación (v0.22.13+) → ahora funciona
+    assert(nums().contains(20))
+    assert(not nums().contains(99))
+    print("contains encadenado ok")
+}
+
+fn test_vacio_y_bordes() {
+    let vacio: Array = []
+    assert(not vacio.contains(1))
+    let uno: Array = [7]
+    assert(uno.contains(7))
+    assert(not uno.contains(0))
+    // el 0 como valor buscado NO debe confundirse con "no encontrado"
+    let con_cero: Array = [0, 5]
+    assert(con_cero.contains(0))
+    print("contains vacio y bordes ok")
+}
+
+fn main() {
+    test_bindeado()
+    test_encadenado()
+    test_vacio_y_bordes()
+    print("test-310-array-contains ok")
+}

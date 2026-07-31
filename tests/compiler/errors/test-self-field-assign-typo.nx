@@ -1,0 +1,20 @@
+// Task 1 ronda 2: mismo fallo silencioso en escritura, `self.<typo> = v`
+// dentro de un método `&mut self`.
+// Expected stderr (contains): "field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
+// Expected exit: non-zero (semantic check fails)
+
+struct Usuario {
+    nombre: String
+}
+
+impl Usuario {
+    fn rename(&mut self) {
+        self.nombree = "Bee"
+    }
+}
+
+fn main() -> int {
+    var u: Usuario = Usuario { nombre: "Ada" }
+    u.rename()
+    return 0
+}

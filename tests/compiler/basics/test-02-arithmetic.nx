@@ -1,0 +1,25 @@
+// TEST 2: Operadores Aritméticos
+fn main() {
+    print("=== TEST 2: ARITMÉTICA ===")
+
+    let a = 10
+    let b = 3
+
+    print("Suma (10 + 3):")
+    print(a + b)
+
+    print("Resta (10 - 3):")
+    print(a - b)
+
+    print("Multiplicación (10 * 3):")
+    print(a * b)
+
+    print("División (10 / 3):")
+    print(a / b)
+
+    print("Módulo (10 % 3):")
+    print(a % b)
+
+    print("✅ Test 2 completado")
+    return 0
+}

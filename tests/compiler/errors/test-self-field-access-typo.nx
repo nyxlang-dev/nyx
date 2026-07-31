@@ -1,0 +1,25 @@
+// Task 1 ronda 2 (campaña "Primer intento verde", Fase 2): `self.<typo>`
+// dentro de un método (&self) compilaba mudo — ty_of_expr(self) daba un
+// TyRef basura (el marker "&" del receiver se colaba por validate_type_ann
+// como si fuera una anotación de tipo real), así que el guard de
+// check_field_exists (solo valida sobre TyStruct) nunca se disparaba.
+// Ahora validate_impl bindea el tipo real de self antes de validar los
+// métodos (g_current_self_ty).
+// Expected stderr (contains): "field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
+// Expected exit: non-zero (semantic check fails)
+
+struct Usuario {
+    nombre: String
+}
+
+impl Usuario {
+    fn get(&self) -> int {
+        return self.nombree
+    }
+}
+
+fn main() -> int {
+    let u: Usuario = Usuario { nombre: "Ada" }
+    let x: int = u.get()
+    return 0
+}

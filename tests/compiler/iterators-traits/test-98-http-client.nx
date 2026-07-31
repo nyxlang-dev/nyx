@@ -1,0 +1,32 @@
+// Test 98: HTTP Client — URL parsing
+// Note: network integration tests require a running server, tested separately
+
+import "std/json"
+import "std/http"
+
+fn main() {
+    // Test URL parsing — simple URL
+    let u1: Array = http_parse_url("http://example.com/api/data")
+    let host1: String = u1[1]
+    let port1: int = u1[2]
+    let path1: String = u1[3]
+    print(host1)
+    print(port1)
+    print(path1)
+
+    // Test URL parsing — with port
+    let u2: Array = http_parse_url("http://localhost:8080/test")
+    let host2: String = u2[1]
+    let port2: int = u2[2]
+    let path2: String = u2[3]
+    print(host2)
+    print(port2)
+    print(path2)
+
+    // Test URL parsing — no path
+    let u3: Array = http_parse_url("http://host.com")
+    let path3: String = u3[3]
+    print(path3)
+
+    print("HTTP client URL parsing tests passed!")
+}

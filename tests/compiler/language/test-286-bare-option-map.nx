@@ -1,0 +1,24 @@
+// test-286 — Option PELADO (sin turbofish ni anotación <T>) + combinators
+// (campaña 2026-07-22, diferido de A-fase): `Option.Some(21)` sin mono previa
+// hacía morir AL COMPILADOR con "Clave 'Option:Some' no encontrada" (crash
+// silencioso respecto al programa — anti AI-first). Ahora el construct
+// monomorfiza IMPLÍCITO infiriendo el type-arg del argumento (espejo del F2
+// de fns; default int); si la variante realmente no existe, error bilingüe
+// fail-fast en vez del crash de Map.
+fn double_it(x: int) -> int { return x * 2 }
+
+fn main() {
+    let a: Option = Option.Some(21)
+    let b: Option = a.map(double_it)
+    assert(b.unwrap() == 42)
+
+    // lambda inline como callback (path indirecto i64)
+    let c: Option = a.map(fn(x: int) -> int { return x + 100 })
+    assert(c.unwrap() == 121)
+
+    // None pelado + unwrap_or
+    let n: Option = Option.None
+    assert(n.unwrap_or(7) == 7)
+
+    print("bare option map OK")
+}

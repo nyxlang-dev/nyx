@@ -1,0 +1,32 @@
+// test-281 — pre_scan del SharedEnv: formas restantes de la clase i64
+// (campaña A9, follow-up del finding 3 del review del callback). Un local
+// SIN anotación cuyo valor viene de (a) `arr[0]` de un array tipado o
+// (b) `obj.method()` de un struct local, capturado por una nested fn,
+// tipaba i64 en el env → "invalid cast <struct> to i64" en el link
+// (RUIDOSO, no silencioso). Workaround histórico: anotar el tipo.
+struct Point { x: int, y: int }
+
+impl Point {
+    fn shifted(self) -> Point {
+        return Point { x: self.x + 1, y: self.y + 1 }
+    }
+}
+
+fn main() {
+    let points: Array<Point> = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+
+    // (a) let SIN anotación desde arr[0] de un Array<Point> local
+    let p0 = points[0]
+    // (b) let SIN anotación desde un método de un local struct que devuelve struct
+    let base: Point = Point { x: 10, y: 20 }
+    let moved = base.shifted()
+
+    // nested fn que CAPTURA ambos (dispara el pre_scan del SharedEnv)
+    fn reporte() -> int {
+        return p0.x + moved.y
+    }
+
+    let r: int = reporte()
+    assert(r == 22)
+    print("prescan captured struct OK")
+}

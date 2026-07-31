@@ -1,0 +1,54 @@
+// test-294 — A4 (friction-browser): el lookahead balanceado del turbofish
+// (E3, 2026-07-22) cruzaba límites de sentencia buscando su '>' de cierre.
+// Repro: `while i < xs.length()` seguido de CUALQUIER '>' posterior en el
+// archivo (p.ej. `if a > (b-1)`) hacía que `i < xs` se parseara como
+// apertura de type-args → NYX0101 "expected GREATER, found '.'" EN LA LÍNEA
+// DEL '<' (el error "lejano" que veía el usuario). Causa: is_generic_call_lookahead
+// escaneaba tokens SIN restringirlos al set que un type-arg puede contener,
+// así que un '>' de comparación distante lo "balanceaba".
+// Fix: el scan aborta al primer token ajeno a una lista de type-args
+// (LEFT_BRACE, keywords de sentencia, operadores aritméticos, etc.).
+fn other() -> int {
+    // Segunda fn con un '>' — cubre la variante "el '>' vive en OTRA fn".
+    let m = 8
+    if m > 4 { return 1 }
+    return 0
+}
+
+fn main() {
+    // --- El caso RED exacto: '<' antes, '>' después ---
+    let xs: Array<int> = [1, 2, 3]
+    var i = 0
+    var sum = 0
+    while i < xs.length() {
+        sum = sum + xs[i]
+        i = i + 1
+    }
+    assert(sum == 6)
+    assert(i == 3)
+
+    let a = 5
+    let b = 3
+    var branch = 0
+    if a > (b - 1) { branch = 1 }
+    assert(branch == 1)
+
+    // --- '<' y '>' en la MISMA sentencia legítima (comparación encadenada
+    //     con &&) — ambos deben leerse como comparaciones ---
+    let c = 2
+    let d = 9
+    let ok: bool = a < d && c > (b - 2)
+    assert(ok)
+
+    // --- Comparaciones simples intactas (no turbofish) ---
+    assert(c < d)
+    assert(d > c)
+
+    // --- El turbofish REAL sigue funcionando junto a un '<' de comparación ---
+    let e = 4
+    assert(e < d)
+
+    assert(other() == 1)
+
+    print("turbofish lookahead stmt boundary OK")
+}

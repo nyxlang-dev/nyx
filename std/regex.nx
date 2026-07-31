@@ -1,0 +1,44 @@
+// std/regex.nx — Regular expressions via POSIX regex
+//
+// regex_match/regex_is_match/regex_replace/regex_replace_all are compiler
+// BUILTINS (dispatched by name in codegen, backed by runtime/regex.c) —
+// they work globally without any import. The `pub fn` wrappers below exist
+// so `nyx capabilities` (which indexes `pub fn` signatures per std/ file)
+// can list them; call-site resolution still hits the builtin directly
+// (codegen matches the name before falling back to a user-defined function),
+// so these wrappers are never actually invoked — they're index-only.
+//
+// MAINTENANCE WARNING — these wrappers are homonyms of the compiler builtins
+// and only compile safely because the regex dispatch in codegen.nx has NO
+// "user fn wins" guard. Some OTHER builtin families (c_fn_ptr,
+// string_from_cstr, string_from_bytes — see test-264-builtin-user-override)
+// DO check `ctx.function_return_types`/the user-fn table first, so a
+// same-named user function overrides the builtin (established convention,
+// also see test-277-fn-run-name for the sibling "don't collide with an
+// internal desugar name" case). Do NOT add that guard to the regex dispatch
+// — if a user-defined `regex_match`/etc. ever won over the builtin, the
+// body of THIS wrapper (`return regex_match(text, pattern)`) would call
+// itself instead of the runtime, and recurse infinitely (stack overflow,
+// not a compile error). If regex ever needs that guard for a real reason,
+// rename these wrappers first (e.g. `regex_match_impl`) so they can't shadow
+// themselves.
+
+/// Return the first match of `pattern` in `text`, or "" if none.
+pub fn regex_match(text: String, pattern: String) -> String {
+    return regex_match(text, pattern)
+}
+
+/// Whether `pattern` matches anywhere in `text`.
+pub fn regex_is_match(text: String, pattern: String) -> bool {
+    return regex_is_match(text, pattern)
+}
+
+/// Replace the first match of `pattern` in `text` with `replacement`.
+pub fn regex_replace(text: String, pattern: String, replacement: String) -> String {
+    return regex_replace(text, pattern, replacement)
+}
+
+/// Replace all matches of `pattern` in `text` with `replacement`.
+pub fn regex_replace_all(text: String, pattern: String, replacement: String) -> String {
+    return regex_replace_all(text, pattern, replacement)
+}

@@ -1,0 +1,14 @@
+// Aux de los tests SP4 T3 (import no apaga NYX1001). Declara un tipo con un
+// nombre "cercano" al typo del test para que el did-you-mean tenga candidato.
+// A propósito NO usa `pub struct`: `export`→`struct` en collect_declarations
+// solo hace scope_declare (no register_struct), un bug aparte catalogado en
+// el reporte de la tarea.
+struct Point {
+    x: int,
+    y: int
+}
+
+pub fn aux_origin() -> int {
+    let p: Point = Point { x: 0, y: 0 }
+    return p.x + p.y
+}

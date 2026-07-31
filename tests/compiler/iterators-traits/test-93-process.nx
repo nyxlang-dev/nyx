@@ -1,0 +1,24 @@
+// Test 93: Process/OS — exec, getenv, setenv
+
+fn main() {
+    // Test exec — run a simple command (v0.22.1+: exec() captura stdout como
+    // String; exec_code() da el exit code — ver TASKS.md fricción "exec()
+    // viola su contrato String")
+    let code: int = exec_code("echo hello > /dev/null")
+    print(code)  // 0
+
+    let captured: String = exec("echo hello")
+    print(captured)  // hello (sin \n final)
+
+    // Test setenv/getenv
+    setenv("NYX_TEST_VAR", "nyx_rocks")
+    let val: String = getenv("NYX_TEST_VAR")
+    print(val)  // nyx_rocks
+
+    // Test getenv with non-existent var
+    let empty: String = getenv("NYX_NONEXISTENT_VAR_12345")
+    let is_empty: bool = empty.length() == 0
+    print(is_empty)  // true
+
+    print("done")
+}

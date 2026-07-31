@@ -1,0 +1,14 @@
+// Track 4 — caso CORRECTO: un struct NORMAL (no #[affine]) reusado tras
+// "moverlo" NO dispara NYX1230 (los structs GC son refs compartidas; solo los
+// tipos afines son single-owner). Ni en NYX_BORROW=error debe aparecer.
+
+struct Plain {
+    fd: int
+}
+
+fn main() {
+    let a: Plain = Plain { fd: 3 }
+    let b: Plain = a
+    let c: Plain = a
+    print("ok")
+}

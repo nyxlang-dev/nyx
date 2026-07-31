@@ -1,0 +1,34 @@
+// Raw terminal — reading keypresses without line buffering
+// Terminal raw — leer teclas sin buffer de línea
+
+fn main() -> int {
+    // Check if we have a terminal
+    if not isatty(0) {
+        print("not a terminal — skipping raw mode demo")
+        print("run interactively to see keypress reading")
+        return 0
+    }
+
+    print("terminal size: " + int_to_string(term_cols()) + "x" + int_to_string(term_rows()))
+    print("press any key (or 'q' to quit):")
+
+    // Enter raw mode — disables echo and line buffering
+    raw_mode_enter()
+
+    var running: bool = true
+    while running {
+        let byte: int = read_byte()
+        if byte == 113 {
+            // 'q' pressed
+            running = false
+        } else {
+            // In raw mode, we need to manually handle output
+            print("key: " + int_to_string(byte))
+        }
+    }
+
+    // Always restore terminal state
+    raw_mode_exit()
+    print("raw mode exited")
+    return 0
+}

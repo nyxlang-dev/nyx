@@ -1,0 +1,67 @@
+// Test 192: http_serve_mt — servidor HTTP multithread de verdad
+//
+// Antes: definía un handler que nunca usaba y solo imprimía
+// "http_serve_mt available" — el test más engañoso del repo, nombraba una
+// feature crítica y verificaba cero.
+//
+// Patrón (igual que tests/ai-first/15-http-items-api.nx): http_serve_mt
+// nunca retorna (accept loop infinito, sin apagado limpio), así que se
+// levanta en un thread_spawn sobre un puerto fijo, se le pega con el
+// cliente de std/http desde el mismo proceso, se asertan varias respuestas
+// (incluidas varias requests seguidas, para tocar más de un worker), y se
+// termina con exit(0) explícito — el hilo del server queda corriendo, pero
+// el proceso ya terminó.
+import "std/http"
+
+fn test_handler(request: Array) -> String {
+    let method: String = request[1]
+    let path: String = request[2]
+    if method == "GET" and path == "/ping" {
+        return http_response(200, "pong")
+    }
+    if method == "GET" and path == "/echo" {
+        return http_response(200, "test")
+    }
+    return http_response(404, "not found")
+}
+
+const T192_PORT: int = 19192
+
+fn run_server() -> int {
+    http_serve_mt(T192_PORT, 4, test_handler)
+    return 0
+}
+
+fn main() {
+    let _t: int = thread_spawn(run_server)
+    sleep(300) // dejar que el accept loop + workers queden listos
+
+    let port: int = T192_PORT
+    let base: String = "http://127.0.0.1:" + port.to_string()
+
+    // 1. Ruta conocida
+    let r1: Array = http_get(base + "/ping")
+    assert(http_status(r1) == 200)
+    assert(http_body(r1) == "pong")
+
+    // 2. Otra ruta conocida — distinta respuesta
+    let r2: Array = http_get(base + "/echo")
+    assert(http_status(r2) == 200)
+    assert(http_body(r2) == "test")
+
+    // 3. Ruta no encontrada
+    let r3: Array = http_get(base + "/missing")
+    assert(http_status(r3) == 404)
+
+    // 4. Varias requests seguidas, para ejercitar los 4 workers del pool
+    var i: int = 0
+    while i < 8 {
+        let r: Array = http_get(base + "/ping")
+        assert(http_status(r) == 200)
+        assert(http_body(r) == "pong")
+        i = i + 1
+    }
+
+    print("OK 192-http-mt")
+    exit(0) // http_serve_mt nunca retorna — salida explícita
+}

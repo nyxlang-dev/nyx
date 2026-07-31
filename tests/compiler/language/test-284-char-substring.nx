@@ -1,0 +1,23 @@
+// test-284 — E2 (campaña 2026-07-22): s.char_substring(from, to) por
+// CODEPOINTS UTF-8, aditiva — el contrato bytes de substring/length/indexOf
+// NO cambia. Espejo de substring: [from, to), clamps en los bordes.
+fn main() {
+    let ascii: String = "hello"
+    assert(ascii.char_substring(1, 4) == "ell")
+
+    // "áñé" = 3 codepoints / 6 bytes: substring por bytes cortaría a mitad
+    let multi: String = "áñé"
+    assert(multi.char_length() == 3)
+    assert(multi.char_substring(0, 1) == "á")
+    assert(multi.char_substring(1, 3) == "ñé")
+
+    // mezcla ascii + multibyte
+    let mixto: String = "canción"
+    assert(mixto.char_substring(3, 7) == "ción")
+
+    // clamps
+    assert(ascii.char_substring(3, 99) == "lo")
+    assert(ascii.char_substring(3, 3) == "")
+
+    print("char_substring OK")
+}

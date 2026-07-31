@@ -1,0 +1,93 @@
+// test-321-field-assign-ref-generic — `r.campo = v` cuando el receiver es una
+// REFERENCIA (`&T` / `&mut T`), incluidos structs GENÉRICOS y genéricos con
+// type-arg ANIDADO.
+//
+// Bug de raíz (sub-proyecto 4, task 4): había cuatro derivaciones distintas del
+// nombre de struct alimentando el mismo espacio de claves "<Tipo>:<campo>".
+// `codegen_field_assign` solo normalizaba `*T`, así que
+// `fn bump(p: &mut Punto) { p.x = p.x + 1 }` LEÍA bien y DESCARTABA la escritura
+// con un print mudo ("Error: campo no encontrado en field_assign: &mut Punto:x")
+// sin fallar la compilación. Ahora los tres sitios comparten
+// `normalize_struct_type_symbol`.
+//
+// NOTA DE ORDEN (gap SEPARADO, no es lo que testea este archivo): un struct
+// genérico se monomorfiza LAZY, al generar el literal `Contenedor<int>{...}`.
+// Una función definida ANTES de ese literal todavía no ve los campos
+// registrados. Por eso los helpers genéricos van DESPUÉS de main.
+//
+// Self-checking con assert() abortivo.
+
+struct Punto { x: int, y: int }
+struct Contenedor<T> { valor: T, marca: int }
+struct Par<A, B> { izq: A, der: B }
+
+fn main() -> int {
+    // --- 1. &mut sobre struct simple: la escritura persiste en el caller ---
+    var pt: Punto = Punto { x: 10, y: 20 }
+    bump(&mut pt)
+    assert(pt.x == 11)          // ANTES: 10 (escritura descartada)
+    assert(pt.y == 20)          // campo vecino intacto
+    assert(leer_x(&pt) == 11)   // control positivo: la LECTURA vía &T ya andaba
+
+    bump(&mut pt)
+    assert(pt.x == 12)
+
+    // --- 2. & sobre struct GENÉRICO: escritura + lectura ---
+    var c: Contenedor<int> = Contenedor<int> { valor: 1, marca: 7 }
+    assert(leer_c(&c) == 1)     // control positivo: lectura genérica vía &T
+    poner(&c, 42)
+    assert(c.valor == 42)       // ANTES: 1 (escritura descartada)
+    assert(c.marca == 7)
+
+    // --- 3. genérico con type-arg ANIDADO (ejercita el splitter de type-args:
+    //        `Par<int,Map<String,int>>` no se puede partir por comas planas) ---
+    var m: Map<String,int> = {}
+    m.insert("k", 5)
+    var p: Par<int, Map<String,int>> = Par<int, Map<String,int>> { izq: 1, der: m }
+    assert(leer_izq(&p) == 1)   // control positivo: lectura con anidado
+    set_izq(&mut p)
+    assert(p.izq == 9)          // ANTES: 1 (escritura descartada)
+
+    // --- 4. control positivo: `*Struct` (camino que YA funcionaba) ---
+    var a: Punto = Punto { x: 1, y: 2 }
+    bump_ptr(&a)
+    assert(a.x == 101)
+    assert(a.y == 2)
+
+    print("field-assign-ref-generic OK")
+    return 0
+}
+
+// --- &mut / & sobre struct simple ---
+fn bump(p: &mut Punto) {
+    p.x = p.x + 1
+}
+
+fn leer_x(p: &Punto) -> int {
+    return p.x
+}
+
+// --- & sobre struct genérico ---
+fn poner(c: &Contenedor<int>, v: int) {
+    c.valor = v
+}
+
+fn leer_c(c: &Contenedor<int>) -> int {
+    return c.valor
+}
+
+// --- genérico con type-arg anidado. Un solo parámetro a propósito: un tipo que
+// termina en `>>` seguido de `,` en la lista de params rompe el parser hoy
+// (gap SEPARADO, escribirlo `> >` lo evita). ---
+fn set_izq(p: &mut Par<int, Map<String,int>>) {
+    p.izq = 9
+}
+
+fn leer_izq(p: &Par<int, Map<String,int>>) -> int {
+    return p.izq
+}
+
+// --- control positivo: puntero crudo a struct ---
+fn bump_ptr(p: *Punto) {
+    p.x = p.x + 100
+}

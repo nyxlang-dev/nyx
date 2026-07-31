@@ -1,0 +1,34 @@
+// nyx-http2 server — HTTP/2 with HPACK and multiplexing
+// Servidor nyx-http2 — HTTP/2 con HPACK y multiplexing
+
+import "std/http2"
+
+fn on_request(fd: int, stream_id: int, method: String, path: String, body: String) -> int {
+    // HTTP/2 handler receives stream_id so one connection handles many streams
+    let hdrs: Array = ["content-type", "application/json"]
+
+    if path == "/" {
+        h2_send_response(fd, stream_id, 200, hdrs, "{\"message\": \"hello over HTTP/2\"}")
+    } else {
+        h2_send_response(fd, stream_id, 404, hdrs, "{\"error\": \"not found\"}")
+    }
+    return 0
+}
+
+fn main() -> int {
+    let port: int = 3004
+    let workers: int = 4
+
+    print("HTTP/2 server starting on :" + int_to_string(port))
+    print("  mode: h2c (HTTP/2 cleartext, no TLS)")
+    print("  multiplexing: multiple streams per connection")
+    print("  compression: HPACK for headers")
+
+    // h2_serve blocks accepting connections, handling HTTP/2 frames,
+    // dispatching streams to the handler.
+    // h2_serve(port, workers, on_request)
+
+    print("")
+    print("test with: curl --http2-prior-knowledge http://localhost:3004/")
+    return 0
+}

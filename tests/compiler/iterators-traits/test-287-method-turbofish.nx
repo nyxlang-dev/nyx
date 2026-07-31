@@ -1,0 +1,27 @@
+// test-287 — E3 (campaña 2026-07-22): turbofish en METHOD CALLS parsea y se
+// VALIDA. Antes `a.get<int>()` se leía como `(a.get < int) > ()` (error
+// críptico de parse). v1: los type-args explícitos deben COINCIDIR con los
+// del receiver monomorfizado (documentación verificada, camino 1c-S5); sobre
+// un método no genérico son error bilingüe (nunca ignorados en silencio).
+// Genéricos a nivel de método (fn m<U>) = follow-up.
+struct Vec<T> { data: T }
+impl<T> Vec<T> {
+    fn get(self) -> T { return self.data }
+}
+fn main() {
+    let a: Vec<int> = Vec<int>{ data: 7 }
+    let x: int = a.get<int>()
+    assert(x == 7)
+
+    let b: Vec<String> = Vec<String>{ data: "hola" }
+    let sv: String = b.get<String>()
+    assert(sv == "hola")
+
+    // la comparación con '<' sigue intacta
+    let p: int = 3
+    let q: int = 9
+    let cmp: bool = p < q
+    assert(cmp)
+
+    print("method turbofish OK")
+}

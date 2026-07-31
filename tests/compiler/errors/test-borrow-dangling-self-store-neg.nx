@@ -1,0 +1,16 @@
+// Fix soundness inc 2: `self` by-value es un frame-local (copia) → guardar `&v` en
+// `self.f` NO escapa. No debe marcar NYX1222. (`&mut self.f=&x` SÍ marca desde la campaña
+// D2(a) — ver test-borrow-mutself-store.) NYX_BORROW=error.
+struct Box { f: *int }
+
+impl Box {
+    fn set(self, v: int) {
+        self.f = &v
+    }
+}
+
+fn main() {
+    var b: Box = Box { f: 0 as *int }
+    b.set(7)
+    print(1)
+}

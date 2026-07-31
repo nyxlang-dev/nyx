@@ -1,0 +1,18 @@
+// test-315-capture-coexist.nx — una lambda que captura y una nested fn que
+// captura, en la MISMA función. Antes: la segunda perdía su entorno y el
+// codegen fallaba con "use of undefined value '@<local>'". Es SIMÉTRICO:
+// invertir el orden movía el fallo a la otra.
+fn correr(f: Fn) { f() }
+
+fn main() {
+    var t: int = 0
+    fn sub() { t = t + 5 }
+    correr(sub)
+    assert(t == 5)
+
+    let x: int = 1
+    let g = fn() -> int { return x + 10 }
+    assert(g() == 11)
+
+    print("test-315-capture-coexist ok")
+}

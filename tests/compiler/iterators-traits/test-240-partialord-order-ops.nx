@@ -1,0 +1,40 @@
+// Test 240: Fase 1d — operadores de orden < > <= >= sobre un custom type
+// que SOLO implementa PartialOrd (sin Add/Sub/Neg, a diferencia de test-79
+// que ya cubre Money con los 4 traits juntos). Blinda el semantic check
+// nuevo (validate_binop exige PartialOrd para custom types) end-to-end,
+// y verifica la semantica de swap/negate del codegen existente:
+//   a > b  == lt(b, a)
+//   a <= b == not(lt(b, a))
+//   a >= b == not(lt(a, b))
+
+struct Point { dist: int }
+
+impl PartialOrd for Point {
+    fn lt(self, other: Point) -> bool {
+        return self.dist < other.dist
+    }
+}
+
+fn main() {
+    let p1 = Point { dist: 10 }
+    let p2 = Point { dist: 20 }
+
+    if p1 < p2 {
+        print("lt ok")
+    }
+    if p2 > p1 {
+        print("gt ok")
+    }
+    if p1 <= p1 {
+        print("le ok")
+    }
+    if p1 >= p1 {
+        print("ge ok")
+    }
+    if p2 <= p1 {
+        print("le should not print")
+    }
+    if p1 >= p2 {
+        print("ge should not print")
+    }
+}

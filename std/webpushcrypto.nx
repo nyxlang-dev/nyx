@@ -1,0 +1,40 @@
+// std/webpushcrypto.nx — primitivas criptográficas para Web Push (RFC 8291/8292).
+// Wrappers finos sobre runtime/crypto.c (OpenSSL). Todas operan sobre bytes
+// (String binary-safe); usar .length() para el tamaño, nunca asumir NUL.
+
+extern "C" fn nyx_csprng_bytes(n: int) -> String
+extern "C" fn nyx_byte(n: int) -> String
+extern "C" fn nyx_ec_p256_keypair() -> String
+extern "C" fn nyx_ecdh_p256(priv: String, peer_pub: String) -> String
+extern "C" fn nyx_ecdsa_p256_sign(priv: String, hash: String) -> String
+extern "C" fn nyx_ecdsa_p256_verify(pubkey: String, hash: String, sig: String) -> int
+extern "C" fn nyx_hkdf_sha256(salt: String, ikm: String, info: String, len: int) -> String
+extern "C" fn nyx_aes128gcm_encrypt(key: String, iv: String, pt: String, aad: String) -> String
+extern "C" fn nyx_sha256_bytes(input: String) -> String
+
+// n bytes criptográficamente seguros (CSPRNG).
+pub fn csprng_bytes(n: int) -> String { return nyx_csprng_bytes(n) }
+
+// Un byte crudo (n & 0xff) como String de length 1 — NUL-safe (chr(0) también lo es desde v0.22.x/A5).
+pub fn u8(n: int) -> String { return nyx_byte(n) }
+
+// Digest SHA-256 raw (32 bytes) — para firmar (el builtin sha256 devuelve HEX).
+pub fn sha256_bytes(s: String) -> String { return nyx_sha256_bytes(s) }
+
+// Keypair P-256: 32B privada ‖ 65B pública (uncompressed) = 97 bytes.
+pub fn ec_p256_keypair() -> String { return nyx_ec_p256_keypair() }
+
+// ECDH P-256: secreto compartido de 32 bytes.
+pub fn ecdh_p256(priv: String, peer_pub: String) -> String { return nyx_ecdh_p256(priv, peer_pub) }
+
+// Firma ECDSA/P-256 (ES256) de un digest de 32B → raw r‖s (64B).
+pub fn ecdsa_p256_sign(priv: String, hash: String) -> String { return nyx_ecdsa_p256_sign(priv, hash) }
+
+// Verifica una firma raw 64B → 1 (válida) / 0 (inválida).
+pub fn ecdsa_p256_verify(pubkey: String, hash: String, sig: String) -> int { return nyx_ecdsa_p256_verify(pubkey, hash, sig) }
+
+// HKDF-SHA256: deriva `len` bytes de OKM.
+pub fn hkdf_sha256(salt: String, ikm: String, info: String, len: int) -> String { return nyx_hkdf_sha256(salt, ikm, info, len) }
+
+// AES-128-GCM: cifra pt con key(16B)+iv(12B)+aad → ciphertext ‖ tag(16B).
+pub fn aes128gcm_encrypt(key: String, iv: String, pt: String, aad: String) -> String { return nyx_aes128gcm_encrypt(key, iv, pt, aad) }

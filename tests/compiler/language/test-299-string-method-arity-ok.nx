@@ -1,0 +1,40 @@
+// test-299 — A8 (friction-browser): NEG — todos los métodos builtin de
+// String llamados en su aridad MÁXIMA legítima deben seguir compilando.
+// El chequeo de A8 (check_builtin_method_args/string_method_max_arity en
+// semantic.nx) rechaza args de MÁS (ver tests/compiler/errors/
+// test-a8-string-arity-*); este test es el contrapeso: nada de esto debe
+// romperse. indexOf(needle) e indexOf(needle, from) son AMBOS válidos —
+// es el único overload real de la tabla.
+fn main() {
+    let s: String = "Hola Mundo"
+
+    // 0-arg
+    assert(s.trim() == "Hola Mundo")
+    assert(s.length() == 10)
+    assert(s.byte_length() == 10)
+    assert(s.char_length() == 10)
+    assert(s.toUpper() == "HOLA MUNDO")
+    assert(s.toLower() == "hola mundo")
+    assert(s.to_upper() == "HOLA MUNDO")
+    assert(s.to_lower() == "hola mundo")
+
+    // 1-arg
+    assert(s.contains("Mundo"))
+    assert(s.startsWith("Hola"))
+    assert(s.starts_with("Hola"))
+    assert(s.endsWith("Mundo"))
+    assert(s.ends_with("Mundo"))
+    let parts: Array<String> = s.split(" ")
+    assert(parts.length() == 2)
+    assert("-".repeat(3) == "---")
+    assert(s.charAt(0) == 72)
+
+    // 2-arg (incl. el overload de indexOf en sus DOS aridades)
+    assert(s.indexOf("Mundo") == 5)
+    assert(s.indexOf("Mundo", 0) == 5)
+    assert(s.substring(0, 4) == "Hola")
+    assert(s.char_substring(0, 4) == "Hola")
+    assert(s.replace("Mundo", "Nyx") == "Hola Nyx")
+
+    print("string method arity ok")
+}

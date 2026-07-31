@@ -1,0 +1,15 @@
+// test-extern-conflict-std (#7) — un extern de USUARIO colisiona con uno que
+// ya provee std/. Importa std/url (que declara `extern "C" fn nyx_url_decode(s:
+// String) -> String` para su wrapper url_decode) y lo redeclara con firma
+// incompatible: MISMA aridad (1) pero tipo de param distinto → no lo caza el
+// arity check de semantic, llega al chequeo de conflicto de codegen.
+// Antes: `invalid redefinition of function 'nyx_url_decode'` de clang (error
+// críptico tardío en el link). Ahora: error del compilador con las dos firmas
+// + hint accionable ("quitá tu extern si ya lo provee un módulo importado").
+import "std/url"
+
+extern "C" fn nyx_url_decode(n: int) -> String
+
+fn main() {
+    print("no debería compilar")
+}

@@ -1,0 +1,93 @@
+// test-312-array-contains-string-content.nx — slots-tag Etapa 4:
+// `contains`/`indexOf` sobre slots con TAG_STRING comparan por CONTENIDO
+// (nyx_string_equals), no por puntero. Cierra la limitación documentada en
+// test-310.
+//
+// CLAVE del test: los literales string se INTERNAN (mismo literal → mismo
+// puntero), así que buscar con el literal idéntico pasaría por identidad de
+// puntero incluso sin este fix. El needle se construye EN RUNTIME (substring)
+// para garantizar un puntero distinto con el mismo contenido — eso es lo que
+// antes fallaba (contains → false, indexOf → -1).
+//
+// La comparación por contenido exige DOS condiciones: el slot tiene
+// TAG_STRING (literal o push con tipo estático conocido) Y el needle es
+// estáticamente String en el call-site. Un slot UNKNOWN o un needle no-String
+// conservan la comparación cruda por i64 (ints, punteros idénticos).
+// Self-checking con assert() (abortivo).
+
+fn needle(s: String) -> String {
+    // "X" + s + "X" recortado: mismo contenido, puntero SIEMPRE distinto
+    let wrapped: String = "X" + s + "X"
+    return wrapped.substring(1, wrapped.length() - 1)
+}
+
+fn frutas() -> Array {
+    let a: Array = ["pera", "manzana", "uva"]
+    return a
+}
+
+fn test_contains_contenido() {
+    let a: Array = ["uno", "dos", "tres"]
+    let n: String = needle("dos")
+    assert(a.contains(n))
+    assert(not a.contains(needle("cuatro")))
+    print("contains por contenido ok")
+}
+
+fn test_index_of_contenido() {
+    let a: Array = ["uno", "dos", "tres"]
+    assert(a.indexOf(needle("uno")) == 0)
+    assert(a.indexOf(needle("tres")) == 2)
+    assert(a.indexOf(needle("cuatro")) == -1)
+    print("indexOf por contenido ok")
+}
+
+fn test_heterogeneo() {
+    // literal mixto: cada slot lleva su tag (Etapa 2) — el needle String solo
+    // matchea slots TAG_STRING; los ints siguen comparando por valor crudo
+    let h: Array = [1, "dos", true]
+    assert(h.contains(needle("dos")))
+    assert(h.indexOf(needle("dos")) == 1)
+    assert(h.contains(1))
+    assert(not h.contains(99))
+    assert(not h.contains(needle("uno")))
+    print("heterogeneo ok")
+}
+
+fn test_encadenado() {
+    // receiver-expresión: antes del fix, indexOf encadenado con needle String
+    // ni siquiera generaba IR válido (pasaba el puntero como i64 sin coerción)
+    assert(frutas().contains(needle("manzana")))
+    assert(frutas().indexOf(needle("uva")) == 2)
+    assert(frutas().indexOf(needle("kiwi")) == -1)
+    print("encadenado ok")
+}
+
+fn test_push_tipado() {
+    // push con tipo estático conocido → slot tagged (Etapa 2)
+    let a: Array = []
+    a.push("alfa")
+    a.push("beta")
+    assert(a.contains(needle("beta")))
+    assert(a.indexOf(needle("alfa")) == 0)
+    print("push tipado ok")
+}
+
+fn test_identidad_sigue() {
+    // regresión test-310: ints puros siguen funcionando igual
+    let a: Array = [10, 20, 30]
+    assert(a.contains(20))
+    assert(not a.contains(99))
+    assert(a.indexOf(30) == 2)
+    print("identidad int ok")
+}
+
+fn main() {
+    test_contains_contenido()
+    test_index_of_contenido()
+    test_heterogeneo()
+    test_encadenado()
+    test_push_tipado()
+    test_identidad_sigue()
+    print("test-312-array-contains-string-content ok")
+}

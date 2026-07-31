@@ -1,0 +1,36 @@
+// test-239-array-bare-float-read — F1: leer un `float` de un `Array` SIN <T> declarado
+// (var a: Array = []) corrompía el valor: codegen_index no consultaba
+// ctx.expected_type[0], así que elem_type quedaba en "" y el read caía al default
+// i64 crudo. codegen_let entonces hacía sitofp i64->double sobre los BITS del float
+// (guardados con bitcast double->i64 por push), interpretando el patrón de bits como
+// entero -> valor completamente distinto (ej. 1.5 -> ~4.6e18). Fix: codegen_index
+// siembra elem_type="float" desde el hint de contexto cuando sigue "" y el hint es
+// exactamente "float" -> dispara el bitcast i64->double correcto (no el sitofp).
+fn main() -> int {
+    // Caso del bug: Array bare (sin <T>), push de floats, let tipado.
+    var a: Array = []
+    a.push(1.5)
+    a.push(3.14159)
+    a.push(-2.5)
+    a.push(0.0)
+
+    let x0: float = a[0]
+    let x1: float = a[1]
+    let x2: float = a[2]
+    let x3: float = a[3]
+
+    assert(x0 == 1.5)
+    assert(x1 == 3.14159)
+    assert(x2 == -2.5)
+    assert(x3 == 0.0)
+
+    // Guarda de no-regresión: Array<float> CON <T> declarado sigue andando
+    // (elem_type ya se infería "float" por la anotación, sin necesitar el hint).
+    var b: Array<float> = []
+    b.push(2.5)
+    let y: float = b[0]
+    assert(y == 2.5)
+
+    print("array-bare-float-read OK")
+    return 0
+}

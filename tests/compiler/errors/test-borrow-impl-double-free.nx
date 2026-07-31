@@ -1,0 +1,17 @@
+// Free-safety dentro de un método impl: blinda contra el gotcha `methods[mi]` inline
+// (no llega tipado como ASTNode → el cuerpo del método no se walkeaba → double-free
+// perdido = FN). Un double-free dentro de un método DEBE marcar NYX1221. NYX_BORROW=error.
+struct Box { v: int }
+
+impl Box {
+    fn leak(self) {
+        var p: *int = alloc<int>(1)
+        free(p)
+        free(p)
+    }
+}
+
+fn main() {
+    let b: Box = Box { v: 1 }
+    b.leak()
+}

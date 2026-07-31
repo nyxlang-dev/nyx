@@ -1,0 +1,27 @@
+// std/map.nx — Funciones de mapa de la Standard Library v0.21
+
+pub fn map_new() -> Map {
+    return Map.new()
+}
+
+pub fn map_put(m: Map, k: String, v: int) {
+    m.insert(k, v)
+}
+
+pub fn map_get_int(m: Map, k: String) -> int {
+    return m.get(k)
+}
+
+pub fn map_has(m: Map, k: String) -> bool {
+    return m.contains(k)
+}
+
+// Task 2 (campaña "cerrar-silently-wrong"): el bug de tamaño documentado acá
+// (mismo que std/prelude.nx::map_size, copia duplicada verbatim) era
+// EXACTAMENTE el caso que motivó NYX1022 — m.length() sobre un Map coincidía
+// con la rama de Array en codegen y devolvía basura en vez de fallar. NYX1022
+// lo detectó en cuanto se activó. Sigue sin pub-earse porque nadie la
+// necesitaba con ese nombre; usar directamente `m.size()`.
+fn map_size(m: Map) -> int {
+    return m.size()
+}

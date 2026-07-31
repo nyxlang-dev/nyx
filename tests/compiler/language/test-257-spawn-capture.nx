@@ -1,0 +1,13 @@
+// test-257 — spawn captura variables del scope externo (locals).
+// Misma causa raíz que test-256: el spawn-block se desugariza a una lambda
+// hoisteada prependeada en posición 0 → los locals (c, ch) no entraban al
+// SharedEnv → @ch/@c undefined en __spawn_0.
+fn main() {
+    let c: int = 40
+    let ch: Map = channel_new(8)
+    spawn {
+        channel_send(ch, c + 3)
+    }
+    let v: int = channel_recv(ch)
+    print(int_to_string(v))
+}

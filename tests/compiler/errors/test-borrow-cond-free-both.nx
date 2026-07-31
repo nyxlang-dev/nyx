@@ -1,0 +1,12 @@
+// MAX flow-sensitive: free en AMBAS ramas → freed tras el if (MAX(2,2)=2) → el free posterior
+// es un double-free → NYX1221. Hoy era un MISS. Gate-only (double-free real en runtime).
+fn main() {
+    var p: *int = alloc<int>(1)
+    let c: bool = true
+    if c {
+        free(p)
+    } else {
+        free(p)
+    }
+    free(p)
+}

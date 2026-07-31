@@ -1,0 +1,46 @@
+// nyx-proxy health checks — TCP probe upstreams periodically
+// Health checks nyx-proxy — probe TCP de upstreams
+
+var failures: int = 0
+var threshold: int = 3
+var healthy: bool = true
+
+// Try to connect to the upstream — returns true if reachable
+fn probe_upstream(host: String, port: int) -> bool {
+    let fd: int = tcp_connect(host, port)
+    if fd < 0 { return false }
+    tcp_close(fd)
+    return true
+}
+
+fn check_loop(host: String, port: int) -> int {
+    // A typical health check loop (runs in a separate thread)
+    var iterations: int = 0
+    while iterations < 3 {
+        let ok: bool = probe_upstream(host, port)
+        if ok {
+            if not healthy {
+                print("upstream RECOVERED: " + host + ":" + int_to_string(port))
+                healthy = true
+            }
+            failures = 0
+        } else {
+            failures = failures + 1
+            print("probe failed (" + int_to_string(failures) + "/" + int_to_string(threshold) + ")")
+            if failures >= threshold and healthy {
+                print("upstream UNHEALTHY: " + host + ":" + int_to_string(port))
+                healthy = false
+            }
+        }
+        sleep(1000)
+        iterations = iterations + 1
+    }
+    return 0
+}
+
+fn main() -> int {
+    // Check a local upstream (likely fails if nothing listening on 3001)
+    check_loop("127.0.0.1", 3001)
+    print("final state: healthy=" + int_to_string(healthy))
+    return 0
+}

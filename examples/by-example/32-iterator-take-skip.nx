@@ -1,0 +1,32 @@
+// Iteradores: skip() y take() para componer pipelines de datos
+
+fn main() -> int {
+    let nums: Array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    // skip(2): omitir los primeros 2 elementos
+    let sin_primeros2: Array = nums.iter().skip(2).collect()
+    print("skip(2): " + int_to_string(sin_primeros2.length()) + " elementos")
+
+    // take(3): tomar solo los primeros 3
+    let solo3: Array = nums.iter().take(3).collect()
+    print("take(3): " + int_to_string(solo3.length()) + " elementos")
+    let v0: int = solo3[0]
+    let v2: int = solo3[2]
+    print("  [0]=" + int_to_string(v0) + " [2]=" + int_to_string(v2))
+
+    // Combinacion: skip(2).take(3) — elementos 3, 4, 5
+    let ventana: Array = nums.iter().skip(2).take(3).collect()
+    print("skip(2).take(3): " + int_to_string(ventana.length()) + " elementos")
+    var i: int = 0
+    while i < ventana.length() {
+        let v: int = ventana[i]
+        print("  " + int_to_string(v))
+        i = i + 1
+    }
+
+    // Otro uso: paginar — página 2, tamaño 3
+    let pagina2: Array = nums.iter().skip(3).take(3).collect()
+    print("pagina 2 (skip 3, take 3): " + int_to_string(pagina2.length()) + " elementos")
+
+    return 0
+}

@@ -1,0 +1,21 @@
+// Control POSITIVO de la ronda 2 del backstop NYX2007: los métodos homónimos
+// sobre campos que NO son Map deben seguir compilando — y ahora, además,
+// generar el runtime call CORRECTO. Antes de gatear el bloque field_access:
+//   s.nombre.length()   → nyx_array_length sobre un %nyx_string*  (basura)
+//   s.nombre.contains() → nyx_map_contains_str sobre un %nyx_string*
+//   s.items.contains(2) → nyx_map_contains_str(i8* arr, i8* 2)    (int como puntero)
+// Los tres caen ahora al camino genérico, que los resuelve por tipo.
+struct S { name: String, items: Array<int>, m: Map<String, int> }
+
+fn main() -> int {
+    var s: S = S { name: "hola", items: [1, 2, 3], m: {} }
+    print(s.name.length())
+    print(s.name.contains("ol"))
+    print(s.items.contains(2))
+    print(s.items.length())
+    s.items.push(4)
+    s.m.insert("k", 7)
+    print(s.m.size())
+    print(s.m.get("k"))
+    return 0
+}

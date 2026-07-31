@@ -1,0 +1,120 @@
+// A1 (friction-browser): un identificador seguido de `{` en posición de
+// CABECERA (condición de if/while, iterable de for, scrutinee de if let/while
+// let) ya NO se parsea como struct initializer — el `{` abre el bloque.
+// Estilo Go/Rust: literal compuesto prohibido en cabeceras; con paréntesis
+// (o como arg de call) la restricción se apaga y el struct-init sigue válido.
+// Repro RED antes del fix: `if b {\n} else {...}` daba NYX0101
+// "expected 'LEFT_BRACE', found 'else'".
+
+struct Point { x: int }
+
+fn takes_point(p: Point) -> bool {
+    return p.x == 5
+}
+
+// Field access sobre un PARÁMETRO bindeado (no un temporal) — soportado sin
+// gaps. Usado para extraer un int de un struct-literal PELADO sin depender
+// del gap de field-access-on-temp (ver comentario más abajo, NEG de index).
+fn point_x(p: Point) -> int {
+    return p.x
+}
+
+fn main() -> int {
+    // Repro exacto A1: if con then-block VACÍO + else. La rama else ejecuta.
+    var b = false
+    var hit = 0
+    if b {
+    } else {
+        hit = 1
+    }
+    assert(hit == 1)
+
+    // if con bloque vacío, sin else (no debe consumir lo que sigue)
+    if b {
+    }
+    assert(hit == 1)
+
+    // while con cuerpo vacío, condición false → nunca entra (sufría igual)
+    while b {
+    }
+    assert(hit == 1)
+
+    // for con cuerpo vacío sobre identificador pelado (sufría igual)
+    let xs = [1, 2, 3]
+    var count = 0
+    for x in xs {
+    }
+    assert(count == 0)
+
+    // Anidado: if a { if b { } else { y = 1 } }
+    var a = true
+    var y = 0
+    if a {
+        if b {
+        } else {
+            y = 1
+        }
+    }
+    assert(y == 1)
+
+    // NEG: struct init NORMAL en expresión (statement level, sin restricción)
+    let p = Point { x: 5 }
+    assert(p.x == 5)
+
+    // NEG: struct init en condición DENTRO de parens (grouping apaga la
+    // restricción → el struct literal parsea y corre). El field-access sobre un
+    // struct-literal TEMPORAL (`(Point{x:5}).x`) es un gap de codegen PRE-existente
+    // (devuelve 0, no relacionado a A1) → aquí el struct pasa por valor a una fn.
+    var z = 0
+    if (takes_point(Point { x: 5 })) {
+        z = 1
+    }
+    assert(z == 1)
+
+    // NEG: struct init como arg de call en condición (call-args apaga la restricción)
+    var w = 0
+    if takes_point(Point { x: 5 }) {
+        w = 1
+    }
+    assert(w == 1)
+
+    // NEG: array literal en cabecera de for — los `[...]` son un grupo
+    // delimitado, el struct literal adentro parsea (regresión que A1 introdujo
+    // y este cierre arregla). count==2 prueba que ambos elementos se iteraron.
+    var acount = 0
+    for pt in [Point { x: 1 }, Point { x: 2 }] {
+        acount = acount + 1
+    }
+    assert(acount == 2)
+
+    // NEG: index bracket en cabecera de if — struct literal PELADO directo en
+    // `[...]`. Antes se accedía `.x` sobre el literal TEMPORAL ahí mismo
+    // (`Point { x: 0 }.x`), explotando el gap de codegen que devolvía 0 mudo
+    // (field-access sobre struct-literal sin bindear) — desde Fase 3 Task 4c
+    // ese gap aborta con NYX2003 (codegen_field_access no soporta
+    // receivers-expresión). Para seguir probando lo mismo de A1 (struct-init
+    // PELADO parsea bien dentro de `[...]`, un grouping delimitado, en
+    // cabecera de if) sin depender del 0 mudo, el struct literal sigue
+    // apareciendo DIRECTO dentro de los corchetes del índice, pero como arg de
+    // una función que hace el field-access sobre un PARÁMETRO bindeado (no un
+    // temporal) — soportado sin gaps.
+    let ixs = [10, 20, 30]
+    var igot = 0
+    if ixs[point_x(Point { x: 0 })] == 10 {
+        igot = 1
+    }
+    assert(igot == 1)
+
+    // NEG: match con scrutinee identificador pelado (no lo tocamos — sigue OK)
+    let m = 2
+    var r = 0
+    match m {
+        1 => { r = 10 }
+        2 => { r = 20 }
+        _ => { r = 0 }
+    }
+    assert(r == 20)
+
+    print("struct-init-in-condition OK")
+    return 0
+}

@@ -1,0 +1,11 @@
+import "std/http"
+
+fn bench_handler(request: Array) -> String {
+    return http_response(200, "Hello, World!")
+}
+
+fn main() {
+    print("HTTP server on :8090")
+    http_serve(8090, bench_handler)
+    return 0
+}

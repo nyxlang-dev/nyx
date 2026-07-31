@@ -1,0 +1,24 @@
+// test-270 — indexOf(needle, from): overload con offset de arranque. Antes el
+// 2º argumento se descartaba EN SILENCIO (buscaba siempre desde 0 → bugs de
+// scanner sutiles; dos stacks duplicaban el workaround substring+indexOf,
+// tpl_index_from / mp_index_from — dogfooding:serve, TASKS.md 2026-07-20).
+// Devuelve índice ABSOLUTO o -1; from<0 clampea a 0; from>length → -1.
+fn main() {
+    let s: String = "abab"
+    // 1-arg intacto
+    assert(s.indexOf("ab") == 0)
+    // 2-arg: busca desde from
+    assert(s.indexOf("ab", 1) == 2)
+    assert(s.indexOf("ab", 2) == 2)
+    assert(s.indexOf("ab", 3) == -1)
+    assert(s.indexOf("zz", 0) == -1)
+    // receiver expresión (path fallback)
+    assert(s.substring(0, 4).indexOf("ab", 1) == 2)
+    // patrón scanner real (reemplaza el workaround substring+indexOf)
+    let tpl: String = "{{a}} y {{b}}"
+    let first: int = tpl.indexOf("{{")
+    let second: int = tpl.indexOf("{{", first + 1)
+    assert(first == 0)
+    assert(second == 8)
+    print("indexOf from OK")
+}

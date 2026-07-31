@@ -1,0 +1,29 @@
+// test-288 — sugar de impl genérico (gotcha cazado en E3, 2026-07-22):
+// `impl BoxG<T>` SIN el header `impl<T>` se tragaba el <T> y registraba el
+// impl como CONCRETO sobre un struct genérico → métodos contra %BoxG
+// unsized ("base element of getelementptr must be sized" en clang). Ahora
+// los args del target que son identificadores simples NO-primitivos se
+// promueven a type params del header: impl BoxG<T> ≡ impl<T> BoxG<T>.
+// (impl Vec<int> — instanciación concreta — conserva el comportamiento
+// previo: no soportada, catalogada aparte.)
+struct BoxG<T> { v: T }
+
+impl BoxG<T> {
+    fn get(self) -> T { return self.v }
+}
+
+fn main() {
+    let a: BoxG<int> = BoxG<int>{ v: 7 }
+    let x: int = a.get()
+    assert(x == 7)
+
+    let b: BoxG<String> = BoxG<String>{ v: "hola" }
+    let sv: String = b.get()
+    assert(sv == "hola")
+
+    // el turbofish de E3 también funciona sobre el sugar
+    let y: int = a.get<int>()
+    assert(y == 7)
+
+    print("impl target generics OK")
+}

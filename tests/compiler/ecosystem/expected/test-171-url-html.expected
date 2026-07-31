@@ -1,0 +1,22 @@
+url+html test
+--- URL Encode ---
+Hello%20World%21
+alphanumeric unchanged ok
+a%3D1%26b%3D2
+url encode/decode round-trip ok
+empty encode ok
+--- URL Decode ---
+decode spaces ok
+decode plus as space ok
+decode lowercase hex ok
+--- Query String ---
+name=John%20Doe&city=New%20York&age=30
+empty query string ok
+--- HTML Escape ---
+html escape ok
+ampersand escape ok
+html escape round-trip ok
+plain text unchanged ok
+--- Template ---
+template render ok
+url+html ok

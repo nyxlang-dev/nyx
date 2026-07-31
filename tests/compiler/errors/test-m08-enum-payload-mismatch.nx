@@ -1,0 +1,13 @@
+// M-08 B8-F2: tipo de payload equivocado en construcción de enum local.
+// Rgb espera (int, int, int) — el segundo arg String debe fallar (NYX1005).
+
+enum Color {
+    Red,
+    Rgb(int, int, int)
+}
+
+fn main() -> int {
+    let c = Color.Rgb(255, "verde", 0)
+    print("no llega")
+    return 0
+}

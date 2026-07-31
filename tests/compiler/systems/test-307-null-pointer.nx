@@ -1,0 +1,61 @@
+// test-307-null-pointer.nx — `0` como constante de puntero nulo (A3)
+//
+// No había forma de expresar un puntero nulo: `var g: *int = 0` (global) y
+// `let p: *int = 0` (local) daban "type mismatch: expected *int, got int".
+// Impacto real (fricción del navegador): un handle (sqlite) no podía vivir en
+// una global vacía y abrirse después — el workaround era abrir la DB al
+// arrancar aunque no se usara.
+// Contrato: el literal entero 0 es asignable a cualquier `*T` (constante de
+// puntero nulo, como en C). Otros enteros NO (siguen siendo type mismatch:
+// un puntero arbitrario debe venir de alloc/&x/FFI, no de un número al azar).
+// Self-checking con assert() (abortivo).
+
+// Global de handle: el caso de uso que motivó el ítem.
+var g_handle: *int = 0
+
+fn is_null(p: *int) -> bool {
+    let as_int: int = p as int
+    return as_int == 0
+}
+
+fn test_global_null() {
+    assert(is_null(g_handle))
+    print("global *T = 0 ok")
+}
+
+fn test_local_null() {
+    let p: *int = 0
+    assert(is_null(p))
+    print("local *T = 0 ok")
+}
+
+fn test_asignacion_tardia() {
+    // El patrón real: global arranca nula, se abre después, se usa.
+    assert(is_null(g_handle))
+    let real: *int = alloc<int>(1)
+    g_handle = real
+    assert(not is_null(g_handle))
+    // y se puede volver a nular
+    g_handle = 0
+    assert(is_null(g_handle))
+    free(real)
+    print("asignacion tardia ok")
+}
+
+fn test_otros_tipos_de_puntero() {
+    let pc: *i8 = 0
+    let pu: *u8 = 0
+    let as_i: int = pc as int
+    let as_u: int = pu as int
+    assert(as_i == 0)
+    assert(as_u == 0)
+    print("otros *T ok")
+}
+
+fn main() {
+    test_global_null()
+    test_local_null()
+    test_asignacion_tardia()
+    test_otros_tipos_de_puntero()
+    print("test-307-null-pointer ok")
+}

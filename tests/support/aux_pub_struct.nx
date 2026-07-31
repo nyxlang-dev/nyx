@@ -1,0 +1,20 @@
+// Aux de los tests SP4 T3b (`pub struct` / `pub type` se registran como TIPO).
+// A propósito usa `pub struct` y `pub type`: hasta T3b la rama `export` de
+// `collect_declarations` sólo hacía `scope_declare`, nunca `register_struct`,
+// así que estos nombres NO contaban como tipos conocidos y toda anotación
+// `: Tag` daba un NYX1001 espurio — incluso dentro de este mismo módulo.
+pub type TagId = int
+
+pub struct Tag {
+    id: TagId,
+    name: String
+}
+
+pub fn make_tag(id: int, name: String) -> Tag {
+    let t: Tag = Tag { id: id, name: name }
+    return t
+}
+
+pub fn tag_label(t: Tag) -> String {
+    return t.name
+}

@@ -1,0 +1,55 @@
+// Test 271: RWLock — multi-reader/single-writer (pthread_rwlock) expuesto como
+// builtins (patrón condvar/test-266). Motivación: nyx-db serializa TODO con un
+// mutex global; el RWLock permite lecturas concurrentes (dogfooding:gap-analysis
+// 2026-07-20). try* devuelven 0 = adquirido, 1 = ocupado.
+
+var g_lock: Map = Map.new()
+var g_value: int = 0
+
+fn writer() -> int {
+    var i: int = 0
+    while i < 1000 {
+        rwlock_wrlock(g_lock)
+        g_value = g_value + 1
+        rwlock_unlock(g_lock)
+        i = i + 1
+    }
+    return 0
+}
+
+fn reader() -> int {
+    rwlock_rdlock(g_lock)
+    let v: int = g_value
+    rwlock_unlock(g_lock)
+    return v
+}
+
+fn main() {
+    g_lock = rwlock_new()
+
+    // Semántica try*: readers comparten, writer excluye
+    assert(rwlock_tryrdlock(g_lock) == 0)   // 1er reader entra
+    assert(rwlock_tryrdlock(g_lock) == 0)   // 2o reader convive
+    assert(rwlock_trywrlock(g_lock) == 1)   // writer bloqueado por readers
+    rwlock_unlock(g_lock)
+    rwlock_unlock(g_lock)
+    assert(rwlock_trywrlock(g_lock) == 0)   // lock libre -> writer entra
+    assert(rwlock_tryrdlock(g_lock) == 1)   // reader bloqueado por writer
+    rwlock_unlock(g_lock)
+
+    // Serialización real entre threads: 2 writers x 1000 increments exactos
+    let w1: int = thread_spawn(writer)
+    let w2: int = thread_spawn(writer)
+    thread_join(w1)
+    thread_join(w2)
+    assert(g_value == 2000)
+    print(g_value)  // 2000
+
+    // Un reader post-join ve el valor final
+    let r: int = thread_spawn(reader)
+    let seen: int = thread_join(r)
+    assert(seen == 2000)
+
+    rwlock_destroy(g_lock)
+    print("done")
+}

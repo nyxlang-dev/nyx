@@ -1,0 +1,32 @@
+// Fixture (Fase 3, review final): bound de trait violado en un generic call
+// con TURBOFISH EXPLÍCITO — rama distinta de test-m08-trait-bound-unsatisfied.nx
+// (esa dispara NYX1020 en semantic, forma implícita `show_it(p)` con Point
+// que SÍ tiene un impl local de OTRO trait). Acá `show_it<Point>(p)` usa
+// turbofish, que el chequeo de bounds de semantic no cubre — pasa `check OK`
+// y recién codegen aborta con NYX2004, nombrando la firma faltante.
+trait Display2 {
+    fn show(self) -> String
+}
+
+struct Point {
+    x: int,
+}
+
+struct Other {
+    y: int,
+}
+
+impl Display2 for Other {
+    fn show(self) -> String {
+        return "o"
+    }
+}
+
+fn show_it<T: Display2>(v: T) -> int {
+    return 1
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 1 }
+    return show_it<Point>(p)
+}

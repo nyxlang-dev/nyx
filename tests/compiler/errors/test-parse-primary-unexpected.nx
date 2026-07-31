@@ -1,0 +1,9 @@
+// El catch-all final de parse_primary imprimía "ERROR: token inesperado en
+// primary" pero NO contaba el error (sin pasar por p_diag) -> el compilador
+// seguía y emitía un binario mudo (exit 0). Hermano exacto del NYX0106 de
+// map-literal y el NYX0105 del dispatcher de atributos. Ahora es NYX0107
+// contado, con el token real en el mensaje.
+fn main() {
+    let x = )
+    print(x)
+}

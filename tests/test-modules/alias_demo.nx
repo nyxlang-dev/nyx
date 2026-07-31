@@ -1,0 +1,2 @@
+// Tests helper module — type alias exported for S17 tests.
+pub type Score = int

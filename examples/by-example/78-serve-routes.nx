@@ -1,0 +1,42 @@
+// nyx-serve routes — GET, POST, PUT, DELETE handlers
+// Rutas nyx-serve — handlers para GET, POST, PUT, DELETE
+
+import "std/http"
+import "std/web"
+
+fn get_users(req: Request) -> Response {
+    return response_json(200, "[{\"id\": 1, \"name\": \"Alice\"}]")
+}
+
+fn get_user_by_id(req: Request) -> Response {
+    // {id} is captured automatically in req.params
+    let id: String = req.params.get("id")
+    return response_json(200, "{\"id\": " + id + ", \"name\": \"User\"}")
+}
+
+fn create_user(req: Request) -> Response {
+    // req.body contains the raw request body
+    return response_json(201, "{\"created\": true, \"body\": \"" + req.body + "\"}")
+}
+
+fn delete_user(req: Request) -> Response {
+    let id: String = req.params.get("id")
+    return response_new(204, "")
+}
+
+fn main() -> int {
+    let app: App = app_new()
+
+    // RESTful routes with path parameters
+    app_get(app, "/users", get_users)
+    app_get(app, "/users/{id}", get_user_by_id)
+    app_post(app, "/users", create_user)
+    app_delete(app, "/users/{id}", delete_user)
+
+    print("REST API configured with 4 routes")
+    print("  GET    /users")
+    print("  GET    /users/{id}")
+    print("  POST   /users")
+    print("  DELETE /users/{id}")
+    return 0
+}

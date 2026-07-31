@@ -1,0 +1,33 @@
+// Test 53: M-08 session 9 — let inference extension happy path.
+//
+// Exercises: let without annotation infers Array<int> from literal,
+// struct_init infers TyStruct, field_access resolves via struct registry,
+// index access on Array<int> yields int, for-loop variable inherits element
+// type. Every typed let on the LHS matches the inferred RHS.
+
+struct Point {
+    x: int,
+    y: int
+}
+
+fn main() -> int {
+    // Array literal → Array<int>
+    let arr = [10, 20, 30]
+    let first: int = arr[0]
+
+    // Struct construction → TyStruct("Point")
+    let p = Point { x: 1, y: 2 }
+    let px: int = p.x
+
+    // For-var type from iterable
+    var total: int = 0
+    for n in arr {
+        total = total + n
+    }
+
+    print(int_to_string(first))
+    print(int_to_string(px))
+    print(int_to_string(total))
+    print("OK")
+    return 0
+}

@@ -1,0 +1,51 @@
+// Test 102: format strings (v0.6.0)
+
+fn main() {
+    // Test 1: basic format with string
+    let name: String = "World"
+    let s1: String = format("Hello, {}!", name)
+    assert(s1 == "Hello, World!")
+    print("Basic format: OK")
+
+    // Test 2: format with int
+    let age: int = 25
+    let s2: String = format("Age: {}", age)
+    assert(s2 == "Age: 25")
+    print("Int format: OK")
+
+    // Test 3: format with multiple args
+    let s3: String = format("{} is {} years old", name, age)
+    assert(s3 == "World is 25 years old")
+    print("Multi-arg format: OK")
+
+    // Test 4: format with float
+    let pi: float = 3.14
+    let s4: String = format("Pi is {}", pi)
+    assert(s4 == "Pi is 3.14")
+    print("Float format: OK")
+
+    // Test 5: format with bool
+    let flag: bool = true
+    let s5: String = format("Active: {}", flag)
+    assert(s5 == "Active: true")
+    print("Bool format: OK")
+
+    // Test 6: format with no placeholders
+    let s6: String = format("No placeholders here")
+    assert(s6 == "No placeholders here")
+    print("No placeholders: OK")
+
+    // Test 7: format with adjacent placeholders
+    let a: String = "Hello"
+    let b: String = "World"
+    let s7: String = format("{}{}", a, b)
+    assert(s7 == "HelloWorld")
+    print("Adjacent placeholders: OK")
+
+    // Test 8: format with only a placeholder
+    let s8: String = format("{}", name)
+    assert(s8 == "World")
+    print("Single placeholder: OK")
+
+    print("Test 102 completado")
+}

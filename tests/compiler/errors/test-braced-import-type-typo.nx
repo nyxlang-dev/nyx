@@ -1,0 +1,13 @@
+// SP4 T3: un archivo con `import { ... } from "..."` NO debe apagar NYX1001.
+// La rama `import` de collect_declarations solo prendía g_has_imports (sin
+// escanear el módulo), y validate_type_ann degradaba TODO nombre desconocido
+// a wildcard cuando ese flag estaba prendido.
+// Expected stderr (contains): "unknown type 'Poimt'"
+// Expected exit: non-zero (semantic check fails)
+
+import { aux_origin } from "tests/support/aux_import_types"
+
+fn main() -> int {
+    let p: Poimt = Point { x: 1, y: 2 }   // typo: Point → Poimt
+    return aux_origin()
+}

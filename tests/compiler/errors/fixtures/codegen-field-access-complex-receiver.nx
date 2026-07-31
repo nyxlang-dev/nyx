@@ -1,0 +1,21 @@
+// Fixture (Fase 3, Task 4c): field_access con un campo VÁLIDO pero un
+// receiver que es una expresión compleja (una llamada a función), no un
+// identificador simple bindeado. semantic ya caza el campo INEXISTENTE
+// desde la Fase 2 (NYX1017) — este es un caso DISTINTO: el campo existe,
+// pero codegen_field_access solo sabe bajar receivers-identificador. Antes
+// imprimía un Warning y evaluaba a 0 en silencio; ahora debe abortar con
+// NYX2003. Soportar el caso real (`f().campo`) NO es parte de esta tarea —
+// el hint del mensaje es bindear el resultado primero.
+struct Punto {
+    x: int,
+    y: int,
+}
+
+fn hacer_punto() -> Punto {
+    return Punto { x: 42, y: 7 }
+}
+
+fn main() {
+    let v = hacer_punto().x
+    print(v)
+}

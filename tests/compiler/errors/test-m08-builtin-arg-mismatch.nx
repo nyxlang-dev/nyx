@@ -1,0 +1,9 @@
+// M-08 sesion 6 error test: built-in method arg type mismatch.
+// String.substring expects (int, int). Passing a String as start fails.
+// Expected stderr (contains): "argument 1 of 'substring': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let s: String = "hola"
+    let bad: String = s.substring("start", 2)
+    return 0
+}

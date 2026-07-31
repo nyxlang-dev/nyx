@@ -1,0 +1,7 @@
+// M-08 error test: literal type mismatch against annotation.
+// Expected stderr (contains): "type mismatch in 'x': expected int, got String"
+// Expected exit: non-zero (semantic check fails)
+fn main() -> int {
+    let x: int = "hola"
+    return 0
+}

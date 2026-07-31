@@ -1,0 +1,43 @@
+fn abs_val(x: int) -> int {
+    if x < 0 {
+        return 0 - x
+    } else {
+        return x
+    }
+}
+
+fn describe(n: int) -> String {
+    if n > 0 {
+        return "positive"
+    } else {
+        if n < 0 {
+            return "negative"
+        } else {
+            return "zero"
+        }
+    }
+}
+
+enum Shape {
+    Circle(int),
+    Square(int)
+}
+
+fn area_name(s: Shape) -> String {
+    match s {
+        Shape.Circle(r) => { return "circle" }
+        Shape.Square(side) => { return "square" }
+    }
+}
+
+fn main() {
+    print("abs(-5): " + int_to_string(abs_val(-5)))
+    print("abs(3): " + int_to_string(abs_val(3)))
+    print("describe(5): " + describe(5))
+    print("describe(-3): " + describe(-3))
+    print("describe(0): " + describe(0))
+    let c = Shape.Circle(5)
+    print("area_name: " + area_name(c))
+    print("All return-in-branches tests passed!")
+}
+main()

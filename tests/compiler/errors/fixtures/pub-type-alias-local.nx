@@ -1,0 +1,14 @@
+// SP4 T3b (positivo): un alias EXPORTADO usado como anotación, sin ningún
+// import. `parse_pub` envuelve el alias en `export` y la rama `export` de
+// collect_declarations no lo miraba → `unknown type 'Ali'`.
+pub type Ali = int
+
+pub fn doble(a: Ali) -> Ali {
+    return a + a
+}
+
+fn main() -> int {
+    let a: Ali = 21
+    print(doble(a))
+    return 0
+}

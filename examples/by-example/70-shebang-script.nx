@@ -1,0 +1,25 @@
+#!/usr/bin/env nyx
+// Shebang scripts — running Nyx files as executable scripts
+// Scripts shebang — ejecutar archivos Nyx como scripts ejecutables
+//
+// Make this file executable: chmod +x 70-shebang-script.nx
+// Then run directly: ./70-shebang-script.nx
+
+fn greet(name: String) -> String {
+    return "Hello, " + name + "!"
+}
+
+fn main() -> int {
+    print(greet("World"))
+    print("running as a script")
+
+    let args: Array = get_args()
+    print("args: " + int_to_string(args.length()))
+
+    if args.length() > 1 {
+        let name: String = args[1]
+        print(greet(name))
+    }
+
+    return 0
+}

@@ -1,0 +1,5 @@
+fn main() {
+    var m = Map.new()
+    m.insert("x", 10)
+    print(m)
+}

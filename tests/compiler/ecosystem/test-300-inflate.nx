@@ -1,0 +1,100 @@
+// test-300-inflate.nx — std/compress: inflate/gunzip/inflate_raw (D1 friction-browser)
+//
+// Streaming zlib inflate (inflateInit2) so no original_size is needed —
+// closes the gap that made std/compress useless for HTTP Content-Encoding.
+// Self-checking with assert() (abortive on failure).
+
+import "std/compress"
+
+fn test_zlib_roundtrip_via_compress() {
+    // compress() (runtime nyx_compress) emits zlib-framed (RFC 1950) output.
+    // inflate() (mode 0, auto zlib|gzip) must round-trip it without needing
+    // original_size — the whole point of the streaming API.
+    let text = "Hello World! This is a test of the Nyx compression system. " +
+               "The more repetition there is, the better the compression ratio. " +
+               "Repetition, repetition, repetition makes text compressible."
+    let compressed = compress(text)
+    let back = inflate(compressed)
+    assert(back == text)
+    print("zlib auto-detect round-trip ok")
+}
+
+fn test_gunzip_fixture() {
+    // gzip("hello") produced with: python3 -c "import gzip;
+    //   print(list(gzip.compress(b'hello', compresslevel=9, mtime=0)))"
+    let bytes: Array = [31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 203, 72, 205, 201,
+                         201, 7, 0, 134, 166, 16, 54, 5, 0, 0, 0]
+    let gz: String = string_from_bytes(bytes, 0, 25)
+    let out = gunzip(gz)
+    assert(out == "hello")
+    print("gunzip fixture ok")
+
+    // inflate() auto-detect must also accept gzip framing.
+    let out2 = inflate(gz)
+    assert(out2 == "hello")
+    print("inflate auto-detects gzip ok")
+}
+
+fn test_inflate_raw_fixture() {
+    // raw deflate("hello", no header) via:
+    //   zlib.compressobj(9, zlib.DEFLATED, -15)
+    let bytes: Array = [203, 72, 205, 201, 201, 7, 0]
+    let raw: String = string_from_bytes(bytes, 0, 7)
+    let out = inflate_raw(raw)
+    assert(out == "hello")
+    print("inflate_raw fixture ok")
+}
+
+fn test_zlib_fixture() {
+    // zlib.compress(b"hello", 9) — RFC 1950 zlib framing (not gzip).
+    let bytes: Array = [120, 218, 203, 72, 205, 201, 201, 7, 0, 6, 44, 2, 21]
+    let zl: String = string_from_bytes(bytes, 0, 13)
+    let out = inflate(zl)
+    assert(out == "hello")
+    print("zlib fixture (auto-detect) ok")
+}
+
+fn test_corrupt_input() {
+    // Same gzip("hello") fixture with one payload byte flipped -> corrupt
+    // deflate stream. Must return "" (not abort).
+    let bytes: Array = [31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 203, 72, 50, 201,
+                         201, 7, 0, 134, 166, 16, 54, 5, 0, 0, 0]
+    let gz: String = string_from_bytes(bytes, 0, 25)
+    let out = gunzip(gz)
+    assert(out.length() == 0)
+    print("corrupt input returns empty ok")
+}
+
+fn test_empty_input() {
+    assert(inflate("").length() == 0)
+    assert(gunzip("").length() == 0)
+    assert(inflate_raw("").length() == 0)
+    print("empty input returns empty ok")
+}
+
+fn test_binary_output_with_nuls() {
+    // gzip("a\0b\0c") — the decompressed output itself contains embedded
+    // NULs; length must be preserved exactly (binary-safe end to end).
+    let bytes: Array = [31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 75, 100, 72, 98,
+                         72, 6, 0, 76, 134, 152, 253, 5, 0, 0, 0]
+    let gz: String = string_from_bytes(bytes, 0, 25)
+    let out = gunzip(gz)
+    assert(out.length() == 5)
+    assert(out.charAt(0) == 97)  // 'a'
+    assert(out.charAt(1) == 0)
+    assert(out.charAt(2) == 98)  // 'b'
+    assert(out.charAt(3) == 0)
+    assert(out.charAt(4) == 99)  // 'c'
+    print("binary output with embedded NULs preserved ok")
+}
+
+fn main() {
+    test_zlib_roundtrip_via_compress()
+    test_gunzip_fixture()
+    test_inflate_raw_fixture()
+    test_zlib_fixture()
+    test_corrupt_input()
+    test_empty_input()
+    test_binary_output_with_nuls()
+    print("test-300-inflate ok")
+}

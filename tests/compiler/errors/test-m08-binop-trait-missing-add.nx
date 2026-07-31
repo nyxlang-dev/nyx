@@ -1,0 +1,28 @@
+// M-08 sesion 20 error test: struct con impl Display (algún trait)
+// pero sin impl Add, usado con operador `+`. S20 endurece validate_binop
+// para operadores aritméticos análogo a S18 sobre unop.
+// Expected stderr (contains): "left operand of '+' must implement 'Add', but 'Point' does not"
+// Expected exit: non-zero (semantic check fails)
+
+trait Show {
+    fn show(self) -> String
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Show for Point {
+    fn show(self) -> String {
+        return "point"
+    }
+}
+
+fn main() -> int {
+    let a: Point = Point { x: 1, y: 2 }
+    let b: Point = Point { x: 3, y: 4 }
+    let c: Point = a + b
+    print(c.show())
+    return 0
+}

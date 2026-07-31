@@ -1,0 +1,10 @@
+// NYX2007: push sobre un campo Map. Antes compilaba limpio y segfaulteaba en
+// runtime (codegen despachaba nyx_array_push sobre un i8* que es un Map).
+// Expected stderr (contains): "NYX2007"
+struct S { m: Map<String, int> }
+
+fn main() -> int {
+    let s: S = S { m: {"a": 1} }
+    s.m.push(7)
+    return 0
+}

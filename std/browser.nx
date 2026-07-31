@@ -1,0 +1,96 @@
+// std/browser.nx — pasarela browser para el target WASM (handoff venezuelainfo #6).
+// SOLO compila bajo NYX_TARGET=wasm32-wasi (extern "js" aborta en nativo a
+// propósito). Formaliza el patrón callback-por-NOMBRE-de-export que el portal
+// ya probó en producción: todo lo async (fetch/timers/geo) llama de vuelta a
+// una fn Nyx exportada con #[export_name]. El shim provee browserBindings()
+// (examples/browser/nyx-wasi-shim.js) sobre el browser real o mocks (tests).
+//
+// EN: browser gateway for the WASM target. Async APIs call back into Nyx
+// exports BY NAME (same pattern as dom_on) until real async/await exists.
+//
+// Uso / usage:
+//   import "std/browser"
+//   #[export_name = "on_datos"]
+//   fn on_datos(status: int, body: String) { ... }
+//   fn main() { browser_fetch("https://api...", "GET", "", "on_datos") }
+
+extern "js" fn js_browser_fetch(url: String, method: String, body: String, handler: String)
+extern "js" fn js_browser_interval(ms: int, handler: String) -> int
+extern "js" fn js_browser_timeout(ms: int, handler: String) -> int
+extern "js" fn js_browser_clear_timer(id: int)
+extern "js" fn js_browser_geo(handler: String)
+extern "js" fn js_ls_get(key: String) -> String
+extern "js" fn js_ls_set(key: String, value: String)
+extern "js" fn js_tz_offset() -> int
+extern "js" fn js_match_media(query: String) -> int
+// Adición Task 2 (router): hash del URL + suscripción a hashchange por
+// CLOSURE — mismo mecanismo de function-table que dom_on_fn/dom_on_h
+// (std/dom.nx): el par {fn_ptr, env_ptr} cruza como i8* y el shim lo invoca
+// vía la function table exportada (nyx.callClosure). std/router.nx los usa
+// para resolver la vista actual y re-navegar cuando el usuario cambia el
+// hash (atrás/adelante del browser, o un link `#/...`).
+extern "js" fn js_browser_get_hash() -> String
+extern "js" fn js_browser_on_hashchange_fn(handler: Fn)
+
+// HTTP fetch: al resolver, llama al export `handler(status: int, body: String)`.
+// status 0 = error de red (body = mensaje). body de request "" = sin body.
+export fn browser_fetch(url: String, method: String, body: String, handler: String) {
+    js_browser_fetch(url, method, body, handler)
+}
+
+// setInterval: llama al export `handler()` cada `ms`. Devuelve un id para
+// browser_clear_timer.
+export fn browser_interval(ms: int, handler: String) -> int {
+    return js_browser_interval(ms, handler)
+}
+
+// setTimeout: llama al export `handler()` una vez tras `ms`. Devuelve id.
+export fn browser_timeout(ms: int, handler: String) -> int {
+    return js_browser_timeout(ms, handler)
+}
+
+// Cancela un timer (interval o timeout) por id
+export fn browser_clear_timer(id: int) {
+    js_browser_clear_timer(id)
+}
+
+// Geolocalización: llama al export `handler(lat: float, lon: float)`.
+// Si el permiso falla, el handler NO se llama (mismo contrato que el portal).
+export fn browser_geo(handler: String) {
+    js_browser_geo(handler)
+}
+
+// localStorage.getItem ("" si no existe)
+export fn ls_get(key: String) -> String {
+    return js_ls_get(key)
+}
+
+// localStorage.setItem
+export fn ls_set(key: String, value: String) {
+    js_ls_set(key, value)
+}
+
+// Offset de zona horaria en MINUTOS al este de UTC (= -Date.getTimezoneOffset();
+// Caracas = -240). EN: timezone offset in minutes east of UTC.
+export fn tz_offset() -> int {
+    return js_tz_offset()
+}
+
+// window.matchMedia(query).matches → 1/0 (0 también si matchMedia no existe)
+export fn match_media(query: String) -> int {
+    return js_match_media(query)
+}
+
+// location.hash actual (incluye el "#" inicial, p.ej. "#/detalle/7"; "" si
+// no hay hash). std/routematch.nx normaliza el "#" al matchear.
+export fn browser_get_hash() -> String {
+    return js_browser_get_hash()
+}
+
+// Suscribe un CLOSURE Nyx al evento `hashchange` de `window` (dispara cuando
+// el usuario navega atrás/adelante o cambia el hash). Solo UN listener activo
+// por módulo — una llamada nueva reemplaza a la anterior (dedup del lado del
+// shim, mismo patrón que dom_on_fn).
+export fn browser_on_hashchange(f: Fn) {
+    js_browser_on_hashchange_fn(f)
+}

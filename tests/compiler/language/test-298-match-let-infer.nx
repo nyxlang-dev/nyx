@@ -1,0 +1,81 @@
+// test-298 — A7 friction-browser: `let r = match ...` SIN anotación infiere
+// el tipo del match por sus ramas. Antes codegen_match SIEMPRE retornaba el
+// slot i64 crudo (match_arm_store ptrtoint-ea cualquier valor al guardarlo)
+// y nada convertía ese i64 de vuelta a puntero de String en el `let` sin
+// anotar → `let r = match v {1=>"uno",...}` imprimía el PUNTERO del String
+// como número (`r=187651452971792`). Fix: infer_nyx_type_from_ast gana un
+// caso "match" (infiere por la PRIMERA arm inferible, body-expr o
+// body-bloque vía su última statement) y codegen_let lo usa para coercionar
+// el i64 crudo de vuelta a %nyx_string* (mismo mecanismo que ya existía
+// para inferred_type de una `call`).
+
+enum Color {
+    Red,
+    Blue
+}
+
+fn main() {
+    // Caso del reporte: let sin anotación, ramas String
+    let v = 2
+    let r = match v { 1 => "uno", 2 => "dos", _ => "otro" }
+    assert(r == "dos")
+
+    // var también (el usuario lo probó)
+    var r2 = match v { 1 => "uno", 2 => "dos", _ => "otro" }
+    assert(r2 == "dos")
+
+    // scrutinee String con ramas String
+    let s = "b"
+    let sr = match s { "a" => "x", "b" => "y", _ => "z" }
+    assert(sr == "y")
+
+    // rama-bloque: el tipo se infiere de la ÚLTIMA statement del bloque
+    let br = match v {
+        1 => {
+            let t = "a" + "b"
+            t
+        },
+        _ => "z"
+    }
+    assert(br == "z")
+    let br2 = match v {
+        2 => {
+            let t = "a" + "b"
+            t
+        },
+        _ => "z"
+    }
+    assert(br2 == "ab")
+
+    // Concat e interpolación del resultado (el usuario reportó que
+    // fallaban por el mismo origen — el i64 crudo llegando a concat)
+    assert(("r=" + r) == "r=dos")
+    let msg = "r=${r}"
+    assert(msg == "r=dos")
+
+    // NEG — no romper lo que ya andaba:
+    // ramas int sin anotar siguen siendo int
+    let ir = match v { 1 => 10, 2 => 20, _ => 0 }
+    assert(ir == 20)
+    assert((ir + 1) == 21)
+
+    // let anotado explícito sigue funcionando (gana la anotación)
+    let ar: String = match v { 1 => "uno", 2 => "dos", _ => "otro" }
+    assert(ar == "dos")
+
+    // match como STATEMENT (no expresión) sigue OK
+    match v {
+        2 => { print("stmt-ok") },
+        _ => { print("stmt-bad") }
+    }
+
+    // match sobre enum con let anotado sigue OK
+    let c: Color = Color.Blue
+    let cr: String = match c {
+        Color.Red => "red",
+        Color.Blue => "blue"
+    }
+    assert(cr == "blue")
+
+    print("match let inference OK")
+}

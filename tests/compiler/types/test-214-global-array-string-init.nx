@@ -1,0 +1,33 @@
+// Test 214: literal de array GLOBAL con elementos String se inicializa
+// COMPLETO (fricción dogfooding venezuelainfo.org, 2026-06-30).
+// Regresión: __nyx_init_globals solo emitía nyx_array_push para elementos
+// `number`, ignorando los `string` → los arrays globales de String se
+// inicializaban vacíos (length() == 0). Los de int nunca se vieron afectados.
+
+var g_strs: Array = ["alpha", "beta", "gamma"]
+var g_one: Array = ["solo"]
+var g_ints: Array = [10, 20, 30]
+
+fn main() -> int {
+    // Multi-elemento String: el bug reportado.
+    assert(g_strs.length() == 3)
+    let a: String = g_strs[0]
+    let b: String = g_strs[1]
+    let c: String = g_strs[2]
+    assert(a == "alpha")
+    assert(b == "beta")
+    assert(c == "gamma")
+
+    // Un solo elemento String: también estaba roto (daba 0).
+    assert(g_one.length() == 1)
+    let s: String = g_one[0]
+    assert(s == "solo")
+
+    // int sigue funcionando (no regresión).
+    assert(g_ints.length() == 3)
+    assert(g_ints[0] == 10)
+    assert(g_ints[2] == 30)
+
+    print("ok")
+    return 0
+}

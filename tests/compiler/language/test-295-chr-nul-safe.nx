@@ -1,0 +1,33 @@
+// test-295 — chr(0) construye el byte NUL real (length 1), no colapsa a ""
+// (A5 friction-browser). Causa raíz: nyx_string_from_char en runtime/strings.c
+// pasaba por nyx_string_from_cstr (strlen-based) y truncaba en el NUL. Fix:
+// nyx_string_from_ptr con longitud explícita 1 — chr conserva su contrato
+// byte-level (chr(233) sigue siendo el byte 0xE9 crudo; codepoints UTF-8 vía
+// utf8_encode es aparte, D2 pendiente).
+fn main() {
+    let s: String = chr(65) + chr(0) + chr(66)
+    assert(s.length() == 3)
+    assert(s.charAt(0) == 65)
+    assert(s.charAt(1) == 0)
+    assert(s.charAt(2) == 66)
+    assert(s.indexOf(chr(0)) == 1)
+
+    // round-trip contra string_from_bytes (constructor NUL-safe conocido)
+    let bytes: Array = [65, 0, 66]
+    let via_bytes: String = string_from_bytes(bytes, 0, 3)
+    assert(s == via_bytes)
+    assert(s.length() == via_bytes.length())
+
+    // chr(0) solo, sin concat de por medio
+    let z: String = chr(0)
+    assert(z.length() == 1)
+    assert(z.charAt(0) == 0)
+
+    // NOTA: write_file/read_file NO son binary-safe hoy (write_file recibe
+    // char* — se corta en el NUL al cruzar el ABI a C-string; read_file usa
+    // fread de longitud completa pero el write ya perdió el resto). Es un
+    // bug DISTINTO (firma extern de write_file, no chr) — catalogado aparte,
+    // fuera de scope de A5 (que es SOLO el constructor chr).
+
+    print("chr(0) NUL-safe OK")
+}

@@ -1,0 +1,13 @@
+// Fixture (Fase 3, Task 4b): método inexistente sobre un global cuyo ÚNICO
+// registro es `const_values` (no `ctx.variables`/`global_var_names`) — un
+// `const` de literal simple a nivel de archivo. Antes esta rama (separada
+// del catch-all de codegen_method_call arreglado en v0.22.14) imprimía
+// "Error: método no soportado en global: ..." a stdout SIN abortar, y
+// encima seguía generando IR que referencia un `@N` que nunca se declaró
+// como global real. Ahora debe abortar con NYX2002.
+const N: int = 5
+
+fn main() {
+    N.metodo_que_no_existe()
+    print("no debería llegar acá")
+}

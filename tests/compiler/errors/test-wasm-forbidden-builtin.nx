@@ -1,0 +1,11 @@
+// Un builtin cuyo runtime .c está excluido del subset WASM (aquí tcp_connect,
+// de net.c) compilado con NYX_TARGET=wasm32-wasi debe fallar con error bilingüe
+// en codegen (fail-fast), en vez de dejar que wasm-ld muera con un
+// 'undefined symbol' críptico. En target nativo el mismo programa compila.
+// EN: a builtin excluded from the wasm runtime subset must fail fast under the
+// wasm target with a clear error instead of a cryptic wasm-ld link failure.
+
+fn main() {
+    let fd: int = tcp_connect("localhost", 8080)
+    print(fd)
+}

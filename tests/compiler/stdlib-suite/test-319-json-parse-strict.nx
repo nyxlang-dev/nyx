@@ -1,0 +1,93 @@
+// test-319 — los literales de JSON se validan completos, no por su primera
+// letra. Antes: parse_value hacía `if c == 't' { pos += 4; return true }`,
+// así que "tomato" parseaba como true y "nada" como null.
+//
+// También cubre el round-trip completo parse(stringify(x)) == x para
+// strings con \r, \t, controles (\u00XX) y UTF-8 multibyte -- json_escape
+// (Task 1) ahora emite \u00XX para controles y parse_string tiene que
+// poder decodificarlos de vuelta.
+import "std/json"
+
+fn main() {
+    // Literales VÁLIDOS siguen funcionando (control positivo)
+    let t: Array = json_parse("true")
+    assert(json_type(t) == "bool")
+    let f: Array = json_parse("false")
+    assert(json_type(f) == "bool")
+    let n: Array = json_parse("null")
+    assert(json_type(n) == "null")
+
+    // Basura que empieza con la misma letra NO se acepta como literal
+    let bad1: Array = json_parse("tomato")
+    assert(json_type(bad1) == "null")
+    let bad2: Array = json_parse("nada")
+    assert(json_type(bad2) == "null")
+    let bad3: Array = json_parse("fx")
+    assert(json_type(bad3) == "null")
+
+    // Dentro de una estructura tampoco
+    let arr: Array = json_parse("[true,tomato]")
+    assert(json_type(arr) == "array")
+
+    // ROUND-TRIP: parse(stringify(x)) == x
+    let with_cr: String = "linea1\rlinea2"
+    let r1: Array = json_parse(json_stringify(json_string(with_cr)))
+    let v1: String = r1[1]
+    assert(v1 == with_cr)
+
+    let with_tab: String = "col1\tcol2"
+    let r2: Array = json_parse(json_stringify(json_string(with_tab)))
+    let v2: String = r2[1]
+    assert(v2 == with_tab)
+
+    let with_ctrl: String = chr(1)
+    let r3: Array = json_parse(json_stringify(json_string(with_ctrl)))
+    let v3: String = r3[1]
+    assert(v3 == with_ctrl)
+
+    let with_utf8: String = "café"
+    let r4: Array = json_parse(json_stringify(json_string(with_utf8)))
+    let v4: String = r4[1]
+    assert(v4 == with_utf8)
+
+    // Bordes de \uXXXX y de los literales truncados -- verificados a mano
+    // en la review de la Task 3 pero nunca quedaron como assert. No
+    // crashean, no cuelgan, y el comportamiento actual (confirmado
+    // correcto por la review) es el que se fija acá.
+
+    // \uZZZZ: hex malformado -> parse_hex4 devuelve -1, el escape \u no
+    // se decodifica y los 4 caracteres crudos quedan como texto literal.
+    let bad_hex: Array = json_parse("\"\\uZZZZ\"")
+    assert(json_type(bad_hex) == "string")
+    let bad_hex_v: String = bad_hex[1]
+    assert(bad_hex_v == "ZZZZ")
+
+    // \u12 al final del input: no hay 4 hex disponibles (truncado), el
+    // escape se ignora y "12" queda como texto literal.
+    let trunc_hex: Array = json_parse("\"\\u12\"")
+    assert(json_type(trunc_hex) == "string")
+    let trunc_hex_v: String = trunc_hex[1]
+    assert(trunc_hex_v == "12")
+
+    // Hex en minúscula y en mayúscula decodifican al mismo codepoint.
+    let hex_lower: Array = json_parse("\"\\u00e9\"")
+    assert(json_type(hex_lower) == "string")
+    let hex_lower_v: String = hex_lower[1]
+    assert(hex_lower_v == "é")
+
+    let hex_upper: Array = json_parse("\"\\u00E9\"")
+    assert(json_type(hex_upper) == "string")
+    let hex_upper_v: String = hex_upper[1]
+    assert(hex_upper_v == "é")
+
+    // Literales truncados: "tru"/"fals"/"nul" no son prefijos válidos de
+    // nada más -- deben rechazarse como null, igual que "tomato"/"nada".
+    let trunc_true: Array = json_parse("tru")
+    assert(json_type(trunc_true) == "null")
+    let trunc_false: Array = json_parse("fals")
+    assert(json_type(trunc_false) == "null")
+    let trunc_null: Array = json_parse("nul")
+    assert(json_type(trunc_null) == "null")
+
+    print("ok")
+}

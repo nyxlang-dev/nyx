@@ -1,0 +1,8 @@
+5
+urgent
+urgent
+critical
+high
+2
+network_poll,handle_input,render_frame,update_physics,garbage_collect
+priority queue ok

@@ -1,0 +1,23 @@
+// Test 76: Default methods in traits
+
+trait Greet {
+    fn hello(self) -> String
+    fn greeting(self) -> String {
+        return "Hello, " + self.hello()
+    }
+}
+
+struct Person { name: String }
+
+impl Greet for Person {
+    fn hello(self) -> String {
+        return self.name
+    }
+    // greeting() uses default implementation
+}
+
+fn main() {
+    let p = Person { name: "World" }
+    print(p.greeting())
+    print(p.hello())
+}

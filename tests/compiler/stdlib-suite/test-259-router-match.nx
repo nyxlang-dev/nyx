@@ -1,0 +1,33 @@
+// test-259 — route_match/route_resolve de std/routematch: puro, corre NATIVO.
+import "std/routematch"
+fn main() {
+    // exacto
+    let m1: Array = route_match("/lista", "#/lista")
+    assert(m1[0] == 1)
+    // :param captura
+    let m2: Array = route_match("/detalle/:id", "#/detalle/7")
+    assert(m2[0] == 1)
+    let ps: Array = m2[1]
+    let p0: Array = ps[0]
+    assert(p0[0] == "id")
+    assert(p0[1] == "7")
+    // no-match: distinto literal y distinto largo
+    assert(route_match("/lista", "#/detalle")[0] == 0)
+    assert(route_match("/detalle/:id", "#/detalle")[0] == 0)
+    assert(route_match("/detalle/:id", "#/detalle/7/extra")[0] == 0)
+    // raíz: "/" matchea vacío y "/"
+    assert(route_match("/", "")[0] == 1)
+    assert(route_match("/", "#/")[0] == 1)
+    // multi-segmento con 2 params
+    let m3: Array = route_match("/a/:x/b/:y", "#/a/1/b/2")
+    assert(m3[0] == 1)
+    let ps3: Array = m3[1]
+    assert(ps3.length() == 2)
+    // resolve: primer match gana; sin match → default
+    let pats: Array = ["/lista", "/detalle/:id"]
+    let r1: Array = route_resolve(pats, "#/detalle/9", 0)
+    assert(r1[0] == 1)
+    let r2: Array = route_resolve(pats, "#/nada", 0)
+    assert(r2[0] == 0)
+    print("router-match OK")
+}

@@ -1,0 +1,10 @@
+// Fixture (Fase 3, Task 4a): `0..n` asignado a una variable, FUERA de un
+// `for`. codegen_expr solo sabe bajar "range" dentro del azúcar de un for
+// (ver codegen.nx ~10893); en cualquier otro lugar caía al catch-all maestro
+// y devolvía "i64 0" en silencio. Soportar `let r = 0..n` de verdad NO es
+// parte de esta tarea — lo que se prueba es que ahora aborta con NYX2001 en
+// vez de compilar mudo a 0.
+fn main() {
+    let r = 0..5
+    print(r)
+}

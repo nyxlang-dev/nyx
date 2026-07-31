@@ -1,0 +1,38 @@
+// Números aleatorios y UUID v4
+import "std/random"
+import "std/uuid"
+
+fn main() -> int {
+    // Generar 3 números aleatorios entre 1 y 100
+    print("Numeros aleatorios (1-100):")
+    let r1: int = random_range(1, 100)
+    let r2: int = random_range(1, 100)
+    let r3: int = random_range(1, 100)
+    print("  " + int_to_string(r1))
+    print("  " + int_to_string(r2))
+    print("  " + int_to_string(r3))
+
+    // random_bool
+    let b: bool = random_bool()
+    print("random_bool: " + int_to_string(b))
+
+    // random_float en [0.0, 1.0)
+    let f: float = random_float()
+    print("random_float: (generado)")
+
+    // Generar un UUID v4
+    let id: String = uuid_v4()
+    print("uuid_v4: " + id)
+    print("longitud uuid: " + int_to_string(id.length()))
+
+    // Validar que el UUID es valido
+    let valido: bool = uuid_is_valid(id)
+    print("uuid valido: " + int_to_string(valido))
+
+    // Generar otro UUID — debe ser diferente
+    let id2: String = uuid_v4()
+    print("segundo uuid: " + id2)
+    print("son distintos: " + int_to_string(id != id2))
+
+    return 0
+}

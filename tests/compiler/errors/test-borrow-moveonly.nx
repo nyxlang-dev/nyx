@@ -1,0 +1,12 @@
+// inc 4 Etapa 3: MoveOnly<T> afín REAL desde std/owned (enforcement compile-time).
+// move_consume consume el valor by-value (afín) → un segundo move_consume(m) es
+// use-after-move → NYX1230 (SOUND/gating en NYX_BORROW=error). Reemplaza el viejo
+// enforcement RUNTIME (flag consumed en un Array) por el borrow checker de Track 4.
+import "std/owned"
+
+fn main() {
+    let m: MoveOnly<int> = move_new(5)
+    let x: int = move_consume(m)
+    let y: int = move_consume(m)   // ← NYX1230: use of moved value 'm'
+    print(x)
+}

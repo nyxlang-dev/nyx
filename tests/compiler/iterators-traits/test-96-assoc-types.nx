@@ -1,0 +1,43 @@
+// Test: associated types in traits
+
+trait Container {
+    type Item
+    fn first(self) -> Self.Item
+    fn size(self) -> int
+}
+
+struct IntBox { value: int }
+
+impl Container for IntBox {
+    type Item = int
+    fn first(self) -> int {
+        return self.value
+    }
+    fn size(self) -> int {
+        return 1
+    }
+}
+
+struct NameBox { name: String }
+
+impl Container for NameBox {
+    type Item = String
+    fn first(self) -> String {
+        return self.name
+    }
+    fn size(self) -> int {
+        return 1
+    }
+}
+
+fn main() {
+    let box = IntBox { value: 42 }
+    let v: int = box.first()
+    print(int_to_string(v))
+    print(int_to_string(box.size()))
+
+    let nb = NameBox { name: "hello" }
+    print(nb.first())
+    print(int_to_string(nb.size()))
+    print("Associated types OK")
+}

@@ -1,0 +1,259 @@
+// std/pool.nx — Generic Resource Pool for Nyx (v4.1.0)
+// Thread-safe resource pool using mutex + parallel arrays
+//
+// Pool layout: [meta_arr, available_arr, in_use_arr, mutex_ptr]
+//   meta_arr      = [max_size, created_count, wait_timeout_ms]
+//   available_arr = array of free handles (int)
+//   in_use_arr    = array of checked-out handles (int)
+//   mutex_ptr     = mutex handle (int, from mutex_new())
+
+// ── Pool creation ────────────────────────────────────────────────────────────
+
+pub fn pool_new(max_size: int, timeout_ms: int) -> Array {
+    var meta = []
+    meta.push(max_size)     // [0] max capacity
+    meta.push(0)            // [1] created_count
+    meta.push(timeout_ms)   // [2] wait timeout (ms)
+
+    var available = []
+    var in_use = []
+
+    let mx = mutex_new()
+
+    var storage = []
+    storage.push(meta)
+    storage.push(available)
+    storage.push(in_use)
+    storage.push(mx)
+    return storage
+}
+
+// ── Pool state queries ───────────────────────────────────────────────────────
+
+pub fn pool_capacity(pool: Array) -> int {
+    let meta: Array = pool[0]
+    let cap: int = meta[0]
+    return cap
+}
+
+pub fn pool_available_count(pool: Array) -> int {
+    let available: Array = pool[1]
+    return available.length()
+}
+
+pub fn pool_in_use_count(pool: Array) -> int {
+    let in_use: Array = pool[2]
+    return in_use.length()
+}
+
+pub fn pool_created_count(pool: Array) -> int {
+    let meta: Array = pool[0]
+    let cnt: int = meta[1]
+    return cnt
+}
+
+pub fn pool_total_active(pool: Array) -> int {
+    return pool_available_count(pool) + pool_in_use_count(pool)
+}
+
+// ── Handle allocation ────────────────────────────────────────────────────────
+
+// Acquire a handle from the pool. Returns -1 if pool is exhausted.
+// The caller should call pool_release() when done.
+pub fn pool_acquire(pool: Array) -> int {
+    let meta: Array = pool[0]
+    let available: Array = pool[1]
+    let in_use: Array = pool[2]
+    let mx: Map = pool[3]
+
+    mutex_lock(mx)
+
+    var handle = -1
+
+    // Try to get an existing available handle
+    if available.length() > 0 {
+        let last_idx = available.length() - 1
+        let h: int = available[last_idx]
+        available.pop()
+        in_use.push(h)
+        handle = h
+    } else {
+        // Create new handle if under capacity
+        let max_size: int = meta[0]
+        let created: int = meta[1]
+        if created < max_size {
+            let new_handle = created + 1  // handles are 1-based
+            meta[1] = created + 1
+            in_use.push(new_handle)
+            handle = new_handle
+        }
+        // else: pool exhausted, handle stays -1
+    }
+
+    mutex_unlock(mx)
+    return handle
+}
+
+// Acquire with busy-wait retry (polls up to timeout_ms)
+pub fn pool_acquire_wait(pool: Array) -> int {
+    let meta: Array = pool[0]
+    let timeout_ms: int = meta[2]
+
+    var elapsed = 0
+    var handle = -1
+    var done = false
+
+    while not done {
+        handle = pool_acquire(pool)
+        if handle >= 0 {
+            done = true
+        } else if elapsed >= timeout_ms {
+            done = true
+        } else {
+            sleep(10)
+            elapsed = elapsed + 10
+        }
+    }
+    return handle
+}
+
+// Release a handle back to the pool
+pub fn pool_release(pool: Array, handle: int) {
+    let available: Array = pool[1]
+    let in_use: Array = pool[2]
+    let mx: Map = pool[3]
+
+    if handle >= 0 {
+        mutex_lock(mx)
+
+        // Remove from in_use (find and shift-left)
+        var i = 0
+        var found = false
+        while i < in_use.length() {
+            let h: int = in_use[i]
+            if h == handle and not found {
+                // Shift remaining elements left
+                var j = i
+                while j < in_use.length() - 1 {
+                    let next_h: int = in_use[j + 1]
+                    in_use[j] = next_h
+                    j = j + 1
+                }
+                in_use.pop()
+                found = true
+            } else {
+                i = i + 1
+            }
+        }
+
+        // Return to available
+        if found {
+            available.push(handle)
+        }
+
+        mutex_unlock(mx)
+    }
+}
+
+// ── Pool lifecycle ───────────────────────────────────────────────────────────
+
+// Drain all available handles (mark pool as closed)
+pub fn pool_drain(pool: Array) {
+    let available: Array = pool[1]
+    let in_use: Array = pool[2]
+    let mx: Map = pool[3]
+
+    mutex_lock(mx)
+    while available.length() > 0 {
+        available.pop()
+    }
+    mutex_unlock(mx)
+}
+
+// Reset pool state (useful for testing)
+pub fn pool_reset(pool: Array) {
+    let meta: Array = pool[0]
+    let available: Array = pool[1]
+    let in_use: Array = pool[2]
+    let mx: Map = pool[3]
+
+    mutex_lock(mx)
+    while available.length() > 0 { available.pop() }
+    while in_use.length() > 0 { in_use.pop() }
+    meta[1] = 0   // reset created_count
+    mutex_unlock(mx)
+}
+
+// ── Stream helpers ───────────────────────────────────────────────────────────
+// Lightweight async-style stream using Arrays + closures (v4.1.0)
+// A "stream" is a lazy sequence backed by a generator closure.
+//
+// stream_new(capacity) -> Array   // creates stream storage
+// stream_push(s, val)             // push value to stream buffer
+// stream_poll(s) -> String        // pull next value ("" = empty)
+// stream_is_done(s) -> bool       // true when closed and empty
+
+pub fn stream_new() -> Array {
+    var buf = []
+    var meta = []
+    meta.push(0)   // closed flag: 0=open, 1=closed
+    var storage = []
+    storage.push(buf)
+    storage.push(meta)
+    return storage
+}
+
+pub fn stream_push(s: Array, val: String) {
+    let buf: Array = s[0]
+    buf.push(val)
+}
+
+pub fn stream_close(s: Array) {
+    let meta: Array = s[1]
+    meta[0] = 1
+}
+
+pub fn stream_poll(s: Array) -> String {
+    let buf: Array = s[0]
+    if buf.length() == 0 { return "" }
+    // Pop from front (head of queue)
+    let val: String = buf[0]
+    var i = 0
+    while i < buf.length() - 1 {
+        let next: String = buf[i + 1]
+        buf[i] = next
+        i = i + 1
+    }
+    buf.pop()
+    return val
+}
+
+pub fn stream_is_done(s: Array) -> bool {
+    let buf: Array = s[0]
+    let meta: Array = s[1]
+    let closed: int = meta[0]
+    return closed == 1 and buf.length() == 0
+}
+
+pub fn stream_pending(s: Array) -> int {
+    let buf: Array = s[0]
+    return buf.length()
+}
+
+// Collect all items from stream into array (drains the stream)
+pub fn stream_collect(s: Array) -> Array {
+    var result = []
+    var going = true
+    while going {
+        let val = stream_poll(s)
+        if val == "" {
+            let meta: Array = s[1]
+            let closed: int = meta[0]
+            if closed == 1 { going = false }
+            else { going = false }   // empty and open = stop
+        } else {
+            result.push(val)
+        }
+    }
+    return result
+}

@@ -1,0 +1,20 @@
+// NYX2007 (épica dispatch, T4): la propiedad `.length` sobre un campo Map.
+// Hermano en forma-de-PROPIEDAD del bug 1 (`m.length()` sobre un Map local),
+// que semantic caza con NYX1022 — pero NYX1022 mira LLAMADAS a métodos, así
+// que `s.m.length` sin paréntesis pasaba de largo por semantic y en codegen
+// caía al bloque de acceso ANIDADO de codegen_field_access, que buscaba la
+// clave inexistente "i8*:length" en struct_field_index, imprimía un "Error:"
+// mudo por STDOUT y devolvía el literal `i64 0`. Un Map de 1 elemento medía 0,
+// en silencio y con exit code 0.
+//
+// Nota sobre el tipo reportado: acá el diagnóstico habla en tipo LLVM (i8*) y
+// no en tipo Nyx, porque en ese punto del flujo lo único disponible es el tipo
+// LLVM del valor cargado. Es el mismo fallback que mc_report_type.
+// Expected stderr (contains): "NYX2007"
+struct S { m: Map<String, int> }
+
+fn main() -> int {
+    let s: S = S { m: {"a": 1} }
+    print(int_to_string(s.m.length))
+    return 0
+}

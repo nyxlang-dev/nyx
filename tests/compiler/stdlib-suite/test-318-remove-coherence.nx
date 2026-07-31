@@ -1,0 +1,37 @@
+// test-318 — has/size/get quedan COHERENTES después de remove.
+// Antes: set_remove insertaba un tombstone (valor 0) pero set_has seguía
+// preguntando contains() -> true. El mismo set reportaba has(x)==true y
+// size()==0 a la vez. btree_get devolvía el literal "__DELETED__".
+import "std/collections"
+import "std/btreemap"
+
+fn main() {
+    var s: Map = {}
+    set_add(s, "a")
+    set_add(s, "b")
+    assert(set_has(s, "a"))
+    assert(set_size(s) == 2)
+
+    set_remove(s, "a")
+    assert(not set_has(s, "a"))       // el bug: devolvía true
+    assert(set_has(s, "b"))           // el otro no se toca
+    assert(set_size(s) == 1)          // coherente con has
+
+    // re-agregar después de remover funciona
+    set_add(s, "a")
+    assert(set_has(s, "a"))
+    assert(set_size(s) == 2)
+
+    var bt: Map = {}
+    btree_set(bt, "k1", "v1")
+    btree_set(bt, "k2", "v2")
+    assert(btree_has(bt, "k1"))
+
+    btree_remove(bt, "k1")
+    assert(not btree_has(bt, "k1"))   // el bug: devolvía true
+    assert(btree_has(bt, "k2"))
+    let got: String = btree_get(bt, "k1")
+    assert(got == "")                 // el bug: devolvía "__DELETED__"
+
+    print("ok")
+}

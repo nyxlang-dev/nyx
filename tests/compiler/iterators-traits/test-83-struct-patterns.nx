@@ -1,0 +1,16 @@
+struct Point { x: int, y: int }
+
+fn main() {
+    let p = Point { x: 10, y: 20 }
+    let sum: int = match p {
+        Point { x, y } => x + y
+    }
+    print(sum)
+
+    let desc: String = match p {
+        Point { x: px, y: py } if px > py => "x wins",
+        Point { x: px, y: py } => "y wins or tie"
+    }
+    print(desc)
+    print("struct patterns OK")
+}

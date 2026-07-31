@@ -1,0 +1,33 @@
+// Funciones: parámetros, valor de retorno, default parameters
+
+fn suma(a: int, b: int) -> int {
+    return a + b
+}
+
+fn saludar(nombre: String, saludo: String = "Hola") -> String {
+    return saludo + ", " + nombre + "!"
+}
+
+fn describir(n: int) -> String {
+    if n > 0 {
+        return "positivo"
+    }
+    if n < 0 {
+        return "negativo"
+    }
+    return "cero"
+}
+
+fn main() -> int {
+    let resultado: int = suma(3, 4)
+    print("3 + 4 = " + int_to_string(resultado))
+
+    print(saludar("Mundo"))
+    print(saludar("Nyx", "Buenos dias"))
+
+    print("42 es " + describir(42))
+    print("-5 es " + describir(-5))
+    print("0 es " + describir(0))
+
+    return 0
+}

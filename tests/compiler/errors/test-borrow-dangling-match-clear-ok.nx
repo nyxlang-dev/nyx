@@ -1,0 +1,18 @@
+// Flow-merge (cobertura de `match`): `r` se reasigna a un puntero externo en TODOS los
+// arms → tras el match r NO es frame-bound en ningún path → `return r` NO dispara NYX1222.
+// Ejercita el fold-join de arms del handler match (no solo if). NYX_BORROW=error.
+fn f(k: int, a: *int) -> *int {
+    let x: int = 5
+    var r: *int = &x
+    match k {
+        1 => { r = a }
+        _ => { r = a }
+    }
+    return r
+}
+
+fn main() {
+    let y: int = 1
+    let p: *int = f(2, &y)
+    print(1)
+}

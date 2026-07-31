@@ -1,0 +1,29 @@
+// defer: garantizar cleanup al salir del bloque, como file_close
+
+fn main() -> int {
+    let path: String = "/tmp/nyx_example_36.txt"
+    let contenido: String = "Linea 1: Nyx defer example\nLinea 2: cleanup garantizado\n"
+
+    // Escribir el archivo primero
+    write_file(path, contenido)
+    print("Archivo escrito: " + path)
+
+    // Abrir el archivo con file_open
+    let f: File = file_open(path, "r")
+
+    // defer garantiza que file_close se ejecuta al salir,
+    // sin importar si hay return temprano o error
+    defer { file_close(f) }
+
+    // Leer e imprimir el contenido
+    let linea1: String = file_read_line(f)
+    print("Leyendo: " + linea1)
+
+    let linea2: String = file_read_line(f)
+    print("Leyendo: " + linea2)
+
+    print("El file_close se ejecutara automaticamente al salir")
+    // file_close(f) es llamado aqui por defer
+
+    return 0
+}

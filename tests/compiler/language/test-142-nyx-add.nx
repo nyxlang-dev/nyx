@@ -1,0 +1,108 @@
+// test-142-nyx-add: verifica parsing de dependencias en nyx.toml y generacion de lockfile
+
+// TOML parser (inlined from build.nx subset)
+
+fn parse_toml_value(line: String) -> String {
+    let trimmed: String = line.trim()
+    var eq_pos = -1
+    var i = 0
+    while i < trimmed.length() {
+        let c: char = trimmed.charAt(i)
+        if c == '=' {
+            eq_pos = i
+            i = trimmed.length()
+        } else {
+            i = i + 1
+        }
+    }
+    if eq_pos < 0 { return "" }
+    let value_part: String = trimmed.substring(eq_pos + 1, trimmed.length()).trim()
+    if value_part.startsWith("\"") and value_part.endsWith("\"") {
+        return value_part.substring(1, value_part.length() - 1)
+    }
+    return value_part
+}
+
+fn parse_toml_key(line: String) -> String {
+    let trimmed: String = line.trim()
+    var eq_pos = -1
+    var i = 0
+    while i < trimmed.length() {
+        let c: char = trimmed.charAt(i)
+        if c == '=' {
+            eq_pos = i
+            i = trimmed.length()
+        } else {
+            i = i + 1
+        }
+    }
+    if eq_pos < 0 { return "" }
+    return trimmed.substring(0, eq_pos).trim()
+}
+
+fn main() -> int {
+    // Simular un nyx.toml con dependencias
+    let toml = "[package]\nname = \"myapp\"\nversion = \"1.0.0\"\nmain = \"src/main.nx\"\n\n[dependencies]\nstd-http = \"2.0.0\"\nnyx-json = \"1.5.0\"\n"
+
+    // Parsear las dependencias
+    var dep_names: Array = []
+    var dep_versions: Array = []
+
+    let lines: Array<String> = toml.split("\n")
+    var section = ""
+    var i = 0
+    while i < lines.length() {
+        let line: String = lines[i]
+        let trimmed: String = line.trim()
+        if trimmed == "" or trimmed.startsWith("#") {
+            i = i + 1
+        } else {
+            if trimmed.startsWith("[") and trimmed.endsWith("]") {
+                section = trimmed.substring(1, trimmed.length() - 1).trim()
+                i = i + 1
+            } else {
+                let key: String = parse_toml_key(trimmed)
+                let val: String = parse_toml_value(trimmed)
+                if section == "package" {
+                    if key == "name" { print("name: " + val) }
+                    if key == "version" { print("version: " + val) }
+                }
+                if section == "dependencies" {
+                    if key != "" and val != "" {
+                        dep_names.push(key)
+                        dep_versions.push(val)
+                    }
+                }
+                i = i + 1
+            }
+        }
+    }
+
+    // Mostrar dependencias
+    print("deps: " + dep_names.length())
+    var di = 0
+    while di < dep_names.length() {
+        let dname: String = dep_names[di]
+        let dver: String = dep_versions[di]
+        print("  " + dname + " = " + dver)
+        di = di + 1
+    }
+
+    // Simular generacion de nyx.lock
+    var lock_content = "# nyx.lock\n[package]\nname = \"myapp\"\nversion = \"1.0.0\"\n\n[dependencies]\n"
+    var li = 0
+    while li < dep_names.length() {
+        let dn: String = dep_names[li]
+        let dv: String = dep_versions[li]
+        lock_content = lock_content + dn + " = \"" + dv + "\"\n"
+        li = li + 1
+    }
+
+    // Verificar contenido del lockfile
+    let has_http: bool = lock_content.contains("std-http")
+    let has_json: bool = lock_content.contains("nyx-json")
+    if has_http and has_json { print("lockfile ok") }
+
+    print("nyx-add ok")
+    return 0
+}

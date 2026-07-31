@@ -1,0 +1,60 @@
+// test-313-c-built-array-tags.nx — los arrays que arma el RUNTIME C llevan
+// TAG de tipo, y el tag se PROPAGA al re-pushear un slot a otro array.
+//
+// Antes de esto, un `Array` devuelto por el runtime C (split, stat, la request
+// de http_serve, hpack…) tenía todos sus slots en UNKNOWN: `"x " + partes[0]`
+// imprimía el PUNTERO como número. El workaround era anotar `Array<String>`,
+// que no sirve para los layouts heterogéneos (stat = [int,int,int,bool,bool]).
+//
+// Cubre además las tres vías de escritura que antes NO tagueaban:
+// push desde otro slot (propagación en runtime), unshift e insert.
+// Self-checking con assert() (abortivo).
+
+fn test_split() {
+    // split lo construye nyx_string_split en C
+    let partes: Array = "alfa,beta,gamma".split(",")
+    assert(("x " + partes[0]) == "x alfa")
+    assert(("y " + partes[2]) == "y gamma")
+    // sin tag esto daba el puntero, no el contenido
+    assert(partes.contains("beta"))
+    print("split C-built ok")
+}
+
+fn test_stat_heterogeneo() {
+    // stat devuelve [size:int, mode:int, mtime:int, is_dir:bool, is_file:bool]
+    // — layout MIXTO: ninguna anotación Array<T> podría describirlo
+    let st: Array = stat("VERSION")
+    assert(("d:" + st[3]) == "d:false")
+    assert(("f:" + st[4]) == "f:true")
+    print("stat heterogeneo ok")
+}
+
+fn test_propagacion_push() {
+    let orig: Array = ["uno", "dos"]
+    var copia: Array = []
+    copia.push(orig[1])
+    // el tag viaja con el valor: antes imprimía el puntero
+    assert(("c: " + copia[0]) == "c: dos")
+    print("propagacion push ok")
+}
+
+fn test_unshift_insert() {
+    var a: Array = []
+    a.unshift("primero")
+    assert(("u: " + a[0]) == "u: primero")
+
+    var b: Array = []
+    b.push("x")
+    b.insert(0, "nuevo")
+    assert(("i: " + b[0]) == "i: nuevo")
+    assert(("j: " + b[1]) == "j: x")
+    print("unshift insert ok")
+}
+
+fn main() {
+    test_split()
+    test_stat_heterogeneo()
+    test_propagacion_push()
+    test_unshift_insert()
+    print("test-313-c-built-array-tags ok")
+}

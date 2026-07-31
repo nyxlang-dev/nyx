@@ -1,0 +1,45 @@
+// test-232: arrays anidados Array<Array<T>> — indexación doble, fila
+// extraída y paso como argumento. Antes: `grid[0][0]` emitía IR inválido
+// ('%N' defined with type 'i64' but expected 'ptr') porque el tipo de
+// elemento anidado no se trackeaba (infer_nyx_type_from_ast sin caso "array").
+
+fn sum_row(row: Array) -> int {
+    var total = 0
+    var i = 0
+    while i < row.length() {
+        let v: int = row[i]
+        total = total + v
+        i = i + 1
+    }
+    return total
+}
+
+fn main() -> int {
+    let grid = [[1, 2], [3, 4], [5, 6]]
+
+    // Indexación doble directa
+    assert(grid[0][0] == 1)
+    assert(grid[1][1] == 4)
+    assert(grid[2][0] == 5)
+
+    // Fila extraída a variable
+    let row = grid[1]
+    assert(row[0] == 3)
+    assert(row.length() == 2)
+
+    // Fila pasada como argumento
+    assert(sum_row(grid[0]) == 3)
+    assert(sum_row(grid[2]) == 11)
+
+    // Anidamiento con Strings
+    let words = [["hola", "mundo"], ["nyx", "lang"]]
+    let w: String = words[1][0]
+    assert(w == "nyx")
+
+    // Mutación de la fila extraída (Arrays = referencia)
+    row.push(99)
+    assert(grid[1][2] == 99)
+
+    print("nested arrays ok")
+    return 0
+}

@@ -1,0 +1,77 @@
+// Test A27: State Machine
+// Combines: enum, match+guards, closures+mutable state, while+break, string interpolation, compound assignment
+
+enum State {
+    Idle,
+    Running(int),
+    Paused(int),
+    Done(int)
+}
+
+fn step(state: State, input: int) -> State {
+    return match state {
+        State.Idle => State.Running(input),
+        State.Running(progress) if progress + input >= 100 => State.Done(100),
+        State.Running(progress) => State.Running(progress + input),
+        State.Paused(progress) => State.Running(progress),
+        State.Done(v) => State.Done(v)
+    }
+}
+
+fn state_name(state: State) -> String {
+    return match state {
+        State.Idle => "idle",
+        State.Running(p) => "running(${p})",
+        State.Paused(p) => "paused(${p})",
+        State.Done(v) => "done(${v})"
+    }
+}
+
+fn is_done(state: State) -> bool {
+    return match state {
+        State.Done(v) => true,
+        _ => false
+    }
+}
+
+fn run_machine() -> int {
+    var state = State.Idle
+    var steps = 0
+
+    let inputs = [10, 20, 30, 50]
+    var i = 0
+    while i < inputs.length() {
+        let input = inputs[i]
+        state = step(state, input)
+        steps += 1
+        print(state_name(state))
+        if is_done(state) {
+            break
+        }
+        i = i + 1
+    }
+    return steps
+}
+
+fn main() -> int {
+    let steps = run_machine()
+    print("steps: ${steps}")
+
+    var s = State.Idle
+    print(state_name(s))
+
+    s = step(s, 25)
+    print(state_name(s))
+
+    s = State.Paused(25)
+    print(state_name(s))
+
+    s = step(s, 0)
+    print(state_name(s))
+
+    s = step(s, 80)
+    print(state_name(s))
+
+    print("A27 passed")
+    return 0
+}

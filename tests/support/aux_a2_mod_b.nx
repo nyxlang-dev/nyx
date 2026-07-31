@@ -1,0 +1,12 @@
+// aux A2 (test-306): módulo con global propia homónima a la de aux_a2_mod_a
+// y a la del archivo principal. Incremento distinto para detectar cruces.
+var g_counter: int = 200
+
+pub fn b_bump() -> int {
+    g_counter = g_counter + 10
+    return g_counter
+}
+
+pub fn b_get() -> int {
+    return g_counter
+}

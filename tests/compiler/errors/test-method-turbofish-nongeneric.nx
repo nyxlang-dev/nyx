@@ -1,0 +1,7 @@
+// E3 NEG: turbofish sobre un método NO genérico (builtin de String) → error
+// claro en vez de ignorar los type-args.
+fn main() {
+    let s: String = "hola"
+    let t: String = s.substring<int>(0, 2)
+    print(t)
+}

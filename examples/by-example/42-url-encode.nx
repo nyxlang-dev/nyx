@@ -1,0 +1,27 @@
+// URL encoding, decoding, and query string building
+// Codificación URL, decodificación y construcción de query strings
+
+import "std/url"
+
+fn main() -> int {
+    // Percent-encode special characters
+    let raw: String = "hello world & foo=bar"
+    let encoded: String = url_encode(raw)
+    print("encoded: " + encoded)
+
+    // Decode back
+    let decoded: String = url_decode(encoded)
+    print("decoded: " + decoded)
+
+    // Build a query string from key/value arrays
+    let keys: Array = ["name", "lang", "version"]
+    let vals: Array = ["Nyx Lang", "es", "0.12"]
+    let qs: String = build_query_string(keys, vals)
+    print("query:   " + qs)
+
+    // HTML escaping
+    let html: String = html_escape("<script>alert('xss')</script>")
+    print("escaped: " + html)
+
+    return 0
+}

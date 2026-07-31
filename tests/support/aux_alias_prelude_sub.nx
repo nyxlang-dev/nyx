@@ -1,0 +1,13 @@
+// aux del test-308 (P1 friction-portscan): SUBMÓDULO que aliasea std/prelude.
+// prelude viene auto-cargado por resolve_source, así que su path ya está en el
+// registro `imported` — el loop transitivo dejaba la línea cruda sin emitir el
+// `module <alias> = [...]`, y el alias terminaba como un global LLVM indefinido.
+import "std/prelude" as p
+
+pub fn ordenar_via_alias(xs: Array) -> Array {
+    return p.sort_int(xs)
+}
+
+pub fn maximo_via_alias(xs: Array) -> int {
+    return p.array_max(xs)
+}

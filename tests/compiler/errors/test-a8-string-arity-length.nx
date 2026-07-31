@@ -1,0 +1,7 @@
+// A8: length() es 0-arg — pasar un arg debe ser error, no ignorarse.
+// Expected stderr (contains): "'length' accepts at most 0 argument(s), got 1"
+fn main() -> int {
+    let s: String = "hola mundo"
+    let n: int = s.length(7)
+    return 0
+}

@@ -1,0 +1,10 @@
+// inc 4 pre-2 NEG: un tipo #[affine] genérico usado SIN moverlo → NO dispara NYX1230.
+#[affine]
+struct Boxx<T> {
+    value: T
+}
+
+fn main() {
+    let a: Boxx<int> = Boxx<int> { value: 5 }
+    print(a.value)
+}

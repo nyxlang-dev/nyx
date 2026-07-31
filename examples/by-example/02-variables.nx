@@ -1,0 +1,29 @@
+// Variables: let (inmutable), var (mutable), tipos básicos e interpolación
+
+fn main() -> int {
+    // let es inmutable
+    let nombre: String = "Nyx"
+    let version: int = 12
+    let activo: bool = true
+    let precio: float = 3.14
+
+    print("Nombre: ${nombre}")
+    print("Version: ${version}")
+    print("Activo: ${activo}")
+
+    // var es mutable — se puede reasignar
+    var contador: int = 0
+    contador = contador + 1
+    contador = contador + 1
+    print("Contador: ${contador}")
+
+    // Interpolación con expresión
+    let doble: int = contador * 2
+    print("Doble: ${doble}")
+
+    // Concatenación de strings
+    let saludo: String = "Hola, " + nombre + "!"
+    print(saludo)
+
+    return 0
+}

@@ -1,0 +1,63 @@
+// Test 111: Default Parameters — fn foo(x: int = 42)
+
+fn greet(name: String = "World") -> String {
+    return "Hello, " + name + "!"
+}
+
+fn add(a: int, b: int = 10) -> int {
+    return a + b
+}
+
+fn power(base: int, exp: int = 2) -> int {
+    var result = 1
+    var i = 0
+    while i < exp {
+        result = result * base
+        i = i + 1
+    }
+    return result
+}
+
+fn config(host: String = "localhost", port: int = 8080) -> String {
+    return host + ":" + int_to_string(port)
+}
+
+fn main() {
+    // Test 1: Call with default
+    let g1: String = greet()
+    print(g1)
+
+    // Test 2: Call with explicit value
+    let g2: String = greet("Nyx")
+    print(g2)
+
+    // Test 3: Partial default — first arg explicit, second default
+    let s1: int = add(5)
+    print(s1)
+
+    // Test 4: Both args explicit
+    let s2: int = add(5, 20)
+    print(s2)
+
+    // Test 5: Default exponent
+    let p1: int = power(3)
+    print(p1)
+
+    // Test 6: Explicit exponent
+    let p2: int = power(2, 8)
+    print(p2)
+
+    // Test 7: All defaults
+    let c1: String = config()
+    print(c1)
+
+    // Test 8: Partial override
+    let c2: String = config("example.com")
+    print(c2)
+
+    // Test 9: Full override
+    let c3: String = config("10.0.0.1", 3000)
+    print(c3)
+
+    print("All default param tests passed!")
+}

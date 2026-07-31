@@ -1,0 +1,40 @@
+// test-290: req_json parsea el body de un Request como Map string->string,
+// leyendo los arrays paralelos keys/vals que devuelve json_parse (no pares
+// [k,v] como asumía el código roto). Ver TASKS.md "req_json REVIENTA".
+import "std/web"
+
+fn make_req(body: String) -> Request {
+    let empty_map: Map = map_new()
+    let empty_arr: Array = []
+    return Request {
+        method: "POST",
+        path: "/",
+        query: empty_map,
+        headers_flat: empty_arr,
+        body: body,
+        form: empty_map,
+        cookies: empty_map,
+        params: empty_map
+    }
+}
+
+fn main() {
+    let req: Request = make_req("{\"title\":\"hola\",\"n\":42,\"ok\":true,\"nada\":null}")
+    let m: Map = req_json(req)
+    assert(m.get("title") == "hola")
+    assert(m.get("n") == "42")
+    assert(m.get("ok") == "true")
+    assert(m.get("nada") == "null")
+
+    // Body vacío -> Map vacío
+    let req_empty: Request = make_req("")
+    let m_empty: Map = req_json(req_empty)
+    assert(m_empty.size() == 0)
+
+    // Body que no es un objeto -> Map vacío
+    let req_arr: Request = make_req("[1,2]")
+    let m_arr: Map = req_json(req_arr)
+    assert(m_arr.size() == 0)
+
+    print("test-290-req-json OK")
+}

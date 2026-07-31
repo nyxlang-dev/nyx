@@ -1,0 +1,13 @@
+// SP4 T3: idem para la forma `import "..." as alias` (import_module). Esta es
+// la que REALMENTE estaba apagada: resolve_source conserva la línea del import
+// de módulo para el parser, así que g_has_imports quedaba en true y NYX1001
+// no salía en NINGÚN archivo que importara un módulo por path.
+// Expected stderr (contains): "unknown type 'Poimt'"
+// Expected exit: non-zero (semantic check fails)
+
+import "tests/support/aux_import_types" as aux
+
+fn main() -> int {
+    let p: Poimt = Point { x: 1, y: 2 }   // typo: Point → Poimt
+    return aux.aux_origin()
+}

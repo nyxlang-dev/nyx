@@ -1,0 +1,27 @@
+// test-235-global-ptr-sqlite — regresión Bug 2b (friction report v0.17,
+// dogfooding servidor web + SQLite en laptop i7). Patrón del usuario: un
+// global `*int` inicializado con una FFI (sqlite_open) y leído desde otras
+// funciones. Eran DOS bugs juntos:
+//  (1) __nyx_init_globals NO emitía el call de init → el global quedaba null.
+//  (2) leer el global `*T` resolvía a `%db.ptr` porque el param `db: *int` de
+//      std/sqlite pisaba la entrada global en ctx.variables (bleed entre fns).
+// Fix: fallback general de call en __nyx_init_globals + re-afirmación de
+// globales al entrar a cada función (snapshot global_var_entries). Cubre
+// también Bug 1 (db != 0). Auto-verificable con assert().
+import "std/sqlite"
+
+var db: *int = sqlite_open(":memory:")
+
+fn db_ready() -> bool {
+    // Lee el global desde OTRA función → dispara el path del bleed.
+    return db != 0
+}
+
+fn main() -> int {
+    assert(db_ready())                             // part 1 (init) + part 2 (read)
+    let ok: bool = sqlite_exec(db, "CREATE TABLE t(x INTEGER)")
+    assert(ok)                                     // global como arg a fn con param `db`
+    sqlite_close(db)
+    print("global-ptr-sqlite OK")
+    return 0
+}

@@ -1,0 +1,31 @@
+// test-291 — `#[affine] pub struct` cross-módulo (gap catalogado 2026-07-17,
+// cerrado 2026-07-23, task T14). El dispatcher de atributos del parser
+// (parser.nx, rama check("HASH")) no tenía rama PUB tras `#[affine]` →
+// `#[affine] pub struct Res {...}` caía al fallback silencioso ("error" sin
+// p_diag) y desaparecía del AST: el struct nunca se registraba afín, así que
+// su `impl Drop` nunca se llamaba (drops=0) SIN diagnóstico de compilación.
+// Repro cross-módulo: el struct afín-pub vive en un módulo importado
+// (tests/support/aux_affine_pub_res.nx — NO bajo tests/compiler/, cuyo path
+// contiene la substring "compiler/" y desactiva el inlining de imports vía
+// is_module_import/is_user_import; nombre con '_' no '-' — el import
+// bare deriva el alias del namespace-decl sintético del nombre de archivo,
+// que debe ser un identificador Nyx válido) — std/llm.nx esquivaba el gap
+// original justo así, declarando `struct LLM` SIN pub.
+//
+// El guard real es el `assert(res_drops() == 1)` de abajo — un test que
+// solo compila+corre sin comparar output es decorativo (make test no diffea
+// stdout; con el gap sin arreglar este test compilaba y corría con exit 0
+// igual, sin "drop:res" en la salida — cero valor de guardia). El Res se
+// crea DENTRO de una fn helper porque el drop T4c es function-scoped: corre
+// al salir de esa fn, ANTES de que main lea el contador.
+import "tests/support/aux_affine_pub_res"
+
+fn make_and_drop() {
+    let r: Res = Res { id: 1 }
+}
+
+fn main() {
+    make_and_drop()
+    assert(res_drops() == 1)
+    print("done")
+}

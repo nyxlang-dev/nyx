@@ -1,0 +1,14 @@
+// Flow-merge (guard de regresión): un `free` seguido de un revive CONDICIONAL (solo en
+// la rama then) y un segundo `free` DEBE seguir marcando NYX1221 (double-free) — en el
+// path donde la rama no corre, p sigue liberado. Blindaje contra reintroducir el min-join
+// de moved/freed en el flow-merge (que borraría el estado freed del fall-through = FN).
+// El flow-merge aplica SOLO reforigin; moved/freed quedan pre-rama. NYX_BORROW=error.
+fn main() {
+    var p: *int = alloc<int>(1)
+    free(p)
+    let c: bool = true
+    if c {
+        p = alloc<int>(1)
+    }
+    free(p)
+}

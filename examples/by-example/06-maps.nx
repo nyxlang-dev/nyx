@@ -1,0 +1,30 @@
+// Maps: Map.new(), insert, get, has, size, iterar con keys()
+
+fn main() -> int {
+    var capitales: Map = Map.new()
+
+    // Insertar pares clave-valor
+    capitales.insert("Argentina", "Buenos Aires")
+    capitales.insert("Francia", "Paris")
+    capitales.insert("Japon", "Tokio")
+
+    // size
+    print("paises: " + int_to_string(capitales.size()))
+
+    // get
+    let capital: String = capitales.get("Francia")
+    print("Capital de Francia: " + capital)
+
+    // has
+    print("tiene Argentina: " + int_to_string(capitales.has("Argentina")))
+    print("tiene Brasil: " + int_to_string(capitales.has("Brasil")))
+
+    // Iterar claves
+    let ks: Array = capitales.keys()
+    print("claves (" + int_to_string(ks.length()) + "):")
+    for k in ks {
+        print("  " + k)
+    }
+
+    return 0
+}

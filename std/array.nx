@@ -1,0 +1,154 @@
+// std/array.nx — Funciones de array de la Standard Library v0.21
+// Nota: push como statement no está disponible. Las funciones que modifican
+// arrays operan in-place sobre el array recibido.
+
+fn array_sum(arr: Array) -> int {
+    var total = 0
+    var i = 0
+    while i < arr.length() {
+        total = total + arr[i]
+        i = i + 1
+    }
+    return total
+}
+
+fn array_min(arr: Array) -> int {
+    var m = arr[0]
+    var i = 1
+    while i < arr.length() {
+        if arr[i] < m { m = arr[i] }
+        i = i + 1
+    }
+    return m
+}
+
+fn array_max(arr: Array) -> int {
+    var m = arr[0]
+    var i = 1
+    while i < arr.length() {
+        if arr[i] > m { m = arr[i] }
+        i = i + 1
+    }
+    return m
+}
+
+// array_reverse: invierte arr in-place y lo retorna
+fn array_reverse(arr: Array) -> Array {
+    let n = arr.length()
+    var i = 0
+    while i < n / 2 {
+        let temp = arr[i]
+        arr[i] = arr[n - 1 - i]
+        arr[n - 1 - i] = temp
+        i = i + 1
+    }
+    return arr
+}
+
+fn array_contains_int(arr: Array, val: int) -> bool {
+    var i = 0
+    while i < arr.length() {
+        if arr[i] == val { return true }
+        i = i + 1
+    }
+    return false
+}
+
+fn array_index_of(arr: Array, val: int) -> int {
+    var i = 0
+    while i < arr.length() {
+        if arr[i] == val { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// sort_int: ordena arr in-place (bubble sort) y lo retorna
+pub fn sort_int(arr: Array) -> Array {
+    let n = arr.length()
+    var swapped = true
+    while swapped == true {
+        swapped = false
+        var j = 0
+        while j < n - 1 {
+            if arr[j] > arr[j + 1] {
+                let temp = arr[j]
+                arr[j] = arr[j + 1]
+                arr[j + 1] = temp
+                swapped = true
+            }
+            j = j + 1
+        }
+    }
+    return arr
+}
+
+// sort_by: ordena arr in-place usando comparator fn
+// cmp(a, b) debe retornar int: negativo si a < b, 0 si a == b, positivo si a > b
+pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array {
+    let n = arr.length()
+    if n <= 1 { return arr }
+    // Insertion sort — estable, simple, eficiente para arrays pequenos
+    var i = 1
+    while i < n {
+        let key = arr[i]
+        var j = i - 1
+        var done = false
+        while j >= 0 and not done {
+            let c: int = cmp(arr[j], key)
+            if c > 0 {
+                arr[j + 1] = arr[j]
+                j = j - 1
+            } else {
+                done = true
+            }
+        }
+        arr[j + 1] = key
+        i = i + 1
+    }
+    return arr
+}
+
+// str_compare: compara dos strings lexicograficamente
+// retorna negativo si a < b, 0 si iguales, positivo si a > b
+pub fn str_compare(a: String, b: String) -> int {
+    let la = a.length()
+    let lb = b.length()
+    var min_len = la
+    if lb < min_len { min_len = lb }
+    var i = 0
+    while i < min_len {
+        let ca: int = a.charAt(i) as int
+        let cb: int = b.charAt(i) as int
+        if ca < cb { return -1 }
+        if ca > cb { return 1 }
+        i = i + 1
+    }
+    if la < lb { return -1 }
+    if la > lb { return 1 }
+    return 0
+}
+
+// sort_str: ordena array de strings in-place
+pub fn sort_str(arr: Array) -> Array {
+    let n = arr.length()
+    if n <= 1 { return arr }
+    var i = 1
+    while i < n {
+        let key: String = arr[i]
+        var j = i - 1
+        var done = false
+        while j >= 0 and not done {
+            let cur: String = arr[j]
+            if str_compare(cur, key) > 0 {
+                arr[j + 1] = cur
+                j = j - 1
+            } else {
+                done = true
+            }
+        }
+        arr[j + 1] = key
+        i = i + 1
+    }
+    return arr
+}

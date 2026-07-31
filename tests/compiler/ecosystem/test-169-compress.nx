@@ -1,0 +1,76 @@
+// test-169-compress.nx — Compression + Base64 (v4.4.0)
+import "std/compress"
+
+fn test_base64() {
+    print("--- Base64 ---")
+
+    let enc = base64_encode("Hello, Nyx!")
+    print(enc)
+    // Should be: SGVsbG8sIE55eCE=
+
+    let dec = base64_decode(enc)
+    print(dec)
+    // Should be: Hello, Nyx!
+
+    // Round-trip
+    let original = "The quick brown fox jumps over the lazy dog"
+    let encoded = base64_encode(original)
+    let decoded = base64_decode(encoded)
+    if decoded == original {
+        print("base64 round-trip ok")
+    }
+
+    // Empty string
+    let enc_empty = base64_encode("")
+    print(format("empty encode len: {}", enc_empty.length()))
+}
+
+fn test_compress() {
+    print("--- Compress ---")
+
+    let text = "Hello World! This is a test of the Nyx compression system. " +
+               "The more repetition there is, the better the compression ratio. " +
+               "Repetition, repetition, repetition makes text compressible. " +
+               "Nyx is a great programming language with native performance."
+    let orig_len = text.length()
+    print(format("original size: {}", orig_len))
+
+    let compressed = compress(text)
+    let comp_len = compressed.length()
+    print(format("compressed size: {}", comp_len))
+
+    // Compression should reduce size for this repetitive text
+    if comp_len < orig_len {
+        print("compression reduced size ok")
+    }
+
+    // Decompress and verify round-trip
+    let decompressed = decompress(compressed, orig_len)
+    if decompressed == text {
+        print("compress/decompress round-trip ok")
+    }
+
+    // Compression ratio
+    let ratio = compression_ratio(text, comp_len)
+    print(format("compression ratio: {}%", ratio))
+}
+
+fn test_compress_small() {
+    print("--- Compress Small ---")
+    // Small strings may not compress well (overhead), but should round-trip
+    let small = "abc"
+    let comp = compress(small)
+    let decomp = decompress(comp, small.length())
+    if decomp == small {
+        print("small round-trip ok")
+    }
+    print(format("small orig: {} comp: {}", small.length(), comp.length()))
+}
+
+fn main() {
+    print("compress test")
+    test_base64()
+    test_compress()
+    test_compress_small()
+    print("compress ok")
+}

@@ -1,0 +1,21 @@
+// 18: CSV parsing — split lines and fields manually
+import "std/csv"
+
+fn main() -> int {
+    let data: String = "name,age,city\nAlice,30,NYC\nBob,25,LA\nCharlie,35,SF"
+    let rows: Array = data.split("\n")
+
+    // Skip header, print each row parsed
+    var i: int = 1
+    while i < rows.length() {
+        let row: String = rows[i]
+        let fields: Array = row.split(",")
+        let name: String = fields[0]
+        let age: String = fields[1]
+        let city: String = fields[2]
+        print(name + " is " + age + " from " + city)
+        i = i + 1
+    }
+
+    return 0
+}

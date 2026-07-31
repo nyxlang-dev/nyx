@@ -1,0 +1,105 @@
+// test-303-wcwidth.nx — std/unicode: wcwidth + display_width (D4 friction-browser)
+//
+// char_length() cuenta codepoints, pero CJK/fullwidth/emoji ocupan 2 columnas de
+// terminal y las combinantes 0 — cualquier TUI desalinea sin esto. Contrato
+// wcwidth(3) estilo Kuhn: NUL -> 0, control (C0/C1 salvo NUL) -> -1, combinantes
+// y zero-width (ZWJ/VS16/...) -> 0, East Asian Wide/Fullwidth + emoji -> 2,
+// resto -> 1. display_width(s) suma sobre los codepoints del String (UTF-8),
+// contando los negativos como 0 — el número de columnas que ocupa en pantalla.
+// Self-checking con assert() (abortivo).
+
+import "std/unicode"
+
+fn test_wcwidth_ascii_y_control() {
+    assert(wcwidth(65) == 1)          // 'A'
+    assert(wcwidth(32) == 1)          // espacio
+    assert(wcwidth(0) == 0)           // NUL
+    assert(wcwidth(9) == 0 - 1)       // TAB = control C0
+    assert(wcwidth(10) == 0 - 1)      // LF
+    assert(wcwidth(0x7F) == 0 - 1)    // DEL
+    assert(wcwidth(0x9B) == 0 - 1)    // C1
+    print("ascii y control ok")
+}
+
+fn test_wcwidth_latin_1col() {
+    assert(wcwidth(0xE9) == 1)        // é precompuesta
+    assert(wcwidth(0xF1) == 1)        // ñ
+    assert(wcwidth(0x20AC) == 1)      // €
+    print("latin 1 columna ok")
+}
+
+fn test_wcwidth_zero_width() {
+    assert(wcwidth(0x0301) == 0)      // combinante acute
+    assert(wcwidth(0x036F) == 0)      // borde combining diacritics
+    assert(wcwidth(0x200B) == 0)      // ZWSP
+    assert(wcwidth(0x200D) == 0)      // ZWJ
+    assert(wcwidth(0xFE0F) == 0)      // variation selector 16
+    assert(wcwidth(0xFEFF) == 0)      // BOM/ZWNBSP
+    print("zero-width ok")
+}
+
+fn test_wcwidth_wide_2col() {
+    assert(wcwidth(0x4E2D) == 2)      // 中 CJK
+    assert(wcwidth(0x3042) == 2)      // あ hiragana
+    assert(wcwidth(0x30A2) == 2)      // ア katakana
+    assert(wcwidth(0x3000) == 2)      // espacio ideográfico
+    assert(wcwidth(0xAC00) == 2)      // 가 Hangul silábico
+    assert(wcwidth(0x1100) == 2)      // Hangul Jamo inicial
+    assert(wcwidth(0xFF21) == 2)      // Ａ fullwidth
+    assert(wcwidth(0xFFE5) == 2)      // ￥ fullwidth
+    assert(wcwidth(0xF900) == 2)      // CJK compat
+    assert(wcwidth(0x20000) == 2)     // CJK ext B
+    print("wide 2 columnas ok")
+}
+
+fn test_wcwidth_emoji() {
+    assert(wcwidth(0x1F600) == 2)     // 😀
+    assert(wcwidth(0x1F680) == 2)     // 🚀
+    assert(wcwidth(0x1F9D1) == 2)     // 🧑
+    assert(wcwidth(0x1FAE0) == 2)     // 🫠
+    print("emoji 2 columnas ok")
+}
+
+fn test_display_width_basico() {
+    assert(display_width("") == 0)
+    assert(display_width("hola") == 4)
+    assert(display_width("café") == 4)          // é precompuesta (2 bytes, 1 col)
+    assert(display_width("中文") == 4)           // 2 CJK = 4 columnas
+    assert(display_width("a中b") == 4)           // 1 + 2 + 1
+    assert(display_width("Ａ") == 2)             // fullwidth
+    print("display_width basico ok")
+}
+
+fn test_display_width_compuesto() {
+    // e + combinante U+0301 = 1 columna (2 codepoints)
+    let e_comb: String = "e" + utf8_encode(0x0301)
+    assert(e_comb.char_length() == 2)
+    assert(display_width(e_comb) == 1)
+    // emoji via utf8_encode
+    assert(display_width(utf8_encode(0x1F600)) == 2)
+    // control cuenta 0 en el total (no negativo)
+    assert(display_width("a" + utf8_encode(9) + "b") == 2)
+    print("display_width compuesto ok")
+}
+
+fn test_display_width_malformado() {
+    // Byte de continuación suelto / truncado: 1 columna por byte inválido,
+    // sin colgarse ni descuadrar el resto.
+    let stray: String = chr(0x80) + "ab"
+    assert(display_width(stray) == 3)
+    let trunc: String = "ab" + chr(0xE2)        // lead de 3 bytes sin continuación
+    assert(display_width(trunc) == 3)
+    print("display_width malformado ok")
+}
+
+fn main() {
+    test_wcwidth_ascii_y_control()
+    test_wcwidth_latin_1col()
+    test_wcwidth_zero_width()
+    test_wcwidth_wide_2col()
+    test_wcwidth_emoji()
+    test_display_width_basico()
+    test_display_width_compuesto()
+    test_display_width_malformado()
+    print("test-303-wcwidth ok")
+}

@@ -1,0 +1,48 @@
+// Trait bounds: función genérica que acepta cualquier tipo con Display
+
+trait Display {
+    fn to_string(self) -> String
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Display for Point {
+    fn to_string(self) -> String {
+        return "(" + int_to_string(self.x) + ", " + int_to_string(self.y) + ")"
+    }
+}
+
+struct Circle {
+    radius: int
+}
+
+impl Display for Circle {
+    fn to_string(self) -> String {
+        return "Circulo{radio=" + int_to_string(self.radius) + "}"
+    }
+}
+
+fn print_it<T: Display>(x: T) -> String {
+    return x.to_string()
+}
+
+fn show_twice<T: Display>(x: T) {
+    let s: String = x.to_string()
+    print(s)
+    print(s)
+}
+
+fn main() -> int {
+    let p: Point = Point { x: 7, y: 2 }
+    print(print_it<Point>(p))
+
+    let c: Circle = Circle { radius: 10 }
+    print(print_it<Circle>(c))
+
+    show_twice<Point>(p)
+
+    return 0
+}

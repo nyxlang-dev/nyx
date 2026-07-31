@@ -1,0 +1,32 @@
+name: Nyx by Example
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'examples/by-example/**'
+      - 'scripts/test-examples.sh'
+      - '.github/workflows/examples.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'examples/by-example/**'
+      - 'scripts/test-examples.sh'
+
+jobs:
+  validate:
+    name: Validate all examples compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libgc-dev libssl-dev zlib1g-dev
+
+      - name: Build bootstrap compiler
+        run: make bootstrap
+
+      - name: Validate every example compiles
+        run: make test-examples

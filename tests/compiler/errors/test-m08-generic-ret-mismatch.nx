@@ -1,0 +1,14 @@
+// M-08 sesion 10 error test: T inferred from arg → ret type substituted.
+// `id(42)` binds T=int, so the call returns int — assigning to a String
+// annotation must trip the let mismatch check.
+// Expected stderr (contains): "type mismatch in 's': expected String, got int"
+// Expected exit: non-zero (semantic check fails)
+fn id<T>(x: T) -> T {
+    return x
+}
+
+fn main() -> int {
+    let s: String = id(42)
+    print(s)
+    return 0
+}

@@ -1,0 +1,84 @@
+// Test 100: Enum methods via impl blocks (v0.6.0)
+
+enum Color {
+    Red,
+    Green,
+    Blue
+}
+
+impl Color {
+    fn name(self) -> String {
+        match self {
+            Color.Red => { return "red" }
+            Color.Green => { return "green" }
+            Color.Blue => { return "blue" }
+        }
+        return "unknown"
+    }
+
+    fn is_primary(self) -> bool {
+        match self {
+            Color.Red => { return true }
+            Color.Blue => { return true }
+            _ => { return false }
+        }
+        return false
+    }
+}
+
+enum Shape {
+    Circle(float),
+    Rectangle(float)
+}
+
+impl Shape {
+    fn area(self) -> float {
+        match self {
+            Shape.Circle(r) => { return 3.14 * r * r }
+            Shape.Rectangle(s) => { return s * s }
+        }
+        return 0.0
+    }
+
+    fn describe(self) -> String {
+        match self {
+            Shape.Circle(r) => { return "circle" }
+            Shape.Rectangle(s) => { return "rectangle" }
+        }
+        return "unknown"
+    }
+}
+
+fn main() {
+    // Test simple enum methods
+    let r: Color = Color.Red
+    let name: String = r.name()
+    assert(name == "red")
+    print("Color.Red.name() = red: OK")
+
+    let g: Color = Color.Green
+    assert(g.name() == "green")
+    print("Color.Green.name() = green: OK")
+
+    assert(r.is_primary() == true)
+    print("Color.Red.is_primary() = true: OK")
+
+    assert(g.is_primary() == false)
+    print("Color.Green.is_primary() = false: OK")
+
+    // Test enum with data methods
+    let c: Shape = Shape.Circle(5.0)
+    let area: float = c.area()
+    assert(area > 78.0)
+    assert(area < 79.0)
+    print("Shape.Circle(5).area() ~ 78.5: OK")
+
+    assert(c.describe() == "circle")
+    print("Shape.Circle.describe() = circle: OK")
+
+    let sq: Shape = Shape.Rectangle(4.0)
+    assert(sq.area() == 16.0)
+    print("Shape.Rectangle(4).area() = 16: OK")
+
+    print("✅ Test 100 completado")
+}
