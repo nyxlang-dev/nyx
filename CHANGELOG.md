@@ -7,6 +7,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.2] — 2026-08-01 — El intérprete deja de mentir en silencio
+
+La última pata de la familia silently-wrong, declarada como brecha propia en el cierre de
+v0.24.0: `compiler/interpreter.nx` (el evaluador del REPL) despachaba métodos con un
+fallback **print mudo + nil** — el mismo programa daba OTRO resultado que el binario
+compilado, con la sesión en verde. El inventario midió el subconjunto real: String 12
+métodos, Array 3, y **Map cero** — mientras el comentario de cabecera prometía
+`Map: insert, get, contains, length` (ficción pura, desde siempre).
+
+### Corregido
+- **NYX3001** (serie nueva NYX30xx = interpreter-phase, catalogada en SPEC.md/es): método
+  fuera del subconjunto declarado → error bilingüe ruidoso que además dice la verdad útil
+  («el binario compilado sí lo soporta si el lenguaje lo tiene»). La sesión del REPL
+  **sobrevive** (es interactiva; abortar mataría la sesión) y `interp_error_count()`
+  (export nuevo) registra el error para consumidores no interactivos.
+- El comentario de cabecera de interpreter.nx ahora declara el subconjunto REAL.
+- **Drift reparado de paso**: NYX2007 (v0.24.0) faltaba en las tablas de códigos de
+  SPEC.md Y SPEC.es.md.
+
+### Añadido
+- `make test-repl` (dentro de `test-all`): smoke E2E `run_repl_smoke.sh` — NYX3001
+  ruidoso, sesión viva tras el error, control negativo (`s.length()`==4). RED verificado
+  contra el binario previo; el target reconstruye nyx_repl SIEMPRE (un smoke contra
+  binario stale certificaría el pasado).
+
+### Residuo catalogado (ficha en TASKS.md)
+- Quedan prints mudos en el intérprete FUERA del dispatch de métodos (el smoke destapó
+  «Expresión no soportada: <bytes basura>» — mudo y con mojibake — y el «no es una
+  función» + nil de eval_call). Migrarlos a NYX30xx es campaña propia.
+
 ## [0.24.1] — 2026-07-31 — El residuo declarado de v0.24.0, cerrado
 
 v0.24.0 dejó UN caso silently-wrong catalogado a conciencia: `m.length` (propiedad, sin

@@ -208,6 +208,16 @@ solo en el texto del mensaje, p.ej. `error [NYX2001]: ...`, no como campo
 | NYX2004 | bound de trait no satisfecho en llamada genérica (`fn f<T: Display>(x: T)` llamada con un `T` que no tiene el impl) — camino normal para llamadas con turbofish explícito (`f<Point>(p)`, que el chequeo de bounds de semantic nunca cubre) y para la forma implícita cuando el tipo concreto no tiene ningún impl local (la heurística conservadora NYX1020 de semantic es estricta solo cuando el tipo tiene al menos un `impl` local; wildcard en caso contrario). Semantic solo se adelanta con NYX1020 para la forma implícita cuando el tipo tiene un impl local (de *cualquier* trait). Nombra la(s) firma(s) del método del trait desde `ctx.trait_methods` cuando el trait ya fue definido antes en el módulo |
 | NYX2005 | asignación a campo anidada (`a.b.c = x`) cuya cadena de receivers tiene un eslabón que no es un struct conocido por codegen (ej. un campo intermedio de tipo `Map`/`Array`, o un genérico sin monomorfizar). Las cadenas soportadas SÍ bajan ahora (cadena de GEPs sobre la memoria real del struct raíz, ver test-322); este código es el residuo que antes se descartaba en silencio con exit 0 |
 | NYX2006 | asignación a campo cuyo receiver no es ni un identificador simple ni una cadena de campos — `f().campo = v` (llamada), `a[0].campo = v` (índice). Contraparte de escritura de NYX2003 |
+| NYX2007 | backstop de tipo de receptor en el dispatch de métodos (v0.24.0): un método reconocido despachado a un receptor cuyo tipo no lo tiene (`m.length()`/`m.length` sobre un `Map`, métodos sobre receptores `&String`/`&Array`/`&Map`). Gemelo en codegen del NYX1022 de semantic — la única capa que cubre código sin anotar y `NYX_SKIP_SEMANTIC=1` |
+
+**Errores de fase intérprete (serie NYX30xx)** — los emite `compiler/interpreter.nx`
+(el evaluador del REPL), impresos en el texto del mensaje como la serie NYX20xx. El
+intérprete cubre un SUBCONJUNTO declarado del lenguaje; estos errores son ruidosos en
+vez del viejo print-mudo-y-nil:
+
+| Código | Significado |
+|--------|-------------|
+| NYX3001 | método no soportado por el intérprete para ese tipo de valor (v0.24.2). La sesión del REPL sobrevive (es interactivo); `interp_error_count()` lo registra para consumidores no interactivos. El binario compilado bien puede soportar el método — el texto del error lo dice |
 
 ### Limitaciones conocidas (v0.16.2)
 

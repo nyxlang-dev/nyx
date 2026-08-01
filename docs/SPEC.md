@@ -813,6 +813,16 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2004 | generic call trait bound not satisfied (`fn f<T: Display>(x: T)` called with a `T` lacking the impl) — normal path for calls with explicit turbofish (`f<Point>(p)`, which semantic's bound check never covers) and for the implicit form when the concrete type has no local impls (semantic's conservative NYX1020 heuristic is strict only when the type has at least one local `impl`; wildcard otherwise). Semantic only preempts this with NYX1020 for the implicit form when the type has a local impl (of *any* trait). Names the trait's method signature(s) from `ctx.trait_methods` when the trait was already defined earlier in the module |
 | NYX2005 | nested field assignment (`a.b.c = x`) whose receiver chain has a link that is not a struct known to codegen (e.g. an intermediate field typed `Map`/`Array`, or a generic not yet monomorphized). The supported chains DO lower now (a chain of GEPs over the root struct's real memory, see test-322); this code is the residue that used to be dropped silently with exit 0 |
 | NYX2006 | field assignment whose receiver is neither a simple identifier nor a field chain — `f().field = v` (call), `a[0].field = v` (index). Write-side counterpart of NYX2003 |
+| NYX2007 | receiver-type backstop in method dispatch (v0.24.0): a recognized method dispatched to a receiver whose type doesn't have it (`m.length()`/`m.length` on a `Map`, methods on `&String`/`&Array`/`&Map` receivers). The codegen twin of semantic's NYX1022 — the only layer that covers unannotated code and `NYX_SKIP_SEMANTIC=1` |
+
+**Interpreter-phase errors (NYX30xx series)** — emitted by `compiler/interpreter.nx`
+(the REPL's evaluator), printed in the message text like the NYX20xx series. The
+interpreter covers a declared SUBSET of the language; these errors are loud instead
+of the old silent print-and-nil:
+
+| Code | Meaning |
+|------|---------|
+| NYX3001 | method not supported by the interpreter for that value type (v0.24.2). The REPL session survives (interactive); `interp_error_count()` records it for non-interactive consumers. The compiled binary may well support the method — the error text says so |
 
 **ES** — Con `NYX_DIAG=json`, los errores de parse y semánticos salen como un objeto
 JSON por línea (NDJSON) en lugar de texto humano, para que agentes AI y tooling los

@@ -195,6 +195,8 @@ test-all:
 	@echo ""
 	$(MAKE) test-ai-first
 	@echo ""
+	$(MAKE) test-repl
+	@echo ""
 	$(MAKE) test-stacks
 	@echo ""
 	@echo "=== All automated suites passed ==="
@@ -306,6 +308,12 @@ build-repl:
 repl:
 	@test -f nyx_repl || (echo "Primero ejecuta: make build-repl"; exit 1)
 	./nyx_repl
+
+## Smoke E2E del REPL/intérprete (NYX3001 ruidoso + la sesión sobrevive +
+## control negativo). Construye nyx_repl SIEMPRE: un smoke contra un binario
+## stale certificaría el pasado (la clase de fallo de los seeds stale).
+test-repl: build-repl
+	bash scripts/testing/run_repl_smoke.sh
 
 ## Build nyx_check (LSP driver)
 build-check:
@@ -426,4 +434,4 @@ playground:
 	@echo "✓ nyx_playground compilado"
 	./nyx_playground
 
-.PHONY: bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet cross wasm build-nyx-build nyx-build build-bindgen bindgen playground
+.PHONY: bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet cross wasm build-nyx-build nyx-build build-bindgen bindgen playground
