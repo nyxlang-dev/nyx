@@ -218,6 +218,11 @@ vez del viejo print-mudo-y-nil:
 | Código | Significado |
 |--------|-------------|
 | NYX3001 | método no soportado por el intérprete para ese tipo de valor (v0.24.2). La sesión del REPL sobrevive (es interactivo); `interp_error_count()` lo registra para consumidores no interactivos. El binario compilado bien puede soportar el método — el texto del error lo dice |
+| NYX3002 | expresión, operador o feature fuera del subconjunto del intérprete (v0.24.3) — node types no soportados, operadores binarios/unarios/compound-assign, `field_assign` |
+| NYX3003 | variable no definida (v0.24.3) — lectura, asignación o compound-assign de un nombre que no está en el entorno |
+| NYX3004 | llamada a un valor que no es una función (v0.24.3) |
+| NYX3005 | error de runtime del programa reportado por el intérprete (v0.24.3) — división por cero, módulo por cero, índice fuera de rango, `index_assign` sobre no-array. El binario compilado aborta en estos; el REPL reporta y sobrevive |
+| NYX3006 | número de argumentos incorrecto en una llamada (v0.24.3) — chequeado antes de bindear; la lectura fuera de rango antes MATABA la sesión entera del REPL |
 
 ### Limitaciones conocidas (v0.16.2)
 

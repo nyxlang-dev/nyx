@@ -823,6 +823,11 @@ of the old silent print-and-nil:
 | Code | Meaning |
 |------|---------|
 | NYX3001 | method not supported by the interpreter for that value type (v0.24.2). The REPL session survives (interactive); `interp_error_count()` records it for non-interactive consumers. The compiled binary may well support the method — the error text says so |
+| NYX3002 | expression, operator or feature not supported by the interpreter's subset (v0.24.3) — unsupported node types, binary/unary/compound-assign operators, `field_assign` |
+| NYX3003 | undefined variable (v0.24.3) — read, assign or compound-assign of a name not in the environment |
+| NYX3004 | calling a value that is not a function (v0.24.3) |
+| NYX3005 | program runtime error surfaced by the interpreter (v0.24.3) — division by zero, modulo by zero, index out of range, `index_assign` on a non-array. The compiled binary aborts on these; the REPL reports and survives |
+| NYX3006 | wrong number of arguments in a call (v0.24.3) — checked before binding; the out-of-range read used to kill the whole REPL session |
 
 **ES** — Con `NYX_DIAG=json`, los errores de parse y semánticos salen como un objeto
 JSON por línea (NDJSON) en lugar de texto humano, para que agentes AI y tooling los

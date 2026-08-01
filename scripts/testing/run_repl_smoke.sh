@@ -72,6 +72,182 @@ if grep -q "NYX3001" "$TMP/out2.txt"; then
     FAIL=$((FAIL + 1))
 fi
 
+# ── Caso 3: los literales de array construyen el array REAL ────────────
+# Bug cazado 2026-08-01 (campaña NYX30xx): eval_array iteraba node_data en
+# vez de node_data[0] → TODO literal de array producía [nil] (length 1,
+# elemento nil) y de paso el catch-all imprimía mojibake. Silently-wrong
+# de datos, no solo de ruido.
+cat > "$TMP/in3.txt" <<'EOF'
+let a = [10, 20, 30]
+print(a.length())
+print(a[2])
+:quit
+EOF
+./nyx_repl < "$TMP/in3.txt" > "$TMP/out3.txt" 2>&1
+
+# Ancla al fin de línea: sin el $, "nyx> 3" matchea por substring la línea
+# "nyx> 30" y el check de length queda vacuo (hallazgo del code-review).
+if grep -q "nyx> 3$" "$TMP/out3.txt" && grep -q "nyx> 30" "$TMP/out3.txt"; then
+    echo "  ✓ literal de array: length 3 y a[2]=30 (datos reales, no [nil])"
+else
+    echo "  ✗ literal de array roto (esperado length 3 y a[2]=30)"
+    sed 's/^/      /' "$TMP/out3.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+# Grep por el CÓDIGO neutro, no por texto de un idioma: el binario emite
+# inglés con NYX_LANG sin setear — el grep español era un guard muerto
+# (hallazgo del code-review).
+if grep -qa "NYX3002" "$TMP/out3.txt"; then
+    echo "  ✗ literal de array sigue disparando el catch-all de expresión"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 4: variable no definida → NYX3003 (antes «Error:» mudo) ───────
+cat > "$TMP/in4.txt" <<'EOF'
+print(no_existe)
+:quit
+EOF
+./nyx_repl < "$TMP/in4.txt" > "$TMP/out4.txt" 2>&1
+if grep -q "NYX3003" "$TMP/out4.txt"; then
+    echo "  ✓ variable no definida emite NYX3003"
+else
+    echo "  ✗ variable no definida sin NYX3003"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 5: llamar algo que no es función → NYX3004 ────────────────────
+cat > "$TMP/in5.txt" <<'EOF'
+let x = 1
+x()
+:quit
+EOF
+./nyx_repl < "$TMP/in5.txt" > "$TMP/out5.txt" 2>&1
+if grep -q "NYX3004" "$TMP/out5.txt"; then
+    echo "  ✓ llamada a no-función emite NYX3004"
+else
+    echo "  ✗ llamada a no-función sin NYX3004"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 6: for-in sobre array ITERA (antes: segfault exit 139) ────────
+# Causa raíz (code-review 2026-08-01): el parser guarda el nombre de la
+# variable del for como String plana en data[0]; eval_for lo trataba como
+# astnode y leía [0] de la String → puntero basura → SIGSEGV.
+cat > "$TMP/in6.txt" <<'EOF'
+for x in [7, 8] {
+print(x)
+}
+
+print("FOR-TERMINO")
+:quit
+EOF
+./nyx_repl < "$TMP/in6.txt" > "$TMP/out6.txt" 2>&1
+rc6=$?
+if [ "$rc6" -eq 139 ]; then
+    echo "  ✗ for-in sobre array SEGFAULTEA (exit 139)"
+    FAIL=$((FAIL + 1))
+elif grep -q "7" "$TMP/out6.txt" && grep -q "8" "$TMP/out6.txt" && grep -q "FOR-TERMINO" "$TMP/out6.txt"; then
+    echo "  ✓ for-in itera (7, 8) y la sesión sigue"
+else
+    echo "  ✗ for-in no iteró bien (rc=$rc6)"
+    sed 's/^/      /' "$TMP/out6.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 7: módulo por cero → NYX3005 (antes: 5 % 0 daba 5 en silencio,
+#    artefacto del msub de ARM64 sin guard — división SÍ lo tenía) ─────
+cat > "$TMP/in7.txt" <<'EOF'
+print(5 % 0)
+:quit
+EOF
+./nyx_repl < "$TMP/in7.txt" > "$TMP/out7.txt" 2>&1
+if grep -q "NYX3005" "$TMP/out7.txt"; then
+    echo "  ✓ módulo por cero emite NYX3005"
+else
+    echo "  ✗ módulo por cero sin NYX3005 (¿sigue dando 5 mudo?)"
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 8: aridad incorrecta → NYX3006 y la sesión SOBREVIVE ──────────
+# Antes: eval_call indexaba args[i] fuera de rango → el abort de lectura
+# chequeada del binario compilado mataba la sesión entera (exit 1).
+cat > "$TMP/in8.txt" <<'EOF'
+fn suma(a, b) {
+return a + b
+}
+
+suma(1)
+print("SESION-VIVA-TRAS-ARIDAD")
+:quit
+EOF
+./nyx_repl < "$TMP/in8.txt" > "$TMP/out8.txt" 2>&1
+if grep -q "NYX3006" "$TMP/out8.txt" && grep -q "SESION-VIVA-TRAS-ARIDAD" "$TMP/out8.txt"; then
+    echo "  ✓ aridad incorrecta emite NYX3006 y la sesión sobrevive"
+else
+    echo "  ✗ aridad incorrecta: sin NYX3006 o la sesión murió"
+    sed 's/^/      /' "$TMP/out8.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 9: bare `return` en fn void NO dispara NYX3002 ────────────────
+# El parser sintetiza make_astnode("integer", [0]) para el bare return
+# (parser.nx:2831); codegen tiene rama dedicada (lección de NYX2001: los
+# catch-alls pueden ser load-bearing para nodos sintéticos) — el
+# intérprete no la tenía y erroreaba sobre código VÁLIDO.
+cat > "$TMP/in9.txt" <<'EOF'
+fn saluda() {
+print("HOLA-BARE-RETURN")
+return
+}
+
+saluda()
+:quit
+EOF
+./nyx_repl < "$TMP/in9.txt" > "$TMP/out9.txt" 2>&1
+if grep -q "HOLA-BARE-RETURN" "$TMP/out9.txt" && ! grep -qa "NYX3002" "$TMP/out9.txt"; then
+    echo "  ✓ bare return en fn void no dispara NYX3002 (nodo sintético cubierto)"
+else
+    echo "  ✗ bare return dispara NYX3002 sobre código válido"
+    sed 's/^/      /' "$TMP/out9.txt" | head -6
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 10: indexar un no-array → NYX3002 honesto, no NYX3005 falso ───
+# s[0] sobre String: el binario compilado lo soporta (indexado por bytes);
+# el intérprete no — es limitación del subconjunto (NYX3002), no "índice
+# fuera de rango" del programa (NYX3005, que además el SPEC promete que
+# el binario abortaría — falso acá).
+cat > "$TMP/in10.txt" <<'EOF'
+let s = "abc"
+print(s[0])
+:quit
+EOF
+./nyx_repl < "$TMP/in10.txt" > "$TMP/out10.txt" 2>&1
+if grep -qa "NYX3002" "$TMP/out10.txt" && ! grep -qa "NYX3005" "$TMP/out10.txt"; then
+    echo "  ✓ indexar un no-array reporta NYX3002 (subconjunto), no NYX3005 falso"
+else
+    echo "  ✗ indexar String: etiqueta incorrecta (esperado NYX3002, no NYX3005)"
+    sed 's/^/      /' "$TMP/out10.txt" | head -6
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 11: llamar un nombre indefinido → UN solo error, no dos ───────
+# Antes: NYX3003 (env_get) + NYX3004 falso ("no es una función") y el
+# contador subía 2 por un solo error del usuario.
+cat > "$TMP/in11.txt" <<'EOF'
+no_existe(1)
+:quit
+EOF
+./nyx_repl < "$TMP/in11.txt" > "$TMP/out11.txt" 2>&1
+n_errs=$(grep -ac "error \[NYX30" "$TMP/out11.txt")
+if [ "$n_errs" -eq 1 ] && grep -qa "NYX3003" "$TMP/out11.txt"; then
+    echo "  ✓ llamada a nombre indefinido: exactamente 1 error (NYX3003)"
+else
+    echo "  ✗ llamada a nombre indefinido: $n_errs errores (esperado 1, solo NYX3003)"
+    sed 's/^/      /' "$TMP/out11.txt" | head -6
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 if [ "$FAIL" -gt 0 ]; then
     echo "  smoke del REPL: FALLÓ ($FAIL check(s))"

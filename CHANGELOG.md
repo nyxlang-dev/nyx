@@ -7,6 +7,71 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.3] — 2026-08-01 — La serie NYX30xx completa, y el bug que el mojibake escondía
+
+La campaña de prints mudos del intérprete (residuo declarado de v0.24.2) terminó
+encontrando algo mejor que ruido: un bug de **datos** silently-wrong presente desde
+siempre.
+
+### Corregido
+- **`eval_array` construía `[nil]` para TODO literal de array**: iteraba `node_data` en
+  vez de `node_data[0]` (el parser emite `make_astnode("array", [elements])`), así que
+  evaluaba como "elemento" a la lista entera — un no-astnode. `[10, 20, 30]` en el REPL
+  medía `length() == 1` con `a[0] == nil`, y el famoso «Expresión no soportada: <bytes
+  basura>» era la lista de elementos impresa como String. Diagnóstico por sondas mínimas
+  (cualquier literal lo disparaba; `let a = 1` no), fix de raíz de una línea.
+- **Los 14 sitios print-mudo del intérprete migrados a la serie NYX30xx** vía helper
+  `interp_err()` (bilingüe + contador `interp_error_count()`): **NYX3002** expresión/
+  operador/feature fuera del subconjunto (catch-all de eval_expr, binop, unop,
+  compound-assign, field_assign), **NYX3003** variable no definida (×3 caminos),
+  **NYX3004** llamada a no-función, **NYX3005** errores de runtime del programa
+  (división por cero ×2, índice fuera de rango ×2, index_assign sobre no-array — el
+  binario compilado aborta en estos; el REPL reporta y sobrevive). Catálogo completo en
+  SPEC.md/SPEC.es.md.
+
+### Corregido (2ª ronda — hallazgos del /code-review pre-release, todos reproducidos)
+- **`for x in [array]` SEGFAULTEABA el REPL** (exit 139, desde siempre): el parser guarda
+  el nombre de la variable del for como String plana en `data[0]`; `eval_for` lo trataba
+  como astnode y leía `[0]` de la String — memoria reinterpretada como puntero.
+- **`5 % 0` devolvía 5 en silencio**: módulo sin el guard que división sí tenía — en
+  ARM64 el udiv-por-cero no trapea (da 0) y el msub deja `a`, un artefacto de hardware
+  disfrazado de resultado. Ahora NYX3005.
+- **Aridad incorrecta (`f(1)` sobre fn de 2 params) MATABA la sesión** (exit 1): el
+  índice fuera de rango de `args[i]` disparaba el abort del binario compilado. Ahora
+  **NYX3006** antes de bindear, y la sesión sobrevive.
+- **`eval_compound_assign` removido**: código muerto inalcanzable — el parser desugarea
+  `x += e` a `x = x + e` y nunca emite ese nodo (la rama tenía el mismo bug latente de
+  eval_for adentro como prueba de que jamás corrió). El bloque NYX3001 ahora usa el
+  helper `interp_err` (hallazgo de reuse de la review).
+
+### Corregido (3ª ronda — reporte final del /code-review)
+- **Bare `return` en fn void emitía NYX3002 sobre código VÁLIDO**: el parser sintetiza
+  el nodo `"integer"` (parser.nx:2831) y el intérprete no tenía rama — la misma lección
+  de NYX2001 (los catch-alls son load-bearing para nodos sintéticos), ahora aplicada acá.
+- **Indexar un no-array reportaba un falso "índice fuera de rango"** (NYX3005): `s[0]`
+  sobre String —que el binario compilado SÍ soporta por bytes— es limitación del
+  subconjunto → NYX3002 honesto, con chequeo de `value_type` (eval_index_assign ya lo
+  tenía; eval_index quedó simétrico).
+- **Llamar un nombre indefinido emitía DOS errores** (NYX3003 + un NYX3004 falso) y el
+  contador subía 2: `env_has` nuevo + pre-check en eval_call — un error, contador +1.
+- Dos guards vacuos del propio smoke (cazados por la review): el grep de length matcheaba
+  por substring (`"nyx> 3"` ⊂ `"nyx> 30"`) y el guard anti-catch-all grepeaba texto en
+  español con el binario emitiendo inglés. Anclado y migrado a códigos neutros.
+- Comentario stale de eval_field_assign («silenciamos silenciosamente» sobre código ya
+  ruidoso).
+
+### Residuo catalogado (ficha en TASKS.md, documentado en el helper)
+- **nil-cascade**: tras un NYX30xx la expresión contenedora sigue computando con nil —
+  `print(a[9] + 1)` emite NYX3005 y después imprime `1`. El error nunca es silencioso,
+  pero puede venir seguido de un valor fabricado. Fix de diseño (value_type "error"
+  propagable) en ficha.
+
+### Tests
+- `run_repl_smoke.sh` 3 → **12 checks** (array literal con datos reales, NYX3003,
+  NYX3004, for-in sin segfault, NYX3005 módulo, NYX3006 aridad con sesión viva, bare
+  return sintético, NYX3002 en indexado de no-array, 1-solo-error en llamada indefinida),
+  todos con RED verificado contra el binario previo.
+
 ## [0.24.2] — 2026-08-01 — El intérprete deja de mentir en silencio
 
 La última pata de la familia silently-wrong, declarada como brecha propia en el cierre de
