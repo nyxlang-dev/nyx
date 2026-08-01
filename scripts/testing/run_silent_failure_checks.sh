@@ -504,6 +504,61 @@ NX
     fi
 fi
 
+# ------------------------------------------------------------------
+# Check: silent-bind-failure — friction 2026-08-01. Un bind fallido de
+# tcp_listen (http_serve con el puerto ocupado) era MUDO: -1 + exit 0 sin
+# una línea de error; el ejemplo canónico descartaba el retorno y el
+# programa "arrancaba" sin servidor. Ahora el runtime escribe
+# «nyx: tcp_listen: cannot bind port N: <causa>» a STDERR.
+# Reusa tests/ai-first/21-bind-failure-loud.nx (que asierta el retorno -1;
+# el runner ai-first mezcla stderr — ESTE check lo captura separado).
+# Control negativo obligatorio: un bind EXITOSO no debe emitir el mensaje
+# (prueba que el instrumento distingue, no que grepea cualquier cosa).
+# ------------------------------------------------------------------
+if command -v clang >/dev/null 2>&1; then
+    BF_RT="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c"
+    BF_LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+    name="silent-bind-failure"
+
+    cp tests/ai-first/21-bind-failure-loud.nx script.nx
+    bf_bad_rc=-1
+    if ./nyx_bootstrap > "$TMPDIR/bf_c.log" 2>&1 && \
+       clang -O2 script.ll $BF_RT $BF_LIBS -o "$TMPDIR/bf_bad_bin" 2>> "$TMPDIR/bf_c.log"; then
+        timeout 20 "$TMPDIR/bf_bad_bin" > "$TMPDIR/bf_bad.out" 2> "$TMPDIR/bf_bad.err"
+        bf_bad_rc=$?
+    fi
+
+    cat > "$TMPDIR/bf_good.nx" <<'NX'
+fn main() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 18742)
+    assert(srv >= 0)
+    tcp_close(srv)
+    print("bind-ok")
+    return 0
+}
+NX
+    cp "$TMPDIR/bf_good.nx" script.nx
+    bf_good_rc=-1
+    if ./nyx_bootstrap > "$TMPDIR/bf_c2.log" 2>&1 && \
+       clang -O2 script.ll $BF_RT $BF_LIBS -o "$TMPDIR/bf_good_bin" 2>> "$TMPDIR/bf_c2.log"; then
+        timeout 20 "$TMPDIR/bf_good_bin" > "$TMPDIR/bf_good.out" 2> "$TMPDIR/bf_good.err"
+        bf_good_rc=$?
+    fi
+
+    if [ "$bf_bad_rc" -eq 0 ] && grep -q "cannot bind port 18741" "$TMPDIR/bf_bad.err" \
+       && [ "$bf_good_rc" -eq 0 ] && ! grep -q "cannot bind" "$TMPDIR/bf_good.err"; then
+        printf "  ✓ %s\n" "$name"
+        PASS=$((PASS + 1))
+    else
+        printf "  ✗ %s\n" "$name"
+        printf "    bad rc=%d (esperado 0 con 'cannot bind port 18741' en stderr), good rc=%d (esperado 0 SIN mensaje — control negativo)\n" "$bf_bad_rc" "$bf_good_rc"
+        sed 's/^/      bad stderr: /' "$TMPDIR/bf_bad.err" 2>/dev/null | head -3
+        sed 's/^/      good stderr: /' "$TMPDIR/bf_good.err" 2>/dev/null | head -3
+        FAIL=$((FAIL + 1))
+        FAILED+=("$name")
+    fi
+fi
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 

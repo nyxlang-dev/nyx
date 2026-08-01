@@ -101,7 +101,9 @@ pub fn on_request(req: Array) -> String {
     let path: String = req[2]
     return http.http_response(200, "Hello!")
 }
-fn main() -> int { http.http_serve(8080, on_request); return 0 }
+// http_serve retorna -1 si el bind falla (puerto ocupado) — chequealo o el
+// programa "corre" sin servidor:
+fn main() -> int { if http.http_serve(8080, on_request) < 0 { return 1 } return 0 }
 
 // Concurrency
 let t = thread_spawn(worker_fn)

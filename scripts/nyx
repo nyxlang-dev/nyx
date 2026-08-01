@@ -375,7 +375,7 @@ RUNTIME_SRCS="$NYX_HOME/runtime/runtime.c $NYX_HOME/runtime/strings.c \
   $NYX_HOME/runtime/random.c $NYX_HOME/runtime/url.c \
   $NYX_HOME/runtime/msgpack.c $NYX_HOME/runtime/websocket.c \
   $NYX_HOME/runtime/persist.c $NYX_HOME/runtime/http2.c \
-  $NYX_HOME/runtime/process.c"
+  $NYX_HOME/runtime/process.c $NYX_HOME/runtime/llama_adapter.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 
 # Use a temp directory to avoid polluting CWD

@@ -488,7 +488,13 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         "$RT/time.c $RT/crypto.c $RT/tls.c " +
         "$RT/scheduler.c $RT/event_loop.c $RT/sqlite_adapter.c " +
         "$RT/compress.c $RT/random.c $RT/url.c " +
+        // llama_adapter va SIEMPRE: es dlopen-lazy (cero dependencia dura de
+        // libllama) y sin él todo import de std/llm muere en el LINK con
+        // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31 —
+        // la feature estuvo publicada e inusable para usuarios del
+        // toolchain instalado desde v0.20.x).
         "$RT/msgpack.c $RT/websocket.c $RT/persist.c $RT/http2.c $RT/process.c " +
+        "$RT/llama_adapter.c " +
         "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz " +
         "-o \"$ORIG_DIR/" + output_name + "\" 2> \"$LOG\" " +
         "|| { echo \"error: clang link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +

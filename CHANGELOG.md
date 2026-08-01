@@ -7,6 +7,38 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.4] — 2026-08-01 — Dos reportes de fricción: el bind mudo y la feature que no linkeaba
+
+Ciclo de fricción completo (skill kv-friction-pull): dos reportes de usuarios reales,
+ambos reproducidos ANTES de tocar nada, ambos blindados con guardia permanente.
+
+### Corregido — el bind fallido es RUIDOSO (reporte 2026-08-01, usuario en v0.24.1)
+`http_serve(8080, handler)` con el puerto ocupado devolvía -1 **sin un solo mensaje**, y
+el ejemplo canónico de la doc descartaba el retorno: el programa "arrancaba" con exit 0
+y sin servidor (el usuario debuggeó contra el proceso ajeno que ocupaba su puerto).
+- `nyx_tcp_listen` (bind Y listen) + `nyx_udp_bind` (misma familia): fallo → mensaje a
+  **stderr** con puerto y `strerror(errno)` (capturado antes del `close`, que puede
+  pisarlo). El retorno -1 se mantiene (ABI).
+- Los 5 ejemplos canónicos (LLM.md, templates/CLAUDE.md, CHEATSHEET ×2, SPEC) ahora
+  chequean el retorno; docstrings de `http_serve`/`http_serve_mt` documentan el contrato.
+- Blindaje: `tests/ai-first/21-bind-failure-loud.nx` + check `silent-bind-failure`
+  (stderr capturado aparte, control negativo: un bind exitoso NO emite).
+- La IDEA del reporte (`Result<int,String>`) queda catalogada — cambio de firma.
+
+### Corregido — `std/llm` linkea para usuarios (A10 del reporte 2026-07-31)
+Todo `import "std/llm"` moría en el link (`undefined reference to nyx_llm_*`) con el
+toolchain instalado **desde v0.20.x**: `llama_adapter.c` estaba en el Makefile del
+monorepo (gates internos verdes) pero faltaba en las DOS recetas de usuarios
+(`scripts/nyx` y `compiler/build.nx`). Verificado vivo en v0.24.3; agregado a ambas
+(dlopen-lazy, cero dependencia dura). Post-fix el repro linkea y da el error runtime
+accionable. Lección estructural: `run_toolchain_recipe_audit.sh` (6ª línea de
+`make test-ai-first`) exige TODO `runtime/*.c` en ambas recetas — con control positivo.
+Seeds regenerados (`build.ll` + `make build-nyx-build`).
+
+Del resto del reporte 2026-07-31 (navegador): C1 (SIGWINCH) ya era verdad desde
+v0.22.18, C3 (regex en CAPABILITIES) ya resuelto, A1-A9/B/C2/C4 cerrados en v0.22.x.
+Ambos reportes archivados; inbox vacío.
+
 ## [0.24.3] — 2026-08-01 — La serie NYX30xx completa, y el bug que el mojibake escondía
 
 La campaña de prints mudos del intérprete (residuo declarado de v0.24.2) terminó

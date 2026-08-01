@@ -545,6 +545,11 @@ pub fn http_cors_response(origin: String) -> String {
 
 // === Server ===
 
+// Sirve HTTP en 0.0.0.0:port, un request por vez. NO retorna en éxito
+// (loop infinito); retorna -1 si el bind falla (puerto ocupado/permiso —
+// el runtime además lo grita por stderr desde v0.24.4). CHEQUEÁ el
+// retorno: descartarlo deja el programa "corriendo" sin servidor.
+//   if http_serve(8080, handler) < 0 { return 1 }
 pub fn http_serve(port: int, handler: Fn) -> int {
     let server: int = tcp_listen("0.0.0.0", port)
     if server < 0 {
@@ -595,6 +600,8 @@ fn __http_mt_worker() -> int {
     return 0
 }
 
+// Variante multi-thread de http_serve. Mismo contrato de retorno: NO
+// retorna en éxito; -1 si el bind falla (ruidoso por stderr desde v0.24.4).
 pub fn http_serve_mt(port: int, num_workers: int, handler: Fn) -> int {
     __http_mt_ch = channel_new(512)
     __http_mt_handler = handler

@@ -71,11 +71,23 @@ int64_t nyx_tcp_listen(const char* host, int64_t port) {
     }
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        /* Friction 2026-08-01: un bind fallido era MUDO — http_serve devolvía
+         * -1, el ejemplo canónico descartaba el retorno, y el programa
+         * "arrancaba" con exit 0 sin servidor (el usuario debuggeó contra el
+         * proceso ajeno que ocupaba su puerto). El retorno -1 se mantiene
+         * (ABI); el ruido va a stderr con puerto y causa. errno se captura
+         * ANTES de close(), que puede pisarlo. */
+        int bind_errno = errno;
+        fprintf(stderr, "nyx: tcp_listen: cannot bind port %lld: %s\n",
+                (long long)port, strerror(bind_errno));
         close(fd);
         return -1;
     }
 
     if (listen(fd, 128) < 0) {
+        int listen_errno = errno;
+        fprintf(stderr, "nyx: tcp_listen: listen failed on port %lld: %s\n",
+                (long long)port, strerror(listen_errno));
         close(fd);
         return -1;
     }
@@ -648,6 +660,11 @@ int64_t nyx_udp_bind(const char* host, int64_t port) {
     }
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        /* Misma familia que el bind de tcp_listen (friction 2026-08-01):
+         * fallo de bind ruidoso por stderr, retorno -1 intacto. */
+        int bind_errno = errno;
+        fprintf(stderr, "nyx: udp_bind: cannot bind port %lld: %s\n",
+                (long long)port, strerror(bind_errno));
         close(fd);
         return -1;
     }

@@ -744,6 +744,15 @@ Listed so you don't avoid a construct that is perfectly fine.
     variable used to print a mute error and return 0 with rc=0 — now it's
     NYX2007 too. A Map exposes no properties; use the methods (`m.size()`,
     `m.keys()`, `m.values()`).
+12. **A failed bind is LOUD now (v0.24.4)** [test: 21-bind-failure-loud].
+    `http_serve`/`tcp_listen`/`udp_bind` on a taken port used to fail in
+    complete silence: return -1, no message — and since the old canonical
+    example discarded the return, the program "started" with exit 0 and no
+    server (a real user debugged against the unrelated process squatting
+    their port). The runtime now prints `nyx: tcp_listen: cannot bind port
+    N: <cause>` to stderr. Still CHECK the return (`if http_serve(...) < 0`)
+    — the -1 contract is unchanged and the error stream may not be visible
+    in every deployment.
 
 ---
 
@@ -856,7 +865,14 @@ pub fn on_request(req: Array) -> String {
 }
 
 fn main() -> int {
-    http.http_serve(8080, on_request)
+    // http_serve never returns on success; it returns -1 if the bind fails
+    // (port taken / permission) — CHECK it, or the program "runs" with no
+    // server (the runtime also prints `nyx: tcp_listen: cannot bind...` to
+    // stderr since v0.24.4).
+    if http.http_serve(8080, on_request) < 0 {
+        print("bind failed — is the port taken?")
+        return 1
+    }
     return 0
 }
 // NOTE: the app-based router (app_new/app_get/serve_app, Request/Response types)

@@ -364,7 +364,10 @@ pub fn my_handler(req: Array) -> String {
     return http.http_response(404, "not found")
 }
 fn main() -> int {
-    http.http_serve(8080, my_handler)
+    // -1 = bind falló (puerto ocupado); sin el check el programa "corre" sin servidor
+    if http.http_serve(8080, my_handler) < 0 {
+        return 1
+    }
     return 0
 }
 

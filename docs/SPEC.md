@@ -2559,7 +2559,10 @@ pub fn handler(req: Array) -> String {
 }
 
 fn main() -> int {
-    http.http_serve(8080, handler)
+    // Returns -1 if the bind fails (port taken); never returns on success
+    if http.http_serve(8080, handler) < 0 {
+        return 1
+    }
     return 0
 }
 ```
