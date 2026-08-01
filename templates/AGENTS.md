@@ -68,6 +68,23 @@ it's a web page.
    When in doubt use flat keys: `m.insert("user::name", "alice")`.
 8. **`map.remove(k)` on a struct FIELD is a silent no-op** — bind to a local first:
     `let m = obj.the_map; m.remove(k)` (Maps are references, so it mutates the same map).
+9. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct payload fails to LINK**
+   (not a silent runtime bug — `clang` refuses it every time). Boxing always reserves one
+   word. Don't put a multi-field struct through `Option`/`Result` directly — return
+   `Option<Array>`/`Result<Array, E>` with the fields packed into an Array instead.
+10. **`arr[i] = <float>` on an existing Array corrupts the value on the next read** — the
+    indexed-assignment path doesn't retag the slot. Never reassign a float by index into an
+    existing Array: only `.push()` fresh floats (append-only), or sort an Array of `int`
+    indices instead of swapping float values in place.
+11. **A small `channel_new(N)` can deadlock a producer/consumer** if you send everything
+    before you start draining a second bounded channel. Size each channel to the total
+    number of messages it will carry, or interleave sends and receives.
+12. **A missing method on a typed receiver is a compile error (NYX1022)**, not silent
+    garbage — e.g. `m.length()` on a `Map` fails with a did-you-mean. Use `size()` on Map,
+    `length()` on String/Array.
+13. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`** — a failed bind (port
+    taken) returns `-1` and prints to stderr; without the check your program "runs" with no
+    server: `if http.http_serve(8080, handler) < 0 { return 1 }`.
 
 If a gotcha bites you, that's expected — fix per the note, don't rewrite your whole approach.
 

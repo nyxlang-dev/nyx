@@ -88,7 +88,7 @@ if let Option.Some(v) = maybe { print(v) }
 let content = read_file("file.txt")
 write_file("out.txt", data)
 
-// JSON — values are tagged Arrays, not Map (JSON is recursive; nested Maps SEGV)
+// JSON — values are tagged Arrays, not Map (JSON is recursive; see nested-Maps trap below)
 let data: Array = json_parse(text)
 let name: String = json_as_string(json_get(data, "name"))
 let body: String = json_stringify(json_object(["k"], [json_string("v")]))
@@ -117,22 +117,36 @@ let args: Array = get_args()
 
 ## Critical Traps
 
-1. **`arr[i].method()` causes SEGV** — store `arr[i]` in a typed variable first.
-2. **`charAt()` returns int** (ASCII/codepoint), not char. Compare with numbers: `if c == 65`.
-3. **String API is byte-based** — `length()`, `substring()`, `indexOf()`, `charAt()` all
+1. **`charAt()` returns int** (ASCII/codepoint), not char. Compare with numbers: `if c == 65`.
+2. **String API is byte-based** — `length()`, `substring()`, `indexOf()`, `charAt()` all
    operate on BYTES, so they compose: `s.substring(0, s.length())` is the identity. For
    user-visible character counts use `char_length()` (UTF-8 codepoints). HTTP
    `Content-Length` = `length()` directly.
-4. **`for-in` on mixed-type arrays** causes infinite loop. Use `while` + index.
-5. **Enum syntax uses `.`** not `::` — `Color.Red`, not `Color::Red`.
-6. **Map literal keys must be STRINGS** — `{"k": v}` and `{}` work; `{ident: v}` is NOT a
+3. **`for-in` on mixed-type arrays** causes infinite loop. Use `while` + index.
+4. **Enum syntax uses `.`** not `::` — `Color.Red`, not `Color::Red`.
+5. **Map literal keys must be STRINGS** — `{"k": v}` and `{}` work; `{ident: v}` is NOT a
    map literal. For non-string keys use `Map.new()` + `.insert()`.
-7. **Nested Maps cause SEGV** — use flat keys: `m.insert("user::name", "alice")`.
-8. **Channels must be `Map`, not `int`** — `let ch: Map = channel_new(10)`.
+6. **Nested Maps: OK for a variable or an inline literal, SEGVs for a function's return
+   value** — `outer.insert("k", inner)` with `let inner: Map = {...}` (or an inline
+   `{"a":"b"}`) works; `outer.insert("k", make_map())` still SEGVs on read. When in doubt
+   use flat keys: `m.insert("user::name", "alice")`.
+7. **Channels must be `Map`, not `int`** — `let ch: Map = channel_new(10)`.
+8. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct payload fails to LINK** —
+   boxing reserves one word. Return `Option<Array>`/`Result<Array, E>` with the struct's
+   fields packed into an Array instead.
+9. **`arr[i] = <float>` on an existing Array corrupts the value on the next read** — never
+   reassign a float by index into an existing Array; `.push()` fresh floats (append-only)
+   or sort an Array of `int` indices instead.
+10. **A small `channel_new(N)` can deadlock a producer/consumer** — size each channel to
+    the total number of messages it will carry, or interleave sends and receives.
+11. **A missing method on a typed receiver is a compile error (NYX1022)** — e.g.
+    `m.length()` on a `Map` fails with a did-you-mean, not silent garbage. Use `size()` on
+    Map, `length()` on String/Array.
 
-`and`/`or` **do** short-circuit. `defer expr()` (no block), `const` with `String`, bare
-`return` in void functions, and `handler` as a function name all work. For the full gotcha
-list and stdlib reference see `LLM.md` in this project (or `~/.nyx/LLM.md`).
+`and`/`or` **do** short-circuit. Closure capture of locals fully works (lambda, nested fn,
+and both coexisting in the same function). `defer expr()` (no block), `const` with
+`String`, bare `return` in void functions, and `handler` as a function name all work. For
+the full gotcha list and stdlib reference see `LLM.md` in this project (or `~/.nyx/LLM.md`).
 
 ## Build Commands
 
@@ -146,7 +160,7 @@ nyx info               # show project info
 ```
 
 
-## v0.17: in-place mutation & WebAssembly
+## In-place mutation & WebAssembly (v0.17+)
 
 ```nyx
 // &mut self mutates the CALLER's struct (Go-style, no borrow checker):
@@ -161,8 +175,10 @@ JS; `#[export_name = "f"]` lets JS call Nyx (events re-enter). Use `std/dom`
 localStorage) — both wasm-only. For long-lived pages enable the per-event
 arena (`runNyxWasm(bytes, { arena: true })` in the JS shim).
 
-**Handler-state trap**: closure capture of locals is broken (catalogued) —
-keep callback/handler state in module GLOBALS (`var g_count: int = 0`).
+Closure capture of locals works — a lambda, a nested fn, and both coexisting in the same
+function all mutate captured locals correctly. If you need handler state to survive across
+separate wasm events (not just within one function), module GLOBALS (`var g_count: int = 0`)
+are still the simplest option.
 
 ## AI-first workflow
 

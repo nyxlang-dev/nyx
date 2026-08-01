@@ -159,7 +159,7 @@ var m = Map.new()
 m.insert("key", "value")
 let v: String = m.get("key")
 let keys: Array = m.keys()
-// Note: map literal {} is NOT supported (ambiguity with blocks)
+// Map literals also work: {"k": "v"} and {} — see "Known Traps" #6 for the string-keys rule
 ```
 
 ## Structs
@@ -284,11 +284,12 @@ let result = [1, 2, 3, 4, 5]
 ## Modules
 
 ```nyx
-// math_utils.nx
+// src/math_utils.nx
 export fn cube(x: int) -> int { return x * x * x }
 
-// main.nx
-import { cube } from "math_utils"
+// src/main.nx — local imports use the src/ path, not a bare module name
+// (a bare name like "math_utils" is silently ignored)
+import "src/math_utils"
 print(cube(3))  // 27
 
 // Import with namespace
@@ -330,8 +331,8 @@ mutex_lock(m)
 // critical section
 mutex_unlock(m)
 
-// Channels
-let ch = channel_new()
+// Channels — Map, not int; size is required
+let ch: Map = channel_new(10)
 channel_send(ch, 42)
 let val: int = channel_recv(ch)
 
@@ -425,8 +426,8 @@ struct Point { x: int, y: int }
 
 ```nyx
 fn process_file() {
-    let f = open_file("data.txt")
-    defer close_file(f)    // runs when function exits
+    let f = file_open("data.txt", "r")
+    defer { file_close(f) }    // runs when function exits
     // work with f...
 }
 ```
@@ -471,14 +472,15 @@ guard clauses are safe:
 while pos < len and is_digit(input.charAt(pos)) { pos = pos + 1 }
 ```
 
-### 2. `arr[i].method()` causes SEGV — use intermediate variable
+### 2. `Option<Struct>`/`Result<Struct, E>` with a 2+-field struct payload fails to LINK
+Boxing a generic payload always reserves one word — fine for `int`/`bool`/`String`/`Array`,
+not enough for a multi-field struct. `clang` refuses to link it every time (not intermittent).
 ```nyx
-// WRONG — segfault
-let name: String = cmd[0].toUpper()
+// WRONG — link error, Item has 3 fields
+fn find(id: int) -> Option<Item> { ... }
 
-// CORRECT
-let raw: String = cmd[0]
-let name: String = raw.toUpper()
+// CORRECT — pack the struct's fields into an Array instead
+fn find(id: int) -> Option<Array> { ... }
 ```
 
 ### 3. `charAt()` returns int, not char
@@ -516,11 +518,13 @@ let m = {"name": "alice", "role": "admin"}   // OK
 let empty = {}                                // OK
 ```
 
-### 7. Nested Maps cause SEGV
-Use flat keys instead.
+### 7. Nested Maps: OK for a variable or an inline literal, SEGVs for a function's return value
 ```nyx
-m.insert("user::name", "alice")   // not m.insert("user", inner_map)
+outer.insert("k", inner)          // inner: Map = {...} — OK
+outer.insert("k", {"a": "b"})     // inline literal — OK
+outer.insert("k", make_map())     // value comes from a function call — SEGVs on read
 ```
+When in doubt use flat keys instead: `m.insert("user::name", "alice")`.
 
 ### 8. Channels must be `Map`, not `int`
 ```nyx
@@ -531,6 +535,39 @@ let ch: Map = channel_new(10)   // never `let ch: int`
 The string API is byte-based since v0.14, so `.length()` already returns bytes — use it
 directly for `Content-Length`. For user-visible character counts use `char_length()`.
 
+### 10. `arr[i] = <float>` on an existing Array corrupts the value on the next read
+The indexed-assignment path doesn't retag the slot's type, so a later typed read gets
+garbage bits reinterpreted as a `double`.
+```nyx
+// WRONG
+var a: Array = [0.0]
+a[0] = 5.5
+let g: float = a[0]   // garbage, not 5.5
+
+// CORRECT — append-only, or sort an Array of int indices instead of swapping floats
+var a: Array = []
+a.push(5.5)
+```
+
+### 11. A small `channel_new(N)` can deadlock a producer/consumer
+If you send everything on a bounded channel before draining a second bounded channel,
+both sides can end up blocked waiting on each other.
+```nyx
+// SAFER — size for the total message count, or interleave sends and receives
+let jobs: Map = channel_new(m + n)
+```
+
+### 12. A missing method on a typed receiver is a compile error (NYX1022), not silent garbage
+```nyx
+// WRONG — NYX1022: no method 'length' on Map (did you mean 'size'?)
+let n: int = my_map.length()
+
+// CORRECT
+let n: int = my_map.size()
+```
+
 > Resolved since v0.16 (no longer traps): `and`/`or` short-circuit, `defer expr()` without
 > a block, `const` with `String`, bare `return` in void functions, and `handler` as a
-> function name all work.
+> function name all work. Resolved since 2026-07-27: closure capture of locals — a lambda,
+> a nested fn, and both coexisting in the same function all work. Resolved (April 2026):
+> `arr[i].method()` no longer SEGVs — the indexed result is coerced to the right type.

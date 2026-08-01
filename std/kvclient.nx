@@ -7,6 +7,8 @@
 //
 import "std/resp"
 
+// Conecta por TLS y autentica. Retorna el HANDLE (>0) o -1 si la conexión
+// o el AUTH fallan. Token vacío = conexión anónima (si el server la permite).
 pub fn kv_connect_auth(host: String, port: int, token: String) -> int {
     let h: int = tls_connect(host, port)
     if h == 0 { return -1 }
@@ -166,11 +168,15 @@ pub fn kv_get(h: int, key: String) -> String {
     return kv_cmd(h, parts)
 }
 
+// DEL key. Retorna la cantidad de claves borradas (0 si no existía);
+// respuestas de error del server parsean a 0 — verificá con kv_exists si importa.
 pub fn kv_del(h: int, key: String) -> int {
     let parts: Array = ["DEL", key]
     return string_to_int(kv_cmd(h, parts))
 }
 
+// RPUSH key value. Retorna el largo de la lista tras el push (>=1 en éxito;
+// 0 = respuesta de error del server, p.ej. WRONGTYPE).
 pub fn kv_rpush(h: int, key: String, value: String) -> int {
     let parts: Array = ["RPUSH", key, value]
     return string_to_int(kv_cmd(h, parts))
@@ -181,11 +187,13 @@ pub fn kv_lrange(h: int, key: String, start: int, stop: int) -> Array {
     return kv_cmd_array(h, parts)
 }
 
+// LLEN key. Retorna el largo de la lista (0 si no existe o en error).
 pub fn kv_llen(h: int, key: String) -> int {
     let parts: Array = ["LLEN", key]
     return string_to_int(kv_cmd(h, parts))
 }
 
+// SADD key member. Retorna 1 si se agregó, 0 si ya estaba (o en error).
 pub fn kv_sadd(h: int, key: String, member: String) -> int {
     let parts: Array = ["SADD", key, member]
     return string_to_int(kv_cmd(h, parts))

@@ -7,6 +7,31 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.5] — 2026-08-01 — La métrica AI-first re-medida: 4/4 al primer intento
+
+Ottavio pidió "poner a prueba bien el lenguaje y aclarar los manuales". Se hizo ambas.
+
+### El banco de primer intento, contra v0.24.4
+Mismo protocolo del baseline (agente sonnet headless, contexto limpio, SOLO la doc que
+`nyx init` siembra, acceptance a ciegas): **4/4 ACCEPT PASS** — el baseline v0.22.21 era
+7/8. `first_green_attempt = 1` en las cuatro tareas (el PRIMER build de cada proyecto fue
+verde), cero incidentes de silencio, cero fallos sin diagnóstico. La tarea 4 — el único
+FAIL del baseline — ahora pasa: `float_to_fixed` existe, y el examinado que escribió
+`println` recibió el did-you-mean de `nyx check` y corrigió en una invocación. Detalle y
+advertencias honestas (n=1 por tarea) en `docs/BENCH-FIRST-ATTEMPT.md`. **Scorer v2**: el
+instrumento contaba como "fallos mudos" los diagnósticos de `nyx_check` (van por stdout,
+sin código NYX — ficha abierta); corregido con caso de control en el selftest.
+
+### Los manuales dejan de mentir (auditoría completa contra LLM.md)
+Los 3 manuales que `nyx init` siembra en cada proyecto arrastraban falsedades: closures
+"rotos" (arreglados hace 5 días de eso... desde 2026-07-27), la trampa `arr[i].method()`
+muerta desde abril, el CHEATSHEET contradiciéndose a sí mismo dos veces, API inventada
+(`open_file`), `http_get` tipado `String` (retorna `Array`), e import local con sintaxis
+de dependencia. Todo corregido hacia el core; los 3 ganan las 3 trampas vivas de §5.1 que
+les faltaban, NYX1022 y el check del bind. `std/kvclient` gana sus 5 contratos de retorno
+(la lección http_serve generalizada — el resto de las familias de riesgo ya los tenía).
+LLM.md documenta el subconjunto del REPL (§5.4.12).
+
 ## [0.24.4] — 2026-08-01 — Dos reportes de fricción: el bind mudo y la feature que no linkeaba
 
 Ciclo de fricción completo (skill kv-friction-pull): dos reportes de usuarios reales,

@@ -744,7 +744,17 @@ Listed so you don't avoid a construct that is perfectly fine.
     variable used to print a mute error and return 0 with rc=0 — now it's
     NYX2007 too. A Map exposes no properties; use the methods (`m.size()`,
     `m.keys()`, `m.values()`).
-12. **A failed bind is LOUD now (v0.24.4)** [test: 21-bind-failure-loud].
+12. **The REPL evaluates a declared SUBSET and says so loudly (v0.24.2-3)**.
+    `make repl` runs a tree-walking interpreter, NOT the compiler: it covers
+    basic types, control flow, functions, arrays and 15 builtin methods
+    (12 String, 3 Array — no Map values, no structs-with-methods, no
+    generics). Anything outside the subset raises a loud `NYX30xx` error and
+    the session survives. Until v0.24.3 it was worse than limited — it was
+    wrong: every array literal evaluated to `[nil]`, `for x in [...]`
+    segfaulted, `5 % 0` returned 5. All fixed and guarded (`make test-repl`).
+    Trust the compiled binary (`nyx build`/`nyx run`) as ground truth; use
+    the REPL for quick arithmetic/string exploration only.
+13. **A failed bind is LOUD now (v0.24.4)** [test: 21-bind-failure-loud].
     `http_serve`/`tcp_listen`/`udp_bind` on a taken port used to fail in
     complete silence: return -1, no message — and since the old canonical
     example discarded the return, the program "started" with exit 0 and no
