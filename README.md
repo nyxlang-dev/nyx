@@ -2,7 +2,7 @@
 
 **A self-hosting, gradually-typed systems language that compiles to native code via LLVM — one language from bare metal to the browser.**
 
-![version](https://img.shields.io/badge/version-0.21.0-blue)
+[![version](https://img.shields.io/github/v/tag/nyxlang-dev/nyx?label=version&color=blue)](https://github.com/nyxlang-dev/nyx/tags)
 [![license](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![tests](https://img.shields.io/badge/tests-passing-brightgreen)](docs/TESTS.md)
 ![self-hosting](https://img.shields.io/badge/self--hosting-verified-8A2BE2)
