@@ -13,10 +13,13 @@ fn main() -> int {
     // Initialize TLS server with default cert
     // tls_server_init(default_cert, default_key)
 
-    // Add additional certs for other domains
-    // tls_server_add_cert("/etc/letsencrypt/live/nyxkv.com/fullchain.pem",
+    // Add additional certs for other domains (SNI). Real signature is
+    // 3 args: hostname first, then cert and key paths.
+    // tls_server_add_cert("nyxkv.com",
+    //                     "/etc/letsencrypt/live/nyxkv.com/fullchain.pem",
     //                     "/etc/letsencrypt/live/nyxkv.com/privkey.pem")
-    // tls_server_add_cert("/etc/letsencrypt/live/serve.nyxlang.com/fullchain.pem",
+    // tls_server_add_cert("serve.nyxlang.com",
+    //                     "/etc/letsencrypt/live/serve.nyxlang.com/fullchain.pem",
     //                     "/etc/letsencrypt/live/serve.nyxlang.com/privkey.pem")
 
     print("SNI config example:")
