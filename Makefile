@@ -216,10 +216,19 @@ test-integration:
 	bash scripts/testing/run_integration_tests.sh
 
 ## Build nyx_test (integrated test runner)
+## build-test funciona en DOS layouts: el repo privado (compila test.nx y
+## refresca el seed) y el clon público (test.nx es fuente privada que no
+## viaja — usa el seed test.ll, mismo patrón que build.ll). Sin esto,
+## install.sh estuvo ROTO para todo instalador externo del 29/07 al 02/08
+## («make build-test failed» — los CI de nyx-proxy/nyx-serve lo gritaban
+## y nadie los miraba). El guard de completitud del sync cubre la clase.
 build-test:
-	cp compiler/test.nx script.nx
-	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
-	$(CLANG) script.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_test
+	@if [ -f compiler/test.nx ]; then \
+		cp compiler/test.nx script.nx && \
+		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
+		cp script.ll compiler/test.ll; \
+	fi
+	$(CLANG) compiler/test.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_test
 	@echo "✓ nyx_test listo"
 
 ## (build-shell retirado — nyx-shell extraído a ~/nyx-shell-stack, 2026-07-05)

@@ -7,6 +7,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.6] — 2026-08-02 — El install público estuvo roto 4 días; ahora no puede volver a pasar
+
+`curl install.sh | sh` moría para TODO usuario externo desde el 29/07: `make build-test`
+(paso agregado en v0.22.20) necesita `compiler/test.nx`, fuente privada que no viaja al
+mirror — y no existía seed. Los gates internos, todos verdes; los CI de nyx-proxy y
+nyx-serve lo gritaban en rojo y nadie los miraba.
+
+### Corregido
+- Seed `compiler/test.ll` trackeado + `build-test` dual: con la fuente compila y
+  refresca el seed; sin ella (clon público) construye desde el seed — patrón `build.ll`.
+- **Guard de completitud del install en el sync** (espejo del guard anti-fugas): todo
+  target de `install.sh` que necesite un `compiler/*.nx` debe tener fuente o seed en el
+  mirror, o el sync no commitea. Verificado con control positivo. La clase entera de
+  "feature interna verde / instalador externo muerto" queda cerrada estructuralmente.
+- Ficha meta: los CI de los repos públicos como verificadores-que-nadie-mira (el rojo
+  de nyx-serve llevaba 2+ días visible).
+
 ## [0.24.5] — 2026-08-01 — La métrica AI-first re-medida: 4/4 al primer intento
 
 Ottavio pidió "poner a prueba bien el lenguaje y aclarar los manuales". Se hizo ambas.
