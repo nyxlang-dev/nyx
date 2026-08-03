@@ -1533,6 +1533,27 @@ else
   echo "$n7n_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+# El formato humano de semantic lleva el código NYX (v0.24.8): nyx_check
+# emitía "error in 'main': ..." SIN código — la audiencia AI-first matchea
+# códigos estables, no prosa (lo destapó el scorer del banco contándolos
+# como fallos mudos). NYX0000 (sin código) se omite a propósito.
+name="check-diag-carries-code"
+if [ ! -x ./nyx_check ]; then
+  printf "  ⚠️  nyx_check no existe — corré 'make build-check' (se salta este check)\n"
+else
+  cdc_src=$(mktemp /tmp/cdc-XXXX.nx)
+  printf 'fn main() -> int {\n    prinln("x")\n    return 0\n}\n' > "$cdc_src"
+  cdc_out=$(NYX_SRC="$cdc_src" ./nyx_check 2>&1)
+  rm -f "$cdc_src"
+  if echo "$cdc_out" | grep -q "error \[NYX1" && echo "$cdc_out" | grep -q "DIAG:ERROR:.*\[NYX1"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s (el formato humano de nyx_check no lleva código NYX)\n" "$name"
+    echo "$cdc_out" | grep -E "✗|DIAG" | head -3 | sed 's/^/      /'
+    FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+fi
+
 # Gemelo del anterior con receptor IDENTIFICADOR (residuo post-v0.24.0):
 # `m.length` propiedad sobre una variable Map local. Sin NYX_SKIP_SEMANTIC:
 # NYX1022 mira llamadas, la forma-propiedad pasa semantic limpia.

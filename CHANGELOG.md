@@ -7,6 +7,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.8] — 2026-08-03 — Los diagnósticos humanos llevan su código
+
+Dos menores de la cola, cerrados con la disciplina completa:
+
+### Corregido
+- **El formato humano de semantic lleva el código NYX**: `sem_diag` construía
+  «error in 'main' (line N): ...» descartando el código que ya tenía — `nyx_check`
+  (y cualquier consumidor del canal humano) recibía prosa sin identificador estable.
+  Ahora: `error [NYX1002] in 'main' (line N): ...`, también en el protocolo `DIAG:`
+  del LSP. La audiencia AI-first matchea códigos, no prosa (lo destapó el scorer del
+  banco). `NYX0000` (sin código asignado) se omite para no inventar identificadores.
+  Fixed point ×2 byte-idéntico; blindado con `check-diag-carries-code` (errors → 240).
+- **`run_case` en el smoke del REPL**: 14 bloques de boilerplate colapsados a un helper
+  con `timeout 20` (que faltaba — un REPL colgado ya no cuelga la suite). 15/15
+  intactos, control positivo del refactor verificado.
+
+### Catalogado
+- `nyx_check` vía `NYX_SRC` directa reporta la línea corrida por el prelude (la vía del
+  wrapper rebasea bien) — ficha nueva.
+
 ## [0.24.7] — 2026-08-03 — El error del intérprete corta la evaluación (nil-cascade resuelto)
 
 El residuo de diseño declarado en v0.24.3: tras un NYX30xx, la expresión contenedora
