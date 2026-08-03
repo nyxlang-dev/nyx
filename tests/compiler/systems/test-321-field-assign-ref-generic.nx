@@ -11,9 +11,11 @@
 // `normalize_struct_type_symbol`.
 //
 // NOTA DE ORDEN (gap SEPARADO, no es lo que testea este archivo): un struct
-// genérico se monomorfiza LAZY, al generar el literal `Contenedor<int>{...}`.
-// Una función definida ANTES de ese literal todavía no ve los campos
-// registrados. Por eso los helpers genéricos van DESPUÉS de main.
+// genérico se monomorfizaba LAZY, al generar el literal `Contenedor<int>{...}`
+// — RESUELTO 2026-08-03 (sp4-bug-3, arco "la anotación manda"): la mono es
+// on-demand por MENCIÓN de tipo y el orden de declaración ya no importa
+// (test-326 fija el orden fn-antes-del-literal). Los helpers de este test
+// quedan después de main por HISTORIA, no por necesidad.
 //
 // Self-checking con assert() abortivo.
 

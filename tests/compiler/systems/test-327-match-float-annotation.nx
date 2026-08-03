@@ -1,0 +1,17 @@
+fn elegir(v: int) -> float {
+    return match v {
+        1 => 1.5,
+        2 => 2,
+        _ => { let base = 10.0  base + 0.25 }
+    }
+}
+fn main() -> int {
+    print(elegir(1))
+    print(elegir(2))
+    print(elegir(9))
+    let sin_anot = match 3 { 3 => 0.75, _ => 0.5 }
+    print(sin_anot)
+    let legacy: int = match 1 { 1 => 42, _ => 0 }
+    print(legacy)
+    return 0
+}

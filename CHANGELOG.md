@@ -7,6 +7,54 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.9] — 2026-08-03 — La anotación manda (ronda 1): mueren tres adivinanzas
+
+Arco de endurecimiento del tipado gradual. Principio rector: donde el usuario ANOTÓ,
+el compilador obedece la anotación — nunca la adivinanza. Plan aprobado por Ottavio;
+spec del incremento restante incluida.
+
+### Corregido
+- **Struct de nombre corto ES un struct (A1)**: la heurística "≤2 chars = parámetro de
+  tipo" hacía que `struct Q` bypaseara NYX1020/NYX2004 y el compilador emitiera IR
+  inválido con exit 0 (clang lo cazaba recién al linkear). Registro
+  `g_concrete_type_names` + wrapper `sem_ty_parse` (18 call-sites): si el nombre corto
+  está registrado como struct/enum, es CONCRETO. Ahora: NYX2004 nombrando la firma
+  faltante. Cerró también a su gemela de semantic (`pub struct St` validaba distinto
+  que `pub struct Sto`). Test: `codegen-nyx2004-short-struct-bound` (errors → 241).
+- **Monomorfización de structs genéricos ON-DEMAND (B1, sp4-bug-3)**: una fn declarada
+  ANTES del literal genérico leía campos de un tipo sin registrar → print mudo y el
+  binario devolvía 0 en vez del valor, con exit 0. La rama de `nyx_type_to_llvm` que
+  manglea `Base<Args>` ahora monomorfiza por MENCIÓN de tipo — el orden de declaración
+  dejó de importar. test-326 fija el orden que antes rompía; el comentario de test-321
+  que vendía el workaround como "estilo" quedó saneado.
+- **`match` float preserva el valor (B2)**: `let x: float = match v { 1 => 1.5, _ => 2.5 }`
+  imprimía 1.0 — `match_arm_store` hacía fptosi incondicional. Cuando el match infiere
+  float, el slot pasa a modo BITS simétrico (bitcast store/load, como `coerce_to_i64`)
+  y los arms enteros se promueven (sitofp); `codegen_match` retorna `double` tipado.
+  Con y sin anotación, block-arms incluidos; arms mixtos int-primero conservan el
+  legacy. test-327 cubre los 5 bordes con salida comparada.
+
+### Verificado sin cambio (A2)
+- El orden de fuentes de `nyx_type_to_llvm_for_env` (anotación → inferencia →
+  heurística por-nombre → i64) se AUDITÓ correcto: la heurística léxica solo corre como
+  último recurso. Documentado sobre la fn con la evidencia; su retiro total queda como
+  ficha de medición (patrón v0.22.14).
+
+### Spec (Incremento C — sin implementación)
+- **Tag de fallback ESTÁTICO para slots de Array**
+  (`docs/superpowers/specs/2026-08-03-static-tag-fallback-spec.md`): el tipo DECLARADO
+  del receptor como tercera fuente de verdad — solo gana cuando el tag runtime es
+  UNKNOWN, mismatch → NYX2008 ruidoso. Mata de raíz la familia `arr[i] = 5.5`
+  corrupto + los 4 espejos SEGV del push. Implementación en sesión propia.
+
+### Catalogado
+- 4 fichas nuevas en TASKS.md: retiro medido de la heurística por-nombre, migración de
+  call-sites legacy al unify por-id, `ty_eq` estricto, y "modo ceguera visible"
+  (contador de validaciones apagadas por TyUnknown, candidato `NYX_STRICT=warn`).
+
+Gates: 348/348 (98 salidas comparadas), errors 241/0, m08, ai-first, stacks.
+Fixed point ×2 en semantic y codegen.
+
 ## [0.24.8] — 2026-08-03 — Los diagnósticos humanos llevan su código
 
 Dos menores de la cola, cerrados con la disciplina completa:

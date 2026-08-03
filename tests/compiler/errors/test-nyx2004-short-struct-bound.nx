@@ -1,0 +1,23 @@
+// "la anotación manda" (2026-08-03, ficha struct Q): un struct de nombre
+// ≤2 caracteres era tratado como type-param por la heurística de longitud
+// de ty_parse → el chequeo de bounds lo salteaba ENTERO (ni NYX1020 ni
+// NYX2004) y el compilador emitía IR con `call @show_it(%Q ...)` sin
+// definir — error recién en el LINK, con exit 0 del compilador. Renombrar
+// el struct cambiaba el comportamiento del programa.
+// Fix: semantic registra los tipos concretos declarados y sem_ty_parse
+// post-corrige el TyGeneric corto. Ahora: NYX2004 nombrando la firma.
+// Expected stderr (contains): "NYX2004"
+struct Q { x: int }
+
+trait Other { fn area(self) -> float }
+
+fn show_it<T: Other>(v: T) -> float {
+    return v.area()
+}
+
+fn main() -> int {
+    let q: Q = Q { x: 1 }
+    let a: float = show_it(q)
+    print("area: ${a}")
+    return 0
+}

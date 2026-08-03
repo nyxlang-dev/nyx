@@ -1537,6 +1537,20 @@ fi
 # emitía "error in 'main': ..." SIN código — la audiencia AI-first matchea
 # códigos estables, no prosa (lo destapó el scorer del banco contándolos
 # como fallos mudos). NYX0000 (sin código) se omite a propósito.
+# Struct de nombre corto (≤2 chars) con bound insatisfecho → NYX2004
+# (antes: bypasaba el chequeo entero e IR inválido con exit 0 — ficha Q).
+name="codegen-nyx2004-short-struct-bound"
+ssb_out=$(NYX_SRC=tests/compiler/errors/test-nyx2004-short-struct-bound.nx ./nyx_bootstrap 2>&1); ssb_rc=$?
+if [ "$ssb_rc" -ne 0 ] && echo "$ssb_out" | grep -qF "NYX2004" && echo "$ssb_out" | grep -qF "'Other'"; then
+  printf "  ✓ %s
+" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s
+" "$name"; printf "    exit: %d (esperado != 0 con NYX2004 nombrando Other)
+" "$ssb_rc"
+  echo "$ssb_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="check-diag-carries-code"
 if [ ! -x ./nyx_check ]; then
   printf "  ⚠️  nyx_check no existe — corré 'make build-check' (se salta este check)\n"

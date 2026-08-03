@@ -1,0 +1,9 @@
+struct Cont<T> { valor: T }
+
+fn leer(c: &Cont<int>) -> int { return c.valor }
+
+fn main() -> int {
+    var c: Cont<int> = Cont<int>{ valor: 5 }
+    print(leer(&c))
+    return 0
+}
