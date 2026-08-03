@@ -213,7 +213,9 @@ solo en el texto del mensaje, p.ej. `error [NYX2001]: ...`, no como campo
 **Errores de fase intérprete (serie NYX30xx)** — los emite `compiler/interpreter.nx`
 (el evaluador del REPL), impresos en el texto del mensaje como la serie NYX20xx. El
 intérprete cubre un SUBCONJUNTO declarado del lenguaje; estos errores son ruidosos en
-vez del viejo print-mudo-y-nil:
+vez del viejo print-mudo-y-nil, y desde v0.24.7 PROPAGAN: un error mata la expresión o
+el statement en evaluación (sin valores fabricados aguas abajo — `print(a[9] + 1)` ya no
+imprime `1` tras el error) con la sesión del REPL viva:
 
 | Código | Significado |
 |--------|-------------|

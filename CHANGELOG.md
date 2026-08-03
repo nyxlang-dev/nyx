@@ -7,6 +7,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.7] — 2026-08-03 — El error del intérprete corta la evaluación (nil-cascade resuelto)
+
+El residuo de diseño declarado en v0.24.3: tras un NYX30xx, la expresión contenedora
+seguía computando con nil — `print(a[9] + 1)` emitía el error y DESPUÉS imprimía `1`
+(un valor fabricado presentado como resultado), y un nil raíz podía cascadear errores
+espurios. Ahora existe el Value `"error"` propagable (mismo canal de control que el
+`"return"` de eval_block): los 15 sitios de error lo devuelven, 29 guardas en los
+combinadores lo propagan, los bloques y loops lo burbujean, y `repl_eval` corta el
+input restante sin mostrar nada fabricado. El cuerpo de una función aborta tras el
+error — paridad con el binario compilado (que aborta el proceso); la sesión del REPL
+sobrevive. Smoke `make test-repl`: 12 → **15 checks**, RED verificado por caso.
+También: la guardia de coherencia LLM.md↔manuales sembrados (7ª línea de test-ai-first,
+2026-08-03) — ratchet de 9 mentiras resucitadas + anclas de trampas vivas + pin de §5.1.
+
 ## [0.24.6] — 2026-08-02 — El install público estuvo roto 4 días; ahora no puede volver a pasar
 
 `curl install.sh | sh` moría para TODO usuario externo desde el 29/07: `make build-test`

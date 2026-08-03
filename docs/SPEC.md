@@ -818,7 +818,9 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 **Interpreter-phase errors (NYX30xx series)** — emitted by `compiler/interpreter.nx`
 (the REPL's evaluator), printed in the message text like the NYX20xx series. The
 interpreter covers a declared SUBSET of the language; these errors are loud instead
-of the old silent print-and-nil:
+of the old silent print-and-nil, and since v0.24.7 they PROPAGATE: an error kills the
+expression/statement being evaluated (no fabricated values downstream — `print(a[9] + 1)`
+no longer prints `1` after the error) while the REPL session survives:
 
 | Code | Meaning |
 |------|---------|

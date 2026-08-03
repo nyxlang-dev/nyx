@@ -248,6 +248,67 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── Caso 12: el error CORTA la expresión — sin valor fabricado ─────────
+# nil-cascade (ficha 2026-08-01): print(a[9] + 1) emitía NYX3005 y DESPUÉS
+# imprimía 1 (value_to_int(nil)==0) — error seguido de un resultado
+# incorrecto presentado como válido. Ahora el Value "error" propaga y la
+# expresión muere; la sesión sigue.
+cat > "$TMP/in12.txt" <<'EOF'
+let a = [1, 2, 3]
+print(a[9] + 1)
+print("VIVA-TRAS-CORTE")
+:quit
+EOF
+./nyx_repl < "$TMP/in12.txt" > "$TMP/out12.txt" 2>&1
+if grep -qa "NYX3005" "$TMP/out12.txt" && ! grep -qa "nyx> 1$" "$TMP/out12.txt" \
+   && ! grep -qaE "^1$" "$TMP/out12.txt" && grep -qa "VIVA-TRAS-CORTE" "$TMP/out12.txt"; then
+    echo "  ✓ el error corta la expresión (sin valor fabricado) y la sesión sigue"
+else
+    echo "  ✗ nil-cascade: el error no corta o mató la sesión"
+    sed 's/^/      /' "$TMP/out12.txt" | head -6
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 13: sin cascada de errores espurios ───────────────────────────
+# no_existe + 5 → UN NYX3003; antes el nil raíz podía disparar errores
+# aguas abajo y el contador sobre-contaba.
+cat > "$TMP/in13.txt" <<'EOF'
+no_existe + 5
+:quit
+EOF
+./nyx_repl < "$TMP/in13.txt" > "$TMP/out13.txt" 2>&1
+n13=$(grep -ac "error \[NYX30" "$TMP/out13.txt")
+if [ "$n13" -eq 1 ] && ! grep -qa "=> " "$TMP/out13.txt"; then
+    echo "  ✓ expresión con raíz errónea: exactamente 1 error, sin resultado mostrado"
+else
+    echo "  ✗ cascada: $n13 errores (esperado 1) o mostró un resultado fabricado"
+    sed 's/^/      /' "$TMP/out13.txt" | head -5
+    FAIL=$((FAIL + 1))
+fi
+
+# ── Caso 14: el error aborta el CUERPO de la función, no la sesión ─────
+# Igual que el binario compilado aborta el proceso, el REPL aborta la
+# evaluación en curso: lo que sigue al error dentro de la fn NO corre.
+cat > "$TMP/in14.txt" <<'EOF'
+fn f() {
+let x = zzz
+print("NO-DEBE-VERSE")
+}
+
+f()
+print("SESION-VIVA-14")
+:quit
+EOF
+./nyx_repl < "$TMP/in14.txt" > "$TMP/out14.txt" 2>&1
+if grep -qa "NYX3003" "$TMP/out14.txt" && ! grep -qa "NO-DEBE-VERSE" "$TMP/out14.txt" \
+   && grep -qa "SESION-VIVA-14" "$TMP/out14.txt"; then
+    echo "  ✓ el error aborta el cuerpo de la fn (estilo compilado) y la sesión sigue"
+else
+    echo "  ✗ el cuerpo siguió tras el error, o la sesión murió"
+    sed 's/^/      /' "$TMP/out14.txt" | head -6
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 if [ "$FAIL" -gt 0 ]; then
     echo "  smoke del REPL: FALLÓ ($FAIL check(s))"

@@ -170,6 +170,7 @@ test-ai-first:
 	bash scripts/testing/run_codegen_mute_audit.sh
 	bash scripts/testing/run_capabilities_test.sh
 	bash scripts/testing/run_toolchain_recipe_audit.sh
+	bash scripts/testing/run_template_coherence.sh
 
 ## Matriz de invariancia por forma del receptor (gate propio: genera y compila
 ## decenas de programas). Verifica UNA propiedad — el mismo método sobre el
