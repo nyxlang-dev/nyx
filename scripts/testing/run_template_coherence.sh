@@ -51,6 +51,7 @@ MENTIRAS=(
   "health_start()|función inexistente enseñada por el README de nyx-proxy hasta v0.4.1"
   "proxy_listen()|misma familia health_start"
   "interval_ms|clave de config inexistente (la real: health_check_interval en segundos)"
+  "corrupts the value on the next read|arr[i]=float RESUELTO 2026-08-03 (tag estático C2, test-328): la escritura indexada taguea el slot con el tipo del VALOR"
 )
 for entrada in "${MENTIRAS[@]}"; do
     frase="${entrada%%|*}"
@@ -68,7 +69,7 @@ fi
 
 # ── Check C (antes que B): pin del conteo de trampas vivas de §5.1 ──────
 # Si LLM.md gana/pierde una trampa, la guardia EXIGE actualizar las anclas.
-PIN_TRAMPAS=4
+PIN_TRAMPAS=3
 vivas=$(sed -n '/^### 5\.1/,/^### 5\.2/p' LLM.md | grep -cE '^[0-9]+\.')
 if [ "$vivas" -ne "$PIN_TRAMPAS" ]; then
     printf "  ✗ LLM.md §5.1 tiene %d trampas vivas y el pin dice %d\n" "$vivas" "$PIN_TRAMPAS"
@@ -84,7 +85,6 @@ fi
 ANCLAS=(
   "nested Maps|§5.1.1 Maps anidados (retorno de función SEGVea)"
   "Option<Array>|§5.1.2 boxing de struct multi-campo en Option/Result rompe el link (el workaround es el ancla)"
-  "arr\[i\] =|§5.1.3 arr[i] = float corrompe el slot"
   "deadlock|§5.1.4 canal chico deadlockea productor/consumidor"
 )
 for entrada in "${ANCLAS[@]}"; do

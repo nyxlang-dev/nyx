@@ -814,6 +814,7 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2005 | nested field assignment (`a.b.c = x`) whose receiver chain has a link that is not a struct known to codegen (e.g. an intermediate field typed `Map`/`Array`, or a generic not yet monomorphized). The supported chains DO lower now (a chain of GEPs over the root struct's real memory, see test-322); this code is the residue that used to be dropped silently with exit 0 |
 | NYX2006 | field assignment whose receiver is neither a simple identifier nor a field chain — `f().field = v` (call), `a[0].field = v` (index). Write-side counterpart of NYX2003 |
 | NYX2007 | receiver-type backstop in method dispatch (v0.24.0): a recognized method dispatched to a receiver whose type doesn't have it (`m.length()`/`m.length` on a `Map`, methods on `&String`/`&Array`/`&Map` receivers). The codegen twin of semantic's NYX1022 — the only layer that covers unannotated code and `NYX_SKIP_SEMANTIC=1` |
+| NYX2008 | RUNTIME slot-type mismatch (static-tag spec 2026-08-03): an Array slot whose runtime tag names a pointer type (String/Array/Map/pointer) read as float — pointer bits as double are guaranteed garbage. Orderly abort instead of silently-wrong; `NYX_SLOT_CHECK=off` disables it |
 
 **Interpreter-phase errors (NYX30xx series)** — emitted by `compiler/interpreter.nx`
 (the REPL's evaluator), printed in the message text like the NYX20xx series. The

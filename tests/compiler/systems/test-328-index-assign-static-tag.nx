@@ -1,0 +1,26 @@
+// test-328 — "la anotación manda" para la ESCRITURA de slots (spec 2026-08-03,
+// tag estático de fallback, cluster C2). El bug: `xs[1] = 5.5` sobre un
+// Array<float> ANOTADO guardaba los bits del double con tag UNKNOWN
+// (nyx_array_set) y la relectura float hacía el widening histórico sitofp
+// sobre esos bits → 4.61788e+18 en vez de 5.5, silencioso con exit 0.
+// Ahora la escritura lleva el tag del VALOR, y un int escrito en un
+// Array<float> se PROMUEVE (sitofp) — un Array<float> guarda bits de double.
+fn main() -> int {
+    var xs: Array<float> = [0.0, 0.0]
+    xs[1] = 5.5
+    let y: float = xs[1]
+    print(y)
+    xs[0] = 3
+    let z: float = xs[0]
+    print(z)
+    var ns: Array<int> = [0, 0]
+    ns[0] = 7
+    print(ns[0])
+    var libre = [1, 2, 3]
+    libre[1] = 42
+    print(libre[1])
+    var ss: Array<String> = ["a", "b"]
+    ss[1] = "hola"
+    print(ss[1])
+    return 0
+}

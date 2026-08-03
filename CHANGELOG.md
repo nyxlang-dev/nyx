@@ -7,6 +7,47 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.10] — 2026-08-03 — Tag estático de fallback: la familia que corrompía slots está muerta
+
+Implementación completa de la spec del tag estático (el Incremento C de "la anotación
+manda"). Regla estructural en todos los sitios: **el tag estático SOLO gana cuando el
+tag runtime es UNKNOWN** — nunca pisa evidencia real. Con eso no hay quinta ronda de
+precedencias posible: todo cambio es corrección de un silently-wrong o un abort
+diagnosticado, nunca un valor distinto en silencio.
+
+### Corregido
+- **`arr[i] = 5.5` releía `4.61788e+18`** (con o sin anotación del receptor): la
+  escritura indexada ahora taguea el slot con el tipo del VALOR (double → bits + tag
+  FLOAT); un int escrito en un `Array<float>` anotado se PROMUEVE (sitofp). La trampa
+  §5.1.3 de LLM.md pasó a "Already fixed" y la guardia de coherencia la vigila como
+  mentira resucitable (test-328).
+- **`a.unshift(a[1])` imprimía la dirección del puntero**: los 5 sitios de
+  unshift/insert resolvían el tag DESPUÉS de emitir la mutación (slots corridos);
+  ahora antes, como siempre hizo push (test-329).
+- **`push` de un índice sin tag propagable + `let v = src[1]; b.push(v)`** con receptor
+  ANOTADO heredan el tag de la anotación (las 4 formas espejo del residuo); un select
+  en runtime garantiza que el tag propagado conocido siga mandando (test-329).
+- **Literal con destino anotado** (`var b: Array<String> = [src[1]]`) hereda el tag en
+  sus slots UNKNOWN vía `nyx_array_retag_unknown` — solo literales, solo UNKNOWN
+  (test-330).
+
+### Runtime (C1, commit previo 93f8736)
+- `nyx_slot_as_float_st(arr, i, static_tag)`: tabla rt/st completa; slot puntero leído
+  como float → abort **NYX2008** (documentado en SPEC/SPEC.es); rt INT/BOOL conserva el
+  widening numérico. `nyx_array_retag_unknown(arr, tag)`. TDD con test_arrays 63/63.
+
+### Diseño (la decisión que evita la recaída)
+- El registro `annotated_elem_tags` se alimenta EXCLUSIVAMENTE de anotaciones
+  explícitas — let/var anotados, params de fn, campos de struct — nunca del tipo de
+  `ctx.variables`, que incluye la inferencia por primer elemento (`[1,"dos"]` →
+  `Array<int>` transportando un String: la falla probada del round 3).
+
+### Verificación
+- Gates: 351/351 (101 salidas comparadas), errors 241/0, m08, ai-first 17✓ (guardia
+  re-pineada), runtime C 20/20, stacks 6/6. Fixed point ×2 (gen2==gen3 — el compilador
+  taguea sus propias escrituras). El bootstrap se recompiló ×2 con el tagueo nuevo sin
+  un solo aborto espurio (el canario de los 9/11 falsos positivos).
+
 ## [0.24.9] — 2026-08-03 — La anotación manda (ronda 1): mueren tres adivinanzas
 
 Arco de endurecimiento del tipado gradual. Principio rector: donde el usuario ANOTÓ,

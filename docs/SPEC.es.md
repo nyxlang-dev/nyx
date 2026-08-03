@@ -209,6 +209,7 @@ solo en el texto del mensaje, p.ej. `error [NYX2001]: ...`, no como campo
 | NYX2005 | asignación a campo anidada (`a.b.c = x`) cuya cadena de receivers tiene un eslabón que no es un struct conocido por codegen (ej. un campo intermedio de tipo `Map`/`Array`, o un genérico sin monomorfizar). Las cadenas soportadas SÍ bajan ahora (cadena de GEPs sobre la memoria real del struct raíz, ver test-322); este código es el residuo que antes se descartaba en silencio con exit 0 |
 | NYX2006 | asignación a campo cuyo receiver no es ni un identificador simple ni una cadena de campos — `f().campo = v` (llamada), `a[0].campo = v` (índice). Contraparte de escritura de NYX2003 |
 | NYX2007 | backstop de tipo de receptor en el dispatch de métodos (v0.24.0): un método reconocido despachado a un receptor cuyo tipo no lo tiene (`m.length()`/`m.length` sobre un `Map`, métodos sobre receptores `&String`/`&Array`/`&Map`). Gemelo en codegen del NYX1022 de semantic — la única capa que cubre código sin anotar y `NYX_SKIP_SEMANTIC=1` |
+| NYX2008 | mismatch de tipo de slot en RUNTIME (spec tag-estático 2026-08-03): un slot de Array cuyo tag runtime nombra un tipo puntero (String/Array/Map/puntero) leído como float — los bits de un puntero como double son basura garantizada. Abort ordenado en vez de silently-wrong; `NYX_SLOT_CHECK=off` lo desactiva |
 
 **Errores de fase intérprete (serie NYX30xx)** — los emite `compiler/interpreter.nx`
 (el evaluador del REPL), impresos en el texto del mensaje como la serie NYX20xx. El

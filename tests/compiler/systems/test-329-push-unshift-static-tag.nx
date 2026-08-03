@@ -1,0 +1,28 @@
+// test-329 — tag estático en push/unshift (spec 2026-08-03, clusters C3).
+// Tres fichas del residuo del tagueo:
+//  1. push de un índice sin tag propagable (campo de struct) a receptor
+//     ANOTADO — antes quedaba UNKNOWN (o SEGV en los espejos).
+//  2. propagación "sintáctica, no semántica": `let v = src[1]; b.push(v)`
+//     perdía el tag porque v ya no es un nodo index — la anotación del
+//     receptor lo rellena.
+//  3. `a.unshift(a[1])` con origen==destino: el tag se leía DESPUÉS de la
+//     mutación (slots corridos) → imprimía la dirección del puntero.
+struct C { data: Array }
+
+fn main() -> int {
+    let c: C = C{ data: [7] }
+    var nums: Array<int> = []
+    nums.push(c.data[0])
+    print(nums[0])
+
+    var src: Array = [10, "dos"]
+    var bs: Array<String> = []
+    let v = src[1]
+    bs.push(v)
+    print(bs[0])
+
+    var a: Array = [10, "dos"]
+    a.unshift(a[1])
+    print(a[0])
+    return 0
+}

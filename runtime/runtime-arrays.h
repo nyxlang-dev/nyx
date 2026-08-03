@@ -74,6 +74,20 @@ int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_
 // (sitofp); STRING → abort diagnosticado.
 double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index);
 
+// ===== TAG ESTÁTICO DE FALLBACK (spec 2026-08-03, "la anotación manda") =====
+// El tipo DECLARADO del receptor viaja como static_tag y SOLO gana cuando el
+// tag runtime es UNKNOWN — nunca pisa un tag conocido. Cierra la familia
+// `arr[i] = 5.5` releído corrupto con `Array<float>` anotado.
+//   rt FLOAT → bits · rt INT/BOOL → widening numérico (correcto, se preserva)
+//   rt puntero (STRING/ARRAY/MAP/PTR) → abort NYX2008 (bits de puntero = basura)
+//   rt UNKNOWN: st FLOAT → bits (la anotación manda); si no → widening histórico
+double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag);
+
+// Pisa los tags UNKNOWN de un array con el tipo DECLARADO de su destino (para
+// literales con anotación: `var b: Array<String> = [src[1]]`). Solo UNKNOWN;
+// tags conocidos quedan intactos. NULL/sin-tags = no-op.
+void nyx_array_retag_unknown(nyx_array_t* arr, int64_t tag);
+
 // Acceso
 int64_t nyx_array_get(nyx_array_t* arr, int64_t index);
 int64_t nyx_array_get_or_zero(nyx_array_t* arr, int64_t index);  // v0.14: OOB → 0 (slots opcionales)

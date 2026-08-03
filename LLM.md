@@ -583,26 +583,7 @@ this section is either a language rule or an external limitation.
    Array (a JSON object value works great if you already need JSON) instead
    of the struct itself. [test: 15-http-items-api]
 
-3. **`arr[i] = <float>` on an already-existing `Array`/`Array<float>`
-   corrupts the value on the next read** (found 2026-07-28, same campaign,
-   writing a CSV aggregator and an HTTP client that sort by a float field).
-   `codegen_index_assign` (`compiler/codegen.nx`) always calls
-   `nyx_array_set`, which *intentionally* leaves the slot's type tag as
-   UNKNOWN (that's `nyx_array_set_tagged`'s job, called right after — by
-   design — everywhere else in the codegen) — but the `arr[i] = x` codegen
-   path never calls `nyx_array_set_tagged`. A later read that needs the tag
-   to reinterpret the bits as a `double` gets garbage (`~4.6e18` from
-   `a[0] = 5.5`). `arr[i] = <int>` and `arr[i] = <String>` do NOT have this
-   bug (verified) — pointers and raw integers don't need the tag to read back
-   correctly. Minimal repro: `var a: Array = [0.0]; a[0] = 5.5; let g: float
-   = a[0]; print(g.to_string())` prints garbage, not `5.5`. Workaround: never
-   reassign a float into an existing Array slot by index — accumulate in
-   integer cents instead (multiply by 100, round, `Array` of `int`), or only
-   ever `.push()` new floats into a fresh Array (append-only) and sort an
-   `Array` of `int` **indices** instead of swapping the float values
-   in place. [test: 17-csv-aggregator] [test: 18-http-client-filter]
-
-4. **A fixed small channel capacity (e.g. `channel_new(64)`) can deadlock a
+3. **A fixed small channel capacity (e.g. `channel_new(64)`) can deadlock a
    producer/consumer pattern under enough load** — not a compiler bug, a
    concurrency design trap worth knowing before reaching for `channel_new`.
    If the main goroutine sends M jobs on a bounded jobs channel and only
@@ -646,7 +627,16 @@ internals you never touch directly.
 Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
-1. **Closure capture of locals WORKS — including a lambda and a nested fn in the
+1. **`arr[i] = <float>` on an existing Array WORKS** (fixed 2026-08-03,
+   static-tag spec, v0.24.10) [test: 17-csv-aggregator] [test: 18-http-client-filter]
+   [test: test-328 in the regression suite]. The indexed write now tags the slot
+   with the VALUE's type (a double is stored as bits + FLOAT tag), and an int
+   written into an annotated `Array<float>` is promoted (sitofp) — the
+   annotation wins. The old workaround (integer cents / append-only) is no
+   longer needed. `push`/`unshift`/`insert` with an annotated receiver also
+   inherit the static tag when the runtime tag is unreadable.
+
+2. **Closure capture of locals WORKS — including a lambda and a nested fn in the
    same function** (fixed 2026-07-27) [test: 12-closure-capture-paths]. Every form works: a lambda literal
    capturing a local passed inline (`ejecutar(fn() { c[0] = c[0]+1 })`), a lambda
    bound to a `let`, a named nested fn that mutates a local and is called through
@@ -658,13 +648,13 @@ Listed so you don't avoid a construct that is perfectly fine.
    outside the happy path", and that over-generalization cost a real user a
    2,400-line terminal browser written without a single callback — which is why
    the whole section now demands an executable case per item.
-2. **`and`/`or` DO short-circuit** (since the April 2026 compiler fixes) —
+3. **`and`/`or` DO short-circuit** (since the April 2026 compiler fixes) —
    the right side is not evaluated when the left side decides the result.
-3. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish) monomorphizes in `let`/`var`/statement position AND when nested inside another expression: `assert(id(42) == 42)`, `if id(x) == y`, binop operands. (Turbofish on *method* calls — `b.conv<T>(x)` — still doesn't parse; annotate or bind to drive inference there.)
-4. **Nested arrays `Array<Array<T>>` work** (`grid[0][0]`, extracted rows,
+4. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish) monomorphizes in `let`/`var`/statement position AND when nested inside another expression: `assert(id(42) == 42)`, `if id(x) == y`, binop operands. (Turbofish on *method* calls — `b.conv<T>(x)` — still doesn't parse; annotate or bind to drive inference there.)
+5. **Nested arrays `Array<Array<T>>` work** (`grid[0][0]`, extracted rows,
    rows as args). If you saw the old "'%N' i64 but expected ptr" error,
    update your toolchain (`nyx update`).
-5. **`chr(0)` builds the real NUL byte (v0.22.x+, fixed 2026-07-25)** —
+6. **`chr(0)` builds the real NUL byte (v0.22.x+, fixed 2026-07-25)** —
     `chr(code)` is byte-level (not UTF-8, see 5.2.3) and now length-explicit
     end to end: `chr(65) + chr(0) + chr(66)` has `length() == 3`. Before this
     fix, `chr(0)` collapsed to the empty String (a C-string/`strlen` path
@@ -682,7 +672,7 @@ Listed so you don't avoid a construct that is perfectly fine.
     1-4 UTF-8 bytes; invalid input (negative, > 0x10FFFF, surrogates
     U+D800..U+DFFF) yields U+FFFD instead of aborting — HTML numeric-entity
     semantics, so it composes directly with entity decoding.
-6. **GC exhaustion is now an ORDERED error, not a raw SEGV (fixed 2026-07-24)** —
+7. **GC exhaustion is now an ORDERED error, not a raw SEGV (fixed 2026-07-24)** —
     holding a very large number of tiny allocations live at once (e.g. ~272k
     one-char Strings per round, repeated) used to exhaust the Boehm heap and
     SIGSEGV silently (the string runtime dereferenced a NULL from `GC_malloc`).
@@ -692,7 +682,7 @@ Listed so you don't avoid a construct that is perfectly fine.
     chunk the work (e.g. 4 KB blocks) so most become collectable each round;
     (b) **`GC_MAXIMUM_HEAP_SIZE`** (Boehm env var, in bytes) caps/raises the heap
     and, with a small value, makes exhaustion deterministic for testing.
-7. **Methods chained on a user function's `Array` return (FIXED v0.22.x+,
+8. **Methods chained on a user function's `Array` return (FIXED v0.22.x+,
     2026-07-26)** — `f(args).length()` used to compile and silently return 0
     (the expression-receiver path had no Array branches and fell through to a
     mute `return 0`). Now `length`, `indexOf`, `join`, `reverse`, `slice`,
@@ -703,7 +693,7 @@ Listed so you don't avoid a construct that is perfectly fine.
     CONTENT on tagged slots, not by pointer). Chained `reverse`/`push`
     mutate in place and return void, same contract as on a variable, so on a
     temporary the effect is discarded.
-8. **`tcp_write`/`tls_write` already loop until everything is sent** —
+9. **`tcp_write`/`tls_write` already loop until everything is sent** —
     `nyx_tcp_write` (`runtime/net.c`) and `nyx_tls_write_conn`
     (`runtime/tls.c`) both `while (total < len)` around `send()`/`SSL_write()`
     internally, retrying on a benign partial write. A single call returns the
@@ -713,7 +703,7 @@ Listed so you don't avoid a construct that is perfectly fine.
     returns `<= 0`, so on a **non-blocking fd** an `EAGAIN`/`EWOULDBLOCK` can
     still make the call return short — only non-blocking sockets need the
     caller to check the return value and retry.
-9. **`udp_sendto`/`udp_recvfrom` carry binary payloads intact (fixed
+10. **`udp_sendto`/`udp_recvfrom` carry binary payloads intact (fixed
     2026-07-30)** [test: 20-udp-binary-payload]. They used to truncate at the
     first NUL byte (`strlen` on the way out, `from_cstr` on the way back), so
     `"AB" + char_to_string(0) + "CDE"` left as 2 bytes instead of 6 — which made

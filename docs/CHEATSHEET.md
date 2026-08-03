@@ -535,21 +535,7 @@ let ch: Map = channel_new(10)   // never `let ch: int`
 The string API is byte-based since v0.14, so `.length()` already returns bytes — use it
 directly for `Content-Length`. For user-visible character counts use `char_length()`.
 
-### 10. `arr[i] = <float>` on an existing Array corrupts the value on the next read
-The indexed-assignment path doesn't retag the slot's type, so a later typed read gets
-garbage bits reinterpreted as a `double`.
-```nyx
-// WRONG
-var a: Array = [0.0]
-a[0] = 5.5
-let g: float = a[0]   // garbage, not 5.5
-
-// CORRECT — append-only, or sort an Array of int indices instead of swapping floats
-var a: Array = []
-a.push(5.5)
-```
-
-### 11. A small `channel_new(N)` can deadlock a producer/consumer
+### 10. A small `channel_new(N)` can deadlock a producer/consumer
 If you send everything on a bounded channel before draining a second bounded channel,
 both sides can end up blocked waiting on each other.
 ```nyx

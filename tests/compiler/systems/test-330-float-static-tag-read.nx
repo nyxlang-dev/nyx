@@ -1,0 +1,28 @@
+// test-330 — lectura float con tag estático + retag de literal anotado
+// (spec 2026-08-03, clusters C4/C5). El camino que corrompía: un slot
+// UNKNOWN que transporta BITS de double, releído por el widening histórico
+// (sitofp) → 4.6e18. Con el receptor ANOTADO Array<float>, el tag estático
+// rellena el UNKNOWN (bits), sin pisar jamás un tag runtime conocido.
+fn promedio(xs: Array<float>) -> float {
+    // param anotado: el registro del tag estático viene de la firma
+    return (xs[0] + xs[1]) / 2.0
+}
+
+fn main() -> int {
+    var xs: Array<float> = [0.0, 0.0]
+    xs[0] = 1.5
+    xs[1] = 2.5
+    print(promedio(xs))
+
+    // Slot UNKNOWN con bits de double: transportar el valor por un array
+    // pelado (pierde el tag), y reconstruir con destino ANOTADO (C5: el
+    // literal hereda el tag estático en sus slots UNKNOWN).
+    var origen: Array<float> = [1.25]
+    var crudo = []
+    let t = origen[0]
+    crudo.push(t)
+    var ys: Array<float> = [crudo[0]]
+    let leido: float = ys[0]
+    print(leido)
+    return 0
+}

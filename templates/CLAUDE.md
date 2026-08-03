@@ -134,11 +134,8 @@ let args: Array = get_args()
 8. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct payload fails to LINK** —
    boxing reserves one word. Return `Option<Array>`/`Result<Array, E>` with the struct's
    fields packed into an Array instead.
-9. **`arr[i] = <float>` on an existing Array corrupts the value on the next read** — never
-   reassign a float by index into an existing Array; `.push()` fresh floats (append-only)
-   or sort an Array of `int` indices instead.
-10. **A small `channel_new(N)` can deadlock a producer/consumer** — size each channel to
-    the total number of messages it will carry, or interleave sends and receives.
+9. **A small `channel_new(N)` can deadlock a producer/consumer** — size each channel to
+   the total number of messages it will carry, or interleave sends and receives.
 11. **A missing method on a typed receiver is a compile error (NYX1022)** — e.g.
     `m.length()` on a `Map` fails with a did-you-mean, not silent garbage. Use `size()` on
     Map, `length()` on String/Array.

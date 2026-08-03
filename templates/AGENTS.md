@@ -72,11 +72,7 @@ it's a web page.
    (not a silent runtime bug — `clang` refuses it every time). Boxing always reserves one
    word. Don't put a multi-field struct through `Option`/`Result` directly — return
    `Option<Array>`/`Result<Array, E>` with the fields packed into an Array instead.
-10. **`arr[i] = <float>` on an existing Array corrupts the value on the next read** — the
-    indexed-assignment path doesn't retag the slot. Never reassign a float by index into an
-    existing Array: only `.push()` fresh floats (append-only), or sort an Array of `int`
-    indices instead of swapping float values in place.
-11. **A small `channel_new(N)` can deadlock a producer/consumer** if you send everything
+10. **A small `channel_new(N)` can deadlock a producer/consumer** if you send everything
     before you start draining a second bounded channel. Size each channel to the total
     number of messages it will carry, or interleave sends and receives.
 12. **A missing method on a typed receiver is a compile error (NYX1022)**, not silent

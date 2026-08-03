@@ -627,6 +627,58 @@ double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index) {
     return (double)v;
 }
 
+// Tag ESTÁTICO de fallback (spec 2026-08-03, arco "la anotación manda").
+// Tabla de decisión completa en runtime-arrays.h. La regla estructural que
+// evita una quinta ronda de precedencias: st SOLO gana ante rt UNKNOWN.
+double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag) {
+    if (!arr) {
+        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
+        exit(1);
+    }
+    nyx_array_bounds_check(arr, index);
+    int64_t v = arr->data[index];
+    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+    if (t == NYX_TAG_FLOAT) {
+        double d;
+        memcpy(&d, &v, sizeof(double));
+        return d;
+    }
+    // Widening numérico int→float es una conversión CORRECTA, no una
+    // adivinanza — se preserva aunque st diga FLOAT (rt conocido manda).
+    if (t == NYX_TAG_INT || t == NYX_TAG_BOOL) {
+        return (double)v;
+    }
+    if (t != NYX_TAG_UNKNOWN && !nyx_slot_check_off()) {
+        // STRING/ARRAY/MAP/PTR: los bits de un puntero como float son basura
+        // garantizada — abort ordenado en vez de silently-wrong.
+        fprintf(stderr,
+            "💥 Runtime Error [NYX2008]: el slot %" PRId64 " del Array contiene %s"
+            " pero se leyó como float — anota el tipo real o convertí explícito"
+            " (string_to_float, ...); NYX_SLOT_CHECK=off lo desactiva\n",
+            index, nyx_tag_name(t));
+        exit(1);
+    }
+    if (t == NYX_TAG_UNKNOWN && static_tag == NYX_TAG_FLOAT) {
+        // La anotación manda: el receptor está DECLARADO Array<float>, el
+        // slot no tiene tag (vía de escritura no migrada) → los slots de un
+        // Array<float> guardan bits de double, no ints.
+        double d;
+        memcpy(&d, &v, sizeof(double));
+        return d;
+    }
+    return (double)v;
+}
+
+void nyx_array_retag_unknown(nyx_array_t* arr, int64_t tag) {
+    if (!arr || !arr->tags) return;
+    if (tag <= NYX_TAG_UNKNOWN || tag > NYX_TAG_PTR) return;
+    for (int64_t i = 0; i < arr->length; i++) {
+        if (arr->tags[i] == NYX_TAG_UNKNOWN) {
+            arr->tags[i] = (uint8_t)tag;
+        }
+    }
+}
+
 int64_t nyx_array_contains_tagged(nyx_array_t* arr, int64_t value, int64_t needle_tag) {
     if (!arr) {
         // espeja el manejo de NULL de nyx_array_contains
