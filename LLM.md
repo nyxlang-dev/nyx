@@ -1100,6 +1100,12 @@ the stdlib offers, auto-regenerated on `nyx build`).
   NDJSON to stdout; `nyx run` and `nyx build` capture the driver output and re-emit
   it (JSON included) to **stderr** on a failed compile, followed by a final
   `error: compilation failed` / `error: nyx compile failed` line.
+- `NYX_STRICT=warn` — **visible gradual-typing blindness** (v0.24.11): after a
+  clean compile, prints how many semantic checks were SKIPPED because a type
+  was unknown, with the first 6 spots (function + line) so you know exactly
+  where annotating enables checking. Counts ONLY your own code (prelude and
+  inlined imports excluded). Silent when everything is annotated. If you are
+  an AI agent, set this to find the highest-value annotations to add.
 - `NYX_VERBOSE=1` — detailed compiler output (default: compact)
 - `NYX_SKIP_SEMANTIC=1` — skip semantic checks (only for debugging the compiler itself)
 - `NYX_NO_GC=1` — build without Boehm GC (bare-metal / embedded)

@@ -792,6 +792,12 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1020 | trait bound not satisfied (`fn f<T: Display>` with a `T` lacking the impl) |
 | NYX0000 | uncoded diagnostic (fallback) |
 
+**Visible gradual-typing blindness** (`NYX_STRICT=warn`, v0.24.11): after a clean
+compile, reports how many semantic checks were skipped because a type was unknown,
+with the first 6 spots (function + line). Counts only user code (prelude and inlined
+imports excluded). Fully annotated programs: silence. Instrumentation only — the
+exit code never changes.
+
 Resolve-phase codes (`phase:"resolve"` — the driver's import resolver,
 `compiler/nyx.nx`, before parse/semantic even run; only NYX_DIAG=json gets
 the JSON line, the human-readable path prints bilingual text instead):

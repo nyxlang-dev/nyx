@@ -1568,6 +1568,35 @@ else
   fi
 fi
 
+name="strict-warn-blind-counter"
+# "Modo ceguera visible" (arco gradual 2026-08-04): NYX_STRICT=warn reporta las
+# validaciones salteadas por TyUnknown — SOLO del código del usuario (el
+# prelude va rebasado a línea 1000001+ y los módulos inlineados se excluyen
+# por module_marker). Tres direcciones: (a) programa gradual → warning con
+# contexto accionable y SIN ruido del prelude; (b) programa anotado → silencio
+# (control positivo); (c) sin el flag → silencio (opt-in).
+swb_src=$(mktemp /tmp/swb-XXXX.nx)
+printf 'fn misterio(x) {\n    return x + 1\n}\nfn main() -> int {\n    let a = misterio(5)\n    print(a)\n    return 0\n}\n' > "$swb_src"
+swb_ann=$(mktemp /tmp/swba-XXXX.nx)
+printf 'fn claro(x: int) -> int {\n    return x + 1\n}\nfn main() -> int {\n    let a: int = claro(5)\n    print(a)\n    return 0\n}\n' > "$swb_ann"
+swb_out=$(NYX_STRICT=warn NYX_SRC="$swb_src" ./nyx_bootstrap 2>&1)
+swb_ann_out=$(NYX_STRICT=warn NYX_SRC="$swb_ann" ./nyx_bootstrap 2>&1)
+swb_off_out=$(NYX_SRC="$swb_src" ./nyx_bootstrap 2>&1)
+rm -f "$swb_src" "$swb_ann"
+swb_ok=1
+echo "$swb_out" | grep -q "checks skipped\|validaciones omitidas" || swb_ok=0
+echo "$swb_out" | grep -q "'misterio'" || swb_ok=0
+echo "$swb_out" | grep -q "array_sum\|array_min" && swb_ok=0
+echo "$swb_ann_out" | grep -q "checks skipped\|validaciones omitidas" && swb_ok=0
+echo "$swb_off_out" | grep -q "checks skipped\|validaciones omitidas" && swb_ok=0
+if [ "$swb_ok" -eq 1 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (warning ausente, ruido de prelude, o no es opt-in)\n" "$name"
+  echo "$swb_out" | grep -A3 "skipped\|omitidas" | head -5 | sed 's/^/      /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 # Gemelo del anterior con receptor IDENTIFICADOR (residuo post-v0.24.0):
 # `m.length` propiedad sobre una variable Map local. Sin NYX_SKIP_SEMANTIC:
 # NYX1022 mira llamadas, la forma-propiedad pasa semantic limpia.

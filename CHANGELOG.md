@@ -7,6 +7,30 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.11] — 2026-08-04 — Modo ceguera visible: la degradación del gradual ya no es invisible
+
+### Agregado
+- **`NYX_STRICT=warn`**: tras una compilación limpia, el compilador reporta cuántas
+  validaciones semánticas se saltearon por tipos desconocidos, con los primeros 6
+  puntos (función + línea, bilingüe) — «anotar tipos en esos puntos enciende los
+  chequeos apagados». 14 sitios de alta señal instrumentados (binop ×8, unop,
+  retorno ×2, args de llamada ×2, let anotado, objetivo de llamada). SOLO cuenta el
+  código del usuario: el prelude va rebasado a línea 1000001+ y los módulos
+  inlineados se excluyen vía los `module_marker` existentes. Con todo anotado:
+  silencio. Instrumentación pura — el exit code no cambia y NINGÚN gate se endurece
+  (la lección de las 5 regresiones de julio). Es el dato que decide si vale la pena
+  endurecer los ~40 gates de leniencia en una campaña futura.
+
+### Mantenimiento
+- Disco de la máquina de dev: 96% → 90% (versiones viejas del CLI, transcripts +21d,
+  journal, git gc).
+- `PLAN.md` refrescado (slots-tag y match-float ya no figuran como pendientes);
+  `docs/TESTS.md` reconciliado (regression **351**, errors **242** — estaba stale
+  desde v0.24.9).
+
+Gates: 351/351 (101 salidas comparadas), errors 242/0, m08, ai-first, stacks.
+Fixed point ×2 en semantic y nyx.
+
 ## [0.24.10] — 2026-08-03 — Tag estático de fallback: la familia que corrompía slots está muerta
 
 Implementación completa de la spec del tag estático (el Incremento C de "la anotación

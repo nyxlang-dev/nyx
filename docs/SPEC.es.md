@@ -194,6 +194,12 @@ Con `NYX_DIAG=json`, el compilador emite una línea NDJSON por error:
 Códigos de parse: NYX0101–NYX0107. Códigos semánticos: NYX1001–NYX1020.
 El campo `message` es bilingüe (inglés por defecto; castellano con `NYX_LANG=es`).
 
+**Ceguera visible del tipado gradual** (`NYX_STRICT=warn`, v0.24.11): tras una
+compilación limpia, reporta cuántas validaciones semánticas se saltearon por
+tipos desconocidos, con los primeros 6 puntos (función + línea). Solo cuenta el
+código del usuario (el prelude y los módulos inlineados quedan afuera). Con todo
+anotado: silencio. Es instrumentación, no un modo estricto — el exit code no cambia.
+
 Códigos de fase codegen (`phase:"codegen"` — se alcanzan solo cuando semantic
 ya dijo `check OK`; son huecos en la *generación* de código, no en los tipos
 del programa. Codegen no tiene registro de diagnósticos — el código vive
