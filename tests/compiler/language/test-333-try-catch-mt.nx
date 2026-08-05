@@ -1,0 +1,47 @@
+// Test 333: try/catch multi-thread — el try-stack del runtime es thread-local.
+// Antes del fix (_Thread_local en __nyx_try_stack/__nyx_try_depth/
+// __nyx_exception_msg) esto era UB: dos threads corrompían el depth compartido
+// y un throw podía saltar al jmp_buf de otro thread.
+
+fn worker() -> int {
+    var caught: int = 0
+    var i: int = 0
+    while i < 1000 {
+        try {
+            throw("boom")
+        } catch(e: String) {
+            caught = caught + 1
+        }
+        i = i + 1
+    }
+    return caught
+}
+
+fn panicker() -> int {
+    var got: int = 0
+    try {
+        panic("panic-en-thread")
+    } catch(e: String) {
+        if e == "panic-en-thread" { got = 1 }
+    }
+    return got
+}
+
+fn main() {
+    let t1: int = thread_spawn(worker)
+    let t2: int = thread_spawn(worker)
+    let t3: int = thread_spawn(worker)
+    let t4: int = thread_spawn(worker)
+    let c1: int = thread_join(t1)
+    let c2: int = thread_join(t2)
+    let c3: int = thread_join(t3)
+    let c4: int = thread_join(t4)
+    assert(c1 == 1000)
+    assert(c2 == 1000)
+    assert(c3 == 1000)
+    assert(c4 == 1000)
+
+    let tp: int = thread_spawn(panicker)
+    assert(thread_join(tp) == 1)
+    print("mt try/catch ok: " + int_to_string(c1 + c2 + c3 + c4))
+}

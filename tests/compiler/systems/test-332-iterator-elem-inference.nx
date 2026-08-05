@@ -1,0 +1,38 @@
+// test-332 — inferencia de elemento en cadenas de iteradores (Sesión B,
+// spec 2026-08-05-inferencia-iteradores-spec.md). Antes: TODA la cadena
+// iter/filter/map/collect daba TyUnknown → 24 chequeos apagados en la receta
+// canónica; la anotación `Array` pelada bloqueaba el refinamiento; los
+// builtins de conversión no tenían firma. Ahora los tres eslabones tipan.
+fn es_par(x: int) -> bool {
+    return x % 2 == 0
+}
+
+fn doble(x: int) -> int {
+    return x * 2
+}
+
+fn a_texto(x: int) -> String {
+    return "n" + int_to_string(x)
+}
+
+fn main() -> int {
+    let nums: Array = [1, 2, 3, 4, 5, 6]
+
+    // Cadena completa: Iterator[int] fluye por filter/map y collect da
+    // Array<int> — el refinamiento B3 registra la anotación pelada refinada
+    // y r0: int valida de verdad (antes: chequeo apagado).
+    let pares: Array = nums.iter().filter(es_par).map(doble).collect()
+    let r0: int = pares[0]
+    let r2: int = pares[2]
+    print(int_to_string(r0))
+    print(int_to_string(r2))
+
+    // map con fn que CAMBIA el tipo de elemento: Iterator[String].
+    let textos: Array = nums.iter().map(a_texto).take(2).collect()
+    let t0: String = textos[0]
+    print(t0)
+
+    // B1: los builtins de conversión tienen firma — este binop se valida.
+    print("total: " + int_to_string(pares.length()))
+    return 0
+}

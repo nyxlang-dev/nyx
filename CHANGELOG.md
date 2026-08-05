@@ -7,6 +7,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.14] — 2026-08-05 — Los iteradores tipan: -53% de ceguera gradual
+
+Sesión B del plan post-auditoría — la palanca MEDIDA del dato NYX_STRICT.
+
+### Agregado
+- **La cadena de iteradores TIPA end-to-end**: `iter()` sobre `Array<T>` da
+  `Iterator[T]`; `filter`/`take`/`skip`/`chain` preservan el elemento; `map(f)` con f
+  de firma registrada da `Iterator[ret(f)]`; `collect()` da `Array<T>`. Y muerde:
+  `let s: String = nums.iter().map(doble).collect()` es NYX1003 «expected String, got
+  Array<int>» donde antes compilaba mudo (test en errors).
+- **Firmas de retorno de builtins**: `int_to_string`/`string_to_int`/`read_file`/etc.
+  ya no dan TyUnknown (envenenaban cada binop que los consumía).
+- **Refinamiento de anotación `Array` pelada** cuando el valor es una cadena de método.
+
+### MÉTRICA (100 recetas by-example, NYX_STRICT=warn)
+- **482 → 226 chequeos salteados (-53%)**; archivos afectados 60 → 51; el peor
+  (29-iterator-map-filter) **24 → 0**.
+
+### La lección que el gate cazó (documentada en la spec)
+- La 1ª versión del refinamiento aceptaba array literales → 20 tests rojos: el patrón
+  de arrays etiquetados (`["bool", v]` de std/json) se infiere `Array<String>` por
+  PRIMER elemento → NYX1005 espurio en cada push. Tercera aparición del principio:
+  **la inferencia por primer elemento NUNCA endurece chequeos**. Restringido a
+  method_call. (Y el comparador de salidas cazó mi propio expected/ con la aritmética
+  mal — la red funciona en ambas direcciones.)
+
+Residuo catalogado: next()/for-in sobre Iterator, lambdas inline en map/filter,
+colisión de nombre con struct `Iterator` de usuario. Fixed point ×2. Gates: 354/354
+(105 comparadas, 0 conocidos), errors 244/0, m08, ai-first, stacks.
+
 ## [0.24.13] — 2026-08-05 — El runtime no te mata: decompress resucita y Map.get gana salida segura
 
 Sesión A del plan post-auditoría — los dos P1 de runtime para código de usuario.

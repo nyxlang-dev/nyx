@@ -1,0 +1,14 @@
+// Dientes nuevos de la Sesión B: la cadena de iteradores TIPA, así que un
+// mismatch que antes pasaba en silencio (todo era TyUnknown) ahora es
+// NYX1003. collect() sobre Iterator[int] da Array<int>; asignarlo a un
+// String anotado debe fallar en compile-time.
+fn doble(x: int) -> int {
+    return x * 2
+}
+
+fn main() -> int {
+    let nums: Array = [1, 2, 3]
+    let malo: String = nums.iter().map(doble).collect()
+    print(malo)
+    return 0
+}

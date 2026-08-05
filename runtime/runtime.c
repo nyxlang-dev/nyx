@@ -314,11 +314,11 @@ void nyx_var_anchor(void* p) { (void)p; }
 
 #define NYX_TRY_STACK_MAX 64
 
-static int __nyx_try_depth = 0;
-static nyx_string* __nyx_exception_msg = NULL;
+static _Thread_local int __nyx_try_depth = 0;
+static _Thread_local nyx_string* __nyx_exception_msg = NULL;
 
 #ifndef __wasi__
-static jmp_buf __nyx_try_stack[NYX_TRY_STACK_MAX];
+static _Thread_local jmp_buf __nyx_try_stack[NYX_TRY_STACK_MAX];
 
 // Push a jmp_buf onto the try stack, return pointer for setjmp
 void* nyx_try_push() {

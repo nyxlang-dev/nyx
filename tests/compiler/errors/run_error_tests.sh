@@ -1568,6 +1568,17 @@ else
   fi
 fi
 
+name="iterator-chain-type-mismatch"
+# Sesión B (2026-08-05): la cadena iter/map/collect TIPA — un collect() de
+# Iterator[int] asignado a String anotado es NYX1003 (antes: TyUnknown mudo).
+icm_out=$(NYX_SRC=tests/compiler/errors/test-iterator-chain-type-mismatch.nx ./nyx_bootstrap 2>&1); icm_rc=$?
+if [ "$icm_rc" -ne 0 ] && echo "$icm_out" | grep -qF "NYX1003"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (esperado rc!=0 con NYX1003; rc=%d)\n" "$name" "$icm_rc"
+  echo "$icm_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="map-get-missing-key-actionable-abort"
 # A2 (2026-08-05): el abort de Map.get con clave ausente nombra la clave Y
 # sugiere la salida (contains / get_or). Control del comportamiento: exit != 0
