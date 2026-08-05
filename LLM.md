@@ -348,7 +348,8 @@ no-ops that ignored the extra argument.
 |--------|------|---------|-------|
 | `Map.new()` | 0 | Map | constructor (literal `{}` NOT supported) |
 | `insert(k, v)` | 2 | — | — |
-| `get(k)` | 1 | any | — |
+| `get(k)` | 1 | any | **ABORTS the process if the key is missing** (exit 1, names the key) — for optional reads use `get_or` |
+| `get_or(k, default)` | 2 | any | v0.24.13: safe read — missing key returns `default`, never aborts. Type follows the default (String default → String, int default → int). Receiver must be a local Map var (field receiver: catalogued) |
 | `has(k)` / `contains(k)` | 1 | bool | — |
 | `size()` | 0 | int | — |
 | `keys()` / `values()` | 0 | Array | — |

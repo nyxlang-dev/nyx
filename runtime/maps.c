@@ -385,7 +385,7 @@ char* nyx_map_get_str(nyx_map_t* map, const char* key_str) {
     while (1) {
         nyx_map_entry_t* slot = &map->entries[idx];
         if (slot->probe_distance < 0 || dist > slot->probe_distance) {
-            fprintf(stderr, "Runtime Error: Clave '%s' no encontrada en map\n", key_str);
+            fprintf(stderr, "Runtime Error: Clave '%s' no encontrada en map\n   sugerencia: m.contains(k) antes de leer, o m.get_or(k, default)\n", key_str);
             exit(1);
         }
         if (slot->hash == h && slot->key.type == KEY_TYPE_STRING &&
@@ -453,6 +453,49 @@ int64_t nyx_map_remove_str(nyx_map_t* map, const char* key_str) {
     return 1;  // Return 1 = key was removed
 }
 
+// ===== GET_OR — variantes SEGURAS (A2, 2026-08-05) =====
+// Clave ausente (o map NULL) devuelve el default en vez de exit(1). El abort
+// del get clásico sigue siendo el contrato para "la clave DEBE estar"; estas
+// son el camino para lecturas opcionales sin matar el proceso.
+
+char* nyx_map_get_str_or(nyx_map_t* map, const char* key_str, char* deflt) {
+    if (!map || !key_str) return deflt;
+    uint64_t h = nyx_hash_string(key_str);
+    int64_t idx = (int64_t)(h % (uint64_t)map->capacity);
+    int32_t dist = 0;
+    while (1) {
+        nyx_map_entry_t* slot = &map->entries[idx];
+        if (slot->probe_distance < 0 || dist > slot->probe_distance) {
+            return deflt;
+        }
+        if (slot->hash == h && slot->key.type == KEY_TYPE_STRING &&
+            strcmp(slot->key.value.string_key, key_str) == 0) {
+            return (char*)slot->value;
+        }
+        dist++;
+        idx = (idx + 1) % map->capacity;
+    }
+}
+
+int64_t nyx_map_get_int_or(nyx_map_t* map, const char* key_str, int64_t deflt) {
+    if (!map || !key_str) return deflt;
+    uint64_t h = nyx_hash_string(key_str);
+    int64_t idx = (int64_t)(h % (uint64_t)map->capacity);
+    int32_t dist = 0;
+    while (1) {
+        nyx_map_entry_t* slot = &map->entries[idx];
+        if (slot->probe_distance < 0 || dist > slot->probe_distance) {
+            return deflt;
+        }
+        if (slot->hash == h && slot->key.type == KEY_TYPE_STRING &&
+            strcmp(slot->key.value.string_key, key_str) == 0) {
+            return (int64_t)slot->value;
+        }
+        dist++;
+        idx = (idx + 1) % map->capacity;
+    }
+}
+
 int64_t nyx_map_get_int(nyx_map_t* map, const char* key_str) {
     if (!map) {
         fprintf(stderr, "Runtime Error: Map es NULL\n");
@@ -464,7 +507,7 @@ int64_t nyx_map_get_int(nyx_map_t* map, const char* key_str) {
     while (1) {
         nyx_map_entry_t* slot = &map->entries[idx];
         if (slot->probe_distance < 0 || dist > slot->probe_distance) {
-            fprintf(stderr, "Runtime Error: Clave '%s' no encontrada en map\n", key_str);
+            fprintf(stderr, "Runtime Error: Clave '%s' no encontrada en map\n   sugerencia: m.contains(k) antes de leer, o m.get_or(k, default)\n", key_str);
             exit(1);
         }
         if (slot->hash == h && slot->key.type == KEY_TYPE_STRING &&

@@ -7,6 +7,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.13] — 2026-08-05 — El runtime no te mata: decompress resucita y Map.get gana salida segura
+
+Sesión A del plan post-auditoría — los dos P1 de runtime para código de usuario.
+
+### Corregido
+- **`decompress()` devolvía `""` SIEMPRE** (sp3-bug-1, desde su creación): la llamada
+  interna de zlib a `inflate` resolvía contra la `pub fn inflate` de std/compress
+  (colisión de símbolos ELF). Ahora delega en el camino streaming con dlopen (patrón
+  D1), inmune a la colisión. `test-169-compress` volvió a verde SOLO — como promete el
+  mecanismo — y **KNOWN_OUTPUT_FAILURES queda VACÍO por primera vez** (352/352, 103
+  salidas comparadas, 0 fallos conocidos). El fix de raíz (mangle de `pub fn`) sigue
+  catalogado.
+
+### Agregado
+- **`Map.get_or(k, default)`**: la lectura SEGURA — clave ausente (o Map NULL)
+  devuelve el default en vez de matar el proceso. Runtime (str/int) + dispatch de
+  codegen (selección por tipo del default) + catálogo de semantic + test-331. El
+  abort de `get` ahora nombra la clave Y sugiere `contains`/`get_or` (check con
+  ejecución real en errors → 243). Alcance v1: receptor variable; campo catalogado.
+
+Fixed point gen2==gen3 en codegen y semantic. Gates completos verdes.
+
 ## [0.24.12] — 2026-08-05 — La verdad de los docs: auditoría integral
 
 Auditoría de todo el proyecto (3 agentes: fichas-vs-código, coherencia documental,

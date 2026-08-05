@@ -1,0 +1,15 @@
+// test-331 — Map.get_or(k, default): la variante SEGURA de get (sesión A2,
+// 2026-08-05). Antes: la ÚNICA lectura era get, que ABORTA el proceso con
+// exit(1) ante clave ausente — un typo en una clave mataba el programa.
+fn main() -> int {
+    var m: Map = {"nombre": "nyx", "num": "cuatro"}
+    let hay: String = m.get_or("nombre", "???")
+    print(hay)
+    let falta: String = m.get_or("apellido", "sin-apellido")
+    print(falta)
+    var e: Map = Map.new()
+    e.insert("edad", 30)
+    print(e.get_or("edad", -1))
+    print(e.get_or("altura", -1))
+    return 0
+}

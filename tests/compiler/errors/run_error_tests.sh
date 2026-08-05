@@ -1568,6 +1568,23 @@ else
   fi
 fi
 
+name="map-get-missing-key-actionable-abort"
+# A2 (2026-08-05): el abort de Map.get con clave ausente nombra la clave Y
+# sugiere la salida (contains / get_or). Control del comportamiento: exit != 0
+# + ambas piezas en stderr. get_or es la variante que NO aborta (test-331).
+mga_src=$(mktemp /tmp/mga-XXXX.nx)
+printf 'fn main() -> int {\n    var m: Map = {"a": "1"}\n    let v: String = m.get("zzz")\n    print(v)\n    return 0\n}\n' > "$mga_src"
+# Compila+linkea+corre de verdad vía el wrapper (el bootstrap crudo solo
+# emite el .ll — la 1ª versión de este check corría un script_bin STALE).
+mga_out=$(bash "$(pwd)/scripts/nyx" run "$mga_src" 2>&1); mga_rc=$?
+rm -f "$mga_src"
+if [ "$mga_rc" -ne 0 ] && echo "$mga_out" | grep -qF "'zzz'" && echo "$mga_out" | grep -qF "get_or"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (abort sin clave o sin sugerencia get_or; rc=%d)\n" "$name" "$mga_rc"
+  echo "$mga_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="strict-warn-blind-counter"
 # "Modo ceguera visible" (arco gradual 2026-08-04): NYX_STRICT=warn reporta las
 # validaciones salteadas por TyUnknown — SOLO del código del usuario (el

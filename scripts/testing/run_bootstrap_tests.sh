@@ -62,12 +62,10 @@ XPASS_LIST=""
 # intacto (nunca falseado a la salida actual) y el test nunca se borra, así
 # que el día que se arregle el bug el test pasa a verde solo.
 # Cada entrada DEBE citar su ficha en TASKS.md.
+# VACÍO desde 2026-08-05 (sp3-bug-1 resuelto: nyx_decompress delega en el
+# camino dlopen de nyx_inflate — test-169 volvió a verde solo, como promete
+# el mecanismo). Si algo entra acá, DEBE citar su ficha en TASKS.md.
 KNOWN_OUTPUT_FAILURES=(
-    # TASKS.md · [sp3-bug-1] colisión de símbolo ELF `inflate` (std/compress
-    # define `pub fn inflate` sin mangling) → zlib's uncompress() llama a la
-    # fn Nyx y nyx_decompress devuelve "". Rompe las 2 líneas de round-trip.
-    # Es de compiler/ (linkage/mangling): fuera del scope de este sub-proyecto.
-    "test-169-compress"
 )
 
 _is_known_output_failure() {

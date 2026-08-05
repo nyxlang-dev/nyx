@@ -102,27 +102,24 @@ nyx_string* nyx_compress(nyx_string* src) {
     return result;
 }
 
-// Decompress zlib-compressed data, original_size must be known
+// Decompress zlib-compressed data.
+//
+// sp3-bug-1 (arreglado 2026-08-05): la versión anterior llamaba uncompress()
+// de zlib DIRECTO — pero uncompress() llama internamente a inflate() vía PLT,
+// y ese símbolo resuelve contra la `pub fn inflate` de std/compress (las
+// definiciones del ejecutable ganan sobre la lib dinámica) → ABI distinto →
+// uncompress devolvía != Z_OK y esto retornaba "" EN SILENCIO en todo binario
+// que importara std/compress. compress() funcionaba; decompress() no.
+// Fix: delegar en el camino streaming (nyx_inflate modo 3 = zlib estricto),
+// que ya resuelve los símbolos por dlopen/dlsym sobre el handle de libz
+// (patrón D1) y es inmune a la colisión. Bonus: original_size deja de ser
+// necesario (el buffer crece solo) — se conserva en la firma por
+// compatibilidad ABI con los seeds, como hint ignorado.
+nyx_string* nyx_inflate(nyx_string* src, int64_t mode);
+
 nyx_string* nyx_decompress(nyx_string* src, int64_t original_size) {
-    if (!src || !src->data || src->length == 0) {
-        return nyx_string_from_cstr("");
-    }
-
-    uLongf dest_len = (uLongf)(original_size + 1);
-    Bytef* dest = (Bytef*)GC_malloc(dest_len);
-    if (!dest) return nyx_string_from_cstr("");
-
-    int rc = uncompress(dest, &dest_len,
-                        (const Bytef*)src->data, (uLongf)src->length);
-    if (rc != Z_OK) {
-        return nyx_string_from_cstr("");
-    }
-
-    dest[dest_len] = '\0';
-    nyx_string* result = (nyx_string*)GC_malloc(sizeof(nyx_string));
-    result->data = (char*)dest;
-    result->length = (int64_t)dest_len;
-    return result;
+    (void)original_size;
+    return nyx_inflate(src, 3);
 }
 
 // ── zlib inflate (streaming, no original_size required) ─────────────────────

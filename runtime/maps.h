@@ -107,6 +107,9 @@ bool nyx_map_contains_str(nyx_map_t* map, const char* key_str);
 // Wrappers para LLVM - integers
 void nyx_map_insert_int(nyx_map_t* map, const char* key_str, int64_t value);
 int64_t nyx_map_get_int(nyx_map_t* map, const char* key_str);
+// GET_OR seguras (A2, 2026-08-05): clave ausente/NULL → default, sin abort.
+char* nyx_map_get_str_or(nyx_map_t* map, const char* key_str, char* deflt);
+int64_t nyx_map_get_int_or(nyx_map_t* map, const char* key_str, int64_t deflt);
 
 // Wrappers para LLVM - remove/clear
 int64_t nyx_map_remove_str(nyx_map_t* map, const char* key_str);
