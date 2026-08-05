@@ -84,7 +84,7 @@ v0.15.0 — Type checker M-08 cerrado (B8): trait bounds reales (NYX1020),
 v0.16.0 — Compilador blindado: el parser nunca cuelga (presupuesto +
            panic-mode), multi-error de parse con códigos NYX0101-0105 + JSON,
            monomorfización implícita (genéricos sin turbofish, gap S10). ✅
-v0.17.0 — Package registry público (nyx publish / nyx install). ✅
+v0.17.0 — Gateway/proxy WebSocket + AI-first groundwork. (La línea anterior decía «Package registry ✅» — FALSO: `nyx publish` no existe; el registry sigue siendo futuro, ver ROADMAP sección FUTURE.) ✅
 v0.18.0 — Mutación in-place de agregados + WASM hasta el browser (FFI extern
            "js", eventos, std/dom) + tooling AI-first (nyx update/report). ✅
 v0.19.0 — Type system real (TyVar/occurs-check/monomorfización real de
@@ -94,9 +94,12 @@ v0.19.0 — Type system real (TyVar/occurs-check/monomorfización real de
 v0.20.0 — Borrow checker completo (dangling refs inter-procedurales,
            ownership types reales Box/Rc/MoveOnly) + criptografía Web Push
            (VAPID + aes128gcm RFC 8291/8292). ✅
-v0.20.1 ← AHORA. Patch: RESP binario-seguro sobre TLS (nyx-kv) + dedup de
-           `extern "C"` homónimos en codegen.
-v0.21.0 — Pre-1.0 freeze: SPEC audit, estabilidad de std/, security audit.
+v0.20.1 — RESP binario-seguro sobre TLS (nyx-kv) + dedup extern "C". ✅
+v0.21-v0.24 — primitivos de runtime + std/llm; campañas SCAN/borrow y "Primer
+           intento verde"; campaña de corrección v0.23; dispatch honesto +
+           tag estático + ceguera visible (detalle: CHANGELOG.md / ROADMAP.md). ✅
+AHORA — ver VERSION. La escalera hacia v1.0 se decide por arco (ROADMAP
+           sección FUTURE); el pre-1.0 freeze sigue siendo el último escalón.
 
 (Escalera futura v0.17+ tentativa — corrida +1 el 2026-06-12 al entrar el
 compilador blindado como v0.16.0; alineada con docs/ROADMAP.md. Stripe/dashboard

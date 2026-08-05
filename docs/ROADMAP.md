@@ -4,7 +4,7 @@
 
 Build the first language capable of hosting itself as a complete web platform — proxy, backend, database, queue, HTTP/2, playground — written entirely in Nyx. From bare-metal to the browser DOM in a single language, optimized so that humans and AIs can operate it alike (LLM-dense docs, `NYX_DIAG=json`, `nyx update`/`nyx report`).
 
-**Current version**: v0.20.1 (July 2026) — canonical test counts in `docs/TESTS.md` (single source of truth) — self-hosting compiler with verified fixed point, hardened parser (never hangs, multi-error NYX01xx + JSON), type checker M-08 complete, implicit monomorphization, **real type system** (TyVar/occurs-check/real monomorphization of generic impl-methods), **real async** (stackful goroutines + M:N scheduler + epoll event loop — `await`/`spawn` run real concurrency), **borrow checker** (free-safety NYX1220/1221 SOUND, move-checking of `#[affine]` types NYX1230, deterministic drop/RAII, dangling-ref detection NYX1222/1223, `&mut` exclusivity NYX1210/1211), Web Push crypto (VAPID RFC 8292 + aes128gcm RFC 8291), real wasm32-wasi target through the browser (extern "js", std/dom, std/browser), in-place mutation, WebSocket proxying, consolidated `std/resp` server-side reader.
+**Current version**: see the `VERSION` file (this line said v0.20.1 four minors too long) — canonical test counts in `docs/TESTS.md` (single source of truth) — self-hosting compiler with verified fixed point, hardened parser (never hangs, multi-error NYX01xx + JSON), type checker M-08 complete, implicit monomorphization, **real type system** (TyVar/occurs-check/real monomorphization of generic impl-methods), **real async** (stackful goroutines + M:N scheduler + epoll event loop — `await`/`spawn` run real concurrency), **borrow checker** (free-safety NYX1220/1221 SOUND, move-checking of `#[affine]` types NYX1230, deterministic drop/RAII, dangling-ref detection NYX1222/1223, `&mut` exclusivity NYX1210/1211), Web Push crypto (VAPID RFC 8292 + aes128gcm RFC 8291), real wasm32-wasi target through the browser (extern "js", std/dom, std/browser), in-place mutation, WebSocket proxying, consolidated `std/resp` server-side reader.
 
 ---
 
@@ -106,14 +106,34 @@ v0.19.0  ✅ "Real guarantees": real type system (TyVar/occurs-check/real
             NYX1220/1221, move-checking #[affine] NYX1230, deterministic drop/RAII)
 v0.20.0  ✅ Borrow checker complete (dangling refs inter-procedural NYX1222/1223,
             real ownership types Box/Rc/MoveOnly) + Web Push crypto (VAPID + aes128gcm)
-v0.20.1  ✅ ← NOW — RESP binary-safe over TLS + extern "C" dedup in codegen +
+v0.20.1  ✅ RESP binary-safe over TLS + extern "C" dedup in codegen +
             server-side RESP reader consolidation + docs/agents/skills hygiene
-v0.21.0  — Package Registry: nyx publish / nyx install, self-hosted registry server,
-            first external packages (nyx-jwt, nyx-bcrypt, nyx-s3) — deferred from v0.18
-v0.22.0  — Cross-Platform: macOS ARM64 pre-built binary, Docker image,
-            Windows/WSL install guide, CI build matrix
-v0.23.0  — Pre-1.0 freeze: SPEC audit (stable vs experimental), API stability
-            guarantee for std/, migration guide, security audit
+v0.21.0  ✅ Runtime primitives + std/llm (llama.cpp bindings, c_fn_ptr callbacks)
+v0.22.x  ✅ SCAN + borrow campaigns; "Primer intento verde" (first-attempt bench
+            7/8, clang attribution, did-you-mean imports, honest CAPABILITIES)
+v0.23.0  ✅ Correction campaign: runtime heap-overflow fixes (WS/msgpack/HPACK/
+            RESP), stdlib correctness, the verification net (runner compares
+            expected/), compiler silent-failure kills
+v0.24.x  ✅ "Honest dispatch" (NYX1022/2007/3001 in all 3 layers) + interpreter
+            NYX30xx + public-ecosystem hardening + "annotation rules" arc
+            (short-name structs, on-demand mono, match float) + static slot
+            tag (NYX2008) + visible gradual-typing blindness (NYX_STRICT=warn)
+
+FUTURE (not version-pinned — the ladder below v1.0 gets decided per-arc by
+the author; the old v0.21-v0.23 assignments above never happened as written):
+- Package Registry: nyx publish / nyx install, self-hosted registry server,
+  first external packages (nyx-jwt, nyx-bcrypt, nyx-s3). NOT built yet
+  (docs/VERSIONING.md wrongly marked it ✅ for months — no `nyx publish`
+  subcommand exists).
+- Cross-Platform: macOS ARM64 pre-built binary, Docker image, Windows/WSL
+  install guide, CI build matrix (Windows target épica in TASKS.md).
+- Language-owned friction channel (plan approved, pending execution:
+  docs/superpowers/plans/2026-08-05-friccion-propia-nyxlang-api.md).
+- Better iterator/closure element-type inference — the lever behind the
+  NYX_STRICT=warn data (60/100 canonical recipes have blind spots; the worst
+  are all iterator chains).
+- Pre-1.0 freeze: SPEC audit (stable vs experimental), API stability
+  guarantee for std/, migration guide, security audit
 v1.0.0   — First stable public release (requires author approval)
 
 (The registry/cross-platform milestones were deferred: v0.18–0.20 instead

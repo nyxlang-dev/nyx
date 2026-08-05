@@ -3,9 +3,43 @@
 Todos los cambios notables de este proyecto se documentan aquí.
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
-> **Note**: Current version is **v0.22.0** (pre-release). Versions v0.2.0-v5.4.0 were assigned during rapid development before a formal versioning policy was adopted. The version was reset to v0.9.0 and then progressed through v0.10.0-v0.17.x. See [docs/VERSIONING.md](docs/VERSIONING.md) for details.
+> **Note**: current version = the top entry below (source of truth: `VERSION` file). Versions v0.2.0-v5.4.0 were assigned during rapid development before a formal versioning policy was adopted. The version was reset to v0.9.0 and then progressed through v0.10.0-v0.17.x. See [docs/VERSIONING.md](docs/VERSIONING.md) for details.
 
 ---
+
+## [0.24.12] — 2026-08-05 — La verdad de los docs: auditoría integral
+
+Auditoría de todo el proyecto (3 agentes: fichas-vs-código, coherencia documental,
+higiene) + primera cosecha real de NYX_STRICT=warn.
+
+### El dato del eje IA
+- **60/100 recetas by-example tienen puntos ciegos del gradual** (482 chequeos
+  salteados; las peores son cadenas de iteradores) y el código de producción
+  disciplinado da 0 → la palanca es inferencia de elemento en iteradores/closures,
+  NO endurecer gates. Ahora encabeza TASKS.md como prioridad medida.
+
+### Corregido (docs — 21 contradicciones)
+- LLM.md declaraba v0.21.0; CHANGELOG "current v0.22.0"; ROADMAP/VERSIONING/SPEC/
+  COMPARISON pineaban v0.16-v0.20 — la versión ya NO vive en ningún doc (puntero a
+  VERSION). El "Package registry ✅" de VERSIONING era FALSO (nyx publish no existe).
+- PLAN.md tenía una campaña "EN CURSO sin mergear" publicada 6 días antes.
+- SPEC.md omitía los 10 códigos de la serie borrow (NYX1021/1201/1210-11/1220-23/1230).
+- CLAUDE.md: limitaciones despineadas de versión + los arcos v0.22-v0.24.
+- COMPARISON.es sincronizada (memoria 3, concurrencia 4, rendimiento 4).
+
+### Higiene
+- 237 MB (.superpowers/sdd) + logrotate roto + fixture binario des-trackeado +
+  seed fmt.ll regenerado (único par stale) + 9 skills/agentes con paths fósiles
+  (~/NyxLang y compañía, muertos desde la migración de layout 2026-07-22).
+- Skill write-nyx-program: enseñaba `Some()`/`Ok()` pelados que NO compilan —
+  reescrito con las formas calificadas + el gotcha de payload multi-campo.
+
+### TASKS.md depurado
+- 9 fichas cerradas con evidencia (3 verificadas con repro serial), 3 fusionadas,
+  2 degradadas, sección "Ruta A+" (280 líneas de trabajo hecho) archivada, sección
+  ⭐ AHORA con las 5 de mayor valor. 96 → 87 abiertas y las de arriba son las reales.
+
+Gates: 351/351, errors 242/0, ai-first (guardia de coherencia verde tras cada manual).
 
 ## [0.24.11] — 2026-08-04 — Modo ceguera visible: la degradación del gradual ya no es invisible
 

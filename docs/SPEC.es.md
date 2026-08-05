@@ -1,4 +1,4 @@
-# Especificación del Lenguaje Nyx v0.16.2 — Resumen en Castellano
+# Especificación del Lenguaje Nyx — Resumen en Castellano
 
 > **Traducción parcial — la referencia normativa es [SPEC.md](SPEC.md).**
 > Este documento es un puntero útil para hispanohablantes: incluye el índice
@@ -184,6 +184,10 @@ no cortar en medio de un codepoint.
 exit 1 al final de la suite.
 
 ### Diagnósticos estructurados
+
+> Catálogo COMPLETO de códigos (44+, incl. la serie borrow NYX12xx): `docs/SPEC.md`.
+> Esta versión resume; ante un código que no figure acá, buscarlo allá.
+
 
 Con `NYX_DIAG=json`, el compilador emite una línea NDJSON por error:
 

@@ -4,7 +4,7 @@
 > working with Nyx code. Load this file as context on first contact with
 > the language. For the full spec, see [docs/SPEC.md](docs/SPEC.md).
 
-**Version**: v0.21.0. **Self-hosting**: compiler written in Nyx, compiles
+**Version**: see the `VERSION` file (source of truth — this line does NOT carry a number on purpose: it went 4 minors stale once). **Self-hosting**: compiler written in Nyx, compiles
 itself to native code via LLVM (fixed-point verified). Canonical test counts:
 [docs/TESTS.md](docs/TESTS.md) — do not hardcode numbers from this file, they
 go stale. Semantic type checker active end-to-end (real `TyVar`/occurs-check

@@ -1,6 +1,8 @@
-# Nyx Language Specification v0.16.2
+# Nyx Language Specification
 
-> Current version: v0.16.2 (pre-release). 347 compiler tests (229 regression + 30 advanced + 69 error parse+semantic + 16 M-08 happy-types + 3 stdlib; test-56 counted in both M-08 runners), self-hosting with verified fixed point. Semantic type checker active end-to-end (M-08 complete, incl. trait bounds + enum variant payloads + multi-error recovery).
+> Current version: see the `VERSION` file; canonical test counts: `docs/TESTS.md`
+> (this header carried "v0.16.2, 347 tests" for months — numbers do not live here).
+> Self-hosting with verified fixed point. Semantic type checker active end-to-end (M-08 complete, incl. trait bounds + enum variant payloads + multi-error recovery).
 
 Especificacion completa de sintaxis y caracteristicas del lenguaje Nyx.
 
@@ -790,6 +792,15 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1018 | struct field type mismatch |
 | NYX1019 | non-exhaustive match |
 | NYX1020 | trait bound not satisfied (`fn f<T: Display>` with a `T` lacking the impl) |
+| NYX1021 | `await` of a float expression is gated (ABI hazard in the goroutine join — annotate through an int-returning wrapper) |
+| NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
+| NYX1210 | borrow: `&mut` exclusivity violation (statement-scoped lint) |
+| NYX1211 | borrow: `&mut` aliasing with an active `&` borrow (lint, sibling of NYX1210) |
+| NYX1220 | borrow: use-after-free on manual memory (SOUND/gating, flow-sensitive) |
+| NYX1221 | borrow: double-free on manual memory (SOUND/gating) |
+| NYX1222 | borrow: dangling reference escape with explicit `'a` (GATING) |
+| NYX1223 | borrow: dangling reference escape by elision (LINT — `NYX_BORROW=warn` default) |
+| NYX1230 | borrow: use-after-move of an `#[affine]` type (move-checking) |
 | NYX0000 | uncoded diagnostic (fallback) |
 
 **Visible gradual-typing blindness** (`NYX_STRICT=warn`, v0.24.11): after a clean

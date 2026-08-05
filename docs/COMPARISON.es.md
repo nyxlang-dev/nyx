@@ -1,6 +1,11 @@
-# Nyx v0.17.0 — Comparativa con Otros Lenguajes
+# Nyx — Comparativa con Otros Lenguajes
 
-> Comparativa honesta. Última actualización: 2026-06-13 (v0.16.0 — agrega dimensión AI-Verificabilidad; ver docs/AI-FIRST.md). Auditoría original: 2026-03-24.
+> Comparativa honesta. **La versión NORMATIVA es [COMPARISON.md](COMPARISON.md) (inglés)** —
+> esta traducción se sincroniza a mano y puede atrasarse en la prosa; los PUNTAJES de abajo
+> sí están alineados (sync 2026-08-05 tras la auditoría integral).
+> Última actualización de fondo: 2026-07-15 en la normativa (Seguridad de memoria 2→3 por el
+> borrow checker; Concurrencia 3→4 por async real v0.19-v0.20; Rendimiento 3→4 por paridad
+> de cómputo con C bajo medición justa + internado + LICM). Auditoría original: 2026-03-24.
 > Scoring 1-5: 1=inexistente, 2=básico, 3=funcional, 4=bueno, 5=excelente/líder.
 > Los scores de Nyx están basados en features **verificadas compilando y ejecutando**, no en documentación.
 
@@ -68,12 +73,12 @@
   lenguaje self-hosted pequeño puede superar a los incumbentes — el checker y el pipeline de
   diagnósticos son ~3.7K líneas de Nyx que controlamos completamente.
 
-### Rendimiento: 3
+### Rendimiento: 4 — subido 2026-07-15 (normativa)
 - Compila a LLVM IR nativo → en teoría rendimiento comparable a C/Rust
 - Pero: no hay benchmarks, no se verificaron optimization passes, GC Boehm agrega overhead
 - Sin evidencia de rendimiento real bajo carga
 
-### Seguridad de memoria: 2
+### Seguridad de memoria: 3 — subido 2026-07 (borrow checker)
 - GC Boehm previene memory leaks simples
 - Pero: no hay borrow checker, lifetimes decorativos, &T/&mut T son alias, Box/Rc sin enforcement
 - unsafe blocks existen pero sin verificación de correctitud
@@ -95,7 +100,7 @@
 - CI público, playground en nyxlang.com, VS Code extension
 - Todavía: un solo desarrollador, sin adopción externa, SPEC parcialmente desactualizado
 
-### Concurrencia: 3
+### Concurrencia: 4 — subido 2026-07 (async real)
 - M:N scheduler con work-stealing REAL (ucontext_t)
 - Channels, mutex, WaitGroup, Semaphore, Once, AtomicCounter
 - Event loop epoll REAL
