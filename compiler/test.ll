@@ -409,6 +409,8 @@ declare void @nyx_map_insert_str(i8*, i8*, i8*)
 declare i8* @nyx_map_get_str(i8*, i8*)
 declare void @nyx_map_insert_int(i8*, i8*, i64)
 declare i64 @nyx_map_get_int(i8*, i8*)
+declare i8* @nyx_map_get_str_or(i8*, i8*, i8*)
+declare i64 @nyx_map_get_int_or(i8*, i8*, i64)
 declare i1 @nyx_map_contains_str(i8*, i8*)
 declare { i64, i8* }* @nyx_map_keys_array(i8*)
 declare { i64, i8* }* @nyx_map_values_array(i8*)
@@ -427,6 +429,8 @@ declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
+declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
 declare void @nyx_array_insert({ i64, i8* }*, i64, i64)
@@ -1393,7 +1397,7 @@ then114:
   %386 = add i64 %385, 1
   %387 = load %nyx_string*, %nyx_string** %379
   %388 = ptrtoint %nyx_string* %387 to i64
-  call void @nyx_array_set({ i64, i8* }* %384, i64 %386, i64 %388)
+  call void @nyx_array_set_tagged({ i64, i8* }* %384, i64 %386, i64 %388, i64 2)
   %389 = load i64, i64* %366
   %390 = sub i64 %389, 1
   store i64 %390, i64* %366
@@ -1409,7 +1413,7 @@ while_end111:
   %393 = add i64 %392, 1
   %394 = load %nyx_string*, %nyx_string** %363
   %395 = ptrtoint %nyx_string* %394 to i64
-  call void @nyx_array_set({ i64, i8* }* %391, i64 %393, i64 %395)
+  call void @nyx_array_set_tagged({ i64, i8* }* %391, i64 %393, i64 %395, i64 2)
   %396 = load i64, i64* %354
   %397 = add i64 %396, 1
   store i64 %397, i64* %354

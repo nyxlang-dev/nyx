@@ -725,6 +725,8 @@ declare void @nyx_map_insert_str(i8*, i8*, i8*)
 declare i8* @nyx_map_get_str(i8*, i8*)
 declare void @nyx_map_insert_int(i8*, i8*, i64)
 declare i64 @nyx_map_get_int(i8*, i8*)
+declare i8* @nyx_map_get_str_or(i8*, i8*, i8*)
+declare i64 @nyx_map_get_int_or(i8*, i8*, i64)
 declare i1 @nyx_map_contains_str(i8*, i8*)
 declare { i64, i8* }* @nyx_map_keys_array(i8*)
 declare { i64, i8* }* @nyx_map_values_array(i8*)
@@ -743,6 +745,8 @@ declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
+declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
 declare void @nyx_array_insert({ i64, i8* }*, i64, i64)
@@ -7495,7 +7499,7 @@ define i64 @mark_moved(
   store { i64, i8* }* %3704, { i64, i8* }** %3705
   %3706 = load { i64, i8* }*, { i64, i8* }** %3705
   %3707 = load i64, i64* %3701
-  call void @nyx_array_set({ i64, i8* }* %3706, i64 %3707, i64 1)
+  call void @nyx_array_set_tagged({ i64, i8* }* %3706, i64 %3707, i64 1, i64 1)
   ret i64 0
 }
 
@@ -7551,7 +7555,7 @@ define i64 @mark_freed(
   store { i64, i8* }* %3730, { i64, i8* }** %3731
   %3732 = load { i64, i8* }*, { i64, i8* }** %3731
   %3733 = load i64, i64* %3727
-  call void @nyx_array_set({ i64, i8* }* %3732, i64 %3733, i64 2)
+  call void @nyx_array_set_tagged({ i64, i8* }* %3732, i64 %3733, i64 2, i64 1)
   ret i64 0
 }
 
@@ -7607,7 +7611,7 @@ define i64 @revive(
   store { i64, i8* }* %3756, { i64, i8* }** %3757
   %3758 = load { i64, i8* }*, { i64, i8* }** %3757
   %3759 = load i64, i64* %3753
-  call void @nyx_array_set({ i64, i8* }* %3758, i64 %3759, i64 0)
+  call void @nyx_array_set_tagged({ i64, i8* }* %3758, i64 %3759, i64 0, i64 1)
   ret i64 0
 }
 
@@ -7743,7 +7747,7 @@ define i64 @set_reforigin(
   %3814 = load i64, i64* %3808
   %3815 = load %nyx_string*, %nyx_string** %origin.ptr
   %3816 = ptrtoint %nyx_string* %3815 to i64
-  call void @nyx_array_set({ i64, i8* }* %3813, i64 %3814, i64 %3816)
+  call void @nyx_array_set_tagged({ i64, i8* }* %3813, i64 %3814, i64 %3816, i64 2)
   ret i64 0
 }
 
@@ -7806,7 +7810,7 @@ while_body992:
   call void @llvm.stackrestore(i8* %3840)
   %3845 = load { i64, i8* }*, { i64, i8* }** %3838
   %3846 = load i64, i64* %3839
-  call void @nyx_array_set({ i64, i8* }* %3845, i64 %3846, i64 0)
+  call void @nyx_array_set_tagged({ i64, i8* }* %3845, i64 %3846, i64 0, i64 1)
   %3847 = load i64, i64* %3839
   %3848 = add i64 %3847, 1
   store i64 %3848, i64* %3839
@@ -8112,7 +8116,7 @@ then1015:
   %4036 = load i64, i64* %3969
   %4037 = load %nyx_string*, %nyx_string** %4019
   %4038 = ptrtoint %nyx_string* %4037 to i64
-  call void @nyx_array_set({ i64, i8* }* %4035, i64 %4036, i64 %4038)
+  call void @nyx_array_set_tagged({ i64, i8* }* %4035, i64 %4036, i64 %4038, i64 2)
   br label %merge1017
 else1016:
   %4039 = load %nyx_string*, %nyx_string** %4019
@@ -8135,7 +8139,7 @@ then1024:
   %4050 = load i64, i64* %3969
   %4051 = load %nyx_string*, %nyx_string** %4019
   %4052 = ptrtoint %nyx_string* %4051 to i64
-  call void @nyx_array_set({ i64, i8* }* %4049, i64 %4050, i64 %4052)
+  call void @nyx_array_set_tagged({ i64, i8* }* %4049, i64 %4050, i64 %4052, i64 2)
   br label %merge1026
 else1025:
   br label %merge1026

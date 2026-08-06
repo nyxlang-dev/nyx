@@ -7,6 +7,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.15] — 2026-08-05 — Renombrar una variable ya no cambia tu programa
+
+Sesión C del arco gradual: retiro MEDIDO de la última adivinanza léxica.
+
+### Corregido
+- **Las heurísticas por NOMBRE de variable de `nyx_type_to_llvm_for_env` fueron
+  RETIRADAS**: una variable llamada `tokens` en un closure se tipaba `Array` por el
+  nombre; llamarla `toks` cambiaba el programa. Medición previa (patrón v0.22.14):
+  660 archivos + los 10 módulos del compilador → UN hit legítimo (`var done = false`
+  del lexer), con control positivo del instrumento verificado antes de confiar en los
+  ceros. La inferencia A9 del pre-scan de closures aprendió LITERALES (bool/int/float/
+  String) — el único usuario real quedó cubierto por inferencia, y
+  `SharedEnv_tokenize` es byte-idéntico como prueba de equivalencia.
+
+### Mantenimiento
+- Los 10 seeds `.ll` refrescados coherentemente (arrastraban declares stale de varios
+  releases — la clase de drift que ya mordió con fmt.ll) + binarios derivados
+  reconstruidos.
+
+Fixed point ×2. Gates: 354/354 (105 comparadas, 0 conocidos), errors 244/0, m08,
+ai-first, repl, stacks.
+
 ## [0.24.14] — 2026-08-05 — Los iteradores tipan: -53% de ceguera gradual
 
 Sesión B del plan post-auditoría — la palanca MEDIDA del dato NYX_STRICT.

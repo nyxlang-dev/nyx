@@ -2347,6 +2347,8 @@ declare void @nyx_map_insert_str(i8*, i8*, i8*)
 declare i8* @nyx_map_get_str(i8*, i8*)
 declare void @nyx_map_insert_int(i8*, i8*, i64)
 declare i64 @nyx_map_get_int(i8*, i8*)
+declare i8* @nyx_map_get_str_or(i8*, i8*, i8*)
+declare i64 @nyx_map_get_int_or(i8*, i8*, i64)
 declare i1 @nyx_map_contains_str(i8*, i8*)
 declare { i64, i8* }* @nyx_map_keys_array(i8*)
 declare { i64, i8* }* @nyx_map_values_array(i8*)
@@ -2365,6 +2367,8 @@ declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
+declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
 declare void @nyx_array_insert({ i64, i8* }*, i64, i64)
@@ -11671,7 +11675,7 @@ merge20:
   %94 = load { i64, i8* }*, { i64, i8* }** %18
   %95 = load %nyx_string*, %nyx_string** %79
   %96 = ptrtoint %nyx_string* %95 to i64
-  call void @nyx_array_set({ i64, i8* }* %94, i64 0, i64 %96)
+  call void @nyx_array_set_tagged({ i64, i8* }* %94, i64 0, i64 %96, i64 2)
   br label %merge17
 else16:
   br label %merge17
@@ -12876,7 +12880,7 @@ else51:
   %263 = getelementptr [1 x i8], [1 x i8]* @.str769, i32 0, i32 0
   %264 = call %nyx_string* @nyx_intern_cstr(%nyx_string** @.str769.c, i8* %263)
   %265 = ptrtoint %nyx_string* %264 to i64
-  call void @nyx_array_set({ i64, i8* }* %262, i64 0, i64 %265)
+  call void @nyx_array_set_tagged({ i64, i8* }* %262, i64 0, i64 %265, i64 2)
   %266 = getelementptr [6 x i8], [6 x i8]* @.str770, i32 0, i32 0
   %267 = call %nyx_string* @nyx_intern_cstr(%nyx_string** @.str770.c, i8* %266)
   %268 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %267)
@@ -12952,7 +12956,7 @@ while_end29:
   %306 = getelementptr [1 x i8], [1 x i8]* @.str773, i32 0, i32 0
   %307 = call %nyx_string* @nyx_intern_cstr(%nyx_string** @.str773.c, i8* %306)
   %308 = ptrtoint %nyx_string* %307 to i64
-  call void @nyx_array_set({ i64, i8* }* %305, i64 0, i64 %308)
+  call void @nyx_array_set_tagged({ i64, i8* }* %305, i64 0, i64 %308, i64 2)
   %309 = getelementptr [6 x i8], [6 x i8]* @.str774, i32 0, i32 0
   %310 = call %nyx_string* @nyx_intern_cstr(%nyx_string** @.str774.c, i8* %309)
   %311 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %310)
@@ -13124,7 +13128,7 @@ then92:
   %410 = load %nyx_string*, %nyx_string** %342
   %411 = call %nyx_string* @nyx_string_concat(%nyx_string* %409, %nyx_string* %410)
   %412 = ptrtoint %nyx_string* %411 to i64
-  call void @nyx_array_set({ i64, i8* }* %404, i64 %405, i64 %412)
+  call void @nyx_array_set_tagged({ i64, i8* }* %404, i64 %405, i64 %412, i64 2)
   br label %merge94
 else93:
   %413 = load { i64, i8* }*, { i64, i8* }** %31
@@ -13136,7 +13140,7 @@ else93:
   %419 = load %nyx_string*, %nyx_string** %342
   %420 = call %nyx_string* @nyx_string_concat(%nyx_string* %418, %nyx_string* %419)
   %421 = ptrtoint %nyx_string* %420 to i64
-  call void @nyx_array_set({ i64, i8* }* %413, i64 %414, i64 %421)
+  call void @nyx_array_set_tagged({ i64, i8* }* %413, i64 %414, i64 %421, i64 2)
   br label %merge94
 merge94:
   store i1 1, i1* %359
