@@ -7,6 +7,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.16] — 2026-08-05 — El motor por-id absorbe la unificación de inferencia
+
+Arco gradual, incremento de migración unify→por-id (1 de 2).
+
+### Cambiado
+- Los 3 sitios de REPLAY de `ty_of_expr` (fn genérica libre, método de struct, método
+  de enum) migran del `unify` string-based legacy al **motor por-id real** de v0.19.0
+  (TyVar + occurs-check) vía el helper `replay_ret_by_id` — con residuo
+  legacy-equivalente (params sin bindear vuelven como TyGeneric; ningún TyVar se
+  filtra). De 5 call-sites legacy quedan 2 (los validantes, que gatean NYX1005 —
+  incremento final con mensajes idénticos, ficha [~]).
+
+Fixed point ×2. Gates: 354/354 (105 comparadas, 0 conocidos), errors 244/0, m08,
+ai-first, stacks.
+
 ## [0.24.15] — 2026-08-05 — Renombrar una variable ya no cambia tu programa
 
 Sesión C del arco gradual: retiro MEDIDO de la última adivinanza léxica.
