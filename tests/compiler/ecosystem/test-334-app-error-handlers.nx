@@ -1,0 +1,57 @@
+// Test 334: App error handlers — not_found_handler/error_handler con defaults
+// reales en app_new + registro via app_not_found/app_error. Verifica ADEMÁS
+// que la asignación de campo Fn a través del parámetro App persiste en el
+// caller (mismo mecanismo que app.static_dir en nyx-serve files.nx).
+// (Numerado 334: el plan de serve decía 332, ocupado por iteradores.)
+
+import "std/web"
+
+fn my_404(req: Request) -> Response {
+    return response_json(404, "{\"custom\":\"nf\"}")
+}
+
+fn my_500(req: Request, err: String) -> Response {
+    return response_json(500, "{\"custom\":\"" + err + "\"}")
+}
+
+fn fake_req() -> Request {
+    var q: Map = Map.new()
+    var f: Map = Map.new()
+    var c: Map = Map.new()
+    var p: Map = Map.new()
+    var h: Array = []
+    return Request { method: "GET", path: "/x", query: q, headers_flat: h, body: "", form: f, cookies: c, params: p }
+}
+
+fn main() -> int {
+    var app: App = app_new()
+    let req: Request = fake_req()
+
+    // Defaults presentes desde app_new (nunca hay campo vacío)
+    let nf0: Fn(Request) -> Response = app.not_found_handler
+    let r0: Response = nf0(req)
+    assert(r0.status == 404)
+    assert(r0.body.contains("404 Not Found"))
+
+    let eh0: Fn(Request, String) -> Response = app.error_handler
+    let e0: Response = eh0(req, "secret-detail")
+    assert(e0.status == 500)
+    assert(not e0.body.contains("secret-detail"))
+
+    // Registro: la asignación de campo Fn vía parámetro PERSISTE en el caller
+    app_not_found(&mut app, my_404)
+    app_error(&mut app, my_500)
+
+    let nf1: Fn(Request) -> Response = app.not_found_handler
+    let r1: Response = nf1(req)
+    assert(r1.status == 404)
+    assert(r1.body.contains("custom"))
+
+    let eh1: Fn(Request, String) -> Response = app.error_handler
+    let e1: Response = eh1(req, "boom")
+    assert(e1.status == 500)
+    assert(e1.body.contains("boom"))
+
+    print("error handlers ok")
+    return 0
+}

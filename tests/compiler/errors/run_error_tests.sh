@@ -1568,6 +1568,38 @@ else
   fi
 fi
 
+name="tyeq-strict-fn-slot"
+# ty_eq estricto v1 (cierre del arco gradual, 2026-08-05): `let f: Fn = "..."`
+# pasaba MUDO (Fn parsea TyGeneric = comodín). String/float/bool a un slot Fn
+# ahora es NYX1003; int sigue permitido (0 = slot nulo, i64 = fn pointers).
+tef_src=$(mktemp /tmp/tef-XXXX.nx)
+printf 'fn main() -> int {\n    let f: Fn = "no soy funcion"\n    return 0\n}\n' > "$tef_src"
+tef_out=$(NYX_SRC="$tef_src" ./nyx_bootstrap 2>&1); tef_rc=$?
+tef_ok_src=$(mktemp /tmp/tefok-XXXX.nx)
+printf 'var g: Fn = 0\nfn s() -> int { return 0 }\nfn main() -> int {\n    g = s\n    let ok: Fn = s\n    return 0\n}\n' > "$tef_ok_src"
+tef_ok_out=$(NYX_SRC="$tef_ok_src" ./nyx_bootstrap 2>&1); tef_ok_rc=$?
+rm -f "$tef_src" "$tef_ok_src"
+if [ "$tef_rc" -ne 0 ] && echo "$tef_out" | grep -qF "NYX1003" && echo "$tef_out" | grep -qF "expected Fn" && [ "$tef_ok_rc" -eq 0 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (positivo rc=%d, control negativo rc=%d)\n" "$name" "$tef_rc" "$tef_ok_rc"
+  echo "$tef_out" | tail -2 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+name="tyeq-strict-dyn-primitive"
+# ty_eq estricto v1: `let c: dyn Trait = 42` pasaba MUDO (el checker de dyn
+# hacía early-return para actuals no-struct). Primitivo a dyn = NYX1012.
+ted_src=$(mktemp /tmp/ted-XXXX.nx)
+printf 'trait Mostrable { fn ver(self) -> String }\nfn main() -> int {\n    let c: dyn Mostrable = 42\n    return 0\n}\n' > "$ted_src"
+ted_out=$(NYX_SRC="$ted_src" ./nyx_bootstrap 2>&1); ted_rc=$?
+rm -f "$ted_src"
+if [ "$ted_rc" -ne 0 ] && echo "$ted_out" | grep -qF "NYX1012" && echo "$ted_out" | grep -qiF "primitive"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (esperado rc!=0 con NYX1012 primitivo; rc=%d)\n" "$name" "$ted_rc"
+  echo "$ted_out" | tail -2 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="iterator-chain-type-mismatch"
 # Sesión B (2026-08-05): la cadena iter/map/collect TIPA — un collect() de
 # Iterator[int] asignado a String anotado es NYX1003 (antes: TyUnknown mudo).

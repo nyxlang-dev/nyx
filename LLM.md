@@ -391,7 +391,13 @@ local first: `let m = obj.my_map; m.remove(k)` (Maps are references, so it mutat
 
 ### I/O
 - `print(x)` / `print_no_newline(x)` — to stdout
-- `read_line()` — read from stdin
+- `read_line()` — read a line from stdin. **EOF contract (documented 2026-08-06,
+  friction report)**: at EOF it returns the SENTINEL string `":EOF:"` (legacy,
+  load-bearing — editor/grep examples compare against it). A stdio-server loop is
+  `while true { let l = read_line()  if l == ":EOF:" { break } ... }`. Caveat: a
+  real input line containing exactly `:EOF:` is indistinguishable — for binary-safe
+  detection use `read_byte()`, which returns < 0 at EOF (build your own line loop
+  on top). A `stdin_eof()` builtin is catalogued as follow-up.
 - `read_file(path)` → String
 - `write_file(path, content)` → bool
 - `file_exists(path)` → bool

@@ -37,6 +37,8 @@ struct App {
     after_hooks: Array,
     middlewares: Array,
     static_dir: String,
+    not_found_handler: Fn,
+    error_handler: Fn,
 }
 
 // Decodifica percent-encoding de forms/query. Delega en el runtime C
@@ -264,7 +266,11 @@ pub fn app_new() -> App {
     var before_hooks: Array = []
     var after_hooks: Array = []
     var middlewares: Array = []
-    return App { routes: routes, before_hooks: before_hooks, after_hooks: after_hooks, middlewares: middlewares, static_dir: "" }
+    // Bindear las fns a `let` antes del literal (no asumir que el codegen
+    // toma una fn nombrada directo en el literal — spec de serve 2026-08-05).
+    let nf: Fn = default_not_found
+    let eh: Fn = default_error
+    return App { routes: routes, before_hooks: before_hooks, after_hooks: after_hooks, middlewares: middlewares, static_dir: "", not_found_handler: nf, error_handler: eh }
 }
 
 pub fn app_route(app: App, method: String, pattern: String, handler: Fn) {
@@ -303,6 +309,40 @@ pub fn app_after(app: App, hook: Fn) {
 // Return a non-zero status Response to short-circuit (e.g. 403, 429).
 pub fn app_use(app: App, mw: Fn) {
     app.middlewares.push(mw)
+}
+
+// ── Error handlers registrables (fricción de serve, 2026-08-06) ──
+// Doctrina: el poder al vocabulario — el 404 y el 500 son del USUARIO, con
+// defaults reales desde app_new (nunca hay campo vacío).
+
+// Default 404: la misma página que el framework servía hardcodeada.
+pub fn default_not_found(req: Request) -> Response {
+    return response_html(404, "<h1>404 Not Found</h1>")
+}
+
+// Default 500: genérico a propósito — NO ecoa `err` al cliente (no filtrar
+// internals). El parámetro existe para los handlers registrados con
+// app_error, que sí pueden usarlo.
+pub fn default_error(req: Request, err: String) -> Response {
+    return response_html(500, "<h1>500 Internal Server Error</h1>")
+}
+
+// handler: Fn(Request) -> Response — reemplaza la página 404.
+// ⚠️ Receptor &mut App OBLIGATORIO (hallazgo del test, 2026-08-06): un campo
+// escalar (Fn/String) asignado vía parámetro POR VALOR muta la copia y se
+// pierde — la premisa del plan («mismo mecanismo que app.static_dir») era
+// falsa: serve_static tiene el mismo patrón y está rota en silencio (los
+// sites usan la vía de globals). Con &mut App el field-assign persiste
+// (garantizado por test-321). Callsite: app_not_found(&mut app, mi_404)
+// con `var app`.
+pub fn app_not_found(app: &mut App, handler: Fn) {
+    app.not_found_handler = handler
+}
+
+// handler: Fn(Request, String) -> Response — recibe el mensaje del
+// panic/throw que atrapó el servidor. Mismo contrato &mut que app_not_found.
+pub fn app_error(app: &mut App, handler: Fn) {
+    app.error_handler = handler
 }
 
 // ── Built-in middleware: Logging ──

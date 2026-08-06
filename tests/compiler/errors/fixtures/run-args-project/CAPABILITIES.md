@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.24.16 -->
+<!-- nyx-version: 0.24.18 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,
 > `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -23,7 +23,7 @@
 
 ### `std/web`
 
-`import "std/web"` — 24 funciones:
+`import "std/web"` — 28 funciones:
 
 - `pub fn url_decode(s: String) -> String`
 - `pub fn parse_query_string(path: String) -> Map`
@@ -46,6 +46,10 @@
 - `pub fn app_before(app: App, hook: Fn)`
 - `pub fn app_after(app: App, hook: Fn)`
 - `pub fn app_use(app: App, mw: Fn)`
+- `pub fn default_not_found(req: Request) -> Response`
+- `pub fn default_error(req: Request, err: String) -> Response`
+- `pub fn app_not_found(app: &mut App, handler: Fn)`
+- `pub fn app_error(app: &mut App, handler: Fn)`
 - `pub fn mw_logging(req: Request) -> Response`
 - `pub fn cors_configure(origin: String, methods: String, headers: String)`
 - `pub fn mw_cors(req: Request) -> Response`

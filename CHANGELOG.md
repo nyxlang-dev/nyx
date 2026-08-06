@@ -7,6 +7,53 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.19] — 2026-08-06 — Ronda de fricción: serve v0.4.0 destrabado
+
+Los 2 reportes del inbox procesados de punta a punta.
+
+### Corregido (reporte de nyx-serve — sus DOS bloqueadores)
+- **try-stack thread-local**: `__nyx_try_depth`/`__nyx_try_stack`/`__nyx_exception_msg`
+  eran globals compartidos — con threads concurrentes un throw podía saltar al jmp_buf
+  de OTRO thread (UB reproducido). `_Thread_local` los tres; test-333 (4 threads ×
+  1000 try/throw/catch) + runtime C 20/20. LIMITACIÓN documentada: un try no debe
+  cruzar un yield de goroutine (el scheduler es work-stealing).
+- **std/web: error handlers registrables**: `App.not_found_handler`/`error_handler`
+  con defaults reales desde `app_new` (el 500 NO ecoa el mensaje interno al cliente) +
+  `app_not_found`/`app_error`. El TEST refutó la premisa del plan dos veces: el
+  registro es **`&mut App`** (un campo escalar vía parámetro por valor muta la copia —
+  y de paso `serve_static` de nyx-serve está rota en silencio, ficha para su repo) y
+  los handlers se leen con **anotación tipada** `Fn(Request) -> Response` (el `Fn`
+  pelado con arg struct SEGVea — gap catalogado).
+
+### Documentado (reporte anónimo — servidor MCP stdio)
+- **El contrato EOF de `read_line()`**: devuelve el sentinel `":EOF:"` (legacy
+  load-bearing) — estaba sin documentar y el reporte loopeaba infinito. LLM.md lo
+  documenta con el caveat de ambigüedad y la alternativa binary-safe (`read_byte()<0`).
+  Fichas nuevas: `stdin_eof()` builtin, reverse DNS, enumeración de interfaces.
+  La introspección TLS que pedía YA EXISTE (el reporte venía de v0.24.6).
+
+Gates: 355/355 (106 comparadas, 0 conocidos), errors 246/0, ai-first, stacks.
+
+## [0.24.18] — 2026-08-06 — ty_eq estricto: el arco gradual CIERRA
+
+La última ficha del arco "la anotación manda" (v0.24.9 → v0.24.18, diez releases).
+
+### Agregado
+- **ty_eq estricto v1** — dientes quirúrgicos donde la anotación es inequívoca, sin
+  tocar el ty_eq global (la lección de julio): `let f: Fn = "texto"` es NYX1003
+  (antes mudo, explotaba al llamar; int sigue permitido — slot nulo y fn pointers) y
+  `let c: dyn Trait = 42` es NYX1012 accionable (los traits no se implementan sobre
+  primitivos; el mensaje sugiere el wrapper). 2 checks con controles negativos
+  (errors 246/0).
+
+### El arco completo, en una línea por release
+dispatch honesto en 3 capas → la anotación manda (structs cortos, mono on-demand,
+match float) → tag estático de fallback (NYX2008) → ceguera visible (NYX_STRICT) →
+runtime que no mata (get_or, decompress) → iteradores que tipan (-53%) → heurística
+por-nombre muerta con medición → un solo motor de unificación → ty_eq estricto.
+
+Gates: 354/354, errors 246/0, m08, ai-first, stacks. Fixed point ×2.
+
 ## [0.24.17] — 2026-08-05 — Un solo motor de unificación
 
 Arco gradual, migración unify→por-id 2/2 — COMPLETA.
