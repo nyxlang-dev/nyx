@@ -7,6 +7,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.20] — 2026-08-06 — try/catch cuenta como retorno
+
+### Corregido
+- **NYX1008 reconoce try/catch exhaustivo**: una función que termina en
+  `try { return X } catch(e) { return Y }` ya no exige un `return` inalcanzable
+  (fricción del dispatcher de serve, reportada y arreglada el mismo día). Un `throw`
+  que escapa del try no rompe la exhaustividad. try-sin-return sigue siendo NYX1008
+  (check doble en errors). test-335 cubre el patrón real con throw condicional.
+
+Gates: 356/356 (107 comparadas, 0 conocidos), errors 247/0. Fixed point ×2.
+
 ## [0.24.19] — 2026-08-06 — Ronda de fricción: serve v0.4.0 destrabado
 
 Los 2 reportes del inbox procesados de punta a punta.

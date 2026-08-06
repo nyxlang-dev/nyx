@@ -1,0 +1,16 @@
+// test-335 — try/catch con ambas ramas retornando ES camino exhaustivo para
+// NYX1008 (fricción del dispatcher de serve, 2026-08-06 — antes exigía un
+// `return ""` inalcanzable tras el try/catch).
+fn decide(n: int) -> String {
+    try {
+        if n == 0 { throw("cero") }
+        return "ok:" + int_to_string(n)
+    } catch(e: String) {
+        return "err:" + e
+    }
+}
+fn main() -> int {
+    print(decide(7))
+    print(decide(0))
+    return 0
+}

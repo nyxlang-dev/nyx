@@ -1568,6 +1568,24 @@ else
   fi
 fi
 
+name="nyx1008-try-catch-exhaustive"
+# Fricción serve 2026-08-06: try/catch con AMBAS ramas retornando es camino
+# exhaustivo (antes exigía un return inalcanzable). Dos direcciones: el patrón
+# del dispatcher compila; try SIN return sigue siendo NYX1008.
+tce_ok=$(mktemp /tmp/tce-XXXX.nx)
+printf 'fn f() -> String {\n    try {\n        return "a"\n    } catch(e: String) {\n        return "b"\n    }\n}\nfn main() -> int {\n    print(f())\n    return 0\n}\n' > "$tce_ok"
+tce_ok_out=$(NYX_SRC="$tce_ok" ./nyx_bootstrap 2>&1); tce_ok_rc=$?
+tce_bad=$(mktemp /tmp/tceb-XXXX.nx)
+printf 'fn g() -> String {\n    try {\n        print("x")\n    } catch(e: String) {\n        return "b"\n    }\n}\nfn main() -> int { return 0 }\n' > "$tce_bad"
+tce_bad_out=$(NYX_SRC="$tce_bad" ./nyx_bootstrap 2>&1); tce_bad_rc=$?
+rm -f "$tce_ok" "$tce_bad"
+if [ "$tce_ok_rc" -eq 0 ] && [ "$tce_bad_rc" -ne 0 ] && echo "$tce_bad_out" | grep -qF "NYX1008"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (ok_rc=%d esperado 0; bad_rc=%d esperado !=0 con NYX1008)\n" "$name" "$tce_ok_rc" "$tce_bad_rc"
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="tyeq-strict-fn-slot"
 # ty_eq estricto v1 (cierre del arco gradual, 2026-08-05): `let f: Fn = "..."`
 # pasaba MUDO (Fn parsea TyGeneric = comodín). String/float/bool a un slot Fn
