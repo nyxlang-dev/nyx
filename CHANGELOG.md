@@ -7,6 +7,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.17] — 2026-08-05 — Un solo motor de unificación
+
+Arco gradual, migración unify→por-id 2/2 — COMPLETA.
+
+### Cambiado
+- Los 2 sitios VALIDANTES (args de llamada genérica y de métodos de impl) migran al
+  motor por-id. `uv_pairs` proyecta la subst de TyVars a los pares legacy: mensajes
+  NYX1005 con bindings acumulados y bounds NYX1020 **byte-idénticos** (verificados
+  contra los tests autoritativos). El `unify` string-based queda con CERO call-sites
+  en el checker — el motor real de v0.19.0 (TyVar + occurs-check) es el único camino.
+
+Fixed point ×2. Gates: 354/354 (105 comparadas, 0 conocidos), errors 244/0, m08,
+ai-first, stacks.
+
 ## [0.24.16] — 2026-08-05 — El motor por-id absorbe la unificación de inferencia
 
 Arco gradual, incremento de migración unify→por-id (1 de 2).
