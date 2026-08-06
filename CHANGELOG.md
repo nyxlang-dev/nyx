@@ -7,6 +7,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.21] — 2026-08-06 — stdin_eof(): los servidores stdio terminan limpio
+
+### Agregado
+- **`stdin_eof() -> bool`**: la señal INEQUÍVOCA de fin de stdin (fricción del
+  servidor MCP — el sentinel `":EOF:"` de read_line es ambiguo con una línea
+  literal). Patrón: leer, después preguntar. E2E con pipe real en la suite de
+  errores; LLM.md enseña ambas vías.
+
+Gates: 356/356, errors 248/0, ai-first, stacks. Fixed point gen2==gen3.
+
 ## [0.24.20] — 2026-08-06 — try/catch cuenta como retorno
 
 ### Corregido

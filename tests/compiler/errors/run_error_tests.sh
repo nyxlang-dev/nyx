@@ -1568,6 +1568,20 @@ else
   fi
 fi
 
+name="stdin-eof-builtin"
+# stdin_eof() (fricción MCP-stdio 2026-08-06): señal INEQUÍVOCA de EOF de
+# stdin — el loop del reporte termina limpio con pipe real (antes: infinito).
+seb_src=$(mktemp /tmp/seb-XXXX.nx)
+printf 'fn main() -> int {\n    var n = 0\n    while true {\n        let l: String = read_line()\n        if stdin_eof() {\n            print("EOF:" + int_to_string(n))\n            return 0\n        }\n        n = n + 1\n    }\n    return 0\n}\n' > "$seb_src"
+seb_out=$(printf 'x\ny\nz\n' | timeout 60 bash "$(pwd)/scripts/nyx" run "$seb_src" 2>&1); seb_rc=$?
+rm -f "$seb_src"
+if [ "$seb_rc" -eq 0 ] && echo "$seb_out" | grep -qF "EOF:3"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (esperado rc=0 con EOF:3; rc=%d)\n" "$name" "$seb_rc"
+  echo "$seb_out" | tail -2 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="nyx1008-try-catch-exhaustive"
 # Fricción serve 2026-08-06: try/catch con AMBAS ramas retornando es camino
 # exhaustivo (antes exigía un return inalcanzable). Dos direcciones: el patrón

@@ -397,7 +397,7 @@ local first: `let m = obj.my_map; m.remove(k)` (Maps are references, so it mutat
   `while true { let l = read_line()  if l == ":EOF:" { break } ... }`. Caveat: a
   real input line containing exactly `:EOF:` is indistinguishable — for binary-safe
   detection use `read_byte()`, which returns < 0 at EOF (build your own line loop
-  on top). A `stdin_eof()` builtin is catalogued as follow-up.
+  on top). Or use `stdin_eof() -> bool` (v0.24.21): the UNAMBIGUOUS signal — read, then ask (`feof` activates after the read that hit EOF): `while true { let l = read_line()  if stdin_eof() { break }  ... }`.
 - `read_file(path)` → String
 - `write_file(path, content)` → bool
 - `file_exists(path)` → bool

@@ -140,6 +140,14 @@ void nyx_term_flush(void) {
 }
 
 // Lee una línea de stdin; retorna ":EOF:" en EOF
+// stdin_eof() — la señal INEQUÍVOCA de fin de stdin (fricción MCP-stdio,
+// 2026-08-06): el sentinel ":EOF:" de read_line es ambiguo con una línea
+// literal. feof(stdin) se activa tras la LECTURA que tocó el EOF — el patrón
+// es leer y DESPUÉS preguntar.
+int64_t nyx_stdin_eof() {
+    return feof(stdin) ? 1 : 0;
+}
+
 nyx_string* nyx_read_line() {
     char buf[4096];
     if (fgets(buf, sizeof(buf), stdin) == NULL) {
