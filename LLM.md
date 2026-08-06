@@ -446,6 +446,10 @@ local first: `let m = obj.my_map; m.remove(k)` (Maps are references, so it mutat
   entero). `udp_recvfrom` sigue sin devolver el remitente.
   `tcp_set_timeout(fd, s)` y `tcp_close(fd)` funcionan sobre el fd de UDP.
 - `resolve(host) -> String` (IPv4 del hostname, "" si no resuelve)
+- `resolve_ptr(ip) -> String` — reverse DNS (v0.24.22): hostname de una IPv4, "" si
+  no hay PTR o la IP es inválida
+- `net_interfaces() -> Array` — interfaces IPv4 locales (v0.24.22): Array PLANO de
+  tripletas String `[nombre, ip, máscara, ...]` (stride 3, loopback incluida)
 
 ### TLS / HTTPS
 - `https_get(url)` — simple GET, NO custom headers, returns the body as a `String`.

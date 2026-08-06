@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/time.h>
+#include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -708,6 +709,50 @@ nyx_string* nyx_udp_recvfrom(int64_t fd, int64_t max_bytes) {
 }
 
 // ===== DNS =====
+
+// Reverse DNS (IDEA del reporte MCP-stdio/lanpass, 2026-08-06): IP -> hostname.
+// Fail-soft como nyx_resolve: "" si no hay PTR o la IP es inválida (NI_NAMEREQD
+// evita devolver la IP misma como "nombre").
+nyx_string* nyx_resolve_ptr(const char* ip) {
+    if (!ip) return nyx_string_from_cstr("");
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    if (inet_pton(AF_INET, ip, &sa.sin_addr) != 1) {
+        return nyx_string_from_cstr("");
+    }
+    char host[NI_MAXHOST];
+    if (getnameinfo((struct sockaddr*)&sa, sizeof(sa), host, sizeof(host),
+                    NULL, 0, NI_NAMEREQD) != 0) {
+        return nyx_string_from_cstr("");
+    }
+    return nyx_string_from_cstr(host);
+}
+
+// Enumeración de interfaces IPv4 (IDEA del mismo reporte): Array plano de
+// TRIPLETAS String [nombre, ip, máscara, nombre, ip, máscara, ...] — stride 3.
+// Solo AF_INET con dirección asignada; loopback incluida (el caller filtra).
+nyx_array_t* nyx_net_interfaces() {
+    nyx_array_t* out = nyx_array_new(8);
+    struct ifaddrs* ifs = NULL;
+    if (getifaddrs(&ifs) != 0) return out;
+    for (struct ifaddrs* it = ifs; it != NULL; it = it->ifa_next) {
+        if (!it->ifa_addr || it->ifa_addr->sa_family != AF_INET) continue;
+        char ip[INET_ADDRSTRLEN] = "";
+        char mask[INET_ADDRSTRLEN] = "";
+        struct sockaddr_in* a = (struct sockaddr_in*)it->ifa_addr;
+        inet_ntop(AF_INET, &a->sin_addr, ip, sizeof(ip));
+        if (it->ifa_netmask) {
+            struct sockaddr_in* m = (struct sockaddr_in*)it->ifa_netmask;
+            inet_ntop(AF_INET, &m->sin_addr, mask, sizeof(mask));
+        }
+        nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(it->ifa_name), 2);
+        nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(ip), 2);
+        nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(mask), 2);
+    }
+    freeifaddrs(ifs);
+    return out;
+}
 
 nyx_string* nyx_resolve(const char* hostname) {
     if (!hostname) return nyx_string_from_cstr("");

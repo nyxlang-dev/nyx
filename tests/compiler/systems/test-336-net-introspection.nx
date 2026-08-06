@@ -1,0 +1,22 @@
+// test-336 — resolve_ptr (reverse DNS) + net_interfaces (IDEAs del reporte de
+// red 2026-08-05, herramientas "Nyx puro" sin exec). Solo invariantes
+// DETERMINISTAS: el conteo de interfaces y el nombre PTR varían por máquina.
+fn main() -> int {
+    let ifs: Array = net_interfaces()
+    assert(ifs.length() >= 3)
+    assert(ifs.length() % 3 == 0)
+    var vi_lo = false
+    var i = 0
+    while i < ifs.length() {
+        let ip: String = ifs[i + 1]
+        if ip == "127.0.0.1" { vi_lo = true }
+        i = i + 3
+    }
+    assert(vi_lo)
+    print("interfaces ok")
+
+    let inv: String = resolve_ptr("999.999.1.1")
+    assert(inv == "")
+    print("ptr invalida ok")
+    return 0
+}

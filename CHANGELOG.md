@@ -7,6 +7,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.22] — 2026-08-06 — Red introspectable: reverse DNS + interfaces
+
+### Agregado
+- **`resolve_ptr(ip) -> String`**: reverse DNS (hostname de una IPv4; "" si no hay
+  PTR o la IP es inválida — NI_NAMEREQD evita el falso nombre).
+- **`net_interfaces() -> Array`**: interfaces IPv4 locales como tripletas planas
+  `[nombre, ip, máscara, ...]` (stride 3) — autodetectar la red a escanear sin
+  `exec("ip addr")`.
+
+Con esto el reporte de fricción de red queda 6/6: EOF de stdin (v0.24.21), reverse
+DNS e interfaces (hoy), introspección TLS (ya existía), connect-timeout y
+udp-binary-safe (catalogadas). test-336 con invariantes deterministas.
+
+Gates: 357/357, errors 248/0. Fixed point gen2==gen3.
+
 ## [0.24.21] — 2026-08-06 — stdin_eof(): los servidores stdio terminan limpio
 
 ### Agregado
