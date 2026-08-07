@@ -7,6 +7,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.23] — 2026-08-07 — Un `Fn` pelado ya puede devolver structs
+
+### Corregido
+- **`let f: Fn = fn_que_devuelve_struct` + llamada indirecta era SEGV**: el emisor de
+  llamada saca el retorno de la anotación `Fn(...) -> T`; con `Fn` pelado asumía `i64`
+  y el consumidor hacía `inttoptr` sobre un struct devuelto POR VALOR. Ahora el slot se
+  REFINA con la firma real de la función asignada. (El diagnóstico original culpaba al
+  argumento struct — el bisect mostró que ese caso siempre funcionó: era el retorno.)
+  test-337 con las 3 formas, incluido el control de no-regresión.
+
+Gates: 358/358 (109 comparadas, 0 conocidos), errors 248/0. Fixed point ×2.
+
 ## [0.24.22] — 2026-08-06 — Red introspectable: reverse DNS + interfaces
 
 ### Agregado

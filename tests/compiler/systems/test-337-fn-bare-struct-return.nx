@@ -1,0 +1,38 @@
+// test-337 — `let f: Fn = fn_que_devuelve_struct` y la llamada indirecta
+// (gap destapado por test-334, 2026-08-06): con `Fn` PELADO el emisor de
+// llamada asumía retorno i64 FIJO y un `let r: Struct = f(x)` hacía inttoptr
+// sobre un struct devuelto POR VALOR → SEGV. Ahora el slot se refina con la
+// firma REAL de la fn asignada (Fn(params) -> Ret) y el bitcast del puntero
+// de función lleva el tipo correcto.
+struct Punto { x: int, y: int }
+
+fn dobla(p: Punto) -> Punto {
+    return Punto { x: p.x * 2, y: p.y * 2 }
+}
+
+fn origen() -> Punto {
+    return Punto { x: 1, y: 2 }
+}
+
+fn suma(p: Punto) -> int {
+    return p.x + p.y
+}
+
+fn main() -> int {
+    let p: Punto = Punto { x: 3, y: 4 }
+
+    // retorno struct CON arg struct (era SEGV)
+    let f: Fn = dobla
+    let d: Punto = f(p)
+    print(int_to_string(d.x + d.y))
+
+    // retorno struct SIN args (era SEGV)
+    let g: Fn = origen
+    let o: Punto = g()
+    print(int_to_string(o.x + o.y))
+
+    // retorno primitivo con arg struct (funcionaba, no regresionar)
+    let h: Fn = suma
+    print(int_to_string(h(p)))
+    return 0
+}
