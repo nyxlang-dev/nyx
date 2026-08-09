@@ -7,6 +7,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.24] — 2026-08-09 — Router montable + contrato wrap en std/web
+
+### Agregado
+- **`std/web` gana vocabulario Router/Mount**: struct `Router` (routes/middlewares/
+  wraps) + `Mount`, `App` gana `wraps`/`mounts`, registro `router_*`/`app_wrap`/
+  `app_mount` (todo push por valor — los Arrays son referencias). Contrato wrap:
+  `Fn(Request, Fn) -> Response` con `next: Fn(Request) -> Response`. Vocabulario
+  del bloqueador 2 de nyx-serve (router montable + middleware con `next()`).
+  test-338-router-vocabulary + test-339-wrap-next-closure, este último fija el
+  patrón next-como-closure (captura array+int+Fn en SharedEnv + recursión vía fn
+  de módulo).
+
+Gates: 360/360, test-runtime 20/20 (re-run; el fallo del primer run fue el flake
+catalogado test_tls_large_write). Fixed point ×2.
+
 ## [0.24.23] — 2026-08-07 — Un `Fn` pelado ya puede devolver structs
 
 ### Corregido

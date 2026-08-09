@@ -1,0 +1,94 @@
+// Test 339: el patrón EXACTO del motor de wraps de nyx-serve — fn anidada
+// que captura (Array de Fn, int, Fn) y recursión vía fn de módulo. Fija que
+// el codegen soporta: captura de array+int+Fn en SharedEnv, llamada de Fn
+// capturado con binding tipado, y composición encadenada con short-circuit.
+
+import "std/web"
+
+fn fake_req() -> Request {
+    var q: Map = Map.new()
+    var f: Map = Map.new()
+    var c: Map = Map.new()
+    var p: Map = Map.new()
+    var h: Array = []
+    return Request { method: "GET", path: "/x", query: q, headers_flat: h, body: "", form: f, cookies: c, params: p }
+}
+
+var __trace: Array = []
+
+fn w_outer(req: Request, next: Fn) -> Response {
+    __trace.push("outer-in")
+    let nx: Fn(Request) -> Response = next
+    var resp: Response = nx(req)
+    __trace.push("outer-out")
+    resp.headers_flat.push("X-Outer")
+    resp.headers_flat.push("1")
+    return resp
+}
+
+fn w_inner(req: Request, next: Fn) -> Response {
+    __trace.push("inner-in")
+    let nx: Fn(Request) -> Response = next
+    let resp: Response = nx(req)
+    __trace.push("inner-out")
+    return resp
+}
+
+fn w_teapot(req: Request, next: Fn) -> Response {
+    // short-circuit: no llama next
+    return response_json(418, "{\"teapot\":true}")
+}
+
+fn run_wraps(wraps: Array, i: int, req: Request, core: Fn) -> Response {
+    if i >= wraps.length() {
+        let c: Fn(Request) -> Response = core
+        return c(req)
+    }
+    let w: Fn(Request, Fn) -> Response = wraps[i]
+    fn next_fn(r: Request) -> Response {
+        return run_wraps(wraps, i + 1, r, core)
+    }
+    let nx: Fn = next_fn
+    return w(req, nx)
+}
+
+fn core_handler(req: Request) -> Response {
+    __trace.push("core")
+    return response_json(200, "{\"ok\":true}")
+}
+
+fn main() -> int {
+    let req: Request = fake_req()
+    let core: Fn = core_handler
+
+    // cadena de 2 wraps: orden onion correcto
+    var wraps: Array = []
+    wraps.push(w_outer)
+    wraps.push(w_inner)
+    let resp: Response = run_wraps(wraps, 0, req, core)
+    assert(resp.status == 200)
+    assert(__trace.length() == 5)
+    let t0: String = __trace[0]
+    let t1: String = __trace[1]
+    let t2: String = __trace[2]
+    let t3: String = __trace[3]
+    let t4: String = __trace[4]
+    assert(t0 == "outer-in")
+    assert(t1 == "inner-in")
+    assert(t2 == "core")
+    assert(t3 == "inner-out")
+    assert(t4 == "outer-out")
+    // el wrap externo modificó la respuesta al salir (response_json ya
+    // pone 2 entradas de Content-Type; w_outer agrega 2 más: X-Outer/1)
+    assert(resp.headers_flat.length() == 4)
+
+    // short-circuit: teapot corta antes del core
+    var wraps2: Array = []
+    wraps2.push(w_teapot)
+    wraps2.push(w_inner)
+    let resp2: Response = run_wraps(wraps2, 0, req, core)
+    assert(resp2.status == 418)
+
+    print("wrap next closure ok")
+    return 0
+}

@@ -39,6 +39,8 @@ struct App {
     static_dir: String,
     not_found_handler: Fn,
     error_handler: Fn,
+    wraps: Array,
+    mounts: Array,
 }
 
 // Decodifica percent-encoding de forms/query. Delega en el runtime C
@@ -266,11 +268,13 @@ pub fn app_new() -> App {
     var before_hooks: Array = []
     var after_hooks: Array = []
     var middlewares: Array = []
+    var wraps: Array = []
+    var mounts: Array = []
     // Bindear las fns a `let` antes del literal (no asumir que el codegen
     // toma una fn nombrada directo en el literal — spec de serve 2026-08-05).
     let nf: Fn = default_not_found
     let eh: Fn = default_error
-    return App { routes: routes, before_hooks: before_hooks, after_hooks: after_hooks, middlewares: middlewares, static_dir: "", not_found_handler: nf, error_handler: eh }
+    return App { routes: routes, before_hooks: before_hooks, after_hooks: after_hooks, middlewares: middlewares, static_dir: "", not_found_handler: nf, error_handler: eh, wraps: wraps, mounts: mounts }
 }
 
 pub fn app_route(app: App, method: String, pattern: String, handler: Fn) {
@@ -343,6 +347,80 @@ pub fn app_not_found(app: &mut App, handler: Fn) {
 // panic/throw que atrapó el servidor. Mismo contrato &mut que app_not_found.
 pub fn app_error(app: &mut App, handler: Fn) {
     app.error_handler = handler
+}
+
+// ── Routers montables + middleware envolvente (bloqueador 2 de serve) ──
+// Contrato wrap: Fn(Request, Fn) -> Response. El 2º argumento es
+// next: Fn(Request) -> Response — llamarlo ejecuta el resto de la cadena y
+// devuelve su Response (envolver antes/después, modificar la respuesta, no
+// llamarlo = short-circuit, o pasarle un Request distinto). Todo el registro
+// de acá abajo hace push a Arrays (referencias) → va POR VALOR como app_get;
+// la lección &mut de app_not_found aplica solo a asignar campos escalares.
+
+struct Router {
+    routes: Array,
+    middlewares: Array,
+    wraps: Array,
+}
+
+struct Mount {
+    prefix: String,
+    router: Router,
+}
+
+pub fn router_new() -> Router {
+    var routes: Array = []
+    var middlewares: Array = []
+    var wraps: Array = []
+    return Router { routes: routes, middlewares: middlewares, wraps: wraps }
+}
+
+pub fn router_route(router: Router, method: String, pattern: String, handler: Fn) {
+    router.routes.push(Route { method: method, pattern: pattern, handler: handler })
+}
+
+pub fn router_get(router: Router, pattern: String, handler: Fn) {
+    router_route(router, "GET", pattern, handler)
+}
+
+pub fn router_post(router: Router, pattern: String, handler: Fn) {
+    router_route(router, "POST", pattern, handler)
+}
+
+pub fn router_put(router: Router, pattern: String, handler: Fn) {
+    router_route(router, "PUT", pattern, handler)
+}
+
+pub fn router_delete(router: Router, pattern: String, handler: Fn) {
+    router_route(router, "DELETE", pattern, handler)
+}
+
+// Middleware estilo status-0 (el contrato clásico), scoped al router.
+pub fn router_use(router: Router, mw: Fn) {
+    router.middlewares.push(mw)
+}
+
+// Middleware envolvente (contrato wrap), scoped al router.
+pub fn router_wrap(router: Router, mw: Fn) {
+    router.wraps.push(mw)
+}
+
+// Middleware envolvente a nivel app: envuelve hooks, middlewares, mounts,
+// rutas, static y 404. El server los ejecuta en orden de registro (el
+// primero es el más externo).
+pub fn app_wrap(app: App, mw: Fn) {
+    app.wraps.push(mw)
+}
+
+// Monta un router bajo un prefijo literal (sin {param}). El prefijo se
+// normaliza sin "/" final: "/api" matchea "/api" y "/api/...". El matching
+// interno del router ve el path SIN el prefijo ("/api" pelado → "/").
+pub fn app_mount(app: App, prefix: String, router: Router) {
+    var p: String = prefix
+    if p.length() > 1 and p.endsWith("/") {
+        p = p.substring(0, p.length() - 1)
+    }
+    app.mounts.push(Mount { prefix: p, router: router })
 }
 
 // ── Built-in middleware: Logging ──

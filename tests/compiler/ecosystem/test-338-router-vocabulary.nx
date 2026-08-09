@@ -1,0 +1,61 @@
+// Test 338: Router/Mount/wraps — vocabulario del bloqueador 2 de nyx-serve.
+// Registro por VALOR (todo hace push a Arrays, referencias) — la lección &mut
+// de test-334 aplica solo a asignación de campos escalares, no acá.
+
+import "std/web"
+
+fn h_users(req: Request) -> Response {
+    return response_json(200, "{\"route\":\"users\"}")
+}
+
+fn mw_dummy(req: Request) -> Response {
+    var h: Array = []
+    return Response { status: 0, headers_flat: h, body: "" }
+}
+
+fn w_dummy(req: Request, next: Fn) -> Response {
+    let nx: Fn(Request) -> Response = next
+    return nx(req)
+}
+
+fn main() -> int {
+    var app: App = app_new()
+    assert(app.wraps.length() == 0)
+    assert(app.mounts.length() == 0)
+
+    var r: Router = router_new()
+    router_get(r, "/users/{id}", h_users)
+    router_post(r, "/users", h_users)
+    router_use(r, mw_dummy)
+    router_wrap(r, w_dummy)
+    assert(r.routes.length() == 2)
+    assert(r.middlewares.length() == 1)
+    assert(r.wraps.length() == 1)
+
+    // el push vía parámetro por valor PERSISTE (Arrays son referencias)
+    app_wrap(app, w_dummy)
+    assert(app.wraps.length() == 1)
+
+    // app_mount normaliza el prefijo (sin / final)
+    app_mount(app, "/api/", r)
+    assert(app.mounts.length() == 1)
+    let m: Mount = app.mounts[0]
+    assert(m.prefix == "/api")
+    assert(m.router.routes.length() == 2)
+
+    // Route reusa el struct existente; el handler se llama con binding tipado
+    let rt: Route = m.router.routes[0]
+    assert(rt.method == "GET")
+    let cb: Fn(Request) -> Response = rt.handler
+    var q: Map = Map.new()
+    var f: Map = Map.new()
+    var c: Map = Map.new()
+    var p: Map = Map.new()
+    var hh: Array = []
+    let req: Request = Request { method: "GET", path: "/users/1", query: q, headers_flat: hh, body: "", form: f, cookies: c, params: p }
+    let resp: Response = cb(req)
+    assert(resp.status == 200)
+
+    print("router vocabulary ok")
+    return 0
+}
