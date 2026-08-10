@@ -15,12 +15,10 @@ fn my_500(req: Request, err: String) -> Response {
 }
 
 fn fake_req() -> Request {
-    var q: Map = Map.new()
-    var f: Map = Map.new()
-    var c: Map = Map.new()
-    var p: Map = Map.new()
-    var h: Array = []
-    return Request { method: "GET", path: "/x", query: q, headers_flat: h, body: "", form: f, cookies: c, params: p }
+    var r: Request = request_new()
+    r.method = "GET"
+    r.path = "/x"
+    return r
 }
 
 fn main() -> int {

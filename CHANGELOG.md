@@ -7,6 +7,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.25] — 2026-08-10 — Request.ctx + request_new en std/web
+
+### Agregado
+- **`std/web` gana `Request.ctx`**: estado por-request (referencia compartida
+  entre copias del struct — mutar `req.ctx` en un middleware es visible en el
+  handler y en middlewares posteriores). `request_new()` construye un `Request`
+  con campos vacíos (ctx incluido) para tests y helpers que arman requests
+  sintéticos. test-340-request-ctx fija el contrato de referencia compartida;
+  los 4 `fake_req` de la suite (test-290, test-334, test-338, test-339) migrados
+  a `request_new()`.
+
+Gates: 361/361, test-runtime 20/20. Fixed point ×2.
+
 ## [0.24.24] — 2026-08-09 — Router montable + contrato wrap en std/web
 
 ### Agregado

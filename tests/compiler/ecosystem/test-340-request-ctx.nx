@@ -1,0 +1,48 @@
+// Test 340: Request.ctx — contrato del bloqueador 3 de nyx-serve.
+// Fija DOS cosas: (1) request_new() produce campos vacíos utilizables y Maps
+// FRESCOS por llamada; (2) el contrato clave del diseño: Map es referencia —
+// al copiar el struct (paso por valor), las copias comparten el MISMO ctx:
+// un insert hecho sobre la copia es visible en el original. Si (2) falla,
+// el diseño entero de ctx no funciona: PARAR el arco, no parchear.
+
+import "std/web"
+
+fn mutate_copy(r: Request) -> int {
+    // r es una COPIA del struct del caller; su ctx es la MISMA referencia
+    r.ctx.insert("request-id", "abc-123")
+    return 0
+}
+
+fn main() -> int {
+    var req: Request = request_new()
+    assert(req.method == "")
+    assert(req.path == "")
+    assert(req.body == "")
+    assert(req.headers_flat.length() == 0)
+    assert(req.query.size() == 0)
+    assert(req.form.size() == 0)
+    assert(req.cookies.size() == 0)
+    assert(req.params.size() == 0)
+    assert(req.ctx.size() == 0)
+
+    // Maps frescos por llamada: dos requests no comparten ctx
+    var req2: Request = request_new()
+    req2.ctx.insert("solo-en-req2", "x")
+    assert(req.ctx.size() == 0)
+    assert(req2.ctx.size() == 1)
+
+    // Contrato de referencia compartida: copia por asignación
+    var copia: Request = req
+    copia.ctx.insert("via-copia", "1")
+    assert(req.ctx.contains("via-copia"))
+
+    // Copia por paso a función (el camino real: wrap → next(req))
+    let rc: int = mutate_copy(req)
+    assert(rc == 0)
+    assert(req.ctx.contains("request-id"))
+    let rid: String = req.ctx.get("request-id")
+    assert(rid == "abc-123")
+
+    print("request ctx ok")
+    return 0
+}

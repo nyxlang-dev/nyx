@@ -47,12 +47,9 @@ fn main() -> int {
     let rt: Route = m.router.routes[0]
     assert(rt.method == "GET")
     let cb: Fn(Request) -> Response = rt.handler
-    var q: Map = Map.new()
-    var f: Map = Map.new()
-    var c: Map = Map.new()
-    var p: Map = Map.new()
-    var hh: Array = []
-    let req: Request = Request { method: "GET", path: "/users/1", query: q, headers_flat: hh, body: "", form: f, cookies: c, params: p }
+    var req: Request = request_new()
+    req.method = "GET"
+    req.path = "/users/1"
     let resp: Response = cb(req)
     assert(resp.status == 200)
 

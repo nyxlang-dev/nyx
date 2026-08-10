@@ -17,6 +17,7 @@ struct Request {
     form: Map,
     cookies: Map,
     params: Map,
+    ctx: Map,
 }
 
 struct Response {
@@ -41,6 +42,22 @@ struct App {
     error_handler: Fn,
     wraps: Array,
     mounts: Array,
+}
+
+// Construye un Request con todos los campos vacíos (Maps frescos por
+// llamada). Preferilo sobre el literal Request{...}: cuando el struct gane
+// campos, el literal rompe en cada call site y esto no. `ctx` es el estado
+// por-request compartido entre capas: Map es referencia, así que TODAS las
+// copias del struct (paso por valor incluido) comparten el MISMO ctx — lo
+// que un middleware inserta, el handler y los after-hooks lo ven.
+pub fn request_new() -> Request {
+    var q: Map = map_new()
+    var f: Map = map_new()
+    var c: Map = map_new()
+    var p: Map = map_new()
+    var cx: Map = map_new()
+    var h: Array = []
+    return Request { method: "", path: "", query: q, headers_flat: h, body: "", form: f, cookies: c, params: p, ctx: cx }
 }
 
 // Decodifica percent-encoding de forms/query. Delega en el runtime C

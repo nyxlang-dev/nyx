@@ -4,18 +4,11 @@
 import "std/web"
 
 fn make_req(body: String) -> Request {
-    let empty_map: Map = map_new()
-    let empty_arr: Array = []
-    return Request {
-        method: "POST",
-        path: "/",
-        query: empty_map,
-        headers_flat: empty_arr,
-        body: body,
-        form: empty_map,
-        cookies: empty_map,
-        params: empty_map
-    }
+    var r: Request = request_new()
+    r.method = "POST"
+    r.path = "/"
+    r.body = body
+    return r
 }
 
 fn main() {
