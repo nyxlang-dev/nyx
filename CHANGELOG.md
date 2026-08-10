@@ -7,6 +7,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.26] — 2026-08-10 — App.access_log en std/web
+
+### Agregado
+- **`std/web` gana `App.access_log` + `app_access_log(&mut app)`**: flag
+  booleano en `App` (default `false`) para habilitar el access-log built-in
+  de nyx-serve v0.6.0. test-341-access-log-field fija el contrato del campo
+  y del setter.
+
+Gates: test-341 PASS, test-runtime 19/20 (test_tls flake catalogado).
+
 ## [0.24.25] — 2026-08-10 — Request.ctx + request_new en std/web
 
 ### Agregado

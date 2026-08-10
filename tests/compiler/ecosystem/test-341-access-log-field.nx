@@ -1,0 +1,13 @@
+// Test 341: App.access_log — flag del access-log built-in de nyx-serve
+// (v0.6.0). Registro &mut como app_not_found (asignación de campo escalar).
+
+import "std/web"
+
+fn main() -> int {
+    var app: App = app_new()
+    assert(app.access_log == false)
+    app_access_log(&mut app)
+    assert(app.access_log == true)
+    print("access log field ok")
+    return 0
+}

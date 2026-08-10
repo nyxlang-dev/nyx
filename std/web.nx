@@ -42,6 +42,7 @@ struct App {
     error_handler: Fn,
     wraps: Array,
     mounts: Array,
+    access_log: bool,
 }
 
 // Construye un Request con todos los campos vacíos (Maps frescos por
@@ -291,7 +292,7 @@ pub fn app_new() -> App {
     // toma una fn nombrada directo en el literal — spec de serve 2026-08-05).
     let nf: Fn = default_not_found
     let eh: Fn = default_error
-    return App { routes: routes, before_hooks: before_hooks, after_hooks: after_hooks, middlewares: middlewares, static_dir: "", not_found_handler: nf, error_handler: eh, wraps: wraps, mounts: mounts }
+    return App { routes: routes, before_hooks: before_hooks, after_hooks: after_hooks, middlewares: middlewares, static_dir: "", not_found_handler: nf, error_handler: eh, wraps: wraps, mounts: mounts, access_log: false }
 }
 
 pub fn app_route(app: App, method: String, pattern: String, handler: Fn) {
@@ -364,6 +365,13 @@ pub fn app_not_found(app: &mut App, handler: Fn) {
 // panic/throw que atrapó el servidor. Mismo contrato &mut que app_not_found.
 pub fn app_error(app: &mut App, handler: Fn) {
     app.error_handler = handler
+}
+
+// Activa el access-log estructurado del servidor (una línea JSON por
+// request a stdout — la emite el dispatcher del consumer, p.ej. nyx-serve).
+// Mismo contrato &mut que app_not_found (asignación de campo escalar).
+pub fn app_access_log(app: &mut App) {
+    app.access_log = true
 }
 
 // ── Routers montables + middleware envolvente (bloqueador 2 de serve) ──
