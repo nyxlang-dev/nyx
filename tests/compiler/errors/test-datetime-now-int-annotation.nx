@@ -1,0 +1,12 @@
+// B2 (fricción ERP 2026-08-10): el usuario siguió el SPEC viejo — que
+// documentaba `let now: int = datetime_now()` — y el checker callaba →
+// IR inválido (un %nyx_string* metido en un int). Ahora la familia
+// datetime_* tiene sus tipos reales en builtin_fn_ret: datetime_now()
+// devuelve String; el epoch (int) lo producen time_epoch()/datetime_parse().
+// Expected stderr (contains): "type mismatch in 'now': expected int, got String"
+fn main() -> int {
+    let now: int = datetime_now()
+    let y: int = datetime_year(now)
+    print(y)
+    return 0
+}

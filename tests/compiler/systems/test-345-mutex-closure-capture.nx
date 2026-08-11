@@ -1,0 +1,25 @@
+// test-345 — handle de builtin (mutex_new) capturado en closure (Tanda B1,
+// fricción ERP 2026-08-10). La asimetría no era builtin-vs-builtin sino
+// builtin vs fn de std: sqlite_open es Nyx (std/sqlite.nx) → entra en
+// function_return_types y el campo del SharedEnv sale tipado; mutex_new es
+// builtin inline → no entra → el campo caía al default i64 → IR inválido
+// (mismatch de tipos en el store del env). Fix: builtin_fn_ret gana los
+// handles (*int) + pre_scan_closure_env gana el fallback equivalente.
+fn main() -> int {
+    let m = mutex_new()
+    var contador: int = 0
+
+    let inc = fn() {
+        mutex_lock(m)
+        contador = contador + 1
+        mutex_unlock(m)
+    }
+
+    inc()
+    inc()
+    inc()
+    assert(contador == 3)
+    print(contador)
+    print("mutex-closure-capture OK")
+    return 0
+}

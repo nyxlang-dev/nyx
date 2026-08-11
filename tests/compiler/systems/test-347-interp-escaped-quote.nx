@@ -1,0 +1,19 @@
+// test-347 — comilla escapada \" dentro de ${...} (Tanda B4, fricción ERP
+// 2026-08-10). El usuario escribe print("n = ${f(\"hola\")}") escapando las
+// comillas como en el string exterior; el \ caía al fallback MUDO del
+// dispatcher, el " abría un string desfasado y el lexer descarrilaba
+// ("String sin cerrar" sin ubicación, o 15 NYX0101 en cascada líneas más
+// abajo del problema real). Regla nueva: dentro de ${...}, un string
+// abierto con \" se cierra con \" — y la comilla PELADA (que siempre fue
+// lo correcto ahí) sigue funcionando igual.
+fn f(s: String) -> int {
+    return s.length()
+}
+
+fn main() -> int {
+    print("n = ${f(\"hola\")}")
+    print("directo = ${\"abc\".length()}")
+    print("pelada = ${f("mundo")}")
+    print("post ok")
+    return 0
+}

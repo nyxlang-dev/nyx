@@ -97,6 +97,10 @@ TESTS=(
   # puntero que no es un array (silencioso, sin ningún catch-all que se entere).
   "tests/compiler/errors/test-nyx1022-map-length.nx|has no method 'length'"
   "tests/compiler/errors/test-nyx1022-string-push.nx|has no method 'push'"
+  # B2 (fricción ERP 2026-08-10): la familia datetime_* con tipos reales en
+  # builtin_fn_ret — el SPEC viejo decía `let now: int = datetime_now()` y el
+  # checker callaba → IR inválido. Ahora es NYX1003.
+  "tests/compiler/errors/test-datetime-now-int-annotation.nx|type mismatch in 'now': expected int, got String"
 )
 
 for entry in "${TESTS[@]}"; do

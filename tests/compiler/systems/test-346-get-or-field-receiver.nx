@@ -1,0 +1,24 @@
+// test-346 — get_or sobre CAMPO de struct (Tanda B3, fricción ERP 2026-08-10,
+// confirmada por DOS reportes independientes). get_or existía solo en el
+// cluster de dispatch de receptor VARIABLE; sobre `s.m.get_or(k, d)` no
+// compilaba. Fix: ambos clusters comparten emit_map_get_or — la duplicación
+// de clusters es la que causó el gap, así que el cuerpo ahora es único.
+struct Sesion {
+    datos: Map,
+}
+
+fn main() -> int {
+    var s: Sesion = Sesion { datos: Map.new() }
+    s.datos.insert("user", "ottavio")
+    let u: String = s.datos.get_or("user", "???")
+    print(u)
+    let falta: String = s.datos.get_or("cookie", "sin-cookie")
+    print(falta)
+
+    var n: Sesion = Sesion { datos: Map.new() }
+    n.datos.insert("edad", 30)
+    print(n.datos.get_or("edad", -1))
+    print(n.datos.get_or("altura", -1))
+    print("get-or-field OK")
+    return 0
+}

@@ -7,6 +7,35 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.28] — 2026-08-11 — Tanda B del inbox ERP: compila, o decí por qué
+
+Cuatro fricciones P1 (IR inválido / lexer descarrilado) del mismo triage.
+
+### Arreglado
+- **Handle de builtin capturado en closure → IR inválido**: `mutex_new()`
+  capturado por un closure tipaba el campo del SharedEnv como i64 con el
+  registro real i8*. `pre_scan_closure_env` gana el fallback de handles y
+  `builtin_fn_ret` los declara como `Map` opaco — el `*int` que el plan
+  proponía fue REFUTADO por la evidencia (std/sync tipa `mutex: Map //
+  handle (opaque)` y Map baja a i8*, el tipo real). Anotar
+  `let m: int = mutex_new()` ahora es NYX1003. test-345.
+- **`datetime_*` sin diagnóstico**: la familia entera entró a
+  `builtin_fn_ret` con sus tipos reales — `let now: int = datetime_now()`
+  (lo que el SPEC viejo enseñaba) es NYX1003 en vez de checker mudo → IR
+  inválido. test-datetime-now-int-annotation (errors 249).
+- **`get_or` sobre campo de struct** (DOS reportes): existía solo en el
+  cluster de receptor variable; ahora ambos clusters comparten
+  `emit_map_get_or` — la duplicación de clusters causó el gap. test-346.
+- **`\"` dentro de `${...}` descarrilaba el lexer**: el `\` caía al
+  fallback mudo del dispatcher ("String sin cerrar" sin ubicación, o 15
+  NYX0101 en cascada lejos del problema). Un string abierto con `\"`
+  dentro de una interpolación ahora se cierra con `\"`; la comilla pelada
+  sigue igual. test-347.
+
+Gates por commit: regression 366→368, errors 248→249, m08 18/18,
+ai-first verde, unit 21/21, stacks 6/6, fixed point ×2 por módulo tocado
+(semantic, codegen, lexer) byte-idéntico.
+
 ## [0.24.27] — 2026-08-11 — Tanda A del inbox ERP: no corrompas datos
 
 Tres fricciones P0 del reporte real de un ERP greenfield (triage en
