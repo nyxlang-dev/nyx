@@ -17,6 +17,15 @@
 #include <setjmp.h>
 #include <sys/ioctl.h>
 #endif
+// GC_THREADS ANTES de gc.h: redirige pthread_create → GC_pthread_create para
+// que el thread drenador de señales (S2, self-pipe) quede registrado en
+// Boehm — sus closures Nyx alocan. Mismo mecanismo que scheduler.c:16-23;
+// NO llamar GC_register_my_thread además (doble registro).
+#ifndef __wasi__
+#define GC_THREADS
+#include <pthread.h>
+#include <fcntl.h>
+#endif
 #include <gc.h>  // Boehm GC (en wasm32-wasi: shim runtime/wasi/gc.h vía -Iruntime/wasi)
 #include "strings.h"
 
@@ -676,19 +685,75 @@ static void* nyx_signal_handlers[64] = {0};
 // Forward declaration of closure call
 extern int64_t nyx_call_closure_i64(void* pair, int64_t arg);
 
+// ===== SELF-PIPE (S2 campaña 2026-08-11) =====
+// Antes el trampolín llamaba el closure Nyx DIRECTO en contexto de señal:
+// cualquier alocación (concat, int_to_string, print — casi todo Nyx) podía
+// deadlockear si la señal caía con el lock del GC/malloc tomado (el drain de
+// serve v0.6.0 tuvo que escribirse allocation-free a mano por esto). Ahora
+// el trampolín es async-signal-safe puro (UN write de 1 byte) y un thread
+// drenador dedicado — lazy en el primer signal_handle, registrado en Boehm
+// vía la redirección GC_THREADS de pthread_create — ejecuta el closure en
+// contexto normal: puede alocar, printear, leer env. Spec:
+// docs/superpowers/specs/2026-08-11-self-pipe-senales-spec.md
+static int nyx_sig_pipe[2] = {-1, -1};
+static int nyx_sig_thread_started = 0;
+
 static void nyx_signal_trampoline(int signum) {
     if (signum >= 0 && signum < 64 && nyx_signal_handlers[signum]) {
-        nyx_call_closure_i64(nyx_signal_handlers[signum], (int64_t)signum);
+        unsigned char b = (unsigned char)signum;
+        // write(2) es async-signal-safe (POSIX). Pipe lleno ⇒ el byte se
+        // descarta: las señales UNIX ya coalescen por diseño.
+        ssize_t r = write(nyx_sig_pipe[1], &b, 1);
+        (void)r;
     }
 }
 
-// Register a signal handler: signal_handle(signum, handler_fn)
-// handler_fn receives the signal number as argument
-void nyx_signal_handle(int64_t signum, void* handler) {
-    if (signum >= 0 && signum < 64) {
-        nyx_signal_handlers[signum] = handler;
-        signal((int)signum, nyx_signal_trampoline);
+static void* nyx_signal_drain_thread(void* arg) {
+    (void)arg;
+    unsigned char b;
+    while (read(nyx_sig_pipe[0], &b, 1) == 1) {
+        int sig = (int)b;
+        void* h = (sig >= 0 && sig < 64) ? nyx_signal_handlers[sig] : NULL;
+        // Carrera benigna con signal_reset: un byte de una señal ya
+        // des-registrada simplemente se ignora.
+        if (h) nyx_call_closure_i64(h, (int64_t)sig);
     }
+    return NULL;
+}
+
+// Register a signal handler: signal_handle(signum, handler_fn)
+// handler_fn receives the signal number as argument.
+// El closure corre en el THREAD DRENADOR (contexto normal), no en el thread
+// interrumpido — cambio de semántica documentado en CHANGELOG v0.24.32.
+void nyx_signal_handle(int64_t signum, void* handler) {
+    if (signum < 0 || signum >= 64) return;
+    // Señales SINCRÓNICAS jamás van por el pipe: un fault no es diferible.
+    // Reservadas para el handler de guard-page del arco de stacks (S4).
+    if (signum == SIGSEGV || signum == SIGBUS || signum == SIGFPE || signum == SIGILL) {
+        fprintf(stderr, "[nyx] signal_handle: la señal síncrona %lld no se puede manejar con un closure Nyx\n", (long long)signum);
+        return;
+    }
+    if (!nyx_sig_thread_started) {
+        if (pipe(nyx_sig_pipe) != 0) return;
+        fcntl(nyx_sig_pipe[0], F_SETFD, FD_CLOEXEC);
+        fcntl(nyx_sig_pipe[1], F_SETFD, FD_CLOEXEC);
+        // Escritura non-blocking: si el pipe se llena (ráfaga de 64K
+        // señales), el trampolín descarta en vez de bloquear en contexto
+        // de señal.
+        fcntl(nyx_sig_pipe[1], F_SETFL, O_NONBLOCK);
+        pthread_t t;
+        if (pthread_create(&t, NULL, nyx_signal_drain_thread, NULL) != 0) {
+            close(nyx_sig_pipe[0]);
+            close(nyx_sig_pipe[1]);
+            nyx_sig_pipe[0] = -1;
+            nyx_sig_pipe[1] = -1;
+            return;
+        }
+        pthread_detach(t);
+        nyx_sig_thread_started = 1;
+    }
+    nyx_signal_handlers[signum] = handler;
+    signal((int)signum, nyx_signal_trampoline);
 }
 
 // Reset signal to default handler

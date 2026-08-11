@@ -7,6 +7,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.32] — 2026-08-11 — S2 de la campaña multi-arco: señales allocation-safe
+
+### Cambiado
+- **Signal handlers vía self-pipe**: el closure de `signal_handle` corre
+  en un thread drenador dedicado (contexto normal — **puede alocar,
+  printear, leer env**); el trampolín de señal es async-signal-safe puro
+  (un write de 1 byte). Señales síncronas (SEGV/BUS/FPE/ILL) rechazadas
+  con warning (reservadas para el arco de stacks). test-352.
+- **Semántica**: el closure corre en OTRO thread y la entrega es
+  asíncrona. Regla para consumidores (aprendida del E2E, que refutó la
+  spec inicial): para despertar a otro thread bloqueado en I/O usar
+  `tcp_shutdown(fd, 2)`, NO `tcp_close` — en Linux close() de otro
+  thread no despierta un accept() bloqueado. serve y edit migrados
+  (63/63 y 41/41).
+
 ## [0.24.31] — 2026-08-11 — S1 de la campaña multi-arco: literales binary-safe
 
 Primera sesión de la campaña multi-arco (plan

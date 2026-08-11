@@ -1,0 +1,44 @@
+// test-352 — signal handler allocation-safe vía self-pipe (S2 campaña
+// 2026-08-11; fricción ERP/serve). Antes el trampolín llamaba el closure
+// DIRECTO en contexto de señal — alocar ahí (concat, int_to_string, print)
+// era UB latente (deadlock posible con el lock del GC tomado); el drain de
+// serve v0.6.0 tuvo que escribirse allocation-free a mano. Ahora el closure
+// corre en el thread drenador (contexto normal): este test ALOCA A
+// PROPÓSITO en el handler y verifica que el mensaje sale y el proceso
+// sigue vivo. Spec: docs/superpowers/specs/2026-08-11-self-pipe-senales-spec.md
+var g_recibidas: int = 0
+
+fn on_usr1(sig: int) -> int {
+    // alocaciones deliberadas: concat + int_to_string + print
+    let msg: String = "señal " + int_to_string(sig) + " con alocación OK"
+    print(msg)
+    g_recibidas = g_recibidas + 1
+    return 0
+}
+
+fn main() -> int {
+    signal_handle(10, on_usr1)
+
+    let pid: int = getpid()
+    exec("kill -USR1 " + int_to_string(pid))
+
+    // la entrega es asíncrona (pipe + drenador): esperar con paciencia
+    var intentos = 0
+    while g_recibidas < 1 and intentos < 100 {
+        sleep(20)
+        intentos = intentos + 1
+    }
+    assert(g_recibidas == 1)
+
+    // segunda señal: el drenador sigue vivo
+    exec("kill -USR1 " + int_to_string(pid))
+    var intentos2 = 0
+    while g_recibidas < 2 and intentos2 < 100 {
+        sleep(20)
+        intentos2 = intentos2 + 1
+    }
+    assert(g_recibidas == 2)
+
+    print("signal-alloc-safe OK")
+    return 0
+}
