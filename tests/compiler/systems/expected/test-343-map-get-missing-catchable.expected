@@ -1,0 +1,3 @@
+catch: Clave 'session' no encontrada en map — sugerencia: m.contains(k) antes de leer, o m.get_or(k, default)
+catch int: ok
+map-get-missing-catchable OK

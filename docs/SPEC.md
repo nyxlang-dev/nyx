@@ -2600,23 +2600,31 @@ let url: Map = http_parse_url("http://example.com:8080/path?q=1")
 
 ## DateTime
 
-Desde v6.2, Nyx soporta operaciones de date/time:
+El contrato (reescrito 2026-08-11 contra el runtime real — la versión
+anterior documentaba una API que no existía): los **productores de epoch**
+son `time_epoch()` y `datetime_parse()`; los **accesores y formatters
+toman ese epoch** (int, segundos); las funciones que devuelven fechas
+legibles devuelven **String**.
 
 ```nyx
-let now: int = datetime_now()  // timestamp en segundos
-let epoch: int = time_epoch(2026, 3, 18)  // construir epoch timestamp
-let formatted: String = datetime_format(now, "%Y-%m-%d %H:%M:%S")
+// Productores de epoch (int, segundos desde 1970)
+let epoch: int = time_epoch()                              // ahora
+let parsed: int = datetime_parse("2026-03-18", "%Y-%m-%d") // -1 si no parsea
 
-let dt: int = datetime_from_epoch(1234567890)
-let year: int = datetime_year(dt)
-let month: int = datetime_month(dt)
-let day: int = datetime_day(dt)
-let hour: int = datetime_hour(dt)
-let minute: int = datetime_minute(dt)
-let second: int = datetime_second(dt)
-let weekday: int = datetime_weekday(dt)  // 0=Sunday, 6=Saturday
+// Formatters (devuelven String)
+let now_s: String = datetime_now()                    // "YYYY-MM-DD HH:MM:SS" de ahora
+let hoy: String = datetime_format("%Y-%m-%d")         // formatea AHORA (ignora todo instante previo)
+let s: String = datetime_format_epoch(parsed, "%d/%m/%Y")  // formatea EL EPOCH DADO
+let s2: String = datetime_from_epoch(1234567890)      // "YYYY-MM-DD HH:MM:SS" del epoch
 
-let parsed: int = datetime_parse("2026-03-18", "%Y-%m-%d")
+// Accesores (toman epoch int)
+let year: int = datetime_year(epoch)
+let month: int = datetime_month(epoch)    // 1-12
+let day: int = datetime_day(epoch)
+let hour: int = datetime_hour(epoch)
+let minute: int = datetime_minute(epoch)
+let second: int = datetime_second(epoch)
+let weekday: int = datetime_weekday(epoch)  // 0=Sunday, 6=Saturday
 ```
 
 ---

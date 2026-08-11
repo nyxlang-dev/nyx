@@ -7,6 +7,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.27] — 2026-08-11 — Tanda A del inbox ERP: no corrompas datos
+
+Tres fricciones P0 del reporte real de un ERP greenfield (triage en
+`docs/superpowers/plans/2026-08-10-plan-fricciones-erp.md`).
+
+### Arreglado
+- **Globales/const sin store → 0 mudo**: `__nyx_init_globals` solo emitía
+  store para 4 formas (call/method_call/array/string) — `const NEG = -1`
+  (unop), binop, char, cast y var/let globales quedaban en su
+  zeroinitializer EN SILENCIO. Ahora todo global no-literal emite store, y
+  una forma no emitible al arranque aborta con NYX2009 nombrando la
+  constante (nunca más un 0 mudo). test-342.
+- **`Map.get` de clave ausente es capturable**: antes `exit(1)` directo —
+  un servidor moría porque una request no traía una cookie y el try/catch
+  no podía hacer nada. Los tres gets (genérico/str/int) pasan por
+  `nyx_panic` → throw capturable con try activo; sin try, mismo contrato
+  de siempre (mensaje con hint de `get_or` + exit 1). test-343.
+
+### Agregado
+- **`datetime_format_epoch(epoch, fmt)`**: la format de 2 args que el SPEC
+  prometía y no existía. Hallazgo colateral del triage (nadie lo reportó):
+  `datetime_format(fmt)` IGNORA el instante — siempre formatea `time(NULL)`
+  — y quedó documentada como lo que hace ("formatea AHORA"). SPEC §DateTime
+  reescrito contra el runtime real. test-344.
+
+Gates por commit: regression 363→365 (116 comparadas), errors 248/248,
+m08 18/18, ai-first verde, unit 21/21, stacks 6/6, fixed point global
+byte-idéntico (seeds .ll regenerados: el declare nuevo aparece en todo
+programa generado).
+
 ## [0.24.26] — 2026-08-10 — App.access_log en std/web
 
 ### Agregado

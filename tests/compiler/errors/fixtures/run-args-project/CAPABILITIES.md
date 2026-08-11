@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.24.23 -->
+<!-- nyx-version: 0.24.26 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,
 > `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -23,8 +23,9 @@
 
 ### `std/web`
 
-`import "std/web"` — 28 funciones:
+`import "std/web"` — 40 funciones:
 
+- `pub fn request_new() -> Request`
 - `pub fn url_decode(s: String) -> String`
 - `pub fn parse_query_string(path: String) -> Map`
 - `pub fn parse_form_data(body: String, content_type: String) -> Map`
@@ -50,6 +51,17 @@
 - `pub fn default_error(req: Request, err: String) -> Response`
 - `pub fn app_not_found(app: &mut App, handler: Fn)`
 - `pub fn app_error(app: &mut App, handler: Fn)`
+- `pub fn app_access_log(app: &mut App)`
+- `pub fn router_new() -> Router`
+- `pub fn router_route(router: Router, method: String, pattern: String, handler: Fn)`
+- `pub fn router_get(router: Router, pattern: String, handler: Fn)`
+- `pub fn router_post(router: Router, pattern: String, handler: Fn)`
+- `pub fn router_put(router: Router, pattern: String, handler: Fn)`
+- `pub fn router_delete(router: Router, pattern: String, handler: Fn)`
+- `pub fn router_use(router: Router, mw: Fn)`
+- `pub fn router_wrap(router: Router, mw: Fn)`
+- `pub fn app_wrap(app: App, mw: Fn)`
+- `pub fn app_mount(app: App, prefix: String, router: Router)`
 - `pub fn mw_logging(req: Request) -> Response`
 - `pub fn cors_configure(origin: String, methods: String, headers: String)`
 - `pub fn mw_cors(req: Request) -> Response`

@@ -1,0 +1,25 @@
+// test-342 — globales/const con inicializador fuera de la whitelist vieja
+// (fricción ERP 2026-08-10). __nyx_init_globals solo emitía store para 4
+// formas (call/method_call/array/string): todo lo demás —unop de literal
+// negativo, binop, char, y también var/let globales— quedaba en su
+// zeroinitializer SIN store: `const NEG = -1` valía 0 EN SILENCIO.
+// Regla nueva: ningún global sale del loop de init sin store (o NYX2009).
+const NEG = -1              // unop  → antes 0 mudo
+const EXPR = 10 * 3 + 2     // binop → antes 0 mudo
+const CH = 'x'              // char  → antes 0 mudo
+var g_neg: int = -7         // var global unop → antes 0 mudo
+
+fn main() -> int {
+    assert(NEG == -1)
+    assert(EXPR == 32)
+    assert(CH == 'x')
+    assert(g_neg == -7)
+    g_neg = g_neg - 1
+    assert(g_neg == -8)
+    print(NEG)
+    print(EXPR)
+    print(CH)
+    print(g_neg)
+    print("global-init-store OK")
+    return 0
+}

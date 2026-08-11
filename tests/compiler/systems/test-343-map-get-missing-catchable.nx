@@ -1,0 +1,46 @@
+// test-343 — Map.get de clave ausente es CAPTURABLE por try/catch (Tanda A2,
+// fricción ERP 2026-08-10). Antes: exit(1) directo en el runtime — un servidor
+// entero se caía porque una request no traía una cookie, y el try/catch del
+// handler no podía hacer nada. Ahora el abort pasa por nyx_panic → nyx_throw
+// (try-stack thread-local desde v0.24.19): con catch activo se atrapa; sin
+// catch, sigue abortando con exit 1 (el contrato "la clave DEBE estar" no
+// cambia para código sin try).
+fn leer_cookie(jar: Map) -> String {
+    let v: String = jar.get("session")
+    return v
+}
+
+fn main() -> int {
+    var jar: Map = Map.new()
+    jar.insert("otra", "x")
+
+    // 1) get_str (clave String, valor String) — el camino del reporte
+    var atrapado = 0
+    try {
+        let s: String = leer_cookie(jar)
+        print(s)
+    } catch (e) {
+        atrapado = 1
+        print("catch: " + e)
+    }
+    assert(atrapado == 1)
+
+    // 2) get_int (clave String, valor int)
+    var atrapado2 = 0
+    var nums: Map = Map.new()
+    nums.insert("uno", 1)
+    try {
+        let n: int = nums.get("dos")
+        print(n)
+    } catch (e) {
+        atrapado2 = 1
+        print("catch int: ok")
+    }
+    assert(atrapado2 == 1)
+
+    // 3) el proceso sigue vivo y el map sigue usable
+    assert(jar.get("otra") == "x")
+    assert(nums.get("uno") == 1)
+    print("map-get-missing-catchable OK")
+    return 0
+}

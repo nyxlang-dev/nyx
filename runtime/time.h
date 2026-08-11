@@ -14,6 +14,7 @@ nyx_string* nyx_datetime_now();
 // Returns the current local datetime formatted with the given strftime format string.
 // On format error or empty output, returns an empty string.
 nyx_string* nyx_datetime_format(nyx_string* fmt);
+nyx_string* nyx_datetime_format_epoch(int64_t epoch, nyx_string* fmt);
 
 // Returns the current Unix epoch in seconds.
 int64_t nyx_time_epoch();

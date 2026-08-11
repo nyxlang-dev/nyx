@@ -1,0 +1,30 @@
+// test-344 — datetime_format_epoch(epoch, fmt) (Tanda A3, fricción ERP
+// 2026-08-10). Hallazgo del triage que NADIE reportó: datetime_format(fmt)
+// IGNORA el instante — siempre formatea time(NULL). El SPEC documentaba una
+// API de 2 args que no existía; el usuario siguió el SPEC y el SPEC mentía.
+// Fix aditivo: datetime_format_epoch(epoch, fmt) formatea EL EPOCH DADO;
+// datetime_format(fmt) queda documentado como "formatea AHORA".
+// Round-trip parse→format: TZ-independiente (ambos usan localtime/mktime).
+fn main() -> int {
+    let epoch: int = datetime_parse("2020-05-17 10:30:45", "%Y-%m-%d %H:%M:%S")
+    assert(epoch > 0)
+
+    let s: String = datetime_format_epoch(epoch, "%d/%m/%Y %H:%M")
+    print(s)
+    assert(s == "17/05/2020 10:30")
+
+    // Componentes sueltos, mismo epoch — coherencia con los accesores
+    let anio: String = datetime_format_epoch(epoch, "%Y")
+    assert(anio == "2020")
+    assert(datetime_year(epoch) == 2020)
+
+    // Un epoch DISTINTO produce salida DISTINTA (la fricción original:
+    // format ignoraba el instante y siempre daba "ahora")
+    let epoch2: int = datetime_parse("1999-12-31 23:59:59", "%Y-%m-%d %H:%M:%S")
+    let s2: String = datetime_format_epoch(epoch2, "%d/%m/%Y %H:%M")
+    print(s2)
+    assert(s2 == "31/12/1999 23:59")
+
+    print("datetime-format-epoch OK")
+    return 0
+}

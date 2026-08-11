@@ -6,6 +6,27 @@
 #include <inttypes.h>
 #include <gc.h>
 #include "maps.h"
+#include "strings.h"
+
+// Clave ausente en get: el abort pasa por nyx_panic (runtime.c) — con un try
+// activo se vuelve throw CAPTURABLE (try-stack thread-local, v0.24.19); sin
+// try, panic imprime el mensaje y exit(1) como siempre. Tanda A2 (fricción
+// ERP 2026-08-10): un servidor no debe morir porque una request no trae una
+// cookie. Los aborts de map NULL siguen siendo exit(1): eso es un bug del
+// programa, no un dato ausente.
+void nyx_panic(nyx_string* msg);
+
+// noreturn: nyx_panic o hace longjmp al try más cercano o hace exit(1) —
+// nunca vuelve al caller (el return de abajo con idx<0 jamás se ejecuta).
+__attribute__((noreturn))
+static void nyx_map_missing_key_panic(const char* key_repr) {
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+             "Clave '%s' no encontrada en map — sugerencia: m.contains(k) antes de leer, o m.get_or(k, default)",
+             key_repr);
+    nyx_panic(nyx_string_from_cstr(buf));
+    exit(1);  // inalcanzable — satisface noreturn si nyx_panic cambiara
+}
 
 // ===== FUNCIONES DE HASH =====
 
@@ -187,12 +208,13 @@ int64_t nyx_map_get(nyx_map_t* map, nyx_key_t key) {
     uint64_t h = compute_hash(key);
     int64_t idx = find_slot(map, key, h);
     if (idx < 0) {
-        fprintf(stderr, "Runtime Error: Clave no encontrada en map\n");
-        if (key.type == KEY_TYPE_STRING)
-            fprintf(stderr, "   Clave: \"%s\"\n", key.value.string_key);
-        else
-            fprintf(stderr, "   Clave: %" PRId64 "\n", key.value.int_key);
-        exit(1);
+        if (key.type == KEY_TYPE_STRING) {
+            nyx_map_missing_key_panic(key.value.string_key);
+        } else {
+            char keybuf[32];
+            snprintf(keybuf, sizeof(keybuf), "%" PRId64, key.value.int_key);
+            nyx_map_missing_key_panic(keybuf);
+        }
     }
     return map->entries[idx].value;
 }
@@ -385,8 +407,7 @@ char* nyx_map_get_str(nyx_map_t* map, const char* key_str) {
     while (1) {
         nyx_map_entry_t* slot = &map->entries[idx];
         if (slot->probe_distance < 0 || dist > slot->probe_distance) {
-            fprintf(stderr, "Runtime Error: Clave '%s' no encontrada en map\n   sugerencia: m.contains(k) antes de leer, o m.get_or(k, default)\n", key_str);
-            exit(1);
+            nyx_map_missing_key_panic(key_str);
         }
         if (slot->hash == h && slot->key.type == KEY_TYPE_STRING &&
             strcmp(slot->key.value.string_key, key_str) == 0) {
@@ -507,8 +528,7 @@ int64_t nyx_map_get_int(nyx_map_t* map, const char* key_str) {
     while (1) {
         nyx_map_entry_t* slot = &map->entries[idx];
         if (slot->probe_distance < 0 || dist > slot->probe_distance) {
-            fprintf(stderr, "Runtime Error: Clave '%s' no encontrada en map\n   sugerencia: m.contains(k) antes de leer, o m.get_or(k, default)\n", key_str);
-            exit(1);
+            nyx_map_missing_key_panic(key_str);
         }
         if (slot->hash == h && slot->key.type == KEY_TYPE_STRING &&
             strcmp(slot->key.value.string_key, key_str) == 0) {

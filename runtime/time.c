@@ -76,6 +76,25 @@ nyx_string* nyx_datetime_format(nyx_string* fmt) {
     return nyx_string_from_ptr(buf, written);
 }
 
+// ===== nyx_datetime_format_epoch =====
+
+// Formatea EL EPOCH DADO con fmt (strftime). A diferencia de
+// nyx_datetime_format(fmt) — que formatea time(NULL), "ahora" — esta es la
+// variante que toma el instante como argumento (Tanda A3, fricción ERP
+// 2026-08-10: el SPEC documentaba una format de 2 args que no existía).
+nyx_string* nyx_datetime_format_epoch(int64_t epoch, nyx_string* fmt) {
+    if (!fmt) return nyx_string_from_cstr("");
+
+    const char* fmt_cstr = nyx_string_to_cstr(fmt);
+    struct tm tm_buf;
+    if (epoch_to_tm(epoch, &tm_buf) != 0) return nyx_string_from_cstr("");
+
+    char* buf = (char*)GC_MALLOC_ATOMIC(NYX_TIME_BUF);
+    size_t written = strftime(buf, NYX_TIME_BUF, fmt_cstr, &tm_buf);
+    if (written == 0) return nyx_string_from_cstr("");
+    return nyx_string_from_ptr(buf, written);
+}
+
 // ===== nyx_time_epoch =====
 
 int64_t nyx_time_epoch() {
