@@ -293,6 +293,13 @@ build_nyx() {
     # solución. ANTES de organize() porque dist-clean borra compiler/.
     spin "Building checker..." make build-check \
         || err "make build-check failed"
+    # nyx vet y nyx fmt: mismo contrato — el wrapper los rutea y AGENTS.md
+    # promociona vet; sin estos builds mueren en toda instalación estándar
+    # (reporte 20260810-220013: "nyx check y nyx vet no están instalados").
+    spin "Building vet..." make build-vet \
+        || err "make build-vet failed"
+    spin "Building formatter..." make build-fmt \
+        || err "make build-fmt failed"
 }
 
 # ── Organize (move binaries to bin/, keep runtime+std) ───

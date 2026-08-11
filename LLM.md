@@ -503,9 +503,9 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
 
 ### Threading / Concurrency
 - `thread_spawn(fn)`, `thread_join(tid)`
-- `mutex_new()`, `mutex_lock(m)`, `mutex_unlock(m)`, `mutex_destroy(m)`
-- `condvar_new()`, `condvar_wait(cv, m)` (hold m locked), `condvar_signal(cv)`, `condvar_broadcast(cv)`, `condvar_timedwait(cv, m, ms)` → 0 signaled / 1 timeout
-- `rwlock_new()`, `rwlock_rdlock(l)` / `rwlock_wrlock(l)`, `rwlock_tryrdlock(l)` / `rwlock_trywrlock(l)` → 0 acquired / 1 busy, `rwlock_unlock(l)`, `rwlock_destroy(l)` — multi-reader/single-writer; blocks the OS thread (like mutex — goroutines should prefer channels)
+- `mutex_new()` → Map (opaque handle, NOT int! — `let m: int = mutex_new()` is NYX1003 since v0.24.28; unannotated `let m = mutex_new()` is fine, incl. captured by closures), `mutex_lock(m)`, `mutex_unlock(m)`, `mutex_destroy(m)`
+- `condvar_new()` → Map (opaque handle), `condvar_wait(cv, m)` (hold m locked), `condvar_signal(cv)`, `condvar_broadcast(cv)`, `condvar_timedwait(cv, m, ms)` → 0 signaled / 1 timeout
+- `rwlock_new()` → Map (opaque handle), `rwlock_rdlock(l)` / `rwlock_wrlock(l)`, `rwlock_tryrdlock(l)` / `rwlock_trywrlock(l)` → 0 acquired / 1 busy, `rwlock_unlock(l)`, `rwlock_destroy(l)` — multi-reader/single-writer; blocks the OS thread (like mutex — goroutines should prefer channels)
 - `channel_new(size)` → Map (NOT int!)
 - `channel_send(ch, val)`, `channel_recv(ch)`, `channel_destroy(ch)`
 - `spawn_task(fn)`, `task_await(t)`, `task_cancel(t)`, `task_race(t1, t2)`
@@ -534,6 +534,21 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
 ### Crypto
 - `sha256(s)`, `md5(s)`, `hmac_sha256(key, data)`
 
+### `std/sqlite` — el contrato empírico (verificado contra el runtime 2026-08-11)
+`import "std/sqlite"`. Lo que las firmas no dicen y cuesta horas descubrir:
+- `sqlite_query(db, sql) -> Array` de filas; cada fila es `Array` y **toda
+  celda es `String` — incluidas las columnas INTEGER**. Pasar por
+  `string_to_int`. Leer una celda como `int` sin convertir NO da error:
+  devuelve el puntero del String como número (silencioso y venenoso).
+- `sqlite_query_named` **antepone una fila de headers** → `N+1` elementos;
+  la fila 0 son los nombres de columna.
+- `sqlite_exec_params(db, sql, params)`: **todos los params como `String`**
+  (también los numéricos — el binding es textual).
+- Una celda SQL `NULL` llega como **la cadena `"NULL"`** (no `""`, no un
+  null real — `runtime/sqlite_adapter.c`, `column_str`).
+- `sqlite_open(path) -> *int` — handle real de puntero; capturarlo en
+  closures funciona (fn de std con retorno declarado).
+
 ### Terminal (for CLI apps)
 - `raw_mode_enter()`, `raw_mode_exit()`
 - `read_byte()` — from stdin in raw mode
@@ -543,7 +558,14 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   automatically (only if the process hasn't installed its own) so this wakeup
   works out of the box; if you register your own handler via `signal_handle`
   (any order relative to `raw_mode_enter`), yours wins and still fires.
-- `term_write(s)`, `term_flush()` — stdout without per-call flush (buffered frames)
+- `term_write(s)`, `term_flush()` — stdout without per-call flush (buffered
+  frames). Also the MT-safe path for structured output (access logs, NDJSON):
+  build the line WITH `\n` included and `term_write(s)` emits ONE fwrite
+  (line-atomic under the stream lock); `term_flush()` when stdout is a pipe
+  (systemd/journald buffers ~4KB — lines show up late and die on SIGKILL
+  without it). Note `print(s)` IS line-atomic too (single printf, measured
+  4000/4000 under 8 threads) but does NOT flush — the flush is what
+  term_write/term_flush buy you.
 - `term_cols()`, `term_rows()`, `chr(code)`
 
 ---

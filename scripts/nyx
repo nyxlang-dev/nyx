@@ -215,6 +215,10 @@ case "${1:-}" in
         # promociona, y sin este build el comando moria en toda instalacion.
         spin "Rebuilding checker..." make build-check \
             || { echo "error: make build-check failed" >&2; exit 1; }
+        spin "Rebuilding vet..." make build-vet \
+            || { echo "error: make build-vet failed" >&2; exit 1; }
+        spin "Rebuilding formatter..." make build-fmt \
+            || { echo "error: make build-fmt failed" >&2; exit 1; }
         # refrescar binarios de bin/ y limpiar dev files (lista CANONICA
         # compartida con install.sh - antes habia dos listas desincronizadas)
         mkdir -p bin

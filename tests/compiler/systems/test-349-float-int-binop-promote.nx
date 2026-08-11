@@ -1,0 +1,40 @@
+// test-349 — promoción float×entero en binops (reporte 20260810-220013,
+// bug 2). `vel() * 10` (literal entero) pasaba el check y emitía
+// `fmul double %x, 10` — IR inválido que recién moría en clang, apuntando a
+// un .ll temporal ya borrado; el workaround era escribir 10.0. Ahora el
+// lado entero (literal o registro, i64/i32, en cualquier posición) se
+// promueve con sitofp antes del dispatch — aritmética Y comparaciones.
+fn vel() -> float {
+    return 2.5
+}
+
+fn main() -> int {
+    // literal a la derecha (el repro exacto del reporte)
+    let x: int = float_to_int(vel() * 10)
+    assert(x == 25)
+
+    // literal a la izquierda
+    let y: int = float_to_int(10 * vel())
+    assert(y == 25)
+
+    // variable int con float
+    let i: int = 4
+    let z: float = vel() + i
+    assert(z == 6.5)
+
+    // comparación mixta (misma clase de IR inválido)
+    var mayor = 0
+    if vel() > 2 {
+        mayor = 1
+    }
+    assert(mayor == 1)
+
+    // resta y división mixtas
+    let r: float = vel() - 1
+    assert(r == 1.5)
+    let d: float = 5 / 2.0
+    assert(d == 2.5)
+
+    print("float-int-promote OK")
+    return 0
+}

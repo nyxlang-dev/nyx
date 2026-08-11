@@ -7,6 +7,42 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.30] — 2026-08-11 — cierre de la campaña del inbox: float×entero + vet/fmt instalados
+
+Cierre de la campaña de fricciones (Tandas D-E + un reporte nuevo que
+llegó post-triage, 20260810-220013).
+
+### Arreglado
+- **float×entero en binops promueve con sitofp**: `vel() * 10` (literal
+  entero) pasaba el check y emitía `fmul double %x, 10` — IR inválido
+  que moría en clang sin file:line; mismo bug en ambas posiciones, con
+  variables int, y en comparaciones mixtas (`vel() > 2`). Normalización
+  única pre-dispatch en codegen_binop. test-349.
+- **`nyx vet` y `nyx fmt` se construyen e instalan** (extensión de C4
+  por el reporte nuevo): seeds compiler/vet.ll (nuevo) y fmt.ll;
+  install.sh + nyx update + install-local cablean los tres tools.
+
+### Docs (Tanda D)
+- LLM.md: contrato empírico de `std/sqlite` (celdas String incluidas
+  INTEGER, query_named N+1 con headers, params String, NULL → "NULL"),
+  handles de concurrencia como Map opaco (NOT int!), y
+  term_write/term_flush como vía MT con flush. El ítem "campos Map
+  necesitan binding tipado" quedó OBSOLETO: req.ctx.insert(...) ya
+  compila y corre (verificado — el gap de v0.24.25 se cerró por trabajo
+  intermedio).
+
+### Catalogado (Tanda E, TASKS.md)
+- Namespacing/privacidad de módulos — gravedad SUBIDA: la llamada
+  calificada `moda.set()` ejecuta la homónima de OTRO módulo
+  (silently-wrong, reporte raycaster). request_new(method, path).
+  Signal handler allocation-safe (self-pipe). Literal `"\0"` → IR
+  inválido. serve_app → -1 en bind fallido (repo serve).
+
+Los 6 reportes del inbox de fricción quedaron respondidos en el archivo
+y archivados a resolved/. Gates: regression 370/370 (121 comparadas),
+errors 250/250, m08 18/18, ai-first verde, unit 21/21, stacks 6/6,
+fixed point global ×2.
+
 ## [0.24.29] — 2026-08-11 — Tanda C del inbox ERP: el ciclo de test funciona
 
 Cuatro fricciones P2 del triage (baratas, alto impacto AI-first). Dos de

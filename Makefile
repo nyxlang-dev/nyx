@@ -70,6 +70,8 @@ install-local:
 	if [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/bin/nyx_build"; fi; \
 	if [ -f nyx_check ]; then cp nyx_check "$$NYX_HOME_DIR/nyx_check"; fi; \
 	if [ -f nyx_test ]; then cp nyx_test "$$NYX_HOME_DIR/nyx_test"; fi; \
+	if [ -f nyx_vet ]; then cp nyx_vet "$$NYX_HOME_DIR/nyx_vet"; fi; \
+	if [ -f nyx_fmt ]; then cp nyx_fmt "$$NYX_HOME_DIR/nyx_fmt"; fi; \
 	if [ -f "$$NYX_HOME_DIR/nyx_bootstrap" ]; then cp nyx_bootstrap "$$NYX_HOME_DIR/nyx_bootstrap"; fi; \
 	if [ -f "$$NYX_HOME_DIR/nyx_build" ] && [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/nyx_build"; fi; \
 	cp runtime/*.c runtime/*.h "$$NYX_HOME_DIR/runtime/"; \
@@ -297,9 +299,12 @@ run-asan:
 
 ## Build the formatter tool
 build-fmt:
-	cp compiler/fmt.nx script.nx
-	./nyx_bootstrap
-	$(CLANG) script.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_fmt
+	@if [ -f compiler/fmt.nx ]; then \
+		cp compiler/fmt.nx script.nx && \
+		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
+		cp script.ll compiler/fmt.ll; \
+	fi
+	$(CLANG) compiler/fmt.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_fmt
 	@echo "✓ nyx_fmt listo"
 
 ## Format a Nyx source file
@@ -364,9 +369,12 @@ nyx-build:
 
 ## Build nyx_vet (static analyzer, v1.8.0)
 build-vet:
-	cp compiler/vet.nx script.nx
-	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
-	$(CLANG) script.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_vet
+	@if [ -f compiler/vet.nx ]; then \
+		cp compiler/vet.nx script.nx && \
+		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
+		cp script.ll compiler/vet.ll; \
+	fi
+	$(CLANG) compiler/vet.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_vet
 	@echo "✓ nyx_vet listo"
 
 ## Run static analysis on a Nyx source file (v1.8.0)
