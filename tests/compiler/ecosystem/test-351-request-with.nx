@@ -1,0 +1,32 @@
+// test-351 — request_with(method, path) (campaña S1 2026-08-11, T4.6;
+// fricción ERP "testabilidad de handlers"). request_new() existía desde
+// v0.24.25 pero era 0-args: armar un request de prueba exigía tocar los
+// campos a mano. request_with arma el sintético en una línea; el resto de
+// los campos siguen el contrato de request_new (frescos, utilizables).
+import "std/web"
+
+fn handler_eco(req: Request) -> String {
+    return req.method + " " + req.path
+}
+
+fn main() -> int {
+    let req: Request = request_with("GET", "/api/users")
+    assert(req.method == "GET")
+    assert(req.path == "/api/users")
+    assert(handler_eco(req) == "GET /api/users")
+
+    // los campos colección vienen frescos y utilizables (contrato request_new)
+    var r2: Request = request_with("POST", "/login")
+    r2.ctx.insert("request_id", "t-1")
+    let rid: String = r2.ctx.get("request_id")
+    assert(rid == "t-1")
+    r2.params.insert("user", "ana")
+    assert(r2.params.get("user") == "ana")
+
+    // independencia entre requests sintéticos
+    let r3: Request = request_with("GET", "/")
+    assert(r3.ctx.contains("request_id") == false)
+
+    print("request-with OK")
+    return 0
+}

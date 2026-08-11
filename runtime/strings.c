@@ -79,6 +79,24 @@ nyx_string* nyx_intern_cstr(nyx_string** cache, const char* cstr) {
     return s;
 }
 
+// nyx_intern_ptr — variante LENGTH-AWARE de nyx_intern_cstr (S1 campaña
+// 2026-08-11, T4.2): el camino cstr hace strlen, así que un literal con NUL
+// embebido ("a\0b") quedaba truncado a length 1 EN SILENCIO aunque el .ll
+// llevara los 3 bytes. Mismo contrato de inmortalidad que intern_cstr
+// (calloc crudo, nunca GC — ver el comentario de arriba) y misma carrera
+// benigna entre threads.
+nyx_string* nyx_intern_ptr(nyx_string** cache, const char* ptr, int64_t length) {
+    nyx_string* s = *cache;
+    if (s) return s;
+    s = (nyx_string*)calloc(1, sizeof(nyx_string));
+    s->length = length;
+    s->capacity = length + 1;
+    s->data = (char*)calloc(1, (size_t)length + 1);
+    memcpy(s->data, ptr, (size_t)length);
+    *cache = s;
+    return s;
+}
+
 nyx_string* nyx_string_from_ptr(const char* ptr, int64_t length) {
     nyx_string* str = (nyx_string*)GC_malloc(sizeof(nyx_string));
     str->length = length;

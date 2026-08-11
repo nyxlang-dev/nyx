@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.24.29 -->
+<!-- nyx-version: 0.24.30 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,
 > `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -23,9 +23,10 @@
 
 ### `std/web`
 
-`import "std/web"` — 40 funciones:
+`import "std/web"` — 41 funciones:
 
 - `pub fn request_new() -> Request`
+- `pub fn request_with(method: String, path: String) -> Request` — Request sintético con method y path — para tests de handlers y helpers. Los demás campos vienen frescos y utilizables (mismo contrato que request_new).
 - `pub fn url_decode(s: String) -> String`
 - `pub fn parse_query_string(path: String) -> Map`
 - `pub fn parse_form_data(body: String, content_type: String) -> Map`
@@ -119,30 +120,30 @@
 
 `import "std/sqlite"` — 24 funciones:
 
-- `pub fn sqlite_open(path: String) -> *int`
+- `pub fn sqlite_open(path: String) -> *int` — Abre (o crea) el archivo. Devuelve el handle *int — capturable en closures sin drama (fn de std con retorno declarado).
 - `pub fn sqlite_close(db: *int)`
-- `pub fn sqlite_exec(db: *int, sql: String) -> bool`
-- `pub fn sqlite_query(db: *int, sql: String) -> Array`
-- `pub fn sqlite_query_named(db: *int, sql: String) -> Array`
+- `pub fn sqlite_exec(db: *int, sql: String) -> bool` — DDL/DML sin resultado; true en éxito. Para SQL con valores usar sqlite_exec_params (params String).
+- `pub fn sqlite_query(db: *int, sql: String) -> Array` — Array de filas; cada fila es Array y TODA celda es String — incluidas columnas INTEGER (pasar por string_to_int; leerla como int devuelve el PUNTERO como número, silencioso). Celda SQL NULL llega como la cadena "NULL". Para ints reales: sqlite_query_int.
+- `pub fn sqlite_query_named(db: *int, sql: String) -> Array` — Como sqlite_query pero ANTEPONE una fila de headers: N+1 elementos, la fila 0 son los nombres de columna.
 - `pub fn sqlite_exec_int(db: *int, sql: String, val: int) -> bool`
 - `pub fn sqlite_exec_str(db: *int, sql: String, val: String) -> bool`
-- `pub fn sqlite_last_id(db: *int) -> int`
+- `pub fn sqlite_last_id(db: *int) -> int` — last_insert_rowid del handle.
 - `pub fn sqlite_affected(db: *int) -> int`
-- `pub fn sqlite_error(db: *int) -> String`
+- `pub fn sqlite_error(db: *int) -> String` — Mensaje del último error del handle (sqlite3_errmsg).
 - `pub fn sqlite_begin(db: *int) -> bool`
 - `pub fn sqlite_commit(db: *int) -> bool`
 - `pub fn sqlite_rollback(db: *int) -> bool`
-- `pub fn sqlite_query_int(db: *int, sql: String) -> Array`
-- `pub fn sqlite_query_one_int(db: *int, sql: String) -> int`
-- `pub fn sqlite_query_one_str(db: *int, sql: String) -> String`
-- `pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool`
-- `pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array`
+- `pub fn sqlite_query_int(db: *int, sql: String) -> Array` — Filas de int REALES (sqlite3_column_int) — la vía tipada para columnas numéricas, sin string_to_int.
+- `pub fn sqlite_query_one_int(db: *int, sql: String) -> int` — Primera columna de la primera fila como int real; 0 si no hay filas.
+- `pub fn sqlite_query_one_str(db: *int, sql: String) -> String` — Primera columna de la primera fila como String; "" si no hay filas. NULL llega como "NULL".
+- `pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool` — TODOS los params como String (binding textual), también los numéricos: ["7", "ana"] y no [7, "ana"].
+- `pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array` — Query con params (todos String, binding textual). Celdas del resultado: String, como sqlite_query.
 - `pub fn sqlite_migrate_init(db: *int) -> bool`
 - `pub fn sqlite_migrate_version(db: *int) -> int`
 - `pub fn sqlite_migrate(db: *int, version: int, name: String, sql: String) -> bool`
 - `pub fn sqlite_tables(db: *int) -> Array`
 - `pub fn sqlite_table_exists(db: *int, name: String) -> bool`
-- `pub fn sqlite_count(db: *int, table: String) -> int`
+- `pub fn sqlite_count(db: *int, table: String) -> int` — SELECT COUNT(*) de la tabla, como int real.
 
 ## Serialización & datos
 

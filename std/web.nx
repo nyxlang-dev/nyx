@@ -61,6 +61,19 @@ pub fn request_new() -> Request {
     return Request { method: "", path: "", query: q, headers_flat: h, body: "", form: f, cookies: c, params: p, ctx: cx }
 }
 
+// S1 2026-08-11 (fricción ERP "testabilidad de handlers"): request_new() era
+// 0-args y armar un request de prueba exigía tocar campos a mano. Nombre
+// propio porque no hay dispatch por aridad en Nyx.
+/// Request sintético con method y path — para tests de handlers y helpers.
+/// Los demás campos vienen frescos y utilizables (mismo contrato que
+/// request_new).
+pub fn request_with(method: String, path: String) -> Request {
+    var r: Request = request_new()
+    r.method = method
+    r.path = path
+    return r
+}
+
 // Decodifica percent-encoding de forms/query. Delega en el runtime C
 // (nyx_url_decode): `%XX` (espacios %20, acentos UTF-8, %26, %3D...) Y `+`→espacio.
 // Antes solo hacía `+`→espacio → corrompía silenciosamente toda la ingesta de forms.

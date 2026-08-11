@@ -7,6 +7,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.31] — 2026-08-11 — S1 de la campaña multi-arco: literales binary-safe
+
+Primera sesión de la campaña multi-arco (plan
+`docs/superpowers/plans/2026-08-11-campana-namespacing-stacks-escapes-signals.md`,
+orquestada con agentes de exploración + diseño + review).
+
+### Arreglado
+- **Literales con NUL embebido**: `"a\0b"` emitía el byte crudo → IR
+  inválido; y el interning (strlen) habría truncado a length 1 en
+  silencio. escape_string con tabla completa (\XX para <0x20, `"`, `\`,
+  DEL) + `nyx_intern_ptr` length-aware en los 3 sitios cstr-based.
+  El patrón de match con NUL también es binary-safe ahora. test-350.
+- **Nombres de test escapados en el runner**: `test "con \"comillas\""`
+  o UTF-8 rompían el .ll del runner (texto de usuario interpolado
+  crudo). E2E verificado.
+
+### Agregado
+- **`request_with(method, path)`** en std/web: requests sintéticos para
+  tests de handlers en una línea (fricción ERP; request_new era
+  0-args). test-351.
+- **Spec de errores tipados** (S∥, agente redactor):
+  `docs/superpowers/specs/2026-08-11-errores-tipados-design.md` —
+  recomendación híbrido Result+panic; PENDIENTE de review de Ottavio,
+  nada se implementa sin su OK.
+
+Review de agente aplicado (3 sitios unificados a str_byte_length).
+Refutado por evidencia: `\r` crudo y el global no-ASCII ya compilaban.
+Gates: regression 372/372, errors 250, m08 18, ai-first, unit 21,
+stacks 6/6, fixed point global ×2.
+
 ## [0.24.30] — 2026-08-11 — cierre de la campaña del inbox: float×entero + vet/fmt instalados
 
 Cierre de la campaña de fricciones (Tandas D-E + un reporte nuevo que

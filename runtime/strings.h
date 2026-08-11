@@ -121,6 +121,7 @@ typedef struct {
 } nyx_string_builder;
 
 nyx_string* nyx_intern_cstr(nyx_string** cache, const char* cstr);
+nyx_string* nyx_intern_ptr(nyx_string** cache, const char* ptr, int64_t length);
 
 nyx_string_builder* nyx_sb_new(int64_t initial_capacity);
 void nyx_sb_append(nyx_string_builder* sb, nyx_string* s);

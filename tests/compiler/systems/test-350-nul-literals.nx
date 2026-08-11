@@ -1,0 +1,59 @@
+// test-350 — literales con NUL embebido (campaña S1 2026-08-11, T4.1+T4.2;
+// descubierto escribiendo test-348). Antes: `"a\0b"` emitía el byte NUL
+// CRUDO en la constante del .ll (clang: "expected string" — IR inválido), y
+// aunque se escapara, el interning hacía strlen y truncaba a length 1 en
+// silencio. Ahora: escape_string con tabla completa (todo byte < 0x20, `"`,
+// `\`, DEL → \XX hex) + nyx_intern_ptr length-aware. El char '\0' y los
+// PATRONES de match con NUL van por los mismos caminos arreglados.
+// global de MÓDULO no-ASCII: va por el camino de init de globals (from_ptr
+// con longitud desde el review S1) — el array [N x i8] debe dimensionarse
+// en BYTES (canción = 8 bytes, 7 codepoints)
+let G_CANCION: String = "canción"
+
+fn main() -> int {
+    // el global no-ASCII llegó entero, en bytes (ó = 0xC3 0xB3)
+    assert(G_CANCION.byte_length() == 8)
+    assert(G_CANCION.charAt(5) as int == 195)
+    assert(G_CANCION.charAt(6) as int == 179)
+    assert(G_CANCION.charAt(7) == 'n')
+
+    // string literal con NUL: longitud real y contenido byte a byte
+    let s: String = "a\0b"
+    assert(s.byte_length() == 3)
+    assert(s.charAt(0) == 'a')
+    assert(s.charAt(1) as int == 0)
+    assert(s.charAt(2) == 'b')
+
+    // equivalencia con la construcción runtime (chr(0), ya cubierta en 295)
+    let r: String = "a" + chr(0) + "b"
+    assert(s == r)
+
+    // patrón de match con NUL embebido (el patrón también es binary-safe)
+    var m = 0
+    match s {
+        "a\0b" => { m = 1 }
+        _ => { m = 2 }
+    }
+    assert(m == 1)
+
+    // y NO matchea el prefijo (un strcmp habría cortado en el NUL)
+    var m2 = 0
+    match s {
+        "a" => { m2 = 1 }
+        _ => { m2 = 2 }
+    }
+    assert(m2 == 2)
+
+    // char literal NUL
+    let c: char = '\0'
+    assert(c as int == 0)
+
+    // otros controles de la tabla nueva: \r y \t sobreviven con su byte
+    let ctl: String = "x\r\ty"
+    assert(ctl.byte_length() == 4)
+    assert(ctl.charAt(1) as int == 13)
+    assert(ctl.charAt(2) as int == 9)
+
+    print("nul-literals OK")
+    return 0
+}
