@@ -114,9 +114,28 @@ void nyx_print_bool(int value) {
     printf("%s\n", value ? "true" : "false");
 }
 
+// C3 (2026-08-11, fricción ERP/serve): esta fn era DOS llamadas stdio
+// (printf "%s" + printf "\n") y fue citada por un reporte como "print no es
+// line-atomic". El diagnóstico era INCORRECTO en dos niveles: (1) esta fn es
+// CÓDIGO MUERTO — codegen emite nyx_print_string (un solo printf, atómico
+// bajo el lock de stream de glibc) para print(s); (2) verificación empírica
+// 2026-08-11: 8 threads × 500 prints concurrentes = 4000/4000 líneas
+// intactas, cero intercaladas. Se deja single-write igual (una llamada, por
+// longitud — NUL-safe) para que no vuelva a inducir el mal diagnóstico ni
+// muerda si algo la linkea algún día. El flush ante pipes (journald) sigue
+// siendo responsabilidad del caller: term_write + term_flush.
 void nyx_print_hstring(nyx_string* str) {
-    nyx_print_nyx_string(str);
-    printf("\n");
+    if (!str) {
+        fwrite("(null)\n", 1, 7, stdout);
+        return;
+    }
+    size_t len = (size_t)str->length;
+    char stack_buf[1024];
+    char* buf = (len + 1 <= sizeof(stack_buf)) ? stack_buf
+                                               : (char*)GC_MALLOC_ATOMIC(len + 1);
+    memcpy(buf, str->data, len);
+    buf[len] = '\n';
+    fwrite(buf, 1, len + 1, stdout);
 }
 
 // Imprime sin newline final (útil para prompts en el REPL)
@@ -416,11 +435,22 @@ void nyx_assert_eq_int(int64_t expected, int64_t actual, const char* msg) {
     }
 }
 
-// assert_eq para strings
+// assert_eq para strings. C2 (2026-08-11): comparación por longitud+memcmp,
+// NO strcmp — strings = bytes (v0.14) y strcmp cortaba en el primer NUL
+// embebido (mismo bug que el == de strings arregló con nyx_string_equals,
+// test-268). Conectar esta fn con strcmp habría regresado la seguridad
+// binaria de los asserts.
 void nyx_assert_eq_str(nyx_string* expected, nyx_string* actual, const char* msg) {
     const char* e = expected ? expected->data : "(null)";
     const char* a = actual ? actual->data : "(null)";
-    if (strcmp(e, a) != 0) {
+    int eq;
+    if (expected && actual) {
+        eq = expected->length == actual->length &&
+             memcmp(expected->data, actual->data, (size_t)expected->length) == 0;
+    } else {
+        eq = expected == actual;
+    }
+    if (!eq) {
         fprintf(stderr, "  ASSERTION FAILED: %s — expected \"%s\", got \"%s\"\n", msg, e, a);
         __nyx_test_failed = 1;
         if (!__nyx_test_mode) exit(1);

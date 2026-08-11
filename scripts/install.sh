@@ -287,6 +287,12 @@ build_nyx() {
     # por esa misma razón: después ya no están los fuentes.
     spin "Building test runner..." make build-test \
         || err "make build-test failed"
+    # C4 (2026-08-11, fricción ERP): `nyx check` es el paso 5 de AGENTS.md
+    # ("self-check first") y el wrapper lo rutea desde siempre — pero el
+    # binario nunca se construía: mismo bug que nyx_test arriba, misma
+    # solución. ANTES de organize() porque dist-clean borra compiler/.
+    spin "Building checker..." make build-check \
+        || err "make build-check failed"
 }
 
 # ── Organize (move binaries to bin/, keep runtime+std) ───

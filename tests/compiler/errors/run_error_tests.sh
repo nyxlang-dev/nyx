@@ -1664,6 +1664,22 @@ else
   echo "$mga_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="assert-eq-expected-got"
+# C2 (fricción ERP 2026-08-10): assert(a == b) fallido dice "expected X, got
+# Y" (nyx_assert_eq_int, código muerto en runtime.c desde siempre, conectado)
+# y el mensaje default del parser lleva la LÍNEA del assert. Compila+corre
+# vía el wrapper, igual que map-get-missing-key-actionable-abort.
+aeq_src=$(mktemp /tmp/aeq-XXXX.nx)
+printf 'fn main() -> int {\n    let x: int = 1\n    assert(x == 2)\n    return 0\n}\n' > "$aeq_src"
+aeq_out=$(bash "$(pwd)/scripts/nyx" run "$aeq_src" 2>&1); aeq_rc=$?
+rm -f "$aeq_src"
+if [ "$aeq_rc" -ne 0 ] && echo "$aeq_out" | grep -qF "expected 2, got 1" && echo "$aeq_out" | grep -qF "line 3"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (esperado rc!=0 con expected/got y línea; rc=%d)\n" "$name" "$aeq_rc"
+  echo "$aeq_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="strict-warn-blind-counter"
 # "Modo ceguera visible" (arco gradual 2026-08-04): NYX_STRICT=warn reporta las
 # validaciones salteadas por TyUnknown — SOLO del código del usuario (el

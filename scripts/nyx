@@ -211,6 +211,10 @@ case "${1:-}" in
         # (dist-clean borra compiler/, asi que despues ya no se puede rebuildear)
         spin "Rebuilding test runner..." make build-test \
             || { echo "error: make build-test failed" >&2; exit 1; }
+        # nyx_check idem (C4 2026-08-11): el wrapper lo rutea, AGENTS.md lo
+        # promociona, y sin este build el comando moria en toda instalacion.
+        spin "Rebuilding checker..." make build-check \
+            || { echo "error: make build-check failed" >&2; exit 1; }
         # refrescar binarios de bin/ y limpiar dev files (lista CANONICA
         # compartida con install.sh - antes habia dos listas desincronizadas)
         mkdir -p bin

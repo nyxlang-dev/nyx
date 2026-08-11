@@ -7,6 +7,42 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.24.29] — 2026-08-11 — Tanda C del inbox ERP: el ciclo de test funciona
+
+Cuatro fricciones P2 del triage (baratas, alto impacto AI-first). Dos de
+los diagnósticos de los reportes eran incorrectos y se corrigieron con
+evidencia.
+
+### Arreglado
+- **`nyx test` mentía tres veces** (el reporte decía una): el volcado de
+  stdout estaba invertido (mostraba el de los que PASAN, nunca el de los
+  que FALLAN), los errores de compilación iban a /dev/null (FAIL sin
+  explicación), y un archivo caído daba "ALL TESTS PASSED" + exit 0 (CI
+  verde con la suite rota). Los tres cerrados.
+- **`assert(a == b)` dice "expected X, got Y" + línea**:
+  `nyx_assert_eq_int/_str` eran código muerto desde siempre; conectadas
+  con decisión POR AST (inferencia conservadora, camino genérico
+  intacto) y el mensaje default lleva "assert @ line N". `eq_str` pasó
+  de strcmp a longitud+memcmp (binary-safe). test-348 + check en errors.
+- **`nyx check` se construye e instala** (install.sh + nyx update +
+  install-local): AGENTS.md lo promociona como paso 5 y el binario nunca
+  se construía — mismo bug y misma solución que tuvo `nyx test`.
+
+### Aclarado con medición
+- **"print no es line-atomic" REFUTADO**: la fn citada
+  (nyx_print_hstring) es código muerto; el camino real es un solo
+  printf("%s\n") y el stress MT dio 4000/4000 líneas intactas. La fn
+  muerta quedó single-write igual. Lo real del reporte: print no
+  flushea — term_write+term_flush es la vía MT con flush (docs en D).
+
+Colateral descubierto (catalogado, pendiente): el literal `"\0"` emite
+el NUL crudo en la constante del .ll → IR inválido.
+
+Gates por commit: regression 368→369 (120 comparadas), errors 249→250,
+m08 18/18, ai-first verde, unit 21/21, stacks 6/6, fixed point global
+×2 (seeds regenerados dos veces en C2: la 1ª ronda llevaba un fast path
+con 3 defectos que el propio gate cazó).
+
 ## [0.24.28] — 2026-08-11 — Tanda B del inbox ERP: compila, o decí por qué
 
 Cuatro fricciones P1 (IR inválido / lexer descarrilado) del mismo triage.

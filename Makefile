@@ -68,6 +68,8 @@ install-local:
 	fi; \
 	cp nyx_bootstrap "$$NYX_HOME_DIR/bin/nyx"; \
 	if [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/bin/nyx_build"; fi; \
+	if [ -f nyx_check ]; then cp nyx_check "$$NYX_HOME_DIR/nyx_check"; fi; \
+	if [ -f nyx_test ]; then cp nyx_test "$$NYX_HOME_DIR/nyx_test"; fi; \
 	if [ -f "$$NYX_HOME_DIR/nyx_bootstrap" ]; then cp nyx_bootstrap "$$NYX_HOME_DIR/nyx_bootstrap"; fi; \
 	if [ -f "$$NYX_HOME_DIR/nyx_build" ] && [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/nyx_build"; fi; \
 	cp runtime/*.c runtime/*.h "$$NYX_HOME_DIR/runtime/"; \
@@ -327,10 +329,18 @@ test-repl: build-repl
 	bash scripts/testing/run_repl_smoke.sh
 
 ## Build nyx_check (LSP driver)
+# Espejo de build-test (C4, 2026-08-11): compila desde la fuente SI está
+# (árbol dev) y refresca el seed; en el árbol público instalado (solo seeds
+# .ll) linkea el seed directo. Sin esto, install.sh público moría en
+# build-check — el guard de completitud de sync_to_public.sh lo cazó ANTES
+# de publicar (la vez de test.nx nadie lo cazó y el install estuvo roto 4 días).
 build-check:
-	cp compiler/nyx_check.nx script.nx
-	./nyx_bootstrap
-	$(CLANG) script.ll compiler/lexer.ll compiler/parser.ll compiler/types.ll compiler/semantic.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_check
+	@if [ -f compiler/nyx_check.nx ]; then \
+		cp compiler/nyx_check.nx script.nx && \
+		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
+		cp script.ll compiler/nyx_check.ll; \
+	fi
+	$(CLANG) compiler/nyx_check.ll compiler/lexer.ll compiler/parser.ll compiler/types.ll compiler/semantic.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_check
 	@echo "✓ nyx_check listo"
 
 ## Run nyx_check on a file

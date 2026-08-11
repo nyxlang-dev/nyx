@@ -1,0 +1,33 @@
+// test-348 — fast path de assert(a == b) (Tanda C2, fricción ERP 2026-08-10).
+// assert con == de tipos simples ahora llama nyx_assert_eq_int/_str (que eran
+// código muerto): el fallo dice "expected X, got Y" con la línea. Este test
+// fija que el camino FELIZ del fast path compila y pasa en todas sus formas,
+// que el eq de strings sigue binary-safe (longitud+memcmp, no strcmp), y que
+// las condiciones no-eq siguen por el camino genérico intacto.
+fn main() -> int {
+    let a: int = 2 + 2
+    assert(a == 4)
+    assert(4 == a)
+
+    let s: String = "ho" + "la"
+    assert(s == "hola")
+
+    // binary-safe: NUL embebido — comparación por longitud, nunca strcmp.
+    // (Construido con chr(0) EN RUNTIME a propósito: el literal "a\0b" emite
+    // el NUL crudo en la constante del .ll → IR inválido "expected string" —
+    // bug PREEXISTENTE descubierto acá, catalogado en el plan de fricciones.)
+    let n1: String = "a" + chr(0) + "b"
+    let n2: String = "a" + chr(0) + "b"
+    assert(n1 == n2)
+
+    // mensaje explícito: sigue pasando tal cual al runtime
+    assert(1 == 1, "uno es uno")
+
+    // tipos que NO van por el fast path de eq
+    assert(1.5 == 1.5)
+    assert(true)
+    assert(1 < 2)
+
+    print("assert-eq OK")
+    return 0
+}
