@@ -23,6 +23,7 @@ extern "C" fn nyx_sqlite_errmsg(db: *int) -> String
 // High-level wrappers
 
 // Open database (":memory:" for in-memory)
+/// Abre (o crea) el archivo. Devuelve el handle *int — capturable en closures sin drama (fn de std con retorno declarado).
 pub fn sqlite_open(path: String) -> *int {
     return nyx_sqlite_open(path)
 }
@@ -32,12 +33,14 @@ pub fn sqlite_close(db: *int) {
 }
 
 // Execute DDL/DML with no result — returns true on success
+/// DDL/DML sin resultado; true en éxito. Para SQL con valores usar sqlite_exec_params (params String).
 pub fn sqlite_exec(db: *int, sql: String) -> bool {
     let rc = nyx_sqlite_exec(db, sql)
     return rc == 0
 }
 
 // Query: returns Array of rows, each row is an Array of String values
+/// Array de filas; cada fila es Array y TODA celda es String — incluidas columnas INTEGER (pasar por string_to_int; leerla como int devuelve el PUNTERO como número, silencioso). Celda SQL NULL llega como la cadena "NULL". Para ints reales: sqlite_query_int.
 pub fn sqlite_query(db: *int, sql: String) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var rows = []
@@ -63,6 +66,7 @@ pub fn sqlite_query(db: *int, sql: String) -> Array {
 }
 
 // Query returning column names (first call) then rows
+/// Como sqlite_query pero ANTEPONE una fila de headers: N+1 elementos, la fila 0 son los nombres de columna.
 pub fn sqlite_query_named(db: *int, sql: String) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var result = []
@@ -118,6 +122,7 @@ pub fn sqlite_exec_str(db: *int, sql: String, val: String) -> bool {
 }
 
 // Last inserted row id
+/// last_insert_rowid del handle.
 pub fn sqlite_last_id(db: *int) -> int {
     return nyx_sqlite_last_insert_id(db)
 }
@@ -127,6 +132,7 @@ pub fn sqlite_affected(db: *int) -> int {
     return nyx_sqlite_changes(db)
 }
 
+/// Mensaje del último error del handle (sqlite3_errmsg).
 pub fn sqlite_error(db: *int) -> String {
     return nyx_sqlite_errmsg(db)
 }
@@ -148,6 +154,7 @@ pub fn sqlite_rollback(db: *int) -> bool {
 // === Typed query results ===
 
 // Query returning rows of int values
+/// Filas de int REALES (sqlite3_column_int) — la vía tipada para columnas numéricas, sin string_to_int.
 pub fn sqlite_query_int(db: *int, sql: String) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var rows = []
@@ -173,6 +180,7 @@ pub fn sqlite_query_int(db: *int, sql: String) -> Array {
 }
 
 // Query returning single int value (first column of first row)
+/// Primera columna de la primera fila como int real; 0 si no hay filas.
 pub fn sqlite_query_one_int(db: *int, sql: String) -> int {
     let stmt = nyx_sqlite_prepare(db, sql)
     let rc = nyx_sqlite_step(stmt)
@@ -185,6 +193,7 @@ pub fn sqlite_query_one_int(db: *int, sql: String) -> int {
 }
 
 // Query returning single string value (first column of first row)
+/// Primera columna de la primera fila como String; "" si no hay filas. NULL llega como "NULL".
 pub fn sqlite_query_one_str(db: *int, sql: String) -> String {
     let stmt = nyx_sqlite_prepare(db, sql)
     let rc = nyx_sqlite_step(stmt)
@@ -199,6 +208,7 @@ pub fn sqlite_query_one_str(db: *int, sql: String) -> String {
 // === Multi-parameter binding ===
 
 // Execute with int + string parameters (e.g., UPDATE ... SET name=? WHERE id=?)
+/// TODOS los params como String (binding textual), también los numéricos: ["7", "ana"] y no [7, "ana"].
 pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool {
     let stmt = nyx_sqlite_prepare(db, sql)
     var i: int = 0
@@ -214,6 +224,7 @@ pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool {
 }
 
 // Query with string parameters
+/// Query con params (todos String, binding textual). Celdas del resultado: String, como sqlite_query.
 pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var i: int = 0
@@ -307,6 +318,7 @@ pub fn sqlite_table_exists(db: *int, name: String) -> bool {
 }
 
 // Count rows in a table
+/// SELECT COUNT(*) de la tabla, como int real.
 pub fn sqlite_count(db: *int, table: String) -> int {
     return sqlite_query_one_int(db, "SELECT COUNT(*) FROM " + table)
 }
