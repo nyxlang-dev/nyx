@@ -280,6 +280,22 @@ import "std/http" as http       // stdlib modules import by std/ path
 fn main() { print("${helper()}") }
 ```
 
+**Functions resolve PER MODULE (v0.25.0)** — before that, two modules
+exporting the same fn name collided silently and the LAST definition won,
+even for a QUALIFIED call (`render.px(x,y,c)` executed `player.px()`: no
+error, wrong function, blank screen). Now:
+
+- `alias.fn(...)` calls the fn of THAT module, always.
+- An unqualified call to a name that exists in the caller's own module
+  resolves there first (a module's own fns see each other without
+  qualifying).
+- An unqualified call ambiguous between two imported modules is an error
+  (**NYX2010**) naming both modules — qualify it or rename.
+- Module fns are emitted as `<module_path>__<fn>` in the IR; the main file
+  and the prelude keep bare names (single-file programs: zero change).
+- Note `pub` is still cosmetic — this arc changed HOW names resolve, not
+  what is visible.
+
 ### Error handling
 
 ```nyx

@@ -1680,6 +1680,24 @@ else
   echo "$aeq_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="module-fn-ambiguous-unqualified"
+# S3 namespacing (2026-08-11): dos módulos importados exportan `set`; la
+# llamada NO calificada desde el main era silently-wrong (ganaba la última
+# definición). Ahora: NYX2010 con los módulos nombrados. Compila vía el
+# wrapper (necesita el resolver de imports del driver).
+mfa_dir=$(mktemp -d /tmp/mfa-XXXX)
+printf 'var g: int = 0\npub fn set(v: int) { g = v }\n' > "$mfa_dir/m_uno.nx"
+printf 'var h: int = 0\npub fn set(v: int) { h = v }\n' > "$mfa_dir/m_dos.nx"
+printf 'import "%s/m_uno"\nimport "%s/m_dos"\nfn main() -> int {\n    set(7)\n    return 0\n}\n' "$mfa_dir" "$mfa_dir" > "$mfa_dir/main.nx"
+mfa_out=$(bash "$(pwd)/scripts/nyx" run "$mfa_dir/main.nx" 2>&1); mfa_rc=$?
+rm -rf "$mfa_dir"
+if [ "$mfa_rc" -ne 0 ] && echo "$mfa_out" | grep -qF "NYX2010" && echo "$mfa_out" | grep -qF "AMBIGUA"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (esperado rc!=0 con NYX2010; rc=%d)\n" "$name" "$mfa_rc"
+  echo "$mfa_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="strict-warn-blind-counter"
 # "Modo ceguera visible" (arco gradual 2026-08-04): NYX_STRICT=warn reporta las
 # validaciones salteadas por TyUnknown — SOLO del código del usuario (el

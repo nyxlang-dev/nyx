@@ -1,0 +1,57 @@
+// test-353 — funciones homónimas entre módulos: la llamada CALIFICADA
+// resuelve POR MÓDULO (arco S3, reportes 20260810-200003 fricciones 8/12 y
+// 20260810-220013 raycaster). Antes: moda.set(2, 99) ejecutaba modb.set()
+// — el prefijo se ignoraba, ganaba la última definición, ni la aridad
+// frenaba (silently-wrong: pantalla negra sin error en el proyecto real).
+import "tests/support/aux_ns_moda"
+import "tests/support/aux_ns_modb"
+
+// F1 (review S3): homónima con una fn de módulo — el ARCHIVO PRINCIPAL debe
+// ganar para sus propias llamadas no calificadas ("user code shadows"), o la
+// llamada del main se iba en silencio al módulo.
+fn quien() -> String {
+    return "MAIN"
+}
+
+fn main() -> int {
+    // F1: gana el main
+    assert(quien() == "MAIN")
+    print(quien())
+    // ...y calificado sigue llegando al módulo
+    assert(aux_ns_moda.quien() == "moda")
+
+    // F3: una fn de módulo homónima a un builtin-guard (`run`) le gana al
+    // builtin — antes caía al desugar async y emitía IR inválido.
+    assert(run(21) == 42)
+
+    // F7: un binding local homónimo a una fn ambigua entre DOS módulos
+    // (`set` está en ambos) no debe disparar NYX2010 — el scope interno
+    // manda y la ambigüedad solo aplica a llamadas top-level reales.
+    let set = fn(v: int) -> int { return v + 1 }
+    assert(set(41) == 42)
+
+    aux_ns_moda.set(2, 99)
+    let v: int = aux_ns_moda.get(2)
+    print(v)
+    assert(v == 99)
+
+    let c1: int = aux_ns_modb.set()
+    print(c1)
+    assert(c1 == 1)
+
+    // el contador de modb NO fue tocado por la llamada a moda.set
+    assert(aux_ns_modb.tally() == 1)
+
+    // y el array de moda no fue tocado por modb.set
+    assert(aux_ns_moda.get(0) == 0)
+
+    // co-fix TASKS.md:880: inferencia del return type en llamada por alias
+    // SIN anotación (String — antes caía a i64 y el concat corrompía)
+    let lbl = aux_ns_modb.label()
+    let saludo: String = "hola " + lbl
+    assert(saludo == "hola modb")
+    print(saludo)
+
+    print("module-fn-homonyms OK")
+    return 0
+}

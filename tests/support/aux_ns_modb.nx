@@ -1,0 +1,20 @@
+// aux S3 namespacing (test-353): fn homónima `set` con OTRA aridad y otro
+// retorno que la de aux_ns_moda. Antes del arco S3, la llamada calificada
+// moda.set(2,99) ejecutaba ESTA función (gana la última definición).
+var h: int = 0
+
+pub fn set() -> int {
+    h = h + 1
+    return h
+}
+
+pub fn tally() -> int {
+    return h
+}
+
+// para el co-fix TASKS.md:880: `let x = alias.fn()` SIN anotación debe
+// inferir el return type (String acá) — antes caía a i64 y el concat
+// posterior operaba sobre un puntero reinterpretado.
+pub fn label() -> String {
+    return "modb"
+}

@@ -7,6 +7,41 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.25.0] — 2026-08-12 — S3: las funciones resuelven POR MÓDULO
+
+MINOR de la campaña multi-arco (spec:
+`docs/superpowers/specs/2026-08-11-namespacing-modulos-spec.md`).
+Autorizado por Ottavio: "resolver por módulo".
+
+### Arreglado (silently-wrong, dos reportes)
+- **La llamada calificada ejecutaba la función de OTRO módulo**: con dos
+  módulos exportando `set`, `moda.set(2, 99)` corría `modb.set()` — el
+  prefijo se ignoraba al resolver, ganaba la última definición y ni la
+  aridad frenaba. En el proyecto real del reporte (raycaster):
+  `render.px(x,y,c)` vs `player.px()` → todas las escrituras de píxel
+  no-ops, pantalla negra SIN error. test-353.
+- Las fns de módulo se emiten como `<path>__<fn>`; el archivo principal y
+  el prelude conservan nombres pelados (programas de un archivo: cero
+  cambio de IR). Espeja el mecanismo A2 de globales homónimas.
+- **Inferencia por alias** (TASKS.md:880): `let x = alias.fn()` sin
+  anotación ya infiere el tipo de retorno real (antes caía a i64 y el
+  concat corrompía).
+
+### Agregado
+- **NYX2010**: llamada NO calificada ambigua entre dos módulos importados
+  → error nombrando ambos y sugiriendo la forma calificada (antes: se
+  resolvía en silencio a la última definición).
+- **NYX2011**: template genérico ausente en `generic_call` → error con
+  contexto en vez del panic crudo del Map.
+
+### Notas
+- `pub` sigue siendo cosmético: este arco cambió CÓMO se resuelven los
+  nombres, no qué es visible (enforcement de privacidad = arco futuro).
+- La prueba de fuego fueron los propios consumidores: el canario de
+  stacks y las suites cazaron tres caminos que el diseño inicial no
+  cubría (genéricos de módulo, imports con llaves sin alias, y las fns
+  del pipeline bajo NYX_INLINE_COMPILER).
+
 ## [0.24.32] — 2026-08-11 — S2 de la campaña multi-arco: señales allocation-safe
 
 ### Cambiado

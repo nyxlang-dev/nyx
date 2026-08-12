@@ -1,0 +1,27 @@
+// aux S3 namespacing (test-353): módulo con fn homónima a la de aux_ns_modb
+// — el repro EXACTO del reporte del raycaster (20260810-220013). `set` acá
+// tiene aridad 2 y escribe un array; en modb tiene aridad 0 y devuelve un
+// contador. La llamada CALIFICADA debe resolver al módulo del prefijo.
+var g: Array<int> = [0, 0, 0, 0, 0]
+
+pub fn set(i: int, v: int) {
+    g[i] = v
+}
+
+pub fn get(i: int) -> int {
+    return g[i]
+}
+
+// F3 (review S3): `run` es un builtin-guard del compilador (desugar async).
+// Una fn de MÓDULO homónima debe GANARLE al builtin — antes el guard usaba
+// el nombre pelado, post-rename era falso y el builtin se comía la llamada
+// (IR inválido: "invalid cast opcode i64 → ptr").
+pub fn run(x: int) -> int {
+    return x * 2
+}
+
+// F1 (review S3): homónima con una fn del ARCHIVO PRINCIPAL — el main debe
+// ganar para sus propias llamadas no calificadas.
+pub fn quien() -> String {
+    return "moda"
+}
