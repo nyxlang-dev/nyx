@@ -757,7 +757,20 @@ void nyx_signal_handle(int64_t signum, void* handler) {
 }
 
 // Reset signal to default handler
+// F15 (review S4): reset/ignore también deben RECHAZAR las señales
+// síncronas. Sin esto, `signal_reset(11)` desde Nyx desarmaba el handler de
+// guard-page de TODO el proceso en silencio, y `signal_ignore(11)` ponía
+// SIG_IGN en SIGSEGV — UB: el fault se re-ejecuta infinitamente y el
+// proceso se cuelga quemando CPU.
+static int nyx_signal_is_sync(int64_t s) {
+    return s == SIGSEGV || s == SIGBUS || s == SIGFPE || s == SIGILL;
+}
+
 void nyx_signal_reset(int64_t signum) {
+    if (nyx_signal_is_sync(signum)) {
+        fprintf(stderr, "[nyx] signal_reset: la señal síncrona %lld está reservada (guard page de stacks)\n", (long long)signum);
+        return;
+    }
     if (signum >= 0 && signum < 64) {
         nyx_signal_handlers[signum] = NULL;
         signal((int)signum, SIG_DFL);
@@ -766,6 +779,10 @@ void nyx_signal_reset(int64_t signum) {
 
 // Ignore a signal
 void nyx_signal_ignore(int64_t signum) {
+    if (nyx_signal_is_sync(signum)) {
+        fprintf(stderr, "[nyx] signal_ignore: ignorar la señal síncrona %lld es UB (bucle infinito de faults) — rechazado\n", (long long)signum);
+        return;
+    }
     signal((int)signum, SIG_IGN);
 }
 #else

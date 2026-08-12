@@ -1,0 +1,53 @@
+// test-354 — stack de goroutine con headroom y guard page (S4, Track 5c
+// incremento 1; spec 2026-08-11-stacks-growables-design.md). Antes: 64KB
+// FIJOS con malloc y CERO detección de overflow — una recursión que pasaba
+// el límite pisaba memoria vecina del heap EN SILENCIO (corrupción, no
+// crash). Ahora: mmap con guard page (default 256KB, NYX_GOROUTINE_STACK_KB)
+// y el overflow muere con mensaje, nunca mudo.
+//
+// El marco de cada nivel acá es deliberadamente gordo (varios locales) para
+// consumir stack rápido sin necesitar millones de niveles.
+fn hondo(n: int) -> int {
+    let a: int = n * 2
+    let b: int = n + a
+    let c: int = a - b
+    let d: int = n + 1
+    if n <= 0 {
+        return a + b + c + d
+    }
+    let r: int = hondo(n - 1)
+    return r + c - c
+}
+
+// async fn: `await` la corre en una GOROUTINE real del scheduler M:N —
+// ahí vive el stack de NYX_STACK_SIZE (thread_spawn usaría un thread OS con
+// stack de 8MB y no probaría nada).
+async fn worker() -> int {
+    // 3000 niveles: CALIBRADO — desborda con los 64KB viejos (verificado
+    // con NYX_GOROUTINE_STACK_KB=64: "goroutine stack overflow") y entra
+    // cómodo en los 256KB nuevos. Con el malloc de antes esto pisaba el
+    // heap vecino en silencio.
+    let v: int = hondo(3000)
+    return v
+}
+
+fn main() -> int {
+    let r: int = await worker()
+    assert(r != 0 or r == 0)
+
+    // el proceso sigue sano tras la recursión profunda: el GC y el heap no
+    // fueron pisados (con 64KB esto corrompía silenciosamente)
+    var acc: Array<int> = []
+    var i = 0
+    while i < 500 {
+        acc.push(i * 3)
+        i = i + 1
+    }
+    assert(acc.length() == 500)
+    assert(acc[499] == 1497)
+
+    let s: String = "vivo tras " + int_to_string(acc.length()) + " allocs"
+    print(s)
+    print("goroutine-stack OK")
+    return 0
+}

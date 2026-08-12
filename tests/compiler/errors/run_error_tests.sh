@@ -1698,6 +1698,23 @@ else
   echo "$mfa_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="goroutine-stack-overflow-diagnosed"
+# S4 Track 5c inc.1 (2026-08-12): una recursión desbocada en una GOROUTINE
+# moría con SIGSEGV MUDO (exit 139, cero salida) — indistinguible de
+# cualquier otro crash. Ahora la guard page la caza: mensaje accionable con
+# el tamaño actual y exit 1. Se corre con el stack en el mínimo para que
+# desborde rápido.
+gso_src=$(mktemp /tmp/gso-XXXXXXXX.nx)
+printf 'fn hondo(n: int) -> int {\n    let a: int = n * 2\n    if n <= 0 { return a }\n    return hondo(n - 1) + a - a\n}\nasync fn w() -> int { return hondo(1000000) }\nfn main() -> int {\n    let r: int = await w()\n    print(r)\n    return 0\n}\n' > "$gso_src"
+gso_out=$(NYX_GOROUTINE_STACK_KB=64 bash "$(pwd)/scripts/nyx" run "$gso_src" 2>&1); gso_rc=$?
+rm -f "$gso_src"
+if [ "$gso_rc" -ne 0 ] && echo "$gso_out" | grep -qF "goroutine stack overflow" && echo "$gso_out" | grep -qF "64KB"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (esperado rc!=0 con el diagnóstico de overflow; rc=%d)\n" "$name" "$gso_rc"
+  echo "$gso_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="strict-warn-blind-counter"
 # "Modo ceguera visible" (arco gradual 2026-08-04): NYX_STRICT=warn reporta las
 # validaciones salteadas por TyUnknown — SOLO del código del usuario (el

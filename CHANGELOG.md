@@ -7,6 +7,42 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.26.0] — 2026-08-12 — S4: stacks de goroutine con guard page (Track 5c inc.1)
+
+Cierre de la campaña multi-arco. Spec deliberada con Ottavio
+(`docs/superpowers/specs/2026-08-11-stacks-growables-design.md`).
+
+### Arreglado
+- **Un overflow de stack de goroutine ya no corrompe memoria en silencio**:
+  los stacks pasan de `malloc(64KB)` fijo SIN detección a `mmap` RW con
+  **guard multi-página** (16 páginas `PROT_NONE`, coste RSS cero). Tocarla
+  reporta `[nyx] goroutine stack overflow — subí NYX_GOROUTINE_STACK_KB
+  (actual: N KB)` y sale con 1; antes era un SIGSEGV mudo (exit 139) o,
+  peor, escritura silenciosa sobre el mapeo vecino. test-354 + check en
+  errors.
+- **`signal_reset`/`signal_ignore` rechazan las señales síncronas** (agujero
+  adyacente hallado en el review): `signal_ignore(11)` ponía SIG_IGN en
+  SIGSEGV — UB con bucle infinito de faults.
+
+### Cambiado
+- **Default de stack 64KB → 256KB**, tuneable con `NYX_GOROUTINE_STACK_KB`
+  (clamp [64, 8192] KB CON aviso — antes un valor fuera de rango se
+  ignoraba en silencio).
+- **Pool de stacks reciclados**: el A/B mostró que mmap+mprotect+munmap
+  costaba 1.8× en spawn (58→103 ms/4000 spawns) y que el costo era 100%
+  syscalls (idéntico con 64KB y con 1024KB). Con el pool el spawn vuelve a
+  52-58 ms: **4× de headroom y detección de overflow a costo cero**.
+
+### Alcance honesto
+La detección cubre stacks de GOROUTINE. Una recursión infinita en el thread
+principal sigue muriendo con SIGSEGV mudo (sin regresión, pero sin cubrir).
+El crecimiento on-demand real (PROT_NONE + commit en el fault) NO entra: el
+escaneo conservador de Boehm sobre rangos no comiteados es un crux que
+exige spike propio — incremento 2, catalogado.
+
+Gates: regression 375/375, errors 252/252, m08 18/18, ai-first, unit 21/21,
+stacks 6/6, integración (incl. serve+kv real), WASM 23/23.
+
 ## [0.25.0] — 2026-08-12 — S3: las funciones resuelven POR MÓDULO
 
 MINOR de la campaña multi-arco (spec:

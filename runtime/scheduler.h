@@ -20,8 +20,18 @@
 
 // Maximum goroutines in the scheduler
 #define NYX_MAX_GOROUTINES 4096
-#define NYX_STACK_SIZE     (64 * 1024)  // 64KB stack per goroutine
+// Track 5c inc.1 (2026-08-12): default 256KB (era 64KB fijo). El stack se
+// reserva con mmap RW + una GUARD PAGE PROT_NONE al fondo, así un overflow
+// muere con diagnóstico en vez de pisar el heap vecino en silencio. Tuneable
+// sin recompilar con NYX_GOROUTINE_STACK_KB (clamp [64KB, 8MB]).
+// Spec: docs/superpowers/specs/2026-08-11-stacks-growables-design.md
+#define NYX_STACK_SIZE     (256 * 1024) // DEFAULT (no "el" tamaño: ver nyx_goroutine_stack_size)
+#define NYX_STACK_MIN_KB   64
+#define NYX_STACK_MAX_KB   8192
 #define NYX_NUM_WORKERS    4            // default worker thread count
+
+// Tamaño efectivo del stack (leído una vez de NYX_GOROUTINE_STACK_KB).
+size_t nyx_goroutine_stack_size(void);
 
 // Goroutine states
 #define NYX_GOROUTINE_READY    0
@@ -36,15 +46,19 @@
 // a GC object in `result`). It stays reachable only via the registry
 // (g_reg[]/reg_next chains) while alive; once `nyx_goroutine_join` reg_removes
 // it, it becomes unreachable to the collector and is eventually reclaimed.
-// The `stack` buffer remains a plain `malloc` (forward-compatible with the
-// future guard-page stacks of Track 5c) but is registered as an explicit GC
-// root (`GC_add_roots`) for its lifetime so a suspended goroutine's locals
-// are scanned; the root is removed before the stack is freed in `reap`.
+// El stack se reserva con `mmap` RW + una GUARD multi-página `PROT_NONE` al
+// fondo (Track 5c inc.1, 2026-08-12). Solo el área ÚTIL se registra como GC
+// root (`GC_add_roots`) para que los locals de una goroutine suspendida se
+// escaneen — la guard queda fuera, así el colector nunca la toca. El root se
+// quita ANTES del `munmap` en `reap`.
 typedef struct NyxGoroutine {
     int            id;
     int            state;       // NYX_GOROUTINE_*
     ucontext_t     context;
-    char*          stack;       // allocated stack (plain malloc, GC-rooted separately)
+    char*          stack;       // área útil del stack (mmap RW, GC-rooted aparte)
+    char*          stack_base;  // base del mapeo (guard page PROT_NONE al inicio)
+    size_t         stack_total; // bytes mapeados (guard + útil) — para munmap
+    size_t         stack_size;  // bytes útiles (lo que se registra como root)
     int64_t        (*fn)(void*); // function to run
     void*          arg;         // argument (closure pair)
     int64_t        result;      // return value

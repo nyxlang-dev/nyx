@@ -22,12 +22,230 @@
 // (GC_DUPLICATE) since the redirect already does it.
 #define GC_THREADS
 #include <gc.h>
+#include <sys/mman.h>
+#include <signal.h>
+#include <stdint.h>
 #include "scheduler.h"
 #include "event_loop.h"
 
 // Global scheduler instance
 static NyxScheduler g_scheduler;
 static int g_scheduler_initialized = 0;
+
+// ============================================================
+// Track 5c inc.1 — stacks con GUARD PAGE (spec 2026-08-11)
+// ============================================================
+// Antes: malloc(64KB) fijo, sin NINGUNA detección de overflow — una
+// recursión que pasaba el límite pisaba el heap vecino EN SILENCIO
+// (corrupción, no crash; y cuando crasheaba era un SIGSEGV mudo).
+// Ahora: mmap RW del stack + una página PROT_NONE al fondo (el stack crece
+// hacia abajo). Tocarla dispara SIGSEGV, que el handler de abajo reconoce y
+// reporta como overflow con exit 1. La guard page queda FUERA del rango
+// registrado con GC_add_roots: Boehm nunca la toca.
+//
+// NO es growable on-demand: registrar roots de páginas comiteadas bajo
+// demanda choca con el escaneo conservador de Boehm (ver "crux" en la spec)
+// — eso es el incremento 2, gated por spike.
+
+static size_t g_stack_size = 0;   // tamaño útil (sin la guard)
+static size_t g_page_size  = 4096;
+
+// F1 (review S4): la guard NO puede ser de una sola página. Un frame más
+// grande que una página mueve SP por debajo de la guard sin tocarla nunca
+// (stack clash clásico) — y hay frames así en el propio runtime que corren
+// dentro de goroutines: `char line[4096]`/`hdr[4096]` en net.c (servidor
+// HTTP), buffers de tls.c y process.c. Sin -fstack-clash-protection en el
+// build, ese salto aterriza en el mapeo vecino de abajo, que con altísima
+// probabilidad es la cima ÚTIL del stack de otra goroutine (mmap empaqueta
+// hacia abajo) — o sea, exactamente la corrupción silenciosa que este arco
+// viene a cerrar. 16 páginas de PROT_NONE cuestan CERO RSS (solo espacio
+// virtual: 4096 goroutines × 64KB = 256MB de VA, irrelevante en 64 bits).
+#define NYX_GUARD_PAGES 16
+
+// F4 (review S4): se resuelve UNA vez desde nyx_scheduler_init, donde el
+// proceso todavía es single-thread. Antes era cache lazy en el primer
+// spawn: data race entre workers y —peor— el handler de señal podía caer
+// en el camino frío (sysconf/getenv/strtol NO son async-signal-safe).
+size_t nyx_goroutine_stack_size(void) {
+    if (g_stack_size) return g_stack_size;
+    long ps = sysconf(_SC_PAGESIZE);
+    if (ps > 0) g_page_size = (size_t)ps;
+    size_t kb = NYX_STACK_SIZE / 1024;
+    const char* env = getenv("NYX_GOROUTINE_STACK_KB");
+    if (env && *env) {
+        char* endp = NULL;
+        long v = strtol(env, &endp, 10);
+        // F5: CLAMPEA (antes ignoraba en silencio: =16384 daba 256KB y el
+        // usuario no tenía forma de saber por qué seguía desbordando).
+        if (endp == env || (endp && *endp != '\0')) {
+            fprintf(stderr, "[nyx] NYX_GOROUTINE_STACK_KB='%s' no es un número — uso %zu KB\n", env, kb);
+        } else {
+            if (v < NYX_STACK_MIN_KB) {
+                fprintf(stderr, "[nyx] NYX_GOROUTINE_STACK_KB=%ld < %d — clampeado a %d KB\n", v, NYX_STACK_MIN_KB, NYX_STACK_MIN_KB);
+                v = NYX_STACK_MIN_KB;
+            } else if (v > NYX_STACK_MAX_KB) {
+                fprintf(stderr, "[nyx] NYX_GOROUTINE_STACK_KB=%ld > %d — clampeado a %d KB\n", v, NYX_STACK_MAX_KB, NYX_STACK_MAX_KB);
+                v = NYX_STACK_MAX_KB;
+            }
+            kb = (size_t)v;
+        }
+    }
+    size_t sz = kb * 1024;
+    // redondear a múltiplo de página
+    sz = ((sz + g_page_size - 1) / g_page_size) * g_page_size;
+    g_stack_size = sz;
+    return g_stack_size;
+}
+
+// Registro de guard pages. F2/F3 (review S4): la versión sin locks PERDÍA
+// registros bajo spawn concurrente (dos registros eligiendo el mismo slot;
+// un unregister pisando un register: quedaba lo=válido/hi=NULL, guard viva
+// pero INVISIBLE al handler) y en aarch64 no tenía barreras. Efecto real:
+// el overflow volvía al SIGSEGV mudo de forma NO DETERMINISTA, justo bajo
+// carga. Ahora: los ESCRITORES se serializan con mutex (no es camino
+// caliente — dos syscalls de mmap ya dominan) y la publicación es atómica
+// release/acquire, así el handler (que NO puede tomar locks) ve siempre un
+// par (lo,hi) coherente. Orden ÚNICO en ambos caminos: `hi` primero, `lo`
+// (el publicador) último; al desregistrar, `lo=NULL` primero.
+typedef struct { char* lo; char* hi; } NyxGuard;
+static NyxGuard g_guards[NYX_MAX_GOROUTINES];
+static volatile int g_guard_count = 0;
+static pthread_mutex_t g_guard_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_stack_handler_installed = 0;
+
+static void guard_register(char* lo, char* hi) {
+    pthread_mutex_lock(&g_guard_lock);
+    int n = g_guard_count;
+    int idx = -1;
+    for (int i = 0; i < n; i++) {
+        if (__atomic_load_n(&g_guards[i].lo, __ATOMIC_RELAXED) == NULL) { idx = i; break; }
+    }
+    if (idx < 0) {
+        if (n >= NYX_MAX_GOROUTINES) {
+            // F6: agotado (>4096 goroutines VIVAS) — decirlo, no degradar mudo.
+            static int warned = 0;
+            if (!warned) {
+                warned = 1;
+                fprintf(stderr, "[nyx] registro de guard pages lleno (%d): los overflows de las goroutines nuevas no se diagnostican\n", NYX_MAX_GOROUTINES);
+            }
+            pthread_mutex_unlock(&g_guard_lock);
+            return;
+        }
+        idx = n;
+        g_guard_count = n + 1;
+    }
+    g_guards[idx].hi = hi;
+    __atomic_store_n(&g_guards[idx].lo, lo, __ATOMIC_RELEASE);   // publica
+    pthread_mutex_unlock(&g_guard_lock);
+}
+
+// POOL de stacks (F12 / gate de perf de la spec). Medición A/B: el mmap +
+// mprotect + munmap por goroutine costaba 1.8× en spawn+join (58ms → 103ms
+// por 4000 spawns), y el A/B con NYX_GOROUTINE_STACK_KB=64 y =1024 mostró
+// que el costo es ENTERAMENTE de los syscalls, no del tamaño. Reciclando el
+// mapeo (la guard page sigue PROT_NONE — mprotect persiste) el spawn vuelve
+// al costo de antes SIN perder la protección. Cap: 64 stacks (VA acotada;
+// el RSS es el de las páginas ya tocadas, que es justo lo que se reusa).
+#define NYX_STACK_POOL_MAX 64
+static char* g_stack_pool[NYX_STACK_POOL_MAX];
+static int g_stack_pool_count = 0;   // bajo g_guard_lock
+
+static char* stack_pool_get(void) {
+    char* p = NULL;
+    pthread_mutex_lock(&g_guard_lock);
+    if (g_stack_pool_count > 0) p = g_stack_pool[--g_stack_pool_count];
+    pthread_mutex_unlock(&g_guard_lock);
+    return p;
+}
+
+static int stack_pool_put(char* base) {
+    int ok = 0;
+    pthread_mutex_lock(&g_guard_lock);
+    if (g_stack_pool_count < NYX_STACK_POOL_MAX) {
+        g_stack_pool[g_stack_pool_count++] = base;
+        ok = 1;
+    }
+    pthread_mutex_unlock(&g_guard_lock);
+    return ok;
+}
+
+static void guard_unregister(char* lo) {
+    pthread_mutex_lock(&g_guard_lock);
+    int n = g_guard_count;
+    for (int i = 0; i < n; i++) {
+        if (__atomic_load_n(&g_guards[i].lo, __ATOMIC_RELAXED) == lo) {
+            __atomic_store_n(&g_guards[i].lo, (char*)NULL, __ATOMIC_RELEASE);  // despublica
+            g_guards[i].hi = NULL;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_guard_lock);
+}
+
+// Handler async-signal-safe: solo write(2) crudo y _exit.
+static void nyx_stack_fault_handler(int sig, siginfo_t* info, void* uctx) {
+    (void)uctx;
+    char* addr = info ? (char*)info->si_addr : NULL;
+    if (addr) {
+        int n = g_guard_count;
+        for (int i = 0; i < n; i++) {
+            char* lo = __atomic_load_n(&g_guards[i].lo, __ATOMIC_ACQUIRE);
+            char* hi = g_guards[i].hi;
+            if (lo && hi && addr >= lo && addr < hi) {
+                static const char m1[] = "[nyx] goroutine stack overflow — subí NYX_GOROUTINE_STACK_KB (actual: ";
+                ssize_t w = write(2, m1, sizeof(m1) - 1);
+                char buf[24];
+                size_t kb = nyx_goroutine_stack_size() / 1024;
+                int p = 0;
+                if (kb == 0) { buf[p++] = '0'; }
+                else {
+                    char tmp[24]; int t = 0;
+                    while (kb > 0 && t < 20) { tmp[t++] = (char)('0' + (kb % 10)); kb /= 10; }
+                    while (t > 0) buf[p++] = tmp[--t];
+                }
+                buf[p++] = 'K'; buf[p++] = 'B'; buf[p++] = ')'; buf[p++] = '\n';
+                w = write(2, buf, (size_t)p);
+                (void)w;
+                _exit(1);
+            }
+        }
+    }
+    // NO es una guard page: un SEGV/BUS genuino sigue siendo eso. Restaurar
+    // la disposición default y re-raise (nunca enmascarar bugs reales).
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+// sigaltstack por worker: el fault ocurre con el stack AGOTADO, así que el
+// handler necesita su propia pila o faultea él mismo.
+static void nyx_stack_guard_thread_init(void) {
+    static __thread char* alt = NULL;
+    if (alt) return;
+    size_t asz = SIGSTKSZ < 32768 ? 32768 : (size_t)SIGSTKSZ;
+    alt = (char*)malloc(asz);
+    if (!alt) {
+        // F9: sin pila alterna, un overflow vuelve al SIGSEGV mudo — decirlo.
+        fprintf(stderr, "[nyx] no se pudo reservar la pila alterna del worker: los overflows de stack no se diagnosticarán\n");
+        return;
+    }
+    stack_t ss;
+    ss.ss_sp = alt;
+    ss.ss_size = asz;
+    ss.ss_flags = 0;
+    sigaltstack(&ss, NULL);
+}
+
+static void nyx_stack_guard_install(void) {
+    if (g_stack_handler_installed) return;
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = nyx_stack_fault_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    g_stack_handler_installed = 1;   // F7: marcar DESPUÉS de instalar
+}
 
 // Thread-local: which worker is running on this OS thread
 static __thread NyxWorker* g_current_worker = NULL;
@@ -131,9 +349,17 @@ int nyx_scheduler_debug_live_count(void) {
 // once unreachable (post reg_remove) the collector reclaims it on its own.
 static void reap(NyxGoroutine* g) {
     if (g->stack) {
-        GC_remove_roots(g->stack, g->stack + NYX_STACK_SIZE);
-        free(g->stack);
+        GC_remove_roots(g->stack, g->stack + g->stack_size);
+        guard_unregister(g->stack_base);
+        // Reciclar el mapeo (con su guard intacta) en vez de devolverlo al
+        // kernel; si el pool está lleno, munmap como siempre.
+        if (!stack_pool_put(g->stack_base)) {
+            munmap(g->stack_base, g->stack_total);
+        }
         g->stack = NULL;
+        g->stack_base = NULL;
+        g->stack_total = 0;
+        g->stack_size = 0;
     }
 }
 
@@ -307,6 +533,10 @@ static void goroutine_entry(uint32_t hi, uint32_t lo) {
 static void* worker_thread(void* arg) {
     NyxWorker* w = (NyxWorker*)arg;
     g_current_worker = w;
+    // Track 5c inc.1: pila alterna para el handler de overflow — el fault
+    // ocurre con el stack de la goroutine AGOTADO, así que sin sigaltstack
+    // el propio handler faultearía (y el proceso moriría mudo otra vez).
+    nyx_stack_guard_thread_init();
 
     while (w->active) {
         // Try to get a goroutine from own queue
@@ -431,6 +661,10 @@ static void* worker_thread(void* arg) {
 // ============================================================
 
 void nyx_scheduler_init(int num_workers) {
+    // F4 (review S4): resolver tamaño de stack + page size ACÁ, donde el
+    // proceso es single-thread — así el handler de señal nunca cae en el
+    // camino frío (getenv/strtol/sysconf no son async-signal-safe).
+    nyx_goroutine_stack_size();
     if (g_scheduler_initialized) return;
 
     if (num_workers <= 0) num_workers = NYX_NUM_WORKERS;
@@ -506,16 +740,36 @@ static int64_t spawn_internal(int64_t (*fn)(void*), void* arg, int detached) {
     g->result = 0;
     g->detached = detached;
 
-    // Allocate stack (plain malloc — invisible to GC until rooted below).
-    // `g` itself needs no explicit free on this failure path: it is
-    // GC_MALLOC'd and not yet registered/reachable, so it's simply collected.
-    g->stack = (char*)malloc(NYX_STACK_SIZE);
-    if (!g->stack) { return -1; }
+    // Track 5c inc.1: mmap RW + GUARD PAGE al fondo (el stack crece hacia
+    // abajo, así que la guard va en la página MÁS BAJA del mapeo). El
+    // handler de SIGSEGV la reconoce y reporta overflow en vez del SEGV
+    // mudo de antes. `g` no necesita free en este camino de error: es
+    // GC_MALLOC'd y aún no es alcanzable.
+    size_t stack_sz = nyx_goroutine_stack_size();
+    size_t guard_sz = g_page_size * NYX_GUARD_PAGES;   // F1: multi-página
+    size_t total_sz = stack_sz + guard_sz;
+    // Pool primero: un mapeo reciclado ya tiene su guard PROT_NONE puesta.
+    char* base = stack_pool_get();
+    if (!base) {
+        base = (char*)mmap(NULL, total_sz, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (base == MAP_FAILED) { return -1; }
+        if (mprotect(base, guard_sz, PROT_NONE) != 0) {
+            munmap(base, total_sz);
+            return -1;
+        }
+    }
+    nyx_stack_guard_install();
+    guard_register(base, base + guard_sz);
+    g->stack_base = base;
+    g->stack_total = total_sz;
+    g->stack = base + guard_sz;   // área útil: DESPUÉS de la guard
+    g->stack_size = stack_sz;
 
     // Set up ucontext
     getcontext(&g->context);
     g->context.uc_stack.ss_sp = g->stack;
-    g->context.uc_stack.ss_size = NYX_STACK_SIZE;
+    g->context.uc_stack.ss_size = stack_sz;
     g->context.uc_link = NULL;  // We manage context switching manually
 
     // Pass goroutine pointer as two 32-bit ints (ucontext_t limitation)
@@ -529,7 +783,7 @@ static int64_t spawn_internal(int64_t (*fn)(void*), void* arg, int detached) {
     // GC object may live in a stack local, invisible to the collector
     // otherwise. Paired with GC_remove_roots in reap(), using the exact same
     // range, in the opposite order (remove-before-free there).
-    GC_add_roots(g->stack, g->stack + NYX_STACK_SIZE);
+    GC_add_roots(g->stack, g->stack + g->stack_size);
 
     // Publish to the join registry before it can be observed running/done.
     reg_insert(g);
