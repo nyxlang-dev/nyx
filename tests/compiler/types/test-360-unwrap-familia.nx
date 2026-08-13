@@ -1,0 +1,39 @@
+// test-360: unwrap/unwrap_or/unwrap_err con payloads puntero y struct
+// (B1/B2/B3 del review 2026-08-13: unwrap String devolvía el puntero como
+// número; el RETORNO de unwrap_or nunca se migró; unwrap_err no tenía rama
+// float ni struct y devolvía 0 mudo).
+
+struct Fallo { code: int, detalle: String }
+struct Item { name: String, qty: int }
+
+fn main() -> int {
+    // B1: unwrap con clase puntero, SIN anotación en el let
+    let r1: Result<String, String> = Result.Ok("hola")
+    let s = r1.unwrap()
+    print(s)
+
+    // B2: el RETORNO de unwrap_or por el camino Ok (el review solo migró el default)
+    let r2: Result<String, String> = Result.Ok("directo")
+    let s2 = r2.unwrap_or("fallback")
+    print(s2)
+    let r3: Result<String, String> = Result.Err("x")
+    let s3 = r3.unwrap_or("fallback")
+    print(s3)
+
+    // B3: unwrap_err con payload struct
+    let r4: Result<int, Fallo> = Result.Err(Fallo { code: 7, detalle: "rota" })
+    let f = r4.unwrap_err()
+    print(f.code)
+    print(f.detalle)
+
+    // B3 bis: unwrap_err con payload float
+    let r5: Result<int, float> = Result.Err(2.5)
+    let ef = r5.unwrap_err()
+    print(ef)
+
+    // Struct por unwrap directo (ya cubierto por E1, no debe regresionar)
+    let r6: Result<Item, String> = Result.Ok(Item { name: "cosa", qty: 3 })
+    let it = r6.unwrap()
+    print(it.name)
+    return 0
+}

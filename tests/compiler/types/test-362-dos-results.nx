@@ -1,0 +1,29 @@
+// test-362 (C1/A2 del review 2026-08-13): dos instanciaciones de Result
+// vivas — la clave base "Result:Ok:0" era un slot GLOBAL último-escritor-
+// gana, así que el ORDEN de monomorfización decidía qué tipo veía cada
+// sitio. Este test pone la instancia String DESPUÉS de la struct (el orden
+// que envenenaba a test-357) y además un retorno `Result` PELADO (A2).
+
+struct Item { name: String, qty: int }
+
+fn da_item() -> Result<Item, String> { return Result.Ok(Item { name: "cosa", qty: 1 }) }
+fn da_nombre() -> Result<String, String> { return Result.Ok("hola") }
+
+// A2: Result PELADO conviviendo con los genéricos — no debe dar IR inválido.
+fn pelado() -> Result { return Result.Ok(3) }
+
+fn main() -> int {
+    let ri: Result<Item, String> = da_item()
+    match ri {
+        Result.Ok(it) => { print(it.name) }
+        Result.Err(e) => { print(e) }
+    }
+    let rs: Result<String, String> = da_nombre()
+    match rs {
+        Result.Ok(s) => { print(s) }
+        Result.Err(e2) => { print(e2) }
+    }
+    let rp = pelado()
+    if rp.is_ok() { print("pelado-ok") }
+    return 0
+}

@@ -1,0 +1,45 @@
+// test-369 (F2 del review adversarial del arco E1+E2): el ENCODER de payloads
+// coerciona al tipo DECLARADO del slot, no al de la expresión.
+//
+// `Result<float, String>` construido con `Result.Ok(3)` —Nyx ensancha
+// int→float en let/return, así que es código que un usuario escribe, y
+// semantic no lo caza: el payload de un enum genérico es wildcard—
+// guardaba el i64 3 con coerce_to_i64("i64", ...) mientras el decoder,
+// que mira el tipo declarado (float), hacía `bitcast i64 3 to double` =
+// los BITS del entero = 1.4822e-323. Silencioso, exit 0.
+//
+// Por qué era regresión del arco y no solo un bug viejo: antes el `?` (y la
+// familia unwrap) devolvían SIEMPRE i64 crudo y la coerción de `let x: float`
+// hacía el sitofp correcto río abajo; con el decoder tipado el bitcast del
+// decoder es el que manda, y el encoder tenía que ponerse a la par.
+//
+// Cubre las dos salidas del payload: el `?` y el match con binding.
+
+fn medir(b: bool) -> Result<float, String> {
+    if b { return Result.Err("bum") }
+    // Expresión ENTERA en un slot declarado float.
+    return Result.Ok(3)
+}
+
+fn usar(b: bool) -> Result<float, String> {
+    let v: float = medir(b)?
+    print(v)
+    return Result.Ok(v)
+}
+
+fn main() -> int {
+    let r = usar(false)
+    match medir(false) {
+        Result.Ok(f) => { print(f) }
+        Result.Err(e) => { print(e) }
+    }
+    // Control: el mismo slot con una expresión ya float no se toca.
+    match medir_float() {
+        Result.Ok(f2) => { print(f2) }
+        Result.Err(e2) => { print(e2) }
+    }
+    print("FLOAT PAYLOAD OK")
+    return 0
+}
+
+fn medir_float() -> Result<float, String> { return Result.Ok(2.5) }

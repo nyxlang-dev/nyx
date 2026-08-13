@@ -1,0 +1,23 @@
+// test-359: x.metodo()? usa el tipo de retorno declarado del método de impl
+// (B6 del review 2026-08-13: caía al i64 histórico e imprimía un puntero).
+
+struct Lector { origen: String }
+
+impl Lector {
+    fn leer(self) -> Result<String, String> {
+        return Result.Ok(self.origen + ":dato")
+    }
+}
+
+fn usa() -> Result<String, String> {
+    let l = Lector { origen: "disco" }
+    let s: String = l.leer()?
+    print(s)
+    return Result.Ok(s)
+}
+
+fn main() -> int {
+    let r = usa()
+    if r.is_ok() { print("OK") }
+    return 0
+}

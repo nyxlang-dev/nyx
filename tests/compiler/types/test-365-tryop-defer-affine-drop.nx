@@ -1,0 +1,32 @@
+// test-365 (Minor del review de Task 6, formaliza R5): el camino Err de `?`
+// también debe correr el drop determinista de un `#[affine]` con `impl Drop`
+// vivo en la fn — misma maquinaria de cleanup que defer (fn_needs_cleanup =
+// fn_has_defers OR drop_obligations.length() > 0, codegen.nx ~15804).
+
+#[affine]
+struct Recurso { id: int }
+
+impl Drop for Recurso {
+    fn drop(self) {
+        print("drop Recurso")
+    }
+}
+
+fn inner(f: bool) -> Result<int, String> {
+    if f { return Result.Err("bum") }
+    return Result.Ok(1)
+}
+
+fn conductor(f: bool) -> Result<int, String> {
+    let r: Recurso = Recurso { id: 1 }
+    let v = inner(f)?
+    return Result.Ok(v)
+}
+
+fn main() -> int {
+    print("-- Ok --")
+    let a: Result<int, String> = conductor(false)
+    print("-- Err --")
+    let b: Result<int, String> = conductor(true)
+    return 0
+}

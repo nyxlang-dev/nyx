@@ -1,0 +1,74 @@
+// test-368 (F1 del review adversarial del arco E1+E2): el tipo Nyx del SUJETO
+// de un enum se infiere igual en los TRES sitios que lo necesitan — `?`,
+// `match` y `while let` — vía infer_enum_subject_type.
+//
+// Antes: solo `?` sabía leer la firma del callee; `match` y `while let` solo
+// miraban un sujeto IDENTIFIER en ctx.variables. Con un sujeto LLAMADA
+// (`match f()`, `while let Option.Some(x) = f()` — la forma canónica de
+// iterar) el tipo quedaba "", el lookup del tipo declarado del slot fallaba
+// y el binding degradaba al i64 crudo: el %nyx_string* del payload se
+// imprimía como un número grande, silencioso, exit 0. Con payload struct el
+// binding quedaba tipado "int" y el field access leía basura (0).
+//
+// Cubre las tres formas de sujeto soportadas: identifier (control),
+// llamada y method_call. field_access/index quedan FUERA a propósito
+// (degradan al camino histórico, nunca adivinan).
+
+struct Item { name: String, qty: int }
+
+struct Fuente { base: int }
+
+impl Fuente {
+    fn dame(self) -> Result<String, String> {
+        return Result.Ok("desde-metodo")
+    }
+}
+
+fn saluda() -> Result<String, String> { return Result.Ok("hola") }
+
+fn trae_item() -> Result<Item, String> {
+    return Result.Ok(Item { name: "cosa", qty: 7 })
+}
+
+fn tomar(n: int) -> Option<String> {
+    if n > 2 { return Option.None }
+    return Option.Some("uno")
+}
+
+fn main() -> int {
+    // CONTROL: sujeto identifier anotado (el único que andaba antes).
+    let s: Result<String, String> = saluda()
+    match s {
+        Result.Ok(v) => { print("control-" + v) }
+        Result.Err(e) => { print(e) }
+    }
+
+    // Sujeto LLAMADA, payload String.
+    match saluda() {
+        Result.Ok(v2) => { print(v2) }
+        Result.Err(e2) => { print(e2) }
+    }
+
+    // Sujeto LLAMADA, payload STRUCT (el binding tipado "int" leía basura).
+    match trae_item() {
+        Result.Ok(it) => { print(it.name) }
+        Result.Err(e3) => { print(e3) }
+    }
+
+    // Sujeto METHOD_CALL.
+    let f: Fuente = Fuente { base: 1 }
+    match f.dame() {
+        Result.Ok(v4) => { print(v4) }
+        Result.Err(e4) => { print(e4) }
+    }
+
+    // while let sobre una LLAMADA — la forma canónica de iterar.
+    var i = 0
+    while let Option.Some(x) = tomar(i) {
+        print(x)
+        i = i + 1
+    }
+
+    print("SUBJECT OK")
+    return 0
+}

@@ -1,0 +1,27 @@
+// test-363 (A1 del review 2026-08-13): `?` dentro de una fn que devuelve un
+// enum PROPIO con convención Ok/Err compilaba y andaba antes del arco.
+// NYX1023 no debe disparar: ty_parse colapsa los nombres de enum a TyStruct
+// (types.nx:560), así que semantic consulta el registry de enums declarados.
+
+enum ParseResult {
+    Ok(int),
+    Err(String)
+}
+
+fn parsea(s: String) -> ParseResult {
+    if s.length() > 0 { return ParseResult.Ok(s.length()) }
+    return ParseResult.Err("vacio")
+}
+
+fn pipeline(s: String) -> ParseResult {
+    let n = parsea(s)?
+    return ParseResult.Ok(n * 2)
+}
+
+fn main() -> int {
+    match pipeline("abc") {
+        ParseResult.Ok(n) => { print(n) }
+        ParseResult.Err(e) => { print(e) }
+    }
+    return 0
+}

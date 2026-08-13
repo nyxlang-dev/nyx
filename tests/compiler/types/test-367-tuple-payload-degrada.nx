@@ -1,0 +1,32 @@
+// test-367 (A5, review adversarial 2026-08-13): payload de enum genérico
+// que es una TUPLA (`Result<(int, String), String>`). Recorte de
+// docs/superpowers/reviews/2026-08-13-arco-e1-e2-repros/r6-tuple-payload.nx.
+//
+// Cadena de la corrupción (medida, no adivinada — ver comentario en
+// decode_payload, codegen.nx ~15433): extract_type_args_from_str no respeta
+// paréntesis al partir los type-args de "Result<(int, String), String>" —
+// la coma DENTRO de la tupla se cuenta como separador de type-arg de
+// Result, así que el slot 0 de Ok termina con el tipo Nyx basura "(int"
+// (truncado). nyx_type_to_llvm mapea esa basura a un nombre inventado
+// ("%__Tuple_in") que NADIE registra ni emite — decode_payload NO debe
+// emitir inttoptr+load sobre eso (loading unsized types = IR inválido).
+//
+// Contrato esperado: el programa COMPILA y corre con exit 0. El valor del
+// payload tupla se degrada al camino histórico (i64 crudo, un puntero
+// interpretado como número) — no es el valor correcto, es el fallback
+// documentado y medido (ver expected/).
+fn mk() -> Result<(int, String), String> {
+    return Result.Ok((7, "cosa"))
+}
+
+fn main() -> int {
+    let r: Result<(int, String), String> = mk()
+    match r {
+        Result.Ok(t) => { print(t.0) },
+        Result.Err(e) => { print("err") }
+    }
+    let u = mk()
+    let t2: (int, String) = u.unwrap()
+    print(t2.0)
+    return 0
+}

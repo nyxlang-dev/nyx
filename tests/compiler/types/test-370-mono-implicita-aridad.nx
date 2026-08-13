@@ -1,0 +1,57 @@
+// test-370 (F5 del review adversarial del arco E1+E2): la monomorfización
+// de un enum genérico respeta la ARIDAD del template — un llamador con
+// menos type-args que type-params ya no mata al compilador.
+//
+// monomorphize_enum sustituye POSICIONALMENTE type_args contra type_params.
+// Dos llamadores reales pasaban de menos: la mono IMPLÍCITA de la
+// construcción (arma siempre UN type-arg — se escribió para `Option.Some(21)`
+// y es ciega a que `Result<T, E>` tiene dos) y extract_type_args_from_str
+// partiendo un type-arg con flecha (`Result<Fn(int)->int, String>`: el '>'
+// de la flecha cierra el depth y deja UN solo arg). En la variante `Err(E)`
+// el loop hacía `type_args[1]` sobre un array de largo 1 → "Índice 1 fuera de
+// rango" = MUERTE del compilador, sin diagnóstico y sin .ll. Los faltantes se
+// completan con "int" (el default histórico de un slot sin tipo conocido),
+// que degrada al payload i64 de siempre en vez de abortar.
+//
+// Este archivo es test-362 con `pelado()` movida ARRIBA: la definición de
+// accidente de orden — el mismo programa, reordenado, mataba al compilador.
+
+struct Item { name: String, qty: int }
+
+// PRIMER uso de Result en el archivo y sin type-args en el contexto: la
+// clave base no existe todavía → mono implícita de aridad 1 sobre un enum
+// de aridad 2.
+fn pelado() -> Result { return Result.Ok(3) }
+
+// Type-arg con flecha: el splitter deja UN solo arg ("Fn(int)-"), aridad 2.
+fn dame_fn() -> Result<Fn(int) -> int, String> {
+    return Result.Ok(hacer_adder(5))
+}
+
+fn hacer_adder(n: int) -> Fn(int) -> int {
+    fn add(x: int) -> int { return n + x }
+    return add
+}
+
+fn da_item() -> Result<Item, String> { return Result.Ok(Item { name: "cosa", qty: 1 }) }
+fn da_nombre() -> Result<String, String> { return Result.Ok("hola") }
+
+fn main() -> int {
+    let ri: Result<Item, String> = da_item()
+    match ri {
+        Result.Ok(it) => { print(it.name) }
+        Result.Err(e) => { print(e) }
+    }
+    let rs: Result<String, String> = da_nombre()
+    match rs {
+        Result.Ok(s) => { print(s) }
+        Result.Err(e2) => { print(e2) }
+    }
+    let rp = pelado()
+    if rp.is_ok() { print("pelado-ok") }
+
+    let rf: Result<Fn(int) -> int, String> = dame_fn()
+    let f: Fn(int) -> int = rf.unwrap()
+    print(f(3))
+    return 0
+}

@@ -1,0 +1,18 @@
+// test-364 (D1 del review 2026-08-13): el camino Err de `?` emitía `ret`
+// crudo y salteaba defer (y el drop determinista de #[affine]). El defer
+// debe correr tanto en el camino Ok como en el early-return del Err.
+
+fn falla() -> Result<int, String> { return Result.Err("boom") }
+
+fn usa() -> Result<int, String> {
+    defer print("limpieza")
+    let n = falla()?
+    print(n)
+    return Result.Ok(n)
+}
+
+fn main() -> int {
+    let r = usa()
+    if r.is_err() { print("err-visto") }
+    return 0
+}

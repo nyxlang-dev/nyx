@@ -1,0 +1,15 @@
+// E2: el camino Err de `?` hace `ret` del enum tal cual, así que la fn que lo
+// usa tiene que devolver Result. Medido 2026-08-13: sin este chequeo el
+// programa NO se corrompe — clang lo rechaza con "value doesn't match
+// function result type 'i64'" apuntando a script.ll, sin la línea del usuario
+// ni explicación. Este test fija que el error salga del compilador, legible.
+// Expected stderr (contains): "NYX1023"
+fn interno() -> Result<int, String> {
+    return Result.Ok(1)
+}
+
+fn main() -> int {
+    let v: int = interno()?
+    print(v)
+    return 0
+}

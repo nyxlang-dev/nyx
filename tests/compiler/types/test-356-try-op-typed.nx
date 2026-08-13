@@ -1,0 +1,102 @@
+// test-356 — el operador `?` extrae el Ok con su TIPO REAL (arco E2).
+// codegen_try_op hacía `load i64` y devolvía "i64" fijo. Medido 2026-08-12
+// con 12 sondas: los payloads puntero/struct se rompen solo donde NO hay
+// anotación de la que sacar el tipo (let pelado, ? inline); el payload
+// float se rompe SIEMPRE, incluso anotado, porque la coerción del let
+// emite `sitofp` sobre un patrón de bits que nunca fue un entero (3.5
+// vuelve como 4.6e18).
+struct Item { id: int, name: String, price: int }
+
+fn s_interno(f: bool) -> Result<String, String> {
+    if f { return Result.Err("bum") }
+    return Result.Ok("valor-ok")
+}
+
+fn i_interno(f: bool) -> Result<Item, String> {
+    if f { return Result.Err("bum") }
+    return Result.Ok(Item { id: 7, name: "cosa", price: 100 })
+}
+
+fn f_interno(f: bool) -> Result<float, String> {
+    if f { return Result.Err("bum") }
+    return Result.Ok(3.5)
+}
+
+fn n_interno(f: bool) -> Result<int, String> {
+    if f { return Result.Err("bum") }
+    return Result.Ok(42)
+}
+
+// 1) String SIN anotar (daba el puntero como número)
+fn w_str_pelado(f: bool) -> Result<String, String> {
+    let v = s_interno(f)?
+    return Result.Ok("vi:" + v)
+}
+
+// 2) String inline en una expresión, sin binding (mismo síntoma)
+fn w_str_inline(f: bool) -> Result<String, String> {
+    return Result.Ok("vi:" + s_interno(f)?)
+}
+
+// 3) struct SIN anotar (fallaba MUDO: string vacío)
+fn w_struct_pelado(f: bool) -> Result<String, String> {
+    let it = i_interno(f)?
+    return Result.Ok(it.name)
+}
+
+// 4) float ANOTADO — el peor: falla en la forma idiomática
+fn w_float(f: bool) -> Result<float, String> {
+    let v: float = f_interno(f)?
+    return Result.Ok(v + 1.0)
+}
+
+// controles: caminos que YA andaban y no se deben romper
+fn c_str_anotado(f: bool) -> Result<String, String> {
+    let v: String = s_interno(f)?
+    return Result.Ok("vi:" + v)
+}
+
+fn c_int(f: bool) -> Result<int, String> {
+    let v: int = n_interno(f)?
+    return Result.Ok(v + 1)
+}
+
+fn main() -> int {
+    let a: Result<String, String> = w_str_pelado(false)
+    let sa: String = a.unwrap()
+    assert(sa == "vi:valor-ok")
+    print(sa)
+
+    let b: Result<String, String> = w_str_inline(false)
+    let sb: String = b.unwrap()
+    assert(sb == "vi:valor-ok")
+    print(sb)
+
+    let c: Result<String, String> = w_struct_pelado(false)
+    let sc: String = c.unwrap()
+    assert(sc == "cosa")
+    print(sc)
+
+    let d: Result<float, String> = w_float(false)
+    let fd: float = d.unwrap()
+    assert(fd > 4.4 and fd < 4.6)
+    print(fd)
+
+    let e: Result<String, String> = c_str_anotado(false)
+    let se: String = e.unwrap()
+    assert(se == "vi:valor-ok")
+
+    let g: Result<int, String> = c_int(false)
+    let ng: int = g.unwrap()
+    assert(ng == 43)
+    print(ng)
+
+    // el Err se propaga tal cual (mismo E, sin conversión: `?` v1 no tiene From)
+    let h: Result<String, String> = w_str_pelado(true)
+    assert(h.is_err())
+    let hf: Result<float, String> = w_float(true)
+    assert(hf.is_err())
+
+    print("try-op-typed OK")
+    return 0
+}

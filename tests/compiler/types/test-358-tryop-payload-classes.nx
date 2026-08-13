@@ -1,0 +1,32 @@
+// test-358: el operador ? extrae el Ok en TODAS las clases de payload
+// (regresión A3 del review 2026-08-13: char/i8/i16/i32/f32 daban
+// "invalid cast opcode for cast from 'i64' to 'i8'").
+
+fn da_char() -> Result<char, String> { return Result.Ok('x') }
+fn da_i32() -> Result<i32, String> { return Result.Ok(42) }
+fn da_f32() -> Result<f32, String> { return Result.Ok(1.5) }
+fn da_str() -> Result<String, String> { return Result.Ok("hola") }
+fn da_int() -> Result<int, String> { return Result.Ok(7) }
+fn da_bool() -> Result<bool, String> { return Result.Ok(true) }
+
+fn usa() -> Result<int, String> {
+    let c: char = da_char()?
+    print(c)
+    let n: i32 = da_i32()?
+    print(n)
+    let f: f32 = da_f32()?
+    print(f)
+    let s: String = da_str()?
+    print(s)
+    let i: int = da_int()?
+    print(i)
+    let b: bool = da_bool()?
+    print(b)
+    return Result.Ok(0)
+}
+
+fn main() -> int {
+    let r = usa()
+    if r.is_ok() { print("OK") }
+    return 0
+}

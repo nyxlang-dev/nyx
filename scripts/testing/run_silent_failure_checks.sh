@@ -374,24 +374,61 @@ fn main() -> int {
 }
 NX
 
-    name="clang-link-failure-attribution-ir-bug"
+    # ARCO E1 (2026-08-12): este fixture ERA el repro del bug de payload
+    # struct (Option<Item> con 3 campos → IR inválido → fallo de link), y el
+    # check exigía que FALLARA con la atribución de clase (a). El bug se
+    # arregló (coerce_to_i64 en codegen_enum_construct), así que el fixture
+    # se da vuelta: ahora es un test de REGRESIÓN y debe buildear LIMPIO.
+    # Cubre más que test-355: match con binding de payload, Array<Item> y un
+    # campo float en el struct.
+    name="struct-payload-option-links-clean"
     (cd "$PROJ_BAD/bad_repro" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/$NYX_BUILD" build) > "$TMPDIR/bad_build.out" 2>&1
     bad_build_rc=$?
     (cd "$PROJ_GOOD/good_repro" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/$NYX_BUILD" build) > "$TMPDIR/good_build.out" 2>&1
     good_build_rc=$?
 
-    if [ "$bad_build_rc" -ne 0 ] \
-       && grep -q "Nyx compiler BUG" "$TMPDIR/bad_build.out" \
-       && grep -q "defined with type" "$TMPDIR/bad_build.out" \
-       && [ "$good_build_rc" -eq 0 ] \
-       && ! grep -q "Nyx compiler BUG" "$TMPDIR/good_build.out"; then
+    if [ "$bad_build_rc" -eq 0 ] \
+       && ! grep -q "Nyx compiler BUG" "$TMPDIR/bad_build.out" \
+       && [ "$good_build_rc" -eq 0 ]; then
         printf "  ✓ %s\n" "$name"
         PASS=$((PASS + 1))
     else
         printf "  ✗ %s\n" "$name"
-        printf "    bad rc=%d (esperado != 0 con atribución), good rc=%d (esperado 0 — control positivo)\n" "$bad_build_rc" "$good_build_rc"
-        sed 's/^/      bad: /' "$TMPDIR/bad_build.out"
-        sed 's/^/      good: /' "$TMPDIR/good_build.out"
+        printf "    struct-payload rc=%d (esperado 0 desde el arco E1), control rc=%d (esperado 0)\n" "$bad_build_rc" "$good_build_rc"
+        sed 's/^/      payload: /' "$TMPDIR/bad_build.out"
+        sed 's/^/      control: /' "$TMPDIR/good_build.out"
+        FAIL=$((FAIL + 1))
+        FAILED+=("$name")
+    fi
+
+    # La ATRIBUCIÓN de fallos de link sigue siendo valiosa, pero necesitaba un
+    # disparador que NO dependa de un bug vivo (el anterior murió con su bug).
+    # Clase (b) de clang_failure_attribution_bash: símbolo indefinido — se
+    # dispara con un `extern "C"` que no existe en ninguna lib, que es código
+    # de usuario legítimo y falla estable. La clase (a) (IR inválido) no tiene
+    # disparador estable POR DISEÑO: solo la produce un bug del compilador.
+    name="clang-link-failure-attribution-undefined-symbol"
+    PROJ_SYM="$TMPDIR/proj_sym"
+    mkdir -p "$PROJ_SYM"
+    (cd "$PROJ_SYM" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/$NYX_BUILD" init sym_repro >/dev/null 2>&1)
+    cat > "$PROJ_SYM/sym_repro/src/main.nx" <<'NXSYM'
+extern "C" fn nyx_simbolo_que_no_existe_en_ninguna_lib(x: int) -> int
+
+fn main() -> int {
+    let v: int = nyx_simbolo_que_no_existe_en_ninguna_lib(1)
+    print(v)
+    return 0
+}
+NXSYM
+    (cd "$PROJ_SYM/sym_repro" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/$NYX_BUILD" build) > "$TMPDIR/sym_build.out" 2>&1
+    sym_build_rc=$?
+    if [ "$sym_build_rc" -ne 0 ] && grep -q "symbol not found at link time" "$TMPDIR/sym_build.out"; then
+        printf "  ✓ %s\n" "$name"
+        PASS=$((PASS + 1))
+    else
+        printf "  ✗ %s\n" "$name"
+        printf "    rc=%d (esperado != 0 con la atribución de símbolo indefinido)\n" "$sym_build_rc"
+        sed 's/^/      sym: /' "$TMPDIR/sym_build.out"
         FAIL=$((FAIL + 1))
         FAILED+=("$name")
     fi
@@ -554,6 +591,92 @@ NX
         printf "    bad rc=%d (esperado 0 con 'cannot bind port 18741' en stderr), good rc=%d (esperado 0 SIN mensaje — control negativo)\n" "$bf_bad_rc" "$bf_good_rc"
         sed 's/^/      bad stderr: /' "$TMPDIR/bf_bad.err" 2>/dev/null | head -3
         sed 's/^/      good stderr: /' "$TMPDIR/bf_good.err" 2>/dev/null | head -3
+        FAIL=$((FAIL + 1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Check: tryop-sin-anotacion-no-cuela — F3 del review adversarial del arco
+# E1+E2 (2026-08-13). Una fn SIN anotación de retorno tiene free-pass de
+# NYX1023 (semantic no puede validar lo que no se declaró) y codegen la emite
+# como `define i64`. Con un `defer` en el medio, el camino Err del `?` había
+# ganado una rama `ptrtoint i8* → i64` que hacía COMPILAR el módulo: la fn
+# devolvía el PUNTERO del enum Err como número y el error del callee se
+# evaporaba — silently-wrong, exit 0. Peor: la MISMA fn sin el `defer` no
+# compilaba. Agregar un `defer` no puede convertir un error de compilación en
+# corrupción silenciosa; hoy ambas formas caen al `ret i8*` histórico y clang
+# rechaza el módulo ("value doesn't match function result type 'i64'").
+#
+# Este check NO vive en tests/compiler/types/ (el runner de regresión exige
+# compilar+linkear+exit 0) ni en tests/compiler/errors/ (ese runner exige
+# «check FAILED», o sea un error de SEMANTIC — este sale de clang). Reemplaza
+# al viejo test-366-tryop-unannotated-defer, que documentaba justamente el
+# comportamiento que acá se revierte.
+#
+# Control positivo obligatorio: el MISMO programa con la anotación
+# `-> Result<int, String>` compila, linkea y corre con exit 0.
+# ------------------------------------------------------------------
+if command -v clang >/dev/null 2>&1; then
+    TA_RT="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c"
+    TA_LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+    name="tryop-sin-anotacion-no-cuela"
+
+    cat > "$TMPDIR/ta_bad.nx" <<'NX'
+fn falla() -> Result<int, String> { return Result.Err("boom") }
+
+fn sin_anotar() {
+    defer print("cleanup")
+    let n = falla()?
+    print(n)
+}
+
+fn main() -> int {
+    sin_anotar()
+    print("fin")
+    return 0
+}
+NX
+
+    cat > "$TMPDIR/ta_good.nx" <<'NX'
+fn falla() -> Result<int, String> { return Result.Err("boom") }
+
+fn anotada() -> Result<int, String> {
+    defer print("cleanup")
+    let n = falla()?
+    print(n)
+    return Result.Ok(n)
+}
+
+fn main() -> int {
+    let r = anotada()
+    print("fin")
+    return 0
+}
+NX
+
+    cp "$TMPDIR/ta_bad.nx" script.nx
+    ./nyx_bootstrap > "$TMPDIR/ta_bad_gen.log" 2>&1
+    ta_bad_link=0
+    clang -O2 script.ll $TA_RT $TA_LIBS -o "$TMPDIR/ta_bad_bin" > "$TMPDIR/ta_bad_link.log" 2>&1 || ta_bad_link=1
+
+    cp "$TMPDIR/ta_good.nx" script.nx
+    ta_good_rc=-1
+    if ./nyx_bootstrap > "$TMPDIR/ta_good_gen.log" 2>&1 && \
+       clang -O2 script.ll $TA_RT $TA_LIBS -o "$TMPDIR/ta_good_bin" > "$TMPDIR/ta_good_link.log" 2>&1; then
+        timeout 20 "$TMPDIR/ta_good_bin" > "$TMPDIR/ta_good.out" 2>&1
+        ta_good_rc=$?
+    fi
+
+    if [ "$ta_bad_link" -eq 1 ] && grep -q "doesn't match function result type" "$TMPDIR/ta_bad_link.log" \
+       && [ "$ta_good_rc" -eq 0 ] && grep -q "cleanup" "$TMPDIR/ta_good.out"; then
+        printf "  ✓ %s\n" "$name"
+        PASS=$((PASS + 1))
+    else
+        printf "  ✗ %s\n" "$name"
+        printf "    bad link=%d (esperado 1 con 'doesn't match function result type'), good rc=%d (esperado 0 con 'cleanup')\n" "$ta_bad_link" "$ta_good_rc"
+        sed 's/^/      bad link: /' "$TMPDIR/ta_bad_link.log" 2>/dev/null | head -3
+        sed 's/^/      good out: /' "$TMPDIR/ta_good.out" 2>/dev/null | head -3
         FAIL=$((FAIL + 1))
         FAILED+=("$name")
     fi

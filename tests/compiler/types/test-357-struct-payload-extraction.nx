@@ -1,0 +1,65 @@
+// test-357 — extracción de payload STRUCT en los 4 caminos que NO tienen
+// anotación de tipo del destino (arco E1, segunda mitad). Medido 2026-08-12:
+// con la construcción arreglada, `let x: Item = r.unwrap()` funciona porque
+// la anotación coerciona el i64 de vuelta; estos cuatro NO tienen de dónde
+// sacar el tipo y trataban el puntero al box como si fuera el valor:
+//   - match con binding: el GC intentaba expandir 8 PETABYTES
+//   - let sin anotar: imprimía 0
+//   - unwrap_or sobre Err: devolvía basura en vez del default
+//   - map: fallaba mudo
+struct Item {
+    id: int,
+    name: String,
+    price: int,
+}
+
+fn mk(ok: bool) -> Result<Item, String> {
+    if ok {
+        return Result.Ok(Item { id: 7, name: "cosa", price: 100 })
+    }
+    return Result.Err("no")
+}
+
+fn nombre(it: Item) -> String {
+    return it.name
+}
+
+fn main() -> int {
+    // 1) match con binding de payload (era corrupción de heap)
+    let r: Result<Item, String> = mk(true)
+    var visto: String = ""
+    match r {
+        Result.Ok(it) => { visto = it.name },
+        Result.Err(e) => { visto = "err" }
+    }
+    assert(visto == "cosa")
+    print(visto)
+
+    // 2) let SIN anotación (era 0)
+    let r2: Result<Item, String> = mk(true)
+    let got = r2.unwrap()
+    assert(got.id == 7)
+    print(got.id)
+
+    // 3) unwrap_or sobre Err debe dar el DEFAULT (daba basura)
+    let r3: Result<Item, String> = mk(false)
+    let d: Item = Item { id: 0, name: "DEFAULT", price: 0 }
+    let got3: Item = r3.unwrap_or(d)
+    assert(got3.name == "DEFAULT")
+    print(got3.name)
+
+    // 4) map con fn que toma el struct (fallaba mudo)
+    let r4: Result<Item, String> = mk(true)
+    let m: Result<String, String> = r4.map(nombre)
+    let s: String = m.unwrap()
+    assert(s == "cosa")
+    print(s)
+
+    // control: el camino anotado que YA funcionaba sigue funcionando
+    let r5: Result<Item, String> = mk(true)
+    let ok5: Item = r5.unwrap()
+    assert(ok5.price == 100)
+
+    print("extraction OK")
+    return 0
+}

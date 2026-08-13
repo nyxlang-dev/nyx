@@ -1,0 +1,35 @@
+// test-355 — Result<T,E> con payload STRUCT multi-campo (arco E1 del spec de
+// errores tipados). Antes: la construcción del enum guardaba cada arg como
+// i64 y un struct por valor (%Item = { i64, ptr, i64 }) no matcheaba ninguna
+// rama de conversión → `store i64 %reg-de-tipo-%Item` = IR inválido que
+// rompía el LINK (documentado en LLM.md y TASKS.md). Sin esto no existe
+// `Result<Response, Error>` con structs reales, o sea no hay modelo de
+// errores tipados posible.
+struct Item {
+    id: int,
+    name: String,
+    price: int,
+}
+
+fn buscar(existe: bool) -> Result<Item, String> {
+    if existe {
+        let it: Item = Item { id: 7, name: "cosa", price: 100 }
+        return Result.Ok(it)
+    }
+    return Result.Err("no existe")
+}
+
+fn main() -> int {
+    let r: Result<Item, String> = buscar(true)
+    assert(r.is_ok())
+    let got: Item = r.unwrap()
+    assert(got.id == 7)
+    assert(got.name == "cosa")
+    assert(got.price == 100)
+    print(got.name)
+
+    let e: Result<Item, String> = buscar(false)
+    assert(e.is_err())
+    print("struct-payload OK")
+    return 0
+}

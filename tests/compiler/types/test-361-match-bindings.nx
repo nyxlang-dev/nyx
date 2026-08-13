@@ -1,0 +1,52 @@
+// test-361: los bindings de match COPIAN el payload (A4: mutar el binding no
+// escribe dentro del enum), while let con payload struct no segfaultea (B4).
+//
+// B5 (patron anidado de DOS niveles de enum, Option.Some(Result.Ok(it)) )
+// se investigo y NO se pudo demostrar en este test: parse_single_pattern
+// (modulo parser, funcion parse_single_pattern) clasifica el sub-patron
+// interno (Result.Ok(it)) como
+// nested_match_pattern en vez de match_pattern incluso cuando su unico
+// sub-patron es un identifier_pattern plano -- el is_nested de esa funcion
+// se decide comparando sub_pat.node_type sobre un valor tipado Array
+// (parse_single_pattern devuelve -> Array, no -> ASTNode), fuera del
+// contrato de esta task (codegen.nx). Con esa forma de AST,
+// semantic.nx:validate_match_arm tampoco declara el binding (NYX1002 it not
+// declared) -- el programa nunca llega a codegen. Repro y hallazgo completo:
+// docs/superpowers/reviews/2026-08-13-arco-e1-e2-repros/r2-nested2-struct.nx
+// mas task-3-report.md. El sitio de codegen para el binding INTERNO de un
+// patron anidado de 2 niveles (la 3ra copia de la tabla, alcanzable cuando
+// el sub-patron SI llega como match_pattern) fue ruteado por
+// bind_payload_var de todas formas -- verificado con NYX_SKIP_SEMANTIC=1
+// sobre r2-nested2-struct.nx (ver reporte).
+
+struct Item { name: String, qty: int }
+
+fn main() -> int {
+    // A4: mutar el binding NO altera el enum de origen
+    let r: Result<Item, String> = Result.Ok(Item { name: "cosa", qty: 1 })
+    match r {
+        Result.Ok(it) => {
+            it.name = "hackeado"
+            print(it.name)
+        }
+        Result.Err(e) => { print(e) }
+    }
+    match r {
+        Result.Ok(it2) => { print(it2.name) }
+        Result.Err(e2) => { print(e2) }
+    }
+
+    // B4: while let con payload struct
+    var pendientes: Array = []
+    pendientes.push(1)
+    var vueltas = 0
+    let w: Result<Item, String> = Result.Ok(Item { name: "wl", qty: 9 })
+    while let Result.Ok(x) = w {
+        print(x.name)
+        print(x.qty)
+        vueltas = vueltas + 1
+        if vueltas >= 1 { break }
+    }
+
+    return 0
+}

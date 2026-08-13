@@ -1,0 +1,4 @@
+-- Ok --
+drop Recurso
+-- Err --
+drop Recurso

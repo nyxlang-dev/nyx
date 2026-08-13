@@ -101,6 +101,11 @@ TESTS=(
   # builtin_fn_ret — el SPEC viejo decía `let now: int = datetime_now()` y el
   # checker callaba → IR inválido. Ahora es NYX1003.
   "tests/compiler/errors/test-datetime-now-int-annotation.nx|type mismatch in 'now': expected int, got String"
+  # E2 (errores tipados): el camino Err de `?` hace `ret` del enum tal cual,
+  # así que la fn que lo usa DEBE devolver Result. Sin este chequeo el error
+  # lo tiraba clang sobre script.ll ("value doesn't match function result
+  # type 'i64'"), sin la línea del usuario ni explicación.
+  "tests/compiler/errors/test-tryop-outside-result-fn.nx|NYX1023"
 )
 
 for entry in "${TESTS[@]}"; do

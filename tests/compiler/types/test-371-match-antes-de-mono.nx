@@ -1,0 +1,32 @@
+// test-371 (F4 del review adversarial del arco E1+E2): el match resuelve el
+// tag de la variante con contains-guard + mono implícita, nunca con el panic
+// del runtime de Maps.
+//
+// `ctx.enum_variants.get("Result:Ok")` a secas mataba al COMPILADOR con
+// "panic: Clave 'Result:Ok' no encontrada en map" —sin línea, sin código
+// NYXxxxx— cuando el match se codegenea ANTES de que cualquier sitio
+// monomorfice el enum genérico (accidente de ORDEN DE ARCHIVO: la fn que
+// matchea arriba, la que construye abajo) y el sujeto no aporta tipo. Acá el
+// sujeto es un FIELD ACCESS, que queda fuera de infer_enum_subject_type a
+// propósito, así que ni siquiera la inferencia compartida (F1) lo salva: lo
+// salva la mono implícita del resolvedor de tags, espejo de la que la
+// CONSTRUCCIÓN ya tenía desde 2026-07-22. Si aun así faltara, el error es
+// NYX2012 bilingüe con exit, jamás el panic.
+//
+// La construcción vive DESPUÉS del match a propósito — mover `hacer` arriba
+// hace pasar el programa por el camino ya cubierto y el test deja de probar
+// lo que dice probar.
+
+struct Caja { r: Result<int, String> }
+
+fn main() -> int {
+    let c = hacer()
+    match c.r {
+        Result.Ok(v) => { print(v) }
+        Result.Err(e) => { print(e) }
+    }
+    print("MATCH PRE-MONO OK")
+    return 0
+}
+
+fn hacer() -> Caja { return Caja { r: Result.Ok(5) } }

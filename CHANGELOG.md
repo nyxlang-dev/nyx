@@ -7,6 +7,50 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.27.0] — 2026-08-13 — Errores tipados E1+E2: Result<T,E> real de punta a punta
+
+**MINOR autorizado por Ottavio (2026-08-13).** Cambio de
+política incluido: NYX1023 (el `?` exige fn que devuelva Result o un enum
+declarado del usuario) convierte en error programas que antes compilaban mal.
+
+### Added
+- **NYX1023**: el operador `?` fuera de una fn que devuelve `Result` es error
+  bilingüe con hint; enums declarados del usuario reciben free pass VISIBLE
+  (`NYX_STRICT=warn`). **NYX2012**: variante de enum irresoluble en `match`
+  es diagnóstico bilingüe (antes: panic del runtime de Maps del compilador).
+- Tests de regresión 355-365 y 367-371 (+16 netos) cubriendo payload struct,
+  clases de payload en `?`, familia unwrap, bindings de match/while-let,
+  convivencia de instanciaciones, defer en el camino Err, tuplas degradadas,
+  sujetos no-identifier y aridad de la mono implícita.
+
+### Fixed
+- **`Result<Struct,E>`/`Option<Struct>` end-to-end**: construcción boxea por
+  `coerce_to_i64` (GC-safe medido) y TODA extracción decodifica por
+  `decode_payload`, inverso exacto del encoder con whitelist por clase —
+  `?`, `unwrap`/`unwrap_or`/`unwrap_err`, los 4 sitios de binding de
+  match/while-let. Antes: link error o corrupción silenciosa.
+- El binding de `match` COPIA el payload (mutarlo ya no escribe dentro del
+  enum); `while let` con payload struct ya no segfaultea.
+- `monomorphize_enum` ya no registra tipos bajo la clave base global
+  (último-escritor-gana): dos instanciaciones de `Result` conviven y el
+  resultado no depende del orden de monomorfización.
+- Inferencia de sujeto compartida (`infer_enum_subject_type`): `match f()`,
+  `while let Option.Some(x) = f()` y `x.metodo()?` resuelven el tipo real
+  (antes: puntero impreso como número, exit 0).
+- El constructor coerciona a la clase DECLARADA del slot (`Result<float,E>`
+  con `Ok(3)` da `3.0`, no bits); el camino Err del `?` pasa por
+  `defer_cleanup` (defer y drop de `#[affine]` corren en el early-return) y
+  una fn sin anotación con `defer`+`?` vuelve a ser error ruidoso.
+- La mono implícita respeta la aridad del template (fin del crash "Índice 1
+  fuera de rango" del compilador); payload tupla degrada a i64 seguro en vez
+  de romper el IR.
+
+### Notas
+- 16 residuos catalogados con causa raíz en TASKS.md
+  (`[arco:errores-tipados-E1E2]`); los preexistentes D2/D3 del review
+  original siguen abiertos a propósito (gated por decisiones E7/spec).
+- Fixed point global byte-idéntico (6 módulos); suites completas verdes.
+
 ## [0.26.0] — 2026-08-12 — S4: stacks de goroutine con guard page (Track 5c inc.1)
 
 Cierre de la campaña multi-arco. Spec deliberada con Ottavio
