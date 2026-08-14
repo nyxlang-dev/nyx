@@ -20,6 +20,13 @@
 //   "io"         — fallo de E/S genérico (el resto de errno)
 //   "invalid"    — argumento/estado inválido (EINVAL)
 //   "oom"        — sin memoria (ENOMEM)
+//   "eof"        — fin de stream ESPERADO (code 0 — agregado en E5.2b para
+//                  las centinelas que necesitan distinguir EOF de un Ok
+//                  vacío legítimo, ej. try_tcp_read_line/try_tcp_read_exact
+//                  en std/net.nx). NO es un fallo: es información de
+//                  control de flujo, como io.EOF en Go. errno_to_kind NO lo
+//                  mapea (code 0 real jamás llega a esta función) — el
+//                  kind lo arma el caller directo vía err_new(0, "eof", …).
 
 pub struct Error {
     code: int,
@@ -48,4 +55,13 @@ pub fn errno_to_kind(code: int) -> String {
 // un log estructurado parsea. `kind: msg (code N)`.
 pub fn error_to_string(e: Error) -> String {
     return e.kind + ": " + e.msg + " (code " + int_to_string(e.code) + ")"
+}
+
+// Distingue EOF-esperado de un fallo real. Necesaria porque Err{code:0}
+// rompe el patrón habitual "code != 0 = fallo" (0 normalmente es éxito) —
+// comparar e.kind == "eof" a mano en cada call-site es frágil y se
+// desincroniza si el vocabulario de kind cambia; este helper es el único
+// lugar que conoce el string literal.
+pub fn is_eof(e: Error) -> bool {
+    return e.kind == "eof"
 }

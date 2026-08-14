@@ -246,7 +246,10 @@ not → panic (`unwrap()`, an aborting builtin). `Error { code, kind, msg }`
 (`import "std/error"`) is the ONE shape for every fallible stdlib
 function going forward — `kind` is a closed vocabulary (`not_found`,
 `permission`, `connection`, `parse`, `timeout`, `in_use`, `io`, `invalid`,
-`oom`), built from errno via `errno_to_kind(code)`; `error_to_string(e)`
+`oom`, `eof`), built from errno via `errno_to_kind(code)` — except `eof`
+(code 0, expected end-of-stream, NEVER an errno; `errno_to_kind` never
+maps it, callers build it directly via `err_new(0, "eof", ...)`);
+`error_to_string(e)`
 is the one human format. For files, `try_read_file(path) -> Result<String,
 Error>` / `try_write_file(path, content) -> Result<int, Error>`
 (`import "std/fs"`) are the canonical Result-returning I/O for new code —
@@ -257,14 +260,70 @@ Gotcha: `let w = try_write_file(...)` WITHOUT a type annotation loses the
 generic `Result<T,E>` (opaque `i8*` to the checker) — `w.unwrap()` then
 fails with "method 'unwrap' is not available on a receiver of type
 'i8*'"; annotate `let w: Result<int, Error> = try_write_file(...)`. For
-sockets (E5.1), `try_tcp_connect(host, port)` / `try_tcp_listen(host,
-port)` / `try_udp_bind(host, port)` (all `-> Result<int, Error>`,
-`import "std/net"`) are the Result-returning trio over connect/listen/
-bind — prefer them over the old `tcp_connect`/`tcp_listen`/`udp_bind`
-builtins, which abort or print to stderr on failure instead of returning
-a typed error (e.g. `EADDRINUSE` surfaces as `kind == "in_use"`, `code ==
-98`). `accept`/`read`/`write`/`resolve` sockets stay on the old builtins
-for now (E5.2, tracked in `TASKS.md`).
+sockets (E5.1+E5.2+E5.2b, `import "std/net"`), `try_tcp_connect(host,
+port)` / `try_tcp_listen(host, port)` / `try_udp_bind(host, port)` /
+`try_tcp_accept(listen_fd)` / `try_tcp_read(fd, max)` /
+`try_tcp_write(fd, data)` / `try_udp_sendto(fd, data, host, port)` /
+`try_udp_recvfrom(fd, max)` / `try_resolve(host)` / `try_tcp_read_line(fd)`
+/ `try_tcp_read_partial(fd, max)` / `try_tcp_read_exact(fd, n)` /
+`try_tcp_shutdown(fd, mode)` / `try_tcp_set_timeout(fd, secs)` /
+`try_getpeername(fd)` / `try_resolve_ptr(ip)` are the full
+Result-returning family over the old `tcp_connect`/`tcp_listen`/
+`tcp_accept`/`tcp_read`/`tcp_write`/`udp_bind`/`udp_sendto`/
+`udp_recvfrom`/`resolve`/`tcp_read_line`/`tcp_read_partial`/
+`tcp_read_exact`/`tcp_shutdown`/`tcp_set_timeout`/`getpeername`/
+`resolve_ptr` builtins, which abort or print to stderr on failure instead
+of returning a typed error (e.g. `EADDRINUSE` surfaces as `kind ==
+"in_use"`, `code == 98`). Three measured gotchas from the I/O half
+(E5.2+E5.2b):
+1. **EOF vs. blocking is asymmetric between TCP and UDP.**
+   `try_tcp_read(fd, max)` returns `Ok("")` when the peer closed cleanly
+   — that's EOF, not an error, same rule as `try_read_file` on an empty
+   file. But with the connection still OPEN, asking for `max` bytes when
+   fewer are available BLOCKS until `max` bytes arrive (it loops `recv()`
+   to fill `max` exactly, no short-read) — a `max=4096` "just in case"
+   buffer over a 4-byte message hangs the process with no error, UNLESS
+   the caller previously called the builtin `tcp_set_timeout(fd, s)`
+   (SO_RCVTIMEO) on that same fd — that IS the escape from the block, not
+   a parameter of `try_tcp_read` itself. With the timeout active
+   (measured in the unit test): partial data already gathered when
+   `recv()` times out returns `Ok(partial)` (a real short-read, despite
+   "no short-read" above — that only holds without a timeout); no data at
+   all returns `Err{code:11 EAGAIN, kind:"io"}` (11 isn't in
+   `errno_to_kind`'s closed vocabulary, falls to the "io" catch-all — open
+   question in TASKS.md on whether it deserves its own "timeout" kind).
+   `try_udp_recvfrom(fd, max)` shares the same timeout escape
+   (`Err{code:11, kind:"io"}`) but not the short-read subtlety: it makes a
+   single `recvfrom()` and returns whatever datagram arrives, even if
+   shorter than `max` — never waits to accumulate `max` bytes across
+   datagrams, so there's no partial-then-fail case to lose errno from.
+2. **`try_resolve(host)` uses its own error kinds, not `errno_to_kind`.**
+   `getaddrinfo()` failures map to `kind == "not_found"` (unresolvable
+   host) or `kind == "timeout"` (resolver busy, EAI_AGAIN) via an
+   explicit `err_new` call in `try_resolve` itself — `errno_to_kind`
+   stays untouched (the E5.1 trio still sees code 113 as generic `"io"`
+   in its own context).
+3. **The EOF asymmetry (E5.2b) — `Ok("")` vs. `Err{0, "eof"}` depends on
+   whether `""` would be ambiguous.** `try_tcp_read(fd, max)` and
+   `try_tcp_read_partial(fd, max)` return `Ok("")` for EOF — a `""` of raw
+   bytes is NEVER ambiguous, there's no "empty line" or "n exact bytes"
+   reading to confuse it with. `try_tcp_read_line(fd)` and
+   `try_tcp_read_exact(fd, n)` do NOT: a real empty line (a lone `\n`) IS a
+   legitimate `Ok("")`, and reusing that same shape for EOF would make the
+   two indistinguishable — the exact bug `try_tcp_read_line` exists to
+   prevent. So those two reserve `Err(err_new(0, "eof", ...))` for clean
+   EOF instead (Go's `io.EOF` precedent), keeping `Ok("")` for the real
+   empty-line/zero-length case. `kind == "eof"` is control flow, not
+   failure — a caller looping on `try_tcp_read_line` breaks the loop on
+   `kind == "eof"`, not on `Ok("")`. `try_tcp_read_line` is the canonical
+   way to read a line in new code: the old `tcp_read_line` builtin
+   (sentinel `""` for both empty-line and EOF) is legacy, kept for
+   backward compat only — prefer the `try_` version whenever the caller
+   needs to tell "blank line" from "connection closed" apart. Same
+   sentinel-vs-Result split for `try_tcp_read_exact`: a peer that closes
+   mid-read discards the partial bytes already received (documented,
+   can't do anything useful with a short prefix when the contract is
+   "exactly n") and returns `Err{0, "eof"}`, never a truncated `Ok`.
 
 ### Closures
 

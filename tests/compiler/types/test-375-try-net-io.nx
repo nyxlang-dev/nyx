@@ -1,0 +1,105 @@
+// test-375 (E5.2): las hermanas try_ de E/S y resolución — try_tcp_accept/
+// try_tcp_read/try_tcp_write/try_udp_sendto/try_udp_recvfrom/try_resolve.
+// El trío de test-374 (E5.1) abre sockets; este pipeline los USA de punta
+// a punta sobre loopback real: listen → connect → accept → write → read
+// → close del peer → read de nuevo (EOF-como-Ok, contrato documentado en
+// el header de try_tcp_read en std/net.nx) → resolve (éxito y fallo) →
+// eco UDP → cierre de todos los fds.
+//
+// Puerto fijo alto (best-effort, mismo criterio que test-374): no existe
+// forma de leer el puerto efímero asignado por el kernel desde Nyx (sin
+// builtin de getsockname), así que se fija un puerto alto poco probable
+// de colisionar en el runner en vez de usar 0.
+
+import "std/net"
+import "std/error"
+
+fn main() -> int {
+    // (a) listen + connect + accept sobre el mismo puerto fijo.
+    let listen_fd: int = match try_tcp_listen("127.0.0.1", 58740) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-listen") ; 0 - 1 }
+    }
+
+    let client_fd: int = match try_tcp_connect("127.0.0.1", 58740) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-connect") ; 0 - 1 }
+    }
+
+    let peer_fd: int = match try_tcp_accept(listen_fd) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-accept") ; 0 - 1 }
+    }
+
+    // (b) write desde el cliente, read del lado servidor (peer_fd).
+    match try_tcp_write(client_fd, "hola") {
+        Result.Ok(n) => { print(int_to_string(n)) }
+        Result.Err(e) => { print("no-deberia-write") }
+    }
+
+    // ⚠️ max = 4 EXACTO (longitud de "hola"), no 4096: try_tcp_read
+    // (mecánica espejada de la centinela, ver header en std/net.nx)
+    // loopea hasta juntar `max` bytes o hasta EOF/error — con la
+    // conexión todavía abierta y menos datos disponibles que `max`,
+    // pedir de más BLOQUEA esperando bytes que nunca llegan (MEDIDO acá
+    // mismo con timeout: cuelga con max=4096). Con la conexión ya
+    // cerrada (el caso de abajo) el `max` grande no bloquea porque el
+    // EOF corta el loop antes de completar el pedido.
+    match try_tcp_read(peer_fd, 4) {
+        Result.Ok(s) => { print(s) }
+        Result.Err(e) => { print("no-deberia-read") }
+    }
+
+    // (c) el cliente cierra su extremo — el servidor debe ver EOF limpio
+    // en el próximo read (Ok(""), NO un error) según el contrato
+    // documentado en std/net.nx. Impresión MEDIDA: si el runtime alguna
+    // vez devolviera un Err acá (ej. ECONNRESET por un cierre con datos
+    // pendientes sin leer), este test lo mostraría como el kind, no
+    // "eof-limpio" — el valor real manda, no la expectativa a priori.
+    tcp_close(client_fd)
+    match try_tcp_read(peer_fd, 4096) {
+        Result.Ok(s) => {
+            if s.length() == 0 { print("eof-limpio") }
+            if s.length() != 0 { print("no-deberia-datos-post-close") }
+        }
+        Result.Err(e) => { print(e.kind) }
+    }
+    tcp_close(peer_fd)
+    tcp_close(listen_fd)
+
+    // (d) resolve — éxito (localhost) y fallo (host irresoluble).
+    match try_resolve("localhost") {
+        Result.Ok(ip) => { print(ip) }
+        Result.Err(e) => { print("no-deberia-resolve") }
+    }
+    match try_resolve("nyx-no-existe.invalid") {
+        Result.Ok(ip) => { print("no-deberia-resolve-2") }
+        Result.Err(e) => { print(e.kind) }
+    }
+
+    // (e) eco UDP: server bindeado en puerto fijo, cliente bindeado
+    // efímero (su propio puerto no importa — sendto no lo necesita, y
+    // recvfrom no devuelve remitente en esta familia, ver header).
+    let udp_server_fd: int = match try_udp_bind("127.0.0.1", 58741) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-udp-bind-server") ; 0 - 1 }
+    }
+    let udp_client_fd: int = match try_udp_bind("127.0.0.1", 0) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-udp-bind-client") ; 0 - 1 }
+    }
+
+    match try_udp_sendto(udp_client_fd, "eco-e5.2", "127.0.0.1", 58741) {
+        Result.Ok(n) => { print(int_to_string(n)) }
+        Result.Err(e) => { print("no-deberia-sendto") }
+    }
+    match try_udp_recvfrom(udp_server_fd, 4096) {
+        Result.Ok(s) => { print(s) }
+        Result.Err(e) => { print("no-deberia-recvfrom") }
+    }
+    tcp_close(udp_client_fd)
+    tcp_close(udp_server_fd)
+
+    print("sigo-vivo")
+    return 0
+}

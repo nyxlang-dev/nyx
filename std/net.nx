@@ -62,3 +62,360 @@ pub fn try_udp_bind(host: String, port: int) -> Result<int, Error> {
     let code: int = 0 - h
     return Result.Err(err_new(code, errno_to_kind(code), "udp_bind " + host + ":" + int_to_string(port)))
 }
+
+// E5.2: las hermanas Result de E/S sobre un socket ya abierto (accept/
+// read/write/sendto/recvfrom) y de resolución (resolve). El trío de
+// arriba (E5.1) abre el socket; estas seis operan sobre un fd que el
+// caller ya tiene (de try_tcp_listen/try_tcp_connect/try_udp_bind o de
+// las centinelas viejas — ambas familias devuelven el mismo fd crudo).
+//
+// Dos de las seis devuelven DATOS, no solo un fd/errno: la convención es
+// el mismo patrón Array `[status, payload]` de nyx_file_read_result
+// (std/fs.nx) — acá `status` es el errno mismo (0 = éxito), no un fd.
+// Se extrae con `let code: int = r[0]` / `let x = r[1]`, NUNCA con index
+// negativo `0 - h` (esa resta es SOLO para las que devuelven fd/bytes
+// directo en `int64_t`, donde negativo = -errno).
+
+extern "C" fn nyx_tcp_accept_result(listen_fd: int) -> int
+extern "C" fn nyx_tcp_read_result(fd: int, max_bytes: int) -> Array
+extern "C" fn nyx_tcp_write_result(fd: int, data: String) -> int
+extern "C" fn nyx_udp_sendto_result(fd: int, data: String, host: String, port: int) -> int
+extern "C" fn nyx_udp_recvfrom_result(fd: int, max_bytes: int) -> Array
+extern "C" fn nyx_resolve_result(host: String) -> Array
+
+// E5.2: hermana Result de tcp_accept. ⚠️ BLOQUEA hasta que llegue una
+// conexión — es la semántica normal de accept(2), esta función no la
+// cambia (no hay timeout ni versión no-bloqueante acá). Éxito = fd del
+// socket ya conectado con el peer; error SOLO ante fallo real del
+// syscall (EBADF, EINVAL, EMFILE...) — un `listen_fd` inválido (< 0) da
+// Err(EBADF) sin siquiera llamar a accept().
+pub fn try_tcp_accept(listen_fd: int) -> Result<int, Error> {
+    let h: int = nyx_tcp_accept_result(listen_fd)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_accept"))
+}
+
+// E5.2: hermana Result de tcp_read. ⚠️ CONTRATO EOF: `Ok("")` significa
+// que el peer cerró su extremo de forma limpia (recv() devolvió 0) — es
+// un Ok SEMÁNTICO, NO un error. Un caller que trata cualquier Ok como
+// "llegaron datos" sin chequear length() == 0 confunde EOF con un
+// datagrama vacío legítimo (el mismo gotcha que try_read_file documenta
+// para el archivo vacío). `Err` es SOLO un fallo real de socket
+// (ECONNRESET, ETIMEDOUT...). Binary-safe: no trunca en NUL.
+//
+// ⚠️ ASIMETRÍA DELIBERADA con try_tcp_read_line/try_tcp_read_exact (E5.2b,
+// ver sus headers más abajo): acá EOF SIEMPRE puede compartir el code 0
+// con un Ok de datos porque un `""` de payload nunca es ambiguo — leer
+// bytes crudos no tiene "línea vacía" ni "n bytes exactos" que confundir
+// con el cierre. read_line SÍ tiene esa ambigüedad (un `\n` suelto ES una
+// línea vacía real, code 0) y por eso reserva un sentinel propio (kind
+// "eof") para el EOF limpio en vez de reusar Ok(""). No es inconsistencia:
+// cada función usa el shape que su propio dato hace inambiguo.
+//
+// ⚠️ BLOQUEO por `max` sobredimensionado (MEDIDO, test-375): mientras la
+// conexión sigue ABIERTA, esta función loopea recv() hasta juntar `max`
+// bytes exactos — NO corta en el primer paquete disponible (a diferencia
+// de try_udp_recvfrom, ver abajo). Pedir `max=4096` cuando el peer solo
+// mandó 4 bytes y sigue conectado CUELGA el proceso esperando los 4092
+// que nunca van a llegar — SALVO que el caller haya llamado antes al
+// builtin `tcp_set_timeout(fd, s)` sobre este mismo fd (SO_RCVTIMEO): ESA
+// es la salida al bloqueo, no un parámetro de esta función. Con el
+// timeout activo (MEDIDO en el unit test): (a) si el loop ya había
+// juntado datos parciales cuando el `recv()` siguiente expira, corta y
+// devuelve `Ok(parcial)` — sí hay short-read, a pesar de "no corta en el
+// primer paquete" de arriba (eso vale sin timeout); (b) si no había
+// NADA todavía, devuelve `Err{code:11 EAGAIN, kind:"io"}` (11 no está en
+// el vocabulario cerrado de `errno_to_kind`, cae al catch-all "io" —
+// ficha en TASKS.md sobre si merece kind "timeout" propio, junto a la de
+// EAI_NODATA/113). Sin `tcp_set_timeout`, la falta de datos SÍ bloquea
+// indefinidamente. Usar `max` ajustado al tamaño del mensaje esperado
+// (protocolo con longitud conocida) o cerrar/agotar la conexión del otro
+// lado para que un `max` grande corte por EOF en vez de bloquear.
+//
+// ⚠️ errno descartado en short-read con fallo real a mitad de camino
+// (simétrico al criterio POSIX de `try_tcp_write` ya documentado abajo):
+// si el loop ya había juntado datos parciales y el siguiente `recv()`
+// falla (EAGAIN por timeout u otro error), esta función devuelve
+// `Ok(parcial)` sin exponer ESE errno — se pierde, igual que un
+// short-write pierde el errno del intento que lo cortó.
+pub fn try_tcp_read(fd: int, max: int) -> Result<String, Error> {
+    let r: Array = nyx_tcp_read_result(fd, max)
+    let code: int = r[0]
+    if code == 0 {
+        let datos: String = r[1]
+        return Result.Ok(datos)
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_read"))
+}
+
+// E5.2: hermana Result de tcp_write. Éxito = los bytes REALES escritos
+// (lección E4: nunca un Ok(0) placeholder) — puede ser MENOS que
+// `data.length()` en un short-write que luego falla a mitad de camino
+// (criterio POSIX write(2): lo ya escrito se reporta como Ok, el error
+// solo aparece si NADA se pudo escribir). Reintentar el resto queda del
+// lado del caller.
+pub fn try_tcp_write(fd: int, data: String) -> Result<int, Error> {
+    let h: int = nyx_tcp_write_result(fd, data)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_write"))
+}
+
+// E5.2: hermana Result de udp_sendto. ⚠️ `host` DEBE ser una IP numérica
+// ("127.0.0.1") — igual que try_tcp_listen/try_udp_bind (E5.1), la
+// runtime valida con inet_pton() y devuelve Err{kind:"invalid", code:22}
+// ante un hostname; NO resuelve DNS acá (para eso está try_resolve,
+// explícito, del lado del caller). Éxito = bytes reales enviados.
+pub fn try_udp_sendto(fd: int, data: String, host: String, port: int) -> Result<int, Error> {
+    let h: int = nyx_udp_sendto_result(fd, data, host, port)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_sendto " + host + ":" + int_to_string(port)))
+}
+
+// E5.2: hermana Result de udp_recvfrom. Mismo contrato EOF-como-Ok que
+// try_tcp_read para el caso borde: un datagrama de longitud 0 es un
+// mensaje LEGÍTIMO en UDP (no hay "conexión" que cerrar), así que
+// `Ok("")` ahí es un datagrama vacío real, no EOF — la distinción con
+// TCP es conceptual, no de código (mismo Array `[0, ""]`). El remitente
+// del datagrama NO viaja en este Result (la centinela tampoco lo
+// devuelve) — queda para una ficha futura si hace falta.
+//
+// A diferencia de try_tcp_read, ESTA función NO bloquea esperando juntar
+// `max` bytes: hace UN solo recvfrom() (un datagrama es una unidad
+// atómica, no tiene sentido loopear) y devuelve lo que haya en ESE
+// datagrama, aunque sea menos que `max` — nunca espera un segundo
+// datagrama para completar el pedido. Sí bloquea (semántica normal de
+// recvfrom) si no hay NINGÚN datagrama pendiente, hasta que llegue uno —
+// salvo que el caller haya llamado antes al builtin `tcp_set_timeout(fd,
+// s)` sobre este mismo fd (SO_RCVTIMEO, aplica igual a un socket UDP):
+// esa es la salida al bloqueo, y da el mismo par que try_tcp_read —
+// `Err{code:11 EAGAIN, kind:"io"}` (11 no está en `errno_to_kind`, cae al
+// catch-all "io"). Acá no hay ambigüedad de datos parciales que
+// documentar: un solo recvfrom() o devuelve el datagrama completo o
+// falla entero, nunca descarta errno a mitad de camino.
+pub fn try_udp_recvfrom(fd: int, max: int) -> Result<String, Error> {
+    let r: Array = nyx_udp_recvfrom_result(fd, max)
+    let code: int = r[0]
+    if code == 0 {
+        let datos: String = r[1]
+        return Result.Ok(datos)
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_recvfrom"))
+}
+
+// E5.2: resuelve un hostname a su primera IP (texto). A diferencia del
+// resto de esta familia, el `kind` del Err NO sale de errno_to_kind
+// directo — getaddrinfo() vive en su propio namespace de códigos EAI_*,
+// y runtime/net.c ya los mapea a un `code` de errno-compatible antes de
+// cruzar el ABI (ver runtime/net.c para el mapeo EAI→code completo):
+// code 113 (EAI_NONAME/EAI_NODATA y cualquier EAI_* no listado) → acá se
+// etiqueta "not_found" explícito (más preciso que el "io" genérico que
+// errno_to_kind le daría a un 113 fuera de este contexto); code 110
+// (EAI_AGAIN, resolvedor ocupado) → "timeout". El resto (típicamente
+// EAI_SYSTEM con un errno real de verdad) usa errno_to_kind normal —
+// errno_to_kind en sí NO se toca, el trío E5.1 sigue viendo 113 → "io".
+pub fn try_resolve(host: String) -> Result<String, Error> {
+    let r: Array = nyx_resolve_result(host)
+    let code: int = r[0]
+    if code == 0 {
+        let ip: String = r[1]
+        return Result.Ok(ip)
+    }
+    if code == 113 {
+        return Result.Err(err_new(code, "not_found", "resolve '" + host + "'"))
+    }
+    if code == 110 {
+        return Result.Err(err_new(code, "timeout", "resolve '" + host + "'"))
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "resolve '" + host + "'"))
+}
+
+// E5.2b: las 7 hermanas Result restantes de red — el resto de lo que las
+// centinelas viejas (tcp_read_line/tcp_read_partial/tcp_read_exact/
+// tcp_shutdown/tcp_set_timeout/getpeername/resolve_ptr, builtins del
+// codegen) ya cubrían sin distinguir causa de fallo. Kind nuevo "eof"
+// (std/error.nx) para el EOF limpio de read_line/read_exact — ver el
+// header de cada una para por qué NO comparten Ok("") con try_tcp_read.
+
+extern "C" fn nyx_tcp_read_line_result(fd: int) -> Array
+extern "C" fn nyx_tcp_read_partial_result(fd: int, max_bytes: int) -> Array
+extern "C" fn nyx_tcp_read_exact_result(fd: int, n: int) -> Array
+extern "C" fn nyx_tcp_shutdown_result(fd: int, how: int) -> int
+extern "C" fn nyx_tcp_set_timeout_result(fd: int, seconds: int) -> int
+extern "C" fn nyx_getpeername_result(fd: int) -> Array
+extern "C" fn nyx_resolve_ptr_result(ip: String) -> Array
+
+// Sentinel de EOF limpio devuelto en el slot `code` de read_line/read_exact
+// — espeja NYX_NET_EOF (runtime/net.c / net.h): 1000 nunca colisiona con un
+// errno real (todos < 200 en Linux), así que sirve para distinguir "fin de
+// stream" de un fallo de socket sin un flag aparte.
+const NET_EOF: int = 1000
+
+// E5.2b: hermana Result de tcp_read_line — LA razón de ser de esta
+// función es desambiguar dos casos que la centinela vieja devuelve
+// idénticos ("" en ambos): una línea VACÍA real (llegó un '\n' suelto,
+// ej. el terminador en blanco de headers HTTP) vs EOF limpio (el peer
+// cerró sin mandar más datos). Acá quedan separados:
+//   - `Ok("")` = línea vacía real, Ok semántico igual que try_tcp_read.
+//   - EOF limpio = `Err{code:0, kind:"eof"}` (precedente Go io.EOF) — NO
+//     Ok(""). ⚠️ Esto es una ASIMETRÍA DELIBERADA con try_tcp_read/
+//     try_tcp_read_partial (ver su header arriba): ahí Ok("") ya es
+//     inambiguo (nunca hay "línea vacía" que confundir), acá si no se
+//     separara, un caller no podría distinguir headers-terminados de
+//     conexión-cortada — el bug que esta función existe para prevenir.
+//   - Fallo real de socket (no EOF) → Err con errno_to_kind normal.
+// El terminador `\n` NO viaja en el payload (recortado); `\r\n` recorta
+// igual que `\n` solo — el `\r` se descarta siempre, sea el único byte
+// antes del salto o no (MEDIDO, mismo comportamiento que la centinela
+// vieja, ver runtime/net.c y tests/runtime-unit/test_net_result.c).
+// ⚠️ Fragmento sin `\n` antes del cierre: se DESCARTA entero (Err eof,
+// NO un Ok con el fragmento) — un caller que necesita ese resto parcial
+// no lo tiene acá (MEDIDO, test C `test_read_line_result_fragment_discarded`).
+// Tres bordes más (review final E5.2b):
+//   (a) ⚠️ TIMEOUT A MITAD DE LÍNEA (con try_tcp_set_timeout activo): el
+//       recv() que arma la línea devuelve EAGAIN/EWOULDBLOCK y la función
+//       responde `Err{code:11, kind:"io"}` (el 11 llega con kind "io"
+//       genérico, no "timeout" — errno_to_kind no mapea EAGAIN; ficha del
+//       kind pendiente en TASKS.md) — pero el prefijo YA leído de esta
+//       línea SE PIERDE (vive en un buffer local que nunca se devuelve).
+//       La próxima llamada retoma el socket/conn_buf donde quedó y trata
+//       la COLA de esa línea como si fuera una línea completa nueva — el
+//       caller no tiene forma de saber que perdió el prefijo. Un buffer
+//       de línea persistente (sobrevive al timeout, no local a la
+//       función) lo arreglaría — ver TASKS.md.
+//   (b) Binary-safe: copia exactamente los bytes leídos (incl. NUL
+//       embebido), no trunca — mismo mecanismo que try_tcp_read
+//       (`nyx_string_from_ptr` con longitud explícita, no
+//       `nyx_string_from_cstr` con `strlen`).
+//   (c) ⚠️ CAP DE 4095 bytes sin `\n`: la línea se corta ahí y se
+//       devuelve como `Ok` (SIN error, SIN el `\n` final) — una línea más
+//       larga que el cap llega partida en DOS `Ok` sucesivos. Para un
+//       parser de headers HTTP esto es un header partido a la mitad, no
+//       un error visible — ver TASKS.md.
+pub fn try_tcp_read_line(fd: int) -> Result<String, Error> {
+    let r: Array = nyx_tcp_read_line_result(fd)
+    let code: int = r[0]
+    if code == 0 {
+        let linea: String = r[1]
+        return Result.Ok(linea)
+    }
+    if code == NET_EOF {
+        return Result.Err(err_new(0, "eof", "tcp_read_line: fin de stream"))
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_read_line"))
+}
+
+// E5.2b: hermana Result de tcp_read_partial. Mismo contrato que
+// try_udp_recvfrom (NO try_tcp_read_line): UN solo recv() sobre lo que
+// haya disponible ahora mismo, nunca espera a juntar `max` bytes exactos.
+// `Ok("")` = EOF limpio (recv() devolvió 0) — acá SÍ comparte Ok("") con
+// try_tcp_read (sin la ambigüedad de read_line: un recv parcial no tiene
+// noción de "línea", así que "" solo puede significar EOF). Útil cuando
+// el caller quiere lo que llegó SIN bloquear esperando completar `max`
+// (a diferencia de try_tcp_read, que si loopea hasta juntar `max` o EOF).
+pub fn try_tcp_read_partial(fd: int, max: int) -> Result<String, Error> {
+    let r: Array = nyx_tcp_read_partial_result(fd, max)
+    let code: int = r[0]
+    if code == 0 {
+        let datos: String = r[1]
+        return Result.Ok(datos)
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_read_partial"))
+}
+
+// E5.2b: hermana Result de tcp_read_exact. Éxito = EXACTAMENTE `n` bytes.
+// Si el peer cierra antes de completar los `n` pedidos, los bytes
+// parciales ya recibidos se DESCARTAN (documentado, mismo criterio que
+// read_line con el fragmento sin `\n`: un consumidor de "exactamente n"
+// no puede hacer nada útil con un prefijo más corto) y el resultado es
+// `Err{code:0, kind:"eof"}` — MISMO sentinel "eof" que read_line, misma
+// razón (EOF necesita distinguirse de un Ok, acá de "los n bytes
+// llegaron"). `n <= 0` es un Ok trivial `""` (espejo de la centinela
+// vieja, no un error). Fallo real de socket a mitad de camino (no EOF)
+// también descarta el parcial y devuelve Err con errno_to_kind normal —
+// a diferencia de try_tcp_write, acá NO hay "short-write" que reportar
+// como Ok parcial: o están los `n` bytes completos, o no hay Ok.
+pub fn try_tcp_read_exact(fd: int, n: int) -> Result<String, Error> {
+    let r: Array = nyx_tcp_read_exact_result(fd, n)
+    let code: int = r[0]
+    if code == 0 {
+        let datos: String = r[1]
+        return Result.Ok(datos)
+    }
+    if code == NET_EOF {
+        return Result.Err(err_new(0, "eof", "tcp_read_exact: fin de stream"))
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_read_exact"))
+}
+
+// E5.2b: hermana Result de tcp_shutdown. Cierra la mitad (o las dos) del
+// flujo del socket sin liberar el fd (el fd sigue vivo para tcp_close
+// explícito después). `mode`: 0 = SHUT_RD (deja de poder leer), 1 =
+// SHUT_WR (deja de poder escribir — el peer ve EOF), cualquier otro valor
+// = SHUT_RDWR (ambos, MEDIDO en runtime/net.c: el `how` crudo no valida,
+// cualquier valor fuera de {0,1} cae al caso "ambos"). Éxito = `Ok(0)`.
+pub fn try_tcp_shutdown(fd: int, mode: int) -> Result<int, Error> {
+    let h: int = nyx_tcp_shutdown_result(fd, mode)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_shutdown"))
+}
+
+// E5.2b: hermana Result de tcp_set_timeout. Setea SO_RCVTIMEO y
+// SO_SNDTIMEO en segundos (unidad MEDIDA en runtime/net.c: `seconds`
+// entero, sin fracción — 0 o negativo cae a "sin timeout" tal como lo
+// interpreta el kernel para ese valor de timeval). Es la salida al
+// bloqueo indefinido que try_tcp_read/try_udp_recvfrom documentan en su
+// propio header (⚠️ BLOQUEO): setear esto ANTES de leer sobre el mismo
+// fd es lo que convierte un recv() sin datos en `Err{code:11 EAGAIN}` en
+// vez de colgar. Éxito = `Ok(0)`. ⚠️ Sobre try_tcp_read_line/
+// try_tcp_read_exact el timeout CUESTA datos: si expira a mitad de una
+// línea/de los n bytes pedidos, el prefijo ya leído se descarta (ver el
+// header de cada una) — no es gratis, es un trade-off.
+pub fn try_tcp_set_timeout(fd: int, secs: int) -> Result<int, Error> {
+    let h: int = nyx_tcp_set_timeout_result(fd, secs)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_set_timeout"))
+}
+
+// E5.2b: hermana Result de getpeername. Éxito = la IP (texto) del extremo
+// remoto de un socket TCP ya conectado — reemplaza el "unknown" mudo de
+// la centinela vieja ante fallo (fd inválido, socket no conectado) con un
+// Err real vía errno_to_kind. Sigue funcionando aunque el peer remoto ya
+// haya cerrado su extremo (getpeername opera sobre el fd LOCAL, que sigue
+// vivo hasta que el caller llame tcp_close) — solo falla si el fd local
+// mismo es inválido o nunca estuvo conectado.
+pub fn try_getpeername(fd: int) -> Result<String, Error> {
+    let r: Array = nyx_getpeername_result(fd)
+    let code: int = r[0]
+    if code == 0 {
+        let ip: String = r[1]
+        return Result.Ok(ip)
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "getpeername"))
+}
+
+// E5.2b: hermana Result de resolve_ptr (resolución inversa DNS, IP →
+// hostname). Mismos kinds no-estándar que try_resolve (getaddrinfo/
+// getnameinfo viven en su propio namespace EAI_*, ya mapeado a un `code`
+// errno-compatible en runtime/net.c): code 113 (sin PTR configurado para
+// esa IP, el caso común) → kind "not_found" explícito, vía err_new (NO
+// errno_to_kind, que le daría "io" genérico). IP con formato inválido
+// (no pasa inet_pton) → code 22 (EINVAL) → kind "invalid", ESE sí sale de
+// errno_to_kind normal (22 ya está en su vocabulario, no hace falta un
+// caso especial acá).
+pub fn try_resolve_ptr(ip: String) -> Result<String, Error> {
+    let r: Array = nyx_resolve_ptr_result(ip)
+    let code: int = r[0]
+    if code == 0 {
+        let host: String = r[1]
+        return Result.Ok(host)
+    }
+    if code == 113 {
+        return Result.Err(err_new(code, "not_found", "resolve_ptr '" + ip + "'"))
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "resolve_ptr '" + ip + "'"))
+}

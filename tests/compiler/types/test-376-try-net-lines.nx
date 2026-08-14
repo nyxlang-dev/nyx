@@ -1,0 +1,128 @@
+// test-376 (E5.2b): las 7 hermanas try_ restantes de std/net — foco en
+// try_tcp_read_line (la desambiguación EOF/línea-vacía es LA razón de la
+// función), más try_tcp_read_exact/try_getpeername/try_tcp_set_timeout/
+// try_tcp_shutdown/try_resolve_ptr. El trío de test-374 (E5.1) abre
+// sockets, test-375 (E5.2) cubre accept/read/write/sendto/recvfrom/
+// resolve; este test cierra las 7 que quedaban (kind "eof" nuevo,
+// std/error.nx).
+//
+// Puertos fijos altos (mismo criterio best-effort de test-374/375, sin
+// getsockname en Nyx para leer el puerto efímero): 58742 para el par
+// read_line, 58743 para el par read_exact/getpeername/timeout/shutdown.
+//
+// Mecánica de "servidor manda X y cierra" (patrón test-375): listen +
+// connect + accept sobre el mismo puerto (connect a un listen backlog
+// no bloquea esperando accept — el handshake ya completó cuando
+// try_tcp_connect retorna), el builtin `tcp_write` (no try_tcp_write —
+// ESTE test no ejercita esa hermana) manda los bytes crudos desde el
+// extremo aceptado, `tcp_close` cierra ESE extremo, y el otro lado lee
+// con la hermana bajo test.
+
+import "std/net"
+import "std/error"
+
+fn main() -> int {
+    // (a) par read_line: el "servidor" (peer1, extremo aceptado) manda
+    // "hola\n\nresto" y cierra. El "cliente" (client1) lee tres líneas:
+    // "hola" (línea normal), "" (línea vacía real — el segundo '\n'
+    // suelto), y el fragmento "resto" sin '\n' antes del cierre, que se
+    // DESCARTA (Err kind "eof", no un Ok con "resto"). Una cuarta lectura
+    // confirma que el EOF queda estable (no cuelga, sigue dando "eof").
+    let listen1: int = match try_tcp_listen("127.0.0.1", 58742) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-listen1") ; 0 - 1 }
+    }
+    let client1: int = match try_tcp_connect("127.0.0.1", 58742) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-connect1") ; 0 - 1 }
+    }
+    let peer1: int = match try_tcp_accept(listen1) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-accept1") ; 0 - 1 }
+    }
+
+    tcp_write(peer1, "hola\n\nresto")
+    tcp_close(peer1)
+
+    match try_tcp_read_line(client1) {
+        Result.Ok(s) => { print(s) }
+        Result.Err(e) => { print("no-deberia-line1") }
+    }
+    match try_tcp_read_line(client1) {
+        Result.Ok(s) => {
+            if s.length() == 0 { print("linea-vacia") }
+            if s.length() != 0 { print("no-deberia-linea-vacia") }
+        }
+        Result.Err(e) => { print("no-deberia-line2") }
+    }
+    match try_tcp_read_line(client1) {
+        Result.Ok(s) => { print("no-deberia-line3-fragmento-resto") }
+        // is_eof(e) en vez de comparar e.kind == "eof" a mano (std/error.nx):
+        // Err{code:0} rompe el patrón code!=0=fallo, así que confirmar EOF
+        // pasa por kind, no code — is_eof es el único lugar que sabe el
+        // string literal.
+        Result.Err(e) => { if is_eof(e) { print("eof") } if !is_eof(e) { print(e.kind) } }
+    }
+    match try_tcp_read_line(client1) {
+        Result.Ok(s) => { print("no-deberia-line4") }
+        Result.Err(e) => { if is_eof(e) { print("eof") } if !is_eof(e) { print(e.kind) } }
+    }
+    tcp_close(client1)
+    tcp_close(listen1)
+
+    // (b) segundo par: try_tcp_read_exact feliz y cortado, try_getpeername,
+    // try_tcp_set_timeout, try_tcp_shutdown — todos sobre client2, que
+    // sigue vivo LOCALMENTE aunque el peer remoto (peer2) ya cerró.
+    let listen2: int = match try_tcp_listen("127.0.0.1", 58743) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-listen2") ; 0 - 1 }
+    }
+    let client2: int = match try_tcp_connect("127.0.0.1", 58743) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-connect2") ; 0 - 1 }
+    }
+    let peer2: int = match try_tcp_accept(listen2) {
+        Result.Ok(fd) => { fd }
+        Result.Err(e) => { print("no-deberia-accept2") ; 0 - 1 }
+    }
+
+    tcp_write(peer2, "abcdefgh")
+    tcp_close(peer2)
+
+    // Feliz: pide 4 de los 8 bytes disponibles.
+    match try_tcp_read_exact(client2, 4) {
+        Result.Ok(s) => { print(s) }
+        Result.Err(e) => { print("no-deberia-exact1") }
+    }
+    // Cortado: quedan 4 bytes ("efgh") pero se piden 10 — el peer ya
+    // cerró antes de completarlos. Se descartan, Err kind "eof".
+    match try_tcp_read_exact(client2, 10) {
+        Result.Ok(s) => { print("no-deberia-exact2") }
+        Result.Err(e) => { print(e.kind) }
+    }
+
+    match try_getpeername(client2) {
+        Result.Ok(ip) => { print(ip) }
+        Result.Err(e) => { print("no-deberia-getpeername") }
+    }
+    match try_tcp_set_timeout(client2, 5) {
+        Result.Ok(n) => { print(int_to_string(n)) }
+        Result.Err(e) => { print("no-deberia-set-timeout") }
+    }
+    match try_tcp_shutdown(client2, 2) {
+        Result.Ok(n) => { print(int_to_string(n)) }
+        Result.Err(e) => { print("no-deberia-shutdown") }
+    }
+    tcp_close(client2)
+    tcp_close(listen2)
+
+    // (c) resolve_ptr con una IP inválida (no pasa inet_pton) — kind
+    // "invalid" (code 22, EINVAL), vía errno_to_kind normal.
+    match try_resolve_ptr("no-es-ip") {
+        Result.Ok(host) => { print("no-deberia-resolve-ptr") }
+        Result.Err(e) => { print(e.kind) }
+    }
+
+    print("sigo-vivo")
+    return 0
+}

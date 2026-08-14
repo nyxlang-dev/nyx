@@ -7,6 +7,100 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.30.0] — 2026-08-14 — E5.2+E5.2b: `std/net` — la familia try_ completa (E/S, resolución, y las 7 restantes)
+
+> MINOR agrupado autorizado explícitamente por Ottavio (2026-08-14,
+> «sigue con E5.2b y luego release agrupado»).
+
+> Rama `feat/e5-2-net-io` (E5.2) + `feat/e5-2b-net-resto` (E5.2b) sobre
+> `main` v0.29.0 (E5.1), sin mergear. `VERSION` sin tocar, sin tag —
+> release AGRUPADO E5.2+E5.2b autorizado por Ottavio por adelantado.
+
+### Added
+- **`nyx_tcp_accept_result`/`nyx_tcp_read_result`/`nyx_tcp_write_result`/
+  `nyx_udp_sendto_result`/`nyx_udp_recvfrom_result`/`nyx_resolve_result`**
+  (runtime, `runtime/net.c`, E5.2): espejo de mecánica de las 6 centinelas
+  correspondientes (accept/read/write/sendto/recvfrom/resolve), sin
+  stderr, `-errno` (fd/bytes) o `[errno, datos]` (read/recvfrom/resolve)
+  en vez de abortar.
+- **`nyx_tcp_read_line_result`/`nyx_tcp_read_partial_result`/
+  `nyx_tcp_read_exact_result`/`nyx_tcp_shutdown_result`/
+  `nyx_tcp_set_timeout_result`/`nyx_getpeername_result`/
+  `nyx_resolve_ptr_result`** (runtime, `runtime/net.c`, E5.2b): las 7
+  centinelas de red restantes ganan su versión `_result`. `runtime/net.h`
+  ganó las 16 declaraciones `_result` en total (E5.1+E5.2+E5.2b) más
+  `#define NYX_NET_EOF 1000` — código fuera del rango de errno de Linux
+  (todos <1000) para el EOF limpio de read_line/read_exact, traducido por
+  la capa Nyx antes de llegar al caller (nunca ve el 1000 crudo).
+- **`std/net.nx`**: `try_tcp_accept(listen_fd)` / `try_tcp_read(fd, max)`
+  / `try_tcp_write(fd, data)` / `try_udp_sendto(fd, data, host, port)` /
+  `try_udp_recvfrom(fd, max)` / `try_resolve(host)` (E5.2) +
+  `try_tcp_read_line(fd)` / `try_tcp_read_partial(fd, max)` /
+  `try_tcp_read_exact(fd, n)` / `try_tcp_shutdown(fd, mode)` /
+  `try_tcp_set_timeout(fd, secs)` / `try_getpeername(fd)` /
+  `try_resolve_ptr(ip)` (E5.2b), las 13 `-> Result<..., Error>` —
+  completan la familia `try_` de `std/net` junto al trío E5.1 (16
+  funciones en total).
+- **`std/error.nx`**: kind nuevo `"eof"` (code 0) en el vocabulario
+  cerrado — fin de stream ESPERADO, NO un fallo (precedente `io.EOF` de
+  Go); `errno_to_kind` no lo mapea, lo arma el caller directo vía
+  `err_new(0, "eof", ...)`.
+- Tests E5.2: regression +test-375-try-net-io; runtime `test_net_result`
+  +11 tests / 48 asserts totales (loopback TCP/UDP real,
+  `make_loopback_pair`/`make_udp_socket_bound`).
+- Tests E5.2b: regression +test-376-try-net-lines (397 archivos); runtime
+  `test_net_result` 48→**99 asserts** totales (línea vacía real vs EOF
+  distinguidos, read_exact feliz y cortado, getpeername, resolve_ptr
+  inválido, shutdown+set_timeout, EOF real cerrando el peer, fragmento sin
+  `\n` descartado).
+
+### Semánticas contractuales (decididas en el plan, auditadas en review)
+- `try_tcp_accept`: BLOQUEA hasta que llegue una conexión — semántica
+  normal de `accept(2)`, sin timeout.
+- `try_tcp_read`: `Ok("")` = EOF limpio (el peer cerró) — NO es error.
+  Con la conexión abierta, pedir `max` mayor a lo disponible BLOQUEA
+  (loopea `recv()` hasta juntar `max` bytes exactos, sin short-read).
+- `try_tcp_write`: `Ok(bytes)` reales (nunca un placeholder); short-write
+  con fallo a mitad de camino reporta los bytes ya escritos (criterio
+  POSIX `write(2)`), no un Err que perdería esa información.
+- `try_udp_sendto`: `host` debe ser IP numérica (mismo guard `inet_pton`
+  que el trío E5.1 — no resuelve DNS).
+- `try_udp_recvfrom`: mismo contrato Ok/Err que `try_tcp_read`, pero UN
+  SOLO `recvfrom()` — nunca loopea hasta `max`, devuelve el datagrama que
+  llegue. El remitente no viaja en el resultado (ficha futura).
+- `try_resolve`: mapea `EAI_*` a kinds propios vía `err_new` explícito —
+  `not_found` (code 113, EAI_NONAME/EAI_NODATA/resto) y `timeout` (code
+  110, EAI_AGAIN) — sin tocar `errno_to_kind` (el trío E5.1 sigue viendo
+  113 → `"io"` en su propio contexto).
+- **La asimetría EOF (E5.2b, EL gotcha de este arco)**: `try_tcp_read`/
+  `try_tcp_read_partial` devuelven `Ok("")` en EOF — un `""` de bytes
+  crudos nunca es ambiguo. `try_tcp_read_line`/`try_tcp_read_exact`
+  devuelven `Err{code:0, kind:"eof"}` en EOF, NO `Ok("")` — ahí `Ok("")`
+  YA significa algo real (una línea vacía real, o `n<=0`), y reusarlo para
+  EOF haría indistinguibles "terminador de headers HTTP" de "conexión
+  cortada" — exactamente el bug que `try_tcp_read_line` existe para
+  prevenir (precedente `io.EOF` de Go). `try_tcp_read_line` es la forma
+  CANÓNICA de leer una línea en código nuevo: la centinela vieja
+  `tcp_read_line` (con su `""` ambiguo entre línea vacía y EOF) queda
+  legacy, solo por compatibilidad hacia atrás.
+- `try_tcp_read_exact`: éxito = EXACTAMENTE `n` bytes; si el peer cierra
+  antes, los bytes parciales se DESCARTAN (`Err{0,"eof"}`, no un `Ok`
+  truncado) — mismo criterio que el fragmento sin `\n` de read_line.
+- `try_tcp_shutdown`: `mode` 0=SHUT_RD, 1=SHUT_WR, cualquier otro valor
+  (MEDIDO) cae a SHUT_RDWR. `try_tcp_set_timeout`: segundos enteros
+  (SO_RCVTIMEO+SO_SNDTIMEO), 0 o negativo = sin timeout.
+- `try_resolve_ptr`: mismo patrón de kinds no-estándar que `try_resolve`
+  — code 113 (sin PTR) → `"not_found"` vía `err_new` explícito; IP
+  inválida → code 22 (EINVAL) → `"invalid"` vía `errno_to_kind` normal.
+
+### Scope
+- Las 16 funciones de la spec §4.2.2 de `std/net` (trío E5.1
+  connect/listen/bind + 6 de E/S y resolución de E5.2 + 7 restantes de
+  E5.2b) tienen su hermana `try_` — familia `std/net` CERRADA. Próximo
+  módulo del arco E5, por orden de la spec §4.2: `http` (E5.3).
+
+---
+
 ## [0.29.0] — 2026-08-14 — E5.1: `std/net` — la familia try_ de conexión/bind
 
 > MINOR autorizado explícitamente por Ottavio (2026-08-14, «sigue 1 luego 2»).

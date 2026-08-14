@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.28.0 -->
+<!-- nyx-version: 0.29.0 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,
 > `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -272,6 +272,14 @@
 - `pub fn h2_check_upgrade(request: String) -> bool`
 - `pub fn h2_send_response(fd: int, stream_id: int, status: int, resp_headers: Array, body: String) -> int`
 - `pub fn h2_serve(port: int, num_workers: int, cb: Fn) -> int`
+
+### `std/net`
+
+`import "std/net"` — 3 funciones:
+
+- `pub fn try_tcp_connect(host: String, port: int) -> Result<int, Error>`
+- `pub fn try_tcp_listen(host: String, port: int) -> Result<int, Error>`
+- `pub fn try_udp_bind(host: String, port: int) -> Result<int, Error>`
 
 ### `std/url`
 
