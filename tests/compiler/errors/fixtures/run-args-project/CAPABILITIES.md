@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.27.0 -->
+<!-- nyx-version: 0.28.0 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,
 > `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -248,6 +248,13 @@
 `import "std/io"` — 1 funciones:
 
 - `pub fn println(s: String)`
+
+### `std/fs`
+
+`import "std/fs"` — 2 funciones:
+
+- `pub fn try_read_file(path: String) -> Result<String, Error>`
+- `pub fn try_write_file(path: String, content: String) -> Result<int, Error>`
 
 ### `std/file`
 

@@ -7,6 +7,40 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.29.0] — 2026-08-14 — E5.1: `std/net` — la familia try_ de conexión/bind
+
+> MINOR autorizado explícitamente por Ottavio (2026-08-14, «sigue 1 luego 2»).
+
+> Candidato a release futuro — rama `feat/e5-net-try` sobre `main` v0.28.0,
+> sin mergear. `VERSION` sin tocar, sin tag.
+
+### Added
+- **`nyx_tcp_connect_result`/`nyx_tcp_listen_result`/`nyx_udp_bind_result`**
+  (runtime): mismo mecanismo que las centinelas `tcp_connect`/`tcp_listen`/
+  `udp_bind` (getaddrinfo/socket/connect/bind/listen), pero sin stderr y
+  devolviendo `-errno` en vez de abortar — el errno real llega al llamador.
+- **`std/net.nx`** (módulo nuevo): `try_tcp_connect(host, port)` /
+  `try_tcp_listen(host, port)` / `try_udp_bind(host, port)`, las tres
+  `-> Result<int, Error>` — las primeras hermanas Result-returning de red,
+  conviven con las centinelas viejas (`tcp_connect`/`tcp_listen`/
+  `tcp_close`/`udp_bind`, builtins intactos).
+- **Kind `"in_use"`** en el vocabulario cerrado de `std/error.nx`
+  (EADDRINUSE, 98) — sin este kind, un listen duplicado caía en `"io"`
+  genérico, indistinguible de cualquier otro fallo de bind/listen.
+- Tests: regression +test-374-try-net; runtime `test_net_result`
+  (14 asserts, `tests/runtime-unit/test_net_result.c`).
+
+### Scope
+- Piloto deliberadamente CHICO (mismo criterio que E4/file): solo el trío
+  que abre un socket y devuelve el fd, donde errno más importa
+  (ECONNREFUSED, EADDRINUSE, ETIMEDOUT, EACCES). Las familias
+  accept/read/write/sendto/recvfrom/resolve quedan para E5.2 (fichado en
+  `TASKS.md`, cosecha `[arco:E5-net]`) — `accept` en particular tiene
+  semántica distinta (bloquea en vez de fallar con errno), no es un
+  simple espejo del trío.
+
+---
+
 ## [0.28.0] — 2026-08-14 — E4: piloto de errores tipados de E/S (`std/error` + `std/fs`)
 
 > MINOR autorizado explícitamente por Ottavio (2026-08-14, segundo de la

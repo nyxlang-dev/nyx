@@ -13,6 +13,10 @@
 //   "connection" — fallo de red/conexión (ECONNREFUSED, reset)
 //   "parse"      — entrada malformada (json inválido, header roto)
 //   "timeout"    — se agotó el tiempo (ETIMEDOUT)
+//   "in_use"     — el recurso ya está tomado (EADDRINUSE — agregado en
+//                  E5.1: sin este kind, un listen duplicado caía en "io"
+//                  genérico, indistinguible de cualquier otro fallo de
+//                  bind/listen; medido con test-374)
 //   "io"         — fallo de E/S genérico (el resto de errno)
 //   "invalid"    — argumento/estado inválido (EINVAL)
 //   "oom"        — sin memoria (ENOMEM)
@@ -36,6 +40,7 @@ pub fn errno_to_kind(code: int) -> String {
     if code == 22  { return "invalid" }
     if code == 110 { return "timeout" }
     if code == 111 { return "connection" }
+    if code == 98  { return "in_use" }
     return "io"
 }
 

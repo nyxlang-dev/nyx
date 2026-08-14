@@ -772,3 +772,195 @@ nyx_string* nyx_resolve(const char* hostname) {
 
     return nyx_string_from_cstr(ip);
 }
+
+// ===== E5.1 — trío *_result: errno como valor de retorno, sin stderr =====
+//
+// Espejo de nyx_tcp_connect/nyx_tcp_listen/nyx_udp_bind de arriba: MISMA
+// mecánica (getaddrinfo/socket/setsockopt/connect/bind/listen), pero:
+//   - `host` llega como `nyx_string*` (ABI real de extern "C" fn(host: String),
+//     lección del arco E4 — NUNCA char* crudo).
+//   - Retorno `int64_t`: éxito = fd (≥ 0), fallo = -errno (negativo). JAMÁS
+//     `long` (rompe wasm ILP32, ver Global Constraints del plan).
+//   - CERO stderr — las centinelas viejas gritan por stderr (friction
+//     2026-08-01); estas reportan el fallo únicamente por el valor de
+//     retorno, para que el caller Nyx (Task 2, capa `?`) decida.
+//   - errno se captura EN UNA VARIABLE LOCAL inmediatamente tras el syscall
+//     que falló, ANTES de cualquier close()/freeaddrinfo() que pueda
+//     pisarlo (mismo cuidado que ya tenían las centinelas con bind_errno/
+//     listen_errno). Si quedó 0 (syscall que no setea errno en ese camino)
+//     se usa EIO (5) como fallback estable — mismo patrón que
+//     nyx_file_read_result/nyx_file_write_result en file-io.c.
+//   - host == NULL (puntero nulo, defensive check de ABI, no "sin host") →
+//     -22 (EINVAL) en las 3 funciones. Un nyx_string* NO-nulo con length==0
+//     ("") sigue significando "sin host" en listen/bind (bind-all →
+//     INADDR_ANY, igual que las centinelas viejas con `host && strlen(host)
+//     > 0`); connect SÍ necesita un host real para resolver.
+
+int64_t nyx_tcp_listen_result(nyx_string* host, int64_t port) {
+    if (!host) return -22; // EINVAL — puntero nulo (ABI), no "sin host"
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        int e = errno ? errno : 5 /* EIO */;
+        return -(int64_t)e;
+    }
+
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+
+    if (host->data && host->length > 0) {
+        // inet_pton devuelve 0 (no 1) si `host` no es una IP numérica
+        // válida (ej. "localhost") SIN tocar addr.sin_addr — que el
+        // memset de arriba dejó en 0.0.0.0. Sin este guard, un hostname
+        // bindeaba en silencio a INADDR_ANY (todas las interfaces) y
+        // devolvía Ok: exposición silenciosa de un listener que el
+        // caller pidió atar a una IP puntual. -1 (error de sistema, no
+        // "no es IP") también cae acá — mismo -EINVAL, ninguna dirección
+        // válida quedó armada en ningún caso.
+        if (inet_pton(AF_INET, host->data, &addr.sin_addr) != 1) {
+            close(fd); // el socket ya existe (se creó antes de este chequeo)
+            return -22; // EINVAL
+        }
+    } else {
+        addr.sin_addr.s_addr = INADDR_ANY;
+    }
+
+    errno = 0;
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        int e = errno ? errno : 5 /* EIO */;
+        close(fd); // tras capturar e — close() puede pisar errno
+        return -(int64_t)e;
+    }
+
+    errno = 0;
+    if (listen(fd, 128) < 0) {
+        int e = errno ? errno : 5 /* EIO */;
+        close(fd);
+        return -(int64_t)e;
+    }
+
+    return (int64_t)fd;
+}
+
+int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port) {
+    if (!host || !host->data) return -22; // EINVAL
+
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%lld", (long long)port);
+
+    int gai = getaddrinfo(host->data, port_str, &hints, &result);
+    if (gai != 0) {
+        // ⚠️ getaddrinfo NO setea errno: devuelve códigos EAI_* en un
+        // namespace propio. Solo EAI_SYSTEM delega a un errno real (lo
+        // setea la syscall interna que falló); el resto de fallos de
+        // resolución (EAI_NONAME/EAI_AGAIN/EAI_NODATA/...) se mapean a un
+        // código estable y documentado: EHOSTUNREACH (113) — "no se pudo
+        // alcanzar/resolver el host", medido en este entorno con un host
+        // inexistente (gai=EAI_NONAME=-2, errno=0, ver task-1-report.md).
+        if (gai == EAI_SYSTEM) {
+            int e = errno ? errno : 5 /* EIO */;
+            return -(int64_t)e;
+        }
+        return -113; // EHOSTUNREACH
+    }
+
+    int fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    if (fd < 0) {
+        int e = errno ? errno : 5 /* EIO */;
+        freeaddrinfo(result);
+        return -(int64_t)e;
+    }
+
+    // Set non-blocking for connect with timeout (misma mecánica que la
+    // centinela nyx_tcp_connect)
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    errno = 0;
+    int ret = connect(fd, result->ai_addr, result->ai_addrlen);
+    int connect_errno = errno; // capturado ANTES de freeaddrinfo/close
+    freeaddrinfo(result);
+
+    if (ret < 0) {
+        if (connect_errno != EINPROGRESS) {
+            int e = connect_errno ? connect_errno : 5 /* EIO */;
+            close(fd);
+            return -(int64_t)e;
+        }
+        // Wait up to 3 seconds for connection (mismo timeout que la centinela)
+        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+        errno = 0;
+        ret = poll(&pfd, 1, 3000);
+        if (ret < 0) {
+            int e = errno ? errno : 5 /* EIO */;
+            close(fd);
+            return -(int64_t)e;
+        }
+        if (ret == 0) {
+            // Timeout: poll() no setea errno en este caso — ETIMEDOUT es
+            // el código estable para "no respondió a tiempo".
+            close(fd);
+            return -(int64_t)ETIMEDOUT;
+        }
+        // Check for connection error
+        int err = 0;
+        socklen_t len = sizeof(err);
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+        if (err != 0) {
+            // `err` YA es un valor errno-like (lo entrega SO_ERROR directo,
+            // no pasa por la variable global errno) — se usa tal cual.
+            close(fd);
+            return -(int64_t)err;
+        }
+    }
+
+    // Restore blocking mode
+    fcntl(fd, F_SETFL, flags);
+
+    return (int64_t)fd;
+}
+
+int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) {
+    if (!host) return -22; // EINVAL — puntero nulo (ABI), no "sin host"
+
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        int e = errno ? errno : 5 /* EIO */;
+        return -(int64_t)e;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+
+    if (host->data && host->length > 0) {
+        // Mismo guard que nyx_tcp_listen_result arriba: sin él, un host
+        // NO-numérico ("localhost") bindea en silencio a INADDR_ANY.
+        if (inet_pton(AF_INET, host->data, &addr.sin_addr) != 1) {
+            close(fd); // el socket ya existe (se creó antes de este chequeo)
+            return -22; // EINVAL
+        }
+    } else {
+        addr.sin_addr.s_addr = INADDR_ANY;
+    }
+
+    errno = 0;
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        int e = errno ? errno : 5 /* EIO */;
+        close(fd);
+        return -(int64_t)e;
+    }
+
+    return (int64_t)fd;
+}

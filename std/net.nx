@@ -1,0 +1,64 @@
+// std/net.nx — E5.1: las hermanas Result de la conexión de red
+// (spec errores-tipados §4.2.2, arco E5 "net").
+//
+// Alcance de E5.1 — SOLO el trío que abre un socket y devuelve el fd:
+// try_tcp_connect / try_tcp_listen / try_udp_bind. Las centinelas viejas
+// (tcp_connect/tcp_listen/tcp_close/udp_bind, builtins del codegen)
+// abortan/loggean por stderr ante fallo y devuelven -1 sin distinguir la
+// causa; estas hermanas reportan el errno real via Result<int, Error> y
+// el proceso sigue vivo. read/write/accept/resolve de sockets (y sus
+// analogías Result) son E5.2+ — no están acá.
+//
+// Contrato de `host` en try_tcp_listen/try_udp_bind (review final F1):
+// SOLO una IP numérica ("127.0.0.1") o "" (bind-all, todas las
+// interfaces vía INADDR_ANY) — NUNCA un hostname. runtime/net.c valida
+// con inet_pton() y devuelve Err{kind:"invalid", code:22} si `host` no es
+// una IP numérica; antes de este fix, un hostname no-numérico bindeaba en
+// silencio a INADDR_ANY (exposición no pedida por el caller). La
+// resolución de hostnames (getaddrinfo) es exclusiva de try_tcp_connect
+// — connect SÍ necesita resolver un host real; listen/bind no resuelven
+// nada, solo validan que ya sea una dirección.
+//
+// Los tres externs son el trío *_result de runtime/net.c (E5.1 Task 1):
+// éxito = fd (>= 0) devuelto tal cual, fallo = -errno (negativo) — el
+// código de error real es `0 - h` (ver std/fs.nx y las otras hermanas de
+// la stdlib para el mismo idioma: resta desde 0, no unario `-h`).
+//
+// Módulo NUEVO (no hay `std/socket.nx` ni equivalente congelado por el
+// prelude) — `import "std/net"` funciona con el mecanismo normal de
+// imports, sin el problema de std/file.nx documentado en std/fs.nx.
+
+import "std/error"
+
+extern "C" fn nyx_tcp_connect_result(host: String, port: int) -> int
+extern "C" fn nyx_tcp_listen_result(host: String, port: int) -> int
+extern "C" fn nyx_udp_bind_result(host: String, port: int) -> int
+
+// E5.1: hermana Result de tcp_connect. Éxito = fd de un socket TCP ya
+// conectado; error = Error con el errno real (ej. 111 ECONNREFUSED si
+// nadie escucha en host:port).
+pub fn try_tcp_connect(host: String, port: int) -> Result<int, Error> {
+    let h: int = nyx_tcp_connect_result(host, port)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_connect " + host + ":" + int_to_string(port)))
+}
+
+// E5.1: hermana Result de tcp_listen. Éxito = fd de un socket TCP en
+// modo listen (bind + listen ya hechos); error = Error con el errno real
+// (ej. 98 EADDRINUSE si el puerto ya está tomado).
+pub fn try_tcp_listen(host: String, port: int) -> Result<int, Error> {
+    let h: int = nyx_tcp_listen_result(host, port)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_listen " + host + ":" + int_to_string(port)))
+}
+
+// E5.1: hermana Result de udp_bind. Éxito = fd de un socket UDP ya
+// bindeado; error = Error con el errno real.
+pub fn try_udp_bind(host: String, port: int) -> Result<int, Error> {
+    let h: int = nyx_udp_bind_result(host, port)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_bind " + host + ":" + int_to_string(port)))
+}

@@ -245,9 +245,9 @@ reasonably do something other than log-and-die → `Result<T, Error>`; if
 not → panic (`unwrap()`, an aborting builtin). `Error { code, kind, msg }`
 (`import "std/error"`) is the ONE shape for every fallible stdlib
 function going forward — `kind` is a closed vocabulary (`not_found`,
-`permission`, `connection`, `parse`, `timeout`, `io`, `invalid`, `oom`),
-built from errno via `errno_to_kind(code)`; `error_to_string(e)` is the
-one human format. For files, `try_read_file(path) -> Result<String,
+`permission`, `connection`, `parse`, `timeout`, `in_use`, `io`, `invalid`,
+`oom`), built from errno via `errno_to_kind(code)`; `error_to_string(e)`
+is the one human format. For files, `try_read_file(path) -> Result<String,
 Error>` / `try_write_file(path, content) -> Result<int, Error>`
 (`import "std/fs"`) are the canonical Result-returning I/O for new code —
 prefer them over the old `read_file`/`write_file` sentinels (`""` for
@@ -256,7 +256,15 @@ failure). See `examples/by-example/101-file-errors-two-tier.nx`.
 Gotcha: `let w = try_write_file(...)` WITHOUT a type annotation loses the
 generic `Result<T,E>` (opaque `i8*` to the checker) — `w.unwrap()` then
 fails with "method 'unwrap' is not available on a receiver of type
-'i8*'"; annotate `let w: Result<int, Error> = try_write_file(...)`.
+'i8*'"; annotate `let w: Result<int, Error> = try_write_file(...)`. For
+sockets (E5.1), `try_tcp_connect(host, port)` / `try_tcp_listen(host,
+port)` / `try_udp_bind(host, port)` (all `-> Result<int, Error>`,
+`import "std/net"`) are the Result-returning trio over connect/listen/
+bind — prefer them over the old `tcp_connect`/`tcp_listen`/`udp_bind`
+builtins, which abort or print to stderr on failure instead of returning
+a typed error (e.g. `EADDRINUSE` surfaces as `kind == "in_use"`, `code ==
+98`). `accept`/`read`/`write`/`resolve` sockets stay on the old builtins
+for now (E5.2, tracked in `TASKS.md`).
 
 ### Closures
 

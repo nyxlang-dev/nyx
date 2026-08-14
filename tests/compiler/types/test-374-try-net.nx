@@ -1,0 +1,62 @@
+// test-374 (E5.1): las hermanas try_ de red — try_tcp_connect/
+// try_tcp_listen/try_udp_bind devuelven Result<int, Error> en vez de
+// abortar/loggear por stderr como las centinelas viejas
+// (tcp_connect/tcp_listen/tcp_close, builtins).
+//
+// Import bare (`import "std/modulo"`, ver test-372/373): la forma
+// `{ } from` quedó obsoleta desde Task 1.
+//
+// std/net (no std/socket): módulo NUEVO — ver el comentario header de
+// std/net.nx para el porqué (mismo mecanismo que std/fs.nx, sin el
+// problema de congelamiento del prelude).
+
+import "std/net"
+import "std/error"
+
+fn main() -> int {
+    // (a) listen efímero (puerto 0 → el kernel asigna uno libre) — Ok.
+    let l: Result<int, Error> = try_tcp_listen("127.0.0.1", 0)
+    if l.is_ok() { print("listen-ok") }
+    match l {
+        Result.Ok(fd) => { tcp_close(fd) }
+        Result.Err(e) => { print("no-deberia") }
+    }
+
+    // (b) connect a un puerto alto cerrado (nadie escucha ahí) — Err con
+    // kind "connection" y code 111 (ECONNREFUSED, salida MEDIDA).
+    match try_tcp_connect("127.0.0.1", 58734) {
+        Result.Ok(fd) => { print("no-deberia") ; tcp_close(fd) }
+        Result.Err(e) => { print(e.kind) ; print(int_to_string(e.code)) }
+    }
+
+    // (c) listen duplicado del mismo puerto alto fijo — el primero
+    // reserva el puerto, el segundo choca contra EADDRINUSE. Salida
+    // MEDIDA de kind/code (decisión in_use documentada en std/error.nx).
+    let first: Result<int, Error> = try_tcp_listen("127.0.0.1", 58735)
+    match first {
+        Result.Ok(fd1) => {
+            match try_tcp_listen("127.0.0.1", 58735) {
+                Result.Ok(fd2) => { print("no-deberia") ; tcp_close(fd2) }
+                Result.Err(e2) => { print(e2.kind) ; print(int_to_string(e2.code)) }
+            }
+            tcp_close(fd1)
+        }
+        Result.Err(e1) => { print("no-deberia-tampoco") }
+    }
+
+    // (d) host NO-numérico ("localhost") — review final F1: inet_pton()
+    // no lo parsea (no es una IP), runtime/net.c ahora lo rechaza con
+    // -EINVAL en vez de bindear INADDR_ANY en silencio. kind "invalid"
+    // (vocabulario cerrado de std/error.nx), code 22.
+    match try_tcp_listen("localhost", 0) {
+        Result.Ok(fd3) => { print("no-deberia-tampoco-2") ; tcp_close(fd3) }
+        Result.Err(e3) => { print(e3.kind) ; print(int_to_string(e3.code)) }
+    }
+
+    // smoke de convivencia: los builtins viejos (tcp_listen/tcp_close)
+    // siguen funcionando sin tocar nada de este módulo.
+    let old: int = tcp_listen("127.0.0.1", 0)
+    tcp_close(old)
+    print("sigo-vivo")
+    return 0
+}
