@@ -1,0 +1,28 @@
+// test-372 (E4): el tipo Error canónico de std — struct único ratificado
+// (spec 2026-08-11 §3.1, decisión de Ottavio 2026-08-14). Un solo shape
+// para toda la std; kind con vocabulario cerrado.
+//
+// Corrección de sonda: los tests de este repo importan módulos std con
+// `import "std/modulo"` (forma bare — inlinea el módulo y expone sus
+// pub struct/pub fn directo, sin destructuring `{ } from`); ver
+// tests/ai-first/09-json.nx y test-140-args (suite de lenguaje).
+
+import "std/error"
+
+fn falla() -> Result<int, Error> {
+    return Result.Err(err_new(2, errno_to_kind(2), "no existe /tmp/nada"))
+}
+
+fn main() -> int {
+    match falla() {
+        Result.Ok(n) => { print(n) }
+        Result.Err(e) => {
+            print(e.kind)
+            print(e.code)
+            print(error_to_string(e))
+        }
+    }
+    print(errno_to_kind(13))
+    print(errno_to_kind(99))
+    return 0
+}

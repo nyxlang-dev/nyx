@@ -87,6 +87,9 @@ if let Option.Some(v) = maybe { print(v) }
 // File I/O
 let content = read_file("file.txt")
 write_file("out.txt", data)
+// New code: prefer the try_ Result-returning pair over the sentinels above
+// (import "std/fs"; import "std/error") — try_read_file/try_write_file
+// distinguish empty-file from error and never abort the process.
 
 // JSON — values are tagged Arrays, not Map (JSON is recursive; see nested-Maps trap below)
 let data: Array = json_parse(text)

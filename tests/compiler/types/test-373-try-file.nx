@@ -1,0 +1,47 @@
+// test-373 (E4): el piloto de la familia try_ de E/S — try_read_file/
+// try_write_file devuelven Result<T, Error>. Éxito, not_found
+// distinguible de vacío, y write que NO aborta el proceso (la centinela
+// vieja de std/file hace exit(1)).
+//
+// Import bare (`import "std/modulo"`, ver test-372): la forma
+// `{ } from` quedó obsoleta desde Task 1.
+//
+// std/fs (no std/file): std/file.nx queda congelado por el prelude
+// (ver el comentario header de std/fs.nx) — cualquier función agregada
+// ahí después de esa foto es invisible vía import. std/fs es un módulo
+// nuevo y no tiene ese problema.
+
+import "std/fs"
+import "std/error"
+
+fn main() -> int {
+    // Anotación explícita necesaria: un `let` sin tipo pierde el genérico
+    // Result<T,E> (queda i8* opaco) y `.is_ok()` no dispatchea — gotcha
+    // general de Nyx, no específico de este piloto (confirmado con sondas).
+    let w: Result<int, Error> = try_write_file("/tmp/nyx_e4_piloto.txt", "contenido")
+    if w.is_ok() { print("write-ok") }
+
+    match try_read_file("/tmp/nyx_e4_piloto.txt") {
+        Result.Ok(s) => { print(s) }
+        Result.Err(e) => { print(error_to_string(e)) }
+    }
+
+    match try_read_file("/tmp/nyx_e4_no_existe.txt") {
+        Result.Ok(s) => { print("no-deberia") }
+        Result.Err(e) => { print(e.kind) }
+    }
+
+    // el proceso SIGUE VIVO tras un write fallido — la prueba del piloto
+    match try_write_file("/tmp/nyx_e4_no_dir/x.txt", "y") {
+        Result.Ok(n) => { print("no-deberia") }
+        Result.Err(e2) => { print(e2.kind) }
+    }
+    print("sigo-vivo")
+
+    // hermeticidad (M6, review final E4, 2026-08-14): el archivo que
+    // try_write_file crea en /tmp no lo limpia el runner — convención de
+    // los tests vecinos que escriben a /tmp (ver remove_file en
+    // test-267-fsync.nx).
+    remove_file("/tmp/nyx_e4_piloto.txt")
+    return 0
+}

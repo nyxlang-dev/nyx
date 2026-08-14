@@ -402,6 +402,10 @@ let json: String = json_stringify(obj)
 let content: String = read_file("data.txt")
 write_file("output.txt", "hello")
 let exists: bool = file_exists("data.txt")
+
+// New code: prefer the try_ Result-returning pair over the sentinels above
+// (import "std/fs"; import "std/error") — try_read_file/try_write_file
+// distinguish empty-file from error and never abort the process.
 ```
 
 ## Process & OS

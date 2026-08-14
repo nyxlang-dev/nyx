@@ -1,0 +1,39 @@
+// Errores tipados de E/S: Result<T, Error> cuando el caller reacciona, panic cuando morir es correcto
+
+import "std/fs"
+import "std/error"
+
+// Nivel 1 (Result): el caller de cargar_config puede reaccionar distinto
+// según el fallo, así que esta función NO decide por él — propaga el
+// Error con `?` sin necesitar saber por qué try_read_file falló.
+fn cargar_config(path: String) -> Result<String, Error> {
+    let contenido: String = try_read_file(path)?
+    return Result.Ok(contenido)
+}
+
+fn main() -> int {
+    let path: String = "/tmp/nyx_example_101_config.txt"
+
+    // Nivel 2 (panic): sembrar el archivo de ejemplo en /tmp. Si esto
+    // falla, /tmp no es escribible y no hay fallback razonable — morir
+    // acá con unwrap() es más honesto que seguir con un estado a medias.
+    // Anotación explícita necesaria: un `let` sin tipo pierde el genérico
+    // Result<T,E> (queda i8* opaco) y .unwrap() no dispatchea.
+    let w: Result<int, Error> = try_write_file(path, "puerto=8080\nmodo=dev\n")
+    w.unwrap()
+
+    // Nivel 1: match exhaustivo, la config existe.
+    match cargar_config(path) {
+        Result.Ok(cfg) => { print(cfg) }
+        Result.Err(e) => { print("no se pudo cargar config: " + error_to_string(e)) }
+    }
+
+    // Mismo Result, ahora el archivo no existe: el caller distingue el
+    // tipo de fallo por e.kind sin parsear un string de mensaje.
+    match cargar_config("/tmp/nyx_example_101_no_existe.txt") {
+        Result.Ok(cfg) => { print(cfg) }
+        Result.Err(e) => { print("kind: " + e.kind) }
+    }
+
+    return 0
+}

@@ -1,0 +1,46 @@
+// std/error.nx — El tipo Error canónico de la stdlib (E4, spec
+// 2026-08-11-errores-tipados-design §3.1, ratificado 2026-08-14).
+//
+// UN solo shape para toda la std: Result<T, Error> es la firma estándar
+// de toda función falible; Option<T> queda para ausencia-sin-causa.
+// La regla de dos niveles del híbrido: si el caller razonablemente hace
+// algo distinto de loggear-y-morir → Result; si no → panic.
+//
+// kind usa un VOCABULARIO CERRADO v1 — agregar un kind nuevo es una
+// decisión de diseño con ficha, no un string ad-hoc:
+//   "not_found"  — el recurso no existe (ENOENT, 404, clave ausente)
+//   "permission" — sin permisos (EACCES, 403)
+//   "connection" — fallo de red/conexión (ECONNREFUSED, reset)
+//   "parse"      — entrada malformada (json inválido, header roto)
+//   "timeout"    — se agotó el tiempo (ETIMEDOUT)
+//   "io"         — fallo de E/S genérico (el resto de errno)
+//   "invalid"    — argumento/estado inválido (EINVAL)
+//   "oom"        — sin memoria (ENOMEM)
+
+pub struct Error {
+    code: int,
+    kind: String,
+    msg: String,
+}
+
+pub fn err_new(code: int, kind: String, msg: String) -> Error {
+    return Error { code: code, kind: kind, msg: msg }
+}
+
+// errno → kind. Los números son los de Linux (el único target nativo hoy);
+// wasm32-wasi mapea sus errno equivalentes a los mismos valores POSIX.
+pub fn errno_to_kind(code: int) -> String {
+    if code == 2   { return "not_found" }
+    if code == 13  { return "permission" }
+    if code == 12  { return "oom" }
+    if code == 22  { return "invalid" }
+    if code == 110 { return "timeout" }
+    if code == 111 { return "connection" }
+    return "io"
+}
+
+// Formato humano único: es lo que muestra un unwrap() panicante y lo que
+// un log estructurado parsea. `kind: msg (code N)`.
+pub fn error_to_string(e: Error) -> String {
+    return e.kind + ": " + e.msg + " (code " + int_to_string(e.code) + ")"
+}

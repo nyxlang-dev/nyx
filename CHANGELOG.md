@@ -7,6 +7,45 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.28.0] — 2026-08-14 — E4: piloto de errores tipados de E/S (`std/error` + `std/fs`)
+
+> MINOR autorizado explícitamente por Ottavio (2026-08-14, segundo de la
+> sesión — autorización del dueño de la política).
+
+**Candidato MINOR v0.28.0 — decisión de release PENDIENTE de Ottavio** (política:
+1 MINOR por sesión, v0.27.0 ya salió). Rama `feat/e4-std-error-file`, sin
+mergear a `main`. `VERSION` sin tocar, sin tag.
+
+### Added
+- **`std/error.nx`**: `Error { code, kind, msg }` — UN solo shape para toda
+  fn falible de la stdlib, con `Result<T, Error>` como firma estándar
+  (`Option<T>` queda para ausencia-sin-causa). `err_new`/`errno_to_kind`/
+  `error_to_string`; `kind` usa vocabulario CERRADO v1 de 8 valores
+  (`not_found`, `permission`, `connection`, `parse`, `timeout`, `io`,
+  `invalid`, `oom`).
+- **`nyx_file_read_result`/`nyx_file_write_result`** (runtime): E/S con
+  errno real, binary-safe, nunca abortan el proceso.
+- **`std/fs.nx`**: `try_read_file(path) -> Result<String, Error>` /
+  `try_write_file(path, content) -> Result<int, Error>` — las primeras
+  hermanas Result-returning de I/O, conviven con la centinela vieja
+  (`read_file`/`write_file` de `std/file.nx`, intacta).
+- Receta `examples/by-example/101-file-errors-two-tier.nx` (la regla de
+  dos niveles: `Result` cuando el caller reacciona, panic cuando morir es
+  correcto) + sección nueva en `LLM.md` (§2 y §5.3).
+- Tests: regression +test-372-std-error, +test-373-try-file; runtime
+  `test_file_result` (15 asserts).
+
+### Hallazgo (no bloqueante, catalogado)
+- `std/prelude.nx` es una copia física congelada de `std/file`/`math`/
+  `io`/`array`/`map` (desde v0.12.0), pre-registrada como "ya importada"
+  para todo programa — `import "std/file"` es un no-op para cualquier
+  función agregada a ese archivo después de esa foto. Por eso las
+  hermanas `try_*` viven en `std/fs.nx` (módulo nuevo), no en
+  `std/file.nx`. Detalle de los 4 caminos explorados y la recomendación:
+  `TASKS.md`, ficha `[arco:E4-std-error]`.
+
+---
+
 ## [0.27.0] — 2026-08-13 — Errores tipados E1+E2: Result<T,E> real de punta a punta
 
 **MINOR autorizado por Ottavio (2026-08-13).** Cambio de

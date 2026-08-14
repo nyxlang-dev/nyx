@@ -1,0 +1,63 @@
+// std/fs.nx — E4: las hermanas Result de la E/S de archivos
+// (spec errores-tipados §4.2.1).
+//
+// ¿Por qué un módulo nuevo y no directamente std/file.nx? Porque no se
+// puede hoy: std/prelude.nx es una copia física congelada de std/file.nx
+// (junto con math/io/array/map), git-tracked desde v0.12.0, y el driver
+// la auto-carga y PRE-REGISTRA como "ya importada" para todo programa —
+// así que un `import "std/file"` explícito del usuario es un no-op para
+// cualquier función agregada a std/file.nx DESPUÉS de esa foto congelada:
+// el símbolo nunca se re-inlinea y el checker lo reporta 'not declared'.
+// Confirmado con 4 caminos de workaround, todos con dead-end sin tocar el
+// resolutor de imports del binario que arranca el bootstrap (embeber acá
+// tambien Error rompe TODO programa que no importe std/error; embeberlo
+// además en la copia congelada colisiona con quien importe std/error
+// aparte — "redefinition of type" al ensamblar; alias calificado genera
+// IR mal tipado porque el heurístico de firmas no maneja Array/Result).
+// Repro y detalle completo: el test-373 de la suite de tipos (E4).
+//
+// std/fs.nx es un módulo NUEVO — no tiene ese problema, así que
+// `import "std/fs"` SÍ funciona con el mecanismo normal (el mismo que ya
+// usa std/error.nx). Cuando el prelude deje de estar congelado (ficha
+// pendiente), re-exportar estas dos desde std/file.nx es aditivo.
+//
+// La centinela vieja de std/file.nx (read_text/write_text, y los
+// builtins read_file/write_file que envuelve) NO se toca acá: read_file
+// devuelve "" ambiguo (vacío-real vs error) y write_file aborta el
+// proceso ante cualquier fallo. El cutover a Result como firma única es
+// decisión MAJOR (1.0.0); hoy conviven.
+//
+// ⚠️ Límite conocido heredado (M1, review final E4, 2026-08-14): archivos
+// que REPORTAN tamaño 0 pero SÍ tienen contenido (ej. /proc/*, que no
+// implementa stat de tamaño real) devuelven `Ok("")` en try_read_file —
+// no un error. El mecanismo de lectura de nyx_file_read_result usa el
+// tamaño reportado por ftell/SEEK_END para dimensionar el buffer; un
+// tamaño 0 nunca entra al fread. No confundir con el guard de ESPIPE
+// (stream directamente no-seekable, ej. FIFO/pipe) — ese sí devuelve
+// error. Para /proc y similares, hoy NO hay forma de distinguir
+// "vacío real" de "tamaño mal reportado" desde esta API.
+
+import "std/error"
+
+extern "C" fn nyx_file_read_result(path: String) -> Array
+extern "C" fn nyx_file_write_result(path: String, content: String) -> int
+
+// E4: hermana Result de read_file. Distingue vacío-real de error y es
+// binary-safe (la centinela devuelve "" ambiguo y trunca en NUL).
+pub fn try_read_file(path: String) -> Result<String, Error> {
+    let r: Array = nyx_file_read_result(path)
+    let code: int = r[0]
+    if code == 0 {
+        let contenido: String = r[1]
+        return Result.Ok(contenido)
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "read_file '" + path + "'"))
+}
+
+// E4: hermana Result de write_file. La centinela ABORTA el proceso ante
+// cualquier fallo; esta reporta y el caller decide.
+pub fn try_write_file(path: String, content: String) -> Result<int, Error> {
+    let code: int = nyx_file_write_result(path, content)
+    if code == 0 { return Result.Ok(0) }
+    return Result.Err(err_new(code, errno_to_kind(code), "write_file '" + path + "'"))
+}

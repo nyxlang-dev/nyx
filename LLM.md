@@ -240,6 +240,24 @@ fn may_fail() -> Result { return Result.Err("oops") }
 let val = may_fail()?    // early-returns Err
 ```
 
+**Errors = the two-tier rule (E4, `std/error`)**: if the caller can
+reasonably do something other than log-and-die → `Result<T, Error>`; if
+not → panic (`unwrap()`, an aborting builtin). `Error { code, kind, msg }`
+(`import "std/error"`) is the ONE shape for every fallible stdlib
+function going forward — `kind` is a closed vocabulary (`not_found`,
+`permission`, `connection`, `parse`, `timeout`, `io`, `invalid`, `oom`),
+built from errno via `errno_to_kind(code)`; `error_to_string(e)` is the
+one human format. For files, `try_read_file(path) -> Result<String,
+Error>` / `try_write_file(path, content) -> Result<int, Error>`
+(`import "std/fs"`) are the canonical Result-returning I/O for new code —
+prefer them over the old `read_file`/`write_file` sentinels (`""` for
+both empty-file and error; `write_file` aborts the process on any
+failure). See `examples/by-example/101-file-errors-two-tier.nx`.
+Gotcha: `let w = try_write_file(...)` WITHOUT a type annotation loses the
+generic `Result<T,E>` (opaque `i8*` to the checker) — `w.unwrap()` then
+fails with "method 'unwrap' is not available on a receiver of type
+'i8*'"; annotate `let w: Result<int, Error> = try_write_file(...)`.
+
 ### Closures
 
 ```nyx
@@ -670,6 +688,7 @@ internals you never touch directly.
 
 1. **Global structs need `zeroinitializer`**, not `0` — handled by codegen, but worth knowing if you write FFI
 2. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is inconsistent in child process)
+3. **`std/prelude.nx` is a frozen copy of `std/file`/`math`/`io`/`array`/`map` (since v0.12.0), pre-registered as "already imported"** — a driver-level detail, not a per-program bug. Any function added to `std/file.nx` AFTER that snapshot is invisible to `import "std/file"`: the module is never re-inlined, so the checker reports the new symbol as "not declared" even though it's really there on disk. This is why the E4 `try_read_file`/`try_write_file` pair lives in a NEW module, `std/fs.nx` (`import "std/fs"`), instead of `std/file.nx` — a brand-new module name has no frozen snapshot to collide with. Re-exporting from `std/file.nx` once the prelude stops being hand-frozen is a tracked follow-up (`TASKS.md`, cosecha E4-std-error).
 
 ### 5.4 Already fixed — you can use these
 
