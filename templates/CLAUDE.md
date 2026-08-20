@@ -142,6 +142,11 @@ let args: Array = get_args()
 11. **A missing method on a typed receiver is a compile error (NYX1022)** — e.g.
     `m.length()` on a `Map` fails with a did-you-mean, not silent garbage. Use `size()` on
     Map, `length()` on String/Array.
+12. **A C `int` (32-bit) returned by `extern "C"` does NOT sign-extend into Nyx `int`
+    (64-bit)** — a negative C value crosses as a huge positive number instead (e.g. `-1`
+    arrives as `4294967295`). Never compare an `extern "C"` result against an exact
+    negative sentinel — test the condition you actually know (`rc != 0`), or declare the
+    C side `int64_t` when you control it (NOT `long` — on Win64/LLP64 `long` is 32-bit).
 
 `and`/`or` **do** short-circuit. Closure capture of locals fully works (lambda, nested fn,
 and both coexisting in the same function). `defer expr()` (no block), `const` with

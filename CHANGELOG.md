@@ -7,6 +7,187 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.31.0] — 2026-08-20 — E5 completo: `http` + `json` + `sqlite` en la regla de dos niveles (+ W0 Windows interno)
+
+> MINOR agrupado autorizado explícitamente por Ottavio (2026-08-20,
+> «confirmado v0.31.0»). Cierra el arco E5 de la spec de errores tipados
+> §4.2 de punta a punta: `file` (E4, v0.28.0) → `net` (E5.1/E5.2/E5.2b,
+> v0.29.0-v0.30.0) → `http` + `json` + `sqlite` (este release). Tres
+> ramas paralelas sobre v0.30.0 (E5.3/E5.4/E5.5) + el arco W0 de Windows
+> (INTERNO — nada de esto anuncia soporte Windows, decisión todo-o-nada
+> §1.3 de la spec: la sección W0 documenta ingeniería en construcción).
+> Gates del merge: regression 400 archivos / 399 ejecutados ARM64 100%,
+> errors 256/0, ai-first 22, fixed point ×2, stacks 6/6, CI de main
+> verde (Nyx CI + Nyx Windows W0). En el merge se aplicó la enmienda
+> LLP64: la receta FFI de LLM.md §5.1 ítem 4 es `int64_t` ÚNICA (NO
+> `long` — Win64 es LLP64, 32 bits).
+
+### W0: fundaciones del target Windows (INTERNO — esto NO anuncia soporte Windows)
+
+> Rama `feat/w0-windows-target` sobre `main` v0.30.0, MERGEADA 2026-08-20. Primera
+> etapa del arco Windows nativo (spec
+> `docs/superpowers/specs/2026-08-19-windows-nativo-design.md`, decisión
+> todo-o-nada §1.3: nada se publica como soportado hasta W6).
+
+### Added
+- **`NYX_TARGET=x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`**: el
+  triple se emite tal cual en el .ll (sin forzar `no_gc` — Boehm soporta
+  win32/win64, a diferencia de wasm32). Un `NYX_TARGET` NO reconocido es
+  ahora error fatal bilingüe que nombra los targets válidos — antes caía
+  MUDO al triple linux (silently-wrong de toolchain).
+- **`win_forbidden_builtin` (guard TEMPORAL W0-W5)**: los builtins de
+  net/scheduler/process/tls/señales fallan fast con error bilingüe «aún
+  no está portado a Windows» bajo un target windows, en vez de un
+  `unresolved external symbol` críptico del linker. La capa `nyx_os_*`
+  (W1+) lo vacía etapa por etapa.
+- **`make win-compile FILE=x.nx [ARCH=arm64]`** → `x.win.ll` /
+  `x.arm64.win.ll`.
+- **CI `windows.yml` — el primer .exe Nyx nativo CORRIÓ en CI** (run real
+  verde, la evidencia ejecutada que pide la spec §4-W0): fixture-freshness
+  en ubuntu (reconstruye el bootstrap desde seeds, re-emite el IR del
+  hello y lo diffea contra el fixture commiteado), hello-x64 en
+  windows-latest (vcpkg bdwgc + clang→MSVC + lld-link + ejecución con
+  salida assertada), hello-arm64 cross (compile+link + artefacto; no hay
+  runner ARM64-Windows público). Subset de runtime W0: `strings.c` +
+  `runtime-arrays.c` + `maps.c` + `runtime/os/win_w0_hello.c` (stub W0-TEMP
+  de 6 símbolos que W1 borra).
+- Tests: errors 253→256 (builtin prohibido con control positivo nativo,
+  target desconocido, triple emitido ×2 archs). Auditoría ABI Win64
+  MEDIDA en la spec §9 (c_fn_ptr por-triple, struct by-value sin
+  byval/sret, LLP64 — `long` C es de 32 bits en Win64 —, paths/HOME del
+  driver) con 4 fichas en TASKS.md, cosecha `[arco:W0-windows]`.
+
+### E5.5: `std/sqlite` — el canal lateral muere dentro del Error
+
+> Rama `feat/e5-5-sqlite-try` sobre `main` v0.30.0, MERGEADA 2026-08-20 —
+> cuarta hermana de la migración E5 (junto a E5.2b `std/net`, E5.3
+> `std/http`, E5.4 `std/json`).
+
+### Added
+- **`std/sqlite.nx`**: `try_sqlite_open(path) -> Result<*int, Error>` /
+  `try_sqlite_exec(db, sql) -> Result<int, Error>` (`Ok(affected)` real) /
+  `try_sqlite_query(db, sql) -> Result<Array, Error>` /
+  `try_sqlite_query_named(db, sql) -> Result<Array, Error>` — reemplazan
+  el patrón NULL/-1/bool mudo + `sqlite_error(db)` a mano de las
+  centinelas viejas (`sqlite_open`/`sqlite_exec`/`sqlite_query`/
+  `sqlite_query_named`, intactas). Nyx puro, CERO cambios en
+  `runtime/sqlite_adapter.c`. `begin`/`commit`/`rollback`/`exec_int`/
+  `exec_str`/`query_int` quedan sin hermana `try_` (ficha `E5.5b`,
+  TASKS.md, cosecha `[arco:E5.5-sqlite]`).
+- **Kind `"db"`** en el vocabulario cerrado de `std/error.nx` — los result
+  codes de sqlite (1-27) colisionan con el espacio errno (rc 2 =
+  SQLITE_INTERNAL ≠ ENOENT); espacio de código propio, mismo precedente
+  que `"eof"` (E5.2b).
+- Tests: regression +test-379-try-sqlite (open/exec/query Ok, SQL
+  malformado vía exec y vía query, tabla inexistente, PK duplicada vía
+  query, open de path imposible — todos con expected MEDIDO); ai-first
+  +22-ffi-int-truncation (blindaje del hallazgo 2, ver abajo).
+
+### Found (documentado, NO arreglado — fuera de alcance de esta rama)
+- **La centinela `sqlite_query`/`sqlite_query_named` se come en silencio
+  un error de STEP real** (ej. `SQLITE_CONSTRAINT` de un `INSERT` con
+  conflicto de PRIMARY KEY): su loop trata cualquier rc no-`SQLITE_ROW`
+  como "query terminada" y devuelve las filas parciales como si nada
+  hubiese fallado. Impacto bajo (un `SELECT` normal nunca dispara esto)
+  pero real para `INSERT`/`UPDATE` corridos por esas funciones. Las
+  hermanas `try_` distinguen correctamente. Ficha `[arco:E5.5-sqlite]`
+  en TASKS.md.
+- **Clase de FFI nueva**: varias funciones de `runtime/sqlite_adapter.c`
+  (`nyx_sqlite_step`/`nyx_sqlite_exec`/`nyx_sqlite_column_count`/
+  `nyx_sqlite_bind_str/int/double`) declaran retorno C `int` (32 bits)
+  contra un `extern "C"` Nyx de 64 bits — un valor negativo cruza
+  ZERO-extendido, no sign-extendido (`-1` llega como `4294967295`). La
+  clase potencialmente afecta a CUALQUIER `extern "C" fn ... -> int` del
+  repo, no solo sqlite (`runtime/net.c` ya se cubre declarando
+  `int64_t` explícito). Auditoría del resto de los adapters fichada
+  `[arco:E5.5-sqlite]` en TASKS.md. Visible en LLM.md §5.1 item 4.
+
+### E5.4: `std/json` — el `null` ambiguo muere
+
+> Rama `feat/e5-4-json-try` sobre `main` v0.30.0, MERGEADA 2026-08-20 —
+> paralela a `feat/e5-3-http-try` (ambas parten del mismo v0.30.0).
+> CERO C, CERO `compiler/` — `std/json.nx` es Nyx puro.
+
+### Added
+- **`std/json.nx`**: `try_json_parse(input) -> Result<Array, Error>` /
+  `try_json_get(obj, key) -> Result<Array, Error>` /
+  `try_json_array_get(arr, i) -> Result<Array, Error>` — hermanas
+  `Result`-returning de `json_parse`/`json_get`/`json_array_get`. Las
+  centinelas viejas quedan INTACTAS (sin cambios, sin deprecar).
+- **La desambiguación EXACTA del `null`**: `json_parse`/`json_get`/
+  `json_array_get` devuelven el mismo `["null"]` centinela tanto para un
+  `null` JSON legítimo como para "no había nada que parsear" / "clave
+  ausente" / "índice fuera de rango" — indistinguibles mirando solo el
+  valor. `try_json_parse` resuelve la ambigüedad de parseo comparando el
+  input recortado contra el literal `"null"` (no delegando en el tag del
+  resultado); `try_json_get` la resuelve re-recorriendo las keys del
+  objeto en vez de llamar a `json_get` (clave presente con valor `null` →
+  `Ok`; clave ausente → `Err{2,"not_found"}`); `try_json_array_get` hace
+  lo análogo con el índice (`Err{22,"invalid"}` fuera de rango).
+- **`json_trim` (helper interno, fix de review)**: la desambiguación de
+  `try_json_parse` recorta el input con un helper propio que espeja el
+  set de whitespace de `skip_whitespace` (espacio/`\t`/`\n`/`\r`, RFC 8259
+  §2) — NO con `.trim()` del runtime, que delega en `isspace()` de libc y
+  también considera whitespace a `\v`/`\f`, dos bytes que JSON no
+  reconoce. Con `.trim()` genérico, un input con VT/FF pegado a `null`
+  colaba como `Ok(null)` legítimo cuando debía ser `Err` — hallado en
+  review, no en el diseño original (`.trim()` estaba documentado como
+  "alcanza sin helper" y era falso).
+- **Límite estructural conocido, fichado, NO resuelto acá**: basura
+  ESTRUCTURAL dentro de un objeto/array sin cerrar (`"{oops"`) NO activa
+  la desambiguación — `parse_object`/`parse_array` siempre sintetizan
+  alguna estructura (parcial/corrupta) en vez de propagar tag `"null"`,
+  así que ese tipo de basura pasa como `Ok` con contenido corrupto.
+  Detectarlo requiere que el parser trackee posición/buena formación
+  end-to-end — arco propio (`TASKS.md`, ficha `[MEDIA-ALTA] parser con
+  posición`).
+- Test `test-378-try-json` (regression, 398 archivos): parse válido con
+  navegación de dos niveles, `"null"` con/sin whitespace JSON alrededor
+  (incl. `\t`/`\n`), basura pura y vacío → `Err "parse"`, `"{oops"` → `Ok`
+  corrupto (pin de comportamiento actual), trailing garbage tras `"null"`
+  (`Err`, gratis) vs. tras un valor válido (`Ok`, leniente heredado),
+  clave presente con valor `null` (`Ok`, EL assert central) vs. clave
+  ausente (`Err "not_found"`), receptor que no es objeto/array
+  (`Err "invalid"`), índice fuera de rango, VT (`chr(11)`, sin escape
+  literal en Nyx) delante de `"null"` → `Err` (fija el fix de
+  `json_trim`), no-regresión de las 3 centinelas viejas.
+
+### E5.3: `std/http` — cliente HTTP tipado, el primer consumer real de `std/net`
+
+> Rama `feat/e5-3-http-try` sobre `main` v0.30.0, MERGEADA 2026-08-20.
+> CERO C, CERO `compiler/` — `std/http.nx` es Nyx puro sobre la familia
+> `try_` de `std/net`.
+
+### Added
+- **`std/http.nx`**: `try_http_get(url)` / `try_http_post(url, body)` /
+  `try_http_request(method, url, headers, body) -> Result<Array, Error>`
+  — cliente HTTP tipado que mata el status `-1` centinela de las viejas
+  `http_get`/`http_post`/`http_request` (INTACTAS, sin cambios). Helper
+  interno compartido `try_http_exec` centraliza el pipeline parse→
+  connect→timeout→write→read→close sobre `try_tcp_connect`/
+  `try_tcp_write`/`try_tcp_set_timeout` de `std/net` (E5.1/E5.2) — el
+  primer consumer real de esa familia.
+- **Contrato de dos niveles**: CUALQUIER respuesta HTTP bien formada —
+  200, 404, 500 incluidos — es `Ok(response)`: el servidor respondió, eso
+  es éxito de transporte; un status es información de aplicación, no un
+  fallo de red. `Err` es exclusivo de fallos de transporte reales: URL
+  sin host parseable (`Err{22, "invalid"}`, detectado por `host == ""` de
+  `http_parse_url`), connect rechazado/timeout/DNS (el `Error` real de
+  `try_tcp_connect`), o una "respuesta" que no es HTTP válido con la
+  conexión abierta (`Err{5, "parse"}`, `status <= 0`).
+- **TLS degradado honesto**: `http_tls_request` (canal propio del
+  runtime) no expone errno real, solo un centinela `-1` con mensaje libre
+  — las `try_` lo mapean a `Err{5, "connection", msg}` en vez de fingir un
+  errno que el canal no da (ficha para un canal `nyx_tls_connect_result`
+  tipado en `TASKS.md`).
+- Test `test-377-try-http` (regression): URL inválida, connect rechazado
+  (kind `"connection"`, code 111), camino feliz canned local (`Ok`,
+  status 200, body), 404 canned (sigue siendo `Ok` — el assert central del
+  contrato), smoke de `try_http_post`/`try_http_request`. No-regresión:
+  `test-374`/`test-375`/`test-376` y la centinela `http_get` intactos.
+
+---
+
 ## [0.30.0] — 2026-08-14 — E5.2+E5.2b: `std/net` — la familia try_ completa (E/S, resolución, y las 7 restantes)
 
 > MINOR agrupado autorizado explícitamente por Ottavio (2026-08-14,

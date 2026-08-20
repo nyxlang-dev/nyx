@@ -1,0 +1,159 @@
+// test-378 (E5.4): try_json_parse/try_json_get/try_json_array_get — el "" ambiguo
+// muere. json_parse/json_get/json_array_get (las centinelas) devuelven el mismo
+// ["null"] centinela tanto para "no había nada que parsear"/"clave ausente"/
+// "índice fuera de rango" como para "el valor JSON legítimo es null" — las tres
+// hermanas try_ de este test arbitran esa ambigüedad vía Result<Array, Error>.
+//
+// (e) es el caso interesante para lectores futuros: "{oops" (objeto malformado
+// sin cerrar) NO cae en el mecanismo de desambiguación de try_json_parse — pasa
+// como Ok con contenido corrupto. Es un límite CONOCIDO y documentado en el
+// header de try_json_parse (std/json.nx): parse_object/parse_array siempre
+// sintetizan una estructura, nunca propagan tag "null", así que solo la basura
+// que cae en el fallback final de parse_value (input vacío, o un primer
+// carácter/keyword sin match) se cachea. Detectar basura estructural es del
+// arco de parser con pos-tracking (fichado, no esta tarea) — este test fija el
+// comportamiento ACTUAL para que no cambie en silencio.
+//
+// Caso (n) fija el fix de review: la desambiguación recorta con json_trim
+// (helper interno, espeja skip_whitespace) en vez de `.trim()` de libc —
+// isspace() también considera whitespace a \v y \f, que JSON NO reconoce
+// (RFC 8259 §2 es exactamente espacio/\t/\n/\r), así que `.trim()` genérico
+// dejaba colar basura con VT/FF como si fuera el "null" legítimo.
+
+import "std/json"
+import "std/error"
+
+fn main() -> int {
+    // (a) parse válido (objeto anidado) → Ok + navegación de dos niveles.
+    match try_json_parse("{\"a\":1,\"b\":{\"c\":2}}") {
+        Result.Ok(v) => {
+            print("a-parse-ok")
+            match try_json_get(v, "b") {
+                Result.Ok(inner) => {
+                    match try_json_get(inner, "c") {
+                        Result.Ok(c) => { print("a-nav=" + int_to_string(json_as_int(c))) }
+                        Result.Err(e) => { print("a-nav-no-deberia") }
+                    }
+                }
+                Result.Err(e) => { print("a-nav-inner-no-deberia") }
+            }
+        }
+        Result.Err(e) => { print("a-parse-no-deberia") }
+    }
+
+    // (b) "null" (con y sin whitespace JSON alrededor) → Ok con tag null.
+    match try_json_parse("null") {
+        Result.Ok(v) => { print("b-null=" + json_type(v)) }
+        Result.Err(e) => { print("b-null-no-deberia") }
+    }
+    match try_json_parse("  null\n\t") {
+        Result.Ok(v) => { print("b-null-ws=" + json_type(v)) }
+        Result.Err(e) => { print("b-null-ws-no-deberia") }
+    }
+    match try_json_parse("\tnull\n") {
+        Result.Ok(v) => { print("b2-null-tabnl=" + json_type(v)) }
+        Result.Err(e) => { print("b2-null-tabnl-no-deberia") }
+    }
+
+    // (c) basura pura (no matchea ningún prefijo de parse_value) → Err "parse".
+    match try_json_parse("nul") {
+        Result.Ok(v) => { print("c-basura-no-deberia") }
+        Result.Err(e) => { print("c-basura=" + e.kind) }
+    }
+
+    // (d) input vacío → Err "parse" (no es el "null" legítimo).
+    match try_json_parse("") {
+        Result.Ok(v) => { print("d-vacio-no-deberia") }
+        Result.Err(e) => { print("d-vacio=" + e.kind) }
+    }
+
+    // (e) basura ESTRUCTURAL — límite conocido, ver header del archivo: pasa
+    // como Ok con contenido corrupto (NO Err). Pin de comportamiento actual.
+    match try_json_parse("{oops") {
+        Result.Ok(v) => { print("e-estructural-ok=" + json_stringify(v)) }
+        Result.Err(e) => { print("e-estructural-no-deberia") }
+    }
+
+    // (l1) trailing garbage tras "null" → Err (gratis del mismo mecanismo).
+    match try_json_parse("null xyz") {
+        Result.Ok(v) => { print("l1-trailnull-no-deberia") }
+        Result.Err(e) => { print("l1-trailnull=" + e.kind) }
+    }
+    // (l2) trailing garbage tras un valor válido → Ok leniente (heredado).
+    match try_json_parse("5 xyz") {
+        Result.Ok(v) => { print("l2-trailvalido=" + int_to_string(json_as_int(v))) }
+        Result.Err(e) => { print("l2-trailvalido-no-deberia") }
+    }
+
+    // (n) FIX DE REVIEW: whitespace fuera del set JSON (RFC 8259 §2) NO debe
+    // colar como "null" legítimo. VT (0x0B, sin escape literal en Nyx — se
+    // construye con chr(11)) rodeando "null" hace que parse_value caiga al
+    // fallback (tag "null"), pero el trim JSON-específico (json_trim, NO
+    // `.trim()` de libc/isspace() que SÍ considera VT y FF whitespace) no lo
+    // recorta → el trimmeado queda distinto de "null" → Err. Antes del fix
+    // esto colaba como Ok(null) porque `.trim()` genérico sí comía el VT.
+    match try_json_parse(chr(11) + "null") {
+        Result.Ok(v) => { print("n-vt-no-deberia") }
+        Result.Err(e) => { print("n-vt=" + e.kind) }
+    }
+
+    let obj: Array = json_parse("{\"nombre\":\"nyx\",\"valor\":null,\"n\":7}")
+
+    // (f) clave presente (valor no-null) → Ok.
+    match try_json_get(obj, "nombre") {
+        Result.Ok(v) => { print("f-presente=" + json_as_string(v)) }
+        Result.Err(e) => { print("f-presente-no-deberia") }
+    }
+
+    // (g) EL ASSERT CENTRAL: clave presente cuyo VALOR es null → Ok (no Err).
+    // Es la distinción completa que json_get (la centinela) no puede hacer.
+    match try_json_get(obj, "valor") {
+        Result.Ok(v) => { print("g-presente-valor-null=" + json_type(v)) }
+        Result.Err(e) => { print("g-presente-valor-null-no-deberia") }
+    }
+
+    // (h) clave ausente → Err "not_found" con la clave en el mensaje.
+    match try_json_get(obj, "zzz") {
+        Result.Ok(v) => { print("h-ausente-no-deberia") }
+        Result.Err(e) => { print("h-ausente=" + e.kind + " msg=" + e.msg) }
+    }
+
+    // (i) receptor que no es un objeto JSON → Err "invalid".
+    match try_json_get(json_number(5), "nombre") {
+        Result.Ok(v) => { print("i-noobjeto-no-deberia") }
+        Result.Err(e) => { print("i-noobjeto=" + e.kind) }
+    }
+
+    let arr: Array = json_parse("[10,20,null,30]")
+
+    // (j) índice dentro de rango cuyo valor es null → Ok (misma distinción que
+    // (g), ahora para arrays).
+    match try_json_array_get(arr, 2) {
+        Result.Ok(v) => { print("j-null-elem=" + json_type(v)) }
+        Result.Err(e) => { print("j-null-elem-no-deberia") }
+    }
+
+    // (k) fuera de rango → Err "invalid" con índice y largo en el mensaje.
+    match try_json_array_get(arr, 99) {
+        Result.Ok(v) => { print("k-fueraderango-no-deberia") }
+        Result.Err(e) => { print("k-fueraderango=" + e.kind + " msg=" + e.msg) }
+    }
+
+    // (m) receptor que no es un array JSON → Err "invalid".
+    match try_json_array_get(json_number(5), 0) {
+        Result.Ok(v) => { print("m-noarray-no-deberia") }
+        Result.Err(e) => { print("m-noarray=" + e.kind) }
+    }
+
+    // No-regresión: las centinelas json_parse/json_get/json_array_get siguen
+    // devolviendo el ["null"] mudo de siempre (sin Result, sin romper callers
+    // viejos) — try_ son ADICIONES, no reemplazos.
+    let cent: Array = json_parse("{\"x\":42}")
+    print("cent-parse=" + json_type(cent))
+    print("cent-get=" + int_to_string(json_as_int(json_get(cent, "x"))))
+    print("cent-get-ausente=" + json_type(json_get(cent, "zzz")))
+    print("cent-arrget-oor=" + json_type(json_array_get(arr, 99)))
+
+    print("sigo-vivo")
+    return 0
+}

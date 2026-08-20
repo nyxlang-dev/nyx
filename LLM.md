@@ -246,9 +246,12 @@ not → panic (`unwrap()`, an aborting builtin). `Error { code, kind, msg }`
 (`import "std/error"`) is the ONE shape for every fallible stdlib
 function going forward — `kind` is a closed vocabulary (`not_found`,
 `permission`, `connection`, `parse`, `timeout`, `in_use`, `io`, `invalid`,
-`oom`, `eof`), built from errno via `errno_to_kind(code)` — except `eof`
+`oom`, `eof`, `db`), built from errno via `errno_to_kind(code)` — except `eof`
 (code 0, expected end-of-stream, NEVER an errno; `errno_to_kind` never
-maps it, callers build it directly via `err_new(0, "eof", ...)`);
+maps it, callers build it directly via `err_new(0, "eof", ...)`) and `db`
+(E5.5, sqlite's OWN result-code space — sqlite's rc values 1-27 COLLIDE
+with errno, e.g. rc 2 is SQLITE_INTERNAL not ENOENT, so mapping them via
+`errno_to_kind` would lie; same precedent as `eof`);
 `error_to_string(e)`
 is the one human format. For files, `try_read_file(path) -> Result<String,
 Error>` / `try_write_file(path, content) -> Result<int, Error>`
@@ -324,6 +327,75 @@ of returning a typed error (e.g. `EADDRINUSE` surfaces as `kind ==
    mid-read discards the partial bytes already received (documented,
    can't do anything useful with a short prefix when the contract is
    "exactly n") and returns `Err{0, "eof"}`, never a truncated `Ok`.
+
+For HTTP clients (E5.3, `import "std/http"`), `try_http_get(url)` /
+`try_http_post(url, body)` / `try_http_request(method, url, headers,
+body) -> Result<Array, Error>` are the canonical typed family — Nyx-pure,
+built entirely on the `std/net` `try_` family above (`try_tcp_connect`/
+`try_tcp_write`/`try_tcp_set_timeout` + the raw `http_parse_url`/
+`http_build_request`/`http_read_response` helpers), the family's first
+real consumer. The old `http_get`/`http_post`/`http_request` sentinels
+(centinela `-1` status mixed in with real status codes) stay untouched
+for backward compat. **The two-tier rule applied to HTTP: a status code
+is application data, not a transport failure.** ANY well-formed HTTP
+response — 200, 404, 500 — is `Ok(response)`: the server answered, that's
+transport success. `Err` is exclusive to real transport failures: a URL
+with no parseable host (`Err{22, "invalid"}`), connect refused/timeout/DNS
+failure (the real `Error` from `try_tcp_connect`, e.g. `kind:
+"connection", code: 111` for ECONNREFUSED), or a "response" that isn't
+valid HTTP with the connection still open (`Err{5, "parse"}` — `status ==
+0`, the never-a-real-HTTP-code sentinel `http_read_response` leaves
+unparsed). A caller who wants 4xx/5xx treated as failure must check
+`http_status(r) >= 400` explicitly after unwrapping `Ok` — the function
+never decides that for you. TLS (`https://` URLs) degrades honestly
+instead of faking an errno the channel doesn't have: `http_tls_request`
+(the runtime's own `tls_connect`/`tls_read`/`tls_write` channel) has no
+errno path, only a `-1` status sentinel with a free-text message, so the
+`try_` wrapper maps that sentinel to `Err{5, "connection", msg}` (5 =
+generic EIO, not a measured errno) — ficha open in TASKS.md for a typed
+`nyx_tls_connect_result` channel that would replace it with a real one.
+Gotcha: `http_parse_url` never fails with an explicit flag, so URL-invalid
+detection is `host == ""` (measured: `""`, `"http://"`, `"http:///path"`
+all give `host == ""`) — a non-empty but nonsensical host like
+`"not-a-url"` is NOT caught here, it falls through and fails later as a
+real connect/DNS error instead. Gotcha #2: the response read still runs
+over the sentinel `tcp_read_line`/`tcp_read` channel underneath (not the
+`try_` family), so a peer that accepts but never responds surfaces as
+`Err{5, "parse"}` instead of a real timeout kind — misattributed, not a
+bug, until the typed-read follow-up (ficha in TASKS.md) lands.
+
+For an embedded SQL database (E5.5, `import "std/sqlite"`),
+`try_sqlite_open(path)` / `try_sqlite_exec(db, sql)` / `try_sqlite_query(db,
+sql)` / `try_sqlite_query_named(db, sql)` are the Result-returning family
+over the old `sqlite_open`/`sqlite_exec`/`sqlite_query`/`sqlite_query_named`
+sentinels (NULL db handle / bare `bool` / a raw `Array`, with no way to
+learn WHY without a second manual call to `sqlite_error(db)`).
+`begin`/`commit`/`rollback`/`exec_int`/`exec_str`/`query_int` don't have a
+`try_` sibling yet — same mechanical pattern, tracked in TASKS.md
+(cosecha `E5.5-sqlite`). `code` in the `Err` is usually `0`: the C adapter
+(`runtime/sqlite_adapter.c`, untouched by this family) collapses several of
+its own functions to boolean/NULL before Nyx ever sees sqlite's granular
+rc, so there's nothing more precise available today (see the SONDA
+comments inline in `std/sqlite.nx`) — `msg` always carries the real
+`sqlite3_errmsg(db)` text whenever a db handle is alive to ask it. Two
+things measured while building this family, both worth knowing even if
+you never touch `std/sqlite.nx` yourself:
+1. **The OLD `sqlite_query`/`sqlite_query_named` sentinels swallow a real
+   mid-query error in silence.** Their step loop treats ANY non-`SQLITE_ROW`
+   result as "the query is done" — but a genuine step-level failure (e.g.
+   `SQLITE_CONSTRAINT` from a PRIMARY KEY conflict on an `INSERT` run
+   through `sqlite_query`) collapses to that same "done" branch, so the
+   sentinel returns the rows gathered so far as if the query had finished
+   cleanly, with no signal that something failed partway through. Low blast
+   radius (a plain `SELECT` never triggers a step error) but real for
+   `INSERT`/`UPDATE` statements run through the query functions — a
+   non-conventional but valid use. The `try_` siblings distinguish this
+   correctly (`Err{kind:"db", ...}`); the old sentinels are NOT being
+   patched (out of scope for this arc, catalogued in TASKS.md).
+2. **A negative C `int` doesn't survive the FFI boundary as `-1` unless the
+   C signature says so — see the general trap in §5.1.** This is the class
+   that let finding 1 hide: naive Nyx code that compares an `extern "C"`
+   return against the exact sentinel `-1` silently never matches.
 
 ### Closures
 
@@ -516,6 +588,36 @@ local first: `let m = obj.my_map; m.remove(k)` (Maps are references, so it mutat
 - read a field: `json_get(obj, key)` → value (or json_null); `json_as_string(v)` / `json_as_int(v)` extract
 - build: `json_object(keys, vals)`, `json_string(s)`, `json_number(n)`, `json_array(items)`, `json_bool(b)`, `json_null()`
 - `json_stringify(v)` → String — takes the tagged-Array value, NOT a Map
+- `try_json_parse(s) -> Result<Array, Error>` / `try_json_get(obj, key) -> Result<Array,
+  Error>` / `try_json_array_get(arr, i) -> Result<Array, Error>` (E5.4, `import "std/json"`)
+  are the Result-returning siblings of `json_parse`/`json_get`/`json_array_get` — same
+  `import "std/error"` two-tier rule as everywhere else. **Gotcha (the reason they
+  exist)**: the sentinel functions return the SAME `["null"]` for two different
+  situations, and callers can't tell them apart from the value alone —
+  `json_parse("garbage")` and `json_parse("null")` both give `["null"]`;
+  `json_get(obj, "missing_key")` and `json_get(obj, "key_with_null_value")` both give
+  `["null"]`. The `try_` versions disambiguate by construction, not by re-parsing:
+  `try_json_parse` only treats input as legitimate `Ok(null)` if the trimmed input is
+  LITERALLY the word `null` — anything else that falls through to `["null"]` (empty
+  input, unrecognized keyword/prefix) is `Err{5,"parse"}`. Trimming uses an internal
+  `json_trim` helper that mirrors the parser's own whitespace set (space/`\t`/`\n`/`\r`,
+  RFC 8259 §2) — NOT the generic `.trim()` String method, which delegates to libc
+  `isspace()` and also eats `\v`/`\f`, whitespace JSON doesn't recognize (found in
+  review; `.trim()` would have let `\v`-padded garbage masquerade as the `null`
+  literal). `try_json_get` disambiguates by re-walking the object's key list itself
+  (never delegates to `json_get`, which would lose the distinction): key present with
+  a `null` value → `Ok(["null"])` (a real value); key absent → `Err{2,"not_found"}`.
+  `try_json_array_get` does the analogous thing for out-of-range vs. a legitimate
+  `null` element → `Err{22,"invalid"}` for out-of-range/non-array. **Known structural
+  limit (ficha, not fixed here)**: `try_json_parse("{oops")` (an unclosed object) does
+  NOT hit the disambiguation — `parse_object`/`parse_array` always synthesize SOME
+  structure (partial/corrupt but never tag `"null"`), so malformed-but-started JSON
+  passes as `Ok` with corrupt content instead of `Err`. Catching that needs the parser
+  to track position/well-formedness end-to-end — a separate arc (TASKS.md). See
+  `tests/compiler/types/test-378-try-json.nx` for the full behavior matrix (incl. the
+  trailing-garbage asymmetry: `"null xyz"` → `Err` for free from the same trim
+  mechanism, but `"5 xyz"` → `Ok(5)`, lenient, inherited from `parse_value` never
+  checking that the cursor reached the end of input).
 
 ### Process / Environment
 - `get_args()` → Array — CLI args
@@ -730,6 +832,29 @@ this section is either a language rule or an external limitation.
    carry (`channel_new(m + n)` for the jobs channel, `channel_new(m)` for
    results), or interleave sends and receives instead of doing all sends
    before any receive. [test: 16-worker-channels]
+
+4. **A C `int` (32 bits) returned by an `extern "C"` function does NOT
+   sign-extend into a Nyx `int` (64 bits) — a negative C value crosses as a
+   huge positive number, never as a negative one.** Found in
+   `runtime/sqlite_adapter.c` (E5.5): `nyx_sqlite_step`/`nyx_sqlite_exec`/
+   `nyx_sqlite_column_count`/`nyx_sqlite_bind_str/int/double` all declare a
+   plain C `int` return against a Nyx `extern "C" fn ... -> int` — sqlite's
+   `-1` arrives on the Nyx side as `4294967295` (measured), because the
+   32-bit bit pattern gets zero-extended, not sign-extended, across the
+   boundary. Code that compares `rc == -1` never matches; the safe fix
+   used by `try_sqlite_query` (`std/sqlite.nx`) is to test the condition
+   you actually know (`rc != 0` — "not the success value" — instead of
+   guessing the exact failure sentinel). `runtime/net.c` sidesteps the
+   whole class by declaring its `*_result` functions `int64_t` explicitly
+   (see `std/net.nx`); several `sqlite_adapter.c` functions don't (audit
+   tracked in TASKS.md, cosecha `E5.5-sqlite`). This is a GENERAL trap, not
+   sqlite-specific — it bites ANY `extern "C" fn ... -> int` you write
+   yourself against a C function that returns plain `int`: either declare
+   the C side `int64_t` when you control it (NOT `long` — Win64 is LLP64:
+   C `long` is 32-bit there and re-truncates; measured in the W0 audit,
+   spec Windows §9.3), or on the Nyx side
+   never compare a raw FFI return against an exact negative sentinel.
+   [test: 22-ffi-int-truncation]
 
 ### 5.2 Language rules — not bugs, just how Nyx works
 

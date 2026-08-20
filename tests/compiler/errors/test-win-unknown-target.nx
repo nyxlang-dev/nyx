@@ -1,0 +1,12 @@
+// Un NYX_TARGET no reconocido debe ser error fatal bilingüe que NOMBRA los
+// targets válidos — dejarlo pasar en silencio emitiría el triple linux por
+// default: un binario que NO es el target que el usuario pidió
+// (silently-wrong de toolchain). Introducido en W0 junto a los triples
+// windows (antes cualquier valor != wasm32-wasi caía mudo a linux).
+// EN: an unrecognized NYX_TARGET must be a fatal bilingual error naming the
+// valid targets — silently falling back to the linux triple would hand the
+// user a binary for a target they didn't ask for.
+
+fn main() {
+    print("nunca llega")
+}

@@ -502,6 +502,76 @@ fi
 rm -f script.ll
 
 # ==============================================================
+# Codegen target guard W0 (Windows): un builtin de un subsistema aún NO
+# portado (net/scheduler/process/tls/señales) bajo un NYX_TARGET windows
+# debe fallar con error bilingüe + exit != 0. Guard TEMPORAL del arco
+# W0-W5 (win_forbidden_builtin se vacía etapa por etapa). Control
+# positivo: el mismo programa en target nativo compila (exit 0).
+# ==============================================================
+name="test-win-forbidden-builtin"
+cp "tests/compiler/errors/$name.nx" script.nx
+output=$(NYX_TARGET=x86_64-pc-windows-msvc timeout 15 ./nyx_bootstrap 2>&1)
+rc=$?
+native_rc=1
+if timeout 15 ./nyx_bootstrap > /dev/null 2>&1; then native_rc=0; fi
+if [ "$rc" -ne 0 ] && echo "$output" | grep -qF "is not ported to Windows yet" && [ "$native_rc" -eq 0 ]; then
+  printf "  ✓ %s\n" "$name"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"
+  printf "    exit code: %d (esperado != 0), nativo: %d (esperado 0)\n" "$rc" "$native_rc"
+  echo "$output" | sed 's/^/      /'
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("$name")
+fi
+rm -f script.ll
+
+# ==============================================================
+# NYX_TARGET no reconocido = error fatal bilingüe que nombra los targets
+# válidos (W0). Antes cualquier valor != wasm32-wasi caía MUDO al triple
+# linux — un binario que no es el target pedido (silently-wrong).
+# ==============================================================
+name="test-win-unknown-target"
+cp "tests/compiler/errors/$name.nx" script.nx
+output=$(NYX_TARGET=riscv64-fantasia-nx timeout 15 ./nyx_bootstrap 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && echo "$output" | grep -qF "not recognized"; then
+  printf "  ✓ %s\n" "$name"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"
+  printf "    exit code: %d (esperado != 0)\n" "$rc"
+  echo "$output" | sed 's/^/      /'
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("$name")
+fi
+rm -f script.ll
+
+# ==============================================================
+# Triple windows emitido tal cual en el .ll (W0): compilar un programa
+# limpio bajo cada triple windows debe dar exit 0 y el .ll debe llevar
+# `target triple = "<el pedido>"` — el espejo positivo de los dos guards
+# de arriba (verifica que el mecanismo EMITE, no solo que prohíbe).
+# ==============================================================
+name="test-win-triple-emitted"
+printf 'fn main() {\n    print("hola windows")\n}\n' > script.nx
+ok=1
+for t in x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+  if ! NYX_TARGET="$t" timeout 15 ./nyx_bootstrap > /dev/null 2>&1; then ok=0; fi
+  if ! grep -qF "target triple = \"$t\"" script.ll; then ok=0; fi
+  rm -f script.ll
+done
+if [ "$ok" -eq 1 ]; then
+  printf "  ✓ %s\n" "$name"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (algún triple windows no compiló o no quedó en el .ll)\n" "$name"
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("$name")
+fi
+rm -f script.ll
+
+# ==============================================================
 # Camino B fuera de scope v1: un método '&mut self' despachado vía
 # dyn Trait debe fallar con error bilingüe en codegen (el thunk de la
 # vtable carga self by-value → la mutación se perdería en silencio).

@@ -69,7 +69,7 @@ fi
 
 # ── Check C (antes que B): pin del conteo de trampas vivas de §5.1 ──────
 # Si LLM.md gana/pierde una trampa, la guardia EXIGE actualizar las anclas.
-PIN_TRAMPAS=3
+PIN_TRAMPAS=4
 vivas=$(sed -n '/^### 5\.1/,/^### 5\.2/p' LLM.md | grep -cE '^[0-9]+\.')
 if [ "$vivas" -ne "$PIN_TRAMPAS" ]; then
     printf "  ✗ LLM.md §5.1 tiene %d trampas vivas y el pin dice %d\n" "$vivas" "$PIN_TRAMPAS"
@@ -86,6 +86,7 @@ ANCLAS=(
   "nested Maps|§5.1.1 Maps anidados (retorno de función SEGVea)"
   "Option<Array>|§5.1.2 boxing de struct multi-campo en Option/Result rompe el link (el workaround es el ancla)"
   "deadlock|§5.1.4 canal chico deadlockea productor/consumidor"
+  "sign-extend|§5.1.5 (E5.5) extern \"C\" -> int de 32 bits no sign-extiende a Nyx int de 64"
 )
 for entrada in "${ANCLAS[@]}"; do
     ancla="${entrada%%|*}"

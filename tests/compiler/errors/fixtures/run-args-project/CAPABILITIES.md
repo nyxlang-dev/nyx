@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.29.0 -->
+<!-- nyx-version: 0.30.0 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,
 > `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -69,7 +69,7 @@
 
 ### `std/http`
 
-`import "std/http"` — 18 funciones:
+`import "std/http"` — 21 funciones:
 
 - `pub fn http_status_text(code: int) -> String`
 - `pub fn http_response(status: int, body: String) -> String`
@@ -79,6 +79,9 @@
 - `pub fn http_get(url: String) -> Array`
 - `pub fn http_post(url: String, body: String) -> Array`
 - `pub fn http_request(method: String, url: String, headers: Array, body: String) -> Array`
+- `pub fn try_http_get(url: String) -> Result<Array, Error>`
+- `pub fn try_http_post(url: String, body: String) -> Result<Array, Error>`
+- `pub fn try_http_request(method: String, url: String, headers: Array, body: String) -> Result<Array, Error>`
 - `pub fn http_status(resp: Array) -> int`
 - `pub fn http_body(resp: Array) -> String`
 - `pub fn http_headers(resp: Array) -> Array`
@@ -275,11 +278,24 @@
 
 ### `std/net`
 
-`import "std/net"` — 3 funciones:
+`import "std/net"` — 16 funciones:
 
 - `pub fn try_tcp_connect(host: String, port: int) -> Result<int, Error>`
 - `pub fn try_tcp_listen(host: String, port: int) -> Result<int, Error>`
 - `pub fn try_udp_bind(host: String, port: int) -> Result<int, Error>`
+- `pub fn try_tcp_accept(listen_fd: int) -> Result<int, Error>`
+- `pub fn try_tcp_read(fd: int, max: int) -> Result<String, Error>`
+- `pub fn try_tcp_write(fd: int, data: String) -> Result<int, Error>`
+- `pub fn try_udp_sendto(fd: int, data: String, host: String, port: int) -> Result<int, Error>`
+- `pub fn try_udp_recvfrom(fd: int, max: int) -> Result<String, Error>`
+- `pub fn try_resolve(host: String) -> Result<String, Error>`
+- `pub fn try_tcp_read_line(fd: int) -> Result<String, Error>`
+- `pub fn try_tcp_read_partial(fd: int, max: int) -> Result<String, Error>`
+- `pub fn try_tcp_read_exact(fd: int, n: int) -> Result<String, Error>`
+- `pub fn try_tcp_shutdown(fd: int, mode: int) -> Result<int, Error>`
+- `pub fn try_tcp_set_timeout(fd: int, secs: int) -> Result<int, Error>`
+- `pub fn try_getpeername(fd: int) -> Result<String, Error>`
+- `pub fn try_resolve_ptr(ip: String) -> Result<String, Error>`
 
 ### `std/url`
 
@@ -847,11 +863,12 @@
 
 ### `std/error`
 
-`import "std/error"` — 3 funciones:
+`import "std/error"` — 4 funciones:
 
 - `pub fn err_new(code: int, kind: String, msg: String) -> Error`
 - `pub fn errno_to_kind(code: int) -> String`
 - `pub fn error_to_string(e: Error) -> String`
+- `pub fn is_eof(e: Error) -> bool`
 
 ### `std/dom`
 

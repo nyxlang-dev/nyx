@@ -5,6 +5,8 @@
 // Provides request parsing, response building, and a simple server loop
 
 import "std/json"
+import "std/net"
+import "std/error"
 
 // Cap del body (bytes, default 1MiB, configurable con NYX_HTTP_MAX_BODY) —
 // compartido con el parser rápido del runtime (net.c). Sin este cap,
@@ -399,6 +401,149 @@ pub fn http_request(method: String, url: String, headers: Array, body: String) -
     let resp: Array = http_read_response(fd)
     tcp_close(fd)
     return resp
+}
+
+// === Client functions tipadas (E5.3) — try_http_get/post/request ===
+//
+// Contrato de DOS NIVELES (spec 2026-08-11-errores-tipados §4.2.3): estas
+// tres NO son "http_get pero con Result" a secas — el nivel de transporte
+// (¿llegó una respuesta?) y el nivel de aplicación (¿qué status trae esa
+// respuesta?) son cosas DISTINTAS. Cualquier respuesta HTTP bien formada,
+// SEA CUAL SEA su status — 200, 404, 500 — es `Ok(response)`: el servidor
+// respondió, eso es éxito de transporte. Un 404 no es un error de RED, es
+// información de aplicación que el caller decide cómo tratar (igual que
+// `http_get` centinela siempre devolvió cualquier status sin distinguir).
+// `Err` es EXCLUSIVO de fallos de transporte reales: URL sin host parseable,
+// connect rechazado/timeout/DNS, write/read que fallan a nivel de socket, o
+// una "respuesta" que no es HTTP válido (status 0 sin parsear). Quien
+// necesite tratar 4xx/5xx como fallo debe chequear `http_status(r) >= 400`
+// explícitamente después del `Ok` — la función no decide eso por el caller.
+//
+// TLS degradado (secure==1): `http_tls_request` (canal propio del runtime,
+// `tls_connect`/`tls_read`/`tls_write`) NO expone el errno real de la falla
+// — devuelve el centinela status -1 con un mensaje de texto libre. v1 de
+// las try_ mapea ESE centinela a `Err{5, "connection", msg}` (5 = EIO
+// genérico, no un errno real medido — es lo mejor que da el canal actual)
+// en vez de fingir un errno que no existe. Ficha pendiente: un canal
+// `nyx_tls_connect_result` que exponga el errno real de connect/TLS
+// handshake, análogo a `nyx_tcp_connect_result` (ver TASKS.md).
+
+// Helper interno compartido por las 3 públicas: parse → connect → timeout →
+// build request → write → read respuesta → close. NO expone http_parse_url
+// tal cual — SONDA (2026-08-19): http_parse_url nunca "falla" con un flag
+// explícito, así que el detector de URL inválida es `host == ""` (MEDIDO:
+// "", "http://", "http:///path" dan host="" — cualquier URL sin autoridad
+// parseable cae ahí; un host no-vacío pero sin sentido como "not-a-url" NO
+// se cacha acá, sigue de largo y falla más adelante como connect/DNS real).
+//
+// LÍMITE CONOCIDO (review final, 2026-08-19): la lectura de la respuesta
+// corre sobre las centinelas `tcp_read_line`/`tcp_read` (vía
+// `http_read_response`), NO sobre la familia `try_` — dos consecuencias:
+// (1) un timeout de recepción (peer acepta pero no responde) se reporta
+// como `Err{5, "parse"}` en vez de un kind de timeout real: misatribución
+// conocida, no un bug de esta rama. (2) un body cortado a mitad de
+// recepción (peer cierra la conexión tras mandar solo parte del body) puede
+// devolver `Ok` con un body truncado silenciosamente, sin que nada lo
+// distinga de una respuesta completa. Cerrar esto de raíz requiere migrar
+// la lectura a `try_tcp_read_line`/`try_tcp_read_exact` + verificar
+// `Content-Length` contra los bytes recibidos — ficha en TASKS.md
+// (`[arco:E5.3-http]`, "mitad de lectura tipada"), fuera de alcance de
+// esta ola de fixes.
+fn try_http_exec(method: String, url: String, headers: Array, body: String) -> Result<Array, Error> {
+    let parsed: Array = http_parse_url(url)
+    let host: String = parsed[1]
+    let port: int = parsed[2]
+    let path: String = parsed[3]
+    let secure: int = parsed[4]
+    if host.length() == 0 {
+        return Result.Err(err_new(22, "invalid", "http_parse_url: sin host valido en '" + url + "'"))
+    }
+    if secure == 1 {
+        let sreq: String = http_build_request(method, host, path, headers, body)
+        let resp: Array = http_tls_request(host, port, sreq)
+        let status: int = resp[1]
+        // Mismo rango 100-599 que el camino claro (RFC 7231 §6) — sin esto
+        // una status-line basura tipo "FOO 12 X" da status 12 (> 0, no
+        // -1) y colaba como Ok por TLS, el mismo hueco ya cerrado abajo.
+        // (status < 100 ya cubre <= 0, incluido -1/0, no hace falta chequeo aparte.)
+        if status < 100 or status > 599 {
+            let msg: String = resp[3]
+            if status == -1 {
+                return Result.Err(err_new(5, "connection", "https " + host + ":" + int_to_string(port) + ": " + msg))
+            }
+            return Result.Err(err_new(5, "parse", "https " + host + ":" + int_to_string(port) + ": respuesta HTTP invalida o vacia"))
+        }
+        return Result.Ok(resp)
+    }
+    let connect_r: Result<int, Error> = try_tcp_connect(host, port)
+    if connect_r.is_err() {
+        return Result.Err(connect_r.unwrap_err())
+    }
+    let fd: int = connect_r.unwrap()
+    // Timeout de 30s, mismo valor que las centinelas — evita que un host
+    // que acepta pero no responde cuelgue el caller indefinidamente.
+    let to_r: Result<int, Error> = try_tcp_set_timeout(fd, 30)
+    if to_r.is_err() {
+        tcp_close(fd)
+        return Result.Err(to_r.unwrap_err())
+    }
+    let req: String = http_build_request(method, host, path, headers, body)
+    let write_r: Result<int, Error> = try_tcp_write(fd, req)
+    if write_r.is_err() {
+        tcp_close(fd)
+        return Result.Err(write_r.unwrap_err())
+    }
+    // Contrato documentado de std/net: try_tcp_write puede devolver
+    // Ok(n) con n < req.length() (short write, ej. buffer del kernel
+    // lleno) — NO es un fallo pero tampoco significa "se mandó todo".
+    // Si lo dejamos pasar, el server del otro lado recibe una request
+    // HTTP truncada y la respuesta que venga es indistinguible de un
+    // 200 legítimo: corrupción silenciosa. Se trata como fallo de
+    // transporte explícito en vez de arriesgar esa ambigüedad.
+    if write_r.unwrap() < req.length() {
+        tcp_close(fd)
+        return Result.Err(err_new(5, "io", "short write: " + int_to_string(write_r.unwrap()) + " de " + int_to_string(req.length()) + " bytes"))
+    }
+    let resp: Array = http_read_response(fd)
+    tcp_close(fd)
+    // http_read_response nunca falla explícito (usa las centinelas
+    // tcp_read_line/tcp_read por debajo) — ante conexión OK pero respuesta
+    // vacía o basura (peer cierra sin escribir, o escribe algo que no es
+    // una status-line HTTP), status_code queda en 0 (default sin parsear:
+    // ver http_read_response, `parts.length() >= 2` nunca se cumple).
+    // Rango 100-599 (en vez de solo `<= 0`): una status-line basura tipo
+    // "FOO 12 X" SÍ matchea `parts.length() >= 2` y parsea "12" como int
+    // sin levantar ningún error — status quedaría en 12, que pasaría el
+    // viejo chequeo `<= 0` como si fuera un status HTTP real. El rango
+    // 100-599 (RFC 7231 §6: ningún status HTTP real cae fuera) cierra esa
+    // rendija sin tocar http_read_response ni sus centinelas internas.
+    let status: int = resp[1]
+    if status < 100 or status > 599 {
+        return Result.Err(err_new(5, "parse", "http_read_response: respuesta HTTP invalida o vacia de " + host + ":" + int_to_string(port)))
+    }
+    return Result.Ok(resp)
+}
+
+// GET tipado. `Ok(response)` para CUALQUIER status (404/500 incluidos —
+// ver el header de esta sección, regla de dos niveles). `Err` solo ante
+// fallo real de transporte: URL sin host, connect/write/read fallidos, o
+// respuesta no-HTTP con conexión OK.
+pub fn try_http_get(url: String) -> Result<Array, Error> {
+    let empty_headers: Array = []
+    return try_http_exec("GET", url, empty_headers, "")
+}
+
+// POST tipado — mismo contrato que try_http_get. Content-Type fijo
+// text/plain, igual que la centinela http_post.
+pub fn try_http_post(url: String, body: String) -> Result<Array, Error> {
+    let headers: Array = ["Content-Type", "text/plain"]
+    return try_http_exec("POST", url, headers, body)
+}
+
+// Request tipado genérico (método/headers/body a elección) — mismo
+// contrato que try_http_get.
+pub fn try_http_request(method: String, url: String, headers: Array, body: String) -> Result<Array, Error> {
+    return try_http_exec(method, url, headers, body)
 }
 
 pub fn http_status(resp: Array) -> int {

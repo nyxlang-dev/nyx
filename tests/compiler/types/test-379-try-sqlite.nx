@@ -1,0 +1,124 @@
+// test-379 (E5.5): la familia try_sqlite_* — try_sqlite_open/exec/query/
+// query_named devuelven Result<T, Error> con el errmsg de sqlite DENTRO
+// del Error, en vez del patrón viejo "chequeá bool/-1 y andá a
+// preguntarle a sqlite_error(db) qué pasó" (que además pierde la causa
+// si el handle nunca llegó a abrirse). Kind nuevo "db" (std/error.nx) —
+// los result codes de sqlite colisionan con el espacio errno.
+//
+// Import bare (`import "std/modulo"`, ver test-372/373/374): la forma
+// `{ } from` quedó obsoleta desde Task 1.
+
+import "std/sqlite"
+import "std/error"
+
+fn main() -> int {
+    let path = "/tmp/nyx_e5_5_piloto.db"
+    remove_file(path) // slate limpio si quedó un archivo de una corrida anterior
+
+    // (a) open Ok — el pilote real: crear el archivo en /tmp.
+    let o: Result<*int, Error> = try_sqlite_open(path)
+    var db: *int = 0
+    match o {
+        Result.Ok(h) => { db = h ; print("open-ok") }
+        Result.Err(e) => { print("no-deberia") }
+    }
+
+    // (b) exec Ok — DDL, Ok(affected) con affected=0 (CREATE no cuenta
+    // filas modificadas).
+    match try_sqlite_exec(db, "CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)") {
+        Result.Ok(n) => { print("create-ok") ; print(int_to_string(n)) }
+        Result.Err(e) => { print("no-deberia-create") }
+    }
+
+    // (c) exec Ok — INSERT, Ok(affected) con affected real (1).
+    match try_sqlite_exec(db, "INSERT INTO t (name) VALUES ('ada')") {
+        Result.Ok(n) => { print("insert-ok") ; print(int_to_string(n)) }
+        Result.Err(e) => { print("no-deberia-insert") }
+    }
+    try_sqlite_exec(db, "INSERT INTO t (name) VALUES ('grace')")
+
+    // (d) query Ok — filas reales, mismo shape que sqlite_query
+    // (Array de Array de String).
+    match try_sqlite_query(db, "SELECT id, name FROM t ORDER BY id") {
+        Result.Ok(rows) => {
+            print("query-ok")
+            print(int_to_string(rows.length()))
+            let r0: Array = rows[0]
+            let name0: String = r0[1]
+            print(name0)
+        }
+        Result.Err(e) => { print("no-deberia-query") }
+    }
+
+    // (e) query_named Ok — headers en la fila 0.
+    match try_sqlite_query_named(db, "SELECT name FROM t ORDER BY id") {
+        Result.Ok(rows) => {
+            let headers: Array = rows[0]
+            let h0: String = headers[0]
+            print("named-ok")
+            print(h0)
+        }
+        Result.Err(e) => { print("no-deberia-named") }
+    }
+
+    // (f) SQL malformado vía exec → Err kind "db", errmsg de sqlite
+    // adentro (subcadena MEDIDA, no adivinada).
+    match try_sqlite_exec(db, "CREATE TBLE bad syntax") {
+        Result.Ok(n) => { print("no-deberia-2") }
+        Result.Err(e) => {
+            print(e.kind)
+            print(e.msg.contains("syntax"))
+        }
+    }
+
+    // (g) SQL malformado vía query → Err kind "db" (prepare NULL, SONDA
+    // 2: el errmsg del db sigue legible).
+    match try_sqlite_query(db, "SELEKT * FROM t") {
+        Result.Ok(rows) => { print("no-deberia-3") }
+        Result.Err(e) => {
+            print(e.kind)
+            print(e.msg.contains("syntax"))
+        }
+    }
+
+    // (h) query sobre tabla inexistente → Err con errmsg útil (SONDA 2,
+    // caso b: "no such table").
+    match try_sqlite_query(db, "SELECT * FROM tabla_que_no_existe") {
+        Result.Ok(rows) => { print("no-deberia-4") }
+        Result.Err(e) => {
+            print(e.kind)
+            print(e.msg.contains("no such table"))
+        }
+    }
+
+    // (i) SONDA 3, demostrada: error de STEP (no de prepare) vía
+    // try_sqlite_query — un INSERT que viola UNIQUE (PRIMARY KEY)
+    // prepara bien (rc=0, sql válido) pero falla AL EJECUTAR (step,
+    // SQLITE_CONSTRAINT). La centinela sqlite_query trataría este rc
+    // como "done" y devolvería filas vacías como si nada — acá es Err.
+    match try_sqlite_query(db, "INSERT INTO t (id, name) VALUES (1, 'dup')") {
+        Result.Ok(rows) => { print("no-deberia-5") }
+        Result.Err(e) => {
+            print(e.kind)
+            print(e.msg.contains("UNIQUE"))
+        }
+    }
+
+    // (j) open de un path imposible → Err honesto (SONDA 1: nyx_sqlite_open
+    // descarta el handle en cualquier fallo, sin rc ni errmsg accesibles
+    // del lado Nyx — code 0, msg propio).
+    match try_sqlite_open("/proc/nada/db") {
+        Result.Ok(h2) => { print("no-deberia-6") }
+        Result.Err(e) => {
+            print(e.kind)
+            print(int_to_string(e.code))
+        }
+    }
+
+    // el proceso SIGUE VIVO tras todos los fallos de arriba.
+    print("sigo-vivo")
+
+    sqlite_close(db)
+    remove_file(path)
+    return 0
+}

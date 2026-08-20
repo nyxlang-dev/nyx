@@ -556,6 +556,21 @@ let n: int = my_map.length()
 let n: int = my_map.size()
 ```
 
+### 13. A C `int` (32-bit) FFI return does NOT sign-extend into Nyx `int` (64-bit)
+A negative C value crosses the boundary as a huge positive number instead — e.g. sqlite's
+`-1` arrives on the Nyx side as `4294967295`.
+```nyx
+// WRONG — rc == -1 never matches on your own extern "C" fn ... -> int
+extern "C" fn my_c_call() -> int
+let rc = my_c_call()
+if rc == -1 { /* never runs */ }
+
+// CORRECT — test the condition you actually know
+if rc != 0 { /* catches it */ }
+```
+If you control the C side, declare it `int64_t` instead of plain `int` (NOT `long` — on Win64/LLP64 `long` is 32-bit and re-truncates) to avoid the
+trap entirely.
+
 > Resolved since v0.16 (no longer traps): `and`/`or` short-circuit, `defer expr()` without
 > a block, `const` with `String`, bare `return` in void functions, and `handler` as a
 > function name all work. Resolved since 2026-07-27: closure capture of locals — a lambda,

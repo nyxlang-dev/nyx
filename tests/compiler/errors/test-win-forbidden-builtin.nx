@@ -1,0 +1,14 @@
+// Un builtin de un subsistema aún NO portado a Windows (aquí tcp_connect,
+// de net.c) compilado con NYX_TARGET=x86_64-pc-windows-msvc debe fallar con
+// error bilingüe en codegen (fail-fast), en vez de dejar que el linker de
+// Windows muera con un 'unresolved external symbol' críptico. En target
+// nativo el mismo programa compila. Guard TEMPORAL del arco W0-W5: la capa
+// nyx_os_* lo va vaciando etapa por etapa (spec 2026-08-19-windows-nativo).
+// EN: a builtin backed by a subsystem not ported to Windows yet must fail
+// fast under the windows target with a clear bilingual error instead of a
+// cryptic link failure. Temporary W0-W5 guard, emptied stage by stage.
+
+fn main() {
+    let fd: int = tcp_connect("localhost", 8080)
+    print(fd)
+}

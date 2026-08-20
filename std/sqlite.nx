@@ -1,5 +1,15 @@
 // std/sqlite.nx — SQLite3 bindings for Nyx (v0.11.0)
 // Requires: runtime/sqlite_adapter.c, -ldl in link flags
+//
+// E5.5 (spec §4.2.5, "sqlite: el canal lateral sqlite_error(db) desaparece
+// dentro del Error"): la familia try_sqlite_* devuelve Result<T, Error> en
+// vez de bool/-1 mudo + sqlite_error(db) a mano. Kind nuevo "db" en
+// std/error.nx — ver ahí el porqué (colisión rc sqlite / errno). Alcance
+// de esta rama: try_sqlite_open/exec/query/query_named. begin/commit/
+// rollback/exec_int/exec_str/query_int quedan afuera (ficha E5.5b, mismo
+// patrón mecánico) — las centinelas actuales siguen intactas.
+
+import "std/error"
 
 // FFI declarations — sqlite adapter bridge
 extern "C" fn nyx_sqlite_open(path: String) -> *int
@@ -135,6 +145,165 @@ pub fn sqlite_affected(db: *int) -> int {
 /// Mensaje del último error del handle (sqlite3_errmsg).
 pub fn sqlite_error(db: *int) -> String {
     return nyx_sqlite_errmsg(db)
+}
+
+// === Result<T, Error> — el canal lateral muere dentro del Error (E5.5) ===
+//
+// SONDA (evidencia empírica, dlopen directo a libsqlite3.so.0 fuera de
+// Nyx — ver report de la tarea): runtime/sqlite_adapter.c (congelado,
+// CERO cambios en esta rama) colapsa el rc granular de sqlite3 a
+// boolean/NULL en TODAS sus funciones — nyx_sqlite_exec devuelve 0/-1
+// (nunca el rc real: 1 SQLITE_ERROR, 19 SQLITE_CONSTRAINT, etc.),
+// nyx_sqlite_prepare devuelve NULL/stmt, nyx_sqlite_step devuelve 1/0/-1.
+// Nyx JAMÁS ve el número real que sqlite3 devolvió. Por eso `code` en
+// estos Error es 0 (documentado como "sin rc granular disponible", NO
+// SQLITE_OK — el 0 vive adentro de un Err) salvo en try_sqlite_open,
+// donde ni siquiera hay un db handle vivo para consultar `msg`. Exponer
+// el rc real es un cambio de runtime/sqlite_adapter.c — fuera de alcance
+// acá (Nyx puro) y fichado para E5.5b.
+
+// SONDA 1: ¿qué da nyx_sqlite_open ante un path imposible? Medido con
+// "/proc/nada/db": sqlite3_open() SÍ devuelve un db handle válido con rc
+// real (14, SQLITE_CANTOPEN) y errmsg legible ("unable to open database
+// file") — pero el adapter (`if (rc != SQLITE_OK) return NULL;`)
+// DESCARTA ese handle sin cerrarlo y devuelve NULL sin más. Del lado Nyx
+// no queda NADA que consultar: ni rc ni errmsg. NULL es la única señal
+// disponible → fallback honesto: Err{0, "db", "no se pudo abrir <path>"}.
+pub fn try_sqlite_open(path: String) -> Result<*int, Error> {
+    let db: *int = nyx_sqlite_open(path)
+    if db == 0 {
+        return Result.Err(err_new(0, "db", "no se pudo abrir " + path))
+    }
+    return Result.Ok(db)
+}
+
+// A diferencia de try_sqlite_open, acá el db handle SIGUE VIVO tras un
+// fallo (nyx_sqlite_exec solo puede fallar si sqlite ya abrió `db` con
+// éxito) — sqlite3_exec() actualiza el errmsg interno del handle aunque
+// el adapter descarte el out-param propio (medido: el errmsg sigue
+// legible vía nyx_sqlite_errmsg(db) después de un exec fallido). Éxito:
+// Ok(affected) vía sqlite_affected — el rc de exec SÍ distingue Ok/Err
+// con claridad (0 = SQLITE_OK, -1 = cualquier otra cosa), no hace falta
+// fichar ahí.
+pub fn try_sqlite_exec(db: *int, sql: String) -> Result<int, Error> {
+    let rc: int = nyx_sqlite_exec(db, sql)
+    if rc == 0 {
+        return Result.Ok(sqlite_affected(db))
+    }
+    return Result.Err(err_new(0, "db", nyx_sqlite_errmsg(db)))
+}
+
+// SONDA 2: ¿nyx_sqlite_prepare NULL deja errmsg legible en el db? Medido
+// con SQL malformado ("SELEKT ...") y con tabla inexistente: en AMBOS
+// casos prepare falla en el momento del prepare mismo (rc=1
+// SQLITE_ERROR, stmt=NULL) y sqlite3_errmsg(db) da el mensaje real
+// ("near "SELEKT": syntax error" / "no such table: X") — sí sirve.
+//
+// SONDA 3 (HALLAZGO sobre la centinela, fichado — la centinela sqlite_*
+// NO se toca): el loop de sqlite_query trata TODO rc de step distinto de
+// 1 como "done" — pero nyx_sqlite_step YA colapsa un error real de step
+// (ej. 19 SQLITE_CONSTRAINT en un INSERT con conflicto de PK) al mismo
+// -1 que cualquier fallo, DISTINTO del 0 de SQLITE_DONE real. La
+// centinela ignora esa distinción (`else { done = true }`) y devuelve
+// las filas juntadas hasta ahí como si la query hubiese terminado bien
+// — un error de step a mitad de camino se come en silencio. Acá SÍ se
+// distingue: cualquier rc != 0 en esta rama (ver HALLAZGO 2 más abajo
+// sobre por qué NO es un simple `rc == -1`) es Err; rc == 0 es Ok con lo
+// juntado.
+pub fn try_sqlite_query(db: *int, sql: String) -> Result<Array, Error> {
+    let stmt: *int = nyx_sqlite_prepare(db, sql)
+    if stmt == 0 {
+        return Result.Err(err_new(0, "db", nyx_sqlite_errmsg(db)))
+    }
+    var rows = []
+    var done = false
+    var failed = false
+    while not done {
+        let rc = nyx_sqlite_step(stmt)
+        if rc == 1 {
+            let ncols = nyx_sqlite_column_count(stmt)
+            var row = []
+            var c = 0
+            while c < ncols {
+                let val: String = nyx_sqlite_column_str(stmt, c)
+                row.push(val)
+                c = c + 1
+            }
+            rows.push(row)
+        } else {
+            // HALLAZGO 2 (gotcha de FFI, no de sqlite): nyx_sqlite_step
+            // devuelve un C `int` de 32 bits; al cruzar a Nyx `int` (64
+            // bits) NO se sign-extiende — un -1 de C llega acá como
+            // 4294967295 (medido), no como -1. `rc == -1` nunca matchea.
+            // Comparar contra el sentinel exacto es la trampa; lo honesto
+            // es que YA sabemos rc != 1 acá — cualquier rc != 0 (sea cual
+            // sea su representación de bits) es el error de SONDA 3, no
+            // el DONE real. runtime/net.c evita esto declarando sus
+            // _result como int64_t (ver std/net.nx) — sqlite_adapter.c NO
+            // lo hace en varias fns (fichado para E5.5b: migrar sus
+            // firmas C, cambio de runtime fuera de alcance acá).
+            if rc != 0 {
+                failed = true
+            }
+            done = true
+        }
+    }
+    // errmsg ANTES de finalize — es del db handle, no del stmt, pero
+    // capturarlo mientras el stmt sigue vivo evita cualquier duda.
+    let errmsg: String = nyx_sqlite_errmsg(db)
+    nyx_sqlite_finalize(stmt)
+    if failed {
+        return Result.Err(err_new(0, "db", errmsg))
+    }
+    return Result.Ok(rows)
+}
+
+// Como try_sqlite_query pero con la fila de headers al frente (mismo
+// shape que sqlite_query_named) — mismas SONDAS 2/3 aplican, mismo fix.
+pub fn try_sqlite_query_named(db: *int, sql: String) -> Result<Array, Error> {
+    let stmt: *int = nyx_sqlite_prepare(db, sql)
+    if stmt == 0 {
+        return Result.Err(err_new(0, "db", nyx_sqlite_errmsg(db)))
+    }
+    let ncols = nyx_sqlite_column_count(stmt)
+    var headers = []
+    var ci = 0
+    while ci < ncols {
+        let name: String = nyx_sqlite_column_name(stmt, ci)
+        headers.push(name)
+        ci = ci + 1
+    }
+    var result = []
+    result.push(headers)
+
+    var done = false
+    var failed = false
+    while not done {
+        let rc = nyx_sqlite_step(stmt)
+        if rc == 1 {
+            var row = []
+            var c = 0
+            while c < ncols {
+                let val: String = nyx_sqlite_column_str(stmt, c)
+                row.push(val)
+                c = c + 1
+            }
+            result.push(row)
+        } else {
+            // HALLAZGO 2 — ver el comentario de try_sqlite_query arriba
+            // (mismo gotcha de FFI: rc != 0, nunca rc == -1).
+            if rc != 0 {
+                failed = true
+            }
+            done = true
+        }
+    }
+    let errmsg: String = nyx_sqlite_errmsg(db)
+    nyx_sqlite_finalize(stmt)
+    if failed {
+        return Result.Err(err_new(0, "db", errmsg))
+    }
+    return Result.Ok(result)
 }
 
 // === Transactions ===

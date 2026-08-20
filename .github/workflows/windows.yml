@@ -1,0 +1,119 @@
+# Arco Windows W0 (spec docs/superpowers/specs/2026-08-19-windows-nativo-design.md
+# §4-W0): la PRIMERA evidencia ejecutada — un hello-world Nyx cross-emitido
+# desde Linux linkea y CORRE en windows-latest. Interno: esto NO anuncia
+# soporte Windows (todo-o-nada, decisión §1.3 de la spec).
+#
+# 3 jobs:
+#   fixture-freshness (ubuntu) — reconstruye el bootstrap desde los seeds y
+#     regenera ambos .ll; si difieren del fixture commiteado, FALLA (el
+#     check de frescura estilo seeds que pide el plan — el bootstrap no
+#     corre en el runner windows, así que el .ll viaja commiteado).
+#   hello-x64 (windows-latest) — vcpkg bdwgc + clang→MSVC + link + RUN,
+#     asserta la salida exacta. El gate real del arco W0.
+#   hello-arm64-cross (windows-latest) — compila y linkea ARM64 (no hay
+#     runner público ARM64-Windows para ejecutar, §1.4); sube el .exe.
+#
+# Toolchain: clang/clang-cl + link/lld-link, NUNCA MinGW (decisión §1.2).
+name: Nyx Windows (W0)
+
+on:
+  push:
+    branches: [main, 'feat/w0-**']
+  workflow_dispatch:
+
+jobs:
+  fixture-freshness:
+    name: Fixture freshness (Linux regen + diff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libgc-dev libssl-dev
+
+      - name: Build bootstrap compiler (from committed seeds)
+        run: make bootstrap
+
+      - name: Regenerate windows IR fixtures and diff
+        run: |
+          cp tests/integration/win_hello/hello.win.ll /tmp/x64.committed.ll
+          cp tests/integration/win_hello/hello.arm64.win.ll /tmp/arm64.committed.ll
+          make win-compile FILE=tests/integration/win_hello/hello.nx
+          make win-compile FILE=tests/integration/win_hello/hello.nx ARCH=arm64
+          diff /tmp/x64.committed.ll tests/integration/win_hello/hello.win.ll
+          diff /tmp/arm64.committed.ll tests/integration/win_hello/hello.arm64.win.ll
+          echo "fixtures frescos: el .ll commiteado es el que emite este compilador"
+
+  hello-x64:
+    name: hello-world x64 (link + RUN real)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSVC environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Install Boehm GC (vcpkg)
+        run: vcpkg install bdwgc:x64-windows
+
+      - name: Compile + link (clang → MSVC, lld-link)
+        shell: bash
+        run: |
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          clang --target=x86_64-pc-windows-msvc -fuse-ld=lld-link -O2 \
+            tests/integration/win_hello/hello.win.ll \
+            runtime/strings.c runtime/runtime-arrays.c runtime/maps.c \
+            runtime/os/win_w0_hello.c \
+            -Iruntime -I"$VCPKG_DIR/include" \
+            -L"$VCPKG_DIR/lib" -lgc \
+            -o hello.exe
+          cp "$VCPKG_DIR/bin/gc.dll" .
+
+      - name: Run and assert exact output
+        shell: bash
+        run: |
+          # CRLF por partida doble: stdout texto de Windows emite \r\n, y el
+          # checkout del runner puede convertir expected.txt a CRLF
+          # (autocrlf) — se normalizan AMBOS lados antes del diff.
+          ./hello.exe | tr -d '\r' > salida.txt
+          tr -d '\r' < tests/integration/win_hello/expected.txt > esperado.txt
+          diff esperado.txt salida.txt
+          echo "el primer .exe Nyx nativo corrió y dijo lo esperado"
+
+  hello-arm64-cross:
+    name: hello-world ARM64 (cross compile + link, sin ejecutar)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSVC environment (cross amd64 -> arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: Install Boehm GC (vcpkg, arm64)
+        run: vcpkg install bdwgc:arm64-windows
+
+      - name: Cross compile + link ARM64
+        shell: bash
+        run: |
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/arm64-windows"
+          clang --target=aarch64-pc-windows-msvc -fuse-ld=lld-link -O2 \
+            tests/integration/win_hello/hello.arm64.win.ll \
+            runtime/strings.c runtime/runtime-arrays.c runtime/maps.c \
+            runtime/os/win_w0_hello.c \
+            -Iruntime -I"$VCPKG_DIR/include" \
+            -L"$VCPKG_DIR/lib" -lgc \
+            -o hello-arm64.exe
+          echo "ARM64 linkeó (sin runner para ejecutarlo — §1.4 de la spec)"
+
+      - name: Upload ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hello-arm64-exe
+          path: hello-arm64.exe
+          if-no-files-found: error

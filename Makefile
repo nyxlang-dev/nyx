@@ -431,6 +431,17 @@ wasm:
 	$(WASM_CLANG) $(WASM_CFLAGS) script.ll $(WASM_RUNTIME_SRCS) -o $(notdir $(basename $(FILE))).wasm
 	@echo "✓ WASM: $(notdir $(basename $(FILE))).wasm — correr con: wasmtime $(notdir $(basename $(FILE))).wasm"
 
+## Emitir IR con triple Windows (arco W0 — solo COMPILE, el link+run vive
+## en CI windows-latest: .github/workflows/windows.yml). ARCH=x64 (default)
+## o arm64. Salida: <archivo>.win.ll / <archivo>.arm64.win.ll junto al .nx.
+## Usa script.nx/script.ll del root como scratch (mismo caveat que wasm).
+win-compile:
+	@test -n "$(FILE)" || (echo "Uso: make win-compile FILE=<archivo.nx> [ARCH=x64|arm64]"; exit 1)
+	cp $(FILE) script.nx
+	NYX_PROJECT_DIR=$(abspath $(dir $(FILE))) NYX_TARGET=$(if $(filter arm64,$(ARCH)),aarch64-pc-windows-msvc,x86_64-pc-windows-msvc) ./nyx_bootstrap
+	cp script.ll $(basename $(FILE))$(if $(filter arm64,$(ARCH)),.arm64,).win.ll
+	@echo "✓ IR Windows: $(basename $(FILE))$(if $(filter arm64,$(ARCH)),.arm64,).win.ll"
+
 ## Install nyx wrapper script to /usr/local/bin (v1.8.0)
 ## Requiere sudo. Permite usar #!/usr/bin/env nyx en scripts .nx
 install:
@@ -463,4 +474,4 @@ playground:
 	@echo "✓ nyx_playground compilado"
 	./nyx_playground
 
-.PHONY: bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet cross wasm build-nyx-build nyx-build build-bindgen bindgen playground
+.PHONY: bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground

@@ -27,6 +27,19 @@
 //                  control de flujo, como io.EOF en Go. errno_to_kind NO lo
 //                  mapea (code 0 real jamás llega a esta función) — el
 //                  kind lo arma el caller directo vía err_new(0, "eof", …).
+//   "db"         — fallo de motor de base de datos EMBEBIDO (agregado en
+//                  E5.5 para try_sqlite_*/std/sqlite.nx). Los result codes
+//                  de sqlite3 (1-27: SQLITE_ERROR, SQLITE_INTERNAL,
+//                  SQLITE_PERM, ...) COLISIONAN con el espacio errno —
+//                  rc 2 es SQLITE_INTERNAL, no ENOENT; mapearlos por
+//                  errno_to_kind mentiría sobre la causa. "db" es un
+//                  espacio de código PROPIO (mismo precedente que "eof"):
+//                  `code` es lo que expone runtime/sqlite_adapter.c para
+//                  ese fallo (no siempre el rc granular de sqlite — el
+//                  adapter colapsa varias de sus funciones a boolean/NULL,
+//                  ver el comentario de try_sqlite_open en std/sqlite.nx),
+//                  `msg` es SIEMPRE el errmsg real de sqlite3_errmsg(db)
+//                  cuando hay un db handle vivo para consultarlo.
 
 pub struct Error {
     code: int,

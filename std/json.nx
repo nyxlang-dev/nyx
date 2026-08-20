@@ -4,6 +4,7 @@
 // Pure Nyx implementation — recursive descent parser
 
 import "std/unicode"
+import "std/error"
 
 // JSON value types represented as tagged arrays:
 // ["null"]
@@ -86,6 +87,34 @@ pub fn json_get(obj: Array, key: String) -> Array {
     return json_null()
 }
 
+// E5.4: hermana Result de json_get. json_get es AMBIGUA con una clave presente
+// cuyo valor es null: ambos casos (clave ausente vs. clave presente con valor
+// `null`) devuelven el mismo ["null"] centinela — el caller no puede distinguir
+// "no existe" de "existe y es null" mirando el resultado. Esta función SÍ puede,
+// porque replica la iteración de json_get en vez de delegarle: si la clave
+// aparece en `keys` (aunque su valor sea `["null"]`), es Ok(valor) — la
+// distinción vive en la PRESENCIA de la clave, no en el valor. Clave ausente →
+// Err{2,"not_found"} con la clave en el mensaje. `obj` que no es un objeto JSON
+// (otro tag) → Err{22,"invalid"}, mismo code que EINVAL vía errno_to_kind.
+pub fn try_json_get(obj: Array, key: String) -> Result<Array, Error> {
+    let tag: String = obj[0]
+    if tag != "object" {
+        return Result.Err(err_new(22, "invalid", "try_json_get: el valor no es un objeto JSON (tag=" + tag + ")"))
+    }
+    let keys: Array = obj[1]
+    let vals: Array = obj[2]
+    var i: int = 0
+    while i < keys.length() {
+        let k: String = keys[i]
+        if k == key {
+            let v: Array = vals[i]
+            return Result.Ok(v)
+        }
+        i = i + 1
+    }
+    return Result.Err(err_new(2, "not_found", "try_json_get: clave ausente: " + key))
+}
+
 // Extract the underlying String of a ["string", s] JSON value ("" otherwise).
 pub fn json_as_string(val: Array) -> String {
     let tag: String = val[0]
@@ -136,6 +165,25 @@ pub fn json_array_get(arr: Array, i: int) -> Array {
     if i < 0 or i >= items.length() { return json_null() }
     let v: Array = items[i]
     return v
+}
+
+// E5.4: hermana Result de json_array_get. Índice fuera de rango (o `arr` que no
+// es un array JSON) devuelve json_null() en la centinela — indistinguible de un
+// elemento que fuera legítimamente `null`. Acá el fuera-de-rango es Err{22,
+// "invalid"} con el índice y el largo real en el mensaje; `arr` que no es
+// "array" también es Err{22,"invalid"} (mismo kind, distinto mensaje).
+pub fn try_json_array_get(arr: Array, i: int) -> Result<Array, Error> {
+    let tag: String = arr[0]
+    if tag != "array" {
+        return Result.Err(err_new(22, "invalid", "try_json_array_get: el valor no es un array JSON (tag=" + tag + ")"))
+    }
+    let items: Array = arr[1]
+    let len: int = items.length()
+    if i < 0 or i >= len {
+        return Result.Err(err_new(22, "invalid", "try_json_array_get: indice " + int_to_string(i) + " fuera de rango (len=" + int_to_string(len) + ")"))
+    }
+    let v: Array = items[i]
+    return Result.Ok(v)
 }
 
 // Longitud de un `["array", [...]]` JSON (0 si no es un array).
@@ -259,6 +307,81 @@ pub fn json_parse(input: String) -> Array {
     let pos: Array = [0]
     let result: Array = parse_value(input, pos)
     return result
+}
+
+// Recorta SOLO el whitespace que define JSON (RFC 8259 §2: espacio 0x20, tab
+// 0x09, LF 0x0A, CR 0x0D) — espejo exacto del set que reconoce skip_whitespace
+// más abajo. Existe porque `.trim()` del runtime (nyx_string_trim → std C
+// isspace()) NO alcanza: isspace() también considera whitespace a \v (0x0B,
+// vertical tab) y \f (0x0C, form feed), dos bytes que JSON NO reconoce como
+// tales. Con `.trim()` genérico, un input como VT+"null" (chr(11) + "null" —
+// "\v" no tiene escape literal en Nyx, ver test-378 caso (n)) trimmeaba a
+// "null" y colaba como Ok(null) legítimo cuando en realidad el VT inicial no
+// es whitespace JSON válido ahí — debería ser Err. json_trim usa el set
+// correcto y cierra esa asimetría (hallada en review, no en el diseño original).
+fn json_trim(s: String) -> String {
+    let len: int = s.length()
+    var start: int = 0
+    while start < len {
+        let c: char = s.charAt(start)
+        if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
+            start = start + 1
+        } else {
+            break
+        }
+    }
+    var end: int = len
+    while end > start {
+        let c: char = s.charAt(end - 1)
+        if c == ' ' or c == '\t' or c == '\n' or c == '\r' {
+            end = end - 1
+        } else {
+            break
+        }
+    }
+    return s.substring(start, end)
+}
+
+// E5.4: hermana Result de json_parse. json_parse (arriba) devuelve el mismo
+// ["null"] centinela en DOS situaciones bien distintas — parsear el literal
+// JSON `null` (éxito legítimo) y no lograr reconocer nada útil (input vacío,
+// basura, `{`/`[`/`"`/número que no arrancan bien) — indistinguibles mirando
+// solo el Array resultante. La desambiguación EXACTA: si el tag es "null" pero
+// el input TRIMMEADO (vía json_trim, arriba) no es literalmente la palabra
+// "null", el resultado se descarta y se reporta Err{5,"parse"}; si el input
+// trimmeado ES "null", el ["null"] es el Ok legítimo.
+//
+// Alcance EXACTO de lo que detecta — y lo que NO (fichado para el arco de
+// parser con pos-tracking, fuera de esta tarea): solo cachea basura que cae en
+// el fallback final de parse_value (input vacío/solo whitespace, o un primer
+// carácter/keyword que no matchea ningún prefijo válido: "x", "nul", "@"...).
+// Basura ESTRUCTURAL dentro de un objeto o array ("{oops", "[1,2" sin cerrar)
+// NO produce tag "null" — parse_object/parse_array siempre sintetizan una
+// estructura (aunque queden huecos rellenados a null o keys vacías), así que
+// ese tipo de basura pasa como Ok con contenido parcial/corrupto. Detectarla
+// requiere que el parser sepa cuándo un objeto/array quedó mal cerrado, que es
+// exactamente el trabajo del arco de posición mencionado arriba.
+//
+// Trailing garbage: dos honestidades distintas.
+//   - Tras "null": "null   " trimmea a "null" → Ok. "null xyz" NO trimmea a
+//     "null" → Err — gratis, mismo mecanismo (ni siquiera hace falta chequear
+//     `pos` contra el largo del input).
+//   - Tras un valor válido: "5 xyz" NO se valida — Ok leniente, heredado de
+//     parse_value (que nunca chequea que `pos` llegue al final del input;
+//     mismo comportamiento pre-existente que json_parse). Fichado junto con
+//     el punto anterior para cuando el parser trackee posición end-to-end.
+pub fn try_json_parse(input: String) -> Result<Array, Error> {
+    let pos: Array = [0]
+    let result: Array = parse_value(input, pos)
+    let tag: String = result[0]
+    if tag != "null" {
+        return Result.Ok(result)
+    }
+    let trimmed: String = json_trim(input)
+    if trimmed == "null" {
+        return Result.Ok(result)
+    }
+    return Result.Err(err_new(5, "parse", "try_json_parse: entrada invalida o vacia"))
 }
 
 fn skip_whitespace(input: String, pos: Array) {

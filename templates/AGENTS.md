@@ -81,6 +81,12 @@ it's a web page.
 13. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`** — a failed bind (port
     taken) returns `-1` and prints to stderr; without the check your program "runs" with no
     server: `if http.http_serve(8080, handler) < 0 { return 1 }`.
+14. **A C `int` (32-bit) returned by `extern "C"` does NOT sign-extend into Nyx `int`
+    (64-bit)** — a negative C value crosses the FFI boundary as a huge positive number
+    instead (e.g. `-1` arrives as `4294967295`). If you write your own
+    `extern "C" fn ... -> int`, never compare the result against an exact negative
+    sentinel — test the condition you actually know (`rc != 0`), or declare the C side
+    `int64_t` when you control it (NOT `long` — on Win64/LLP64 `long` is 32-bit).
 
 If a gotcha bites you, that's expected — fix per the note, don't rewrite your whole approach.
 

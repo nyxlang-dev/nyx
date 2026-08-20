@@ -1,0 +1,23 @@
+a-parse-ok
+a-nav=2
+b-null=null
+b-null-ws=null
+b2-null-tabnl=null
+c-basura=parse
+d-vacio=parse
+e-estructural-ok={"ops":null}
+l1-trailnull=parse
+l2-trailvalido=5
+n-vt=parse
+f-presente=nyx
+g-presente-valor-null=null
+h-ausente=not_found msg=try_json_get: clave ausente: zzz
+i-noobjeto=invalid
+j-null-elem=null
+k-fueraderango=invalid msg=try_json_array_get: indice 99 fuera de rango (len=4)
+m-noarray=invalid
+cent-parse=object
+cent-get=42
+cent-get-ausente=null
+cent-arrget-oor=null
+sigo-vivo

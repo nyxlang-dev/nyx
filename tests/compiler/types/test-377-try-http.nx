@@ -1,0 +1,113 @@
+// test-377 (E5.3): try_http_get/post/request — la causa real del fallo de
+// TRANSPORTE, con la regla de dos niveles bien aplicada: cualquier
+// respuesta HTTP bien formada es `Ok`, sea cual sea su status (200, 404
+// incluido) — `Err` es exclusivo de connect/DNS/socket rotos o una
+// "respuesta" que no es HTTP válido con la conexión abierta.
+//
+// SONDA (ver header de try_http_exec en std/http.nx): http_parse_url nunca
+// "falla" con un flag explícito — el detector de URL inválida es
+// `host == ""` (MEDIDO: "" da host=""). Servidor canned levantado con
+// thread_spawn + sleep, mismo patrón que test-192-http-mt (http_serve_mt
+// nunca retorna, así que el servidor corre en su propio OS thread mientras
+// el cliente pega desde main) — acá con tcp_listen/tcp_accept/tcp_write
+// crudos en vez de http_serve, para controlar el bytestream exacto de la
+// respuesta (incl. el 404 canned de (d), que las centinelas nunca
+// distinguirían de un fallo).
+
+import "std/http"
+import "std/error"
+
+const T377_PORT_OK: int = 58744
+const T377_PORT_REFUSED: int = 58745
+const T377_PORT_404: int = 58746
+const T377_PORT_POST: int = 58748
+const T377_PORT_REQ: int = 58749
+
+fn run_server_ok() -> int {
+    let l: int = tcp_listen("127.0.0.1", T377_PORT_OK)
+    let peer: int = tcp_accept(l)
+    tcp_write(peer, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nhola")
+    tcp_close(peer)
+    tcp_close(l)
+    return 0
+}
+
+fn run_server_404() -> int {
+    let l: int = tcp_listen("127.0.0.1", T377_PORT_404)
+    let peer: int = tcp_accept(l)
+    tcp_write(peer, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+    tcp_close(peer)
+    tcp_close(l)
+    return 0
+}
+
+fn run_server_post() -> int {
+    let l: int = tcp_listen("127.0.0.1", T377_PORT_POST)
+    let peer: int = tcp_accept(l)
+    tcp_write(peer, "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\npost-ok")
+    tcp_close(peer)
+    tcp_close(l)
+    return 0
+}
+
+fn run_server_req() -> int {
+    let l: int = tcp_listen("127.0.0.1", T377_PORT_REQ)
+    let peer: int = tcp_accept(l)
+    tcp_write(peer, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nput-ok")
+    tcp_close(peer)
+    tcp_close(l)
+    return 0
+}
+
+fn main() -> int {
+    // (a) URL inválida — sin host parseable ("") → Err{22, "invalid"}.
+    match try_http_get("") {
+        Result.Ok(r) => { print("no-deberia-ok-invalid") }
+        Result.Err(e) => { print(e.kind); print(int_to_string(e.code)) }
+    }
+
+    // (b) connect rechazado — puerto alto cerrado, nadie escucha. El Error
+    // REAL de try_tcp_connect: kind "connection", code 111 (ECONNREFUSED).
+    match try_http_get("http://127.0.0.1:" + int_to_string(T377_PORT_REFUSED) + "/") {
+        Result.Ok(r) => { print("no-deberia-ok-refused") }
+        Result.Err(e) => { print(e.kind); print(int_to_string(e.code)) }
+    }
+
+    // (c) camino feliz — canned server local devuelve 200 "hola" → Ok.
+    let _t1: int = thread_spawn(run_server_ok)
+    sleep(300)
+    match try_http_get("http://127.0.0.1:" + int_to_string(T377_PORT_OK) + "/") {
+        Result.Ok(r) => { print(int_to_string(http_status(r))); print(http_body(r)) }
+        Result.Err(e) => { print("no-deberia-err-ok") }
+    }
+
+    // (d) 404 canned — la regla de dos niveles: SIGUE SIENDO Ok (transporte
+    // funcionó), NO Err. Este es el assert central del contrato E5.3.
+    let _t2: int = thread_spawn(run_server_404)
+    sleep(300)
+    match try_http_get("http://127.0.0.1:" + int_to_string(T377_PORT_404) + "/") {
+        Result.Ok(r) => { print(int_to_string(http_status(r))) }
+        Result.Err(e) => { print("no-deberia-err-404") }
+    }
+
+    // (f) try_http_post — mismo contrato Ok, delega en try_http_exec.
+    let _t3: int = thread_spawn(run_server_post)
+    sleep(300)
+    match try_http_post("http://127.0.0.1:" + int_to_string(T377_PORT_POST) + "/", "body=1") {
+        Result.Ok(r) => { print(int_to_string(http_status(r))); print(http_body(r)) }
+        Result.Err(e) => { print("no-deberia-err-post") }
+    }
+
+    // (g) try_http_request — método/headers custom, mismo contrato Ok.
+    let _t4: int = thread_spawn(run_server_req)
+    sleep(300)
+    let custom_headers: Array = ["X-Test", "1"]
+    match try_http_request("PUT", "http://127.0.0.1:" + int_to_string(T377_PORT_REQ) + "/", custom_headers, "data") {
+        Result.Ok(r) => { print(int_to_string(http_status(r))); print(http_body(r)) }
+        Result.Err(e) => { print("no-deberia-err-req") }
+    }
+
+    // (e) sigo-vivo.
+    print("sigo-vivo")
+    return 0
+}
