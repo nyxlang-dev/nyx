@@ -13,14 +13,14 @@ let EXAMPLES_DIR: String = "playground/examples"
 let PORT: int = 8081
 
 // Runtime sources needed for compilation
-let RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c"
+let RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/os/os_posix.c"
 let LIBS: String = "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 
 // WASM target (v0.19.0): el playground compila el código del usuario a wasm32-wasi
 // y lo manda al browser para correrlo SANDBOXEADO — el server NUNCA ejecuta código
 // de usuario. Subset portable del runtime (sin net/tls/thread/etc, que WASI no tiene).
 let WASM_CFLAGS: String = "--target=wasm32-wasi --sysroot=/usr -O2 -Iruntime/wasi -Wl,-z,stack-size=1048576 -Wl,--export-table"
-let WASM_RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/iterators.c runtime/file-io.c runtime/time.c runtime/random.c runtime/url.c runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c"
+let WASM_RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/iterators.c runtime/file-io.c runtime/time.c runtime/random.c runtime/url.c runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c runtime/os/os_wasm.c"
 
 fn content_type_for(path: String) -> String {
     if path.endsWith(".html") { return "text/html; charset=utf-8" }

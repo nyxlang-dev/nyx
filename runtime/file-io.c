@@ -5,10 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <errno.h>
 #include <gc.h>
 #include "strings.h"
+#include "os/nyx_os.h"   // os_fs_stat/os_fs_mkdir/os_fs_listdir (W2 fase A)
 
 // ===== FILE I/O FUNCTIONS =====
 
@@ -74,8 +74,16 @@ int nyx_file_exists(char* path) {
         return 0;
     }
 
-    struct stat buffer;
-    return (stat(path, &buffer) == 0) ? 1 : 0;
+    // os_fs_stat rc!=0 (fallo real, p.ej. EACCES) y rc==0 con exists==0
+    // (ENOENT) colapsan igual: el viejo `stat(path, &buffer) == 0` trataba
+    // CUALQUIER fallo como "no existe", sin distinguir la causa.
+    // EN: os_fs_stat rc!=0 (real failure, e.g. EACCES) and rc==0 with
+    // exists==0 (ENOENT) collapse the same way: the old
+    // `stat(path, &buffer) == 0` treated ANY failure as "doesn't exist",
+    // without distinguishing the cause.
+    os_fs_info_t info;
+    if (os_fs_stat(path, &info) != 0) return 0;
+    return info.exists ? 1 : 0;
 }
 
 int nyx_count_lines(char* str) {
@@ -103,8 +111,6 @@ void nyx_fileio_test(void) {
 
 // ===== BUFFERED FILE I/O (v4.6) =====
 
-#include <dirent.h>
-#include <unistd.h>
 #include "runtime-arrays.h"
 
 // Open a file handle. mode: "r", "w", "a", "r+", "w+", "a+"
@@ -185,24 +191,39 @@ void nyx_file_flush(void* handle) {
 }
 
 // Create directory. Returns 0 on success, -1 on error.
+// NOTA (W2 fase A): antes devolvia el (int) crudo de mkdir(2) (0 o -1,
+// errno global ignorado); ahora devuelve 0/-errno de os_fs_mkdir (p.ej.
+// -EEXIST si ya existe). Ningun caller Nyx medido compara contra -1
+// literal (ver mkdir() en el compilador y los tests que lo ejercitan) --
+// todos tratan "no cero" como fallo generico, asi que el valor mas
+// informativo no rompe nada observable.
+// EN: (W2 phase A): used to return raw mkdir(2) (0 or -1, global errno
+// ignored); now returns os_fs_mkdir's 0/-errno (e.g. -EEXIST if it already
+// exists). No measured Nyx caller compares against literal -1 -- they all
+// treat "nonzero" as generic failure, so the more informative value breaks
+// nothing observable.
 int64_t nyx_mkdir(const char* path) {
     if (!path) return -1;
-    return (int64_t)mkdir(path, 0755);
+    return (int64_t)os_fs_mkdir(path);
+}
+
+// cb de os_fs_listdir: empuja cada nombre al nyx_array_t* pasado por ud.
+static void nyx_readdir_push_cb(const char* name, void* ud) {
+    nyx_array_t* arr = (nyx_array_t*)ud;
+    nyx_string* s = nyx_string_from_cstr(name);
+    nyx_array_push_tagged(arr, (int64_t)s, NYX_TAG_STRING);
 }
 
 // List directory entries. Returns nyx_array_t* of nyx_string* pointers.
+// Si os_fs_listdir falla (dir inexistente, permisos) devuelve el array
+// vacio armado arriba -- MISMO comportamiento silencioso que el viejo
+// `if (!d) return arr;`.
+// EN: if os_fs_listdir fails (missing dir, permissions) returns the empty
+// array built above -- SAME silent behavior as the old `if (!d) return arr;`.
 nyx_array_t* nyx_readdir(const char* path) {
     nyx_array_t* arr = nyx_array_new(8);
     if (!path) return arr;
-    DIR* d = opendir(path);
-    if (!d) return arr;
-    struct dirent* entry;
-    while ((entry = readdir(d)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        nyx_string* s = nyx_string_from_cstr(entry->d_name);
-        nyx_array_push_tagged(arr, (int64_t)s, NYX_TAG_STRING);
-    }
-    closedir(d);
+    os_fs_listdir(path, nyx_readdir_push_cb, arr);
     return arr;
 }
 
@@ -213,15 +234,21 @@ int64_t nyx_remove(const char* path) {
 }
 
 // Flush file data to disk. Returns 0 on success, -1 on error.
+// os_fd_sync (capa nyx_os_*, CARRY de Task 1) devuelve 0/-errno; esta fn
+// colapsa a 0/-1 para no tocar el contrato Nyx-facing preexistente
+// (nyx_fsync nunca expuso el errno específico, solo éxito/fallo).
+// EN: os_fd_sync (nyx_os_* layer, Task 1 carry) returns 0/-errno; this fn
+// collapses to 0/-1 to keep the preexisting Nyx-facing contract unchanged
+// (nyx_fsync never exposed the specific errno, only success/failure).
 int64_t nyx_fsync(int64_t fd) {
     if (fd < 0) return -1;
-    return (int64_t)fsync((int)fd);
+    return os_fd_sync((int)fd) == 0 ? 0 : -1;
 }
 
 // Flush file data (not metadata) to disk. Returns 0 on success, -1 on error.
 int64_t nyx_fdatasync(int64_t fd) {
     if (fd < 0) return -1;
-    return (int64_t)fdatasync((int)fd);
+    return os_fd_datasync((int)fd) == 0 ? 0 : -1;
 }
 
 // ===== E4: E/S NO-abortante con errno (spec errores-tipados §4.2.1) =====

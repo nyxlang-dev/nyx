@@ -1,6 +1,243 @@
 # Nyx Test Suite — Canonical Counts / Conteos canónicos
 
-> Last updated: 2026-08-20 (MERGE de las 4 ramas paralelas a `main`,
+> Last updated: 2026-08-29 (flaky histórico de `test_tls` — rama
+> `fix/tls-flaky`): fix del TEST `test_tls_large_write`, que fallaba ~4/20
+> corridas en serie **con el host ocioso** ("expected 100000, got N"). La causa
+> catalogada ("contención de CPU") era falsa; medido con instrumentación, eran
+> dos defectos encadenados del test: (1) el server pedía un chunk fijo de 65536
+> cuando faltaban 34464, y `nyx_tls_read` no retorna corto → quedaba bloqueado
+> en `recv()` hasta que el CLIENTE cerrara, o sea el resultado dependía de una
+> carrera de teardown; (2) el cliente cerraba justo después de escribir sin
+> haber leído nunca, dejando los `NewSessionTicket` de TLS 1.3 sin consumir en
+> su cola de recepción → `close(2)` manda **RST**, y el RST hace que el kernel
+> del server DESCARTE lo encolado (server-side `errno` = ECONNRESET/EPIPE
+> medido). Fix: pedir exacto lo que falta + fin de protocolo `"ACK\n"` que el
+> cliente espera antes de cerrar (y que de paso drena los tickets). **+1 assert
+> en `test_tls.c` (207→208)**; runtime-unit 34 suites SIN cambio. Aritmética del
+> total: 1443 + 1 = **1444**. regression 401 sin cambio.
+> En la misma rama, el SEGUNDO flaky de la suite —
+> `test_tls_wait_readable_eof_after_nonblock_read`, ~2/20, "expected -1, got 1"
+> — también resultó bug del TEST y quedó arreglado **sin cambio de conteo** (un
+> assert reemplaza a otro): el loop de drenaje cortaba en el primer `""` de
+> `read_nonblock`, que significa tanto "nada ahora" (WANT_READ) como "murió", y
+> solo el segundo setea `h->eof`; ahora drena hasta que el EOF esté observado
+> (`wait_readable == -1`) con deadline absoluto de 5s. Ninguno de los dos
+> flakies era un bug de `runtime/tls.c`. Ledger:
+> `.superpowers/sdd/tls-flaky-report.md`.
+>
+> Previous: 2026-08-28 (cosecha [arco:W3-paso0b] hardening, ficha D — rama
+> `feat/cosecha-0b-hardening`): **M5 del review del paso 0b** — red de
+> seguridad SOLO-testing en `nyx_gc_sp_corrector` (`runtime/scheduler.c`):
+> bajo `NYX_RUNTIME_TESTING`, si un sp no matchea el stack de NINGUNA
+> goroutine ni cae dentro de `[gc_stack_end - 16MB, gc_stack_end]` de ningún
+> worker registrado, escribe una línea a stderr con `write(2)` crudo (mundo
+> parado, GC lock tomado — nada de malloc/stdio bufferizado) SIN tocar el sp.
+> Costo CERO en producción (todo el bloque muere con el `#ifdef`). Nuevo seam
+> `nyx_scheduler_debug_worker_stack_end(idx)` (también SOLO-testing) para
+> construir un sp determinista "dentro de la ventana nativa esperada" sin
+> depender de suspender un worker en el momento justo.
+> `test_gc_goroutine_stack.c` gana 2 tests / **7 asserts** (7→**14**): el sp
+> que no matchea nada avisa por stderr (capturado por `dup2`+pipe) Y deja el
+> sp intacto; el sp dentro de la ventana nativa de un worker real NO avisa.
+> Hallazgo de la propia verificación (documentado en el comentario del
+> corrector): la red también dispara para threads AJENOS al scheduler (el
+> `main()` del programa, cualquier OS thread crudo) porque
+> `GC_set_sp_corrector` corre para TODO thread suspendido, no solo workers —
+> distinguirlos pediría comparar `pthread_id` contra `w->thread` vía un
+> `os_thread_equal` que no existe en la capa (mismo concern #3 ya fichado en
+> el review del paso 0b); aceptado por ser solo-testing, costo cero, y el
+> mensaje dice "posible", nunca "confirmada". **runtime-unit 34 suites SIN
+> cambio**. Aritmética del total: 1436 + 7 = **1443**. regression 401 sin
+> cambio. Ledger: `.superpowers/sdd/cosecha-0b-hardening-report.md`.
+>
+> Previous: 2026-08-28 (W3 Task 2 — rama `feat/w3-threads-scheduler`,
+> INTERNO): **ctx v2 — el `os_ctx_t` pasa a ser DUEÑO de su stack** y el
+> scheduler M:N se migra encima. Motivo (W3, Windows): una Fiber win32 NO
+> puede adoptar un stack ajeno (`CreateFiberEx` aloca el suyo), así que un
+> scheduler que siguiera mapeando stacks con `os_vm_*` registraría, en win32,
+> raíces de GC sobre un stack que la goroutine jamás usa — colección prematura
+> SILENCIOSA. Ahora `os_ctx_make(c, stack_size, entry, arg)` hace el mapeo +
+> la guard multi-página adentro de la capa, `os_ctx_remake` recicla el stack
+> (posix: `makecontext` sobre el MISMO mapeo, cero syscalls) y el scheduler
+> solo consulta rangos (`os_ctx_stack`/`os_ctx_guard`) para el `GC_add_roots`
+> y el registro de guards. El camino de root DIFERIDO (rango desconocido hasta
+> la primera entrada = win32) queda escrito y comentado en `worker_thread`
+> aunque en POSIX nunca se dispare, para que Task 3 lo herede gratis.
+> **runtime-unit 34 suites SIN cambio**; `test_os_vm_ctx` reescrito al
+> contrato v2: **13 → 34 asserts** (vm intacto 3+4; ctx nuevo: thread_init 2,
+> propiedad del stack + guard contigua + RW + free idempotente 8, args
+> inválidos 3, roundtrip make/swap 6, remake reusa EL MISMO mapeo 8 —el 8vo
+> es el CENTINELA del fix round: comparar direcciones no probaba nada porque
+> un munmap+mmap del mismo tamaño devuelve la misma dirección en este host;
+> el byte 0x5A escrito abajo del área útil sí muere con esa mutación, A/B
+> verificado—). Aritmética del total: 1415 − 13 + 34 = **1436**.
+> regression 401 sin cambio.
+> Efecto colateral MEDIDO: `NyxGoroutine` baja de 4896 a **96 bytes** (el ctx
+> se guarda por puntero para que el pool no copie el blob opaco), y 20 000
+> spawn+join pasan de **378 ms a 217 ms (−42%)** — desaparece un
+> `GC_MALLOC`+`memset` de 4.8 KB por goroutine. Flakies: sigue `test_tls`
+> (`test_tls_large_write`, 1/3 corridas — OTRO problema, sin tocar). Ledger:
+> `.superpowers/sdd/2026-08-27-w3-threads-scheduler-windows/`.
+>
+> Previous: 2026-08-27 (W3 paso 0b — rama `feat/w3-paso0b-gc-roots`,
+> INTERNO): **muere el "bug 2"** — el ~50% de SEGV de cualquier programa con
+> goroutines bajo carga. NO eran roots fusionados: Boehm escanea cada thread
+> suspendido como `[sp_capturado, thread->stack_end)`, y un worker suspendido
+> MIENTRAS corría una goroutine tiene el sp en otro mapeo por completo, así que
+> el rango abarca decenas de MB de VA arbitraria con guard pages `PROT_NONE`
+> en el medio (las nuestras y las de glibc). Fix: `GC_set_sp_corrector` —
+> el gancho que Boehm expone para corrutinas — anula el escaneo del thread
+> cuando el sp cae en un stack de goroutine (ese stack ya es root entero por
+> `GC_add_roots`). Decisión POR DIRECCIÓN: sin ventana de carrera y sin costo
+> por switch. Segundo fix, en la capa: `os_fault_guard_install` heredaba una
+> `sa_mask` VACÍA, rompiendo la atomicidad que Boehm construye bloqueando su
+> señal de suspensión durante el write-fault handler — ahora se une la máscara
+> del dueño previo — este segundo se queda por **contrato de la capa**, no por
+> muerte medida: el delta de la ablación pertenecía al corrector (ver el ledger).
+> Medición (programa de carga, 300 goroutines con arrays de 20k): **antes
+> 0/10-6/12 OK, después 30/30 y 15/15 con `GC_ENABLE_INCREMENTAL=1`**.
+> **runtime-unit 33→34 suites** (+`test_gc_goroutine_stack`, **7 asserts** fijos
+> —el conteo NO depende del layout de mmap—; +9 asserts en
+> `test_os_fault_guard_chain` 17→**26**, pin de la herencia de `sa_mask` por
+> señal: total 1399→**1415**). regression 401 sin cambio. Flakies: sigue
+> `test_tls` (OTRO problema, sin tocar). Ledger:
+> `.superpowers/sdd/2026-08-27-w3-paso0b-gc-roots/`.
+>
+> Previous: 2026-08-27 (W3 paso 0 — rama `feat/w3-paso0-segv`, INTERNO):
+> **el SEGV determinista de `test_scheduler` queda RESUELTO** — ya no es un
+> flaky, es un gate vivo (5/5 aislado + 32/32 en suite; antes 10/10 SEGV
+> aislado). Causa raíz: `os_fault_guard_install` pisaba con un `sigaction`
+> plano el handler de SIGSEGV que Boehm instala para sus dirty bits por
+> mprotect (`GC_enable_incremental` → MPROTECT_VDB); el primer write fault
+> del GC tras el primer spawn de goroutina caía en nuestro guard, que no lo
+> reclamaba, y moría en `SIG_DFL + raise`. Fix en la capa
+> (`runtime/os/os_posix.c`, **sin tocar código de `scheduler.c`**): encadenar
+> a la disposición previa. Ronda de review encima: el install pasa a ser
+> **once-only atómico** — sin eso, `install → GC_enable_incremental →
+> install` cerraba la cadena en un CICLO de 2 saltos (medido: 50 re-entradas,
+> muerte por pila alterna agotada) — y la rama SA_SIGINFO filtra
+> SIG_IGN/SIG_ERR igual que la plana. **runtime-unit 31→33 suites**
+> (+`test_os_fault_guard` 8 asserts, +`test_os_fault_guard_chain` 17 asserts:
+> delegación con si_addr/ucontext exactos + idempotencia del install; total
+> 1374→**1399 asserts**). regression 401 sin cambio. Flakies: queda
+> `test_tls` (OTRO problema, sin tocar). Ledger:
+> `.superpowers/sdd/2026-08-27-w3-paso0-segv/`.
+>
+> Previous: 2026-08-27 (W2-ARM64 — rama `feat/w2-arm64`, INTERNO):
+> el gate gana `w2-subset-arm64` — los MISMOS 26 tests ejecutándose en
+> runner windows-11-arm REAL (un manifiesto, dos triples, paridad de flags
+> byte-exacta, FLOOR=26 en ambos). CERO deltas de ABI medidos (IR
+> byte-idéntico salvo triple). Resto sin cambio.
+>
+> Previous: 2026-08-26 (W2 — rama `feat/w2-os-win32`, INTERNO): **26
+> programas Nyx CORREN en Windows** — gate nuevo `w2-subset` en windows.yml
+> (manifiesto canónico `scripts/testing/win_subset_manifest.txt`, 26 tests,
+> PISO 26 en el job, rc==0 + diff CRLF-normalizado; fórmula honesta:
+> subset MENOS sqlite-runtime — sqlite linkea, corre en W5). **runtime-unit
+> 29→31 suites** (+test_os_fs 23, +test_os_term 28; total 1323→**1374
+> asserts**). regression 401 sin cambio (los dominios fs/term/fd/env/
+> time_parse de la capa preservaron todo contrato — test 400/400 en cada
+> task). Ratchet 12→15 headers (termios/ioctl/dirent). Flakies sin cambio
+> (test_scheduler, test_tls). Ledger: `.superpowers/sdd/2026-08-26-w2-os-win32/`.
+>
+> Previous: 2026-08-26 (W1 inc 7 — señales, rama `feat/w1-senales`,
+> INTERNO — **W1 COMPLETO**): os_sig_install(_no_restart)/reset/ignore/
+> is_default + OS_SIG* síncronas (red F15 macOS) + os_fault_guard;
+> runtime.c/persist.c/scheduler.c sin signal.h, runtime.c sin poll.h.
+> **runtime-unit 28→29 suites** (+`test_os_sig`, 24 asserts incl. el caso
+> que DISCRIMINA SA_RESTART midiendo EINTR; total 1299→**1323**).
+> regression/errors/ai-first sin cambio; test-352 ×3 y guard-pages
+> byte-exacto como gates vivos; mutación SA_ONSTACK probada (sin él SEGV
+> mudo). Ratchet queda en 12 headers (signal.h/poll.h retenidos por las
+> 2 superficies pineadas documentadas). Ledger:
+> `.superpowers/sdd/2026-08-26-w1-inc7-senales/`.
+>
+> Previous: 2026-08-26 (W1 inc 6 — dominio dl, rama `feat/w1-dl`,
+> INTERNO): los 3 adapters (zlib/sqlite/llama) sobre os_dl_*; dlfcn.h al
+> ratchet (12 headers). **runtime-unit 27→28 suites** (+`test_os_dl`, 10
+> asserts; total 1289→**1299**). regression/errors/ai-first sin cambio;
+> el E2E llm-stub de integration es el gate del llama adapter (verde).
+> Flakies sin cambio (test_scheduler, test_tls_large_write). Ledger:
+> `.superpowers/sdd/2026-08-25-w1-inc6-dl/`.
+>
+> Previous: 2026-08-25 (W1 inc 5 — dominio proc, rama `feat/w1-proc`,
+> INTERNO): exec/exec_code sobre os_proc_run_capture/run_status; muere el
+> ifdef wasm de runtime.c. **runtime-unit 26→27 suites** (+`test_os_proc`,
+> 17 asserts: captura básica/binaria/multi-chunk, tabla de exit codes,
+> muerte por señal, stderr passthrough; total 1272→**1289 asserts**).
+> regression/errors/ai-first sin cambio (401/256/23; test-293 pinea el
+> contrato de exec en vivo). Flakies sin cambio de tasa (confirmados
+> ajenos ×6 corridas). Ledger: `.superpowers/sdd/2026-08-25-w1-inc5-proc/`.
+>
+> Previous: 2026-08-25 (W1 inc 4 — os_ev implementado, rama
+> `feat/w1-evloop`, INTERNO): el contrato completion-style del spike entra
+> a `os_posix.c` (epoll+eventfd, código validado adaptado; el spike
+> `tests/spikes/w1-evloop/` BORRADO). **runtime-unit 25→26 suites**
+> (+`test_os_ev`, 86 asserts: timers, wake cross-thread, echo con NUL,
+> 4 MiB parcial, cancel, EAGAIN, timer cross-thread despierta run_once,
+> peer reseteado; total 1186→**1272 asserts**). regression/errors/ai-first
+> sin cambio (401/256/23). El review cazó un Critical del propio spike
+> (write() crudo → SIGPIPE mataba el proceso; fix send(MSG_NOSIGNAL)),
+> mató al mutante del escenario 7 y verificó fidelidad mecánica + TSan 0.
+> Scheduler NO migrado (bloqueado por el SEGV de test_scheduler — ficha).
+> Ledger: `.superpowers/sdd/2026-08-25-w1-inc4-evloop/`.
+>
+> Previous: 2026-08-25 (W1 inc 3 — dominio sockets de la capa
+> `nyx_os_*`, rama `feat/w1-sockets`, INTERNO): net.c/tls.c/http2.c sin
+> headers de sockets POSIX (os_sock_*/os_addr_*; 7 headers nuevos al
+> ratchet, poll.h espera a señales/evloop). **runtime-unit 24→25 suites**
+> (+`test_os_sock`, 81 asserts: loopback v4 y v6, resolve any/4, EOF/HUP,
+> POLLNVAL sin síntesis; total 1105→**1186 asserts**). regression sigue
+> 401 (400 ARM64), errors 256, ai-first 23. Fidelidad de net.c verificada
+> con sonda diferencial byte-idéntica (26 fns públicas); el review de
+> rama cazó y arregló una regresión IPv6 real en TLS (resolve_any
+> AF_UNSPEC restaura el baseline) y un guard RED vacuo. Flakies sin
+> cambio de tasa. Ledger: `.superpowers/sdd/2026-08-24-w1-inc3-sockets/`.
+>
+> Previous: 2026-08-22 (W1 inc 2 — dominios vm+ctx de la capa
+> `nyx_os_*`, rama `feat/w1-vm-ctx`, INTERNO): `runtime/scheduler.c/.h`
+> sin `<sys/mman.h>` ni `<ucontext.h>` (os_vm_*/os_ctx_*).
+> **runtime-unit 23→24 suites** (+`test_os_vm_ctx`, 13 asserts:
+> map/protect/release + roundtrip doble de contexto; total 1092→**1105
+> asserts**). regression sigue 401 (400 ejecutados ARM64), errors 256,
+> ai-first 23 (+ítem 14 en §5.4 de LLM.md — el guard de cobertura de
+> gotchas cazó el test 23 sin referencia y quedó saneado). Ratchet:
+> `RATCHET_FORBIDDEN` gana sys/mman.h+ucontext.h. Review adversarial
+> del scheduler: os_ctx_t sub-alineado (UBSan) cazado con gates 100%
+> verdes — fix `_Alignas(16)` + assert. Flakies sin cambio de tasa.
+> Ledger: `.superpowers/sdd/2026-08-21-w1-inc2-vm-ctx/`.
+>
+> Previous: 2026-08-21 (fricción serve-ws procesada — `wg_wait_timeout`
+> en `std/sync` + docs de sync/net; solo std y docs, cero compilador):
+> **regression 400→401 archivos** (+test-380-wg-wait-timeout, expected
+> MEDIDO determinista ×3; en ARM64 ejecutan 400 — test-123-asm se salta),
+> **ai-first 22→23 programas** (+23-sync-global-mutex-wg-timeout: mutex
+> global directo bajo contención + wg_wait_timeout ambos caminos), errors
+> sigue 256, runtime-unit sigue 23 suites/1092. Sonda clave del cierre:
+> `var MU: Map = mutex_new()` global es CONFIABLE (40000/40000 ×5, 4
+> threads) — la premisa del reporte (placeholder lazy necesario) quedó
+> refutada midiendo.
+>
+> Previous: 2026-08-21 (W1 inc 0+1 — capa `nyx_os_*` con dominio
+> threads, rama `feat/w1-threads` sobre `main` v0.31.0, INTERNO — no
+> anuncia soporte Windows): nace `runtime/os/` (nyx_os.h + os_posix.c +
+> os_wasm.c) y thread.c/tls.c/event_loop.c/runtime.c/scheduler.c migran a
+> la capa. **runtime-unit 22→23 suites** (+`test_os_threads`, 26 asserts —
+> la capa testeada directo contra nyx_os.h; total 1066→**1092 asserts**).
+> **regression sigue 400 archivos / 399 ejecutados ARM64** (sin tests .nx
+> nuevos), **errors sigue 256**, **ai-first: el gate gana
+> `run_os_layer_ratchet.sh`** (pthread.h/sched.h prohibidos fuera de
+> runtime/os/) y el audit de recetas pasa a DESCUBRIR consumidores del
+> runtime por grep (18 listas de fuentes reales vs 7 mapeadas a mano; +la
+> regla del glob `runtime/*.c` que no desciende a subdirs — 4 recetas
+> rotas en verde cazadas por review y arregladas). Flakies conocidos SIN
+> cambio de tasa (medidos ×5 antes/después en Task 5): `test_scheduler`
+> SEGV (preexistente, frame en libgc STW sobre worker idle — aislado es
+> DETERMINISTA en este host aunque la ficha diga intermitente) y
+> `test_tls_large_write` (test_tls.c:303, escritura parcial). Ledger:
+> `.superpowers/sdd/2026-08-20-w1-inc0-1-spike-evloop-y-threads/`.
+>
+> Previous: 2026-08-20 (MERGE de las 4 ramas paralelas a `main`,
 > decisión de Ottavio: E5.3 http → E5.4 json → E5.5 sqlite → W0 windows,
 > en orden de la spec; `VERSION` sigue 0.30.0 — mergear NO es releasear,
 > el agrupamiento del MINOR es decisión aparte). Conteos ACUMULADOS
@@ -395,7 +632,7 @@
 | M-08 happy types | `make test-m08-types` | `tests/compiler/types/run_m08_types_tests.sh` | **18** (reconciliado 2026-07-28 en el cierre de la ola final de review Fase 2 — el "16" había quedado stale; conteo real vía `ls tests/compiler/types/test-*-m08-*.nx \| wc -l` y corrida del gate 18/18) | ✅ |
 | Advanced | (in `test-all`) | `tests/advanced/run_advanced_tests.sh` | **30** | ✅ |
 | Stdlib | `make test-stdlib` | `scripts/run_stdlib_tests.sh` | **3** | ✅ |
-| Runtime C unit (B4) | `make test-runtime` | `scripts/testing/run_runtime_tests.sh` | **22 suites / 1066 asserts** (+56 asserts en `test_net_result.c`, 48→**104** — E5.2b: 20 tests nuevos (`test_read_line_result_*` ×6, `test_read_partial_result_*` ×3, `test_read_exact_result_*` ×3, `test_shutdown_result_*` ×2, `test_set_timeout_result_*` ×2, `test_getpeername_result_*` ×2, `test_resolve_ptr_result_*` ×2 — ajustar por solape, conteo real vía `grep -c ASSERT_` reconciliado 1:1 contra la corrida) sobre las 7 `*_result` nuevas de `runtime/net.c` (read_line/read_partial/read_exact/shutdown/set_timeout/getpeername/resolve_ptr), + review final E5.2b (F1): `nyx_tcp_read_line_result` truncaba en el primer NUL embebido (`nyx_string_from_cstr`+`strlen`) — ahora `nyx_string_from_ptr(line, lpos)` con longitud explícita, binary-safe real; `test_read_line_result_embedded_nul` nuevo cubre el caso. Corrida real 2026-08-14: 104/104 verde en `test_net_result`, aislado y dentro de la suite completa (21/22 suites, `test_scheduler` segfault preexistente sin relación — ver ficha `[BAJA]` TASKS.md). Previous 22 suites / 1010 asserts (+32 asserts en `test_net_result.c`, 16→48 — E5.2: 11 tests nuevos sobre loopback TCP/UDP real (`make_loopback_pair`/`make_udp_socket_bound`), cubren las 6 `*_result` nuevas de `runtime/net.c` (accept/read/write/sendto/recvfrom/resolve). Corrida aislada 48/48 verde. Previous **22 suites / 978 asserts** (+2 asserts en `test_net_result.c` — review final E5.1 (F1), guard `inet_pton() != 1` en `nyx_tcp_listen_result`/`nyx_udp_bind_result`: host NO-numérico ("localhost") bindeaba INADDR_ANY en silencio y devolvía Ok — ahora `-EINVAL` (22). Corrida real 2026-08-14: 16/16 verde en `test_net_result`). Previous 22 suites / 976 asserts (+`test_net_result.c` nuevo, 14 asserts — E5.1: `nyx_tcp_connect_result`/`nyx_tcp_listen_result`/`nyx_udp_bind_result`, mismo mecanismo que las centinelas viejas pero `-errno` como retorno en vez de stderr+abort — listen efímero, EADDRINUSE real duplicando puerto fijo alto, ECONNREFUSED real, EINVAL con host NULL, host irresoluble. Corrida real 2026-08-14: 14/14 verde). Previous 21 suites / 962 asserts (+3 asserts en `test_file_result.c` — review final E4 (I1), guard `ftell()<0` en `nyx_file_read_result` sobre stream no-seekable (FIFO): antes `GC_MALLOC(0)` + `fread` con tamaño `(size_t)-1` = escritura OOB; ahora ESPIPE (29) taggeado, sin crash. Corrida real 2026-08-14: 18/18 verde en `test_file_result`, consistente en 3 corridas. Previous 21 suites / 959 asserts (+`test_file_result.c` nuevo, 15 asserts — arco E4: `nyx_file_read_result`/`nyx_file_write_result` con el ABI `nyx_string*` correcto, incl. la rama `NULL`/EINVAL. Corrida real 2026-08-14: 15/15 verde, consistente en 3 corridas — ver `.superpowers/sdd/2026-08-14-e4-std-error-piloto-file/task-3-report.md` Addendum 2). `test_scheduler` (segfault) es preexistente y no relacionado a este arco — falla intermitentemente sin este cambio (confirmado corriendo la suite completa con `test_file_result.c` en `git stash`; ficha `[BAJA]` en TASKS.md, cosecha `[arco:E4-std-error]`). Previous 20 suites / 944 asserts (+55 en 2026-07-29, sub-proyecto 1 de la campaña de corrección v0.23.0 — seguridad del runtime, las cinco rutas alcanzables desde input de red no confiable: `test_websocket::test_hostile_lengths` (la longitud de 64 bits del frame ya no envuelve el chequeo de límites — 2^64-1, bit alto, 16-bit excedido, + control positivo); `test_msgpack::test_truncated_str` (la longitud anunciada se valida contra el buffer real — el bug devolvía heap ajeno AL PROGRAMA como String); `test_http2::test_encode_large_header` + `test_encode_multi_large_headers` + `test_encode_budget_truncation_stays_header_aligned` (el buffer HPACK se dimensiona por tamaño real, guards por-escritura que rebobinan a frontera de header, y verificación de contenido byte a byte — el test viejo medía el tamaño reportado, que era idéntico con y sin el bug; el último caso usa el hook `nyx_h2_test_force_budget`, gateado por `#ifdef NYX_RUNTIME_TESTING` y ausente de los binarios de producción, verificado con `nm`); `test_http2::test_decode_int_overflow` (el varint HPACK no desborda a negativo — el fix incluye `consumed == 0` en los 8 call-sites: sin eso el tope convertía el bug en bucle infinito con OOM del GC, verificado empíricamente); `test_net::test_resp_bulk_cap` y `test_resp_array_cap` (cotas del lado C para `$N` y `*N`, espejando `RESP_MAX_BULK`/`RESP_MAX_ARRAY` de `std/resp.nx` — antes `atoi` sin cota: `$2147483647` desbordaba `data_len + 1` a `INT_MIN` y `*2000000000` forzaba ~16 GB con 14 bytes, con `exit(1)` si la reserva fallaba). Previous 889 (+5 test_net (tags de los 5 slots de la request HTTP) +3 test_strings (tags de split, incl. sin delimitador) — constructores C tagueados, 2026-07-26); previous 881 (+5 en test_arrays.c — lectura tipada chequeada: test_checked_reads, caminos de valor — los aborts se cubren E2E en integration; 2026-07-26); previous 876 (+9 en test_arrays.c — Etapa 4 de slots-tag: test_search_tagged — index_of/contains por contenido con punteros distintos, identidad cruda primero, slot UNKNOWN jamás dereferenciado, NULL degrada; 2026-07-26); previous 867 (+14 en test_arrays.c — Etapa 1 de slots-tag: tags paralelos a `data`, supervivencia al resize (GC_REALLOC de ambos buffers), propagación en `slice`, `set_tagged`, y bordes OOB/negativo/NULL degradando a UNKNOWN sin crashear; 2026-07-26); previous 853 (+14 in test_base64.c — nyx_inflate gzip/zlib/raw fixtures, corrupt/truncated/wrong-mode, empty/NULL, embedded-NUL binary output, buffer-growth past 64KB; D1 friction-browser, 2026-07-25); previous 839 — +test_terminal.c nuevo (C1 friction-browser, 2026-07-25): `nyx_raw_mode_enter()` instala un handler no-op de SIGWINCH SOLO si la disposición sigue en `SIG_DFL` — 6 asserts vía forkpty+`TIOCSWINSZ` real: `read_byte_timeout(-1)` despierta (-2) al resize con solo `raw_mode_enter()`, y un handler propio instalado ANTES (`signal_handle`, orden real de nyx-edit) no se pisa; +9 test_process: nyx_exec/nyx_exec_code — captura de stdout con strip de `\n` finales, "" en comando silencioso/fallido/NULL, exit codes 0/1/7/-1; conteo total reconciliado por corrida real de `make test-runtime`, drift previo de "772" corregido; +10 test_char_substring: codepoints UTF-8 multibyte/emoji, clamps, NULL; +9 test_thread: rwlock — readers comparten/writer excluye vía try*, NULL guards, serialización 4×5000; +15 test_net: cap de body HTTP configurable NYX_HTTP_MAX_BODY + slot 6 de error 0/413 — body ok, too-large sin drenar, env override/inclusivo/inválido; +10 test_index_of_from: indexOf con offset, clamps y binary-safe; +21 test_strings binary-safe: familia equals/compare/contains/index_of/starts_with/ends_with/split/replace por longitud con NUL embebido; +test_file_io: fsync/fdatasync — 13 asserts) | ⚠️ (`test_scheduler` segfaultea intermitente, preexistente y no relacionado a ningún cambio reciente — ficha `[BAJA]` en TASKS.md) |
+| Runtime C unit (B4) | `make test-runtime` | `scripts/testing/run_runtime_tests.sh` | **34 suites / 1444 asserts** (corrida real 2026-08-29; la aritmética incremental desde 1066 — E5, W0-W2, paso 0/0b, ctx v2, red M5, flakies TLS — vive en las notas de cabecera de este archivo, que son la fuente cronológica; esta celda quedó congelada en 1066 desde E5.2b y se reconcilió el 2026-08-29). Historia previa a 1066: (+56 asserts en `test_net_result.c`, 48→**104** — E5.2b: 20 tests nuevos (`test_read_line_result_*` ×6, `test_read_partial_result_*` ×3, `test_read_exact_result_*` ×3, `test_shutdown_result_*` ×2, `test_set_timeout_result_*` ×2, `test_getpeername_result_*` ×2, `test_resolve_ptr_result_*` ×2 — ajustar por solape, conteo real vía `grep -c ASSERT_` reconciliado 1:1 contra la corrida) sobre las 7 `*_result` nuevas de `runtime/net.c` (read_line/read_partial/read_exact/shutdown/set_timeout/getpeername/resolve_ptr), + review final E5.2b (F1): `nyx_tcp_read_line_result` truncaba en el primer NUL embebido (`nyx_string_from_cstr`+`strlen`) — ahora `nyx_string_from_ptr(line, lpos)` con longitud explícita, binary-safe real; `test_read_line_result_embedded_nul` nuevo cubre el caso. Corrida real 2026-08-14: 104/104 verde en `test_net_result`, aislado y dentro de la suite completa (21/22 suites, `test_scheduler` segfault preexistente sin relación — ver ficha `[BAJA]` TASKS.md). Previous 22 suites / 1010 asserts (+32 asserts en `test_net_result.c`, 16→48 — E5.2: 11 tests nuevos sobre loopback TCP/UDP real (`make_loopback_pair`/`make_udp_socket_bound`), cubren las 6 `*_result` nuevas de `runtime/net.c` (accept/read/write/sendto/recvfrom/resolve). Corrida aislada 48/48 verde. Previous **22 suites / 978 asserts** (+2 asserts en `test_net_result.c` — review final E5.1 (F1), guard `inet_pton() != 1` en `nyx_tcp_listen_result`/`nyx_udp_bind_result`: host NO-numérico ("localhost") bindeaba INADDR_ANY en silencio y devolvía Ok — ahora `-EINVAL` (22). Corrida real 2026-08-14: 16/16 verde en `test_net_result`). Previous 22 suites / 976 asserts (+`test_net_result.c` nuevo, 14 asserts — E5.1: `nyx_tcp_connect_result`/`nyx_tcp_listen_result`/`nyx_udp_bind_result`, mismo mecanismo que las centinelas viejas pero `-errno` como retorno en vez de stderr+abort — listen efímero, EADDRINUSE real duplicando puerto fijo alto, ECONNREFUSED real, EINVAL con host NULL, host irresoluble. Corrida real 2026-08-14: 14/14 verde). Previous 21 suites / 962 asserts (+3 asserts en `test_file_result.c` — review final E4 (I1), guard `ftell()<0` en `nyx_file_read_result` sobre stream no-seekable (FIFO): antes `GC_MALLOC(0)` + `fread` con tamaño `(size_t)-1` = escritura OOB; ahora ESPIPE (29) taggeado, sin crash. Corrida real 2026-08-14: 18/18 verde en `test_file_result`, consistente en 3 corridas. Previous 21 suites / 959 asserts (+`test_file_result.c` nuevo, 15 asserts — arco E4: `nyx_file_read_result`/`nyx_file_write_result` con el ABI `nyx_string*` correcto, incl. la rama `NULL`/EINVAL. Corrida real 2026-08-14: 15/15 verde, consistente en 3 corridas — ver `.superpowers/sdd/2026-08-14-e4-std-error-piloto-file/task-3-report.md` Addendum 2). `test_scheduler` (segfault) es preexistente y no relacionado a este arco — falla intermitentemente sin este cambio (confirmado corriendo la suite completa con `test_file_result.c` en `git stash`; ficha `[BAJA]` en TASKS.md, cosecha `[arco:E4-std-error]`). Previous 20 suites / 944 asserts (+55 en 2026-07-29, sub-proyecto 1 de la campaña de corrección v0.23.0 — seguridad del runtime, las cinco rutas alcanzables desde input de red no confiable: `test_websocket::test_hostile_lengths` (la longitud de 64 bits del frame ya no envuelve el chequeo de límites — 2^64-1, bit alto, 16-bit excedido, + control positivo); `test_msgpack::test_truncated_str` (la longitud anunciada se valida contra el buffer real — el bug devolvía heap ajeno AL PROGRAMA como String); `test_http2::test_encode_large_header` + `test_encode_multi_large_headers` + `test_encode_budget_truncation_stays_header_aligned` (el buffer HPACK se dimensiona por tamaño real, guards por-escritura que rebobinan a frontera de header, y verificación de contenido byte a byte — el test viejo medía el tamaño reportado, que era idéntico con y sin el bug; el último caso usa el hook `nyx_h2_test_force_budget`, gateado por `#ifdef NYX_RUNTIME_TESTING` y ausente de los binarios de producción, verificado con `nm`); `test_http2::test_decode_int_overflow` (el varint HPACK no desborda a negativo — el fix incluye `consumed == 0` en los 8 call-sites: sin eso el tope convertía el bug en bucle infinito con OOM del GC, verificado empíricamente); `test_net::test_resp_bulk_cap` y `test_resp_array_cap` (cotas del lado C para `$N` y `*N`, espejando `RESP_MAX_BULK`/`RESP_MAX_ARRAY` de `std/resp.nx` — antes `atoi` sin cota: `$2147483647` desbordaba `data_len + 1` a `INT_MIN` y `*2000000000` forzaba ~16 GB con 14 bytes, con `exit(1)` si la reserva fallaba). Previous 889 (+5 test_net (tags de los 5 slots de la request HTTP) +3 test_strings (tags de split, incl. sin delimitador) — constructores C tagueados, 2026-07-26); previous 881 (+5 en test_arrays.c — lectura tipada chequeada: test_checked_reads, caminos de valor — los aborts se cubren E2E en integration; 2026-07-26); previous 876 (+9 en test_arrays.c — Etapa 4 de slots-tag: test_search_tagged — index_of/contains por contenido con punteros distintos, identidad cruda primero, slot UNKNOWN jamás dereferenciado, NULL degrada; 2026-07-26); previous 867 (+14 en test_arrays.c — Etapa 1 de slots-tag: tags paralelos a `data`, supervivencia al resize (GC_REALLOC de ambos buffers), propagación en `slice`, `set_tagged`, y bordes OOB/negativo/NULL degradando a UNKNOWN sin crashear; 2026-07-26); previous 853 (+14 in test_base64.c — nyx_inflate gzip/zlib/raw fixtures, corrupt/truncated/wrong-mode, empty/NULL, embedded-NUL binary output, buffer-growth past 64KB; D1 friction-browser, 2026-07-25); previous 839 — +test_terminal.c nuevo (C1 friction-browser, 2026-07-25): `nyx_raw_mode_enter()` instala un handler no-op de SIGWINCH SOLO si la disposición sigue en `SIG_DFL` — 6 asserts vía forkpty+`TIOCSWINSZ` real: `read_byte_timeout(-1)` despierta (-2) al resize con solo `raw_mode_enter()`, y un handler propio instalado ANTES (`signal_handle`, orden real de nyx-edit) no se pisa; +9 test_process: nyx_exec/nyx_exec_code — captura de stdout con strip de `\n` finales, "" en comando silencioso/fallido/NULL, exit codes 0/1/7/-1; conteo total reconciliado por corrida real de `make test-runtime`, drift previo de "772" corregido; +10 test_char_substring: codepoints UTF-8 multibyte/emoji, clamps, NULL; +9 test_thread: rwlock — readers comparten/writer excluye vía try*, NULL guards, serialización 4×5000; +15 test_net: cap de body HTTP configurable NYX_HTTP_MAX_BODY + slot 6 de error 0/413 — body ok, too-large sin drenar, env override/inclusivo/inválido; +10 test_index_of_from: indexOf con offset, clamps y binary-safe; +21 test_strings binary-safe: familia equals/compare/contains/index_of/starts_with/ends_with/split/replace por longitud con NUL embebido; +test_file_io: fsync/fdatasync — 13 asserts) | ⚠️ (`test_scheduler` segfaultea intermitente, preexistente y no relacionado a ningún cambio reciente — ficha `[BAJA]` en TASKS.md) |
 | AI-first (objetivo) | `make test-ai-first` | `scripts/testing/run_ai_first_tests.sh` + `run_gotcha_coverage.sh` (guardia) + `run_capabilities_test.sh` (2026-07-29, Fase 5 Task 11 ronda de fix: cableado como 5ta línea del target — antes corría solo manual, y "un guard que nadie corre" es el mismo agujero que la campaña viene tapando; ver fila "Capabilities index" abajo para el detalle de sus 3 checks + chequeo de frescura mtime; se salta limpio con aviso si `nyx_build` no existe, mismo criterio que `clang-link-failure-attribution-ir-bug`) + `run_silent_failure_checks.sh` (2026-07-28/29: campo alucinado sobre identificador, sobre `f().campo`, `warning-visible-under-ndjson` (Task 2), `silent-trait-bound-unsatisfied-codegen-backstop` (Fase 3 Task 5), y `clang-link-failure-attribution-ir-bug` (Fase 4 Task 10: el repro `Option<Item>` del banco vía `nyx_build` real, no `nyx_bootstrap` — el fallo es de LINK; se salta limpio con aviso si `nyx_build` no existe) — 5 checks con control positivo obligatorio cada uno; el control positivo de `f().campo` fue REESCRITO en Fase 3 Task 4 — bindea el resultado primero, porque ESE patrón sin bindear ahora aborta con NYX2003, ver fila de errors) + `run_codegen_mute_audit.sh` (2026-07-28, Fase 3 Task 6, cierre de campaña: auditoría-RATCHET — no repro de programas, sino grep estructural sobre `compiler/codegen.nx`; check 1 confirma que los 4 aborts NYX2001-NYX2004 de Tasks 4/5 siguen presentes (FAIL si alguno se revierte); check 2 cuenta los `print("Error:`/`print("Warning:` NO seguidos de `exit(1)` a ≤6 líneas — baseline 10, la familia "campo no encontrado" que sigue viva a propósito como fallback load-bearing del bootstrap; FAIL si el conteo SUBE (catch-all nuevo mudo), FAIL suave si BAJA (pide bajar el baseline a mano); check 3 es el autotest del propio contador sobre dos heredocs sintéticos (mudo cuenta 1, con exit(1) cuenta 0) — sin este autotest el audit puede quedar verde con un grep roto. Verificado con control negativo manual: print-mudo agregado temporalmente a codegen.nx → FAIL correcto (11 > 10); marcador NYX2001 renombrado temporalmente → FAIL correcto (marcador faltante); ambos revertidos con `git checkout`) | **22 programas + 6 scripts** (E5.5 2026-08-19: +22-ffi-int-truncation — blindaje del hallazgo FFI del arco sqlite: un C `int` de 32 bits retornado por `extern "C"` NO sign-extiende al `int` de 64 de Nyx (`-1` cruza como `4294967295`, medido); el programa asierta el patrón seguro `rc != 0` y el LLM.md §5.1 ítem 4 nuevo lo cita con [test:]; el pin de trampas vivas de `run_template_coherence.sh` sube 3→4 con ancla "sign-extend" exigida en los 4 manuales. Previous **21** (v0.24.4: +21-bind-failure-loud — friction 2026-08-01, http_serve con puerto ocupado devolvía -1 mudo; asierta el -1 auto-ocupando el puerto, y el mensaje stderr lo verifica el check silent-bind-failure con control negativo; +run_toolchain_recipe_audit.sh como 6ª línea del target — friction A10: TODO runtime/*.c debe estar en las recetas de scripts/nyx Y build.nx, porque llama_adapter.c faltó en ambas desde v0.20.x y std/llm no linkeaba para usuarios con los gates internos verdes. Previous **18 + 5 = 23** (18 programas ai-first vía `run_ai_first_tests.sh`: +15-http-items-api, +16-worker-channels, +17-csv-aggregator, +18-http-client-filter — campaña "Primer intento verde" Fase 1 Task 8, las 4 referencias del banco de `scripts/testing/bench/tasks/` adaptadas a caso autoverificado con `assert()` (servidor+cliente HTTP en el mismo proceso vía `thread_spawn` sobre puerto fijo + `exit(0)` explícito, ya que `http_serve` no tiene apagado limpio; canal de trabajos/resultados dimensionado a la cantidad total de mensajes para evitar el deadlock de capacidad fija con M grande) — suben la cobertura de HTTP y concurrencia de la suite de 0 a >0; sumaron 3 ítems nuevos a LLM.md §5.1 (`Option<Struct>`/`Result<Struct,E>` rompe el link, `arr[i] = <float>` corrompe el slot, capacidad de canal fija puede deadlockear). +13-map-literal-keys (workarounds de las trampas de §5.1), +14-language-rules (las 5 reglas de §5.2); el 12 se amplió con la coexistencia de capturas. +1 check en Fase 4 Task 10 (2026-07-29): `clang-link-failure-attribution-ir-bug` — el repro `Option<Item>` del banco compilado con `nyx_build` real (no `nyx_bootstrap`, porque el fallo es de LINK) debe mostrar la atribución bilingüe (`compiler/build.nx::clang_failure_attribution_bash`) antes del log crudo de clang, con control positivo real (`nyx init` sin tocar buildea limpio y SIN el texto); se salta con aviso si `nyx_build` no existe (falta `make build-nyx-build`). +1 check en Fase 3 Task 5 (2026-07-28): `silent-trait-bound-unsatisfied-codegen-backstop` — el backstop de codegen para bound de trait violado en generic call (`show_it<Point>(p)` sin `impl Display for Point`). CORREGIDO tras review del coordinador (I1): este NO es un caso que solo aparezca bajo `NYX_SKIP_SEMANTIC=1` — es CAMINO NORMAL para llamadas con turbofish explícito (`f<Point>(p)`, la validación de bounds de semantic ni pasa por ese nodo) y para la forma implícita cuando el tipo concreto NO tiene ningún impl local (heurística conservadora de semantic: estricto/NYX1020 solo si el tipo tiene AL MENOS UN impl local de cualquier trait, wildcard si no). El check corre igual bajo `NYX_SKIP_SEMANTIC=1` explícito por robustez/consistencia con los otros 3 checks de este script (y porque el runner de `tests/compiler/errors/` no soporta env por-test — no es POR ESO que el caso necesite el skip, sino simple ubicación); antes imprimía un mensaje y SEGUÍA monomorfizando (rc=0), ahora aborta con NYX2004 nombrando la firma completa del método faltante (`fn show(self) -> String`) vía `ctx.trait_methods`. La GUARDIA falla si un ítem de §5.1-5.2 no tiene marca [test:], si apunta a un archivo inexistente, o si un test queda huérfano; 2026-07-27; previous 12 (+12-closure-capture-paths: los 4 caminos de captura de locals que el gotcha 19 promete — lambda inline, lambda bindeada, nested fn vía param Fn, closure retornada; uno POR FUNCIÓN a propósito, porque el límite real es que lambda-que-captura y nested-fn-que-captura no coexisten en la misma fn; fricción C4 2026-07-26); previous 11 (+11-chr-nul-safe: chr(0) construye el byte NUL real, no la String vacía; +10-exec: exec()/exec_code() end-to-end vía assert(); conteo reconciliado por corrida real — valida que la doc sembrada basta para escribir Nyx correcto al 1er intento) | ✅ |
 | Coherencia de manuales | `make test-ai-first` | `scripts/testing/run_template_coherence.sh` | **7ª línea del target (2026-08-03)** — la doc sembrada por `nyx init` no puede contradecir a LLM.md (el drift mordió DOS veces: AGENTS.md con gotchas falsos 2026-07-28, y "closure capture is broken" + trampas muertas + API inventada 2026-08-01). Tres checks con autotest y controles positivos verificados: (A) ratchet de 9 MENTIRAS RESUCITADAS (frases que §5.4 declara arregladas — la lista crece con cada fix, nunca se poda), (B) 4 anclas de las trampas VIVAS de §5.1 exigidas en los 4 manuales (AGENTS/CLAUDE/CHEATSHEET template + docs/CHEATSHEET; el tono es libre, el ancla no), (C) pin del conteo de §5.1 — si LLM.md gana o pierde una trampa, la guardia falla pidiendo actualizar anclas y manuales | ✅ |
 | Capabilities index | `make test-ai-first` | `scripts/testing/run_capabilities_test.sh` | **3 checks + chequeo de frescura** (campaña "Primer intento verde" Fase 5 Task 11, 2026-07-29: (a) cada `pub fn`/`export fn` de std/ aparece en el `CAPABILITIES.md` generado por `nyx capabilities` — chequeo original; (b) NUEVO — paréntesis balanceados en cada firma extraída, caza el bug real donde `compiler/build.nx::capabilities_module_section` cortaba una firma multi-línea en la primera línea (`std/proptest.nx::prop_int`/`prop_int2`, `std/webpush.nx::webpush_encrypt_with_keys` quedaban truncados a medio parámetro — un doc que enseña a llamar MAL); (c) NUEVO — spot-check textual de esas 3 firmas multi-línea contra el string completo esperado. Fix del extractor: `capabilities_module_section` ahora junta líneas mientras el conteo de `(`/`)` no balancee, antes de cortar en el `{` del cuerpo. Control positivo verificado a mano contra una fixture con firma truncada sembrada — (b) la detectó correctamente. **Ronda de fix del coordinador (2026-07-29)**: dejar de ser "(manual)" ya no alcanza — cableado como 5ta línea de `test-ai-first` en el Makefile; se agregó un chequeo de frescura barato (mtime `compiler/build.nx` vs `./nyx_build`) que FALLA con mensaje accionable ("corré make build-nyx-build") si el binario del repo quedó stale, en vez de dejar que el resto del script falle con un diff confuso; verificado con `touch compiler/build.nx` → FAIL correcto, mtime restaurado → vuelve a verde) | ✅ |
@@ -403,6 +640,7 @@
 | REPL / intérprete | `make test-repl` | `scripts/testing/run_repl_smoke.sh` | **15 checks** (v0.24.7, nil-cascade: el error corta la expresión sin valor fabricado, exactamente 1 error por raíz errónea, y el cuerpo de una fn aborta tras el error con la sesión viva — RED verificado; previous **12** (v0.24.3, tres rondas con RED verificado cada caso; ronda 3, reporte final del /code-review — bare `return` sintético no dispara NYX3002 (nodo "integer" del parser), indexar no-array = NYX3002 honesto (no NYX3005 falso), llamada a nombre indefinido = exactamente 1 error; además la review cazó 2 guards vacuos del propio smoke (substring sin ancla `$`, grep de texto español con binario en inglés) — corregidos: ronda 1 — array literal construye datos REALES (eval_array iteraba node_data en vez de node_data[0]: TODO literal daba `[nil]`), NYX3003 variable no definida, NYX3004 no-función; ronda 2, hallazgos del /code-review pre-release — for-in itera SIN segfault (data[0] es String plana, no astnode), NYX3005 módulo por cero (ARM64 no trapea), NYX3006 aridad con la sesión VIVA (antes el OOB de args[i] mataba el REPL). Previous **3** (v0.24.2): NYX3001 método fuera del subconjunto; sesión sobrevive; control negativo `s.length()`==4. El target construye nyx_repl SIEMPRE antes del smoke). Dentro de `make test-all` | ✅ |
 | Stacks extraídos | `make test-stacks` | `scripts/testing/run_stack_tests.sh` | db (7 .nx + Python) + queue 17 + edit 41 + shell 2 + serve 7 (smoke HTTP) + proxy 3 (.nx cache/metrics/xff — split #7) — canario del compilador | ✅ |
 | Integration E2E | `make test-integration` | `scripts/testing/run_integration_tests.sh` | **10 serve+kv + WS proxy (6 checks) + HTTP/2 (1 suite) + FFI callback C→Nyx (3 checks) + std/llm stub (3 checks) + slot typed read (9 checks: print por tag + aborts ordenados, 2026-07-26)** | ✅ |
+| Load gate (`[arco:W3-paso0b]`, nuevo 2026-08-28) | `make test-load` | `scripts/testing/run_load_gate.sh` | **5+3 corridas** (override `LOAD_GATE_RUNS`/`LOAD_GATE_RUNS_INC`) de `tests/stress/gc_goroutine_load.nx` — 300 goroutines × `Array<int>` de 20k, compilado -O2 UNA vez; 5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`. ~15-25s (dominado por la ejecución, no la compilación). Compara la línea `LOAD_OK sum=59997000000`, no solo el rc — es el único gate que reprodujo de punta a punta el "bug 2" del paso 0b (Boehm escaneando el stack nativo de un worker con el sp de una goroutine) y mató sus dos mutantes de review | ✅ |
 | WASM (wasm32-wasi) | `make test-wasm` | `scripts/testing/run_wasm_tests.sh` | **22** (17 tests .nx: wasmtime cuando aplica + shim WASI del navegador vía node; incluye json-floats, float/Array FFI, dom-extendido, std/browser, eventos, closures-por-tabla, arena 10k re-entradas, fixture multi-archivo de make wasm y el framework VDOM — test-wasm-19-dom-handles (Task 2 VDOM, 12 wrappers por-handle), test-wasm-20-component (Task 3 VDOM, mount/update quirúrgico), test-wasm-21-fn-indirect-ptr (cobertura de `Fn(Array)->VNode` tipado en llamada indirecta), test-wasm-22-router (router+SPA Task 2: router_new/router_start resuelve la ruta actual por hash, monta y re-navega en hashchange); SKIP limpio exit 0 sin toolchain — no entra en test-all; ⚠️ test-wasm-12-arena (browser-shim) FALLA pre-existente, no relacionado al framework VDOM — ver TASKS.md) | ⚠️ 22 passed / 1 failed (pre-existente) |
 | Verify (unit) | `make test-unit` | `scripts/testing/run_unit_tests.sh` (2026-07-02) | **21** (13 verify expected-output/exit-code (incl. test-verify-12: carrera de builds concurrentes vía NYX_SRC, 2026-07-18) + 3 compiler-unit: test-lexer, test-types-unify (incl. región TyRef 3c-full), test-borrow-classify + 5 fmt (`run_fmt_tests.sh`: impl genérico RED→GREEN, idempotencia, no-genérico, + T12 2026-07-23: trait-assoc-default (supertrait+default body+assoc type round-trip) e impl-trait-assoc (assoc types en impl))) | ✅ |
 | Compiler unit | `make test-unit` | `scripts/testing/run_unit_tests.sh` | 6 files (2 activos: test-lexer + test-types-unify vía NYX_INLINE_COMPILER=1; resto SKIP) | ⚠️ parcial: el import de módulos compiler/ no aporta funciones al IR para los otros 4 (TASKS.md) |
@@ -513,7 +751,7 @@ linked lists, trait polymorphism, expression trees, state machines, integration 
 
 ## Suite 6: Runtime C unit (`make test-runtime`) — B4, nuevo 2026-06-10
 
-**Total: 22 suites / 1066 asserts** (ver fila reconciliada arriba — `+test_net_result.c` E5.2b (+56, 48→104, incl. su propio review final F1), E5.1 y su review final F1 (+2), `test_scheduler` preexistente flaky; el detalle histórico debajo quedó congelado en el 20/839 previo a las rondas de E4/E5.1) (+test_terminal.c 2026-07-25 (C1 friction-browser): `nyx_raw_mode_enter()` instala un handler no-op de SIGWINCH solo si la disposición sigue en `SIG_DFL` — 6 asserts vía forkpty+`TIOCSWINSZ` real, cubre el wakeup de `read_byte_timeout(-1)` y el no-clobber de un handler propio (`signal_handle`) instalado antes, orden real de nyx-edit; +10 test_char_substring en test_strings.c 2026-07-22: substring por CODEPOINTS UTF-8 — 1 cp multibyte = 2 bytes, salto de emoji de 4 bytes, clamps de borde, NULL; +33 test_maps 2026-07-21: nyx_map_scan cursor-estable — scan completo sin duplicados, GARANTÍA con ≥2 resizes a mitad, deletes, vacío, NULL guards; (+9 rwlock en test_thread.c 2026-07-21: readers comparten/writer excluye vía try*, NULL guards, serialización real 4 threads × 5000; +15 test_net 2026-07-21: cap de body HTTP `NYX_HTTP_MAX_BODY` + slot 6 de error del request (0 ok / 413 too-large, sin drenar el socket sobre el cap); +10 test_index_of_from en test_strings.c 2026-07-21: indexOf(needle, from) — offset absoluto, clamps de borde, needle vacío estilo JS, búsqueda tras NUL; +21 test_binary_safe en test_strings.c 2026-07-21: familia de búsqueda/comparación binary-safe por longitud — equals/compare/contains/index_of/starts_with/ends_with/split/replace con NUL embebido (contrato "strings=bytes" v0.14; antes strcmp/strstr cortaban en el primer NUL); +test_file_io.c nuevo 2026-07-20: fsync/fdatasync — 13 asserts (fd válido con datos escritos, fd inválido/-1/cerrado -> -1, ida vía `nyx_open_fd`); +14 tls_wait_readable_eof_after_nonblock_read, review final pre-push FIX 1: EOF real (close_notify tras el último frame) observado vía `tls_read_nonblock` marca `h->eof` → `tls_wait_readable` deja de reportar POLLIN para siempre y devuelve -1 DETERMINÍSTICO (antes: busy-spin, el fd queda "legible" por EOF sin cota); +31 tls_wait_readable: handle inválido, timeout sin data, data lista+read posterior, data+HUP en la misma vuelta de poll — regresión POLLIN-antes-que-POLLERR/HUP, buffer interno legible sin poll; +31 tls_read_nonblock: handle inválido, max_bytes<=0, sin data no bloquea, data lista + O_NONBLOCK restaurado, buffered sin tocar el socket, caveat NewSessionTicket real — wait_readable=1 + read_nonblock="" sin bloquear) | `tests/runtime-unit/` — harness header-only (test_webpush_crypto: cripto Web Push, 16 asserts, KAT RFC 5869 + McGrew GCM + round-trips ECDH/ECDSA)
+**Total: 34 suites / 1444 asserts** (reconciliado 2026-08-29 con corrida real; los incrementos desde 1066 están en las notas de cabecera de este archivo. Historia al momento del conteo viejo: ver fila reconciliada arriba — `+test_net_result.c` E5.2b (+56, 48→104, incl. su propio review final F1), E5.1 y su review final F1 (+2), `test_scheduler` preexistente flaky; el detalle histórico debajo quedó congelado en el 20/839 previo a las rondas de E4/E5.1) (+test_terminal.c 2026-07-25 (C1 friction-browser): `nyx_raw_mode_enter()` instala un handler no-op de SIGWINCH solo si la disposición sigue en `SIG_DFL` — 6 asserts vía forkpty+`TIOCSWINSZ` real, cubre el wakeup de `read_byte_timeout(-1)` y el no-clobber de un handler propio (`signal_handle`) instalado antes, orden real de nyx-edit; +10 test_char_substring en test_strings.c 2026-07-22: substring por CODEPOINTS UTF-8 — 1 cp multibyte = 2 bytes, salto de emoji de 4 bytes, clamps de borde, NULL; +33 test_maps 2026-07-21: nyx_map_scan cursor-estable — scan completo sin duplicados, GARANTÍA con ≥2 resizes a mitad, deletes, vacío, NULL guards; (+9 rwlock en test_thread.c 2026-07-21: readers comparten/writer excluye vía try*, NULL guards, serialización real 4 threads × 5000; +15 test_net 2026-07-21: cap de body HTTP `NYX_HTTP_MAX_BODY` + slot 6 de error del request (0 ok / 413 too-large, sin drenar el socket sobre el cap); +10 test_index_of_from en test_strings.c 2026-07-21: indexOf(needle, from) — offset absoluto, clamps de borde, needle vacío estilo JS, búsqueda tras NUL; +21 test_binary_safe en test_strings.c 2026-07-21: familia de búsqueda/comparación binary-safe por longitud — equals/compare/contains/index_of/starts_with/ends_with/split/replace con NUL embebido (contrato "strings=bytes" v0.14; antes strcmp/strstr cortaban en el primer NUL); +test_file_io.c nuevo 2026-07-20: fsync/fdatasync — 13 asserts (fd válido con datos escritos, fd inválido/-1/cerrado -> -1, ida vía `nyx_open_fd`); +14 tls_wait_readable_eof_after_nonblock_read, review final pre-push FIX 1: EOF real (close_notify tras el último frame) observado vía `tls_read_nonblock` marca `h->eof` → `tls_wait_readable` deja de reportar POLLIN para siempre y devuelve -1 DETERMINÍSTICO (antes: busy-spin, el fd queda "legible" por EOF sin cota); +31 tls_wait_readable: handle inválido, timeout sin data, data lista+read posterior, data+HUP en la misma vuelta de poll — regresión POLLIN-antes-que-POLLERR/HUP, buffer interno legible sin poll; +31 tls_read_nonblock: handle inválido, max_bytes<=0, sin data no bloquea, data lista + O_NONBLOCK restaurado, buffered sin tocar el socket, caveat NewSessionTicket real — wait_readable=1 + read_nonblock="" sin bloquear) | `tests/runtime-unit/` — harness header-only (test_webpush_crypto: cripto Web Push, 16 asserts, KAT RFC 5869 + McGrew GCM + round-trips ECDH/ECDSA)
 `nyx_test.h`; ejercita el runtime C directamente (sin `nyx_bootstrap`).
 
 | Fase | Suites | Cobertura |
@@ -567,6 +805,41 @@ exactamente 1 vez) + caso negativo sin .so (error limpio, no SEGV).
 
 ---
 
+## Suite 9: Load gate (`make test-load`) — [arco:W3-paso0b]
+
+**Por qué existe**: caza la clase de bug «colector × stacks de goroutine»
+end-to-end — Boehm escaneando el stack NATIVO de un worker suspendido con el
+sp capturado sobre el stack de UNA goroutine (rango de decenas de MB con
+guard pages `PROT_NONE` en el medio). Es el único gate que reprodujo el bug
+del paso 0b de punta a punta y el único que mató los dos mutantes de esa
+review (revertir `GC_set_sp_corrector`: 6/10 SEGV; `sa_mask` vacía sola: sin
+señal, hace falta el corrector junto a la máscara heredada). Antes vivía
+solo en el ledger de esa investigación
+(`.superpowers/sdd/2026-08-27-w3-paso0b-gc-roots/`); acá queda como caso
+permanente para que una regresión futura del GC/scheduler no dependa de que
+alguien recuerde la receta.
+
+`tests/stress/gc_goroutine_load.nx`: 300 goroutines concurrentes, cada una
+construye un `Array<int>` de 20 000 elementos (fuerza varios `GC_realloc` vía
+`push`, el mismo camino del backtrace original) y vuelve a leer cada elemento
+para sumarlos — si el GC escaneó mal las raíces y liberó o corrompió el
+backing store mientras la goroutine estaba suspendida a mitad de
+construcción, la suma se desvía del valor esperado (`59997000000`,
+determinista) en vez de solo crashear.
+
+`scripts/testing/run_load_gate.sh` compila **una sola vez** con la receta
+-O2 de producción (la misma de `make run`) y corre el binario resultante 5
+veces normal + 3 veces con `GC_ENABLE_INCREMENTAL=1` (override
+`LOAD_GATE_RUNS`/`LOAD_GATE_RUNS_INC` — la investigación original usó ×30 en
+ambas variantes para exprimir el ~50% de tasa de fallo del bug original).
+Cada corrida se valida por rc **Y** por la presencia literal de la línea
+`LOAD_OK sum=59997000000` en la salida — comparar solo el rc no alcanza (un
+exit espurio en 0 sin la línea, o el binario matado por `timeout`, deben
+contar como falla). Duración esperada: ~15-25s en la máquina de referencia
+(dominada por la ejecución de las 8 corridas, no por la única compilación).
+
+---
+
 ## Legacy (sin runner funcional)
 
 - **`tests/compiler-unit/`** (4 files): el runner racket (`run_bootstrap_unit_tests.sh`,
@@ -599,11 +872,12 @@ Build: `make build-test`
 ```bash
 make test                # regression (ARM64) — requerido antes de cada commit (conteo: tabla-resumen arriba)
 make test-all            # todas las suites automatizadas (regression + advanced + stdlib
-                         #   + errors + m08-types + runtime + ai-first)
+                         #   + errors + m08-types + runtime + load gate + ai-first)
 make test-errors         # error paths parse + semantic (conteo: tabla-resumen arriba)
 make test-m08-types      # 16 happy types
 make test-stdlib         # 3 stdlib
 make test-runtime        # 22 suites C / 1010 asserts
+make test-load           # gate de carga: 300 goroutines × Array 20k, ×5+3 corridas [arco:W3-paso0b]
 make test-stacks         # suites de los stacks extraídos incl. proxy (canario del compilador)
 make test-integration    # 10 E2E serve+kv (usa ~/nyx-serve-stack y ~/nyx-kv-stack)
 ```

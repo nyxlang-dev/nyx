@@ -21,6 +21,11 @@
 set -u
 cd "$(dirname "$0")/../.."
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh).
+source scripts/testing/lib_testroot_lock.sh
+nyx_testroot_lock_acquire
+
 if [ ! -x ./nyx_bootstrap ]; then
     echo "  ✗ falta ./nyx_bootstrap — correr 'make bootstrap' primero"
     exit 1
@@ -448,7 +453,7 @@ fi
 # con exit 0 y da el resultado correcto.
 # ------------------------------------------------------------------
 if command -v clang >/dev/null 2>&1; then
-    RT_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c"
+    RT_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c runtime/os/os_posix.c"
     RT_LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 
     cat > "$TMPDIR/slot_bad.nx" <<'NX'
@@ -553,7 +558,7 @@ fi
 # (prueba que el instrumento distingue, no que grepea cualquier cosa).
 # ------------------------------------------------------------------
 if command -v clang >/dev/null 2>&1; then
-    BF_RT="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c"
+    BF_RT="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c runtime/os/os_posix.c"
     BF_LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
     name="silent-bind-failure"
 
@@ -618,7 +623,7 @@ fi
 # `-> Result<int, String>` compila, linkea y corre con exit 0.
 # ------------------------------------------------------------------
 if command -v clang >/dev/null 2>&1; then
-    TA_RT="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c"
+    TA_RT="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c runtime/os/os_posix.c"
     TA_LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
     name="tryop-sin-anotacion-no-cuela"
 

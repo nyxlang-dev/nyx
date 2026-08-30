@@ -4,7 +4,15 @@
 
 cd "$(dirname "$0")/.."
 
-RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c"
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh). Este script vive
+# fuera de scripts/testing/ (follow-up de la cosecha [arco:W3-paso0b] ficha B
+# — quedó fichado como fuera del scope original porque no es
+# scripts/testing/*.sh ni parte de make test/test-all).
+source "$(dirname "$0")/../scripts/testing/lib_testroot_lock.sh"
+nyx_testroot_lock_acquire
+
+RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 
 echo "╔══════════════════════════════════════════════════╗"

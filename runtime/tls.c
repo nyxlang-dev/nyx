@@ -37,18 +37,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <unistd.h>
 #include <errno.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <poll.h>
 #include <time.h>
-#include <fcntl.h>
-#include <pthread.h>
+#include "os/nyx_os.h"
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -98,39 +89,44 @@ static SSL_CTX* get_ssl_ctx(void) {
 
 // Apply a 10-second timeout to both send and receive on fd.
 static void set_socket_timeout(int fd) {
-    struct timeval tv;
-    tv.tv_sec  = 10;
-    tv.tv_usec = 0;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    os_sock_set_timeout(fd, 10);
 }
 
 // Connect a TCP socket to host:port.  Returns fd >= 0 on success, -1 on error.
+// NOTA (W1 inc 3, review round 2, I1): la migración original (Task 3) usaba
+// os_addr_resolve4 (AF_INET puro), que perdió IPv6 -- hosts v6-only (p.ej.
+// "::1", ipv6.google.com) que el baseline pre-W1 conectaba sin problema
+// (getaddrinfo con AF_UNSPEC) dejaron de resolver. Restaurado con
+// os_addr_resolve_any (AF_UNSPEC, itera v4 Y v6 en orden RFC 6724) +
+// os_sock_stream_for (socket de la familia de CADA dirección, no siempre
+// v4) -- mismo comportamiento que el baseline de main, ahora expresado
+// sobre la capa nyx_os_*.
+// EN: (W1 inc 3, review round 2, I1): the original migration (Task 3) used
+// os_addr_resolve4 (pure AF_INET), which dropped IPv6 -- v6-only hosts
+// (e.g. "::1", ipv6.google.com) that the pre-W1 baseline connected fine
+// (getaddrinfo with AF_UNSPEC) stopped resolving. Restored with
+// os_addr_resolve_any (AF_UNSPEC, iterates v4 AND v6 in RFC 6724 order) +
+// os_sock_stream_for (socket of EACH address's family, not always v4) --
+// same behavior as main's baseline, now expressed over the nyx_os_* layer.
 static int tcp_connect_fd(const char* host, int port) {
-    char port_str[16];
-    snprintf(port_str, sizeof(port_str), "%d", port);
-
-    struct addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;   // accept IPv4 and IPv6
-    hints.ai_socktype = SOCK_STREAM;
-
-    if (getaddrinfo(host, port_str, &hints, &res) != 0) return -1;
+    os_addr_t addrs[8];
+    int n = os_addr_resolve_any(host, port, addrs, 8, NULL);
+    if (n < 1) return -1;
 
     int fd = -1;
-    for (struct addrinfo* rp = res; rp != NULL; rp = rp->ai_next) {
-        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (fd < 0) continue;
+    for (int i = 0; i < n; i++) {
+        int64_t s = os_sock_stream_for(&addrs[i]);
+        if (s < 0) { fd = -1; continue; }
+        fd = (int)s;
 
         set_socket_timeout(fd);
 
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break; // success
+        if (os_sock_connect(fd, &addrs[i]) == 0) break; // success
 
-        close(fd);
+        os_sock_close(fd);
         fd = -1;
     }
 
-    freeaddrinfo(res);
     return fd;
 }
 
@@ -340,7 +336,7 @@ nyx_string* nyx_https_get(nyx_string* url) {
     if (fd < 0) return nyx_string_from_cstr("");
 
     SSL* ssl = SSL_new(ctx);
-    if (!ssl) { close(fd); return nyx_string_from_cstr(""); }
+    if (!ssl) { os_sock_close(fd); return nyx_string_from_cstr(""); }
 
     SSL_set_fd(ssl, fd);
 
@@ -349,7 +345,7 @@ nyx_string* nyx_https_get(nyx_string* url) {
 
     if (SSL_connect(ssl) != 1) {
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return nyx_string_from_cstr("");
     }
 
@@ -366,7 +362,7 @@ nyx_string* nyx_https_get(nyx_string* url) {
 
     if (req_len <= 0 || SSL_write(ssl, req, req_len) <= 0) {
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return nyx_string_from_cstr("");
     }
 
@@ -374,7 +370,7 @@ nyx_string* nyx_https_get(nyx_string* url) {
 
     SSL_shutdown(ssl);
     SSL_free(ssl);
-    close(fd);
+    os_sock_close(fd);
     return result;
 }
 
@@ -404,14 +400,14 @@ nyx_string* nyx_https_post(nyx_string* url, nyx_string* body, nyx_string* conten
     if (fd < 0) return nyx_string_from_cstr("");
 
     SSL* ssl = SSL_new(ctx);
-    if (!ssl) { close(fd); return nyx_string_from_cstr(""); }
+    if (!ssl) { os_sock_close(fd); return nyx_string_from_cstr(""); }
 
     SSL_set_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host);
 
     if (SSL_connect(ssl) != 1) {
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return nyx_string_from_cstr("");
     }
 
@@ -427,7 +423,7 @@ nyx_string* nyx_https_post(nyx_string* url, nyx_string* body, nyx_string* conten
     size_t hdr_cap = 4096;
     char*  hdr     = (char*)GC_MALLOC_ATOMIC(hdr_cap);
     if (!hdr) {
-        SSL_free(ssl); close(fd);
+        SSL_free(ssl); os_sock_close(fd);
         return nyx_string_from_cstr("");
     }
     int hdr_len = snprintf(hdr, hdr_cap,
@@ -455,7 +451,7 @@ nyx_string* nyx_https_post(nyx_string* url, nyx_string* body, nyx_string* conten
 
     if (!ok) {
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return nyx_string_from_cstr("");
     }
 
@@ -463,7 +459,7 @@ nyx_string* nyx_https_post(nyx_string* url, nyx_string* body, nyx_string* conten
 
     SSL_shutdown(ssl);
     SSL_free(ssl);
-    close(fd);
+    os_sock_close(fd);
     return result;
 }
 
@@ -615,11 +611,7 @@ int64_t nyx_tls_accept(int64_t fd) {
     if (fd < 0 || !g_ssl_server_ctx) return 0;
 
     // 30-second timeout to prevent workers blocking on abandoned connections
-    struct timeval tv;
-    tv.tv_sec = 30;
-    tv.tv_usec = 0;
-    setsockopt((int)fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt((int)fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    os_sock_set_timeout(fd, 30);
 
     SSL* ssl = SSL_new(g_ssl_server_ctx);
     if (!ssl) return 0;
@@ -723,7 +715,7 @@ void nyx_tls_close_conn(int64_t handle) {
 
     SSL_shutdown(h->ssl);
     SSL_free(h->ssl);
-    close(h->fd);
+    os_sock_close(h->fd);
 
     h->ssl = NULL;
     h->fd  = -1;
@@ -743,14 +735,14 @@ int64_t nyx_tls_connect(nyx_string* host, int64_t port) {
     if (fd < 0) return 0;
 
     SSL* ssl = SSL_new(ctx);
-    if (!ssl) { close(fd); return 0; }
+    if (!ssl) { os_sock_close(fd); return 0; }
 
     SSL_set_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host_cstr);
 
     if (SSL_connect(ssl) != 1) {
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return 0;
     }
 
@@ -760,7 +752,7 @@ int64_t nyx_tls_connect(nyx_string* host, int64_t port) {
     if (!h) {
         SSL_shutdown(ssl);
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return 0;
     }
     h->ssl     = ssl;
@@ -789,7 +781,7 @@ int64_t nyx_tls_connect(nyx_string* host, int64_t port) {
 // confianza, y dos contextos compitiendo darían un trust store distinto según
 // quién gane). Es deliberado que quede así.
 static SSL_CTX*      g_ssl_verify_ctx = NULL;
-static pthread_once_t g_verify_once   = PTHREAD_ONCE_INIT;
+static os_once_t g_verify_once = OS_ONCE_STATIC_INIT;
 
 static void verify_ctx_init(void) {
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -809,7 +801,7 @@ static void verify_ctx_init(void) {
 }
 
 static SSL_CTX* get_verify_ctx(void) {
-    pthread_once(&g_verify_once, verify_ctx_init);
+    os_once(&g_verify_once, verify_ctx_init);
     return g_ssl_verify_ctx;
 }
 
@@ -848,7 +840,7 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     if (fd < 0) return 0;
 
     SSL* ssl = SSL_new(ctx);
-    if (!ssl) { close(fd); return 0; }
+    if (!ssl) { os_sock_close(fd); return 0; }
 
     SSL_set_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host_cstr);
@@ -863,16 +855,14 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
         // tipo IP. Se setea UNO SOLO de los dos: OpenSSL exige que todos los
         // criterios de identidad configurados pasen, así que setear ambos
         // rechazaría un certificado legítimo con SAN IP pero sin SAN DNS.
-        unsigned char ipbuf[16];
-        int is_ip = (inet_pton(AF_INET, host_cstr, ipbuf) == 1) ||
-                    (inet_pton(AF_INET6, host_cstr, ipbuf) == 1);
+        int is_ip = os_addr_is_ip(host_cstr);
         int idok;
         if (is_ip) {
             idok = X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), host_cstr);
         } else {
             idok = SSL_set1_host(ssl, host_cstr);
         }
-        if (idok != 1) { SSL_free(ssl); close(fd); return 0; }
+        if (idok != 1) { SSL_free(ssl); os_sock_close(fd); return 0; }
     }
     // Modo 1 ("checked"): NO se sube el modo de verificación. El handshake
     // siempre tiene éxito y SSL_get_verify_result() (nyx_tls_verify_result)
@@ -882,7 +872,7 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
 
     if (SSL_connect(ssl) != 1) {
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return 0;
     }
 
@@ -890,7 +880,7 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     if (!h) {
         SSL_shutdown(ssl);
         SSL_free(ssl);
-        close(fd);
+        os_sock_close(fd);
         return 0;
     }
     h->ssl     = ssl;
@@ -1034,10 +1024,6 @@ int64_t nyx_tls_wait_readable(int64_t handle, int64_t timeout_ms) {
     int64_t remaining_ms = timeout_ms;
 
     for (;;) {
-        struct pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
         int t;
         if (remaining_ms < 0) {
             t = -1; // wait indefinitely
@@ -1045,11 +1031,15 @@ int64_t nyx_tls_wait_readable(int64_t handle, int64_t timeout_ms) {
             t = (remaining_ms > 2147483647) ? 2147483647 : (int)remaining_ms;
         }
 
-        int rc = poll(&pfd, 1, t);
+        // os_sock_poll1 (Task 1, W1 inc 3) devuelve los revents REALES ya
+        // traducidos: >0 con algún bit, 0 == timeout, -errno en error (EINTR
+        // llega como -EINTR EN EL RETORNO -- ya no hay variable errno global
+        // que consultar, a diferencia del poll() crudo que reemplaza).
+        int rc = os_sock_poll1(fd, OS_POLLIN, t);
         if (rc == 0) return 0; // timeout expired, no data
 
         if (rc < 0) {
-            if (errno == EINTR) {
+            if (rc == -EINTR) {
                 if (timeout_ms < 0) continue; // no deadline, just retry
                 struct timespec now;
                 clock_gettime(CLOCK_MONOTONIC, &now);
@@ -1070,8 +1060,8 @@ int64_t nyx_tls_wait_readable(int64_t handle, int64_t timeout_ms) {
         // tunnel). Precedent: event_loop.c also checks POLLIN before POLLERR.
         // So: POLLIN set (with or without HUP) -> 1; only POLLERR/POLLNVAL, or
         // HUP WITHOUT POLLIN (nothing left to read, peer gone) -> -1.
-        if (pfd.revents & POLLIN) return 1;
-        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) return -1;
+        if (rc & OS_POLLIN) return 1;
+        if (rc & (OS_POLLERR | OS_POLLHUP)) return -1;
         return 0;
     }
 }
@@ -1131,14 +1121,12 @@ nyx_string* nyx_tls_read_nonblock(int64_t handle, int64_t max_bytes) {
     int fd = SSL_get_fd(h->ssl);
     if (fd < 0) return nyx_string_from_cstr("");
 
-    int saved_flags = fcntl(fd, F_GETFL, 0);
-    if (saved_flags == -1) return nyx_string_from_cstr("");
     // MUST check the return: on a fd that is (still) blocking, a plain
     // SSL_read() below can BLOCK the caller — there is no "safety-net via
     // WANT_READ" on a blocking fd, WANT_READ is exactly what O_NONBLOCK makes
     // possible. If we can't arm O_NONBLOCK we must not attempt the read at
     // all (the whole point of this function is "never blocks").
-    if (fcntl(fd, F_SETFL, saved_flags | O_NONBLOCK) == -1) {
+    if (os_sock_set_nonblocking(fd, 1) < 0) {
         return nyx_string_from_cstr("");
     }
 
@@ -1167,7 +1155,7 @@ nyx_string* nyx_tls_read_nonblock(int64_t handle, int64_t max_bytes) {
     // ALWAYS restore, even though the read above never returns early — this
     // is the one place the flag is touched, and the rest of the runtime
     // assumes every fd it owns is blocking.
-    fcntl(fd, F_SETFL, saved_flags);
+    os_sock_set_nonblocking(fd, 0);
 
     if (total == 0) return nyx_string_from_cstr("");
     out[total] = '\0';
@@ -1219,7 +1207,7 @@ void nyx_tls_close(int64_t handle) {
 
     SSL_shutdown(h->ssl);
     SSL_free(h->ssl);
-    close(h->fd);
+    os_sock_close(h->fd);
 
     // Null out the fields so accidental reuse is detectable.
     h->ssl = NULL;
@@ -1355,7 +1343,7 @@ static nyx_string* cert_sans(X509* c) {
                 val_len = snprintf(ipbuf, sizeof(ipbuf), "%u.%u.%u.%u",
                                    ip[0], ip[1], ip[2], ip[3]);
             } else if (iplen == 16) {
-                if (!inet_ntop(AF_INET6, ip, ipbuf, sizeof(ipbuf))) continue;
+                if (os_inet_ntop6(ip, ipbuf, (int)sizeof(ipbuf)) != 0) continue;
                 val_len = (int)strlen(ipbuf);
             } else {
                 continue;

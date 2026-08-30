@@ -1,0 +1,41 @@
+// Test 380: sync.wg_wait_timeout — el drain sale al quiescer, el deadline es
+// solo el techo (fricción serve-ws 2026-08-11 ítem 3: el drain de serve dormía
+// el deadline COMPLETO aunque los workers terminaran en milisegundos).
+// Tres contratos: (a) count 0 → true inmediato; (b) worker que termina rápido →
+// true ANTES del techo (early exit medido); (c) count que nunca baja → false
+// tras ~timeout_ms, nunca cuelga.
+
+import "std/sync" as sync
+
+fn main() -> int {
+    // (a) WaitGroup vacío: true sin esperar
+    let wg0 = sync.wg_new()
+    let r0: bool = sync.wg_wait_timeout(wg0, 1000)
+    if r0 { print("empty: true") } else { print("empty: false") }
+
+    // (b) worker termina en ~100ms, techo 5000ms → true y MUCHO antes del techo
+    let wg1 = sync.wg_new()
+    sync.wg_add(wg1, 1)
+    thread_spawn(fn() {
+        sleep(100)
+        sync.wg_done(wg1)
+    })
+    let t0: int = time_ms()
+    let r1: bool = sync.wg_wait_timeout(wg1, 5000)
+    let elapsed1: int = time_ms() - t0
+    if r1 { print("worker: true") } else { print("worker: false") }
+    // margen ancho anti-flaky: salió al quiescer si tardó < 3000 (techo 5000)
+    if elapsed1 < 3000 { print("early-exit: yes") } else { print("early-exit: no") }
+
+    // (c) nadie hace done: false tras ~200ms, sin colgarse
+    let wg2 = sync.wg_new()
+    sync.wg_add(wg2, 1)
+    let t1: int = time_ms()
+    let r2: bool = sync.wg_wait_timeout(wg2, 200)
+    let elapsed2: int = time_ms() - t1
+    if r2 { print("stuck: true") } else { print("stuck: false") }
+    if elapsed2 >= 150 { print("waited-deadline: yes") } else { print("waited-deadline: no") }
+
+    print("done")
+    return 0
+}

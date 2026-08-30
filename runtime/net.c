@@ -1,25 +1,32 @@
 // ============================================
 // NET.C - Networking Runtime for Nyx v5.0
 // ============================================
+//
+// W1 inc 3 (Task 2, 2026-08-24): migrado ENTERO a las primitivas
+// os_sock_*/os_addr_* de runtime/os/nyx_os.h (Task 1, commit 1420ecd) --
+// CERO cambios de comportamiento observable. Este archivo ya NO incluye
+// <sys/socket.h>/<netinet/*.h>/<arpa/inet.h>/<netdb.h>/<fcntl.h>/<poll.h>/
+// <ifaddrs.h>/<sys/uio.h>: cada llamada a socket()/connect()/bind()/
+// listen()/accept()/send()/recv()/sendto()/recvfrom()/close()/shutdown()/
+// setsockopt()/getpeername()/getaddrinfo()/getnameinfo()/inet_pton()/
+// inet_ntop()/poll()/fcntl()/getifaddrs()/writev() pasa por la capa
+// os_sock_*/os_addr_* (contrato en runtime/os/nyx_os.h).
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#include <ifaddrs.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <netinet/tcp.h>
-#include <sys/uio.h>
 #include <gc.h>
 #include "net.h"
+#include "os/nyx_os.h"
+
+// Tamaños de buffer heredados de <netinet/in.h>/<netdb.h> -- esas headers
+// salen del include set en esta migración (el contrato os_addr_* no impone
+// tamaño de buffer, lo define el caller). Valores IDÉNTICOS a los de esas
+// headers en este target (glibc: INET_ADDRSTRLEN=16, NI_MAXHOST=1025) --
+// preservan el tamaño exacto de los buffers que ya usaba este archivo.
+#define NYX_NET_IP_STRLEN 16
+#define NYX_NET_MAXHOST   1025
 
 // ===== Per-fd read buffer (transparent buffering for tcp_read_line) =====
 
@@ -54,122 +61,106 @@ static void reset_conn_buf(int fd) {
 // ===== TCP =====
 
 int64_t nyx_tcp_listen(const char* host, int64_t port) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int64_t fd = os_sock_tcp4();
     if (fd < 0) return -1;
 
-    int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    os_sock_set_reuseaddr(fd);
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
-
+    os_addr_t addr;
     if (host && strlen(host) > 0) {
-        inet_pton(AF_INET, host, &addr.sin_addr);
+        // Mismo comportamiento que la centinela vieja: el retorno de la
+        // resolución de IP NO se chequea acá (a diferencia de los *_result,
+        // ver abajo) -- un host no-numérico deja `addr` en el estado que
+        // dejó os_addr_from_ip4 al fallar temprano (family/port seteados,
+        // dirección en 0 por el memset interno), mismo bind mudo a
+        // INADDR_ANY que ya tenía esta centinela.
+        os_addr_from_ip4(&addr, host, (int)port);
     } else {
-        addr.sin_addr.s_addr = INADDR_ANY;
+        os_addr_from_ip4(&addr, "0.0.0.0", (int)port);
     }
 
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    int rc = os_sock_bind(fd, &addr);
+    if (rc < 0) {
         /* Friction 2026-08-01: un bind fallido era MUDO — http_serve devolvía
          * -1, el ejemplo canónico descartaba el retorno, y el programa
          * "arrancaba" con exit 0 sin servidor (el usuario debuggeó contra el
          * proceso ajeno que ocupaba su puerto). El retorno -1 se mantiene
-         * (ABI); el ruido va a stderr con puerto y causa. errno se captura
-         * ANTES de close(), que puede pisarlo. */
-        int bind_errno = errno;
+         * (ABI); el ruido va a stderr con puerto y causa. */
+        int bind_errno = -rc;
         fprintf(stderr, "nyx: tcp_listen: cannot bind port %lld: %s\n",
                 (long long)port, strerror(bind_errno));
-        close(fd);
+        os_sock_close(fd);
         return -1;
     }
 
-    if (listen(fd, 128) < 0) {
-        int listen_errno = errno;
+    rc = os_sock_listen(fd, 128);
+    if (rc < 0) {
+        int listen_errno = -rc;
         fprintf(stderr, "nyx: tcp_listen: listen failed on port %lld: %s\n",
                 (long long)port, strerror(listen_errno));
-        close(fd);
+        os_sock_close(fd);
         return -1;
     }
 
-    return (int64_t)fd;
+    return fd;
 }
 
 int64_t nyx_tcp_accept(int64_t listen_fd) {
-    struct sockaddr_in client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-    int fd = accept((int)listen_fd, (struct sockaddr*)&client_addr, &addr_len);
-    if (fd >= 0) {
-        int opt = 1;
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-    }
-    return (int64_t)fd;
+    int64_t fd = os_sock_accept(listen_fd);
+    if (fd < 0) return -1; // la centinela vieja siempre devolvía -1 (accept()
+                            // crudo nunca da -errno) -- se preserva ese valor
+                            // exacto, os_sock_accept da -errno internamente.
+    os_sock_set_nodelay(fd);
+    return fd;
 }
 
 nyx_string* nyx_getpeername(int64_t fd) {
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
-    if (getpeername((int)fd, (struct sockaddr*)&addr, &len) < 0) {
+    os_addr_t addr;
+    if (os_sock_peer(fd, &addr) < 0) {
         return nyx_string_from_cstr("unknown");
     }
-    char ip_buf[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &addr.sin_addr, ip_buf, sizeof(ip_buf));
+    char ip_buf[NYX_NET_IP_STRLEN];
+    os_addr_ip(&addr, ip_buf, sizeof(ip_buf));
     return nyx_string_from_cstr(ip_buf);
 }
 
 int64_t nyx_tcp_connect(const char* host, int64_t port) {
     if (!host) return -1;
 
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
+    os_addr_t addr[1];
+    int n = os_addr_resolve4(host, (int)port, addr, 1, NULL);
+    if (n < 1) return -1;
 
-    char port_str[16];
-    snprintf(port_str, sizeof(port_str), "%ld", (long)port);
-
-    if (getaddrinfo(host, port_str, &hints, &result) != 0) return -1;
-
-    int fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (fd < 0) {
-        freeaddrinfo(result);
-        return -1;
-    }
+    int64_t fd = os_sock_tcp4();
+    if (fd < 0) return -1;
 
     // Set non-blocking for connect with timeout
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    os_sock_set_nonblocking(fd, 1);
 
-    int ret = connect(fd, result->ai_addr, result->ai_addrlen);
-    freeaddrinfo(result);
-
+    int ret = os_sock_connect(fd, &addr[0]);
     if (ret < 0) {
-        if (errno != EINPROGRESS) {
-            close(fd);
+        if (ret != -EINPROGRESS) {
+            os_sock_close(fd);
             return -1;
         }
-        // Wait up to 5 seconds for connection
-        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-        ret = poll(&pfd, 1, 3000);
-        if (ret <= 0) {
-            close(fd);
+        // Wait up to 3 seconds for connection
+        int pret = os_sock_poll1(fd, OS_POLLOUT, 3000);
+        if (pret <= 0) {
+            os_sock_close(fd);
             return -1;
         }
         // Check for connection error
-        int err = 0;
-        socklen_t len = sizeof(err);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+        int err = os_sock_error(fd);
         if (err != 0) {
-            close(fd);
+            os_sock_close(fd);
             return -1;
         }
     }
 
     // Restore blocking mode
-    fcntl(fd, F_SETFL, flags);
+    os_sock_set_nonblocking(fd, 0);
 
-    return (int64_t)fd;
+    return fd;
 }
 
 // Aplica SO_RCVTIMEO/SO_SNDTIMEO (en segundos) a un socket cliente. Evita que un
@@ -177,12 +168,8 @@ int64_t nyx_tcp_connect(const char* host, int64_t port) {
 // (bloqueo indefinido, el default del SO). Devuelve 0 en éxito, -1 en error.
 int64_t nyx_tcp_set_timeout(int64_t fd, int64_t seconds) {
     if (fd < 0) return -1;
-    struct timeval tv;
-    tv.tv_sec  = (time_t)(seconds > 0 ? seconds : 0);
-    tv.tv_usec = 0;
-    int r1 = setsockopt((int)fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    int r2 = setsockopt((int)fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    return (r1 == 0 && r2 == 0) ? 0 : -1;
+    int rc = os_sock_set_timeout(fd, seconds);
+    return rc == 0 ? 0 : -1;
 }
 
 nyx_string* nyx_tcp_read(int64_t fd, int64_t max_bytes) {
@@ -204,7 +191,7 @@ nyx_string* nyx_tcp_read(int64_t fd, int64_t max_bytes) {
 
     // Read remaining from socket
     while (total < max_bytes) {
-        ssize_t n = recv((int)fd, out + total, max_bytes - total, 0);
+        int64_t n = os_sock_recv(fd, out + total, max_bytes - total);
         if (n <= 0) break;
         total += n;
     }
@@ -237,7 +224,7 @@ nyx_string* nyx_tcp_read_partial(int64_t fd, int64_t max_bytes) {
 
     // Si el buffer no dio nada, UN solo recv (retorna con lo que haya llegado)
     if (total == 0) {
-        ssize_t n = recv((int)fd, out, max_bytes, 0);
+        int64_t n = os_sock_recv(fd, out, max_bytes);
         if (n > 0) total = n;
     }
 
@@ -250,10 +237,12 @@ nyx_string* nyx_tcp_read_partial(int64_t fd, int64_t max_bytes) {
 // llama shutdown() → un recv() bloqueado en OTRO thread se despierta (EOF). Para
 // desarmar la dirección opuesta de un túnel bidireccional. how: 0=RD, 1=WR, 2=RDWR.
 int64_t nyx_tcp_shutdown(int64_t fd, int64_t how) {
-    int sh = SHUT_RDWR;
-    if (how == 0) sh = SHUT_RD;
-    else if (how == 1) sh = SHUT_WR;
-    return (int64_t)shutdown((int)fd, sh);
+    // os_sock_shutdown mapea how con el mismo contrato que esta centinela ya
+    // tenía (0=RD, 1=WR, cualquier otro valor -> RDWR) -- ver nyx_os.h.
+    int rc = os_sock_shutdown(fd, how);
+    // shutdown() crudo siempre da -1 en error (nunca -errno) -- la centinela
+    // vieja reenviaba ese valor tal cual; se preserva el -1 exacto.
+    return rc < 0 ? -1 : (int64_t)rc;
 }
 
 nyx_string* nyx_tcp_read_line(int64_t fd) {
@@ -265,7 +254,7 @@ nyx_string* nyx_tcp_read_line(int64_t fd) {
         int lpos = 0;
         char c;
         while (lpos < 4095) {
-            ssize_t n = recv((int)fd, &c, 1, 0);
+            int64_t n = os_sock_recv(fd, &c, 1);
             if (n <= 0) break;
             if (c == '\n') break;
             if (c != '\r') line[lpos++] = c;
@@ -281,7 +270,7 @@ nyx_string* nyx_tcp_read_line(int64_t fd) {
     while (lpos < 4095) {
         // Refill buffer if exhausted
         if (cb->pos >= cb->len) {
-            ssize_t n = recv((int)fd, cb->buf, NYX_NET_BUF_SIZE, 0);
+            int64_t n = os_sock_recv(fd, cb->buf, NYX_NET_BUF_SIZE);
             if (n <= 0) break;
             cb->pos = 0;
             cb->len = (int)n;
@@ -303,7 +292,7 @@ int64_t nyx_tcp_write(int64_t fd, nyx_string* data) {
     size_t len = data->length;
     const char* buf = data->data;
     while (total < len) {
-        ssize_t sent = send((int)fd, buf + total, len - total, MSG_NOSIGNAL);
+        int64_t sent = os_sock_send(fd, buf + total, len - total); // MSG_NOSIGNAL adentro
         if (sent <= 0) break;
         total += sent;
     }
@@ -311,28 +300,34 @@ int64_t nyx_tcp_write(int64_t fd, nyx_string* data) {
 }
 
 // Write RESP bulk string directly to socket: $len\r\ndata\r\n
-// Zero allocations — builds header on stack, uses writev for single syscall.
+// Zero allocations — builds header on stack, uses os_sock_sendv (writev) for
+// a single syscall.
 int64_t nyx_resp_write_bulk(int64_t fd, nyx_string* data) {
     if (!data || !data->data) {
         // Null bulk string
         const char* null_resp = "$-1\r\n";
-        return (int64_t)send((int)fd, null_resp, 5, MSG_NOSIGNAL);
+        int64_t r = os_sock_send(fd, null_resp, 5);
+        // send() crudo siempre da -1 en error; se preserva ese valor exacto
+        // (os_sock_send da -errno internamente).
+        return r < 0 ? -1 : r;
     }
     char header[32];
     int hlen = snprintf(header, sizeof(header), "$%ld\r\n", (long)data->length);
-    struct iovec iov[3];
-    iov[0].iov_base = header;
-    iov[0].iov_len = hlen;
-    iov[1].iov_base = data->data;
-    iov[1].iov_len = data->length;
-    iov[2].iov_base = (void*)"\r\n";
-    iov[2].iov_len = 2;
-    return (int64_t)writev((int)fd, iov, 3);
+    os_iovec_t iov[3];
+    iov[0].base = header;
+    iov[0].len = hlen;
+    iov[1].base = data->data;
+    iov[1].len = data->length;
+    iov[2].base = "\r\n";
+    iov[2].len = 2;
+    int64_t r = os_sock_sendv(fd, iov, 3);
+    // writev() crudo siempre da -1 en error; mismo cuidado que arriba.
+    return r < 0 ? -1 : r;
 }
 
 void nyx_tcp_close(int64_t fd) {
     reset_conn_buf((int)fd);
-    close((int)fd);
+    os_sock_close(fd);
 }
 
 // ===== Fast HTTP Request Parser (C-level, minimal GC allocs) =====
@@ -345,7 +340,7 @@ static int buffered_read_line(int fd, nyx_conn_buf_t* cb, char* out, int max_len
     int lpos = 0;
     while (lpos < max_len - 1) {
         if (cb->pos >= cb->len) {
-            ssize_t n = recv(fd, cb->buf, NYX_NET_BUF_SIZE, 0);
+            int64_t n = os_sock_recv(fd, cb->buf, NYX_NET_BUF_SIZE);
             if (n <= 0) break;
             cb->pos = 0;
             cb->len = (int)n;
@@ -363,7 +358,7 @@ static int buffered_read_exact(int fd, nyx_conn_buf_t* cb, char* out, int n) {
     int total = 0;
     while (total < n) {
         if (cb->pos >= cb->len) {
-            ssize_t r = recv(fd, cb->buf, NYX_NET_BUF_SIZE, 0);
+            int64_t r = os_sock_recv(fd, cb->buf, NYX_NET_BUF_SIZE);
             if (r <= 0) return total;
             cb->pos = 0;
             cb->len = (int)r;
@@ -390,7 +385,7 @@ nyx_string* nyx_tcp_read_exact(int64_t fd, int64_t n) {
     } else {
         // Fallback: unbuffered read loop
         while (got < (int)n) {
-            ssize_t r = recv((int)fd, out + got, (int)n - got, 0);
+            int64_t r = os_sock_recv(fd, out + got, (int)n - got);
             if (r <= 0) break;
             got += (int)r;
         }
@@ -621,7 +616,7 @@ nyx_array_t* nyx_http_parse_request_fast(int64_t fd) {
             total = to_copy;
         }
         while (total < content_length) {
-            ssize_t n = recv((int)fd, body_buf + total, content_length - total, 0);
+            int64_t n = os_sock_recv(fd, body_buf + total, content_length - total);
             if (n <= 0) break;
             total += n;
         }
@@ -646,50 +641,47 @@ nyx_array_t* nyx_http_parse_request_fast(int64_t fd) {
 // ===== UDP =====
 
 int64_t nyx_udp_bind(const char* host, int64_t port) {
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    int64_t fd = os_sock_udp4();
     if (fd < 0) return -1;
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
-
+    os_addr_t addr;
     if (host && strlen(host) > 0) {
-        inet_pton(AF_INET, host, &addr.sin_addr);
+        os_addr_from_ip4(&addr, host, (int)port);
     } else {
-        addr.sin_addr.s_addr = INADDR_ANY;
+        os_addr_from_ip4(&addr, "0.0.0.0", (int)port);
     }
 
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    int rc = os_sock_bind(fd, &addr);
+    if (rc < 0) {
         /* Misma familia que el bind de tcp_listen (friction 2026-08-01):
          * fallo de bind ruidoso por stderr, retorno -1 intacto. */
-        int bind_errno = errno;
+        int bind_errno = -rc;
         fprintf(stderr, "nyx: udp_bind: cannot bind port %lld: %s\n",
                 (long long)port, strerror(bind_errno));
-        close(fd);
+        os_sock_close(fd);
         return -1;
     }
 
-    return (int64_t)fd;
+    return fd;
 }
 
 int64_t nyx_udp_sendto(int64_t fd, nyx_string* data, const char* host, int64_t port) {
     if (!data || !host) return -1;
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
-    inet_pton(AF_INET, host, &addr.sin_addr);
+    os_addr_t addr;
+    // Mismo comportamiento que la centinela vieja: el retorno de la
+    // resolución de IP NO se chequea (host no-numérico deja `addr` con la
+    // dirección en 0.0.0.0, el datagrama sale mudo hacia ahí).
+    os_addr_from_ip4(&addr, host, (int)port);
 
     // Binary-safe: usa data->length (el ABI ya lo trae), no strlen(cstr) --
     // un payload con bytes NUL (probes DNS/NTP/SNMP) se cortaba en el primer
     // '\0'. Sin loop de reintento: un sendto corto en un socket de datagramas
     // no es reintentable, es un error que el caller debe ver.
     size_t len = (size_t)data->length;
-    ssize_t sent = sendto((int)fd, data->data, len, 0,
-                          (struct sockaddr*)&addr, sizeof(addr));
-    return (int64_t)sent;
+    int64_t sent = os_sock_sendto(fd, data->data, len, &addr);
+    // sendto() crudo siempre da -1 en error; se preserva ese valor exacto.
+    return sent < 0 ? -1 : sent;
 }
 
 nyx_string* nyx_udp_recvfrom(int64_t fd, int64_t max_bytes) {
@@ -697,33 +689,28 @@ nyx_string* nyx_udp_recvfrom(int64_t fd, int64_t max_bytes) {
     char* buf = (char*)GC_MALLOC(max_bytes + 1);
     if (!buf) return nyx_string_from_cstr("");
 
-    struct sockaddr_in sender_addr;
-    socklen_t addr_len = sizeof(sender_addr);
-    ssize_t n = recvfrom((int)fd, buf, max_bytes, 0,
-                         (struct sockaddr*)&sender_addr, &addr_len);
+    // from=NULL: el remitente se descarta, igual que la centinela vieja.
+    int64_t n = os_sock_recvfrom(fd, buf, max_bytes, NULL);
     if (n < 0) return nyx_string_from_cstr("");
     // Binary-safe: nyx_string_from_ptr hace memcpy de exactamente `n` bytes
     // (length real de recvfrom), no nyx_string_from_cstr(buf) que remedía con
     // strlen y truncaba en el primer NUL. n==0 es un datagrama vacío legítimo.
-    return nyx_string_from_ptr(buf, (int64_t)n);
+    return nyx_string_from_ptr(buf, n);
 }
 
 // ===== DNS =====
 
 // Reverse DNS (IDEA del reporte MCP-stdio/lanpass, 2026-08-06): IP -> hostname.
-// Fail-soft como nyx_resolve: "" si no hay PTR o la IP es inválida (NI_NAMEREQD
+// Fail-soft como nyx_resolve: "" si no hay PTR o la IP es inválida (require_name=1
 // evita devolver la IP misma como "nombre").
 nyx_string* nyx_resolve_ptr(const char* ip) {
     if (!ip) return nyx_string_from_cstr("");
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    if (inet_pton(AF_INET, ip, &sa.sin_addr) != 1) {
+    os_addr_t addr;
+    if (os_addr_from_ip4(&addr, ip, 0) != 0) {
         return nyx_string_from_cstr("");
     }
-    char host[NI_MAXHOST];
-    if (getnameinfo((struct sockaddr*)&sa, sizeof(sa), host, sizeof(host),
-                    NULL, 0, NI_NAMEREQD) != 0) {
+    char host[NYX_NET_MAXHOST];
+    if (os_addr_hostname(&addr, host, sizeof(host), 1) != 0) {
         return nyx_string_from_cstr("");
     }
     return nyx_string_from_cstr(host);
@@ -732,51 +719,39 @@ nyx_string* nyx_resolve_ptr(const char* ip) {
 // Enumeración de interfaces IPv4 (IDEA del mismo reporte): Array plano de
 // TRIPLETAS String [nombre, ip, máscara, nombre, ip, máscara, ...] — stride 3.
 // Solo AF_INET con dirección asignada; loopback incluida (el caller filtra).
+static void nyx_net_ifaces4_cb(const char* name, const char* ip, const char* mask, void* ud) {
+    nyx_array_t* out = (nyx_array_t*)ud;
+    nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(name), NYX_TAG_STRING);
+    nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(ip), NYX_TAG_STRING);
+    nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(mask), NYX_TAG_STRING);
+}
+
 nyx_array_t* nyx_net_interfaces() {
     nyx_array_t* out = nyx_array_new(8);
-    struct ifaddrs* ifs = NULL;
-    if (getifaddrs(&ifs) != 0) return out;
-    for (struct ifaddrs* it = ifs; it != NULL; it = it->ifa_next) {
-        if (!it->ifa_addr || it->ifa_addr->sa_family != AF_INET) continue;
-        char ip[INET_ADDRSTRLEN] = "";
-        char mask[INET_ADDRSTRLEN] = "";
-        struct sockaddr_in* a = (struct sockaddr_in*)it->ifa_addr;
-        inet_ntop(AF_INET, &a->sin_addr, ip, sizeof(ip));
-        if (it->ifa_netmask) {
-            struct sockaddr_in* m = (struct sockaddr_in*)it->ifa_netmask;
-            inet_ntop(AF_INET, &m->sin_addr, mask, sizeof(mask));
-        }
-        nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(it->ifa_name), 2);
-        nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(ip), 2);
-        nyx_array_push_tagged(out, (int64_t)(intptr_t)nyx_string_from_cstr(mask), 2);
-    }
-    freeifaddrs(ifs);
+    // Fallo de os_net_ifaces4 (-errno) nunca invoca el callback -- `out`
+    // queda vacío, mismo comportamiento que la centinela vieja ante un
+    // getifaddrs() fallido.
+    os_net_ifaces4(nyx_net_ifaces4_cb, out);
     return out;
 }
 
 nyx_string* nyx_resolve(const char* hostname) {
     if (!hostname) return nyx_string_from_cstr("");
 
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
+    os_addr_t addr[1];
+    int n = os_addr_resolve4(hostname, 0, addr, 1, NULL);
+    if (n < 1) return nyx_string_from_cstr("");
 
-    if (getaddrinfo(hostname, NULL, &hints, &result) != 0) {
-        return nyx_string_from_cstr("");
-    }
-
-    struct sockaddr_in* addr = (struct sockaddr_in*)result->ai_addr;
-    char ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip));
-    freeaddrinfo(result);
-
+    char ip[NYX_NET_IP_STRLEN];
+    os_addr_ip(&addr[0], ip, sizeof(ip));
     return nyx_string_from_cstr(ip);
 }
 
 // ===== E5.1 — trío *_result: errno como valor de retorno, sin stderr =====
 //
 // Espejo de nyx_tcp_connect/nyx_tcp_listen/nyx_udp_bind de arriba: MISMA
-// mecánica (getaddrinfo/socket/setsockopt/connect/bind/listen), pero:
+// mecánica (resolve/socket/setsockopt/connect/bind/listen sobre la capa
+// os_sock_*/os_addr_*), pero:
 //   - `host` llega como `nyx_string*` (ABI real de extern "C" fn(host: String),
 //     lección del arco E4 — NUNCA char* crudo).
 //   - Retorno `int64_t`: éxito = fd (≥ 0), fallo = -errno (negativo). JAMÁS
@@ -784,12 +759,12 @@ nyx_string* nyx_resolve(const char* hostname) {
 //   - CERO stderr — las centinelas viejas gritan por stderr (friction
 //     2026-08-01); estas reportan el fallo únicamente por el valor de
 //     retorno, para que el caller Nyx (Task 2, capa `?`) decida.
-//   - errno se captura EN UNA VARIABLE LOCAL inmediatamente tras el syscall
-//     que falló, ANTES de cualquier close()/freeaddrinfo() que pueda
-//     pisarlo (mismo cuidado que ya tenían las centinelas con bind_errno/
-//     listen_errno). Si quedó 0 (syscall que no setea errno en ese camino)
-//     se usa EIO (5) como fallback estable — mismo patrón que
-//     nyx_file_read_result/nyx_file_write_result en file-io.c.
+//   - os_sock_*/os_addr_* YA capturan errno EN EL MISMO INSTANTE que la
+//     syscall que falla (antes de cualquier close() que pueda pisarlo) y
+//     devuelven -errno directo (sin el fallback ":5"/EIO explícito de las
+//     versiones viejas — ver runtime/os/os_posix.c; un -errno siempre viene
+//     de una syscall que YA seteó errno, así que el fallback nunca se
+//     alcanzaba en la práctica). Se reenvía ese valor tal cual.
 //   - host == NULL (puntero nulo, defensive check de ABI, no "sin host") →
 //     -22 (EINVAL) en las 3 funciones. Un nyx_string* NO-nulo con length==0
 //     ("") sigue significando "sin host" en listen/bind (bind-all →
@@ -799,183 +774,144 @@ nyx_string* nyx_resolve(const char* hostname) {
 int64_t nyx_tcp_listen_result(nyx_string* host, int64_t port) {
     if (!host) return -22; // EINVAL — puntero nulo (ABI), no "sin host"
 
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        return -(int64_t)e;
-    }
+    int64_t fd = os_sock_tcp4();
+    if (fd < 0) return fd; // ya es -errno
 
-    int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    os_sock_set_reuseaddr(fd);
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
-
+    os_addr_t addr;
     if (host->data && host->length > 0) {
-        // inet_pton devuelve 0 (no 1) si `host` no es una IP numérica
-        // válida (ej. "localhost") SIN tocar addr.sin_addr — que el
-        // memset de arriba dejó en 0.0.0.0. Sin este guard, un hostname
-        // bindeaba en silencio a INADDR_ANY (todas las interfaces) y
-        // devolvía Ok: exposición silenciosa de un listener que el
-        // caller pidió atar a una IP puntual. -1 (error de sistema, no
-        // "no es IP") también cae acá — mismo -EINVAL, ninguna dirección
-        // válida quedó armada en ningún caso.
-        if (inet_pton(AF_INET, host->data, &addr.sin_addr) != 1) {
-            close(fd); // el socket ya existe (se creó antes de este chequeo)
+        // os_addr_from_ip4 devuelve -EINVAL si `host` no es una IP numérica
+        // válida (ej. "localhost") SIN tocar la dirección -- que queda en
+        // 0.0.0.0. Sin este guard, un hostname bindeaba en silencio a
+        // INADDR_ANY (todas las interfaces) y devolvía Ok: exposición
+        // silenciosa de un listener que el caller pidió atar a una IP
+        // puntual.
+        if (os_addr_from_ip4(&addr, host->data, (int)port) != 0) {
+            os_sock_close(fd); // el socket ya existe (se creó antes de este chequeo)
             return -22; // EINVAL
         }
     } else {
-        addr.sin_addr.s_addr = INADDR_ANY;
+        os_addr_from_ip4(&addr, "0.0.0.0", (int)port);
     }
 
-    errno = 0;
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        close(fd); // tras capturar e — close() puede pisar errno
-        return -(int64_t)e;
+    int rc = os_sock_bind(fd, &addr);
+    if (rc < 0) {
+        os_sock_close(fd); // tras capturar rc — close() puede pisar errno
+        return rc;
     }
 
-    errno = 0;
-    if (listen(fd, 128) < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        close(fd);
-        return -(int64_t)e;
+    rc = os_sock_listen(fd, 128);
+    if (rc < 0) {
+        os_sock_close(fd);
+        return rc;
     }
 
-    return (int64_t)fd;
+    return fd;
 }
 
 int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port) {
     if (!host || !host->data) return -22; // EINVAL
 
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port_str[16];
-    snprintf(port_str, sizeof(port_str), "%lld", (long long)port);
-
-    int gai = getaddrinfo(host->data, port_str, &hints, &result);
-    if (gai != 0) {
-        // ⚠️ getaddrinfo NO setea errno: devuelve códigos EAI_* en un
-        // namespace propio. Solo EAI_SYSTEM delega a un errno real (lo
-        // setea la syscall interna que falló); el resto de fallos de
-        // resolución (EAI_NONAME/EAI_AGAIN/EAI_NODATA/...) se mapean a un
-        // código estable y documentado: EHOSTUNREACH (113) — "no se pudo
-        // alcanzar/resolver el host", medido en este entorno con un host
-        // inexistente (gai=EAI_NONAME=-2, errno=0, ver task-1-report.md).
-        if (gai == EAI_SYSTEM) {
-            int e = errno ? errno : 5 /* EIO */;
-            return -(int64_t)e;
-        }
+    os_addr_t addr[1];
+    int n = os_addr_resolve4(host->data, (int)port, addr, 1, NULL);
+    if (n < 1) {
+        // os_addr_resolve4 ya NO distingue EAI_SYSTEM del resto de fallos de
+        // resolución (colapsa a OS_RES_OTHER, igual que EAI_NONAME/EAI_AGAIN
+        // -- decisión de Task 1, runtime/os/os_posix.c). La centinela vieja
+        // mapeaba EAI_SYSTEM -> errno real, resto -> -113 (EHOSTUNREACH);
+        // esa distinción ya no es recuperable desde este contrato. Sin
+        // impacto medido: ningún test (test_net_result) ejercita el camino
+        // EAI_SYSTEM -- es un fallo de recursos del propio getaddrinfo()
+        // (ENOMEM/EMFILE internos), no reproducible con un host inválido.
+        // Ver task-2-report.md, sección "Concerns".
         return -113; // EHOSTUNREACH
     }
 
-    int fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (fd < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        freeaddrinfo(result);
-        return -(int64_t)e;
-    }
+    int64_t fd = os_sock_tcp4();
+    if (fd < 0) return fd; // ya es -errno
 
     // Set non-blocking for connect with timeout (misma mecánica que la
     // centinela nyx_tcp_connect)
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    os_sock_set_nonblocking(fd, 1);
 
-    errno = 0;
-    int ret = connect(fd, result->ai_addr, result->ai_addrlen);
-    int connect_errno = errno; // capturado ANTES de freeaddrinfo/close
-    freeaddrinfo(result);
-
+    int ret = os_sock_connect(fd, &addr[0]);
     if (ret < 0) {
-        if (connect_errno != EINPROGRESS) {
-            int e = connect_errno ? connect_errno : 5 /* EIO */;
-            close(fd);
-            return -(int64_t)e;
+        if (ret != -EINPROGRESS) {
+            os_sock_close(fd);
+            return ret; // ya es -errno
         }
         // Wait up to 3 seconds for connection (mismo timeout que la centinela)
-        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-        errno = 0;
-        ret = poll(&pfd, 1, 3000);
-        if (ret < 0) {
-            int e = errno ? errno : 5 /* EIO */;
-            close(fd);
-            return -(int64_t)e;
+        int pret = os_sock_poll1(fd, OS_POLLOUT, 3000);
+        if (pret < 0) {
+            os_sock_close(fd);
+            return pret; // ya es -errno
         }
-        if (ret == 0) {
-            // Timeout: poll() no setea errno en este caso — ETIMEDOUT es
-            // el código estable para "no respondió a tiempo".
-            close(fd);
+        if (pret == 0) {
+            // Timeout: os_sock_poll1 no distingue esto con -errno (0 es el
+            // contrato de "timeout") -- ETIMEDOUT es el código estable para
+            // "no respondió a tiempo".
+            os_sock_close(fd);
             return -(int64_t)ETIMEDOUT;
         }
         // Check for connection error
-        int err = 0;
-        socklen_t len = sizeof(err);
-        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len);
+        int err = os_sock_error(fd);
         if (err != 0) {
-            // `err` YA es un valor errno-like (lo entrega SO_ERROR directo,
-            // no pasa por la variable global errno) — se usa tal cual.
-            close(fd);
-            return -(int64_t)err;
+            // os_sock_error entrega el errno pendiente EN POSITIVO (SO_ERROR
+            // directo, no pasa por -errno) -- se niega para el retorno. PERO
+            // si el getsockopt() INTERNO de os_sock_error falló, la propia
+            // primitiva devuelve -errno (YA negativo) -- negarlo de nuevo lo
+            // volvería positivo (un "fd fantasma" que Nyx leería como éxito).
+            // Fix review round 1 (H2): distinguir ambos casos por el signo.
+            os_sock_close(fd);
+            return err < 0 ? err : -(int64_t)err;
         }
     }
 
     // Restore blocking mode
-    fcntl(fd, F_SETFL, flags);
+    os_sock_set_nonblocking(fd, 0);
 
-    return (int64_t)fd;
+    return fd;
 }
 
 int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) {
     if (!host) return -22; // EINVAL — puntero nulo (ABI), no "sin host"
 
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        return -(int64_t)e;
-    }
+    int64_t fd = os_sock_udp4();
+    if (fd < 0) return fd; // ya es -errno
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
-
+    os_addr_t addr;
     if (host->data && host->length > 0) {
         // Mismo guard que nyx_tcp_listen_result arriba: sin él, un host
         // NO-numérico ("localhost") bindea en silencio a INADDR_ANY.
-        if (inet_pton(AF_INET, host->data, &addr.sin_addr) != 1) {
-            close(fd); // el socket ya existe (se creó antes de este chequeo)
+        if (os_addr_from_ip4(&addr, host->data, (int)port) != 0) {
+            os_sock_close(fd); // el socket ya existe (se creó antes de este chequeo)
             return -22; // EINVAL
         }
     } else {
-        addr.sin_addr.s_addr = INADDR_ANY;
+        os_addr_from_ip4(&addr, "0.0.0.0", (int)port);
     }
 
-    errno = 0;
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        close(fd);
-        return -(int64_t)e;
+    int rc = os_sock_bind(fd, &addr);
+    if (rc < 0) {
+        os_sock_close(fd);
+        return rc;
     }
 
-    return (int64_t)fd;
+    return fd;
 }
 
 // ===== E5.2 — las 6 `*_result` de E/S y resolución =====
 //
-// Espejo de mecánica de las centinelas de arriba (nyx_tcp_accept:99,
-// nyx_tcp_read:188, nyx_tcp_write:300, nyx_udp_sendto:676,
-// nyx_udp_recvfrom:695, nyx_resolve:757), mismas reglas del trío E5.1:
-// int64_t (jamás long), nyx_string* (jamás char* crudo), CERO stderr,
-// errno capturado ANTES de close()/free, fallback EIO (5) si el syscall
-// no dejó errno.
+// Espejo de mecánica de las centinelas de arriba (nyx_tcp_accept,
+// nyx_tcp_read, nyx_tcp_write, nyx_udp_sendto, nyx_udp_recvfrom,
+// nyx_resolve), mismas reglas del trío E5.1: int64_t (jamás long),
+// nyx_string* (jamás char* crudo), CERO stderr, -errno de os_sock_*/os_addr_*
+// reenviado tal cual (ya capturado en el momento exacto de la syscall que
+// falló, ver nota de sección E5.1 arriba).
 //
-// SONDAS (por función, mecánica que la `_result` copia o documenta que
-// se aparta):
+// SONDAS (por función, mecánica que la `_result` copia o documenta que se
+// aparta):
 //   - accept: la centinela no chequea fd<0 antes de accept() -- un fd
 //     negativo simplemente le da EBADF al syscall igual. La `_result`
 //     adelanta ese chequeo (devuelve -9 SIN llamar accept()) porque el
@@ -990,48 +926,38 @@ int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) {
 //     en el mismo loop) se devuelven esos datos como Ok, igual que la
 //     centinela (que también los devuelve, sin reportar el error).
 //   - write: la centinela YA tiene el loop de short-write (`while (total
-//     < len) { sent = send(...); if (sent <= 0) break; ... }`) -- se
-//     copia tal cual. Único agregado: si el PRIMER send falla (total==0
+//     < len) { sent = os_sock_send(...); if (sent <= 0) break; ... }`) --
+//     se copia tal cual. Único agregado: si el PRIMER send falla (total==0
 //     al momento del fallo) se reporta -errno; si falla DESPUÉS de haber
 //     mandado algo, se devuelven los bytes ya enviados (mismo criterio
 //     que write(2) POSIX: un short-write con error a mitad de camino
 //     reporta lo escrito, no un error que perdería esa información).
-//   - sendto: la centinela usa inet_pton DIRECTO sobre `host` (no
-//     getaddrinfo) y NO chequea su retorno -- un host no-numérico
-//     ("localhost") deja `addr.sin_addr` en 0.0.0.0 (el memset previo) y
-//     el datagrama sale mudo hacia esa dirección. Mismo guard que
-//     nyx_tcp_listen_result/nyx_udp_bind_result (lección E5.1): retorno
-//     de inet_pton != 1 -> -22 (EINVAL), documentado, sin sendto().
-//   - recvfrom: un solo recvfrom() (la centinela no loopea, un datagrama
-//     es una unidad atómica). n==0 es un datagrama vacío LEGÍTIMO (mismo
+//   - sendto: la centinela usa os_addr_from_ip4 DIRECTO sobre `host` (no
+//     os_addr_resolve4) y NO chequea su retorno -- un host no-numérico
+//     ("localhost") deja `addr` en 0.0.0.0 y el datagrama sale mudo hacia
+//     esa dirección. Mismo guard que nyx_tcp_listen_result/
+//     nyx_udp_bind_result (lección E5.1): retorno de os_addr_from_ip4 != 0
+//     -> -22 (EINVAL), documentado, sin sendto().
+//   - recvfrom: un solo recv (la centinela no loopea, un datagrama es una
+//     unidad atómica). n==0 es un datagrama vacío LEGÍTIMO (mismo
 //     comentario que la centinela) -- Ok con data="", errno=0; SOLO n<0
-//     es Err.
-//   - resolve: la centinela usa `getaddrinfo(hostname, NULL, &hints,
-//     ...)` con `hints.ai_family = AF_INET` y toma el PRIMER resultado.
-//     getaddrinfo() NO setea errno -- devuelve códigos EAI_* propios.
-//     Mapeo del plan: EAI_SYSTEM -> errno real (el único caso donde
-//     errno es significativo); EAI_AGAIN -> 110 (ETIMEDOUT); el resto
-//     (incluye EAI_NONAME, y EAI_NODATA que en este glibc/flags de build
-//     ni siquiera está definido -- deprecated, requiere _GNU_SOURCE que
-//     el Makefile de producción no define) -> 113 (EHOSTUNREACH), MISMO
-//     código que ya usa nyx_tcp_connect_result para "no resuelve" (E5.1).
-//     El *kind* Nyx (not_found/timeout/io) lo decide Task 2 (`std/net.nx`)
-//     a partir de este code -- acá solo viaja el número.
+//     es Err. from=NULL, igual que nyx_udp_recvfrom (el remitente se
+//     descarta).
+//   - resolve: la centinela usa os_addr_resolve4(host, 0, ..., max=1) y
+//     toma la PRIMERA dirección. Mapeo del plan: OS_RES_AGAIN -> 110
+//     (ETIMEDOUT); cualquier otro fallo (OS_RES_NOTFOUND/OS_RES_OTHER) ->
+//     113 (EHOSTUNREACH), MISMO código que ya usa nyx_tcp_connect_result
+//     para "no resuelve" (E5.1). El *kind* Nyx (not_found/timeout/io) lo
+//     decide Task 2 (`std/net.nx`) a partir de este code -- acá solo viaja
+//     el número.
 
 int64_t nyx_tcp_accept_result(int64_t listen_fd) {
     if (listen_fd < 0) return -9; // EBADF -- fd inválido, sin llamar accept()
 
-    struct sockaddr_in client_addr;
-    socklen_t addr_len = sizeof(client_addr);
-    errno = 0;
-    int fd = accept((int)listen_fd, (struct sockaddr*)&client_addr, &addr_len);
-    if (fd < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        return -(int64_t)e;
-    }
-    int opt = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-    return (int64_t)fd;
+    int64_t fd = os_sock_accept(listen_fd);
+    if (fd < 0) return fd; // ya es -errno
+    os_sock_set_nodelay(fd);
+    return fd;
 }
 
 nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes) {
@@ -1067,12 +993,10 @@ nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes) {
     // recv() corte), pero acá SÍ distinguimos EOF (n==0, Ok) de error real
     // (n<0, Err -- solo si todavía no se había juntado nada).
     while (total < max_bytes) {
-        errno = 0;
-        ssize_t n = recv((int)fd, out_buf + total, max_bytes - total, 0);
+        int64_t n = os_sock_recv(fd, out_buf + total, max_bytes - total);
         if (n < 0) {
             if (total == 0) {
-                int e = errno ? errno : 5 /* EIO */;
-                nyx_array_push_tagged(out, e, NYX_TAG_INT);
+                nyx_array_push_tagged(out, (int64_t)(-n), NYX_TAG_INT);
                 nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
                 return out;
             }
@@ -1097,15 +1021,19 @@ int64_t nyx_tcp_write_result(int64_t fd, nyx_string* data) {
     size_t total = 0;
     size_t len = (size_t)data->length;
     const char* buf = data->data;
-    // Mismo loop de short-write que nyx_tcp_write:300 (la centinela YA lo
+    // Mismo loop de short-write que nyx_tcp_write (la centinela YA lo
     // tenía -- se copia tal cual, sin reinventar mecánica nueva).
     while (total < len) {
-        errno = 0;
-        ssize_t sent = send((int)fd, buf + total, len - total, MSG_NOSIGNAL);
+        int64_t sent = os_sock_send(fd, buf + total, len - total);
         if (sent <= 0) {
             if (total == 0) {
-                int e = errno ? errno : 5 /* EIO */;
-                return -(int64_t)e;
+                // sent<0: ya es -errno, se reenvía tal cual. sent==0 (caso
+                // patológico, send() no debería dar 0 para un len>0): la
+                // centinela vieja no llamaba a este primer send con errno ya
+                // seteado, así que `errno ? errno : 5` caía SIEMPRE al
+                // fallback EIO -- fix review round 1 (H1), valor -5 exacto
+                // del baseline, no el 0 que este código devolvía antes.
+                return sent < 0 ? sent : -5; /* EIO */
             }
             break; // ya se mandó algo -- se reportan los bytes reales, no el error
         }
@@ -1119,27 +1047,17 @@ int64_t nyx_udp_sendto_result(int64_t fd, nyx_string* data, nyx_string* host, in
     if (!data || !data->data) return -22; // EINVAL
     if (!host || !host->data) return -22; // EINVAL
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons((uint16_t)port);
-
-    // Guard E5.1 (lección inet_pton): la centinela (nyx_udp_sendto:676) NO
-    // chequea este retorno -- un host no-numérico deja sin_addr en 0.0.0.0
-    // (el memset de arriba) y el datagrama sale mudo. Acá se rechaza.
-    if (inet_pton(AF_INET, host->data, &addr.sin_addr) != 1) {
+    // Guard E5.1 (lección inet_pton/os_addr_from_ip4): la centinela
+    // (nyx_udp_sendto) NO chequea este retorno -- un host no-numérico deja
+    // la dirección en 0.0.0.0 y el datagrama sale mudo. Acá se rechaza.
+    os_addr_t addr;
+    if (os_addr_from_ip4(&addr, host->data, (int)port) != 0) {
         return -22; // EINVAL
     }
 
     size_t len = (size_t)data->length;
-    errno = 0;
-    ssize_t sent = sendto((int)fd, data->data, len, 0,
-                          (struct sockaddr*)&addr, sizeof(addr));
-    if (sent < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        return -(int64_t)e;
-    }
-    return (int64_t)sent;
+    int64_t sent = os_sock_sendto(fd, data->data, len, &addr);
+    return sent; // ya es -errno en fallo
 }
 
 nyx_array_t* nyx_udp_recvfrom_result(int64_t fd, int64_t max_bytes) {
@@ -1158,22 +1076,19 @@ nyx_array_t* nyx_udp_recvfrom_result(int64_t fd, int64_t max_bytes) {
         return out;
     }
 
-    struct sockaddr_in sender_addr;
-    socklen_t addr_len = sizeof(sender_addr);
-    errno = 0;
-    ssize_t n = recvfrom((int)fd, buf, max_bytes, 0,
-                         (struct sockaddr*)&sender_addr, &addr_len);
+    // from=NULL: el remitente se descarta -- la centinela lo capturaba en un
+    // sockaddr_in local pero nunca lo usaba en el resultado (mismo discard).
+    int64_t n = os_sock_recvfrom(fd, buf, max_bytes, NULL);
     if (n < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        nyx_array_push_tagged(out, e, NYX_TAG_INT);
+        nyx_array_push_tagged(out, (int64_t)(-n), NYX_TAG_INT);
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
     }
 
     // n==0 es un datagrama vacío LEGÍTIMO (mismo comentario que la
-    // centinela nyx_udp_recvfrom:695) -- Ok con data="", no un error.
+    // centinela nyx_udp_recvfrom) -- Ok con data="", no un error.
     nyx_array_push_tagged(out, 0, NYX_TAG_INT);
-    nyx_array_push_tagged(out, (int64_t)nyx_string_from_ptr(buf, (int64_t)n), NYX_TAG_STRING);
+    nyx_array_push_tagged(out, (int64_t)nyx_string_from_ptr(buf, n), NYX_TAG_STRING);
     return out;
 }
 
@@ -1185,36 +1100,24 @@ nyx_array_t* nyx_resolve_result(nyx_string* host) {
         return out;
     }
 
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-
-    errno = 0;
-    int gai = getaddrinfo(host->data, NULL, &hints, &result);
-    if (gai != 0) {
-        int code;
-        if (gai == EAI_SYSTEM) {
-            code = errno ? errno : 5 /* EIO */;
-        } else if (gai == EAI_AGAIN) {
-            code = 110; // ETIMEDOUT -- mapeo del plan para "resolvedor ocupado, reintentar"
-        } else {
-            // EAI_NONAME, EAI_NODATA (deprecated -- ni siquiera está
-            // definido en este glibc sin _GNU_SOURCE, cae acá igual por
-            // el default) y cualquier otro EAI_* no listado en el plan.
-            code = 113; // EHOSTUNREACH -- mismo código que nyx_tcp_connect_result (E5.1)
-        }
+    os_addr_t addr[1];
+    int n = os_addr_resolve4(host->data, 0, addr, 1, NULL);
+    if (n < 1) {
+        // OS_RES_AGAIN -> 110 (ETIMEDOUT, "resolvedor ocupado, reintentar");
+        // OS_RES_NOTFOUND/OS_RES_OTHER (incluye lo que antes era EAI_SYSTEM,
+        // ya no distinguible -- ver nota en nyx_tcp_connect_result) -> 113
+        // (EHOSTUNREACH), mismo mapeo estable que E5.1.
+        int code = (n == OS_RES_AGAIN) ? 110 : 113;
         nyx_array_push_tagged(out, code, NYX_TAG_INT);
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
     }
 
-    struct sockaddr_in* addr = (struct sockaddr_in*)result->ai_addr;
-    char ip[INET_ADDRSTRLEN] = ""; // init defensivo (fixwave docs review final E5.2, M4):
-                                    // si inet_ntop() fallara devolvería NULL sin tocar
-                                    // `ip`, y el nyx_string_from_cstr() de abajo leería
-                                    // stack sin inicializar en vez de "".
-    inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip));
-    freeaddrinfo(result);
+    char ip[NYX_NET_IP_STRLEN] = ""; // init defensivo (fixwave docs review final E5.2, M4):
+                                      // si os_addr_ip() fallara devolvería sin tocar
+                                      // `ip`, y el nyx_string_from_cstr() de abajo leería
+                                      // stack sin inicializar en vez de "".
+    os_addr_ip(&addr[0], ip, sizeof(ip));
 
     nyx_array_push_tagged(out, 0, NYX_TAG_INT);
     nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(ip), NYX_TAG_STRING);
@@ -1223,67 +1126,65 @@ nyx_array_t* nyx_resolve_result(nyx_string* host) {
 
 // ===== E5.2b — las 7 `*_result` restantes de red =====
 //
-// Espejo de mecánica de las centinelas de arriba (nyx_tcp_read_line:259,
-// nyx_tcp_read_partial:221, nyx_tcp_read_exact:382, nyx_tcp_shutdown:252,
-// nyx_tcp_set_timeout:178, nyx_getpeername:110, nyx_resolve_ptr:716), mismas
-// reglas de E5.1/E5.2: int64_t (jamás long), nyx_string* (jamás char*
-// crudo), CERO stderr, errno capturado ANTES de close()/free, fallback EIO
-// (5) si el syscall no dejó errno, arrays [code, payload] con code 0 = éxito
-// (NYX_TAG_INT/NYX_TAG_STRING, ver net.h).
+// Espejo de mecánica de las centinelas de arriba (nyx_tcp_read_line,
+// nyx_tcp_read_partial, nyx_tcp_read_exact, nyx_tcp_shutdown,
+// nyx_tcp_set_timeout, nyx_getpeername, nyx_resolve_ptr), mismas reglas de
+// E5.1/E5.2: int64_t (jamás long), nyx_string* (jamás char* crudo), CERO
+// stderr, -errno de os_sock_*/os_addr_* reenviado tal cual, arrays [code,
+// payload] con code 0 = éxito (NYX_TAG_INT/NYX_TAG_STRING, ver net.h).
 //
 // SONDAS (por función, mecánica que la `_result` copia o documenta que se
 // aparta):
-//   - read_line: la centinela (net.c:259) hace un char a la vez sobre el
-//     conn_buf, corta en '\n' (SIN incluirlo en la línea) y descarta TODO
-//     '\r' que encuentre en el camino -- no solo el que precede a un '\n'
-//     inmediato. Recorte EXACTO copiado acá: `if (c != '\r') line[lpos++] =
-//     c;`. La centinela vieja devuelve "" tanto si vio un '\n' pegado al
-//     inicio (línea vacía real) como si el peer cerró sin mandar nada --
-//     ESA es la ambigüedad que esta función existe para resolver: separa
-//     "vi un '\n'" (Ok, code 0, incluso con línea "") de "corté sin ver
-//     '\n'" (recv devolvió <=0). Dentro de ese segundo caso: n==0 (EOF
-//     limpio) -> code NYX_NET_EOF (1000); n<0 (error real) -> code = errno
-//     real (fallback EIO). En AMBOS sub-casos se descarta lo acumulado en
-//     `line` -- un fragmento sin terminador no es una línea válida (mismo
-//     criterio que read_exact, ver abajo). Si el loop llega al cap de 4095
-//     bytes SIN ver '\n' (línea patológicamente larga), se devuelve igual
-//     como Ok con lo juntado -- mismo comportamiento que la centinela vieja,
-//     fuera del alcance de las sondas del plan.
-//   - read_partial: la centinela (net.c:221) drena el conn_buf y si no dio
-//     nada hace UN solo recv() (nunca espera a max_bytes) -- se copia tal
-//     cual. Contrato DISTINTO al de read_line/read_exact (asimetría
-//     deliberada, documentada en el plan): acá Ok("") ES EOF, igual que
+//   - read_line: la centinela hace un char a la vez sobre el conn_buf,
+//     corta en '\n' (SIN incluirlo en la línea) y descarta TODO '\r' que
+//     encuentre en el camino -- no solo el que precede a un '\n' inmediato.
+//     Recorte EXACTO copiado acá: `if (c != '\r') line[lpos++] = c;`. La
+//     centinela vieja devuelve "" tanto si vio un '\n' pegado al inicio
+//     (línea vacía real) como si el peer cerró sin mandar nada -- ESA es la
+//     ambigüedad que esta función existe para resolver: separa "vi un '\n'"
+//     (Ok, code 0, incluso con línea "") de "corté sin ver '\n'" (recv
+//     devolvió <=0). Dentro de ese segundo caso: n==0 (EOF limpio) -> code
+//     NYX_NET_EOF (1000); n<0 (error real) -> code = -n (positivo). En
+//     AMBOS sub-casos se descarta lo acumulado en `line` -- un fragmento
+//     sin terminador no es una línea válida (mismo criterio que read_exact,
+//     ver abajo). Si el loop llega al cap de 4095 bytes SIN ver '\n' (línea
+//     patológicamente larga), se devuelve igual como Ok con lo juntado --
+//     mismo comportamiento que la centinela vieja, fuera del alcance de las
+//     sondas del plan.
+//   - read_partial: la centinela drena el conn_buf y si no dio nada hace
+//     UN solo recv() (nunca espera a max_bytes) -- se copia tal cual.
+//     Contrato DISTINTO al de read_line/read_exact (asimetría deliberada,
+//     documentada en el plan): acá Ok("") ES EOF, igual que
 //     nyx_udp_recvfrom_result -- code 0 siempre que no haya un error real
 //     (recv<0), sin el sentinel NYX_NET_EOF.
-//   - read_exact: la centinela (net.c:382, vía buffered_read_exact:362)
-//     acumula hasta completar n bytes o hasta que recv() corte. La
-//     `_result` usa una variante de ese helper que además reporta si el
-//     corte fue EOF limpio (r==0) o error real (r<0, con su errno) --
-//     necesario para no confundir "peer cerró a mitad de los n bytes" con
-//     un fallo real. Si no se completan los n bytes por CUALQUIER motivo,
-//     los bytes parciales se descartan (documentado en el plan): EOF ->
-//     code NYX_NET_EOF (1000); error real -> code = errno.
-//   - shutdown: la centinela (net.c:252) mapea how: 0->SHUT_RD, 1->SHUT_WR,
-//     cualquier otro valor (incl. 2) -> SHUT_RDWR. Mismo mapeo acá, sin
-//     validar `how` -- documentado, no un fallback silencioso nuevo (ya
-//     era el comportamiento de la centinela).
-//   - set_timeout: la centinela (net.c:178) aplica SO_RCVTIMEO/SO_SNDTIMEO
-//     en SEGUNDOS enteros (tv_usec siempre 0) y seconds<=0 DESACTIVA el
-//     timeout (tv_sec=0, bloqueo indefinido) -- no lo rechaza. Mismo
-//     mapeo acá; si el primer setsockopt falla se reporta ESE errno sin
-//     intentar el segundo (evita que un r2 exitoso pise el errno del r1
-//     fallido, mismo cuidado que el trío E5.1 con bind_errno/listen_errno).
-//   - getpeername: la centinela (net.c:110) devuelve el string "unknown" en
-//     cualquier fallo -- muere acá, se reporta el errno real.
-//   - resolve_ptr: la centinela (net.c:716) usa inet_pton para validar la
-//     IP (AF_INET únicamente) y getnameinfo con NI_NAMEREQD (nunca devuelve
-//     la IP misma como "nombre" cuando no hay PTR) -- getnameinfo() NO
-//     setea errno, devuelve códigos EAI_* propios, mismo mapeo que
-//     nyx_resolve_result: EAI_SYSTEM -> errno real, cualquier otro EAI_*
-//     (incl. EAI_NONAME, el caso común de "sin PTR") -> 113 (EHOSTUNREACH),
-//     el *kind* Nyx ("not_found") lo decide Task 2. IP inválida (inet_pton
-//     falla) -> 22 (EINVAL), sin llamar getnameinfo -- no es un fallo de
-//     resolución, es un argumento malformado.
+//   - read_exact: la centinela (vía buffered_read_exact) acumula hasta
+//     completar n bytes o hasta que recv() corte. La `_result` usa una
+//     variante de ese helper que además reporta si el corte fue EOF limpio
+//     (r==0) o error real (r<0, con su -errno) -- necesario para no
+//     confundir "peer cerró a mitad de los n bytes" con un fallo real. Si
+//     no se completan los n bytes por CUALQUIER motivo, los bytes parciales
+//     se descartan (documentado en el plan): EOF -> code NYX_NET_EOF
+//     (1000); error real -> code = errno positivo.
+//   - shutdown: la centinela mapea how: 0->RD, 1->WR, cualquier otro valor
+//     (incl. 2) -> RDWR -- os_sock_shutdown hace el mismo mapeo interno
+//     (ver nyx_os.h), se pasa `how` directo sin traducir.
+//   - set_timeout: la centinela aplica SO_RCVTIMEO/SO_SNDTIMEO en SEGUNDOS
+//     enteros (tv_usec siempre 0) y seconds<=0 DESACTIVA el timeout
+//     (bloqueo indefinido) -- no lo rechaza. os_sock_set_timeout reproduce
+//     ese mismo contrato (ver os_posix.c); si el primer setsockopt falla se
+//     reporta ESE errno sin intentar el segundo (mismo cuidado que el trío
+//     E5.1).
+//   - getpeername: la centinela devuelve el string "unknown" en cualquier
+//     fallo -- muere acá, se reporta el errno real.
+//   - resolve_ptr: la centinela usa os_addr_from_ip4 para validar la IP
+//     (AF_INET únicamente) y os_addr_hostname con require_name=1 (nunca
+//     devuelve la IP misma como "nombre" cuando no hay PTR) --
+//     OS_RES_NOTFOUND (sin PTR, el caso común) / OS_RES_AGAIN / OS_RES_OTHER
+//     (incluye lo que antes era EAI_SYSTEM, ya no distinguible) -> 113
+//     (EHOSTUNREACH), el *kind* Nyx ("not_found") lo decide Task 2. IP
+//     inválida (os_addr_from_ip4 falla) -> 22 (EINVAL), sin llamar
+//     os_addr_hostname -- no es un fallo de resolución, es un argumento
+//     malformado.
 
 nyx_array_t* nyx_tcp_read_line_result(int64_t fd) {
     nyx_array_t* out = nyx_array_new(2);
@@ -1304,9 +1205,8 @@ nyx_array_t* nyx_tcp_read_line_result(int64_t fd) {
         // camino que la centinela, recv() de a un byte.
         char c;
         while (lpos < 4095) {
-            errno = 0;
-            ssize_t n = recv((int)fd, &c, 1, 0);
-            if (n < 0) { fail_code = errno ? errno : 5 /* EIO */; break; }
+            int64_t n = os_sock_recv(fd, &c, 1);
+            if (n < 0) { fail_code = (int)(-n); break; }
             if (n == 0) { fail_code = NYX_NET_EOF; break; }
             if (c == '\n') { got_newline = 1; break; }
             if (c != '\r') line[lpos++] = c;
@@ -1314,9 +1214,8 @@ nyx_array_t* nyx_tcp_read_line_result(int64_t fd) {
     } else {
         while (lpos < 4095) {
             if (cb->pos >= cb->len) {
-                errno = 0;
-                ssize_t n = recv((int)fd, cb->buf, NYX_NET_BUF_SIZE, 0);
-                if (n < 0) { fail_code = errno ? errno : 5 /* EIO */; break; }
+                int64_t n = os_sock_recv(fd, cb->buf, NYX_NET_BUF_SIZE);
+                if (n < 0) { fail_code = (int)(-n); break; }
                 if (n == 0) { fail_code = NYX_NET_EOF; break; }
                 cb->pos = 0;
                 cb->len = (int)n;
@@ -1375,11 +1274,9 @@ nyx_array_t* nyx_tcp_read_partial_result(int64_t fd, int64_t max_bytes) {
     // data="", NO el sentinel NYX_NET_EOF (asimetría deliberada con
     // read_line/read_exact, ver comentario de sección arriba).
     if (total == 0) {
-        errno = 0;
-        ssize_t n = recv((int)fd, out_buf, max_bytes, 0);
+        int64_t n = os_sock_recv(fd, out_buf, max_bytes);
         if (n < 0) {
-            int e = errno ? errno : 5 /* EIO */;
-            nyx_array_push_tagged(out, e, NYX_TAG_INT);
+            nyx_array_push_tagged(out, (int64_t)(-n), NYX_TAG_INT);
             nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
             return out;
         }
@@ -1393,9 +1290,9 @@ nyx_array_t* nyx_tcp_read_partial_result(int64_t fd, int64_t max_bytes) {
 }
 
 // Variante de buffered_read_exact que además reporta si el corte fue EOF
-// limpio (r==0, *out_errno queda 0) o error real (r<0, *out_errno = errno).
-// Necesaria para que read_exact_result no confunda "peer cerró a mitad de
-// los n bytes" con un fallo real -- buffered_read_exact (net.c:362) colapsa
+// limpio (r==0, *out_errno queda 0) o error real (r<0, *out_errno = errno
+// positivo). Necesaria para que read_exact_result no confunda "peer cerró a
+// mitad de los n bytes" con un fallo real -- buffered_read_exact colapsa
 // ambos casos en "return total", que es exactamente lo que la centinela
 // vieja necesita pero la `_result` no puede.
 static int buffered_read_exact_result(int fd, nyx_conn_buf_t* cb, char* out, int n,
@@ -1404,9 +1301,8 @@ static int buffered_read_exact_result(int fd, nyx_conn_buf_t* cb, char* out, int
     *out_errno = 0;
     while (total < n) {
         if (cb->pos >= cb->len) {
-            errno = 0;
-            ssize_t r = recv(fd, cb->buf, NYX_NET_BUF_SIZE, 0);
-            if (r < 0) { *out_errno = errno ? errno : 5 /* EIO */; return total; }
+            int64_t r = os_sock_recv(fd, cb->buf, NYX_NET_BUF_SIZE);
+            if (r < 0) { *out_errno = (int)(-r); return total; }
             if (r == 0) return total; // EOF limpio -- *out_errno queda 0
             cb->pos = 0;
             cb->len = (int)r;
@@ -1429,8 +1325,7 @@ nyx_array_t* nyx_tcp_read_exact_result(int64_t fd, int64_t n) {
         return out;
     }
     if (n <= 0) {
-        // Espejo de la centinela (net.c:383): n<=0 es Ok trivial vacío, no
-        // un error.
+        // Espejo de la centinela: n<=0 es Ok trivial vacío, no un error.
         nyx_array_push_tagged(out, 0, NYX_TAG_INT);
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
@@ -1451,9 +1346,8 @@ nyx_array_t* nyx_tcp_read_exact_result(int64_t fd, int64_t n) {
         // Fallback sin buffer (fd fuera de NYX_MAX_CONN_BUFS).
         got = 0;
         while (got < (int)n) {
-            errno = 0;
-            ssize_t r = recv((int)fd, buf + got, (int)n - got, 0);
-            if (r < 0) { e = errno ? errno : 5 /* EIO */; break; }
+            int64_t r = os_sock_recv(fd, buf + got, (int)n - got);
+            if (r < 0) { e = (int)(-r); break; }
             if (r == 0) break;
             got += (int)r;
         }
@@ -1476,33 +1370,14 @@ nyx_array_t* nyx_tcp_read_exact_result(int64_t fd, int64_t n) {
 
 int64_t nyx_tcp_shutdown_result(int64_t fd, int64_t how) {
     if (fd < 0) return -9; // EBADF
-    int sh = SHUT_RDWR;
-    if (how == 0) sh = SHUT_RD;
-    else if (how == 1) sh = SHUT_WR;
-    errno = 0;
-    if (shutdown((int)fd, sh) < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        return -(int64_t)e;
-    }
-    return 0;
+    int rc = os_sock_shutdown(fd, how);
+    return rc < 0 ? rc : 0; // ya es -errno en fallo
 }
 
 int64_t nyx_tcp_set_timeout_result(int64_t fd, int64_t seconds) {
     if (fd < 0) return -9; // EBADF
-    struct timeval tv;
-    tv.tv_sec  = (time_t)(seconds > 0 ? seconds : 0);
-    tv.tv_usec = 0;
-    errno = 0;
-    if (setsockopt((int)fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        return -(int64_t)e;
-    }
-    errno = 0;
-    if (setsockopt((int)fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        return -(int64_t)e;
-    }
-    return 0;
+    int rc = os_sock_set_timeout(fd, seconds);
+    return rc < 0 ? rc : 0; // ya es -errno en fallo
 }
 
 nyx_array_t* nyx_getpeername_result(int64_t fd) {
@@ -1512,17 +1387,15 @@ nyx_array_t* nyx_getpeername_result(int64_t fd) {
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
     }
-    struct sockaddr_in addr;
-    socklen_t len = sizeof(addr);
-    errno = 0;
-    if (getpeername((int)fd, (struct sockaddr*)&addr, &len) < 0) {
-        int e = errno ? errno : 5 /* EIO */;
-        nyx_array_push_tagged(out, e, NYX_TAG_INT);
+    os_addr_t addr;
+    int rc = os_sock_peer(fd, &addr);
+    if (rc < 0) {
+        nyx_array_push_tagged(out, (int64_t)(-rc), NYX_TAG_INT);
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
     }
-    char ip_buf[INET_ADDRSTRLEN] = ""; // init defensivo, mismo cuidado que nyx_resolve_result
-    inet_ntop(AF_INET, &addr.sin_addr, ip_buf, sizeof(ip_buf));
+    char ip_buf[NYX_NET_IP_STRLEN] = ""; // init defensivo, mismo cuidado que nyx_resolve_result
+    os_addr_ip(&addr, ip_buf, sizeof(ip_buf));
     nyx_array_push_tagged(out, 0, NYX_TAG_INT);
     nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(ip_buf), NYX_TAG_STRING);
     return out;
@@ -1536,32 +1409,22 @@ nyx_array_t* nyx_resolve_ptr_result(nyx_string* ip) {
         return out;
     }
 
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    if (inet_pton(AF_INET, ip->data, &sa.sin_addr) != 1) {
+    os_addr_t addr;
+    if (os_addr_from_ip4(&addr, ip->data, 0) != 0) {
         // IP inválida -- argumento malformado, no un fallo de resolución.
         nyx_array_push_tagged(out, 22 /* EINVAL */, NYX_TAG_INT);
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
     }
 
-    char host[NI_MAXHOST];
-    errno = 0;
-    int gni = getnameinfo((struct sockaddr*)&sa, sizeof(sa), host, sizeof(host),
-                          NULL, 0, NI_NAMEREQD);
-    if (gni != 0) {
-        int code;
-        if (gni == EAI_SYSTEM) {
-            code = errno ? errno : 5 /* EIO */;
-        } else {
-            // EAI_NONAME (sin PTR -- el caso común) y cualquier otro EAI_*
-            // -- mismo mapeo estable 113 (EHOSTUNREACH) que nyx_resolve_result
-            // usa para "no resuelve" (documentado en el plan; el *kind*
-            // Nyx "not_found" lo decide Task 2).
-            code = 113;
-        }
-        nyx_array_push_tagged(out, code, NYX_TAG_INT);
+    char host[NYX_NET_MAXHOST];
+    int rc = os_addr_hostname(&addr, host, sizeof(host), 1);
+    if (rc != 0) {
+        // OS_RES_NOTFOUND (sin PTR -- el caso común) / OS_RES_AGAIN /
+        // OS_RES_OTHER -- mismo mapeo estable 113 (EHOSTUNREACH) que
+        // nyx_resolve_result usa para "no resuelve" (documentado en el
+        // plan; el *kind* Nyx "not_found" lo decide Task 2).
+        nyx_array_push_tagged(out, 113, NYX_TAG_INT);
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
     }

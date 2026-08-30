@@ -638,6 +638,15 @@ local first: `let m = obj.my_map; m.remove(k)` (Maps are references, so it mutat
 ### Networking
 - `tcp_listen(host, port)`, `tcp_accept(fd)`, `tcp_connect(host, port)`
 - `tcp_read(fd, n)`, `tcp_write(fd, data)`, `tcp_close(fd)`
+  - **`tcp_write` has NO timeout by default**: it loops `send()` to completion,
+    so a stalled peer (zero window — e.g. a sleeping device with backlog)
+    blocks the write FOREVER. Any write path that must not hang (shutdown
+    drains, broadcasts to many clients) needs `tcp_set_timeout(fd, s)` first.
+  - **`tcp_close(fd)` does NOT wake a `recv()` blocked in another thread —
+    `tcp_shutdown(fd)` does.** Worse: after close the fd number can be
+    recycled, and the still-blocked reader can steal bytes from an unrelated
+    new connection. Pattern: the non-owner calls `tcp_shutdown(fd)` to wake
+    the reader; only the reader (owner) calls `tcp_close(fd)`.
 - `tcp_set_timeout(fd, seconds)` — SO_RCVTIMEO/SO_SNDTIMEO en un socket cliente (0 = sin
   timeout). `std/http` ya lo aplica (30s) en http_get/post/request; el camino TLS/HTTPS trae 10s.
 - UDP — **ojo con el orden de los args de sendto (data ANTES que destino)**:
@@ -707,6 +716,25 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
 ### Threading / Concurrency
 - `thread_spawn(fn)`, `thread_join(tid)`
 - `mutex_new()` → Map (opaque handle, NOT int! — `let m: int = mutex_new()` is NYX1003 since v0.24.28; unannotated `let m = mutex_new()` is fine, incl. captured by closures), `mutex_lock(m)`, `mutex_unlock(m)`, `mutex_destroy(m)`
+  - **Global mutex: `var MU: Map = mutex_new()` at global scope WORKS — use it
+    directly, never lazy-init.** (Measured 2026-08-21: 4 threads × 10000
+    locked increments = 40000 exact, 5/5 runs — global initializers run
+    single-threaded before `main` since the globals arc, v0.24.27.) The
+    old placeholder pattern `var MU: Map = Map.new()` + `if READY == 0 { MU = mutex_new(); READY = 1 }`
+    is UNNECESSARY and UB with three concrete failure modes: (a) two threads
+    racing the first call → TWO live mutexes → broken critical section;
+    (b) thread A locks M1, B overwrites the global with M2, A unlocks
+    re-reading the global → `unlock` of a mutex it doesn't own = UB (default
+    mutex, no ERRORCHECK); (c) on arm64, without a barrier another core can
+    see `READY == 1` while `MU` still points at the placeholder → lock on a
+    plain Map = UB. If init must be deferred for some other reason, do it
+    eagerly from `main` BEFORE any `thread_spawn`, or use `sync.once_do`.
+- **`import "std/sync"` — high-level primitives (don't hand-roll these)**:
+  `wg_new()/wg_add(wg, n)/wg_done(wg)/wg_wait(wg)` (WaitGroup, real
+  condvar-based — no busy-poll) + **`wg_wait_timeout(wg, ms) -> bool`**
+  (true = quiesced, false = timeout; the shutdown/drain idiom — exit as soon
+  as workers finish, the deadline is only a ceiling), `sem_new/acquire/release`,
+  `once_new/once_do`.
 - `condvar_new()` → Map (opaque handle), `condvar_wait(cv, m)` (hold m locked), `condvar_signal(cv)`, `condvar_broadcast(cv)`, `condvar_timedwait(cv, m, ms)` → 0 signaled / 1 timeout
 - `rwlock_new()` → Map (opaque handle), `rwlock_rdlock(l)` / `rwlock_wrlock(l)`, `rwlock_tryrdlock(l)` / `rwlock_trywrlock(l)` → 0 acquired / 1 busy, `rwlock_unlock(l)`, `rwlock_destroy(l)` — multi-reader/single-writer; blocks the OS thread (like mutex — goroutines should prefer channels)
 - `channel_new(size)` → Map (NOT int!)
@@ -1013,6 +1041,15 @@ Listed so you don't avoid a construct that is perfectly fine.
     N: <cause>` to stderr. Still CHECK the return (`if http_serve(...) < 0`)
     — the -1 contract is unchanged and the error stream may not be visible
     in every deployment.
+14. **Stateful handles (`mutex_new()`, `sem_new()`, `wg_new()`) are RELIABLE
+    as global initializers (since v0.24.27; measured 2026-08-21)**
+    [test: 23-sync-global-mutex-wg-timeout]. `var MU: Map = mutex_new()` at
+    global scope runs single-threaded before `main` — 4 threads × 10000
+    locked increments = 40000 exact, 5/5 runs. The old lazy-init placeholder
+    pattern (`if READY == 0 { MU = mutex_new(); READY = 1 }`) is unnecessary
+    and a data race — see §4 Threading for the three failure modes. The same
+    test also covers `sync.wg_wait_timeout(wg, ms)` (both outcomes: quiesced
+    early-exit and timeout).
 
 ---
 

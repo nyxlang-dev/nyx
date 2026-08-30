@@ -9,9 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <unistd.h>
-#include <sys/uio.h>
-#include <sys/socket.h>
+#include "os/nyx_os.h"
 
 #include <gc.h>
 #include "strings.h"
@@ -575,18 +573,21 @@ int64_t nyx_h2_write_frame(int64_t fd, int64_t type, int64_t flags,
     hdr[7] = (uint8_t)((stream_id >> 8) & 0xFF);
     hdr[8] = (uint8_t)(stream_id & 0xFF);
 
-    struct iovec iov[2];
+    os_iovec_t iov[2];
     int iovcnt = 1;
-    iov[0].iov_base = hdr;
-    iov[0].iov_len = 9;
+    iov[0].base = hdr;
+    iov[0].len = 9;
     if (plen > 0 && payload) {
-        iov[1].iov_base = payload->data;
-        iov[1].iov_len = plen;
+        iov[1].base = payload->data;
+        iov[1].len = plen;
         iovcnt = 2;
     }
 
-    ssize_t written = writev((int)fd, iov, iovcnt);
-    return (int64_t)written;
+    // writev() crudo siempre da -1 en error (con errno aparte); os_sock_sendv
+    // devuelve -errno -- coerción para preservar el valor EXACTO que cruza a
+    // Nyx (mismo patrón que nyx_resp_write_bulk en net.c, Task 2).
+    int64_t written = os_sock_sendv(fd, iov, iovcnt);
+    return written < 0 ? -1 : written;
 }
 
 // ===== SETTINGS helpers =====

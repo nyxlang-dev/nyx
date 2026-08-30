@@ -155,6 +155,7 @@ pub fn try_tcp_read(fd: int, max: int) -> Result<String, Error> {
 // (criterio POSIX write(2): lo ya escrito se reporta como Ok, el error
 // solo aparece si NADA se pudo escribir). Reintentar el resto queda del
 // lado del caller.
+/// Sin timeout por default (como tcp_write): un peer stalled con ventana cero bloquea PARA SIEMPRE — en write-paths que no pueden colgarse (drains de shutdown, broadcasts) aplicar tcp_set_timeout(fd, s) primero.
 pub fn try_tcp_write(fd: int, data: String) -> Result<int, Error> {
     let h: int = nyx_tcp_write_result(fd, data)
     if h >= 0 { return Result.Ok(h) }
@@ -356,6 +357,7 @@ pub fn try_tcp_read_exact(fd: int, n: int) -> Result<String, Error> {
 // SHUT_WR (deja de poder escribir — el peer ve EOF), cualquier otro valor
 // = SHUT_RDWR (ambos, MEDIDO en runtime/net.c: el `how` crudo no valida,
 // cualquier valor fuera de {0,1} cae al caso "ambos"). Éxito = `Ok(0)`.
+/// La forma correcta de despertar un recv() bloqueado en OTRO thread — tcp_close NO lo despierta y el fd reciclado puede robarle bytes a una conexión nueva; patrón: el no-dueño hace shutdown, solo el reader dueño hace close.
 pub fn try_tcp_shutdown(fd: int, mode: int) -> Result<int, Error> {
     let h: int = nyx_tcp_shutdown_result(fd, mode)
     if h >= 0 { return Result.Ok(h) }

@@ -10,7 +10,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <time.h>
-#include <pthread.h>
+#include "os/nyx_os.h"
 
 #ifdef __linux__
 #include <sys/epoll.h>
@@ -46,7 +46,7 @@ struct NyxEventLoop {
     // loop multi-threaded (workers registering/removing fds concurrently
     // with the thread running run_once), so this lock is needed even
     // though the current single-threaded tests don't stress it.
-    pthread_mutex_t lock;
+    os_mutex_t lock;
 };
 
 // One dispatch-ready entry captured under loop->lock before invoking any
@@ -60,9 +60,7 @@ typedef struct {
 
 // Get current time in ms
 static long long now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return os_monotonic_ns() / 1000000;
 }
 
 NyxEventLoop* nyx_event_loop_create(void) {
@@ -74,7 +72,7 @@ NyxEventLoop* nyx_event_loop_create(void) {
 #endif
     loop->last_event_fd = -1;
     loop->last_events = 0;
-    pthread_mutex_init(&loop->lock, NULL);
+    os_mutex_init(&loop->lock);
     return loop;
 }
 
@@ -83,14 +81,14 @@ void nyx_event_loop_destroy(NyxEventLoop* loop) {
 #if HAS_EPOLL
     close(loop->epfd);
 #endif
-    pthread_mutex_destroy(&loop->lock);
+    os_mutex_destroy(&loop->lock);
     free(loop);
 }
 
 int nyx_event_loop_add(NyxEventLoop* loop, int fd, int events,
                         nyx_ev_callback cb, void* userdata) {
     if (!loop || fd < 0) return -1;
-    pthread_mutex_lock(&loop->lock);
+    os_mutex_lock(&loop->lock);
     // Reclamar un slot inactivo antes de crecer fd_count: los slots de fd/timer
     // desactivados (remove / expiración de timer one-shot) no se compactaban, así
     // que fd_count solo crecía y tras MAX_FDS registros de por vida add fallaba en
@@ -101,7 +99,7 @@ int nyx_event_loop_add(NyxEventLoop* loop, int fd, int events,
     }
     if (slot < 0) {
         if (loop->fd_count >= MAX_FDS) {
-            pthread_mutex_unlock(&loop->lock);
+            os_mutex_unlock(&loop->lock);
             return -1;
         }
         slot = loop->fd_count++;
@@ -121,13 +119,13 @@ int nyx_event_loop_add(NyxEventLoop* loop, int fd, int events,
     if (events & NYX_EV_WRITE) ev.events |= EPOLLOUT;
     epoll_ctl(loop->epfd, EPOLL_CTL_ADD, fd, &ev);
 #endif
-    pthread_mutex_unlock(&loop->lock);
+    os_mutex_unlock(&loop->lock);
     return 0;
 }
 
 int nyx_event_loop_modify(NyxEventLoop* loop, int fd, int events) {
     if (!loop || fd < 0) return -1;
-    pthread_mutex_lock(&loop->lock);
+    os_mutex_lock(&loop->lock);
     int result = -1;
     for (int i = 0; i < loop->fd_count; i++) {
         if (loop->fds[i].fd == fd && loop->fds[i].active && !loop->fds[i].is_timer) {
@@ -144,7 +142,7 @@ int nyx_event_loop_modify(NyxEventLoop* loop, int fd, int events) {
             break;
         }
     }
-    pthread_mutex_unlock(&loop->lock);
+    os_mutex_unlock(&loop->lock);
     return result;
 }
 
@@ -153,7 +151,7 @@ int nyx_event_loop_modify(NyxEventLoop* loop, int fd, int events) {
 // slot table with fd-based entries; run_once scans it separately from epoll.
 int nyx_event_loop_add_timer(NyxEventLoop* loop, int delay_ms, nyx_ev_callback cb, void* userdata) {
     if (!loop) return -1;
-    pthread_mutex_lock(&loop->lock);
+    os_mutex_lock(&loop->lock);
     // Reusar slot inactivo (ver nota en nyx_event_loop_add) — sin esto, los timers
     // one-shot agotan fd_count y add_timer falla en silencio.
     int slot = -1;
@@ -162,7 +160,7 @@ int nyx_event_loop_add_timer(NyxEventLoop* loop, int delay_ms, nyx_ev_callback c
     }
     if (slot < 0) {
         if (loop->fd_count >= MAX_FDS) {
-            pthread_mutex_unlock(&loop->lock);
+            os_mutex_unlock(&loop->lock);
             return -1;
         }
         slot = loop->fd_count++;
@@ -174,13 +172,13 @@ int nyx_event_loop_add_timer(NyxEventLoop* loop, int delay_ms, nyx_ev_callback c
     loop->fds[slot].active = 1;
     loop->fds[slot].is_timer = 1;
     loop->fds[slot].timer_deadline_ms = now_ms() + delay_ms;
-    pthread_mutex_unlock(&loop->lock);
+    os_mutex_unlock(&loop->lock);
     return 0;
 }
 
 int nyx_event_loop_remove(NyxEventLoop* loop, int fd) {
     if (!loop) return -1;
-    pthread_mutex_lock(&loop->lock);
+    os_mutex_lock(&loop->lock);
     int result = -1;
     for (int i = 0; i < loop->fd_count; i++) {
         if (loop->fds[i].fd == fd && loop->fds[i].active) {
@@ -192,7 +190,7 @@ int nyx_event_loop_remove(NyxEventLoop* loop, int fd) {
             break;
         }
     }
-    pthread_mutex_unlock(&loop->lock);
+    os_mutex_unlock(&loop->lock);
     return result;
 }
 
@@ -205,7 +203,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
     //    starved by a longer/blocking caller timeout (or fire "late" by
     //    up to timeout_ms).
     long long soonest = -1;
-    pthread_mutex_lock(&loop->lock);
+    os_mutex_lock(&loop->lock);
     for (int i = 0; i < loop->fd_count; i++) {
         if (loop->fds[i].active && loop->fds[i].is_timer) {
             if (soonest < 0 || loop->fds[i].timer_deadline_ms < soonest) {
@@ -213,7 +211,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
             }
         }
     }
-    pthread_mutex_unlock(&loop->lock);
+    os_mutex_unlock(&loop->lock);
 
     int eff_timeout = timeout_ms;
     if (soonest >= 0) {
@@ -233,7 +231,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
     struct pollfd pfds[MAX_FDS];
     int pfd_fd[MAX_FDS];
     int cnt = 0;
-    pthread_mutex_lock(&loop->lock);
+    os_mutex_lock(&loop->lock);
     for (int i = 0; i < loop->fd_count; i++) {
         if (!loop->fds[i].active || loop->fds[i].is_timer) continue;
         pfds[cnt].fd = loop->fds[i].fd;
@@ -244,7 +242,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
         pfd_fd[cnt] = loop->fds[i].fd;
         cnt++;
     }
-    pthread_mutex_unlock(&loop->lock);
+    os_mutex_unlock(&loop->lock);
     int n = poll(pfds, cnt, eff_timeout);
     if (n < 0) n = 0;
 #endif
@@ -255,7 +253,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
     // nyx_event_loop_remove(), which re-takes loop->lock — dispatching while
     // still holding the lock here would self-deadlock. It also avoids
     // iterating fds[] while a concurrent worker thread mutates it.
-    pthread_mutex_lock(&loop->lock);
+    os_mutex_lock(&loop->lock);
 
 #if HAS_EPOLL
     for (int i = 0; i < n; i++) {
@@ -317,7 +315,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
         }
     }
 
-    pthread_mutex_unlock(&loop->lock);
+    os_mutex_unlock(&loop->lock);
 
     // 4) Dispatch outside the lock.
     for (int i = 0; i < snap_count; i++) {

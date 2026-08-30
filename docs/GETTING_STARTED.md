@@ -41,6 +41,10 @@ sudo apt install clang libgc-dev libssl-dev zlib1g-dev
 brew install llvm bdw-gc openssl zlib
 ```
 
+> **libgc/bdwgc >= 8.2 is required for healthy concurrency under load.** Below 8.2, `GC_set_sp_corrector` (`runtime/scheduler.c`) is unavailable and the M:N scheduler's collector can crash under concurrent goroutines — the runtime still builds and runs, it just warns loudly on stderr at startup instead of failing silently. `sudo apt install clang libgc-dev ...` on a current distro already satisfies this; only relevant on an older system or a pinned package.
+>
+> **Se requiere libgc/bdwgc >= 8.2 para concurrencia sana bajo carga.** Por debajo de 8.2 falta `GC_set_sp_corrector` (`runtime/scheduler.c`) y el colector del scheduler M:N puede crashear bajo goroutines concurrentes — el runtime igual compila y corre, solo avisa fuerte por stderr al arrancar en vez de degradar en silencio. `sudo apt install clang libgc-dev ...` en una distro actual ya cumple esto; solo importa en un sistema viejo o un paquete pineado.
+
 ### Build the compiler / Construir el compilador
 
 ```bash

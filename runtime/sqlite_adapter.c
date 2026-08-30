@@ -3,11 +3,11 @@
 // String parameters are nyx_string* (from Nyx ABI)
 
 #include "strings.h"
+#include "os/nyx_os.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <dlfcn.h>
 
 // Helper to extract C string from nyx_string*
 static const char* ns_cstr(nyx_string* s) {
@@ -48,7 +48,7 @@ typedef int64_t  (*fn_lastid) (nyx_db3*);
 typedef int      (*fn_changes)(nyx_db3*);
 
 // Global function pointers
-static void* g_lib     = NULL;
+static os_dl_t g_lib   = NULL;
 static fn_open    g_open    = NULL;
 static fn_close   g_close   = NULL;
 static fn_exec    g_exec    = NULL;
@@ -74,28 +74,28 @@ static int sqlite_load(void) {
     if (g_loaded == 1) return 0;
     if (g_loaded == 2) return -1;
 
-    g_lib = dlopen("libsqlite3.so.0", RTLD_LAZY | RTLD_GLOBAL);
-    if (!g_lib) g_lib = dlopen("libsqlite3.so", RTLD_LAZY | RTLD_GLOBAL);
+    g_lib = os_dl_open("libsqlite3.so.0", 1);
+    if (!g_lib) g_lib = os_dl_open("libsqlite3.so", 1);
     if (!g_lib) { g_loaded = 2; return -1; }
 
-    g_open    = (fn_open)   dlsym(g_lib, "sqlite3_open");
-    g_close   = (fn_close)  dlsym(g_lib, "sqlite3_close");
-    g_exec    = (fn_exec)   dlsym(g_lib, "sqlite3_exec");
-    g_free    = (fn_free)   dlsym(g_lib, "sqlite3_free");
-    g_prepare = (fn_prepare)dlsym(g_lib, "sqlite3_prepare_v2");
-    g_step    = (fn_step)   dlsym(g_lib, "sqlite3_step");
-    g_fin     = (fn_fin)    dlsym(g_lib, "sqlite3_finalize");
-    g_ncols   = (fn_ncols)  dlsym(g_lib, "sqlite3_column_count");
-    g_ctext   = (fn_ctext)  dlsym(g_lib, "sqlite3_column_text");
-    g_cname   = (fn_cname)  dlsym(g_lib, "sqlite3_column_name");
-    g_cint    = (fn_cint)   dlsym(g_lib, "sqlite3_column_int");
-    g_cdbl    = (fn_cdbl)   dlsym(g_lib, "sqlite3_column_double");
-    g_errmsg  = (fn_errmsg) dlsym(g_lib, "sqlite3_errmsg");
-    g_btxt    = (fn_btxt)   dlsym(g_lib, "sqlite3_bind_text");
-    g_bint    = (fn_bint)   dlsym(g_lib, "sqlite3_bind_int");
-    g_bdbl    = (fn_bdbl)   dlsym(g_lib, "sqlite3_bind_double");
-    g_lastid  = (fn_lastid) dlsym(g_lib, "sqlite3_last_insert_rowid");
-    g_changes = (fn_changes)dlsym(g_lib, "sqlite3_changes");
+    g_open    = (fn_open)   os_dl_sym(g_lib, "sqlite3_open");
+    g_close   = (fn_close)  os_dl_sym(g_lib, "sqlite3_close");
+    g_exec    = (fn_exec)   os_dl_sym(g_lib, "sqlite3_exec");
+    g_free    = (fn_free)   os_dl_sym(g_lib, "sqlite3_free");
+    g_prepare = (fn_prepare)os_dl_sym(g_lib, "sqlite3_prepare_v2");
+    g_step    = (fn_step)   os_dl_sym(g_lib, "sqlite3_step");
+    g_fin     = (fn_fin)    os_dl_sym(g_lib, "sqlite3_finalize");
+    g_ncols   = (fn_ncols)  os_dl_sym(g_lib, "sqlite3_column_count");
+    g_ctext   = (fn_ctext)  os_dl_sym(g_lib, "sqlite3_column_text");
+    g_cname   = (fn_cname)  os_dl_sym(g_lib, "sqlite3_column_name");
+    g_cint    = (fn_cint)   os_dl_sym(g_lib, "sqlite3_column_int");
+    g_cdbl    = (fn_cdbl)   os_dl_sym(g_lib, "sqlite3_column_double");
+    g_errmsg  = (fn_errmsg) os_dl_sym(g_lib, "sqlite3_errmsg");
+    g_btxt    = (fn_btxt)   os_dl_sym(g_lib, "sqlite3_bind_text");
+    g_bint    = (fn_bint)   os_dl_sym(g_lib, "sqlite3_bind_int");
+    g_bdbl    = (fn_bdbl)   os_dl_sym(g_lib, "sqlite3_bind_double");
+    g_lastid  = (fn_lastid) os_dl_sym(g_lib, "sqlite3_last_insert_rowid");
+    g_changes = (fn_changes)os_dl_sym(g_lib, "sqlite3_changes");
 
     g_loaded = 1;
     return 0;

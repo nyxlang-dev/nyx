@@ -495,6 +495,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // toolchain instalado desde v0.20.x).
         "$RT/msgpack.c $RT/websocket.c $RT/persist.c $RT/http2.c $RT/process.c " +
         "$RT/llama_adapter.c " +
+        "$RT/os/os_posix.c " +
         "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz " +
         "-o \"$ORIG_DIR/" + output_name + "\" 2> \"$LOG\" " +
         "|| { echo \"error: clang link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
@@ -526,6 +527,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
             "$RT/maps.c $RT/iterators.c $RT/file-io.c " +
             "$RT/time.c $RT/random.c $RT/url.c " +
             "$RT/wasi/main_shim.c $RT/wasi/nyx_arena.c " +
+            "$RT/os/os_wasm.c " +
             "-o \"$ORIG_DIR/" + output_name + ".wasm\" 2> \"$LOG\" " +
             "|| { echo \"error: clang wasm link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
             "echo 'built " + output_name + ".wasm (run: wasmtime " + output_name + ".wasm)'\n"

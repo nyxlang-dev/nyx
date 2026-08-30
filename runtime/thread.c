@@ -6,11 +6,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <errno.h>
 #include <time.h>
-#define GC_THREADS
+// ES: sin pthread directo ni GC_THREADS acá — el redirect a GC_pthread_create
+// vive en os_posix.c, que os_thread_create ya usa por debajo.
+// EN: no direct pthread nor GC_THREADS here — the redirect to
+// GC_pthread_create lives in os_posix.c, already used under os_thread_create.
 #include <gc.h>
+#include "os/nyx_os.h"
 #include "thread.h"
 
 // ===== THREAD SPAWN =====
@@ -29,7 +32,7 @@ typedef struct {
 
 typedef struct {
     nyx_thread_ctx_t* ctx;
-    pthread_t thread;
+    os_thread_t thread;
 } nyx_thread_handle_t;
 
 static void* thread_entry(void* arg) {
@@ -58,7 +61,7 @@ int64_t nyx_thread_spawn(void* closure_pair) {
     nyx_thread_handle_t* handle = (nyx_thread_handle_t*)GC_MALLOC(sizeof(nyx_thread_handle_t));
     handle->ctx = ctx;
 
-    pthread_create(&handle->thread, NULL, thread_entry, ctx);
+    os_thread_create(&handle->thread, thread_entry, ctx);
     return (int64_t)handle;
 }
 
@@ -67,7 +70,7 @@ int64_t nyx_thread_join(int64_t handle_i64) {
     nyx_thread_handle_t* handle = (nyx_thread_handle_t*)(intptr_t)handle_i64;
     if (!handle) return 0;
 
-    pthread_join(handle->thread, NULL);
+    os_thread_join(&handle->thread);
     return handle->ctx->result;
 }
 
@@ -75,7 +78,7 @@ int64_t nyx_thread_join(int64_t handle_i64) {
 void nyx_task_cancel(int64_t handle_i64) {
     nyx_thread_handle_t* handle = (nyx_thread_handle_t*)(intptr_t)handle_i64;
     if (!handle) return;
-    pthread_cancel(handle->thread);
+    os_thread_cancel(&handle->thread);
 }
 
 // Race two tasks: return result of whichever finishes first. v7.4
@@ -84,18 +87,10 @@ int64_t nyx_task_race(int64_t h1_i64, int64_t h2_i64) {
     nyx_thread_handle_t* h2 = (nyx_thread_handle_t*)(intptr_t)h2_i64;
     if (!h1 || !h2) return 0;
 
-    struct timespec ts;
     while (1) {
-        clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_nsec += 1000000;  // 1ms
-        if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
-        if (pthread_timedjoin_np(h1->thread, NULL, &ts) == 0)
+        if (os_thread_timedjoin(&h1->thread, 1) == 0)
             return h1->ctx->result;
-
-        clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_nsec += 1000000;
-        if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
-        if (pthread_timedjoin_np(h2->thread, NULL, &ts) == 0)
+        if (os_thread_timedjoin(&h2->thread, 1) == 0)
             return h2->ctx->result;
     }
 }
@@ -103,21 +98,21 @@ int64_t nyx_task_race(int64_t h1_i64, int64_t h2_i64) {
 // ===== MUTEX =====
 
 void* nyx_mutex_new(void) {
-    pthread_mutex_t* m = (pthread_mutex_t*)GC_MALLOC(sizeof(pthread_mutex_t));
-    pthread_mutex_init(m, NULL);
+    os_mutex_t* m = (os_mutex_t*)GC_MALLOC(sizeof(os_mutex_t));
+    os_mutex_init(m);
     return (void*)m;
 }
 
 void nyx_mutex_lock(void* mutex) {
-    if (mutex) pthread_mutex_lock((pthread_mutex_t*)mutex);
+    if (mutex) os_mutex_lock((os_mutex_t*)mutex);
 }
 
 void nyx_mutex_unlock(void* mutex) {
-    if (mutex) pthread_mutex_unlock((pthread_mutex_t*)mutex);
+    if (mutex) os_mutex_unlock((os_mutex_t*)mutex);
 }
 
 void nyx_mutex_destroy(void* mutex) {
-    if (mutex) pthread_mutex_destroy((pthread_mutex_t*)mutex);
+    if (mutex) os_mutex_destroy((os_mutex_t*)mutex);
 }
 
 // ===== CONDVAR =====
@@ -128,46 +123,43 @@ void nyx_mutex_destroy(void* mutex) {
 // Uses CLOCK_MONOTONIC for timedwait so it does not depend on wall-clock (NTP jumps).
 
 void* nyx_condvar_new(void) {
-    pthread_cond_t* cv = (pthread_cond_t*)GC_MALLOC(sizeof(pthread_cond_t));
-    pthread_condattr_t attr;
-    pthread_condattr_init(&attr);
-    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-    pthread_cond_init(cv, &attr);
-    pthread_condattr_destroy(&attr);
+    // os_cond_init SIEMPRE usa CLOCK_MONOTONIC por debajo — ya no hace falta
+    // armar el condattr acá (era exactamente lo que la lección de este mismo
+    // archivo le enseñó a la capa os_*).
+    // EN: os_cond_init ALWAYS uses CLOCK_MONOTONIC underneath — no need to
+    // build the condattr here anymore (that was exactly the lesson this file
+    // taught the os_* layer).
+    os_cond_t* cv = (os_cond_t*)GC_MALLOC(sizeof(os_cond_t));
+    os_cond_init(cv);
     return (void*)cv;
 }
 
 void nyx_condvar_wait(void* cv, void* mutex) {
-    if (cv && mutex) pthread_cond_wait((pthread_cond_t*)cv, (pthread_mutex_t*)mutex);
+    if (cv && mutex) os_cond_wait((os_cond_t*)cv, (os_mutex_t*)mutex);
 }
 
 void nyx_condvar_signal(void* cv) {
-    if (cv) pthread_cond_signal((pthread_cond_t*)cv);
+    if (cv) os_cond_signal((os_cond_t*)cv);
 }
 
 void nyx_condvar_broadcast(void* cv) {
-    if (cv) pthread_cond_broadcast((pthread_cond_t*)cv);
+    if (cv) os_cond_broadcast((os_cond_t*)cv);
 }
 
 // Returns 0 if signaled, 1 if timed out.
 // ⚠️ Colapso documentado (catalogado 2026-07-19): `cv`/`mutex` NULL devuelve 1
 // (indistinguible de un timeout real), y cualquier error de
-// pthread_cond_timedwait que no sea ETIMEDOUT (EINVAL; EPERM = "olvidé tomar
+// os_cond_timedwait que no sea -ETIMEDOUT (-EINVAL; -EPERM = "olvidé tomar
 // el mutex") cae al else y devuelve 0 — un FALSO "señalado". Un caller con
 // ese misuse ve éxito en vez de un error claro; distinguirlo requeriría un
 // código de retorno aparte (decidido no hacerlo por ahora — contrato 0/1).
 int64_t nyx_condvar_timedwait(void* cv, void* mutex, int64_t timeout_ms) {
     if (!cv || !mutex) return 1;
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    ts.tv_sec += timeout_ms / 1000;
-    ts.tv_nsec += (timeout_ms % 1000) * 1000000L;
-    if (ts.tv_nsec >= 1000000000L) {
-        ts.tv_sec++;
-        ts.tv_nsec -= 1000000000L;
-    }
-    int rc = pthread_cond_timedwait((pthread_cond_t*)cv, (pthread_mutex_t*)mutex, &ts);
-    return (rc == ETIMEDOUT) ? 1 : 0;
+    int64_t deadline = os_monotonic_ns() + timeout_ms * 1000000LL;
+    int rc = os_cond_timedwait((os_cond_t*)cv, (os_mutex_t*)mutex, deadline);
+    // rc != 0 && rc != -ETIMEDOUT (otro -errno, p.ej. -EINVAL/-EPERM) cae acá
+    // igual que antes: colapsa a 0, ver el comentario de arriba.
+    return (rc == -ETIMEDOUT) ? 1 : 0;
 }
 
 // ===== RWLOCK =====
@@ -179,35 +171,35 @@ int64_t nyx_condvar_timedwait(void* cv, void* mutex, int64_t timeout_ms) {
 // try* devuelven 0 = adquirido, 1 = ocupado (o handle NULL).
 
 void* nyx_rwlock_new(void) {
-    pthread_rwlock_t* l = (pthread_rwlock_t*)GC_MALLOC(sizeof(pthread_rwlock_t));
-    pthread_rwlock_init(l, NULL);
+    os_rwlock_t* l = (os_rwlock_t*)GC_MALLOC(sizeof(os_rwlock_t));
+    os_rwlock_init(l);
     return (void*)l;
 }
 
 void nyx_rwlock_rdlock(void* l) {
-    if (l) pthread_rwlock_rdlock((pthread_rwlock_t*)l);
+    if (l) os_rwlock_rdlock((os_rwlock_t*)l);
 }
 
 void nyx_rwlock_wrlock(void* l) {
-    if (l) pthread_rwlock_wrlock((pthread_rwlock_t*)l);
+    if (l) os_rwlock_wrlock((os_rwlock_t*)l);
 }
 
 int64_t nyx_rwlock_tryrdlock(void* l) {
     if (!l) return 1;
-    return pthread_rwlock_tryrdlock((pthread_rwlock_t*)l) == 0 ? 0 : 1;
+    return os_rwlock_tryrdlock((os_rwlock_t*)l) == 0 ? 0 : 1;
 }
 
 int64_t nyx_rwlock_trywrlock(void* l) {
     if (!l) return 1;
-    return pthread_rwlock_trywrlock((pthread_rwlock_t*)l) == 0 ? 0 : 1;
+    return os_rwlock_trywrlock((os_rwlock_t*)l) == 0 ? 0 : 1;
 }
 
 void nyx_rwlock_unlock(void* l) {
-    if (l) pthread_rwlock_unlock((pthread_rwlock_t*)l);
+    if (l) os_rwlock_unlock((os_rwlock_t*)l);
 }
 
 void nyx_rwlock_destroy(void* l) {
-    if (l) pthread_rwlock_destroy((pthread_rwlock_t*)l);
+    if (l) os_rwlock_destroy((os_rwlock_t*)l);
 }
 
 // ===== CHANNEL =====
@@ -218,9 +210,9 @@ typedef struct {
     int64_t head;
     int64_t tail;
     int64_t count;
-    pthread_mutex_t lock;
-    pthread_cond_t not_empty;
-    pthread_cond_t not_full;
+    os_mutex_t lock;
+    os_cond_t not_empty;
+    os_cond_t not_full;
 } nyx_channel_t;
 
 void* nyx_channel_new(int64_t capacity) {
@@ -231,9 +223,9 @@ void* nyx_channel_new(int64_t capacity) {
     ch->head = 0;
     ch->tail = 0;
     ch->count = 0;
-    pthread_mutex_init(&ch->lock, NULL);
-    pthread_cond_init(&ch->not_empty, NULL);
-    pthread_cond_init(&ch->not_full, NULL);
+    os_mutex_init(&ch->lock);
+    os_cond_init(&ch->not_empty);
+    os_cond_init(&ch->not_full);
     return (void*)ch;
 }
 
@@ -241,30 +233,30 @@ void nyx_channel_send(void* handle, int64_t val) {
     nyx_channel_t* ch = (nyx_channel_t*)handle;
     if (!ch) return;
 
-    pthread_mutex_lock(&ch->lock);
+    os_mutex_lock(&ch->lock);
     while (ch->count >= ch->capacity) {
-        pthread_cond_wait(&ch->not_full, &ch->lock);
+        os_cond_wait(&ch->not_full, &ch->lock);
     }
     ch->buffer[ch->tail] = val;
     ch->tail = (ch->tail + 1) % ch->capacity;
     ch->count++;
-    pthread_cond_signal(&ch->not_empty);
-    pthread_mutex_unlock(&ch->lock);
+    os_cond_signal(&ch->not_empty);
+    os_mutex_unlock(&ch->lock);
 }
 
 int64_t nyx_channel_recv(void* handle) {
     nyx_channel_t* ch = (nyx_channel_t*)handle;
     if (!ch) return 0;
 
-    pthread_mutex_lock(&ch->lock);
+    os_mutex_lock(&ch->lock);
     while (ch->count <= 0) {
-        pthread_cond_wait(&ch->not_empty, &ch->lock);
+        os_cond_wait(&ch->not_empty, &ch->lock);
     }
     int64_t val = ch->buffer[ch->head];
     ch->head = (ch->head + 1) % ch->capacity;
     ch->count--;
-    pthread_cond_signal(&ch->not_full);
-    pthread_mutex_unlock(&ch->lock);
+    os_cond_signal(&ch->not_full);
+    os_mutex_unlock(&ch->lock);
     return val;
 }
 
@@ -273,23 +265,23 @@ int64_t nyx_channel_try_recv(void* handle) {
     nyx_channel_t* ch = (nyx_channel_t*)handle;
     if (!ch) return -1;
 
-    pthread_mutex_lock(&ch->lock);
+    os_mutex_lock(&ch->lock);
     if (ch->count <= 0) {
-        pthread_mutex_unlock(&ch->lock);
+        os_mutex_unlock(&ch->lock);
         return -1;
     }
     int64_t val = ch->buffer[ch->head];
     ch->head = (ch->head + 1) % ch->capacity;
     ch->count--;
-    pthread_cond_signal(&ch->not_full);
-    pthread_mutex_unlock(&ch->lock);
+    os_cond_signal(&ch->not_full);
+    os_mutex_unlock(&ch->lock);
     return val;
 }
 
 void nyx_channel_destroy(void* handle) {
     nyx_channel_t* ch = (nyx_channel_t*)handle;
     if (!ch) return;
-    pthread_mutex_destroy(&ch->lock);
-    pthread_cond_destroy(&ch->not_empty);
-    pthread_cond_destroy(&ch->not_full);
+    os_mutex_destroy(&ch->lock);
+    os_cond_destroy(&ch->not_empty);
+    os_cond_destroy(&ch->not_full);
 }

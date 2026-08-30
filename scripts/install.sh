@@ -253,6 +253,44 @@ check_deps() {
     else
         ok "All dependencies found"
     fi
+
+    check_gc_version
+}
+
+# Best-effort libgc/bdwgc version floor (cosecha [arco:W3-paso0b], ficha
+# "piso mínimo libgc 8.2"): below 8.2, runtime/scheduler.c's
+# `#if GC_VERSION_MAJOR/MINOR` guard disables `GC_set_sp_corrector` and the
+# collector-vs-goroutine-stacks bug from the paso 0b investigation comes back
+# WHOLE (the runtime itself warns at startup when this happens -- see
+# `nyx_gc_sp_corrector_install`). Same policy here: degrade LOUD, never fail
+# the install -- a single `pkg-config` query, cheap, and best-effort: if we
+# can't tell the version (no pkg-config, unusual distro), we stay quiet
+# rather than guess wrong.
+check_gc_version() {
+    _gc_ver=""
+    # apt is the only path this repo's docs actually test (README.md,
+    # GETTING_STARTED.md) -- dpkg-query gives an exact, verified format
+    # ("1:8.2.8-1"). Everything else falls back to pkg-config, which may not
+    # even be installed (it commonly isn't on a bare apt box) -- fine, we
+    # just stay quiet rather than guess a package manager's version syntax
+    # we haven't verified.
+    if [ "$PKG_MGR" = "apt" ] || [ "$PKG_MGR" = "termux" ]; then
+        _gc_ver="$(dpkg-query -W -f='${Version}' libgc-dev 2>/dev/null || true)"
+        [ -z "$_gc_ver" ] && _gc_ver="$(dpkg-query -W -f='${Version}' libgc 2>/dev/null || true)"
+    fi
+    [ -z "$_gc_ver" ] && _gc_ver="$(pkg-config --modversion bdw-gc 2>/dev/null || pkg-config --modversion gc 2>/dev/null || true)"
+    [ -z "$_gc_ver" ] && return 0
+
+    _gc_ver="${_gc_ver#*:}"   # strip dpkg epoch ("1:8.2.8-1" -> "8.2.8-1")
+    _gc_major="$(echo "$_gc_ver" | cut -d. -f1 | tr -cd '0-9')"
+    _gc_minor="$(echo "$_gc_ver" | cut -d. -f2 | tr -cd '0-9')"
+    [ -z "$_gc_major" ] && return 0
+    [ -z "$_gc_minor" ] && _gc_minor=0
+
+    if [ "$_gc_major" -lt 8 ] || { [ "$_gc_major" -eq 8 ] && [ "$_gc_minor" -lt 2 ]; }; then
+        warn "libgc/bdwgc $_gc_ver detected (< 8.2 required for healthy concurrency under load)."
+        warn "GC_set_sp_corrector is unavailable below 8.2: the M:N scheduler's collector can crash under goroutine load. The runtime also warns about this at startup. Upgrading libgc/bdwgc to >= 8.2 is strongly recommended."
+    fi
 }
 
 # ── Clone or update ──────────────────────────────────────

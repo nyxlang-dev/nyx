@@ -1,0 +1,166 @@
+# scripts/testing/win_subset_manifest.txt — el subset de regresión que CORRE
+# en windows-latest (job w2-subset de .github/workflows/windows.yml, arco W2
+# fase C). Formato: <test.nx>TAB<expected o NONE>, ambos relativos al root del
+# repo. Líneas vacías y las que empiezan con '#' se ignoran.
+#
+# EN: the regression subset that RUNS on windows-latest (w2-subset job, W2
+# phase C). Format: <test.nx>TAB<expected or NONE>, both repo-root relative.
+# Blank lines and '#' lines are ignored.
+#
+# ============================================================================
+# CÓMO SE ELIGIÓ / HOW IT WAS PICKED — medido, no supuesto
+# ============================================================================
+# El filtro NO es un grep de builtins sobre el .nx (mide de más y de menos).
+# Es la cadena real del job, reproducida en Linux antes de escribir esta
+# lista, en tres pasos que cada candidato tiene que pasar:
+#
+#   1. COMPILA con NYX_TARGET=x86_64-pc-windows-msvc. El compilador ya rechaza
+#      en codegen todo builtin de un subsistema no portado
+#      (`win_forbidden_builtin`, compiler/codegen.nx) — red, threads/mutex/
+#      goroutines, procesos, tls, señales, terminal — y también try/catch e
+#      inline asm (codegen_target_guard). O sea: el gate de "no usa lo
+#      prohibido" ya existe en el compilador; acá solo se COSECHA.
+#   2. LINKEA contra EXACTAMENTE los 9 .o del subset (strings, runtime-arrays,
+#      maps, time, iterators, sqlite_adapter, file-io, runtime, os_*). Un test
+#      que toque un símbolo de un .c fuera del subset (url.c, persist.c, ...)
+#      no linkea — y eso NO se ve en el .nx.
+#   3. CORRE y su salida coincide con su expected/.
+#
+# Prioridad: tests CON expected/ (comparación fuerte). Los pocos sin expected/
+# que entran son los que tienen assert() — assert aborta con exit 1, así que
+# ahí "exit 0" SÍ es una aserción de verdad y no solo "no crasheó".
+#
+# EN: the filter is not a builtin grep — it is the job's real chain, replayed
+# on Linux: (1) compiles under the windows triple (the compiler itself already
+# rejects every not-ported subsystem via win_forbidden_builtin), (2) links
+# against EXACTLY the subset's 9 objects (a symbol from a .c outside the
+# subset is invisible in the .nx), (3) runs and matches its expected/.
+# Tests with expected/ are preferred; the few without have assert(), which
+# aborts with exit 1 — so there "exit 0" is a real assertion.
+#
+# ============================================================================
+# EXCLUSIONES MEDIDAS / MEASURED EXCLUSIONS — el porqué de cada ausencia
+# ============================================================================
+# * THREADS (el canario de GC_beginthreadex que el brief pedía): IMPOSIBLE hoy.
+#   `thread_spawn` está en win_forbidden_builtin (compiler/codegen.nx:3111,
+#   `name.startsWith("thread_")`), así que test-90-thread-basic.nx ni siquiera
+#   COMPILA para el triple windows: "error: 'thread_spawn' is not ported to
+#   Windows yet". No es una elección de este manifiesto — es el gate de W0
+#   todavía cerrado. El smoke del redirect de Boehm entra cuando W3 abra ese
+#   builtin, junto con el resto del dominio de threads.
+#   EN: the GC_beginthreadex canary is impossible today — thread_spawn is
+#   still gated by win_forbidden_builtin, so the test does not even compile
+#   for the windows triple. It arrives with W3, when that gate opens.
+#
+# * SQLITE (test-379-try-sqlite, test-162-sqlite, ...): fallarían, NO skipean.
+#   Medido en runtime/sqlite_adapter.c:77-79 — la cadena de nombres del
+#   dlopen lazy es SOLO Linux ("libsqlite3.so.0", "libsqlite3.so"). En
+#   Windows LoadLibraryA de esos nombres falla → sqlite_load() marca
+#   g_loaded=2 → nyx_sqlite_open devuelve NULL → try_sqlite_open da Err →
+#   el test imprime "no-deberia" y DIFIERE de su expected/. Degrada, sí, pero
+#   a una salida distinta, no a un skip. Agregar "sqlite3.dll" a esa cadena es
+#   un cambio a sqlite_adapter.c (fuera del contrato de archivos de esta task)
+#   y su lugar natural es W5, junto con los otros dos adapters (zlib, llama),
+#   que tienen exactamente el mismo problema. sqlite_adapter.c SÍ se compila y
+#   linkea en el job (está en la lista de TUs) — lo que no se ejercita es su
+#   camino con biblioteca cargada.
+#   EN: sqlite tests would FAIL, not skip: the lazy-dlopen name chain is
+#   Linux-only, so on Windows the adapter degrades to "library missing" and
+#   the test prints a different output than its expected/. Adding
+#   "sqlite3.dll" belongs to W5 with the other two adapters.
+#
+# * test-133-web-framework: LINK-FAIL medido por un camino VIVO — llama
+#   `parse_query_string` (std/web), que llama `url_decode`, que baja a
+#   `nyx_url_decode` (runtime/url.c, fuera del subset). El test necesita url.c
+#   de verdad: entra cuando url.c entre al subset.
+# * test-339-wrap-next-closure: LINK-FAIL medido por ARRASTRE, no por uso —
+#   sólo hace `import "std/web"` y nunca toca query strings; el import se
+#   inlinea entero, así que `nyx_url_decode` termina referenciado igual. Es
+#   deuda de granularidad del import (todo o nada), no una dependencia real
+#   del test — si algún día el compilador emite sólo lo alcanzable, este entra
+#   sin que url.c se mueva.
+# EN: test-133 fails to link through a LIVE path (parse_query_string ->
+# url_decode -> nyx_url_decode in url.c): it genuinely needs url.c. test-339
+# fails by SPILLOVER: it only imports "std/web" and never touches query
+# strings, but the import is inlined whole, so nyx_url_decode ends up
+# referenced anyway — import granularity debt, not a real dependency.
+# * test-295-chr-nul-safe: LINK-FAIL medido — `nyx_string_from_bytes` vive en
+#   runtime/persist.c, que no está en el subset.
+# * test-112-try-catch / test-335-try-catch-return-path: try/catch está
+#   gateado para el triple windows (codegen_target_guard, no es residuo).
+# * test-123-full-asm: inline asm, gateado igual.
+# * test-144-sync: mutex_new → win_forbidden_builtin.
+# * test-137-bench: su salida incluye tiempos — no determinista ni en Linux.
+#
+# ============================================================================
+# CRECIMIENTO / GROWTH
+# ============================================================================
+# Esta lista es el PISO de W2, no el techo. Crece en W3+ a medida que caen los
+# gates de win_forbidden_builtin (threads, luego net, luego procesos) y a
+# medida que más .c del runtime entren al subset compilable. Regla: un test
+# entra SOLO después de pasar los 3 pasos de arriba en CI real — nunca "por
+# parecido".
+# EN: this is W2's floor, not its ceiling. It grows in W3+ as the
+# win_forbidden_builtin gates fall and more runtime .c files join the subset.
+# A test enters only after passing the 3 steps in real CI.
+
+# --- strings / formateo ------------------------------------------------------
+tests/compiler/stdlib-suite/test-124-split-inference.nx	tests/compiler/stdlib-suite/expected/test-124-split-inference.expected
+tests/compiler/stdlib-suite/test-125-hex-literals.nx	tests/compiler/stdlib-suite/expected/test-125-hex-literals.expected
+tests/compiler/stdlib-suite/test-320-float-to-fixed.nx	tests/compiler/stdlib-suite/expected/test-320-float-to-fixed.expected
+tests/compiler/language/test-141-csv.nx	tests/compiler/language/expected/test-141-csv.expected
+tests/compiler/language/test-270-string-indexof-from.nx	NONE
+tests/compiler/types/test-215-string-coercion-global-field.nx	NONE
+
+# --- arrays ------------------------------------------------------------------
+tests/compiler/language/test-150-fixed-arrays.nx	tests/compiler/language/expected/test-150-fixed-arrays.expected
+tests/compiler/language/test-159-deque.nx	tests/compiler/language/expected/test-159-deque.expected
+tests/compiler/language/test-160-priority-queue.nx	tests/compiler/language/expected/test-160-priority-queue.expected
+tests/compiler/stdlib-suite/test-318-remove-coherence.nx	tests/compiler/stdlib-suite/expected/test-318-remove-coherence.expected
+
+# --- maps --------------------------------------------------------------------
+tests/compiler/stdlib-suite/test-106-collections.nx	tests/compiler/stdlib-suite/expected/test-106-collections.expected
+tests/compiler/language/test-158-btreemap.nx	tests/compiler/language/expected/test-158-btreemap.expected
+tests/compiler/language/test-314-nested-maps.nx	NONE
+
+# --- json --------------------------------------------------------------------
+tests/compiler/stdlib-suite/test-317-json-escape.nx	tests/compiler/stdlib-suite/expected/test-317-json-escape.expected
+tests/compiler/stdlib-suite/test-319-json-parse-strict.nx	tests/compiler/stdlib-suite/expected/test-319-json-parse-strict.expected
+tests/compiler/types/test-378-try-json.nx	tests/compiler/types/expected/test-378-try-json.expected
+
+# --- file I/O ----------------------------------------------------------------
+# El ÚNICO test del subset que toca el filesystem real de Windows (fopen/
+# fwrite/fread/remove sobre la CRT de MSVC vía runtime/file-io.c).
+#
+# HALLAZGO de semántica win32 real, cazado por la iteración 1 de este job:
+# el test escribe en rutas "/tmp/...", y una ruta que arranca con "/" NO es
+# absoluta en Windows — resuelve a "raíz del DRIVE ACTUAL del proceso". El
+# .exe es nativo, así que no ve el /tmp de Git Bash: ve la cadena literal. En
+# el runner el workspace vive en D:\, así que crear C:\tmp no alcanzaba y el
+# write daba ENOENT (code 2). El job ahora crea \tmp en el drive del workspace
+# (ver windows.yml). Es setup de ENTORNO —el equivalente exacto de que /tmp
+# exista en Linux—, no un parche: el test corre tal cual está commiteado.
+# Consecuencia para el futuro: cualquier programa Nyx que hoy asuma que
+# "/algo" es una ruta absoluta va a depender del drive en Windows. Es
+# superficie de lenguaje, no de este job — ficha para el arco de paths (W5+).
+# EN: the ONLY test here touching the real Windows filesystem. WIN32 FINDING
+# from this job's iteration 1: it writes to "/tmp/..." paths, and a leading
+# "/" is NOT absolute on Windows — it resolves to the root of the process's
+# CURRENT DRIVE. The .exe is native, so it does not see Git Bash's /tmp. The
+# runner's workspace is on D:, so creating C:\tmp was not enough and the write
+# returned ENOENT (code 2). The job now creates \tmp on the workspace drive.
+# Environment setup — exactly like /tmp existing on Linux — not a patch.
+# Forward-looking: any Nyx program assuming "/x" is absolute becomes
+# drive-dependent on Windows. Language surface, filed for the paths arc (W5+).
+tests/compiler/types/test-373-try-file.nx	tests/compiler/types/expected/test-373-try-file.expected
+
+# --- lenguaje / control flow / tipos (el esqueleto que todo lo demás usa) -----
+tests/compiler/language/test-131-literal-patterns.nx	tests/compiler/language/expected/test-131-literal-patterns.expected
+tests/compiler/language/test-132-range-patterns.nx	tests/compiler/language/expected/test-132-range-patterns.expected
+tests/compiler/language/test-148-clone.nx	tests/compiler/language/expected/test-148-clone.expected
+tests/compiler/stdlib-suite/test-127-inline-lambdas.nx	tests/compiler/stdlib-suite/expected/test-127-inline-lambdas.expected
+tests/compiler/stdlib-suite/test-128-union-types.nx	tests/compiler/stdlib-suite/expected/test-128-union-types.expected
+tests/compiler/stdlib-suite/test-130-if-let.nx	tests/compiler/stdlib-suite/expected/test-130-if-let.expected
+tests/compiler/types/test-355-result-struct-payload.nx	tests/compiler/types/expected/test-355-result-struct-payload.expected
+tests/compiler/types/test-360-unwrap-familia.nx	tests/compiler/types/expected/test-360-unwrap-familia.expected
+tests/compiler/types/test-372-std-error.nx	tests/compiler/types/expected/test-372-std-error.expected

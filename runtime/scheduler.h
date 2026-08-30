@@ -2,7 +2,7 @@
 // NYX SCHEDULER — M:N Green Thread Scheduler (v2.0.0)
 // ============================================================
 // Implements a work-stealing scheduler for Nyx goroutines.
-// Uses ucontext_t for cooperative/preemptive coroutines.
+// Uses os_ctx_t (capa nyx_os_*) for cooperative/preemptive coroutines.
 //
 // Architecture:
 //   - N OS threads (workers) pulled from a thread pool
@@ -15,8 +15,18 @@
 #define NYX_SCHEDULER_H
 
 #include <stdint.h>
-#include <ucontext.h>
-#include <pthread.h>
+// W1 inc 1: threads/locks vía la capa de plataforma (ya no <pthread.h>).
+// W1 inc 2: el cambio de contexto también — los `os_ctx_t` de abajo son de la
+// capa (ya no `ucontext_t` POSIX crudo), y el mapeo de los stacks pasaba por
+// os_vm_* (ya no mmap/mprotect/munmap directos).
+// W3 ctx v2: el mapeo YA NO lo hace el scheduler — el `os_ctx_t` es dueño de
+// su stack (os_ctx_make lo mapea con su guard adentro; os_ctx_stack/guard
+// devuelven los rangos). El scheduler no llama más a os_vm_*.
+// EN: W1 inc 1: threads/locks go through the platform layer. W1 inc 2: context
+// switching too. W3 ctx v2: the scheduler no longer maps stacks — the os_ctx_t
+// owns its own stack (os_ctx_make maps it with its guard inside), and the
+// scheduler no longer calls os_vm_* at all.
+#include "os/nyx_os.h"
 
 // Maximum goroutines in the scheduler
 #define NYX_MAX_GOROUTINES 4096
@@ -47,17 +57,49 @@ size_t nyx_goroutine_stack_size(void);
 // (g_reg[]/reg_next chains) while alive; once `nyx_goroutine_join` reg_removes
 // it, it becomes unreachable to the collector and is eventually reclaimed.
 // El stack se reserva con `mmap` RW + una GUARD multi-página `PROT_NONE` al
-// fondo (Track 5c inc.1, 2026-08-12). Solo el área ÚTIL se registra como GC
-// root (`GC_add_roots`) para que los locals de una goroutine suspendida se
-// escaneen — la guard queda fuera, así el colector nunca la toca. El root se
-// quita ANTES del `munmap` en `reap`.
+// fondo (Track 5c inc.1, 2026-08-12). Desde ctx v2 (W3) ese mapeo lo hace la
+// CAPA, adentro de `os_ctx_make`: el `context` de abajo es DUEÑO de su stack
+// (motivo: una Fiber win32 no puede adoptar un stack ajeno). Solo el área ÚTIL
+// se registra como GC root (`GC_add_roots`) para que los locals de una
+// goroutine suspendida se escaneen — la guard queda fuera, así el colector
+// nunca la toca. El root se quita ANTES de devolver el ctx al pool (o de
+// `os_ctx_free`) en `reap`.
+// EN: since ctx v2 (W3) the mapping happens inside the LAYER (os_ctx_make):
+// `context` below OWNS its stack (a win32 Fiber cannot adopt a foreign stack).
 typedef struct NyxGoroutine {
     int            id;
     int            state;       // NYX_GOROUTINE_*
-    ucontext_t     context;
-    char*          stack;       // área útil del stack (mmap RW, GC-rooted aparte)
-    char*          stack_base;  // base del mapeo (guard page PROT_NONE al inicio)
-    size_t         stack_total; // bytes mapeados (guard + útil) — para munmap
+    // ctx v2: el contexto es DUEÑO de su stack (mapeo + guard adentro), y se
+    // guarda POR PUNTERO, no por valor. Motivo medido: el pool de stacks pasó
+    // a poolear contextos, y con el ctx embebido cada spawn+join copiaba el
+    // blob opaco dos veces (4800B por copia en aarch64) — A/B de 20 000
+    // spawn+join: 362ms (pool v1, puntero de stack crudo) contra 385ms
+    // (+6.3%). Con el ctx por puntero el pool mueve UN puntero y la medición
+    // A/B de v0.26.0 ("el pool cuesta cero") se preserva tal cual. El objeto
+    // es GC_MALLOC'd: lo mantiene vivo `g` mientras la goroutine existe, y el
+    // array estático del pool (que es GC root) mientras está reciclado.
+    // `context == NULL` es además el flag de "ya reciclado" de `reap`.
+    // EN: ctx v2: the context OWNS its stack and is held BY POINTER, not by
+    // value. Measured reason: the stack pool now pools contexts, and with the
+    // ctx embedded every spawn+join copied the opaque blob twice (4800B per
+    // copy on aarch64) — A/B over 20 000 spawn+join: 362ms (v1 pool, raw stack
+    // pointer) vs 385ms (+6.3%). By pointer the pool moves ONE pointer and
+    // v0.26.0's "the pool costs nothing" measurement still holds. The object is
+    // GC_MALLOC'd: kept alive by `g` while the goroutine exists and by the
+    // pool's static array (a GC root) while recycled. `context == NULL` doubles
+    // as reap's "already recycled" flag.
+    os_ctx_t*      context;
+    // CACHE del rango que `os_ctx_stack(context)` devuelve, publicado por
+    // `goroutine_stack_publish` (scheduler.c) y limpiado en `reap`. NO es la
+    // fuente de verdad —el ctx lo es—: existe porque `nyx_gc_sp_corrector`
+    // consulta este rango con el MUNDO PARADO, donde no puede llamar a nada de
+    // la capa, y porque `stack != NULL` es además el flag de "raíces
+    // publicadas" del camino diferido (ver os_ctx_stack en nyx_os.h).
+    // EN: CACHE of the range os_ctx_stack(context) returns — not the source of
+    // truth (the ctx is). It exists because nyx_gc_sp_corrector reads this range
+    // WITH THE WORLD STOPPED, where it cannot call into the layer, and because
+    // `stack != NULL` doubles as the "roots published" flag of the deferred path.
+    char*          stack;       // área útil del stack (GC-rooted aparte)
     size_t         stack_size;  // bytes útiles (lo que se registra como root)
     int64_t        (*fn)(void*); // function to run
     void*          arg;         // argument (closure pair)
@@ -100,17 +142,29 @@ typedef struct NyxRunQueue {
     NyxGoroutine*  head;
     NyxGoroutine*  tail;
     int            count;
-    pthread_mutex_t lock;
+    os_mutex_t     lock;
 } NyxRunQueue;
 
 // Worker thread descriptor
 typedef struct NyxWorker {
     int            id;
-    pthread_t      thread;
+    os_thread_t    thread;
     NyxRunQueue    queue;
     NyxGoroutine*  current;    // currently running goroutine
-    ucontext_t     scheduler_ctx; // context to return to scheduler
+    os_ctx_t       scheduler_ctx; // context to return to scheduler
     int            active;
+    // W3 paso 0b: extremo frío del stack NATIVO de este worker, tal como lo
+    // conoce Boehm (`GC_get_my_stackbottom`). Se lee UNA vez al arrancar el
+    // worker, mientras corre sobre su propio stack. Lo usa el corrector de
+    // stack pointer (ver `nyx_gc_sp_corrector` en scheduler.c) para anular el
+    // escaneo del thread cuando el worker fue suspendido corriendo SOBRE el
+    // stack de una goroutine.
+    // EN: W3 step 0b: cold end of this worker's NATIVE stack as Boehm knows it
+    // (`GC_get_my_stackbottom`), read ONCE at worker startup while running on
+    // its own stack. Used by the stack pointer corrector (see
+    // `nyx_gc_sp_corrector` in scheduler.c) to void the thread scan when the
+    // worker was suspended while running ON a goroutine stack.
+    char*          gc_stack_end;
 } NyxWorker;
 
 // Global scheduler state
@@ -118,7 +172,7 @@ typedef struct NyxScheduler {
     NyxWorker      workers[NYX_NUM_WORKERS];
     int            num_workers;
     int            running;
-    pthread_mutex_t global_lock;
+    os_mutex_t     global_lock;
     int            goroutine_count; // total goroutines ever created
 } NyxScheduler;
 
@@ -166,5 +220,26 @@ int  nyx_goroutine_block_on_fd(int fd, int events);
 // (spawned but not yet joined/reaped). Used by tests/runtime-unit to assert
 // no leaks after a batch of spawn/join cycles.
 int nyx_scheduler_debug_live_count(void);
+
+#ifdef NYX_RUNTIME_TESTING
+// W3 paso 0b — test seam: aplica el corrector de stack pointer (el que evita
+// que Boehm escanee desde el stack de una goroutine hasta el extremo frío del
+// stack nativo del worker) a un sp dado, y devuelve el resultado. Gateado por
+// -DNYX_RUNTIME_TESTING: no existe en binarios de producción.
+// EN: W3 step 0b test seam -- applies the stack pointer corrector to a given sp
+// and returns the result. Gated by -DNYX_RUNTIME_TESTING; absent from
+// production binaries.
+void* nyx_scheduler_debug_correct_sp(void* sp);
+
+// M5 (review del paso 0b) test seam: stack_end nativo (`gc_stack_end`) de un
+// worker ya arrancado, para construir un sp determinista "dentro de la
+// ventana nativa esperada" del corrector. NULL si el índice es inválido o el
+// worker aún no corrió. Gateado por -DNYX_RUNTIME_TESTING.
+// EN: M5 (paso 0b review) test seam: a started worker's native stack_end
+// (`gc_stack_end`), to deterministically build an sp "inside the corrector's
+// expected native window". NULL if the index is invalid or the worker
+// hasn't run yet. Gated by -DNYX_RUNTIME_TESTING.
+void* nyx_scheduler_debug_worker_stack_end(int idx);
+#endif
 
 #endif // NYX_SCHEDULER_H

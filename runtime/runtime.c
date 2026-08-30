@@ -9,23 +9,24 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
-#include <unistd.h>
 #ifndef __wasi__
-// WASI: sin señales, sin setjmp/longjmp (sjlj no estándar), sin ioctl.
-// EN: WASI has no signals, no setjmp/longjmp (sjlj not standardized), no ioctl.
-#include <signal.h>
+// WASI: sin setjmp/longjmp (sjlj no estándar). Señales, terminal y fd crudos
+// (self-pipe, read_byte, raw mode, winsize): la capa nyx_os_*
+// (os_sig_install / os_term_* / os_fd_*) los cubre sin unistd/fcntl/ioctl/
+// termios acá (W1 inc 7 + W2 fase A dominio term+fd).
+// EN: WASI has no setjmp/longjmp (sjlj not standardized). Signals, terminal,
+// and raw fds (self-pipe, read_byte, raw mode, winsize): the nyx_os_* layer
+// (os_sig_install / os_term_* / os_fd_*) covers them without unistd/fcntl/
+// ioctl/termios here (W1 inc 7 + W2 phase A term+fd domain).
 #include <setjmp.h>
-#include <sys/ioctl.h>
 #endif
-// GC_THREADS ANTES de gc.h: redirige pthread_create → GC_pthread_create para
-// que el thread drenador de señales (S2, self-pipe) quede registrado en
-// Boehm — sus closures Nyx alocan. Mismo mecanismo que scheduler.c:16-23;
-// NO llamar GC_register_my_thread además (doble registro).
-#ifndef __wasi__
-#define GC_THREADS
-#include <pthread.h>
-#include <fcntl.h>
-#endif
+// ES: el thread drenador de señales (S2, self-pipe) se crea con
+// os_thread_create, que ya lo registra en Boehm GC — ver runtime/os/os_posix.c.
+// EN: the signal-drain thread (S2, self-pipe) is created via os_thread_create,
+// which already registers it in Boehm GC — see runtime/os/os_posix.c.
+// nyx_os.h sin ifdef: también lo usan nyx_sleep/nyx_time_ms/nyx_time_us
+// (fuera del guard de señales), y os_wasm.c aporta los stubs bajo wasi.
+#include "os/nyx_os.h"
 #include <gc.h>  // Boehm GC (en wasm32-wasi: shim runtime/wasi/gc.h vía -Iruntime/wasi)
 #include "strings.h"
 
@@ -54,7 +55,16 @@ static void* nyx_gc_oom_handler(size_t bytes_requested) {
         "ajustá el tope con GC_MAXIMUM_HEAP_SIZE.\n",
         bytes_requested, bytes_requested);
     fflush(stderr);
-    _exit(1);
+    // _Exit (C99, <stdlib.h>) en vez de _exit (POSIX, <unistd.h>): mismo
+    // efecto (termina sin atexit ni flush adicional -- glibc implementa
+    // ambas como el mismo syscall exit_group), pero sin necesitar unistd.h
+    // acá -- ese header ya murió de runtime.c (W2 fase A, dominio term+fd).
+    // EN: _Exit (C99, <stdlib.h>) instead of _exit (POSIX, <unistd.h>): same
+    // effect (terminates without atexit or extra flushing -- glibc
+    // implements both as the same exit_group syscall), without needing
+    // unistd.h here -- that header already died from runtime.c (W2 phase A,
+    // term+fd domain).
+    _Exit(1);
     return NULL;  // inalcanzable — placa el prototipo GC_oom_func
 }
 
@@ -529,30 +539,54 @@ void nyx_array_set_ptr(nyx_array_t* arr, int64_t index, void* value) {
 // input — doing so is command injection. For untrusted arguments use the
 // array-based process builtins (fork + execvp, see runtime/process.c), which
 // do not invoke a shell.
-#ifndef __wasi__
+//
+// ES: sobre la capa os_proc_* (W1 inc 5) — el growth GC (×2 desde 4096) y el
+// strip de '\n' finales quedan ACÁ (la capa solo transporta chunks binary-safe
+// vía cb); popen-falla (-1 de la capa) mapea a "" como antes. En wasm,
+// os_proc_run_capture nunca llama a cb y devuelve -1, así que el resultado es
+// "" sin necesidad de un #ifdef acá — una sola definición para todas las
+// plataformas.
+// EN: layered on os_proc_* (W1 inc 5) — the GC growth (×2 from 4096) and the
+// trailing-'\n' strip stay HERE (the layer only transports binary-safe
+// chunks via cb); a popen failure (-1 from the layer) maps to "" as before.
+// On wasm, os_proc_run_capture never calls cb and returns -1, so the result
+// is "" with no #ifdef needed here — a single definition for every platform.
+typedef struct {
+    char* buf;
+    size_t len;
+    size_t cap;
+} nyx_exec_acc_t;
+
+static void nyx_exec_acc_cb(const void* chunk, size_t chunk_len, void* ud) {
+    nyx_exec_acc_t* acc = (nyx_exec_acc_t*)ud;
+    if (!acc->buf) return; // ya fallo un GC_MALLOC previo: no seguir acumulando
+    size_t new_len = acc->len + chunk_len;
+    while (new_len > acc->cap) {
+        size_t new_cap = acc->cap * 2;
+        char* new_buf = (char*)GC_MALLOC(new_cap);
+        if (!new_buf) { acc->buf = NULL; return; }
+        memcpy(new_buf, acc->buf, acc->len);
+        acc->buf = new_buf;
+        acc->cap = new_cap;
+    }
+    memcpy(acc->buf + acc->len, chunk, chunk_len);
+    acc->len = new_len;
+}
+
 nyx_string* nyx_exec(const char* cmd) {
     if (!cmd) return nyx_string_from_cstr("");
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) return nyx_string_from_cstr("");
 
-    size_t cap = 4096;
-    size_t len = 0;
-    char* buf = (char*)GC_MALLOC(cap);
-    if (!buf) { pclose(pipe); return nyx_string_from_cstr(""); }
+    nyx_exec_acc_t acc;
+    acc.cap = 4096;
+    acc.len = 0;
+    acc.buf = (char*)GC_MALLOC(acc.cap);
+    if (!acc.buf) return nyx_string_from_cstr("");
 
-    size_t got;
-    while ((got = fread(buf + len, 1, cap - len, pipe)) > 0) {
-        len += got;
-        if (len == cap) {
-            size_t new_cap = cap * 2;
-            char* new_buf = (char*)GC_MALLOC(new_cap);
-            if (!new_buf) { pclose(pipe); return nyx_string_from_cstr(""); }
-            memcpy(new_buf, buf, len);
-            buf = new_buf;
-            cap = new_cap;
-        }
-    }
-    pclose(pipe);
+    int rc = os_proc_run_capture(cmd, nyx_exec_acc_cb, &acc);
+    if (rc != 0 || !acc.buf) return nyx_string_from_cstr("");
+
+    char* buf = acc.buf;
+    size_t len = acc.len;
 
     // Strip TODOS los '\n' finales (semántica $( ) de shell). CRLF: si un
     // '\r' queda inmediatamente antes de un '\n' stripeado, tambien cae.
@@ -569,18 +603,8 @@ nyx_string* nyx_exec(const char* cmd) {
 // exec() ahora captura stdout como String).
 int64_t nyx_exec_code(const char* cmd) {
     if (!cmd) return -1;
-    int status = system(cmd);
-    // system() returns -1 on error, otherwise exit status encoded by waitpid
-    if (status == -1) return -1;
-    // Extract actual exit code
-    return (int64_t)(WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+    return os_proc_run_status(cmd);
 }
-#else
-// WASI: no hay shell ni procesos — exec()/exec_code() no pueden ejecutar.
-// EN: no shell/processes on WASI — exec()/exec_code() cannot run.
-nyx_string* nyx_exec(const char* cmd) { (void)cmd; return nyx_string_from_cstr(""); }
-int64_t nyx_exec_code(const char* cmd) { (void)cmd; return -1; }
-#endif
 
 // Get environment variable. Returns nyx_string* or empty string if not found.
 nyx_string* nyx_getenv(const char* name) {
@@ -598,9 +622,16 @@ nyx_string* nyx_getenv_default(const char* name, nyx_string* default_val) {
     return nyx_string_from_cstr(val);
 }
 
-// Set environment variable.
+// Set environment variable. La lectura (getenv, arriba) es C estándar; la
+// ESCRITURA no — setenv es posix y la CRT de MSVC no lo tiene, así que baja a
+// la capa (os_env_set, W2 fase C). Semántica sin cambios en posix; el valor de
+// retorno se sigue ignorando porque el builtin Nyx `setenv` es void.
+// EN: reading (getenv, above) is standard C; WRITING is not — setenv is posix
+// and the MSVC CRT lacks it, so it goes through the layer (os_env_set, W2
+// phase C). Unchanged posix semantics; the return value is still ignored
+// because Nyx's `setenv` builtin is void.
 void nyx_setenv(const char* name, const char* value) {
-    if (name && value) setenv(name, value, 1);
+    if (name && value) os_env_set(name, value);
 }
 
 // Exit process with code.
@@ -631,10 +662,7 @@ nyx_array_t* nyx_get_args(void) {
 // Sleep for given milliseconds
 void nyx_sleep(int64_t ms) {
     if (ms <= 0) return;
-    struct timespec ts;
-    ts.tv_sec = ms / 1000;
-    ts.tv_nsec = (ms % 1000) * 1000000L;
-    nanosleep(&ts, NULL);
+    os_sleep_ms(ms);
 }
 
 // Current Unix timestamp in seconds
@@ -644,16 +672,12 @@ int64_t nyx_time(void) {
 
 // Current time in milliseconds (monotonic clock)
 int64_t nyx_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+    return os_monotonic_ns() / 1000000;
 }
 
 // Current time in microseconds (monotonic clock)
 int64_t nyx_time_us(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)(ts.tv_sec * 1000000 + ts.tv_nsec / 1000);
+    return os_monotonic_ns() / 1000;
 }
 
 // ===== MATH FUNCTIONS (v6.0) =====
@@ -692,7 +716,7 @@ extern int64_t nyx_call_closure_i64(void* pair, int64_t arg);
 // serve v0.6.0 tuvo que escribirse allocation-free a mano por esto). Ahora
 // el trampolín es async-signal-safe puro (UN write de 1 byte) y un thread
 // drenador dedicado — lazy en el primer signal_handle, registrado en Boehm
-// vía la redirección GC_THREADS de pthread_create — ejecuta el closure en
+// vía os_thread_create (runtime/os/os_posix.c) — ejecuta el closure en
 // contexto normal: puede alocar, printear, leer env. Spec:
 // docs/superpowers/specs/2026-08-11-self-pipe-senales-spec.md
 static int nyx_sig_pipe[2] = {-1, -1};
@@ -702,8 +726,10 @@ static void nyx_signal_trampoline(int signum) {
     if (signum >= 0 && signum < 64 && nyx_signal_handlers[signum]) {
         unsigned char b = (unsigned char)signum;
         // write(2) es async-signal-safe (POSIX). Pipe lleno ⇒ el byte se
-        // descarta: las señales UNIX ya coalescen por diseño.
-        ssize_t r = write(nyx_sig_pipe[1], &b, 1);
+        // descarta: las señales UNIX ya coalescen por diseño. os_fd_write
+        // (posix) es un PASSTHROUGH puro de write(2) -- ver el contrato en
+        // nyx_os.h -- no agrega nada sobre este camino async-signal-safe.
+        int64_t r = os_fd_write(nyx_sig_pipe[1], &b, 1);
         (void)r;
     }
 }
@@ -711,7 +737,7 @@ static void nyx_signal_trampoline(int signum) {
 static void* nyx_signal_drain_thread(void* arg) {
     (void)arg;
     unsigned char b;
-    while (read(nyx_sig_pipe[0], &b, 1) == 1) {
+    while (os_fd_read(nyx_sig_pipe[0], &b, 1) == 1) {
         int sig = (int)b;
         void* h = (sig >= 0 && sig < 64) ? nyx_signal_handlers[sig] : NULL;
         // Carrera benigna con signal_reset: un byte de una señal ya
@@ -719,6 +745,24 @@ static void* nyx_signal_drain_thread(void* arg) {
         if (h) nyx_call_closure_i64(h, (int64_t)sig);
     }
     return NULL;
+}
+
+// Señales SÍNCRONAS reservadas para el fault handler de guard-pages
+// (scheduler.c, os_fault_guard_install). Comparan contra las constantes
+// OS_SIG* de la capa (nyx_os.h) -- NO valores Linux hardcodeados acá: en
+// macOS SIGBUS=10 (7 es SIGEMT), así que un literal fijo reabriría F15 en
+// esa plataforma (review W1 inc 7 round 1). Este archivo NUNCA las
+// REGISTRA vía os_sig_install, solo compara para rechazar
+// signal_handle/reset/ignore sobre ellas.
+// EN: SYNCHRONOUS signals reserved for the guard-page fault handler
+// (scheduler.c, os_fault_guard_install). Compared against the layer's
+// OS_SIG* constants (nyx_os.h) -- NOT hardcoded Linux values here: on
+// macOS SIGBUS=10 (7 is SIGEMT), so a fixed literal would reopen F15 on
+// that platform (W1 inc 7 round-1 review). This file never REGISTERS
+// these via os_sig_install, it only compares to reject
+// signal_handle/reset/ignore over them.
+static int nyx_signal_is_sync(int64_t s) {
+    return s == OS_SIGSEGV || s == OS_SIGBUS || s == OS_SIGFPE || s == OS_SIGILL;
 }
 
 // Register a signal handler: signal_handle(signum, handler_fn)
@@ -729,31 +773,36 @@ void nyx_signal_handle(int64_t signum, void* handler) {
     if (signum < 0 || signum >= 64) return;
     // Señales SINCRÓNICAS jamás van por el pipe: un fault no es diferible.
     // Reservadas para el handler de guard-page del arco de stacks (S4).
-    if (signum == SIGSEGV || signum == SIGBUS || signum == SIGFPE || signum == SIGILL) {
+    if (nyx_signal_is_sync(signum)) {
         fprintf(stderr, "[nyx] signal_handle: la señal síncrona %lld no se puede manejar con un closure Nyx\n", (long long)signum);
         return;
     }
     if (!nyx_sig_thread_started) {
-        if (pipe(nyx_sig_pipe) != 0) return;
-        fcntl(nyx_sig_pipe[0], F_SETFD, FD_CLOEXEC);
-        fcntl(nyx_sig_pipe[1], F_SETFD, FD_CLOEXEC);
+        if (os_fd_pipe(nyx_sig_pipe) != 0) return;
         // Escritura non-blocking: si el pipe se llena (ráfaga de 64K
         // señales), el trampolín descarta en vez de bloquear en contexto
-        // de señal.
-        fcntl(nyx_sig_pipe[1], F_SETFL, O_NONBLOCK);
-        pthread_t t;
-        if (pthread_create(&t, NULL, nyx_signal_drain_thread, NULL) != 0) {
-            close(nyx_sig_pipe[0]);
-            close(nyx_sig_pipe[1]);
+        // de señal. os_sock_set_nonblocking sirve para CUALQUIER fd (fcntl
+        // O_NONBLOCK), no solo sockets -- reusado acá en vez de un
+        // os_fd_set_nonblocking propio (Paso Cero, W2 fase A term+fd).
+        // EN: non-blocking write: if the pipe fills up (a burst of 64K
+        // signals), the trampoline drops instead of blocking in signal
+        // context. os_sock_set_nonblocking works on ANY fd (fcntl
+        // O_NONBLOCK), not just sockets -- reused here instead of a
+        // dedicated os_fd_set_nonblocking (Step Zero, W2 phase A term+fd).
+        os_sock_set_nonblocking(nyx_sig_pipe[1], 1);
+        os_thread_t t;
+        if (os_thread_create(&t, nyx_signal_drain_thread, NULL) != 0) {
+            os_fd_close(nyx_sig_pipe[0]);
+            os_fd_close(nyx_sig_pipe[1]);
             nyx_sig_pipe[0] = -1;
             nyx_sig_pipe[1] = -1;
             return;
         }
-        pthread_detach(t);
+        os_thread_detach(&t);
         nyx_sig_thread_started = 1;
     }
     nyx_signal_handlers[signum] = handler;
-    signal((int)signum, nyx_signal_trampoline);
+    os_sig_install((int)signum, nyx_signal_trampoline);
 }
 
 // Reset signal to default handler
@@ -761,11 +810,8 @@ void nyx_signal_handle(int64_t signum, void* handler) {
 // síncronas. Sin esto, `signal_reset(11)` desde Nyx desarmaba el handler de
 // guard-page de TODO el proceso en silencio, y `signal_ignore(11)` ponía
 // SIG_IGN en SIGSEGV — UB: el fault se re-ejecuta infinitamente y el
-// proceso se cuelga quemando CPU.
-static int nyx_signal_is_sync(int64_t s) {
-    return s == SIGSEGV || s == SIGBUS || s == SIGFPE || s == SIGILL;
-}
-
+// proceso se cuelga quemando CPU. (nyx_signal_is_sync está definida arriba,
+// junto al mapeo de señales síncronas — las constantes OS_SIG* viven en la capa, nyx_os.h.)
 void nyx_signal_reset(int64_t signum) {
     if (nyx_signal_is_sync(signum)) {
         fprintf(stderr, "[nyx] signal_reset: la señal síncrona %lld está reservada (guard page de stacks)\n", (long long)signum);
@@ -773,7 +819,7 @@ void nyx_signal_reset(int64_t signum) {
     }
     if (signum >= 0 && signum < 64) {
         nyx_signal_handlers[signum] = NULL;
-        signal((int)signum, SIG_DFL);
+        os_sig_reset((int)signum);
     }
 }
 
@@ -783,7 +829,7 @@ void nyx_signal_ignore(int64_t signum) {
         fprintf(stderr, "[nyx] signal_ignore: ignorar la señal síncrona %lld es UB (bucle infinito de faults) — rechazado\n", (long long)signum);
         return;
     }
-    signal((int)signum, SIG_IGN);
+    os_sig_ignore((int)signum);
 }
 #else
 // WASI: no hay señales — no-ops con firmas idénticas (fail-silent, como SIG_IGN).
@@ -854,13 +900,16 @@ int64_t nyx_sem_get_fn_arity(nyx_array_t* params) {
 }
 
 // ===== TERMINAL RAW MODE (para editor interactivo) =====
+// fd 0/1 = stdin/stdout -- constantes POSIX/Windows universales (ya no hace
+// falta <unistd.h> solo por STDIN_FILENO/STDOUT_FILENO: os_term_raw_enter/
+// exit/winsize los fijan internamente en la capa, nyx_read_byte* los pasa
+// como literales a os_fd_read/os_sock_poll1).
+// EN: fd 0/1 = stdin/stdout -- universal POSIX/Windows constants (no longer
+// need <unistd.h> just for STDIN_FILENO/STDOUT_FILENO: os_term_raw_enter/
+// exit/winsize fix them internally in the layer, nyx_read_byte* pass them
+// as literals to os_fd_read/os_sock_poll1).
 #ifndef __wasi__
-#include <termios.h>
-#include <poll.h>
 #include <errno.h>
-
-static struct termios nyx_saved_termios;
-static int nyx_raw_mode_active = 0;
 
 // Handler no-op de SIGWINCH: su ÚNICO propósito es existir. poll() está exento
 // de SA_RESTART (signal(7)) y retorna EINTR ante CUALQUIER señal entregada —
@@ -872,37 +921,38 @@ static int nyx_raw_mode_active = 0;
 // (default disposition = ignore doesn't interrupt syscalls at all).
 static void nyx_sigwinch_noop(int sig) { (void)sig; }
 
-// Entrar en raw mode: desactiva echo, canonical mode, signal chars
+// Entrar en raw mode: desactiva echo, canonical mode, signal chars.
+// os_term_raw_enter (capa nyx_os_*) hace el isatty+tcgetattr+cfmakeraw+
+// tcsetattr sobre stdin y guarda el termios previo INTERNAMENTE (no hay
+// parámetro de estado acá — ver nyx_os.h); esta fn solo decide si instalar
+// el no-op de SIGWINCH, y solo si raw_enter tuvo éxito (0).
 void nyx_raw_mode_enter(void) {
-    struct termios raw;
-    if (!isatty(STDIN_FILENO)) return;
-    if (tcgetattr(STDIN_FILENO, &nyx_saved_termios) < 0) return;
-    raw = nyx_saved_termios;
-    cfmakeraw(&raw);
-    raw.c_cc[VMIN]  = 1;   // leer mínimo 1 byte
-    raw.c_cc[VTIME] = 0;   // sin timeout
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    nyx_raw_mode_active = 1;
+    if (os_term_raw_enter() != 0) return;
 
     // Instala un handler no-op de SIGWINCH SOLO si la disposición sigue siendo
     // la default (SIG_DFL) — si el programa ya instaló el suyo (signal_handle,
     // antes o después de este enter) nunca lo pisamos: signal_handle() siempre
     // sobreescribe incondicionalmente, así que cualquier orden queda a salvo.
-    struct sigaction old_winch;
-    if (sigaction(SIGWINCH, NULL, &old_winch) == 0 && old_winch.sa_handler == SIG_DFL) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sa_handler = nyx_sigwinch_noop;
-        sigaction(SIGWINCH, &sa, NULL);
+    // os_sig_install_no_restart (NO os_sig_install): este handler existe
+    // ÚNICAMENTE para que poll()/read() se interrumpan con EINTR visible al
+    // resize (ver nyx_read_byte_timeout) — con SA_RESTART (lo que agrega
+    // os_sig_install/signal()) el syscall se reiniciaría solo y el caller
+    // jamás vería el despertar.
+    // EN: os_sig_install_no_restart (NOT os_sig_install): this handler
+    // exists ONLY so poll()/read() get interrupted with a visible EINTR on
+    // resize (see nyx_read_byte_timeout) — with SA_RESTART (what
+    // os_sig_install/signal() adds) the syscall would auto-restart and the
+    // caller would never see the wakeup.
+    if (os_sig_is_default(OS_SIGWINCH) == 1) {
+        os_sig_install_no_restart(OS_SIGWINCH, nyx_sigwinch_noop);
     }
 }
 
-// Restaurar terminal al estado original
+// Restaurar terminal al estado original. os_term_raw_exit es un no-op
+// (0, sin tocar nada) si raw_enter nunca tuvo éxito -- el flag "activo"
+// vive en la capa, no acá.
 void nyx_raw_mode_exit(void) {
-    if (nyx_raw_mode_active) {
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &nyx_saved_termios);
-        nyx_raw_mode_active = 0;
-    }
+    os_term_raw_exit();
 }
 
 // Destructor: restaura terminal automáticamente al exit() o crash
@@ -914,58 +964,65 @@ static void nyx_raw_mode_destructor(void) {
 // Leer un byte raw de stdin (para editor en raw mode)
 int64_t nyx_read_byte(void) {
     unsigned char c;
-    if (read(STDIN_FILENO, &c, 1) == 1) return (int64_t)c;
+    if (os_fd_read(0, &c, 1) == 1) return (int64_t)c;
     return -1;
 }
 
-// Leer un byte con timeout en ms. Usa poll() a propósito: nyx_signal_handle
-// instala handlers con signal() (semántica glibc = SA_RESTART), así que un
-// read() bloqueante se REINICIA tras una señal y nunca despierta — pero
-// poll() está exento de SA_RESTART (signal(7)) y retorna EINTR al instante.
+// Leer un byte con timeout en ms. Usa poll() (via os_sock_poll1) a
+// propósito: nyx_signal_handle instala handlers con signal() (semántica
+// glibc = SA_RESTART), así que un read() bloqueante se REINICIA tras una
+// señal y nunca despierta — pero poll() está exento de SA_RESTART
+// (signal(7)) y retorna EINTR al instante.
 // ms < 0 = sin timeout. Retorna: byte 0-255; -1 EOF/error; -2 timeout o
 // señal (unificados: "no hay byte, revisá tus flags").
 int64_t nyx_read_byte_timeout(int64_t timeout_ms) {
-    struct pollfd pfd;
-    pfd.fd = STDIN_FILENO;
-    pfd.events = POLLIN;
     int t = -1;
     if (timeout_ms >= 0) {
         t = (timeout_ms > 2147483647) ? 2147483647 : (int)timeout_ms;
     }
-    int rc = poll(&pfd, 1, t);
+    // os_sock_poll1 (capa nyx_os_*) devuelve los revents REALES ya
+    // traducidos: >0 con algún bit, 0 == timeout, -errno en error (EINTR
+    // llega como -EINTR EN EL RETORNO, no como variable errno global — a
+    // diferencia del poll() crudo que reemplaza; mismo patrón que
+    // nyx_tls_wait_readable en tls.c).
+    int rc = os_sock_poll1(0, OS_POLLIN, t);
     if (rc == 0) return -2;
-    if (rc < 0) return (errno == EINTR) ? -2 : -1;
+    if (rc < 0) return (rc == -EINTR) ? -2 : -1;
     unsigned char c;
-    ssize_t n = read(STDIN_FILENO, &c, 1);
+    // os_fd_read devuelve n leidos o -errno EN EL RETORNO (no en errno
+    // global) -- mismo patrón que os_sock_poll1 arriba.
+    int64_t n = os_fd_read(0, &c, 1);
     if (n == 1) return (int64_t)c;
-    if (n < 0 && errno == EINTR) return -2;
+    if (n == -EINTR) return -2;
     return -1;
 }
 
 // Obtener columnas del terminal
 int64_t nyx_term_cols(void) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) return 80;
-    return (int64_t)ws.ws_col;
+    int rows, cols;
+    if (os_term_winsize(&rows, &cols) != 0) return 80;
+    return (int64_t)cols;
 }
 
 // Obtener filas del terminal
 int64_t nyx_term_rows(void) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) return 24;
-    return (int64_t)ws.ws_row;
+    int rows, cols;
+    if (os_term_winsize(&rows, &cols) != 0) return 24;
+    return (int64_t)rows;
 }
 #else
-// WASI: sin termios/ioctl — raw mode no-op, tamaño de terminal fijo 80×24.
-// read() sí existe en wasi-libc → nyx_read_byte se mantiene funcional.
-// EN: no termios/ioctl on WASI — raw mode is a no-op, terminal size fixed 80×24;
-//     read() does exist in wasi-libc so nyx_read_byte stays functional.
+// WASI: os_term_* son -ENOSYS (sin termios/ioctl) -- raw mode no-op, tamaño
+// de terminal fijo 80×24. os_fd_read SÍ es real bajo wasi-libc → nyx_read_byte
+// se mantiene funcional.
+// EN: WASI: os_term_* are -ENOSYS (no termios/ioctl) -- raw mode is a no-op,
+// terminal size fixed 80×24. os_fd_read IS real under wasi-libc, so
+// nyx_read_byte stays functional.
 void nyx_raw_mode_enter(void) {}
 void nyx_raw_mode_exit(void) {}
 
 int64_t nyx_read_byte(void) {
     unsigned char c;
-    if (read(STDIN_FILENO, &c, 1) == 1) return (int64_t)c;
+    if (os_fd_read(0, &c, 1) == 1) return (int64_t)c;
     return -1;
 }
 

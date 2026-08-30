@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.30.0 -->
+<!-- nyx-version: 0.31.0 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,
 > `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -121,7 +121,7 @@
 
 ### `std/sqlite`
 
-`import "std/sqlite"` — 24 funciones:
+`import "std/sqlite"` — 28 funciones:
 
 - `pub fn sqlite_open(path: String) -> *int` — Abre (o crea) el archivo. Devuelve el handle *int — capturable en closures sin drama (fn de std con retorno declarado).
 - `pub fn sqlite_close(db: *int)`
@@ -133,6 +133,10 @@
 - `pub fn sqlite_last_id(db: *int) -> int` — last_insert_rowid del handle.
 - `pub fn sqlite_affected(db: *int) -> int`
 - `pub fn sqlite_error(db: *int) -> String` — Mensaje del último error del handle (sqlite3_errmsg).
+- `pub fn try_sqlite_open(path: String) -> Result<*int, Error>`
+- `pub fn try_sqlite_exec(db: *int, sql: String) -> Result<int, Error>`
+- `pub fn try_sqlite_query(db: *int, sql: String) -> Result<Array, Error>`
+- `pub fn try_sqlite_query_named(db: *int, sql: String) -> Result<Array, Error>`
 - `pub fn sqlite_begin(db: *int) -> bool`
 - `pub fn sqlite_commit(db: *int) -> bool`
 - `pub fn sqlite_rollback(db: *int) -> bool`
@@ -152,7 +156,7 @@
 
 ### `std/json`
 
-`import "std/json"` — 17 funciones:
+`import "std/json"` — 20 funciones:
 
 - `pub fn json_null() -> Array`
 - `pub fn json_bool(val: bool) -> Array`
@@ -163,14 +167,17 @@
 - `pub fn json_object(keys: Array, vals: Array) -> Array`
 - `pub fn json_type(val: Array) -> String`
 - `pub fn json_get(obj: Array, key: String) -> Array`
+- `pub fn try_json_get(obj: Array, key: String) -> Result<Array, Error>`
 - `pub fn json_as_string(val: Array) -> String`
 - `pub fn json_as_int(val: Array) -> int`
 - `pub fn json_as_float(val: Array) -> float`
 - `pub fn json_array_get(arr: Array, i: int) -> Array`
+- `pub fn try_json_array_get(arr: Array, i: int) -> Result<Array, Error>`
 - `pub fn json_array_len(arr: Array) -> int`
 - `pub fn json_escape(s: String) -> String`
 - `pub fn json_stringify(val: Array) -> String`
 - `pub fn json_parse(input: String) -> Array`
+- `pub fn try_json_parse(input: String) -> Result<Array, Error>`
 
 ### `std/toml`
 

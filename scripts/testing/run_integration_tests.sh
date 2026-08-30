@@ -20,6 +20,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh).
+source "$SCRIPT_DIR/lib_testroot_lock.sh"
+nyx_testroot_lock_acquire
+
 # Colors
 if [ -t 1 ]; then
     GREEN='\033[0;32m'
@@ -45,7 +50,9 @@ RT_CACHE="$(mktemp -d /tmp/nyx-rt-cache.XXXXXX)"
 trap 'rm -rf "$RT_CACHE"' EXIT
 echo -e "${BOLD}-- Precompilando runtime (una vez) --${NC}"
 RT_OK=1
-for c in runtime/*.c; do
+# El glob runtime/*.c NO desciende a runtime/os/ — os_posix.c (capa nyx_os_*,
+# W1) va explícito o el link muere con símbolos os_* indefinidos.
+for c in runtime/*.c runtime/os/os_posix.c; do
     clang -O2 -c "$c" -o "$RT_CACHE/$(basename "${c%.c}").o" 2>/dev/null || { RT_OK=0; break; }
 done
 if [ "$RT_OK" -eq 1 ] && ar rcs "$RT_CACHE/libnyxrt.a" "$RT_CACHE"/*.o 2>/dev/null; then
@@ -108,7 +115,7 @@ H2_BIN="/tmp/nyx-http2-test-server"
 echo -e "  Compiling examples/http2-server.nx..."
 cp examples/http2-server.nx script.nx
 if NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap >/dev/null 2>&1 && \
-   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
        -o "$H2_BIN" 2>/dev/null; then
     rm -f script.nx script.ll
     "$H2_BIN" "$H2_PORT" >/dev/null 2>&1 &
@@ -138,7 +145,7 @@ BC_BIN="/tmp/nyx-http-body-cap-server"
 echo -e "  Compiling tests/integration/http_body_cap/server.nx..."
 cp tests/integration/http_body_cap/server.nx script.nx
 if NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap >/dev/null 2>&1 && \
-   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
        -o "$BC_BIN" 2>/dev/null; then
     rm -f script.nx script.ll
     if python3 tests/integration/test_http_body_cap.py "$BC_BIN"; then

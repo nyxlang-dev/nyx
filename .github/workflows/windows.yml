@@ -1,30 +1,93 @@
-# Arco Windows W0 (spec docs/superpowers/specs/2026-08-19-windows-nativo-design.md
-# §4-W0): la PRIMERA evidencia ejecutada — un hello-world Nyx cross-emitido
-# desde Linux linkea y CORRE en windows-latest. Interno: esto NO anuncia
-# soporte Windows (todo-o-nada, decisión §1.3 de la spec).
+# Arco Windows (spec docs/superpowers/specs/2026-08-19-windows-nativo-design.md
+# §4-W0 / §4-W2). Interno: esto NO anuncia soporte Windows (todo-o-nada,
+# decisión §1.3 de la spec).
 #
-# 3 jobs:
+# 5 jobs:
 #   fixture-freshness (ubuntu) — reconstruye el bootstrap desde los seeds y
-#     regenera ambos .ll; si difieren del fixture commiteado, FALLA (el
-#     check de frescura estilo seeds que pide el plan — el bootstrap no
-#     corre en el runner windows, así que el .ll viaja commiteado).
-#   hello-x64 (windows-latest) — vcpkg bdwgc + clang→MSVC + link + RUN,
-#     asserta la salida exacta. El gate real del arco W0.
-#   hello-arm64-cross (windows-latest) — compila y linkea ARM64 (no hay
-#     runner público ARM64-Windows para ejecutar, §1.4); sube el .exe.
+#     regenera ambos .ll de tests/integration/win_hello; si difieren del
+#     fixture commiteado, FALLA (el bootstrap no corre en el runner windows,
+#     así que el .ll viaja commiteado — el check de frescura estilo seeds).
+#     Es también el único gate que ejercita `make win-compile` end-to-end.
+#   w2-compile (windows-latest) — clang con triple MSVC compila TODO el subset
+#     portable del runtime + runtime/os/os_win32.c con -c (sin link, sin
+#     ejecutar): el loop de iteración BARATO de la fase B de W2, antes del job
+#     caro del subset (w2-subset).
+#   w2-subset-ir (ubuntu) — EL GATE, parte 1. Construye el bootstrap desde los
+#     seeds y emite el .ll de cada test de
+#     scripts/testing/win_subset_manifest.txt, para LOS DOS triples MSVC
+#     (x86_64 y aarch64), en dos artifacts. El bootstrap NO corre en el
+#     runner windows (no hay compilador Nyx nativo para Windows todavía: eso
+#     es W6), así que el IR se genera en Linux y viaja como artifact — la
+#     misma partición que ya usaba el fixture del hello de W0, solo que sin
+#     commitear nada.
+#   w2-subset (windows-latest, needs w2-subset-ir) — EL GATE, parte 2. Compila
+#     el subset portable del runtime + os_win32.c a .obj UNA vez, y por cada
+#     .ll del artifact: linkea (clang -fuse-ld=lld-link contra bdwgc de vcpkg),
+#     EJECUTA el .exe y compara su salida contra el expected/ del repo con CRLF
+#     normalizado en AMBOS lados (lección de W0: stdout de Windows emite \r\n y
+#     el checkout puede convertir el expected a CRLF). Tests sin expected/:
+#     exit code 0 (todos los que entran así tienen assert(), que aborta con
+#     exit 1 — ver el header del manifiesto).
+#     Es la primera vez que programas Nyx REALES —no un hello-world— corren en
+#     Windows: acá aparecen los bugs de semántica win32 que ninguna review
+#     puede ver.
+#   w2-subset-arm64 (windows-11-arm, needs w2-subset-ir) — EL MISMO GATE en
+#     aarch64-pc-windows-msvc, con EJECUCIÓN REAL (W2-ARM64). Hasta esta task
+#     ARM64 sólo se compilaba; el runner hosteado `windows-11-arm` existe y
+#     está disponible para este repo (medido con una sonda), así que la
+#     arquitectura entera deja de ser un supuesto. UN SOLO manifiesto para los
+#     dos triples: un test que pase en x64 y falle acá es un hallazgo de ABI,
+#     no una línea a borrar. Ver el bloque de comentarios del job.
+# EN: w2-subset-ir (ubuntu) emits the windows-triple IR for every test in
+# scripts/testing/win_subset_manifest.txt and uploads it (the bootstrap does
+# not run on Windows yet — that is W6). w2-subset (windows) compiles the
+# portable runtime subset + os_win32.c once, then links, RUNS and diffs each
+# test against its expected/, normalizing CRLF on BOTH sides.
+#
+# HISTORIA (W2 fase B): los jobs hello-x64 / hello-arm64-cross de W0 fueron
+# ABSORBIDOS acá y borrados. Existían para probar que un hello-world Nyx
+# cross-emitido linkeaba y corría en Windows contra el stub temporal
+# runtime/os/win_w0_hello.c — stub que MUERE con la llegada de os_win32.c (la
+# regla dormida del ratchet lo exige). Con la capa nyx_os_* real compilando,
+# un hello-world contra un stub de 4 símbolos ya no aporta evidencia nueva:
+# w2-compile cubre la compilación de TODO el subset (mucho más que el hello) y
+# el job w2-subset de Task 4 cubrirá el link + la ejecución real (mucho más
+# fuerte que el hello). Los fixtures .ll y su check de frescura SIGUEN vivos —
+# son el insumo del job de Task 4.
+#
+# EN: W2 phase B absorbed W0's hello-x64/hello-arm64-cross jobs and deleted
+# them: they linked against runtime/os/win_w0_hello.c, the temporary stub that
+# dies with os_win32.c (the ratchet's dormant rule). w2-compile covers strictly
+# more (the whole portable subset compiling), and Task 4's w2-subset job will
+# cover link + real execution — strictly more than the hello ever did. The .ll
+# fixtures and their freshness check stay: they feed Task 4's job.
 #
 # Toolchain: clang/clang-cl + link/lld-link, NUNCA MinGW (decisión §1.2).
-name: Nyx Windows (W0)
+name: Nyx Windows (W0/W2)
 
 on:
   push:
-    branches: [main, 'feat/w0-**']
+    branches: [main, 'feat/w0-**', 'feat/w2-**', 'feat/w3-**']
   workflow_dispatch:
 
 jobs:
   fixture-freshness:
     name: Fixture freshness (Linux regen + diff)
     runs-on: ubuntu-latest
+    # timeout-minutes en los 5 jobs (review de rama W2, M1): sin esto el
+    # default de GitHub es SEIS HORAS. Importa especialmente en w2-subset, que
+    # EJECUTA .exe nativos: el `timeout 30` de ahí es el de MSYS/coreutils, y
+    # que mate limpio a un proceso Windows nativo COLGADO (no sólo lento) no
+    # está probado — si no lo logra, el job se queda tomando un runner
+    # windows hasta el timeout global. El techo del job es la red de
+    # seguridad de segundo nivel.
+    # EN: timeout-minutes on all 4 jobs (W2 branch review, M1): GitHub's
+    # default is SIX HOURS. It matters most in w2-subset, which RUNS native
+    # .exe files: its `timeout 30` is MSYS/coreutils, and whether that cleanly
+    # kills a HUNG (not merely slow) native Windows process is unproven — if
+    # it fails, the job holds a windows runner until the global timeout. The
+    # job ceiling is the second-level safety net.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -46,9 +109,10 @@ jobs:
           diff /tmp/arm64.committed.ll tests/integration/win_hello/hello.arm64.win.ll
           echo "fixtures frescos: el .ll commiteado es el que emite este compilador"
 
-  hello-x64:
-    name: hello-world x64 (link + RUN real)
+  w2-compile:
+    name: Subset portable + os_win32.c (compile-only, clang -> MSVC)
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -60,60 +124,1438 @@ jobs:
       - name: Install Boehm GC (vcpkg)
         run: vcpkg install bdwgc:x64-windows
 
-      - name: Compile + link (clang → MSVC, lld-link)
+      - name: Compile each translation unit (-c, sin link)
         shell: bash
         run: |
+          # set -u sin pipefail (regla del repo).
+          set -u
           VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
-          clang --target=x86_64-pc-windows-msvc -fuse-ld=lld-link -O2 \
-            tests/integration/win_hello/hello.win.ll \
-            runtime/strings.c runtime/runtime-arrays.c runtime/maps.c \
-            runtime/os/win_w0_hello.c \
-            -Iruntime -I"$VCPKG_DIR/include" \
-            -L"$VCPKG_DIR/lib" -lgc \
-            -o hello.exe
-          cp "$VCPKG_DIR/bin/gc.dll" .
+          mkdir -p objs
 
-      - name: Run and assert exact output
+          # ⚠️ SIN -Iruntime (lección de la iteración 1 de W2 fase B): el
+          # runtime tiene runtime/time.h propio, y `-Iruntime` hace que el
+          # `#include <time.h>` de runtime/time.c y runtime/runtime.c resuelva
+          # a ESE archivo en vez de al <time.h> del CRT — 20 errores fantasma
+          # de "localtime undeclared" / "incomplete type struct tm" que no
+          # tienen nada que ver con Windows. Ningún .c del runtime necesita
+          # -Iruntime: TODOS los includes locales son con comillas
+          # ("strings.h", "os/nyx_os.h"), que resuelven relativo al archivo.
+          # El job hello de W0 lo llevaba solo por win_w0_hello.c (vivía en
+          # runtime/os/ e incluía "strings.h" de runtime/) — ese archivo murió.
+          # EN: NO -Iruntime (W2 phase B iteration-1 lesson): the runtime has
+          # its own runtime/time.h, and -Iruntime makes `#include <time.h>`
+          # resolve to IT instead of the CRT's — 20 phantom errors unrelated to
+          # Windows. Every local include in the runtime is quoted, so it
+          # resolves relative to the including file; -Iruntime existed only for
+          # win_w0_hello.c, which is gone.
+          #
+          # -D_CRT_SECURE_NO_WARNINGS: la CRT marca fopen/getenv/strerror como
+          # "deprecated" a favor de sus variantes _s. Es ruido de MSVC, no un
+          # hallazgo — se apaga para que el log muestre lo que importa.
+          CFLAGS="--target=x86_64-pc-windows-msvc -c -O1 -Wall -D_CRT_SECURE_NO_WARNINGS"
+          CFLAGS="$CFLAGS -I$VCPKG_DIR/include"
+          # Las DOS que siguen NO debilitan el gate: cada símbolo posix que
+          # caiga en "implicit function declaration" queda registrado y se
+          # compara contra la lista EXACTA de abajo (ratchet). Sin ellas, un
+          # residuo conocido aborta el TU entero y esconde el resto de sus
+          # diagnósticos.
+          CFLAGS="$CFLAGS -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
+
+          FAIL=0
+          for src in runtime/strings.c \
+                     runtime/runtime-arrays.c \
+                     runtime/maps.c \
+                     runtime/time.c \
+                     runtime/iterators.c \
+                     runtime/sqlite_adapter.c \
+                     runtime/file-io.c \
+                     runtime/runtime.c \
+                     runtime/os/os_win32.c ; do
+            base=$(basename "$src" .c)
+            # M12 (review ronda 1): -Werror SOLO sobre os_win32.c — el archivo
+            # que esta task escribe. Compiló con 0 warnings desde la iteración
+            # 1; con -Werror eso deja de ser una observación del log y pasa a
+            # ser un GATE. El resto del subset queda sin -Werror a propósito:
+            # arrastra warnings preexistentes (unused variable en maps.c, el
+            # residuo posix) que no son de este arco.
+            # EN: M12 — -Werror ONLY on os_win32.c, the file this task owns. It
+            # has compiled with 0 warnings since iteration 1; -Werror turns that
+            # from a log observation into a GATE. The rest of the subset carries
+            # preexisting warnings that are not this arc's to fix.
+            EXTRA=""
+            if [ "$src" = "runtime/os/os_win32.c" ]; then EXTRA="-Werror"; fi
+            echo "=== $src $EXTRA"
+            if ! clang $CFLAGS $EXTRA "$src" -o "objs/$base.obj" > "objs/$base.diag" 2>&1; then
+              FAIL=1
+            fi
+            cat "objs/$base.diag"
+          done
+          [ "$FAIL" -eq 0 ] || { echo "w2-compile: al menos un TU no compila para Windows"; exit 1; }
+
+          # --- Ratchet de residuo posix (W2 fase B): la fase A dejó el subset
+          # sin HEADERS posix, pero quedan LLAMADAS a funciones que la CRT de
+          # Windows no tiene. Son deuda de link (Task 4 / W5), no de esta task
+          # — pero no pueden crecer en silencio: la lista es EXACTA. Si aparece
+          # una función nueva, el job falla; si desaparece una, también (hay
+          # que achicar la lista, no dejarla mintiendo de más).
+          # EN: posix-residue ratchet. Phase A removed posix HEADERS from the
+          # subset, but CALLS the Windows CRT lacks remain (link debt for
+          # Task 4 / W5). The list is EXACT: a new name fails, and a name that
+          # disappears fails too (the list must be tightened, never stale).
+          # W2 fase C (Task 4): la lista quedó VACÍA. Los 2 nombres que estaban
+          # acá — setenv y strptime — eran deuda de LINK, y el job w2-subset
+          # los cobró: sin ellos resueltos, ningún .exe se linkea. Bajaron a la
+          # capa como os_env_set (posix setenv / win32 _putenv_s) y
+          # os_time_parse (posix strptime / win32 -ENOSYS honesto, con
+          # nyx_datetime_parse degradando a su -1 ya documentado).
+          # La regla NO se relaja por estar vacía: sigue siendo exacta, así que
+          # el primer símbolo posix nuevo que entre al subset rompe el job.
+          # EN: W2 phase C emptied this list. setenv and strptime were LINK
+          # debt, and w2-subset collected it: without them resolved nothing
+          # links. They moved onto the layer as os_env_set and os_time_parse.
+          # The rule is NOT relaxed by being empty — it stays exact, so the
+          # first new posix symbol entering the subset breaks the job.
+          EXPECTED=""
+          # `|| true` sobre TODO el pipeline: con la lista vacía el grep no
+          # matchea nada y sale 1 — y `shell: bash` de GitHub corre con
+          # `-e -o pipefail` (el `set -u` de arriba NO los apaga), así que sin
+          # esto el job muere ANTES de comparar, justo cuando el residuo está
+          # en su mejor estado posible. Lo cazó la iteración 1 de Task 4.
+          # EN: `|| true` over the WHOLE pipeline: with an empty list grep
+          # matches nothing and exits 1 — and GitHub's `shell: bash` runs with
+          # `-e -o pipefail` (the `set -u` above does not turn them off), so
+          # without this the job dies BEFORE comparing, exactly when the
+          # residue is in its best possible state. Caught in Task 4 iter 1.
+          FOUND=$(grep -ho "call to undeclared function '[A-Za-z_][A-Za-z_0-9]*'" objs/*.diag \
+                  | sed "s/.*'\(.*\)'/\1/" | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)
+          if [ "$FOUND" != "$EXPECTED" ]; then
+            echo "w2-compile: el residuo posix del subset CAMBIÓ"
+            echo "  esperado: [$EXPECTED]"
+            echo "  medido  : [$FOUND]"
+            echo "  (si creció: una funcion posix nueva entro al subset — migrarla a la capa."
+            echo "   si se achico: alguien la arreglo — actualizar EXPECTED en este workflow.)"
+            exit 1
+          fi
+          echo "el subset portable + os_win32.c compilan para x86_64-pc-windows-msvc"
+          echo "residuo posix del subset: [$FOUND] (vacio desde W2 fase C)"
+
+      - name: os_win32.c tambien para ARM64 (compile-only)
         shell: bash
         run: |
-          # CRLF por partida doble: stdout texto de Windows emite \r\n, y el
-          # checkout del runner puede convertir expected.txt a CRLF
-          # (autocrlf) — se normalizan AMBOS lados antes del diff.
-          ./hello.exe | tr -d '\r' > salida.txt
-          tr -d '\r' < tests/integration/win_hello/expected.txt > esperado.txt
-          diff esperado.txt salida.txt
-          echo "el primer .exe Nyx nativo corrió y dijo lo esperado"
+          set -u
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          # Solo os_win32.c: es el ÚNICO archivo del subset con supuestos
+          # dependientes de la arquitectura — los _Static_assert de tamaño y
+          # alineación (SRWLOCK/CONDITION_VARIABLE/INIT_ONCE/HANDLE/DWORD
+          # contra el storage opaco de nyx_os.h). El resto del subset es C
+          # portable y ya se cubre en x64. No hay runner público ARM64-Windows
+          # para EJECUTAR (spec §1.4), pero compilar SÍ verifica los asserts,
+          # que es justo lo que podría diferir. Los headers de bdwgc son los
+          # mismos para las dos arquitecturas (solo cambia la .lib, que acá no
+          # se linkea).
+          # EN: os_win32.c only — the sole file in the subset with
+          # arch-dependent assumptions (its size/alignment _Static_asserts).
+          # No public ARM64-Windows runner can RUN anything (spec §1.4), but
+          # compiling does verify exactly the asserts that could differ.
+          # -Werror también acá (M12): el ARM64 es donde un warning nuevo sería
+          # MÁS informativo (convenciones de llamada, alineación).
+          clang --target=aarch64-pc-windows-msvc -c -O1 -Wall -Werror -D_CRT_SECURE_NO_WARNINGS \
+            -I"$VCPKG_DIR/include" runtime/os/os_win32.c -o objs/os_win32.arm64.obj
+          echo "os_win32.c compila tambien para aarch64-pc-windows-msvc (asserts de tamano/alineacion OK en ambas)"
 
-  hello-arm64-cross:
-    name: hello-world ARM64 (cross compile + link, sin ejecutar)
-    runs-on: windows-latest
+  w2-subset-ir:
+    name: Subset de regresion — IR windows x64 + arm64 (Linux, insumo de los gates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: MSVC environment (cross amd64 -> arm64)
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libgc-dev libssl-dev
+
+      - name: Build bootstrap compiler (from committed seeds)
+        run: make bootstrap
+
+      - name: Emit windows IR for every test in the manifest (x64 + arm64)
+        run: |
+          # set -u encima del `-e -o pipefail` con el que GitHub ya invoca a
+          # bash (`bash -e -o pipefail {0}`): las variables sin definir también
+          # rompen. OJO con eso al editar — un pipeline cuyo primer comando
+          # "falla" legítimamente (un grep sin matches) mata el job.
+          # EN: set -u on top of the `-e -o pipefail` GitHub already uses.
+          # Careful when editing: a pipeline whose first command legitimately
+          # "fails" (a grep with no matches) kills the job.
+          set -u
+
+          # El manifiesto puede llegar con CRLF si el runner tiene autocrlf —
+          # se normaliza ANTES de parsear (misma lección de W0 que se aplica
+          # abajo a la salida de los .exe). read -r con IFS=tab: las líneas de
+          # comentario y las vacías se saltan explícitamente.
+          # EN: the manifest may arrive CRLF'd under autocrlf — normalize
+          # before parsing (same W0 lesson applied below to the .exe output).
+          tr -d '\r' < scripts/testing/win_subset_manifest.txt > /tmp/manifest.clean
+
+          # W2-ARM64: UN SOLO manifiesto para los DOS triples (ruling del
+          # coordinador). El mismo test se emite dos veces, y cada .exe se
+          # ejecuta en su runner: si un test pasa en x64 y falla en arm64, eso
+          # NO es motivo para sacarlo de la lista — es un hallazgo de ABI y hay
+          # que reportarlo con el log. La lista mide UNA cosa ("esto corre en
+          # Windows"), y tener dos listas dejaría que una arquitectura se
+          # degrade en silencio.
+          # Medido antes del primer push (ver el reporte de la task): el IR de
+          # los dos triples es IDÉNTICO byte a byte salvo la línea
+          # `target triple`. O sea: el codegen de Nyx NO tiene nada
+          # arch-específico hoy, y cualquier divergencia x64-vs-arm64 que este
+          # workflow encuentre viene del backend de LLVM, de la ABI, o del
+          # runtime C — nunca del emisor de IR. Eso hace que valga la pena
+          # ejecutar los dos, en vez de asumir.
+          # EN: ONE manifest for BOTH triples (coordinator ruling). Each test
+          # is emitted twice and each .exe runs on its own runner: a test that
+          # passes on x64 and fails on arm64 is an ABI FINDING, never a reason
+          # to drop it from the list. Measured before the first push: the IR
+          # for both triples is byte-identical except the `target triple` line
+          # — so Nyx's codegen has nothing arch-specific today, and any
+          # divergence this workflow finds comes from LLVM's backend, the ABI,
+          # or the C runtime. That is exactly why running both is worth it.
+          for arch in x64 arm64; do
+            if [ "$arch" = "arm64" ]; then
+              outdir="win_subset_ir_arm64"
+              # make win-compile deja el .ll con sufijo de arquitectura
+              # (Makefile:449): "<base>.arm64.win.ll" para arm64, "<base>.win.ll"
+              # para x64. / the recipe suffixes the arm64 output.
+              suffix=".arm64"
+              triple="aarch64-pc-windows-msvc"
+            else
+              outdir="win_subset_ir"
+              suffix=""
+              triple="x86_64-pc-windows-msvc"
+            fi
+            mkdir -p "$outdir"
+
+            N=0
+            FAIL=0
+            while IFS="$(printf '\t')" read -r test exp; do
+              case "$test" in ''|'#'*) continue ;; esac
+              base=$(basename "$test" .nx)
+              # make win-compile es LA receta documentada del repo para emitir
+              # IR con triple Windows (la misma que usa fixture-freshness, y la
+              # única que sabe de ARCH=arm64). Deja el .ll junto al .nx; se
+              # mueve al dir del artifact para no ensuciar tests/ ni confundir
+              # a otros runners.
+              # EN: make win-compile is the repo's documented windows-IR recipe
+              # (the same one fixture-freshness uses, and the only one that
+              # knows about ARCH=arm64). It drops the .ll next to the .nx; move
+              # it into the artifact dir.
+              if ! make win-compile FILE="$test" ARCH="$arch" > "$outdir/$base.compile.log" 2>&1; then
+                echo "✗ [$arch] $test — no compila para $triple"
+                tail -20 "$outdir/$base.compile.log"
+                FAIL=$((FAIL + 1))
+                continue
+              fi
+              mv "${test%.nx}${suffix}.win.ll" "$outdir/$base.ll"
+              N=$((N + 1))
+            done < /tmp/manifest.clean
+
+            if [ "$FAIL" -gt 0 ]; then
+              echo "w2-subset-ir: $FAIL test(s) del manifiesto no compilan para $triple"
+              echo "  (o entró un test que usa un builtin gateado por win_forbidden_builtin,"
+              echo "   o una regresión del codegen — el manifiesto es una lista MEDIDA, ver su header)"
+              exit 1
+            fi
+            echo "IR $triple emitido para $N tests del manifiesto"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: w2-subset-ir
+          path: win_subset_ir/*.ll
+          if-no-files-found: error
+          retention-days: 3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: w2-subset-ir-arm64
+          path: win_subset_ir_arm64/*.ll
+          if-no-files-found: error
+          retention-days: 3
+
+  w2-subset:
+    name: Subset de regresion — LINK + RUN real (windows-latest)
+    runs-on: windows-latest
+    needs: w2-subset-ir
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSVC environment (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: amd64_arm64
+          arch: amd64
 
-      - name: Install Boehm GC (vcpkg, arm64)
-        run: vcpkg install bdwgc:arm64-windows
+      - name: Install Boehm GC (vcpkg)
+        run: vcpkg install bdwgc:x64-windows
 
-      - name: Cross compile + link ARM64
+      - uses: actions/download-artifact@v4
+        with:
+          name: w2-subset-ir
+          path: ir
+
+      - name: Build the portable runtime subset (once)
         shell: bash
         run: |
-          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/arm64-windows"
-          clang --target=aarch64-pc-windows-msvc -fuse-ld=lld-link -O2 \
-            tests/integration/win_hello/hello.arm64.win.ll \
-            runtime/strings.c runtime/runtime-arrays.c runtime/maps.c \
-            runtime/os/win_w0_hello.c \
-            -Iruntime -I"$VCPKG_DIR/include" \
-            -L"$VCPKG_DIR/lib" -lgc \
-            -o hello-arm64.exe
-          echo "ARM64 linkeó (sin runner para ejecutarlo — §1.4 de la spec)"
+          set -u
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          mkdir -p objs
+          # MISMOS flags y MISMA lista de TUs que w2-compile (incluido el "sin
+          # -Iruntime": runtime/time.h le haría sombra al <time.h> del CRT).
+          # Diferencia con w2-compile: acá NO se toleran los warnings-como-
+          # errores del residuo posix — porque a esta altura ese residuo ya no
+          # existe. setenv y strptime, los 2 símbolos que la CRT de MSVC no
+          # tiene, bajaron a la capa (os_env_set / os_time_parse) justamente
+          # para que este link sea posible: un símbolo indefinido acá no
+          # "degrada", rompe el linker.
+          # EN: same flags and same TU list as w2-compile (including the "no
+          # -Iruntime"). Unlike w2-compile, the posix residue is gone by now:
+          # setenv and strptime — the two symbols the MSVC CRT lacks — moved
+          # onto the layer (os_env_set / os_time_parse) precisely so this link
+          # can happen; an undefined symbol here breaks the linker, it does
+          # not "degrade".
+          CFLAGS="--target=x86_64-pc-windows-msvc -c -O1 -Wall -D_CRT_SECURE_NO_WARNINGS"
+          CFLAGS="$CFLAGS -I$VCPKG_DIR/include"
 
-      - name: Upload ARM64 artifact
-        uses: actions/upload-artifact@v4
+          FAIL=0
+          for src in runtime/strings.c \
+                     runtime/runtime-arrays.c \
+                     runtime/maps.c \
+                     runtime/time.c \
+                     runtime/iterators.c \
+                     runtime/sqlite_adapter.c \
+                     runtime/file-io.c \
+                     runtime/runtime.c \
+                     runtime/os/os_win32.c ; do
+            base=$(basename "$src" .c)
+            # -Werror sobre os_win32.c, igual que en w2-compile (review de
+            # rama W2, M4). Es el MISMO archivo compilado dos veces en el mismo
+            # workflow: con flags distintos, uno de los dos jobs estaría
+            # mintiendo sobre el estado del otro, y el día que os_win32.c
+            # gane un warning el subset lo tragaría en silencio mientras
+            # w2-compile lo grita. Mismo TU, mismos flags.
+            # EN: -Werror on os_win32.c, same as w2-compile (W2 branch review,
+            # M4). It is the SAME file compiled twice in the same workflow:
+            # with divergent flags one job would be lying about the other's
+            # state, and the day os_win32.c grows a warning the subset would
+            # swallow it silently while w2-compile shouts. Same TU, same flags.
+            EXTRA=""
+            if [ "$src" = "runtime/os/os_win32.c" ]; then EXTRA="-Werror"; fi
+            clang $CFLAGS $EXTRA "$src" -o "objs/$base.obj" || FAIL=1
+          done
+          [ "$FAIL" -eq 0 ] || { echo "w2-subset: el subset del runtime no compila"; exit 1; }
+          echo "9 TUs del subset compilados a .obj"
+
+      - name: Link + RUN + diff each test
+        shell: bash
+        run: |
+          set -u
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          mkdir -p bin out
+          # gc.dll junto al .exe: el directorio del ejecutable es lo PRIMERO
+          # en el orden de búsqueda de DLLs de Windows, así que no hace falta
+          # tocar el PATH.
+          # EN: gc.dll next to the .exe — the executable's directory is first
+          # in Windows' DLL search order, so no PATH surgery is needed.
+          cp "$VCPKG_DIR/bin/gc.dll" bin/
+
+          # \tmp — HALLAZGO de semántica win32 real (iteración 1 de Task 4).
+          # El test de file I/O del manifiesto (test-373-try-file) escribe en
+          # rutas "/tmp/...". El .exe es un programa Windows nativo: NO ve el
+          # /tmp de Git Bash, ve la cadena literal "/tmp/..." — y Windows
+          # resuelve una ruta que arranca con "/" como "raíz del DRIVE ACTUAL
+          # del proceso", no como raíz de C:. El workspace del runner vive en
+          # D:\a\..., así que el drive actual es D: y `mkdir /c/tmp` no servía
+          # de nada: la primera corrida dio ENOENT (code 2) en el write.
+          # Se crea \tmp en el drive del workspace (el que el .exe va a ver) y
+          # también en C: por si el runner cambia de layout. Es setup de
+          # ENTORNO — el equivalente exacto de que /tmp exista en Linux —, no
+          # un parche: el test corre tal cual está commiteado.
+          # EN: WIN32 SEMANTICS FINDING (Task 4 iter 1). The manifest's file
+          # I/O test writes to "/tmp/..." paths. The .exe is a native Windows
+          # program: it does NOT see Git Bash's /tmp, it sees the literal
+          # "/tmp/..." — and Windows resolves a leading "/" as "root of the
+          # process's CURRENT DRIVE", not as C:. The runner's workspace lives
+          # on D:\a\..., so `mkdir /c/tmp` did nothing and the first run got
+          # ENOENT (code 2) on the write. We create \tmp on the workspace
+          # drive (the one the .exe will see) and on C: too. Environment
+          # setup — exactly like /tmp existing on Linux — not a patch.
+          mkdir -p /c/tmp
+          WSDRIVE=$( (pwd -W 2>/dev/null || echo "") | cut -c1 | tr 'A-Z' 'a-z' )
+          if [ -n "$WSDRIVE" ]; then
+            mkdir -p "/$WSDRIVE/tmp"
+            echo "tmp del drive del workspace: /$WSDRIVE/tmp"
+          fi
+
+          tr -d '\r' < scripts/testing/win_subset_manifest.txt > /tmp/manifest.clean
+
+          PASS=0
+          LINKFAIL=""
+          RUNFAIL=""
+          DIFFFAIL=""
+          while IFS="$(printf '\t')" read -r test exp; do
+            case "$test" in ''|'#'*) continue ;; esac
+            base=$(basename "$test" .nx)
+            echo "=== $base"
+
+            if ! clang --target=x86_64-pc-windows-msvc -fuse-ld=lld-link -O1 \
+                 "ir/$base.ll" objs/*.obj \
+                 -L"$VCPKG_DIR/lib" -lgc \
+                 -o "bin/$base.exe" > "out/$base.link" 2>&1; then
+              echo "  ✗ LINK"
+              cat "out/$base.link"
+              LINKFAIL="$LINKFAIL $base"
+              continue
+            fi
+
+            # Igual que el runner canónico (run_bootstrap_tests.sh): stdout y
+            # stderr COMBINADOS, timeout de 30s. cd bin/ para que el loader
+            # encuentre gc.dll; los tests que tocan el filesystem usan rutas
+            # absolutas, así que el cwd no cambia su semántica.
+            # EN: same as the canonical runner: stdout+stderr COMBINED, 30s
+            # timeout. cd bin/ so the loader finds gc.dll; filesystem tests
+            # use absolute paths, so the cwd does not change their meaning.
+            # El `if` NO es cosmético: `shell: bash` de GitHub corre con `-e`,
+            # y un `cmd; rc=$?` pelado mata el step entero en el primer test
+            # que salga != 0 — o sea, justo el caso que este job existe para
+            # REPORTAR. Dentro de un `if` el errexit no aplica.
+            # EN: the `if` is not cosmetic: GitHub's `shell: bash` runs with
+            # `-e`, so a bare `cmd; rc=$?` would kill the whole step on the
+            # first test exiting != 0 — precisely the case this job exists to
+            # REPORT. Inside an `if`, errexit does not apply.
+            if ( cd bin && timeout 30 "./$base.exe" ) > "out/$base.raw" 2>&1; then
+              rc=0
+            else
+              rc=$?
+            fi
+            tr -d '\r' < "out/$base.raw" > "out/$base.txt"
+
+            if [ "$exp" = "NONE" ]; then
+              # Sin expected/: el contrato es el exit code. Todos los tests que
+              # entran así tienen assert(), y assert aborta con exit 1 — así
+              # que "exit 0" acá SÍ afirma algo (ver header del manifiesto).
+              # EN: no expected/ — the contract is the exit code. Every test
+              # entering this way has assert(), which aborts with exit 1.
+              if [ "$rc" -eq 0 ]; then
+                echo "  ✓ exit 0 (sin expected/, aserciones internas)"
+                PASS=$((PASS + 1))
+              else
+                echo "  ✗ RUN rc=$rc"
+                cat "out/$base.txt"
+                RUNFAIL="$RUNFAIL $base(rc=$rc)"
+              fi
+              continue
+            fi
+
+            # CRLF por partida doble (lección W0, commit aad10f3): stdout de
+            # Windows emite \r\n Y el checkout puede haber convertido el
+            # expected/ a CRLF. Se normalizan LOS DOS lados antes del diff.
+            # EN: CRLF twice over (W0 lesson): Windows stdout emits \r\n AND
+            # the checkout may have CRLF'd the expected/. Normalize BOTH.
+            tr -d '\r' < "$exp" > "out/$base.exp"
+            # El rc GATEA, no decora (review de rama W2, I1). Antes el PASS lo
+            # decidía sólo el diff y el rc apenas se imprimía: un test que
+            # imprimiera todo lo correcto y DESPUÉS crasheara en el teardown
+            # (double-free en un drop, un atexit del GC, un fault al salir)
+            # pasaba con ✓. En Windows eso no es teórico — es exactamente la
+            # clase de bug que este job existe para encontrar. Paridad con el
+            # runner canónico (run_bootstrap_tests.sh:137-141: compila &&
+            # linkea && corre && compara; el exit code es parte de la cadena).
+            # EN: rc GATES, it does not decorate (W2 branch review, I1).
+            # Previously only the diff decided PASS and rc was merely printed:
+            # a test printing everything correctly and THEN crashing during
+            # teardown (a double-free in a drop, a GC atexit, a fault on the
+            # way out) passed with a ✓. On Windows that is not hypothetical —
+            # it is exactly the class of bug this job exists to catch. Parity
+            # with the canonical runner (run_bootstrap_tests.sh:137-141).
+            if [ "$rc" -eq 0 ] && diff -u "out/$base.exp" "out/$base.txt"; then
+              echo "  ✓ salida == expected/ (rc=0)"
+              PASS=$((PASS + 1))
+            elif [ "$rc" -ne 0 ]; then
+              # Se muestra el diff igual: si la salida ADEMÁS difiere, verlo
+              # ahorra una iteración entera de CI.
+              # EN: show the diff anyway — if the output also differs, seeing
+              # it saves a full CI round-trip.
+              echo "  ✗ RUN rc=$rc (salida abajo; el expected/ se compara igual, a título informativo)"
+              diff -u "out/$base.exp" "out/$base.txt" || true
+              RUNFAIL="$RUNFAIL $base(rc=$rc)"
+            else
+              echo "  ✗ DIFF (rc=0)"
+              DIFFFAIL="$DIFFFAIL $base"
+            fi
+          done < /tmp/manifest.clean
+
+          echo ""
+          echo "================================================================"
+          echo "w2-subset: $PASS test(s) de Nyx CORRIERON en Windows y dijeron lo esperado"
+          [ -z "$LINKFAIL" ] || echo "  ✗ no linkean :$LINKFAIL"
+          [ -z "$RUNFAIL" ]  || echo "  ✗ exit code != 0 :$RUNFAIL"
+          [ -z "$DIFFFAIL" ] || echo "  ✗ salida != expected/ :$DIFFFAIL"
+          echo "================================================================"
+          if [ -n "$LINKFAIL$RUNFAIL$DIFFFAIL" ]; then
+            echo "(un fallo de LINK es un símbolo fuera del subset o un residuo posix nuevo;"
+            echo " un DIFF es semántica win32 REAL divergiendo — ver el header del manifiesto)"
+            exit 1
+          fi
+
+          # Piso del subset (review de rama W2, M2). Sin esto, borrar líneas
+          # del manifiesto hace que el gate pase MÁS rápido y MÁS verde: un
+          # manifiesto vacío daría "0 tests, todo bien". El piso convierte
+          # achicar la cobertura en una decisión EXPLÍCITA — hay que bajar
+          # este número a mano, y eso se ve en el diff.
+          # Crecer no requiere tocar nada; encogerse sí. El conteo canónico de
+          # tests del repo vive en docs/TESTS.md, no acá: este número es sólo
+          # el piso de ESTE job.
+          # EN: subset floor (W2 branch review, M2). Without it, deleting
+          # manifest lines makes the gate pass faster and greener — an empty
+          # manifest would report "0 tests, all good". The floor turns
+          # shrinking coverage into an EXPLICIT decision: someone has to lower
+          # this number by hand, and that shows up in the diff. Growing needs
+          # no edit; shrinking does. The repo's canonical test counts live in
+          # docs/TESTS.md — this is only THIS job's floor.
+          FLOOR=26
+          if [ "$PASS" -lt "$FLOOR" ]; then
+            echo "w2-subset: el subset se ACHICÓ — $PASS verdes contra un piso de $FLOOR"
+            echo "  (si un test salió del manifiesto con razón, bajá FLOOR en este workflow"
+            echo "   EN EL MISMO COMMIT y decí por qué; el piso existe para que encogerse no"
+            echo "   pueda pasar en silencio)"
+            exit 1
+          fi
+
+  # ==========================================================================
+  # w2-subset-arm64 — el MISMO gate, en la OTRA arquitectura, con ejecución
+  # REAL (W2-ARM64).
+  #
+  # Por qué existe: hasta esta task, ARM64-Windows sólo se COMPILABA
+  # (w2-compile, último step: os_win32.c con --target=aarch64 para verificar
+  # sus _Static_assert de tamaño/alineación). La spec §1.4 daba por sentado
+  # que no había runner público ARM64-Windows para EJECUTAR. Ya lo hay:
+  # `windows-11-arm` (imagen windows-11-arm64, VS 2022 Enterprise con
+  # VC.Tools.ARM64, LLVM 20.1.6 y vcpkg preinstalados), medido con una sonda
+  # antes de escribir este job. Así que la mitad "compila pero nadie sabe si
+  # corre" de ARM64 deja de ser un supuesto.
+  #
+  # Qué agrega sobre w2-compile: TODO lo que sólo se ve al ejecutar. Los
+  # _Static_assert cubren el layout de los tipos win32 opacos; no cubren la
+  # calling convention (AAPCS64 vs SysV/Win64), el paso de structs por valor,
+  # la promoción de varargs (float en varargs — printf de doubles cambia de
+  # convención entre x64 y ARM64), la alineación de stack, ni el
+  # comportamiento del GC de Boehm compilado PARA arm64 (escaneo de registros
+  # y de stack son código ensamblador por arquitectura).
+  #
+  # Espejo deliberado de w2-subset: mismos 9 TUs, mismos flags (+ -Werror
+  # sobre os_win32.c), mismo link/run/diff con el rc gateando, mismo FLOOR.
+  # Las ÚNICAS diferencias son el triple, el triplet de vcpkg y el arch de
+  # vcvarsall. La duplicación es a propósito: si los dos jobs divergieran en
+  # flags, un fallo de arm64 dejaría de ser evidencia de ABI y pasaría a ser
+  # "quizás compilamos distinto".
+  #
+  # EN: the SAME gate on the OTHER architecture, with REAL execution. Until
+  # this task ARM64-Windows was only COMPILED (w2-compile's last step, which
+  # verifies os_win32.c's size/alignment _Static_asserts); spec §1.4 assumed
+  # no public ARM64-Windows runner could RUN anything. There is one now:
+  # `windows-11-arm`, measured with a probe before writing this job. Compiling
+  # covers type layout; it does NOT cover the calling convention (AAPCS64),
+  # struct-by-value passing, vararg promotion (printf of doubles differs), or
+  # Boehm GC's per-architecture register/stack scanning assembly. Deliberate
+  # mirror of w2-subset — same TUs, same flags, same gate, same floor; only
+  # the triple, the vcpkg triplet and the vcvarsall arch differ. Divergent
+  # flags would turn an arm64 failure from ABI evidence into "maybe we just
+  # compiled it differently".
+  # ==========================================================================
+  w2-subset-arm64:
+    name: Subset de regresion — LINK + RUN real (windows-11-arm, ARM64)
+    runs-on: windows-11-arm
+    needs: w2-subset-ir
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inventario del runner ARM64
+        shell: bash
+        run: |
+          # windows-11-arm es una imagen JOVEN y con menos software que
+          # windows-latest: este step deja en el log qué trae, para que el día
+          # que la imagen cambie de contenido el diagnóstico sea inmediato en
+          # vez de "clang: command not found" sin contexto. Todo con `|| true`:
+          # es inventario, no gate.
+          # EN: windows-11-arm is a young image with less software than
+          # windows-latest. This step records what it ships so that an image
+          # change is diagnosed instantly instead of via a bare "command not
+          # found". Everything `|| true` — inventory, not a gate.
+          #
+          # Medido en la primera corrida (imagen windows-11-arm64 20260809.134,
+          # LLVM 20.1.6 con default target aarch64-pc-windows-msvc, LLD 20.1.6,
+          # vcpkg en C:\vcpkg, VS 2022 Enterprise con VC.Tools.ARM64):
+          #
+          # ⚠️ TRAMPA: dentro de `shell: bash` este runner reporta
+          # PROCESSOR_ARCHITECTURE=AMD64. NO es un error de la imagen — el bash
+          # de Git for Windows sigue siendo un binario x86_64 corriendo bajo la
+          # emulación de Windows-on-ARM, y ve el entorno emulado. `uname` dice
+          # lo mismo ("x86_64 Msys" sobre un kernel ...-ARM64). O sea: NUNCA
+          # ramificar por PROCESSOR_ARCHITECTURE ni por uname para decidir la
+          # arquitectura objetivo en este job. La fuente honesta es el default
+          # target de clang (que sí dice aarch64) — y de todos modos acá el
+          # triple se pasa EXPLÍCITO en cada invocación, que es justamente por
+          # qué esta trampa no nos toca.
+          # EN: GOTCHA — inside `shell: bash` this runner reports
+          # PROCESSOR_ARCHITECTURE=AMD64, because Git Bash is still an x86_64
+          # binary under Windows-on-ARM emulation and sees the emulated
+          # environment (uname agrees: "x86_64 Msys" on an ...-ARM64 kernel).
+          # Never branch on PROCESSOR_ARCHITECTURE or uname here to decide the
+          # target architecture. clang's default target is the honest source —
+          # and in any case this job passes the triple EXPLICITLY everywhere,
+          # which is exactly why the gotcha does not bite us.
+          set -u
+          echo "PROCESSOR_ARCHITECTURE=${PROCESSOR_ARCHITECTURE:-?}"
+          uname -a || true
+          echo "--- clang"; command -v clang || true; clang --version || true
+          echo "--- lld-link"; command -v lld-link || true; lld-link --version || true
+          echo "--- vcpkg"; echo "VCPKG_INSTALLATION_ROOT=${VCPKG_INSTALLATION_ROOT:-unset}"; vcpkg version || true
+
+      - name: MSVC environment (arm64)
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          name: hello-arm64-exe
-          path: hello-arm64.exe
-          if-no-files-found: error
+          arch: arm64
+
+      - name: Install Boehm GC (vcpkg, triplet arm64-windows)
+        # arm64-windows, NO x64-windows: el .exe final es ARM64 nativo y la
+        # gc.lib/gc.dll que linkea tienen que serlo también. El triplet es la
+        # diferencia sustantiva contra el job de x64 — los HEADERS de bdwgc son
+        # los mismos (por eso w2-compile puede compilar os_win32.c para arm64
+        # usando los includes de x64), pero la biblioteca NO.
+        # EN: arm64-windows, NOT x64-windows: the final .exe is native ARM64 so
+        # gc.lib/gc.dll must be too. bdwgc's headers are arch-independent
+        # (which is why w2-compile can compile for arm64 with the x64
+        # includes), the library is not.
+        run: vcpkg install bdwgc:arm64-windows
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: w2-subset-ir-arm64
+          path: ir
+
+      - name: Build the portable runtime subset (once, aarch64)
+        shell: bash
+        run: |
+          set -u
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/arm64-windows"
+          mkdir -p objs
+          echo "INCLUDE=${INCLUDE:-unset}"
+          echo "LIB=${LIB:-unset}"
+          # MISMOS flags y MISMA lista de TUs que w2-subset (incluido el "sin
+          # -Iruntime": runtime/time.h le haría sombra al <time.h> del CRT).
+          # Única diferencia: el triple.
+          # EN: same flags and same TU list as w2-subset (including the "no
+          # -Iruntime"). Only the triple differs.
+          CFLAGS="--target=aarch64-pc-windows-msvc -c -O1 -Wall -D_CRT_SECURE_NO_WARNINGS"
+          CFLAGS="$CFLAGS -I$VCPKG_DIR/include"
+
+          FAIL=0
+          for src in runtime/strings.c \
+                     runtime/runtime-arrays.c \
+                     runtime/maps.c \
+                     runtime/time.c \
+                     runtime/iterators.c \
+                     runtime/sqlite_adapter.c \
+                     runtime/file-io.c \
+                     runtime/runtime.c \
+                     runtime/os/os_win32.c ; do
+            base=$(basename "$src" .c)
+            # -Werror sobre os_win32.c igual que en los otros dos jobs (M12/M4):
+            # el ARM64 es donde un warning nuevo sería MÁS informativo
+            # (convenciones de llamada, alineación).
+            # EN: -Werror on os_win32.c as in the other two jobs — ARM64 is
+            # where a new warning would be most informative.
+            EXTRA=""
+            if [ "$src" = "runtime/os/os_win32.c" ]; then EXTRA="-Werror"; fi
+            echo "=== $src $EXTRA"
+            if ! clang $CFLAGS $EXTRA "$src" -o "objs/$base.obj" > "objs/$base.diag" 2>&1; then
+              FAIL=1
+            fi
+            cat "objs/$base.diag"
+          done
+          [ "$FAIL" -eq 0 ] || { echo "w2-subset-arm64: el subset del runtime no compila para aarch64"; exit 1; }
+          echo "9 TUs del subset compilados a .obj (aarch64-pc-windows-msvc)"
+
+      - name: Link + RUN + diff each test (ARM64 nativo)
+        shell: bash
+        run: |
+          set -u
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/arm64-windows"
+          mkdir -p bin out
+          # gc.dll junto al .exe: el directorio del ejecutable es lo PRIMERO
+          # en el orden de búsqueda de DLLs de Windows.
+          # EN: gc.dll next to the .exe — first in Windows' DLL search order.
+          cp "$VCPKG_DIR/bin/gc.dll" bin/
+
+          # \tmp en el drive del workspace — MISMO hallazgo win32 que en x64
+          # (ver el comentario largo en w2-subset y el header del manifiesto):
+          # una ruta que arranca con "/" resuelve a la raíz del DRIVE ACTUAL
+          # del proceso, no a C:. El .exe es nativo y no ve el /tmp de Git
+          # Bash. Es setup de ENTORNO, no un parche al test.
+          #
+          # DELTA MEDIDO entre los dos runners: el workspace de windows-latest
+          # vive en D:, el de windows-11-arm en C:. O sea que ESTE job, por sí
+          # solo, NUNCA habría encontrado el hallazgo del drive — acá el
+          # `mkdir /c/tmp` alcanza y `/tmp` "simplemente funciona". Por eso el
+          # drive se DERIVA con `pwd -W` en vez de hardcodearse: la línea de
+          # abajo es idéntica a la de x64 y las dos son correctas en los dos
+          # runners, incluso si alguna imagen cambia de layout mañana.
+          # EN: MEASURED DELTA — windows-latest's workspace is on D:, this
+          # runner's is on C:. So this job alone would NEVER have surfaced the
+          # drive finding: here `mkdir /c/tmp` suffices and "/tmp" just works.
+          # That is why the drive is DERIVED with `pwd -W` instead of
+          # hardcoded — the code below is identical to x64's and correct on
+          # both, even if an image changes layout tomorrow.
+          mkdir -p /c/tmp
+          WSDRIVE=$( (pwd -W 2>/dev/null || echo "") | cut -c1 | tr 'A-Z' 'a-z' )
+          if [ -n "$WSDRIVE" ]; then
+            mkdir -p "/$WSDRIVE/tmp"
+            echo "tmp del drive del workspace: /$WSDRIVE/tmp"
+          fi
+
+          tr -d '\r' < scripts/testing/win_subset_manifest.txt > /tmp/manifest.clean
+
+          PASS=0
+          LINKFAIL=""
+          RUNFAIL=""
+          DIFFFAIL=""
+          while IFS="$(printf '\t')" read -r test exp; do
+            case "$test" in ''|'#'*) continue ;; esac
+            base=$(basename "$test" .nx)
+            echo "=== $base"
+
+            if ! clang --target=aarch64-pc-windows-msvc -fuse-ld=lld-link -O1 \
+                 "ir/$base.ll" objs/*.obj \
+                 -L"$VCPKG_DIR/lib" -lgc \
+                 -o "bin/$base.exe" > "out/$base.link" 2>&1; then
+              echo "  ✗ LINK"
+              cat "out/$base.link"
+              LINKFAIL="$LINKFAIL $base"
+              continue
+            fi
+
+            # El `if` NO es cosmético: `shell: bash` de GitHub corre con `-e`,
+            # y un `cmd; rc=$?` pelado mata el step en el primer test que salga
+            # != 0 — justo el caso que este job existe para REPORTAR.
+            # EN: the `if` is not cosmetic — GitHub's bash runs with `-e`.
+            if ( cd bin && timeout 30 "./$base.exe" ) > "out/$base.raw" 2>&1; then
+              rc=0
+            else
+              rc=$?
+            fi
+            tr -d '\r' < "out/$base.raw" > "out/$base.txt"
+
+            if [ "$exp" = "NONE" ]; then
+              # Sin expected/: el contrato es el exit code. Todos los tests que
+              # entran así tienen assert(), y assert aborta con exit 1.
+              # EN: no expected/ — the contract is the exit code; every test
+              # entering this way has assert(), which aborts with exit 1.
+              if [ "$rc" -eq 0 ]; then
+                echo "  ✓ exit 0 (sin expected/, aserciones internas)"
+                PASS=$((PASS + 1))
+              else
+                echo "  ✗ RUN rc=$rc"
+                cat "out/$base.txt"
+                RUNFAIL="$RUNFAIL $base(rc=$rc)"
+              fi
+              continue
+            fi
+
+            # CRLF por partida doble (lección W0): stdout de Windows emite
+            # \r\n Y el checkout puede haber convertido el expected/ a CRLF.
+            # EN: CRLF twice over — normalize BOTH sides.
+            tr -d '\r' < "$exp" > "out/$base.exp"
+            # El rc GATEA, no decora (review de rama W2, I1): un test que
+            # imprima todo lo correcto y DESPUÉS crashee en el teardown pasaría
+            # con ✓ si sólo mirara el diff.
+            # EN: rc GATES, it does not decorate.
+            if [ "$rc" -eq 0 ] && diff -u "out/$base.exp" "out/$base.txt"; then
+              echo "  ✓ salida == expected/ (rc=0)"
+              PASS=$((PASS + 1))
+            elif [ "$rc" -ne 0 ]; then
+              echo "  ✗ RUN rc=$rc (salida abajo; el expected/ se compara igual, a título informativo)"
+              diff -u "out/$base.exp" "out/$base.txt" || true
+              RUNFAIL="$RUNFAIL $base(rc=$rc)"
+            else
+              echo "  ✗ DIFF (rc=0)"
+              DIFFFAIL="$DIFFFAIL $base"
+            fi
+          done < /tmp/manifest.clean
+
+          echo ""
+          echo "================================================================"
+          echo "w2-subset-arm64: $PASS test(s) de Nyx CORRIERON en Windows ARM64 y dijeron lo esperado"
+          [ -z "$LINKFAIL" ] || echo "  ✗ no linkean :$LINKFAIL"
+          [ -z "$RUNFAIL" ]  || echo "  ✗ exit code != 0 :$RUNFAIL"
+          [ -z "$DIFFFAIL" ] || echo "  ✗ salida != expected/ :$DIFFFAIL"
+          echo "================================================================"
+          if [ -n "$LINKFAIL$RUNFAIL$DIFFFAIL" ]; then
+            echo "(OJO: si el MISMO test pasa en w2-subset (x64) y falla acá, eso NO se"
+            echo " arregla sacándolo del manifiesto — es un HALLAZGO DE ABI. El manifiesto"
+            echo " es único para los dos triples justamente para que esto no se pueda tapar."
+            echo " Sospechosos por orden: calling convention AAPCS64, varargs con floats,"
+            echo " alineación, y el escaneo de stack/registros de Boehm en arm64.)"
+            exit 1
+          fi
+
+          # Piso del subset — el MISMO número que w2-subset (review de rama W2,
+          # M2): las dos arquitecturas corren el mismo manifiesto, así que
+          # tienen el mismo piso. Si algún día hay que bajarlo SÓLO acá, eso ya
+          # sería aceptar por escrito que ARM64 cubre menos que x64 — decisión
+          # explícita, visible en el diff, nunca un silencio.
+          # EN: same floor as w2-subset — both architectures run the same
+          # manifest. Lowering it only here would be a written admission that
+          # ARM64 covers less than x64: explicit and visible in the diff.
+          FLOOR=26
+          if [ "$PASS" -lt "$FLOOR" ]; then
+            echo "w2-subset-arm64: el subset se ACHICÓ — $PASS verdes contra un piso de $FLOOR"
+            echo "  (si un test salió del manifiesto con razón, bajá FLOOR en AMBOS jobs"
+            echo "   EN EL MISMO COMMIT y decí por qué)"
+            exit 1
+          fi
+
+  # ==========================================================================
+  # w3-spike / w3-spike-arm64 — spike de CI (NO gate de merge): valida S1-S6
+  # del diseño docs/superpowers/specs/2026-08-27-w3-gc-windows-design.md §6
+  # ANTES de portar el scheduler M:N a Windows. El binario NO usa
+  # runtime/os/os_win32.c — CreateFiberEx/SwitchToFiber directo contra los
+  # headers de bdwgc de vcpkg, porque el spike tiene que poder correr antes
+  # de que exista la v2 del ctx-switch del scheduler.
+  #
+  # Qué decide: si S1 (el WARN "Thread stack pointer ... out of range,
+  # pushing everything" es cosmético, no faultea) y S3 (cero colecciones
+  # prematuras con el root permanente por-goroutina) se sostienen 20/20, la
+  # Opción E (CreateFiberEx commit==reserve + roots de scheduler.c intactos +
+  # silenciar el WARN) es viable y W3 sigue. Si CUALQUIERA de las dos falla,
+  # el spike es evidencia para el fallback B (parche STACKPTR_CORRECTOR +
+  # build-from-source de bdwgc) — decisión del coordinador, no de este job.
+  #
+  # Regla dura (no negociable): un verde de S1 con warn_count==0 es TAN ROJO
+  # como un exit!=0 — significa que la corrida nunca puso a un worker a
+  # correr una goroutine sobre su fiber mientras el thread de GC de fondo
+  # coleccionaba, es decir, el fenómeno que el spike existe para ejercer
+  # nunca ocurrió. El binario mismo gatea esto (run_load() en
+  # test_w3_gc_spike.c falla si require_warn && warn_count==0), y el step de
+  # abajo lo vuelve a verificar por separado leyendo "warn_count=" del log
+  # de cada corrida — defensa en profundidad contra un bug en ese gate.
+  #
+  # 20 corridas para S1/S3, 10 para S2, 1 para S4/S5 (§6: la ablación de
+  # Linux midió 8/10 de tasa de falla del fenómeno viejo; con esa base, 20
+  # corridas dan ~1.2% de falso-verde contra ~51% de 3 corridas).
+  #
+  # EN: w3-spike / w3-spike-arm64 — CI spike (NOT a merge gate) validating
+  # S1-S6 of the GC-Windows design BEFORE porting the M:N scheduler. No
+  # os_win32.c — direct CreateFiberEx/SwitchToFiber, because the spike must
+  # run before ctx-switch v2 exists. S1/S3 20/20 green decides Option E is
+  # viable; either failing is evidence for fallback B, a coordinator call.
+  # Hard rule: an S1 green with warn_count==0 is as red as a nonzero exit —
+  # it means the run never actually caught a worker running a goroutine on
+  # its fiber while the background GC thread collected. The binary gates
+  # this itself; the step below re-checks it independently from the log.
+  # ==========================================================================
+  w3-spike:
+    name: W3 spike — GC+Fibers S1-S5 (windows-latest, x64)
+    # Solo en ramas feat/w3-** — en main quemaría ~40 min de runner Windows por
+    # push sin aportar señal nueva (el spike es un gate de DISEÑO, no de regresión).
+    # / feat/w3-** branches only — on main it would burn ~40 min of Windows runner
+    # per push with no new signal (the spike gates a design, not regressions).
+    if: startsWith(github.ref, 'refs/heads/feat/w3-')
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSVC environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Install Boehm GC (vcpkg)
+        run: vcpkg install bdwgc:x64-windows
+
+      - name: Compilar el spike
+        shell: bash
+        run: |
+          set -u
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          mkdir -p bin
+          clang --target=x86_64-pc-windows-msvc -O1 -Wall -D_CRT_SECURE_NO_WARNINGS \
+            -I"$VCPKG_DIR/include" -fuse-ld=lld-link \
+            tests/runtime-unit/win/test_w3_gc_spike.c \
+            -L"$VCPKG_DIR/lib" -lgc \
+            -o bin/spike.exe
+          # gc.dll junto al .exe (primero en el orden de busqueda de DLLs de
+          # Windows, misma receta que w2-subset).
+          cp "$VCPKG_DIR/bin/gc.dll" bin/
+          echo "spike.exe compilado (x86_64-pc-windows-msvc)"
+
+      - name: Fase A — R0, matriz 2x2 decisiva (rev2, gate antes de Fase B)
+        shell: bash
+        run: |
+          set -u
+          cd bin
+
+          # Task 1 bis (rev2): el cuelgue de la iteracion anterior NO era una
+          # incompatibilidad Boehm+Fibers -- era un ROOT INVALIDO
+          # (GetCurrentThreadStackLimits devuelve el rango RESERVADO, no el
+          # comiteado; GC_gcollect() sobre esas paginas entra en un bucle de
+          # reintento infinito CON EL MUNDO PARADO, mark.c:447-474 +
+          # alloc.c:875-885). R0 es la matriz 2x2 que lo confirma ANTES de
+          # gastar el resto del run: si s0b (fibers SIN roots) tambien
+          # cuelga, el root-cause es FALSO y hay que ir a la Opcion F, no
+          # seguir iterando E'.
+          #
+          # run_mode: corre N veces un modo con timeout externo (red de
+          # seguridad; el watchdog INTERNO del binario dispara antes, en
+          # 10-20s segun el modo — ver watchdog_seconds_for en el .c) y
+          # cuenta cuantas corridas cumplieron la expectativa.
+          #   expect=ok   -> pasa si rc==0
+          #   expect=hang -> pasa si rc!=0 (99 del watchdog, o cualquier otra
+          #                  señal de que NO retorno limpio)
+          run_mode() {
+            mode="$1"; tmo="$2"; runs="$3"; expect="$4"
+            pass=0
+            for i in $(seq 1 "$runs"); do
+              logf="out_${mode}_${i}.log"
+              # SIN subshell alrededor de `timeout`: la forma anterior
+              # ( timeout ... ) > "$logf" 2>&1 metia una capa extra de
+              # proceso (subshell) entre bash y spike.exe. Confirmado en el
+              # run 33064189783 (coordinador + revision propia): 3 de las 4
+              # corridas fallidas de S1/S3 en ARM64 capturaron CERO bytes en
+              # su out_*.log pese a que spike.exe SI llega a escribir varias
+              # lineas antes de morir (visto en x64, run 6 de s3, que
+              # alcanzo a volcar una linea VEH completa). Redirigir DIRECTO
+              # sobre `timeout` (sin parentesis) es la forma estandar y
+              # elimina esa capa como sospechoso.
+              # El `if` sigue siendo obligatorio (NO cosmetico, misma
+              # trampa que w2-subset ya documenta en este archivo): shell:
+              # bash corre con `-e`, y un `cmd; rc=$?` pelado mata el step
+              # en la primera corrida que salga != 0 -- exactamente el caso
+              # que esta matriz existe para reportar (los modos "hang"
+              # SIEMPRE salen != 0, y son la mayoria de las corridas).
+              if timeout "$tmo" ./spike.exe "$mode" > "$logf" 2>&1; then
+                rc=0
+              else
+                rc=$?
+              fi
+              echo "  [$mode] run $i rc=$rc"
+              cat "$logf"
+              # rc=97: el VEH del binario detecto un EXCEPTION_ACCESS_VIOLATION
+              # real, volco el diagnostico crudo (_write, sin stdio -- ver
+              # global_veh) y salio el solo. Distinto de rc=99 (watchdog: el
+              # proceso NUNCA volvio) y de cualquier `return 1` interno.
+              # Pedido explicito de diagnostico (2026-08-27): rotular esta
+              # corrida aparte y volcar su salida completa de nuevo, resaltada,
+              # sea cual sea el modo.
+              if [ "$rc" -eq 97 ]; then
+                echo "  ==== AV CAPTURADO POR VEH: [$mode] run $i rc=97 -- salida completa de $logf ===="
+                cat "$logf"
+                echo "  ==== fin del volcado VEH de [$mode] run $i ===="
+              fi
+              if [ "$expect" = "ok" ]; then
+                if [ "$rc" -eq 0 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -ne 97 ]; then
+                  # rc=97 ya se etiqueto y volco arriba -- este bloque es
+                  # para cualquier OTRO fallo inesperado (no duplicar el
+                  # volcado de arriba).
+                  echo "  ==== FALLO INESPERADO: [$mode] run $i rc=$rc -- tail -40 de $logf ===="
+                  tail -40 "$logf"
+                  echo "  ==== fin del detalle de [$mode] run $i ===="
+                fi
+              else
+                # "hang" se mide por el WATCHDOG interno (rc=99) -- diseño
+                # original de rev2, restaurado: el VEH (global_veh) ya NO
+                # mata el proceso en el primer AV (eso rompia el mecanismo:
+                # s0c/s2raw/s2default EXISTEN para que bdwgc reintente sobre
+                # la misma pagina mala PARA SIEMPRE, alloc.c:875 -- interceptar
+                # y salir en el primer first-chance AV los hacia terminar en
+                # rc=97 en vez de colgar, tapando exactamente lo que estos
+                # modos existen para probar). rc=97 aca significaria que el
+                # filtro UNHANDLED disparo -- osea que ni siquiera bdwgc pudo
+                # manejar el AV esperado -- una señal real, no una confirmacion:
+                # NO cuenta como pass. rc=124 (timeout EXTERNO) tampoco cuenta:
+                # significa que ni el watchdog ni nada mas disparo.
+                if [ "$rc" -eq 99 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -eq 124 ]; then
+                  echo "  [$mode] run $i: timeout EXTERNO (124), no el watchdog -- sospechoso, no cuenta"
+                fi
+              fi
+            done
+          }
+
+          echo "### s0  x3  (sin fibers, sin roots)                    -> se espera OK"
+          run_mode s0 15 3 ok; PASS_S0=$pass
+          echo "### s0b x3  (fibers, SIN GC_add_roots del stack)       -> se espera OK"
+          run_mode s0b 15 3 ok; PASS_S0B=$pass
+          echo "### s0c x3  (sin fibers, root RAW sobre MEM_RESERVE)   -> se espera CUELGUE (rc!=0 via watchdog)"
+          run_mode s0c 15 3 hang; PASS_S0C=$pass
+          echo "### s2raw x10 (fiber CreateFiberEx + root RAW/nominal) -> se espera CUELGUE (rc!=0 via watchdog); esta corrida TAMBIEN es la mitad 'raw' de R2"
+          run_mode s2raw 15 10 hang; PASS_S2RAW=$pass
+
+          echo ""
+          echo "================================================================"
+          echo "R0: s0=$PASS_S0/3(ok) s0b=$PASS_S0B/3(ok) s0c=$PASS_S0C/3(hang) s2raw=$PASS_S2RAW/10(hang)"
+          echo "================================================================"
+
+          if [ "$PASS_S0B" -ne 3 ]; then
+            echo "FASE A: s0b (fibers SIN roots) NO devolvio OK en las 3 corridas."
+            echo "  Eso significa que el ROOT CAUSE de rev2 es FALSO: hay algo"
+            echo "  especifico de las Fibers que cuelga la coleccion, no el root."
+            echo "  Ver rev2 §4, Opcion F (abandonar Fibers). NO seguir a Fase B —"
+            echo "  este job termina aca a proposito, como evidencia para BLOCKED."
+            exit 1
+          fi
+          if [ "$PASS_S0" -ne 3 ] || [ "$PASS_S0C" -ne 3 ] || [ "$PASS_S2RAW" -ne 10 ]; then
+            echo "FASE A: la matriz 2x2 no cerro limpio (ver conteos arriba) —"
+            echo "  revisar antes de confiar en Fase B (puede ser plomeria del"
+            echo "  spike, no necesariamente el root-cause)."
+            exit 1
+          fi
+          echo "FASE A OK: root-cause de rev2 CONFIRMADO (root invalido, no las"
+          echo "Fibers) — procediendo a Fase B con el fix de rango medido."
+
+      - name: Fase B — matriz S1-S6 completa con el fix (rango medido + guardia)
+        shell: bash
+        run: |
+          set -u
+          cd bin
+
+          run_mode() {
+            mode="$1"; tmo="$2"; runs="$3"; expect="$4"
+            pass=0
+            for i in $(seq 1 "$runs"); do
+              logf="out_${mode}_${i}.log"
+              # SIN subshell alrededor de `timeout`: la forma anterior
+              # ( timeout ... ) > "$logf" 2>&1 metia una capa extra de
+              # proceso (subshell) entre bash y spike.exe. Confirmado en el
+              # run 33064189783 (coordinador + revision propia): 3 de las 4
+              # corridas fallidas de S1/S3 en ARM64 capturaron CERO bytes en
+              # su out_*.log pese a que spike.exe SI llega a escribir varias
+              # lineas antes de morir (visto en x64, run 6 de s3, que
+              # alcanzo a volcar una linea VEH completa). Redirigir DIRECTO
+              # sobre `timeout` (sin parentesis) es la forma estandar y
+              # elimina esa capa como sospechoso.
+              # El `if` sigue siendo obligatorio (NO cosmetico, misma
+              # trampa que w2-subset ya documenta en este archivo): shell:
+              # bash corre con `-e`, y un `cmd; rc=$?` pelado mata el step
+              # en la primera corrida que salga != 0 -- exactamente el caso
+              # que esta matriz existe para reportar (los modos "hang"
+              # SIEMPRE salen != 0, y son la mayoria de las corridas).
+              if timeout "$tmo" ./spike.exe "$mode" > "$logf" 2>&1; then
+                rc=0
+              else
+                rc=$?
+              fi
+              echo "  [$mode] run $i rc=$rc"
+              cat "$logf"
+              # rc=97: el VEH del binario detecto un EXCEPTION_ACCESS_VIOLATION
+              # real, volco el diagnostico crudo (_write, sin stdio -- ver
+              # global_veh) y salio el solo. Distinto de rc=99 (watchdog: el
+              # proceso NUNCA volvio) y de cualquier `return 1` interno.
+              # Pedido explicito de diagnostico (2026-08-27): rotular esta
+              # corrida aparte y volcar su salida completa de nuevo, resaltada,
+              # sea cual sea el modo.
+              if [ "$rc" -eq 97 ]; then
+                echo "  ==== AV CAPTURADO POR VEH: [$mode] run $i rc=97 -- salida completa de $logf ===="
+                cat "$logf"
+                echo "  ==== fin del volcado VEH de [$mode] run $i ===="
+              fi
+              if [ "$expect" = "ok" ]; then
+                if [ "$rc" -eq 0 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -ne 97 ]; then
+                  # rc=97 ya se etiqueto y volco arriba -- este bloque es
+                  # para cualquier OTRO fallo inesperado (no duplicar el
+                  # volcado de arriba).
+                  echo "  ==== FALLO INESPERADO: [$mode] run $i rc=$rc -- tail -40 de $logf ===="
+                  tail -40 "$logf"
+                  echo "  ==== fin del detalle de [$mode] run $i ===="
+                fi
+              else
+                # "hang" se mide por el WATCHDOG interno (rc=99) -- diseño
+                # original de rev2, restaurado: el VEH (global_veh) ya NO
+                # mata el proceso en el primer AV (eso rompia el mecanismo:
+                # s0c/s2raw/s2default EXISTEN para que bdwgc reintente sobre
+                # la misma pagina mala PARA SIEMPRE, alloc.c:875 -- interceptar
+                # y salir en el primer first-chance AV los hacia terminar en
+                # rc=97 en vez de colgar, tapando exactamente lo que estos
+                # modos existen para probar). rc=97 aca significaria que el
+                # filtro UNHANDLED disparo -- osea que ni siquiera bdwgc pudo
+                # manejar el AV esperado -- una señal real, no una confirmacion:
+                # NO cuenta como pass. rc=124 (timeout EXTERNO) tampoco cuenta:
+                # significa que ni el watchdog ni nada mas disparo.
+                if [ "$rc" -eq 99 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -eq 124 ]; then
+                  echo "  [$mode] run $i: timeout EXTERNO (124), no el watchdog -- sospechoso, no cuenta"
+                fi
+              fi
+            done
+          }
+
+          echo "### s2measured x10 (fiber CreateFiberEx + rango MEDIDO/walk)  -> OK, cierra R2 junto con s2raw de Fase A"
+          run_mode s2measured 15 10 ok; PASS_S2MEASURED=$pass
+
+          echo "### s2default x10 (CreateFiber default + root RAW)  -> se espera CUELGUE (rc!=0, antes se esperaba un crash directo; con rev2 sabemos que es el watchdog el que lo corta)"
+          run_mode s2default 15 10 hang; PASS_S2D=$pass
+
+          echo "### s2ex x10 (CreateFiberEx commit==reserve + rango MEDIDO)  -> OK (== s2measured, nombre de continuidad con el S1-S6 original)"
+          run_mode s2ex 15 10 ok; PASS_S2EX=$pass
+
+          echo "### s5 x1 (GC_get_parallel + GC_beginthreadex)"
+          run_mode s5 15 1 ok; PASS_S5=$pass
+
+          echo "### s1 x20 (carga completa, root MEDIDO + guardia)"
+          run_mode s1 30 20 ok; PASS_S1=$pass
+          WARN_ZERO_S1=0
+          for i in $(seq 1 20); do
+            # `|| true`: si algun s1 no imprimio "warn_count=" (rc!=0), el
+            # grep no matchea y sale 1 -- bajo `bash -e -o pipefail` de
+            # GitHub eso mataria el step entero antes de terminar de contar.
+            wc=$(grep -o 'warn_count=[0-9]*' "out_s1_$i.log" | head -1 | cut -d= -f2) || true
+            wc=${wc:-0}
+            [ "$wc" -eq 0 ] && WARN_ZERO_S1=$((WARN_ZERO_S1 + 1))
+          done
+
+          echo "### s3 x50 (diagnostico 2026-08-27, ruling autor diseno: mas masa para que"
+          echo "### el 1/20 caiga -- gate de commit + gcollect inmediato + volcado de canario)"
+          run_mode s3 30 50 ok; PASS_S3=$pass
+          CORRUPT_NONZERO_S3=0
+          for i in $(seq 1 50); do
+            cc=$(grep -o 'corrupt_count=[0-9]*' "out_s3_$i.log" | head -1 | cut -d= -f2) || true
+            cc=${cc:-1}
+            [ "$cc" -ne 0 ] && CORRUPT_NONZERO_S3=$((CORRUPT_NONZERO_S3 + 1))
+          done
+          echo ""
+          echo "---- VOLCADO S3-CORRUPT (si aparece, es LA linea que decide el mecanismo) ----"
+          grep -h "S3-CORRUPT" out_s3_*.log || echo "(ningun S3-CORRUPT en las 50 corridas)"
+          echo "-------------------------------------------------------------------------------"
+
+          echo "### s4 x1 (techo MAX_ROOT_SETS subido a 20000 + costo O(n^2))"
+          run_mode s4 30 1 ok; PASS_S4=$pass
+          S4_N=$(grep -o 'N=[0-9]*' out_s4_1.log | head -1 | cut -d= -f2) || true
+          S4_VERSION=$(grep -o 'GC_get_version=0x[0-9a-fA-F]*' out_s4_1.log | head -1 | cut -d= -f2) || true
+
+          echo ""
+          echo "================================================================"
+          echo "R2  s2raw(FaseA)=10/10(hang esperado) s2measured=$PASS_S2MEASURED/10(ok esperado)"
+          echo "S5_RESULT: $PASS_S5/1 exit0"
+          echo "S1_RESULT: $PASS_S1/20 exit0 ; warn_count==0 en $WARN_ZERO_S1 corridas (debe ser 0)"
+          echo "S2DEFAULT_RESULT: $PASS_S2D/10 (rc!=0 esperado, capturado por el watchdog)"
+          echo "S2EX_RESULT: $PASS_S2EX/10 exit0"
+          echo "S3_RESULT: $PASS_S3/50 exit0 ; corrupt_count!=0 en $CORRUPT_NONZERO_S3 corridas (debe ser 0)"
+          echo "S4_RESULT: N=${S4_N:-desconocido} GC_get_version=${S4_VERSION:-desconocido}"
+          echo "================================================================"
+
+          FAIL=0
+          [ "$PASS_S2MEASURED" -eq 10 ] || { echo "FALLO R2 s2measured: no dio 10/10 exit0 -- el fix de rango medido no cierra"; FAIL=1; }
+          [ "$PASS_S5" -eq 1 ] || { echo "FALLO S5: GC_get_parallel/thread no corrio — TODO W3 bloqueado"; FAIL=1; }
+          [ "$PASS_S1" -eq 20 ] || { echo "FALLO S1: no dio 20/20 exit0"; FAIL=1; }
+          [ "$WARN_ZERO_S1" -eq 0 ] || { echo "FALLO S1: $WARN_ZERO_S1 corridas con warn_count==0 (verde vacio = rojo)"; FAIL=1; }
+          [ "$PASS_S2D" -eq 10 ] || { echo "FALLO S2default: no dio 10/10 con rc!=0"; FAIL=1; }
+          [ "$PASS_S2EX" -eq 10 ] || { echo "FALLO S2ex: no dio 10/10 exit0"; FAIL=1; }
+          [ "$PASS_S3" -eq 50 ] || { echo "FALLO S3: no dio 50/50 exit0"; FAIL=1; }
+          [ "$CORRUPT_NONZERO_S3" -eq 0 ] || { echo "FALLO S3: $CORRUPT_NONZERO_S3 corridas con canarios corruptos"; FAIL=1; }
+          [ "$PASS_S4" -eq 1 ] || { echo "FALLO S4: no corrio limpio"; FAIL=1; }
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "w3-spike: al menos un criterio de Fase B no se cumplio — ver arriba"
+            exit 1
+          fi
+          echo "w3-spike (x64): Fase A + Fase B verificadas — Opcion E' viable en esta arquitectura"
+
+  w3-spike-arm64:
+    name: W3 spike — GC+Fibers S1-S6 (windows-11-arm, paridad ARM64)
+    # Solo en ramas feat/w3-** — misma razón que w3-spike / same reason as w3-spike.
+    if: startsWith(github.ref, 'refs/heads/feat/w3-')
+    runs-on: windows-11-arm
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSVC environment (arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+
+      - name: Install Boehm GC (vcpkg, triplet arm64-windows)
+        run: vcpkg install bdwgc:arm64-windows
+
+      - name: Compilar el spike (aarch64)
+        shell: bash
+        run: |
+          set -u
+          VCPKG_DIR="$VCPKG_INSTALLATION_ROOT/installed/arm64-windows"
+          mkdir -p bin
+          clang --target=aarch64-pc-windows-msvc -O1 -Wall -D_CRT_SECURE_NO_WARNINGS \
+            -I"$VCPKG_DIR/include" -fuse-ld=lld-link \
+            tests/runtime-unit/win/test_w3_gc_spike.c \
+            -L"$VCPKG_DIR/lib" -lgc \
+            -o bin/spike.exe
+          cp "$VCPKG_DIR/bin/gc.dll" bin/
+          echo "spike.exe compilado (aarch64-pc-windows-msvc)"
+
+      - name: Fase A — R0, matriz 2x2 decisiva (rev2, gate antes de Fase B)
+        shell: bash
+        run: |
+          set -u
+          cd bin
+
+          run_mode() {
+            mode="$1"; tmo="$2"; runs="$3"; expect="$4"
+            pass=0
+            for i in $(seq 1 "$runs"); do
+              logf="out_${mode}_${i}.log"
+              # SIN subshell alrededor de `timeout`: la forma anterior
+              # ( timeout ... ) > "$logf" 2>&1 metia una capa extra de
+              # proceso (subshell) entre bash y spike.exe. Confirmado en el
+              # run 33064189783 (coordinador + revision propia): 3 de las 4
+              # corridas fallidas de S1/S3 en ARM64 capturaron CERO bytes en
+              # su out_*.log pese a que spike.exe SI llega a escribir varias
+              # lineas antes de morir (visto en x64, run 6 de s3, que
+              # alcanzo a volcar una linea VEH completa). Redirigir DIRECTO
+              # sobre `timeout` (sin parentesis) es la forma estandar y
+              # elimina esa capa como sospechoso.
+              # El `if` sigue siendo obligatorio (NO cosmetico, misma
+              # trampa que w2-subset ya documenta en este archivo): shell:
+              # bash corre con `-e`, y un `cmd; rc=$?` pelado mata el step
+              # en la primera corrida que salga != 0 -- exactamente el caso
+              # que esta matriz existe para reportar (los modos "hang"
+              # SIEMPRE salen != 0, y son la mayoria de las corridas).
+              if timeout "$tmo" ./spike.exe "$mode" > "$logf" 2>&1; then
+                rc=0
+              else
+                rc=$?
+              fi
+              echo "  [$mode] run $i rc=$rc"
+              cat "$logf"
+              # rc=97: el VEH del binario detecto un EXCEPTION_ACCESS_VIOLATION
+              # real, volco el diagnostico crudo (_write, sin stdio -- ver
+              # global_veh) y salio el solo. Distinto de rc=99 (watchdog: el
+              # proceso NUNCA volvio) y de cualquier `return 1` interno.
+              # Pedido explicito de diagnostico (2026-08-27): rotular esta
+              # corrida aparte y volcar su salida completa de nuevo, resaltada,
+              # sea cual sea el modo.
+              if [ "$rc" -eq 97 ]; then
+                echo "  ==== AV CAPTURADO POR VEH: [$mode] run $i rc=97 -- salida completa de $logf ===="
+                cat "$logf"
+                echo "  ==== fin del volcado VEH de [$mode] run $i ===="
+              fi
+              if [ "$expect" = "ok" ]; then
+                if [ "$rc" -eq 0 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -ne 97 ]; then
+                  # rc=97 ya se etiqueto y volco arriba -- este bloque es
+                  # para cualquier OTRO fallo inesperado (no duplicar el
+                  # volcado de arriba).
+                  echo "  ==== FALLO INESPERADO: [$mode] run $i rc=$rc -- tail -40 de $logf ===="
+                  tail -40 "$logf"
+                  echo "  ==== fin del detalle de [$mode] run $i ===="
+                fi
+              else
+                # "hang" se mide por el WATCHDOG interno (rc=99) -- diseño
+                # original de rev2, restaurado: el VEH (global_veh) ya NO
+                # mata el proceso en el primer AV (eso rompia el mecanismo:
+                # s0c/s2raw/s2default EXISTEN para que bdwgc reintente sobre
+                # la misma pagina mala PARA SIEMPRE, alloc.c:875 -- interceptar
+                # y salir en el primer first-chance AV los hacia terminar en
+                # rc=97 en vez de colgar, tapando exactamente lo que estos
+                # modos existen para probar). rc=97 aca significaria que el
+                # filtro UNHANDLED disparo -- osea que ni siquiera bdwgc pudo
+                # manejar el AV esperado -- una señal real, no una confirmacion:
+                # NO cuenta como pass. rc=124 (timeout EXTERNO) tampoco cuenta:
+                # significa que ni el watchdog ni nada mas disparo.
+                if [ "$rc" -eq 99 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -eq 124 ]; then
+                  echo "  [$mode] run $i: timeout EXTERNO (124), no el watchdog -- sospechoso, no cuenta"
+                fi
+              fi
+            done
+          }
+
+          echo "### s0  x3  (sin fibers, sin roots)                    -> se espera OK"
+          run_mode s0 15 3 ok; PASS_S0=$pass
+          echo "### s0b x3  (fibers, SIN GC_add_roots del stack)       -> se espera OK"
+          run_mode s0b 15 3 ok; PASS_S0B=$pass
+          echo "### s0c x3  (sin fibers, root RAW sobre MEM_RESERVE)   -> se espera CUELGUE (rc!=0 via watchdog)"
+          run_mode s0c 15 3 hang; PASS_S0C=$pass
+          echo "### s2raw x10 (fiber CreateFiberEx + root RAW/nominal) -> se espera CUELGUE; tambien es la mitad 'raw' de R2"
+          run_mode s2raw 15 10 hang; PASS_S2RAW=$pass
+
+          echo ""
+          echo "================================================================"
+          echo "R0 (arm64): s0=$PASS_S0/3(ok) s0b=$PASS_S0B/3(ok) s0c=$PASS_S0C/3(hang) s2raw=$PASS_S2RAW/10(hang)"
+          echo "================================================================"
+
+          if [ "$PASS_S0B" -ne 3 ]; then
+            echo "FASE A (arm64): s0b (fibers SIN roots) NO devolvio OK en las 3 corridas."
+            echo "  El ROOT CAUSE de rev2 es FALSO en esta arquitectura. Ver rev2 §4,"
+            echo "  Opcion F. NO seguir a Fase B — evidencia para BLOCKED/hallazgo ABI."
+            exit 1
+          fi
+          if [ "$PASS_S0" -ne 3 ] || [ "$PASS_S0C" -ne 3 ] || [ "$PASS_S2RAW" -ne 10 ]; then
+            echo "FASE A (arm64): la matriz 2x2 no cerro limpio (ver conteos arriba)."
+            exit 1
+          fi
+          echo "FASE A OK (arm64): root-cause de rev2 CONFIRMADO — procediendo a Fase B."
+
+      - name: Fase B — matriz S1-S6 completa con el fix (rango medido + guardia)
+        shell: bash
+        run: |
+          set -u
+          cd bin
+
+          run_mode() {
+            mode="$1"; tmo="$2"; runs="$3"; expect="$4"
+            pass=0
+            for i in $(seq 1 "$runs"); do
+              logf="out_${mode}_${i}.log"
+              # SIN subshell alrededor de `timeout`: la forma anterior
+              # ( timeout ... ) > "$logf" 2>&1 metia una capa extra de
+              # proceso (subshell) entre bash y spike.exe. Confirmado en el
+              # run 33064189783 (coordinador + revision propia): 3 de las 4
+              # corridas fallidas de S1/S3 en ARM64 capturaron CERO bytes en
+              # su out_*.log pese a que spike.exe SI llega a escribir varias
+              # lineas antes de morir (visto en x64, run 6 de s3, que
+              # alcanzo a volcar una linea VEH completa). Redirigir DIRECTO
+              # sobre `timeout` (sin parentesis) es la forma estandar y
+              # elimina esa capa como sospechoso.
+              # El `if` sigue siendo obligatorio (NO cosmetico, misma
+              # trampa que w2-subset ya documenta en este archivo): shell:
+              # bash corre con `-e`, y un `cmd; rc=$?` pelado mata el step
+              # en la primera corrida que salga != 0 -- exactamente el caso
+              # que esta matriz existe para reportar (los modos "hang"
+              # SIEMPRE salen != 0, y son la mayoria de las corridas).
+              if timeout "$tmo" ./spike.exe "$mode" > "$logf" 2>&1; then
+                rc=0
+              else
+                rc=$?
+              fi
+              echo "  [$mode] run $i rc=$rc"
+              cat "$logf"
+              # rc=97: el VEH del binario detecto un EXCEPTION_ACCESS_VIOLATION
+              # real, volco el diagnostico crudo (_write, sin stdio -- ver
+              # global_veh) y salio el solo. Distinto de rc=99 (watchdog: el
+              # proceso NUNCA volvio) y de cualquier `return 1` interno.
+              # Pedido explicito de diagnostico (2026-08-27): rotular esta
+              # corrida aparte y volcar su salida completa de nuevo, resaltada,
+              # sea cual sea el modo.
+              if [ "$rc" -eq 97 ]; then
+                echo "  ==== AV CAPTURADO POR VEH: [$mode] run $i rc=97 -- salida completa de $logf ===="
+                cat "$logf"
+                echo "  ==== fin del volcado VEH de [$mode] run $i ===="
+              fi
+              if [ "$expect" = "ok" ]; then
+                if [ "$rc" -eq 0 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -ne 97 ]; then
+                  # rc=97 ya se etiqueto y volco arriba -- este bloque es
+                  # para cualquier OTRO fallo inesperado (no duplicar el
+                  # volcado de arriba).
+                  echo "  ==== FALLO INESPERADO: [$mode] run $i rc=$rc -- tail -40 de $logf ===="
+                  tail -40 "$logf"
+                  echo "  ==== fin del detalle de [$mode] run $i ===="
+                fi
+              else
+                # "hang" se mide por el WATCHDOG interno (rc=99) -- diseño
+                # original de rev2, restaurado: el VEH (global_veh) ya NO
+                # mata el proceso en el primer AV (eso rompia el mecanismo:
+                # s0c/s2raw/s2default EXISTEN para que bdwgc reintente sobre
+                # la misma pagina mala PARA SIEMPRE, alloc.c:875 -- interceptar
+                # y salir en el primer first-chance AV los hacia terminar en
+                # rc=97 en vez de colgar, tapando exactamente lo que estos
+                # modos existen para probar). rc=97 aca significaria que el
+                # filtro UNHANDLED disparo -- osea que ni siquiera bdwgc pudo
+                # manejar el AV esperado -- una señal real, no una confirmacion:
+                # NO cuenta como pass. rc=124 (timeout EXTERNO) tampoco cuenta:
+                # significa que ni el watchdog ni nada mas disparo.
+                if [ "$rc" -eq 99 ]; then
+                  pass=$((pass + 1))
+                elif [ "$rc" -eq 124 ]; then
+                  echo "  [$mode] run $i: timeout EXTERNO (124), no el watchdog -- sospechoso, no cuenta"
+                fi
+              fi
+            done
+          }
+
+          echo "### s2measured x10 (fiber CreateFiberEx + rango MEDIDO/walk)  -> OK"
+          run_mode s2measured 15 10 ok; PASS_S2MEASURED=$pass
+
+          echo "### s2default x10 (CreateFiber default + root RAW)  -> se espera CUELGUE"
+          run_mode s2default 15 10 hang; PASS_S2D=$pass
+
+          echo "### s2ex x10 (CreateFiberEx commit==reserve + rango MEDIDO)  -> OK"
+          run_mode s2ex 15 10 ok; PASS_S2EX=$pass
+
+          echo "### s5 x1"
+          run_mode s5 15 1 ok; PASS_S5=$pass
+
+          echo "### s1 x20 (carga completa, root MEDIDO + guardia)"
+          run_mode s1 30 20 ok; PASS_S1=$pass
+          WARN_ZERO_S1=0
+          for i in $(seq 1 20); do
+            wc=$(grep -o 'warn_count=[0-9]*' "out_s1_$i.log" | head -1 | cut -d= -f2) || true
+            wc=${wc:-0}
+            [ "$wc" -eq 0 ] && WARN_ZERO_S1=$((WARN_ZERO_S1 + 1))
+          done
+
+          echo "### s3 x50 (diagnostico 2026-08-27, ruling autor diseno: mas masa para que"
+          echo "### el 1/20 caiga -- gate de commit + gcollect inmediato + volcado de canario)"
+          run_mode s3 30 50 ok; PASS_S3=$pass
+          CORRUPT_NONZERO_S3=0
+          for i in $(seq 1 50); do
+            cc=$(grep -o 'corrupt_count=[0-9]*' "out_s3_$i.log" | head -1 | cut -d= -f2) || true
+            cc=${cc:-1}
+            [ "$cc" -ne 0 ] && CORRUPT_NONZERO_S3=$((CORRUPT_NONZERO_S3 + 1))
+          done
+          echo ""
+          echo "---- VOLCADO S3-CORRUPT (si aparece, es LA linea que decide el mecanismo) ----"
+          grep -h "S3-CORRUPT" out_s3_*.log || echo "(ningun S3-CORRUPT en las 50 corridas)"
+          echo "-------------------------------------------------------------------------------"
+
+          echo "### s4 x1 (techo MAX_ROOT_SETS subido a 20000 + costo O(n^2))"
+          run_mode s4 30 1 ok; PASS_S4=$pass
+          S4_N=$(grep -o 'N=[0-9]*' out_s4_1.log | head -1 | cut -d= -f2) || true
+          S4_VERSION=$(grep -o 'GC_get_version=0x[0-9a-fA-F]*' out_s4_1.log | head -1 | cut -d= -f2) || true
+
+          echo ""
+          echo "================================================================"
+          echo "R2 (arm64) s2raw(FaseA)=10/10(hang esperado) s2measured=$PASS_S2MEASURED/10(ok esperado)"
+          echo "S6 (paridad ARM64) — S5_RESULT: $PASS_S5/1 exit0"
+          echo "S6 (paridad ARM64) — S1_RESULT: $PASS_S1/20 exit0 ; warn_count==0 en $WARN_ZERO_S1 corridas (debe ser 0)"
+          echo "S6 (paridad ARM64) — S2DEFAULT_RESULT: $PASS_S2D/10 (rc!=0 esperado)"
+          echo "S6 (paridad ARM64) — S2EX_RESULT: $PASS_S2EX/10 exit0"
+          echo "S6 (paridad ARM64) — S3_RESULT: $PASS_S3/50 exit0 ; corrupt_count!=0 en $CORRUPT_NONZERO_S3 corridas (debe ser 0)"
+          echo "S6 (paridad ARM64) — S4_RESULT: N=${S4_N:-desconocido} GC_get_version=${S4_VERSION:-desconocido}"
+          echo "================================================================"
+
+          FAIL=0
+          [ "$PASS_S2MEASURED" -eq 10 ] || { echo "FALLO R2 s2measured (arm64): no dio 10/10 exit0"; FAIL=1; }
+          [ "$PASS_S5" -eq 1 ] || { echo "FALLO S5 (arm64)"; FAIL=1; }
+          [ "$PASS_S1" -eq 20 ] || { echo "FALLO S1 (arm64): no dio 20/20 exit0"; FAIL=1; }
+          [ "$WARN_ZERO_S1" -eq 0 ] || { echo "FALLO S1 (arm64): $WARN_ZERO_S1 corridas con warn_count==0"; FAIL=1; }
+          [ "$PASS_S2D" -eq 10 ] || { echo "FALLO S2default (arm64): no dio 10/10 con rc!=0"; FAIL=1; }
+          [ "$PASS_S2EX" -eq 10 ] || { echo "FALLO S2ex (arm64): no dio 10/10 exit0"; FAIL=1; }
+          [ "$PASS_S3" -eq 50 ] || { echo "FALLO S3 (arm64): no dio 50/50 exit0"; FAIL=1; }
+          [ "$CORRUPT_NONZERO_S3" -eq 0 ] || { echo "FALLO S3 (arm64): $CORRUPT_NONZERO_S3 corridas con canarios corruptos"; FAIL=1; }
+          [ "$PASS_S4" -eq 1 ] || { echo "FALLO S4 (arm64): no corrio limpio"; FAIL=1; }
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "w3-spike-arm64: divergencia en ARM64 — HALLAZGO DE ABI, no una linea a borrar"
+            echo "  (misma regla que el manifiesto de W2: si x64 dio verde y esto da rojo, reportar, no tapar)"
+            exit 1
+          fi
+          echo "w3-spike (arm64): Fase A + Fase B verificadas — paridad con x64 confirmada"

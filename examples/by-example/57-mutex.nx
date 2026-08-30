@@ -4,7 +4,11 @@
 var counter: int = 0
 
 fn increment_task() -> int {
-    let m: int = mutex_new()
+    // Handle opaco tipado Map (convención del ecosistema desde v0.24.x, B1):
+    // anotarlo `int` es error del checker — antes truncaba el puntero en silencio.
+    // Opaque handle typed Map (ecosystem convention since v0.24.x, B1):
+    // annotating it `int` is a checker error — it used to silently truncate the pointer.
+    let m: Map = mutex_new()
     var i: int = 0
     while i < 1000 {
         mutex_lock(m)

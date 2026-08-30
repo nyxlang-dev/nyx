@@ -17,15 +17,15 @@
 // not expected to be performance-critical hot paths.
 // ============================================
 
-#define _XOPEN_SOURCE 700  // expose strptime on glibc
-
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>   // ENOSYS — distinguir "la plataforma no puede" de "no matcheo"
 #include <time.h>
 #include <gc.h>
 #include "strings.h"
 #include "time.h"
+#include "os/nyx_os.h"   // os_time_parse (strptime no existe en la CRT de MSVC)
 
 // Buffer size for strftime output.  256 bytes covers all reasonable datetime
 // format strings; we cap it there to avoid unbounded stack allocation.
@@ -126,9 +126,34 @@ int64_t nyx_datetime_parse(nyx_string* date_str, nyx_string* fmt) {
     // tm_isdst = -1 tells mktime to figure out DST automatically.
     tm_buf.tm_isdst = -1;
 
-    char* end = strptime(date_cstr, fmt_cstr, &tm_buf);
-    if (!end) {
-        // strptime returns NULL when the input does not match the format.
+    // os_time_parse (W2 fase C): strptime en posix/wasi, -ENOSYS en win32 (la
+    // CRT de MSVC no lo tiene ni tiene equivalente). El camino de error es el
+    // MISMO en las dos situaciones — devolver -1 — así que Windows no
+    // inaugura ninguna semántica nueva acá: datetime_parse falla, igual que
+    // falla en Linux cuando la fecha no matchea el formato.
+    // EN: os_time_parse — strptime on posix/wasi, -ENOSYS on win32 (the MSVC
+    // CRT has neither it nor an equivalent). The error path is IDENTICAL in
+    // both cases — return -1 — so Windows introduces no new semantics here.
+    //
+    // Pero el MENSAJE sí se distingue (review de rama W2, M3): "strptime
+    // failed to parse" es una MENTIRA en win32, donde no hay ningún strptime
+    // que haya fallado — la plataforma no tiene la capacidad. Culpar al dato
+    // del usuario por una carencia del port manda a depurar el formato de
+    // fecha durante horas. El texto posix queda intacto: es el diagnóstico
+    // correcto cuando SÍ hubo un parseo y no matcheó.
+    // EN: the MESSAGE does distinguish (W2 branch review, M3): "strptime
+    // failed to parse" is a LIE on win32, where no strptime ever ran — the
+    // platform lacks the capability. Blaming the user's data for a missing
+    // port sends people debugging their date format for hours. The posix
+    // text is untouched: it is the right diagnosis when a parse did happen
+    // and did not match.
+    int parse_rc = os_time_parse(date_cstr, fmt_cstr, &tm_buf);
+    if (parse_rc == -ENOSYS) {
+        fprintf(stderr, "Nyx time error: date parsing not supported on this platform "
+                        "/ el parseo de fechas no esta soportado en esta plataforma\n");
+        return -1;
+    }
+    if (parse_rc != 0) {
         fprintf(stderr, "Nyx time error: strptime failed to parse '%s' with format '%s'\n",
                 date_cstr, fmt_cstr);
         return -1;

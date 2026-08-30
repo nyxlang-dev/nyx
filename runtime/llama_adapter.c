@@ -7,12 +7,12 @@
 
 #include "strings.h"
 #include "llama_api.h"
+#include "os/nyx_os.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <dlfcn.h>
 
-static void* g_lib = NULL;
+static os_dl_t g_lib = NULL;
 static int   g_loaded = 0;              // 0=no, 1=ok, 2=falló
 static char  g_libpath[512] = "";
 static char  g_err[512] = "";
@@ -39,9 +39,9 @@ static void set_err(const char* msg) {
     snprintf(g_err, sizeof(g_err), "%s", msg);
 }
 
-// dlsym con error POR NOMBRE (spec §2.2: caza drift de ABI entre versiones).
+// os_dl_sym con error POR NOMBRE (spec §2.2: caza drift de ABI entre versiones).
 static void* llm_sym(const char* name) {
-    void* p = dlsym(g_lib, name);
+    void* p = os_dl_sym(g_lib, name);
     if (!p) {
         snprintf(g_err, sizeof(g_err),
                  "llama adapter: missing symbol '%s' in %s (ABI drift? pinned tag: b4689)",
@@ -57,11 +57,11 @@ static int llm_load_lib(void) {
     const char* env = getenv("NYX_LLAMA_SO");
     const char* path = (env && env[0]) ? env : "libllama.so";
     snprintf(g_libpath, sizeof(g_libpath), "%s", path);
-    g_lib = dlopen(path, RTLD_LAZY | RTLD_GLOBAL);
+    g_lib = os_dl_open(path, 1);
     if (!g_lib) {
         snprintf(g_err, sizeof(g_err),
                  "llama adapter: cannot dlopen '%s' (%s) — set NYX_LLAMA_SO or install libllama",
-                 path, dlerror());
+                 path, os_dl_error());
         g_loaded = 2;
         return -1;
     }

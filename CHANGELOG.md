@@ -7,6 +7,303 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [Unreleased] — arco Windows W2-ARM64: los 26 tests también en **Windows ARM64 real** (INTERNO)
+
+> Rama `feat/w2-arm64`. El gate `w2-subset-arm64` corre los MISMOS 26
+> tests (un solo manifiesto, dos triples) en runner `windows-11-arm`
+> hosteado — EJECUCIÓN real, no cross-compile: sonda midió que el runner
+> existe para este repo. Resultado fuerte: **CERO deltas de ABI** — el IR
+> de ambos triples es byte-idéntico salvo la línea `target triple` (el
+> codegen de Nyx no tiene nada arch-específico), 26/26 en ambas archs en
+> la misma corrida, os_win32.c con -Werror limpio en aarch64, y Boehm GC
+> funcionando en ARM64-Windows (su escaneo de stack es por-arquitectura —
+> no era trivial). Paridad de flags byte-exacta entre los dos jobs
+> (divergir convertiría un fallo arm64 en ambigüedad). Gotchas
+> documentados en el workflow: Git Bash del runner ARM64 reporta AMD64
+> (emulación), y su workspace vive en C: — este job solo jamás habría
+> cazado el hallazgo del drive de W2.
+
+## [Unreleased] — arco Windows W2: **26 programas Nyx CORREN en Windows** (INTERNO)
+
+> Rama `feat/w2-os-win32`. El hito de ejecución del arco: el subset de
+> regresión — 26 tests reales de strings/formateo/arrays/maps/json/file-I/O/
+> lenguaje — se compila en Linux con el triple MSVC, se linkea en
+> windows-latest contra el runtime real y SE EJECUTA con salida comparada
+> byte a byte (CRLF normalizado, rc==0 exigido, piso de 26 en el gate).
+> Fórmula honesta: **subset menos sqlite-runtime** (sqlite compila y linkea;
+> su ejecución llega en W5 con los nombres .dll de los 3 adapters — ficha
+> ALTA); threads gateados por win_forbidden_builtin hasta W3.
+>
+> Piezas: **fase A** — dominios fs (os_fs_stat/mkdir/listdir) y term+fd
+> (raw mode/winsize/self-pipe/fsync) en la capa; file-io.c y runtime.c
+> quedan SIN headers posix (ratchet 12→15). **fase B** — `os_win32.c`
+> (~100 fns: SRWLOCK/CONDITION_VARIABLE — elegido sobre CRITICAL_SECTION
+> porque el init estático en ceros de CS es UB —, GC_beginthreadex,
+> QPC/FILETIME, VirtualAlloc, LoadLibrary, VEH con 3 códigos de excepción,
+> consola, _pipe/_commit; -Werror como gate; LLP64 limpio), y la regla
+> dormida del ratchet se cobró: `win_w0_hello.c` MURIÓ. **fase C** — el
+> job w2-subset (ubuntu genera .ll → artifact → windows linkea y corre).
+> Residuo posix cerrado por la capa: os_env_set + os_time_parse
+> (datetime_parse degrada a su -1 documentado en win32).
+>
+> Los reviews cazaron 16 hallazgos en el arco (4 rondas): el silently-wrong
+> de SIGTERM (el CRT win32 nunca lo genera — persist habría creído tener
+> shutdown), el last-error pisado por free(), el gate ciego al exit code,
+> y el hallazgo estrella del CI: **`/tmp` es drive-relativo en Windows**
+> (deuda de LENGUAJE, decisión pre-anuncio fichada ALTA). 7 carries
+> fichados en TASKS.md con destino W3/W4/W5.
+
+## [Unreleased] — arco Windows W1 inc 7: dominio señales — **W1 COMPLETO** (INTERNO)
+
+> Rama `feat/w1-senales`. El ÚLTIMO dominio: `os_sig_install` /
+> `os_sig_install_no_restart` (la distinción SA_RESTART es real y el review
+> la midió: un handler que retorna cambia la visibilidad de EINTR — SIGWINCH
+> y persist conservan su semántica sigaction exacta, signal_handle su
+> signal()) + `os_sig_reset/ignore/is_default` (sentinelas) + constantes
+> `OS_SIG*` incluidas las síncronas (cierra el agujero F15 de macOS que el
+> hardcodeo reabría — con red de asserts de plataforma) +
+> `os_fault_guard_install/thread_init` (la mecánica sigaltstack+SA_ONSTACK+
+> si_addr del guard de stacks pasa a la capa; el scheduler conserva su
+> callback con el mensaje byte-exacto; la mutación de SA_ONSTACK probó el
+> apareo: sin él, SEGV mudo rc=139). runtime.c queda además sin poll.h
+> (su único poll → os_sock_poll1). test_os_sig 24 asserts.
+>
+> **W1 COMPLETO — resumen del arco** (8 incrementos, 2026-08-20 → 26):
+> `runtime/os/` (nyx_os.h sin un solo ifdef + os_posix.c + os_wasm.c)
+> cubre los 8 dominios: threads/sync/tiempo/yield → vm+ctx → sockets →
+> evloop (os_ev completion-style) → proc → dl → señales/fault-guard.
+> Ratchet: 12 headers prohibidos fuera de la capa. Superficies posix
+> PINEADAS que no pasan por la capa, documentadas con destino:
+> process.c (builtins fork/execvp — win_forbidden_builtin en W5) y
+> event_loop.c (API readiness de usuario — decisión W4+). Deuda gated:
+> scheduler→os_ev tras resolver el SEGV de test_scheduler (ficha ALTA).
+> Los reviews adversariales cazaron 10+ hallazgos mayores con gates
+> verdes a lo largo del arco (alineación de ucontext, regresión IPv6 de
+> TLS, SIGPIPE del spike, SA_RESTART de SIGWINCH, F15 macOS…) — el método
+> quedó validado. W2-W5 = escribir os_win32.c contra un header que ya no
+> cambia. Hazard fichado: el closure de persist en contexto de señal
+> (pre-S2, arco propio coordinado con serve).
+
+## [Unreleased] — arco Windows W1 inc 6: dominio dl (INTERNO)
+
+> Rama `feat/w1-dl`. Los 3 adapters de carga dinámica (zlib/sqlite/llama)
+> pasan a `os_dl_open(name, global)`/`os_dl_sym`/`os_dl_error`/`os_dl_close`
+> — fidelidad hunk por hunk verificada contra main (18/18 dlsym de sqlite
+> byte por byte; el mensaje de error del llama con os_dl_error en el mismo
+> snprintf; la semántica RTLD_LOCAL de la que depende el esquive de la
+> colisión `inflate` de compress.c reproducida exacta). Cadenas de fallback
+> de nombres caller-side (W5/W6 les suman los .dll). `dlfcn.h` entra al
+> ratchet (12 headers). `test_os_dl` 10 asserts (cos(0)==1 por el símbolo
+> real). win32 (W5): LoadLibraryA/GetProcAddress/FormatMessage/FreeLibrary.
+> Plan: `docs/superpowers/plans/2026-08-25-w1-inc6-dl.md`.
+
+## [Unreleased] — arco Windows W1 inc 5: dominio proc (INTERNO)
+
+> Rama `feat/w1-proc`. Los únicos consumers internos de procesos —
+> `exec()`/`exec_code()` (popen/system) — pasan al seam `os_proc_run_capture`
+> (chunks por cb, la capa libre de GC) / `os_proc_run_status` (decode
+> WIFEXITED en la capa). **Muere el `#ifdef __wasi__` de runtime.c** (la
+> capa reemplaza los ifdef dispersos — objetivo de la spec): una sola
+> definición para todas las plataformas; los stubs wasm reproducen ""/-1.
+> Contrato v0.22.1 preservado LETRA POR LETRA (review con sondas: seq 100k
+> cruzando el growth cien veces, 10k NULs binary-safe, tabla de exit codes
+> en vivo, test-293 end-to-end). `test_os_proc` 17 asserts. Los builtins
+> posix crudos de `process.c` (fork/execvp/pipe) quedan como superficie
+> pineada — destino Windows: `win_forbidden_builtin` (W5);
+> `os_proc_spawn/wait/kill` diferido a W5 con su caller (YAGNI medido).
+> Plan: `docs/superpowers/plans/2026-08-25-w1-inc5-proc.md`.
+
+## [Unreleased] — arco Windows W1 inc 4: os_ev (evloop completion-style) implementado (INTERNO)
+
+> Rama `feat/w1-evloop`. El contrato `os_ev_*` firmado por el spike del
+> inc 0 entra a la capa como implementación REAL (adaptación del código
+> validado: 20/20 + TSan; fidelidad verificada mecánicamente por el
+> review — normalización + diff = solo includes). El spike
+> `tests/spikes/w1-evloop/` MUERE (propósito cumplido).
+> Plan: `docs/superpowers/plans/2026-08-25-w1-inc4-evloop.md`.
+
+### Added (interno)
+- **`os_ev_*` implementado en `os_posix.c`** (epoll + eventfd): loop,
+  timers one-shot monotónicos, wake cross-thread, read/write
+  completion-style (write completa el buffer ENTERO acumulando parciales),
+  cancel, run_once. `test_os_ev` (runtime-unit, 86 asserts): los 7
+  escenarios validados del spike + peer reseteado. El review mató al
+  mutante del escenario 7 (sin el wake interno del timer, el test cuelga —
+  guard NO vacuo) y gcov probó el un-write-por-despertar (344 writes / 2
+  completions).
+- **El review cazó un Critical que el spike «validado» no vio**:
+  `os_ev_write` usaba `write()` crudo — un peer cerrado mataba EL PROCESO
+  ENTERO por SIGPIPE (un binario throwaway no muere igual que el runtime).
+  Fix: `send(MSG_NOSIGNAL)`; el cb ahora recibe `-EPIPE`/`-ECONNRESET` y
+  el proceso vive. + 4 contratos nuevos en el header (ownership GC de
+  buffers — el loop es calloc invisible a Boehm —, semántica de cancel
+  vs snapshot en curso, loop_free descarta en silencio, run_once 0
+  espurio por EINTR).
+
+### Alcance negativo (rulings documentados)
+- El scheduler NO migra a os_ev todavía: `block_on_fd` está pineado por
+  `test_scheduler.c` con semántica readiness, y esa suite tiene el SEGV
+  preexistente que hace inverificable el cambio — la ficha del SEGV pasa a
+  BLOQUEANTE de la migración. `event_loop.c` intacto (API readiness
+  Nyx-facing pineada por test-161; destino Windows = W4+). Ratchet sin
+  headers nuevos (documentado).
+
+## [Unreleased] — arco Windows W1 inc 3: dominio sockets de la capa `nyx_os_*` (INTERNO)
+
+> Rama `feat/w1-sockets` sobre `main` 4d90b7c. La superficie más grande del
+> arco: `net.c` entero (~100 sitios), el camino de connect/polls de `tls.c`
+> y el writev de `http2.c`. Refactor interno — cero cambios de
+> comportamiento observables (verificado con sonda diferencial
+> byte-idéntica). Plan: `docs/superpowers/plans/2026-08-24-w1-inc3-sockets.md`.
+
+### Added (interno)
+- **Dominio sockets en `runtime/os/`**: `os_addr_t` (blob opaco 128B ≥
+  sockaddr_storage), resolución con espacio de códigos propio (`OS_RES_*` —
+  los `EAI_*` de glibc colisionan con -errno) + `err_str` de plataforma
+  para mensajes byte-exactos, `os_sock_*` (socket/connect/bind/listen/
+  accept/send/recv/sendto/recvfrom/close/shutdown/peer + opciones medidas +
+  `poll1` de 1 fd con revents REALES: `OS_POLLERR`/`OS_POLLHUP` — un peer
+  que escribe y cierra entrega IN|HUP en el mismo wake, los callers que
+  distinguen EOF chequean IN antes que HUP), `os_sock_sendv` (writev),
+  `os_net_ifaces4`, `os_inet_ntop6`, y tras el review de rama:
+  **`os_addr_resolve_any` (AF_UNSPEC) + `os_sock_stream_for`** con
+  connect/bind/sendto conscientes de familia. `test_os_sock`
+  (runtime-unit, 81 asserts, incl. loopback v4 Y v6, EOF/HUP, POLLNVAL).
+  win32 (W4): Winsock — WSAStartup lazy, closesocket, ioctlsocket,
+  WSAPoll; los codes de la familia `try_` de E5 se preservan.
+
+### Changed (interno)
+- **`net.c`, `tls.c`, `http2.c` sin headers de sockets POSIX** — 7 headers
+  al ratchet (`sys/socket.h netinet/in.h netinet/tcp.h arpa/inet.h
+  netdb.h ifaddrs.h sys/uio.h`; `poll.h` espera a que migren señales y
+  evloop). Fidelidad verificada por sonda diferencial (arnés idéntico
+  linkeado contra el `net.c` viejo y el nuevo → 114 líneas byte-idénticas
+  sobre las 26 funciones públicas) + review adversarial de rama.
+- **Los reviews volvieron a pagar** (van 5 en el arco W1): un camino donde
+  un Err se volvía Ok (`tcp_write_result` con send==0), un fd fantasma
+  (`os_sock_error` negativo re-negado), la síntesis de `poll1` que
+  rompía la discriminación EOF de `tls_wait_readable`, **una regresión
+  IPv6 real en TLS/HTTPS** (la capa era IPv4-only y el baseline resolvía
+  AF_UNSPEC — hosts v6-only dejaban de conectar; restaurado con
+  `resolve_any` + test v6) y un guard RED vacuo (mutación pasaba 68/68 —
+  ahora el assert POLLNVAL discrimina).
+
+## [Unreleased] — arco Windows W1 inc 2: dominios vm+ctx de la capa `nyx_os_*` (INTERNO)
+
+> Rama `feat/w1-vm-ctx` sobre `main`. Continúa el arco Windows (spec
+> `docs/superpowers/specs/2026-08-19-windows-nativo-design.md` §3 dominio 4).
+> Refactor interno del runtime — cero cambios de comportamiento observables.
+> Plan: `docs/superpowers/plans/2026-08-21-w1-inc2-vm-ctx.md`.
+
+### Added (interno)
+- **`os_vm_map`/`os_vm_protect_none`/`os_vm_release`** (memoria virtual:
+  posix mmap/mprotect/munmap; win32 será VirtualAlloc/VirtualProtect/
+  VirtualFree) y **`os_ctx_t`/`os_ctx_make`/`os_ctx_swap`** (contexto
+  cooperativo: posix ucontext; win32 será Fibers) en `runtime/os/nyx_os.h`.
+  El contrato de entry es `entry(void*)` — el hack hi/lo de makecontext
+  (ints de 32 bits) queda como detalle interno de `os_posix.c` (trampolín
+  de 4 mitades). `test_os_vm_ctx` (runtime-unit, 13 asserts): map/protect/
+  release + roundtrip DOBLE de contexto.
+- **El review adversarial del scheduler volvió a pagar**: `os_ctx_t` quedaba
+  SUB-ALINEADO (8 vs los 16 que `ucontext_t` aarch64 exige — glibc escribe
+  `stp q8-q11` ahí; UB confirmado con UBSan, sin crash hoy solo porque el
+  A-bit está apagado). Fix: `_Alignas(16)` + `_Static_assert` de alineación.
+  Los gates verdes no podían verlo — patrón S3/S4 por tercera vez.
+
+### Changed (interno)
+- **`scheduler.c`/`scheduler.h` sin `<sys/mman.h>` ni `<ucontext.h>`**: los
+  3 sitios de vm y los 5 `swapcontext` migrados; el bloque getcontext/
+  makecontext reducido a una llamada `os_ctx_make`; `goroutine_entry`
+  recibe el puntero directo. Máquina de estados (BLOCKED/parked/wake_cb),
+  señales (inc 7) y pool de stacks: INTACTOS. Gates: regresión 100%,
+  concurrencia 8 tests ×3 = 24/24, flakiness ×5 sin cambio de tasa,
+  UBSan alignment limpio.
+- **Ratchet endurecido**: `RATCHET_FORBIDDEN` gana `sys/mman.h` y
+  `ucontext.h` (controles negativos RED verificados ×2).
+
+## [Unreleased] — fricción serve-ws: `wg_wait_timeout` + la verdad medida sobre mutex globales
+
+> Reporte de fricción 2026-08-11 (review de nyx-serve v0.7.0, 4 ítems)
+> procesado 2026-08-21. Solo `std/` y docs — cero cambios de compilador.
+
+### Added
+- **`sync.wg_wait_timeout(wg, ms) -> bool`** (`std/sync`): como `wg_wait`
+  pero con techo — `true` = el contador llegó a 0 (quiesció), `false` =
+  timeout con workers pendientes. Deadline absoluto re-calculado por vuelta
+  (despertares espurios re-esperan el REMANENTE). El idiom de drain/shutdown:
+  salir al quiescer, el deadline pasa a ser solo el techo (antes el drain de
+  serve dormía el deadline COMPLETO — 10s muertos por restart). test-380 +
+  ai-first 23.
+
+### Docs (la mitad del reporte era visibilidad)
+- **Mutex global: `var MU: Map = mutex_new()` FUNCIONA — MEDIDO** (4 threads
+  × 10000 incrementos lockeados = 40000 exacto, 5/5): los inicializadores
+  globales corren single-threaded antes de `main` desde v0.24.27. El patrón
+  lazy-init con flag READY es innecesario y UB (3 modos de fallo trazados en
+  LLM.md §Threading; ejemplo 62 gana la nota). ERRORCHECK en debug = ficha.
+- **`tcp_write` sin timeout por default** (peer stalled bloquea para
+  siempre → `tcp_set_timeout` primero en write-paths que no pueden colgarse)
+  y **`tcp_close` NO despierta un `recv()` de otro thread — `tcp_shutdown`
+  sí** (patrón reader-ownership, incl. el modo de fallo del fd reciclado):
+  ambos en LLM.md §Networking + `///` de `try_tcp_write`/`try_tcp_shutdown`
+  en `std/net` → CAPABILITIES generado.
+- **`std/sync` ahora es descubrible desde LLM.md §Threading** (el reporte
+  pedía un waitgroup que YA existía — el gap real era visibilidad).
+
+## [Unreleased] — arco Windows W1 inc 0+1: nace la capa `nyx_os_*`, dominio threads (INTERNO — esto NO anuncia soporte Windows)
+
+> Rama `feat/w1-threads` sobre `main` v0.31.0. Segunda etapa del arco
+> Windows nativo (spec `docs/superpowers/specs/2026-08-19-windows-nativo-design.md`,
+> todo-o-nada §1.3). Sin cambio de `VERSION`: todo es refactor interno del
+> runtime — cero cambios de comportamiento observables para programas Nyx,
+> con UNA excepción menor anotada abajo. Plan:
+> `docs/superpowers/plans/2026-08-20-w1-inc0-1-spike-evloop-y-threads.md`;
+> ledger `.superpowers/sdd/2026-08-20-w1-inc0-1-spike-evloop-y-threads/`.
+
+### Added (interno)
+- **`runtime/os/` — la capa de abstracción de OS**: `nyx_os.h` (header
+  único SIN `#ifdef` de plataforma), `os_posix.c` (threads, mutex, condvar,
+  rwlock, once, TLS, tiempo monotónico, sleep, yield — el ÚNICO lugar que
+  define `GC_THREADS`, o sea el redirect `pthread_create`→`GC_pthread_create`
+  de Boehm) y `os_wasm.c` (stub single-thread: sync no-op, threads
+  `-ENOSYS`). W2-W5 escriben `os_win32.c` contra este mismo header.
+- **Spike `os_ev` (inc 0, THROWAWAY)**: el contrato de event loop
+  completion-style quedó FIRMADO por evidencia (echo TCP ×16 conexiones,
+  timers cross-thread despertando `run_once`, cancel en vuelo, EAGAIN
+  re-arm, partial write 4 MiB; 20/20 verde + 3/3 bajo ThreadSanitizer).
+  El código del spike vive en `tests/spikes/w1-evloop/` y SE BORRA en el
+  inc 4. Hallazgo medido: `nyx_goroutine_block_on_fd` (readiness-based)
+  no tiene NINGÚN caller — el inc 4 lo reemplaza por lectura/escritura
+  completion sin deuda de compatibilidad.
+- **`test_os_threads`** (runtime-unit, 26 asserts): la capa se testea
+  directo contra `nyx_os.h`, sin pasar por el runtime de arriba.
+- **Ratchet `run_os_layer_ratchet.sh`**: `<pthread.h>` y `<sched.h>`
+  prohibidos fuera de `runtime/os/` (la lista crece un dominio por merge,
+  W1-W7) + regla dormida: si `os_win32.c` existe, el stub W0
+  `win_w0_hello.c` debe haber muerto. Engancha en `make test-ai-first`.
+
+### Changed (interno)
+- **`thread.c`, `tls.c`, `event_loop.c`, `runtime.c`, `scheduler.c`
+  migrados a la capa** — cero `pthread_*`/`sched_*` directo; la máquina
+  de estados del scheduler M:N (BLOCKED/parked/wake_cb) quedó INTACTA
+  (diff solo renombra primitivas; 8 regresiones de concurrencia ×3 verdes
+  antes y después; `ucontext`/mmap/señales se quedan — son del inc 2).
+- **El audit de recetas descubre en vez de listar**: cualquier archivo
+  trackeado que linkee el runtime (menciona `runtime/thread.c` o
+  `nyx_arena.c`, o consume el glob literal `runtime/*.c`) debe llevar
+  `os_posix.c`/`os_wasm.c`/`runtime/os` — Tasks 3-4 encontraron 18 listas
+  de fuentes donde el plan había mapeado 7, y el review de Task 6 encontró
+  4 recetas rotas EN VERDE por el glob que no desciende a subdirs
+  (`run_integration_tests.sh`, `build-release.sh`, `sync_to_public.sh`,
+  `llm-real-demo.sh`) — las 4 arregladas con el patrón de `install-local`.
+
+### Fixed
+- **`nyx_sleep()` reintenta `EINTR`** (vía `os_sleep_ms`): antes un señal
+  a mitad de sleep lo cortaba antes de tiempo; ahora duerme lo pedido.
+  Única diferencia observable de todo el arco — mejora estricta.
+
+---
+
 ## [0.31.0] — 2026-08-20 — E5 completo: `http` + `json` + `sqlite` en la regla de dos niveles (+ W0 Windows interno)
 
 > MINOR agrupado autorizado explícitamente por Ottavio (2026-08-20,

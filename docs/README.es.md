@@ -93,6 +93,8 @@ make bootstrap          # construir el compilador self-hosting
 make test               # suite de regresión, 100% (ARM64) — conteos en TESTS.md
 ```
 
+> **Se requiere libgc/bdwgc >= 8.2 para concurrencia sana bajo carga.** Con versiones anteriores falta `GC_set_sp_corrector`; el runtime igual compila y corre, pero el colector del scheduler M:N puede crashear bajo goroutines concurrentes (avisa fuerte por stderr al arrancar cuando esto pasa — nunca degrada en silencio).
+
 Linux (x86_64 / ARM64) tiene soporte completo. macOS es experimental; Windows no está soportado.
 
 ## Licencia

@@ -55,7 +55,11 @@ cp compiler/*.ll "$DIST/$NAME/compiler/"
 cp Makefile "$DIST/$NAME/"
 
 # Runtime sources (necesarios para compilar programas de usuario)
+# El glob NO desciende a runtime/os/ (capa nyx_os_*, W1) — va explícito o
+# el nyx build del usuario muere con símbolos os_* indefinidos.
 cp runtime/*.c runtime/*.h "$DIST/$NAME/runtime/"
+mkdir -p "$DIST/$NAME/runtime/os"
+cp runtime/os/*.c runtime/os/*.h "$DIST/$NAME/runtime/os/"
 
 # Stdlib
 cp std/*.nx "$DIST/$NAME/std/"

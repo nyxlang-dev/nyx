@@ -6,11 +6,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <signal.h>
 #include <unistd.h>
 #include <gc.h>
 #include "runtime-arrays.h"
 #include "strings.h"
+#include "os/nyx_os.h"
 
 // CRC32 lookup table (IEEE 802.3 polynomial 0xEDB88320)
 static uint32_t crc32_table[256];
@@ -53,6 +53,14 @@ int64_t nyx_rename_file(const char* old_path, const char* new_path) {
 static void* shutdown_fn_ptr = NULL;
 static void* shutdown_env_ptr = NULL;
 
+// FICHA: este handler llama un closure Nyx (potencialmente alocador) EN
+// CONTEXTO DE SEÑAL -- el mismo hazard que el trampolín viejo de runtime.c
+// tenía antes del self-pipe S2 (puede deadlockear si la señal cae con el
+// lock del GC/malloc tomado). Sin resolver a propósito: ver TASKS.md.
+// EN: FICHA (ticket): this handler calls a Nyx closure (potentially
+// allocating) IN SIGNAL CONTEXT -- the same hazard runtime.c's old
+// trampoline had before the S2 self-pipe (can deadlock if the signal lands
+// with the GC/malloc lock held). Left unresolved on purpose: see TASKS.md.
 static void shutdown_signal_handler(int sig) {
     (void)sig;
     if (shutdown_fn_ptr) {
@@ -70,12 +78,20 @@ void nyx_setup_shutdown_handler(void* closure_pair) {
     shutdown_fn_ptr = pair[0];
     shutdown_env_ptr = pair[1];
 
-    struct sigaction sa;
-    sa.sa_handler = shutdown_signal_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    sigaction(SIGTERM, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
+    // os_sig_install_no_restart (NO os_sig_install): el sigaction manual que
+    // este archivo tenía antes de migrar a la capa usaba sa_mask vacía y
+    // flags 0 -- sin SA_RESTART. os_sig_install (via signal()) SÍ agrega
+    // SA_RESTART, un delta observable (ver nyx_os.h) aunque este handler en
+    // particular nunca retorne (_exit siempre) -- se usa la variante fiel
+    // para no introducir un cambio de semántica silencioso.
+    // EN: os_sig_install_no_restart (NOT os_sig_install): the manual
+    // sigaction this file had before migrating to the layer used an empty
+    // sa_mask and flags 0 -- no SA_RESTART. os_sig_install (via signal())
+    // DOES add SA_RESTART, an observable delta (see nyx_os.h) even though
+    // this particular handler never returns (always _exit) -- the faithful
+    // variant is used to avoid a silent semantics change.
+    os_sig_install_no_restart(OS_SIGTERM, shutdown_signal_handler);
+    os_sig_install_no_restart(OS_SIGINT, shutdown_signal_handler);
 }
 
 // Create a nyx_string from a slice of a byte array.

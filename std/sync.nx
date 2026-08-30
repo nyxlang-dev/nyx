@@ -10,7 +10,9 @@
 //   let wg = sync.wg_new()
 //   sync.wg_add(wg, 3)
 //   thread_spawn(fn() { ...; sync.wg_done(wg) })
-//   sync.wg_wait(wg)
+//   sync.wg_wait(wg)                       // bloqueante
+//   sync.wg_wait_timeout(wg, 5000)         // true = quiesció, false = timeout
+//                                          // (drains: el deadline pasa a ser techo)
 //
 //   // Semaphore
 //   let sem = sync.sem_new(1)
@@ -76,6 +78,26 @@ pub fn wg_wait(wg: WaitGroup) {
         condvar_wait(wg.cv, wg.mutex)
     }
     mutex_unlock(wg.mutex)
+}
+
+/// Like wg_wait but gives up after timeout_ms: true = counter reached 0 (quiesced), false = timeout with workers still pending. The shutdown/drain idiom: the deadline becomes a CEILING instead of a fixed sleep — exit as soon as workers finish, wait at most timeout_ms.
+pub fn wg_wait_timeout(wg: WaitGroup, timeout_ms: int) -> bool {
+    // Deadline absoluto recalculado por vuelta: condvar_timedwait puede
+    // despertar espurio o por un done() intermedio con count todavía > 0 —
+    // re-esperar el REMANENTE, no el timeout entero (o un tren de despertares
+    // estiraría la espera sin límite).
+    let deadline: int = time_ms() + timeout_ms
+    mutex_lock(wg.mutex)
+    while wg.count[0] > 0 {
+        let remaining: int = deadline - time_ms()
+        if remaining <= 0 {
+            mutex_unlock(wg.mutex)
+            return false
+        }
+        condvar_timedwait(wg.cv, wg.mutex, remaining)
+    }
+    mutex_unlock(wg.mutex)
+    return true
 }
 
 /// Get current WaitGroup count.

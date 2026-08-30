@@ -23,6 +23,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$ROOT"
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh).
+source "$SCRIPT_DIR/lib_testroot_lock.sh"
+nyx_testroot_lock_acquire
+
 if [ -t 1 ]; then
     GREEN='\033[0;32m'
     RED='\033[0;31m'
@@ -53,10 +58,13 @@ if [ ! -x ./nyx_bootstrap ]; then
 fi
 
 # Subset esencial — mantener en sync con WASM_RUNTIME_SRCS del Makefile
+# os_wasm.c (W1): runtime.c ahora usa os_monotonic_ns/os_sleep_ms sin ifdef
+# (nyx_sleep/nyx_time_ms/nyx_time_us) — sin el stub el link falla.
 WASM_RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
     runtime/maps.c runtime/iterators.c runtime/file-io.c \
     runtime/time.c runtime/random.c runtime/url.c \
-    runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c"
+    runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c \
+    runtime/os/os_wasm.c"
 WASM_CFLAGS="--target=wasm32-wasi --sysroot=$WASI_SYSROOT -O2 -Iruntime/wasi -Wl,-z,stack-size=1048576 -Wl,--export-table"
 
 TMP_DIR="$(mktemp -d)"

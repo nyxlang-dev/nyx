@@ -131,7 +131,7 @@ runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/reg
 runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c \
 runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c \
 runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c \
-runtime/llama_adapter.c"
+runtime/llama_adapter.c runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 
 if [ ! -x ./nyx_bootstrap ]; then

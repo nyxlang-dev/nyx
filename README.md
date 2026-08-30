@@ -93,6 +93,8 @@ make bootstrap          # build the self-hosting compiler
 make test               # regression suite, 100% (ARM64) — counts in docs/TESTS.md
 ```
 
+> **libgc/bdwgc >= 8.2 required for healthy concurrency under load.** Older versions lack `GC_set_sp_corrector`; the runtime still builds and runs, but the M:N scheduler's collector can crash under concurrent goroutines (it warns loudly on stderr at startup when this happens — it never fails silently).
+
 Linux (x86_64 / ARM64) is fully supported. macOS is experimental; Windows is not supported.
 
 ## License

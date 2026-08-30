@@ -5,7 +5,7 @@ RUNTIME_SRCS = runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
                runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c \
                runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c \
                runtime/persist.c runtime/http2.c runtime/process.c \
-               runtime/llama_adapter.c
+               runtime/llama_adapter.c runtime/os/os_posix.c
 LIBS         = -lgc -lpthread -ldl -lm -lssl -lcrypto -lz
 NO_GC_LIBS   = -lpthread -ldl -lm -lssl -lcrypto
 
@@ -19,10 +19,14 @@ WASM_CLANG        ?= clang
 # event_loop/process/websocket/http2/sqlite/compress/crypto/regex/msgpack/
 # persist (sockets/pthread/ucontext/fork/OpenSSL/zlib/regex POSIX no existen
 # en wasi). runtime/wasi/: shim GC→malloc (gc.h) + puente de entry (main_shim.c).
+# runtime/os/os_wasm.c: stub de la capa nyx_os_* (W1) — el link no falla si
+# algo referencia sus símbolos; los dominios 1-7 son no-op/ENOSYS (wasi es
+# single-thread), tiempo es real vía clock_gettime/nanosleep de wasi-libc.
 WASM_RUNTIME_SRCS = runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
                     runtime/maps.c runtime/iterators.c runtime/file-io.c \
                     runtime/time.c runtime/random.c runtime/url.c \
-                    runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c
+                    runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c \
+                    runtime/os/os_wasm.c
 # stack de 1MB: el default de wasm-ld (64KB) es chico para recursión
 # --export-table: expone __indirect_function_table para que JS pueda llamar
 # closures Nyx (table.get(fn_idx)(env_ptr) — handlers de eventos, handoff #3b)
@@ -32,8 +36,9 @@ WASM_CFLAGS       = --target=wasm32-wasi --sysroot=$(WASI_SYSROOT) -O2 \
 # ─────────────────────────────────────────────
 #  Platform-specific flags
 #  macOS: brew installs bdw-gc and openssl@3 outside the default clang paths,
-#  and runtime/scheduler.c uses ucontext_t which the macOS 15 SDK gates behind
-#  _XOPEN_SOURCE. Linux: no extra flags needed.
+#  and runtime/os/os_posix.c uses ucontext_t (capa nyx_os_*, W1 inc 2 — antes
+#  vivía en scheduler.c) which the macOS 15 SDK gates behind _XOPEN_SOURCE.
+#  Linux: no extra flags needed.
 # ─────────────────────────────────────────────
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -76,6 +81,7 @@ install-local:
 	if [ -f "$$NYX_HOME_DIR/nyx_build" ] && [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/nyx_build"; fi; \
 	cp runtime/*.c runtime/*.h "$$NYX_HOME_DIR/runtime/"; \
 	mkdir -p "$$NYX_HOME_DIR/runtime/wasi" && cp -r runtime/wasi/* "$$NYX_HOME_DIR/runtime/wasi/"; \
+	mkdir -p "$$NYX_HOME_DIR/runtime/os" && cp runtime/os/*.c runtime/os/*.h "$$NYX_HOME_DIR/runtime/os/"; \
 	cp VERSION "$$NYX_HOME_DIR/VERSION" 2>/dev/null || true; \
 	cp std/*.nx "$$NYX_HOME_DIR/std/"; \
 	if [ -f "$$NYX_HOME_DIR/scripts/nyx" ]; then cp scripts/nyx "$$NYX_HOME_DIR/scripts/nyx"; fi; \
@@ -166,6 +172,14 @@ test-runtime:
 test-wasm:
 	bash scripts/testing/run_wasm_tests.sh
 
+## Gate de carga permanente [arco:W3-paso0b]: 300 goroutines × Array<int> de
+## 20k, N corridas normales + M con GC_ENABLE_INCREMENTAL=1 (override
+## LOAD_GATE_RUNS/LOAD_GATE_RUNS_INC). Caza la clase de bug "colector ×
+## stacks de goroutine" end-to-end — ver docs/TESTS.md y
+## scripts/testing/run_load_gate.sh para la receta completa.
+test-load:
+	bash scripts/testing/run_load_gate.sh
+
 ## AI-FIRST: valida que la doc sembrada basta para escribir Nyx correcto al 1er intento
 test-ai-first:
 	bash scripts/testing/run_gotcha_coverage.sh
@@ -174,7 +188,9 @@ test-ai-first:
 	bash scripts/testing/run_codegen_mute_audit.sh
 	bash scripts/testing/run_capabilities_test.sh
 	bash scripts/testing/run_toolchain_recipe_audit.sh
+	bash scripts/testing/run_os_layer_ratchet.sh
 	bash scripts/testing/run_template_coherence.sh
+	bash scripts/testing/run_docs_health.sh
 
 ## Matriz de invariancia por forma del receptor (gate propio: genera y compila
 ## decenas de programas). Verifica UNA propiedad — el mismo método sobre el
@@ -198,6 +214,8 @@ test-all:
 	$(MAKE) test-m08-types
 	@echo ""
 	$(MAKE) test-runtime
+	@echo ""
+	$(MAKE) test-load
 	@echo ""
 	$(MAKE) test-ai-first
 	@echo ""

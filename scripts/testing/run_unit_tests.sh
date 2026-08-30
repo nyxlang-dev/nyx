@@ -17,6 +17,11 @@
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh).
+source scripts/testing/lib_testroot_lock.sh
+nyx_testroot_lock_acquire
+
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; NC='\033[0m'
 
 PASS=0

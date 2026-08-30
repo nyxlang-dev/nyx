@@ -3,15 +3,13 @@
 // Also provides base64 encode/decode (pure C, no external dep)
 
 #include "strings.h"
+#include "os/nyx_os.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <zlib.h>
 #include <gc/gc.h>
-#ifndef __wasi__
-#include <dlfcn.h>
-#endif
 
 // ── zlib's `inflate` symbol vs Nyx's `pub fn inflate` — dlopen workaround ───
 //
@@ -27,12 +25,12 @@
 // infinite loop in testing). `nyx_compress`/`nyx_decompress` sidestep this
 // by calling zlib's `compress2`/`uncompress` instead of `compress`
 // (Nyx's `pub fn compress` would collide the same way) — `inflate` has no
-// such alternate entry point in the zlib API, so here we dlopen libz
-// explicitly and dlsym the three symbols we need FROM THAT HANDLE. Unlike
-// a plain call (or dlsym(RTLD_DEFAULT, ...), which would hit the same
-// executable-wide collision), dlsym on a specific dlopen() handle resolves
-// within that library's own symbol table, bypassing the collision. Same
-// pattern as runtime/sqlite_adapter.c's dlopen of libsqlite3.
+// such alternate entry point in the zlib API, so here we os_dl_open libz
+// explicitly and os_dl_sym the three symbols we need FROM THAT HANDLE.
+// Unlike a plain call (or dlsym(RTLD_DEFAULT, ...), which would hit the same
+// executable-wide collision), os_dl_sym on a specific os_dl_open() handle
+// resolves within that library's own symbol table, bypassing the collision.
+// Same pattern as runtime/sqlite_adapter.c's os_dl_open of libsqlite3.
 typedef int (*fn_inflateInit2_)(z_streamp strm, int windowBits, const char* version, int stream_size);
 typedef int (*fn_inflate_call)(z_streamp strm, int flush);
 typedef int (*fn_inflateEnd_call)(z_streamp strm);
@@ -49,20 +47,20 @@ static int zlib_inflate_load(void) {
     if (g_zlib_loaded == 1) return 0;
     if (g_zlib_loaded == 2) return -1;
 
-    // libz is already a DT_NEEDED of this binary (-lz), so dlopen just
+    // libz is already a DT_NEEDED of this binary (-lz), so os_dl_open just
     // bumps its refcount and returns the existing link map — no double
-    // load. RTLD_LOCAL (default): we look symbols up via this specific
-    // handle, not via the global scope, so we never re-collide with our
-    // own executable's `inflate`.
-    void* lib = dlopen("libz.so.1", RTLD_LAZY);
-    if (!lib) lib = dlopen("libz.so", RTLD_LAZY);
+    // load. global=0 (RTLD_LOCAL default): we look symbols up via this
+    // specific handle, not via the global scope, so we never re-collide with
+    // our own executable's `inflate`.
+    os_dl_t lib = os_dl_open("libz.so.1", 0);
+    if (!lib) lib = os_dl_open("libz.so", 0);
     if (!lib) { g_zlib_loaded = 2; return -1; }
 
     // inflateInit2() is a macro around the real exported symbol
     // inflateInit2_(strm, windowBits, ZLIB_VERSION, sizeof(z_stream)).
-    g_zlib_inflateInit2_ = (fn_inflateInit2_)dlsym(lib, "inflateInit2_");
-    g_zlib_inflate        = (fn_inflate_call)dlsym(lib, "inflate");
-    g_zlib_inflateEnd     = (fn_inflateEnd_call)dlsym(lib, "inflateEnd");
+    g_zlib_inflateInit2_ = (fn_inflateInit2_)os_dl_sym(lib, "inflateInit2_");
+    g_zlib_inflate        = (fn_inflate_call)os_dl_sym(lib, "inflate");
+    g_zlib_inflateEnd     = (fn_inflateEnd_call)os_dl_sym(lib, "inflateEnd");
 
     if (!g_zlib_inflateInit2_ || !g_zlib_inflate || !g_zlib_inflateEnd) {
         g_zlib_loaded = 2;
@@ -111,7 +109,7 @@ nyx_string* nyx_compress(nyx_string* src) {
 // uncompress devolvía != Z_OK y esto retornaba "" EN SILENCIO en todo binario
 // que importara std/compress. compress() funcionaba; decompress() no.
 // Fix: delegar en el camino streaming (nyx_inflate modo 3 = zlib estricto),
-// que ya resuelve los símbolos por dlopen/dlsym sobre el handle de libz
+// que ya resuelve los símbolos por os_dl_open/os_dl_sym sobre el handle de libz
 // (patrón D1) y es inmune a la colisión. Bonus: original_size deja de ser
 // necesario (el buffer crece solo) — se conserva en la firma por
 // compatibilidad ABI con los seeds, como hint ignorado.

@@ -3,6 +3,11 @@
 
 import "std/sync"
 
+// Stateful handles (Semaphore/WaitGroup/mutex_new()) are SAFE as global
+// initializers — they run single-threaded before main (since v0.24.27).
+// Never lazy-init them behind a READY flag: that's a data race (see LLM.md).
+// ES: los handles con estado son SEGUROS como inicializadores globales —
+// corren single-threaded antes de main. Nunca lazy-init detrás de un flag.
 var sem: Semaphore = sem_new(2)
 var done: WaitGroup = wg_new()
 

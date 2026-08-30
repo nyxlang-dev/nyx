@@ -13,6 +13,12 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh). Este runner es
+# parte de `make test-all` (test-stdlib).
+source "$(dirname "$0")/testing/lib_testroot_lock.sh"
+nyx_testroot_lock_acquire
+
 echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║                                                            ║${NC}"
 echo -e "${CYAN}║     📦 NYX STDLIB TEST RUNNER v1.0                       ║${NC}"
@@ -39,7 +45,7 @@ declare -a FAILED_TESTS
 
 STD_PRELUDE="std/prelude.nx"
 TEST_DIR="tests/stdlib-unit"
-RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c"
+RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto"
 
 run_test() {

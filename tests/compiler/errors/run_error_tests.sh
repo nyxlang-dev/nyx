@@ -7,6 +7,13 @@
 set -u
 cd "$(dirname "$0")/../../.."
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh). Este es uno de
+# los dos runners con los que se midió la contención original (256 / 254+2
+# / 242+14 tests en el MISMO árbol, ver TASKS.md).
+source scripts/testing/lib_testroot_lock.sh
+nyx_testroot_lock_acquire
+
 PASS=0
 FAIL=0
 FAILED_TESTS=()

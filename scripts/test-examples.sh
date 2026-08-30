@@ -10,6 +10,14 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh). Este script vive
+# fuera de scripts/testing/ (follow-up de la cosecha [arco:W3-paso0b] ficha B
+# — quedó fichado como fuera del scope original porque no es
+# scripts/testing/*.sh ni parte de make test/test-all).
+source "$(dirname "$0")/testing/lib_testroot_lock.sh"
+nyx_testroot_lock_acquire
+
 NYX_BIN="./nyx_bootstrap"
 if [ -x "$HOME/.nyx/bin/nyx" ]; then
     NYX_BIN="$HOME/.nyx/bin/nyx"

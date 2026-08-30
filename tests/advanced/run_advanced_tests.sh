@@ -2,6 +2,11 @@
 # Run all advanced tests for Nyx capability assessment
 cd "$(dirname "$0")/../.."
 
+# Serializa contra otros runners: todos comparten script.nx/script.ll/
+# script_bin en la raíz del repo (ver lib_testroot_lock.sh).
+source scripts/testing/lib_testroot_lock.sh
+nyx_testroot_lock_acquire
+
 PASS=0
 FAIL=0
 ERRORS=""
@@ -19,6 +24,7 @@ for test_file in tests/advanced/test-A*.nx; do
             runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c \
             runtime/compress.c runtime/random.c runtime/url.c \
             runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c \
+            runtime/os/os_posix.c \
             -lgc -lpthread -ldl -lm -lssl -lcrypto -lz -o /tmp/nyx_adv_test 2>/dev/null; then
             # Run with timeout
             output=$(timeout 10 /tmp/nyx_adv_test 2>&1)

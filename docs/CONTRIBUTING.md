@@ -24,6 +24,9 @@ Open an issue tagged `enhancement` with:
 ```bash
 clang --version          # LLVM 14+
 pkg-config --libs bdw-gc # libgc installed
+pkg-config --modversion bdw-gc # must be >= 8.2 (older: GC_set_sp_corrector unavailable,
+                                # M:N scheduler collector can crash under goroutine load —
+                                # runtime warns loudly on stderr, never fails silently)
 ```
 
 ### Initial setup / Setup inicial
