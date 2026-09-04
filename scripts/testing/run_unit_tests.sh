@@ -94,7 +94,7 @@ fi
 # test-types-unify.nx: Fase 1a — motor de unificación por-id (TyVar,
 # subst_new/subst_resolve, occurs_check, unify_var, freshen_params) en
 # compiler/types.nx. Infra ADITIVA, no cableada al pipeline existente —
-# ver docs/superpowers/plans/2026-07-08-type-system-real-borrow-async.md.
+# ver docs/design/plans/2026-07-08-type-system-real-borrow-async.md.
 # GOTCHA descubierto acá: el import multi-línea `import { a, b, ... }
 # from "x"` partido en varias líneas NO resuelve — is_user_import/
 # is_module_import (compiler/nyx.nx) escanean línea por línea buscando
@@ -118,7 +118,7 @@ fi
 # (state_new/place_ensure/mark_moved/is_moved/revive/set_borrow/get_borrow/
 # state_copy/state_join) en compiler/borrow.nx. Infra ADITIVA, NO cableada a
 # bc_walk/borrow_check todavía (eso es S3) — ver
-# docs/superpowers/plans/2026-07-08-type-system-real-borrow-async.md.
+# docs/design/plans/2026-07-08-type-system-real-borrow-async.md.
 # Mismo GOTCHA que test-types-unify: import en UNA sola línea.
 name="compiler-unit/test-borrow-classify"
 out=$(NYX_INLINE_COMPILER=1 timeout 120 make run FILE="tests/compiler-unit/test-borrow-classify.nx" 2>&1)

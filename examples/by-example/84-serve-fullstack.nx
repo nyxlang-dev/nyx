@@ -1,8 +1,9 @@
-// nyx-serve full-stack — HTTP server + JSON API + nyx-kv backend
-// nyx-serve full-stack — servidor HTTP + API JSON + backend nyx-kv
+// std/serve full-stack — HTTP server + JSON API + nyx-kv backend
+// std/serve full-stack — servidor HTTP + API JSON + backend nyx-kv
 
 import "std/http"
 import "std/web"
+import "std/serve"
 
 fn resp_cmd(parts: Array) -> String {
     var sb: StringBuilder = StringBuilder.new()
@@ -50,10 +51,41 @@ fn counter(req: Request) -> Response {
 
 fn main() -> int {
     let app: App = app_new()
+    let port: int = 18184
     app_get(app, "/counter", counter)
 
-    print("full-stack app: HTTP + JSON + KV backend")
-    print("GET /counter increments a counter stored in nyx-kv")
-    print("this pattern powers nyxlang.com's request analytics")
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    let base: String = "http://127.0.0.1:" + int_to_string(port)
+
+    var tries: int = 0
+    var up: bool = false
+    while tries < 50 and !up {
+        let probe: Array = http_get(base + "/counter")
+        if http_status(probe) == 200 {
+            up = true
+        } else {
+            sleep(50)
+        }
+        tries = tries + 1
+    }
+    assert(up, "el servidor nunca levantó en :" + int_to_string(port))
+
+    // Si nyx-kv (127.0.0.1:6380) está corriendo, "count" avanza en cada
+    // request; si no, kv_get/kv_set fallan en silencio (fd < 0, ver
+    // arriba) y el handler sigue respondiendo 200 con count=1 siempre —
+    // este ejemplo funciona standalone, sin depender de que nyx-kv esté
+    // levantado, así que solo verificamos la FORMA de la respuesta.
+    let r1: Array = http_get(base + "/counter")
+    assert(http_status(r1) == 200, "GET /counter -> 200")
+    assert(http_body(r1).indexOf("\"count\":") >= 0, "el body trae \"count\"")
+
+    let r2: Array = http_get(base + "/counter")
+    assert(http_status(r2) == 200, "segundo GET /counter -> 200")
+    assert(http_body(r2).indexOf("\"count\":") >= 0, "el body trae \"count\" en el segundo request")
+
+    print("OK: full-stack (HTTP + JSON, +KV si está arriba) verificado end-to-end")
     return 0
 }

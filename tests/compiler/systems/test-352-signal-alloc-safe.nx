@@ -5,7 +5,7 @@
 // serve v0.6.0 tuvo que escribirse allocation-free a mano. Ahora el closure
 // corre en el thread drenador (contexto normal): este test ALOCA A
 // PROPÓSITO en el handler y verifica que el mensaje sale y el proceso
-// sigue vivo. Spec: docs/superpowers/specs/2026-08-11-self-pipe-senales-spec.md
+// sigue vivo. Spec: docs/design/specs/2026-08-11-self-pipe-senales-spec.md
 var g_recibidas: int = 0
 
 fn on_usr1(sig: int) -> int {

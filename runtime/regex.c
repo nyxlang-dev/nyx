@@ -206,3 +206,27 @@ nyx_string* nyx_regex_replace_all(nyx_string* text, nyx_string* pattern, nyx_str
     out_buf[out_len] = '\0';
     return nyx_string_from_ptr(out_buf, out_len);
 }
+
+// ===== nyx_regex_is_valid =====
+//
+// Por qué existe (2026-09-04, arco andamiaje-sdd): compile_pattern() de arriba
+// REPORTA un patrón roto por stderr y después cada caller devuelve su valor de
+// "no matchea" — indistinguible de un patrón perfectamente válido que
+// simplemente no matcheó. Para un lint alcanza; para VALIDAR datos no: los
+// `pattern:` de docs/gotchas/<id>.md terminan en el linter de vet y en tests
+// generados, así que un patrón que no compila tiene que fallar RUIDOSO en el
+// momento de generar, no lintear nada en silencio para siempre.
+//
+// Contrato: compila con las MISMAS flags que nyx_regex_is_match (REG_EXTENDED),
+// libera, y responde solo el sí/no — sin imprimir nada (quien llama decide cómo
+// quejarse).
+int64_t nyx_regex_is_valid(nyx_string* pattern) {
+    if (!pattern) return 0;
+
+    const char* pattern_cstr = nyx_string_to_cstr(pattern);
+
+    regex_t re;
+    if (regcomp(&re, pattern_cstr, REG_EXTENDED) != 0) return 0;
+    regfree(&re);
+    return 1;
+}

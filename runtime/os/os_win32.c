@@ -1,5 +1,5 @@
 // runtime/os/os_win32.c — impl WIN32 de nyx_os.h (arco W2 fase B, spec
-// docs/superpowers/specs/2026-08-19-windows-nativo-design.md §4-W2).
+// docs/design/specs/2026-08-19-windows-nativo-design.md §4-W2).
 //
 // ES: primera implementación Windows REAL de la capa. Cubre lo que el subset
 // de regresión ejecuta (threads/sync/tiempo/vm/dl/proc/sig/fault/fs/term/fd)
@@ -575,7 +575,7 @@ int os_vm_release(void* base, size_t size) {
 // Contexto cooperativo — W3 Task 3 (ctx v2 sobre Fibers). Autoridades: el
 // contrato ctx v2 de nyx_os.h (incl. inicialización en cero y SEMÁNTICA
 // DIFERIDA de os_ctx_stack), el diseño GC-Windows rev2/rev3 y el spike
-// validado (docs/superpowers/spikes/2026-08-29-w3-spike-local-x64.md).
+// validado (docs/design/spikes/2026-08-29-w3-spike-local-x64.md).
 //
 // ES: decisiones que NO son obvias desde el código:
 //  - CreateFiberEx con dwStackCommitSize == dwStackReserveSize (rev2 §5.2):

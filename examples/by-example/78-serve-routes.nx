@@ -1,8 +1,9 @@
-// nyx-serve routes — GET, POST, PUT, DELETE handlers
-// Rutas nyx-serve — handlers para GET, POST, PUT, DELETE
+// std/serve routes — GET, POST, PUT, DELETE handlers
+// Rutas std/serve — handlers para GET, POST, PUT, DELETE
 
 import "std/http"
 import "std/web"
+import "std/serve"
 
 fn get_users(req: Request) -> Response {
     return response_json(200, "[{\"id\": 1, \"name\": \"Alice\"}]")
@@ -26,6 +27,7 @@ fn delete_user(req: Request) -> Response {
 
 fn main() -> int {
     let app: App = app_new()
+    let port: int = 18178
 
     // RESTful routes with path parameters
     app_get(app, "/users", get_users)
@@ -33,10 +35,49 @@ fn main() -> int {
     app_post(app, "/users", create_user)
     app_delete(app, "/users/{id}", delete_user)
 
-    print("REST API configured with 4 routes")
-    print("  GET    /users")
-    print("  GET    /users/{id}")
-    print("  POST   /users")
-    print("  DELETE /users/{id}")
+    // Arranca el server real en una goroutine detached (spawn corre sobre
+    // el scheduler M:N). Cuando main() termina el proceso sale y se lleva
+    // la goroutine con él — nada queda corriendo al final del ejemplo.
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    let base: String = "http://127.0.0.1:" + int_to_string(port)
+
+    // El accept loop tarda un instante en levantar: reintenta con backoff
+    // corto en vez de asumir que ya está arriba.
+    var tries: int = 0
+    var up: bool = false
+    while tries < 50 and !up {
+        let probe: Array = http_get(base + "/users")
+        if http_status(probe) == 200 {
+            up = true
+        } else {
+            sleep(50)
+        }
+        tries = tries + 1
+    }
+    assert(up, "el servidor nunca levantó en :" + int_to_string(port))
+
+    // GET /users
+    let r1: Array = http_get(base + "/users")
+    assert(http_status(r1) == 200, "GET /users -> 200")
+    assert(http_body(r1).indexOf("Alice") >= 0, "GET /users trae a Alice")
+
+    // GET /users/{id} — el param queda en req.params
+    let r2: Array = http_get(base + "/users/7")
+    assert(http_status(r2) == 200, "GET /users/{id} -> 200")
+    assert(http_body(r2).indexOf("\"id\": 7") >= 0, "GET /users/{id} propaga el id")
+
+    // POST /users — req.body llega crudo al handler
+    let r3: Array = http_post(base + "/users", "name=Bob")
+    assert(http_status(r3) == 201, "POST /users -> 201")
+    assert(http_body(r3).indexOf("name=Bob") >= 0, "POST /users ecoa el body")
+
+    // DELETE /users/{id}
+    let r4: Array = http_request("DELETE", base + "/users/7", [], "")
+    assert(http_status(r4) == 204, "DELETE /users/{id} -> 204")
+
+    print("OK: rutas GET/POST/DELETE verificadas end-to-end")
     return 0
 }

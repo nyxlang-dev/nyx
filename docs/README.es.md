@@ -47,6 +47,11 @@ nyx init mi-app && cd mi-app
 nyx build && ./mi-app
 ```
 
+`nyx init` siembra un scaffold neutral de proveedor (`AGENTS.md`, `CAPABILITIES.md`,
+`docs/nyx/`) — sin archivos atados a un proveedor de IA en particular. Agrega `--lang en|es`,
+`--agent=claude,cursor,copilot` para adaptadores finos por proveedor, o `--sdd` para el
+andamiaje opcional de spec-driven development.
+
 O probalo sin instalar nada en el **[playground web](https://nyxlang.com/playground)** — Nyx compila a WebAssembly y corre en tu navegador.
 
 ## Features
@@ -70,7 +75,7 @@ O probalo sin instalar nada en el **[playground web](https://nyxlang.com/playgro
 | HTTP hello (wrk, multi-thread) | 73.863 req/s |
 | KV GET (500K) | 21,57M ops/s (supera a Redis) |
 
-<sub>*Última medición en v0.12–0.13 (mar 2026); re-medición en v0.19 pendiente. Metodología completa en [BENCHMARKS.md](BENCHMARKS.md).</sub>
+<sub>*Última medición en v0.12–0.13 (mar 2026); re-medición en v0.19 pendiente. Metodología completa en [archive/BENCHMARKS.md](archive/BENCHMARKS.md).</sub>
 
 ## En el navegador (WebAssembly)
 

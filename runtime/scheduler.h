@@ -34,7 +34,7 @@
 // reserva con mmap RW + una GUARD PAGE PROT_NONE al fondo, así un overflow
 // muere con diagnóstico en vez de pisar el heap vecino en silencio. Tuneable
 // sin recompilar con NYX_GOROUTINE_STACK_KB (clamp [64KB, 8MB]).
-// Spec: docs/superpowers/specs/2026-08-11-stacks-growables-design.md
+// Spec: docs/design/specs/2026-08-11-stacks-growables-design.md
 #define NYX_STACK_SIZE     (256 * 1024) // DEFAULT (no "el" tamaño: ver nyx_goroutine_stack_size)
 #define NYX_STACK_MIN_KB   64
 #define NYX_STACK_MAX_KB   8192

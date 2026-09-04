@@ -1,6 +1,6 @@
 // test-367 (A5, review adversarial 2026-08-13): payload de enum genérico
 // que es una TUPLA (`Result<(int, String), String>`). Recorte de
-// docs/superpowers/reviews/2026-08-13-arco-e1-e2-repros/r6-tuple-payload.nx.
+// docs/design/reviews/2026-08-13-arco-e1-e2-repros/r6-tuple-payload.nx.
 //
 // Cadena de la corrupción (medida, no adivinada — ver comentario en
 // decode_payload, codegen.nx ~15433): extract_type_args_from_str no respeta

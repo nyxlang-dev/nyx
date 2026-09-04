@@ -9,6 +9,13 @@ RUNTIME_SRCS = runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
 LIBS         = -lgc -lpthread -ldl -lm -lssl -lcrypto -lz
 NO_GC_LIBS   = -lpthread -ldl -lm -lssl -lcrypto
 
+# Seeds .ll del bootstrap, en orden de link — DEBE coincidir con
+# scripts/build_bootstrap.sh (el enlazado real de nyx_bootstrap) y con el
+# for-loop de verificación de compiler/*.ll en bootstrap: arriba.
+BOOTSTRAP_LL := compiler/lexer.ll compiler/parser.ll compiler/types.ll \
+                compiler/semantic.ll compiler/borrow.ll compiler/licm.ll \
+                compiler/codegen.ll compiler/nyx.ll
+
 # ── WASM (wasm32-wasi) — toolchain liviano Debian, sin wasi-sdk ──
 # Requiere: sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19
 # Para ejecutar: wasmtime (binario release, no está en apt)
@@ -77,6 +84,7 @@ install-local:
 	if [ -f nyx_test ]; then cp nyx_test "$$NYX_HOME_DIR/nyx_test"; fi; \
 	if [ -f nyx_vet ]; then cp nyx_vet "$$NYX_HOME_DIR/nyx_vet"; fi; \
 	if [ -f nyx_fmt ]; then cp nyx_fmt "$$NYX_HOME_DIR/nyx_fmt"; fi; \
+	if [ -f nyx_gendocs ]; then cp nyx_gendocs "$$NYX_HOME_DIR/nyx_gendocs"; fi; \
 	if [ -f "$$NYX_HOME_DIR/nyx_bootstrap" ]; then cp nyx_bootstrap "$$NYX_HOME_DIR/nyx_bootstrap"; fi; \
 	if [ -f "$$NYX_HOME_DIR/nyx_build" ] && [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/nyx_build"; fi; \
 	cp runtime/*.c runtime/*.h "$$NYX_HOME_DIR/runtime/"; \
@@ -86,8 +94,12 @@ install-local:
 	cp std/*.nx "$$NYX_HOME_DIR/std/"; \
 	if [ -f "$$NYX_HOME_DIR/scripts/nyx" ]; then cp scripts/nyx "$$NYX_HOME_DIR/scripts/nyx"; fi; \
 	cp LLM.md "$$NYX_HOME_DIR/LLM.md" 2>/dev/null || true; \
-	if [ -d "$$NYX_HOME_DIR/templates" ]; then cp LLM.md "$$NYX_HOME_DIR/templates/LLM.md"; fi; \
-	echo "✓ Toolchain sincronizado en $$NYX_HOME_DIR (bin + runtime + std + wrapper + LLM.md)"
+	mkdir -p "$$NYX_HOME_DIR/templates"; \
+	cp -r templates/. "$$NYX_HOME_DIR/templates/"; \
+	mkdir -p "$$NYX_HOME_DIR/templates/en/docs/nyx"; \
+	cp LLM.md "$$NYX_HOME_DIR/templates/en/docs/nyx/LLM.md"; \
+	bash scripts/install_purge_legacy_templates.sh "$$NYX_HOME_DIR"; \
+	echo "✓ Toolchain sincronizado en $$NYX_HOME_DIR (bin + runtime + std + wrapper + LLM.md + templates, sin restos pre-ADR-1)"
 
 ## Recompilar un módulo específico con el bootstrap actual
 ## Uso: make recompile MODULE=lexer
@@ -182,7 +194,11 @@ test-load:
 
 ## AI-FIRST: valida que la doc sembrada basta para escribir Nyx correcto al 1er intento
 test-ai-first:
+	bash scripts/testing/run_gotchas_schema.sh
+	bash scripts/testing/run_gendocs_test.sh
+	bash scripts/testing/run_gendocs_noop.sh
 	bash scripts/testing/run_gotcha_coverage.sh
+	bash scripts/testing/run_vet_gotchas.sh
 	bash scripts/testing/run_ai_first_tests.sh
 	bash scripts/testing/run_silent_failure_checks.sh
 	bash scripts/testing/run_codegen_mute_audit.sh
@@ -190,7 +206,13 @@ test-ai-first:
 	bash scripts/testing/run_toolchain_recipe_audit.sh
 	bash scripts/testing/run_os_layer_ratchet.sh
 	bash scripts/testing/run_template_coherence.sh
+	bash scripts/testing/run_seeded_blocks_compile.sh
+	bash scripts/testing/run_templates_parity.sh
+	bash scripts/testing/run_init_golden.sh
+	bash scripts/testing/run_sdd_init.sh
+	bash scripts/testing/run_sync_docs_migration.sh
 	bash scripts/testing/run_docs_health.sh
+	bash scripts/sdd/selftest
 
 ## Matriz de invariancia por forma del receptor (gate propio: genera y compila
 ## decenas de programas). Verifica UNA propiedad — el mismo método sobre el
@@ -214,6 +236,16 @@ test-all:
 	$(MAKE) test-m08-types
 	@echo ""
 	$(MAKE) test-runtime
+	@echo ""
+	$(MAKE) test-unit
+	@echo ""
+	$(MAKE) test-dispatch-matrix
+	@echo ""
+	$(MAKE) test-integration
+	@echo ""
+	$(MAKE) test-wasm
+	@echo ""
+	$(MAKE) test-examples
 	@echo ""
 	$(MAKE) test-load
 	@echo ""
@@ -300,8 +332,7 @@ run-debug: compile-debug
 ## Compilar nyx_bootstrap con AddressSanitizer
 bootstrap-asan:
 	$(CLANG) -fsanitize=address -g \
-	  compiler/lexer.ll compiler/parser.ll compiler/types.ll compiler/semantic.ll \
-	  compiler/borrow.ll compiler/codegen.ll compiler/nyx.ll \
+	  $(BOOTSTRAP_LL) \
 	  $(RUNTIME_SRCS) $(LIBS) -o nyx_bootstrap_dbg
 	@echo "✓ nyx_bootstrap_dbg listo (ASAN)"
 
@@ -334,6 +365,7 @@ fmt:
 	./nyx_fmt
 
 ## Build the REPL
+## se compilan desde .nx con el bootstrap; no llevan seed .ll
 build-repl:
 	cp compiler/repl.nx script.nx
 	./nyx_bootstrap
@@ -373,10 +405,20 @@ check:
 	./nyx_check
 
 ## Build nyx_build (build system, v1.9.0)
+## build.nx importa gotchas_table.nx (declaration-only, igual que vet.nx): el
+## andamiaje SDD genera la evidencia y el test de constitución DESDE la tabla.
+## Se compila COMO UN MODULO MAS y se linkea — un `import` pelado no serviria
+## (nyx.nx no inlinea paths "compiler/"). La tabla solo se recompila si esta la
+## fuente: el clon publico trae el .ll semilla y no el .nx.
 build-nyx-build:
+	@if [ -f compiler/gotchas_table.nx ]; then \
+		cp compiler/gotchas_table.nx script.nx && \
+		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
+		cp script.ll compiler/gotchas_table.ll; \
+	fi
 	cp compiler/build.nx script.nx
 	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
-	$(CLANG) script.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_build
+	$(CLANG) script.ll compiler/gotchas_table.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_build
 	@echo "✓ nyx_build listo"
 
 ## Use nyx_build to build a project (v1.9.0)
@@ -386,24 +428,55 @@ nyx-build:
 	./nyx_build build
 
 ## Build nyx_vet (static analyzer, v1.8.0)
+## Los avisos W1xx salen de compiler/gotchas_table.nx, que se compila COMO UN
+## MODULO MAS y se linkea (el import de vet.nx es declaration-only, igual que
+## lexer/parser: nyx.nx no inlinea paths "compiler/"). Ambos .nx se compilan
+## sólo si están — el clon público trae los .ll semilla y no las fuentes.
 build-vet:
+	@if [ -f compiler/gotchas_table.nx ]; then \
+		cp compiler/gotchas_table.nx script.nx && \
+		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
+		cp script.ll compiler/gotchas_table.ll; \
+	fi
 	@if [ -f compiler/vet.nx ]; then \
 		cp compiler/vet.nx script.nx && \
 		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
 		cp script.ll compiler/vet.ll; \
 	fi
-	$(CLANG) compiler/vet.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_vet
+	$(CLANG) compiler/vet.ll compiler/lexer.ll compiler/parser.ll compiler/gotchas_table.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_vet
 	@echo "✓ nyx_vet listo"
 
 ## Run static analysis on a Nyx source file (v1.8.0)
 ## Uso: make vet FILE=mi_programa.nx
+## NYX_SRC y NO `cp $(FILE) script.nx`: nyx_vet imprime el path que recibe, y
+## con la copia todo aviso salia como `script.nx:<linea>` — templates/en/AGENTS.md
+## le promete al usuario `<file>:<line>` con SU archivo. De paso deja de pisar
+## el script.nx de la raiz (el que serializa el lock de los runners).
 vet:
 	@test -n "$(FILE)" || (echo "Uso: make vet FILE=<archivo.nx>"; exit 1)
 	@test -f nyx_vet || (echo "Primero ejecuta: make build-vet"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_vet
+	NYX_SRC=$(FILE) ./nyx_vet
+
+## Build nyx_gendocs (generador de la capa de información del lenguaje)
+## Mismo patrón que build-vet, pero gendocs.nx no usa módulos del compilador:
+## sólo runtime (read_file/write_file/readdir/regex).
+build-gendocs:
+	cp compiler/gendocs.nx script.nx
+	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
+	cp script.ll compiler/gendocs.ll
+	$(CLANG) compiler/gendocs.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_gendocs
+	@echo "✓ nyx_gendocs listo"
+
+## Regenerar TODO lo que se deriva de docs/gotchas/: las regiones
+## <!-- gen:gotchas … --> de LLM.md y templates/{en,es}/AGENTS.md, la tabla
+## compiler/gotchas_table.nx y los arrays de scripts/testing/gotchas_generated.sh.
+## Correr después de tocar cualquier docs/gotchas/<id>.md (la guardia
+## run_gendocs_noop.sh falla si queda algo stale).
+gen-agent-docs: build-gendocs
+	./nyx_gendocs
 
 ## Build nyx_doc (documentation generator, v1.8.0)
+## se compilan desde .nx con el bootstrap; no llevan seed .ll
 build-doc:
 	cp compiler/doc.nx script.nx
 	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
@@ -469,6 +542,7 @@ install:
 	@echo "  Shebang: #!/usr/bin/env nyx"
 
 ## Build nyx_bindgen (C header binding generator, v2.4.0)
+## se compilan desde .nx con el bootstrap; no llevan seed .ll
 build-bindgen:
 	cp compiler/bindgen.nx script.nx
 	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
@@ -492,4 +566,16 @@ playground:
 	@echo "✓ nyx_playground compilado"
 	./nyx_playground
 
-.PHONY: bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground
+## Guardas documentales (run_docs_health.sh) — también corre dentro de test-ai-first
+docs-health:
+	bash scripts/testing/run_docs_health.sh
+
+## Selftest del método SDD-nyx (scripts/sdd/selftest) — también dentro de test-ai-first
+sdd-check:
+	bash scripts/sdd/selftest
+
+## Verifica que VERSION coincide en los fallbacks (scripts/release-check.sh --pre)
+release-check:
+	bash scripts/release-check.sh --pre
+
+.PHONY: bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check

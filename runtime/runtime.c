@@ -718,7 +718,7 @@ extern int64_t nyx_call_closure_i64(void* pair, int64_t arg);
 // drenador dedicado — lazy en el primer signal_handle, registrado en Boehm
 // vía os_thread_create (runtime/os/os_posix.c) — ejecuta el closure en
 // contexto normal: puede alocar, printear, leer env. Spec:
-// docs/superpowers/specs/2026-08-11-self-pipe-senales-spec.md
+// docs/design/specs/2026-08-11-self-pipe-senales-spec.md
 static int nyx_sig_pipe[2] = {-1, -1};
 static int nyx_sig_thread_started = 0;
 

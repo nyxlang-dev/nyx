@@ -22,18 +22,22 @@
 set -u
 cd "${1:-$HOME/.nyx}" || exit 1
 
-# Contexto AI para `nyx init` (la referencia densa viaja a cada proyecto)
-cp LLM.md templates/LLM.md 2>/dev/null || true
+# Contexto para agentes de `nyx init` (la referencia densa viaja a cada
+# proyecto como docs/nyx/LLM.md). Desde ADR-1 el juego de plantillas está
+# partido por idioma y LLM.md vive SOLO en el juego EN: el scaffold ES lo
+# siembra desde ahí (la referencia densa es monolingüe por decisión).
+mkdir -p templates/en/docs/nyx
+cp LLM.md templates/en/docs/nyx/LLM.md 2>/dev/null || true
 
-rm -rf compiler/ tests/ examples/ benchmarks/ docs/ playground/
+rm -rf compiler/ tests/ examples/ docs/ playground/
 rm -rf products/ sites/ services/ tools/
-rm -rf nyx-vscode/ .github/ .claude/ deploy/ .archive/
+rm -rf .github/ .claude/ deploy/
 rm -f scripts/build_bootstrap.sh scripts/build-release.sh
 rm -f scripts/install.sh scripts/run_stdlib_tests.sh
 rm -f scripts/sync_to_public.sh scripts/test-examples.sh
 rm -rf scripts/testing/
 rm -f SPEC.md SPEC.es.md ROADMAP.md VERSIONING.md
 rm -f PROJECT_STATE.md CLAUDE.md CONTRIBUTING.md TASKS.md
-rm -f README.md LICENSE .cursorrules Makefile
+rm -f README.md LICENSE Makefile
 rm -f script.ll script.nx script_bin access.log
 exit 0

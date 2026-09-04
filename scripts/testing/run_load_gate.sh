@@ -11,7 +11,7 @@
 # PROT_NONE en el medio) y el que mató los dos mutantes de esa investigación
 # (revertir GC_set_sp_corrector: 6/10 SEGV; sa_mask vacía sola: sin señal
 # hace falta el corrector junto a la máscara). Referencia completa:
-# .superpowers/sdd/2026-08-27-w3-paso0b-gc-roots/task-report.md
+# docs/archive/sdd/2026-08-27-w3-paso0b-gc-roots/task-report.md
 #
 # Compila UNA sola vez con la receta -O2 de producción (la misma de
 # `make run`: cp *.nx -> script.nx, ./nyx_bootstrap, clang -O2 script.ll

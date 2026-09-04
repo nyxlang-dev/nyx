@@ -1,0 +1,69 @@
+// Template engine, Flask-style — {{}}, {{{raw}}}, #if, #each, partials
+// Motor de templates estilo Flask — interpolación, condicionales, loops, partials
+//
+// std/template is the PURE engine (no networking): tpl_render(tmpl, ctx)
+// takes a template string and a Map<String> context and returns the final
+// text. It works standalone (this example) or behind std/serve (see
+// examples/by-example/78-84, which render real HTTP responses with it).
+import "std/template"
+
+fn main() -> int {
+    // ── Escaped vs. raw interpolation ───────────────────────────────────
+    // {{key}} HTML-escapes the value (XSS-safe by default); {{{key}}} does
+    // NOT escape — only use it with trusted/pre-sanitized content.
+    var ctx1: Map = map_new()
+    ctx1.insert("name", "<script>alert(1)</script>")
+    let out1: String = tpl_render("hola {{name}}", ctx1)
+    assert(out1 == "hola &lt;script&gt;alert(1)&lt;/script&gt;", "{{key}} escapa por defecto")
+
+    var ctx2: Map = map_new()
+    ctx2.insert("html", "<b>negrita</b>")
+    let out2: String = tpl_render("{{{html}}}", ctx2)
+    assert(out2 == "<b>negrita</b>", "{{{key}}} no escapa (raw)")
+
+    // ── #if / else ───────────────────────────────────────────────────
+    // truthy = la key existe Y su valor no es "" ni "0".
+    var ctx3: Map = map_new()
+    ctx3.insert("logged_in", "1")
+    let out3: String = tpl_render("{{#if logged_in}}bienvenido{{else}}invitado{{/if}}", ctx3)
+    assert(out3 == "bienvenido", "#if con valor truthy")
+
+    var ctx4: Map = map_new()
+    ctx4.insert("logged_in", "0")
+    let out4: String = tpl_render("{{#if logged_in}}bienvenido{{else}}invitado{{/if}}", ctx4)
+    assert(out4 == "invitado", "#if: \"0\" cuenta como falsy")
+
+    // ── #each ───────────────────────────────────────────────────────
+    // La key debe resolver a un Array<Map>; el body se renderiza una vez
+    // por elemento, usando ese Map como contexto del bloque (soporta
+    // anidar {{#each}} dentro de {{#each}}).
+    var it1: Map = map_new()
+    it1.insert("name", "uno")
+    var it2: Map = map_new()
+    it2.insert("name", "dos")
+    let items: Array = [it1, it2]
+    var ctx5: Map = map_new()
+    ctx5.insert("items", items)
+    let out5: String = tpl_render("<ul>{{#each items}}<li>{{name}}</li>{{/each}}</ul>", ctx5)
+    assert(out5 == "<ul><li>uno</li><li>dos</li></ul>", "#each renderiza un <li> por item")
+
+    // ── Partials ───────────────────────────────────────────────────
+    // tpl_partial registra un template reusable por nombre; {{> name}} lo
+    // incluye renderizado con el contexto ACTUAL (no uno nuevo ni vacío).
+    tpl_partial("footer", "<footer>{{year}}</footer>")
+    var ctx6: Map = map_new()
+    ctx6.insert("year", "2026")
+    let out6: String = tpl_render("<body>hola{{> footer}}</body>", ctx6)
+    assert(out6 == "<body>hola<footer>2026</footer></body>", "{{> name}} incluye el partial")
+
+    // ── Todo junto: una página real ───────────────────────────────────
+    var page_ctx: Map = map_new()
+    page_ctx.insert("title", "Nyx & serve")
+    page_ctx.insert("items", items)
+    let page_tmpl: String = "<h1>{{title}}</h1><ul>{{#each items}}<li>{{name}}</li>{{/each}}</ul>"
+    let page: String = tpl_render(page_tmpl, page_ctx)
+    assert(page == "<h1>Nyx &amp; serve</h1><ul><li>uno</li><li>dos</li></ul>", "página completa: título + loop")
+
+    print("OK: motor de templates (interpolación, #if, #each, partial) verificado end-to-end")
+    return 0
+}

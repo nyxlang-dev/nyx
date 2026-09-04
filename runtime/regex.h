@@ -24,4 +24,9 @@ nyx_string* nyx_regex_replace(nyx_string* text, nyx_string* pattern, nyx_string*
 // Returns the original string unchanged if no match is found.
 nyx_string* nyx_regex_replace_all(nyx_string* text, nyx_string* pattern, nyx_string* replacement);
 
+// Returns 1 if pattern COMPILES as a POSIX ERE, 0 otherwise. Unlike the
+// functions above it never prints: it answers the yes/no and lets the caller
+// decide how to complain. See the comment on nyx_regex_is_valid in regex.c.
+int64_t nyx_regex_is_valid(nyx_string* pattern);
+
 #endif // NYX_REGEX_H

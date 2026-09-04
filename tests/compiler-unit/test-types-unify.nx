@@ -1,7 +1,7 @@
 // ===== TEST UNITARIO: MOTOR DE UNIFICACION POR-ID (Fase 1a) =====
 // Verifica compiler/types.nx: TyVar + subst mutable + occurs-check +
 // unify_var + freshen_params — infra ADITIVA, no cableada al pipeline
-// existente (ver docs/superpowers/plans/2026-07-08-type-system-real-borrow-async.md).
+// existente (ver docs/design/plans/2026-07-08-type-system-real-borrow-async.md).
 // Ejecutar: NYX_INLINE_COMPILER=1 make run FILE=tests/compiler-unit/test-types-unify.nx
 //
 // NYX_INLINE_COMPILER=1 (ver compiler/nyx.nx): permite inlinear

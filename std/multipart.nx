@@ -1,0 +1,337 @@
+// std/multipart.nx — parser multipart/form-data (v1, in-memory).
+//
+// Absorbido de nyx-serve v0.7.1 (2026-08-31), copia directa de su
+// src/multipart.nx: parser PURO (no toca red ni std/web), API pública
+// idéntica (multipart_parse + los accessors part_*). Los comentarios que
+// citan task-*-report.md o rutas ~/NyxLang son del repo del producto
+// (historia de su desarrollo); ver la nota de absorción en el bloque de
+// SIZE LIMIT, que sí quedó desactualizado al mudarse al core.
+//
+// STANDALONE HELPER — does NOT populate `req.form` and does NOT touch the
+// `Request` struct in std/web.nx (decided by the arc's design: the
+// dispatcher does not change). A handler that needs multipart fields calls
+// `multipart_parse(req.body, http_find_header(req.headers_flat,
+// "Content-Type"))` explicitly.
+//
+// ⚠️ SIZE LIMIT (runtime, NOT negotiable, NOT worked around here): the
+// underlying HTTP body reader silently discards bodies with
+// Content-Length >= 1MiB (they arrive as "") — see
+// ~/NyxLang/runtime/net.c:520. This makes multipart v1 effectively an
+// IN-MEMORY parser for bodies < 1MiB; a real 413 response + configurable
+// cap is a follow-up of the CORE runtime, tracked separately, and
+// deliberately NOT implemented in this module.
+//
+// [nota de absorción 2026-08-31] Ese follow-up del core YA ESTÁ HECHO: el
+// lector de bodies de runtime/net.c tiene cap configurable
+// (NYX_HTTP_MAX_BODY, default 1MiB) y responde 413 automático en vez de
+// descartar en silencio (E2E: tests/integration/http_body_cap). El párrafo
+// de arriba se conserva como historia; lo vigente es que un body sobre el
+// cap nunca llega a este parser — el server lo rechaza con 413 antes.
+//
+// Format parsed (RFC 2388 subset, tolerant, never crashes on malformed
+// input):
+//   --BOUNDARY\r\n
+//   Content-Disposition: form-data; name="field"; filename="f.txt"\r\n
+//   Content-Type: text/plain\r\n
+//   \r\n
+//   <value bytes, BINARY-SAFE>\r\n
+//   --BOUNDARY\r\n
+//   ...
+//   --BOUNDARY--\r\n
+//
+// Strings = bytes in this compiler (see docs/SPEC.md) — a part's value may
+// contain raw `\r\n` and `--` bytes and still round-trips exactly, because
+// the scanner locates the boundary by explicit `indexOf`, not by any
+// line-oriented trim/split of the VALUE (only the framing CRLF immediately
+// preceding the next boundary marker is stripped, by exact-length slice,
+// never a generic trim).
+//
+// GOTCHA WORKAROUNDS (same family as src/template.nx — see
+// task-3.1/3.2-report.md and CLAUDE.md for the underlying compiler gaps):
+//   - inline `arr[i]` used directly in `.push()`/`+` concat reads back as a
+//     raw pointer → always bind to a typed `let` first. Applied everywhere
+//     below (part accessors, header/param extraction).
+//   - `String.indexOf(needle, from)` silently ignores the 2nd arg (always
+//     searches from byte 0) — same class of gap as src/template.nx's
+//     `tpl_index_from`.
+//   - ⚠️ NEW GAP FOUND IN THIS TASK (not in template.nx's scope, since
+//     templates are always text): `String.indexOf`/`String==`/`.split()`
+//     etc. bottom out in `runtime/strings.c` on `strstr`/`strcmp` (see
+//     `nyx_string_index_of` ~line 288) — those are C string functions that
+//     stop at the first NUL byte, NOT actually binary-safe despite the
+//     "strings = bytes" contract (CLAUDE.md). A multipart body genuinely
+//     contains NUL bytes in binary file parts, so `body.indexOf(delim)`
+//     silently stops scanning at the first embedded `\0` *inside a
+//     preceding part's binary payload* and never finds the REAL next
+//     boundary that comes after it — reproduced empirically: a 1024-byte
+//     binary part (containing 4 NUL bytes) parsed 24 bytes too LONG,
+//     exactly `len("\r\n--boundary--\r\n") - 2`, because the boundary search
+//     failed, degraded to "no more delimiters", and the parser folded the
+//     trailing framing into the value. NOT patched at the runtime (out of
+//     scope for this repo — monorepo is off-limits per this task's brief);
+//     catalog as a compiler/runtime gap for `~/NyxLang` follow-up. Workaround
+//     used HERE: `mp_index_from` does NOT delegate to `.indexOf()` at all —
+//     it's a from-scratch byte-by-byte scanner built on `.charAt()` (which
+//     IS binary-safe: direct `str->data[index]` array read, see
+//     `nyx_string_char_at`), naive O(haystack*needle) but correct
+//     regardless of embedded NUL bytes anywhere in the haystack. Slower
+//     than strstr, but multipart v1 bodies are already capped at <1MiB by
+//     the runtime's own body-size limit (see the module-level note above),
+//     so this is an acceptable cost for correctness (CLAUDE.md principle
+//     #1: "Corrección antes que velocidad").
+//   - `String.starts_with` (snake_case) always returns false → use
+//     `.startsWith` (camelCase) everywhere.
+//   - `String.to_lower` (snake_case) is NOT wired in codegen (only listed as
+//     eligible for i64->String coercion, same class of gap as
+//     `starts_with`/`starts_with` documented in template.nx) → use
+//     `.toLower()` (camelCase), the one actually emitted
+//     (compiler/codegen.nx ~line 7210).
+
+// ── Public entry point ──────────────────────────────────────────────────────
+
+// Guard against pathological input (e.g. a body crafted with thousands of
+// boundary-like markers): stop after this many parts instead of looping
+// unboundedly.
+const MP_MAX_PARTS: int = 256
+
+// Parses `body` (raw bytes as a String) against the boundary declared in
+// `content_type` (e.g. "multipart/form-data; boundary=X" or
+// 'boundary="X"'). Returns an Array of "part" Arrays — use part_name/
+// part_filename/part_ctype/part_value to read them (do NOT index a part
+// Array directly outside this module; the 4-slot layout is an
+// implementation detail). Returns an empty Array if `content_type` has no
+// boundary, or if the leading boundary marker never appears in `body`.
+pub fn multipart_parse(body: String, content_type: String) -> Array {
+    var parts: Array = []
+    let boundary: String = mp_extract_param(content_type, "boundary")
+    if boundary.length() == 0 {
+        return parts
+    }
+    let delim: String = "--" + boundary
+    let n: int = body.length()
+
+    var pos: int = mp_index_from(body, delim, 0)
+    if pos < 0 {
+        return parts
+    }
+    pos = pos + delim.length()
+
+    var count: int = 0
+    while pos < n and count < MP_MAX_PARTS {
+        if mp_starts_with_at(body, pos, "--") {
+            // Terminal boundary "--BOUNDARY--": nothing more to parse.
+            pos = n
+        } else {
+            if mp_starts_with_at(body, pos, "\r\n") {
+                pos = pos + 2
+            } else {
+                if mp_starts_with_at(body, pos, "\n") {
+                    pos = pos + 1
+                }
+            }
+
+            let next_delim: int = mp_index_from(body, delim, pos)
+            var part_end: int = next_delim
+            if next_delim < 0 {
+                // Missing closing boundary (test case e): degrade — treat
+                // the remainder of the body as this part's raw data.
+                part_end = n
+            }
+
+            let part_data: String = body.substring(pos, part_end)
+            let part: Array = mp_parse_part(part_data)
+            if part.length() > 0 {
+                parts.push(part)
+            }
+            count = count + 1
+
+            if next_delim < 0 {
+                pos = n
+            } else {
+                pos = next_delim + delim.length()
+            }
+        }
+    }
+    return parts
+}
+
+// ── Part accessors (typed-getter idiom — see src/template.nx precedent:
+// never index a returned part Array inline, always bind first) ───────────
+
+pub fn part_name(p: Array) -> String {
+    let v: String = p[0]
+    return v
+}
+
+pub fn part_filename(p: Array) -> String {
+    let v: String = p[1]
+    return v
+}
+
+pub fn part_ctype(p: Array) -> String {
+    let v: String = p[2]
+    return v
+}
+
+pub fn part_value(p: Array) -> String {
+    let v: String = p[3]
+    return v
+}
+
+// ── Internals ────────────────────────────────────────────────────────────
+
+// Parses one part's raw slice (everything between the CRLF right after the
+// boundary marker and the CRLF right before the NEXT boundary marker) into
+// [name, filename, part_ctype, value]. Returns an empty Array if the part
+// is malformed (no header/body separator, or no `name` param) — the caller
+// skips it rather than crashing or emitting a garbage part.
+fn mp_parse_part(data: String) -> Array {
+    var result: Array = []
+    let sep_idx: int = mp_index_from(data, "\r\n\r\n", 0)
+    if sep_idx < 0 {
+        return result
+    }
+
+    let header_block: String = data.substring(0, sep_idx)
+    var value: String = data.substring(sep_idx + 4, data.length())
+    // Strip the EXACT trailing CRLF that belongs to the multipart framing
+    // (the one right before the next boundary marker) — a fixed 2-byte
+    // slice, never a generic trim, so binary content inside `value` (incl.
+    // its own `\r\n` bytes anywhere but the very last 2) survives intact.
+    let vlen: int = value.length()
+    if vlen >= 2 and value.substring(vlen - 2, vlen) == "\r\n" {
+        value = value.substring(0, vlen - 2)
+    }
+
+    let headers: Array = mp_split_headers(header_block)
+    var name: String = ""
+    var filename: String = ""
+    var part_ctype: String = ""
+    var i: int = 0
+    while i < headers.length() {
+        let h: String = headers[i]
+        if mp_ci_starts_with(h, "Content-Disposition:") {
+            name = mp_extract_param(h, "name")
+            filename = mp_extract_param(h, "filename")
+        } else {
+            if mp_ci_starts_with(h, "Content-Type:") {
+                let ctype_val: String = h.substring(13, h.length())
+                part_ctype = ctype_val.trim()
+            }
+        }
+        i = i + 1
+    }
+
+    if name.length() == 0 {
+        // Malformed part (no Content-Disposition name) — skip it.
+        return result
+    }
+
+    result.push(name)
+    result.push(filename)
+    result.push(part_ctype)
+    result.push(value)
+    return result
+}
+
+// Splits the header block into trimmed, non-empty lines. Tolerant of both
+// "\r\n" and bare "\n" line endings (trim() strips the trailing "\r").
+fn mp_split_headers(block: String) -> Array {
+    let lines: Array = block.split("\n")
+    var result: Array = []
+    var i: int = 0
+    while i < lines.length() {
+        let line: String = lines[i]
+        let trimmed: String = line.trim()
+        if trimmed.length() > 0 {
+            result.push(trimmed)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Extracts `param_name="value"` (quotes optional) from a `;`-separated
+// header-like string (works for both a Content-Disposition line and the
+// multipart Content-Type itself, e.g. `boundary=X`). Splitting on `;`
+// FIRST and matching the whole trimmed segment against `param_name + "="`
+// is what correctly distinguishes `name=` from `filename=` (a naive
+// `indexOf("name=")` would match inside "filename=" too).
+fn mp_extract_param(header_line: String, param_name: String) -> String {
+    let segments: Array = header_line.split(";")
+    let prefix: String = param_name + "="
+    var i: int = 0
+    while i < segments.length() {
+        let seg: String = segments[i]
+        let trimmed: String = seg.trim()
+        if trimmed.startsWith(prefix) {
+            var v: String = trimmed.substring(prefix.length(), trimmed.length())
+            let vlen: int = v.length()
+            if vlen >= 2 and v.substring(0, 1) == "\"" and v.substring(vlen - 1, vlen) == "\"" {
+                v = v.substring(1, vlen - 1)
+            }
+            return v
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// Case-insensitive header-name prefix check (Content-Disposition/
+// Content-Type casing varies by client).
+fn mp_ci_starts_with(s: String, prefix: String) -> bool {
+    let sl: String = s.toLower()
+    let pl: String = prefix.toLower()
+    return sl.startsWith(pl)
+}
+
+// True if tmpl[at..] starts with `needle` (bounds-safe).
+fn mp_starts_with_at(s: String, at: int, needle: String) -> bool {
+    let n: int = s.length()
+    let nl: int = needle.length()
+    if at + nl > n {
+        return false
+    }
+    let slice: String = s.substring(at, at + nl)
+    return slice == needle
+}
+
+// LANGUAGE GAP WORKAROUND (see the two gaps documented at the top of this
+// file): a from-scratch byte-by-byte search, built ONLY on `.length()` and
+// `.charAt()` (both confirmed binary-safe — direct array indexing in
+// runtime/strings.c, no C-string function involved). Deliberately does NOT
+// delegate to `.indexOf()` anywhere, even for the offset-0 case, because
+// `.indexOf()` bottoms out in `strstr` (NUL-terminated, see the module
+// header gap note) — needed here because a multipart body genuinely
+// contains embedded NUL bytes in binary parts, and this scanner must find
+// the boundary marker that comes AFTER them.
+fn mp_index_from(s: String, needle: String, start_at: int) -> int {
+    let hn: int = s.length()
+    let nn: int = needle.length()
+    if nn == 0 {
+        return start_at
+    }
+    if start_at < 0 {
+        return -1
+    }
+    var i: int = start_at
+    while i + nn <= hn {
+        var matched: bool = true
+        var j: int = 0
+        while j < nn {
+            let hb: int = s.charAt(i + j)
+            let nb: int = needle.charAt(j)
+            if hb != nb {
+                matched = false
+                j = nn
+            } else {
+                j = j + 1
+            }
+        }
+        if matched {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}

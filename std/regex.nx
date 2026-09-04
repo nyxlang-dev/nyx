@@ -23,6 +23,21 @@
 // rename these wrappers first (e.g. `regex_match_impl`) so they can't shadow
 // themselves.
 
+// regex_is_valid NO es un builtin: es una función normal contra el runtime.
+// Existe porque los cuatro builtins de arriba no distinguen «el patrón no
+// compila» de «el patrón compila y no matchea» — los dos devuelven el valor de
+// "sin match" (nyx_regex_is_match devuelve 0 en ambos casos), así que ninguno
+// sirve para validar un patrón que viene de un archivo de datos.
+extern "C" fn nyx_regex_is_valid(pattern: String) -> int
+
+/// Whether `pattern` COMPILES as a POSIX ERE (independent of what it matches).
+/// Use it to validate a pattern that comes from data before handing it to
+/// `regex_is_match`/`regex_replace`, which cannot tell an invalid pattern from
+/// one that simply does not match.
+pub fn regex_is_valid(pattern: String) -> bool {
+    return nyx_regex_is_valid(pattern) != 0
+}
+
 /// Return the first match of `pattern` in `text`, or "" if none.
 pub fn regex_match(text: String, pattern: String) -> String {
     return regex_match(text, pattern)

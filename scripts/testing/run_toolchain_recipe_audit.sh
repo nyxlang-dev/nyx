@@ -71,7 +71,7 @@ done
 #     versionados que igual matchean el patrón por texto (medido: script.nx,
 #     la copia temporal que `make build-test`/`make compile` dejan tirada,
 #     re-descubría compiler/test.nx bajo otro nombre). Filtramos a
-#     .sh/.nx/Makefile/.yml, fuera de .superpowers/, tests/spikes/, docs/.
+#     .sh/.nx/Makefile/.yml, fuera de .sdd/, tests/spikes/, docs/.
 #
 # Recetas Linux: cualquiera de esos archivos que liste runtime/thread.c (o
 # $RT/thread.c, $NYX_HOME/runtime/thread.c) — es decir, que linkee el runtime
@@ -88,7 +88,7 @@ done
 # comentarios), nunca copia ni linkea — pasaba la regla del glob "por
 # casualidad" (mención ≠ cobertura, hallazgo de la re-review de Task 6).
 TRACKED_RECIPE_FILES=$(git ls-files -- '*.sh' '*.nx' '**/Makefile' 'Makefile' '*.yml' \
-    | grep -v '^\.superpowers/' | grep -v '^tests/spikes/' | grep -v '^docs/' \
+    | grep -v '^\.sdd/' | grep -v '^tests/spikes/' | grep -v '^docs/' \
     | grep -v '^\.github/workflows/windows\.yml$' \
     | grep -v '^scripts/testing/run_toolchain_recipe_audit\.sh$' \
     | grep -v '^scripts/testing/run_os_layer_ratchet\.sh$')

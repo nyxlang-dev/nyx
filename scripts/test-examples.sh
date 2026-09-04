@@ -54,6 +54,28 @@ done
 
 rm -f script.nx script.ll
 
+# examples/ raíz (no by-example): puñado curado de ejemplos citados por docs/scripts
+# vivos — cada uno vuelve a compilar acá para que no se pudran en silencio
+# (fix: ola B4 de la campaña SDD-nyx, 2026-09-02 — 19 ejemplos muertos o sin cita
+# se borraron del repo; los que quedan entran a este loop).
+echo ""
+echo "examples/ (raíz):"
+for nx_file in examples/*.nx; do
+    name="$(basename "$nx_file" .nx)"
+    cp "$nx_file" script.nx
+
+    if "$NYX_BIN" > /dev/null 2>&1; then
+        printf "  \033[1;32m✓\033[0m %s\n" "$name"
+        PASS=$((PASS + 1))
+    else
+        printf "  \033[1;31m✗\033[0m %s\n" "$name"
+        FAIL=$((FAIL + 1))
+        FAILED_LIST+=("$name")
+    fi
+done
+
+rm -f script.nx script.ll
+
 echo ""
 echo "────────────────────────────────────────"
 echo "  Passed: $PASS   Failed: $FAIL"
@@ -66,6 +88,6 @@ if [ "$FAIL" -gt 0 ]; then
         echo "  - $name"
     done
     echo ""
-    echo "To debug: cp examples/by-example/<name>.nx script.nx && $NYX_BIN"
+    echo "To debug: cp examples/by-example/<name>.nx script.nx && $NYX_BIN  (or examples/<name>.nx for the root ones)"
     exit 1
 fi

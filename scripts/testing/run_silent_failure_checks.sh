@@ -687,6 +687,173 @@ NX
     fi
 fi
 
+# ------------------------------------------------------------------
+# Check: seed-version-stamp — F3 del informe de fricción del scaffold
+# (hallazgo A2, 2026-08-31): lo que `nyx init` sembraba no llevaba NINGUNA
+# marca de versión, así que un proyecto creado con una toolchain vieja
+# seguía guiando al agente con manuales desactualizados para siempre, en
+# silencio. Ahora seed_file (compiler/build.nx) cierra cada archivo de
+# texto sembrado con `<!-- nyx-version: X -->` (al FINAL: la línea 1 y el
+# frontmatter YAML de las skills quedan intactos) y el wrapper avisa en `nyx build` si AGENTS.md no lleva el sello
+# de la versión instalada. Verifica las dos mitades + control positivo
+# REAL: sello viejo → WARN; sello borrado → WARN; sello vigente → silencio.
+# Necesita make build-nyx-build corrido antes (usa nyx_build, no bootstrap).
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_build ]; then
+    echo "  ⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta seed-version-stamp)"
+else
+    name="seed-version-stamp"
+    REPO_ROOT="$(pwd)"
+    SEED_VER="$(tr -d '[:space:]' < VERSION)"
+    SEED_DIR="$TMPDIR/seed_stamp"
+    mkdir -p "$SEED_DIR"
+    (cd "$SEED_DIR" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/nyx_build" init stamped >/dev/null 2>&1)
+    SP="$SEED_DIR/stamped"
+    seed_ok=1
+    seed_why=""
+    # Desde ADR-1 (2026-09-04) lo sembrado por defecto es AGENTS.md + docs/nyx/
+    # (LLM.md + las 3 guías neutrales); los archivos por proveedor son
+    # adaptadores opt-in (`--agent=`) y se verifican abajo. El sello lleva
+    # AHORA el idioma: `<!-- nyx-version: X nyx-lang: xx -->` — se comprueba
+    # sobre la ÚLTIMA línea, con las dos mitades presentes (el substring
+    # `nyx-version: X` es lo que buscan _warn_seed_drift y la guardia vieja).
+    for f in AGENTS.md docs/nyx/guides/write-a-program.md \
+             docs/nyx/guides/fix-a-compile-error.md docs/nyx/guides/report-friction.md; do
+        if [ ! -f "$SP/$f" ]; then seed_ok=0; seed_why="$seed_why [$f no sembrado]"; continue; fi
+        last="$(tail -n 1 "$SP/$f")"
+        printf '%s' "$last" | grep -q "nyx-version: $SEED_VER" || { seed_ok=0; seed_why="$seed_why [$f sin sello de versión al final]"; }
+        printf '%s' "$last" | grep -q "nyx-lang: " || { seed_ok=0; seed_why="$seed_why [$f sin nyx-lang en el sello]"; }
+    done
+    # docs/nyx/LLM.md solo se siembra si la toolchain trae
+    # templates/en/docs/nyx/LLM.md (install.sh / make install-local lo inyectan;
+    # el repo pelado no lo tiene) — si está, va sellado.
+    if [ -f "$SP/docs/nyx/LLM.md" ]; then
+        last="$(tail -n 1 "$SP/docs/nyx/LLM.md")"
+        printf '%s' "$last" | grep -q "nyx-version: $SEED_VER" || { seed_ok=0; seed_why="$seed_why [docs/nyx/LLM.md sin sello]"; }
+    fi
+    [ -e "$SP/.vscode" ] && { seed_ok=0; seed_why="$seed_why [.vscode sembrado: rama borrada 2026-09-03]"; }
+    [ -e "$SP/.claude" ] && { seed_ok=0; seed_why="$seed_why [.claude/ sembrado: ADR-1 lo mató]"; }
+    # El cuerpo sembrado es la plantilla byte a byte + línea en blanco + sello.
+    if ! head -n -2 "$SP/AGENTS.md" | cmp -s - templates/en/AGENTS.md; then
+        seed_ok=0; seed_why="$seed_why [AGENTS.md: el cuerpo difiere de templates/en/AGENTS.md]"
+    fi
+    # Adaptadores opt-in: con --agent= los tres van sellados igual que el resto.
+    ADAPT_DIR="$TMPDIR/seed_stamp_agents"
+    mkdir -p "$ADAPT_DIR"
+    (cd "$ADAPT_DIR" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/nyx_build" init stamped --agent=claude,cursor,copilot >/dev/null 2>&1)
+    for f in CLAUDE.md .cursorrules .github/copilot-instructions.md; do
+        if [ ! -f "$ADAPT_DIR/stamped/$f" ]; then seed_ok=0; seed_why="$seed_why [adaptador $f no sembrado con --agent=]"; continue; fi
+        last="$(tail -n 1 "$ADAPT_DIR/stamped/$f")"
+        printf '%s' "$last" | grep -q "nyx-version: $SEED_VER" || { seed_ok=0; seed_why="$seed_why [adaptador $f sin sello]"; }
+    done
+    # Wrapper: sello vigente → silencio; sello viejo → WARN; sin sello → WARN.
+    WARN_RE='AGENTS.md fue sembrado por otra versión'
+    w_ok=$(cd "$SP" && NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" build 2>&1 | grep -c "$WARN_RE")
+    sed -i "s/nyx-version: $SEED_VER/nyx-version: 0.0.0/" "$SP/AGENTS.md"
+    w_old=$(cd "$SP" && NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" build 2>&1 | grep -c "$WARN_RE")
+    sed -i '/nyx-version/d' "$SP/AGENTS.md"
+    w_none=$(cd "$SP" && NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" build 2>&1 | grep -c "$WARN_RE")
+    [ "$w_ok" = "0" ] || { seed_ok=0; seed_why="$seed_why [WARN con sello vigente]"; }
+    [ "$w_old" = "1" ] || { seed_ok=0; seed_why="$seed_why [sin WARN con sello viejo (control positivo)]"; }
+    [ "$w_none" = "1" ] || { seed_ok=0; seed_why="$seed_why [sin WARN con sello ausente]"; }
+    if [ "$seed_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$seed_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Check: seed-gitignore — F4 del informe de fricción del scaffold (hallazgo
+# A1, confirmado empíricamente 2026-09-03): `nyx init` no dejaba .gitignore
+# y el primer `git add .` se llevaba el binario, packages/ y los .ll.
+# seed_gitignore (compiler/build.nx) siembra templates/gitignore con
+# {{binary}} = nombre del proyecto y NUNCA pisa uno existente. Sin git init.
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_build ]; then
+    echo "  ⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta seed-gitignore)"
+else
+    name="seed-gitignore"
+    REPO_ROOT="$(pwd)"
+    GI_DIR="$TMPDIR/seed_gitignore"
+    mkdir -p "$GI_DIR/preexist"
+    (cd "$GI_DIR" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/nyx_build" init gi_named >/dev/null 2>&1)
+    printf '# mío\nsecreto.txt\n' > "$GI_DIR/preexist/.gitignore"
+    (cd "$GI_DIR/preexist" && NYX_HOME="$REPO_ROOT" "$REPO_ROOT/nyx_build" init >/dev/null 2>&1)
+    gi_ok=1; gi_why=""
+    GI="$GI_DIR/gi_named/.gitignore"
+    [ -f "$GI" ] || { gi_ok=0; gi_why="$gi_why [no sembró .gitignore]"; }
+    if [ -f "$GI" ]; then
+        grep -qx '/gi_named' "$GI" || { gi_ok=0; gi_why="$gi_why [sin la línea /gi_named del binario]"; }
+        grep -qx 'packages/' "$GI" || { gi_ok=0; gi_why="$gi_why [sin packages/]"; }
+        grep -qx '\*\.ll' "$GI" || { gi_ok=0; gi_why="$gi_why [sin *.ll]"; }
+        grep -q '{{' "$GI" && { gi_ok=0; gi_why="$gi_why [placeholder sin reemplazar]"; }
+    fi
+    [ -d "$GI_DIR/gi_named/.git" ] && { gi_ok=0; gi_why="$gi_why [corrió git init: no debe]"; }
+    [ "$(cat "$GI_DIR/preexist/.gitignore")" = "$(printf '# mío\nsecreto.txt')" ] \
+        || { gi_ok=0; gi_why="$gi_why [pisó un .gitignore existente]"; }
+    if [ "$gi_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$gi_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Check: seed-home-fallback — F6 del informe de fricción del scaffold
+# (hallazgo nuevo #3): con NYX_HOME vacío o apuntando a un dir sin
+# templates/, `nyx init` sembraba CERO archivos de contexto IA en silencio.
+# Ahora resolve_seed_home cae a ~/.nyx (si trae templates/) o al monorepo
+# (nyx_bootstrap en cwd), y si no hay toolchain imprime un error RUIDOSO
+# (no fatal: nyx.toml y src/main.nx se crean igual).
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_build ]; then
+    echo "  ⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta seed-home-fallback)"
+else
+    name="seed-home-fallback"
+    REPO_ROOT="$(pwd)"
+    SH_DIR="$TMPDIR/seed_home"
+    mkdir -p "$SH_DIR/sin_toolchain" "$SH_DIR/vacio"
+    sh_ok=1; sh_why=""
+    # (1) NYX_HOME → dir sin templates/: error ruidoso + proyecto igual creado.
+    sh_out=$(cd "$SH_DIR/sin_toolchain" && NYX_HOME="$SH_DIR/vacio" "$REPO_ROOT/nyx_build" init huerfano 2>&1)
+    echo "$sh_out" | grep -q 'NO se sembró' || { sh_ok=0; sh_why="$sh_why [sin error ruidoso con NYX_HOME sin templates/]"; }
+    [ -f "$SH_DIR/sin_toolchain/huerfano/nyx.toml" ] || { sh_ok=0; sh_why="$sh_why [no creó nyx.toml igual]"; }
+    [ -f "$SH_DIR/sin_toolchain/huerfano/AGENTS.md" ] && { sh_ok=0; sh_why="$sh_why [sembró AGENTS.md desde la nada]"; }
+    # (2) NYX_HOME vacío + cwd = monorepo (nyx_bootstrap): cae a "." y siembra.
+    # HOME apunta a un dir vacío A PROPÓSITO: resolve_seed_home prueba ~/.nyx
+    # ANTES que ".", así que con el HOME real esta rama probaba el toolchain
+    # instalado, no el fallback al monorepo que dice probar.
+    mkdir -p "$SH_DIR/mono" "$SH_DIR/fakehome"
+    (cd "$REPO_ROOT" && env -u NYX_HOME HOME="$SH_DIR/fakehome" "$REPO_ROOT/nyx_build" init "$SH_DIR/mono/desde_mono" >/dev/null 2>&1)
+    [ -f "$SH_DIR/mono/desde_mono/AGENTS.md" ] || { sh_ok=0; sh_why="$sh_why [sin NYX_HOME y con nyx_bootstrap en cwd no sembró]"; }
+    # (3) NYX_HOME vacío + cwd sin toolchain: cae a ~/.nyx si está instalado (si no, error ruidoso).
+    # El marcador es templates/en/ (no templates/ a secas): desde ADR-1 el
+    # scaffold siembra desde templates/<lang>/, así que un ~/.nyx de una
+    # versión anterior (templates/ plano) NO puede sembrar — y lo correcto ahí
+    # es el error ruidoso, que es lo que verifica la otra rama.
+    sh_out3=$(cd "$SH_DIR" && env -u NYX_HOME "$REPO_ROOT/nyx_build" init desde_home 2>&1)
+    if [ -d "$HOME/.nyx/templates/en" ]; then
+        [ -f "$SH_DIR/desde_home/AGENTS.md" ] || { sh_ok=0; sh_why="$sh_why [con ~/.nyx instalado no cayó al fallback]"; }
+    else
+        echo "$sh_out3" | grep -q 'NO se sembró' || { sh_ok=0; sh_why="$sh_why [sin ~/.nyx ni NYX_HOME: faltó el error ruidoso]"; }
+    fi
+    if [ "$sh_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$sh_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 

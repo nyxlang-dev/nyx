@@ -352,9 +352,17 @@ organize() {
 
     # Limpieza con la LISTA CANÓNICA compartida (scripts/dist-clean.sh) —
     # la misma que usa `nyx update`, para que install y update no diverjan.
-    # Conserva: runtime/ (incl. wasi/), std/, templates/ (con .claude/skills),
+    # Conserva: runtime/ (incl. wasi/), std/, templates/ (en/, es/, adapters/),
     # LLM.md, CHANGELOG.md (what's-new de nyx update) y VERSION.
     bash scripts/dist-clean.sh "$NYX_DIR"
+    # Fallback para mirrors públicos sincronizados ANTES de que sync_to_public.sh
+    # empezara a copiar la referencia densa al juego de plantillas (nyx init la
+    # siembra como docs/nyx/LLM.md en proyectos nuevos; sin esto el sembrado
+    # fallaba en silencio — templates/ existía pero sin LLM.md).
+    if [ ! -f "$NYX_DIR/templates/en/docs/nyx/LLM.md" ]; then
+        mkdir -p "$NYX_DIR/templates/en/docs/nyx"
+        cp "$NYX_DIR/LLM.md" "$NYX_DIR/templates/en/docs/nyx/LLM.md" 2>/dev/null || true
+    fi
     ok "Organized: bin/ + runtime/ + std/ + templates/ (v$(cat VERSION 2>/dev/null || echo '?'))"
 }
 

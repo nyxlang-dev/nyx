@@ -1,0 +1,1255 @@
+// std/serve.nx — El ejecutor del framework web de Nyx.
+//
+// Absorbido de nyx-serve v0.7.1 (2026-08-31): fusión de src/server.nx +
+// src/files.nx + src/ws.nx del producto en un solo módulo del core, con los
+// nombres públicos IDÉNTICOS (serve_app, app_ws, serve_ws, app_static,
+// app_static_cached, apply_etag, ws_broadcast, ws_accept, serve_on_shutdown,
+// …) — migrar un consumer del vendoring al core es cambiar el import.
+//
+// std/web aporta el VOCABULARIO (App/Request/Response/Route/Router y los
+// helpers response_*); este módulo aporta el EJECUTOR: server keep-alive
+// multi-thread, pipeline de hooks/wraps/middlewares/mounts/rutas, static con
+// ETag y caching, WebSocket rooms, y drain de SIGTERM.
+//
+// Secciones (en orden): dispatcher (ex server.nx) · static (ex files.nx) ·
+// ws (ex ws.nx). Las referencias que antes cruzaban archivos (import
+// "src/files" / "src/ws") mueren con la fusión: hoy son llamadas locales.
+//
+// Linux/POSIX: los builtins de red siguen gateados en Windows (W4/W5), así
+// que este módulo es Linux-only hasta entonces (el guard existente es
+// ruidoso, no silencioso).
+
+import "std/web"
+import "std/http"
+import "std/json"
+import "std/websocket"
+
+// ===== sección: dispatcher (ex server.nx) =====
+
+// server.nx — Connects std/web.nx App framework with the keep-alive MT server.
+// Converts raw HTTP request arrays to Request structs, runs before-hooks and
+// middlewares, does route matching, runs after-hooks over the final response
+// (via __finalize), and formats Response structs back to HTTP strings.
+
+// Global App reference for the MT handler (set by serve_app)
+var __serve_app: App = app_new()
+
+// WebSocket route registry (upstream of the venezuelainfo.org `serve_ws`
+// local patch — see PROJECT_STATE.md). Pattern uses the same {param}/*
+// syntax as std/web route_match. handler field is untyped Fn (same idiom
+// as std/web's Route.handler) — cast to Fn(Array) -> int at the call site.
+struct WsRoute {
+    pattern: String,
+    handler: Fn
+}
+
+var __serve_ws_routes: Array = []
+
+// Registers a WebSocket upgrade handler for a route pattern. The handler
+// receives [fd, path, headers_flat, params_pairs_flat] and returns 1 if it
+// took ownership of the fd (the server will not read from or close it — the
+// handler must do the handshake, serve the connection and close it itself)
+// or 0 to let the server respond/close normally. params_pairs_flat is a
+// NEW slot (index 3, additive): a flat [k1, v1, k2, v2, ...] array of the
+// {param} captures from the matched pattern, so a handler that only reads
+// slots 0..2 (the pre-app_ws contract) keeps working unchanged.
+pub fn app_ws(pattern: String, handler: Fn(Array) -> int) {
+    __serve_ws_routes.push(WsRoute { pattern: pattern, handler: handler })
+}
+
+// Compat alias for the venezuelainfo.org local patch this upstreams:
+// registers under the catch-all pattern so existing callers migrate with
+// no code changes. Prefer app_ws(pattern, handler) for new code.
+pub fn serve_ws(handler: Fn(Array) -> int) {
+    app_ws("*", handler)
+}
+
+// Flattens a route_match() params Map (minus the internal "_matched" key)
+// into a [k1, v1, k2, v2, ...] array for the WS handler's info[3].
+// NOTE: `params.get(k)` is bound to a typed `let v: String` before
+// `.push()` — pushing it inline (`out.push(params.get(k))`) reads back as
+// a raw pointer downstream (garbage int → GC OOM on the next allocation
+// that uses it as a size). Same class of gap as the documented Map.get/
+// arr[i]-inline fixes, but for untyped `.push()` (not covered by those).
+// See task-3.1-report.md.
+fn __ws_params_flat(params: Map) -> Array {
+    var out: Array = []
+    let keys: Array = params.keys()
+    var i: int = 0
+    while i < keys.length() {
+        let k: String = keys[i]
+        if k != "_matched" {
+            let v: String = params.get(k)
+            out.push(k)
+            out.push(v)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Detect Content-Type from body content (heuristic fallback)
+fn __detect_content_type(body: String) -> String {
+    if body.length() == 0 { return "text/plain" }
+    let first: int = body.charAt(0)
+    if first == 60 { return "text/html; charset=utf-8" }
+    if first == 123 or first == 91 { return "application/json" }
+    return "text/plain; charset=utf-8"
+}
+
+// Format a Response struct into an HTTP response string
+fn __format_http_response(resp: Response) -> String {
+    let status: int = resp.status
+    let body: String = resp.body
+
+    // Handle Location-based redirects (301/302/303/307/308). The redirect URL
+    // travels in resp.body (see response_redirect in std/web); resp.headers_flat
+    // is still emitted so a handler can set Set-Cookie/Cache-Control on a
+    // redirect (e.g. login/logout that sets or clears a session cookie).
+    if status == 301 or status == 302 or status == 303 or status == 307 or status == 308 {
+        var sb: StringBuilder = StringBuilder.new()
+        sb.append("HTTP/1.1 ")
+        sb.append(int_to_string(status))
+        sb.append(" ")
+        sb.append(http_status_text(status))
+        sb.append("\r\nLocation: ")
+        sb.append(body)
+        sb.append("\r\n")
+
+        // Emit custom headers (Set-Cookie, etc.), skipping ones we control here
+        let headers: Array = resp.headers_flat
+        var i: int = 0
+        while i + 1 < headers.length() {
+            let k: String = headers[i]
+            let v: String = headers[i + 1]
+            if k != "Location" and k != "Content-Length" {
+                sb.append(k)
+                sb.append(": ")
+                sb.append(v)
+                sb.append("\r\n")
+            }
+            i = i + 2
+        }
+
+        sb.append("Content-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+        return sb.to_string()
+    }
+
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("HTTP/1.1 ")
+    sb.append(int_to_string(status))
+    sb.append(" ")
+    sb.append(http_status_text(status))
+    sb.append("\r\n")
+
+    // Content-Length
+    sb.append("Content-Length: ")
+    sb.append(int_to_string(str_byte_length(body)))
+    sb.append("\r\n")
+
+    // Add custom headers from Response
+    let headers: Array = resp.headers_flat
+    var has_content_type: bool = false
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        sb.append(k)
+        sb.append(": ")
+        sb.append(v)
+        sb.append("\r\n")
+        if k == "Content-Type" { has_content_type = true }
+        i = i + 2
+    }
+
+    // Auto-detect Content-Type if not set
+    if has_content_type == false {
+        sb.append("Content-Type: ")
+        sb.append(__detect_content_type(body))
+        sb.append("\r\n")
+    }
+
+    sb.append("Connection: keep-alive\r\n")
+    sb.append("\r\n")
+    sb.append(body)
+    return sb.to_string()
+}
+
+// Append all [name, value] pairs from src onto dst (interleaved header arrays).
+fn __collect_headers(dst: Array, src: Array) -> int {
+    var i: int = 0
+    while i + 1 < src.length() {
+        dst.push(src[i])
+        dst.push(src[i + 1])
+        i = i + 2
+    }
+    return 0
+}
+
+// Single exit point for every response path: merge headers contributed by
+// before-hooks/middlewares that continued, run after-hooks so they can
+// observe/modify the final status & headers (access-log, request-id,
+// analytics by status), then format the response to an HTTP string.
+fn __finalize(req: Request, resp: Response, extra_headers: Array) -> String {
+    __collect_headers(resp.headers_flat, extra_headers)
+
+    var r: Response = resp
+    let after_hooks: Array = __serve_app.after_hooks
+    var ai: int = 0
+    while ai < after_hooks.length() {
+        let hook: Fn(Request, Response) -> Response = after_hooks[ai]
+        r = hook(req, r)
+        ai = ai + 1
+    }
+
+    if __serve_app.access_log {
+        __emit_access_log(req, r)
+    }
+
+    return __format_http_response(r)
+}
+
+// Una línea JSON por request a stdout (app_access_log). Campos: ts (epoch
+// s), method, path, status, dur_us, bytes, request_id (solo si alguna capa
+// lo puso en ctx). Strings escapadas con json_escape (std/json).
+fn __emit_access_log(req: Request, resp: Response) -> int {
+    let ctx: Map = req.ctx
+    let t0s: String = ctx.get_or("__t0_us", "")
+    var dur: int = 0
+    if t0s.length() > 0 {
+        dur = time_us() - string_to_int_or(t0s, time_us())
+    }
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("{\"ts\":")
+    sb.append(int_to_string(time_epoch()))
+    sb.append(",\"method\":\"")
+    sb.append(json_escape(req.method))
+    sb.append("\",\"path\":\"")
+    sb.append(json_escape(req.path))
+    sb.append("\",\"status\":")
+    sb.append(int_to_string(resp.status))
+    sb.append(",\"dur_us\":")
+    sb.append(int_to_string(dur))
+    sb.append(",\"bytes\":")
+    sb.append(int_to_string(str_byte_length(resp.body)))
+    let rid: String = ctx.get_or("request-id", "")
+    if rid.length() > 0 {
+        sb.append(",\"request_id\":\"")
+        sb.append(json_escape(rid))
+        sb.append("\"")
+    }
+    // Un solo write atómico con el \n adentro del buffer (no print(), que
+    // son DOS llamadas stdio — payload y "\n" — y bajo concurrencia real
+    // dos workers pueden intercalar sus líneas) + flush explícito: sin él,
+    // en un pipe (systemd) las líneas quedan bufferizadas y tardan o se
+    // pierden si el proceso muere.
+    sb.append("}\n")
+    term_write(sb.to_string())
+    term_flush()
+    return 0
+}
+
+// MT handler: converts raw request Array to Request struct and dispatches.
+// El pipeline corre ENTERO dentro de un try: cualquier panic/throw de un
+// hook/middleware/handler/static/after-hook se convierte en 500 (registrable
+// via app_error) — el proceso no muere jamás por un request.
+fn __serve_mt_dispatch(raw: Array) -> String {
+    let method: String = raw[1]
+    let path: String = raw[2]
+    let headers: Array = raw[3]
+    let body: String = raw[4]
+
+    // Empty method = client disconnected
+    if method.length() == 0 {
+        return ""
+    }
+
+    // Clean path (strip query string for routing)
+    var clean_path: String = path
+    let qp: int = path.indexOf("?")
+    if qp >= 0 { clean_path = path.substring(0, qp) }
+
+    // Request mínimo antes del try: método+path siempre disponibles para el
+    // error handler aunque el parseo de query/cookies/form panickee. El ctx
+    // nace acá (request_new): compartido por referencia entre TODAS las
+    // copias del struct — lo que un wrap/mw inserte lo ven el handler, los
+    // after-hooks y el error handler.
+    var req: Request = request_new()
+    req.method = method
+    req.path = clean_path
+    req.headers_flat = headers
+    req.body = body
+
+    // t0 del access-log viaja por ctx (v0.5.1) — el gap de method-call
+    // sobre campo encadenado obliga al binding (no "simplificar").
+    let ctx0: Map = req.ctx
+    ctx0.insert("__t0_us", int_to_string(time_us()))
+
+    var extra: Array = []
+    try {
+        req.query = parse_query_string(path)
+        req.cookies = parse_cookies(headers)
+        // req.form (fix 2026-07-22, cazado por el tutorial): el dispatcher
+        // NUNCA llamaba a parse_form_data — req.form llegaba SIEMPRE vacío
+        // aunque la doc lo prometía. Se puebla solo para urlencoded
+        // (multipart tiene su helper standalone; JSON va por el body crudo).
+        if body.length() > 0 {
+            let req_ctype: String = http_find_header(headers, "Content-Type")
+            if req_ctype.indexOf("application/x-www-form-urlencoded") >= 0 {
+                req.form = parse_form_data(body, req_ctype)
+            }
+        }
+        let resp: Response = __dispatch_response(req, extra)
+        return __finalize(req, resp, extra)
+    } catch(e: String) {
+        print("[nyx-serve] 500 " + method + " " + clean_path + ": " + e)
+        return __error_response(req, e)
+    }
+    // Unreachable: both try/catch branches return above — the toolchain's
+    // return-path checker doesn't (yet) treat a try/catch as exhaustive.
+    return ""
+}
+
+// Camino de error: handler registrable (app_error) con guard propio — si el
+// handler custom (o un after-hook en esta segunda pasada) también panickea,
+// cae al default de std/web formateado directo, sin hooks.
+fn __error_response(req: Request, err: String) -> String {
+    try {
+        let eh: Fn(Request, String) -> Response = __serve_app.error_handler
+        let resp: Response = eh(req, err)
+        var extra2: Array = []
+        return __finalize(req, resp, extra2)
+    } catch(e2: String) {
+        // Last-resort floor, intentionally unguarded: default_error and
+        // __format_http_response only format constant strings from std/web,
+        // never user/handler code, so there's nothing left here that can
+        // panic — this is the reliable bottom of the fallback chain.
+        return __format_http_response(default_error(req, e2))
+    }
+    // Unreachable: both try/catch branches return above — same checker gap.
+    return ""
+}
+
+// Motor de la cadena de wraps (contrato: Fn(Request, Fn) -> Response, con
+// next: Fn(Request) -> Response). Recursión vía esta fn de módulo; el next
+// es una fn anidada que captura (wraps, i, core) — patrón fijado por
+// test-339-wrap-next-closure de la suite del toolchain. Índice fuera de
+// rango → llama al core.
+fn __run_wraps(wraps: Array, i: int, req: Request, core: Fn) -> Response {
+    if i >= wraps.length() {
+        let c: Fn(Request) -> Response = core
+        return c(req)
+    }
+    let w: Fn(Request, Fn) -> Response = wraps[i]
+    fn next_fn(r: Request) -> Response {
+        return __run_wraps(wraps, i + 1, r, core)
+    }
+    let nx: Fn = next_fn
+    return w(req, nx)
+}
+
+// Cadena de un router montado: sus wraps envuelven (mws status-0 → rutas).
+// Devuelve status 0 (sentinel) si el router no manejó el request →
+// fall-through. Un router-wrap que recibe un status 0 de su next debe
+// devolverlo sin tocar (documentado en API.md).
+fn __router_core(router: Router, req: Request, extra: Array) -> Response {
+    let middlewares: Array = router.middlewares
+    var mi: int = 0
+    while mi < middlewares.length() {
+        let mw: Fn(Request) -> Response = middlewares[mi]
+        let mw_resp: Response = mw(req)
+        if mw_resp.status != 0 {
+            return mw_resp
+        }
+        __collect_headers(extra, mw_resp.headers_flat)
+        mi = mi + 1
+    }
+
+    let routes: Array = router.routes
+    var i: int = 0
+    while i < routes.length() {
+        let route: Route = routes[i]
+        let rm: String = route.method
+        if rm == req.method {
+            let rp: String = route.pattern
+            let match_params: Map = route_match(rp, req.path)
+            if match_params.contains("_matched") {
+                req.params = match_params
+                let cb: Fn(Request) -> Response = route.handler
+                return cb(req)
+            }
+        }
+        i = i + 1
+    }
+
+    // Sin match interno: sentinel de fall-through.
+    var hf: Array = []
+    return Response { status: 0, headers_flat: hf, body: "" }
+}
+
+fn __mount_response(router: Router, req: Request, extra: Array) -> Response {
+    fn rcore_fn(r: Request) -> Response {
+        return __router_core(router, r, extra)
+    }
+    let rc: Fn = rcore_fn
+    return __run_wraps(router.wraps, 0, req, rc)
+}
+
+// Cadena a nivel app: app wraps envolviendo el core completo.
+fn __dispatch_response(req: Request, extra: Array) -> Response {
+    fn core_fn(r: Request) -> Response {
+        return __core_response(r, extra)
+    }
+    let core: Fn = core_fn
+    return __run_wraps(__serve_app.wraps, 0, req, core)
+}
+
+// Cuerpo del pipeline (before-hooks → middlewares → mounts → rutas → static
+// → 404). Devuelve la Response SIN finalizar: los after-hooks y el formateo
+// corren en __serve_mt_dispatch, después de la cadena de wraps.
+fn __core_response(req: Request, extra: Array) -> Response {
+    let before_hooks: Array = __serve_app.before_hooks
+    var bi: int = 0
+    while bi < before_hooks.length() {
+        let hook: Fn(Request) -> Response = before_hooks[bi]
+        let hook_resp: Response = hook(req)
+        if hook_resp.status != 0 {
+            return hook_resp
+        }
+        __collect_headers(extra, hook_resp.headers_flat)
+        bi = bi + 1
+    }
+
+    let middlewares: Array = __serve_app.middlewares
+    var mi: int = 0
+    while mi < middlewares.length() {
+        let mw: Fn(Request) -> Response = middlewares[mi]
+        let mw_resp: Response = mw(req)
+        if mw_resp.status != 0 {
+            return mw_resp
+        }
+        __collect_headers(extra, mw_resp.headers_flat)
+        mi = mi + 1
+    }
+
+    // Mounts van ANTES que las rutas del app, a propósito: montar auth (u
+    // otro wrap/middleware) sobre un prefijo debe proteger TODO ese
+    // prefijo, sin que una ruta concreta del app registrada por debajo
+    // pueda bypasear el guard del mount. El router ve el path SIN el
+    // prefijo; si no maneja el request (sentinel status 0), FALL-THROUGH:
+    // el pipeline del app sigue con el path original (rutas → static →
+    // 404). Primer prefijo que matchea, en orden de registro.
+    let mounts: Array = __serve_app.mounts
+    var mo: int = 0
+    while mo < mounts.length() {
+        let m: Mount = mounts[mo]
+        let pfx: String = m.prefix
+        if req.path == pfx or req.path.startsWith(pfx + "/") {
+            var sub: String = req.path.substring(pfx.length(), req.path.length())
+            if sub.length() == 0 { sub = "/" }
+            var sreq: Request = req
+            sreq.path = sub
+            let rresp: Response = __mount_response(m.router, sreq, extra)
+            if rresp.status != 0 {
+                return rresp
+            }
+        }
+        mo = mo + 1
+    }
+
+    let routes: Array = __serve_app.routes
+    var i: int = 0
+    while i < routes.length() {
+        let route: Route = routes[i]
+        let rm: String = route.method
+        if rm == req.method {
+            let rp: String = route.pattern
+            let match_params: Map = route_match(rp, req.path)
+            if match_params.contains("_matched") {
+                req.params = match_params
+                let cb: Fn(Request) -> Response = route.handler
+                return cb(req)
+            }
+        }
+        i = i + 1
+    }
+
+    // If-None-Match is a conditional request header for ETag-based caching;
+    // we honor it for static files (routes can use apply_etag themselves if
+    // they want the same behavior).
+    let inm: String = http_find_header(req.headers_flat, "If-None-Match")
+
+    // Try prefix-based static file serving (app_static registrations)
+    let prefix_resp: Response = try_serve_static_prefix(req.path)
+    if prefix_resp.status != 0 {
+        return apply_etag(prefix_resp, inm)
+    }
+
+    // Try fallback static file serving (serve_static registration)
+    let static_dir: String = __serve_app.static_dir
+    if static_dir.length() > 0 {
+        let file_resp: Response = try_serve_static(static_dir, req.path)
+        if file_resp.status != 0 {
+            return apply_etag(file_resp, inm)
+        }
+    }
+
+    // 404 Not Found — registrable (app_not_found; default en std/web)
+    let nf: Fn(Request) -> Response = __serve_app.not_found_handler
+    return nf(req)
+}
+
+// Global channel for dispatching client fds to keep-alive workers
+var __serve_ch: Map = Map.new()
+
+// ── Graceful shutdown (v0.6.0) ──
+// SIGTERM → __serve_draining=1 + tcp_close(listener). Cerrar el fd es lo
+// que DESPIERTA al tcp_accept bloqueante del main (verificado
+// empíricamente); no se depende de EINTR. Los workers terminan el request
+// en vuelo, responden Connection: close mientras drenan, y salen al
+// recibir el sentinel. El main espera el drain con deadline
+// (NYX_SERVE_DRAIN_SECS, default 10; 0 = sin espera) y sale con exit 0.
+var __serve_listener: int = 0 - 1
+var __serve_draining: int = 0
+var __serve_workers: int = 0
+
+// Shutdown hooks (v0.6.1): corren en el drain de SIGTERM, DESPUÉS del
+// deadline (workers quietos — estado consistente para snapshots) y antes
+// del return de serve_app. Contexto normal, no de señal. Registrar ANTES
+// de serve_app (que bloquea). Solo SIGTERM: SIGKILL u otras señales no
+// pasan por acá.
+var __serve_shutdown_hooks: Array = []
+
+pub fn serve_on_shutdown(handler: Fn) {
+    __serve_shutdown_hooks.push(handler)
+}
+
+// Cada hook con guard propio: un panic se loguea y no impide los hooks
+// siguientes ni el exit 0.
+fn __run_shutdown_hooks() -> int {
+    var i: int = 0
+    while i < __serve_shutdown_hooks.length() {
+        try {
+            let h: Fn() -> int = __serve_shutdown_hooks[i]
+            h()
+        } catch(e: String) {
+            print("[nyx-serve] shutdown hook failed: " + e)
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+// Desde nyx v0.24.32 (self-pipe del runtime) este handler corre en el THREAD
+// DRENADOR de señales, en contexto normal — ya puede alocar. Pero por lo
+// mismo corre en OTRO thread que el accept loop, y en Linux close() de un fd
+// NO despierta un accept() ya bloqueado en él (el viejo diseño funcionaba
+// porque la señal interrumpía al thread del accept). shutdown() SÍ lo
+// despierta (EINVAL); el close real del fd lo hace el accept loop al entrar
+// al drain, en su propio thread. Guard: el segundo SIGTERM es no-op.
+fn __on_sigterm(sig: int) -> int {
+    if __serve_draining == 1 { return 0 }
+    __serve_draining = 1
+    tcp_shutdown(__serve_listener, 2)
+    return 0
+}
+
+fn __drain_deadline_secs() -> int {
+    let env: String = getenv("NYX_SERVE_DRAIN_SECS")
+    if env.length() == 0 { return 10 }
+    return string_to_int_or(env, 10)
+}
+
+// Keep-alive worker: serves multiple requests per connection
+fn __serve_ka_worker() -> int {
+    while 1 > 0 {
+        let client: int = channel_recv(__serve_ch)
+        if client < 0 { return 0 }
+
+        // Keep-alive loop for this connection
+        var keep_alive: bool = true
+        // Set by a WS handler that returns 1 (took ownership of the fd):
+        // the worker must not read from or close it afterward.
+        var ws_owned: bool = false
+        while keep_alive {
+            let request: Array = http_parse_request_fast(client)
+            let method: String = request[1]
+            if method.length() == 0 {
+                keep_alive = false
+            } else {
+                // Body sobre el cap (NYX_HTTP_MAX_BODY): el fast parser lo
+                // señala en el slot 5 SIN drenar el body (drenarlo sería un
+                // vector DoS) → responder 413 y CERRAR la conexión (el
+                // socket queda con el body sin consumir, no sirve para
+                // otro request keep-alive).
+                let req_err: int = request[5]
+                if req_err == 413 {
+                    tcp_write(client, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    keep_alive = false
+                } else {
+                let path: String = request[2]
+                let headers: Array = request[3]
+                let upg: String = http_find_header(headers, "Upgrade")
+                if __serve_ws_routes.length() > 0 and upg.toLower() == "websocket" {
+                    var clean_path: String = path
+                    let qp: int = path.indexOf("?")
+                    if qp >= 0 { clean_path = path.substring(0, qp) }
+
+                    var matched: bool = false
+                    var wi: int = 0
+                    while wi < __serve_ws_routes.length() and !matched {
+                        let wr: WsRoute = __serve_ws_routes[wi]
+                        let mp: Map = route_match(wr.pattern, clean_path)
+                        if mp.contains("_matched") {
+                            matched = true
+                            var info: Array = []
+                            info.push(client)
+                            info.push(path)
+                            info.push(headers)
+                            info.push(__ws_params_flat(mp))
+                            let wh: Fn(Array) -> int = wr.handler
+                            if wh(info) == 1 {
+                                ws_owned = true
+                            }
+                        }
+                        wi = wi + 1
+                    }
+                    if !matched {
+                        // Sin ruta WS para este path: 404 del framework via
+                        // el handler registrable (app_not_found; default en
+                        // std/web), formateado directo — este camino no pasa
+                        // por el dispatcher HTTP ni sus hooks. Guard propio:
+                        // si el handler custom panickea, cae al default.
+                        var wreq: Request = request_new()
+                        wreq.method = "GET"
+                        wreq.path = clean_path
+                        wreq.headers_flat = headers
+                        var wresp: Response = default_not_found(wreq)
+                        try {
+                            let nf: Fn(Request) -> Response = __serve_app.not_found_handler
+                            wresp = nf(wreq)
+                        } catch(we: String) {
+                            wresp = default_not_found(wreq)
+                        }
+                        tcp_write(client, __format_http_response(wresp))
+                    }
+                    keep_alive = false
+                } else {
+                    let response: String = __serve_mt_dispatch(request)
+                    if response.length() > 0 {
+                        tcp_write(client, response)
+                    }
+                    let conn: String = http_find_header(headers, "Connection")
+                    if conn == "close" {
+                        keep_alive = false
+                    }
+                    // Drain en curso: el request en vuelo ya recibió su
+                    // respuesta completa arriba (con header keep-alive, si
+                    // eso es lo que escribió __format_http_response) — el
+                    // server cierra el socket de todos modos tras escribir.
+                    // Correcto a nivel TCP (el cliente ve EOF tras leer el
+                    // body completo por Content-Length); documentado acá
+                    // porque no se reescribe el header de Connection.
+                    if __serve_draining == 1 {
+                        keep_alive = false
+                    }
+                }
+                }
+            }
+        }
+        if !ws_owned {
+            tcp_close(client)
+        }
+    }
+    return 0
+}
+
+// Start the app server on the given port with the given number of workers.
+// This function blocks (runs the accept loop forever).
+pub fn serve_app(app: App, port: int, workers: int) -> int {
+    __serve_app = app
+    print("nyx-serve starting on port " + int_to_string(port) + " with " + int_to_string(workers) + " workers")
+
+    __serve_ch = channel_new(512)
+    let server: int = tcp_listen("0.0.0.0", port)
+    if server < 0 {
+        print("ERROR: cannot listen on port " + int_to_string(port))
+        // -1 en bind fallido (campaña 2026-08-11, T6b): devolver 0 acá era
+        // indistinguible del shutdown limpio — un supervisor/systemd veía
+        // exit 0 con el puerto ocupado y no reintentaba ni alertaba.
+        return -1
+    }
+
+    __serve_listener = server
+    __serve_workers = workers
+    signal_handle(15, __on_sigterm)
+
+    // Single-threaded here (no workers spawned yet) — pthread_create below
+    // establishes happens-before for every worker, so this is race-free.
+    ws_init_registry()
+
+    var i: int = 0
+    while i < workers {
+        thread_spawn(__serve_ka_worker)
+        i = i + 1
+    }
+
+    while 1 > 0 {
+        let client: int = tcp_accept(server)
+        if client >= 0 {
+            channel_send(__serve_ch, client)
+        } else {
+            if __serve_draining == 1 {
+                // Despertados por el close del handler: iniciar drain. El
+                // print informativo vive ACÁ (no en __on_sigterm) — este
+                // branch corre en contexto normal del accept loop, no en
+                // contexto de señal, así que alocar (concat/int_to_string)
+                // es seguro.
+                // El handler ahora hace shutdown() (despertar el accept);
+                // el CLOSE del fd es responsabilidad de este thread.
+                tcp_close(server)
+                print("[nyx-serve] SIGTERM: draining (deadline " + int_to_string(__drain_deadline_secs()) + "s)")
+                var w: int = 0
+                while w < __serve_workers {
+                    channel_send(__serve_ch, 0 - 1)
+                    w = w + 1
+                }
+                let deadline_ms: int = __drain_deadline_secs() * 1000
+                var waited: int = 0
+                // Espera simple con deadline: los workers salen al drenar;
+                // no hay join de threads en el runtime → dormir en tramos.
+                while waited < deadline_ms {
+                    sleep(200)
+                    waited = waited + 200
+                }
+                // Drain courtesy for WS (v0.7.0): close-frame + fd close for
+                // every registered connection, BEFORE consumer shutdown
+                // hooks — a snapshotting hook sees the WS world already
+                // quiet. Raw app_ws fds not registered via src/ws are still
+                // the handler's problem (documented).
+                ws_drain_close()
+                __run_shutdown_hooks()
+                print("[nyx-serve] drain complete, exiting")
+                return 0
+            }
+        }
+    }
+    return 0
+}
+
+// ===== sección: static (ex files.nx) =====
+
+// static.nx — Static file serving for nyx-serve
+// Serves files from a directory with MIME type detection by extension.
+
+// Detect MIME type from file extension
+pub fn detect_mime_type(path: String) -> String {
+    if path.endsWith(".html") or path.endsWith(".htm") { return "text/html; charset=utf-8" }
+    if path.endsWith(".css") { return "text/css; charset=utf-8" }
+    if path.endsWith(".js") { return "application/javascript; charset=utf-8" }
+    if path.endsWith(".json") { return "application/json" }
+    if path.endsWith(".png") { return "image/png" }
+    if path.endsWith(".jpg") or path.endsWith(".jpeg") { return "image/jpeg" }
+    if path.endsWith(".gif") { return "image/gif" }
+    if path.endsWith(".svg") { return "image/svg+xml" }
+    if path.endsWith(".ico") { return "image/x-icon" }
+    if path.endsWith(".woff") { return "font/woff" }
+    if path.endsWith(".woff2") { return "font/woff2" }
+    if path.endsWith(".ttf") { return "font/ttf" }
+    if path.endsWith(".xml") { return "application/xml" }
+    if path.endsWith(".txt") { return "text/plain; charset=utf-8" }
+    if path.endsWith(".md") { return "text/markdown; charset=utf-8" }
+    if path.endsWith(".wasm") { return "application/wasm" }
+    return "application/octet-stream"
+}
+
+// Try to serve a static file. Returns Response with status=0 if file not found.
+pub fn try_serve_static(base_dir: String, url_path: String) -> Response {
+    let empty_hdrs: Array = []
+    let not_found: Response = Response { status: 0, headers_flat: empty_hdrs, body: "" }
+
+    // Directory paths: try index.html
+    if url_path.endsWith("/") or url_path == "" {
+        let index_path: String = base_dir + url_path + "index.html"
+        if file_exists(index_path) {
+            let content: String = read_file(index_path)
+            let hdrs: Array = ["Content-Type", "text/html; charset=utf-8"]
+            return Response { status: 200, headers_flat: hdrs, body: content }
+        }
+        return not_found
+    }
+
+    // File paths: check that path has an extension (to avoid reading directories)
+    let file_path: String = base_dir + url_path
+    let dot_idx: int = url_path.indexOf(".")
+    if dot_idx < 0 {
+        // No extension — could be a directory, try with /index.html
+        let dir_index: String = file_path + "/index.html"
+        if file_exists(dir_index) {
+            let content: String = read_file(dir_index)
+            let hdrs: Array = ["Content-Type", "text/html; charset=utf-8"]
+            return Response { status: 200, headers_flat: hdrs, body: content }
+        }
+        return not_found
+    }
+
+    if file_exists(file_path) == false {
+        return not_found
+    }
+
+    let content: String = read_file(file_path)
+    let mime: String = detect_mime_type(file_path)
+    let hdrs: Array = ["Content-Type", mime]
+    return Response { status: 200, headers_flat: hdrs, body: content }
+}
+
+// Register a directory as the static file root for the app.
+// All requests not matched by routes will try this directory.
+pub fn serve_static(app: &mut App, base_dir: String) {
+    app.static_dir = base_dir
+}
+
+// Global registry of prefix→directory static mappings.
+// Flat array: [prefix1, dir1, prefix2, dir2, ...]
+var __static_prefixes: Array = []
+
+// Global registry of prefix→directory→max_age mappings for cached static.
+// Flat array: [prefix1, dir1, max_age1, prefix2, dir2, max_age2, ...].
+// Paralelo a __static_prefixes pero con la dimensión extra de caching.
+var __static_cache_config: Array = []
+
+// Register a prefix-based static file route.
+// Serves files from directory when URL starts with prefix.
+// Example: app_static(app, "/learn/", "static/learn/")
+//   /learn/01.html → static/learn/01.html
+// Rejects paths with ".." or "~" for security.
+pub fn app_static(app: App, prefix: String, directory: String) -> int {
+    if prefix.contains("..") or prefix.contains("~") { return 0 }
+    __static_prefixes.push(prefix)
+    __static_prefixes.push(directory)
+    return 0
+}
+
+// Register a prefix-based static route con headers de caching.
+// Además del mapping prefix→directory, setea Cache-Control: public, max-age=N
+// y Last-Modified: <file mtime> en cada response 200.
+// ETag existente sigue aplicándose via apply_etag en server.nx — los dos
+// headers se combinan (Cache-Control evita re-request; ETag valida si re-request).
+//
+// Example:
+//   app_static_cached(app, "/shared/css/", "static/shared/css/", 3600)   // 1h
+//   app_static_cached(app, "/shared/img/", "static/shared/img/", 86400)  // 1d
+pub fn app_static_cached(app: App, prefix: String, directory: String, max_age: int) -> int {
+    if prefix.contains("..") or prefix.contains("~") { return 0 }
+    __static_cache_config.push(prefix)
+    __static_cache_config.push(directory)
+    __static_cache_config.push(max_age)
+    return 0
+}
+
+// Format a Unix epoch as an HTTP date per RFC 7231.
+// Format: "Mon, 22 Apr 2026 14:32:10 GMT"
+// NOTE: assumes the system timezone is UTC (production servers do). If TZ
+// is not UTC the local extractors below will drift — no bug here, but a
+// deployment constraint.
+fn __format_http_date(epoch: int) -> String {
+    let year: int = datetime_year(epoch)
+    let month: int = datetime_month(epoch)
+    let day: int = datetime_day(epoch)
+    let hour: int = datetime_hour(epoch)
+    let minute: int = datetime_minute(epoch)
+    let second: int = datetime_second(epoch)
+    let wday: int = datetime_weekday(epoch)
+
+    let days: Array = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    let months: Array = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+    let day_name: String = days[wday]
+    let month_name: String = months[month - 1]
+
+    return day_name + ", " + __pad2(day) + " " + month_name + " " +
+           int_to_string(year) + " " + __pad2(hour) + ":" + __pad2(minute) +
+           ":" + __pad2(second) + " GMT"
+}
+
+fn __pad2(n: int) -> String {
+    if n < 10 { return "0" + int_to_string(n) }
+    return int_to_string(n)
+}
+
+// Return the UNIX mtime of a file, or 0 if stat fails.
+fn __file_mtime(path: String) -> int {
+    let info: Array = stat(path)
+    if info.length() < 3 { return 0 }
+    return info[2]
+}
+
+// Compute a weak ETag for a static-file body. SHA-256 keeps false negatives
+// negligible across body mutations without us having to hand-roll a hash.
+// Wrapped in W/"..." to mark it as a weak validator (semantically equivalent,
+// not byte-for-byte identical across transforms).
+pub fn compute_weak_etag(content: String) -> String {
+    let digest: String = sha256(content)
+    let short: String = digest.substring(0, 16)
+    return "W/\"" + short + "\""
+}
+
+// Augment a 200 static-file Response with an ETag header and, when the
+// caller's If-None-Match matches, collapse it to a bare 304 Not Modified.
+// Pass "" for if_none_match to just add the header without the 304 check.
+pub fn apply_etag(resp: Response, if_none_match: String) -> Response {
+    if resp.status != 200 { return resp }
+    let etag: String = compute_weak_etag(resp.body)
+    if if_none_match.length() > 0 {
+        if if_none_match == etag {
+            let hdrs_304: Array = ["ETag", etag]
+            return Response { status: 304, headers_flat: hdrs_304, body: "" }
+        }
+    }
+    var new_hdrs: Array = resp.headers_flat
+    new_hdrs.push("ETag")
+    new_hdrs.push(etag)
+    return Response { status: resp.status, headers_flat: new_hdrs, body: resp.body }
+}
+
+// Try to serve a request from registered static prefixes.
+// Returns Response with status=0 if no prefix matched or file not found.
+// Los prefixes cacheados (registrados via app_static_cached) agregan
+// headers Cache-Control: public, max-age=N y Last-Modified en los 200.
+pub fn try_serve_static_prefix(path: String) -> Response {
+    let empty_hdrs: Array = []
+    let no_match: Response = Response { status: 0, headers_flat: empty_hdrs, body: "" }
+
+    // Cached prefixes — evaluados primero para que una mapping cacheada
+    // más específica gane sobre una legacy genérica.
+    var ci: int = 0
+    while ci + 2 < __static_cache_config.length() {
+        let prefix: String = __static_cache_config[ci]
+        let directory: String = __static_cache_config[ci + 1]
+        let max_age: int = __static_cache_config[ci + 2]
+        if path.startsWith(prefix) {
+            let rel_path: String = path.substring(prefix.length(), path.length())
+            if rel_path.contains("..") or rel_path.contains("~") {
+                return response_html(403, "<h1>403 Forbidden</h1>")
+            }
+            let resp: Response = try_serve_static(directory, "/" + rel_path)
+            if resp.status != 0 {
+                return __apply_cache_headers(resp, directory + "/" + rel_path, max_age)
+            }
+        }
+        ci = ci + 3
+    }
+
+    // Legacy prefixes (sin caching) — mantiene el comportamiento actual.
+    var i: int = 0
+    while i + 1 < __static_prefixes.length() {
+        let prefix: String = __static_prefixes[i]
+        let directory: String = __static_prefixes[i + 1]
+        if path.startsWith(prefix) {
+            let rel_path: String = path.substring(prefix.length(), path.length())
+            if rel_path.contains("..") or rel_path.contains("~") {
+                return response_html(403, "<h1>403 Forbidden</h1>")
+            }
+            let resp: Response = try_serve_static(directory, "/" + rel_path)
+            if resp.status != 0 { return resp }
+        }
+        i = i + 2
+    }
+    return no_match
+}
+
+// Agrega Cache-Control: public, max-age=N y Last-Modified: <http-date>
+// a una Response 200. Si stat del archivo falla, solo se agrega
+// Cache-Control (Last-Modified es opcional por spec).
+fn __apply_cache_headers(resp: Response, file_path: String, max_age: int) -> Response {
+    if resp.status != 200 { return resp }
+
+    var new_hdrs: Array = resp.headers_flat
+    new_hdrs.push("Cache-Control")
+    new_hdrs.push("public, max-age=" + int_to_string(max_age))
+
+    let mtime: int = __file_mtime(file_path)
+    if mtime > 0 {
+        new_hdrs.push("Last-Modified")
+        new_hdrs.push(__format_http_date(mtime))
+    }
+
+    return Response { status: resp.status, headers_flat: new_hdrs, body: resp.body }
+}
+
+// ===== sección: ws (ex ws.nx) =====
+
+// ws.nx — First-class WebSocket rooms & broadcast (server-push only).
+// Registry of live WS connections (fd <-> room) under a mutex, one reader
+// thread per connection (detects close/EOF; upstream frames are NOT
+// delivered — this API is push-only by design: validate client input over
+// plain HTTP instead), serialized broadcast (frames never interleave on a
+// fd), and ws_accept() to collapse a typical app_ws handler to three lines.
+// Upstreamed from a consumer pattern proven in production.
+
+var __ws_mu: Map = Map.new()
+var __ws_fds: Array = []
+var __ws_rooms: Array = []
+var __ws_ready: int = 0
+// Set by ws_drain_close (under __ws_mu) before it empties the registry.
+// Tells a waking reader whether the fd it lost ownership of was already
+// closed by the drain (1) or only shutdown()-ed by ws_leave (0) — see the
+// ownership table in __reader.
+var __ws_draining: int = 0
+
+// Registry mutex init. NOT a benign race if two threads reach this
+// concurrently: pthread mutex_unlock on a mutex a thread never itself
+// locked (or locked a stale/half-initialized copy of) is UB, and on arm64
+// the plain store to __ws_ready can retire before the mutex_new() that
+// builds __ws_mu is visible to other cores — a second thread can observe
+// __ws_ready == 1 while __ws_mu is still garbage. serve_app removes the
+// race entirely by calling ws_init_registry() single-threaded, before it
+// spawns any worker/keep-alive thread — pthread_create() establishes a
+// happens-before edge, so every later thread sees a fully-built __ws_mu.
+// __ws_ensure() stays as a safety net for callers that exercise this
+// module outside serve_app (tests, standalone scripts).
+pub fn ws_init_registry() -> int {
+    if __ws_ready == 0 {
+        __ws_mu = mutex_new()
+        __ws_ready = 1
+    }
+    return 0
+}
+
+fn __ws_ensure() -> int {
+    return ws_init_registry()
+}
+
+// Register a live connection in a room and spawn its dedicated reader
+// thread. The reader only detects close/EOF and unregisters — it never
+// delivers upstream frames. Guard kept from the production pattern: only
+// masked TEXT frames (a client keepalive ping) are tolerated; anything
+// else (e.g. raw HTTP if a stale proxy recycles the connection) closes
+// immediately so a zombie fd can't eat someone else's requests.
+pub fn ws_join(fd: int, room: String) {
+    __ws_ensure()
+    mutex_lock(__ws_mu)
+    __ws_fds.push(fd)
+    __ws_rooms.push(room)
+    mutex_unlock(__ws_mu)
+
+    fn __reader() -> int {
+        var go: bool = true
+        var closed_here: bool = false
+        while go {
+            let data: String = tcp_read_partial(fd, 4096)
+            if data.length() == 0 {
+                go = false
+            } else {
+                if ws_is_close(data) {
+                    go = false
+                    // Close-echo path: take ownership BEFORE writing the
+                    // echo. If we win, write+close right here and mark
+                    // closed_here so the ownership block below is skipped.
+                    // If __ws_take returns 0 (case (d): a concurrent
+                    // ws_leave or ws_drain_close already took this fd),
+                    // writing into it now would corrupt a stranger's
+                    // socket — so don't write, AND do NOT set closed_here:
+                    // fall through to the ownership block below, which
+                    // re-checks __ws_take (still 0, cheap no-op scan) and
+                    // applies the same draining-vs-leave distinction as
+                    // any other lost-race wake. Setting closed_here
+                    // unconditionally here was the bug: ws_leave only
+                    // shuts the fd down (doesn't close it), so if this
+                    // reader skipped the ownership block too, nobody ever
+                    // called tcp_close — a leaked fd.
+                    if __ws_take(fd) == 1 {
+                        mutex_lock(__ws_mu)
+                        tcp_write(fd, ws_close())
+                        mutex_unlock(__ws_mu)
+                        tcp_close(fd)
+                        closed_here = true
+                    }
+                } else {
+                    let b0: int = data.charAt(0)
+                    var b1: int = 0
+                    if data.length() > 1 {
+                        b1 = data.charAt(1)
+                    }
+                    // A legitimate TEXT frame that TCP happens to fragment
+                    // across reads would also trip this and close the
+                    // connection — accepted under push-only semantics with
+                    // small pings (see docs/API.md).
+                    if b0 != 129 or b1 < 128 {
+                        go = false
+                    }
+                }
+            }
+        }
+        if closed_here == false {
+            // Reached by (a) spontaneous EOF, (b) an abnormal-frame close,
+            // (c) a wake from ws_leave's tcp_shutdown(), or (d) the
+            // close-echo path above losing its own __ws_take race. Same
+            // ownership table covers all four:
+            //   __ws_take==1                     nobody else touched this
+            //                                     fd yet -> we close it.
+            //   __ws_take==0, __ws_draining==0   ws_leave took it and only
+            //                                     shutdown()-ed (shutdown
+            //                                     doesn't release the fd)
+            //                                     -> we still owe the close.
+            //   __ws_take==0, __ws_draining==1   ws_drain_close took it AND
+            //                                     already closed it itself
+            //                                     -> don't touch (may be
+            //                                     recycled by the OS by now).
+            let owned: int = __ws_take(fd)
+            if owned == 1 or __ws_draining == 0 {
+                tcp_close(fd)
+            }
+        }
+        return 0
+    }
+    thread_spawn(__reader)
+}
+
+// Remove fd from the registry. Returns 1 if it was registered (caller now
+// owns closing the fd) or 0 if someone else (drain, or a concurrent
+// ws_leave/reader) removed it first — that someone else owns the close.
+// Prevents a double tcp_close on a fd the OS may have already recycled for
+// a new connection.
+fn __ws_take(fd: int) -> int {
+    __ws_ensure()
+    mutex_lock(__ws_mu)
+    var found: int = 0
+    var nf: Array = []
+    var nr: Array = []
+    var i: int = 0
+    while i < __ws_fds.length() {
+        let f: int = __ws_fds[i]
+        if f != fd {
+            let r: String = __ws_rooms[i]
+            nf.push(f)
+            nr.push(r)
+        } else {
+            found = 1
+        }
+        i = i + 1
+    }
+    __ws_fds = nf
+    __ws_rooms = nr
+    mutex_unlock(__ws_mu)
+    return found
+}
+
+// Explicit unregister: removes the connection and shuts it down; the
+// reader thread wakes on EOF and closes the fd (see __reader's ownership
+// table). tcp_close() alone would NOT wake a reader blocked in recv() on
+// this fd — only shutdown() does, by delivering EOF to that recv(). Using
+// tcp_close() here (as an earlier version did) would leave the reader
+// blocked indefinitely and, worse, risks the OS recycling the fd for an
+// unrelated new connection while the old reader is still attached to the
+// number — the recycled connection's bytes would then be stolen by a
+// thread that thinks it's still reading the old one.
+pub fn ws_leave(fd: int) {
+    if __ws_take(fd) == 1 {
+        tcp_shutdown(fd, 2)
+    }
+}
+
+// Push a payload to every connection in a room. The mutex serializes
+// broadcasts so frames never interleave on a single fd. A failed write is
+// ignored: that fd's reader will see EOF and clean up.
+pub fn ws_broadcast(room: String, payload: String) {
+    __ws_ensure()
+    let frame: String = ws_frame(payload)
+    mutex_lock(__ws_mu)
+    var i: int = 0
+    while i < __ws_fds.length() {
+        let r: String = __ws_rooms[i]
+        if r == room {
+            let fd: int = __ws_fds[i]
+            tcp_write(fd, frame)
+        }
+        i = i + 1
+    }
+    mutex_unlock(__ws_mu)
+}
+
+// Live WS connections (all rooms / one room).
+pub fn ws_count() -> int {
+    __ws_ensure()
+    mutex_lock(__ws_mu)
+    let n: int = __ws_fds.length()
+    mutex_unlock(__ws_mu)
+    return n
+}
+
+pub fn ws_count_room(room: String) -> int {
+    __ws_ensure()
+    mutex_lock(__ws_mu)
+    var n: int = 0
+    var i: int = 0
+    while i < __ws_rooms.length() {
+        let r: String = __ws_rooms[i]
+        if r == room {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    mutex_unlock(__ws_mu)
+    return n
+}
+
+// Complete the 101 handshake on an fd handed over by an app_ws handler,
+// join the room and spawn the reader. Returns 1 (took ownership of the fd)
+// or 0 if the handshake failed (the server responds/closes normally).
+pub fn ws_accept(fd: int, room: String, headers: Array) -> int {
+    let key: String = http_find_header(headers, "Sec-WebSocket-Key")
+    if key.length() == 0 {
+        return 0
+    }
+    let hs: String = ws_handshake_response(key)
+    if tcp_write(fd, hs) <= 0 {
+        return 0
+    }
+    ws_join(fd, room)
+    return 1
+}
+
+// Drain courtesy (called by serve_app's SIGTERM drain, BEFORE consumer
+// shutdown hooks): snapshot every registered fd and empty the registry
+// under the mutex, then — outside the lock — send each a close frame and
+// close its fd. Emptying the registry first makes this the owner of every
+// fd it took: readers that wake concurrently call __ws_take, get 0 (the
+// drain already removed them) and no-op instead of double-closing.
+pub fn ws_drain_close() -> int {
+    __ws_ensure()
+    mutex_lock(__ws_mu)
+    // Set BEFORE emptying the registry, under the same lock: any reader
+    // that loses the race on __ws_take right after this point must see
+    // __ws_draining == 1 and know the drain (not it) owns the close.
+    __ws_draining = 1
+    let fds: Array = __ws_fds
+    __ws_fds = []
+    __ws_rooms = []
+    mutex_unlock(__ws_mu)
+
+    let cf: String = ws_close()
+    var i: int = 0
+    while i < fds.length() {
+        let fd: int = fds[i]
+        // A stalled client (zero-window, no reads) must not be able to
+        // hang the drain — the exit-0-by-deadline contract wins over
+        // delivering this last close frame.
+        tcp_set_timeout(fd, 1)
+        // The registry no longer lists this fd, so __ws_take can't hand it
+        // to anyone else at this point — but the fd's OWN reader thread is
+        // still alive and can independently win a race on the SAME fd if
+        // the client sends its own close frame right as we get here: the
+        // reader's close-echo path also writes+closes under __ws_mu (see
+        // __reader's ws_is_close branch), gated by its own __ws_take call.
+        // Holding this lock across our write+close keeps the two writes
+        // from interleaving on the wire either way.
+        mutex_lock(__ws_mu)
+        tcp_write(fd, cf)
+        mutex_unlock(__ws_mu)
+        tcp_close(fd)
+        i = i + 1
+    }
+    return 0
+}

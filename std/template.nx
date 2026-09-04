@@ -1,0 +1,362 @@
+// std/template.nx — Motor de templates minimal, estilo Flask/Handlebars.
+//
+// Absorbido de nyx-serve v0.7.1 (2026-08-31), copia directa de su
+// src/template.nx: motor PURO (no toca red ni std/web), API pública idéntica
+// (tpl_render, tpl_partial). Los comentarios que citan task-*-report.md son
+// del repo del producto (historia de su desarrollo, no artefactos del core).
+//
+// Syntax v1:
+//   {{key}}    - HTML-escaped interpolation (default, via std/url html_escape).
+//                Missing key -> "" (no error).
+//   {{{key}}}  - RAW interpolation, no escaping. ⚠️ XSS risk: only use with
+//                trusted/pre-sanitized content, NEVER with raw user input.
+//   {{#if key}}...{{/if}}, {{#if key}}...{{else}}...{{/if}}
+//                truthy = key present AND value != "" AND value != "0".
+//   {{#each key}}...{{/each}}
+//                `key` must resolve to an Array of Map; the body is rendered
+//                once per element using that element's Map as the block ctx.
+//                Nesting ({{#each}} inside {{#each}}) is supported.
+//   {{> name}}   include a partial registered via tpl_partial(), rendered
+//                with the CURRENT ctx. Recursion is capped at
+//                MAX_PARTIAL_DEPTH; beyond that a literal error marker is
+//                emitted instead of looping forever or crashing.
+//
+// Implementation: a single left-to-right byte scanner (strings = bytes
+// contract — see docs/SPEC.md — indexOf/substring are byte-based here) with
+// explicit tag-counting to find the matching {{/if}}/{{/each}} of a block
+// (never naive string replace, so nesting is sound). Recursive-descent per
+// block body.
+//
+// GOTCHA WORKAROUND (see task-3.1-report.md / task-3.2 brief): inline
+// `arr[i]` / `Map.get()` used directly as an arg to `.push()` or as the RHS
+// of a `+` concat reads back as a raw pointer instead of the string value.
+// Workaround used EVERYWHERE below: always bind to a typed `let` first
+// (`let s: String = arr[i]` / `let v: String = m.get(k)`) before using it.
+//
+// NEW GAP FOUND IN THIS TASK (see task-3.2-report.md for the isolated
+// repro): `String.startsWith(...)` (camelCase) is the one actually wired
+// in codegen (compiler/codegen.nx ~line 7235/7710, calls
+// `nyx_string_starts_with`); `String.starts_with(...)` (snake_case) is
+// listed alongside it as eligible for i64->String coercion (line ~7594)
+// but has NO actual call-emitting handler under that name — it silently
+// compiles and always evaluates to false instead of erroring. Workaround:
+// use `.startsWith(...)` everywhere below, never `.starts_with(...)`.
+
+import "std/url"  // html_escape
+
+// ── Partial registry ────────────────────────────────────────────────────────
+// Module-level Map<String> (partial name -> raw/unrendered template text).
+// A plain top-level `var` initialized via a zero-arg constructor call works
+// fine as module state in this codebase (precedent: std/log.nx's
+// `var __log_level = 1`); verified to compile before relying on it here.
+var g_partials: Map = map_new()
+
+pub fn tpl_partial(name: String, tmpl: String) {
+    g_partials.insert(name, tmpl)
+}
+
+const MAX_PARTIAL_DEPTH: int = 8
+
+// ── Public entry point ──────────────────────────────────────────────────────
+
+pub fn tpl_render(tmpl: String, ctx: Map) -> String {
+    return tpl_render_depth(tmpl, ctx, 0)
+}
+
+// ── Core recursive-descent renderer ─────────────────────────────────────────
+//
+// Scans `tmpl` byte-by-byte for `{{`. On each occurrence, classifies the tag
+// (raw `{{{`, block open `#if`/`#each`, block close, else, partial `>`, or
+// plain interpolation) and either emits substituted text or recurses into
+// the block body. `depth` tracks partial-include recursion only (interpolation
+// and if/each nesting don't need a depth counter — they're bounded by the
+// literal template text, not by data-driven recursion).
+fn tpl_render_depth(tmpl: String, ctx: Map, depth: int) -> String {
+    var out: String = ""
+    var i: int = 0
+    let n: int = tmpl.length()
+    while i < n {
+        let open_idx: int = tpl_index_from(tmpl, "{{", i)
+        if open_idx < 0 {
+            let tail: String = tmpl.substring(i, n)
+            out = out + tail
+            i = n
+        } else {
+            let before: String = tmpl.substring(i, open_idx)
+            out = out + before
+
+            if tpl_starts_with_at(tmpl, open_idx, "{{{") {
+                // Raw interpolation {{{key}}}
+                let close_idx: int = tpl_index_from(tmpl, "}}}", open_idx)
+                if close_idx < 0 {
+                    // Unterminated tag: emit literally and stop scanning.
+                    let rest: String = tmpl.substring(open_idx, n)
+                    out = out + rest
+                    i = n
+                } else {
+                    let key: String = tmpl.substring(open_idx + 3, close_idx)
+                    let key_trim: String = key.trim()
+                    let val: String = tpl_ctx_get(ctx, key_trim)
+                    out = out + val
+                    i = close_idx + 3
+                }
+            } else {
+                let close_idx: int = tpl_index_from(tmpl, "}}", open_idx)
+                if close_idx < 0 {
+                    let rest: String = tmpl.substring(open_idx, n)
+                    out = out + rest
+                    i = n
+                } else {
+                    let inner: String = tmpl.substring(open_idx + 2, close_idx)
+                    let inner_trim: String = inner.trim()
+
+                    if inner_trim.startsWith("#if ") {
+                        let cond_key: String = inner_trim.substring(4, inner_trim.length()).trim()
+                        let block: Array = tpl_find_block(tmpl, close_idx + 2, "if")
+                        let body_start: int = block[0]
+                        let body_end: int = block[1]
+                        let after_end: int = block[2]
+                        let body: String = tmpl.substring(body_start, body_end)
+                        let branches: Array = tpl_split_else(body)
+                        let then_branch: String = branches[0]
+                        let else_branch: String = branches[1]
+                        if tpl_truthy(ctx, cond_key) {
+                            let then_rendered: String = tpl_render_depth(then_branch, ctx, depth)
+                            out = out + then_rendered
+                        } else {
+                            let else_rendered: String = tpl_render_depth(else_branch, ctx, depth)
+                            out = out + else_rendered
+                        }
+                        i = after_end
+                    } else {
+                        if inner_trim.startsWith("#each ") {
+                            let each_key: String = inner_trim.substring(6, inner_trim.length()).trim()
+                            let block: Array = tpl_find_block(tmpl, close_idx + 2, "each")
+                            let body_start: int = block[0]
+                            let body_end: int = block[1]
+                            let after_end: int = block[2]
+                            let body: String = tmpl.substring(body_start, body_end)
+                            let rendered: String = tpl_render_each(body, ctx, each_key, depth)
+                            out = out + rendered
+                            i = after_end
+                        } else {
+                            if inner_trim.startsWith(">") {
+                                let name: String = inner_trim.substring(1, inner_trim.length()).trim()
+                                let rendered: String = tpl_render_partial(name, ctx, depth)
+                                out = out + rendered
+                                i = close_idx + 2
+                            } else {
+                                // Plain interpolation {{key}} — HTML-escaped.
+                                let val: String = tpl_ctx_get(ctx, inner_trim)
+                                let escaped: String = html_escape(val)
+                                out = out + escaped
+                                i = close_idx + 2
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return out
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+// LANGUAGE GAP WORKAROUND: `String.indexOf(needle)` in this compiler takes
+// exactly ONE argument — there is no `indexOf(needle, from)` overload (see
+// compiler/codegen.nx ~line 7251/7726, `nyx_string_index_of` is a 2-arg C
+// call: haystack + needle only). Passing a 2nd arg compiles WITHOUT an
+// arity error and just silently searches from byte 0 every time — a real
+// compiler gap (accepted extra args on a builtin method, not caught by the
+// checker), reported in the task report rather than patched here. Workaround:
+// this helper reimplements "indexOf with a start offset" via `substring` +
+// single-arg `indexOf`, used everywhere the scanner needs to resume from `i`.
+fn tpl_index_from(s: String, needle: String, start_at: int) -> int {
+    let n: int = s.length()
+    let sub: String = s.substring(start_at, n)
+    let rel: int = sub.indexOf(needle)
+    if rel < 0 {
+        return -1
+    }
+    return start_at + rel
+}
+
+// True if tmpl[at..] starts with `needle` (bounds-safe).
+fn tpl_starts_with_at(tmpl: String, at: int, needle: String) -> bool {
+    let n: int = tmpl.length()
+    let nl: int = needle.length()
+    if at + nl > n {
+        return false
+    }
+    let slice: String = tmpl.substring(at, at + nl)
+    return slice == needle
+}
+
+// ctx.get(key) as a String, "" if absent. `ctx` here is always a flat
+// Map<String> scope (top-level render ctx or an {{#each}} element ctx).
+fn tpl_ctx_get(ctx: Map, key: String) -> String {
+    if ctx.has(key) {
+        let v: String = ctx.get(key)
+        return v
+    }
+    return ""
+}
+
+// truthy = key present AND value != "" AND value != "0"
+fn tpl_truthy(ctx: Map, key: String) -> bool {
+    if !ctx.has(key) {
+        return false
+    }
+    let v: String = ctx.get(key)
+    if v == "" {
+        return false
+    }
+    if v == "0" {
+        return false
+    }
+    return true
+}
+
+// Finds the matching close tag for a block opened right before `scan_from`
+// (the byte offset right after the opening tag's `}}`). `kind` is "if" or
+// "each" and determines which `{{#kind ...}}` / `{{/kind}}` pairs are
+// counted — nesting depth is tracked so a `{{/each}}` that belongs to a
+// NESTED `{{#each}}` doesn't get mistaken for the outer block's close tag.
+// Returns [body_start, body_end, after_close_end].
+fn tpl_find_block(tmpl: String, scan_from: int, kind: String) -> Array {
+    let n: int = tmpl.length()
+    let open_marker: String = "{{#" + kind + " "
+    let close_marker: String = "{{/" + kind + "}}"
+    var depth: int = 1
+    var i: int = scan_from
+    var body_end: int = n
+    var after_end: int = n
+    while i < n {
+        let next_open: int = tpl_index_from(tmpl, open_marker, i)
+        let next_close: int = tpl_index_from(tmpl, close_marker, i)
+        if next_close < 0 {
+            // Unterminated block: treat the rest of the template as the body.
+            body_end = n
+            after_end = n
+            i = n
+        } else {
+            if next_open >= 0 and next_open < next_close {
+                depth = depth + 1
+                i = next_open + open_marker.length()
+            } else {
+                depth = depth - 1
+                if depth == 0 {
+                    body_end = next_close
+                    after_end = next_close + close_marker.length()
+                    i = n
+                } else {
+                    i = next_close + close_marker.length()
+                }
+            }
+        }
+    }
+    var result: Array = [scan_from, body_end, after_end]
+    return result
+}
+
+// Splits an {{#if}} body on a TOP-LEVEL {{else}} (not one that belongs to a
+// nested {{#if}}) using the same depth-counting approach as tpl_find_block.
+// Returns [then_branch, else_branch] — else_branch is "" if no {{else}}.
+fn tpl_split_else(body: String) -> Array {
+    let n: int = body.length()
+    let open_marker: String = "{{#if "
+    let else_marker: String = "{{else}}"
+    var depth: int = 0
+    var i: int = 0
+    var else_idx: int = -1
+    while i < n and else_idx < 0 {
+        let next_open: int = tpl_index_from(body, open_marker, i)
+        let next_close: int = tpl_index_from(body, "{{/if}}", i)
+        let next_else: int = tpl_index_from(body, else_marker, i)
+
+        var candidate: int = -1
+        var kind_step: int = 0 // 1=open 2=close 3=else
+        if next_open >= 0 {
+            candidate = next_open
+            kind_step = 1
+        }
+        if next_close >= 0 and (candidate < 0 or next_close < candidate) {
+            candidate = next_close
+            kind_step = 2
+        }
+        if next_else >= 0 and (candidate < 0 or next_else < candidate) {
+            candidate = next_else
+            kind_step = 3
+        }
+
+        if candidate < 0 {
+            i = n
+        } else {
+            if kind_step == 1 {
+                depth = depth + 1
+                i = candidate + open_marker.length()
+            } else {
+                if kind_step == 2 {
+                    depth = depth - 1
+                    i = candidate + "{{/if}}".length()
+                } else {
+                    if depth == 0 {
+                        else_idx = candidate
+                    } else {
+                        i = candidate + else_marker.length()
+                    }
+                }
+            }
+        }
+    }
+
+    var result: Array = []
+    if else_idx < 0 {
+        result.push(body)
+        result.push("")
+    } else {
+        let then_branch: String = body.substring(0, else_idx)
+        let else_branch: String = body.substring(else_idx + else_marker.length(), n)
+        result.push(then_branch)
+        result.push(else_branch)
+    }
+    return result
+}
+
+// Renders an {{#each key}}...{{/each}} body: `key` resolves (in the OUTER
+// ctx) to an Array of Map; the body template is rendered once per element
+// with that element's Map as the block ctx (so `{{field}}` inside refers to
+// the element, not the outer ctx — matches the brief's spec). Nested
+// {{#each}} inside `body` recurses through tpl_render_depth normally, since
+// each iteration is just a fresh top-level render call over `body`.
+fn tpl_render_each(body: String, ctx: Map, key: String, depth: int) -> String {
+    if !ctx.has(key) {
+        return ""
+    }
+    let items: Array = ctx.get(key)
+    var out: String = ""
+    var i: int = 0
+    while i < items.length() {
+        let item: Map = items[i]
+        let rendered: String = tpl_render_depth(body, item, depth)
+        out = out + rendered
+        i = i + 1
+    }
+    return out
+}
+
+// Renders {{> name}}: looks up `name` in the partial registry and renders it
+// with the CURRENT ctx. Guards against unbounded/self recursion by capping
+// depth at MAX_PARTIAL_DEPTH — beyond that, emits a literal error marker
+// instead of looping forever or crashing.
+fn tpl_render_partial(name: String, ctx: Map, depth: int) -> String {
+    if depth >= MAX_PARTIAL_DEPTH {
+        return "<!-- tpl_partial recursion depth exceeded: " + name + " -->"
+    }
+    if !g_partials.has(name) {
+        return ""
+    }
+    let partial_tmpl: String = g_partials.get(name)
+    return tpl_render_depth(partial_tmpl, ctx, depth + 1)
+}

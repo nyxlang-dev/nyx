@@ -7,7 +7,7 @@
 set -e
 cd "$(dirname "$0")/.."
 
-VERSION=${1:-0.14.0}
+VERSION=${1:-$(cat "$(dirname "$0")/../VERSION")}
 ARCH=${2:-$(uname -m)}
 NAME="nyx-v${VERSION}-linux-${ARCH}"
 DIST="dist"

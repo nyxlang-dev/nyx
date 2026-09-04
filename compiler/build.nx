@@ -26,6 +26,11 @@
 // Represents a parsed nyx.toml file
 import "std/kvclient"
 import "std/base64"
+// Declaration-only, igual que en vet.nx: gotchas_table.nx se compila aparte y
+// se linkea (ver build-nyx-build en el Makefile). El andamiaje SDD genera la
+// evidencia y el test de constitución DESDE esta tabla — la misma fuente que
+// alimenta AGENTS.md, LLM.md y `nyx vet`, para que no haya dos listas.
+import { gotchas_table, gotcha_field, gotcha_scan_src } from "compiler/gotchas_table"
 
 struct ProjectConfig {
     name: String,
@@ -216,58 +221,654 @@ fn run_add(pkg_name: String, pkg_url: String, config: ProjectConfig) -> bool {
 
 // ===== INIT =====
 
-// Copy AI context and IDE config templates into a project directory
-fn scaffold_project_files(dir: String) {
-    let nyx_home: String = getenv("NYX_HOME")
-    let tpl: String = nyx_home + "/templates"
+// Resolución de la toolchain para SEMBRAR (F6 del informe de fricción del
+// scaffold, hallazgo nuevo #3): NYX_HOME → ~/.nyx si trae templates/ → "."
+// si es el monorepo (nyx_bootstrap) → "" si no hay nada. Antes el scaffold
+// leía getenv a secas: con NYX_HOME vacío buscaba "/templates/AGENTS.md",
+// ningún file_exists daba true y `nyx init` sembraba CERO archivos de
+// contexto IA sin decir una palabra — el proyecto quedaba mudo para el
+// agente y nadie se enteraba. Mismo orden que run_build/capabilities_std_dir;
+// el marcador acá es templates/ porque es lo que este camino necesita.
+fn resolve_seed_home() -> String {
+    var nyx_home: String = getenv("NYX_HOME")
+    if nyx_home != "" { return nyx_home }
+    let home_dir: String = getenv("HOME")
+    if home_dir != "" {
+        let candidate: String = home_dir + "/.nyx"
+        if file_exists(candidate + "/templates") { return candidate }
+    }
+    if file_exists("nyx_bootstrap") { return "." }
+    return ""
+}
 
-    // AGENTS.md — el playbook PRIMARIO que la LLM lee primero (rieles + qué/cómo).
-    if file_exists(tpl + "/AGENTS.md") {
-        let agents_md: String = read_file(tpl + "/AGENTS.md")
-        write_file(dir + "/AGENTS.md", agents_md)
-    }
-    // CAPABILITIES.md — índice generado de la stdlib (qué existe, no reinventar).
-    let cok: bool = run_capabilities(dir + "/CAPABILITIES.md")
+// Sello de versión de lo sembrado (F3 del informe de fricción del scaffold,
+// hallazgo A2 «cero marcas»): cada archivo de contexto IA termina con
+// `<!-- nyx-version: X -->`, el mismo marcador que ya lleva CAPABILITIES.md.
+// Va al FINAL del archivo a propósito: la línea 1 queda intacta (títulos,
+// frontmatter YAML de las skills, que debe empezar en la línea 1). El wrapper
+// (`scripts/nyx`) lo compara contra $NYX_HOME/VERSION en `nyx build` y avisa
+// —WARN, nunca fatal— cuando el contexto quedó de otra versión; `nyx update
+// --sync-docs` lo resiembra con el sello nuevo. Antes de esto, un proyecto
+// creado con 0.22 seguía guiando al agente con manuales viejos para siempre,
+// sin que nadie pudiera notarlo.
+// El sello lleva TAMBIÉN el idioma del proyecto desde ADR-1 (Task 5): un
+// proyecto es monolingüe (`--lang en|es`) y `nyx update --sync-docs` necesita
+// saber de qué juego de plantillas resembrar sin preguntar. El substring
+// `nyx-version: X` no cambia de forma, así que `_warn_seed_drift` y
+// `_selfheal_capabilities` del wrapper siguen funcionando sin tocarlos.
+fn seed_stamp(lang: String) -> String {
+    return "<!-- nyx-version: " + toolchain_version() + " nyx-lang: " + lang + " -->\n"
+}
 
-    // AI context files
-    if file_exists(tpl + "/CLAUDE.md") {
-        let claude_md: String = read_file(tpl + "/CLAUDE.md")
-        write_file(dir + "/CLAUDE.md", claude_md)
-    }
-    if file_exists(tpl + "/.cursorrules") {
-        let cursor: String = read_file(tpl + "/.cursorrules")
-        write_file(dir + "/.cursorrules", cursor)
-    }
-    if file_exists(tpl + "/CHEATSHEET.md") {
-        let cheatsheet: String = read_file(tpl + "/CHEATSHEET.md")
-        write_file(dir + "/CHEATSHEET.md", cheatsheet)
-    }
-    // Dense AI reference — lets an agent learn Nyx deeply from inside the project
-    if file_exists(tpl + "/LLM.md") {
-        let llm_md: String = read_file(tpl + "/LLM.md")
-        write_file(dir + "/LLM.md", llm_md)
-    }
+// Idioma de un proyecto ya sembrado: lee `nyx-lang: xx` del AGENTS.md de `dir`
+// (el sello está en la última línea, pero se busca en todo el archivo por si
+// el usuario editó abajo). Default "en" — un proyecto anterior a ADR-1 no
+// tiene idioma declarado y el juego EN es el que tenía. Task 6 (migración de
+// layouts viejos) lo usa; el wrapper hace la misma lectura en bash.
+fn project_lang(dir: String) -> String {
+    let path: String = dir + "/AGENTS.md"
+    if file_exists(path) == false { return "en" }
+    let body: String = read_file(path)
+    let marker: String = "nyx-lang: "
+    let at: int = body.indexOf(marker)
+    if at < 0 { return "en" }
+    let start: int = at + marker.length()
+    if start + 2 > body.length() { return "en" }
+    let code: String = body.substring(start, start + 2)
+    if code == "es" { return "es" }
+    return "en"
+}
 
-    // GitHub Copilot
-    if file_exists(tpl + "/.github/copilot-instructions.md") {
-        exec("mkdir -p " + dir + "/.github")
-        let copilot: String = read_file(tpl + "/.github/copilot-instructions.md")
-        write_file(dir + "/.github/copilot-instructions.md", copilot)
+// El TEXTO exacto que seed_file escribe: `content` con salto final garantizado
+// + línea en blanco + el sello. Existe aparte del write_file para poder
+// comparar contra lo que ya hay en disco sin duplicar la receta (Task 7: los
+// archivos GENERADOS del andamiaje se reescriben solo si cambiaron, así un
+// `sdd init` repetido no toca ni una mtime).
+fn seed_body(content: String, lang: String) -> String {
+    var body: String = content
+    let n: int = body.length()
+    var needs_nl: bool = true
+    if n > 0 {
+        if body.substring(n - 1, n) == "\n" { needs_nl = false }
     }
+    if needs_nl { body = body + "\n" }
+    return body + "\n" + seed_stamp(lang)
+}
 
-    // AI skills — procedimientos ejecutables para el asistente LLM del
-    // proyecto (write-nyx-program, fix-compile-error, report-nyx-friction).
-    exec("if [ -d '" + tpl + "/.claude/skills' ]; then mkdir -p '" + dir + "/.claude' && cp -r '" + tpl + "/.claude/skills' '" + dir + "/.claude/'; fi")
+// Escribe `content` en `dst` con un salto final garantizado + línea en blanco +
+// el sello. Solo para archivos de texto/markdown sembrados desde templates/.
+fn seed_file(dst: String, content: String, lang: String) {
+    write_file(dst, seed_body(content, lang))
+}
 
-    // VS Code extension recommendation
-    if file_exists(tpl + "/.vscode/extensions.json") {
-        exec("mkdir -p " + dir + "/.vscode")
-        let vscode: String = read_file(tpl + "/.vscode/extensions.json")
-        write_file(dir + "/.vscode/extensions.json", vscode)
+// .gitignore (F4 del informe de fricción del scaffold, hallazgo A1): nyx init
+// no dejaba ninguno y el primer `git add .` se llevaba el binario, packages/ y
+// los .ll. Plantilla en templates/gitignore ({{binary}} = [package].name).
+// Nunca pisa uno existente (init sobre un dir que ya tiene .gitignore lo
+// respeta). `git init` NO se corre: es decisión del usuario (el informe lo
+// marcó opcional y sin pedido explícito no se implementa).
+fn seed_gitignore(dir: String, project_name: String) {
+    let nyx_home: String = resolve_seed_home()
+    if nyx_home == "" { return }
+    let tpl: String = nyx_home + "/templates/gitignore"
+    if file_exists(tpl) == false { return }
+    if file_exists(dir + "/.gitignore") { return }
+    let body: String = read_file(tpl)
+    write_file(dir + "/.gitignore", body.replace("{{binary}}", project_name))
+}
+
+// Valida la lista de `--agent=`: coma-separada, valores `claude|cursor|copilot`.
+// Cualquier otra cosa es un error RUIDOSO con exit 1 — un `--agent=cursorr`
+// que sembrara nada en silencio sería justo la clase de falla muda que este
+// repo persigue.
+fn validate_agents(agents: String) -> bool {
+    if agents == "" { return true }
+    let parts: Array = agents.split(",")
+    var i: int = 0
+    while i < parts.length() {
+        let raw: String = parts[i]
+        let name: String = raw.trim()
+        if name != "claude" and name != "cursor" and name != "copilot" {
+            print("error: --agent inválido: '" + name + "' (valores válidos: claude, cursor, copilot)")
+            print("  Uso: nyx init [nombre] [--lang en|es] [--agent=claude,cursor,copilot]")
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// Adaptadores por proveedor (ADR-1): archivos de 3 líneas que solo dicen
+// «lee AGENTS.md» y «las guías están en docs/nyx/guides/». Se siembran SOLO
+// con `--agent=<lista>`; sin la bandera el proyecto no tiene una sola marca
+// comercial adentro (guardia: run_init_golden.sh). Para claude, únicamente
+// CLAUDE.md — nada bajo .claude/ (las ex-skills son las guías neutrales).
+// `agents` ya viene validado por validate_agents() en main.
+fn seed_adapters(dir: String, lang: String, agents: String) {
+    if agents == "" { return }
+    let nyx_home: String = resolve_seed_home()
+    if nyx_home == "" { return }
+    let adir: String = nyx_home + "/templates/adapters"
+    let parts: Array = agents.split(",")
+    var i: int = 0
+    while i < parts.length() {
+        let raw: String = parts[i]
+        let name: String = raw.trim()
+        if name != "" {
+            let tpl: String = adir + "/" + name + "." + lang + ".md"
+            if file_exists(tpl) {
+                let body: String = read_file(tpl)
+                if name == "claude" {
+                    seed_file(dir + "/CLAUDE.md", body, lang)
+                }
+                if name == "cursor" {
+                    seed_file(dir + "/.cursorrules", body, lang)
+                }
+                if name == "copilot" {
+                    exec("mkdir -p '" + dir + "/.github'")
+                    seed_file(dir + "/.github/copilot-instructions.md", body, lang)
+                }
+            } else {
+                print("warning: falta la plantilla del adaptador '" + name + "' (" + tpl + ") — no se sembró")
+            }
+        }
+        i = i + 1
     }
 }
 
-fn run_init(name_arg: String) -> bool {
+// Siembra el contexto para agentes de un proyecto, en UN idioma (ADR-1):
+// AGENTS.md + CAPABILITIES.md (generado) + docs/nyx/{LLM.md,guides/*.md}, y
+// los adaptadores opt-in. Un solo camino de código para los dos idiomas: lo
+// único que cambia es `templates/<lang>/`. LLM.md sale SIEMPRE de
+// `templates/en/` (la referencia densa es monolingüe por decisión: traducir
+// 84 KB queda fuera de alcance, y el AGENTS.md ES lo aclara).
+fn scaffold_project_files(dir: String, lang: String, agents: String) {
+    let nyx_home: String = resolve_seed_home()
+    let tpl: String = nyx_home + "/templates"
+    let ldir: String = tpl + "/" + lang
+    // Error RUIDOSO (no fatal: nyx.toml y src/main.nx ya están, el proyecto
+    // compila). Antes: silencio total y cero archivos sembrados.
+    var tpl_ok: bool = false
+    if nyx_home != "" {
+        if file_exists(ldir + "/AGENTS.md") { tpl_ok = true }
+    }
+    if tpl_ok == false {
+        print("error: no encuentro la toolchain de Nyx (NYX_HOME vacío o sin templates/" + lang + "/): el contexto para agentes (AGENTS.md, CAPABILITIES.md, docs/nyx/) NO se sembró.")
+        print("  Exportá NYX_HOME (o reinstalá con install.sh) y corré: nyx update --sync-docs")
+        return
+    }
+
+    // AGENTS.md — el playbook PRIMARIO que el agente lee primero (rieles + qué/cómo).
+    let agents_md: String = read_file(ldir + "/AGENTS.md")
+    seed_file(dir + "/AGENTS.md", agents_md, lang)
+
+    // CAPABILITIES.md — índice generado de la stdlib (qué existe, no reinventar).
+    let cok: bool = run_capabilities(dir + "/CAPABILITIES.md")
+
+    // docs/nyx/ — la referencia densa + las tres guías neutrales.
+    exec("mkdir -p '" + dir + "/docs/nyx/guides'")
+    let llm_tpl: String = tpl + "/en/docs/nyx/LLM.md"
+    if file_exists(llm_tpl) {
+        let llm_md: String = read_file(llm_tpl)
+        seed_file(dir + "/docs/nyx/LLM.md", llm_md, lang)
+    } else {
+        // Misma familia que el error de tpl_ok, y por el mismo motivo: la
+        // referencia densa la inyectan los instaladores (install.sh /
+        // install-local) en templates/en/docs/nyx/. Si falta, el proyecto sale
+        // con 8 de 9 archivos y el agente no tiene dónde mirar la forma de las
+        // cosas. No es fatal (el resto ya se sembró), pero se dice en voz alta.
+        print("error: falta " + llm_tpl + " en la toolchain: docs/nyx/LLM.md (la referencia densa) NO se sembró.")
+        print("  Reinstalá con install.sh (o corré make install-local desde el monorepo) y después: nyx update --sync-docs")
+    }
+    let gdir: String = ldir + "/docs/nyx/guides"
+    if file_exists(gdir) {
+        let guides: Array = readdir(gdir)
+        var gi: int = 0
+        while gi < guides.length() {
+            let guide: String = guides[gi]
+            let src: String = gdir + "/" + guide
+            if file_exists(src) {
+                let guide_body: String = read_file(src)
+                seed_file(dir + "/docs/nyx/guides/" + guide, guide_body, lang)
+            }
+            gi = gi + 1
+        }
+    }
+
+    seed_adapters(dir, lang, agents)
+    // (La recomendación de extensión VS Code — .vscode/extensions.json — murió
+    // el 2026-09-03: apuntaba a `nyxlang.nyx-language`, que no existe en el
+    // marketplace, y la plantilla estaba gitignored. Ficha en TASKS.md para
+    // resembrarla cuando haya una extensión publicada.)
+}
+
+// ============================================================
+// ANDAMIAJE SDD OPCIONAL (spec 2026-09-04-andamiaje-sdd-design.md §3)
+// ============================================================
+// `nyx init --sdd` (proyecto nuevo) y `nyx sdd init` (proyecto que ya existe)
+// siembran las 7 piezas que preparan al agente para DECIDIR, no solo para
+// escribir: constitución (con el marcador SDD_INCOMPLETE), glosario, evidencia
+// GENERADA de la tabla de gotchas, plantilla de ADR, specs/README.md, el test
+// de constitución GENERADO y la guía de arranque. Más 2 líneas en AGENTS.md
+// que las disparan. Reglas de la constitución de la feature, todas con
+// guardia en scripts/testing/run_sdd_init.sh:
+//   · `nyx init` SIN la bandera no cambia en nada (listado dorado intacto).
+//   · Idempotente: lo que ya tiene contenido se saltea y se avisa; lo GENERADO
+//     se reescribe solo si su texto cambió (una segunda corrida no toca nada).
+//   · No rellena: las plantillas nacen vacías, el agente pregunta.
+//   · Toca UN solo archivo existente: AGENTS.md (bloque `<!-- sdd:trigger -->`).
+//   · Reversible: al terminar imprime qué borrar para volver a un init normal.
+//   · Neutral: ni un nombre de proveedor de IA en nada de lo sembrado.
+
+// La cabecera que marca una pieza GENERADA como NUESTRA. Es UNA sola cadena
+// para los dos archivos generados (evidencia y test de constitución) a
+// propósito: el chequeo de propiedad tiene que ser el mismo en los dos, y un
+// archivo del usuario que apenas mencione «GENERATED» no puede confundirse con
+// uno nuestro (hallazgo del review de la Task 7).
+fn sdd_generated_marker() -> String {
+    return "GENERATED by `nyx sdd init`"
+}
+
+// Mensaje en el idioma del PROYECTO (el mismo que gobierna las plantillas).
+fn sdd_msg(lang: String, en: String, es: String) -> String {
+    if lang == "es" { return es }
+    return en
+}
+
+// Copia una plantilla del andamiaje a su destino. Nunca pisa: si el destino ya
+// existe se saltea Y SE DICE (regla 3: idempotente y ruidoso, no silencioso).
+fn sdd_seed_template(tpl_dir: String, name: String, dst: String, lang: String) -> bool {
+    if file_exists(dst) {
+        print(sdd_msg(lang, "  skipped (already there): " + dst,
+                            "  salteado (ya existe): " + dst))
+        return false
+    }
+    let src: String = tpl_dir + "/" + name
+    if file_exists(src) == false {
+        print("error: falta la plantilla " + src + " en la toolchain: " + dst + " NO se sembró.")
+        return false
+    }
+    let body: String = read_file(src)
+    seed_file(dst, body, lang)
+    print("  " + dst)
+    return true
+}
+
+// Escapa una cadena para meterla en un literal de Nyx (la tabla de gotchas
+// trae regex con `\(` y títulos con comillas: sin esto el .nx generado no
+// parsea).
+fn nx_escape(s: String) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < s.length() {
+        let c: String = s.substring(i, i + 1)
+        if c == "\\" {
+            out = out + "\\\\"
+        } else {
+            if c == "\"" {
+                out = out + "\\\""
+            } else {
+                out = out + c
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Cuerpo de `docs/evidence/nyx-<ver>.md`: las trampas y reglas VIVAS de la
+// toolchain instalada (una línea por gotcha, con id, ancla y el test que la
+// prueba) + los retirados. Sale de gotchas_table(), la misma fuente que
+// AGENTS.md, LLM.md y `nyx vet` — nadie mantiene esta lista a mano.
+fn evidence_body(lang: String) -> String {
+    let ver: String = toolchain_version()
+    var out: String = ""
+    out = out + sdd_msg(lang, "# Evidence — nyx " + ver + "\n", "# Evidencia — nyx " + ver + "\n")
+    out = out + "\n<!-- " + sdd_generated_marker() + " from the gotcha table of the installed toolchain — do not edit by hand; `nyx update` regenerates it. -->\n\n"
+    out = out + sdd_msg(lang,
+        "Traps and rules that are LIVE in the toolchain this project was seeded with. Each\nline carries the stable id, the anchor term to look up in `AGENTS.md` and\n`docs/nyx/LLM.md`, and the test in the language repo that proves it. This file is\nevidence, not advice: if a line here contradicts a manual, the manual is stale.\n",
+        "Trampas y reglas VIVAS en la toolchain con la que se sembró este proyecto. Cada\nlínea trae el id estable, el término ancla para buscar en `AGENTS.md` y en\n`docs/nyx/LLM.md`, y el test del repo del lenguaje que la prueba. Este archivo es\nevidencia, no consejo: si una línea de acá contradice a un manual, el manual quedó viejo.\n")
+    out = out + "\n"
+
+    let rows: Array = gotchas_table()
+    var i: int = 0
+    while i < rows.length() {
+        let row: Array = rows[i]
+        let kind: String = gotcha_field(row, "kind")
+        let fixed_in: String = gotcha_field(row, "fixed_in")
+        if fixed_in == "" {
+            if kind == "trap" or kind == "rule" {
+                let id: String = gotcha_field(row, "id")
+                let since: String = gotcha_field(row, "since")
+                let anchor: String = gotcha_field(row, "anchor")
+                let test_path: String = gotcha_field(row, "test")
+                var title: String = gotcha_field(row, "title_en")
+                if lang == "es" { title = gotcha_field(row, "title_es") }
+                out = out + "- **" + id + "** (" + kind + ", since " + since + ") — " + title
+                if anchor != "" { out = out + " — anchor `" + anchor + "`" }
+                if test_path != "" { out = out + " — test `" + test_path + "`" }
+                out = out + "\n"
+            }
+        }
+        i = i + 1
+    }
+
+    out = out + sdd_msg(lang, "\n## Retired\n\n", "\n## Retirados\n\n")
+    out = out + sdd_msg(lang,
+        "These were real traps and are not any more: if a manual, a blog post or an older\nagent still repeats them, it is wrong for this version.\n\n",
+        "Estas fueron trampas reales y ya no lo son: si un manual, un artículo o un agente\nviejo las sigue repitiendo, está equivocado para esta versión.\n\n")
+    var j: int = 0
+    while j < rows.length() {
+        let row2: Array = rows[j]
+        let fixed2: String = gotcha_field(row2, "fixed_in")
+        if fixed2 != "" {
+            let id2: String = gotcha_field(row2, "id")
+            var title2: String = gotcha_field(row2, "title_en")
+            if lang == "es" { title2 = gotcha_field(row2, "title_es") }
+            out = out + "- **" + id2 + "** (fixed in " + fixed2 + ") — " + title2 + "\n"
+        }
+        j = j + 1
+    }
+    return out
+}
+
+// Escribe la evidencia. Es un archivo GENERADO: se regenera en su lugar, pero
+// SOLO si el texto cambió (idempotencia) y nunca si el que está en disco no
+// lleva la cabecera GENERATED (entonces lo escribió el usuario). 0 = sin
+// cambios, 1 = escrito, 2 = salteado porque es del usuario.
+fn write_evidence(dir: String, lang: String) -> int {
+    let path: String = dir + "/docs/evidence/nyx-" + toolchain_version() + ".md"
+    let body: String = seed_body(evidence_body(lang), lang)
+    if file_exists(path) {
+        let existing: String = read_file(path)
+        if existing == body { return 0 }
+        if existing.indexOf(sdd_generated_marker()) < 0 { return 2 }
+    }
+    write_file(path, body)
+    return 1
+}
+
+// Cuerpo de `tests/constitution_test.nx`: un bloque `test` por gotcha con
+// `pattern` (los grep-ables de la tabla, hoy 5) que falla con archivo:línea, y
+// un test que caza archivos en tests/ sin bloques `test` (que `nyx test`
+// saltearía en silencio). El código va en inglés a propósito: es código, y los
+// ids/mensajes son los mismos en los dos juegos de plantillas.
+fn constitution_test_body() -> String {
+    var out: String = ""
+    out = out + "// " + sdd_generated_marker() + " from the installed toolchain's gotcha table — regenerate with `nyx update`.\n"
+    out = out + "// Edit it and it becomes yours: with this header gone, `nyx sdd init` never touches it again.\n"
+    out = out + "// Each block greps src/ for a trap the compiler cannot catch for you.\n"
+    out = out + "import \"std/regex\"\n"
+    out = out + "\n"
+    // El recorte de comentarios y strings, inyectado como CÓDIGO: el test tiene
+    // que ser autónomo (sólo importa std), así que no puede importar la tabla.
+    // El fuente sale de gotcha_scan_src(), la misma plantilla que genera la
+    // función que usa `nyx vet` — no hay dos copias que puedan divergir.
+    out = out + gotcha_scan_src()
+    out = out + "\n"
+    out = out + "// `nyx test` compiles and runs every test INSIDE the toolchain (cwd = NYX_HOME),\n"
+    out = out + "// not inside the project: a bare readdir(\"src\") would read the wrong directory and\n"
+    out = out + "// this file would pass without looking at anything. The project directory is the\n"
+    out = out + "// one the runner came from (OLDPWD). If it cannot be found, the first test below\n"
+    out = out + "// FAILS out loud instead of passing on an empty scan.\n"
+    out = out + "fn project_root() -> String {\n"
+    out = out + "    if file_exists(\"nyx.toml\") { return \".\" }\n"
+    out = out + "    let old: String = getenv(\"OLDPWD\")\n"
+    out = out + "    if old != \"\" {\n"
+    out = out + "        if file_exists(old + \"/nyx.toml\") { return old }\n"
+    out = out + "    }\n"
+    out = out + "    return \"\"\n"
+    out = out + "}\n"
+    out = out + "\n"
+    out = out + "// Every .nx under `dir`, recursively. readdir() never returns \".\" or \"..\"; a\n"
+    out = out + "// directory is told apart by file_exists(path + \"/.\").\n"
+    out = out + "fn nx_files(dir: String) -> Array {\n"
+    out = out + "    var out: Array = []\n"
+    out = out + "    if file_exists(dir) == false { return out }\n"
+    out = out + "    let entries: Array = readdir(dir)\n"
+    out = out + "    var i: int = 0\n"
+    out = out + "    while i < entries.length() {\n"
+    out = out + "        let e: String = entries[i]\n"
+    out = out + "        let p: String = dir + \"/\" + e\n"
+    out = out + "        if e.endsWith(\".nx\") {\n"
+    out = out + "            out.push(p)\n"
+    out = out + "        } else {\n"
+    out = out + "            if file_exists(p + \"/.\") {\n"
+    out = out + "                let sub: Array = nx_files(p)\n"
+    out = out + "                var j: int = 0\n"
+    out = out + "                while j < sub.length() {\n"
+    out = out + "                    let s: String = sub[j]\n"
+    out = out + "                    out.push(s)\n"
+    out = out + "                    j = j + 1\n"
+    out = out + "                }\n"
+    out = out + "            }\n"
+    out = out + "        }\n"
+    out = out + "        i = i + 1\n"
+    out = out + "    }\n"
+    out = out + "    return out\n"
+    out = out + "}\n"
+    out = out + "\n"
+    out = out + "// Lines of src/ matching `pattern`, as `src/file.nx:LINE` (relative to the\n"
+    out = out + "// project, so the message is a path you can open).\n"
+    out = out + "fn grep_sources(pattern: String) -> Array {\n"
+    out = out + "    var hits: Array = []\n"
+    out = out + "    let root: String = project_root()\n"
+    out = out + "    if root == \"\" { return hits }\n"
+    out = out + "    let files: Array = nx_files(root + \"/src\")\n"
+    out = out + "    var f: int = 0\n"
+    out = out + "    while f < files.length() {\n"
+    out = out + "        let path: String = files[f]\n"
+    out = out + "        var shown: String = path\n"
+    out = out + "        if path.startsWith(root + \"/\") { shown = path.substring(root.length() + 1, path.length()) }\n"
+    out = out + "        let lines: Array = read_file(path).split(\"\\n\")\n"
+    out = out + "        var i: int = 0\n"
+    out = out + "        while i < lines.length() {\n"
+    out = out + "            let line: String = lines[i]\n"
+    out = out + "            let scanned: String = gotcha_scan_line(line)\n"
+    out = out + "            if regex_is_match(scanned, pattern) { hits.push(shown + \":\" + int_to_string(i + 1)) }\n"
+    out = out + "            i = i + 1\n"
+    out = out + "        }\n"
+    out = out + "        f = f + 1\n"
+    out = out + "    }\n"
+    out = out + "    return hits\n"
+    out = out + "}\n"
+    out = out + "\n"
+    out = out + "test \"the project sources are visible from here\" {\n"
+    out = out + "    let root: String = project_root()\n"
+    out = out + "    assert(root != \"\", \"cannot find the project root (no nyx.toml): every check below would pass without scanning anything\")\n"
+    out = out + "    assert(file_exists(root + \"/src\"), \"no src/ in the project root: nothing to check\")\n"
+    out = out + "}\n"
+
+    let rows: Array = gotchas_table()
+    var i: int = 0
+    while i < rows.length() {
+        let row: Array = rows[i]
+        let pattern: String = gotcha_field(row, "pattern")
+        if pattern != "" {
+            let id: String = gotcha_field(row, "id")
+            let title: String = gotcha_field(row, "title_en")
+            let code: String = gotcha_field(row, "vet_code")
+            out = out + "\n"
+            out = out + "test \"gotcha " + id + ": " + nx_escape(title) + "\" {\n"
+            out = out + "    let hits: Array = grep_sources(\"" + nx_escape(pattern) + "\")\n"
+            out = out + "    assert(hits.length() == 0, \"" + id + " (" + code + ") at: \" + hits.join(\", \"))\n"
+            out = out + "}\n"
+        }
+        i = i + 1
+    }
+
+    out = out + "\n"
+    out = out + "test \"every file in tests/ has test blocks\" {\n"
+    out = out + "    let root: String = project_root()\n"
+    out = out + "    let files: Array = nx_files(root + \"/tests\")\n"
+    out = out + "    var i: int = 0\n"
+    out = out + "    while i < files.length() {\n"
+    out = out + "        let p: String = files[i]\n"
+    out = out + "        assert(read_file(p).indexOf(\"test \\\"\") >= 0, p + \" has no test blocks: nyx test would skip it silently\")\n"
+    out = out + "        i = i + 1\n"
+    out = out + "    }\n"
+    out = out + "}\n"
+    return out
+}
+
+// Escribe el test de constitución. GENERADO igual que la evidencia: se
+// regenera en su lugar solo si cambió, y jamás si el archivo en disco perdió
+// la cabecera GENERATED (ahí es del usuario). 0 = sin cambios, 1 = escrito,
+// 2 = salteado porque es del usuario.
+fn write_constitution_test(dir: String) -> int {
+    let path: String = dir + "/tests/constitution_test.nx"
+    let body: String = constitution_test_body()
+    if file_exists(path) {
+        let existing: String = read_file(path)
+        if existing == body { return 0 }
+        if existing.indexOf(sdd_generated_marker()) < 0 { return 2 }
+    }
+    write_file(path, body)
+    return 1
+}
+
+// Las 2 líneas del disparador en AGENTS.md — el ÚNICO archivo existente que
+// toca el andamiaje. Idempotente por el marcador `<!-- sdd:trigger -->`, y el
+// bloque va JUSTO ANTES del sello `<!-- nyx-version: ... -->`, que tiene que
+// seguir siendo la última línea (lo exige run_silent_failure_checks.sh y lo lee
+// el wrapper para avisar de la deriva).
+fn add_agents_triggers(dir: String, lang: String) -> bool {
+    let path: String = dir + "/AGENTS.md"
+    if file_exists(path) == false {
+        print("warning: no hay AGENTS.md en " + dir + ": el disparador del andamiaje NO se insertó (corré `nyx update --sync-docs`)")
+        return false
+    }
+    let body: String = read_file(path)
+    if body.indexOf("<!-- sdd:trigger -->") >= 0 {
+        print(sdd_msg(lang, "  skipped (already there): AGENTS.md (trigger)",
+                            "  salteado (ya existe): AGENTS.md (disparador)"))
+        return false
+    }
+    var block: String = "<!-- sdd:trigger -->\n"
+    if lang == "es" {
+        block = block + "- Si `docs/constitution.md` todavía contiene `SDD_INCOMPLETE`, no escribas código: sigue `docs/sdd/onboarding.md` y ofrece al usuario completarla.\n"
+        block = block + "- Ante una funcionalidad nueva sin `specs/NNN-feature/spec.md`, ofrece escribir la spec primero (ver `specs/README.md`).\n"
+    } else {
+        block = block + "- If `docs/constitution.md` still contains `SDD_INCOMPLETE`, do not write code yet: follow `docs/sdd/onboarding.md` and offer the user to complete it.\n"
+        block = block + "- For a new feature with no `specs/NNN-feature/spec.md`, offer to write the spec first (see `specs/README.md`).\n"
+    }
+    let marker: String = "<!-- nyx-version: "
+    let at: int = body.indexOf(marker)
+    if at < 0 {
+        write_file(path, body + "\n" + block)
+    } else {
+        write_file(path, body.substring(0, at) + block + "\n" + body.substring(at, body.length()))
+    }
+    print(sdd_msg(lang, "  AGENTS.md (+2 lines: the trigger)",
+                        "  AGENTS.md (+2 líneas: el disparador)"))
+    return true
+}
+
+// Regenera lo GENERADO (evidencia + test de constitución) contra la toolchain
+// instalada. Es lo que corre `nyx update` en un proyecto con andamiaje: si un
+// gotcha se arregló, la evidencia lo manda a «Retirados» y el test deja de
+// buscarlo. No siembra ni pisa ninguna de las 5 plantillas.
+fn run_sdd_evidence(dir: String, lang: String) -> bool {
+    exec("mkdir -p '" + dir + "/docs/evidence'")
+    let ev: int = write_evidence(dir, lang)
+    if ev == 2 {
+        print(sdd_msg(lang, "  skipped (yours, no GENERATED header): docs/evidence/nyx-" + toolchain_version() + ".md",
+                            "  salteado (es tuyo, sin cabecera GENERATED): docs/evidence/nyx-" + toolchain_version() + ".md"))
+    }
+    if ev == 1 {
+        print(sdd_msg(lang, "  regenerated: docs/evidence/nyx-" + toolchain_version() + ".md",
+                            "  regenerado: docs/evidence/nyx-" + toolchain_version() + ".md"))
+    }
+    // Nada que hacer también se DICE: un comando mudo deja al usuario sin saber
+    // si corrió o si falló en silencio.
+    if ev == 0 {
+        print(sdd_msg(lang, "  already up to date: docs/evidence/nyx-" + toolchain_version() + ".md",
+                            "  ya está al día: docs/evidence/nyx-" + toolchain_version() + ".md"))
+    }
+    if file_exists(dir + "/tests/constitution_test.nx") {
+        let ct: int = write_constitution_test(dir)
+        if ct == 1 {
+            print(sdd_msg(lang, "  regenerated: tests/constitution_test.nx",
+                                "  regenerado: tests/constitution_test.nx"))
+        }
+        if ct == 2 {
+            print(sdd_msg(lang, "  skipped (yours, no GENERATED header): tests/constitution_test.nx",
+                                "  salteado (es tuyo, sin cabecera GENERATED): tests/constitution_test.nx"))
+        }
+        if ct == 0 {
+            print(sdd_msg(lang, "  already up to date: tests/constitution_test.nx",
+                                "  ya está al día: tests/constitution_test.nx"))
+        }
+    }
+    return true
+}
+
+// El comando: siembra las 7 piezas + el disparador. `dir` es la raíz del
+// proyecto ("." para `nyx sdd init`), `lang` su idioma (el del sello).
+fn run_sdd_init(dir: String, lang: String) -> bool {
+    let nyx_home: String = resolve_seed_home()
+    let tdir: String = nyx_home + "/templates/" + lang + "/sdd"
+    if nyx_home == "" or file_exists(tdir + "/constitution.md") == false {
+        print(sdd_msg(lang,
+            "error: the SDD scaffolding templates (templates/" + lang + "/sdd/) are missing from the toolchain: NOTHING was seeded.",
+            "error: no encuentro las plantillas del andamiaje (templates/" + lang + "/sdd/) en la toolchain: NO se sembró nada."))
+        print(sdd_msg(lang,
+            "  Reinstall with install.sh (or run `make install-local` from the monorepo) and try again: nyx sdd init",
+            "  Reinstala con install.sh (o corre `make install-local` desde el monorepo) e intenta de nuevo: nyx sdd init"))
+        return false
+    }
+    exec("mkdir -p '" + dir + "/docs/adr' '" + dir + "/docs/sdd' '" + dir + "/docs/evidence' '" + dir + "/specs' '" + dir + "/tests'")
+
+    print(sdd_msg(lang, "SDD scaffolding (optional, reversible):",
+                        "Andamiaje SDD (opcional, reversible):"))
+    sdd_seed_template(tdir, "constitution.md", dir + "/docs/constitution.md", lang)
+    sdd_seed_template(tdir, "glossary.md", dir + "/docs/glossary.md", lang)
+    sdd_seed_template(tdir, "adr-template.md", dir + "/docs/adr/0000-template.md", lang)
+    sdd_seed_template(tdir, "specs-README.md", dir + "/specs/README.md", lang)
+    sdd_seed_template(tdir, "onboarding.md", dir + "/docs/sdd/onboarding.md", lang)
+
+    let ev: int = write_evidence(dir, lang)
+    let ev_path: String = dir + "/docs/evidence/nyx-" + toolchain_version() + ".md"
+    if ev == 1 { print("  " + ev_path + sdd_msg(lang, " (generated)", " (generado)")) }
+    if ev == 2 {
+        print(sdd_msg(lang, "  skipped (yours, no GENERATED header): " + ev_path,
+                            "  salteado (es tuyo, sin cabecera GENERATED): " + ev_path))
+    }
+    // Una segunda corrida no reescribe nada, pero tampoco se queda muda: sin
+    // esta línea el usuario no sabe si la evidencia sigue al día o si el
+    // comando ni la miró.
+    if ev == 0 {
+        print(sdd_msg(lang, "  already up to date: " + ev_path,
+                            "  ya está al día: " + ev_path))
+    }
+    let ct: int = write_constitution_test(dir)
+    let ct_path: String = dir + "/tests/constitution_test.nx"
+    if ct == 1 { print("  " + ct_path + sdd_msg(lang, " (generated)", " (generado)")) }
+    if ct == 2 {
+        print(sdd_msg(lang, "  skipped (yours, no GENERATED header): " + ct_path,
+                            "  salteado (es tuyo, sin cabecera GENERATED): " + ct_path))
+    }
+    if ct == 0 {
+        print(sdd_msg(lang, "  already up to date: " + ct_path,
+                            "  ya está al día: " + ct_path))
+    }
+
+    add_agents_triggers(dir, lang)
+
+    print("")
+    print(sdd_msg(lang,
+        "  Next: an agent reading AGENTS.md will offer to complete docs/constitution.md (7 questions).",
+        "  Ahora: un agente que lea AGENTS.md va a ofrecerte completar docs/constitution.md (7 preguntas)."))
+    print(sdd_msg(lang,
+        "  Reversible: to go back to a plain init, delete docs/constitution.md, docs/glossary.md,",
+        "  Reversible: para volver a un init normal, borra docs/constitution.md, docs/glossary.md,"))
+    print(sdd_msg(lang,
+        "  docs/evidence/, docs/adr/, docs/sdd/, specs/ and tests/constitution_test.nx",
+        "  docs/evidence/, docs/adr/, docs/sdd/, specs/ y tests/constitution_test.nx"))
+    return true
+}
+
+fn run_init(name_arg: String, lang: String, agents: String) -> bool {
     var project_name: String = name_arg
 
     // If a name was given, create the directory
@@ -282,7 +883,8 @@ fn run_init(name_arg: String) -> bool {
         write_file(project_name + "/nyx.toml", content)
         write_file(project_name + "/src/main.nx", "fn main() {\n    print(\"Hello from " + project_name + "!\")\n}\n")
 
-        scaffold_project_files(project_name)
+        scaffold_project_files(project_name, lang, agents)
+        seed_gitignore(project_name, project_name)
 
         print("Initialized project: " + project_name)
         print("  Created: " + project_name + "/")
@@ -316,7 +918,8 @@ fn run_init(name_arg: String) -> bool {
         write_file("src/main.nx", "fn main() {\n    print(\"Hello from " + project_name + "!\")\n}\n")
     }
 
-    scaffold_project_files(".")
+    scaffold_project_files(".", lang, agents)
+    seed_gitignore(".", project_name)
 
     print("Initialized project: " + project_name)
     print("  Created: nyx.toml, src/main.nx")
@@ -577,7 +1180,7 @@ fn toolchain_version() -> String {
     }
     // B3: fallback solo si no hay VERSION ni NYX_HOME (no debería pasar en un
     // toolchain instalado). Mantenerlo al día igual — un fallback stale confunde.
-    return "0.22.10"
+    return "0.31.0"
 }
 
 // ===== FRICTION REPORT (v0.17, AI-first) =====
@@ -799,8 +1402,11 @@ fn run_capabilities(out_arg: String) -> bool {
     var doc = "# CAPABILITIES — índice de la stdlib de Nyx\n\n"
     doc = doc + "<!-- nyx-version: " + toolchain_version() + " -->\n"
     doc = doc + "> Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.\n"
-    doc = doc + "> Es el índice de QUÉ EXISTE: antes de escribir una función, buscá acá si un módulo ya lo hace,\n"
-    doc = doc + "> `import`alo y usalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.\n\n"
+    // Español neutro (regla 9 del arco andamiaje-sdd): sin voseo. La cabecera
+    // sigue siendo castellana aunque el proyecto sea `--lang en` — bilingüizarla
+    // por idioma está fichado aparte en TASKS.md.
+    doc = doc + "> Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,\n"
+    doc = doc + "> impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.\n\n"
     var ci = 0
     while ci < cats.length() {
         let cat: String = cats[ci]
@@ -881,15 +1487,128 @@ fn shell_quote_arg(s: String) -> String {
     // Banner único y honesto (adiós "Build System v1.9.0" de la era pre-reset)
     print("nyx v" + toolchain_version() + " — " + command)
 
-    // Handle `nyx init [name]`
+    // Handle `nyx init [name] [--lang en|es] [--agent=a,b]`
     if command == "init" {
         var init_name = ""
-        if args.length() >= 3 {
-            let name_val: String = args[2]
-            init_name = name_val
+        var init_lang = ""
+        var init_agents = ""
+        var init_sdd = false
+        var bad_flag = ""
+        var missing_value = ""
+        var ii = 2
+        while ii < args.length() {
+            let a: String = args[ii]
+            var handled: bool = false
+            // `--lang xx` / `--agent a,b`: el valor es OBLIGATORIO. Si la
+            // bandera es el último argumento o la sigue otra `--flag`, es un
+            // error RUIDOSO — un `nyx init proy --lang` que sembrara en inglés
+            // por defecto es exactamente la falla muda que este repo persigue.
+            if a == "--lang" or a == "--agent" {
+                handled = true
+                var value: String = ""
+                if ii + 1 < args.length() {
+                    let nv: String = args[ii + 1]
+                    if nv.startsWith("--") == false { value = nv }
+                }
+                if value == "" {
+                    missing_value = a
+                } else {
+                    if a == "--lang" { init_lang = value }
+                    if a == "--agent" { init_agents = value }
+                    ii = ii + 1
+                }
+            }
+            if handled == false and a.startsWith("--lang=") {
+                handled = true
+                init_lang = a.substring(7, a.length())
+                if init_lang == "" { missing_value = "--lang" }
+            }
+            if handled == false and a.startsWith("--agent=") {
+                handled = true
+                init_agents = a.substring(8, a.length())
+                if init_agents == "" { missing_value = "--agent" }
+            }
+            // `--sdd`: init normal + andamiaje SDD (spec §3). Sin valor: es un
+            // interruptor, y el proyecto sigue siendo el mismo si no se pasa.
+            if handled == false and a == "--sdd" {
+                handled = true
+                init_sdd = true
+            }
+            if handled == false and a.startsWith("--") {
+                // `nyx init` acepta EXACTAMENTE --lang y --agent. `--release` y
+                // `--target` no significan nada acá: aceptarlos hacía que
+                // `nyx init --target x86 proy` tomara «x86» como nombre.
+                handled = true
+                bad_flag = a
+            }
+            if handled == false {
+                if init_name == "" { init_name = a }
+            }
+            ii = ii + 1
         }
-        let ok: bool = run_init(init_name)
-        if ok { return 0 }
+        if bad_flag != "" {
+            print("error: flag desconocida para `nyx init`: " + bad_flag)
+            print("  Uso: nyx init [nombre] [--lang en|es] [--agent=claude,cursor,copilot] [--sdd]")
+            return 1
+        }
+        if missing_value != "" {
+            print("error: " + missing_value + " necesita un valor")
+            print("  Uso: nyx init [nombre] [--lang en|es] [--agent=claude,cursor,copilot] [--sdd]")
+            return 1
+        }
+        // Sin --lang: NYX_LANG si vale "es", si no "en" (ADR-1: un idioma por
+        // proyecto, elegido al sembrar y grabado en el sello).
+        if init_lang == "" {
+            let env_lang: String = getenv("NYX_LANG")
+            if env_lang == "es" { init_lang = "es" }
+            if init_lang == "" { init_lang = "en" }
+        }
+        if init_lang != "en" and init_lang != "es" {
+            print("error: --lang inválido: '" + init_lang + "' (valores válidos: en, es)")
+            return 1
+        }
+        if validate_agents(init_agents) == false { return 1 }
+        let ok: bool = run_init(init_name, init_lang, init_agents)
+        if ok == false { return 1 }
+        // El andamiaje va DESPUÉS del init normal (necesita el AGENTS.md ya
+        // sembrado para insertarle el disparador). Sin la bandera no se ejecuta
+        // ni una línea de esto: el listado dorado por defecto no cambia.
+        if init_sdd {
+            var sdd_dir: String = init_name
+            if sdd_dir == "" { sdd_dir = "." }
+            print("")
+            let sok: bool = run_sdd_init(sdd_dir, init_lang)
+            if sok == false { return 1 }
+        }
+        return 0
+    }
+
+    // `nyx sdd init` (proyecto que ya existe) y `nyx sdd evidence` (regenerar
+    // lo GENERADO contra la toolchain instalada; lo usa `nyx update`). El
+    // idioma NO se pregunta: sale del sello de AGENTS.md (project_lang).
+    if command == "sdd" {
+        var sub: String = ""
+        if args.length() >= 3 {
+            let s: String = args[2]
+            sub = s
+        }
+        if sub == "init" {
+            let ok: bool = run_sdd_init(".", project_lang("."))
+            if ok { return 0 }
+            return 1
+        }
+        if sub == "evidence" {
+            let ok: bool = run_sdd_evidence(".", project_lang("."))
+            if ok { return 0 }
+            return 1
+        }
+        if sub == "" {
+            print("error: `nyx sdd` necesita un subcomando (init, evidence)")
+        } else {
+            print("error: subcomando desconocido para `nyx sdd`: '" + sub + "' (válidos: init, evidence)")
+        }
+        print("  Uso: nyx sdd init      # siembra el andamiaje SDD en este proyecto")
+        print("       nyx sdd evidence  # regenera docs/evidence/ para la toolchain instalada")
         return 1
     }
 

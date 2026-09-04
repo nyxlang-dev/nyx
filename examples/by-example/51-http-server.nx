@@ -21,6 +21,11 @@ fn main() -> int {
     print("listening on :8080")
     // http_serve blocks, accepting connections in a loop
     // Each request calls on_request and sends the response
-    http_serve(8080, on_request)
+    // Siempre se chequea el retorno del bind: si el puerto esta ocupado,
+    // http_serve devuelve -1 y el programa seguiria "corriendo" sin servidor.
+    if http_serve(8080, on_request) < 0 {
+        print("no se pudo bindear el puerto 8080")
+        return 1
+    }
     return 0
 }

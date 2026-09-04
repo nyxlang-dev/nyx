@@ -1,892 +1,86 @@
 # Nyx Test Suite — Canonical Counts / Conteos canónicos
 
-> Last updated: 2026-08-29 (flaky histórico de `test_tls` — rama
-> `fix/tls-flaky`): fix del TEST `test_tls_large_write`, que fallaba ~4/20
-> corridas en serie **con el host ocioso** ("expected 100000, got N"). La causa
-> catalogada ("contención de CPU") era falsa; medido con instrumentación, eran
-> dos defectos encadenados del test: (1) el server pedía un chunk fijo de 65536
-> cuando faltaban 34464, y `nyx_tls_read` no retorna corto → quedaba bloqueado
-> en `recv()` hasta que el CLIENTE cerrara, o sea el resultado dependía de una
-> carrera de teardown; (2) el cliente cerraba justo después de escribir sin
-> haber leído nunca, dejando los `NewSessionTicket` de TLS 1.3 sin consumir en
-> su cola de recepción → `close(2)` manda **RST**, y el RST hace que el kernel
-> del server DESCARTE lo encolado (server-side `errno` = ECONNRESET/EPIPE
-> medido). Fix: pedir exacto lo que falta + fin de protocolo `"ACK\n"` que el
-> cliente espera antes de cerrar (y que de paso drena los tickets). **+1 assert
-> en `test_tls.c` (207→208)**; runtime-unit 34 suites SIN cambio. Aritmética del
-> total: 1443 + 1 = **1444**. regression 401 sin cambio.
-> En la misma rama, el SEGUNDO flaky de la suite —
-> `test_tls_wait_readable_eof_after_nonblock_read`, ~2/20, "expected -1, got 1"
-> — también resultó bug del TEST y quedó arreglado **sin cambio de conteo** (un
-> assert reemplaza a otro): el loop de drenaje cortaba en el primer `""` de
-> `read_nonblock`, que significa tanto "nada ahora" (WANT_READ) como "murió", y
-> solo el segundo setea `h->eof`; ahora drena hasta que el EOF esté observado
-> (`wait_readable == -1`) con deadline absoluto de 5s. Ninguno de los dos
-> flakies era un bug de `runtime/tls.c`. Ledger:
-> `.superpowers/sdd/tls-flaky-report.md`.
->
-> Previous: 2026-08-28 (cosecha [arco:W3-paso0b] hardening, ficha D — rama
-> `feat/cosecha-0b-hardening`): **M5 del review del paso 0b** — red de
-> seguridad SOLO-testing en `nyx_gc_sp_corrector` (`runtime/scheduler.c`):
-> bajo `NYX_RUNTIME_TESTING`, si un sp no matchea el stack de NINGUNA
-> goroutine ni cae dentro de `[gc_stack_end - 16MB, gc_stack_end]` de ningún
-> worker registrado, escribe una línea a stderr con `write(2)` crudo (mundo
-> parado, GC lock tomado — nada de malloc/stdio bufferizado) SIN tocar el sp.
-> Costo CERO en producción (todo el bloque muere con el `#ifdef`). Nuevo seam
-> `nyx_scheduler_debug_worker_stack_end(idx)` (también SOLO-testing) para
-> construir un sp determinista "dentro de la ventana nativa esperada" sin
-> depender de suspender un worker en el momento justo.
-> `test_gc_goroutine_stack.c` gana 2 tests / **7 asserts** (7→**14**): el sp
-> que no matchea nada avisa por stderr (capturado por `dup2`+pipe) Y deja el
-> sp intacto; el sp dentro de la ventana nativa de un worker real NO avisa.
-> Hallazgo de la propia verificación (documentado en el comentario del
-> corrector): la red también dispara para threads AJENOS al scheduler (el
-> `main()` del programa, cualquier OS thread crudo) porque
-> `GC_set_sp_corrector` corre para TODO thread suspendido, no solo workers —
-> distinguirlos pediría comparar `pthread_id` contra `w->thread` vía un
-> `os_thread_equal` que no existe en la capa (mismo concern #3 ya fichado en
-> el review del paso 0b); aceptado por ser solo-testing, costo cero, y el
-> mensaje dice "posible", nunca "confirmada". **runtime-unit 34 suites SIN
-> cambio**. Aritmética del total: 1436 + 7 = **1443**. regression 401 sin
-> cambio. Ledger: `.superpowers/sdd/cosecha-0b-hardening-report.md`.
->
-> Previous: 2026-08-28 (W3 Task 2 — rama `feat/w3-threads-scheduler`,
-> INTERNO): **ctx v2 — el `os_ctx_t` pasa a ser DUEÑO de su stack** y el
-> scheduler M:N se migra encima. Motivo (W3, Windows): una Fiber win32 NO
-> puede adoptar un stack ajeno (`CreateFiberEx` aloca el suyo), así que un
-> scheduler que siguiera mapeando stacks con `os_vm_*` registraría, en win32,
-> raíces de GC sobre un stack que la goroutine jamás usa — colección prematura
-> SILENCIOSA. Ahora `os_ctx_make(c, stack_size, entry, arg)` hace el mapeo +
-> la guard multi-página adentro de la capa, `os_ctx_remake` recicla el stack
-> (posix: `makecontext` sobre el MISMO mapeo, cero syscalls) y el scheduler
-> solo consulta rangos (`os_ctx_stack`/`os_ctx_guard`) para el `GC_add_roots`
-> y el registro de guards. El camino de root DIFERIDO (rango desconocido hasta
-> la primera entrada = win32) queda escrito y comentado en `worker_thread`
-> aunque en POSIX nunca se dispare, para que Task 3 lo herede gratis.
-> **runtime-unit 34 suites SIN cambio**; `test_os_vm_ctx` reescrito al
-> contrato v2: **13 → 34 asserts** (vm intacto 3+4; ctx nuevo: thread_init 2,
-> propiedad del stack + guard contigua + RW + free idempotente 8, args
-> inválidos 3, roundtrip make/swap 6, remake reusa EL MISMO mapeo 8 —el 8vo
-> es el CENTINELA del fix round: comparar direcciones no probaba nada porque
-> un munmap+mmap del mismo tamaño devuelve la misma dirección en este host;
-> el byte 0x5A escrito abajo del área útil sí muere con esa mutación, A/B
-> verificado—). Aritmética del total: 1415 − 13 + 34 = **1436**.
-> regression 401 sin cambio.
-> Efecto colateral MEDIDO: `NyxGoroutine` baja de 4896 a **96 bytes** (el ctx
-> se guarda por puntero para que el pool no copie el blob opaco), y 20 000
-> spawn+join pasan de **378 ms a 217 ms (−42%)** — desaparece un
-> `GC_MALLOC`+`memset` de 4.8 KB por goroutine. Flakies: sigue `test_tls`
-> (`test_tls_large_write`, 1/3 corridas — OTRO problema, sin tocar). Ledger:
-> `.superpowers/sdd/2026-08-27-w3-threads-scheduler-windows/`.
->
-> Previous: 2026-08-27 (W3 paso 0b — rama `feat/w3-paso0b-gc-roots`,
-> INTERNO): **muere el "bug 2"** — el ~50% de SEGV de cualquier programa con
-> goroutines bajo carga. NO eran roots fusionados: Boehm escanea cada thread
-> suspendido como `[sp_capturado, thread->stack_end)`, y un worker suspendido
-> MIENTRAS corría una goroutine tiene el sp en otro mapeo por completo, así que
-> el rango abarca decenas de MB de VA arbitraria con guard pages `PROT_NONE`
-> en el medio (las nuestras y las de glibc). Fix: `GC_set_sp_corrector` —
-> el gancho que Boehm expone para corrutinas — anula el escaneo del thread
-> cuando el sp cae en un stack de goroutine (ese stack ya es root entero por
-> `GC_add_roots`). Decisión POR DIRECCIÓN: sin ventana de carrera y sin costo
-> por switch. Segundo fix, en la capa: `os_fault_guard_install` heredaba una
-> `sa_mask` VACÍA, rompiendo la atomicidad que Boehm construye bloqueando su
-> señal de suspensión durante el write-fault handler — ahora se une la máscara
-> del dueño previo — este segundo se queda por **contrato de la capa**, no por
-> muerte medida: el delta de la ablación pertenecía al corrector (ver el ledger).
-> Medición (programa de carga, 300 goroutines con arrays de 20k): **antes
-> 0/10-6/12 OK, después 30/30 y 15/15 con `GC_ENABLE_INCREMENTAL=1`**.
-> **runtime-unit 33→34 suites** (+`test_gc_goroutine_stack`, **7 asserts** fijos
-> —el conteo NO depende del layout de mmap—; +9 asserts en
-> `test_os_fault_guard_chain` 17→**26**, pin de la herencia de `sa_mask` por
-> señal: total 1399→**1415**). regression 401 sin cambio. Flakies: sigue
-> `test_tls` (OTRO problema, sin tocar). Ledger:
-> `.superpowers/sdd/2026-08-27-w3-paso0b-gc-roots/`.
->
-> Previous: 2026-08-27 (W3 paso 0 — rama `feat/w3-paso0-segv`, INTERNO):
-> **el SEGV determinista de `test_scheduler` queda RESUELTO** — ya no es un
-> flaky, es un gate vivo (5/5 aislado + 32/32 en suite; antes 10/10 SEGV
-> aislado). Causa raíz: `os_fault_guard_install` pisaba con un `sigaction`
-> plano el handler de SIGSEGV que Boehm instala para sus dirty bits por
-> mprotect (`GC_enable_incremental` → MPROTECT_VDB); el primer write fault
-> del GC tras el primer spawn de goroutina caía en nuestro guard, que no lo
-> reclamaba, y moría en `SIG_DFL + raise`. Fix en la capa
-> (`runtime/os/os_posix.c`, **sin tocar código de `scheduler.c`**): encadenar
-> a la disposición previa. Ronda de review encima: el install pasa a ser
-> **once-only atómico** — sin eso, `install → GC_enable_incremental →
-> install` cerraba la cadena en un CICLO de 2 saltos (medido: 50 re-entradas,
-> muerte por pila alterna agotada) — y la rama SA_SIGINFO filtra
-> SIG_IGN/SIG_ERR igual que la plana. **runtime-unit 31→33 suites**
-> (+`test_os_fault_guard` 8 asserts, +`test_os_fault_guard_chain` 17 asserts:
-> delegación con si_addr/ucontext exactos + idempotencia del install; total
-> 1374→**1399 asserts**). regression 401 sin cambio. Flakies: queda
-> `test_tls` (OTRO problema, sin tocar). Ledger:
-> `.superpowers/sdd/2026-08-27-w3-paso0-segv/`.
->
-> Previous: 2026-08-27 (W2-ARM64 — rama `feat/w2-arm64`, INTERNO):
-> el gate gana `w2-subset-arm64` — los MISMOS 26 tests ejecutándose en
-> runner windows-11-arm REAL (un manifiesto, dos triples, paridad de flags
-> byte-exacta, FLOOR=26 en ambos). CERO deltas de ABI medidos (IR
-> byte-idéntico salvo triple). Resto sin cambio.
->
-> Previous: 2026-08-26 (W2 — rama `feat/w2-os-win32`, INTERNO): **26
-> programas Nyx CORREN en Windows** — gate nuevo `w2-subset` en windows.yml
-> (manifiesto canónico `scripts/testing/win_subset_manifest.txt`, 26 tests,
-> PISO 26 en el job, rc==0 + diff CRLF-normalizado; fórmula honesta:
-> subset MENOS sqlite-runtime — sqlite linkea, corre en W5). **runtime-unit
-> 29→31 suites** (+test_os_fs 23, +test_os_term 28; total 1323→**1374
-> asserts**). regression 401 sin cambio (los dominios fs/term/fd/env/
-> time_parse de la capa preservaron todo contrato — test 400/400 en cada
-> task). Ratchet 12→15 headers (termios/ioctl/dirent). Flakies sin cambio
-> (test_scheduler, test_tls). Ledger: `.superpowers/sdd/2026-08-26-w2-os-win32/`.
->
-> Previous: 2026-08-26 (W1 inc 7 — señales, rama `feat/w1-senales`,
-> INTERNO — **W1 COMPLETO**): os_sig_install(_no_restart)/reset/ignore/
-> is_default + OS_SIG* síncronas (red F15 macOS) + os_fault_guard;
-> runtime.c/persist.c/scheduler.c sin signal.h, runtime.c sin poll.h.
-> **runtime-unit 28→29 suites** (+`test_os_sig`, 24 asserts incl. el caso
-> que DISCRIMINA SA_RESTART midiendo EINTR; total 1299→**1323**).
-> regression/errors/ai-first sin cambio; test-352 ×3 y guard-pages
-> byte-exacto como gates vivos; mutación SA_ONSTACK probada (sin él SEGV
-> mudo). Ratchet queda en 12 headers (signal.h/poll.h retenidos por las
-> 2 superficies pineadas documentadas). Ledger:
-> `.superpowers/sdd/2026-08-26-w1-inc7-senales/`.
->
-> Previous: 2026-08-26 (W1 inc 6 — dominio dl, rama `feat/w1-dl`,
-> INTERNO): los 3 adapters (zlib/sqlite/llama) sobre os_dl_*; dlfcn.h al
-> ratchet (12 headers). **runtime-unit 27→28 suites** (+`test_os_dl`, 10
-> asserts; total 1289→**1299**). regression/errors/ai-first sin cambio;
-> el E2E llm-stub de integration es el gate del llama adapter (verde).
-> Flakies sin cambio (test_scheduler, test_tls_large_write). Ledger:
-> `.superpowers/sdd/2026-08-25-w1-inc6-dl/`.
->
-> Previous: 2026-08-25 (W1 inc 5 — dominio proc, rama `feat/w1-proc`,
-> INTERNO): exec/exec_code sobre os_proc_run_capture/run_status; muere el
-> ifdef wasm de runtime.c. **runtime-unit 26→27 suites** (+`test_os_proc`,
-> 17 asserts: captura básica/binaria/multi-chunk, tabla de exit codes,
-> muerte por señal, stderr passthrough; total 1272→**1289 asserts**).
-> regression/errors/ai-first sin cambio (401/256/23; test-293 pinea el
-> contrato de exec en vivo). Flakies sin cambio de tasa (confirmados
-> ajenos ×6 corridas). Ledger: `.superpowers/sdd/2026-08-25-w1-inc5-proc/`.
->
-> Previous: 2026-08-25 (W1 inc 4 — os_ev implementado, rama
-> `feat/w1-evloop`, INTERNO): el contrato completion-style del spike entra
-> a `os_posix.c` (epoll+eventfd, código validado adaptado; el spike
-> `tests/spikes/w1-evloop/` BORRADO). **runtime-unit 25→26 suites**
-> (+`test_os_ev`, 86 asserts: timers, wake cross-thread, echo con NUL,
-> 4 MiB parcial, cancel, EAGAIN, timer cross-thread despierta run_once,
-> peer reseteado; total 1186→**1272 asserts**). regression/errors/ai-first
-> sin cambio (401/256/23). El review cazó un Critical del propio spike
-> (write() crudo → SIGPIPE mataba el proceso; fix send(MSG_NOSIGNAL)),
-> mató al mutante del escenario 7 y verificó fidelidad mecánica + TSan 0.
-> Scheduler NO migrado (bloqueado por el SEGV de test_scheduler — ficha).
-> Ledger: `.superpowers/sdd/2026-08-25-w1-inc4-evloop/`.
->
-> Previous: 2026-08-25 (W1 inc 3 — dominio sockets de la capa
-> `nyx_os_*`, rama `feat/w1-sockets`, INTERNO): net.c/tls.c/http2.c sin
-> headers de sockets POSIX (os_sock_*/os_addr_*; 7 headers nuevos al
-> ratchet, poll.h espera a señales/evloop). **runtime-unit 24→25 suites**
-> (+`test_os_sock`, 81 asserts: loopback v4 y v6, resolve any/4, EOF/HUP,
-> POLLNVAL sin síntesis; total 1105→**1186 asserts**). regression sigue
-> 401 (400 ARM64), errors 256, ai-first 23. Fidelidad de net.c verificada
-> con sonda diferencial byte-idéntica (26 fns públicas); el review de
-> rama cazó y arregló una regresión IPv6 real en TLS (resolve_any
-> AF_UNSPEC restaura el baseline) y un guard RED vacuo. Flakies sin
-> cambio de tasa. Ledger: `.superpowers/sdd/2026-08-24-w1-inc3-sockets/`.
->
-> Previous: 2026-08-22 (W1 inc 2 — dominios vm+ctx de la capa
-> `nyx_os_*`, rama `feat/w1-vm-ctx`, INTERNO): `runtime/scheduler.c/.h`
-> sin `<sys/mman.h>` ni `<ucontext.h>` (os_vm_*/os_ctx_*).
-> **runtime-unit 23→24 suites** (+`test_os_vm_ctx`, 13 asserts:
-> map/protect/release + roundtrip doble de contexto; total 1092→**1105
-> asserts**). regression sigue 401 (400 ejecutados ARM64), errors 256,
-> ai-first 23 (+ítem 14 en §5.4 de LLM.md — el guard de cobertura de
-> gotchas cazó el test 23 sin referencia y quedó saneado). Ratchet:
-> `RATCHET_FORBIDDEN` gana sys/mman.h+ucontext.h. Review adversarial
-> del scheduler: os_ctx_t sub-alineado (UBSan) cazado con gates 100%
-> verdes — fix `_Alignas(16)` + assert. Flakies sin cambio de tasa.
-> Ledger: `.superpowers/sdd/2026-08-21-w1-inc2-vm-ctx/`.
->
-> Previous: 2026-08-21 (fricción serve-ws procesada — `wg_wait_timeout`
-> en `std/sync` + docs de sync/net; solo std y docs, cero compilador):
-> **regression 400→401 archivos** (+test-380-wg-wait-timeout, expected
-> MEDIDO determinista ×3; en ARM64 ejecutan 400 — test-123-asm se salta),
-> **ai-first 22→23 programas** (+23-sync-global-mutex-wg-timeout: mutex
-> global directo bajo contención + wg_wait_timeout ambos caminos), errors
-> sigue 256, runtime-unit sigue 23 suites/1092. Sonda clave del cierre:
-> `var MU: Map = mutex_new()` global es CONFIABLE (40000/40000 ×5, 4
-> threads) — la premisa del reporte (placeholder lazy necesario) quedó
-> refutada midiendo.
->
-> Previous: 2026-08-21 (W1 inc 0+1 — capa `nyx_os_*` con dominio
-> threads, rama `feat/w1-threads` sobre `main` v0.31.0, INTERNO — no
-> anuncia soporte Windows): nace `runtime/os/` (nyx_os.h + os_posix.c +
-> os_wasm.c) y thread.c/tls.c/event_loop.c/runtime.c/scheduler.c migran a
-> la capa. **runtime-unit 22→23 suites** (+`test_os_threads`, 26 asserts —
-> la capa testeada directo contra nyx_os.h; total 1066→**1092 asserts**).
-> **regression sigue 400 archivos / 399 ejecutados ARM64** (sin tests .nx
-> nuevos), **errors sigue 256**, **ai-first: el gate gana
-> `run_os_layer_ratchet.sh`** (pthread.h/sched.h prohibidos fuera de
-> runtime/os/) y el audit de recetas pasa a DESCUBRIR consumidores del
-> runtime por grep (18 listas de fuentes reales vs 7 mapeadas a mano; +la
-> regla del glob `runtime/*.c` que no desciende a subdirs — 4 recetas
-> rotas en verde cazadas por review y arregladas). Flakies conocidos SIN
-> cambio de tasa (medidos ×5 antes/después en Task 5): `test_scheduler`
-> SEGV (preexistente, frame en libgc STW sobre worker idle — aislado es
-> DETERMINISTA en este host aunque la ficha diga intermitente) y
-> `test_tls_large_write` (test_tls.c:303, escritura parcial). Ledger:
-> `.superpowers/sdd/2026-08-20-w1-inc0-1-spike-evloop-y-threads/`.
->
-> Previous: 2026-08-20 (MERGE de las 4 ramas paralelas a `main`,
-> decisión de Ottavio: E5.3 http → E5.4 json → E5.5 sqlite → W0 windows,
-> en orden de la spec; `VERSION` sigue 0.30.0 — mergear NO es releasear,
-> el agrupamiento del MINOR es decisión aparte). Conteos ACUMULADOS
-> medidos post-merge: **regression 400 archivos** (397 base + test-377 +
-> test-378 + test-379; en ARM64 ejecutan 399 — test-123-asm se salta),
-> **errors 256** (los 3 bloques W0), **ai-first 22** (el 22-ffi de
-> E5.5). Reconciliación aplicada EN el merge: la receta FFI de la trampa
-> §5.1 ítem 4 quedó `int64_t` única con nota LLP64 en los 5 manuales
-> (la ficha [arco:W0-windows] lo pedía exactamente en este momento;
-> coherencia de manuales verde tras la enmienda). Las entradas Previous
-> de abajo documentan cada rama por separado con sus números de rama
-> (398/398/398/397+256 — eran paralelas sobre la misma base, por eso no
-> acumulaban).
->
-> Previous: 2026-08-19 (W0 — fundaciones del target Windows, rama
-> `feat/w0-windows-target` sobre `main` v0.30.0, INTERNO — no anuncia
-> soporte): `NYX_TARGET` gana `x86_64-pc-windows-msvc` y
-> `aarch64-pc-windows-msvc` (triple emitido tal cual, sin no_gc forzado);
-> NYX_TARGET no reconocido = error fatal bilingüe (antes caía mudo al
-> triple linux); `win_forbidden_builtin` TEMPORAL (net/scheduler/process/
-> tls/señales fallan fast bajo el target windows). **errors 253→256**
-> (+test-win-forbidden-builtin con control positivo nativo,
-> +test-win-unknown-target, +test-win-triple-emitted ×2 archs —
-> bloques especiales con env var, patrón wasm). **regression sigue en su
-> conteo** (sin tests .nx nuevos del loop estándar; corrida real
-> 396/396 ejecutados en esta rama, 100%). Fixed point ×2 byte-idéntico.
-> **CI windows.yml NUEVO, run real VERDE** (32310444551 + re-run del fix
-> CRLF): fixture-freshness (ubuntu reconstruye el bootstrap y re-emite
-> ambos .ll, diff contra el fixture commiteado), hello-x64 (vcpkg bdwgc +
-> clang→MSVC + lld-link + RUN con salida assertada — **el primer .exe Nyx
-> nativo corrió en windows-latest**), hello-arm64-cross (compile+link,
-> artefacto, sin runner para ejecutar). Subset runtime W0: strings.c +
-> runtime-arrays.c + maps.c + `runtime/os/win_w0_hello.c` (stub W0-TEMP que
-> W1 borra). Ledger: `.superpowers/sdd/2026-08-19-w0-fundaciones-windows/`.
->
-> Previous: 2026-08-19 (E5.5 — `std/sqlite` gana la familia `try_`,
-> `feat/e5-5-sqlite-try` sobre `main` v0.30.0, paralela a E5.3/E5.4):
-> `try_sqlite_open`/`try_sqlite_exec`/`try_sqlite_query`/
-> `try_sqlite_query_named` sobre las centinelas intactas — Nyx puro,
-> CERO cambios en `runtime/sqlite_adapter.c`. Kind nuevo `"db"` en
-> `std/error.nx` (los result codes de sqlite 1-27 colisionan con errno —
-> espacio de código propio, precedente `"eof"`). **regression 397→398**
-> (+test-379-try-sqlite: open/exec/query Ok, SQL malformado vía exec y
-> vía query, tabla inexistente, PK duplicada vía query, open de path
-> imposible — expected MEDIDO), **errors sigue 253** (la familia no
-> agrega diagnósticos nuevos), **ai-first 21→22 programas**
-> (+22-ffi-int-truncation: blindaje del hallazgo FFI del arco — un C
-> `int` de 32 bits retornado por `extern "C"` NO sign-extiende al `int`
-> de 64 de Nyx, `-1` cruza como `4294967295`; LLM.md §5.1 ítem 4 nuevo,
-> pin de trampas vivas 3→4 en `run_template_coherence.sh` + ancla en los
-> 4 manuales). Runtime C sin cambios (sin asserts nuevos). Dos hallazgos
-> fichados en TASKS.md (cosecha `[arco:E5.5-sqlite]`): la centinela
-> `sqlite_query` se come un error de step real en silencio (filas
-> parciales sin señal), y la auditoría FFI int-32 del resto de los
-> adapters. Ledger: `.superpowers/sdd/2026-08-19-e5-5-sqlite-try/`.
->
-> Previous: 2026-08-19 (E5.4 — `std/json` gana la familia `try_`, el
-> `null` ambiguo muere, rama `feat/e5-4-json-try` sobre `main` v0.30.0,
-> PARALELA a `feat/e5-3-http-try` — ambas parten del mismo v0.30.0, no una
-> sobre la otra): `try_json_parse(input)` / `try_json_get(obj, key)` /
-> `try_json_array_get(arr, i) -> Result<Array, Error>` en `std/json.nx`,
-> sobre las centinelas `json_parse`/`json_get`/`json_array_get`
-> (INTACTAS). Desambiguación EXACTA: `try_json_parse` compara el input
-> recortado contra el literal `"null"` en vez de confiar en el tag del
-> resultado (que es `"null"` tanto para el `null` legítimo como para
-> input vacío/basura); `try_json_get` re-recorre las keys en vez de
-> delegar en `json_get` (clave presente con valor `null` → `Ok`; clave
-> ausente → `Err{2,"not_found"}`); `try_json_array_get` hace lo análogo
-> con el índice (`Err{22,"invalid"}` fuera de rango). **Fix de review
-> (ANTES de los docs)**: el trim de la desambiguación usaba `.trim()` del
-> runtime (`nyx_string_trim` → `isspace()` de libc), que además del
-> whitespace JSON real (espacio/`\t`/`\n`/`\r`, RFC 8259 §2) también
-> recorta `\v`/`\f` — asimétrico con `skip_whitespace` del parser propio
-> (el header mentía al decir que el trim genérico "alcanza sin helper").
-> Reemplazado por `json_trim`, helper interno que espeja el set de
-> `skip_whitespace` byte a byte. **regression 397→398**
-> (+test-378-try-json: parse válido con navegación de dos niveles, `null`
-> con/sin whitespace JSON alrededor incl. `\t`/`\n`, basura pura y vacío →
-> `Err "parse"`, `"{oops"` → `Ok` corrupto — límite estructural CONOCIDO y
-> pineado, ver TASKS.md ficha `[MEDIA-ALTA] parser con posición` —,
-> trailing garbage tras `"null"` [`Err`, gratis] vs. tras un valor válido
-> [`Ok`, leniente heredado], clave presente con valor `null` [`Ok`, EL
-> assert central] vs. clave ausente [`Err "not_found"`], receptor que no
-> es objeto/array [`Err "invalid"`], índice fuera de rango, VT vía
-> `chr(11)` delante de `"null"` → `Err` [fija el fix de `json_trim` —
-> antes del fix este caso colaba como `Ok(null)`], no-regresión de las 3
-> centinelas viejas — 23 líneas de salida MEDIDA con `make run`), **errors
-> sigue 253** (la familia no agrega diagnósticos nuevos), sin cambios en
-> runtime C (`std/json.nx` es Nyx puro, sin componente `runtime/*.c`
-> nuevo). `make test` 100% ARM64, `make test-ai-first` verde. Ledger:
-> `.superpowers/sdd/2026-08-19-e5-4-json-try/`.
->
-> Previous: 2026-08-19 (E5.3 — `std/http` gana cliente HTTP tipado,
-> Nyx puro sobre `std/net`, `feat/e5-3-http-try` sobre `main` v0.30.0):
-> `try_http_get`/`try_http_post`/`try_http_request -> Result<Array,
-> Error>` con el contrato de dos niveles (CUALQUIER status HTTP, 404/500
-> incluidos, es `Ok`; `Err` solo ante fallo de transporte real — URL sin
-> host parseable, connect/DNS/socket roto, o respuesta no-HTTP con
-> conexión abierta). TLS degrada honesto: el centinela `-1` de
-> `http_tls_request` mapea a `Err{5,"connection",msg}` (ficha para un
-> canal `nyx_tls_connect_result` tipado, TASKS.md). Helper interno
-> `try_http_exec` centraliza parse→connect→timeout→write→read→close sobre
-> `try_tcp_connect`/`try_tcp_write`/`try_tcp_set_timeout` de `std/net`
-> (E5.1/E5.2) — CERO C, CERO `compiler/` en esta rama. **regression
-> 397→398** (+test-377-try-http: URL inválida, connect rechazado
-> kind/code MEDIDOS 111, camino feliz canned local, 404 canned — el
-> assert central del contrato —, smoke post/request; no-regresión
-> test-374/375/376 y la centinela `http_get`), **errors sigue 253** (la
-> familia no agrega diagnósticos nuevos), **runtime sin cambios** (22
-> suites / 1066 asserts, sin tocar `runtime/*.c` en esta rama).
->
-> Previous: 2026-08-14 (E5.2b — las 7 centinelas de red restantes
-> ganan hermana `try_`, `feat/e5-2b-net-resto` sobre `feat/e5-2-net-io`):
-> `try_tcp_read_line`/`try_tcp_read_partial`/`try_tcp_read_exact`/
-> `try_tcp_shutdown`/`try_tcp_set_timeout`/`try_getpeername`/
-> `try_resolve_ptr` sobre 7 `nyx_*_result` nuevas de `runtime/net.c`
-> (`NYX_NET_EOF = 1000`, fuera del rango de errno, para el EOF limpio de
-> read_line/read_exact). Kind nuevo `"eof"` en `std/error.nx` (code 0,
-> control de flujo, NO fallo — `errno_to_kind` nunca lo mapea). Asimetría
-> DELIBERADA documentada en ambos lados: `try_tcp_read`/
-> `try_tcp_read_partial` devuelven `Ok("")` en EOF (un `""` de bytes crudos
-> nunca es ambiguo); `try_tcp_read_line`/`try_tcp_read_exact` devuelven
-> `Err{0,"eof"}` en EOF (su `Ok("")` YA significa algo real — línea vacía
-> o `n<=0` — reusarlo para EOF los volvería indistinguibles, el bug que
-> ambas funciones existen para prevenir). **regression 396→397**
-> (+test-376-try-net-lines: línea vacía vs EOF distinguidos con
-> `try_tcp_read_line`, `try_tcp_read_exact` feliz y cortado,
-> `try_getpeername`, `try_resolve_ptr` con IP inválida, `try_tcp_shutdown`
-> + `try_tcp_set_timeout` Ok, sobre 2 pares loopback reales), **errors
-> sigue 253** (la familia no agrega diagnósticos nuevos), runtime
-> `test_net_result` 48→**104 asserts** (22 suites / **1066 asserts** en
-> total, ver detalle abajo — corrida real: 104/104 verde en
-> `test_net_result`, aislado y dentro de la suite completa; `test_scheduler`
-> segfaulteó en la corrida completa, preexistente y no relacionado, ficha
-> `[BAJA]` en TASKS.md — 21/22 suites verdes esa corrida, patrón ya
-> documentado en entradas previas). Medido con `scripts/testing/
-> run_runtime_tests.sh` real (no estimado) y el mismo `find` de
-> `run_bootstrap_tests.sh` para el conteo de regresión. Reconciliación:
-> el conteo de regresión previo a este commit medía **396** archivos
-> `test-*.nx` (no 395 como decía el bloque de abajo — off-by-one
-> preexistente del propio arco E5.2, sin re-auditar el resto de la cadena
-> histórica, fuera de alcance de este commit). Review final E5.2b (misma
-> rama, +5 asserts sobre lo de arriba, 99→**104**): `nyx_tcp_read_line_result`
-> (`runtime/net.c`) devolvía el payload vía `nyx_string_from_cstr(line)` —
-> `strlen()` corta en el primer NUL, truncando en silencio una línea binaria
-> con un byte `0x00` embebido; ahora usa `nyx_string_from_ptr(line, lpos)`
-> (longitud explícita, mismo idioma que `try_tcp_read`/`event_loop.c`).
-> +`test_read_line_result_embedded_nul` (`test_read_line_result_*` pasa de
-> ×5 a ×6, **20 tests nuevos** en total para la familia E5.2b — ver la fila
-> de abajo). También `is_eof(e: Error) -> bool` en `std/error.nx` (usado en
-> `test-376`) y `const NET_EOF: int = 1000` en `std/net.nx` (reemplaza los
-> dos literales `1000` que espejaban `NYX_NET_EOF` a mano). Ledger:
-> `.superpowers/sdd/2026-08-14-e5-2b-net-resto/`.
->
-> Previous: 2026-08-14 (E5.2 — familia try_ de E/S y resolución de
-> `std/net`, rama `feat/e5-2-net-io` sobre `main` v0.29.0, E5.1): las 6
-> hermanas restantes (`try_tcp_accept`/`try_tcp_read`/`try_tcp_write`/
-> `try_udp_sendto`/`try_udp_recvfrom`/`try_resolve`) sobre las `_result` de
-> `runtime/net.c`, completan las 9 funciones de la spec §4.2.2 de
-> `std/net` junto al trío E5.1 (quedan 7 centinelas de red sin hermana
-> `try_` ni ficha — TASKS.md, cosecha `[arco:E5-net]`). **regression
-> 394→395** (+test-375-try-net-io: pipeline E2E loopback completo —
-> listen/connect/accept/write/read, EOF-como-Ok tras close, resolve
-> localhost/host inválido, eco UDP), **errors sigue 253** (la familia no
-> agrega diagnósticos nuevos), runtime `test_net_result` 16→**48 asserts**
-> (22 suites / **1010 asserts** en total, ver detalle abajo — 11 tests
-> nuevos sobre loopback TCP/UDP real, `make_loopback_pair`/
-> `make_udp_socket_bound`). Corrida completa verificada 395/395 PERFECTO
-> tras un incidente de gate (rc capturado a través de un `tail` en el
-> script del coordinador enmascaraba el exit code real de `make test`; el
-> rojo real de la re-corrida limpia resultó ser un flaky preexistente de
-> puertos fijos en TIME_WAIT, ya fichado, no un bug de E5.2). Medido en el
-> gate del cierre del arco (ledger
-> `.superpowers/sdd/2026-08-14-e5-2-net-io-family/`).
->
-> Previous: 2026-08-14 (review final E5.1, F1 — guard de `inet_pton` en
-> `nyx_tcp_listen_result`/`nyx_udp_bind_result`, rama `feat/e5-net-try`):
-> un host NO-numérico ("localhost") hacía que `inet_pton` devolviera 0 sin
-> tocar `sin_addr` (el `memset` lo dejaba en 0.0.0.0) → bindeaba
-> INADDR_ANY en silencio y devolvía Ok — exposición no pedida por el
-> caller. Ahora ambas funciones devuelven `-EINVAL` (22) si `host` no es
-> una IP numérica. **regression sigue 394** (test-374-try-net gana un caso
-> `(d)` — host no-numérico → `Err{kind:"invalid", code:22}` —, no un
-> archivo nuevo), **errors sigue 253**, runtime `test_net_result` 14→**16
-> asserts** (22 suites / **978 asserts** en total, ver detalle abajo).
-> Medido en el gate del review final (ledger
-> `.superpowers/sdd/2026-08-14-e5-net-try-family/`).
->
-> Previous: 2026-08-14 (E5.1 — familia try_ de `std/net`, rama
-> `feat/e5-net-try` sobre `main` v0.28.0 (base real de la rama — `af3f916`
-> era la base de E4, ya superada por el release v0.28.0 del propio E4)):
-> **regression 393→394** (+test-374-try-net: `try_tcp_connect`/
-> `try_tcp_listen`/`try_udp_bind` — Ok con fd real, `Err` con `kind`/`code`
-> reales (ECONNREFUSED 111, EADDRINUSE 98 → kind nuevo `"in_use"`), smoke de
-> convivencia con los builtins viejos `tcp_listen`/`tcp_close`), **errors
-> sigue 253** (el trío no agrega diagnósticos nuevos), runtime
-> `test_net_result` nuevo (**14 asserts**, `tests/runtime-unit/test_net_result.c`
-> — 22 archivos de suite runtime en total ahora). Medidos en el gate final
-> del arco (ledger `.superpowers/sdd/2026-08-14-e5-net-try-family/`).
->
-> Previous: 2026-08-14 (arco E4 — piloto de errores tipados de E/S, rama
-> `feat/e4-std-error-file` sobre `main` v0.27.0 (`af3f916`, ya mergeado y
-> taggeado — el arco `errores-tipados-e1-e2` referenciado abajo cerró y
-> mergeó ANTES de que esta rama arrancara)): **regression 391→393**
-> (+test-372-std-error, +test-373-try-file),
-> **errors sigue 253** (el piloto no agrega diagnósticos nuevos), runtime
-> `test_file_result` nuevo (**15 asserts**, `tests/runtime-unit/test_file_result.c`
-> — 21 archivos de suite runtime en total ahora). Medidos en el gate final del
-> arco (ledger `.superpowers/sdd/2026-08-14-e4-std-error-piloto-file/`).
->
-> Previous: 2026-08-13 (arco errores tipados E1+E2, rama
-> `feat/errores-tipados-e1-e2` — pendiente de merge): **regression 378→391**
-> (+test-355..365, +test-367..371; test-366 retirado a
-> `run_silent_failure_checks.sh` con control positivo — el caso correcto es
-> que NO compile), **errors 253** (+NYX1023 tryop-outside-result-fn),
-> silent-failure checks 8→9, m08 18/18, unit 21/21, stacks 6/6, fixed point
-> GLOBAL byte-idéntico (6 módulos). Medidos en el gate final del arco
-> (ledger `.superpowers/sdd/2026-08-13-decoder-unificado-e1-e2/`).
->
-> Previous: 2026-07-27 (campaña "la verdad de los gotchas": regression 334→336
-> (+test-314-nested-maps, +test-315-capture-coexist), errors 202→203 (+NYX0106 clave no-string
-> en map literal), ai-first 12→14 (+13-map-literal-keys, +14-language-rules) y GUARDIA NUEVA
-> `run_gotcha_coverage.sh` cableada a `make test-ai-first`: falla si un ítem de LLM.md §5.1-5.2
-> no tiene marca `[test: ...]`, si la marca apunta a un archivo inexistente, o si queda un test
-> ai-first huérfano que ningún ítem cita (los 3 modos verificados con control positivo).
-> **La métrica de la campaña**: las TRAMPAS de LLM.md pasaron de 21 a 2. Auditoría medida con
-> sonda ejecutable por gotcha: 4 MENTÍAN (ya funcionaban) y se borraron; 6 eran des-advertencias;
-> quedaron 3 bugs vivos, los TRES arreglados (map literal con clave no-string → error contado;
-> Maps anidados → SEGV resuelto salvo el caso heurístico del retorno de función; coexistencia
-> lambda + nested fn → `pre_scan_closure_env` cortaba el scan de locals en la primera nested fn).
-> El resto se reclasificó en 5 reglas del lenguaje, 3 límites de plataforma y 7 ya-arreglados.
-> Nota de método: el 5º gotcha falso (short writes — el runtime ya loopea internamente) lo
-> destapó intentar escribir su test E2E real; el test simulado que el plan traía habría quedado
-> VERDE certificando algo inexistente.) | Previous: (constructores C tagueados: regression 333→334 —
-> +test-313-c-built-array-tags.nx (split/stat heterogéneo/propagación push/unshift+insert),
-> runtime-unit 881→889 asserts (+5 test_net: tags de los slots de la request HTTP; +3
-> test_strings: tags de split). 50 sitios de construcción de arrays en 7 archivos C migrados a
-> push_tagged; `dest.push(src[i])` propaga el tag en runtime; unshift/insert taguean vía
-> set_tagged. E1 re-acotado al residuo MEDIDO: slot que vino de indexar una EXPRESIÓN
-> (`push(gen()[0])`) — propagarlo exigiría re-evaluar la llamada. Map values e iteradores
-> quedan sin tag A PROPÓSITO (i64 opacos). Fixed point ×2 byte-idéntico con gating activo.)
-> | Previous: (lectura tipada chequeada: runtime-unit 876→881 asserts (+5 en
-> test_arrays: get_checked passthrough/match, float bits/widening) + integration gana la suite
-> slot_typed_read (9 checks E2E: print inline por tag float/String/bool + mismatches definidos
-> abortan exit 1 con mensaje, nunca SEGV). Regression queda en 333. HALLAZGO MEDIDO de la
-> sesión: taguear INT todo i64 hacía abortar en falso a la lectura chequeada en 9/11 módulos del
-> compilador al recompilarse (los "int" eran PUNTEROS re-empacados 0xFFFF… vía
-> `[node.data[i], x]`) → política final: i64 se taguea INT SOLO si el elemento es literal
-> numérico en el AST; con eso fixed point ×2 byte-idéntico CON el gating activo. Escape hatch
-> NYX_SLOT_CHECK=off (espejo NYX_BORROW). El chequeo cubre `let` anotado String/float sobre
-> receiver identificador; var/expresión = camino histórico, catalogado.) | Previous: (slots-tag Etapa 4: regression 332→333 —
-> +test-312-array-contains-string-content.nx, runtime-unit 867→876 asserts (+9 en test_arrays).
-> `contains`/`indexOf` con needle String despachan variantes tagged que comparan por CONTENIDO
-> (nyx_string_equals) los slots con TAG_STRING; la identidad cruda se chequea primero (ints
-> intactos) y un slot sin tag JAMÁS se dereferencia. `push` con arg estáticamente String taguea
-> el slot (pieza de la Etapa 2 que faltaba — sin ella el contenido solo funcionaba en literales).
-> HALLAZGO CORREGIDO de raíz: insert/remove/shift/unshift/reverse movían data SIN mover tags, y
-> push/set no limpiaban el tag del slot escrito — un TAG_STRING huérfano sobre un slot int era
-> SEGV latente desde la Etapa 3. Invariante nuevo: tags[i] describe SIEMPRE a data[i]. Colateral
-> cazado en el camino: el indexOf ENCADENADO con needle String ni coercionaba el puntero → IR
-> inválido (ahora funciona). El flaky test_tls_large_write reapareció 1 vez (98304/100000,
-> catalogado en TASKS.md) — re-run limpio 20/20 suites.) | Previous: (slots-tag Etapas 1-3: regression 331→332 — +test-311-array-slot-tags.nx,
-> runtime-unit 853→867 asserts. Los slots de Array llevan TAG de tipo (buffer uint8 PARALELO a data,
-> así `data` no cambia de layout y siguen válidos los accesos crudos de maps/persist/file-io). Cierra
-> el gotcha más viejo de la familia: `"x" + a[1]` imprimía el PUNTERO como número mientras
-> `a[1] + "y"` funcionaba — dos adivinanzas OPUESTAS sobre el mismo valor. La conversión consulta el
-> tag en runtime; si el slot no está tagueado usa el tipo estático como FALLBACK (sin eso, un
-> Array<String> llenado con push() habría regresado). HALLAZGO de fondo catalogado: la inferencia de
-> `Array<T>` mira SOLO EL PRIMER ELEMENTO del literal, así que `[1,"dos"]` se registra como
-> Array<int> — esa es la causa próxima del gotcha. INCIDENTE del camino: una versión intermedia del
-> helper emitía IR antes de decidir si podía manejar el caso (el nodo `index` también cubre `m["k"]`)
-> → IR inválido → el compilador no pudo recompilarse; recuperado con git checkout de los .ll +
-> build_bootstrap.sh. El helper ahora decide por AST SIN emitir.) | Previous: (contains sobre Array: regression 330→331 — +test-310-array-contains.nx.
-> Estaba roto en AMBOS caminos: el codegen despachaba `contains` por la rama de MAP sin chequear el
-> receiver y emitía `nyx_map_contains_str(i8* <array>, i8* 2)` = IR inválido; encadenado daba 0
-> silencioso (hasta v0.22.13) y error accionable (desde v0.22.14). El runtime ya tenía
-> `nyx_array_contains` sin declarar. Alcance honesto: compara slots i64 crudos → correcto para
-> int/bool/char; para String compara punteros (lo cierra la Etapa 4 de slots-tag).)
-> | Previous: (catch-all mudo → ERROR: errors 201→202 — +method-not-available-errors.
-> El `return "i64 0"` final de `codegen_method_call` hacía que un método NO RECONOCIDO compilara y
-> evaluara a 0 en silencio: causa ESTRUCTURAL de la familia silently-wrong con ≥3 apariciones en el
-> repo (f(x).length() sobre Array v0.22.13, obj.campo.remove() no-op test-274, to_string sobre
-> primitivos del dogfooding WASM). MEDIDO antes de cambiarlo con experimento directo — con el error
-> activo regresión 330/330 + errors + stacks 6/6 quedan VERDES, o sea CERO rutas legítimas del
-> corpus (compilador + tests + 6 productos reales) dependían del fallback. Mensaje accionable
-> bilingüe. NOTA DE MÉTODO: dos intentos previos de medir instrumentando con `print` dieron un falso
-> "0 impactos" — el script fallaba su assert sin notarse Y `run_bootstrap_tests.sh` manda la salida
-> del compilador a /dev/null; se detectó con un CONTROL POSITIVO, ahora parte del procedimiento.)
-> | Previous: (P1 silently-wrong: regression 329→330 — +test-309-chained-array-method.nx,
-> método encadenado sobre el retorno Array de una user fn. `f(args).length()` compilaba SIN error y
-> devolvía 0: el camino de receiver-EXPRESIÓN de codegen_method_call no tenía NINGUNA rama de Array
-> (solo String/Map/iteradores) y caía al catch-all mudo `return "i64 0"` — el IR mostraba la call
-> devolviendo `{ i64, i8* }*` correcto y el método emitiendo la constante 0. Agregada la familia
-> completa (length/indexOf/join/reverse/slice/push/pop/shift/unshift), con `reverse`/`push`
-> conservando su contrato void+in-place para NO divergir del camino bindeado. Indexación encadenada
-> y métodos de String encadenados nunca estuvieron rotos (cubiertos como regresión). Queda `contains`
-> encadenado en 0 y el catch-all mudo catalogado para sesión dedicada, con el método de medición
-> correcto anotado.) | Previous: (portscan: regression 328→329 — +test-308-alias-prelude-submodule.nx
-> (alias de std/prelude en un SUBMÓDULO daba link error `@<alias>` indefinido: NO era codegen sino
-> `resolve_source` — su loop TRANSITIVO emitía el `module <alias> = [...]` solo para módulos no
-> importados, y prelude viene auto-cargado/pre-registrado, así que el alias nunca se declaraba; el
-> loop del archivo principal ya lo emitía siempre — el fix restaura la simetría) + errors 199→201
-> (run-wrapper-args-forward/dashdash: `nyx run` reenvía args al binario con citado POSIX).) | Previous: (A3+B3 friction-browser: regression 327→328 — +test-307-null-pointer.nx,
-> el literal `0` pasa a ser la constante de PUNTERO NULO. Hallazgo: el ítem decía "no se puede declarar
-> `*T` global sin init", pero NO había forma de expresar un puntero nulo en NINGÚN contexto (`let p:
-> *int = 0` local fallaba igual). Fix en 2 capas, ambas acotadas al 0 EXACTO: semantic acepta el
-> literal 0 para cualquier `*T` (otro entero sigue NYX1003) y `codegen_assign` emite `store <T>* null`
-> (LLVM rechaza `store i64* 0`). B3 (mismo release): el banner del driver leía "v0.21.0" hardcodeado —
-> ahora sale del archivo VERSION como el resto del toolchain.) | Previous: (A2 friction-browser: regression 326→327 — +test-306-module-global-homonyms.nx,
-> globales homónimas de módulos distintos. El link error reportado ("redefinition of global '@g'") era
-> la mitad visible: el registro de globales del codegen se keyea por nombre PELADO, así que el segundo
-> módulo inlineado PISABA al primero (las fns del módulo A leían la global de B — scoping roto y
-> silencioso). El AST no conservaba el módulo de origen tras el inlining de resolve_source (//#line lo
-> descarta el lexer sin token), así que el fix propaga un marcador NUEVO por el pipeline: resolve_source
-> emite `//#module <path>` (4 sitios de inlining incl. fixpoint transitivo) → lexer emite token
-> MODULE_MARKER (único comentario que produce token) → parser lo vuelve nodo `module_marker` (contrato
-> ASTNode INTACTO: nodo nuevo, ningún shape existente cambia; no-op en semantic/codegen como module_decl)
-> → codegen pase -1 emite `@<modulo_sanitizado>__<global>` y re-afirma por-módulo al entrar a cada fn.
-> Las globales del archivo principal quedan PELADAS → cero cambio de IR para todo lo no importado.
-> Fixed point verificado tras el cambio.) | Previous: (D6 friction-browser: regression 325→326 — +test-305-http-find-headers.nx,
-> `std/http.nx` gana `http_find_headers` PLURAL (todos los valores de un header en orden,
-> case-insensitive RFC 9110 — Set-Cookie repetido ya no pierde cookies; singular intacto) + doc de
-> no-redirect en http_get/http_request y del layout Array-mixto de http_parse_url. COLATERAL
-> catalogado (TASKS.md P1 + gotcha 24 LLM.md): `f(args).length()` sobre retorno Array de user fn
-> devuelve 0 SILENCIOSO — bindear primero; cazado porque el assert encadenado del test daba falso
-> negativo.) | Previous: (D5 friction-browser: regression 324→325 — +test-304-legacy-encodings.nx,
-> `std/unicode.nx` gana `latin1_to_utf8` (byte→codepoint 1:1, total) y `windows1252_to_utf8`
-> (tabla cp1252 para 0x80-0x9F; slots indefinidos → C1 passthrough, semántica WHATWG), ambas
-> sobre `utf8_encode`.) | Previous: (D4 friction-browser: regression 323→324 — +test-303-wcwidth.nx,
-> `std/unicode.nx` gana `wcwidth(codepoint)` (contrato wcwidth(3)/Kuhn: NUL→0, controles C0/C1→-1,
-> combinantes/zero-width→0 (tabla curada: diacríticos Latin/Cyrillic/Hebrew/Arabic/Indic/Thai, ZWJ/
-> ZWSP/bidi, variation selectors), East Asian Wide/Fullwidth + bloques emoji→2, resto→1) y
-> `display_width(s)` (columnas de terminal de un String: decodificador UTF-8 propio — el inverso de
-> utf8_encode — suma wcwidth por codepoint, controles cuentan 0, bytes malformados/truncados 1 columna
-> por byte sin colgarse; companion column-accurate de char_length). Rangos no listados degradan a
-> width 1 — desalineación, nunca crash.) | Previous: (D3 friction-browser: regression 322→323 — +test-302-html-unescape.nx,
-> `html_unescape` de `std/url.nx` reescrito como scanner de PASADA ÚNICA: (1) el encadenado de
-> replace() previo doble-decodificaba — "&amp;lt;" terminaba en "<" cuando debe quedar "&lt;"
-> literal (el output decodificado ya no se re-escanea); (2) referencias numéricas &#233;/&#xE9;
-> vía `utf8_encode` de D2 (inválidas/surrogates → U+FFFD, semántica HTML; acumulador con clamp
-> anti-overflow); (3) tabla curada de ~50 entidades nombradas (antes 7); malformadas/desconocidas
-> quedan LITERALES emitiendo solo el '&' y re-escaneando desde el byte siguiente ("&&amp;" decodifica
-> bien la segunda). `std/url.nx` ahora importa `std/unicode` (dedup de inlining verificado con el
-> import doble del test). Consumidor previo test-171 (round-trip escape→unescape, incl. &#x27;)
-> sigue verde por la vía numérica.) | Previous: (D2 friction-browser: regression 321→322 — +test-301-utf8-encode.nx,
-> `std/unicode.nx` NUEVO con `utf8_encode(codepoint) -> String` (codepoint → 1-4 bytes UTF-8 en Nyx
-> puro sobre `chr()`; inválidos/surrogates → U+FFFD, función total con semántica de referencias
-> numéricas HTML — consumidor directo: html_unescape D3). Errors reconciliado 195→199 al passed
-> autoritativo del runner (`make test-errors` = 199 passed / 0 failed en la corrida real de esta
-> sesión; el delta +4 NO es de esta sesión — D2 no agrega error tests, drift de tabla de un ciclo
-> previo, mismo patrón que las reconciliaciones anteriores).) | Previous: (D1 friction-browser: regression 320→321 — +test-300-inflate.nx, streaming
-> gzip/deflate/zlib decompression via `nyx_inflate` (`runtime/compress.c`) + `std/compress.nx`
-> `inflate`/`gunzip`/`inflate_raw`; runtime-unit asserts 839→853 (+14 in `test_base64.c`: gzip/zlib/raw
-> fixtures, corrupt/truncated/wrong-mode → "", empty/NULL, embedded-NUL binary output, buffer-growth
-> past 64KB) — suite count stays 20 (test_base64.c already existed for base64+zlib compress/decompress).
-> `pub fn inflate` collided with libz's own exported `inflate` symbol — Nyx's codegen emits a GLOBAL
-> `@inflate` definition that the linker preferred over libz's dynamic one for any C call inside
-> runtime/compress.c, so `nyx_inflate` silently called itself instead of zlib and produced garbage with
-> no forward progress (looked like a hang, not a clean error) until fixed via `dlopen("libz.so.1")` +
-> `dlsym` from that specific handle, mirroring `runtime/sqlite_adapter.c`'s pattern; explains in
-> hindsight why `nyx_compress`/`nyx_decompress` already used `compress2`/`uncompress` instead of
-> `compress` — same class of collision, avoided ad hoc without a comment.) | Previous: reconciliación de
-> conteos stale + C1/C2/C3 friction-browser: regression
-> 316→317 y errors 192→195 no eran de esta sesión — test-296 (A1) y run-wrapper-b1/b2 (B1/B2) de una
-> sesión previa nunca se habían volcado a esta tabla; runtime-unit 18→20 suites / 830→839 asserts SÍ
-> es de esta sesión — +test_terminal.c (C1: SIGWINCH wakeup de `read_byte_timeout` vía no-op handler
-> gateado a SIG_DFL, forkpty real, 6 asserts). Además: `templates/AGENTS.md` deja de mandar leer
-> `examples/by-example/` inexistente (C2, apunta a nyxlang.com/by-example) y `nyx capabilities` pasa
-> de 46 a 51/51 archivos de `std/` indexados — `std/regex.nx` era comentario-only sin ningún `pub fn`
-> (C3; + barrido: `std/file.nx`/`std/io.nx`/`std/map.nx`/`std/math.nx` tenían funciones reales sin
-> `pub`). `map_size` de `std/map.nx`/`std/prelude.nx` queda deliberadamente SIN `pub` — su
-> implementación (`Map.length()`) devuelve basura, bug pre-existente catalogado en TASKS.md.)
-> Previo: 2026-07-19 (+test_tls_wait_readable_eof_after_nonblock_read, review final pre-push: FIX 1
-> CRITICAL — `tls_wait_readable` detecta EOF real vía el flag `h->eof` que setea `tls_read_nonblock` al ver
-> close_notify/error fatal, cerrando el busy-spin del túnel WS de nyx-proxy tras FIN del peer; 14 asserts
-> nuevos, runtime-unit 647→661) | (previo: +tls_read_nonblock en el runtime — companion no-bloqueante de tls_wait_readable
-> para el patrón poll-then-lock del túnel WS de nyx-proxy: 31 asserts nuevos en tests/runtime-unit/test_tls.c
-> (handle inválido, max_bytes<=0, sin data devuelve inmediato sin bloquear, data lista + flag O_NONBLOCK
-> restaurado via fcntl, buffer interno servido sin tocar el socket, caso exacto del caveat NewSessionTicket
-> de tls_wait_readable — wait_readable=1 + read_nonblock="" sin bloquear); conteo de runtime-unit corregido
-> por corrida real de `make test-runtime` — el "345 asserts" previo tenía drift acumulado (scheduler/webpush
-> ya no sumaban), la baseline real pre-cambio era 616, ahora 647) | Nyx v0.21.0 | **This table is the single source of truth
-> for test counts** — every other doc (CLAUDE.md, README, landings) references it.
-> Esta tabla es la única fuente de verdad de conteos — el resto de docs la referencia.
+> **Rol**: esta tabla es la ÚNICA fuente de conteos vigentes de tests. La
+> historia de cómo llegó cada número a su valor actual (42 fechas, ~830
+> líneas) vive en `docs/archive/2026-tests-history.md` — PROHIBIDO narrar acá.
+> **Regla de mantenimiento**: al cambiar un conteo, actualizar el número en
+> la tabla de abajo + un bullet en `CHANGELOG.md` — nada más. Presupuesto:
+> ≤150 líneas totales, ≤300 chars por línea (guarda `run_docs_health.sh`
+> check 6).
 
-## Summary / Resumen
+## Suites
 
-| Suite | Target | Runner | Count | Status |
-|-------|--------|--------|-------|--------|
-| Regression | `make test` | `scripts/testing/run_bootstrap_tests.sh` | **400** (corrida real 2026-08-19, E5.5: +test-379-try-sqlite — la familia `try_sqlite_open`/`try_sqlite_exec`/`try_sqlite_query`/`try_sqlite_query_named` de `std/sqlite` (Result-returning sobre las centinelas intactas, kind `"db"` nuevo): open/exec/query con filas Ok, SQL malformado → `Err{kind:"db"}` con el errmsg real de sqlite vía exec Y vía query, tabla inexistente, PK duplicada corrida vía query (el caso que la centinela se come en silencio — hallazgo fichado), open de `/proc/nada/db` → Err honesto. Expected MEDIDO. Previous **399** (corrida real 2026-08-19, E5.4: +test-378-try-json — `try_json_parse`/`try_json_get`/`try_json_array_get` de `std/json.nx`, la familia `Result<Array, Error>` que desambigua el `["null"]` centinela compartido entre parse-fallido/clave-ausente/índice-fuera-de-rango y un `null` JSON legítimo. Medido con el mismo `find` de este runner (398 archivos `test-*.nx`). Incluye el fix de review: la comparación exacta contra el literal `"null"` usa `json_trim` (helper propio, espeja `skip_whitespace`) en vez de `.trim()` de libc — `isspace()` recorta de más (`\v`/`\f`, fuera del whitespace JSON de RFC 8259 §2), lo que dejaba colar basura con VT/FF como si fuera `null`; caso `chr(11) + "null"` agregado al test para fijar el fix. Corrida completa real: 397/397 tests pasados (398 archivos − 1 `test-123-full-asm` saltado en ARM64, patrón de siempre), 148 salidas comparadas ok, 0 distintas, 0 fallos conocidos. Previous **398** (corrida real 2026-08-19, E5.3: +test-377-try-http — `try_http_get`/`try_http_post`/`try_http_request` de `std/http.nx`, Nyx puro sobre la familia `try_` de `std/net`: (a) URL inválida (`""`, sin host parseable) → `Err{kind:"invalid", code:22}`; (b) connect rechazado (puerto alto cerrado) → `Err{kind:"connection", code:111}`, el `Error` real de `try_tcp_connect`; (c) camino feliz vía servidor canned local (`thread_spawn`+`tcp_listen`/`tcp_accept`/`tcp_write` crudos) → `Ok`, status 200, body "hola"; (d) 404 canned → SIGUE SIENDO `Ok` (status 404) — el assert central del contrato de dos niveles, NO `Err`; smoke de `try_http_post`/`try_http_request` sobre el mismo helper `try_http_exec`. No-regresión: test-374/375/376 y la centinela `http_get` sin cambios de salida. Medido con el mismo `find` de `run_bootstrap_tests.sh` (`tests/compiler/{basics,types,systems,iterators-traits,stdlib-suite,language,ecosystem}/test-*.nx`, 398 archivos). Previous **397** (corrida real 2026-08-14, E5.2b: +test-376-try-net-lines — pipeline E2E de las 7 hermanas restantes de `std/net`: `try_tcp_read_line` distingue línea vacía real `Ok("")` de EOF limpio `Err{0,"eof"}` (la razón de ser de la función), `try_tcp_read_exact` feliz (4 bytes) y cortado (EOF a mitad de los 10 pedidos), `try_getpeername`, `try_tcp_set_timeout`+`try_tcp_shutdown` Ok, `try_resolve_ptr` con IP inválida — 2 pares loopback reales, puertos altos fijos. Previous **396** (medido directo con el mismo `find` de `run_bootstrap_tests.sh` — reconcilia un off-by-one preexistente en el texto de abajo, que documentaba 395 tras E5.2: el conteo real en ese punto ya era 396; no se re-audita el resto de la cadena histórica, fuera de alcance de este commit). Previous **395** (corrida real 2026-08-14, E5.2: +test-375-try-net-io — pipeline E2E loopback de las 6 hermanas restantes de `std/net` (`try_tcp_accept`/`try_tcp_read`/`try_tcp_write`/`try_udp_sendto`/`try_udp_recvfrom`/`try_resolve`): listen/connect/accept/write("hola")/read Ok("hola"), close del cliente + read post-close Ok("") EOF limpio, `try_resolve` localhost → `127.0.0.1` y host inválido → `not_found`, eco UDP sendto/recvfrom. Previous **394** (corrida real 2026-08-14, E5.1: +test-374-try-net — las hermanas `try_tcp_connect`/`try_tcp_listen`/`try_udp_bind` de `std/net` (Result-returning, spec errores-tipados §4.2.2): listen efímero Ok, connect a puerto cerrado `Err{kind:"connection",code:111}`, listen duplicado del mismo puerto `Err{kind:"in_use",code:98}` (kind nuevo agregado a `std/error.nx`), smoke de convivencia con los builtins viejos `tcp_listen`/`tcp_close`. Previous **393** (corrida real 2026-08-14: +test-372-std-error (arco E4: `Error{code,kind,msg}` canónico, vocabulario cerrado de `kind`) y +test-373-try-file (arco E4: `try_read_file`/`try_write_file` de `std/fs` — éxito, `not_found` distinguible de vacío, write que NO aborta el proceso). Import bare (`import "std/modulo"`) confirmado, no `{ } from`. Previous **391** — gate final del arco E1+E2 (detalle completo en el bloque "Last updated" de arriba de esta página; la celda de abajo, **378**, es la corrida real intermedia 2026-08-13 sin reconciliar contra el cierre completo del arco — no se toca acá, fuera de alcance de esta sesión). Previous **378** (corrida real 2026-08-13: +test-356-try-op-typed — arco E2: el operador `?` extraía el Ok como `i64` fijo. Medido con 12 sondas: los payloads puntero/struct se rompen solo SIN anotación en el destino (`let` pelado, `?` inline); `float` se rompía SIEMPRE, incluso anotado, por `sitofp` sobre los bits del double (3.5 → 4.6e18) — misma clase que el bug de `unwrap` cerrado en la campaña A4 (TASKS.md:1670), en el único sitio que esa campaña no tocó. 129 comparadas, 0 conocidos. Previous **377** (corrida real 2026-08-12: +test-357-struct-payload-extraction — arco E1 segunda mitad: la EXTRACCIÓN de payload struct en los 4 caminos sin tipo declarado en el destino. Medido con 9 sondas: `match` con binding hacía que el GC pidiera 8 PB (el fix estaba en la rama de patrón ANIDADO, no en la simple — visible solo en el .ll: `alloca %Item*` usada como `%Item*` en el GEP), `let` sin anotar daba 0, `unwrap_or` sobre Err devolvía basura y `map` fallaba mudo. 128 comparadas, 0 conocidos. Previous **376** (corrida real 2026-08-12: +test-355-result-struct-payload — arco E1 de errores tipados: `Result<Item, String>` con struct multi-campo LINKEA y corre (antes: `store i64 %reg-de-tipo-%Item` = IR inválido, el link fallaba). La cadena de 5 conversiones de codegen_enum_construct se reemplazó por coerce_to_i64, que ya boxeaba agregados con GC_malloc+store+ptrtoint. Cierra el backlog de TASKS.md sobre payload struct. Previous **375** (corrida real 2026-08-12: +test-354-goroutine-stack — S4 Track 5c inc.1: stacks de goroutine con mmap + guard multi-página (default 256KB, NYX_GOROUTINE_STACK_KB). Recursión de 3000 niveles CALIBRADA: desborda con los 64KB viejos, entra en 256KB. Antes un overflow pisaba el heap vecino en silencio o moría con SIGSEGV mudo. Previous **374** (corrida real 2026-08-12: +test-353-module-fn-homonyms — S3 namespacing: las fns de módulo se emiten como `<path>__<fn>` y la llamada CALIFICADA resuelve POR MÓDULO (antes `moda.set(2,99)` ejecutaba `modb.set()` — silently-wrong de dos reportes); + co-fix de la inferencia por alias (TASKS.md:880). 125 comparadas, 0 conocidos. La prueba de fuego fueron los consumidores: el canario y las suites cazaron 3 caminos del diseño inicial (genéricos de módulo → panic del Map, imports con llaves sin module_decl, y las fns del pipeline bajo NYX_INLINE_COMPILER). Previous **373** (corrida real 2026-08-11: +test-352-signal-alloc-safe — self-pipe de señales (S2): el trampolín pasa a UN write async-signal-safe y un thread drenador lazy (GC_THREADS) ejecuta el closure en contexto normal — el test ALOCA a propósito en el handler; señales síncronas (SEGV/BUS/FPE/ILL) rechazadas (reserva S4). El E2E de serve REFUTÓ la spec inicial: close() desde otro thread no despierta un accept bloqueado — serve migrado a shutdown()+close-en-dueño (63/63), edit re-mide en el wakeup (carrera flag-vs-EINTR). Previous **372** (corrida real 2026-08-11: +test-350-nul-literals y +test-351-request-with — campaña S1: escape_string con tabla COMPLETA (byte <0x20, ", \, DEL → \XX; antes "a\0b" emitía el NUL crudo → IR inválido) + nyx_intern_ptr length-aware (el strlen del interning truncaba a length 1 en silencio) en los 3 sitios cstr-based; el runner de nyx test escapa el nombre del test (texto de usuario — comillas/UTF-8 verificados E2E); request_with(method, path) en std/web. Review de agente aplicado: 3 sitios unificados a str_byte_length. Previous **370** (corrida real 2026-08-11: +test-349-float-int-binop-promote — mezclar double con entero en binops emitía el operando entero CRUDO (`fmul double %x, 10` — IR inválido que moría en clang apuntando a un .ll temporal borrado; reporte 20260810-220013 bug 2). Normalización única pre-dispatch: el lado entero (literal o registro, i64/i32, cualquier posición) se promueve con sitofp — aritmética Y comparaciones. 121 comparadas, 0 conocidos. Previous **369** (corrida real 2026-08-11: +test-348-assert-eq-fastpath — assert(a == b) con int/String inferidos llama nyx_assert_eq_int/_str ("expected X, got Y" + línea en el default; las fns eran código muerto). La decisión es POR AST antes de emitir: el 1er diseño evaluaba-y-decidía y tuvo 3 defectos (doble eval de efectos, SSA fuera de orden %648 en test-323, y semántica de representación que rompía slot-i64==String); inferencia conservadora + camino genérico intacto. eq_str pasó de strcmp a longitud+memcmp (binary-safe). Colateral descubierto: literal "\0" emite NUL crudo → IR inválido (catalogado en el plan, pendiente). 120 comparadas, 0 conocidos. Previous **368** (corrida real 2026-08-11: +test-347-interp-escaped-quote — \" dentro de ${...} abre/cierra string esc-delim (Tanda B4; antes el \ caía al fallback MUDO del dispatcher del lexer y descarrilaba: "String sin cerrar" sin ubicación o cascada NYX0101 líneas después; la comilla pelada — siempre válida ahí — sigue igual). Meta-bug cazado por compiler-unit/test-lexer: el mensaje de error del fix contenía "${...}" literal que se interpolaba al compilar lexer.nx. 119 comparadas, 0 conocidos. Previous **367** (corrida real 2026-08-11: +test-346-get-or-field-receiver — get_or sobre CAMPO de struct (Tanda B3, DOS reportes): existía solo en el cluster de receptor variable; ahora ambos clusters comparten emit_map_get_or (la duplicación de clusters causó el gap). 118 comparadas, 0 conocidos. Previous **366** (corrida real 2026-08-11: +test-345-mutex-closure-capture — handle de builtin capturado en closure ya no emite IR inválido (Tanda B1; el campo del SharedEnv caía al default i64 con el registro real i8*). builtin_fn_ret gana los 4 handles como Map<?,?> — el plan decía *int pero la evidencia lo refutó: std/sync tipa `mutex: Map // handle (opaque)` y Map baja a i8*, el tipo real; anotar `let m: int = mutex_new()` ahora es NYX1003. 117 comparadas, 0 conocidos. Previous **365** (corrida real 2026-08-11: +test-344-datetime-format-epoch — datetime_format_epoch(epoch, fmt) nuevo (Tanda A3; el triage destapó que datetime_format(fmt) IGNORA el instante — siempre formatea time(NULL) — y el SPEC documentaba una format de 2 args inexistente; SPEC §DateTime reescrito contra el runtime real). Round-trip parse→format TZ-independiente. 116 comparadas, 0 conocidos. Previous **364** (corrida real 2026-08-11: +test-343-map-get-missing-catchable — Map.get de clave ausente pasa por nyx_panic → CAPTURABLE por try/catch (Tanda A2, fricción ERP: un servidor moría porque una request no traía cookie); sin try el contrato no cambia (exit 1 + hint de get_or). 115 comparadas, 0 conocidos. Previous **363** (corrida real 2026-08-11: +test-342-global-init-store — globales/const con inicializador fuera de la whitelist vieja de `__nyx_init_globals` (unop/binop/char/var global) quedaban en zeroinitializer SIN store: `const NEG = -1` valía 0 EN SILENCIO (fricción ERP 2026-08-10, Tanda A1); ahora todo global no-literal emite store o aborta NYX2009 (whitelist ganó `cast` al cazar `0 as *int` en test-borrow-dangling-global-store). 114 comparadas, 0 conocidos. Previous **362** (corrida real 2026-08-10: +test-341-access-log-field — `App.access_log: bool` (default `false` en `app_new`) + `app_access_log(&mut app)` que lo pone en `true`; flag del access-log estructurado built-in de nyx-serve v0.6.0, mismo contrato `&mut` que `app_not_found` (asignación de campo escalar). 113 comparadas, 0 conocidos. Previous **361** (corrida real 2026-08-10: +test-340-request-ctx — Request gana ctx: Map + request_new() (bloqueador 3 de nyx-serve: estado por-request compartido entre capas); fija el contrato de referencia compartida del Map entre copias del struct (copia por asignación y por paso a función) además de campos vacíos utilizables y Maps frescos por llamada). 112 comparadas, 0 conocidos. Previous **360** (corrida real 2026-08-07: +test-338-router-vocabulary, +test-339-wrap-next-closure (vocabulario Router/Mount/wraps + patrón next-como-closure del motor de serve; renumerados de 336/337 a 338/339 porque esos números ya los tomaron test-336-net-introspection/test-337-fn-bare-struct-return el mismo día). Previous **358** (corrida real 2026-08-07: +test-337-fn-bare-struct-return — `let f: Fn = fn_que_devuelve_struct` + llamada indirecta era SEGV (el emisor asumía retorno i64 con Fn pelado y el consumidor hacía inttoptr sobre un struct por valor); 3 formas incl. control de no-regresión. 109 comparadas, 0 conocidos. Previous **357** (corrida real 2026-08-06 noche 2: +test-336-net-introspection — resolve_ptr (reverse DNS, NI_NAMEREQD fail-soft) y net_interfaces (getifaddrs, tripletas planas String); solo invariantes deterministas. 108 comparadas, 0 conocidos. Previous **356** (corrida real 2026-08-06 noche: +test-335-try-catch-return-path — try/catch con ambas ramas retornando ES exhaustivo para NYX1008 (fricción del dispatcher de serve; incluye throw condicional + catch). 107 comparadas, 0 conocidos. Previous **355** (corrida real 2026-08-06, ronda de fricción: +test-333-try-catch-mt (try-stack thread-local, 4 threads × 1000 try/throw/catch — adoptado de la sesión de serve) y +test-334-app-error-handlers (std/web not_found/error handlers; el test refutó la premisa del plan: registro con &mut App, y Fn pelado con arg struct SEGVea → anotación tipada obligatoria). 106 comparadas, 0 conocidos. Previous **354** (corrida real 2026-08-05 tarde, sesión B inferencia de iteradores: +test-331-map-get-or, +test-332-iterator-elem-inference (cadena iter/filter/map/collect TIPADA end-to-end; el expected/ inicial tenía la aritmética MAL y el comparador lo cazó — funciona en ambas direcciones). 105 comparadas, 0 conocidos. Previous **352** (corrida real 2026-08-05, sesión A "el runtime no te mata": +test-331-map-get-or (variante segura de Map.get) y test-169-compress VOLVIÓ A VERDE SOLO (sp3-bug-1: nyx_decompress delega en el camino dlopen) → **KNOWN_OUTPUT_FAILURES VACÍO por primera vez** — 103 salidas comparadas, 0 fallos conocidos. Previous **351** (corrida real 2026-08-04, arco "la anotación manda" + tag estático, TODOS con `expected/` — salidas comparadas pasan de 96 a 101: +test-326-generic-struct-order (v0.24.9 B1: mono ON-DEMAND por mención de tipo — fn declarada antes del literal genérico imprimía 0 mudo), +test-327-match-float-annotation (v0.24.9 B2: match en modo float con bits simétricos, 5 bordes), +test-328-index-assign-static-tag (v0.24.10 C2: arr[i]=5.5 releía 4.6e18 — la escritura taguea con el tipo del VALOR + promoción a Array<float>), +test-329-push-unshift-static-tag (C3: push de campo/dos líneas con receptor anotado + unshift self-referente con tag resuelto ANTES de mutar), +test-330-float-static-tag-read (C4/C5: lectura float por param anotado + literal con destino anotado retagueado). Previous **346** (corrida real 2026-07-31, cierre de la campaña cerrar-silently-wrong: 346/346, **96 salidas comparadas ok, 0 distintas, 1 fallo conocido (test-169-compress), 249 sin `expected/`** — el «346 esperados» DERIVADO que esta celda declaró honestamente en la sesión anterior quedó confirmado por el runner. Los +2 son de la T4 de esa épica y ambos traen `expected/` (las salidas comparadas pasan de 94 a 96): +test-324-field-string-length-property (invariancia por FORMA del receptor para la propiedad builtin `.length`: `s.f.length` devolvía `i64 0` mudo mientras `s.f.length()` y la variable bindeada daban 4 — el bloque de acceso ANIDADO de `codegen_field_access` no tenía las ramas builtin y hacía `return` antes de las que sí existían), +test-325-field-array-contains (invariancia de `contains`/`indexOf`/`length` sobre un campo Array, positivo Y negativo — el caso quedó ARREGLADO por las tareas 2 y 3 de la épica, que lo empujaron al camino genérico, pero su única cobertura era compile-only: si el camino genérico volviera a emitir la rama de Map, que devuelve false en silencio, la suite seguiría verde). En el mismo commit desaparece `tests/dispatch-repro/` (4 repros sin runner, nunca contados en esta tabla): bug1 y bug3 ya estaban cubiertos por los tests NYX1022/NYX2007 de las tareas 2 y 3, bug2 y bug4 son los dos tests nuevos de arriba. Previous **344** (corrida real 2026-07-30, cierre del sub-proyecto 4: +test-321-field-assign-ref-generic (`field_assign` con `&mut T` y con genéricos perdía la escritura), +test-322-nested-field-assign (`a.b.c = x` se descartaba en silencio), +test-323 (un método de String sobre un slot que no lo es: era SEGV o `false` mudo). Contadores del runner: **94 salidas comparadas ok, 0 distintas, 1 fallo conocido, 249 sin `expected/`**. Previous 341 — **y desde 2026-07-30 el runner COMPARA LA SALIDA** (sub-proyecto 3 de la campaña v0.23.0, cambio cualitativo más que de conteo). Hasta entonces capturaba la salida de cada test y solo la imprimía: la palabra "expected" no aparecía en el script, así que un test sin `assert()` únicamente detectaba crashes — y había **95 archivos `expected/` escritos que ningún runner consumía** (43 ecosystem, 30 language, 18 stdlib-suite, 4 systems). Ahora compara contra `tests/compiler/<suite>/expected/<test>.expected` cuando ese archivo existe, una diferencia **FALLA la suite**, y el resumen informa tres contadores. Corrida real 2026-07-30: **93 comparadas ok, 0 distintas, 1 fallo conocido, 247 sin `expected/`** — ese último número es el hueco real de cobertura y ahora es visible en cada corrida. Capacidad nueva: marcador `__ANY__` en una línea del `expected/` (prefijo y sufijo literales, comodín en el medio, **conteo de líneas exacto**) para salida genuinamente no determinista — lo usan 4 archivos (timings de bench, prefijo de goroutines de spawn/scheduler, tamaños de zlib); los otros 90 van por `diff` literal. `KNOWN_OUTPUT_FAILURES` lleva los fallos de salida con ficha abierta, contados aparte y sin romper el exit code: hoy solo `test-169-compress` (ficha `[sp3-bug-1]`, `decompress()` roto por secuestro del símbolo `inflate`). Tests con verificación real agregada en el mismo sub-proyecto: punteros crudos y FFI (`test-47`, `test-56`, `test-58`, `test-86` — pasaron de `print` con el valor en un comentario a `assert`; es el área por donde entró el P1 de punteros retornados), concurrencia (`test-89` a `test-92`, asertando solo lo determinista), y `test-192-http-mt`, que **decía probar `http_serve_mt` y nunca la llamaba** — ahora levanta el servidor y asierta 11 requests reales. Previous (corrida real 2026-07-29 — campaña de corrección v0.23.0: +test-316-ptr-return-corruption (sub-proyecto 0/P1 friction: retornar `*T` ya no lo dereferencia de más), y el sub-proyecto 2 de corrección de stdlib suma 4 con su `expected/` obligatorio: +test-317-json-escape (json_stringify escapa `"`/`\`/controles en valores Y claves, con round-trip parse(stringify(x))==x), +test-318-remove-coherence (has/size/get coherentes tras remove: los tombstones se reemplazaron por `remove()` real — y eso destapó que `Map.get` de clave ausente ABORTA el proceso, ficha P1 en TASKS.md), +test-319-json-parse-strict (los literales se validan completos: "tomato" ya no parsea como true; parse_string decodifica `\r`/`\b`/`\f`/`\uXXXX` vía std/unicode, cerrando el round-trip que el escape correcto había roto), +test-320-float-to-fixed (formato con decimales fijos, el gap que costó un run del banco: acarreo 99.999→100.00, negativos, cero negativo sin signo y clamp de decimals). NOTA (corregida en la review de FIX 5, 2026-07-29 — la versión anterior de esta nota era falsa y peligrosa, ver abajo): test-106-collections ya ejercitaba el bug de set_remove desde siempre (hacía remove y después has), pero **`run_bootstrap_tests.sh` NUNCA compara la salida contra `expected/` para ningún test de esta suite** — solo compila, linkea y verifica exit code 0 (la palabra "expected" no aparece en ese script; los únicos runners que sí comparan son el de WASM y el de verify). Tener o no tener un archivo `expected/` no blinda nada acá — la única red real en esta suite son los `assert()` dentro del propio `.nx`, y test-106-collections no tenía ninguno hasta este sub-proyecto (ver `assert()` agregados en test-106-collections.nx y test-320-float-to-fixed.nx). La afirmación anterior ("de los 36 tests de esa suite solo 13 tenían salida esperada, así que la suya nunca se comparaba con nada") sugería que agregar un `expected/` SÍ blindaría el test — eso es falso: ninguno se compara, tenga `expected/` o no. Previous 336 (ARM64; corrida real 2026-07-27 — +test-314-nested-maps (Maps anidados ya no SEGVean al leerlos) y +test-315-capture-coexist (lambda-que-captura + nested-fn-que-captura en la misma fn, ambos órdenes); previous 334 (ARM64; corrida real 2026-07-26 — +test-313-c-built-array-tags.nx (arrays construidos por el runtime C llevan tag + propagación en push + unshift/insert, ver header note); previous 333 — +test-312-array-contains-string-content.nx (slots-tag Etapa 4: contains/indexOf por CONTENIDO con needle String sobre slots TAG_STRING, en los caminos bindeado Y encadenado + push que taguea, ver header note); previous 332 — +test-311-array-slot-tags.nx (slots-tag Etapa 3: concat de arr[i] por TAG, ver header note); previous 331 — +test-310-array-contains.nx (contains sobre Array en ambos caminos, ver header note); previous 330 — +test-309-chained-array-method.nx (P1 silently-wrong: métodos de Array encadenados sobre retorno de fn, ver header note); previous 329 — +test-308-alias-prelude-submodule.nx (P1 friction-portscan, ver header note); previous 328 — +test-307-null-pointer.nx (A3: `0` como constante de puntero nulo en semantic+codegen, ver header note); previous 327 — +test-306-module-global-homonyms.nx (A2 friction-browser: mangle de globales por módulo vía marcador //#module en el pipeline, ver header note); previous 326 — +test-305-http-find-headers.nx (D6 friction-browser: http_find_headers plural case-insensitive + docs no-redirect/parse_url, ver header note); previous 325 — +test-304-legacy-encodings.nx (D5 friction-browser: latin1/cp1252 → UTF-8, ver header note); previous 324 — +test-303-wcwidth.nx (D4 friction-browser: wcwidth Kuhn + display_width con decoder UTF-8, ver header note); previous 323 — +test-302-html-unescape.nx (D3 friction-browser: html_unescape pasada única + numéricas + tabla nombrada, ver header note); previous 322 — +test-301-utf8-encode.nx (D2 friction-browser: `std/unicode.nx` nuevo, `utf8_encode` codepoint→UTF-8, ver header note); previous 321 — +test-300-inflate.nx (D1 friction-browser: streaming gzip/deflate/zlib decompression, see header note); previous 318 — +test-298-match-let-infer (A7 friction-browser: `infer_nyx_type_from_ast` gana un caso `match` — infiere el tipo del resultado por sus arms; `let r = match v {...=>"str"...}` SIN anotación dejaba de convertir el i64 crudo de `codegen_match` de vuelta a puntero de String, imprimiendo el puntero como número); reconciliado con `test-296-struct-init-in-condition` (A1 friction-browser, `if b { }` con then vacío ya no se lee como struct-init; agregado en una sesión previa, nunca volcado a esta tabla — el "316" quedó stale un ciclo); +test-295 chr(0) construye el byte NUL real, length explícita vía nyx_string_from_ptr en runtime, no strlen-truncation; A5 friction-browser); anterior 315 x86_64 — +test-293 exec() honra su contrato String (captura stdout) + exec_code() para exit codes — fricción "exec() viola su contrato String" cerrada; +test-292 nested fns homónimas (mangle <outer>__<inner>: dos fn helper anidadas en outers distintos con capturas propias + recursiva + NEG top-level homónima intacta; antes "invalid redefinition" al linkear); +test-291 #[affine] pub struct cross-módulo (rama PUB tras atributo en el parser; guard REAL: contador de drops en el aux + assert(res_drops()==1) — caza drops=0 y double-drop); +test-290 req_json shape real de json_parse (keys/vals paralelos; antes "Array es NULL"/SEGV desde su creación); +test-289 genéricos a NIVEL DE MÉTODO vía turbofish (fn wrap<U> en impl concreto → template method-level instanciado por Etapa B con self concreto; antes la LLAMADA segfaulteaba al compilador; sin turbofish → error accionable); +test-288 sugar de impl genérico (`impl BoxG<T>` ≡ `impl<T> BoxG<T>`: los args simples no-primitivos del target se promueven a type params del header — antes el <T> se tragaba en silencio y el impl quedaba CONCRETO sobre un struct genérico → gep-unsized/"campo no encontrado"; turbofish E3 funciona sobre el sugar); +test-287 turbofish en METHOD CALLS (E3: `a.get<int>()` parsea vía el lookahead balanceado de fns libres y los type-args se VALIDAN contra el receiver monomorfizado; comparación `a < b` intacta); +test-285 payload FLOAT de enum: unwrap/unwrap_or devuelven double vía bitcast cuando el enum mono declara payload float (antes sitofp sobre BITS: 1.5→4.6e18; y unwrap_or con default float emitía IR inválido); +test-286 Option PELADO + combinators: el construct monomorfiza IMPLÍCITO infiriendo el type-arg del argumento (antes el COMPILADOR moría con "Clave Option:Some no encontrada"); +test-284 char_substring por codepoints UTF-8 (E2, aditiva — el contrato bytes NO cambia); +test-283 T4c hardening doble-drop (`x.drop()` explícito / método self-consuming apaga el drop flag del receiver en el call-site — era el ÚNICO unsound de T4c; `&self` = modo "ref" nuevo, NO consume); +test-282 map_scan builtin (SCAN cursor-estable, FASE B); +test-274..281 campaña integral FASE A (Map.remove field-access; let-enum coerción; match block-arm captura valor; fn run() guard; combinators tipados; bindings Fn de match; named-fn cross-module fijado; pre_scan arr[0]/obj.method()); +test-273 patrones string de match binary-safe (nyx_string_equals en codegen_literal_pattern_cmp; antes strcmp cortaba en NUL y "a\0x" matcheaba "a"); +test-272 inferencia de elemento vía anotación Array<String> en params/locales (fija el idiom del gotcha "arr[i] inline en concat da puntero crudo"; el Array PELADO queda acotado a "slots sin tag"); +test-271 rwlock (multi-reader/single-writer pthread_rwlock: try* 0/1, writers serializados entre threads); +test-270 indexOf(needle, from) con offset (nyx_string_index_of_from; antes el 2º arg se descartaba en silencio; semantic tipa el from como int → NYX1005); +test-269 aliases snake_case de métodos String (starts_with/ends_with/to_upper/to_lower despachan igual que sus camelCase; antes devolvían 0 EN SILENCIO); +test-268 strings binary-safe (==/indexOf/contains/split/replace/startsWith/endsWith sobre bytes con NUL embebido — nyx_memmem en runtime/strings.c + `==`/`!=` de codegen_binop migrados de strcmp a nyx_string_equals); — +test-267 fsync/fdatasync (durabilidad de I/O — builtins `fsync(fd)`/`fdatasync(fd)`, runtime/file-io.c, consumidor: snapshot durable del daemon nyx-kv T2b); — +test-266 condvar (mutex+condvar con predicado, 2 threads OS, verificado real `make test` 287/287); — +test-264 user-fns ganan sobre builtins homónimos (c_fn_ptr/string_from_cstr/string_from_bytes con guard) + test-265 struct GENÉRICO capturado en SharedEnv (campo %Wrapper_int monomorfizado textual, antes invalid-cast i64); — +test-262 rework handler array global (negativos/bool/struct via codegen_array_literal) + test-261 literal float en array global (bitcast en __nyx_init_globals); — +test-260 string_to_int_or/float_or (variantes seguras, no abortan); — +test-259 route_match/route_resolve del router hash, data pura sin WASM (std/routematch, router+SPA Task 1); +test-258 vdiff de std/vdom, data pura sin WASM (framework VDOM del frontend, Task 1); +test-256 lambda captura locals + test-257 spawn captura scope (fix parser: insertar lambdas hoisteadas en el punto de uso); — test-123-asm skipped on ARM64; +test-254 internado de literales de String (nyx_intern_cstr) + test-255 LICM de literales (hoisting fuera de loops, incl. trampa de patrón de match en loop); incluye +test-240..244 T4c drop determinista + test-245 drop-mono de afín GENÉRICO (Box, inc 4 Etapa 4) + test-246 Rc refcount (inc 4 Etapa 5) + test-247 colisión fn-nombrada/local homónimo (ctx.variables limpiado entre fns) + test-248/249/250 cripto Web Push (webpushcrypto round-trip, vapid_jwt, RFC 8291 §5 vector) + test-251 dedup de extern "C" duplicados entre módulos (std/web+std/url) + test-252 resp_parse_len (parseo RESP sin exit(1)) + test-253 resp_read_command length-based; el 250 canónico previo tenía drift) | ✅ |
-| Error paths (parse + semantic) | `make test-errors` | `tests/compiler/errors/run_error_tests.sh` | **256** (corrida real 2026-08-19, W0 Task 1: +`test-win-forbidden-builtin` (builtin de subsistema no portado bajo un NYX_TARGET windows → error bilingüe "is not ported to Windows yet", CON control positivo — el mismo programa compila en target nativo), +`test-win-unknown-target` (NYX_TARGET no reconocido → error fatal que nombra los targets válidos; antes caía MUDO al triple linux), +bloque `test-win-triple-emitted` (compila un programa limpio bajo AMBOS triples windows y asserta `target triple = "..."` en el .ll — el espejo positivo de los guards). Los 3 son bloques especiales con env var, patrón test-wasm-forbidden-builtin. Previous **253** (corrida real 2026-08-13: +`tryop-outside-result-fn` — arco E2, código nuevo **NYX1023**: `?` en una fn que NO devuelve Result. MEDIDO: no era corrupción silenciosa como decía el plan — clang rechazaba el módulo con `value doesn't match function result type 'i64'` apuntando a `script.ll`, sin la línea del usuario ni explicación; el defecto era de DIAGNÓSTICO. Usa `ty_kind == "TyResult"` con free-pass de unknown + `sem_blind` (patrón de la casa, semantic.nx:3476) — un `startsWith("Result")` habría dado falso positivo sobre tipos unknown. Scope verificado con sondas instrumentadas: en closure, fn anidada y método de impl el tipo es el de la fn INTERNA, sin leak. Previous **252** (corrida real 2026-08-12: +`goroutine-stack-overflow-diagnosed` — S4: la recursión desbocada en goroutine muere con mensaje accionable y exit 1 (antes SIGSEGV mudo, exit 139). Previous **251** (corrida real 2026-08-12: +`module-fn-ambiguous-unqualified` — S3: llamada NO calificada ambigua entre dos módulos importados es NYX2010 nombrando ambos (antes resolvía en silencio a la última definición). Previous **250** (corrida real 2026-08-11: +`assert-eq-expected-got` — Tanda C2: assert(x == 2) fallido dice "expected 2, got 1" y el default lleva "line N" (compila+corre vía wrapper, patrón map-get-missing-key). Previous **249** (corrida real 2026-08-11: +`datetime-now-int-annotation` — Tanda B2 fricción ERP: la familia datetime_* completa entró a builtin_fn_ret con sus tipos reales (now/format/format_epoch/from_epoch → String; time_epoch/parse/accesores → int); `let now: int = datetime_now()` — lo que el SPEC viejo documentaba — es NYX1003 en vez de checker mudo → IR inválido; la aridad ya se cazaba (NYX1006). Previous **248** (corrida real 2026-08-06 noche: +`stdin-eof-builtin` — E2E con pipe REAL: el loop del reporte MCP-stdio termina limpio con EOF:3. Previous **247** (corrida real 2026-08-06 noche: +`nyx1008-try-catch-exhaustive` — doble dirección: el patrón del dispatcher compila Y try-sin-return sigue siendo NYX1008. Previous **246** (corrida real 2026-08-06: +`tyeq-strict-fn-slot` y +`tyeq-strict-dyn-primitive` — ty_eq estricto v1, cierre del arco gradual, ambos con control negativo. Previous **244** (corrida real 2026-08-05 tarde: +`iterator-chain-type-mismatch` — collect() de Iterator[int] a String anotado es NYX1003 con el tipo inferido en el mensaje; antes TyUnknown mudo. Previous **243** (corrida real 2026-08-05: +`map-get-missing-key-actionable-abort` — el abort de Map.get nombra la clave y sugiere contains/get_or; el check compila+linkea+corre vía el wrapper — la 1ª versión corría un script_bin stale y el propio gate la cazó. Previous **242** (corrida real 2026-08-04: +`codegen-nyx2004-short-struct-bound` (v0.24.9 A1: struct de nombre ≤2 chars ya no bypasea el chequeo de bounds — NYX2004 nombrando la firma faltante en vez de IR inválido exit 0) y +`strict-warn-blind-counter` (v0.24.11 "modo ceguera visible": NYX_STRICT=warn reporta validaciones salteadas por TyUnknown con 3 direcciones verificadas — warning accionable solo del código del usuario, filtro de prelude/módulos inlineados, silencio con todo anotado o sin el flag). Previous **240** (v0.24.8: +`check-diag-carries-code` — el formato humano de semantic y el protocolo DIAG: de nyx_check llevan el código NYX. Previous **239** (corrida real 2026-07-31, v0.24.1: +`codegen-nyx2007-map-local-length-property` — `m.length` propiedad sobre variable Map local, el residuo declarado de la campaña; sin NYX_SKIP_SEMANTIC porque NYX1022 mira llamadas y la forma-propiedad pasa semantic limpia. Previous **238** (corrida real de `make test-errors` 2026-07-31 sobre f704b97, cierre de la épica dispatch — **medido contra el runner, que es la fuente autoritativa**, no derivado. AVISO METODOLÓGICO: la primera versión de esta celda decía "229 esperados" (228 + 1), derivado del baseline 228 del 2026-07-30; ese baseline YA estaba stale, porque las tareas 2 y 3 de esta épica agregaron 5 archivos de test + sus checks al runner sin tocar este archivo (`git log 937feec..e22c702 -- docs/TESTS.md` sale vacío). Derivar de un baseline en vez de contar contra el runner propaga el drift en silencio y hace que la sesión siguiente "verifique" contra un número inventado. Los +10 sobre 228 son: los 5 de T2/T3 (2 NYX1022 de semantic + 3 NYX2007 de codegen) y sus checks asociados, más el +1 de T4: `codegen-nyx2007-nested-map-length-property` — `codegen-nyx2007-nested-map-length-property` — `.length` como PROPIEDAD sobre un campo Map. NYX1022 de semantic mira LLAMADAS a métodos, así que la forma sin paréntesis se le escapaba, y en codegen el bloque de acceso anidado devolvía `i64 0` con un print mudo por stdout y exit 0: un Map de 1 elemento medía 0 en silencio. Verificado individualmente (rc=1, NYX2007 nombrando 'length'), no vía el runner completo. Previous **228** (corrida real 2026-07-30, cierre del sub-proyecto 4 de la campaña v0.23.0 — reconciliado contra el runner, que es la fuente autoritativa: el **218** anterior había quedado stale durante el sub-proyecto y se arrastró por varias tareas. Los +10 son de este sub-proyecto: `test-lex-unterminated-string` (el lexer cuenta sus errores y el driver corta antes del parse), los de `pub struct`/`pub type` registrados como tipo y el `#[attr] pub struct` de una línea (P1 `[sp4-bug-1]`: `import { parse } from "std/semver"` no compilaba), y los dos aborts nuevos de `field_assign` (NYX2005 cadena con eslabón no-struct, NYX2006 receptor que no es identificador ni cadena). Previous 218 (+1 en 2026-07-30, sub-proyecto 4 Task 2: `test-lex-unterminated-string` — el lexer imprimía y seguía en 5 sitios (comentario de bloque, string ×2, string multilínea, raw string sin cerrar) SIN contador, y el driver solo consultaba el de parse; una comilla sin cerrar cascadeaba en decenas de NYX0107 de parse hasta "too many parse errors, aborting" (o, si el parser lograba armar un AST igual, emitía binario con la fuente truncada). Fix: `g_lex_error_count` en `lexer.nx` (espejo exacto de `g_parse_error_count` de F1 — reset al inicio de `tokenize`, incremento en los 5 sitios, `export fn get_lex_error_count()`) + gate nuevo en `nyx.nx` ANTES del gate de parse (mismo formato bilingüe "lex FAILED"/"❌ Lex errors: N"); mensajes existentes son `print` sueltos sin infra de diagnóstico — se dejaron así a propósito, sin montar códigos NYX00xx nuevos; previous 217 (+2 en 2026-07-28, campaña "Primer intento verde" Fase 4 Task 10: `test-import-not-found-suggests-std` (texto + NDJSON) — el import no resuelto ya no sugiere solo el hint fijo `src/<path>`, corre Levenshtein (código local en `compiler/nyx.nx`, no exportado de `semantic.nx` — ver comentario en `import_levenshtein_best`) contra los módulos reales de std/ + src/ del proyecto; código nuevo NYX0301 (serie resolver, `phase:"resolve"`, catalogado en docs/SPEC.md); previous 215 (+1 en 2026-07-28, ola final de review Fase 3: `codegen-trait-bound-turbofish` — bound de trait violado en un generic call con turbofish explícito (`show_it<Point>(p)` sin `impl Display2 for Point`) es camino NORMAL con semantic activo, sin env especial, distinto del NYX1020 de `test-m08-trait-bound-unsatisfied.nx` (forma implícita); previous 214 (+3 en 2026-07-28, campaña "Primer intento verde" Fase 3 Task 4: tres catch-alls MUDOS de codegen que devolvían `"i64 0"` en silencio (o, en el caso de 4b, imprimían un mensaje y seguían) ahora abortan con NYX20xx, mismo patrón v0.22.14 — `codegen-range-standalone` (NYX2001, catch-all maestro de `codegen_expr`: `let r = 0..5` fuera de un `for` — el único node_type "range" alcanzable desde superficie hasta este sitio), `codegen-method-on-const-global` (NYX2002, método sobre un global registrado SOLO en `const_values`, ej. `const N: int = 5; N.metodo()` — rama separada del catch-all de `codegen_method_call` que quedó afuera del fix v0.22.14 porque los globales `var`/`static_var` normales YA se registran en `ctx.variables` en Pass 0 y nunca la alcanzan), `codegen-field-access-complex-receiver` (NYX2003, `f().campo` con campo VÁLIDO pero receiver-expresión sin bindear — antes imprimía un Warning y evaluaba a 0 mudo; el fix también obligó a reescribir el control positivo de `silent-field-hallucination-fncall` en `run_silent_failure_checks.sh` de la Fase 2 Task 1, que asumía que ESE mismo patrón compilaba con rc=0 — ahora bindea el resultado primero, como recomienda el hint del propio NYX2003, preservando lo que ese check realmente probaba: que un campo válido no dispara NYX1017 falso-positivo); previous 211 (+1 en 2026-07-28, cierre de la ola final de review Fase 2: `json:test-field-access-typo` — el NYX1017 del camino nuevo de field ACCESS (Task 1) no tenía cobertura NDJSON, a diferencia de su hermano `test-m08-imported-field-typo`; agregado a JSON_TESTS espejando ese formato; previous 210 (+2 en 2026-07-28, campaña "Primer intento verde" Fase 2 Task 3: test-parse-primary-unexpected (texto + NDJSON) — el catch-all final de `parse_primary` imprimía "ERROR: token inesperado en primary" pero NO contaba el error (sin pasar por `p_diag`), hermano exacto del NYX0106 de map-literal y el NYX0105 del dispatcher de atributos; ahora es NYX0107 contado, con el token real (`tok_val`/`tok_type`) en el mensaje; previous 208 (+2 en 2026-07-28, ronda 2 de la campaña "Primer intento verde" Fase 2 Task 1: test-self-field-access-typo / test-self-field-assign-typo — `self.<typo>` DENTRO de un método (`self`/`&self`/`&mut self`) también compilaba mudo, porque validate_impl/validate_impl_trait no bindeaban el tipo real de `self` antes de validar los métodos (`ty_of_expr(self)` daba TyUnknown o un TyRef-basura del marker "&"/"&mut" mal interpretado como anotación); fix: `g_current_self_ty` seteado por validate_impl/validate_impl_trait (guard: solo structs registrados, NO impls genéricos — miss seguro preferido a FP en código genérico no auditado), leído por validate_function al bindear el param `self`; previous 206 (+3 en 2026-07-28, campaña "Primer intento verde" Fase 2 Task 1: test-field-access-typo / test-field-access-typo-fncall / test-field-assign-typo — un campo inexistente en field_access/field_assign (lectura/escritura) compilaba mudo y evaluaba a 0; ahora cablea al mismo NYX1017 de validate_struct_init, con did-you-mean, vía helper compartido `check_field_exists`; previous 203 (+1 en 2026-07-27: map-literal-nonstring-key — `{1: "uno"}` daba exit 0 y un binario que no ejecutaba nada; ahora NYX0106 contado; previous 202 (passed autoritativo del runner; +1 en 2026-07-26 — method-not-available-errors (el catch-all de codegen_method_call ya no devuelve 0 en silencio; ver header note); previous 201, +2 en 2026-07-25 — run-wrapper-args-forward / run-wrapper-args-dashdash (P1 friction-portscan: `nyx run` reenvía args al binario, con citado POSIX verificado — un arg con `;` debe llegar literal, no ejecutarse); previous 199, reconciliado 2026-07-25 en la sesión D2 — corrida real 199/0, el "195" previo quedó stale un ciclo, D2 no agrega error tests; previous 195 — reconciliado con `run-wrapper-b1-text`/`run-wrapper-b1-json`/`run-wrapper-b2-project` (B1/B2 friction-browser: `nyx run archivo.nx` ahora informa errores de compilación + resuelve imports locales sin `NYX_PROJECT_DIR`; agregados en una sesión previa, nunca volcados a esta tabla — el "192" quedó stale un ciclo); **+T14 (2026-07-23): test-parse-attr-unexpected-item (`#[attr]` sobre item no soportado → NYX0105 CONTADO; antes error-node silencioso que se tragaba `#[affine] pub struct` con drops=0)**; — **+T7 (2026-07-23): driver crudo — test-driver-unknown-arg (argv desconocido → error bilingüe) + test-driver-missing-source (fuente ausente/vacía → error bilingüe, nunca más "✓" con 0 funciones)**; — **+E3-followup (2026-07-22): method-generic-needs-turbofish (fn m<U> sin turbofish → error accionable, antes SEGFAULT del compilador)**; — **+E3 (2026-07-22): method-turbofish-mismatch (type-args ≠ receiver → error) + method-turbofish-nongeneric (turbofish sobre builtin → error, nunca ignorado)**; — **+E1 (2026-07-22): test-warn-bare-array-concat (warning no-fatal, compila con exactamente 1 aviso; Array<T> tipado no avisa)**; — **+D3 (2026-07-22): lambda-capture-neg NEG (FP capturas) + whilelet-free gate-only (NYX1221 en body de while_let)**; — **+D2 inc2-menores (2026-07-22): mutself-store + derefassign-outparam POS ×2 [gate+off-silent] + derefassign-local-neg NEG**; — reconciliado 2026-07-17: +test-c-fn-ptr-notfn/closure (callback Task 1, no volcados en su momento) + test-c-fn-ptr-shadow (local que shadowea fn top-level → error, antes silently-wrong), incl. NYX_DIAG=json; incluye 12 de fase parse F1 + test-import-unresolved + test-extern-js-native-target + test-dyn-mutref + resolve-vendored-pkg-src-import + borrow checker: use-after-move T1a, free-safety NYX1220/1221 T3a, exclusividad &mut NYX1210/1211, move-checking afín NYX1230 T4a/T4b, dangling refs vía `return` NYX1222 T3 inc1 (+9: 3 casos POS × 2 [gate+off-silent] + 3 NEG de exclusión) + flow-merge (+3: branch-oneside POS × 2 + branch-clear-ok/match-clear-ok NEG + freed-revive-branch guard NYX1221 + dangling-while POS + impl-double-free guard NYX1221 dentro de método), **T3 inc2 (2026-07-11, +10): return-de-agregado (agg-return/agg-struct) + store a destino que sobrevive — global (global-store) o out-param (outparam), 4 casos POS × 2 [gate+off-silent] + 2 NEG (agg-neg: elemento no frame-bound; local-struct-neg: destino no sobrevive)**; **T3 inc3a (2026-07-11): taint transitivo de contenedores locales (`v[i]=&x`/`s.f=&x`) — taint-index-return/taint-field-return POS + taint-local-noescape NEG**; **T3 inc3b (2026-07-11): dangling INTER-PROCEDURAL — elisión NYX1223 lint (interproc-elision/chain/agg + soft-hard, warn/error/off) + `'a` explícito NYX1222 gating (interproc-lifetime/lifetime-pick/join-hard) + NEG global/ambig**; **T3 inc3c-1 (2026-07-12): multi-source outlives — interproc-multisrc/multisrc2 POS gating (×2 con off-silent) + multisrc-neg**; **T3 inc3c-2a (2026-07-12): struct-con-lifetime elisión — interproc-struct POS (warn/error/off) NYX1223 lint + struct-neg/struct-glob-neg**; **T3 inc3c-2b (2026-07-12): struct `'a` explícito → GATING — interproc-struct-hard POS (gate+off-silent) NYX1222 + struct-hard-neg**; **T3 multi-lifetime (2026-07-12): structs con varios `'a` (`Holder<'a,'b>`) matchean TODOS los lifetimes del ret-type — multi-lt POS (gate+off-silent) + multi-lt-neg**; **T3 cross-módulo (2026-07-12): passthrough a través de una fn IMPORTADA (funciona por inlining — interproc-xmodule POS warn/error/off NYX1223 + xmodule-neg)**; **inc4/pre-2 (2026-07-12): move-checking de #[affine] struct X<T> GENÉRICO — affine-generic POS (gate+off-silent) NYX1230 + affine-generic-ok NEG**; **inc4 Etapa 3 (2026-07-12): MoveOnly<T> afín REAL desde std/owned — moveonly POS (gate+off-silent) NYX1230 + moveonly-ok NEG (single consume)**; conteo reconciliado 2026-07-12 al total autoritativo del runner (`make test-errors` = **171 passed**); el "126"/"72" previos estaban stale — nunca se habían volcado a la tabla los checks de borrow de inc 3a/3b/3c; **+test-extern-conflict (2026-07-14, sección codegen exit≠0): extern duplicado con firma/ABI conflictiva → error, no miscompile silencioso**; **+FP fix borrow (2026-07-14): place_path field-sensitive — free(self.a)+free(self.b) de campos DISTINTOS ya NO es NYX1221 double-free (rompía el drop de Rc<T>); test-borrow-moveonly-ok VERDE + test-borrow-drop-two-fields-ok nuevo**) | ✅ 256 passed / 0 failed (corrida real 2026-08-19 en `feat/w0-windows-target`) |
-| M-08 happy types | `make test-m08-types` | `tests/compiler/types/run_m08_types_tests.sh` | **18** (reconciliado 2026-07-28 en el cierre de la ola final de review Fase 2 — el "16" había quedado stale; conteo real vía `ls tests/compiler/types/test-*-m08-*.nx \| wc -l` y corrida del gate 18/18) | ✅ |
-| Advanced | (in `test-all`) | `tests/advanced/run_advanced_tests.sh` | **30** | ✅ |
-| Stdlib | `make test-stdlib` | `scripts/run_stdlib_tests.sh` | **3** | ✅ |
-| Runtime C unit (B4) | `make test-runtime` | `scripts/testing/run_runtime_tests.sh` | **34 suites / 1444 asserts** (corrida real 2026-08-29; la aritmética incremental desde 1066 — E5, W0-W2, paso 0/0b, ctx v2, red M5, flakies TLS — vive en las notas de cabecera de este archivo, que son la fuente cronológica; esta celda quedó congelada en 1066 desde E5.2b y se reconcilió el 2026-08-29). Historia previa a 1066: (+56 asserts en `test_net_result.c`, 48→**104** — E5.2b: 20 tests nuevos (`test_read_line_result_*` ×6, `test_read_partial_result_*` ×3, `test_read_exact_result_*` ×3, `test_shutdown_result_*` ×2, `test_set_timeout_result_*` ×2, `test_getpeername_result_*` ×2, `test_resolve_ptr_result_*` ×2 — ajustar por solape, conteo real vía `grep -c ASSERT_` reconciliado 1:1 contra la corrida) sobre las 7 `*_result` nuevas de `runtime/net.c` (read_line/read_partial/read_exact/shutdown/set_timeout/getpeername/resolve_ptr), + review final E5.2b (F1): `nyx_tcp_read_line_result` truncaba en el primer NUL embebido (`nyx_string_from_cstr`+`strlen`) — ahora `nyx_string_from_ptr(line, lpos)` con longitud explícita, binary-safe real; `test_read_line_result_embedded_nul` nuevo cubre el caso. Corrida real 2026-08-14: 104/104 verde en `test_net_result`, aislado y dentro de la suite completa (21/22 suites, `test_scheduler` segfault preexistente sin relación — ver ficha `[BAJA]` TASKS.md). Previous 22 suites / 1010 asserts (+32 asserts en `test_net_result.c`, 16→48 — E5.2: 11 tests nuevos sobre loopback TCP/UDP real (`make_loopback_pair`/`make_udp_socket_bound`), cubren las 6 `*_result` nuevas de `runtime/net.c` (accept/read/write/sendto/recvfrom/resolve). Corrida aislada 48/48 verde. Previous **22 suites / 978 asserts** (+2 asserts en `test_net_result.c` — review final E5.1 (F1), guard `inet_pton() != 1` en `nyx_tcp_listen_result`/`nyx_udp_bind_result`: host NO-numérico ("localhost") bindeaba INADDR_ANY en silencio y devolvía Ok — ahora `-EINVAL` (22). Corrida real 2026-08-14: 16/16 verde en `test_net_result`). Previous 22 suites / 976 asserts (+`test_net_result.c` nuevo, 14 asserts — E5.1: `nyx_tcp_connect_result`/`nyx_tcp_listen_result`/`nyx_udp_bind_result`, mismo mecanismo que las centinelas viejas pero `-errno` como retorno en vez de stderr+abort — listen efímero, EADDRINUSE real duplicando puerto fijo alto, ECONNREFUSED real, EINVAL con host NULL, host irresoluble. Corrida real 2026-08-14: 14/14 verde). Previous 21 suites / 962 asserts (+3 asserts en `test_file_result.c` — review final E4 (I1), guard `ftell()<0` en `nyx_file_read_result` sobre stream no-seekable (FIFO): antes `GC_MALLOC(0)` + `fread` con tamaño `(size_t)-1` = escritura OOB; ahora ESPIPE (29) taggeado, sin crash. Corrida real 2026-08-14: 18/18 verde en `test_file_result`, consistente en 3 corridas. Previous 21 suites / 959 asserts (+`test_file_result.c` nuevo, 15 asserts — arco E4: `nyx_file_read_result`/`nyx_file_write_result` con el ABI `nyx_string*` correcto, incl. la rama `NULL`/EINVAL. Corrida real 2026-08-14: 15/15 verde, consistente en 3 corridas — ver `.superpowers/sdd/2026-08-14-e4-std-error-piloto-file/task-3-report.md` Addendum 2). `test_scheduler` (segfault) es preexistente y no relacionado a este arco — falla intermitentemente sin este cambio (confirmado corriendo la suite completa con `test_file_result.c` en `git stash`; ficha `[BAJA]` en TASKS.md, cosecha `[arco:E4-std-error]`). Previous 20 suites / 944 asserts (+55 en 2026-07-29, sub-proyecto 1 de la campaña de corrección v0.23.0 — seguridad del runtime, las cinco rutas alcanzables desde input de red no confiable: `test_websocket::test_hostile_lengths` (la longitud de 64 bits del frame ya no envuelve el chequeo de límites — 2^64-1, bit alto, 16-bit excedido, + control positivo); `test_msgpack::test_truncated_str` (la longitud anunciada se valida contra el buffer real — el bug devolvía heap ajeno AL PROGRAMA como String); `test_http2::test_encode_large_header` + `test_encode_multi_large_headers` + `test_encode_budget_truncation_stays_header_aligned` (el buffer HPACK se dimensiona por tamaño real, guards por-escritura que rebobinan a frontera de header, y verificación de contenido byte a byte — el test viejo medía el tamaño reportado, que era idéntico con y sin el bug; el último caso usa el hook `nyx_h2_test_force_budget`, gateado por `#ifdef NYX_RUNTIME_TESTING` y ausente de los binarios de producción, verificado con `nm`); `test_http2::test_decode_int_overflow` (el varint HPACK no desborda a negativo — el fix incluye `consumed == 0` en los 8 call-sites: sin eso el tope convertía el bug en bucle infinito con OOM del GC, verificado empíricamente); `test_net::test_resp_bulk_cap` y `test_resp_array_cap` (cotas del lado C para `$N` y `*N`, espejando `RESP_MAX_BULK`/`RESP_MAX_ARRAY` de `std/resp.nx` — antes `atoi` sin cota: `$2147483647` desbordaba `data_len + 1` a `INT_MIN` y `*2000000000` forzaba ~16 GB con 14 bytes, con `exit(1)` si la reserva fallaba). Previous 889 (+5 test_net (tags de los 5 slots de la request HTTP) +3 test_strings (tags de split, incl. sin delimitador) — constructores C tagueados, 2026-07-26); previous 881 (+5 en test_arrays.c — lectura tipada chequeada: test_checked_reads, caminos de valor — los aborts se cubren E2E en integration; 2026-07-26); previous 876 (+9 en test_arrays.c — Etapa 4 de slots-tag: test_search_tagged — index_of/contains por contenido con punteros distintos, identidad cruda primero, slot UNKNOWN jamás dereferenciado, NULL degrada; 2026-07-26); previous 867 (+14 en test_arrays.c — Etapa 1 de slots-tag: tags paralelos a `data`, supervivencia al resize (GC_REALLOC de ambos buffers), propagación en `slice`, `set_tagged`, y bordes OOB/negativo/NULL degradando a UNKNOWN sin crashear; 2026-07-26); previous 853 (+14 in test_base64.c — nyx_inflate gzip/zlib/raw fixtures, corrupt/truncated/wrong-mode, empty/NULL, embedded-NUL binary output, buffer-growth past 64KB; D1 friction-browser, 2026-07-25); previous 839 — +test_terminal.c nuevo (C1 friction-browser, 2026-07-25): `nyx_raw_mode_enter()` instala un handler no-op de SIGWINCH SOLO si la disposición sigue en `SIG_DFL` — 6 asserts vía forkpty+`TIOCSWINSZ` real: `read_byte_timeout(-1)` despierta (-2) al resize con solo `raw_mode_enter()`, y un handler propio instalado ANTES (`signal_handle`, orden real de nyx-edit) no se pisa; +9 test_process: nyx_exec/nyx_exec_code — captura de stdout con strip de `\n` finales, "" en comando silencioso/fallido/NULL, exit codes 0/1/7/-1; conteo total reconciliado por corrida real de `make test-runtime`, drift previo de "772" corregido; +10 test_char_substring: codepoints UTF-8 multibyte/emoji, clamps, NULL; +9 test_thread: rwlock — readers comparten/writer excluye vía try*, NULL guards, serialización 4×5000; +15 test_net: cap de body HTTP configurable NYX_HTTP_MAX_BODY + slot 6 de error 0/413 — body ok, too-large sin drenar, env override/inclusivo/inválido; +10 test_index_of_from: indexOf con offset, clamps y binary-safe; +21 test_strings binary-safe: familia equals/compare/contains/index_of/starts_with/ends_with/split/replace por longitud con NUL embebido; +test_file_io: fsync/fdatasync — 13 asserts) | ⚠️ (`test_scheduler` segfaultea intermitente, preexistente y no relacionado a ningún cambio reciente — ficha `[BAJA]` en TASKS.md) |
-| AI-first (objetivo) | `make test-ai-first` | `scripts/testing/run_ai_first_tests.sh` + `run_gotcha_coverage.sh` (guardia) + `run_capabilities_test.sh` (2026-07-29, Fase 5 Task 11 ronda de fix: cableado como 5ta línea del target — antes corría solo manual, y "un guard que nadie corre" es el mismo agujero que la campaña viene tapando; ver fila "Capabilities index" abajo para el detalle de sus 3 checks + chequeo de frescura mtime; se salta limpio con aviso si `nyx_build` no existe, mismo criterio que `clang-link-failure-attribution-ir-bug`) + `run_silent_failure_checks.sh` (2026-07-28/29: campo alucinado sobre identificador, sobre `f().campo`, `warning-visible-under-ndjson` (Task 2), `silent-trait-bound-unsatisfied-codegen-backstop` (Fase 3 Task 5), y `clang-link-failure-attribution-ir-bug` (Fase 4 Task 10: el repro `Option<Item>` del banco vía `nyx_build` real, no `nyx_bootstrap` — el fallo es de LINK; se salta limpio con aviso si `nyx_build` no existe) — 5 checks con control positivo obligatorio cada uno; el control positivo de `f().campo` fue REESCRITO en Fase 3 Task 4 — bindea el resultado primero, porque ESE patrón sin bindear ahora aborta con NYX2003, ver fila de errors) + `run_codegen_mute_audit.sh` (2026-07-28, Fase 3 Task 6, cierre de campaña: auditoría-RATCHET — no repro de programas, sino grep estructural sobre `compiler/codegen.nx`; check 1 confirma que los 4 aborts NYX2001-NYX2004 de Tasks 4/5 siguen presentes (FAIL si alguno se revierte); check 2 cuenta los `print("Error:`/`print("Warning:` NO seguidos de `exit(1)` a ≤6 líneas — baseline 10, la familia "campo no encontrado" que sigue viva a propósito como fallback load-bearing del bootstrap; FAIL si el conteo SUBE (catch-all nuevo mudo), FAIL suave si BAJA (pide bajar el baseline a mano); check 3 es el autotest del propio contador sobre dos heredocs sintéticos (mudo cuenta 1, con exit(1) cuenta 0) — sin este autotest el audit puede quedar verde con un grep roto. Verificado con control negativo manual: print-mudo agregado temporalmente a codegen.nx → FAIL correcto (11 > 10); marcador NYX2001 renombrado temporalmente → FAIL correcto (marcador faltante); ambos revertidos con `git checkout`) | **22 programas + 6 scripts** (E5.5 2026-08-19: +22-ffi-int-truncation — blindaje del hallazgo FFI del arco sqlite: un C `int` de 32 bits retornado por `extern "C"` NO sign-extiende al `int` de 64 de Nyx (`-1` cruza como `4294967295`, medido); el programa asierta el patrón seguro `rc != 0` y el LLM.md §5.1 ítem 4 nuevo lo cita con [test:]; el pin de trampas vivas de `run_template_coherence.sh` sube 3→4 con ancla "sign-extend" exigida en los 4 manuales. Previous **21** (v0.24.4: +21-bind-failure-loud — friction 2026-08-01, http_serve con puerto ocupado devolvía -1 mudo; asierta el -1 auto-ocupando el puerto, y el mensaje stderr lo verifica el check silent-bind-failure con control negativo; +run_toolchain_recipe_audit.sh como 6ª línea del target — friction A10: TODO runtime/*.c debe estar en las recetas de scripts/nyx Y build.nx, porque llama_adapter.c faltó en ambas desde v0.20.x y std/llm no linkeaba para usuarios con los gates internos verdes. Previous **18 + 5 = 23** (18 programas ai-first vía `run_ai_first_tests.sh`: +15-http-items-api, +16-worker-channels, +17-csv-aggregator, +18-http-client-filter — campaña "Primer intento verde" Fase 1 Task 8, las 4 referencias del banco de `scripts/testing/bench/tasks/` adaptadas a caso autoverificado con `assert()` (servidor+cliente HTTP en el mismo proceso vía `thread_spawn` sobre puerto fijo + `exit(0)` explícito, ya que `http_serve` no tiene apagado limpio; canal de trabajos/resultados dimensionado a la cantidad total de mensajes para evitar el deadlock de capacidad fija con M grande) — suben la cobertura de HTTP y concurrencia de la suite de 0 a >0; sumaron 3 ítems nuevos a LLM.md §5.1 (`Option<Struct>`/`Result<Struct,E>` rompe el link, `arr[i] = <float>` corrompe el slot, capacidad de canal fija puede deadlockear). +13-map-literal-keys (workarounds de las trampas de §5.1), +14-language-rules (las 5 reglas de §5.2); el 12 se amplió con la coexistencia de capturas. +1 check en Fase 4 Task 10 (2026-07-29): `clang-link-failure-attribution-ir-bug` — el repro `Option<Item>` del banco compilado con `nyx_build` real (no `nyx_bootstrap`, porque el fallo es de LINK) debe mostrar la atribución bilingüe (`compiler/build.nx::clang_failure_attribution_bash`) antes del log crudo de clang, con control positivo real (`nyx init` sin tocar buildea limpio y SIN el texto); se salta con aviso si `nyx_build` no existe (falta `make build-nyx-build`). +1 check en Fase 3 Task 5 (2026-07-28): `silent-trait-bound-unsatisfied-codegen-backstop` — el backstop de codegen para bound de trait violado en generic call (`show_it<Point>(p)` sin `impl Display for Point`). CORREGIDO tras review del coordinador (I1): este NO es un caso que solo aparezca bajo `NYX_SKIP_SEMANTIC=1` — es CAMINO NORMAL para llamadas con turbofish explícito (`f<Point>(p)`, la validación de bounds de semantic ni pasa por ese nodo) y para la forma implícita cuando el tipo concreto NO tiene ningún impl local (heurística conservadora de semantic: estricto/NYX1020 solo si el tipo tiene AL MENOS UN impl local de cualquier trait, wildcard si no). El check corre igual bajo `NYX_SKIP_SEMANTIC=1` explícito por robustez/consistencia con los otros 3 checks de este script (y porque el runner de `tests/compiler/errors/` no soporta env por-test — no es POR ESO que el caso necesite el skip, sino simple ubicación); antes imprimía un mensaje y SEGUÍA monomorfizando (rc=0), ahora aborta con NYX2004 nombrando la firma completa del método faltante (`fn show(self) -> String`) vía `ctx.trait_methods`. La GUARDIA falla si un ítem de §5.1-5.2 no tiene marca [test:], si apunta a un archivo inexistente, o si un test queda huérfano; 2026-07-27; previous 12 (+12-closure-capture-paths: los 4 caminos de captura de locals que el gotcha 19 promete — lambda inline, lambda bindeada, nested fn vía param Fn, closure retornada; uno POR FUNCIÓN a propósito, porque el límite real es que lambda-que-captura y nested-fn-que-captura no coexisten en la misma fn; fricción C4 2026-07-26); previous 11 (+11-chr-nul-safe: chr(0) construye el byte NUL real, no la String vacía; +10-exec: exec()/exec_code() end-to-end vía assert(); conteo reconciliado por corrida real — valida que la doc sembrada basta para escribir Nyx correcto al 1er intento) | ✅ |
-| Coherencia de manuales | `make test-ai-first` | `scripts/testing/run_template_coherence.sh` | **7ª línea del target (2026-08-03)** — la doc sembrada por `nyx init` no puede contradecir a LLM.md (el drift mordió DOS veces: AGENTS.md con gotchas falsos 2026-07-28, y "closure capture is broken" + trampas muertas + API inventada 2026-08-01). Tres checks con autotest y controles positivos verificados: (A) ratchet de 9 MENTIRAS RESUCITADAS (frases que §5.4 declara arregladas — la lista crece con cada fix, nunca se poda), (B) 4 anclas de las trampas VIVAS de §5.1 exigidas en los 4 manuales (AGENTS/CLAUDE/CHEATSHEET template + docs/CHEATSHEET; el tono es libre, el ancla no), (C) pin del conteo de §5.1 — si LLM.md gana o pierde una trampa, la guardia falla pidiendo actualizar anclas y manuales | ✅ |
-| Capabilities index | `make test-ai-first` | `scripts/testing/run_capabilities_test.sh` | **3 checks + chequeo de frescura** (campaña "Primer intento verde" Fase 5 Task 11, 2026-07-29: (a) cada `pub fn`/`export fn` de std/ aparece en el `CAPABILITIES.md` generado por `nyx capabilities` — chequeo original; (b) NUEVO — paréntesis balanceados en cada firma extraída, caza el bug real donde `compiler/build.nx::capabilities_module_section` cortaba una firma multi-línea en la primera línea (`std/proptest.nx::prop_int`/`prop_int2`, `std/webpush.nx::webpush_encrypt_with_keys` quedaban truncados a medio parámetro — un doc que enseña a llamar MAL); (c) NUEVO — spot-check textual de esas 3 firmas multi-línea contra el string completo esperado. Fix del extractor: `capabilities_module_section` ahora junta líneas mientras el conteo de `(`/`)` no balancee, antes de cortar en el `{` del cuerpo. Control positivo verificado a mano contra una fixture con firma truncada sembrada — (b) la detectó correctamente. **Ronda de fix del coordinador (2026-07-29)**: dejar de ser "(manual)" ya no alcanza — cableado como 5ta línea de `test-ai-first` en el Makefile; se agregó un chequeo de frescura barato (mtime `compiler/build.nx` vs `./nyx_build`) que FALLA con mensaje accionable ("corré make build-nyx-build") si el binario del repo quedó stale, en vez de dejar que el resto del script falle con un diff confuso; verificado con `touch compiler/build.nx` → FAIL correcto, mtime restaurado → vuelve a verde) | ✅ |
-| Dispatch matrix | `make test-dispatch-matrix` | `scripts/testing/run_dispatch_matrix.sh` | **17/29 celdas verificadas (piso: 17)** — invariancia por forma del receptor (campaña cerrar-silently-wrong, 2026-07-31): el mismo método sobre el mismo dato debe imprimir lo MISMO en todas las formas (local/campo/retorno/elemento/global/referencia × String/Array/Map). Las celdas no verificables se listan explícitamente (rechazo ruidoso NYX2007/NYX2003 = comportamiento correcto, no hueco); lista de divergencias CONOCIDAS **vacía desde v0.24.1** (la única — `m.length` propiedad sobre variable Map local — pasó a rechazo ruidoso NYX2007; el script poda por diseño: una conocida que deja de ocurrir es XPASS y grita hasta que se saca). El piso impide la variante degradada del verificador-que-no-puede-fallar: sin él, un runtime que no compila → todas las celdas IR_INVALIDO → 0 verificadas y exit 0. Gate propio, fuera de `make test` (compila ~29 programas) | ✅ |
-| REPL / intérprete | `make test-repl` | `scripts/testing/run_repl_smoke.sh` | **15 checks** (v0.24.7, nil-cascade: el error corta la expresión sin valor fabricado, exactamente 1 error por raíz errónea, y el cuerpo de una fn aborta tras el error con la sesión viva — RED verificado; previous **12** (v0.24.3, tres rondas con RED verificado cada caso; ronda 3, reporte final del /code-review — bare `return` sintético no dispara NYX3002 (nodo "integer" del parser), indexar no-array = NYX3002 honesto (no NYX3005 falso), llamada a nombre indefinido = exactamente 1 error; además la review cazó 2 guards vacuos del propio smoke (substring sin ancla `$`, grep de texto español con binario en inglés) — corregidos: ronda 1 — array literal construye datos REALES (eval_array iteraba node_data en vez de node_data[0]: TODO literal daba `[nil]`), NYX3003 variable no definida, NYX3004 no-función; ronda 2, hallazgos del /code-review pre-release — for-in itera SIN segfault (data[0] es String plana, no astnode), NYX3005 módulo por cero (ARM64 no trapea), NYX3006 aridad con la sesión VIVA (antes el OOB de args[i] mataba el REPL). Previous **3** (v0.24.2): NYX3001 método fuera del subconjunto; sesión sobrevive; control negativo `s.length()`==4. El target construye nyx_repl SIEMPRE antes del smoke). Dentro de `make test-all` | ✅ |
-| Stacks extraídos | `make test-stacks` | `scripts/testing/run_stack_tests.sh` | db (7 .nx + Python) + queue 17 + edit 41 + shell 2 + serve 7 (smoke HTTP) + proxy 3 (.nx cache/metrics/xff — split #7) — canario del compilador | ✅ |
-| Integration E2E | `make test-integration` | `scripts/testing/run_integration_tests.sh` | **10 serve+kv + WS proxy (6 checks) + HTTP/2 (1 suite) + FFI callback C→Nyx (3 checks) + std/llm stub (3 checks) + slot typed read (9 checks: print por tag + aborts ordenados, 2026-07-26)** | ✅ |
-| Load gate (`[arco:W3-paso0b]`, nuevo 2026-08-28) | `make test-load` | `scripts/testing/run_load_gate.sh` | **5+3 corridas** (override `LOAD_GATE_RUNS`/`LOAD_GATE_RUNS_INC`) de `tests/stress/gc_goroutine_load.nx` — 300 goroutines × `Array<int>` de 20k, compilado -O2 UNA vez; 5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`. ~15-25s (dominado por la ejecución, no la compilación). Compara la línea `LOAD_OK sum=59997000000`, no solo el rc — es el único gate que reprodujo de punta a punta el "bug 2" del paso 0b (Boehm escaneando el stack nativo de un worker con el sp de una goroutine) y mató sus dos mutantes de review | ✅ |
-| WASM (wasm32-wasi) | `make test-wasm` | `scripts/testing/run_wasm_tests.sh` | **22** (17 tests .nx: wasmtime cuando aplica + shim WASI del navegador vía node; incluye json-floats, float/Array FFI, dom-extendido, std/browser, eventos, closures-por-tabla, arena 10k re-entradas, fixture multi-archivo de make wasm y el framework VDOM — test-wasm-19-dom-handles (Task 2 VDOM, 12 wrappers por-handle), test-wasm-20-component (Task 3 VDOM, mount/update quirúrgico), test-wasm-21-fn-indirect-ptr (cobertura de `Fn(Array)->VNode` tipado en llamada indirecta), test-wasm-22-router (router+SPA Task 2: router_new/router_start resuelve la ruta actual por hash, monta y re-navega en hashchange); SKIP limpio exit 0 sin toolchain — no entra en test-all; ⚠️ test-wasm-12-arena (browser-shim) FALLA pre-existente, no relacionado al framework VDOM — ver TASKS.md) | ⚠️ 22 passed / 1 failed (pre-existente) |
-| Verify (unit) | `make test-unit` | `scripts/testing/run_unit_tests.sh` (2026-07-02) | **21** (13 verify expected-output/exit-code (incl. test-verify-12: carrera de builds concurrentes vía NYX_SRC, 2026-07-18) + 3 compiler-unit: test-lexer, test-types-unify (incl. región TyRef 3c-full), test-borrow-classify + 5 fmt (`run_fmt_tests.sh`: impl genérico RED→GREEN, idempotencia, no-genérico, + T12 2026-07-23: trait-assoc-default (supertrait+default body+assoc type round-trip) e impl-trait-assoc (assoc types en impl))) | ✅ |
-| Compiler unit | `make test-unit` | `scripts/testing/run_unit_tests.sh` | 6 files (2 activos: test-lexer + test-types-unify vía NYX_INLINE_COMPILER=1; resto SKIP) | ⚠️ parcial: el import de módulos compiler/ no aporta funciones al IR para los otros 4 (TASKS.md) |
+| Suite | Comando | Conteo | Nota |
+|-------|---------|--------|------|
+| Regression | `make test` | **401 archivos / 400 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura) |
+| Error paths (parse+semantic) | `make test-errors` | **256** | verificado con corrida real 2026-08-30 |
+| M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
+| Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
+| Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
+| Runtime C unit (B4) | `make test-runtime` | **34 suites / 1587 asserts** | verificado con corrida real 2026-08-30; discrepancia vs. el `1444` documentado el 2026-08-29 (main avanzó con W3 Task 2/3 antes del corte de esta rama) — el número real gana |
+| AI-first (objetivo) | `make test-ai-first` | **25 programas + 18 guardas** | corre 19 scripts: `run_ai_first_tests.sh` (25 `.nx`) + 17 scripts de guardas (18 guardas — `run_templates_parity.sh` trae dos) + `scripts/sdd/selftest`; ver las 9 filas siguientes |
+| Coherencia de manuales | (dentro de `make test-ai-first`) `run_template_coherence.sh` | **4 checks** | mentiras resucitadas + anclas de trampas/reglas vivas + imports sin comillas + ids de gotcha citados, sobre lo sembrado en ambos idiomas; ANCLAS/MENTIRAS de `gotchas_generated.sh` |
+| Bloques sembrados compilan | (dentro de `make test-ai-first`) `run_seeded_blocks_compile.sh` | **1 check** | cada bloque ` ```nyx ` sembrado (ambos idiomas) compila con bootstrap semántico + clang; sin `fn main` debe ser ` ```nyx-fragment ` o falla |
+| Paridad EN/ES + español neutro | (dentro de `make test-ai-first`) `run_templates_parity.sh` | **2 checks** | twins EN/ES coherentes (marca de template, encabezados `##`, `gen:ids`) + denylist de voseo/vosotros (regla 9) en `## es` de los gotchas, `templates/es/**` y los adaptadores ES |
+| Listado dorado de `nyx init` | (dentro de `make test-ai-first`) `run_init_golden.sh` | **7 checks** | listado exacto por idioma vs `tests/ai-first/golden/init-default-{en,es}.txt`, neutralidad de proveedor, sello con `nyx-lang`, `--lang`/`NYX_LANG`, adaptadores opt-in, `--agent=foo` con exit 1 |
+| Andamiaje SDD (`--sdd`) | (dentro de `make test-ai-first`) `run_sdd_init.sh` | **33 checks** (4 autotests + 10 x 2 idiomas + 4 de `sdd init` sobre proyecto existente + 2 de `sdd evidence` + 3 con `nyx test`) | listado dorado, default intacto, marcador + 7 secciones, disparador, idempotencia |
+| Migración de `--sync-docs` | (dentro de `make test-ai-first`) `run_sync_docs_migration.sh` | **5 escenarios + 2 checks estáticos** | layout viejo CON/SIN sello, idempotencia, copia real de `nyxlang.com` (SKIP si no clonado), purga de `templates/` legacy, wiring de `nyx_gendocs fixed-since` |
+| Capabilities index | (dentro de `make test-ai-first`) `run_capabilities_test.sh` | **3 checks + frescura** | balance de paréntesis en firmas extraídas + chequeo de mtime `build.nx` vs `nyx_build` |
+| Generador gendocs | (dentro de `make test-ai-first`) `run_gendocs_test.sh` + `run_gendocs_noop.sh` | **23 asserts + 4 checks** | fixture de 2 gotchas de juguete (regiones, tabla, arrays, `--check`, `fixed-since`) + no-op de regenerar + smoke de `gotchas_table.nx` |
+| Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **5 casos + auditoría de 161 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (102) + std (59) |
+| Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
+| REPL / intérprete | `make test-repl` | **15 checks** | tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4) |
+| Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
+| Integration E2E | `make test-integration` | **9 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm stub 3 + HTTP/2 1 + body cap 6 + std/serve contrato 10 + smoke 63 + serve+kv 10) | smoke 63 = el de nyx-serve, portado al congelarlo; serve+kv SKIPea sin el daemon kv |
+| Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
+| WASM (wasm32-wasi) | `make test-wasm` | **22** | SKIP limpio sin toolchain; 1 falla pre-existente no relacionada (ver TASKS.md) |
+| Verify + compiler-unit + fmt | `make test-unit` | **21** (13 verify + 3 compiler-unit + 5 fmt) | compiler-unit activos: test-lexer, test-types-unify, test-borrow-classify (3 de 6; resto SKIP, ver abajo) |
 
-**Compiler tests**: 346 + 30 + 239 + 18 + 3 = 636 (v0.24.1, 2026-07-31: errors 238→239, residuo `m.length` propiedad sobre Map local; previous 635, formula reconciliada 2026-07-31, cierre de la campaña cerrar-silently-wrong: regression 344→346 (test-324/325, corrida real) y errors 228→238 — el 228 de esta fórmula había quedado stale respecto de su PROPIA fila de errors, que ya decía 238 desde c5483c2; previous 623, formula reconciliada 2026-07-30, sub-proyecto 4 Task 2 — y de paso corregido un drift que venía del sub-proyecto 3: la fila de Regression decía 341 pero esta fórmula seguía sumando 336, así que el total estaba 5 abajo. Los 5 son test-316 (punteros retornados) y los 4 de la corrección de stdlib (317-320). errors 217→218 (+test-lex-unterminated-string — ver fila de arriba); previous 604, formula reconciliada 2026-07-29, Fase 4 Task 10: errors 215→217 (+test-import-not-found-suggests-std texto+JSON — did-you-mean real vía Levenshtein para import no resuelto, NYX0301 — ver fila de arriba); previous 602, formula reconciliada 2026-07-28, ola final de review Fase 3: errors 214→215 (+codegen-trait-bound-turbofish — ver fila de arriba); previous 601, campaña "Primer intento verde" Fase 3 Task 4: errors 211→214 (+codegen-range-standalone, +codegen-method-on-const-global, +codegen-field-access-complex-receiver — ver fila de arriba); previous 598, cierre de la ola final de review Fase 2: errors 210→211 por `json:test-field-access-typo` (NYX1017 de field ACCESS en NDJSON); m08-types 16→18, drift preexistente reconciliado contra el conteo real de `test-*-m08-*.nx`. 579 únicos — test-46..58 + test-208..210 + test-238 cuentan en regression y m08-types; el conteo de errors incluye las entradas multi-fragmento (B8-F3 semantic y F1 parse), las re-corridas JSON, y los checks pareados gate+off-silent del borrow checker, como siempre).
-**`make test-all`** corre: regression + advanced + stdlib + errors + m08-types + runtime + ai-first + **test-stacks** (canario de los 6 stacks; SKIP con aviso si un stack no está clonado).
-(`test-product-units` se retiró en el split #7: las 3 suites del proxy viven en `~/nyx-proxy-stack` y entran por `make test-stacks`.)
+`make test-all` corre las 15 suites, en el orden del `Makefile`: regression +
+advanced + stdlib + errors + m08-types + runtime + unit + dispatch-matrix +
+integration + wasm + examples + load + ai-first + repl + stacks.
 
-> **nyx-kv**: extraído del monorepo (2026-04-27) a `~/nyx-kv-stack` (repo nyxlang-dev/nyx-kv-stack).
-> Sus ~41 tests RESP corren en ese repo. **nyx-serve**: extraído (2026-07-06, split #6) a
-> `~/nyx-serve-stack`. El E2E serve+kv del monorepo usa los binarios de ambos stacks
-> (`NYX_KV_BIN` / `NYX_SERVE_BIN` para override; skip con aviso si falta alguno).
+## Compiler-unit — detalle (`tests/compiler-unit/`, 6 archivos)
 
----
+Corridos por `scripts/testing/run_unit_tests.sh` vía `NYX_INLINE_COMPILER=1`
+(inlinea internals del compilador para testing real, path default intacto).
+**Activos (3)**: `test-lexer`, `test-types-unify`, `test-borrow-classify`.
+**SKIP (3)**: `test-parser`/`test-semantic`/`test-interpreter` — bloqueadas
+por un tipo `Token` sin resolver al inlinear lexer+parser+semantic juntos
+(la colisión de nested fns homónimas que las bloqueaba antes ya está
+resuelta); follow-up en `TASKS.md`.
 
-## Suite 1: Regression (`make test`)
-
-**Total: 313 (ARM64) / 314 (x86_64)** — test-123-asm se salta en ARM64 (número de
-línea histórico en esta suite tiene drift acumulado documentado — la tabla-resumen
-arriba es la fuente autoritativa; este total se reconcilió con el runner real 2026-07-18;
-+test-267 fsync/fdatasync 2026-07-20; +test-268 strings binary-safe, +test-269
-aliases snake_case, +test-270 indexOf con offset, +test-271 rwlock, +test-272
-Array<T>-annot, +test-273 match-string binary-safe y +test-274..281 campaña FASE A 2026-07-21).
-**Runner:** `scripts/testing/run_bootstrap_tests.sh` — compila cada test con `nyx_bootstrap`
-(semantic checker activo end-to-end desde M-08 S13), linkea el runtime completo y compara
-exit code / expected output.
-
-| Directory | Range | Area | Example |
-|-----------|-------|------|---------|
-| `tests/compiler/basics/` | 01–20 | Primitives, arithmetic, logic, variables, conditionals, while, for, functions, arrays, strings, scope | test-10-fibonacci |
-| `tests/compiler/types/` | 21–58, 208–210, 213–215 | Enums, closures, generics, generic structs, traits, dynamic dispatch, tuples, type aliases, M-08 happy types, implicit mono (F2), global array string init, String coercion global/field | test-36-traits-basic |
-| `tests/compiler/systems/` | 46–70, 219, 221, 240–244 | FFI, const, bitwise, raw pointers, unsafe, manual memory, inline asm, module import, panic, arena allocator, auto-deref *Struct field, drop determinista #[affine] (T4c) | test-56-raw-pointers |
-| `tests/compiler/iterators-traits/` | 71–100, 216–217, 220, 266 | Iterators, trait advanced, operator overloading, visibility, pattern matching, networking, threading, json floats, http url scheme, &mut self mutation, condvar (mutex+condvar con predicado, 2 threads OS) | test-75-iter-chain |
-| `tests/compiler/stdlib-suite/` | 101–130, 222, 252–253, 258–259 | HTTP, time, crypto, datetime, TLS, async, unicode, macros, build system, Stack LIFO (&mut self), resp_parse_len, resp_read_command length-based, vdiff del framework VDOM (data pura), route_match/route_resolve del router hash (data pura, std/routematch) | test-252-resp-parse-len |
-| `tests/compiler/language/` | 131–160, 218, 224–230 | Union types, macros, if-let, web framework, build, CLI, CSV, spawn, derive, HKT, lifetimes, ASI newline-paren, Map.get String inline/arg, to_string int/float/bool/f32, substring índice negativo, Map.get int + literal, async+alloc | test-133-web-framework |
-| `tests/compiler/ecosystem/` | 161–207, 223, 248–251 | SQLite, event loop, compress, WebSocket, proptest, TOML, FSM, StringBuilder, HTTP MT, TLS server, builtins, process builtins, builtin-collision (B1), cross-module global forward-ref (B2), url decode percent-encoding, cripto Web Push, dedup extern "C" entre módulos | test-251-dup-extern-imports |
-
----
-
-## Suite 2: Error paths — parse + semantic (`make test-errors`)
-
-**Total: ver tabla-resumen** (passed autoritativo del runner = **173**, incl. 16 NYX_DIAG=json + los checks pareados
-gate+off-silent del borrow checker T1a/T3a/T3-inc1..3c/inc4 + el FP-fix de 2026-07-14: `test-borrow-moveonly-ok` VERDE
-+ `test-borrow-drop-two-fields-ok`) | `tests/compiler/errors/` — programas que DEBEN fallar
-con el mensaje esperado. Semantic (M-08): type mismatches, trait faltante, dyn incompat,
-call non-function, did-you-mean, trait bounds B8-F1, enum payloads B8-F2; el archivo
-multi-error (B8-F3) entra 3 veces, una por fragmento. Parse (F1, nuevo 2026-06-12):
-keyword como identificador (NYX0102), multi-error de parse (3 fragmentos), presupuesto
-NYX0103, EOF inesperado NYX0104, paréntesis sin cerrar NYX0101 — grepean "parse FAILED".
-Driver (v0.16.1): `test-import-unresolved` — import local que no resuelve a ningún
-archivo emite error bilingüe + exit(1) (antes silencioso).
-Driver crudo (T7, 2026-07-23): `test-driver-unknown-arg` — el binario crudo `nyx_bootstrap`
-no acepta NINGÚN argv (usa NYX_SRC); `test-driver-missing-source` — fuente ausente o vacía
-aborta con error bilingüe en vez de "✓" con 0 funciones generadas.
-Codegen target (2026-07-02): `test-extern-js-native-target` — `extern "js" fn`
-(FFI WASM) compilado sin NYX_TARGET=wasm32-wasi emite error bilingüe + exit(1).
-`test-wasm-forbidden-builtin` — un builtin no portable (tcp_connect/net.c)
-bajo NYX_TARGET=wasm32-wasi emite error bilingüe + exit(1) (guard de codegen).
-Los 16 casos JSON re-corren una muestra con `NYX_DIAG=json` y validan con python3
-que cada línea sea JSON válido con el `code` estable, `phase` correcta (parse/semantic),
-`suggestion` y línea donde aplica.
-
-**Borrow checker** (v0.19.0, tracks 1/3/4 — el runner los corre con `NYX_BORROW=warn|error`
-y también en modo OFF para probar silencio; el número de checks por caso NO es uniforme —
-depende de cuántos modos/variantes ejercita cada test, no de una regla fija "pareado = 2"; el
-desglose exacto está en cada bullet de abajo, y suma al total de la suite (ver tabla-resumen: 173):
-`test-borrow-use-after-move` (T1a, NYX1201 hint no-gating, se suprime en error — 3 checks:
-warn-hint + error-suppressed + off-silent) + `test-borrow-use-after-free`/
-`test-borrow-double-free`/`test-borrow-free-ok` (T3a, NYX1220/1221 SOUND — 1 check cada uno) +
-`test-borrow-mut-exclusive`/`-ok` (NYX1210/1211, lint no-gating — 1 check cada uno) +
-`test-borrow-affine-move`/`-ok` (T4a/T4b, NYX1230 SOUND — 1 check cada uno) +
-`test-borrow-dangling-return`/`-propagate`/`-reassign`/`-neg-passthrough`/`-neg-self`/
-`-neg-deref` (Track 3 inc 1, 2026-07-10: NYX1222 GATING — escape de
-`&<local del frame>` por `return`, directo o propagado vía `let`/reasignación; excluye
-`&self.campo`, `&arr[i]`, `&*p` y `return` de un puntero recibido; +9 checks: 3 casos POS
-× 2 [gate + off-silent] + 3 casos NEG × 1 [sin falso positivo]). Sound dentro de su scope
-(sin falsos negativos de escape-por-return); ver limitación conservadora de flow-merge
-compartida con toda la familia gating en `TASKS.md`.
-**Track 3 inc 2** (nuevo 2026-07-11): dos vectores de escape nuevos, mismo NYX1222, mensaje
-distinto pero ambos con el prefijo común `reference to local '<x>' escapes` (por eso el runner
-grepea ese substring en vez del sufijo completo). (A) **return de un agregado** con un ref
-frame-bound adentro — `test-borrow-dangling-agg-return` (`return [&x]`) y
-`test-borrow-dangling-agg-struct` (`return Holder { r: &x }`); mensaje "...escapes the function
-that owns it". (B) **store a un destino que sobrevive** — `test-borrow-dangling-global-store`
-(`g = &x` sobre global) y `test-borrow-dangling-outparam` (`out.f = &x` con `out: *T` parámetro);
-mensaje "...escapes into a longer-lived location". NEG: `test-borrow-dangling-agg-neg`
-(`return [&p.x]` con `p: *Point` parámetro — el elemento no es frame-bound, no marca) y
-`test-borrow-dangling-local-struct-neg` (`h.r = &x` con `h` struct frame-local — el destino
-NO sobrevive a la función, no marca). +10 checks: 4 casos POS × 2 [gate+off-silent] + 2 NEG × 1.
-Spec: `docs/superpowers/specs/2026-07-10-track3-dangling-refs-design.md` (inc 1) y
-`docs/superpowers/specs/2026-07-11-track3-inc2-escape-vectors-design.md` (inc 2).
-
-## Suite 3: M-08 happy types (`make test-m08-types`)
-
-**Total: 16** | `tests/compiler/types/test-NN-m08-*.nx` — happy paths del type checker
-end-to-end (parse → semantic → codegen → run) sin `NYX_SKIP_SEMANTIC`.
-Incluye test-46..58 (M-08 S1–B8) + test-208..210 (F2 monomorfización implícita).
-
-## Suite 4: Advanced (`tests/advanced/`)
-
-**Total: 30** (A01–A30) — stress tests y algoritmos complejos para capability assessment:
-recursión profunda, structs anidados, HOFs, sorting, matrices, closures con estado,
-linked lists, trait polymorphism, expression trees, state machines, integration stress.
-
-## Suite 5: Stdlib (`make test-stdlib`)
-
-**Total: 3** — std/math.nx, std/array.nx, integración (primes/sort/gcd/lcm/clamp).
-
-## Suite 6: Runtime C unit (`make test-runtime`) — B4, nuevo 2026-06-10
-
-**Total: 34 suites / 1444 asserts** (reconciliado 2026-08-29 con corrida real; los incrementos desde 1066 están en las notas de cabecera de este archivo. Historia al momento del conteo viejo: ver fila reconciliada arriba — `+test_net_result.c` E5.2b (+56, 48→104, incl. su propio review final F1), E5.1 y su review final F1 (+2), `test_scheduler` preexistente flaky; el detalle histórico debajo quedó congelado en el 20/839 previo a las rondas de E4/E5.1) (+test_terminal.c 2026-07-25 (C1 friction-browser): `nyx_raw_mode_enter()` instala un handler no-op de SIGWINCH solo si la disposición sigue en `SIG_DFL` — 6 asserts vía forkpty+`TIOCSWINSZ` real, cubre el wakeup de `read_byte_timeout(-1)` y el no-clobber de un handler propio (`signal_handle`) instalado antes, orden real de nyx-edit; +10 test_char_substring en test_strings.c 2026-07-22: substring por CODEPOINTS UTF-8 — 1 cp multibyte = 2 bytes, salto de emoji de 4 bytes, clamps de borde, NULL; +33 test_maps 2026-07-21: nyx_map_scan cursor-estable — scan completo sin duplicados, GARANTÍA con ≥2 resizes a mitad, deletes, vacío, NULL guards; (+9 rwlock en test_thread.c 2026-07-21: readers comparten/writer excluye vía try*, NULL guards, serialización real 4 threads × 5000; +15 test_net 2026-07-21: cap de body HTTP `NYX_HTTP_MAX_BODY` + slot 6 de error del request (0 ok / 413 too-large, sin drenar el socket sobre el cap); +10 test_index_of_from en test_strings.c 2026-07-21: indexOf(needle, from) — offset absoluto, clamps de borde, needle vacío estilo JS, búsqueda tras NUL; +21 test_binary_safe en test_strings.c 2026-07-21: familia de búsqueda/comparación binary-safe por longitud — equals/compare/contains/index_of/starts_with/ends_with/split/replace con NUL embebido (contrato "strings=bytes" v0.14; antes strcmp/strstr cortaban en el primer NUL); +test_file_io.c nuevo 2026-07-20: fsync/fdatasync — 13 asserts (fd válido con datos escritos, fd inválido/-1/cerrado -> -1, ida vía `nyx_open_fd`); +14 tls_wait_readable_eof_after_nonblock_read, review final pre-push FIX 1: EOF real (close_notify tras el último frame) observado vía `tls_read_nonblock` marca `h->eof` → `tls_wait_readable` deja de reportar POLLIN para siempre y devuelve -1 DETERMINÍSTICO (antes: busy-spin, el fd queda "legible" por EOF sin cota); +31 tls_wait_readable: handle inválido, timeout sin data, data lista+read posterior, data+HUP en la misma vuelta de poll — regresión POLLIN-antes-que-POLLERR/HUP, buffer interno legible sin poll; +31 tls_read_nonblock: handle inválido, max_bytes<=0, sin data no bloquea, data lista + O_NONBLOCK restaurado, buffered sin tocar el socket, caveat NewSessionTicket real — wait_readable=1 + read_nonblock="" sin bloquear) | `tests/runtime-unit/` — harness header-only (test_webpush_crypto: cripto Web Push, 16 asserts, KAT RFC 5869 + McGrew GCM + round-trips ECDH/ECDSA)
-`nyx_test.h`; ejercita el runtime C directamente (sin `nyx_bootstrap`).
-
-| Fase | Suites | Cobertura |
-|------|--------|-----------|
-| 1 — puros | strings, arrays, maps, crypto, url, base64, random, msgpack | Vectores de valor conocido (FIPS/RFC) |
-| 2 — I/O | websocket, http2, thread, process, net | accept_key RFC6455, HPACK, channels/mutex cross-thread, fork+exec+wait, parsers HTTP/RESP vía socketpair |
-| 3 — frágiles | event_loop, scheduler, tls | fd readiness, 50 goroutines work-stealing, loopback TLS con cert X509 in-process |
-
-Gotchas del toolchain documentados en el header del runner (`-iquote` vs `-I` por
-`runtime/time.h`; `-D_DEFAULT_SOURCE`).
-
-## Suite 7: Stacks extraídos (`make test-stacks`) — CANARIO del compilador
-
-`scripts/testing/run_stack_tests.sh` corre las suites de los stacks locales
-(SKIP limpio si no están clonados). Los tests de producto cazaron la
-regresión de codegen v0.18 — este runner preserva ese early-warning tras
-cambios de compiler/runtime/std.
-
-| Stack | Target | Suite |
-|-------|--------|-------|
-| ~/nyx-db-stack | `make test-db` | 7 suites .nx (92 casos) + Python RESP2 con persistencia |
-| ~/nyx-queue-stack | `make test-queue` | 17 tests Python RESP2 |
-| ~/nyx-edit-stack | `make test-edit` | harness PTY 41 checks |
-| ~/nyx-shell-stack | `make test-shell` | smoke 2 checks |
-| ~/nyx-serve-stack | `make test-serve` | smoke HTTP 7 checks |
-| ~/nyx-proxy-stack | `make test-proxy` | 3 suites .nx: cache (LRU/TTL/singleflight + integridad de bytes), metrics (histograms Prometheus), xff — movidas de tests/products/ en el split #7 (2026-07-06); el viejo `make test-product-units` se retiró |
-
-(nyx-kv-stack se testea desde su propio repo — flujo TLS/daemon propio;
-sus 41 tests viven en `~/nyx-kv-stack`. El viejo `make test-products` se
-retiró con la extracción de db.)
-
-## Suite 8: Integration E2E (`make test-integration`)
-
-**Total: 10 serve+kv + WS proxy + HTTP/2 + FFI callback C→Nyx + std/llm stub** |
-`tests/integration/test_serve_kv.py` — HTTP health, landing, 404, KV CRUD
-directo, keep-alive (+1 test de CSS que se salta si el archivo no está).
-Ports: KV=13380 (binario de `~/nyx-kv-stack`, override `NYX_KV_BIN`), SERVE=13000.
-`tests/integration/test_ws_proxy.py` — WebSocket proxying (6 checks, fixture
-ws_gateway; vendoriza la lib desde `~/nyx-proxy-stack`, override `NYX_PROXY_SRC`).
-`tests/integration/test_http2.py` — frames HTTP/2 contra `examples/http2-server.nx`
-en :13004 (movido de tests/products/ al absorber nyx-http2 al core, 2026-07-05;
-modo lib `h2` o fallback raw-socket sin deps).
-`tests/integration/test_ffi_callback.py` — callback C→Nyx (3 checks): compila
-`ffi_callback/main.nx` con el bootstrap, linkea con `ffi_callback/toy_lib.c`
-(stand-in de libllama) + runtime, corre y compara stdout. Prueba `c_fn_ptr` +
-`string_from_cstr` end-to-end (escalar 42 / logging / streaming tok 0..2).
-`tests/integration/test_llm_stub.py` — bindings llama.cpp contra stub (3 checks):
-compila `libllama_stub.so` (firmas reales, eco determinista), corre `llm_stub/main.nx`
-via std/llm — generate + streaming c_fn_ptr + `STUB_FREES model=1 ctx=1` (drop afín
-exactamente 1 vez) + caso negativo sin .so (error limpio, no SEGV).
-
----
-
-## Suite 9: Load gate (`make test-load`) — [arco:W3-paso0b]
-
-**Por qué existe**: caza la clase de bug «colector × stacks de goroutine»
-end-to-end — Boehm escaneando el stack NATIVO de un worker suspendido con el
-sp capturado sobre el stack de UNA goroutine (rango de decenas de MB con
-guard pages `PROT_NONE` en el medio). Es el único gate que reprodujo el bug
-del paso 0b de punta a punta y el único que mató los dos mutantes de esa
-review (revertir `GC_set_sp_corrector`: 6/10 SEGV; `sa_mask` vacía sola: sin
-señal, hace falta el corrector junto a la máscara heredada). Antes vivía
-solo en el ledger de esa investigación
-(`.superpowers/sdd/2026-08-27-w3-paso0b-gc-roots/`); acá queda como caso
-permanente para que una regresión futura del GC/scheduler no dependa de que
-alguien recuerde la receta.
-
-`tests/stress/gc_goroutine_load.nx`: 300 goroutines concurrentes, cada una
-construye un `Array<int>` de 20 000 elementos (fuerza varios `GC_realloc` vía
-`push`, el mismo camino del backtrace original) y vuelve a leer cada elemento
-para sumarlos — si el GC escaneó mal las raíces y liberó o corrompió el
-backing store mientras la goroutine estaba suspendida a mitad de
-construcción, la suma se desvía del valor esperado (`59997000000`,
-determinista) en vez de solo crashear.
-
-`scripts/testing/run_load_gate.sh` compila **una sola vez** con la receta
--O2 de producción (la misma de `make run`) y corre el binario resultante 5
-veces normal + 3 veces con `GC_ENABLE_INCREMENTAL=1` (override
-`LOAD_GATE_RUNS`/`LOAD_GATE_RUNS_INC` — la investigación original usó ×30 en
-ambas variantes para exprimir el ~50% de tasa de fallo del bug original).
-Cada corrida se valida por rc **Y** por la presencia literal de la línea
-`LOAD_OK sum=59997000000` en la salida — comparar solo el rc no alcanza (un
-exit espurio en 0 sin la línea, o el binario matado por `timeout`, deben
-contar como falla). Duración esperada: ~15-25s en la máquina de referencia
-(dominada por la ejecución de las 8 corridas, no por la única compilación).
-
----
-
-## Legacy (sin runner funcional)
-
-- **`tests/compiler-unit/`** (4 files): el runner racket (`run_bootstrap_unit_tests.sh`,
-  invocaba `racket main.rkt` — ya no existe) fue RETIRADO 2026-06-17 y `make test-unit`
-  neutralizado. Los .nx son programas Nyx válidos (importan `compiler/lexer`, etc.) pero
-  print-based — pendiente portarlos a un runner nyx_bootstrap con asserts (TASKS.md).
-- **`tests/verify/`** (12 files): suite exhaustiva pre-v0.13 sin runner tras la
-  reorganización. Programas Nyx válidos (sized types, bitwise, casts) — mismo destino
-  que compiler-unit (portar a nyx_bootstrap, TASKS.md).
-
----
-
-## Integrated Test Runner (`nyx test`)
-
-Nyx incluye un test runner integrado (`compiler/test.nx`) para proyectos con bloques
-`test "name" { ... }`:
+## Cómo se verifica
 
 ```bash
-nyx test my_test.nx           # un archivo
-nyx test                      # descubre por nyx.toml
-nyx test --filter "string" --verbose --timeout 60
+make test                    # regression — requerido antes de cada commit
+make test-errors              # error paths parse + semantic
+make test-m08-types           # M-08 happy types
+make test-stdlib               # stdlib
+make test-runtime              # runtime C unit
+make test-load                 # load gate (gc × goroutine stacks)
+make test-ai-first              # ai-first + guardias + docs-health
+make test-dispatch-matrix        # invariancia de dispatch por forma
+make test-repl                    # smoke del intérprete
+make test-stacks                   # canario de los 5 stacks (SKIP si faltan)
+make test-integration                # E2E serve+kv+WS+HTTP2+FFI+llm
+make test-unit                        # verify + compiler-unit + fmt
+make test-wasm                         # wasm32-wasi (SKIP sin toolchain)
+make test-all                           # todo lo de arriba salvo integration/wasm
 ```
 
-Build: `make build-test`
+`assert()` aborta el proceso (`exit(1)`) en el primer fallo salvo dentro de
+`nyx test` (el runner integrado, que reporta por-test y sale con código 1 al
+final) — cualquier runner de tests `.nx` propio debe grepear
+`ASSERTION FAILED` en el output además del exit code. Los runners de
+`scripts/testing/` serializan contra `script.nx`/`script.ll`/`script_bin` de
+la raíz (ver `lib_testroot_lock.sh`) — no correr dos en paralelo.
 
----
-
-## How to Run
-
-```bash
-make test                # regression (ARM64) — requerido antes de cada commit (conteo: tabla-resumen arriba)
-make test-all            # todas las suites automatizadas (regression + advanced + stdlib
-                         #   + errors + m08-types + runtime + load gate + ai-first)
-make test-errors         # error paths parse + semantic (conteo: tabla-resumen arriba)
-make test-m08-types      # 16 happy types
-make test-stdlib         # 3 stdlib
-make test-runtime        # 22 suites C / 1010 asserts
-make test-load           # gate de carga: 300 goroutines × Array 20k, ×5+3 corridas [arco:W3-paso0b]
-make test-stacks         # suites de los stacks extraídos incl. proxy (canario del compilador)
-make test-integration    # 10 E2E serve+kv (usa ~/nyx-serve-stack y ~/nyx-kv-stack)
-```
-
-## Adding New Tests
+## Adding new tests
 
 ```bash
-# Regression: crear en el subdirectorio temático y correr make test
-cat > tests/compiler/ecosystem/test-211-my-feature.nx << 'EOF'
+# Regression: crear en el subdirectorio temático correspondiente y correr make test
+cat > tests/compiler/ecosystem/test-XXX-my-feature.nx << 'EOF'
 fn main() {
     print("expected output")
 }
@@ -894,16 +88,12 @@ EOF
 make test
 ```
 
-- Error test: `tests/compiler/errors/test-m08-*.nx` + entrada en su runner.
-- Product unit .nx (proxy): crear el archivo en `~/nyx-proxy-stack/tests/` y agregar su nombre a `TESTS` en `~/nyx-proxy-stack/scripts/run_unit_tests.sh`; el monorepo lo corre vía `make test-stacks`.
-  Recordar: verificar con asserts + el runner detecta "ASSERTION FAILED".
+Error test: agregar en `tests/compiler/errors/` + entrada en su runner.
+Producto (stack extraído): agregar el archivo en `~/nyx/products/<stack>/tests/`
+y su nombre al runner de ese repo; `make test-stacks` lo recoge solo.
 
-## Notes
+## Referencias
 
-- **assert() no aborta** (runtime.c `nyx_assert_fail`): cualquier runner de tests .nx debe
-  grepear "ASSERTION FAILED" en el output — el exit code solo no alcanza.
-- **Strings**: `length()` = codepoints UTF-8; `substring()`/`indexOf()` = bytes. Para
-  slicing usar `byte_length()` (ver Limitaciones en CLAUDE.md).
-- **RUNTIME_SRCS**: todos los runners linkean el runtime completo de 23 archivos.
-- **Support files**: `tests/support/mylib.nx`, `tests/support/vislib.nx` (test-65, test-81);
-  `tests/test-modules/*.nx` — fixtures de tests cross-module (alias_demo, display_only_demo).
+- Historia completa de conteos 2026-04→2026-08: `docs/archive/2026-tests-history.md`
+- Detalle de directorios de regression (`tests/compiler/basics/` 01–20, etc.): explorar con `ls tests/compiler/`
+- Gotchas de testing/toolchain: `LLM.md` §5

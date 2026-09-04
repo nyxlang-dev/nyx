@@ -1,8 +1,8 @@
 # Nyx — Comparativa con Otros Lenguajes
 
 > Comparativa honesta. **La versión NORMATIVA es [COMPARISON.md](COMPARISON.md) (inglés)** —
-> esta traducción se sincroniza a mano y puede atrasarse en la prosa; los PUNTAJES de abajo
-> sí están alineados (sync 2026-08-05 tras la auditoría integral).
+> esta traducción se sincroniza a mano y puede atrasarse en la prosa.
+> Sync: 2026-08-30.
 > Última actualización de fondo: 2026-07-15 en la normativa (Seguridad de memoria 2→3 por el
 > borrow checker; Concurrencia 3→4 por async real v0.19-v0.20; Rendimiento 3→4 por paridad
 > de cómputo con C bajo medición justa + internado + LICM). Auditoría original: 2026-03-24.
@@ -31,7 +31,7 @@
 
 | Lenguaje | Rend. | Seg.Mem. | Express. | Ecosist. | Concurr. | Full-Stack | Curva | Self-host | AI-Verif. | **Media** |
 |----------|-------|----------|----------|----------|----------|------------|-------|-----------|-----------|-----------|
-| **Nyx** | **3** | **2** | **4** | **2** | **3** | **4** | **3** | **5** | **4** | **3.3** |
+| **Nyx** | **4** | **3** | **4** | **2** | **4** | **4** | **3** | **5** | **4** | **3.7** |
 | C | 5 | 1 | 2 | 4 | 2 | 2 | 2 | 5 | 2 | 2.8 |
 | C++ | 5 | 2 | 4 | 5 | 3 | 2 | 1 | 5 | 2 | 3.2 |
 | Rust | 5 | 5 | 5 | 4 | 5 | 2 | 1 | 5 | 5 | 4.1 |
@@ -74,15 +74,27 @@
   diagnósticos son ~3.7K líneas de Nyx que controlamos completamente.
 
 ### Rendimiento: 4 — subido 2026-07-15 (normativa)
-- Compila a LLVM IR nativo → en teoría rendimiento comparable a C/Rust
-- Pero: no hay benchmarks, no se verificaron optimization passes, GC Boehm agrega overhead
-- Sin evidencia de rendimiento real bajo carga
+- Compila a código nativo vía LLVM IR; **medido en paridad o mejor que C (-O2) en todos los
+  benchmarks de cómputo puro medidos** (primes 0.80x, fib ~1.02x, map ~1.0x, strings ~1.1x —
+  medición justa, init one-time del GC excluido)
+- Primeros optimization passes propios shippeados y verificados: interning de string literals
+  (`nyx_intern_cstr`) + LICM (`compiler/licm.nx`)
+- Sin embargo: GC Boehm cuesta en allocación masiva (~∞ vs C optimizado) + init one-time
+  (~7.5ms); sin SIMD/intrinsics; sin evidencia de rendimiento real bajo carga (re-medición de
+  benchmarks de producto pendiente)
 
 ### Seguridad de memoria: 3 — subido 2026-07 (borrow checker)
 - GC Boehm previene memory leaks simples
-- Pero: no hay borrow checker, lifetimes decorativos, &T/&mut T son alias, Box/Rc sin enforcement
-- unsafe blocks existen pero sin verificación de correctitud
-- Mejor que C (tiene GC), peor que todo lo demás
+- **Borrow checker real** (`compiler/borrow.nx`, `NYX_BORROW=off|warn|error`): detección SOUND
+  de use-after-free/double-free sobre memoria manual (NYX1220/1221, flow-sensitive), move-checking
+  de tipos `#[affine]` (NYX1230), detección de dangling-refs vía `return` (NYX1222) + lifetimes
+  inter-procedurales (NYX1223), exclusividad de `&mut` (NYX1210/1211)
+- `#[affine]` + `impl Drop` = drop RAII determinista (una vez, al salir del frame dueño);
+  `Box<T>`/`Rc<T>`/`MoveOnly<T>` (`std/owned`) son **tipos afines reales con enforcement**
+- Sin embargo: sobre código GC normal el borrow checker es un lint opt-in (el GC ya garantiza
+  no-UAF); los lifetimes se parsean pero la inferencia de regiones completa es un subconjunto
+  de la de Rust; el aliasing de `&mut` baja a `T*` sin `noalias`
+- Mejor que C/Go, por debajo de Rust/Haskell (GC por defecto, borrow checker es un subconjunto)
 
 ### Expresividad: 4
 - Traits con dispatch estático+dinámico, inheritance, default methods, associated types
@@ -104,8 +116,12 @@
 - M:N scheduler con work-stealing REAL (ucontext_t)
 - Channels, mutex, WaitGroup, Semaphore, Once, AtomicCounter
 - Event loop epoll REAL
-- Pero: async/await es reescritura sintáctica (no paralelismo real)
-- spawn no puede capturar variables directamente
+- **Async real** (v0.19): `await` corre una goroutine stackful real con join cooperativo y
+  `spawn { }` lanza una goroutine detached sobre el scheduler M:N + event loop epoll —
+  concurrencia real, ya no azúcar sintáctica (`await` de un float está gateado, NYX1021,
+  hazard de ABI)
+- Sin embargo: `spawn` no puede capturar variables del scope externo directamente
+  (limitación de closure-capture)
 
 ### Full-Stack nativo: 4
 - 8 productos como librerías PM: nyx-kv, nyx-serve, nyx-proxy, nyx-queue, nyx-db, nyx-http2, nyx-edit, nyx-shell

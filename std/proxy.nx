@@ -233,5 +233,12 @@ pub fn proxy_start(config: ProxyConfig) {
     print("")
 
     let handler: Fn = make_proxy_handler(config)
-    http_serve(config.listen_port, handler)
+    // Se chequea el retorno del bind (gotcha check-bind-return / W107): un
+    // bind fallido devuelve -1 y, sin este chequeo, proxy_start() "arranca"
+    // sin proxy y vuelve con exito. La firma es void por contrato publico, asi
+    // que el aviso es un print — el runtime ademas grita por stderr desde
+    // v0.24.4 (gotcha bind-failure-loud).
+    if http_serve(config.listen_port, handler) < 0 {
+        print("ERROR: no se pudo bindear el puerto " + int_to_string(config.listen_port))
+    }
 }

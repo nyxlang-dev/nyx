@@ -7,11 +7,12 @@
 # Usage:
 #   bash scripts/testing/run_integration_tests.sh
 #
-# Prerequisites: los binarios de nyx-serve y nyx-kv vienen de sus repos
-# extraídos (nyx-serve-stack y nyx-kv-stack; overrides NYX_SERVE_BIN /
-# NYX_KV_BIN). Si alguno no está disponible, el E2E se SKIPEA con aviso
-# (exit 0) — no es un fallo del monorepo. `make test-stacks` compila el
-# nyx-serve del stack como parte del canario.
+# Prerequisites: el server web es std/serve (fixture compilado acá mismo con
+# el bootstrap — desde la absorción 2026-09-03 no hay binario nyx-serve
+# aparte); el daemon nyx-kv viene de su repo extraído
+# (~/nyx/products/kv/daemon/nyxkv, override NYX_KV_BIN). Si el daemon kv no
+# está, el E2E serve+kv se SKIPEA con aviso (exit 0) — no es un fallo del
+# monorepo.
 # =============================================================================
 
 set -uo pipefail
@@ -161,17 +162,83 @@ else
     OVERALL=1
 fi
 
+# ── std/serve (framework web absorbido al core) ──────────────────────────
+# Fixture propio (tests/integration/serve_std): server mínimo con std/serve +
+# std/template. Cubre el CONTRATO público del módulo: {param}, JSON,
+# keep-alive, POST urlencoded, tpl_render, static con ETag/304/Cache-Control,
+# traversal 403, 404 y drain de SIGTERM con exit 0. El harness levanta y mata
+# el server él mismo (nunca queda uno vivo).
+echo -e "\n${BOLD}-- std/serve --${NC}"
+SS_BIN="/tmp/nyx-serve-std-test-server"
+if [ ! -x ./nyx_bootstrap ]; then
+    echo -e "  SKIP: falta ./nyx_bootstrap (make bootstrap)"
+else
+    echo -e "  Compiling tests/integration/serve_std/server.nx..."
+    cp tests/integration/serve_std/server.nx script.nx
+    if ./nyx_bootstrap >/dev/null 2>&1 && \
+       clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+           -o "$SS_BIN" 2>/dev/null; then
+        rm -f script.nx script.ll
+        if python3 tests/integration/test_serve_std.py "$SS_BIN"; then
+            echo -e "  ${GREEN}std/serve E2E passed${NC}"
+        else
+            echo -e "  ${RED}std/serve E2E failed${NC}"
+            OVERALL=1
+        fi
+        rm -f "$SS_BIN"
+    else
+        rm -f script.nx script.ll
+        echo -e "  ${RED}std/serve: no se pudo compilar el fixture${NC}"
+        OVERALL=1
+    fi
+fi
+
+# ── std/serve: smoke COMPLETO (los 64 checks de nyx-serve v0.7.1) ─────────
+# Fixture tests/integration/serve_std/standalone.nx = examples/standalone.nx
+# del producto con los imports en std/*; harness test_serve_std_smoke.py =
+# su tests/test_serve_smoke.py. Portados al congelar el producto (T4 de la
+# absorción, 2026-09-03) para no perder cobertura: redirect+Set-Cookie,
+# after-hooks, 404/500 custom con panic, WS {param}/404/rooms/broadcast,
+# multipart, 413, wraps, routers, ctx, access-log, drain, bind fallido y
+# serve_on_shutdown. Puertos 13080-13083. El binario se reutiliza abajo
+# como server del E2E serve+kv.
+echo -e "\n${BOLD}-- std/serve smoke completo --${NC}"
+SS_SMOKE_BIN="/tmp/nyx-serve-std-smoke"
+rm -f "$SS_SMOKE_BIN"
+if [ ! -x ./nyx_bootstrap ]; then
+    echo -e "  SKIP: falta ./nyx_bootstrap (make bootstrap)"
+else
+    echo -e "  Compiling tests/integration/serve_std/standalone.nx..."
+    cp tests/integration/serve_std/standalone.nx script.nx
+    if ./nyx_bootstrap >/dev/null 2>&1 && \
+       clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+           -o "$SS_SMOKE_BIN" 2>/dev/null; then
+        rm -f script.nx script.ll
+        if python3 tests/integration/test_serve_std_smoke.py "$SS_SMOKE_BIN"; then
+            echo -e "  ${GREEN}std/serve smoke passed${NC}"
+        else
+            echo -e "  ${RED}std/serve smoke failed${NC}"
+            OVERALL=1
+        fi
+    else
+        rm -f script.nx script.ll "$SS_SMOKE_BIN"
+        echo -e "  ${RED}std/serve smoke: no se pudo compilar el fixture${NC}"
+        OVERALL=1
+    fi
+fi
+
 # ── serve + kv E2E ────────────────────────────────────────────────────────
-# nyx-serve y nyx-kv viven en sus repos extraídos — usar sus binarios.
+# Server = el fixture de std/serve compilado arriba (standalone acepta
+# --port y expone /api/health, el contrato del daemon viejo); el daemon kv
+# viene de su repo extraído. SKIP limpio si falta cualquiera de los dos.
 echo -e "\n${BOLD}-- serve + kv --${NC}"
-KV_BIN="${NYX_KV_BIN:-$HOME/nyx-kv-stack/daemon/nyxkv}"
-SERVE_BIN="${NYX_SERVE_BIN:-$HOME/nyx-serve-stack/nyx-serve}"
+KV_BIN="${NYX_KV_BIN:-$HOME/nyx/products/kv/daemon/nyxkv}"
+SERVE_BIN="${NYX_SERVE_BIN:-$SS_SMOKE_BIN}"
 if [ ! -x "$KV_BIN" ]; then
     echo -e "  SKIP: binario nyx-kv no encontrado en $KV_BIN"
-    echo -e "  (clonar nyx-kv-stack o exportar NYX_KV_BIN para correr el E2E)"
+    echo -e "  (clonar ~/nyx/products/kv y buildear el daemon, o exportar NYX_KV_BIN)"
 elif [ ! -x "$SERVE_BIN" ]; then
-    echo -e "  SKIP: binario nyx-serve no encontrado en $SERVE_BIN"
-    echo -e "  (make -C ~/nyx-serve-stack build, o exportar NYX_SERVE_BIN)"
+    echo -e "  SKIP: server de std/serve no disponible en $SERVE_BIN (el smoke de arriba no compiló)"
 else
     if NYX_KV_BIN="$KV_BIN" NYX_SERVE_BIN="$SERVE_BIN" python3 tests/integration/test_serve_kv.py; then
         echo -e "  ${GREEN}serve+kv E2E passed${NC}"
@@ -180,6 +247,7 @@ else
         OVERALL=1
     fi
 fi
+rm -f "$SS_SMOKE_BIN"
 
 if [ "$OVERALL" -eq 0 ]; then
     echo -e "\n${GREEN}Integration tests passed${NC}"

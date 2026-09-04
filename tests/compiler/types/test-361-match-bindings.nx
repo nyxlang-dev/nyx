@@ -12,7 +12,7 @@
 // contrato de esta task (codegen.nx). Con esa forma de AST,
 // semantic.nx:validate_match_arm tampoco declara el binding (NYX1002 it not
 // declared) -- el programa nunca llega a codegen. Repro y hallazgo completo:
-// docs/superpowers/reviews/2026-08-13-arco-e1-e2-repros/r2-nested2-struct.nx
+// docs/design/reviews/2026-08-13-arco-e1-e2-repros/r2-nested2-struct.nx
 // mas task-3-report.md. El sitio de codegen para el binding INTERNO de un
 // patron anidado de 2 niveles (la 3ra copia de la tabla, alcanzable cuando
 // el sub-patron SI llega como match_pattern) fue ruteado por

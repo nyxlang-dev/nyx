@@ -1,8 +1,9 @@
-// nyx-serve CORS — cross-origin headers for frontend APIs
-// CORS nyx-serve — headers cross-origin para APIs de frontend
+// std/serve CORS — cross-origin headers for frontend APIs
+// CORS std/serve — headers cross-origin para APIs de frontend
 
 import "std/http"
 import "std/web"
+import "std/serve"
 
 fn api_data(req: Request) -> Response {
     return response_json(200, "{\"data\": [1, 2, 3]}")
@@ -10,6 +11,7 @@ fn api_data(req: Request) -> Response {
 
 fn main() -> int {
     let app: App = app_new()
+    let port: int = 18183
 
     // Configure CORS policy — who can call the API, what methods, headers
     cors_configure(
@@ -26,8 +28,42 @@ fn main() -> int {
 
     app_get(app, "/api/data", api_data)
 
-    print("CORS configured for https://myapp.com")
-    print("middleware chain: logging -> cors -> route handler")
-    print("OPTIONS preflight requests return 204 with appropriate headers")
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    let base: String = "http://127.0.0.1:" + int_to_string(port)
+
+    var tries: int = 0
+    var up: bool = false
+    while tries < 50 and !up {
+        let probe: Array = http_get(base + "/api/data")
+        if http_status(probe) == 200 {
+            up = true
+        } else {
+            sleep(50)
+        }
+        tries = tries + 1
+    }
+    assert(up, "el servidor nunca levantó en :" + int_to_string(port))
+
+    // Un GET normal no pasa por preflight: mw_cors solo actúa sobre
+    // OPTIONS (ver std/web.nx), así que la ruta responde directo.
+    let r: Array = http_get(base + "/api/data")
+    assert(http_status(r) == 200, "GET /api/data -> 200")
+    assert(http_body(r).indexOf("[1, 2, 3]") >= 0, "GET /api/data body")
+
+    // OPTIONS preflight -> 204 + los 3 headers CORS configurados arriba.
+    let pre: Array = http_request("OPTIONS", base + "/api/data", [], "")
+    assert(http_status(pre) == 204, "OPTIONS preflight -> 204")
+    let pre_headers: Array = pre[2]
+    assert(http_find_header(pre_headers, "Access-Control-Allow-Origin") == "https://myapp.com",
+           "Access-Control-Allow-Origin")
+    assert(http_find_header(pre_headers, "Access-Control-Allow-Methods") == "GET, POST, PUT, DELETE",
+           "Access-Control-Allow-Methods")
+    assert(http_find_header(pre_headers, "Access-Control-Allow-Headers") == "Content-Type, Authorization, X-API-Key",
+           "Access-Control-Allow-Headers")
+
+    print("OK: CORS (GET directo + preflight OPTIONS) verificado end-to-end")
     return 0
 }

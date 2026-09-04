@@ -3,8 +3,8 @@
 #  Suite AI-FIRST — valida el OBJETIVO, no solo el compilador
 # ============================================================
 # Cada caso en tests/ai-first/ es código idiomático que una IA
-# escribiría guiándose SOLO por la doc sembrada (LLM.md / CLAUDE.md /
-# CHEATSHEET). Cada programa verifica su propia corrección con assert()
+# escribiría guiándose SOLO por la doc sembrada (AGENTS.md y docs/nyx/ —
+# LLM.md + las guías). Cada programa verifica su propia corrección con assert()
 # (abortivo, exit 1 desde v0.14). Si la doc enseñara algo falso —como
 # pasó con "and/or no cortocircuitan"— el assert aborta y el caso cae.
 #

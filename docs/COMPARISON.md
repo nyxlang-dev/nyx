@@ -1,6 +1,6 @@
-# Nyx v0.20.1 — Language Comparison
+# Nyx — Language Comparison
 
-> Honest comparison. Last updated: 2026-07-15 (Memory Safety 2→3, Concurrency 3→4 — borrow checker + real async v0.19-v0.20; Performance 3→4 — compute at C parity under fair measurement, interning + LICM passes). Prior: 2026-06-10 (AI-Verifiability dimension; see docs/AI-FIRST.md). Original audit: 2026-03-24.
+> Honest comparison. Medido en v0.20.1+LICM, 2026-07-15; re-medición pendiente (ficha en TASKS.md) (Memory Safety 2→3, Concurrency 3→4 — borrow checker + real async v0.19-v0.20; Performance 3→4 — compute at C parity under fair measurement, interning + LICM passes). Prior: 2026-06-10 (AI-Verifiability dimension; see docs/archive/AI-FIRST.md). Original audit: 2026-03-24.
 > Scoring 1-5: 1=nonexistent, 2=basic, 3=functional, 4=good, 5=excellent/leader.
 > Nyx scores are based on features **verified by compiling and running**, not documentation claims.
 

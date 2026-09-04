@@ -6,6 +6,16 @@
 
 Especificacion completa de sintaxis y caracteristicas del lenguaje Nyx.
 
+> **Cobertura**: este documento especifica lo que está LISTADO en la Tabla de
+> Contenidos de abajo (sintaxis core, tipos, traits/generics, concurrencia
+> M:N real, borrow checker, Box/Rc/MoveOnly, WASM, stdlib, etc.). **Todavía
+> NO especificado acá**: errores tipados E1-E5 (`std/error`, la familia
+> `try_*` — ver el stub más abajo), resolución de imports por módulo, y el
+> target Windows (arco W en curso). Referencia provisional para esas tres
+> áreas: `LLM.md` (Option/Result en §2, gotchas en §5, Modules en §2) y
+> `CHANGELOG.md`. La especificación completa de estas áreas queda fichada
+> como parte del pre-1.0 freeze (`docs/VERSIONING.md`).
+
 ## Tabla de Contenidos
 
 - [Comentarios](#comentarios)
@@ -20,6 +30,8 @@ Especificacion completa de sintaxis y caracteristicas del lenguaje Nyx.
 - [Closures](#closures)
 - [Arrays](#arrays)
 - [Strings](#strings)
+- [Semantic Type Checker (M-08)](#semantic-type-checker-m-08)
+- [Structured Diagnostics (`NYX_DIAG=json`)](#structured-diagnostics-nyx_diagjson)
 - [Multiline y Raw Strings](#multiline-y-raw-strings)
 - [Tuples](#tuples)
 - [Hash Maps](#hash-maps)
@@ -33,7 +45,9 @@ Especificacion completa de sintaxis y caracteristicas del lenguaje Nyx.
 - [Trait Inheritance](#trait-inheritance)
 - [Generics](#generics)
 - [Try Operator](#try-operator)
+- [Typed Errors (Result/try_*)](#typed-errors-resulttry_)
 - [Try-Catch Exception Handling](#try-catch-exception-handling)
+- [Conversiones de Tipo](#conversiones-de-tipo)
 - [FFI (Foreign Function Interface)](#ffi-foreign-function-interface)
 - [Const Declarations](#const-declarations)
 - [Typed For-In](#typed-for-in)
@@ -42,6 +56,7 @@ Especificacion completa de sintaxis y caracteristicas del lenguaje Nyx.
 - [Bitwise Operators](#bitwise-operators)
 - [String Methods](#string-methods)
 - [Array Methods](#array-methods)
+- [Terminal I/O](#terminal-io)
 - [Sized Numeric Types](#sized-numeric-types)
 - [Cast Operator](#cast-operator)
 - [sizeof/alignof](#sizeofalignof)
@@ -122,7 +137,7 @@ Especificacion completa de sintaxis y caracteristicas del lenguaje Nyx.
 let x = 42  // Comentario al final de la linea
 ```
 
-### Comentarios de bloque (v1.1)
+### Comentarios de bloque
 ```nyx
 /* Comentario de bloque simple */
 
@@ -202,7 +217,7 @@ let decimal: float = 3.14      // Float explicito
 
 ## Type Aliases
 
-Desde v1.1, se pueden definir aliases de tipos con `type`:
+Se pueden definir aliases de tipos con `type`:
 
 ```nyx
 type Integer = int
@@ -323,7 +338,7 @@ for num in numeros {
 }
 ```
 
-### For con Type Annotation (v1.4)
+### For con Type Annotation
 ```nyx
 struct Point { x: int, y: int }
 let points: Array = [Point{x: 1, y: 2}, Point{x: 3, y: 4}]
@@ -365,7 +380,7 @@ fn suma(a: int, b: int) -> int {
 let resultado = suma(5, 3)  // 8
 ```
 
-### Default Parameters (v6.2)
+### Default Parameters
 
 ```nyx
 fn greet(name: String = "World") -> String {
@@ -415,7 +430,7 @@ fn my_is_odd(n: int) -> bool {
 
 ## Varargs Tipados
 
-Desde v6.4, las funciones soportan varargs como último parámetro:
+Las funciones soportan varargs como último parámetro:
 
 ```nyx
 fn print_all(sep: String, ...args: String) {
@@ -865,7 +880,7 @@ apunta al token de cierre. El output humano lleva la misma posición:
 
 ## Multiline y Raw Strings
 
-Desde v1.1, Nyx soporta strings multilinea y raw strings.
+Nyx soporta strings multilinea y raw strings.
 
 ### Multiline strings
 ```nyx
@@ -890,7 +905,7 @@ Las raw strings se prefijan con `r` y no procesan escape sequences: `\n`, `\t`, 
 
 ## Tuples
 
-Desde v1.2, Nyx soporta tuples como tipo compuesto anonimo.
+Nyx soporta tuples como tipo compuesto anonimo.
 
 ### Creacion
 ```nyx
@@ -1112,7 +1127,7 @@ Los parametros de variantes soportan `int`, `String`, `float` y `bool`.
 
 ## Generic Enums
 
-Desde v1.2, los enums soportan type parameters via monomorphization:
+Los enums soportan type parameters via monomorphization:
 
 ### Option<T>
 ```nyx
@@ -1278,7 +1293,7 @@ impl Display for Point {
 
 ## Trait Inheritance
 
-Desde v6.3, los traits pueden heredar de otros traits:
+Los traits pueden heredar de otros traits:
 
 ```nyx
 trait Named {
@@ -1365,9 +1380,49 @@ fn compute(x: int, y: int) -> Result {
 
 ---
 
+## Typed Errors (Result/try_*)
+
+> **Stub honesto** — esta sección cubre el contrato ESENCIAL y verificado, no
+> una especificación completa (esa queda fichada para el pre-1.0 freeze).
+> Fuente: `LLM.md` §2/§5 y `docs/design/specs/2026-08-11-errores-tipados-design.md`.
+
+`Result<T, E>` es un enum genérico real (builtin en `std/prelude.nx`), no una
+convención por módulo: cualquier tipo de payload (`int`, `String`, un struct
+propio) funciona de punta a punta en la construcción, el operador `?` y los
+métodos (`unwrap`, `unwrap_or`, `map`, `and_then`, etc.).
+
+**La familia `try_*`** es la forma recomendada, en migración módulo por
+módulo, para las funciones de la stdlib que antes fallaban con centinelas
+mudos (`""`, `-1`, `NULL`) o abortando el proceso. Cubre hoy `std/fs`
+(`try_read_file`/`try_write_file`), `std/net` (conexión, E/S y resolución),
+`std/http` (`try_http_get`/`try_http_post`/`try_http_request`), `std/json`
+(`try_json_parse`) y `std/sqlite` (`try_sqlite_open`/`try_sqlite_exec`/
+`try_sqlite_query`/`try_sqlite_query_named`). Las funciones viejas
+equivalentes (`read_file`, `tcp_connect`, `http_get`, etc.) siguen existiendo
+por compatibilidad hacia atrás — no tienen `try_*` retirado, conviven.
+
+**`std/error`** provee el shape único para todo error de la stdlib:
+`Error { code, kind, msg }`, con `kind` de vocabulario cerrado (`not_found`,
+`permission`, `connection`, `parse`, `timeout`, `in_use`, `io`, `invalid`,
+`oom`, `eof`, `db`) y `error_to_string(e)` como formato humano.
+
+**La regla de dos niveles**: si quien llama puede razonablemente hacer algo
+distinto de loguear y morir, la función devuelve `Result<T, Error>`; si no,
+aborta (`unwrap()`, `panic()`).
+
+**Limpieza de scope y `?`**: el camino `Err` del operador `?` pasa por la misma
+limpieza de scope que un `return` explícito — `defer` corre y un tipo `#[affine]`
+con `impl Drop` (`Box`/`Rc` de `std/owned.nx`) libera — desde v0.27.0 (el emisor
+de `?` salta a la etiqueta de cleanup de la función). Verificado por repro el
+2026-09-03: `defer { println("cleanup") }` + `let v = fails()?` imprime `cleanup`
+antes de devolver `Err`. La nota anterior de esta sección, que afirmaba lo
+contrario, era falsa desde su redacción (2026-08-31).
+
+---
+
 ## Try-Catch Exception Handling
 
-Desde v6.3, Nyx soporta exception handling via `try-catch` blocks:
+Nyx soporta exception handling via `try-catch` blocks:
 
 ```nyx
 try {
@@ -1448,7 +1503,7 @@ if file_exists("archivo.txt") {
 
 ## FFI (Foreign Function Interface)
 
-Desde v1.4, se pueden declarar funciones externas de C directamente en Nyx:
+Se pueden declarar funciones externas de C directamente en Nyx:
 
 ```nyx
 extern "C" fn abs(x: int) -> int
@@ -1484,7 +1539,7 @@ El compilador emite `declare <ret> @<name>(<params>)` en el IR y registra la fun
 
 ## Const Declarations
 
-Desde v1.4, se pueden declarar constantes evaluadas en compile-time:
+Se pueden declarar constantes evaluadas en compile-time:
 
 ```nyx
 const MAX = 100
@@ -1516,7 +1571,7 @@ Para expresiones complejas (llamadas a funciones, etc.), el compilador hace fall
 
 ## Typed For-In
 
-Desde v1.4, el loop `for-in` acepta una type annotation opcional para el elemento:
+El loop `for-in` acepta una type annotation opcional para el elemento:
 
 ```nyx
 struct Point { x: int, y: int }
@@ -1538,7 +1593,7 @@ Esto resuelve el problema de que sin annotation, los elementos de arrays se trat
 
 ## Test Framework
 
-Desde v1.3, Nyx incluye un framework de testing integrado:
+Nyx incluye un framework de testing integrado:
 
 ```nyx
 test "arithmetic" {
@@ -1650,7 +1705,7 @@ fn main() {
 
 ## Bitwise Operators
 
-Desde v1.5, Nyx soporta operadores bit a bit con precedencia C-style:
+Nyx soporta operadores bit a bit con precedencia C-style:
 
 ### Operadores
 ```nyx
@@ -1681,7 +1736,7 @@ Los operadores bitwise tienen precedencia entre comparacion y aritmetica, siguie
 
 ## String Methods
 
-Desde v1.5, los strings exponen metodos adicionales:
+Los strings exponen metodos adicionales:
 
 ```nyx
 let s = "  Hello World  "
@@ -1704,7 +1759,7 @@ Estos metodos se implementan en el runtime C y se despachan via `codegen_method_
 
 ## Array Methods
 
-Desde v1.5, los arrays exponen metodos adicionales:
+Los arrays exponen metodos adicionales:
 
 ```nyx
 let arr = [10, 20, 30, 40, 50]
@@ -1747,7 +1802,7 @@ These builtins are implemented in `runtime/runtime.c` and declared in the compil
 
 ## Sized Numeric Types
 
-Desde v1.6, Nyx soporta tipos numericos de ancho fijo:
+Nyx soporta tipos numericos de ancho fijo:
 
 ```nyx
 let a: i8 = 127
@@ -1777,7 +1832,7 @@ let i: usize = 42
 
 ## Cast Operator
 
-Desde v1.6, el operador `as` permite conversiones explicitas entre tipos:
+El operador `as` permite conversiones explicitas entre tipos:
 
 ```nyx
 let x: int = 42
@@ -1796,7 +1851,7 @@ El compilador selecciona la instruccion LLVM correcta (trunc, zext, sext, fptrun
 
 ## sizeof/alignof
 
-Desde v1.6, se pueden consultar tamaños y alineamientos de tipos en compile-time:
+Se pueden consultar tamaños y alineamientos de tipos en compile-time:
 
 ```nyx
 let size = sizeof(int)       // 8 (bytes)
@@ -1810,7 +1865,7 @@ Ambos se evaluan en compile-time y se insertan como constantes.
 
 ## Raw Pointers & Unsafe
 
-Desde v1.6, Nyx soporta raw pointers y bloques unsafe:
+Nyx soporta raw pointers y bloques unsafe:
 
 ```nyx
 var x: int = 42
@@ -1838,7 +1893,7 @@ Las operaciones de raw pointer (`&x`, `*ptr`, `alloc`, `free`) requieren estar d
 
 ## Manual Memory
 
-Desde v1.6, se puede gestionar memoria manualmente:
+Se puede gestionar memoria manualmente:
 
 ```nyx
 unsafe {
@@ -1865,7 +1920,7 @@ Las `static var` se compilan como globals LLVM con initializer. Persisten durant
 
 ## FFI Structs
 
-Desde v1.6, los structs pueden tener layout compatible con C:
+Los structs pueden tener layout compatible con C:
 
 ```nyx
 #[repr(C)]
@@ -1881,7 +1936,7 @@ Los structs con `#[repr(C)]` se alocan en el stack (no en el heap con GC) y tien
 
 ## Inline Assembly
 
-Desde v1.6, se puede emitir ensamblador inline:
+Se puede emitir ensamblador inline:
 
 ```nyx
 unsafe {
@@ -1896,7 +1951,7 @@ Se compila a LLVM inline assembly. Requiere bloque `unsafe`.
 
 ## Volatile & Atomic
 
-Desde v1.6, se soportan operaciones volatile y atomicas:
+Se soportan operaciones volatile y atomicas:
 
 ```nyx
 unsafe {
@@ -1917,7 +1972,7 @@ unsafe {
 
 ## Typed Closures
 
-Desde v2.0, las closures pueden tener type annotations completas:
+Las closures pueden tener type annotations completas:
 
 ```nyx
 let add: Fn(int, int) -> int = fn(a: int, b: int) -> int { return a + b }
@@ -1941,7 +1996,7 @@ El compilador verifica aridad y tipos de los argumentos en las llamadas indirect
 
 ## Typed Arrays
 
-Desde v2.0.1, los arrays soportan type parameters:
+Los arrays soportan type parameters:
 
 ```nyx
 let nums: Array<int> = [1, 2, 3]
@@ -1954,7 +2009,7 @@ El compilador trackea el tipo del elemento en compile-time y hace auto-coercion 
 
 ## Dynamic Dispatch
 
-Desde v2.0.2, Nyx soporta dynamic dispatch via `dyn Trait`:
+Nyx soporta dynamic dispatch via `dyn Trait`:
 
 ```nyx
 trait Shape {
@@ -1986,7 +2041,7 @@ Internamente, `dyn Trait` es un fat pointer `{data_ptr, vtable_ptr}`. El compila
 
 ## Advanced Pattern Matching
 
-Desde v2.0.3, el pattern matching soporta features avanzadas:
+El pattern matching soporta features avanzadas:
 
 ### Match Guards
 ```nyx
@@ -2038,7 +2093,7 @@ fn unwrap_nested(o: Option<Option<int>>) -> int {
 
 ## pub Keyword
 
-Desde v2.1, `pub` es sinonimo de `export`:
+`pub` es sinonimo de `export`:
 
 ```nyx
 pub fn greet(name: String) -> String {
@@ -2057,7 +2112,7 @@ pub enum Level { Info, Warn, Error }
 
 ## Module Imports with Namespaces
 
-Desde v2.1, se pueden importar modulos con alias para acceso calificado:
+Se pueden importar modulos con alias para acceso calificado:
 
 ```nyx
 import "mylib" as lib
@@ -2075,7 +2130,7 @@ Solo los items marcados con `pub` o `export` son accesibles via namespace dispat
 
 ## panic
 
-Desde v2.2, `panic()` aborta la ejecucion con un mensaje:
+`panic()` aborta la ejecucion con un mensaje:
 
 ```nyx
 fn divide(a: int, b: int) -> int {
@@ -2092,7 +2147,7 @@ Imprime el mensaje a stderr y termina con `exit(1)`.
 
 ## Result/Option Methods
 
-Desde v2.2, `Result<T,E>` y `Option<T>` tienen metodos builtin:
+`Result<T,E>` y `Option<T>` tienen metodos builtin:
 
 ### Result Methods
 ```nyx
@@ -2124,7 +2179,7 @@ o.and_then(fn(x: int) -> Option<int> { return Option.Some(x + 1) })
 
 ## Iterators
 
-Desde v3.0, Nyx soporta iterators lazy y chainables:
+Nyx soporta iterators lazy y chainables:
 
 ### Crear un Iterator
 ```nyx
@@ -2174,7 +2229,7 @@ let result = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 ## Default Methods
 
-Desde v3.1, los traits pueden tener metodos con implementacion por defecto:
+Los traits pueden tener metodos con implementacion por defecto:
 
 ```nyx
 trait Greeter {
@@ -2202,7 +2257,7 @@ Los impls pueden sobreescribir metodos default o heredar la implementacion del t
 
 ## Multi-Bounds
 
-Desde v3.1, los type params genericos soportan multiples trait bounds:
+Los type params genericos soportan multiples trait bounds:
 
 ```nyx
 trait Display {
@@ -2223,7 +2278,7 @@ fn show<T: Display + Printable>(x: T) {
 
 ## Associated Types
 
-Desde v3.1, los traits pueden declarar tipos asociados:
+Los traits pueden declarar tipos asociados:
 
 ```nyx
 trait Container {
@@ -2248,7 +2303,7 @@ impl Container for IntList {
 
 ## Where Clauses
 
-Desde v3.1, las funciones genericas soportan `where` clauses:
+Las funciones genericas soportan `where` clauses:
 
 ```nyx
 fn print_all<T>(items: Array) where T: Display {
@@ -2265,7 +2320,7 @@ Las `where` clauses son equivalentes a inline bounds (`T: Display`) pero mejoran
 
 ## Operator Overloading
 
-Desde v4.3, los operadores se pueden sobrecargar via traits:
+Los operadores se pueden sobrecargar via traits:
 
 ```nyx
 struct Vec2 { x: int, y: int }
@@ -2311,7 +2366,7 @@ print(a == b)              // false
 
 ## Pointer Arithmetic
 
-Desde v4.5, los raw pointers soportan aritmetica:
+Los raw pointers soportan aritmetica:
 
 ```nyx
 unsafe {
@@ -2336,7 +2391,7 @@ unsafe {
 
 ## Buffered I/O
 
-Desde v4.6, Nyx soporta I/O con buffers (ademas del simple read_file/write_file):
+Nyx soporta I/O con buffers (ademas del simple read_file/write_file):
 
 ```nyx
 let f: File = file_open("data.txt", "w")
@@ -2369,7 +2424,7 @@ file_close(f2)
 
 ## Map Iteration
 
-Desde v4.6, los Maps soportan iteracion sobre keys y values:
+Los Maps soportan iteracion sobre keys y values:
 
 ```nyx
 var m = Map.new()
@@ -2389,7 +2444,7 @@ for k: String in keys {
 
 ## Networking
 
-Desde v5.0, Nyx soporta networking TCP y UDP:
+Nyx soporta networking TCP y UDP:
 
 ### TCP Server
 ```nyx
@@ -2426,7 +2481,7 @@ let ip: String = resolve("example.com")    // "93.184.216.34"
 
 ## Threading
 
-Desde v5.1, Nyx soporta threads, mutexes y channels:
+Nyx soporta threads, mutexes y channels:
 
 ### Threads
 ```nyx
@@ -2460,7 +2515,7 @@ channel_destroy(ch)
 
 ## Process/OS
 
-Desde v5.2, Nyx puede interactuar con el sistema operativo:
+Nyx puede interactuar con el sistema operativo:
 
 ```nyx
 // Ejecutar comando shell — captura stdout, strip de los '\n' finales
@@ -2539,7 +2594,7 @@ kill_process(pid, 15)  // send signal (15=SIGTERM)
 
 ## JSON
 
-Desde v5.2, Nyx incluye un parser/serializer JSON puro (en `std/json.nx`):
+Nyx incluye un parser/serializer JSON puro (en `std/json.nx`):
 
 ```nyx
 // Parse
@@ -2560,7 +2615,7 @@ Soporta: strings, numeros (int/float), booleans, null, arrays y objetos anidados
 
 ## HTTP
 
-Desde v5.2, Nyx incluye una libreria HTTP pura (en `std/http.nx`) construida sobre TCP:
+Nyx incluye una libreria HTTP pura (en `std/http.nx`) construida sobre TCP:
 
 ### HTTP Server
 ```nyx
@@ -2631,7 +2686,7 @@ let weekday: int = datetime_weekday(epoch)  // 0=Sunday, 6=Saturday
 
 ## Crypto
 
-Desde v6.2, Nyx incluye funciones criptograficas:
+Nyx incluye funciones criptograficas:
 
 ```nyx
 let data = "hello world"
@@ -2660,7 +2715,7 @@ Used for JWT signing, API authentication, and webhook verification. Implemented 
 
 ## TLS/HTTPS
 
-Desde v6.2, Nyx soporta HTTPS via OpenSSL:
+Nyx soporta HTTPS via OpenSSL:
 
 ```nyx
 // GET/POST simples (sin cabeceras custom). https_get devuelve el body como String.
@@ -2687,7 +2742,7 @@ Requiere OpenSSL instalado (`libssl-dev`, `libcrypto`).
 
 ## Logging
 
-Desde v6.1, Nyx incluye un framework de logging (`std/log.nx`):
+Nyx incluye un framework de logging (`std/log.nx`):
 
 ```nyx
 log_debug("debug message")
@@ -2704,7 +2759,7 @@ Niveles: `LOG_DEBUG`, `LOG_INFO`, `LOG_WARN`, `LOG_ERROR`.
 
 ## Collections
 
-Desde v6.1, `std/collections.nx` proporciona operaciones de Set:
+`std/collections.nx` proporciona operaciones de Set:
 
 ```nyx
 var s = set_new()
@@ -2731,7 +2786,7 @@ let arr = set_to_array(union)
 
 ## Regex
 
-Desde v6.1, Nyx soporta expresiones regulares POSIX:
+Nyx soporta expresiones regulares POSIX:
 
 ```nyx
 let text = "Hello 2026 World"
@@ -2749,7 +2804,7 @@ let all: String = regex_replace_all(text, "[a-z]", "X")  // "HeXXo 2026 WorXd"
 
 ## Format String
 
-Desde v6.0, `format()` proporciona template strings:
+`format()` proporciona template strings:
 
 ```nyx
 let name = "Nyx"
@@ -2767,7 +2822,7 @@ print(format("Pi={}, Valid={}", f, b))  // "Pi=3.14, Valid=true"
 
 ## Sleep and Time
 
-Desde v6.0, Nyx soporta funciones de tiempo:
+Nyx soporta funciones de tiempo:
 
 ```nyx
 sleep(1000)  // pausa 1000 ms
@@ -2781,7 +2836,7 @@ let t3 = time_us()   // timestamp en microsegundos
 
 ## Math Functions
 
-Desde v6.0, Nyx expone 17 funciones mathematicas via libm:
+Nyx expone 17 funciones mathematicas via libm:
 
 ```nyx
 abs(-42)          // valor absoluto
@@ -2802,7 +2857,7 @@ ceil(3.2), floor(3.8), round(3.5)
 
 ## Signal Handling
 
-Desde v6.0, Nyx puede manejar señales POSIX:
+Nyx puede manejar señales POSIX:
 
 ```nyx
 extern "C" fn my_handler()
@@ -2816,7 +2871,7 @@ signal_ignore(2)              // ignorar signal
 
 ## Defer Statement
 
-Desde v6.0, `defer` ejecuta codigo al salir del scope:
+`defer` ejecuta codigo al salir del scope:
 
 ```nyx
 fn cleanup_example() {
@@ -2896,7 +2951,8 @@ http_parse_url(url) http_status_text(code)
 
 ## Async/Await
 
-> **Status: SYNTACTIC ONLY** — async/await compiles but does NOT provide real parallelism. It is desugared to closure pairs.
+> **Status: real concurrency since v0.19.0** — `await` runs a real goroutine on
+> the M:N scheduler and joins it; it is no longer synchronous sugar.
 
 ```nyx
 async fn fetch_data() -> String {
@@ -2910,19 +2966,49 @@ fn main() {
 ```
 
 **How it works internally:**
-- `async fn` generates a closure factory returning `{fn_ptr, env_ptr}*`
-- `await` invokes that closure synchronously
-- No futures, no polling, no task scheduling
-- For real parallelism, use `spawn` or threads
+- `async fn NAME` lowers to two symbols: a body function `__async_body_NAME`
+  and a factory that returns a closure pair `{fn_ptr, env_ptr}*`.
+- `await expr` evaluates `expr` to that closure pair, then calls
+  `nyx_goroutine_spawn_closure` + `nyx_goroutine_join` — the body runs as a
+  **stackful goroutine** on the M:N work-stealing scheduler
+  (`runtime/scheduler.c`), and the caller joins it.
+- The join has two paths: called from inside another goroutine it yields back
+  to the scheduler and retries (cooperative, never blocks the OS thread);
+  called from `main` it blocks on a condvar woken when the goroutine finishes.
+- `go_sleep(ms)` inside a goroutine suspends it on an event-loop timer, so its
+  worker keeps scheduling other goroutines (plain `sleep(ms)` is a real OS
+  sleep and does block the worker).
 
-### Async Executor [UNVERIFIED]
+**Limits (by design, today):**
+- An `async fn` whose body contains no `await` is still plain synchronous
+  sugar — there is nothing to suspend on.
+- `async fn` returning `float`/`f32` is rejected at compile time with
+  **NYX1021**: the join returns the body result in an `i64` register, so a
+  double would be corrupted. Return an int/String/struct, or box the float.
+- `await` is an expression, not a scheduling primitive: there is no
+  `select`-over-futures. Multiplex with channels (see **Select** below).
+- Socket I/O still uses blocking syscalls: a goroutine that reads from a socket
+  occupies its worker for the duration. The runtime already has the primitive
+  to park a goroutine on an fd (`nyx_goroutine_block_on_fd` in
+  `runtime/scheduler.c`), but the networking builtins do not route through it
+  yet.
+
+### Async Executor (OS threads)
+
+`spawn_task` / `task_await` / `task_cancel` / `task_race` are a separate,
+**OS-thread** based family — not goroutines. They map directly onto
+`runtime/thread.c`:
 
 ```nyx
-// spawn_task, task_await, task_cancel, task_race
-// These exist in tests but use pthreads under the hood
-let task = spawn_task(async_fn)
-let result = task_await(task)
+let task: int = spawn_task(fn() { return work() })   // → nyx_thread_spawn
+let result: int = task_await(task)                   // → nyx_thread_join
+task_cancel(other)                                   // → nyx_task_cancel
+let first: int = task_race(t1, t2)                   // → nyx_task_race (first to finish)
 ```
+
+Use `spawn` / `await` for lightweight concurrency (thousands of goroutines on
+a few OS threads); use this family only when you need a real OS thread handle
+(cancellation, racing two blocking calls).
 
 ---
 
@@ -2939,7 +3025,23 @@ spawn {
 sleep(50)  // wait for goroutine to complete
 ```
 
-**Limitation:** `spawn` blocks cannot capture variables from the outer scope directly. Use channels for communication.
+A `spawn` block **does capture** locals from the enclosing scope (the block is
+desugared to a hoisted closure that shares the function's environment), so this
+works:
+
+```nyx
+fn main() {
+    let c: int = 40
+    let ch: Map = channel_new(8)
+    spawn {
+        channel_send(ch, c + 3)   // captures both `ch` and `c`
+    }
+    print(int_to_string(channel_recv(ch)))   // 43
+}
+```
+
+Channels remain the recommended way to get a *result* back out, since the
+spawned goroutine is detached (nothing to join).
 
 ### Select
 
@@ -3693,71 +3795,70 @@ let original: String = base64url_decode(url_safe)
 | Generics | Soportado (v0.26) | Functions y structs via monomorphization |
 | Generic structs | Soportado (v0.26b) | `struct Pair<A,B>` |
 | Traits (static) | Soportado (v0.27) | `trait Display`, `impl Display for Point`, bounds |
-| Dynamic dispatch | Soportado (v1.0) | vtables, `dyn Trait` como fat pointer |
+| Dynamic dispatch | Soportado | vtables, `dyn Trait` como fat pointer; dispatch honesto (ver nota 1) |
 | Closures 3+ niveles | Soportado (v0.28) | Flattened environment inheritance |
 | `check_has_return` | Soportado (v0.28) | Detecta return en if/else/match |
-| Block comments `/* */` | Soportado (v1.1) | Anidados con tracking de profundidad |
-| Multiline strings | Soportado (v1.1) | `"""..."""` preserva newlines |
-| Raw strings | Soportado (v1.1) | `r"..."` sin escape sequences |
-| Polymorphic Maps | Soportado (v1.1) | Dispatch correcto a get_str/get_int |
-| Parser error recovery | Soportado (v1.1) | `synchronize()`, acumula errores |
-| Type inference | Soportado (v1.1) | Desde return types de funciones |
-| Type aliases | Soportado (v1.1) | `type Integer = int` |
-| Generic enums | Soportado (v1.2) | `enum Option<T>`, monomorphization |
-| Option/Result builtins | Soportado (v1.2) | En std/prelude.nx |
-| Tuples | Soportado (v1.2) | `(int, String)`, destructuring, `t.0` |
-| Test framework | Soportado (v1.3) | `test "name" { assert(expr) }` |
-| Formatter | Soportado (v1.3) | `nyx fmt` — AST pretty-printer |
-| LSP tooling | Soportado (v1.3) | go-to-def, hover, document symbols |
-| FFI (`extern "C" fn`) | Soportado (v1.4) | Declaraciones de funciones C |
-| Const evaluation | Soportado (v1.4) | `const MAX = 100` — compile-time inline |
-| Typed for-in | Soportado (v1.4) | `for p: Point in points` |
-| Package manager | Soportado (v1.4) | Multi-path import resolution |
-| Bitwise operators | Soportado (v1.5) | `&`, `|`, `^`, `<<`, `>>`, `~` |
-| Compound assignment | Soportado (v1.5) | `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` |
-| String methods | Soportado (v1.5) | trim, toUpper, toLower, replace, repeat, etc. |
-| Array methods | Soportado (v1.5) | slice, reverse, indexOf, join |
-| Sized numeric types | Soportado (v1.6) | i8, i16, i32, u8, u16, u32, u64, f32, usize |
-| `as` cast | Soportado (v1.6) | `x as i32`, `y as float` |
-| sizeof/alignof | Soportado (v1.6) | `sizeof(Type)`, `alignof(Type)` |
-| Raw pointers + unsafe | Soportado (v1.6) | `*int`, `&x`, `*ptr`, `unsafe { ... }` |
-| Manual memory | Soportado (v1.6) | `alloc(n)`, `free(ptr)`, `static var` |
-| FFI structs | Soportado (v1.6) | `#[repr(C)]` |
-| Inline assembly | Soportado (v1.6) | `asm("...")` |
-| Volatile/atomic | Soportado (v1.6) | `volatile_read/write`, `atomic_load/store` |
-| Typed closures | Soportado (v2.0) | `Fn(int) -> int` |
-| Typed arrays | Soportado (v2.0.1) | `Array<int>`, `Array<String>` |
-| Dynamic dispatch | Soportado (v2.0.2) | `dyn Trait` fat pointers |
-| Match guards | Soportado (v2.0.3) | `Pattern if cond => body` |
-| OR patterns | Soportado (v2.0.3) | `A | B => body` |
-| Struct patterns | Soportado (v2.0.3) | `Point { x, y }` |
-| Nested patterns | Soportado (v2.0.3) | `Some(Some(x))` |
-| `pub` keyword | Soportado (v2.1) | Sinonimo de `export` |
-| Module imports | Soportado (v2.1) | `import "mod" as alias` |
-| panic() | Soportado (v2.2) | Runtime abort |
-| Result/Option methods | Soportado (v2.2) | is_ok, unwrap, map, and_then, etc. |
-| Iterators | Soportado (v3.0) | Lazy, chainable, for-in desugaring |
-| Default methods | Soportado (v3.1) | Trait methods con body |
-| Multi-bounds | Soportado (v3.1) | `T: A + B` |
-| Associated types | Soportado (v3.1) | `type Item` en traits |
-| Where clauses | Soportado (v3.1) | `where T: Display` |
-| Operator overloading | Soportado (v4.3) | Via traits Add, Sub, Mul, etc. |
-| Pointer arithmetic | Soportado (v4.5) | `ptr + n`, `ptr - ptr` |
-| Buffered I/O | Soportado (v4.6) | file_open, file_read_line, etc. |
-| Map iteration | Soportado (v4.6) | `map.keys()`, `map.values()` |
-| Networking | Soportado (v5.0) | TCP, UDP, DNS |
-| Threading | Soportado (v5.1) | Threads, mutexes, channels |
+| Block comments `/* */` | Soportado | Anidados con tracking de profundidad |
+| Multiline strings | Soportado | `"""..."""` preserva newlines |
+| Raw strings | Soportado | `r"..."` sin escape sequences |
+| Polymorphic Maps | Soportado | Dispatch correcto a get_str/get_int |
+| Parser error recovery | Soportado | `synchronize()`, acumula errores |
+| Type inference | Soportado | Desde return types de funciones |
+| Type aliases | Soportado | `type Integer = int` |
+| Generic enums | Soportado | `enum Option<T>`, monomorphization |
+| Option/Result builtins | Soportado | En std/prelude.nx |
+| Tuples | Soportado | `(int, String)`, destructuring, `t.0` |
+| Test framework | Soportado | `test "name" { assert(expr) }` |
+| Formatter | Soportado | `nyx fmt` — AST pretty-printer |
+| LSP tooling | Soportado | go-to-def, hover, document symbols |
+| FFI (`extern "C" fn`) | Soportado | Declaraciones de funciones C |
+| Const evaluation | Soportado | `const MAX = 100` — compile-time inline |
+| Typed for-in | Soportado | `for p: Point in points` |
+| Package manager | Parcial | `nyx init`/`build`/`run`/`add` + `nyx.toml`/`nyx.lock` + resolucion multi-path. **`nyx publish` y el registry NO existen** (deps por path o git URL) |
+| Bitwise operators | Soportado | `&`, `|`, `^`, `<<`, `>>`, `~` |
+| Compound assignment | Soportado | `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=` |
+| String methods | Soportado | trim, toUpper, toLower, replace, repeat, etc. |
+| Array methods | Soportado | slice, reverse, indexOf, join |
+| Sized numeric types | Soportado | i8, i16, i32, u8, u16, u32, u64, f32, usize |
+| `as` cast | Soportado | `x as i32`, `y as float` |
+| sizeof/alignof | Soportado | `sizeof(Type)`, `alignof(Type)` |
+| Raw pointers + unsafe | Soportado | `*int`, `&x`, `*ptr`, `unsafe { ... }` |
+| Manual memory | Soportado | `alloc(n)`, `free(ptr)`, `static var` |
+| FFI structs | Soportado | `#[repr(C)]` |
+| Inline assembly | Soportado | `asm("...")` |
+| Volatile/atomic | Soportado | `volatile_read/write`, `atomic_load/store` |
+| Typed closures | Soportado | `Fn(int) -> int` |
+| Typed arrays | Soportado | `Array<int>`, `Array<String>` |
+| Match guards | Soportado | `Pattern if cond => body` |
+| OR patterns | Soportado | `A | B => body` |
+| Struct patterns | Soportado | `Point { x, y }` |
+| Nested patterns | Soportado | `Some(Some(x))` |
+| `pub` keyword | Soportado | Sinonimo de `export` |
+| Module imports | Soportado | `import "mod" as alias` |
+| panic() | Soportado | Runtime abort |
+| Result/Option methods | Soportado | is_ok, unwrap, map, and_then, etc. |
+| Iterators | Soportado | Lazy, chainable, for-in desugaring |
+| Default methods | Soportado | Trait methods con body |
+| Multi-bounds | Soportado | `T: A + B` |
+| Associated types | Soportado | `type Item` en traits |
+| Where clauses | Soportado | `where T: Display` |
+| Operator overloading | Soportado | Via traits Add, Sub, Mul, etc. |
+| Pointer arithmetic | Soportado | `ptr + n`, `ptr - ptr` |
+| Buffered I/O | Soportado | file_open, file_read_line, etc. |
+| Map iteration | Soportado | `map.keys()`, `map.values()` |
+| Networking | Soportado | TCP, UDP, DNS |
+| Threading | Soportado | Threads, mutexes, channels |
 | Process/OS | Soportado (v0.12.0) | exec, getenv, setenv, exit, get_args, fork, execvp, waitpid, dup2, pipe_new, close_fd, open_fd, getcwd, chdir, stat, isatty, getpid, kill_process |
 | nyx test | Soportado (v0.12.0) | Integrated test runner: `nyx test file.nx`, `nyx test` (project discovery) |
-| JSON | Soportado (v5.2) | json_parse, json_stringify |
-| HTTP | Soportado (v5.2) | Server + client library |
+| JSON | Soportado | json_parse, json_stringify |
+| HTTP | Soportado | Server + client library |
 | Spawn/Select | Soportado | M:N scheduler, channels, work-stealing |
-| Async/Await | Sintáctico | Compila pero NO es paralelismo real |
+| Async/Await | Soportado | `await` = goroutine real + join cooperativo sobre el scheduler M:N (ver nota 2) |
 | Event Loop | Soportado | epoll real en runtime/event_loop.c |
 | Clone/Derive | Soportado | #[derive(Clone, PartialEq, Debug, Display, Default)] |
 | Fixed-size arrays | Soportado | `[int: 5]` stack-allocated |
 | HKT/GATs | Decorativo | Parseados, sin enforcement semántico |
-| Lifetime annotations | Decorativo | Parseados (`'a`), sin borrow checker |
+| Lifetime annotations | Parcial | Se parsean end-to-end (incl. `struct S<'a>`) y los consulta el chequeo de dangling refs (NYX1222 gating / NYX1223 lint); NO hay sistema de regiones verificado — la inferencia inter-procedural es follow-up (ver nota 3) |
 | impl Trait | Soportado | Sugar para dyn Trait |
 | Tuple structs | Soportado | `struct Point(int, int)` → `_0`, `_1` |
 | Union types | Soportado | `type V = int \| String` → enum |
@@ -3767,10 +3868,10 @@ let original: String = base64url_decode(url_safe)
 | GCC inline asm | Soportado | Full constraint mapping |
 | No-GC mode | Soportado | `make compile-no-gc` |
 | Cross-compilation | Soportado | `make cross TARGET=...` |
-| WASM target | Soportado | `make wasm` via wasi-sdk |
+| WASM target | Soportado | `make wasm` → wasm32-wasi real bajo wasmtime; toolchain liviano (clang del sistema + `wasi-libc` + `lld`), **sin wasi-sdk** |
 | Shebang | Soportado | `#!/usr/bin/env nyx` |
-| Box/Rc/MoveOnly | Wrapper | Library-level, no compiler enforcement |
-| `&T`/`&mut T` | Decorativo | Parsed, no borrow checking |
+| Box/Rc/MoveOnly | Soportado | Tipos `#[affine]` REALES en `std/owned.nx` con enforcement del compilador: drop determinista/RAII + use-after-move NYX1230 (ver nota 4) |
+| `&T`/`&mut T` | Soportado | Bajan a alias de punteros (`T*`); `&mut self` en metodos SI muta y persiste al caller. Chequeo de aliasing = lint opt-in (ver nota 3) |
 | Bare `return` | Soportado (v0.12.0) | `return` in void functions synthesizes `return 0` |
 | Defer | Soportado (v0.12.0) | `defer { expr() }` — LIFO cleanup at function exit |
 | Short-circuit and/or | Soportado (v0.12.0) | Lazy evaluation; second operand skipped if unnecessary |
@@ -3779,6 +3880,58 @@ let original: String = base64url_decode(url_safe)
 | arr[i].method() | Soportado (v0.12.0) | Direct method calls on indexed array elements |
 | `::` para enums | No soportado | Usar `.` (ej: `Color.Red`, no `Color::Red`) |
 | Variable shadowing | No soportado | Re-declaration in same scope is an error |
-| Default params | No soportado | `fn f(x: int = 5)` parsed but arity not reduced |
+| Default params | Soportado | `fn f(x: int = 5)`; los faltantes se rellenan en el call-site, override parcial o total |
 | u8/u16 print | Bug | Small types don't print correctly via print() |
-| Lambda capture | Limitado | Lambdas can't capture outer scope; use inner fn pattern |
+| Lambda capture | Soportado | Lambdas y fns anidadas capturan locals del scope exterior (ver nota 5) |
+
+### Notas del cuadro
+
+**Nota 1 — dispatch honesto.** Llamar un metodo o leer una propiedad sobre un
+receptor que no la tiene es un **error**, no basura silenciosa, en las tres
+capas: `NYX1022` (checker semantico), `NYX2007` (codegen) y `NYX3001`
+(interprete). Antes esos casos compilaban y devolvian un valor sin sentido.
+
+**Nota 2 — async/await.** `await` corre el cuerpo del `async fn` como goroutine
+real sobre el scheduler M:N y lo joinea (cooperativo si el llamador ya es una
+goroutine, condvar si es `main`); `spawn { }` lanza una goroutine detached. Ver
+la seccion **Async/Await**. Dos limites vigentes: un `async fn` sin ningun
+`await` adentro sigue siendo azucar sincrona, y un `async fn` que retorna
+`float` se rechaza en compile-time con **NYX1021** (hazard de ABI en el join).
+
+**Nota 3 — borrow checker.** Existe y es real: `compiler/borrow.nx`, controlado
+por `NYX_BORROW=off|warn|error` (**default `off`** — sobre codigo GC normal es
+un lint, porque el GC ya garantiza no-use-after-free). Codigos:
+
+| Codigo | Que caza | Clase |
+|--------|----------|-------|
+| `NYX1210` / `NYX1211` | Exclusividad de `&mut` violada | Lint (statement-scoped) |
+| `NYX1220` | Use-after-free sobre memoria manual, flow-sensitive | **Gating** (sound) |
+| `NYX1221` | Double-free | **Gating** (sound) |
+| `NYX1222` | Referencia colgante (`&local` que escapa) con `'a` explicito | **Gating** |
+| `NYX1223` | Misma forma pero inferida por elision | Lint |
+| `NYX1230` | Use-after-move de un valor `#[affine]` | **Gating** (sound) |
+
+Bajo `NYX_BORROW=error` solo los gating fallan el build (gate limpio, sin falsos
+positivos sobre codigo GC). El aliasing de `&mut` **no es UB**: baja a `T*` sin
+`noalias`. Lo que **no** hay todavia: un sistema de regiones/lifetimes
+verificado inter-procedural, field-sensitivity y `return &self`.
+
+**Nota 4 — tipos afines.** Un tipo marcado `#[affine]` solo puede usarse una vez
+(moverlo invalida el binding original). Si ademas tiene `impl Drop`, su
+destructor corre **exactamente una vez** al salir la funcion dueña (return
+temprano, fall-through, break/continue — function-scoped, estilo Go/defer),
+salvo que el valor se haya movido afuera. El drop determinista lo emite el
+codegen siempre; el use-after-move (`NYX1230`) requiere `NYX_BORROW=warn|error`.
+`std/owned.nx` trae los tres listos: `MoveOnly<T>` (afin puro), `Box<T>` (dueño
+de un `*T` manual, libera al dropear) y `Rc<T>` (refcount compartido). Fuera de
+alcance hoy: drop block-scoped, afines dentro de contenedores GC, loops (solo
+dropea el binding de la ultima iteracion) y afines cross-modulo.
+
+**Nota 5 — captura de closures.** Funcionan todas las formas: lambda literal
+pasada inline (`ejecutar(fn() { c[0] = c[0] + 1 })`), lambda ligada a un `let`,
+fn anidada que muta un local del scope exterior, `spawn { }` / `thread_spawn`
+con captura, y una lambda capturadora y una fn anidada capturadora **coexistiendo
+en la misma funcion** (en cualquier orden). Todo esto es codigo nativo; en el
+target wasm32-wasi los handlers de eventos DOM (`dom_on_fn`) tambien aceptan
+closures, pero si un handler se comporta raro el fallback seguro sigue siendo
+estado en globals del modulo.

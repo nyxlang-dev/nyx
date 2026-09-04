@@ -47,6 +47,10 @@ nyx init my-app && cd my-app
 nyx build && ./my-app
 ```
 
+`nyx init` seeds a provider-neutral scaffold (`AGENTS.md`, `CAPABILITIES.md`, `docs/nyx/`) — no
+files tied to a specific AI provider. Add `--lang en|es`, `--agent=claude,cursor,copilot` for
+thin per-provider adapters, or `--sdd` for the optional spec-driven-development layer.
+
 Or try it with zero setup at the **[web playground](https://nyxlang.com/playground)** — Nyx compiles to WebAssembly and runs in your browser.
 
 ## Features
@@ -70,7 +74,7 @@ Or try it with zero setup at the **[web playground](https://nyxlang.com/playgrou
 | map (100K ops) | **~1.0× C** (parity) |
 | strings (100K concat) | **~1.1× C** (~parity — string-literal interning + LICM) |
 
-<sub>*Core benchmarks re-measured on v0.20.1+LICM with fair measurement (aarch64, 2 cores, 2026-07-15): one-time Boehm GC lazy-init (~7.5ms) is excluded via warmup — it used to be counted inside the timed region, which is why strings was historically misreported as "~11-18× C". The **ratio is the portable metric** — absolute times are hardware-specific. Product benchmarks (HTTP 73K req/s, KV 21.57M ops/s) are from v0.12–0.13 and pending re-measurement in their extracted stacks. Full methodology in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).</sub>
+<sub>*Core benchmarks re-measured on v0.20.1+LICM with fair measurement (aarch64, 2 cores, 2026-07-15): one-time Boehm GC lazy-init (~7.5ms) is excluded via warmup — it used to be counted inside the timed region, which is why strings was historically misreported as "~11-18× C". The **ratio is the portable metric** — absolute times are hardware-specific. Product benchmarks (HTTP 73K req/s, KV 21.57M ops/s) are from v0.12–0.13 and pending re-measurement in their extracted stacks. Full methodology in [docs/archive/BENCHMARKS.md](docs/archive/BENCHMARKS.md).</sub>
 
 ## In the browser (WebAssembly)
 

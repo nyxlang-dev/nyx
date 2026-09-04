@@ -8,9 +8,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
+// unistd.h MURIÓ de este archivo (W3 Task 4 — la limpieza que el ratchet ya
+// anticipaba): write(2) → os_fd_write (en posix es write() crudo, sigue
+// async-signal-safe), _exit → _Exit (C99, precedente de runtime.c),
+// sysconf(_SC_PAGESIZE) → la capa es la autoridad (os_ctx_make redondea a la
+// página REAL adentro; acá queda el redondeo nominal de 4 KB).
+// EN: unistd.h DIED from this file (W3 Task 4 — the cleanup the ratchet
+// anticipated): write(2) → os_fd_write (raw write() on posix, still
+// async-signal-safe), _exit → _Exit (C99, runtime.c precedent),
+// sysconf(_SC_PAGESIZE) → the layer owns the real page size (os_ctx_make
+// re-rounds internally; the nominal 4 KB rounding stays here).
 #include <assert.h>
-#include <fcntl.h>
 #include "os/nyx_os.h"
 // Los workers se crean con os_thread_create (runtime/os/os_posix.c), que es el
 // único lugar que define GC_THREADS y por lo tanto redirige pthread_create a
@@ -57,16 +65,19 @@ static int g_scheduler_initialized = 0;
 // — eso es el incremento 2, gated por spike.
 
 static size_t g_stack_size = 0;   // tamaño útil (sin la guard)
-static size_t g_page_size  = 4096;
+static const size_t g_nominal_page = 4096;  // NOMINAL para redondeo/mensajes; la página REAL la aplica os_ctx_make (Task 4: sysconf murió de este TU)
 
 // F4 (review S4): se resuelve UNA vez desde nyx_scheduler_init, donde el
 // proceso todavía es single-thread. Antes era cache lazy en el primer
 // spawn: data race entre workers y —peor— el handler de señal podía caer
-// en el camino frío (sysconf/getenv/strtol NO son async-signal-safe).
+// en el camino frío (getenv/strtol NO son async-signal-safe; Task 4: sysconf ya ni se llama en este TU).
 size_t nyx_goroutine_stack_size(void) {
     if (g_stack_size) return g_stack_size;
-    long ps = sysconf(_SC_PAGESIZE);
-    if (ps > 0) g_page_size = (size_t)ps;
+    // El redondeo de acá es NOMINAL (4 KB, ambos triples soportados): la capa
+    // vuelve a redondear con la página REAL adentro de os_ctx_make, que es la
+    // única que la conoce. Se fue sysconf (unistd) — ver el bloque de includes.
+    // EN: this rounding is NOMINAL (4 KB); os_ctx_make re-rounds with the REAL
+    // page size inside the layer, the only place that knows it.
     size_t kb = NYX_STACK_SIZE / 1024;
     const char* env = getenv("NYX_GOROUTINE_STACK_KB");
     if (env && *env) {
@@ -89,7 +100,7 @@ size_t nyx_goroutine_stack_size(void) {
     }
     size_t sz = kb * 1024;
     // redondear a múltiplo de página
-    sz = ((sz + g_page_size - 1) / g_page_size) * g_page_size;
+    sz = ((sz + g_nominal_page - 1) / g_nominal_page) * g_nominal_page;
     g_stack_size = sz;
     return g_stack_size;
 }
@@ -239,7 +250,7 @@ static void guard_unregister(char* lo) {
 // (formateo manual sin snprintf, que no es async-signal-safe) — se mudó acá
 // TEXTUAL desde el viejo nyx_stack_fault_handler, sin tocar una coma.
 // Contrato de la capa: devuelve 1 si el addr cae en una guard page propia
-// (ya hizo _exit, no retorna en la práctica); 0 si no es nuestra — la capa
+// (ya hizo _Exit, no retorna en la práctica); 0 si no es nuestra — la capa
 // ENCADENA al dueño que la señal tenía antes de este guard (en Linux, el
 // write-fault handler de Boehm cuando el GC incremental está activo), y solo
 // si no había dueño previo restaura SIG_DFL y re-raisea. Un SEGV/BUS genuino
@@ -266,7 +277,11 @@ static int nyx_stack_fault_on_fault(void* addr_v) {
             char* hi = g_guards[i].hi;
             if (lo && hi && addr >= lo && addr < hi) {
                 static const char m1[] = "[nyx] goroutine stack overflow — subí NYX_GOROUTINE_STACK_KB (actual: ";
-                ssize_t w = write(2, m1, sizeof(m1) - 1);
+                // os_fd_write: en posix es write() crudo (async-signal-safe,
+                // misma syscall que antes); en win32, _write del CRT.
+                // EN: raw write() on posix (same syscall as before); CRT
+                // _write on win32.
+                int64_t w = os_fd_write(2, m1, (int64_t)(sizeof(m1) - 1));
                 char buf[24];
                 size_t kb = nyx_goroutine_stack_size() / 1024;
                 int p = 0;
@@ -277,9 +292,11 @@ static int nyx_stack_fault_on_fault(void* addr_v) {
                     while (t > 0) buf[p++] = tmp[--t];
                 }
                 buf[p++] = 'K'; buf[p++] = 'B'; buf[p++] = ')'; buf[p++] = '\n';
-                w = write(2, buf, (size_t)p);
+                w = os_fd_write(2, buf, (int64_t)p);
                 (void)w;
-                _exit(1);
+                // _Exit (C99) en vez de _exit (POSIX/unistd): mismo efecto,
+                // precedente de runtime.c (W2 fase A). / same effect, C99.
+                _Exit(1);
             }
         }
     }
@@ -1023,7 +1040,7 @@ GC_API nyx_gc_sp_corrector_proc GC_CALL GC_get_sp_corrector(void);
 // política de GC (la excepción permitida del ratchet), no una API win32
 // filtrándose al scheduler. Con el bdwgc de vcpkg SIN parchear el corrector
 // jamás se invoca (el call site de win32_threads.c está gateado a pthreads) —
-// el parche de 2 hunks vive en docs/superpowers/spikes/ y el degradado es el
+// el parche de 2 hunks vive en docs/design/spikes/ y el degradado es el
 // aviso RUIDOSO de nyx_gc_sp_corrector_install, que en ese caso dispara
 // porque GC_get_sp_corrector devuelve NULL.
 // EN: W3 Task 3 (P3) — the win32 corrector core lives in os_win32.c (sole
@@ -1033,7 +1050,7 @@ GC_API nyx_gc_sp_corrector_proc GC_CALL GC_get_sp_corrector(void);
 // allowed exception), not a win32 API leaking into the scheduler. Against
 // unpatched vcpkg bdwgc the corrector is never invoked (the win32_threads.c
 // call site is gated to pthreads) — the 2-hunk patch lives in
-// docs/superpowers/spikes/ and the degradation is the LOUD warning in
+// docs/design/spikes/ and the degradation is the LOUD warning in
 // nyx_gc_sp_corrector_install (GC_get_sp_corrector returns NULL there).
 // (Fix round 1 M4: la declaración vive en el header interno compartido, una
 // sola fuente para scheduler y test. / single shared declaration.)
@@ -1042,10 +1059,13 @@ GC_API nyx_gc_sp_corrector_proc GC_CALL GC_get_sp_corrector(void);
 
 #if defined(NYX_RUNTIME_TESTING) && !defined(_WIN32)
 // (El !defined(_WIN32) es de W3 Task 3: la red pertenece a la rama de
-// INCLUSIÓN posix del corrector — en win32 la rama por exclusión no la llama
-// y el cuerpo usa write(2) crudo, que no existe ahí. / The !_WIN32 guard is
-// W3 Task 3's: the net belongs to the corrector's posix INCLUSION branch —
-// the win32 exclusion branch never calls it and the body uses raw write(2).)
+// INCLUSIÓN posix del corrector — la rama por exclusión de win32 tiene su
+// propia detección y no la llama. Nota Task 4: el cuerpo ya usa os_fd_write,
+// que SÍ existe en win32 — el guard se sostiene solo por la primera razón.
+// / The !_WIN32 guard is W3 Task 3's: the net belongs to the corrector's
+// posix INCLUSION branch — win32's exclusion branch has its own detection
+// and never calls this. Task 4 note: the body now uses os_fd_write, which
+// DOES exist on win32 — the guard stands on the first reason alone.)
 // M5 (hallazgo del review del paso 0b, ficha TASKS.md "red de seguridad para
 // un sp sin match en el corrector"): red de seguridad SOLO-TESTING, costo
 // CERO en producción (todo el bloque muere con el `#ifdef`). El corrector de
@@ -1100,7 +1120,7 @@ GC_API nyx_gc_sp_corrector_proc GC_CALL GC_get_sp_corrector(void);
 // message already says "possible", never "confirmed".
 //
 // Corre en el MISMO contexto que el corrector: mundo parado, GC lock tomado.
-// Nada de malloc ni stdio bufferizado -- write(2) crudo y formateo manual,
+// Nada de malloc ni stdio bufferizado -- os_fd_write (write crudo en posix, _write en win32) y formateo manual,
 // mismo patrón que `nyx_stack_fault_on_fault` arriba en este archivo.
 // EN: Runs in the SAME context as the corrector: world stopped, GC lock
 // held. No malloc, no buffered stdio -- raw write(2) and manual formatting,
@@ -1116,7 +1136,7 @@ static void nyx_gc_sp_corrector_testing_net(char* sp) {
         }
     }
     static const char m1[] = "[nyx] sp_corrector: sp 0x";
-    ssize_t w0 = write(2, m1, sizeof(m1) - 1);
+    int64_t w0 = os_fd_write(2, m1, (int64_t)(sizeof(m1) - 1));
     char buf[24];
     uintptr_t v = (uintptr_t)sp;
     int p = 0;
@@ -1130,9 +1150,9 @@ static void nyx_gc_sp_corrector_testing_net(char* sp) {
         }
         while (t > 0) buf[p++] = tmp[--t];
     }
-    w0 = write(2, buf, (size_t)p);
+    w0 = os_fd_write(2, buf, (int64_t)p);
     static const char m2[] = " fuera de todo stack conocido — posible regresión del invariante current\n";
-    w0 = write(2, m2, sizeof(m2) - 1);
+    w0 = os_fd_write(2, m2, (int64_t)(sizeof(m2) - 1));
     (void)w0;
 }
 #endif
@@ -1575,8 +1595,13 @@ int nyx_goroutine_block_on_fd(int fd, int events) {
     // fd must be non-blocking so a spurious/edge-triggered wakeup or a
     // partial-readiness race never wedges the goroutine in a blocking
     // syscall on the shared OS thread pool.
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags >= 0) fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    // W3 Task 4: via la capa (en posix es EXACTAMENTE el mismo baile
+    // F_GETFL/F_SETFL|O_NONBLOCK que había acá inline; en win32 hoy es el
+    // stub de sockets — este camino entero es de I/O de red y llega con W4).
+    // Retorno ignorado igual que antes: el fallo era silencioso también con
+    // el fcntl inline. / via the layer (identical fcntl dance on posix; the
+    // whole path is W4 network I/O on win32). Return ignored as before.
+    (void)os_sock_set_nonblocking((int64_t)fd, 1);
 
     g->state = NYX_GOROUTINE_BLOCKED;
     g->woken = 0;

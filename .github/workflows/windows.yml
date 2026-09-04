@@ -1,4 +1,4 @@
-# Arco Windows (spec docs/superpowers/specs/2026-08-19-windows-nativo-design.md
+# Arco Windows (spec docs/design/specs/2026-08-19-windows-nativo-design.md
 # §4-W0 / §4-W2). Interno: esto NO anuncia soporte Windows (todo-o-nada,
 # decisión §1.3 de la spec).
 #
@@ -170,6 +170,9 @@ jobs:
                      runtime/sqlite_adapter.c \
                      runtime/file-io.c \
                      runtime/runtime.c \
+                     runtime/thread.c \
+                     runtime/scheduler.c \
+                     runtime/os/event_loop_win32.c \
                      runtime/os/os_win32.c ; do
             base=$(basename "$src" .c)
             # M12 (review ronda 1): -Werror SOLO sobre os_win32.c — el archivo
@@ -434,6 +437,9 @@ jobs:
                      runtime/sqlite_adapter.c \
                      runtime/file-io.c \
                      runtime/runtime.c \
+                     runtime/thread.c \
+                     runtime/scheduler.c \
+                     runtime/os/event_loop_win32.c \
                      runtime/os/os_win32.c ; do
             base=$(basename "$src" .c)
             # -Werror sobre os_win32.c, igual que en w2-compile (review de
@@ -768,6 +774,9 @@ jobs:
                      runtime/sqlite_adapter.c \
                      runtime/file-io.c \
                      runtime/runtime.c \
+                     runtime/thread.c \
+                     runtime/scheduler.c \
+                     runtime/os/event_loop_win32.c \
                      runtime/os/os_win32.c ; do
             base=$(basename "$src" .c)
             # -Werror sobre os_win32.c igual que en los otros dos jobs (M12/M4):
@@ -926,7 +935,7 @@ jobs:
 
   # ==========================================================================
   # w3-spike / w3-spike-arm64 — spike de CI (NO gate de merge): valida S1-S6
-  # del diseño docs/superpowers/specs/2026-08-27-w3-gc-windows-design.md §6
+  # del diseño docs/design/specs/2026-08-27-w3-gc-windows-design.md §6
   # ANTES de portar el scheduler M:N a Windows. El binario NO usa
   # runtime/os/os_win32.c — CreateFiberEx/SwitchToFiber directo contra los
   # headers de bdwgc de vcpkg, porque el spike tiene que poder correr antes

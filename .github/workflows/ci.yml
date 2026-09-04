@@ -1,3 +1,5 @@
+# Sin billing en GitHub Actions desde 2026-08 (cuenta de Ottavio); este
+# workflow es el gate cuando vuelva.
 name: Nyx CI
 
 on:
@@ -24,40 +26,27 @@ jobs:
       - name: Build bootstrap compiler
         run: make bootstrap
 
-      - name: Run regression tests (217/217 ARM64, 218/218 x86_64)
+      - name: Run regression tests
         run: make test
 
-      - name: Run advanced tests (30/30)
+      - name: Run advanced tests
         run: bash tests/advanced/run_advanced_tests.sh
 
       - name: Run stdlib tests
         run: make test-stdlib
 
-  # ─────────────────────────────────────────────
-  #  macOS — DESACTIVADO 2026-06-11 (decisión de Ottavio: no es prioridad).
-  #  "Build bootstrap compiler" falla en macos-latest desde junio 2026 con el
-  #  mismo código que pasa en Linux — sospecha: cambio del runner image
-  #  (patrón ya visto en abril: brew paths + ucontext_t, fix c83781f).
-  #  Para reactivar: descomentar el job y diagnosticar con el log del run
-  #  (requiere gh CLI autenticado o la UI de Actions). Entrada en TASKS.md.
-  # ─────────────────────────────────────────────
-  # test-macos:
-  #   name: Test (macOS)
-  #   runs-on: macos-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #
-  #     - name: Install dependencies
-  #       run: brew install bdw-gc openssl@3
-  #
-  #     - name: Build bootstrap compiler
-  #       run: make bootstrap
-  #
-  #     - name: Run regression tests
-  #       run: make test
-  #
-  #     - name: Run advanced tests
-  #       run: bash tests/advanced/run_advanced_tests.sh
-  #
-  #     - name: Run stdlib tests
-  #       run: make test-stdlib
+      - name: Run error tests
+        run: make test-errors
+
+      - name: Run M-08 type tests
+        run: make test-m08-types
+
+      # Ambos pasos se saltan en el mirror público (scripts/sync_to_public.sh copia este
+      # workflow tal cual, pero no scripts/sdd/ ni el cuarteto PROJECT_STATE/PLAN/TASKS).
+      - name: Run docs health check
+        if: hashFiles('PROJECT_STATE.md') != ''
+        run: bash scripts/testing/run_docs_health.sh
+
+      - name: Run SDD selftest
+        if: hashFiles('scripts/sdd/selftest') != ''
+        run: bash scripts/sdd/selftest

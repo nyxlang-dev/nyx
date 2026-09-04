@@ -1,0 +1,13 @@
+# .gitignore sembrado por `nyx init` (plantilla: templates/gitignore de la toolchain).
+# Binario de `nyx build` — su nombre es [package].name de nyx.toml.
+/{{binary}}
+# Dependencias que `nyx build` clona en packages/ cuando faltan (necesita red).
+# Borrá esta línea si preferís vendorizarlas COMMITEADAS (build determinista sin red).
+packages/
+# Intermedios del compilador y respaldos de `nyx update --sync-docs`.
+*.ll
+*.o
+*.bak
+*.bak.*
+__pycache__/
+.DS_Store

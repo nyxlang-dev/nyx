@@ -1,17 +1,16 @@
-// nyx-serve JSON API — request parsing and response_json_map
-// API JSON nyx-serve — parseo de request y response_json_map
+// std/serve JSON API — request parsing and response_json_map
+// API JSON std/serve — parseo de request y response_json_map
 
 import "std/http"
 import "std/web"
-import "std/json"
+import "std/serve"
 
 fn echo_json(req: Request) -> Response {
     // req.body contains the raw request body as a String
-    // Use std/json to parse structured input
     let data: String = req.body
 
     // response_json_map builds a JSON object from a Map
-    var result: Map = Map.new()
+    var result: Map = map_new()
     result.insert("received", data)
     result.insert("method", req.method)
     result.insert("path", req.path)
@@ -23,18 +22,50 @@ fn health_check(req: Request) -> Response {
     return response_json(200, "{\"status\": \"ok\", \"service\": \"api\"}")
 }
 
-fn not_found(req: Request) -> Response {
-    return response_json(404, "{\"error\": \"not found\"}")
-}
-
 fn main() -> int {
     let app: App = app_new()
+    let port: int = 18179
 
     app_get(app, "/health", health_check)
     app_post(app, "/echo", echo_json)
 
-    print("JSON API configured")
-    print("  GET  /health -> {\"status\": \"ok\"}")
-    print("  POST /echo   -> echoes request body as JSON")
+    // Servidor real en una goroutine detached — ver 78-serve-routes.nx
+    // para el detalle del patrón (spawn + poll + assert + exit limpio).
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    let base: String = "http://127.0.0.1:" + int_to_string(port)
+
+    var tries: int = 0
+    var up: bool = false
+    while tries < 50 and !up {
+        let probe: Array = http_get(base + "/health")
+        if http_status(probe) == 200 {
+            up = true
+        } else {
+            sleep(50)
+        }
+        tries = tries + 1
+    }
+    assert(up, "el servidor nunca levantó en :" + int_to_string(port))
+
+    let h: Array = http_get(base + "/health")
+    assert(http_status(h) == 200, "GET /health -> 200")
+    assert(http_body(h).indexOf("\"status\": \"ok\"") >= 0, "GET /health body")
+
+    let e: Array = http_post(base + "/echo", "hello")
+    assert(http_status(e) == 200, "POST /echo -> 200")
+    let ectype: Array = e[2]
+    assert(http_find_header(ectype, "Content-Type").indexOf("application/json") >= 0, "POST /echo Content-Type")
+    // response_json_map serializa por Map.keys() — el orden no está
+    // garantizado, así que verificamos cada par por separado en vez de
+    // asumir un orden fijo.
+    let ebody: String = http_body(e)
+    assert(ebody.indexOf("\"received\":\"hello\"") >= 0, "echo trae el body recibido")
+    assert(ebody.indexOf("\"method\":\"POST\"") >= 0, "echo trae el method")
+    assert(ebody.indexOf("\"path\":\"/echo\"") >= 0, "echo trae el path")
+
+    print("OK: API JSON verificada end-to-end")
     return 0
 }

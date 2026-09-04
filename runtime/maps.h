@@ -72,7 +72,7 @@ void nyx_map_clear(nyx_map_t* map);
 // Propiedades
 int64_t nyx_map_length(nyx_map_t* map);
 // SCAN con cursor estable ante resize (dictScan de Redis adaptado a Robin
-// Hood; spec docs/superpowers/specs/2026-07-21-map-stable-cursor-scan-design.md).
+// Hood; spec docs/design/specs/2026-07-21-map-stable-cursor-scan-design.md).
 // Llena `out` (nyx_array_t*, pasado como void* para no acoplar headers) con
 // las KEYS del home-bucket del cursor (string keys → nyx_string*; int keys →
 // el valor) y devuelve el cursor siguiente (0 = scan completo). Garantía

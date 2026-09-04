@@ -24,6 +24,18 @@ The `nyx` binary gives you the full toolchain: `nyx build`, `nyx run`, `nyx init
 
 El binario `nyx` incluye el toolchain completo: `nyx build`, `nyx run`, `nyx init`, `nyx test`, `nyx fmt`, `nyx vet`.
 
+`nyx init` seeds a provider-neutral scaffold — `AGENTS.md`, `CAPABILITIES.md`, `docs/nyx/`
+(reference + guides) — with nothing tied to a specific AI provider. Pick a language with
+`--lang en|es` (or `NYX_LANG`); add thin per-provider adapters with
+`--agent=claude,cursor,copilot`; and layer on the optional spec-driven-development scaffold
+with `--sdd` (or, on an existing project, `nyx sdd init`).
+
+`nyx init` siembra un scaffold neutral de proveedor — `AGENTS.md`, `CAPABILITIES.md`,
+`docs/nyx/` (referencia + guías) — sin nada atado a un proveedor de IA en particular. Elige el
+idioma con `--lang en|es` (o `NYX_LANG`); agrega adaptadores finos por proveedor con
+`--agent=claude,cursor,copilot`; y suma el andamiaje opcional de spec-driven development con
+`--sdd` (o, sobre un proyecto existente, `nyx sdd init`).
+
 ---
 
 ## Building from source / Compilar desde el código fuente
@@ -219,7 +231,7 @@ fn main() {
 
 ## Next steps / Siguiente paso
 
-- See [SPEC.md](../SPEC.md) for the complete language reference
+- See [SPEC.md](SPEC.md) for the complete language reference
 - See [examples/](../examples/) for more complex programs
 - See [docs/COMPARISON.md](COMPARISON.md) for how Nyx compares to other languages
 - Run `make test` to run regression tests: 204/204 on ARM64 (205/205 on x86_64 — one x86 asm test is skipped on ARM64)

@@ -108,7 +108,7 @@ case "${1:-}" in
         if [ -f "$NYX_HOME/VERSION" ]; then
             echo "nyx $(cat "$NYX_HOME/VERSION")"
         else
-            echo "nyx 0.17.0"
+            echo "nyx 0.31.0"
         fi
         exit 0
         ;;
@@ -119,7 +119,13 @@ case "${1:-}" in
         echo "       nyx <command> [options]"
         echo ""
         echo "Commands:"
-        echo "  init          Create a new project (nyx.toml + src/main.nx)"
+        echo "  init [name]   Create a new project (nyx.toml + src/main.nx + AGENTS.md + docs/nyx/)"
+        echo "                  --lang en|es                  language of the seeded docs (default: NYX_LANG, else en)"
+        echo "                  --agent=claude,cursor,copilot  also seed the 3-line adapter for those tools"
+        echo "                  --sdd                          also seed the SDD scaffolding (see below)"
+        echo "  sdd init      Seed the SDD scaffolding in an EXISTING project (constitution,"
+        echo "                glossary, evidence, ADR template, specs/, constitution test, guide)"
+        echo "  sdd evidence  Regenerate docs/evidence/ for the installed toolchain"
         echo "  add <pkg>     Add a package dependency"
         echo "  build         Build the project"
         echo "  run [args...] Build and run the project (args go to the program;"
@@ -134,7 +140,7 @@ case "${1:-}" in
         echo "                (no argument = src/main.nx)"
         echo ""
         echo "  update        Update Nyx to the latest version (+ what's new)"
-        echo "  update --sync-docs   Refresh AI context (LLM.md/skills) in this project"
+        echo "  update --sync-docs   Refresh AI context (AGENTS.md + docs/nyx/) in this project"
         echo "  report [f.md] Send a friction/bug report to the Nyx team"
         echo "  uninstall     Remove Nyx from this system"
         echo ""
@@ -157,30 +163,169 @@ case "${1:-}" in
         exit 0
         ;;
     update)
-        # ── nyx update --sync-docs: refresca el contexto IA del PROYECTO ──
-        # (LLM.md, CHEATSHEET.md, .claude/skills de Nyx) desde el toolchain.
-        # Así el asistente del proyecto aislado aprende las features nuevas
-        # sin re-init. CLAUDE.md NO se pisa (suele tener ediciones del user).
+        # ── nyx update --sync-docs: refresca el contexto para agentes del
+        # PROYECTO (AGENTS.md + docs/nyx/) desde el toolchain. Así el asistente
+        # de un proyecto aislado aprende las features nuevas sin re-init.
+        # Desde ADR-1 (2026-09-04) el proyecto es MONOLINGÜE: el juego de
+        # plantillas sale de `templates/<lang>/`, con lang leído del sello del
+        # propio AGENTS.md (`nyx-lang: xx`, default en). LLM.md sale siempre de
+        # `templates/en/` (la referencia densa es monolingüe por decisión).
+        # Los adaptadores por proveedor (CLAUDE.md, .cursorrules, copilot) NO
+        # se pisan: son opt-in y suelen tener ediciones del usuario.
+        # La MIGRACIÓN de layouts viejos (LLM.md en la raíz, CHEATSHEET.md,
+        # .claude/skills sembradas) es otra tarea: acá no se mueve ni se borra
+        # nada del proyecto.
         if [ "${2:-}" = "--sync-docs" ]; then
             if [ ! -f nyx.toml ]; then
                 echo "error: no hay nyx.toml aca - corre esto dentro de un proyecto Nyx" >&2
                 exit 1
             fi
             synced=""
-            for f in AGENTS.md LLM.md CHEATSHEET.md; do
-                if [ -f "$NYX_HOME/templates/$f" ]; then
-                    if [ -f "$f" ] && ! cmp -s "$NYX_HOME/templates/$f" "$f"; then
-                        cp "$f" "$f.bak"
-                    fi
-                    cp "$NYX_HOME/templates/$f" "$f"
-                    synced="$synced $f"
-                fi
-            done
-            if [ -d "$NYX_HOME/templates/.claude/skills" ]; then
-                mkdir -p .claude
-                cp -r "$NYX_HOME/templates/.claude/skills" .claude/
-                synced="$synced .claude/skills"
+            lang="en"
+            if [ -f AGENTS.md ]; then
+                _l="$(sed -n 's/.*nyx-lang: \([a-z][a-z]\).*/\1/p' AGENTS.md | head -1)"
+                [ -n "$_l" ] && lang="$_l"
             fi
+            [ -d "$NYX_HOME/templates/$lang" ] || lang="en"
+            # Sello de versión + idioma al final de cada archivo resembrado (el
+            # mismo que pone nyx_build init — ver seed_file en
+            # compiler/build.nx); con él _warn_seed_drift deja de avisar y la
+            # próxima deriva vuelve a verse.
+            _stamp_seed() { printf '\n<!-- nyx-version: %s nyx-lang: %s -->\n' "$(cat "$NYX_HOME/VERSION" 2>/dev/null | tr -d '[:space:]')" "$lang" >> "$1"; }
+
+            # ── Migración del layout viejo (spec §2 «Migración de proyectos
+            # existentes», Task 6) — corre ANTES de sincronizar nada. Regla de
+            # oro: solo se toca lo que llevaba NUESTRO sello
+            # (`grep 'nyx-version:'`); cualquier archivo sin sello lo escribió
+            # el usuario y se avisa, nunca se pisa. Siempre .bak antes de
+            # mover/reemplazar/borrar. Idempotente: LLM.md/CHEATSHEET.md/
+            # .claude/skills desaparecen de su lugar viejo en la primera
+            # corrida (la segunda ya no los encuentra); los adaptadores se
+            # comparan contra el contenido que produciríamos hoy, así que una
+            # segunda corrida que ya coincide no los vuelve a tocar.
+            _has_stamp() { grep -q 'nyx-version:' "$1" 2>/dev/null; }
+            # _safe_backup ARCHIVO — respalda ARCHIVO en ARCHIVO.bak SIN pisar
+            # un .bak preexistente (fix round 1, Task 6): un respaldo manual
+            # del usuario, o el de una corrida interrumpida y restaurada a
+            # mano, no se destruye en silencio. Si ARCHIVO.bak ya existe, usa
+            # el primer ARCHIVO.bak.N libre y avisa; deja el path elegido en
+            # $_LAST_BAK para que el caller lo cite en su mensaje. Nunca
+            # aborta la migración por esto.
+            _safe_backup() {
+                local file="$1" bak="$1.bak"
+                if [ -e "$bak" ]; then
+                    local n=1
+                    while [ -e "$bak.$n" ]; do n=$((n + 1)); done
+                    bak="$bak.$n"
+                    printf '⚠ %s.bak ya existía: respaldo en %s\n' "$file" "$bak" >&2
+                fi
+                cp -a "$file" "$bak"
+                _LAST_BAK="$bak"
+            }
+            _MIG_TMP="$(mktemp -d)"
+            # _migrate_adapter ARCHIVO PROVEEDOR — reemplaza ARCHIVO por el
+            # adaptador fino de $NYX_HOME/templates/adapters/<proveedor>.<lang>.md
+            # si ARCHIVO existe y lleva sello; deja la versión vieja en .bak.
+            # Sin sello: aviso, no se toca. Ya migrado (contenido idéntico al
+            # que generaríamos hoy): no hace nada — idempotencia real, sin
+            # tocar el mtime.
+            _migrate_adapter() {
+                local file="$1" provider="$2"
+                [ -f "$file" ] || return 0
+                if ! _has_stamp "$file"; then
+                    printf '⚠ %s no lo sembró nyx (sin sello): no se toca\n' "$file" >&2
+                    return 0
+                fi
+                local tpl="$NYX_HOME/templates/adapters/$provider.$lang.md"
+                [ -f "$tpl" ] || tpl="$NYX_HOME/templates/adapters/$provider.en.md"
+                [ -f "$tpl" ] || return 0
+                local want="$_MIG_TMP/$provider.want"
+                cp "$tpl" "$want"
+                _stamp_seed "$want"
+                if cmp -s "$want" "$file"; then
+                    return 0
+                fi
+                mkdir -p "$(dirname "$file")"
+                _safe_backup "$file"
+                cp "$want" "$file"
+                echo "  → $file regenerado como adaptador fino (versión previa en $_LAST_BAK)"
+            }
+            _migrate_seeded_layout() {
+                # LLM.md en la raíz CON sello → se retira; docs/nyx/LLM.md
+                # queda a cargo del _sync_one de abajo (copia fresca desde el
+                # template, con su propio .bak si hiciera falta).
+                if [ -f LLM.md ]; then
+                    if _has_stamp LLM.md; then
+                        _safe_backup LLM.md
+                        rm -f LLM.md
+                        echo "  → LLM.md (raíz) migrado a docs/nyx/LLM.md (versión previa en $_LAST_BAK)"
+                    else
+                        printf '⚠ LLM.md no lo sembró nyx (sin sello): no se toca\n' >&2
+                    fi
+                fi
+                # CHEATSHEET.md CON sello → se retira (contenido absorbido por
+                # AGENTS.md + docs/nyx/ hace tiempo).
+                if [ -f CHEATSHEET.md ]; then
+                    if _has_stamp CHEATSHEET.md; then
+                        _safe_backup CHEATSHEET.md
+                        rm -f CHEATSHEET.md
+                        echo "  → CHEATSHEET.md retirado (versión previa en $_LAST_BAK)"
+                    else
+                        printf '⚠ CHEATSHEET.md no lo sembró nyx (sin sello): no se toca\n' >&2
+                    fi
+                fi
+                # Adaptadores por proveedor CON sello → adaptador fino (ADR-1).
+                _migrate_adapter CLAUDE.md claude
+                _migrate_adapter .cursorrules cursor
+                _migrate_adapter .github/copilot-instructions.md copilot
+                # .claude/skills/*/SKILL.md CON sello → todo el directorio a
+                # .claude/skills.bak (las guías neutrales viven en
+                # docs/nyx/guides/ desde ADR-1). Si CUALQUIER SKILL.md no
+                # lleva sello, no se toca nada del directorio (podría tener
+                # skills propias del usuario mezcladas con las nuestras).
+                if [ -d .claude/skills ]; then
+                    _skf_found=0
+                    _skf_unstamped=0
+                    for _skf in .claude/skills/*/SKILL.md; do
+                        [ -f "$_skf" ] || continue
+                        _skf_found=1
+                        if _has_stamp "$_skf"; then
+                            :
+                        else
+                            printf '⚠ %s no lo sembró nyx (sin sello): no se toca\n' "$_skf" >&2
+                            _skf_unstamped=1
+                        fi
+                    done
+                    if [ "$_skf_found" -eq 1 ] && [ "$_skf_unstamped" -eq 0 ]; then
+                        mv .claude/skills .claude/skills.bak
+                        echo "  → .claude/skills retirado (.claude/skills.bak) — las guías viven en docs/nyx/guides/"
+                    fi
+                fi
+            }
+            _migrate_seeded_layout
+            rm -rf "$_MIG_TMP"
+
+            # _sync_one PLANTILLA DESTINO — copia con .bak si el destino difería.
+            # El respaldo va por _safe_backup (no por un `cp` crudo): estas son
+            # las 5 rutas que --sync-docs toca SIEMPRE (AGENTS.md, docs/nyx/LLM.md
+            # y las 3 guías), y un `.bak` propio del usuario no se destruye en
+            # silencio — escala a .bak.N avisando, igual que la migración.
+            _sync_one() {
+                [ -f "$1" ] || return 0
+                mkdir -p "$(dirname "$2")"
+                if [ -f "$2" ] && ! cmp -s "$1" "$2"; then
+                    _safe_backup "$2"
+                fi
+                cp "$1" "$2"
+                _stamp_seed "$2"
+                synced="$synced $2"
+            }
+            _sync_one "$NYX_HOME/templates/$lang/AGENTS.md" AGENTS.md
+            _sync_one "$NYX_HOME/templates/en/docs/nyx/LLM.md" docs/nyx/LLM.md
+            for _g in "$NYX_HOME/templates/$lang/docs/nyx/guides/"*.md; do
+                [ -f "$_g" ] || continue
+                _sync_one "$_g" "docs/nyx/guides/$(basename "$_g")"
+            done
             # CAPABILITIES.md: se GENERA de la stdlib instalada (no es template).
             _NB="$NYX_HOME/nyx_build"; [ -x "$_NB" ] || _NB="$NYX_HOME/bin/nyx_build"
             if [ -x "$_NB" ]; then
@@ -188,12 +333,15 @@ case "${1:-}" in
                     && synced="$synced CAPABILITIES.md(generado)"
             fi
             ver=$(cat "$NYX_HOME/VERSION" 2>/dev/null || echo "?")
-            printf "  \033[1;32mContexto IA sincronizado a nyx v%s:\033[0m%s\n" "$ver" "$synced"
+            printf "  \033[1;32mContexto para agentes sincronizado a nyx v%s (idioma: %s):\033[0m%s\n" "$ver" "$lang" "$synced"
             echo "  (los archivos previos con cambios quedaron en *.bak)"
             exit 0
         fi
 
         printf "\n  \033[1mUpdating Nyx\033[0m\n\n"
+        # El proyecto desde el que se llamó: `cd "$NYX_HOME"` lo pierde, y al
+        # final hay que volver para regenerar la evidencia del andamiaje SDD.
+        _PROJECT_DIR="$PWD"
         cd "$NYX_HOME"
         if [ ! -d .git ]; then
             echo "error: $NYX_HOME is not a git repo. Reinstall with:" >&2
@@ -234,6 +382,28 @@ case "${1:-}" in
             echo ""
             echo "  Para actualizar el contexto IA de tus proyectos:"
             echo "    cd <proyecto> && nyx update --sync-docs"
+        fi
+        # ── What's new de gotchas: trampas que ya no hace falta esquivar
+        # entre OLD_VERSION y NEW_VERSION (Task 2: `nyx_gendocs fixed-since`
+        # imprime «id: título» de cada gotcha kind:fixed con fixed_in >
+        # versión). Nunca fatal — si nyx_gendocs no está instalado (toolchain
+        # vieja recién actualizada a esta misma versión, antes del próximo
+        # install-local) simplemente no se muestra nada.
+        if [ -n "${OLD_VERSION:-}" ] && [ "$OLD_VERSION" != "$NEW_VERSION" ] && [ -x "$NYX_HOME/nyx_gendocs" ]; then
+            printf "\n  \033[1mGotchas que ya no hace falta esquivar:\033[0m\n"
+            "$NYX_HOME/nyx_gendocs" fixed-since "$OLD_VERSION" | sed 's/^/  /'
+        fi
+        # ── Andamiaje SDD: docs/evidence/ y el test de constitución son
+        # GENERADOS desde la tabla de gotchas de la toolchain, así que después
+        # de un update quedarían de la versión vieja (justo la clase de mentira
+        # que este arco persigue). Solo si el proyecto desde el que se llamó
+        # tiene andamiaje; nunca crea nada, nunca pisa lo que el usuario editó.
+        if [ -f "$_PROJECT_DIR/nyx.toml" ] && [ -d "$_PROJECT_DIR/docs/evidence" ]; then
+            _NBU="$NYX_HOME/nyx_build"; [ -x "$_NBU" ] || _NBU="$NYX_HOME/bin/nyx_build"
+            if [ -x "$_NBU" ]; then
+                printf "\n  \033[1mAndamiaje SDD de este proyecto:\033[0m\n"
+                (cd "$_PROJECT_DIR" && NYX_HOME="$NYX_HOME" "$_NBU" sdd evidence 2>&1 | sed 's/^/  /')
+            fi
         fi
         exit 0
         ;;
@@ -327,9 +497,26 @@ _selfheal_capabilities() {
     fi
 }
 
+# Aviso de deriva del contexto IA sembrado (F3 del informe de fricción, A2):
+# AGENTS.md lleva el sello `<!-- nyx-version: X -->` desde que nyx init lo
+# siembra (seed_file en compiler/build.nx). Si falta o es de otra versión, el
+# agente está leyendo manuales de otro toolchain — se avisa en stderr, una
+# vez por build, y NUNCA se toca el archivo (puede tener ediciones del
+# usuario): refrescar es decisión suya con `nyx update --sync-docs` (deja .bak).
+# CAPABILITIES.md sí se regenera solo porque es 100% generado; AGENTS.md no.
+_warn_seed_drift() {
+    [ -f nyx.toml ] && [ -f AGENTS.md ] || return 0
+    local curver
+    curver="$(cat "$NYX_HOME/VERSION" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$curver" ] || return 0
+    if ! grep -q "nyx-version: $curver" AGENTS.md 2>/dev/null; then
+        printf '\033[1;33m⚠ AGENTS.md fue sembrado por otra versión de nyx (o sin sello): el contexto IA puede estar desactualizado — `nyx update --sync-docs` lo refresca (deja .bak).\033[0m\n' >&2
+    fi
+}
+
 # Route PM subcommands to nyx_build
 case "${1:-}" in
-    init|add|build|info|report|capabilities)
+    init|add|build|info|report|capabilities|sdd)
         NYX_BUILD="$NYX_HOME/nyx_build"
         [ ! -x "$NYX_BUILD" ] && NYX_BUILD="$NYX_HOME/bin/nyx_build"
         if [ ! -x "$NYX_BUILD" ]; then
@@ -337,7 +524,7 @@ case "${1:-}" in
             exit 1
         fi
         export NYX_HOME
-        [ "$1" = "build" ] && _selfheal_capabilities
+        [ "$1" = "build" ] && { _selfheal_capabilities; _warn_seed_drift; }
         exec "$NYX_BUILD" "$@"
         ;;
     run)
@@ -353,6 +540,7 @@ case "${1:-}" in
             fi
             export NYX_HOME
             _selfheal_capabilities
+            _warn_seed_drift
             exec "$NYX_BUILD" "$@"
         fi
         ;;

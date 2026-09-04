@@ -7,7 +7,8 @@
 # cambios de compilador/runtime/std. SKIP limpio si un stack no está clonado.
 #
 # (nyx-kv-stack no se incluye: sus tests requieren su propio flujo TLS/
-#  daemon de producción — se corren desde ese repo.)
+#  daemon de producción — se corren desde ese repo. nyx-serve tampoco desde
+#  2026-09-03: absorbido al core, su smoke corre en make test-integration.)
 set -uo pipefail
 
 declare -A STACKS=(
@@ -15,7 +16,6 @@ declare -A STACKS=(
     ["$HOME/nyx/products/queue"]="test-queue"
     ["$HOME/nyx/products/edit"]="test-edit"
     ["$HOME/nyx/products/shell"]="test-shell"
-    ["$HOME/nyx/products/serve"]="test-serve"
     ["$HOME/nyx/products/proxy"]="test-proxy"
 )
 

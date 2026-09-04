@@ -45,7 +45,10 @@ declare -a FAILED_TESTS
 
 STD_PRELUDE="std/prelude.nx"
 TEST_DIR="tests/stdlib-unit"
-RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/os/os_posix.c"
+# runtime/url.c: lo pide std/url (nyx_url_encode/decode), que llega
+# transitivamente por std/template (html_escape) — sin él el link del test
+# de template muere con símbolos indefinidos.
+RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/url.c runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto"
 
 run_test() {

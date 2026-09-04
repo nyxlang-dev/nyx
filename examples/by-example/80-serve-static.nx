@@ -1,8 +1,9 @@
-// nyx-serve static files — serving CSS, JS, images from a directory
-// Archivos estáticos nyx-serve — servir CSS, JS, imágenes desde directorio
+// std/serve static files — serving CSS, JS, images from a directory
+// Archivos estáticos std/serve — servir CSS, JS, imágenes desde directorio
 
 import "std/http"
 import "std/web"
+import "std/serve"
 
 fn home(req: Request) -> Response {
     let html: String = "<!DOCTYPE html><html><head><link rel=\"stylesheet\" href=\"/assets/style.css\"></head><body><h1>Home</h1></body></html>"
@@ -11,25 +12,62 @@ fn home(req: Request) -> Response {
 
 fn main() -> int {
     let app: App = app_new()
+    let port: int = 18180
 
-    // Register dynamic routes first
+    // Un archivo real para servir — nombrado con el pid para no chocar si
+    // dos corridas de este ejemplo se solapan en el mismo /tmp.
+    let css_path: String = "/tmp/nyx-ex80-" + int_to_string(getpid()) + ".css"
+    let css_body: String = "body { color: darkslateblue; }"
+    write_file(css_path, css_body)
+
     app_get(app, "/", home)
 
-    // Static file serving via app_static (from nyx-serve product):
-    //   app_static(app, "/assets/", "./public/")
-    //
-    // When a request path starts with "/assets/", the rest is looked up
-    // in ./public/. For example: GET /assets/style.css serves ./public/style.css
-    //
-    // The serve_app runtime auto-detects MIME types:
-    //   .css -> text/css
-    //   .js  -> application/javascript
-    //   .png -> image/png
-    //   .svg -> image/svg+xml
+    // app_static_cached mapea un prefijo de URL a un directorio del disco,
+    // con ETag (débil) + Cache-Control: public, max-age=<segundos>. Sirve
+    // CUALQUIER archivo bajo ese directorio — /tmp en este ejemplo, para no
+    // depender de un directorio propio del proyecto.
+    //   app_static(app, prefix, dir) hace lo mismo SIN esos headers.
+    app_static_cached(app, "/assets/", "/tmp", 60)
 
-    print("static file serving pattern:")
-    print("  app_static(app, \"/assets/\", \"./public/\")")
-    print("  GET /assets/style.css -> ./public/style.css")
-    print("  GET /assets/app.js    -> ./public/app.js")
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    let base: String = "http://127.0.0.1:" + int_to_string(port)
+    let css_url: String = base + "/assets/" + "nyx-ex80-" + int_to_string(getpid()) + ".css"
+
+    var tries: int = 0
+    var up: bool = false
+    while tries < 50 and !up {
+        let probe: Array = http_get(base + "/")
+        if http_status(probe) == 200 {
+            up = true
+        } else {
+            sleep(50)
+        }
+        tries = tries + 1
+    }
+    assert(up, "el servidor nunca levantó en :" + int_to_string(port))
+
+    let r_home: Array = http_get(base + "/")
+    assert(http_status(r_home) == 200, "GET / -> 200")
+    assert(http_body(r_home).indexOf("/assets/style.css") >= 0, "la home linkea el css")
+
+    let r_css: Array = http_get(css_url)
+    assert(http_status(r_css) == 200, "GET /assets/*.css -> 200")
+    assert(http_body(r_css) == css_body, "el archivo servido es byte a byte el que escribimos")
+    let css_headers: Array = r_css[2]
+    assert(http_find_header(css_headers, "Content-Type").indexOf("text/css") >= 0, "MIME por extensión: text/css")
+    assert(http_find_header(css_headers, "Cache-Control") == "public, max-age=60", "Cache-Control del app_static_cached")
+    let etag: String = http_find_header(css_headers, "ETag")
+    assert(etag.length() > 0, "static cacheado manda ETag")
+
+    // If-None-Match con el ETag recibido -> 304 sin body (el mismo
+    // contrato que valida tests/integration/serve_std).
+    let r304: Array = http_request("GET", css_url, ["If-None-Match", etag], "")
+    assert(http_status(r304) == 304, "If-None-Match -> 304")
+
+    remove_file(css_path)
+    print("OK: static files (ETag + Cache-Control + 304) verificados end-to-end")
     return 0
 }
