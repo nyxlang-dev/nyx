@@ -1665,7 +1665,7 @@ Public repos: `https://github.com/nyxlang-dev/nyx-<name>`.
 
 - **Full language spec**: [docs/SPEC.md](docs/SPEC.md) (3500+ lines, bilingual)
 - **Cookbook (~100 worked recipes, EN/ES)**: `https://nyxlang.com/by-example/`
-- **The Book** (31 chapters + appendices): `https://nyxlang.com/learn/`
+- **Step-by-step guide (EN/ES)**: `https://nyxlang.com/docs/` / `https://nyxlang.com/es/docs/`
 - **Playground**: `https://nyxlang.com/playground`
 - **Benchmarks**: [docs/archive/BENCHMARKS.md](docs/archive/BENCHMARKS.md)
 - **Roadmap**: [docs/ROADMAP.md](docs/ROADMAP.md)

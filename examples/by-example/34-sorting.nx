@@ -16,6 +16,24 @@ fn print_array(arr: Array) {
     print(s)
 }
 
+// El mismo recorrido para arrays de String: el tipo del elemento se declara
+// al leerlo (`let v: String`), porque un Array no lo lleva consigo: anotar
+// `int` acá imprimiría la dirección de cada string en vez del texto.
+fn print_array_str(arr: Array) {
+    var s: String = "["
+    var i: int = 0
+    while i < arr.length() {
+        let v: String = arr[i]
+        s = s + v
+        if i < arr.length() - 1 {
+            s = s + ", "
+        }
+        i = i + 1
+    }
+    s = s + "]"
+    print(s)
+}
+
 fn main() -> int {
     var nums: Array = [64, 25, 12, 22, 11, 90, 3, 47, 8, 55]
 
@@ -31,11 +49,11 @@ fn main() -> int {
     // Otro ejemplo: strings
     var palabras: Array = ["manzana", "banana", "cereza", "aguacate"]
     print("Strings antes:")
-    print_array(palabras)
+    print_array_str(palabras)
 
     let ord_str: Array = sort_str(palabras)
     print("Strings despues:")
-    print_array(ord_str)
+    print_array_str(ord_str)
 
     return 0
 }

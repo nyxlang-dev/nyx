@@ -2,6 +2,13 @@
 import "std/random"
 import "std/uuid"
 
+// bool -> texto: int_to_string() espera un int y un bool no se convierte solo,
+// así que la conversión se escribe explícita.
+fn si_no(b: bool) -> String {
+    if b { return "si" }
+    return "no"
+}
+
 fn main() -> int {
     // Generar 3 números aleatorios entre 1 y 100
     print("Numeros aleatorios (1-100):")
@@ -14,7 +21,7 @@ fn main() -> int {
 
     // random_bool
     let b: bool = random_bool()
-    print("random_bool: " + int_to_string(b))
+    print("random_bool: " + si_no(b))
 
     // random_float en [0.0, 1.0)
     let f: float = random_float()
@@ -27,12 +34,12 @@ fn main() -> int {
 
     // Validar que el UUID es valido
     let valido: bool = uuid_is_valid(id)
-    print("uuid valido: " + int_to_string(valido))
+    print("uuid valido: " + si_no(valido))
 
     // Generar otro UUID — debe ser diferente
     let id2: String = uuid_v4()
     print("segundo uuid: " + id2)
-    print("son distintos: " + int_to_string(id != id2))
+    print("son distintos: " + si_no(id != id2))
 
     return 0
 }

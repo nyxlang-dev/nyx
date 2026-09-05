@@ -84,6 +84,7 @@ Or try it with zero setup at the **[web playground](https://nyxlang.com/playgrou
 
 - [Language Specification](docs/SPEC.md)
 - [Getting Started](docs/GETTING_STARTED.md)
+- [Step-by-step guide](https://nyxlang.com/docs/)
 - [Language Comparison](docs/COMPARISON.md) — vs 15 languages
 - [Roadmap](docs/ROADMAP.md) · [Changelog](CHANGELOG.md) · [Test suite](docs/TESTS.md)
 - [Web playground](https://nyxlang.com/playground)
@@ -99,7 +100,7 @@ make test               # regression suite, 100% (ARM64) — counts in docs/TEST
 
 > **libgc/bdwgc >= 8.2 required for healthy concurrency under load.** Older versions lack `GC_set_sp_corrector`; the runtime still builds and runs, but the M:N scheduler's collector can crash under concurrent goroutines (it warns loudly on stderr at startup when this happens — it never fails silently).
 
-Linux (x86_64 / ARM64) is fully supported. macOS is experimental; Windows is not supported.
+Linux (x86_64 / ARM64) is fully supported. macOS and Windows are not supported.
 
 ## License
 

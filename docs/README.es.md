@@ -85,6 +85,7 @@ O probalo sin instalar nada en el **[playground web](https://nyxlang.com/playgro
 
 - [Especificación del lenguaje](SPEC.es.md) ([English](SPEC.md))
 - [Primeros pasos](GETTING_STARTED.md)
+- [Guía paso a paso](https://nyxlang.com/es/docs/)
 - [Comparativa](COMPARISON.es.md) — vs 15 lenguajes
 - [Roadmap](ROADMAP.md) · [Changelog](../CHANGELOG.md) · [Suite de tests](TESTS.md)
 - [Playground web](https://nyxlang.com/playground)
@@ -100,7 +101,7 @@ make test               # suite de regresión, 100% (ARM64) — conteos en TESTS
 
 > **Se requiere libgc/bdwgc >= 8.2 para concurrencia sana bajo carga.** Con versiones anteriores falta `GC_set_sp_corrector`; el runtime igual compila y corre, pero el colector del scheduler M:N puede crashear bajo goroutines concurrentes (avisa fuerte por stderr al arrancar cuando esto pasa — nunca degrada en silencio).
 
-Linux (x86_64 / ARM64) tiene soporte completo. macOS es experimental; Windows no está soportado.
+Linux (x86_64 / ARM64) tiene soporte completo. macOS y Windows no están soportados.
 
 ## Licencia
 

@@ -2,9 +2,16 @@
 
 import "std/regex"
 
+// bool -> texto: int_to_string() espera un int y un bool no se convierte solo,
+// así que la conversión se escribe explícita.
+fn si_no(b: bool) -> String {
+    if b { return "si" }
+    return "no"
+}
+
 fn validar_email(email: String) -> bool {
     // Patrón POSIX básico para email
-    return regex_is_match(email, "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$")
+    return regex_is_match(email, "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9.-]+$")
 }
 
 fn main() -> int {
@@ -13,9 +20,9 @@ fn main() -> int {
     let email2: String = "no-es-email"
     let email3: String = "bob.dev@nyx-lang.org"
 
-    print("Email: " + email1 + " -> " + int_to_string(validar_email(email1)))
-    print("Email: " + email2 + " -> " + int_to_string(validar_email(email2)))
-    print("Email: " + email3 + " -> " + int_to_string(validar_email(email3)))
+    print("Email: " + email1 + " -> " + si_no(validar_email(email1)))
+    print("Email: " + email2 + " -> " + si_no(validar_email(email2)))
+    print("Email: " + email3 + " -> " + si_no(validar_email(email3)))
 
     // regex_match: retorna la primera coincidencia o ""
     let texto: String = "Nyx version 0.12.0 released"

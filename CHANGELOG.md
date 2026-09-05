@@ -233,6 +233,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **`docs/SPEC.md` §Typed Errors deja de mentir sobre `?`**: la nota del 2026-08-31 afirmaba que el camino
   `Err` de `?` no corría `defer` ni liberaba tipos afines; era falsa desde su redacción (fix real en
   v0.27.0, `9ef30fa`). Repro compilado 2026-09-03 durante el triage de TASKS; ficha cerrada.
+- **Documentación web: guía paso a paso en nyxlang.com/docs** (instalar, primer programa,
+  proyecto, desarrollar con agentes, CLI, sintaxis) en EN/ES; el libro `/learn/` queda como
+  legado sin enlaces; `GETTING_STARTED.md` apunta a la guía.
 
 ### Interno — arco Windows W1: nace la capa `nyx_os_*` (8 incrementos, 2026-08-20 → 26)
 - **`runtime/os/`**: `nyx_os.h` (header único SIN un solo `#ifdef` de plataforma) +

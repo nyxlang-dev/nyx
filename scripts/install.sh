@@ -467,7 +467,7 @@ main() {
     printf "  Get started:\n"
     printf "    \$ echo 'fn main() { print(\"Hello!\") }' > hello.nx\n"
     printf "    \$ nyx run hello.nx\n\n"
-    printf "  Learn more: https://nyxlang.com/learn/\n\n"
+    printf "  Learn more: https://nyxlang.com/docs/\n\n"
 }
 
 main

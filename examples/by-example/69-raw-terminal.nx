@@ -2,8 +2,11 @@
 // Terminal raw — leer teclas sin buffer de línea
 
 fn main() -> int {
-    // Check if we have a terminal
-    if not isatty(0) {
+    // Check if we have a terminal.
+    // `not` aplicado directo a la llamada de un builtin genera IR invalido
+    // (xor i1 sobre un i64): se liga primero a un bool con tipo declarado.
+    let tty: bool = isatty(0)
+    if not tty {
         print("not a terminal — skipping raw mode demo")
         print("run interactively to see keypress reading")
         return 0

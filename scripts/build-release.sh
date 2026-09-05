@@ -85,7 +85,7 @@ nyx run hello.nx
 
 ## Learn more
 
-https://nyxlang.com/learn/
+https://nyxlang.com/docs/
 EOF
 
 echo "  [3/4] Creating tarball..."

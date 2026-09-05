@@ -1,5 +1,12 @@
 // Strings: length, substring, split, contains, trim, toUpper, interpolación
 
+// bool -> texto: int_to_string() espera un int y un bool no se convierte solo,
+// así que la conversión se escribe explícita.
+fn si_no(b: bool) -> String {
+    if b { return "si" }
+    return "no"
+}
+
 fn main() -> int {
     let texto: String = "  Hola Nyx  "
 
@@ -19,8 +26,8 @@ fn main() -> int {
     print("toLower: " + limpio.toLower())
 
     // contains
-    print("contains 'Nyx': " + int_to_string(limpio.contains("Nyx")))
-    print("contains 'Go': " + int_to_string(limpio.contains("Go")))
+    print("contains 'Nyx': " + si_no(limpio.contains("Nyx")))
+    print("contains 'Go': " + si_no(limpio.contains("Go")))
 
     // split
     let frase: String = "uno dos tres"

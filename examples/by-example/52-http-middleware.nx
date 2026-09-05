@@ -25,7 +25,7 @@ fn main() -> int {
     app_get(app, "/api/status", handle_api)
 
     // The app is ready — in production you would pass it
-    // to serve_app() from nyx-serve to start serving.
+    // to serve_app() from std/serve to start serving.
     // Here we just demonstrate the framework API.
     print("app configured with 2 routes and 2 middlewares")
     print("routes: GET / and GET /api/status")

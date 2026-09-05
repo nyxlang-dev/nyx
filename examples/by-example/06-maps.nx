@@ -1,5 +1,12 @@
 // Maps: Map.new(), insert, get, has, size, iterar con keys()
 
+// bool -> texto: int_to_string() espera un int y un bool no se convierte solo,
+// así que la conversión se escribe explícita.
+fn si_no(b: bool) -> String {
+    if b { return "si" }
+    return "no"
+}
+
 fn main() -> int {
     var capitales: Map = Map.new()
 
@@ -16,14 +23,17 @@ fn main() -> int {
     print("Capital de Francia: " + capital)
 
     // has
-    print("tiene Argentina: " + int_to_string(capitales.has("Argentina")))
-    print("tiene Brasil: " + int_to_string(capitales.has("Brasil")))
+    print("tiene Argentina: " + si_no(capitales.has("Argentina")))
+    print("tiene Brasil: " + si_no(capitales.has("Brasil")))
 
     // Iterar claves
     let ks: Array = capitales.keys()
     print("claves (" + int_to_string(ks.length()) + "):")
     for k in ks {
-        print("  " + k)
+        // El tipo de elemento de un Array que devuelve un builtin no se infiere:
+        // sin esta anotación, "  " + k concatena el puntero, no el texto.
+        let clave: String = k
+        print("  " + clave)
     }
 
     return 0

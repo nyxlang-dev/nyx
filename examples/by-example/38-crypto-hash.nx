@@ -1,5 +1,12 @@
 // Criptografía: SHA-256, MD5 y HMAC-SHA256
 
+// bool -> texto: int_to_string() espera un int y un bool no se convierte solo,
+// así que la conversión se escribe explícita.
+fn si_no(b: bool) -> String {
+    if b { return "si" }
+    return "no"
+}
+
 fn main() -> int {
     // SHA-256
     let h1: String = sha256("hello world")
@@ -28,12 +35,12 @@ fn main() -> int {
     // Verificar determinismo: mismo input -> mismo hash
     let a: String = sha256("nyx")
     let b: String = sha256("nyx")
-    print("sha256 es determinista: " + int_to_string(a == b))
+    print("sha256 es determinista: " + si_no(a == b))
 
     // Verificar que inputs distintos -> hashes distintos
     let c: String = sha256("aaa")
     let d: String = sha256("bbb")
-    print("hashes distintos para inputs distintos: " + int_to_string(c != d))
+    print("hashes distintos para inputs distintos: " + si_no(c != d))
 
     return 0
 }
