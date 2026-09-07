@@ -1,0 +1,5 @@
+catch bare: desde throw
+catch bare: desde panic
+catch int: 42
+catch String: 7
+fin

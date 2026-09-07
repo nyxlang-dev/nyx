@@ -808,6 +808,12 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1019 | non-exhaustive match |
 | NYX1020 | trait bound not satisfied (`fn f<T: Display>` with a `T` lacking the impl) |
 | NYX1021 | `await` of a float expression is gated (ABI hazard in the goroutine join — annotate through an int-returning wrapper) |
+| NYX1022 | receiver-type method lookup failure (`m.length()` on a `Map`, or any method the checker knows the receiver type doesn't have) |
+| NYX1023 | `?` used outside a function that returns `Result` |
+| NYX1024 | reservado — namespacing (llamada no calificada homónima; `docs/design/specs/2026-08-11-namespacing-modulos-spec.md`) |
+| NYX1025 | `?` propagates an `Err` whose `E` differs from the function's declared `E` (no `From`-conversion in v1 — same type or compile error) |
+| NYX1026 | `throw`/`panic` payload is not `String` or `int` |
+| NYX1027 | `catch (e: T)` annotation is not `String` (`catch` is untyped; the annotation is reserved, not a promise of a future typed catch) |
 | NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
 | NYX1210 | borrow: `&mut` exclusivity violation (statement-scoped lint) |
 | NYX1211 | borrow: `&mut` aliasing with an active `&` borrow (lint, sibling of NYX1210) |
@@ -1422,18 +1428,26 @@ contrario, era falsa desde su redacción (2026-08-31).
 
 ## Try-Catch Exception Handling
 
-Nyx soporta exception handling via `try-catch` blocks:
+Nyx soporta manejo de excepciones con bloques `try`/`catch`:
 
 ```nyx
 try {
     let result = risky_operation()
     print(result)
-} catch(e: String) {
+} catch (e) {
     print("Error: " + e)
 }
 ```
 
-### Throw
+El valor capturado por `catch (e)` es siempre un `String` (ver «`catch (e: T)`: solo `String`» abajo).
+
+### Throw (deprecado — alias de panic)
+
+> **Deprecado desde v0.31.0.** `throw(x)` es un alias de `panic(x)`: mismo canal (`nyx_panic` hace
+> `nyx_throw` si hay un `try` activo), mismo `catch`, los mismos límites. `nyx vet` lo marca con
+> **W108** (`docs/gotchas/throw-deprecated.md`). Sigue compilando — retirar la sintaxis sería un
+> cambio MAJOR — pero el código nuevo debería usar `panic()` para lo irrecuperable y
+> `Result<T, E>` para lo esperable.
 
 ```nyx
 fn divide(a: int, b: int) -> int {
@@ -1443,29 +1457,110 @@ fn divide(a: int, b: int) -> int {
 
 try {
     let result = divide(10, 0)
-} catch(e: String) {
+} catch (e) {
     print(e)  // "division by zero"
 }
 ```
+
+### El payload de `throw`/`panic`: `String` o `int` (NYX1026)
+
+El runtime solo transporta un `nyx_string*` — un único slot `_Thread_local`
+(`__nyx_exception_msg`, `runtime/runtime.c:359-415`): no hay tag de tipo ni dispatch por tipo.
+`throw`/`panic` aceptan `String` (tal cual) o `int` (convertido con `nyx_string_from_int`, como
+siempre); cualquier otro tipo de payload — `float`, un struct, o un enum nombrado en el propio call
+site, con payload (`throw(Shape.Circle(1))`) o unitario (`throw(Color.Red)`) — es **NYX1026** en
+tiempo de compilación:
+
+```
+error [NYX1026] in 'main' (line 11): the 'throw' payload must be String or int, got float
+```
+
+Antes de NYX1026 (v0.31.0 y anteriores) esto compilaba sin avisar: un payload `float` producía IR
+mal tipado que `clang` rechazaba con un error sin línea de usuario (`floating point constant
+invalid for type`); `panic(Shape.Circle(1))` era peor — el struct del enum pasaba por el slot
+`%nyx_string*` bajo punteros opacos, `clang` no objetaba nada, y el runtime leía el buffer del enum
+como si fuera un `nyx_string`: **corrupción de memoria silenciosa**. NYX1026 cierra los dos casos en
+semantic, antes de que exista IR.
+
+Un payload cuyo tipo el checker no puede inferir (genérico sin instanciar, `dyn Trait`, o un entero
+con tamaño — `i8`..`u64`, el emisor solo convierte `i64`) conserva el free-pass histórico como
+`sem_blind` (ceguera VISIBLE bajo `NYX_STRICT=warn`), nunca como aprobado mudo.
+
+### `catch (e: T)`: solo `String` (NYX1027)
+
+La sintaxis de la anotación existe desde siempre, pero el parser la descartaba en silencio y el
+catch siempre bindeaba `String` — la anotación era fantasma. Desde v0.31.0, cualquier anotación
+distinta de `String` es un diagnóstico:
+
+```
+error [NYX1027] in 'main' (line 15): 'catch' only accepts the annotation 'String', got 'MiError'
+```
+
+No es una limitación temporal a resolver después: el runtime solo transporta un `String`, y esta
+spec **no promete** un catch tipado futuro — es la Opción C de
+`docs/design/specs/2026-08-11-errores-tipados-design.md` (excepciones para lo irrecuperable, sin
+dispatch por tipo). Para distinguir errores por tipo, usá `Result<T, E>` con `match`.
+
+La anotación del `catch` se limita a un **identificador simple** (`String`): una forma calificada o
+genérica (`catch (e: mod.Error)`, `catch (e: Result<int, E>)`) es error de SINTAXIS (NYX0101), no
+NYX1027.
 
 ### Panic es Catchable
 
 ```nyx
 try {
     panic("something went wrong")
-} catch(e: String) {
+} catch (e) {
     print("Caught panic: " + e)
 }
 ```
 
-Sin `try-catch`, `panic()` aborta el programa. Dentro de un `try-catch`, es catchable como una excepcion normal.
+Sin `try-catch`, `panic()` aborta el programa (`exit(1)`). Dentro de un `try-catch`, es atrapable
+como cualquier excepción — `nyx_panic` hace `nyx_throw` si hay un try activo
+(`runtime/runtime.c:418-425`).
+
+### wasm32-wasi: fail-fast por contrato
+
+`wasi-libc` no tiene `setjmp`/`longjmp`, así que `try`/`catch` no existe en ese target — es una
+decisión de diseño (D5 del arco E6), no una limitación temporal: en wasm lo esperable va por
+`Result<T, E>` (es un valor, funciona idéntico en ambos targets) y lo irrecuperable mata la
+instancia, el modelo estándar de wasm. Dos capas independientes lo garantizan:
+
+- **Compile-time**: `codegen_target_guard(ctx, "try/catch")` rechaza cualquier `try` bajo `make wasm`.
+- **Runtime**: si igual se linkea (código viejo, FFI directa), `nyx_try_push()` bajo `__wasi__`
+  imprime `error: try/catch is not supported on wasm32-wasi` y hace `exit(1)`, en vez de ofrecer un
+  try-catch roto a medias.
+
+### Frontera try-como-aislamiento: el leak de afines bajo `longjmp`
+
+`try`/`catch` es una frontera de **aislamiento de grano grueso** (top-level de un server, un
+worker, un test) — no un mecanismo de recuperación *sound*. La implementación es `setjmp`/`longjmp`
+puro: un `throw()`/`panic()` catcheado hace `longjmp` directo al `try` más cercano, y `longjmp`
+**salta** cualquier código intermedio — incluidos los `defer` y los drops deterministas de T4c que
+correrían en una salida normal de función. Consecuencia: **todo valor `#[affine]` con `impl Drop`
+(`Box`/`Rc` de `std/owned.nx`) que esté vivo entre el `throw` y el `catch` LEAKEA** — su `Drop`
+nunca corre. Es un trade-off documentado, no un bug pendiente: hacerlo *sound* exigiría unwinding
+real (landing pads o tablas de cleanup por frame), un proyecto de compilador comparable a T4 entero
+(catalogado como T4c en `docs/design/specs/2026-08-11-errores-tipados-design.md` §1.1).
+
+**Contraste con `?`**: el camino `Err` de `?` **no** usa `longjmp` — es un `return` temprano que
+pasa por la misma limpieza de scope que un `return` explícito, así que `defer` corre y los afines
+con `Drop` se liberan (desde v0.27.0; ver «Typed Errors» arriba). Por eso la regla de dos niveles
+importa en la práctica: `Result<T, E>` + `?` para lo esperable (limpieza determinista garantizada) y
+`try`/`panic` reservados para lo irrecuperable, donde una frontera de grano grueso alcanza y el leak
+es aceptable (el proceso está por morir, o por reiniciar ese worker, de todos modos).
+
+`?` además exige que el `E` del `Result` interno sea el mismo que el `E` de la función que lo usa —
+**NYX1025**, ver la tabla de códigos: no hay conversión (`From`) en v1 mientras `Error` sea el
+struct único de la std (E7 queda diferido, no abandonado).
 
 ### Implementacion
 
-- Via `setjmp`/`longjmp` en el runtime C
-- Try blocks crean un try-catch frame en el stack
-- `throw()` ejecuta `longjmp` al frame mas cercano
-- LIFO ordering: blockes anidados funcionan como expected
+- Via `setjmp`/`longjmp` en el runtime C (no disponible en wasm32-wasi, ver arriba)
+- Los bloques `try` crean un try-catch frame en una pila `_Thread_local` de 64 niveles
+- `throw()`/`panic()` catcheado ejecutan `longjmp` al frame mas cercano — LIFO ordering: bloques
+  anidados funcionan como se espera
+- `catch (e)` bindea siempre un `String` (`nyx_get_exception()`)
 
 ---
 

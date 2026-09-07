@@ -1,0 +1,26 @@
+// D2 del review adversarial 2026-08-13 (repro R4): el `?` no verificaba que
+// el `E` del callee fuera el `E` del caller. El camino Err reenvía el enum
+// ENTERO (`ret i8* %inner`), así que un `%nyx_string*` en el slot 0 llega al
+// caller que lo lee como `%MiError*` — los dos bajan a `i8*` y clang no dice
+// nada. Resultado medido antes del fix: SEGFAULT / basura, sin ningún aviso.
+// NYX1025 lo convierte en un error de compilación con línea y hint.
+// Expected stderr (contains): "NYX1025"
+struct MiError { code: int, msg: String }
+
+fn interno() -> Result<int, String> {
+    return Result.Err("soy String no error")
+}
+
+fn externo() -> Result<int, MiError> {
+    let v = interno()?
+    return Result.Ok(v)
+}
+
+fn main() -> int {
+    let r: Result<int, MiError> = externo()
+    match r {
+        Result.Ok(v) => print("ok: " + int_to_string(v)),
+        Result.Err(e) => print("err code=" + int_to_string(e.code))
+    }
+    return 0
+}

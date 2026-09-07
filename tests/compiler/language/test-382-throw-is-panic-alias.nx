@@ -1,0 +1,45 @@
+// test-382 (arco E6, Task 2): control POSITIVO de NYX1026/NYX1027. El emisor
+// único de throw/panic no puede cambiar NADA de lo que ya andaba:
+//   · `throw` y `panic` son el mismo mecanismo — los dos los atrapa el mismo
+//     `catch (e)` sin anotación,
+//   · un payload `int` se sigue convirtiendo con nyx_string_from_int y llega
+//     al catch como su representación decimal,
+//   · `catch (e: String)` (la forma que usa std/serve.nx en 3 sitios) sigue
+//     siendo válida y bindea `e` como String.
+
+fn lanza_string() {
+    throw("desde throw")
+}
+
+fn lanza_panic() {
+    panic("desde panic")
+}
+
+fn main() -> int {
+    try {
+        lanza_string()
+    } catch (e) {
+        print("catch bare: " + e)
+    }
+
+    try {
+        lanza_panic()
+    } catch (e) {
+        print("catch bare: " + e)
+    }
+
+    try {
+        throw(42)
+    } catch (e) {
+        print("catch int: " + e)
+    }
+
+    try {
+        throw("anotado")
+    } catch (e: String) {
+        print("catch String: " + e.length())
+    }
+
+    print("fin")
+    return 0
+}

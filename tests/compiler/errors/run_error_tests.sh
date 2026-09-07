@@ -113,6 +113,22 @@ TESTS=(
   # lo tiraba clang sobre script.ll ("value doesn't match function result
   # type 'i64'"), sin la línea del usuario ni explicación.
   "tests/compiler/errors/test-tryop-outside-result-fn.nx|NYX1023"
+  # E6 Task 1 (D2 del review 2026-08-13, repro R4): el `?` exige que el E del
+  # callee sea el del caller. Antes compilaba limpio y reenviaba el enum Err
+  # entero — un %nyx_string* leído como %MiError*: SEGV o basura, sin aviso.
+  "tests/compiler/errors/test-tryop-error-type-mismatch.nx|NYX1025"
+  # E6 Task 2 (D2/D3): el payload de throw/panic solo puede ser String o int
+  # (lo demás llegaba crudo a @nyx_throw(%nyx_string*): error ilegible de clang
+  # con un double, corrupción SILENCIOSA con un enum), y `catch (e: T)` solo
+  # admite String — el parser descartaba la anotación y bindeaba String igual.
+  "tests/compiler/errors/test-throw-payload-not-string.nx|NYX1026"
+  "tests/compiler/errors/test-panic-payload-enum.nx|NYX1026"
+  "tests/compiler/errors/test-catch-typed-not-string.nx|NYX1027"
+  # I-1 de la review final: la variante UNITARIA (`Color.Red`) parsea como
+  # field_access, no como method_call — se escapaba del chequeo y el binario
+  # segfaulteaba. Las dos formas (`panic` y `throw`) tienen que dar NYX1026.
+  "tests/compiler/errors/test-panic-payload-enum-unit.nx|NYX1026"
+  "tests/compiler/errors/test-throw-payload-enum-unit.nx|NYX1026"
 )
 
 for entry in "${TESTS[@]}"; do

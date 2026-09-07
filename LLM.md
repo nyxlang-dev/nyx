@@ -517,10 +517,25 @@ error, wrong function, blank screen). Now:
 ```nyx
 try {
     risky_call()
-} catch e {
+} catch (e) {
     print("failed: ${e}")
 }
 ```
+
+`catch (e)` needs the parens (`catch e { ... }` is a parse error — `LEFT_PAREN` is mandatory).
+`catch` always binds `e` as a `String`; `catch (e: T)` for any `T` other than `String` is
+**NYX1027** — the annotation is reserved, not a promise of a future typed catch (see §5.2
+`throw-deprecated` below: `throw(x)` is a deprecated alias of `panic(x)`, same channel, same
+`catch`). New in v0.31.0:
+
+| Code | What |
+|---|---|
+| NYX1025 | `?` propagates an `Err` whose `E` differs from the function's declared `E` — no `From`-conversion in v1, same `E` on both sides or compile error |
+| NYX1026 | `throw`/`panic` payload is not `String` or `int` (a struct/enum/float payload used to produce untyped IR or, worse, silently corrupt memory — see docs/SPEC.md §Try-Catch) |
+| NYX1027 | `catch (e: T)` annotation is not `String` |
+
+`Map.get(k)` (aborts if missing) and `get_or(k, default)` (never aborts) coexist — no migration
+to `Option<T>` planned (would be a breaking MAJOR change to a builtin).
 
 ### Defer (always runs at scope exit)
 
@@ -936,7 +951,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -988,6 +1003,9 @@ treat `assert()` as fatal, not recoverable. [test: 24-bare-return-assert]
 10. **A bare `return` (no value) works in a `void`-returning function** — the compiler synthesizes
 `return 0` under the hood, so `fn f() { return }` is valid and behaves like `fn f() { return 0 }`.
 Only meaningful in `void` functions; a non-void function still needs an explicit value. [test: 24-bare-return-assert]
+
+11. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
 <!-- /gen:gotchas -->
 

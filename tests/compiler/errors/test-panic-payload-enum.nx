@@ -1,0 +1,12 @@
+// D2 del arco E6, variante SILENCIOSA: con punteros opacos un enum del usuario
+// y un %nyx_string* bajan los dos a `ptr`, así que clang NO se queja —
+// `call void @nyx_panic(%nyx_string* %enum_ptr)` compila y el runtime lee el
+// buffer del enum como si fuera un string. NYX1026 corta eso en semantic.
+// Expected stderr (contains): "NYX1026"
+
+enum Shape { Circle(int), Square(int) }
+
+fn main() -> int {
+    panic(Shape.Circle(1))
+    return 0
+}

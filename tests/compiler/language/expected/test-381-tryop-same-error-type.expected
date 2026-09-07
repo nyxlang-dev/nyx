@@ -1,0 +1,4 @@
+propio ok: 11
+propio err: 7 negativo
+std ok: 111
+std err: not_found: sin dato (code 2)

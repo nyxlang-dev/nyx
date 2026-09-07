@@ -1,0 +1,17 @@
+// D3 del arco E6: `catch (e: T)` aceptaba CUALQUIER identificador como
+// anotación y la descartaba — el parser no la guardaba y codegen bindeaba `e`
+// como String igual. `catch (e: MiError)` compilaba y `e` era un String: una
+// promesa de catch tipado que el lenguaje no cumple. NYX1027 la hace honesta:
+// la única anotación válida es `String`.
+// Expected stderr (contains): "NYX1027"
+
+struct MiError { code: int }
+
+fn main() -> int {
+    try {
+        throw("boom")
+    } catch (e: MiError) {
+        print("caught")
+    }
+    return 0
+}

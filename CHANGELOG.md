@@ -68,6 +68,35 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   serve+kv vuelve a correr — llevaba meses en SKIP por rutas del layout viejo — contra el fixture
   de `std/serve` y el daemon de `~/nyx/products/kv`); `make test-stacks` 6→5. Hallazgo con
   ruling: «sin deploy» no protege `static/` servido en vivo (PROJECT_STATE, error #20).
+- **`?` exige el mismo `E` en callee y caller — NYX1025** `[arco: e6-throw-panic]`: hasta ahora
+  el camino `Err` de `?` reenviaba el enum `Result` entero sin comparar el `E` — un `%nyx_string*`
+  del callee llegaba a un caller que lo leía como `%MiError*` (ambos bajan a `i8*`, `clang`
+  callado): corrupción de memoria SILENCIOSA. Cierra el repro R4
+  (`docs/design/reviews/2026-08-13-arco-e1-e2-repros/R4-error-type-mismatch-silencioso.nx`), que
+  ahora falla en compile-time. Se diagnostica solo cuando ambos `E` son conocidos y no-comodín
+  (`ty_eq`, la misma igualdad del chequeo de retorno); los casos con tipo desconocido/genérico
+  conservan el free-pass histórico como `sem_blind` (ceguera VISIBLE, ficha en TASKS.md). Sin
+  conversión (`From`) en v1 mientras `Error` sea el struct único de la std — E7 queda diferido.
+- **`throw`/`panic`: payload tipado (`String`/`int`) — NYX1026** `[arco: e6-throw-panic]`: el
+  runtime solo transporta un `nyx_string*`; antes, un payload `float`/struct/enum pasaba crudo al
+  IR — un `float` producía IR mal tipado que `clang` rechazaba sin línea de usuario, y un enum
+  CONSTRUIDO (`panic(Shape.Circle(1))`) era peor: `clang` no objetaba nada bajo punteros opacos y
+  el runtime leía el buffer del enum como si fuera un `nyx_string` — corrupción de memoria
+  SILENCIOSA, el caso más peligroso de los dos. Ahora ambos son NYX1026 en semantic, antes de que
+  exista IR. Un solo emisor en codegen (`emit_panic_payload`) reemplaza las tres copias que tenían
+  `codegen_throw` y las ramas builtin `panic`/`throw`. Incluye la variante UNITARIA
+  (`panic(Color.Red)`), que el parser produce como field access y no como `method_call`: se
+  escapaba del chequeo y el binario segfaulteaba (hallazgo I-1 de la review final del arco; errors
+  260→262).
+- **`catch (e: T)` honesto — NYX1027** `[arco: e6-throw-panic]`: la anotación de tipo del catch
+  existía en la sintaxis pero el parser la descartaba en silencio y el catch siempre bindeaba
+  `String` — una promesa de catch tipado que el lenguaje no cumplía. Ahora se guarda como cuarto
+  hijo del nodo `try_catch` (cambio aditivo, ASTNode intacto) y cualquier anotación distinta de
+  `String` es diagnóstico: `catch` es y sigue siendo intencionalmente NO tipado, no se promete un
+  catch tipado futuro.
+- **`nyx vet`: W108, `throw(x)` deprecado** `[arco: e6-throw-panic]`: sexto patrón vivo del
+  linter (`docs/gotchas/throw-deprecated.md`) — `throw(x)` es un alias de `panic(x)` (mismo
+  canal, mismo `catch`); marca el uso y sugiere `panic()`.
 
 ### Fixed
 - **Sello de versión en lo que siembra `nyx init`** (F3 del informe de fricción del scaffold,
@@ -165,6 +194,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Guardia nueva: `scripts/testing/run_init_golden.sh` (listado dorado por idioma, neutralidad,
   adaptadores, `--lang`/`--agent`), dentro de `make test-ai-first`.
 
+### Deprecated
+- **`throw(x)` es un alias deprecado de `panic(x)`** `[arco: e6-throw-panic]` (GO Ottavio
+  2026-09-06, D1 de la spec de errores tipados): mismo canal, mismo `catch`, los mismos límites.
+  Sigue compilando — retirar la sintaxis sería un cambio MAJOR — pero `nyx vet` lo marca (W108) y
+  la std/los ejemplos publicados ya no lo usan (`examples/by-example/35-error-handling.nx`
+  migrado a `panic`). Código nuevo: `panic()` para lo irrecuperable, `Result<T, E>` para lo
+  esperable.
+
 ### Docs
 - **`LLM.md` §std/serve documenta los 9 campos de `Request`** (F7 del informe de fricción,
   hallazgo A3c): `method`, `path` (sin la query string), `query` (decodificada), `headers_flat`
@@ -236,6 +273,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **Documentación web: guía paso a paso en nyxlang.com/docs** (instalar, primer programa,
   proyecto, desarrollar con agentes, CLI, sintaxis) en EN/ES; el libro `/learn/` queda como
   legado sin enlaces; `GETTING_STARTED.md` apunta a la guía.
+- **`docs/SPEC.md` §Try-Catch Exception Handling reescrita** `[arco: e6-throw-panic]`: `throw`
+  deprecado, el payload tipado (NYX1026) y el catch honesto (NYX1027), tabla de códigos NYX10xx
+  con las filas NYX1022/1023/1025/1026/1027, la política wasm de fail-fast por contrato (dos
+  capas: `codegen_target_guard` + runtime bajo `__wasi__`), y la frontera try-como-aislamiento —
+  el `longjmp` salta los `defer`/drops de T4c, así que un afín con `Drop` vivo entre `throw` y
+  `catch` LEAKEA (documentado, no arreglado), en contraste con el camino `Err` de `?`, que SÍ
+  corre `defer`/drops desde v0.27.0 y exige el mismo `E` (NYX1025). `LLM.md` §Error handling
+  corrige la sintaxis mentirosa (`catch e` → `catch (e)`, paréntesis obligatorios) y suma la
+  tabla de códigos. `docs/design/specs/2026-08-11-errores-tipados-design.md` §6 registra el
+  ruling de Ottavio para cada una de las 8 decisiones pendientes (D1-D5 del plan del arco); banner
+  → VIGENTE con E1-E6 hechos y E7 diferido.
 
 ### Interno — arco Windows W1: nace la capa `nyx_os_*` (8 incrementos, 2026-08-20 → 26)
 - **`runtime/os/`**: `nyx_os.h` (header único SIN un solo `#ifdef` de plataforma) +

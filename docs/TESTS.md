@@ -12,8 +12,8 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **401 archivos / 400 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura) |
-| Error paths (parse+semantic) | `make test-errors` | **256** | verificado con corrida real 2026-08-30 |
+| Regression | `make test` | **403 archivos / 402 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura) |
+| Error paths (parse+semantic) | `make test-errors` | **262** | verificado con corrida real 2026-09-07 |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
@@ -27,7 +27,7 @@
 | Migración de `--sync-docs` | (dentro de `make test-ai-first`) `run_sync_docs_migration.sh` | **5 escenarios + 2 checks estáticos** | layout viejo CON/SIN sello, idempotencia, copia real de `nyxlang.com` (SKIP si no clonado), purga de `templates/` legacy, wiring de `nyx_gendocs fixed-since` |
 | Capabilities index | (dentro de `make test-ai-first`) `run_capabilities_test.sh` | **3 checks + frescura** | balance de paréntesis en firmas extraídas + chequeo de mtime `build.nx` vs `nyx_build` |
 | Generador gendocs | (dentro de `make test-ai-first`) `run_gendocs_test.sh` + `run_gendocs_noop.sh` | **23 asserts + 4 checks** | fixture de 2 gotchas de juguete (regiones, tabla, arrays, `--check`, `fixed-since`) + no-op de regenerar + smoke de `gotchas_table.nx` |
-| Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **5 casos + auditoría de 161 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (102) + std (59) |
+| Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **6 casos + auditoría de 161 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107–W108) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (102) + std (59) |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **15 checks** | tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4) |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |

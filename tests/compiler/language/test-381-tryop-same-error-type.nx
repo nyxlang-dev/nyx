@@ -1,0 +1,49 @@
+// test-381 (arco E6, Task 1): control POSITIVO de NYX1025. Cuando el `E` del
+// callee coincide con el `E` del caller, `?` tiene que seguir propagando Ok y
+// Err sin ruido — el chequeo nuevo no puede prohibir el uso legítimo.
+// Dos formas del mismo contrato: un struct de error PROPIO del usuario y el
+// `Error` canónico de la std (std/error.nx, forma bare de import).
+
+import "std/error"
+
+struct MiError { code: int, msg: String }
+
+fn falla_propio(x: int) -> Result<int, MiError> {
+    if x < 0 { return Result.Err(MiError { code: 7, msg: "negativo" }) }
+    return Result.Ok(x * 2)
+}
+
+fn usa_propio(x: int) -> Result<int, MiError> {
+    let v = falla_propio(x)?
+    return Result.Ok(v + 1)
+}
+
+fn falla_std(x: int) -> Result<int, Error> {
+    if x < 0 { return Result.Err(err_new(2, "not_found", "sin dato")) }
+    return Result.Ok(x + 10)
+}
+
+fn usa_std(x: int) -> Result<int, Error> {
+    let v = falla_std(x)?
+    return Result.Ok(v + 100)
+}
+
+fn main() -> int {
+    match usa_propio(5) {
+        Result.Ok(v) => print("propio ok: " + int_to_string(v)),
+        Result.Err(e) => print("propio err: " + int_to_string(e.code) + " " + e.msg)
+    }
+    match usa_propio(-1) {
+        Result.Ok(v) => print("propio ok: " + int_to_string(v)),
+        Result.Err(e) => print("propio err: " + int_to_string(e.code) + " " + e.msg)
+    }
+    match usa_std(1) {
+        Result.Ok(v) => print("std ok: " + int_to_string(v)),
+        Result.Err(e) => print("std err: " + error_to_string(e))
+    }
+    match usa_std(-2) {
+        Result.Ok(v) => print("std ok: " + int_to_string(v)),
+        Result.Err(e) => print("std err: " + error_to_string(e))
+    }
+    return 0
+}

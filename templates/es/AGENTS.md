@@ -63,7 +63,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,option-struct-multifield-link,small-channel-deadlock,ffi-c-int-no-sign-extend,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void -->
+<!-- gen:ids nested-map-from-call,option-struct-multifield-link,small-channel-deadlock,ffi-c-int-no-sign-extend,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
 
 1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
@@ -88,6 +88,7 @@ operan todas sobre BYTES — para conteos de *caracteres* se usa `char_length()`
 ocupado) retorna `-1` — `if http_serve(8080, handler) < 0 { return 1 }`.**
 13. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
 14. **Un `return` sin valor funciona en una función que retorna `void`**
+15. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
 
 <!-- /gen:gotchas -->
 

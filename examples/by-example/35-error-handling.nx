@@ -1,14 +1,14 @@
-// Manejo de errores: try/catch con throw y panic
+// Manejo de errores: try/catch con panic (throw es un alias deprecado de panic)
 
 fn dividir(a: int, b: int) -> int {
     if b == 0 {
-        throw("division por cero: denominador es 0")
+        panic("division por cero: denominador es 0")
     }
     return a / b
 }
 
 fn main() -> int {
-    // Capturar un throw explícito
+    // Capturar un panic explícito
     var resultado: String = ""
     try {
         let r: int = dividir(10, 0)
@@ -41,7 +41,7 @@ fn main() -> int {
     var externo: String = ""
     try {
         try {
-            throw("error interno")
+            panic("error interno")
         } catch(e: String) {
             externo = "manejado: " + e
         }

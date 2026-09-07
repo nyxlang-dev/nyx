@@ -23,6 +23,7 @@ GOTCHA_IDS=(
   "check-bind-return"
   "assert-aborts-process"
   "bare-return-void"
+  "throw-deprecated"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
   "prelude-frozen-snapshot"
@@ -61,6 +62,7 @@ ANCLAS=(
   "tcp_listen|check-bind-return"
   "exit(1)|assert-aborts-process"
   "\`void\`|bare-return-void"
+  "panic(|throw-deprecated"
 )
 
 MENTIRAS=(
@@ -80,4 +82,5 @@ PATTERN_CODES=(
   "W101|enum-dot-not-colons"
   "W102|map-literal-string-keys"
   "W107|check-bind-return"
+  "W108|throw-deprecated"
 )

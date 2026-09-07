@@ -1,0 +1,16 @@
+// D2 del arco E6: el payload de `throw` viaja al runtime como `%nyx_string*`.
+// Solo String (directo) e int (convertido con nyx_string_from_int) tienen
+// conversión; cualquier otro tipo se emitía CRUDO. Medido antes del fix:
+//   call void @nyx_throw(%nyx_string* 3.5)
+// → clang: "floating point constant invalid for type" apuntando a script.ll,
+// sin la línea del usuario. NYX1026 lo caza en semantic, con línea y hint.
+// Expected stderr (contains): "NYX1026"
+
+fn main() -> int {
+    try {
+        throw(3.5)
+    } catch (e) {
+        print("caught: " + e)
+    }
+    return 0
+}

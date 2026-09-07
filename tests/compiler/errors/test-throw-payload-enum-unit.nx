@@ -1,0 +1,16 @@
+// I-1 de la review final del arco E6, la misma forma por el otro nombre:
+// `throw` y `panic` son el mismo mecanismo (D1), así que la variante unitaria
+// de un enum tiene que morir igual por los dos caminos — el nodo `throw`
+// (keyword) y la llamada builtin comparten check_payload_lanzado.
+// Expected stderr (contains): "NYX1026"
+
+enum Color { Red, Green }
+
+fn main() -> int {
+    try {
+        throw(Color.Red)
+    } catch (e) {
+        print(e)
+    }
+    return 0
+}

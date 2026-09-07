@@ -58,7 +58,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,option-struct-multifield-link,small-channel-deadlock,ffi-c-int-no-sign-extend,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void -->
+<!-- gen:ids nested-map-from-call,option-struct-multifield-link,small-channel-deadlock,ffi-c-int-no-sign-extend,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
@@ -82,6 +82,7 @@ on BYTES — for *character* counts use `char_length()` (UTF-8 codepoints).**
 `if http_serve(8080, handler) < 0 { return 1 }`.**
 13. **`assert()` aborts the process (`exit(1)`) on the first failure**
 14. **A bare `return` (no value) works in a `void`-returning function**
+15. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
 
 <!-- /gen:gotchas -->
 

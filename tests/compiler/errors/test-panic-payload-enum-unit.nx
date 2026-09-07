@@ -1,0 +1,18 @@
+// I-1 de la review final del arco E6: la variante UNITARIA de un enum
+// (`Color.Red`) llega como field_access, no como method_call, así que se
+// escapaba del NYX1026 que ya cazaba `Shape.Circle(1)`. Medido antes del fix:
+//   call void @nyx_panic(%nyx_string* %425)   ; %425 = GC_malloc del enum
+// compilaba sin una queja de clang (con punteros opacos el enum y el
+// %nyx_string* son los dos `ptr`) y el binario SEGFAULTEABA.
+// Expected stderr (contains): "NYX1026"
+
+enum Color { Red, Green }
+
+fn main() -> int {
+    try {
+        panic(Color.Red)
+    } catch (e) {
+        print(e)
+    }
+    return 0
+}
