@@ -256,7 +256,6 @@ mientras escribes un programa nuevo, por id:
 | `map-literal-string-keys` | Escribir `{clave: 1}` en vez de `{"clave": 1}` |
 | `enum-dot-not-colons` | Escribir `Enum::Variant` |
 | `check-bind-return` | Ignorar el retorno de `http_serve`/`tcp_listen`/`udp_bind` |
-| `option-struct-multifield-link` | Retornar `Option<Struct>` con un struct de 2+ campos como payload |
 | `fork-gc-child-exec` | Alocar en el hijo de `fork()` antes del `execvp()` — es un *límite*, así que no está en la lista de AGENTS.md: vive en `docs/nyx/LLM.md` |
 | `assert-aborts-process` | Esperar que `assert()` siga adelante después de una falla |
 

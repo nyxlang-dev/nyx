@@ -1,0 +1,5 @@
+option some: widget
+option none
+result ok: gadget
+result err: not found
+option struct multifield OK

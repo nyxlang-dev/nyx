@@ -1,0 +1,63 @@
+// test-386 — `Option<Struct>`/`Result<Struct, E>` con un struct de 3 campos
+// como payload FUNCIONA (docs/gotchas/option-struct-multifield-link.md,
+// kind: fixed desde la review final del arco E7, 2026-09-08 — no se conoce
+// el commit exacto del arreglo, se lo encontró ya funcionando en `main` y en
+// la base del arco). Antes, boxear un struct multi-campo emitía un tipo LLVM
+// que no coincidía con el `i64` que esperaba el sitio de boxing y `clang` se
+// negaba a linkear el binario — SIEMPRE, en el build, nunca en runtime. Este
+// test blinda el comportamiento correcto: retornar el struct DIRECTO por
+// `Option`/`Result`, sin empaquetarlo en un Array (el workaround viejo que
+// sigue ejercitando tests/ai-first/15-http-items-api.nx, que se deja como
+// está).
+//
+// Cubre las 4 combinaciones: Option.Some / Option.None / Result.Ok /
+// Result.Err, con un struct de 3 campos (int, String, Array).
+struct Item {
+    id: int,
+    name: String,
+    price: Array
+}
+
+fn find_item(ok: bool) -> Option<Item> {
+    if ok {
+        let it = Item { id: 1, name: "widget", price: [10, 20] }
+        return Option.Some(it)
+    }
+    return Option.None
+}
+
+fn find_item_result(ok: bool) -> Result<Item, String> {
+    if ok {
+        let it = Item { id: 2, name: "gadget", price: [30, 40] }
+        return Result.Ok(it)
+    }
+    return Result.Err("not found")
+}
+
+fn main() {
+    let opt_some = find_item(true)
+    match opt_some {
+        Option.Some(it) => print("option some: " + it.name),
+        Option.None => print("option none")
+    }
+
+    let opt_none = find_item(false)
+    match opt_none {
+        Option.Some(it) => print("option some: " + it.name),
+        Option.None => print("option none")
+    }
+
+    let res_ok = find_item_result(true)
+    match res_ok {
+        Result.Ok(it) => print("result ok: " + it.name),
+        Result.Err(e) => print("result err: " + e)
+    }
+
+    let res_err = find_item_result(false)
+    match res_err {
+        Result.Ok(it) => print("result ok: " + it.name),
+        Result.Err(e) => print("result err: " + e)
+    }
+
+    print("option struct multifield OK")
+}

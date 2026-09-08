@@ -58,17 +58,17 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,option-struct-multifield-link,small-channel-deadlock,ffi-c-int-no-sign-extend,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
-2. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct as the payload fails to LINK — return
-`Option<Array>`/`Result<Array, E>` with the fields packed into an Array instead.**
-3. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
+2. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
 draining a second bounded channel — size each channel to at least the total number of messages it will
 carry.**
-4. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
+3. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
 bits) — a negative C value crosses as a huge positive number, never as a negative one.**
+4. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
+checked/saturating function, no compiler flag, and no 128-bit type.**
 5. **Callbacks: prefer `Fn(Type) -> Ret`**
 6. **`await` of a `float`-returning function is gated (NYX1021)**
 7. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**

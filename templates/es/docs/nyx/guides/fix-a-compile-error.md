@@ -102,7 +102,6 @@ un bug del compilador — ve a «Cuando el bug no es tuyo».
 | `NYX0101` en `Enum::Variant` | `::` en vez de `.` | Trampa `enum-dot-not-colons` |
 | `NYX0106` en `{ident: v}` | Las claves de un map deben ser literales String | Trampa `map-literal-string-keys` |
 | Error de tipo en un canal | El handle es opaco y la capacidad es obligatoria | Trampa `channel-is-map` |
-| Error de link que menciona tu `Option`/`Result` | Un struct de 2+ campos como payload | Trampa `option-struct-multifield-link` |
 
 ### Compila pero se porta mal en ejecución
 

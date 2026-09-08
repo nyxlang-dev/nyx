@@ -10,9 +10,9 @@
 
 GOTCHA_IDS=(
   "nested-map-from-call"
-  "option-struct-multifield-link"
   "small-channel-deadlock"
   "ffi-c-int-no-sign-extend"
+  "int-wraps-silently"
   "fn-callback-typed"
   "await-float-gated"
   "channel-is-map"
@@ -37,6 +37,7 @@ GOTCHA_IDS=(
   "array-elem-method-chaining"
   "closure-capture-works"
   "tcp-write-loops-until-sent"
+  "option-struct-multifield-link"
   "udp-binary-payload-intact"
   "tls-peer-cert-introspection"
   "missing-method-compile-error"
@@ -49,9 +50,9 @@ GOTCHA_IDS=(
 
 ANCLAS=(
   "user::name|nested-map-from-call"
-  "Option<Array>|option-struct-multifield-link"
   "deadlock|small-channel-deadlock"
   "sign-extend|ffi-c-int-no-sign-extend"
+  "wraparound|int-wraps-silently"
   "Fn(Type)|fn-callback-typed"
   "NYX1021|await-float-gated"
   "channel_new|channel-is-map"
@@ -71,6 +72,10 @@ MENTIRAS=(
   "arr[i].method() causes SEGV|array-elem-method-chaining"
   "closure capture of locals is broken|closure-capture-works"
   "capture is BROKEN|closure-capture-works"
+  "as the payload fails to LINK|option-struct-multifield-link"
+  "rompe el LINK|option-struct-multifield-link"
+  "clang refuses it every time|option-struct-multifield-link"
+  "clang lo rechaza siempre|option-struct-multifield-link"
   "open_file(|file-api-names"
   "close_file(|file-api-names"
   "corrupts the value on the next read|array-index-float-write"

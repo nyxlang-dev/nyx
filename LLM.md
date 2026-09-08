@@ -923,7 +923,7 @@ These are the ones that can hurt you without saying so. Everything else in
 this section is either a language rule or an external limitation.
 
 <!-- gen:gotchas kinds=trap lang=en form=long -->
-<!-- gen:ids nested-map-from-call,option-struct-multifield-link,small-channel-deadlock,ffi-c-int-no-sign-extend -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.** `outer.insert("i", inner)` where `inner`
@@ -939,19 +939,7 @@ LAST `insert()` wins, so `o.insert("i", inner); o.insert("s", "texto"); let g: M
 binding: `let g: Map = o.get("i"); print(g.get("k"))` prints a raw pointer as a number (e.g.
 `187651464825712`), not the value — only `let v: String = g.get("k")` returns the real content. [test: 13-map-literal-keys]
 
-2. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct as the payload fails to LINK — return
-`Option<Array>`/`Result<Array, E>` with the fields packed into an Array instead.** (Not a
-silent runtime bug — `clang` refuses it every time). Boxing a generic payload always `GC_malloc`s
-exactly 8 bytes and stores it as a single `i64` — fine for `int`/`bool`/`String`/`Array`/pointers (all
-one word), but a multi-field struct like `Item { id: int, name: String, price: Array }` needs 3 words,
-so `Option.Some(it)`/`Result.Ok(it)` produces `%Item = type { i64, ptr, ptr }` where the boxing site
-expects `i64` — `clang` refuses to link it (`'%N' defined with type '%Item = ...' but expected 'i64'`),
-so this NEVER reaches runtime — every affected program fails 100% of the time at build, not
-intermittently. Workaround: don't put a raw multi-field struct through `Option`/`Result` — return
-`Option<Array>`/`Result<Array, E>` with the struct's fields packed into an Array (a JSON object value
-works great if you already need JSON) instead of the struct itself. [test: 15-http-items-api]
-
-3. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
+2. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
 draining a second bounded channel — size each channel to at least the total number of messages it will
 carry.** Not a compiler bug, a concurrency design trap worth knowing before reaching for
 `channel_new`. If the main goroutine sends M jobs on a bounded jobs channel and only starts
@@ -962,7 +950,7 @@ workers and M=200 jobs against a 64-slot channel. Fix: size each channel to at l
 of messages it will carry (`channel_new(m + n)` for the jobs channel, `channel_new(m)` for results), or
 interleave sends and receives instead of doing all sends before any receive. [test: 16-worker-channels]
 
-4. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
+3. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
 bits) — a negative C value crosses as a huge positive number, never as a negative one.** Found in
 `runtime/sqlite_adapter.c` (E5.5): `nyx_sqlite_step`/`nyx_sqlite_exec`/`nyx_sqlite_column_count`/
 `nyx_sqlite_bind_str/int/double` all declare a plain C `int` return against a Nyx
@@ -977,6 +965,30 @@ TASKS.md, cosecha `E5.5-sqlite`). This is a GENERAL trap, not sqlite-specific �
 declare the C side `int64_t` when you control it (NOT `long` — Win64 is LLP64: C `long` is 32-bit
 there and re-truncates; measured in the W0 audit, spec Windows §9.3), or on the Nyx side never compare
 a raw FFI return against an exact negative sentinel. [test: 22-ffi-int-truncation]
+
+4. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
+checked/saturating function, no compiler flag, and no 128-bit type.** `codegen.nx` emits plain
+`add i64`/`sub i64`/`mul i64` with no `nsw`/`nuw` (`compiler/codegen.nx:1988`, `:2056`, the `mul i64`
+branch under `:2070`), so the largest representable `int` (`9223372036854775807`) plus `1` silently
+becomes the smallest one (`-9223372036854775808`), and a square like `3037000500 * 3037000500` also
+wraps to a negative number — nothing in `runtime`/`std` catches it.
+Division (`sdiv i64`, `codegen.nx:2098`) has no guard either: `INT_MIN / -1` and division by zero are
+UB at the LLVM IR level — on ARM64 the hardware wraps or returns 0, on x86_64 the same IR can SIGFPE.
+The financial shape bites hardest: `monto * tasa_ppm / 1_000_000` (a rate expressed in
+parts-per-million) overflows once `monto` passes roughly 9.2e12 minimum units — a perfectly ordinary
+accounting amount comes out NEGATIVE, in silence. The honest mitigation for a real ppm rate
+(`tasa` up to `1_000_000`, i.e. up to 100%) is the two-step split with the remainder —
+`(monto / 1_000_000) * tasa + ((monto % 1_000_000) * tasa) / 1_000_000` — which is safe for ANY
+`monto` that fits in `int`: the dominant term `(monto / 1_000_000) * tasa` never exceeds `monto`
+itself (integer division can't grow past its input), and the remainder term
+`(monto % 1_000_000) * tasa` stays under `1_000_000 * 1_000_000 = 10^12`. Reordering to plain
+`(monto / 1_000_000) * tasa` without the remainder loses precision instead (the division truncates
+first) — that's a different bug, not an overflow fix. For a rate ABOVE 100% (`tasa` in the
+billions, e.g. a multi-hundred-percent factor) the dominant term can overflow on its own with a
+large enough `monto` — `monto = 10^15`, `tasa = 2×10^12` gives `(monto / 1_000_000) * tasa =
+2×10^21`, far past `2^63` — so check `tasa < 2^63 / (monto / 1_000_000)` before multiplying.
+`float` is not a substitute for money either: it silently loses integer precision starting at
+2^53. [test: compiler/language/test-385-int-wraparound]
 
 <!-- /gen:gotchas -->
 
@@ -1081,7 +1093,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -1155,13 +1167,25 @@ blocking socket. The one real exception: both loops `break` early if the underly
 `<= 0`, so on a **non-blocking fd** an `EAGAIN`/`EWOULDBLOCK` can still make the call return short —
 only non-blocking sockets need the caller to check the return value and retry.
 
-10. **`udp_sendto`/`udp_recvfrom` carry binary payloads intact (fixed 2026-07-30)**. They used to truncate
+10. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct as the payload WORKS — return the
+struct directly, no Array packing needed.** Boxing used to assume a generic payload always fit in one
+`GC_malloc`ed word (`i64`), so a multi-field struct like `Item { id: int, name: String, price: Array }`
+produced a mismatched LLVM type at the boxing site (`%Item = type { i64, ptr, ptr }` where an `i64` was
+expected) and `clang` refused to link the binary — every time, at build, never intermittently at
+runtime. The exact commit that fixed the boxing site is not known (found already working during the
+final review of the E7 arc, 2026-09-08, on both `main` and the arc's earlier base commit — the fix
+predates both); confirmed on v0.31.0 with `Option<Item>` and `Result<Item, String>`, all four paths
+(`Some`/`None`, `Ok`/`Err`). If a link error still mentions your `Option`/`Result` type, update the
+toolchain (`nyx update`) first. The old workaround — repacking the struct's fields into
+`Option<Array>`/`Result<Array, E>` — is no longer needed; return the struct itself. [test: compiler/language/test-386-option-struct-multifield] [test: 15-http-items-api]
+
+11. **`udp_sendto`/`udp_recvfrom` carry binary payloads intact (fixed 2026-07-30)**. They used to truncate
 at the first NUL byte (`strlen` on the way out, `from_cstr` on the way back), so `"AB" +
 char_to_string(0) + "CDE"` left as 2 bytes instead of 6 — which made DNS, NTP and SNMP probes
 impossible to write, since all three put NULs in their headers. Both now use the `String`'s real byte
 length. See the Networking section of LLM.md for the signatures. [test: 20-udp-binary-payload]
 
-11. **You CAN inspect the peer's TLS certificate — no C bindings needed (v0.23.1)**. `import "std/tls"`
+12. **You CAN inspect the peer's TLS certificate — no C bindings needed (v0.23.1)**. `import "std/tls"`
 gives `tls_peer_cert(h)` (subject, issuer, validity dates, serial, algorithm, SHA-256 fingerprint,
 SANs), the session accessors (`tls_version`, `tls_cipher`, `tls_cipher_bits`), and two one-line
 answers for scanners: **`cert_is_expired(cert)`** and **`tls_is_weak(h)`**. Certificate *verification*
@@ -1170,7 +1194,7 @@ the handshake and lets you ask whether it *would* have failed. That is the mode 
 needs to reach the broken machine and report it, not be protected from it. See the TLS/HTTPS section
 of LLM.md for the signatures. [test: 19-tls-introspection]
 
-12. **A method that doesn't exist for the receiver's type is now a compile error, not garbage
+13. **A method that doesn't exist for the receiver's type is now a compile error, not garbage
 (v0.24.0)**. `m.length()` on a `Map` used to print a pointer read as an integer (`281473395465504`),
 silently; `s.m.push(x)` on a `Map` field segfaulted; `s.f.contains(x)` on an `Array` field emitted
 invalid IR. All are now compile errors: **NYX1022** from semantic when the receiver's type is
@@ -1181,7 +1205,7 @@ length instead of 0. The last residue fell in v0.24.1: `m.length` (property form
 variable used to print a mute error and return 0 with rc=0 — now it's NYX2007 too. A Map exposes no
 properties; use the methods (`m.size()`, `m.keys()`, `m.values()`).
 
-13. **The REPL evaluates a declared SUBSET and says so loudly (v0.24.2-3)**. `make repl` runs a
+14. **The REPL evaluates a declared SUBSET and says so loudly (v0.24.2-3)**. `make repl` runs a
 tree-walking interpreter, NOT the compiler: it covers basic types, control flow, functions, arrays and
 15 builtin methods (12 String, 3 Array — no Map values, no structs-with-methods, no generics). Anything
 outside the subset raises a loud `NYX30xx` error and the session survives. Until v0.24.3 it was worse
@@ -1189,14 +1213,14 @@ than limited — it was wrong: every array literal evaluated to `[nil]`, `for x 
 `5 % 0` returned 5. All fixed and guarded (`make test-repl`). Trust the compiled binary (`nyx
 build`/`nyx run`) as ground truth; use the REPL for quick arithmetic/string exploration only.
 
-14. **A failed bind is LOUD now (v0.24.4)**. `http_serve`/`tcp_listen`/`udp_bind` on a taken port used to
+15. **A failed bind is LOUD now (v0.24.4)**. `http_serve`/`tcp_listen`/`udp_bind` on a taken port used to
 fail in complete silence: return -1, no message — and since the old canonical example discarded the
 return, the program "started" with exit 0 and no server (a real user debugged against the unrelated
 process squatting their port). The runtime now prints `nyx: tcp_listen: cannot bind port N: <cause>`
 to stderr. Still CHECK the return (`if http_serve(...) < 0`) — the -1 contract is unchanged and the
 error stream may not be visible in every deployment. [test: 21-bind-failure-loud]
 
-15. **The real buffered file API is `file_open()`/`file_write_string()`/`file_close()` — not `open_file()`
+16. **The real buffered file API is `file_open()`/`file_write_string()`/`file_close()` — not `open_file()`
 or `close_file()` (invented names)**. The core `CHEATSHEET.md` taught the invented names until an
 audit caught the mismatch (2026-08-01, same audit that also killed the resurrected "capture is
 BROKEN" and "arr[i].method() causes SEGV" lies): `open_file()`/`close_file()` never existed in the
@@ -1204,13 +1228,13 @@ stdlib. If a doc, template or generated manual shows those names, it is teaching
 fail to compile — use `file_open`/`file_write_string`/`file_close` (see `chr-zero-nul-byte` for the
 binary-safety contract of this API).
 
-16. **`arr[i] = <float>` on an existing Array WORKS** (fixed 2026-08-03, static-tag spec, v0.24.10). The
+17. **`arr[i] = <float>` on an existing Array WORKS** (fixed 2026-08-03, static-tag spec, v0.24.10). The
 indexed write now tags the slot with the VALUE's type (a double is stored as bits + FLOAT tag), and an
 int written into an annotated `Array<float>` is promoted (sitofp) — the annotation wins. The old
 workaround (integer cents / append-only) is no longer needed. `push`/`unshift`/`insert` with an
 annotated receiver also inherit the static tag when the runtime tag is unreadable. [test: 17-csv-aggregator] [test: 18-http-client-filter]
 
-17. **Stateful handles (`mutex_new()`, `sem_new()`, `wg_new()`) are RELIABLE as global initializers
+18. **Stateful handles (`mutex_new()`, `sem_new()`, `wg_new()`) are RELIABLE as global initializers
 (since v0.24.27; measured 2026-08-21)**. `var MU: Map = mutex_new()` at global scope runs
 single-threaded before `main` — 4 threads × 10000 locked increments = 40000 exact, 5/5 runs. The old
 lazy-init placeholder pattern (`if READY == 0 { MU = mutex_new(); READY = 1 }`) is unnecessary and a

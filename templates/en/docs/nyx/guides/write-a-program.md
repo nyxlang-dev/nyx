@@ -256,7 +256,6 @@ often while writing a new program, by id:
 | `map-literal-string-keys` | Writing `{key: 1}` instead of `{"key": 1}` |
 | `enum-dot-not-colons` | Writing `Enum::Variant` |
 | `check-bind-return` | Ignoring the return value of `http_serve`/`tcp_listen`/`udp_bind` |
-| `option-struct-multifield-link` | Returning `Option<Struct>` with a 2+-field struct payload |
 | `fork-gc-child-exec` | Allocating in the child of `fork()` before `execvp()` — a *limit*, so it is not in the AGENTS.md list: it lives in `docs/nyx/LLM.md` |
 | `assert-aborts-process` | Expecting `assert()` to keep going after a failure |
 

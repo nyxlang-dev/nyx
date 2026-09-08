@@ -63,17 +63,17 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,option-struct-multifield-link,small-channel-deadlock,ffi-c-int-no-sign-extend,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
 
 1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
-2. **`Option<Struct>`/`Result<Struct, E>` con un struct de 2+ campos como payload rompe el LINK — retorna
-`Option<Array>`/`Result<Array, E>` con los campos empaquetados en un Array.**
-3. **Un `channel_new(N)` chico puede deadlockear un productor/consumidor si envías todo antes de empezar
+2. **Un `channel_new(N)` chico puede deadlockear un productor/consumidor si envías todo antes de empezar
 a drenar un segundo canal acotado — dimensiona cada canal para al menos el total de mensajes que va a
 transportar.**
-4. **Un `int` de C (32 bits) retornado por una función `extern "C"` NO hace sign-extend a un `int` de Nyx
+3. **Un `int` de C (32 bits) retornado por una función `extern "C"` NO hace sign-extend a un `int` de Nyx
 (64 bits) — un valor negativo de C cruza como un número positivo enorme, nunca como negativo.**
+4. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay
+función chequeada ni saturada, ni flag del compilador, ni tipo de 128 bits.**
 5. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
 6. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
 7. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**

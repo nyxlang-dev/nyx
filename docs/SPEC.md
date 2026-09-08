@@ -255,6 +255,29 @@ Todos los operadores aritmeticos funcionan con `int` y `float`:
 -3.14          // fneg: -3.14
 ```
 
+### Overflow
+
+La aritmética de `int` (`+`, `-`, `*`) se emite como `add`/`sub`/`mul i64` sin las banderas `nsw`/`nuw`
+de LLVM: al desbordar el resultado envuelve en silencio en complemento a dos (wraparound), sin excepción,
+sin abortar y sin ningún aviso — no existe función `checked_*` ni saturada en `runtime`/`std`, no hay
+flag del compilador para activar el chequeo, y no hay tipo de 128 bits para ampliar el rango. La
+división (`sdiv i64`) tampoco lleva guarda: dividir el `int` más chico representable por `-1`, o
+dividir por cero, es comportamiento indefinido a nivel del IR de LLVM (en ARM64 el hardware envuelve o
+devuelve 0; en x86_64 el mismo IR puede terminar en `SIGFPE`). El caso más peligroso en código real es
+el financiero: un cálculo como `monto * tasa_ppm / 1_000_000` (una tasa expresada en partes por millón)
+desborda apenas `monto` supera unas 9.2×10¹² unidades mínimas, y el resultado sale NEGATIVO sin que
+nada lo señale. La mitigación disponible hoy, para una tasa ppm real (`tasa` hasta 1.000.000, o sea
+hasta 100%), es dividir en dos pasos con el resto — `(monto / 1_000_000) * tasa +
+((monto % 1_000_000) * tasa) / 1_000_000` — que es segura para cualquier `monto` que quepa en `int`:
+el término dominante `(monto / 1_000_000) * tasa` nunca supera al propio `monto` (la división entera
+no crece más allá de su entrada) y el término del resto queda bajo 10¹². Reordenar a
+`(monto / 1_000_000) * tasa` sin el término del resto pierde precisión en cambio (la división trunca
+primero), no es un arreglo de overflow. Para una tasa por encima del 100% el término dominante puede
+desbordar solo con un `monto` suficientemente grande (repro: `monto = 10^15`, `tasa = 2×10^12` da
+`2×10^21`) — hay que chequear `tasa < 2⁶³ / (monto / 1_000_000)` antes de multiplicar. `float` no es
+un sustituto válido para dinero: pierde precisión entera en silencio a partir de 2⁵³. Detalle y
+repro completo: `docs/gotchas/int-wraps-silently.md`.
+
 ### Asignacion Compuesta
 ```nyx
 x += 5     // x = x + 5

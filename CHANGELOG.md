@@ -304,6 +304,24 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   tabla de códigos. `docs/design/specs/2026-08-11-errores-tipados-design.md` §6 registra el
   ruling de Ottavio para cada una de las 8 decisiones pendientes (D1-D5 del plan del arco); banner
   → VIGENTE con E1-E6 hechos y E7 diferido.
+- **Gotcha nuevo: `int-wraps-silently`** (`docs/gotchas/int-wraps-silently.md`, `docs/SPEC.md`
+  §Aritméticos «Overflow», test-385): la aritmética de `int` (`+`/`-`/`*`) se emite como
+  `add`/`sub`/`mul i64` sin `nsw`/`nuw` — desborda en wraparound silencioso de complemento a dos,
+  sin función chequeada/saturada, sin flag del compilador y sin tipo de 128 bits; la división
+  (`sdiv i64`) tampoco tiene guarda (`INT_MIN / -1` y por cero son UB en el IR). El caso más
+  peligroso en código real: `monto * tasa_ppm / 1_000_000` desborda a NEGATIVO apenas `monto`
+  supera ~9.2e12 unidades mínimas. Mitigación honesta documentada (dividir en dos pasos con el
+  resto); `checked_add`/`checked_sub`/`checked_mul`/`mul_div_round` quedan fichados en `TASKS.md`,
+  no prometidos.
+- **Gotcha `option-struct-multifield-link` deja de estar vivo** (`docs/gotchas/option-struct-multifield-link.md`
+  → `kind: fixed`, `fixed_in: 0.31.0`, test-386 nuevo): la review final del arco E7 (2026-09-08)
+  reprodujo el caso exacto (`Item { id: int, name: String, price: Array }` por `Option<Item>` y
+  `Result<Item, String>`, los cuatro caminos) en `main` y en la base del arco — funciona; no se
+  conoce el commit que lo arregló. El manual sembrado (`AGENTS.md`/`LLM.md`/las guías de
+  `templates/{en,es}/`) dejaba de enseñar la mentira («fails to LINK» / «rompe el LINK») y el
+  workaround de empaquetar los campos en `Option<Array>`/`Result<Array, E>`; retorna el struct
+  directo.
+- **`docs/TESTS.md`**: Regression pasa de 406/405 a 407/406 (test-386-option-struct-multifield).
 
 ### Interno — arco Windows W1: nace la capa `nyx_os_*` (8 incrementos, 2026-08-20 → 26)
 - **`runtime/os/`**: `nyx_os.h` (header único SIN un solo `#ifdef` de plataforma) +

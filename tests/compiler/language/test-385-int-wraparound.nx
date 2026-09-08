@@ -1,0 +1,45 @@
+// test-385 — aritmética de `int` (i64) SIN chequeo de overflow: wraparound
+// silencioso en complemento a dos. Es un test de REGRESIÓN DE COMPORTAMIENTO:
+// fija lo que el compilador hace HOY (`add`/`sub`/`mul i64` sin `nsw`/`nuw`
+// en codegen.nx, ver docs/gotchas/int-wraps-silently.md) — NO es la conducta
+// deseada. Si un arco futuro agrega overflow-checking (TASKS.md:
+// checked_add/checked_sub/checked_mul), este test se actualiza A PROPÓSITO,
+// nunca se borra en silencio.
+//
+// Todos los operandos viven en variables (no literales plegados inline en el
+// print) para que el caso ejercite la emisión real de codegen, no una
+// constante calculada aparte.
+//
+// Casos:
+//   1. el `int` más grande representable + 1 -> envuelve al más chico
+//   2. un cuadrado que excede 2^63 -> envuelve a negativo
+//   3. el caso financiero `monto * tasa_ppm / 1_000_000`: con monto = 9.3e12
+//      (por encima del límite ~9.2e12) el producto ya desbordó ANTES de
+//      dividir, así que el resultado da negativo y sin sentido
+//   4. control: con monto = 9.0e12 (bajo el límite) el mismo camino hace ida
+//      y vuelta exacta — no hay overflow
+fn main() {
+    let max: int = 9223372036854775807
+    let one: int = 1
+    let sum: int = max + one
+
+    let base: int = 3037000500
+    let squared: int = base * base
+
+    let monto: int = 9300000000000
+    let tasa_ppm: int = 1000000
+    let producto: int = monto * tasa_ppm
+    let dividido: int = producto / tasa_ppm
+
+    let monto_ok: int = 9000000000000
+    let producto_ok: int = monto_ok * tasa_ppm
+    let dividido_ok: int = producto_ok / tasa_ppm
+
+    print(sum)
+    print(squared)
+    print(producto)
+    print(dividido)
+    print(producto_ok)
+    print(dividido_ok)
+    print("int wraparound OK")
+}

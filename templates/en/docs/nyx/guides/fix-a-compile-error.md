@@ -102,7 +102,6 @@ compiler bug — go to «When it is not your bug».
 | `NYX0101` on `Enum::Variant` | `::` instead of `.` | Gotcha `enum-dot-not-colons` |
 | `NYX0106` on `{ident: v}` | Map keys must be String literals | Gotcha `map-literal-string-keys` |
 | Type error on a channel | The handle is opaque and the capacity is mandatory | Gotcha `channel-is-map` |
-| Link error mentioning your `Option`/`Result` | A 2+-field struct as the payload | Gotcha `option-struct-multifield-link` |
 
 ### It compiles but misbehaves at run time
 
