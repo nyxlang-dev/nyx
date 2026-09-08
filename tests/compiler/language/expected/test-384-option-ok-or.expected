@@ -1,0 +1,18 @@
+ok 42
+err clave ausente
+ok hola
+err sin texto
+ok 42
+err not_found/no está la clave 9/2
+puente ok 84
+puente err sin clave 9
+txt hola-dos
+txt err sin texto 9
+txt hola-un
+txt err sin texto 9
+caja-dos siete
+puente ok 7
+puente err sin caja 9
+caja-un siete
+puente ok 70
+OK_OR OK

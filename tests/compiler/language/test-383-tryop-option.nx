@@ -1,0 +1,67 @@
+// test-383 (arco E7, Task 1 — D1 del plan): `?` sobre `Option` dentro de una
+// función que devuelve `Option`. `Some(x)?` entrega `x`; `None?` hace
+// early-return de `None`. Sin conversión del payload: `None` no lleva nada,
+// así que un `Option<int>?` sirve igual en una fn que devuelve `Option<U>`.
+//
+// Antes de este arco: NYX1023 («'?' solo dentro de una fn que devuelve
+// Result») prohibía la forma entera, y el mismo `?` sobre un Option dentro de
+// una fn que devuelve Result COMPILABA decodificando la variante "Ok" —
+// inexistente en Option — y degradaba al i64 crudo (silently-wrong medido).
+//
+// Cubre: dos `?` encadenados (camino Some y camino None), `?` con `defer` en
+// el camino None (el cleanup tiene que correr igual que en el camino Err de
+// Result), y una fn `-> Option<String>` alimentada por un `Option<int>?`
+// (el `T` del operando NO tiene que coincidir con el `U` del retorno).
+
+fn tabla(k: int) -> Option<int> {
+    if k == 1 { return Option.Some(10) }
+    if k == 2 { return Option.Some(20) }
+    return Option.None
+}
+
+// Dos `?` encadenados: los dos Some → Some(suma); cualquiera None → None.
+fn suma_dos(a: int, b: int) -> Option<int> {
+    let x = tabla(a)?
+    let y = tabla(b)?
+    return Option.Some(x + y)
+}
+
+// El defer corre también cuando el `?` sale por el camino None.
+fn con_defer(k: int) -> Option<int> {
+    defer print("limpieza")
+    let v = tabla(k)?
+    return Option.Some(v * 2)
+}
+
+// `Option<int>?` dentro de una fn que devuelve `Option<String>`: el `?`
+// entrega el `int` real (payload decodificado como "Some", no como "Ok").
+fn describir(k: int) -> Option<String> {
+    let v = tabla(k)?
+    return Option.Some("v=" + int_to_string(v))
+}
+
+fn mostrar_int(o: Option<int>) {
+    match o {
+        Option.Some(v) => print("some " + int_to_string(v)),
+        Option.None => print("none")
+    }
+}
+
+fn mostrar_str(o: Option<String>) {
+    match o {
+        Option.Some(s) => print("some " + s),
+        Option.None => print("none")
+    }
+}
+
+fn main() -> int {
+    mostrar_int(suma_dos(1, 2))
+    mostrar_int(suma_dos(1, 9))
+    mostrar_int(suma_dos(9, 1))
+    mostrar_int(con_defer(2))
+    mostrar_int(con_defer(7))
+    mostrar_str(describir(1))
+    mostrar_str(describir(5))
+    print("TRYOP OPTION OK")
+    return 0
+}

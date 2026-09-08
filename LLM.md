@@ -297,7 +297,17 @@ if let Option.Some(v) = maybe { print(v) }
 // Try operator
 fn may_fail() -> Result { return Result.Err("oops") }
 let val = may_fail()?    // early-returns Err
+
+// ? also works on Option, inside a fn that returns Option (v0.31.0)
+fn buscar(k: int) -> Option<int> { if k == 1 { return Option.Some(42) }; return Option.None }
+fn duplicar(k: int) -> Option<int> {
+    let v = buscar(k)?    // Some(42) -> v=42; None -> early-returns None
+    return Option.Some(v * 2)
+}
 ```
+
+Mixing `Option` and `Result` through `?` is a compile error, not a silent
+degradation — see NYX1028 in §Option/Result below.
 
 **Errors = the two-tier rule (E4, `std/error`)**: if the caller can
 reasonably do something other than log-and-die → `Result<T, Error>`; if
@@ -533,6 +543,7 @@ try {
 | NYX1025 | `?` propagates an `Err` whose `E` differs from the function's declared `E` — no `From`-conversion in v1, same `E` on both sides or compile error |
 | NYX1026 | `throw`/`panic` payload is not `String` or `int` (a struct/enum/float payload used to produce untyped IR or, worse, silently corrupt memory — see docs/SPEC.md §Try-Catch) |
 | NYX1027 | `catch (e: T)` annotation is not `String` |
+| NYX1028 | `?` mixes `Option` and `Result`: an `Option` operand inside a fn returning `Result` (hint `.ok_or(e)?`), or a `Result` operand inside a fn returning `Option` (hint `match`/`unwrap_or`) |
 
 `Map.get(k)` (aborts if missing) and `get_or(k, default)` (never aborts) coexist — no migration
 to `Option<T>` planned (would be a breaking MAJOR change to a builtin).
@@ -626,6 +637,30 @@ local first: `let m = obj.my_map; m.remove(k)` (Maps are references, so it mutat
 | `unwrap_or(default)` | — |
 | `map(f)` / `and_then(f)` | both |
 | `map_err(f)` | Result only |
+| `ok_or(e)` | Option only — `Some(x)` → `Ok(x)`, `None` → `Err(e)`, with `e` of any type `E` (result: `Result<T, E>`) |
+
+**Option → Result bridge** (v0.31.0): `?` on an `Option` inside a function that
+returns `Result` is a compile error (NYX1028) — the `None` would arrive as an
+`Err` with nothing inside. Convert the absence into an error first:
+`let v = opt.ok_or(err_new(2, "not_found", "no key"))?`. `T` can be anything —
+`int`, `String`, a struct — and `?` hands it back decoded, both chained and in
+two steps. The receiver must be a variable (`let o: Option<int> = ...` then
+`o.ok_or(e)`), like every other Option/Result builtin method. The reverse mix
+— a `Result` operand inside a fn returning `Option` — is also NYX1028, bridged
+with `match` or `unwrap_or` (there's no `ok()` on `Result`, YAGNI).
+
+**Converting `E`**: the idiom is `.map_err(f)?`, with the receiver bound to a
+variable first (same limitation as above — `expr().map_err(f)?` chained on a
+direct call fails with "method 'map_err' is not available on a receiver of
+type 'i8*'"):
+```nyx
+let r: Result<int, String> = parse_num(s)
+let v = r.map_err(convertir)?    // E: String -> String (or any other E)
+```
+There is no `From`-conversion in v1 (NYX1025 if the `E`s differ and neither
+side maps them) — E7 shipped `?` on `Option` + `ok_or` in its minimal form;
+`From` stays out of scope unless an error domain actually diverges from the
+single `Error` struct.
 
 ### Iterator (chainable)
 

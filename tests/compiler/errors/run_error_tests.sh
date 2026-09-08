@@ -117,6 +117,20 @@ TESTS=(
   # callee sea el del caller. Antes compilaba limpio y reenviaba el enum Err
   # entero — un %nyx_string* leído como %MiError*: SEGV o basura, sin aviso.
   "tests/compiler/errors/test-tryop-error-type-mismatch.nx|NYX1025"
+  # E7 Task 1 (D2): mezclar Option y Result a través de `?` es NYX1028. La
+  # primera forma (Option en fn Result) COMPILABA y propagaba basura: el
+  # camino Some decodificaba la variante "Ok" (inexistente en Option) y el
+  # camino None reenviaba el enum entero como si fuera un Err. La segunda
+  # (Result en fn Option) caía en NYX1023, que decía algo cierto pero inútil.
+  "tests/compiler/errors/test-tryop-option-in-result-fn.nx|NYX1028"
+  "tests/compiler/errors/test-tryop-result-in-option-fn.nx|NYX1028"
+  # E7 Task 2 (D3): las dos formas de usar mal el puente `ok_or`. Sin aridad,
+  # `o.ok_or()` mataba al COMPILADOR en `args[0]` (panic de índice, sin línea
+  # ni código); sobre un Result la rama de codegen no existe (gateada por
+  # `is_option_type`) y la llamada caía al dispatch de impl, a un `define`
+  # inexistente.
+  "tests/compiler/errors/test-okor-sin-argumento.nx|NYX1006"
+  "tests/compiler/errors/test-okor-sobre-result.nx|NYX1022"
   # E6 Task 2 (D2/D3): el payload de throw/panic solo puede ser String o int
   # (lo demás llegaba crudo a @nyx_throw(%nyx_string*): error ilegible de clang
   # con un double, corrupción SILENCIOSA con un enum), y `catch (e: T)` solo

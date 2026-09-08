@@ -1,0 +1,149 @@
+// test-384 (arco E7, Task 2 — D3 del plan): `ok_or(e)` sobre `Option<T>`.
+//
+// `Some(x).ok_or(e)` = `Ok(x)` y `None.ok_or(e)` = `Err(e)`, con `e` de
+// CUALQUIER tipo `E`: el resultado se tipa `Result<T, E>`. Es el puente
+// explícito Option → Result que pide el hint del NYX1028 de la Task 1
+// («convertí la ausencia en error antes de propagarla con '.ok_or(e)?'»):
+// sin él, la única salida era un `match` a mano en cada sitio.
+//
+// Cubre: E = String y E = Error (el struct canónico de std/error, que se
+// reempaqueta boxeado igual que en `Result.Err(e)`), T = int, T = String y
+// T = struct, y el puente `.ok_or(e)?` en sus DOS formas (encadenada en un
+// paso, y en dos pasos con una variable intermedia anotada).
+//
+// ⚠ ORDEN DE DECLARACIÓN, NO TOCAR (fix round 1): las funciones puente van
+// ANTES de sus `mostrar_*`. El bug que este test blinda era que el `?` no
+// monomorfizaba el combo <T, E> del operando, así que el payload degradaba
+// al i64 crudo (un String salía impreso como puntero en decimal); un `match`
+// sobre el mismo `Result<T, E>` codegeneado ANTES lo registraba de paso y
+// tapaba el agujero. Con `T = int` el bug era invisible: el i64 del buffer
+// ES el int.
+
+import "std/error"
+
+struct Caja {
+    n: int,
+    etiqueta: String,
+}
+
+fn buscar(k: int) -> Option<int> {
+    if k == 1 { return Option.Some(42) }
+    return Option.None
+}
+
+fn buscar_txt(k: int) -> Option<String> {
+    if k == 1 { return Option.Some("hola") }
+    return Option.None
+}
+
+fn buscar_caja(k: int) -> Option<Caja> {
+    if k == 1 { return Option.Some(Caja { n: 7, etiqueta: "siete" }) }
+    return Option.None
+}
+
+// E = String, T = int
+fn con_string(k: int) {
+    let o: Option<int> = buscar(k)
+    let r: Result<int, String> = o.ok_or("clave ausente")
+    match r {
+        Result.Ok(v) => print("ok " + int_to_string(v)),
+        Result.Err(e) => print("err " + e)
+    }
+}
+
+// T = String: el payload del Some viaja tal cual al Ok (puntero, no número)
+fn con_payload_string(k: int) {
+    let o: Option<String> = buscar_txt(k)
+    let r: Result<String, String> = o.ok_or("sin texto")
+    match r {
+        Result.Ok(s) => print("ok " + s),
+        Result.Err(e) => print("err " + e)
+    }
+}
+
+// E = Error (struct de std/error): boxeado por coerce_to_i64, igual que
+// cuando se construye `Result.Err(err_new(...))` a mano.
+fn con_error(k: int) {
+    let o: Option<int> = buscar(k)
+    let r: Result<int, Error> = o.ok_or(err_new(2, "not_found", "no está la clave " + int_to_string(k)))
+    match r {
+        Result.Ok(v) => print("ok " + int_to_string(v)),
+        Result.Err(e) => print("err " + e.kind + "/" + e.msg + "/" + int_to_string(e.code))
+    }
+}
+
+// El puente completo: `.ok_or(e)?` dentro de una fn que devuelve Result.
+fn puente(k: int) -> Result<int, Error> {
+    let o: Option<int> = buscar(k)
+    let v = o.ok_or(err_new(2, "not_found", "sin clave " + int_to_string(k)))?
+    return Result.Ok(v * 2)
+}
+
+// T = String vía `?`, DOS pasos (variable intermedia anotada).
+fn puente_txt_dos(k: int) -> Result<String, Error> {
+    let o: Option<String> = buscar_txt(k)
+    let r: Result<String, Error> = o.ok_or(err_new(2, "not_found", "sin texto " + int_to_string(k)))
+    let v = r?
+    return Result.Ok(v + "-dos")
+}
+
+// T = String vía `?`, UN paso (el `?` encadenado al método).
+fn puente_txt_un(k: int) -> Result<String, Error> {
+    let o: Option<String> = buscar_txt(k)
+    let v = o.ok_or(err_new(2, "not_found", "sin texto " + int_to_string(k)))?
+    return Result.Ok(v + "-un")
+}
+
+// T = struct vía `?`, DOS pasos: el binding tiene que ser un %Caja real
+// (antes del fix ni siquiera compilaba: "campo no encontrado: int:etiqueta").
+fn puente_caja_dos(k: int) -> Result<int, Error> {
+    let o: Option<Caja> = buscar_caja(k)
+    let r: Result<Caja, Error> = o.ok_or(err_new(2, "not_found", "sin caja " + int_to_string(k)))
+    let c = r?
+    print("caja-dos " + c.etiqueta)
+    return Result.Ok(c.n)
+}
+
+// T = struct vía `?`, UN paso.
+fn puente_caja_un(k: int) -> Result<int, Error> {
+    let o: Option<Caja> = buscar_caja(k)
+    let c = o.ok_or(err_new(2, "not_found", "sin caja " + int_to_string(k)))?
+    print("caja-un " + c.etiqueta)
+    return Result.Ok(c.n * 10)
+}
+
+fn mostrar_puente(r: Result<int, Error>) {
+    match r {
+        Result.Ok(v) => print("puente ok " + int_to_string(v)),
+        Result.Err(e) => print("puente err " + e.msg)
+    }
+}
+
+fn mostrar_txt(r: Result<String, Error>) {
+    match r {
+        Result.Ok(s) => print("txt " + s),
+        Result.Err(e) => print("txt err " + e.msg)
+    }
+}
+
+fn main() -> int {
+    con_string(1)
+    con_string(9)
+    con_payload_string(1)
+    con_payload_string(9)
+    con_error(1)
+    con_error(9)
+    let p1: Result<int, Error> = puente(1)
+    mostrar_puente(p1)
+    let p2: Result<int, Error> = puente(9)
+    mostrar_puente(p2)
+    mostrar_txt(puente_txt_dos(1))
+    mostrar_txt(puente_txt_dos(9))
+    mostrar_txt(puente_txt_un(1))
+    mostrar_txt(puente_txt_un(9))
+    mostrar_puente(puente_caja_dos(1))
+    mostrar_puente(puente_caja_dos(9))
+    mostrar_puente(puente_caja_un(1))
+    print("OK_OR OK")
+    return 0
+}

@@ -809,11 +809,12 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1020 | trait bound not satisfied (`fn f<T: Display>` with a `T` lacking the impl) |
 | NYX1021 | `await` of a float expression is gated (ABI hazard in the goroutine join — annotate through an int-returning wrapper) |
 | NYX1022 | receiver-type method lookup failure (`m.length()` on a `Map`, or any method the checker knows the receiver type doesn't have) |
-| NYX1023 | `?` used outside a function that returns `Result` |
+| NYX1023 | `?` used outside a function that returns `Result` or `Option` (v0.31.0: message widened from `Result`-only) |
 | NYX1024 | reservado — namespacing (llamada no calificada homónima; `docs/design/specs/2026-08-11-namespacing-modulos-spec.md`) |
 | NYX1025 | `?` propagates an `Err` whose `E` differs from the function's declared `E` (no `From`-conversion in v1 — same type or compile error) |
 | NYX1026 | `throw`/`panic` payload is not `String` or `int` |
 | NYX1027 | `catch (e: T)` annotation is not `String` (`catch` is untyped; the annotation is reserved, not a promise of a future typed catch) |
+| NYX1028 | `?` mixes `Option` and `Result` across the operand and the function's return type (v0.31.0) — `Option` operand in a `Result`-returning fn: hint `.ok_or(e)?`; `Result` operand in an `Option`-returning fn: hint `match`/`unwrap_or` |
 | NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
 | NYX1210 | borrow: `&mut` exclusivity violation (statement-scoped lint) |
 | NYX1211 | borrow: `&mut` aliasing with an active `&` borrow (lint, sibling of NYX1210) |
@@ -1168,6 +1169,33 @@ let val = match r {
 `Option<T>` y `Result<T,E>` estan predefinidos en `std/prelude.nx` y disponibles automaticamente en todos los programas.
 
 El compilador genera versiones especializadas via monomorphization (`Option_int`, `Result_int_String`, etc.). En match, se puede usar el nombre base del enum (`Option.Some`, `Result.Ok`) sin los type arguments.
+
+### `?` sobre `Option` (v0.31.0)
+
+Dentro de una función que devuelve `Option<U>`, el operador `?` sobre un
+`Option<T>` extrae el `T` de `Some` o retorna `None` de inmediato — la misma
+mecánica que `?` sobre `Result`, sin conversión de tipo (`None` no lleva
+payload):
+
+```nyx
+fn buscar(k: int) -> Option<int> {
+    if k == 1 { return Option.Some(42) }
+    return Option.None
+}
+
+fn duplicar(k: int) -> Option<int> {
+    let v = buscar(k)?          // Some(42) -> v=42; None -> return None
+    return Option.Some(v * 2)
+}
+```
+
+Mezclar `Option` y `Result` a traves de `?` es **NYX1028**, no una degradacion
+muda: un `?` sobre `Option` dentro de una función que devuelve `Result` diria
+que el `None` se propagaria como un `Err` sin error adentro (el puente
+explicito es `.ok_or(e)?`, ver `ok_or` en §Result/Option Methods); un `?`
+sobre `Result` dentro de una función que devuelve `Option` diria que el `Err`
+se perderia (el puente es `match` o `unwrap_or`). Ver la tabla de codigos y
+§Try-Catch/`?` para el detalle completo.
 
 ---
 
@@ -1552,7 +1580,29 @@ es aceptable (el proceso está por morir, o por reiniciar ese worker, de todos m
 
 `?` además exige que el `E` del `Result` interno sea el mismo que el `E` de la función que lo usa —
 **NYX1025**, ver la tabla de códigos: no hay conversión (`From`) en v1 mientras `Error` sea el
-struct único de la std (E7 queda diferido, no abandonado).
+struct único de la std. El puente es explícito: `expr.map_err(f)?` convierte el `E`, con el
+receptor bindeado a una variable primero (`let r: Result<T, E1> = expr(); r.map_err(f)?` — la
+misma limitación de todo método builtin de Option/Result, ver «el receptor debe ser una variable»
+en §Result/Option Methods).
+
+### `?` sobre `Option` y las mezclas (NYX1023/NYX1028, v0.31.0)
+
+`?` funciona igual sobre `Option<T>` dentro de una función que devuelve `Option<U>`: propaga `None`
+y entrega el `T` de `Some` (ver §Option<T> arriba para el ejemplo). El operador exige que el
+operando y el retorno de la función sean de la MISMA familia (`Result` con `Result`, `Option` con
+`Option`) — mezclarlas es un error de compilación, no una degradación silenciosa:
+
+- `Option` operando dentro de una función `-> Result<T, E>` → **NYX1028**, hint `.ok_or(e)?`.
+- `Result` operando dentro de una función `-> Option<T>` → **NYX1028**, hint `match` o `unwrap_or`.
+- `?` fuera de una función que devuelve `Result` u `Option` → **NYX1023** (mensaje ampliado desde
+  v0.31.0: antes solo mencionaba `Result`).
+
+Cuando el tipo del operando o del retorno es desconocido (genérico sin instanciar, `dyn Trait`,
+firma sin anotar) el chequeo se apaga (`sem_blind`, ceguera VISIBLE bajo `NYX_STRICT=warn`) — cero
+falsos positivos. El arco que agregó esto es E7 (`docs/design/specs/2026-08-11-errores-tipados-design.md`
+§5-§6): se ejecutó en su forma mínima (`?` sobre `Option` + `ok_or`); `trait From<T>` para
+conversión implícita de `E` heterogéneos sigue fuera de alcance, y solo se retoma si algún dominio
+de error diverge del `Error` único.
 
 ### Implementacion
 
@@ -2268,7 +2318,29 @@ o.unwrap()                   // 42
 o.unwrap_or(0)               // 42
 o.map(fn(x: int) -> int { return x * 2 })     // Some(84)
 o.and_then(fn(x: int) -> Option<int> { return Option.Some(x + 1) })
+o.ok_or("sin valor")         // Result<int, String>: Ok(42) — None daria Err("sin valor")
 ```
+
+`ok_or(e)` (v0.31.0) existe SOLO en `Option` y es el puente explicito a
+`Result`: `Some(x).ok_or(e)` = `Ok(x)`, `None.ok_or(e)` = `Err(e)`, con `e` de
+cualquier tipo `E` — el resultado se tipa `Result<T, E>`. Es la forma de
+propagar una ausencia desde una funcion que devuelve `Result`, donde `?` sobre
+un `Option` es error (NYX1028):
+
+```nyx
+fn leer(k: int) -> Result<int, Error> {
+    let o: Option<int> = buscar(k)
+    let v = o.ok_or(err_new(2, "not_found", "sin clave"))?
+    return Result.Ok(v * 2)
+}
+```
+
+`T` puede ser cualquier tipo — `int`, `String`, un struct — y el `?` lo entrega
+decodificado tanto encadenado (`o.ok_or(e)?`) como en dos pasos (`let r:
+Result<T, E> = o.ok_or(e)` y despues `r?`).
+
+Como todo metodo builtin de `Option`/`Result`, el receptor tiene que ser una
+VARIABLE (`let o: Option<int> = ...`), no el resultado directo de una llamada.
 
 ---
 

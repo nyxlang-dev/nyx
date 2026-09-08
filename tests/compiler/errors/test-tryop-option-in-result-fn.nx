@@ -1,0 +1,25 @@
+// E7 Task 1 (D2 del plan): `?` sobre un `Option` dentro de una función que
+// devuelve `Result`. MEDIDO antes del fix: compilaba limpio y el camino
+// Some/Ok decodificaba la variante "Ok" — que en `Option` no existe — así
+// que el payload degradaba al i64 crudo; el camino None reenviaba el enum
+// `Option.None` (tag 1, buffer vacío) como si fuera un `Err`, y el caller lo
+// leía como `Err(E)` con basura adentro. Silently-wrong en las dos ramas.
+// El puente correcto es explícito: `.ok_or(e)?`.
+// Expected stderr (contains): "NYX1028"
+fn buscar(k: int) -> Option<int> {
+    if k > 0 { return Option.Some(k) }
+    return Option.None
+}
+
+fn usa(k: int) -> Result<int, String> {
+    let v = buscar(k)?
+    return Result.Ok(v + 1)
+}
+
+fn main() -> int {
+    match usa(3) {
+        Result.Ok(v) => print(v),
+        Result.Err(e) => print(e)
+    }
+    return 0
+}

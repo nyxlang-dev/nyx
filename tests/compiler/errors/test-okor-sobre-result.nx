@@ -1,0 +1,17 @@
+// E7 Task 2 (D3): `ok_or` existe SOLO en `Option` — es el puente de la
+// ausencia hacia el error, y un `Result` ya tiene su error adentro. Codegen
+// lo gatea con `is_option_type` (la simetría exacta de `map_err`, que se
+// gatea con `is_result_type`), así que sobre un Result la rama no existe y la
+// llamada caería al dispatch de métodos de impl — un `define` inexistente.
+// El catálogo por tipo de semantic lo caza antes con NYX1022 y su
+// "did you mean" sobre los métodos que Result SÍ tiene.
+// Expected stderr (contains): "NYX1022"
+fn main() -> int {
+    let r: Result<int, String> = Result.Ok(1)
+    let x: Result<int, String> = r.ok_or("no")
+    match x {
+        Result.Ok(v) => print(v),
+        Result.Err(e) => print(e)
+    }
+    return 0
+}

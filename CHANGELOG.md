@@ -97,6 +97,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **`nyx vet`: W108, `throw(x)` deprecado** `[arco: e6-throw-panic]`: sexto patrón vivo del
   linter (`docs/gotchas/throw-deprecated.md`) — `throw(x)` es un alias de `panic(x)` (mismo
   canal, mismo `catch`); marca el uso y sugiere `panic()`.
+- **`?` sobre `Option` + `ok_or(e)` — NYX1028** `[arco: e7-option-try]`: dentro de una función
+  que devuelve `Option<U>`, `expr?` sobre un `Option<T>` ahora propaga `None` y entrega el `T`
+  de `Some` — la misma mecánica que `?` sobre `Result` (antes: cerrado a `Result`, NYX1023 sin
+  excepción). Mezclar `Option` y `Result` a través de `?` deja de compilar mal en silencio (el
+  caso `Option` en una función `-> Result` compilaba y propagaba basura — silently-wrong
+  medido) y pasa a ser **NYX1028** en las dos direcciones, con hint (`.ok_or(e)?`, o `match`/
+  `unwrap_or`); NYX1023 se mantiene para retornos que no son ni `Result` ni `Option`, mensaje
+  ampliado. El puente explícito es `ok_or(e)`, builtin nuevo de `Option<T>`: `Some(x).ok_or(e)`
+  = `Ok(x)`, `None.ok_or(e)` = `Err(e)` con `e` de cualquier tipo `E`; no se agrega `ok()` en
+  `Result` (YAGNI). Fix general de yapa, destapado por `ok_or`: `codegen_try_op` no
+  monomorfizaba el combo `<T,E>` de un `Result<T,E>` antes de decodificar el payload de `?` —
+  un `?` sobre un `Result<T,E>` armado por una ruta que no pasa por el constructor de superficie
+  (hoy `ok_or`, que construye el enum a mano) decodificaba el puntero como número (payload no
+  escalar); el orden de declaración en el archivo NO lo dispara (medido sobre la base); arreglado con
+  `ensure_enum_mono`, el mismo mecanismo que ya usaba `codegen_match`. `From` para conversión
+  implícita de `E` heterogéneos sigue fuera de alcance — el idiom es `.map_err(f)?` — y solo se
+  retoma si algún dominio de error diverge del `Error` único de la std (ruling 2026-09-07,
+  `docs/design/specs/2026-08-11-errores-tipados-design.md` §6 ítem 7). Regression 403→405
+  archivos (test-383 de la propagación `?`/NYX1028, test-384 de `ok_or`), error paths 262→266
+  (2 tests NYX1028 de las mezclas, 2 tests de aridad/tipo de `ok_or`).
 
 ### Fixed
 - **Sello de versión en lo que siembra `nyx init`** (F3 del informe de fricción del scaffold,

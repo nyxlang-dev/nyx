@@ -1,0 +1,24 @@
+// E7 Task 1 (D2 del plan): `?` sobre un `Result` dentro de una función que
+// devuelve `Option`. El camino Err reenviaría el enum `Result.Err(e)` entero
+// donde el caller espera un `Option<U>`: el tag 1 coincide con `None` pero el
+// buffer trae el payload del error, que nadie lee — el error se EVAPORA.
+// Antes de este arco esto era NYX1023 («la fn no devuelve Result»); ahora el
+// diagnóstico dice qué pasa de verdad y ofrece el puente (`match`/`unwrap_or`).
+// Expected stderr (contains): "NYX1028"
+fn puede_fallar(k: int) -> Result<int, String> {
+    if k > 0 { return Result.Ok(k) }
+    return Result.Err("negativo")
+}
+
+fn usa(k: int) -> Option<int> {
+    let v = puede_fallar(k)?
+    return Option.Some(v + 1)
+}
+
+fn main() -> int {
+    match usa(3) {
+        Option.Some(v) => print(v),
+        Option.None => print("none")
+    }
+    return 0
+}

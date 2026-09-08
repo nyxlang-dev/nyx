@@ -1,0 +1,15 @@
+// E7 Task 2 (D3): `ok_or` toma EXACTAMENTE 1 argumento — el error del camino
+// None, que es el `E` del `Result<T, E>` resultante. Sin el chequeo de
+// aridad, `o.ok_or()` llegaba a codegen y moría en `args[0]` con el panic de
+// índice del runtime de Arrays: el COMPILADOR abortando sin línea, sin código
+// NYXxxxx y sin nada que le diga al usuario qué escribió mal.
+// Expected stderr (contains): "NYX1006"
+fn main() -> int {
+    let o: Option<int> = Option.Some(1)
+    let r: Result<int, String> = o.ok_or()
+    match r {
+        Result.Ok(v) => print(v),
+        Result.Err(e) => print(e)
+    }
+    return 0
+}

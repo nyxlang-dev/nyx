@@ -12,8 +12,8 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **403 archivos / 402 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura) |
-| Error paths (parse+semantic) | `make test-errors` | **262** | verificado con corrida real 2026-09-07 |
+| Regression | `make test` | **405 archivos / 404 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura) |
+| Error paths (parse+semantic) | `make test-errors` | **266** | verificado con corrida real 2026-09-08 |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
