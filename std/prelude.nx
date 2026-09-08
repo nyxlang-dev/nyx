@@ -19,6 +19,10 @@ const SIGUSR2 = 12
 const SIGPIPE = 13
 const SIGALRM = 14
 
+// Límites de `int` (i64, complemento a dos) — usados por checked_add/sub/mul/div.
+const INT_MIN = -9223372036854775808
+const INT_MAX = 9223372036854775807
+
 pub fn abs(n: int) -> int {
     if n < 0 { return -n }
     return n
@@ -83,6 +87,153 @@ pub fn sqrt_int(n: int) -> int {
     }
     return x
 }
+
+// --- Aritmética chequeada (arco checked-math, docs/design/plans/2026-09-08-checked-math.md) ---
+//
+// `+`, `-`, `*` en Nyx desbordan en wraparound DEFINIDO de complemento a dos
+// (docs/gotchas/int-wraps-silently.md) — no hay `nsw`/`nuw` en el IR. Eso
+// significa que el resultado ya calculado, aunque "incorrecto", es
+// determinístico y sirve para detectar el desborde con las pruebas de signo
+// clásicas de dos-complemento, sin necesitar un tipo más ancho.
+// `checked_div` es la excepción: dividir es UB a nivel de IR en dos casos
+// (`b == 0`, `INT_MIN / -1`) — esos casos se detectan ANTES y la división
+// nunca se ejecuta.
+
+// checked_add: `s = a + b` solo puede desbordar cuando `a` y `b` tienen el
+// MISMO signo (sumar dos operandos de signo distinto no puede cruzar el
+// límite representable) y el resultado `s` sale con el signo CONTRARIO.
+pub fn checked_add(a: int, b: int) -> Option<int> {
+    let s: int = a + b
+    let a_neg: bool = a < 0
+    let b_neg: bool = b < 0
+    let s_neg: bool = s < 0
+    if a_neg == b_neg and s_neg != a_neg {
+        return Option.None
+    }
+    return Option.Some(s)
+}
+
+// checked_sub: `s = a - b` solo puede desbordar cuando `a` y `b` tienen
+// signos DISTINTOS (restar dos del mismo signo no puede cruzar el límite) y
+// el resultado `s` sale con el signo del sustraendo `b`.
+pub fn checked_sub(a: int, b: int) -> Option<int> {
+    let s: int = a - b
+    let a_neg: bool = a < 0
+    let b_neg: bool = b < 0
+    let s_neg: bool = s < 0
+    if a_neg != b_neg and s_neg == b_neg {
+        return Option.None
+    }
+    return Option.Some(s)
+}
+
+// checked_mul: los casos borde se resuelven ANTES de dividir, porque
+// dividir por 0 o hacer `INT_MIN / -1` es UB (docs/gotchas/int-wraps-silently.md):
+//   - `a == 0 or b == 0` -> `Some(0)` directo, sin tocar `b` como divisor.
+//   - `a == -1` (o, simétricamente, `b == -1`): el único desborde posible es
+//     multiplicar por `INT_MIN`, porque el complemento a dos no tiene un
+//     `+INT_MAX + 1` que represente a `-INT_MIN`.
+// Con esos casos afuera, `b` nunca vale `0` ni `-1` en lo que sigue, así que
+// la división inversa `p / b` es segura y detecta cualquier otro desborde:
+// si el producto envolvió, la vuelta no da `a`.
+pub fn checked_mul(a: int, b: int) -> Option<int> {
+    if a == 0 or b == 0 {
+        return Option.Some(0)
+    }
+    if a == -1 {
+        if b == INT_MIN {
+            return Option.None
+        }
+        return Option.Some(-b)
+    }
+    if b == -1 {
+        if a == INT_MIN {
+            return Option.None
+        }
+        return Option.Some(-a)
+    }
+    let p: int = a * b
+    if p / b != a {
+        return Option.None
+    }
+    return Option.Some(p)
+}
+
+// checked_div: los dos casos UB de `sdiv i64` (docs/gotchas/int-wraps-silently.md)
+// se detectan ANTES de dividir y NUNCA se ejecutan: `b == 0` (división por
+// cero) y `a == INT_MIN and b == -1` (el único cociente que no entra en
+// `int`, porque `-INT_MIN` desborda).
+pub fn checked_div(a: int, b: int) -> Option<int> {
+    if b == 0 {
+        return Option.None
+    }
+    if a == INT_MIN and b == -1 {
+        return Option.None
+    }
+    return Option.Some(a / b)
+}
+
+// --- mul_div_round: `a*b/c` con el producto intermedio en 128 bits ---
+// (arco checked-math, docs/design/plans/2026-09-08-checked-math.md)
+//
+// `checked_mul` DETECTA que `a * b` desborda, pero no deja calcular: la
+// fórmula financiera `monto * tasa / escala` necesita el producto EXACTO
+// aunque no entre en `int`, porque el COCIENTE sí entra (9.3e12 * 1e6
+// desborda; 9.3e12 * 1e6 / 1e6 es un número chico). El cálculo vive en C
+// —runtime/runtime.c::nyx_mul_div_round, con `__int128`— porque Nyx no tiene
+// hoy un entero de 128 bits.
+//
+// El estado del fallo NO cruza por un out-param (nada de punteros en esta
+// frontera, y un `int` de C no se sign-extiende — gotcha
+// ffi-c-int-no-sign-extend): la función C lo deja en una variable
+// thread-local y el segundo builtin lo devuelve. Se consulta INMEDIATAMENTE
+// después de la llamada, antes de cualquier otra cosa que pueda llamarla.
+extern "C" fn nyx_mul_div_round(a: int, b: int, c: int, mode: int) -> int
+extern "C" fn nyx_mul_div_round_status() -> int
+
+// Modos de redondeo del cociente EXACTO `a*b/c` (D1 del plan):
+//   Truncate — hacia cero          Floor — hacia -infinito   Ceil — hacia +infinito
+//   HalfUp   — al más cercano, empates ALEJÁNDOSE de cero (2.5 -> 3, -2.5 -> -3)
+//   HalfEven — al más cercano, empates al PAR (2.5 -> 2, 3.5 -> 4; bancario)
+pub enum RoundMode {
+    Truncate,
+    Floor,
+    Ceil,
+    HalfUp,
+    HalfEven
+}
+
+// Código entero que viaja a C. El `match` es EXPLÍCITO a propósito: si el
+// código saliera del orden de declaración del enum, reordenar `RoundMode` un día
+// cambiaría en silencio el redondeo de todo el software que lo use.
+fn round_mode_code(mode: RoundMode) -> int {
+    return match mode {
+        RoundMode.Truncate => 0,
+        RoundMode.Floor => 1,
+        RoundMode.Ceil => 2,
+        RoundMode.HalfUp => 3,
+        RoundMode.HalfEven => 4
+    }
+}
+
+// mul_div_round: `a*b/c` redondeado según `mode`, con el producto intermedio
+// exacto en 128 bits. PANICA si `c == 0` o si el cociente no entra en `int`
+// (D2 del plan, regla de dos niveles de la std). La hermana que devuelve
+// `Result<int, Error>` es `try_mul_div_round`, en std/math_ext — no puede
+// vivir acá porque std/math.nx viaja en el prelude congelado, que no importa
+// std/error (ver la cabecera de std/math_ext.nx).
+pub fn mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int {
+    let v: int = nyx_mul_div_round(a, b, c, round_mode_code(mode))
+    let st: int = nyx_mul_div_round_status()
+    if st == 1 {
+        panic("mul_div_round: division by zero")
+    }
+    if st == 2 {
+        panic("mul_div_round: result overflows int")
+    }
+    return v
+}
+
 // std/array.nx — Funciones de array de la Standard Library v0.21
 // Nota: push como statement no está disponible. Las funciones que modifican
 // arrays operan in-place sobre el array recibido.

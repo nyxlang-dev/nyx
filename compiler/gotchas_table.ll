@@ -105,9 +105,9 @@ target triple = "x86_64-pc-linux-gnu"
 @.str50.c = internal global %nyx_string* null
 @.str51 = private unnamed_addr constant [51 x i8] c"tests/compiler/language/test-385-int-wraparound.nx\00"
 @.str51.c = internal global %nyx_string* null
-@.str52 = private unnamed_addr constant [167 x i8] c"`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no checked/saturating function, no compiler flag, and no 128-bit type.\00"
+@.str52 = private unnamed_addr constant [265 x i8] c"`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.\00"
 @.str52.c = internal global %nyx_string* null
-@.str53 = private unnamed_addr constant [180 x i8] c"La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay función chequeada ni saturada, ni flag del compilador, ni tipo de 128 bits.\00"
+@.str53 = private unnamed_addr constant [275 x i8] c"La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay función saturada, ni flag del compilador, ni tipo de 128 bits; usa `checked_add`/`checked_sub`/`checked_mul`/`checked_div` para DETECTARLO y `mul_div_round` para `a*b/c`.\00"
 @.str53.c = internal global %nyx_string* null
 @.str54 = private unnamed_addr constant [18 x i8] c"fn-callback-typed\00"
 @.str54.c = internal global %nyx_string* null
@@ -1602,12 +1602,12 @@ define { i64, i8* }* @gotchas_table(
   %235 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str51.c, i8* %234, i64 50)
   %236 = ptrtoint %nyx_string* %235 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %206, i64 %236, i64 2)
-  %237 = getelementptr [167 x i8], [167 x i8]* @.str52, i32 0, i32 0
-  %238 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str52.c, i8* %237, i64 166)
+  %237 = getelementptr [265 x i8], [265 x i8]* @.str52, i32 0, i32 0
+  %238 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str52.c, i8* %237, i64 264)
   %239 = ptrtoint %nyx_string* %238 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %206, i64 %239, i64 2)
-  %240 = getelementptr [180 x i8], [180 x i8]* @.str53, i32 0, i32 0
-  %241 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str53.c, i8* %240, i64 179)
+  %240 = getelementptr [275 x i8], [275 x i8]* @.str53, i32 0, i32 0
+  %241 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str53.c, i8* %240, i64 274)
   %242 = ptrtoint %nyx_string* %241 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %206, i64 %242, i64 2)
   %243 = ptrtoint { i64, i8* }* %206 to i64

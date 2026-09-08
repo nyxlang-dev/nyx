@@ -1,0 +1,21 @@
+add MAX+1: None
+add MIN+(-1): None
+add MAX+0: Some(9223372036854775807)
+add -5+3: Some(-2)
+sub MIN-1: None
+sub MAX-(-1): None
+sub 5-10: Some(-5)
+mul 3037000500*3037000500: None
+mul MIN*-1: None
+mul -1*MIN: None
+mul 0*MIN: Some(0)
+mul MAX*1: Some(9223372036854775807)
+mul 2*(MAX/2): Some(9223372036854775806)
+mul 2*(MAX/2+1): None
+div 7/0: None
+div MIN/-1: None
+div 7/2: Some(3)
+div -7/2: Some(-3)
+mul financiero 9.3e12*1e6: None
+mul financiero 9.0e12*1e6: Some(9000000000000000000)
+checked math OK

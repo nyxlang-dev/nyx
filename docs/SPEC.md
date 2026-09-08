@@ -259,24 +259,61 @@ Todos los operadores aritmeticos funcionan con `int` y `float`:
 
 La aritmética de `int` (`+`, `-`, `*`) se emite como `add`/`sub`/`mul i64` sin las banderas `nsw`/`nuw`
 de LLVM: al desbordar el resultado envuelve en silencio en complemento a dos (wraparound), sin excepción,
-sin abortar y sin ningún aviso — no existe función `checked_*` ni saturada en `runtime`/`std`, no hay
-flag del compilador para activar el chequeo, y no hay tipo de 128 bits para ampliar el rango. La
-división (`sdiv i64`) tampoco lleva guarda: dividir el `int` más chico representable por `-1`, o
-dividir por cero, es comportamiento indefinido a nivel del IR de LLVM (en ARM64 el hardware envuelve o
-devuelve 0; en x86_64 el mismo IR puede terminar en `SIGFPE`). El caso más peligroso en código real es
-el financiero: un cálculo como `monto * tasa_ppm / 1_000_000` (una tasa expresada en partes por millón)
-desborda apenas `monto` supera unas 9.2×10¹² unidades mínimas, y el resultado sale NEGATIVO sin que
-nada lo señale. La mitigación disponible hoy, para una tasa ppm real (`tasa` hasta 1.000.000, o sea
-hasta 100%), es dividir en dos pasos con el resto — `(monto / 1_000_000) * tasa +
-((monto % 1_000_000) * tasa) / 1_000_000` — que es segura para cualquier `monto` que quepa en `int`:
-el término dominante `(monto / 1_000_000) * tasa` nunca supera al propio `monto` (la división entera
-no crece más allá de su entrada) y el término del resto queda bajo 10¹². Reordenar a
-`(monto / 1_000_000) * tasa` sin el término del resto pierde precisión en cambio (la división trunca
-primero), no es un arreglo de overflow. Para una tasa por encima del 100% el término dominante puede
-desbordar solo con un `monto` suficientemente grande (repro: `monto = 10^15`, `tasa = 2×10^12` da
-`2×10^21`) — hay que chequear `tasa < 2⁶³ / (monto / 1_000_000)` antes de multiplicar. `float` no es
-un sustituto válido para dinero: pierde precisión entera en silencio a partir de 2⁵³. Detalle y
-repro completo: `docs/gotchas/int-wraps-silently.md`.
+sin abortar y sin ningún aviso — no hay flag del compilador para activar un chequeo automático, ni un
+tipo de 128 bits para ampliar el rango del propio `int`. La división (`sdiv i64`) tampoco lleva guarda:
+dividir el `int` más chico representable por `-1`, o dividir por cero, es comportamiento indefinido a
+nivel del IR de LLVM (en ARM64 el hardware envuelve o devuelve 0; en x86_64 el mismo IR puede terminar en
+`SIGFPE`). El caso más peligroso en código real es el financiero: un cálculo como
+`monto * tasa_ppm / 1_000_000` (una tasa expresada en partes por millón) desborda apenas `monto` supera
+unas 9.2×10¹² unidades mínimas, y el resultado sale NEGATIVO sin que nada lo señale.
+
+`std/math` ofrece dos familias de funciones para esto. Las cuatro `checked_*` (globales vía el
+prelude, sin `import`) DETECTAN el overflow antes de que ocurra:
+
+```nyx
+checked_add(a: int, b: int) -> Option<int>
+checked_sub(a: int, b: int) -> Option<int>
+checked_mul(a: int, b: int) -> Option<int>
+checked_div(a: int, b: int) -> Option<int>
+```
+
+Cada una devuelve `None` si la operación desborda, `Some(v)` si no; `checked_div` además da `None` con
+`b == 0` y con `INT_MIN / -1` — los dos casos UB de la división de arriba, que con `checked_div` nunca
+llegan a ejecutarse.
+
+Para el patrón `a * b / c` — el que más muerde en código financiero, porque el producto intermedio
+`a * b` puede desbordar aunque el resultado final entre en `int` — `mul_div_round` calcula ese producto
+EXACTO en 128 bits (`__int128` en el runtime C) antes de dividir:
+
+```nyx
+enum RoundMode { Truncate, Floor, Ceil, HalfUp, HalfEven }
+
+// global vía el prelude, sin import; panica con c == 0 o un cociente que no entra en int
+mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int
+
+// misma cuenta, sin panicar — import "std/math_ext"
+try_mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> Result<int, Error>
+```
+
+`try_mul_div_round` vive en `std/math_ext` y no en `std/math` porque `std/prelude.nx` es una foto
+congelada (`compiler/nyx.nx::resolve_source` la antepone CRUDA a todo programa) que no puede nombrar
+`Error`/`err_new` de `std/error` sin romper cualquier programa que no lo importe — el mismo motivo por
+el que `std/fs` existe aparte de `std/file`. `enum RoundMode`, `mul_div_round` y las cuatro `checked_*` sí
+viven en el prelude, sin `import`.
+
+`mode` decide cómo redondear el cociente exacto `a*b/c` cuando no es entero:
+
+| Modo | Regla | `5/2` | `-5/2` | `7/2` | `-13/5` |
+|---|---|---|---|---|---|
+| `RoundMode.Truncate` | hacia cero | 2 | -2 | 3 | -2 |
+| `RoundMode.Floor` | hacia -infinito | 2 | -3 | 3 | -3 |
+| `RoundMode.Ceil` | hacia +infinito | 3 | -2 | 4 | -2 |
+| `RoundMode.HalfUp` | al más cercano, empates ALEJÁNDOSE de cero | 3 | -3 | 4 | -3 |
+| `RoundMode.HalfEven` | al más cercano, empates al PAR (bancario) | 2 | -2 | 4 | -3 |
+
+`float` no es un sustituto válido para dinero: pierde precisión entera en silencio a partir de 2⁵³.
+Detalle, repro completo y la nota histórica de la mitigación previa a estas funciones (split manual
+en dos pasos): `docs/gotchas/int-wraps-silently.md`.
 
 ### Asignacion Compuesta
 ```nyx

@@ -29,16 +29,19 @@ EN/ES), que es una página web.
    (saltea este paso si no hay red — `CAPABILITIES.md` alcanza).
 4. **Escribe el programa.** Prefiere la cosa más chica que funcione.
 5. **Auto-verifica primero:** `nyx check` chequea tipos SIN linkear ni ejecutar — es la
-   retroalimentación más rápida que tienes, y sale con código distinto de cero ante un error,
-   así que `nyx check && nyx run` se puede encadenar sin riesgo. `nyx vet` caza variables sin
-   usar y código muerto, y marca las trampas grep-ables de más abajo con
-   `warning[W1NN] <archivo>:<línea>` — así recibes la trampa por su nombre en vez de un error
-   del parser. Los dos usan `src/main.nx` por defecto.
+   retroalimentación más rápida que tienes, y sale con código distinto de cero ante un error.
+   LÍMITE (v0.31): solo ve el ÚNICO archivo que recibe — no sigue `import "src/..."` (todo
+   nombre importado sale como NYX1002 «not declared»), así que en un proyecto multi-módulo la
+   puerta de tipos es `nyx build`. `nyx vet` caza variables sin usar y código muerto, y marca
+   los gotchas grepeables de abajo con `warning[W1NN] <archivo>:<línea>` — recibes el gotcha
+   por nombre en vez de un error del parser. Ambos usan `src/main.nx` por defecto.
 6. **Ejecútalo:** `nyx run` (o `nyx build`). Lee la salida del compilador.
 7. **Pruébalo:** `nyx test` corre `tests/*.nx`. Las pruebas TIENEN que usar bloques
-   `test "nombre" { ... }` — un archivo con funciones llamadas `test_*` se SALTEA EN SILENCIO
-   («No files with test blocks found»), así que creerías que tu código está probado cuando no
-   lo está.
+   `test "nombre" { ... }` — un archivo con funciones llamadas `test_*` se SALTA EN SILENCIO
+   («No files with test blocks found») y creerías, mal, que tu código está probado. `nyx test`
+   NO chequea tipos (v0.31: compila cada prueba con el checker apagado), así que un error de
+   tipos en un módulo o en una prueba pasa en verde — corre `nyx build` antes de confiar en un
+   `nyx test` verde.
 8. **Si no compila:** lee el error (trae archivo:línea y muchas veces un «did you mean»).
    Revisa las trampas de más abajo — la mayoría de las fallas del primer intento son una de
    ellas. Corrige y vuelve a correr.
@@ -73,7 +76,7 @@ transportar.**
 3. **Un `int` de C (32 bits) retornado por una función `extern "C"` NO hace sign-extend a un `int` de Nyx
 (64 bits) — un valor negativo de C cruza como un número positivo enorme, nunca como negativo.**
 4. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay
-función chequeada ni saturada, ni flag del compilador, ni tipo de 128 bits.**
+función saturada, ni flag del compilador, ni tipo de 128 bits; usa `checked_add`/`checked_sub`/`checked_mul`/`checked_div` para DETECTARLO y `mul_div_round` para `a*b/c`.**
 5. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
 6. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
 7. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**

@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **407 archivos / 406 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura); +1 (test-386-option-struct-multifield, 2026-09-08) |
+| Regression | `make test` | **409 archivos / 408 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura); +2 (test-387-checked-math y test-388-mul-div-round, 2026-09-08, arco checked-math Tasks 1 y 2) |
 | Error paths (parse+semantic) | `make test-errors` | **266** | verificado con corrida real 2026-09-08 |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

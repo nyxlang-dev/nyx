@@ -1,0 +1,152 @@
+// test-388 (arco checked-math, Task 2 — docs/design/plans/2026-09-08-checked-math.md):
+// `mul_div_round(a, b, c, modo)` calcula `a*b/c` con el producto intermedio
+// EXACTO en 128 bits (runtime/runtime.c::nyx_mul_div_round, `__int128`) y
+// redondeo explícito; `try_mul_div_round` (std/math_ext) devuelve
+// `Result<int, Error>` en vez de panicar.
+//
+// Compañero de test-385-int-wraparound y test-387-checked-math: `a*b` puede
+// desbordar `int` aunque `a*b/c` entre de sobra — la fórmula financiera
+// `monto * tasa / escala` es exactamente ese caso.
+//
+// Semántica de los 5 modos (D1 del plan), sobre el cociente exacto `a*b/c`:
+//   Truncate — hacia cero            |  Floor — hacia -inf  |  Ceil — hacia +inf
+//   HalfUp   — al más cercano, empates ALEJÁNDOSE de cero (2.5 -> 3, -2.5 -> -3)
+//   HalfEven — al más cercano, empates al PAR (2.5 -> 2, 3.5 -> 4; bancario)
+//
+// TODOS los valores esperados salen de una implementación de referencia en
+// python validada contra `fractions.Fraction` en 10.200 combinaciones de
+// signo (ver task-2-report.md); ninguno se transcribió a ojo.
+//
+// Fallos (D2): `c == 0` y cociente fuera de `int` -> `Err(invalid, code 22)`
+// por la vía `try_`, `panic` con el MISMO mensaje por la vía plana.
+import "std/error"
+import "std/math_ext"
+
+fn show(label: String, v: int) {
+    print(label + ": " + int_to_string(v))
+}
+
+fn show_try(label: String, r: Result<int, Error>) {
+    match r {
+        Result.Ok(v) => print(label + ": Ok(" + int_to_string(v) + ")"),
+        Result.Err(e) => print(label + ": Err(" + error_to_string(e) + ")")
+    }
+}
+
+fn main() {
+    // --- Grilla por modo: empates (.5), no-empates, y las 4
+    // combinaciones de signo de `a`, `b` y `c` (D1 del plan) ---
+
+    show("Truncate 5*1/2 (2.5)", mul_div_round(5, 1, 2, RoundMode.Truncate))
+    show("Truncate -5*1/2 (-2.5)", mul_div_round(-5, 1, 2, RoundMode.Truncate))
+    show("Truncate 5*1/-2 (-2.5)", mul_div_round(5, 1, -2, RoundMode.Truncate))
+    show("Truncate -5*1/-2 (2.5)", mul_div_round(-5, 1, -2, RoundMode.Truncate))
+    show("Truncate 7*1/2 (3.5)", mul_div_round(7, 1, 2, RoundMode.Truncate))
+    show("Truncate 7*-1/2 (-3.5)", mul_div_round(7, -1, 2, RoundMode.Truncate))
+    show("Truncate 12*1/5 (2.4)", mul_div_round(12, 1, 5, RoundMode.Truncate))
+    show("Truncate -13*1/5 (-2.6)", mul_div_round(-13, 1, 5, RoundMode.Truncate))
+    show("Truncate 7*1/3 (2.333)", mul_div_round(7, 1, 3, RoundMode.Truncate))
+    show("Truncate -7*1/3 (-2.333)", mul_div_round(-7, 1, 3, RoundMode.Truncate))
+    show("Truncate 6*1/3 (exacto 2)", mul_div_round(6, 1, 3, RoundMode.Truncate))
+
+    show("Floor 5*1/2 (2.5)", mul_div_round(5, 1, 2, RoundMode.Floor))
+    show("Floor -5*1/2 (-2.5)", mul_div_round(-5, 1, 2, RoundMode.Floor))
+    show("Floor 5*1/-2 (-2.5)", mul_div_round(5, 1, -2, RoundMode.Floor))
+    show("Floor -5*1/-2 (2.5)", mul_div_round(-5, 1, -2, RoundMode.Floor))
+    show("Floor 7*1/2 (3.5)", mul_div_round(7, 1, 2, RoundMode.Floor))
+    show("Floor 7*-1/2 (-3.5)", mul_div_round(7, -1, 2, RoundMode.Floor))
+    show("Floor 12*1/5 (2.4)", mul_div_round(12, 1, 5, RoundMode.Floor))
+    show("Floor -13*1/5 (-2.6)", mul_div_round(-13, 1, 5, RoundMode.Floor))
+    show("Floor 7*1/3 (2.333)", mul_div_round(7, 1, 3, RoundMode.Floor))
+    show("Floor -7*1/3 (-2.333)", mul_div_round(-7, 1, 3, RoundMode.Floor))
+    show("Floor 6*1/3 (exacto 2)", mul_div_round(6, 1, 3, RoundMode.Floor))
+
+    show("Ceil 5*1/2 (2.5)", mul_div_round(5, 1, 2, RoundMode.Ceil))
+    show("Ceil -5*1/2 (-2.5)", mul_div_round(-5, 1, 2, RoundMode.Ceil))
+    show("Ceil 5*1/-2 (-2.5)", mul_div_round(5, 1, -2, RoundMode.Ceil))
+    show("Ceil -5*1/-2 (2.5)", mul_div_round(-5, 1, -2, RoundMode.Ceil))
+    show("Ceil 7*1/2 (3.5)", mul_div_round(7, 1, 2, RoundMode.Ceil))
+    show("Ceil 7*-1/2 (-3.5)", mul_div_round(7, -1, 2, RoundMode.Ceil))
+    show("Ceil 12*1/5 (2.4)", mul_div_round(12, 1, 5, RoundMode.Ceil))
+    show("Ceil -13*1/5 (-2.6)", mul_div_round(-13, 1, 5, RoundMode.Ceil))
+    show("Ceil 7*1/3 (2.333)", mul_div_round(7, 1, 3, RoundMode.Ceil))
+    show("Ceil -7*1/3 (-2.333)", mul_div_round(-7, 1, 3, RoundMode.Ceil))
+    show("Ceil 6*1/3 (exacto 2)", mul_div_round(6, 1, 3, RoundMode.Ceil))
+
+    show("HalfUp 5*1/2 (2.5)", mul_div_round(5, 1, 2, RoundMode.HalfUp))
+    show("HalfUp -5*1/2 (-2.5)", mul_div_round(-5, 1, 2, RoundMode.HalfUp))
+    show("HalfUp 5*1/-2 (-2.5)", mul_div_round(5, 1, -2, RoundMode.HalfUp))
+    show("HalfUp -5*1/-2 (2.5)", mul_div_round(-5, 1, -2, RoundMode.HalfUp))
+    show("HalfUp 7*1/2 (3.5)", mul_div_round(7, 1, 2, RoundMode.HalfUp))
+    show("HalfUp 7*-1/2 (-3.5)", mul_div_round(7, -1, 2, RoundMode.HalfUp))
+    show("HalfUp 12*1/5 (2.4)", mul_div_round(12, 1, 5, RoundMode.HalfUp))
+    show("HalfUp -13*1/5 (-2.6)", mul_div_round(-13, 1, 5, RoundMode.HalfUp))
+    show("HalfUp 7*1/3 (2.333)", mul_div_round(7, 1, 3, RoundMode.HalfUp))
+    show("HalfUp -7*1/3 (-2.333)", mul_div_round(-7, 1, 3, RoundMode.HalfUp))
+    show("HalfUp 6*1/3 (exacto 2)", mul_div_round(6, 1, 3, RoundMode.HalfUp))
+
+    show("HalfEven 5*1/2 (2.5)", mul_div_round(5, 1, 2, RoundMode.HalfEven))
+    show("HalfEven -5*1/2 (-2.5)", mul_div_round(-5, 1, 2, RoundMode.HalfEven))
+    show("HalfEven 5*1/-2 (-2.5)", mul_div_round(5, 1, -2, RoundMode.HalfEven))
+    show("HalfEven -5*1/-2 (2.5)", mul_div_round(-5, 1, -2, RoundMode.HalfEven))
+    show("HalfEven 7*1/2 (3.5)", mul_div_round(7, 1, 2, RoundMode.HalfEven))
+    show("HalfEven 7*-1/2 (-3.5)", mul_div_round(7, -1, 2, RoundMode.HalfEven))
+    show("HalfEven 12*1/5 (2.4)", mul_div_round(12, 1, 5, RoundMode.HalfEven))
+    show("HalfEven -13*1/5 (-2.6)", mul_div_round(-13, 1, 5, RoundMode.HalfEven))
+    show("HalfEven 7*1/3 (2.333)", mul_div_round(7, 1, 3, RoundMode.HalfEven))
+    show("HalfEven -7*1/3 (-2.333)", mul_div_round(-7, 1, 3, RoundMode.HalfEven))
+    show("HalfEven 6*1/3 (exacto 2)", mul_div_round(6, 1, 3, RoundMode.HalfEven))
+
+    // --- Producto intermedio de 128 bits: `a*b` NO cabe en `int` ---
+
+    show("Truncate MAX*MAX/MAX", mul_div_round(9223372036854775807, 9223372036854775807, 9223372036854775807, RoundMode.Truncate))
+    show("HalfEven MAX*MAX/MAX", mul_div_round(9223372036854775807, 9223372036854775807, 9223372036854775807, RoundMode.HalfEven))
+
+    show("HalfUp 9.3e12*1e6/1e6", mul_div_round(9300000000000, 1000000, 1000000, RoundMode.HalfUp))
+
+    show("HalfUp 9.3e12*1234567/1e6", mul_div_round(9300000000000, 1234567, 1000000, RoundMode.HalfUp))
+    show("HalfEven 9.3e12*1234567/1e6", mul_div_round(9300000000000, 1234567, 1000000, RoundMode.HalfEven))
+
+    show("Truncate 9300000000001*1234567/1e6", mul_div_round(9300000000001, 1234567, 1000000, RoundMode.Truncate))
+    show("Floor 9300000000001*1234567/1e6", mul_div_round(9300000000001, 1234567, 1000000, RoundMode.Floor))
+    show("Ceil 9300000000001*1234567/1e6", mul_div_round(9300000000001, 1234567, 1000000, RoundMode.Ceil))
+    show("HalfUp 9300000000001*1234567/1e6", mul_div_round(9300000000001, 1234567, 1000000, RoundMode.HalfUp))
+    show("HalfEven 9300000000001*1234567/1e6", mul_div_round(9300000000001, 1234567, 1000000, RoundMode.HalfEven))
+
+    show("Truncate empate128 +X.5", mul_div_round(9300000000001, 1000000, 2000000, RoundMode.Truncate))
+    show("Floor empate128 +X.5", mul_div_round(9300000000001, 1000000, 2000000, RoundMode.Floor))
+    show("Ceil empate128 +X.5", mul_div_round(9300000000001, 1000000, 2000000, RoundMode.Ceil))
+    show("HalfUp empate128 +X.5", mul_div_round(9300000000001, 1000000, 2000000, RoundMode.HalfUp))
+    show("HalfEven empate128 +X.5", mul_div_round(9300000000001, 1000000, 2000000, RoundMode.HalfEven))
+
+    show("Truncate empate128 -X.5", mul_div_round(-9300000000001, 1000000, 2000000, RoundMode.Truncate))
+    show("Floor empate128 -X.5", mul_div_round(-9300000000001, 1000000, 2000000, RoundMode.Floor))
+    show("Ceil empate128 -X.5", mul_div_round(-9300000000001, 1000000, 2000000, RoundMode.Ceil))
+    show("HalfUp empate128 -X.5", mul_div_round(-9300000000001, 1000000, 2000000, RoundMode.HalfUp))
+    show("HalfEven empate128 -X.5", mul_div_round(-9300000000001, 1000000, 2000000, RoundMode.HalfEven))
+
+    show("Truncate MAX*1/1", mul_div_round(9223372036854775807, 1, 1, RoundMode.Truncate))
+
+    show("Truncate MIN*1/1", mul_div_round(-9223372036854775808, 1, 1, RoundMode.Truncate))
+
+    // --- Fallos por la via `try_` (Result) ---
+    show_try("try c==0", try_mul_div_round(1, 1, 0, RoundMode.Truncate))
+    show_try("try MAX*2/1", try_mul_div_round(9223372036854775807, 2, 1, RoundMode.Truncate))
+    show_try("try MIN*-1/1", try_mul_div_round(-9223372036854775808, -1, 1, RoundMode.Truncate))
+    show_try("try ok 128b", try_mul_div_round(9300000000001, 1000000, 2000000, RoundMode.HalfEven))
+
+    // --- Los MISMOS fallos por la via plana: panic atrapado con try/catch ---
+    try {
+        let _z: int = mul_div_round(1, 1, 0, RoundMode.Truncate)
+        print("panic c==0: NO PANICO (bug)")
+    } catch (e) {
+        print("panic c==0: " + e)
+    }
+
+    try {
+        let _o: int = mul_div_round(9223372036854775807, 2, 1, RoundMode.Truncate)
+        print("panic MAX*2/1: NO PANICO (bug)")
+    } catch (e) {
+        print("panic MAX*2/1: " + e)
+    }
+}

@@ -28,14 +28,18 @@ a web page.
    (skip this step with no network — `CAPABILITIES.md` is enough).
 4. **Write the program.** Prefer the smallest thing that works.
 5. **Self-check first:** `nyx check` type-checks WITHOUT linking or running — the fastest
-   feedback you have, and it exits non-zero on error, so `nyx check && nyx run` is safe to chain.
+   feedback you have, and it exits non-zero on error. LIMIT (v0.31): it only sees the ONE file
+   it is given — it does not follow `import "src/..."` (every imported name comes back as
+   NYX1002 "not declared"), so in a multi-module project the type gate is `nyx build`.
    `nyx vet` catches unused vars and dead code, and flags the grep-able gotchas below with
    `warning[W1NN] <file>:<line>` — so you get the gotcha by name instead of a parser error.
    Both default to `src/main.nx`.
 6. **Run it:** `nyx run` (or `nyx build`). Read the compiler output.
 7. **Test it:** `nyx test` runs `tests/*.nx`. Tests MUST use `test "name" { ... }` blocks —
    a file with functions named `test_*` is SILENTLY SKIPPED ("No files with test blocks found"),
-   so you would wrongly believe your code is tested.
+   so you would wrongly believe your code is tested. `nyx test` does NOT type-check (v0.31: it
+   compiles each test with the checker off), so a type error in a module or in a test still
+   passes green — run `nyx build` before trusting a green `nyx test`.
 8. **If it doesn't compile:** read the error (it has file:line and often a "did you mean").
    Check the Gotchas below — most first-try failures are one of them. Fix and re-run.
 9. **If you hit a real wall** — the language or stdlib genuinely can't do it, or you found a
@@ -68,7 +72,7 @@ carry.**
 3. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
 bits) — a negative C value crosses as a huge positive number, never as a negative one.**
 4. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
-checked/saturating function, no compiler flag, and no 128-bit type.**
+saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.**
 5. **Callbacks: prefer `Fn(Type) -> Ret`**
 6. **`await` of a `float`-returning function is gated (NYX1021)**
 7. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**

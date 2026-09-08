@@ -1,0 +1,83 @@
+Truncate 5*1/2 (2.5): 2
+Truncate -5*1/2 (-2.5): -2
+Truncate 5*1/-2 (-2.5): -2
+Truncate -5*1/-2 (2.5): 2
+Truncate 7*1/2 (3.5): 3
+Truncate 7*-1/2 (-3.5): -3
+Truncate 12*1/5 (2.4): 2
+Truncate -13*1/5 (-2.6): -2
+Truncate 7*1/3 (2.333): 2
+Truncate -7*1/3 (-2.333): -2
+Truncate 6*1/3 (exacto 2): 2
+Floor 5*1/2 (2.5): 2
+Floor -5*1/2 (-2.5): -3
+Floor 5*1/-2 (-2.5): -3
+Floor -5*1/-2 (2.5): 2
+Floor 7*1/2 (3.5): 3
+Floor 7*-1/2 (-3.5): -4
+Floor 12*1/5 (2.4): 2
+Floor -13*1/5 (-2.6): -3
+Floor 7*1/3 (2.333): 2
+Floor -7*1/3 (-2.333): -3
+Floor 6*1/3 (exacto 2): 2
+Ceil 5*1/2 (2.5): 3
+Ceil -5*1/2 (-2.5): -2
+Ceil 5*1/-2 (-2.5): -2
+Ceil -5*1/-2 (2.5): 3
+Ceil 7*1/2 (3.5): 4
+Ceil 7*-1/2 (-3.5): -3
+Ceil 12*1/5 (2.4): 3
+Ceil -13*1/5 (-2.6): -2
+Ceil 7*1/3 (2.333): 3
+Ceil -7*1/3 (-2.333): -2
+Ceil 6*1/3 (exacto 2): 2
+HalfUp 5*1/2 (2.5): 3
+HalfUp -5*1/2 (-2.5): -3
+HalfUp 5*1/-2 (-2.5): -3
+HalfUp -5*1/-2 (2.5): 3
+HalfUp 7*1/2 (3.5): 4
+HalfUp 7*-1/2 (-3.5): -4
+HalfUp 12*1/5 (2.4): 2
+HalfUp -13*1/5 (-2.6): -3
+HalfUp 7*1/3 (2.333): 2
+HalfUp -7*1/3 (-2.333): -2
+HalfUp 6*1/3 (exacto 2): 2
+HalfEven 5*1/2 (2.5): 2
+HalfEven -5*1/2 (-2.5): -2
+HalfEven 5*1/-2 (-2.5): -2
+HalfEven -5*1/-2 (2.5): 2
+HalfEven 7*1/2 (3.5): 4
+HalfEven 7*-1/2 (-3.5): -4
+HalfEven 12*1/5 (2.4): 2
+HalfEven -13*1/5 (-2.6): -3
+HalfEven 7*1/3 (2.333): 2
+HalfEven -7*1/3 (-2.333): -2
+HalfEven 6*1/3 (exacto 2): 2
+Truncate MAX*MAX/MAX: 9223372036854775807
+HalfEven MAX*MAX/MAX: 9223372036854775807
+HalfUp 9.3e12*1e6/1e6: 9300000000000
+HalfUp 9.3e12*1234567/1e6: 11481473100000
+HalfEven 9.3e12*1234567/1e6: 11481473100000
+Truncate 9300000000001*1234567/1e6: 11481473100001
+Floor 9300000000001*1234567/1e6: 11481473100001
+Ceil 9300000000001*1234567/1e6: 11481473100002
+HalfUp 9300000000001*1234567/1e6: 11481473100001
+HalfEven 9300000000001*1234567/1e6: 11481473100001
+Truncate empate128 +X.5: 4650000000000
+Floor empate128 +X.5: 4650000000000
+Ceil empate128 +X.5: 4650000000001
+HalfUp empate128 +X.5: 4650000000001
+HalfEven empate128 +X.5: 4650000000000
+Truncate empate128 -X.5: -4650000000000
+Floor empate128 -X.5: -4650000000001
+Ceil empate128 -X.5: -4650000000000
+HalfUp empate128 -X.5: -4650000000001
+HalfEven empate128 -X.5: -4650000000000
+Truncate MAX*1/1: 9223372036854775807
+Truncate MIN*1/1: -9223372036854775808
+try c==0: Err(invalid: mul_div_round: division by zero (code 22))
+try MAX*2/1: Err(invalid: mul_div_round: result overflows int (code 22))
+try MIN*-1/1: Err(invalid: mul_div_round: result overflows int (code 22))
+try ok 128b: Ok(4650000000000)
+panic c==0: mul_div_round: division by zero
+panic MAX*2/1: mul_div_round: result overflows int

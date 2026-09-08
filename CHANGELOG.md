@@ -117,6 +117,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `docs/design/specs/2026-08-11-errores-tipados-design.md` §6 ítem 7). Regression 403→405
   archivos (test-383 de la propagación `?`/NYX1028, test-384 de `ok_or`), error paths 262→266
   (2 tests NYX1028 de las mezclas, 2 tests de aridad/tipo de `ok_or`).
+- **`checked_add/sub/mul/div(a, b) -> Option<int>`, `mul_div_round`/`try_mul_div_round(a, b, c,
+  mode) -> int` / `Result<int, Error>`, `enum RoundMode`** (`std/math`) `[arco: checked-math]`.
+  Mitigación real para el gotcha `int-wraps-silently`: las cuatro `checked_*` DETECTAN el
+  overflow de `+`/`-`/`*` (`None` en vez de envolver en silencio); `checked_div` además cierra
+  los dos casos UB de la división (`b == 0`, `INT_MIN / -1`) con `None`. Para el patrón
+  financiero `a*b/c`, `mul_div_round`/`try_mul_div_round` calculan el producto intermedio
+  `a*b` EXACTO en 128 bits (`__int128` en el runtime C) antes de dividir, con el modo de
+  redondeo explícito en `mode: RoundMode` (`Truncate`/`Floor`/`Ceil`/`HalfUp`/`HalfEven`, empates
+  documentados con signo en las dos direcciones); `mul_div_round` panica con `c == 0` o un
+  cociente fuera de `int`, `try_mul_div_round` da `Err(invalid, …)` para los mismos dos casos.
+  `checked_*`, `mul_div_round` y `enum RoundMode` son globales vía el prelude, sin `import`;
+  `try_mul_div_round` vive en `std/math_ext` (`import "std/math_ext"`) porque `std/prelude.nx`
+  es una foto congelada que no puede nombrar `Error`/`err_new` sin romper todo programa que no
+  importe `std/error` (mismo motivo por el que `std/fs` existe aparte de `std/file`). Nombres
+  globales que el prelude reserva desde este arco: `INT_MIN`, `INT_MAX`, `RoundMode`,
+  `checked_add/sub/mul/div`, `mul_div_round` (una `const INT_MAX` propia ahora da NYX1013; un
+  `enum RoundMode` propio reemplaza al del prelude y el error apunta a `round_mode_code` en una
+  línea del prelude — fichado). El enum se llamó `Round` durante el desarrollo del arco y se
+  renombró a `RoundMode` antes de publicar (colisión con nombres de usuario, decisión de
+  Ottavio 2026-09-08). test-387
+  (`checked_*`) y test-388 (`mul_div_round`/`try_mul_div_round`, con oráculo validado contra
+  `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
 - **Sello de versión en lo que siembra `nyx init`** (F3 del informe de fricción del scaffold,
@@ -311,8 +333,8 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   (`sdiv i64`) tampoco tiene guarda (`INT_MIN / -1` y por cero son UB en el IR). El caso más
   peligroso en código real: `monto * tasa_ppm / 1_000_000` desborda a NEGATIVO apenas `monto`
   supera ~9.2e12 unidades mínimas. Mitigación honesta documentada (dividir en dos pasos con el
-  resto); `checked_add`/`checked_sub`/`checked_mul`/`mul_div_round` quedan fichados en `TASKS.md`,
-  no prometidos.
+  resto); `checked_add`/`checked_sub`/`checked_mul`/`mul_div_round` llegan más arriba en esta
+  misma sección de novedades (bullet `[arco: checked-math]`).
 - **Gotcha `option-struct-multifield-link` deja de estar vivo** (`docs/gotchas/option-struct-multifield-link.md`
   → `kind: fixed`, `fixed_in: 0.31.0`, test-386 nuevo): la review final del arco E7 (2026-09-08)
   reprodujo el caso exacto (`Item { id: int, name: String, price: Array }` por `Option<Item>` y

@@ -1,5 +1,20 @@
 // std/math_ext.nx — Extended Math Library for Nyx (v4.3.0)
 // Pure Nyx implementation. Complements std/math.nx prelude functions.
+//
+// Excepción a «pure Nyx» desde el arco checked-math (2026-09-08):
+// `try_mul_div_round` (al final del archivo) llama a los dos builtins C que
+// declara std/math.nx. Vive ACÁ y no en std/math.nx por una razón
+// estructural, no de gusto: std/math.nx viaja en la copia CONGELADA de
+// std/prelude.nx (gotcha prelude-frozen-snapshot), el prelude se antepone
+// crudo —sus propios `import` no se resuelven, ver
+// compiler/nyx.nx::resolve_source— y por lo tanto NADA del prelude puede
+// nombrar `Error`/`err_new` de std/error sin romper todo programa que no
+// importe std/error. Mismo callejón y misma salida que std/fs.nx frente a
+// std/file.nx (E4): la hermana `try_` se muda a un módulo importable de
+// verdad. `mul_div_round` (la que panica) y `enum RoundMode` SÍ están en el
+// prelude, así que se usan sin ningún import.
+
+import "std/error"
 
 // ── Number Theory ────────────────────────────────────────────────────────────
 
@@ -336,4 +351,27 @@ pub fn float_to_fixed(x: float, decimals: int) -> String {
         out = out + "." + fs
     }
     return out
+}
+
+// ── Aritmética exacta con producto de 128 bits ────────────────────────────────
+
+// try_mul_div_round: la hermana `Result` de `mul_div_round` (std/math, global
+// vía prelude). Mismo cálculo —producto intermedio EXACTO en `__int128`,
+// runtime/runtime.c::nyx_mul_div_round— pero los dos fallos ESPERABLES de D2
+// vuelven como `Err` en vez de panicar:
+//   · `c == 0`                          -> invalid / "mul_div_round: division by zero"
+//   · el cociente no entra en `int`      -> invalid / "mul_div_round: result overflows int"
+// `code` es 22 (EINVAL) en los dos: son argumentos inválidos, no un fallo de
+// E/S. Los mensajes son LITERALMENTE los mismos que los del `panic` de la
+// versión plana, para que un log no dependa de por cuál de las dos se pasó.
+pub fn try_mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> Result<int, Error> {
+    let v: int = nyx_mul_div_round(a, b, c, round_mode_code(mode))
+    let st: int = nyx_mul_div_round_status()
+    if st == 1 {
+        return Result.Err(err_new(22, "invalid", "mul_div_round: division by zero"))
+    }
+    if st == 2 {
+        return Result.Err(err_new(22, "invalid", "mul_div_round: result overflows int"))
+    }
+    return Result.Ok(v)
 }

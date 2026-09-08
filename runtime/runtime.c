@@ -700,6 +700,101 @@ double nyx_math_round(double x) { return round(x); }
 double nyx_math_fabs(double x) { return fabs(x); }
 double nyx_math_fmod(double x, double y) { return fmod(x, y); }
 
+// ===== nyx_mul_div_round — `a*b/c` con producto intermedio de 128 bits =====
+//
+// Por qué existe (arco checked-math, 2026-09-08): `a * b` en Nyx desborda en
+// wraparound SILENCIOSO (docs/gotchas/int-wraps-silently.md), así que la
+// fórmula financiera `monto * tasa / escala` devuelve basura en cuanto el
+// producto pasa de 2^63 — aunque el COCIENTE entre de sobra en un `int`
+// (9.3e12 * 1e6 ya desborda; 9.3e12 * 1e6 / 1e6 es un número chico). Acá el
+// producto vive en `__int128` (|a*b| <= 2^126: jamás desborda) y solo el
+// cociente final vuelve a 64 bits, con el redondeo elegido explícitamente.
+//
+// Frontera FFI: todo `int64_t` y sin punteros (gotcha ffi-c-int-no-sign-extend:
+// un `int` de C, 32 bits, no se sign-extiende al cruzar a un `int` de Nyx). El
+// estado del fallo NO viaja por un out-param sino por una variable thread-local
+// que consulta el segundo builtin, nyx_mul_div_round_status(), inmediatamente
+// después de la llamada.
+//
+// Modos (D1 del plan; `q` y `r` son el cociente y el resto TRUNCADOS hacia
+// cero que da C, y `s` el signo del cociente EXACTO):
+//   0 Truncate — hacia cero            (descarta `r`)
+//   1 Floor    — hacia -infinito       (`q-1` si el cociente exacto es negativo)
+//   2 Ceil     — hacia +infinito       (`q+1` si el cociente exacto es positivo)
+//   3 HalfUp   — al más cercano, empates ALEJÁNDOSE de cero (contable)
+//   4 HalfEven — al más cercano, empates al PAR (bancario)
+//
+// Un ejemplo por modo con signo NEGATIVO, que es donde los cinco divergen —
+// sobre -5/2 = -2.5 y -7/2 = -3.5 exactos:
+//   -2.5: Truncate -2 | Floor -3 | Ceil -2 | HalfUp -3 | HalfEven -2 (par)
+//   -3.5: Truncate -3 | Floor -4 | Ceil -3 | HalfUp -4 | HalfEven -4 (par)
+// (HalfEven cambia de vecino entre los dos casos; HalfUp nunca: siempre se
+// aleja de cero.)
+//
+// Estado: 0 ok, 1 división por cero (`c == 0`), 2 el cociente no entra en
+// `int64_t`, 3 modo fuera de rango — este último inalcanzable desde Nyx: el
+// `match` sobre `Round` del wrapper de std/math es exhaustivo. Se resetea a 0
+// al principio de CADA llamada, así que consultarlo sin haber llamado antes
+// desde el mismo thread devuelve 0.
+static _Thread_local int64_t __nyx_mul_div_round_status = 0;
+
+int64_t nyx_mul_div_round_status(void) {
+    return __nyx_mul_div_round_status;
+}
+
+int64_t nyx_mul_div_round(int64_t a, int64_t b, int64_t c, int64_t mode) {
+    __nyx_mul_div_round_status = 0;
+
+    if (c == 0) {
+        __nyx_mul_div_round_status = 1;
+        return 0;
+    }
+    if (mode < 0 || mode > 4) {
+        __nyx_mul_div_round_status = 3;
+        return 0;
+    }
+
+    // |p| <= 2^126: ni el producto ni `p / c` pueden desbordar el __int128
+    // (el UB clásico INT_MIN/-1 es inalcanzable acá, porque p nunca vale el
+    // mínimo de 128 bits).
+    __int128 p = (__int128)a * (__int128)b;
+    __int128 q = p / (__int128)c;   // trunca hacia cero (C99 6.5.5p6)
+    __int128 r = p % (__int128)c;   // resto con el signo de `p`
+
+    if (r != 0) {
+        // Signo del cociente exacto: con `r != 0`, signo(r) == signo(p), así
+        // que alcanza con comparar los signos de `r` y `c` (evita mirar `p`,
+        // que puede ser 0 solo cuando r también lo es).
+        __int128 s = ((r < 0) == (c < 0)) ? 1 : -1;
+        if (mode == 1) {                    // Floor
+            if (s < 0) q -= 1;
+        } else if (mode == 2) {             // Ceil
+            if (s > 0) q += 1;
+        } else if (mode == 3 || mode == 4) {
+            // Comparar 2*|r| con |c| en vez de |r| con |c|/2: exacto y sin
+            // dividir. |r| < |c| <= 2^63, así que 2*|r| < 2^64 y entra
+            // holgado en __int128; |c| tampoco desborda con c == INT64_MIN.
+            __int128 twice = (r < 0 ? -r : r) * 2;
+            __int128 ac = (c < 0) ? -(__int128)c : (__int128)c;
+            if (twice > ac) {
+                q += s;                     // más de la mitad: al vecino lejano
+            } else if (twice == ac) {
+                // Empate: HalfUp SIEMPRE se aleja de cero; HalfEven solo se
+                // mueve si `q` (el vecino hacia cero) quedó impar, porque
+                // entonces el par es el otro.
+                if (mode == 3 || (q % 2) != 0) q += s;
+            }
+            // twice < ac: menos de la mitad, `q` ya es el más cercano.
+        }
+    }
+
+    if (q > (__int128)INT64_MAX || q < (__int128)INT64_MIN) {
+        __nyx_mul_div_round_status = 2;
+        return 0;
+    }
+    return (int64_t)q;
+}
+
 // ===== SIGNAL HANDLING (v6.0) =====
 
 #ifndef __wasi__

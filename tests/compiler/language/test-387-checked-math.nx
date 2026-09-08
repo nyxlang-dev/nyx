@@ -1,0 +1,124 @@
+// test-387 (arco checked-math, Task 1 — docs/design/plans/2026-09-08-checked-math.md):
+// `checked_add/sub/mul/div` de `std/math` devuelven `Option<int>`: `None`
+// en overflow (nunca ejecutan la aritmética en el caso UB de la división),
+// `Some(v)` con el valor exacto en cualquier otro caso.
+//
+// Compañero de test-385-int-wraparound (que fija el wraparound silencioso
+// de `+`/`-`/`*` como comportamiento HOY): este test fija la API nueva que
+// lo detecta sin ejecutar UB. Todos los operandos viven en variables (no
+// literales plegados inline) para ejercitar la emisión real de codegen.
+//
+// Valores esperados calculados con python (ver task-1-report.md):
+//   MAX = 9223372036854775807, MIN = -9223372036854775808
+//
+// Casos:
+//   add: MAX+1 (None), MIN+(-1) (None), MAX+0 (Some MAX, borde sin overflow),
+//        -5+3 (Some -2, mezcla de signos sin overflow)
+//   sub: MIN-1 (None), MAX-(-1) (None), 5-10 (Some -5, control sin overflow)
+//   mul: 3037000500*3037000500 (None, desborda sin pasar por ±1),
+//        MIN*-1 (None), -1*MIN (None, simétrico), 0*MIN (Some 0),
+//        MAX*1 (Some MAX), 2*(MAX/2) (Some, borde SIN overflow),
+//        2*(MAX/2+1) (None, un paso más allá del borde)
+//   div: 7/0 (None, división por cero), MIN/-1 (None, UB evitado),
+//        7/2 (Some 3, trunca hacia cero), -7/2 (Some -3, trunca hacia cero)
+//   financiero (test-385, ahora detectado en vez de desbordar en silencio):
+//        9300000000000*1000000 (None), 9000000000000*1000000 (Some)
+fn show(label: String, o: Option<int>) {
+    match o {
+        Option.Some(v) => print(label + ": Some(" + int_to_string(v) + ")"),
+        Option.None => print(label + ": None")
+    }
+}
+
+fn main() {
+    let max: int = 9223372036854775807
+    let min: int = -9223372036854775808
+
+    // --- checked_add ---
+    let a1: int = max
+    let b1: int = 1
+    show("add MAX+1", checked_add(a1, b1))
+
+    let a2: int = min
+    let b2: int = -1
+    show("add MIN+(-1)", checked_add(a2, b2))
+
+    let a3: int = max
+    let b3: int = 0
+    show("add MAX+0", checked_add(a3, b3))
+
+    let a4: int = -5
+    let b4: int = 3
+    show("add -5+3", checked_add(a4, b4))
+
+    // --- checked_sub ---
+    let a5: int = min
+    let b5: int = 1
+    show("sub MIN-1", checked_sub(a5, b5))
+
+    let a6: int = max
+    let b6: int = -1
+    show("sub MAX-(-1)", checked_sub(a6, b6))
+
+    let a7: int = 5
+    let b7: int = 10
+    show("sub 5-10", checked_sub(a7, b7))
+
+    // --- checked_mul ---
+    let a8: int = 3037000500
+    let b8: int = 3037000500
+    show("mul 3037000500*3037000500", checked_mul(a8, b8))
+
+    let a9: int = min
+    let b9: int = -1
+    show("mul MIN*-1", checked_mul(a9, b9))
+
+    let a10: int = -1
+    let b10: int = min
+    show("mul -1*MIN", checked_mul(a10, b10))
+
+    let a11: int = 0
+    let b11: int = min
+    show("mul 0*MIN", checked_mul(a11, b11))
+
+    let a12: int = max
+    let b12: int = 1
+    show("mul MAX*1", checked_mul(a12, b12))
+
+    let half: int = max / 2
+    let a13: int = 2
+    let b13: int = half
+    show("mul 2*(MAX/2)", checked_mul(a13, b13))
+
+    let half_plus: int = half + 1
+    let a14: int = 2
+    let b14: int = half_plus
+    show("mul 2*(MAX/2+1)", checked_mul(a14, b14))
+
+    // --- checked_div ---
+    let a15: int = 7
+    let b15: int = 0
+    show("div 7/0", checked_div(a15, b15))
+
+    let a16: int = min
+    let b16: int = -1
+    show("div MIN/-1", checked_div(a16, b16))
+
+    let a17: int = 7
+    let b17: int = 2
+    show("div 7/2", checked_div(a17, b17))
+
+    let a18: int = -7
+    let b18: int = 2
+    show("div -7/2", checked_div(a18, b18))
+
+    // --- caso financiero (test-385): monto * tasa_ppm ---
+    let monto_bad: int = 9300000000000
+    let tasa_ppm: int = 1000000
+    show("mul financiero 9.3e12*1e6", checked_mul(monto_bad, tasa_ppm))
+
+    let monto_ok: int = 9000000000000
+    show("mul financiero 9.0e12*1e6", checked_mul(monto_ok, tasa_ppm))
+
+    print("checked math OK")
+}

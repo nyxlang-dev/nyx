@@ -95,11 +95,13 @@ generated pieces so they never describe an older toolchain than the installed on
 
 You cannot run a program in your head, and Nyx is not in your training data.
 These four commands are your feedback loop. `check` is the fastest: it type-checks
-without linking or executing, and **exits non-zero when something is wrong**, so
-`nyx check && nyx test` is safe to chain.
+without linking or executing and **exits non-zero when something is wrong** — but it only
+sees the one file it is given (no `import "src/..."` resolution: every imported name reads as
+NYX1002) and `nyx test` compiles tests with the checker OFF, so in a multi-module project the
+type gate is `nyx build` — run it before trusting a green `nyx test`.
 
 ```bash
-nyx check [file.nx]    # parse + type-check only. No linking, no execution. Exit 1 on error.
+nyx check [file.nx]    # parse + type-check ONE file (no local imports). No linking, no execution. Exit 1 on error.
 nyx fmt   [file.nx]    # canonical formatting (prints to stdout)
 nyx vet   [file.nx]    # unused vars, dead code after return/break, unused imports
 nyx test               # run tests/*.nx
@@ -870,6 +872,41 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   `"1.01"`, no `"1.02"`, porque 1.015 no tiene representación binaria exacta
   (mismo fenómeno que `round()` en Python o `toFixed()` en JS) — no es un bug,
   el error queda acotado al último dígito.
+- `checked_add(a: int, b: int) -> Option<int>`, `checked_sub`, `checked_mul`,
+  `checked_div` (`std/math`, en el prelude — no necesitan `import`) —
+  aritmética SIN el wraparound silencioso de `+`/`-`/`*` (gotcha
+  `int-wraps-silently`, §5.1): `None` en overflow, `Some(v)` si no.
+  `checked_div` también da `None` con `b == 0` y con `INT_MIN / -1` (los dos
+  casos UB de la división a nivel de IR — nunca se ejecutan).
+- `mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int` (`std/math`, en
+  el prelude — sin `import`) — `a*b/c` con el producto intermedio EXACTO en 128
+  bits (`__int128` en el runtime C): calcula bien aunque `a*b` no entre en
+  `int`, que es el caso de la fórmula financiera `monto * tasa / escala`
+  (`9300000000000 * 1234567 / 1000000` = `11481473100000`, mientras que
+  `a*b` a secas envuelve). PANICA con `c == 0` («mul_div_round: division by
+  zero») y con un cociente fuera de `int` («… result overflows int»).
+- `try_mul_div_round(a, b, c, mode) -> Result<int, Error>` — la hermana que
+  NO panica; vive en `std/math_ext` (`import "std/math_ext"`), no en
+  `std/math`, porque el prelude congelado no puede nombrar `Error` (mismo
+  motivo por el que `std/fs` existe aparte de `std/file`). Devuelve
+  `Err(invalid, code 22)` con los MISMOS mensajes que el `panic`.
+- `enum RoundMode` (en el prelude, sin `import`) — el modo de redondeo del
+  cociente exacto `a*b/c`, con `.` no `::`:
+
+  | Modo | Regla | `5/2` | `-5/2` | `7/2` | `-13/5` |
+  |---|---|---|---|---|---|
+  | `RoundMode.Truncate` | hacia cero | 2 | -2 | 3 | -2 |
+  | `RoundMode.Floor` | hacia -infinito | 2 | -3 | 3 | -3 |
+  | `RoundMode.Ceil` | hacia +infinito | 3 | -2 | 4 | -2 |
+  | `RoundMode.HalfUp` | al más cercano, empates ALEJÁNDOSE de cero | 3 | -3 | 4 | -3 |
+  | `RoundMode.HalfEven` | al más cercano, empates al PAR (bancario) | 2 | -2 | 4 | -3 |
+
+- Nombres globales que el prelude RESERVA (sin `import`): `INT_MIN`, `INT_MAX`, `RoundMode`,
+  `checked_add/sub/mul/div`, `mul_div_round`. Redeclararlos tiene TRES conductas distintas: una
+  `const INT_MAX` propia da NYX1013; un `enum RoundMode` propio REEMPLAZA al del prelude y el error
+  apunta a `round_mode_code` en una línea del prelude (≥ 1000000); una `fn checked_add` (o
+  `mul_div_round`) propia PISA a la del prelude EN SILENCIO — compila sin aviso y gana la tuya.
+  Renombra lo tuyo (p. ej. `my_checked_add`).
 
 ### Crypto
 - `sha256(s)`, `md5(s)`, `hmac_sha256(key, data)`
@@ -967,7 +1004,7 @@ there and re-truncates; measured in the W0 audit, spec Windows §9.3), or on the
 a raw FFI return against an exact negative sentinel. [test: 22-ffi-int-truncation]
 
 4. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
-checked/saturating function, no compiler flag, and no 128-bit type.** `codegen.nx` emits plain
+saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.** `codegen.nx` emits plain
 `add i64`/`sub i64`/`mul i64` with no `nsw`/`nuw` (`compiler/codegen.nx:1988`, `:2056`, the `mul i64`
 branch under `:2070`), so the largest representable `int` (`9223372036854775807`) plus `1` silently
 becomes the smallest one (`-9223372036854775808`), and a square like `3037000500 * 3037000500` also
@@ -976,19 +1013,24 @@ Division (`sdiv i64`, `codegen.nx:2098`) has no guard either: `INT_MIN / -1` and
 UB at the LLVM IR level — on ARM64 the hardware wraps or returns 0, on x86_64 the same IR can SIGFPE.
 The financial shape bites hardest: `monto * tasa_ppm / 1_000_000` (a rate expressed in
 parts-per-million) overflows once `monto` passes roughly 9.2e12 minimum units — a perfectly ordinary
-accounting amount comes out NEGATIVE, in silence. The honest mitigation for a real ppm rate
-(`tasa` up to `1_000_000`, i.e. up to 100%) is the two-step split with the remainder —
-`(monto / 1_000_000) * tasa + ((monto % 1_000_000) * tasa) / 1_000_000` — which is safe for ANY
-`monto` that fits in `int`: the dominant term `(monto / 1_000_000) * tasa` never exceeds `monto`
-itself (integer division can't grow past its input), and the remainder term
-`(monto % 1_000_000) * tasa` stays under `1_000_000 * 1_000_000 = 10^12`. Reordering to plain
-`(monto / 1_000_000) * tasa` without the remainder loses precision instead (the division truncates
-first) — that's a different bug, not an overflow fix. For a rate ABOVE 100% (`tasa` in the
-billions, e.g. a multi-hundred-percent factor) the dominant term can overflow on its own with a
-large enough `monto` — `monto = 10^15`, `tasa = 2×10^12` gives `(monto / 1_000_000) * tasa =
-2×10^21`, far past `2^63` — so check `tasa < 2^63 / (monto / 1_000_000)` before multiplying.
-`float` is not a substitute for money either: it silently loses integer precision starting at
-2^53. [test: compiler/language/test-385-int-wraparound]
+accounting amount comes out NEGATIVE, in silence. `std/math` now ships two real mitigations. To
+DETECT overflow, use `checked_add`/`checked_sub`/`checked_mul`/`checked_div(a, b) ->
+Option<int>` (global via the prelude, no `import` needed): `None` on overflow, `Some(v)` otherwise —
+`checked_div` also turns the two UB division cases (`b == 0`, `INT_MIN / -1`) into `None` instead of
+undefined behavior. For the `a * b / c` shape specifically, use `mul_div_round(a, b, c, mode)` (also
+global) or its non-panicking twin `try_mul_div_round(a, b, c, mode) -> Result<int, Error>` (needs
+`import "std/math_ext"` — the prelude is a frozen snapshot that can't name `Error`/`err_new`, gotcha
+`prelude-frozen-snapshot`, so the `try_` variant lives in a separate importable module, the same
+reason `std/fs` exists apart from `std/file`): both compute the intermediate product `a * b` EXACTLY
+in 128 bits (`__int128` in the runtime), so `monto * tasa_ppm` never wraps before the division runs,
+and the `mode: RoundMode` argument (`Truncate`/`Floor`/`Ceil`/`HalfUp`/`HalfEven`) makes the rounding
+explicit instead of leaving it to truncation. `mul_div_round` panics on `c == 0` or a quotient that
+doesn't fit in `int`; `try_mul_div_round` returns `Err(invalid, …)` for the same two cases instead.
+(Historical note: before these functions existed, the only workaround for a ppm-scale rate was a
+manual two-step split with the remainder — `(monto / 1_000_000) * tasa + ((monto % 1_000_000) *
+tasa) / 1_000_000` — still arithmetically correct, but `mul_div_round` supersedes it: one call,
+exact 128-bit product, explicit rounding.) `float` is not a substitute for money either: it silently
+loses integer precision starting at 2^53. [test: compiler/language/test-385-int-wraparound]
 
 <!-- /gen:gotchas -->
 
