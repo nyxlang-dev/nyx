@@ -90,43 +90,6 @@ fn placeholders(n: int) -> String {
     return out
 }
 
-// Encuentra el índice del primer campo bool en campos() — hace falta para
-// la trampa de abajo, y buscarlo en vez de asumir un número fijo evita que
-// la receta mienta si alguien reordena los campos de Contacto.
-fn indice_del_bool(campos: Array) -> int {
-    var i: int = 0
-    while i < campos.length() {
-        let partes: Array = campos[i].split(":")
-        if partes[1] == "bool" { return i }
-        i = i + 1
-    }
-    return -1
-}
-
-// TRAMPA: PostgreSQL manda un boolean en formato text como "t"/"f", NUNCA
-// como "true"/"false" (ver docs/gotchas/derive-fields-solo-primitivos.md,
-// que documenta esto junto al límite de tipos del derive). Por su lado,
-// Contacto_desde_fila compara la celda EXACTAMENTE contra "true" — es lo
-// único que puede hacer sin adivinar, y "true" es lo que Contacto_valores()
-// efectivamente escribe. El resultado: una fila que sale DE VERDAD de
-// try_pg_query necesita esta normalización antes de reconstruirse, o el
-// campo activo vuelve siempre en false. Una fila armada a mano con
-// Contacto_valores() no la necesita, porque valores() ya escribe
-// "true"/"false" y no "t"/"f".
-fn normalizar_bool_pg(fila: Array, idx: int) -> Array {
-    var out: Array = []
-    var i: int = 0
-    while i < fila.length() {
-        if i == idx {
-            if fila[i] == "t" { out.push("true") } else { out.push("false") }
-        } else {
-            out.push(fila[i])
-        }
-        i = i + 1
-    }
-    return out
-}
-
 fn main() -> int {
     let conninfo: String = "host=127.0.0.1 port=5432 dbname=nyx_test user=nyx_test password=nyx_test_pw"
 
@@ -143,7 +106,6 @@ fn main() -> int {
             //    rif, activo y saldo se escriben acá y en ningún otro lugar
             //    de este archivo.
             let campos: Array = Contacto_campos()
-            let idx_bool: int = indice_del_bool(campos)
 
             // 2. El esquema sale de campos(), no de un CREATE TABLE tipeado
             //    a mano que se puede desincronizar del struct.
@@ -164,15 +126,18 @@ fn main() -> int {
                 Result.Err(e) => { print("insert fallo: " + e.msg) }
             }
 
-            // 4. Leer y reconstruir con desde_fila() — con la normalización
-            //    del punto anterior aplicada ANTES, porque la fila viene de
-            //    verdad del servidor.
+            // 4. Leer y reconstruir con desde_fila(), directo sobre la fila
+            //    que devuelve el servidor. El booleano no necesita
+            //    normalizarse a mano: PostgreSQL manda "t"/"f" en formato
+            //    text, y desde_fila entiende esa forma además de la que
+            //    escribe valores() ("true"/"false"). Un texto que no sea
+            //    ninguna de las dos ABORTA nombrando el valor, en vez de
+            //    asumir false — ver docs/gotchas/derive-fields-pg-bool-text.md.
             match try_pg_query(conn, "SELECT " + nombres_columnas(campos) + " FROM contactos ORDER BY nombre") {
                 Result.Ok(filas) => {
                     var i: int = 0
                     while i < filas.length() {
-                        let fila_cruda: Array = filas[i]
-                        let fila: Array = normalizar_bool_pg(fila_cruda, idx_bool)
+                        let fila: Array = filas[i]
                         let reconstruido: Contacto = Contacto_desde_fila(fila)
                         let linea: String = reconstruido.nombre + " · " + reconstruido.rif + " · activo=" + bool_texto(reconstruido.activo) + " · saldo=" + int_to_string(reconstruido.saldo)
                         print(linea)

@@ -820,8 +820,47 @@ nyx_string* nyx_string_from_char(char c) {
 }
 
 // Crear string desde un booleano
+// nyx_panic vive en runtime.c: con un try activo se vuelve throw capturable.
+void nyx_panic(nyx_string* msg);
+
 nyx_string* nyx_string_from_bool(int64_t value) {
     return nyx_string_from_cstr(value ? "true" : "false");
+}
+
+// Texto → bool para `#[derive(Fields)]::desde_fila` (arco struct-campos-
+// reflexion, 2026-09-09). Acepta las formas que producen los DOS productores de
+// esas filas:
+//   - `<S>_valores()` emite "true"/"false" (nyx_string_from_bool, arriba);
+//   - PostgreSQL, en formato TEXT del protocolo v3, emite "t"/"f" — que es la
+//     trampa que un ORM se come al leer una fila REAL de la base.
+// Se aceptan también "1"/"0", que es lo que devuelven SQLite y varios drivers.
+//
+// Cualquier otra cosa ABORTA nombrando el valor, en vez de asumir `false`: un
+// booleano que no se entiende no es `false`, y asumirlo escribiría una decisión
+// equivocada en un sistema que factura. Es la misma regla que gobierna todo
+// este derive — ningún camino inventa un valor.
+int64_t nyx_bool_from_text(nyx_string* s) {
+    if (!s || !s->data) {
+        nyx_panic(nyx_string_from_cstr(
+            "desde_fila: campo booleano ausente (celda nula) — usa pg_is_null antes de convertir"));
+        return 0;
+    }
+    const char* d = s->data;
+    int64_t n = s->length;
+    if (n == 4 && strncmp(d, "true", 4) == 0) return 1;
+    if (n == 1 && (d[0] == 't' || d[0] == 'T' || d[0] == '1')) return 1;
+    if (n == 5 && strncmp(d, "false", 5) == 0) return 0;
+    if (n == 1 && (d[0] == 'f' || d[0] == 'F' || d[0] == '0')) return 0;
+    if (n == 4 && strncmp(d, "TRUE", 4) == 0) return 1;
+    if (n == 5 && strncmp(d, "FALSE", 5) == 0) return 0;
+    {
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+                 "desde_fila: valor booleano no reconocido: '%.*s' — se aceptan true/false, t/f, 1/0",
+                 (int)(n > 64 ? 64 : n), d);
+        nyx_panic(nyx_string_from_cstr(buf));
+    }
+    return 0;
 }
 
 // ===== WRAPPERS i8* PARA CODEGEN (métodos de string) =====
