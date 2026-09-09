@@ -155,13 +155,28 @@ int8_t* nyx_iter_next(NyxIterator* iter) {
             return nyx_iter_next((NyxIterator*)iter->source);
         }
         case NYX_ITER_ENUMERATE: {
-            // Returns the value from source, but index tracks position
-            // User accesses index separately if needed
+            // Devuelve el PAR [índice, valor] como Array de 2, que es lo que
+            // promete `enumerate()` y lo que la receta publicada
+            // (examples/by-example/31-iterator-enumerate.nx) documenta desde
+            // siempre: «cada elemento es un array [indice, valor]».
+            //
+            // Hasta el 2026-09-09 devolvía el VALOR de la fuente y guardaba el
+            // índice adentro del iterador, donde nadie podía leerlo: `par[0]`
+            // no era el índice y `par[1]` no existía. Ficha [ALTA, runtime].
             int8_t* inner = nyx_iter_next((NyxIterator*)iter->source);
             int64_t tag = *(int64_t*)inner;
-            if (tag != 0) return inner;
+            if (tag != 0) return inner;  // None: se propaga tal cual
+
+            // Payload del Some de la fuente: data está en el byte 8 (ver
+            // nyx_option_some_val — el offset explícito importa en wasm32).
+            int64_t* inner_data = *(int64_t**)((char*)inner + sizeof(int64_t));
+            int64_t val = *inner_data;
+
+            nyx_array_t* par = nyx_array_new(2);
+            nyx_array_push(par, iter->index);
+            nyx_array_push(par, val);
             iter->index++;
-            return inner;
+            return nyx_option_some_val((int64_t)(intptr_t)par);
         }
         case NYX_ITER_CHAIN: {
             int8_t* inner = nyx_iter_next((NyxIterator*)iter->source);

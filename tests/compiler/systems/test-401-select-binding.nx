@@ -1,0 +1,46 @@
+// test-401 — `case v = ch =>` liga el valor que el select consumió
+//
+// Ficha [ALTA, codegen]: `select` llamaba a nyx_channel_try_recv —que CONSUME
+// el valor— y después saltaba al case sin exponerlo. El dato se perdía, y un
+// `channel_recv(ch)` en el cuerpo del case bloqueaba PARA SIEMPRE: lo que lo
+// habría despertado ya había salido del canal.
+//
+// Sintaxis decidida por Ottavio (2026-09-09): `case v = ch => { ... }`, con el
+// mismo `=` que Nyx ya usa para asignar. El `case ch => { ... }` sin binding
+// sigue siendo válido para quien solo quiere saber que llegó algo.
+
+fn main() -> int {
+    let ch1: Map = channel_new(4)
+    let ch2: Map = channel_new(4)
+
+    channel_send(ch1, 42)
+
+    var recibido: int = 0 - 1
+    var cual: String = ""
+    select {
+        case v = ch1 => { recibido = v  cual = "ch1" }
+        case w = ch2 => { recibido = w  cual = "ch2" }
+    }
+    assert(cual == "ch1", "disparo el case del canal que tenia dato")
+    assert(recibido == 42, "el valor recibido llega al cuerpo del case")
+
+    // el segundo canal: el binding liga SU valor, no el del primero
+    channel_send(ch2, 7)
+    var segundo: int = 0 - 1
+    select {
+        case v = ch1 => { segundo = v }
+        case w = ch2 => { segundo = w }
+    }
+    assert(segundo == 7, "el binding del segundo case trae su propio valor")
+
+    // sin binding sigue andando (control: no se rompe la forma vieja)
+    channel_send(ch1, 99)
+    var paso: bool = false
+    select {
+        case ch1 => { paso = true }
+    }
+    assert(paso, "el case sin binding sigue siendo valido")
+
+    print("OK test-401 select binding")
+    return 0
+}

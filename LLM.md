@@ -95,13 +95,13 @@ generated pieces so they never describe an older toolchain than the installed on
 
 You cannot run a program in your head, and Nyx is not in your training data.
 These four commands are your feedback loop. `check` is the fastest: it type-checks
-without linking or executing and **exits non-zero when something is wrong** — but it only
-sees the one file it is given (no `import "src/..."` resolution: every imported name reads as
-NYX1002) and `nyx test` compiles tests with the checker OFF, so in a multi-module project the
-type gate is `nyx build` — run it before trusting a green `nyx test`.
+without linking or executing and **exits non-zero when something is wrong**. It resolves
+`import "src/..."`, `import "std/..."` and the prelude the same way `nyx build` does, and
+`nyx test` type-checks each test too, so `nyx check && nyx test` holds as the type gate of a
+multi-module project.
 
 ```bash
-nyx check [file.nx]    # parse + type-check ONE file (no local imports). No linking, no execution. Exit 1 on error.
+nyx check [file.nx]    # parse + type-check (resolves project and std imports). No linking, no execution. Exit 1 on error.
 nyx fmt   [file.nx]    # canonical formatting (prints to stdout)
 nyx vet   [file.nx]    # unused vars, dead code after return/break, unused imports
 nyx test               # run tests/*.nx
@@ -1040,7 +1040,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,string-order-is-bytewise,throw-deprecated -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1093,7 +1093,50 @@ treat `assert()` as fatal, not recoverable. [test: 24-bare-return-assert]
 `return 0` under the hood, so `fn f() { return }` is valid and behaves like `fn f() { return 0 }`.
 Only meaningful in `void` functions; a non-void function still needs an explicit value. [test: 24-bare-return-assert]
 
-11. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+11. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`** — pushing a bare
+struct into an untyped `Array` and then reading it back with `for x: dyn Trait in arr` crashes with a
+SIGSEGV. Converting to `dyn` changes the REPRESENTATION (a pointer to the struct becomes a fat pointer
+`{ data, vtable }`), so it has to happen when the value is WRITTEN: once it is in the array every
+element is an indistinguishable `i64`, and the reader cannot tell a struct from a fat pointer. With
+`Array<dyn Trait>` each element is upcast to its own vtable as it goes in, which is what makes a
+heterogeneous list — several impls in the same collection — work. Annotating the value first
+(`let d: dyn Trait = x` and pushing `d`) works too. What does NOT work, and crashes at runtime rather
+than failing to compile, is pushing the concrete struct into an untyped `Array` and reading it as
+`dyn`. [test: compiler/language/test-391-dyn-trait-array]
+
+12. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
+`try_pg_query` returns every value as text, and SQL NULL comes back as a one-byte sentinel, not
+as `""`. Comparing with `== ""` treats a real NULL as an empty string and, worse, treats a
+genuinely empty column as if it were NULL: two different values collapse into one. Always use
+`pg_is_null(v)`, never a comparison by hand — the day the representation needs to change, it
+changes in one place. The one edge: a `bytea` column holding exactly one zero byte and nothing
+else reads as NULL; that is the price of keeping rows as `Array` of String instead of
+`Option<String>`. [test: postgres/02-query]
+
+13. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+nonces, or any other cryptographic material; use `csprng_bytes` instead.** `random_bytes` is backed
+by `nyx_random_bytes` (`runtime/random.c`), which draws from a single `xorshift64` generator seeded
+once from `/dev/urandom` (`rng_init`, `runtime/random.c`) — fine for simulation, sampling, jitter, or
+IDs that only need to be unpredictable-by-accident, but not for anything that needs to be
+unpredictable-by-an-attacker. The generator carries just 64 bits of internal state, and each output
+word leaks that state directly: an attacker who observes a handful of consecutive outputs (e.g. a
+salt or token exposed in a database, a URL, or a timing side channel) can reconstruct the internal
+state and predict every future and past output — xorshift is explicitly not cryptographically secure
+by design, it optimizes for speed and statistical distribution, not unpredictability. The real CSPRNG
+is `csprng_bytes`, which despite living in `std/webpushcrypto` (a module nobody would think to search
+for "random bytes") is a thin wrapper over `nyx_csprng_bytes` (`runtime/crypto.c`), which calls
+OpenSSL's `RAND_bytes` — the primitive actually designed to resist this kind of state-recovery attack.
+Use `random_bytes`/`random_int`/`random_float` for anything where predictability is merely annoying;
+use `csprng_bytes` for anything where predictability is a security breach (password salts, session
+tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
+
+14. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
+lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
+which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
+does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
+
+15. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
 <!-- /gen:gotchas -->

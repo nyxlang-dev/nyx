@@ -1,0 +1,54 @@
+// test-399 — un sub-patrón LITERAL en un patrón de enum se compara de verdad
+//
+// Ficha [ALTA silent-wrong]: `Result.Ok(0)` no emitía NINGUNA comparación —el
+// literal caía en el «wildcard: skip» del bucle de sub-patrones—, así que el
+// arm disparaba para CUALQUIER payload. Medido en su momento: imprimía
+// `cero/cero` donde iba `siete/cero`. Sin error, sin warning: el arm equivocado
+// simplemente ganaba.
+
+enum Res {
+    Ok(int),
+    Err(String)
+}
+
+fn describir(r: Res) -> String {
+    match r {
+        Res.Ok(0) => { return "cero" }
+        Res.Ok(n) => { return "n=" + int_to_string(n) }
+        Res.Err(e) => { return "err:" + e }
+    }
+}
+
+enum Etiqueta {
+    Texto(String),
+    Bandera(bool)
+}
+
+fn etiquetar(e: Etiqueta) -> String {
+    match e {
+        Etiqueta.Texto("alfa") => { return "es-alfa" }
+        Etiqueta.Texto(t) => { return "texto:" + t }
+        Etiqueta.Bandera(true) => { return "prendida" }
+        Etiqueta.Bandera(b) => { return "apagada" }
+    }
+}
+
+fn main() -> int {
+    // ── el caso exacto de la ficha ──────────────────────────────────
+    assert(describir(Res.Ok(0)) == "cero", "el literal 0 matchea el 0")
+    assert(describir(Res.Ok(7)) == "n=7", "el 7 NO matchea el arm del 0")
+    assert(describir(Res.Ok(0 - 3)) == "n=-3", "un negativo tampoco")
+    assert(describir(Res.Err("x")) == "err:x", "la otra variante sigue andando")
+
+    // ── literal String ──────────────────────────────────────────────
+    assert(etiquetar(Etiqueta.Texto("alfa")) == "es-alfa", "el literal String matchea por CONTENIDO")
+    assert(etiquetar(Etiqueta.Texto("beta")) == "texto:beta", "otro texto cae al binding")
+    assert(etiquetar(Etiqueta.Texto("")) == "texto:", "el vacio no matchea el literal")
+
+    // ── literal bool ────────────────────────────────────────────────
+    assert(etiquetar(Etiqueta.Bandera(true)) == "prendida", "el literal true matchea")
+    assert(etiquetar(Etiqueta.Bandera(false)) == "apagada", "false cae al binding")
+
+    print("OK test-399 subpatron literal")
+    return 0
+}

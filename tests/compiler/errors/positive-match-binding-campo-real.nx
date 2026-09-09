@@ -1,0 +1,28 @@
+// CONTROL POSITIVO del test de campo alucinado: el mismo programa con el campo
+// que SÍ existe tiene que compilar y correr. Sin este control, un checker roto
+// que rechazara todo pasaría el test negativo en verde.
+//
+// Expected exit: 0
+
+struct P {
+    a: int,
+    b: String
+}
+
+enum Caja {
+    Lleno(P),
+    Vacio
+}
+
+fn main() -> int {
+    let c: Caja = Caja.Lleno(P { a: 7, b: "x" })
+    match c {
+        Caja.Lleno(p) => {
+            assert(p.a == 7, "el campo real se lee")
+            assert(p.b == "x", "y el otro tambien")
+        }
+        Caja.Vacio => { assert(false, "no deberia") }
+    }
+    print("OK control positivo")
+    return 0
+}

@@ -1,0 +1,65 @@
+// test-394 — framing del protocolo v3 de PostgreSQL, sin red
+//
+// Task 2 del arco postgres-wire-v3. La capa se testea SOLA y antes que nada
+// porque un error acá se manifiesta como «el servidor cerró la conexión» a diez
+// capas de distancia, sin ninguna pista.
+
+import "std/postgres"
+
+fn main() -> int {
+    // ── int32 big-endian ────────────────────────────────────────────
+    let z: String = pg_be32(0)
+    assert(z.byte_length() == 4, "be32 son 4 bytes")
+    assert(z.charAt(0) == 0 and z.charAt(3) == 0, "cero es 00 00 00 00")
+
+    let uno: String = pg_be32(1)
+    assert(uno.charAt(0) == 0 and uno.charAt(1) == 0 and uno.charAt(2) == 0 and uno.charAt(3) == 1, "1 = 00 00 00 01 (big-endian, no 01 00 00 00)")
+
+    let mil: String = pg_be32(1000)
+    assert(mil.charAt(2) == 3 and mil.charAt(3) == 232, "1000 = 00 00 03 E8")
+
+    // 196608 = 0x00030000 = versión 3.0, el primer int32 del StartupMessage
+    let ver: String = pg_be32(196608)
+    assert(ver.charAt(0) == 0 and ver.charAt(1) == 3 and ver.charAt(2) == 0 and ver.charAt(3) == 0, "protocolo 3.0 = 00 03 00 00")
+
+    // ── ida y vuelta ────────────────────────────────────────────────
+    assert(pg_read_be32(pg_be32(0), 0) == 0, "roundtrip 0")
+    assert(pg_read_be32(pg_be32(12345), 0) == 12345, "roundtrip 12345")
+    assert(pg_read_be32(pg_be32(2147483647), 0) == 2147483647, "roundtrip INT32_MAX")
+
+    // -1 es el marcador de NULL en DataRow: tiene que volver CON SIGNO
+    assert(pg_read_be32(pg_be32(0 - 1), 0) == 0 - 1, "roundtrip -1 (marcador de NULL)")
+
+    // ── lectura con offset ──────────────────────────────────────────
+    let dos: String = pg_be32(7) + pg_be32(9)
+    assert(pg_read_be32(dos, 0) == 7, "primer int32")
+    assert(pg_read_be32(dos, 4) == 9, "segundo int32 con offset")
+
+    // ── int16 ───────────────────────────────────────────────────────
+    let d16: String = pg_be16(258)
+    assert(d16.byte_length() == 2, "be16 son 2 bytes")
+    assert(d16.charAt(0) == 1 and d16.charAt(1) == 2, "258 = 01 02")
+    assert(pg_read_be16(pg_be16(0), 0) == 0, "roundtrip 0")
+    assert(pg_read_be16(pg_be16(65535), 0) == 65535, "roundtrip 65535")
+
+    // ── string C-terminado ──────────────────────────────────────────
+    let c: String = pg_cstr("hola")
+    assert(c.byte_length() == 5, "cstr agrega el NUL")
+    assert(c.charAt(4) == 0, "termina en NUL")
+    assert(pg_cstr("").byte_length() == 1, "cstr vacio es solo el NUL")
+
+    // ── mensaje completo ────────────────────────────────────────────
+    let m: String = pg_msg("Q", pg_cstr("SELECT 1"))
+    assert(m.charAt(0) == 81, "el tipo es 'Q' (81)")
+    // longitud = 4 (ella misma) + 9 (payload) = 13, SIN contar el byte de tipo
+    assert(pg_read_be32(m, 1) == 13, "la longitud se incluye a si misma pero NO al tipo")
+    assert(m.byte_length() == 14, "total = 1 byte de tipo + 13")
+
+    // Un payload vacío da longitud 4: solo el campo de longitud
+    let vacio: String = pg_msg("S", "")
+    assert(pg_read_be32(vacio, 1) == 4, "payload vacio: longitud 4")
+    assert(vacio.byte_length() == 5, "total 5")
+
+    print("OK test-394 pg framing")
+    return 0
+}

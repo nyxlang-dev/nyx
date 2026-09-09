@@ -445,6 +445,22 @@ case "${1:-}" in
             echo "  Uso: nyx $_sub [archivo.nx]   (sin argumento usa src/main.nx)" >&2
             exit 1
         fi
+        # Detección de proyecto — MISMA que la rama `run` (B2, más abajo), que
+        # esta rama nunca alcanzaba: el `exec` de acá corta antes. Sin
+        # NYX_PROJECT_DIR, `nyx check` resolvía `import "src/x"` solo si el
+        # usuario estaba parado justo en la raíz del proyecto, y ni así el
+        # prelude (arco tooling-type-gates, 2026-09-08). Un NYX_PROJECT_DIR
+        # explícito del usuario tiene prioridad.
+        if [ -z "${NYX_PROJECT_DIR:-}" ]; then
+            _pd="$PWD"
+            while [ "$_pd" != "/" ]; do
+                if [ -f "$_pd/nyx.toml" ]; then
+                    export NYX_PROJECT_DIR="$_pd"
+                    break
+                fi
+                _pd="$(dirname "$_pd")"
+            done
+        fi
         NYX_SRC="$_target" NYX_HOME="$NYX_HOME" exec "$_bin"
         ;;
 esac

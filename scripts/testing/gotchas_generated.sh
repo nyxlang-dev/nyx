@@ -23,6 +23,10 @@ GOTCHA_IDS=(
   "check-bind-return"
   "assert-aborts-process"
   "bare-return-void"
+  "dyn-trait-needs-annotation"
+  "pg-null-sentinel"
+  "random-bytes-not-crypto"
+  "string-order-is-bytewise"
   "throw-deprecated"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
@@ -63,6 +67,10 @@ ANCLAS=(
   "tcp_listen|check-bind-return"
   "exit(1)|assert-aborts-process"
   "\`void\`|bare-return-void"
+  "Array<dyn|dyn-trait-needs-annotation"
+  "pg_is_null|pg-null-sentinel"
+  "csprng_bytes|random-bytes-not-crypto"
+  "BYTES|string-order-is-bytewise"
   "panic(|throw-deprecated"
 )
 

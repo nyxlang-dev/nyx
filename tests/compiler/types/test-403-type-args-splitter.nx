@@ -1,0 +1,58 @@
+// test-403 — el splitter de type-args entiende paréntesis y flechas
+//
+// Ficha [ALTA UX]: `extract_type_args_from_str` contaba solo `<`/`>`, así que
+// `Result<(int,String),String>` se partía en TRES args basura —`(int`,
+// `String)`, `String`— y el SLOT HERMANO quedaba tipado basura (i64 mudo);
+// y en `Result<Fn(int)->int,E>` el `>` de la flecha cerraba la profundidad y se
+// comía todo lo que venía después.
+//
+// ALCANCE DE ESTE TEST: que el splitter parta bien, medido por el efecto que
+// tenía cuando partía mal — el slot hermano corrompido. LEER una tupla desde el
+// payload de un genérico es un problema DISTINTO y sigue abierto (ficha propia
+// en TASKS.md, con la evidencia de este mismo caso): `par.0` devuelve 0.
+
+struct MiErr { msg: String }
+
+fn con_tupla(ok: bool) -> Result<(int, String), MiErr> {
+    if not ok { return Result.Err(MiErr { msg: "hermano-vivo" }) }
+    return Result.Ok((7, "siete"))
+}
+
+fn con_fn(ok: bool) -> Result<Fn(int) -> int, MiErr> {
+    if not ok { return Result.Err(MiErr { msg: "hermano-vivo-fn" }) }
+    return Result.Err(MiErr { msg: "no-usado" })
+}
+
+fn anidado(ok: bool) -> Result<Option<(int, String)>, MiErr> {
+    if not ok { return Result.Err(MiErr { msg: "hermano-vivo-anidado" }) }
+    return Result.Ok(Option.None)
+}
+
+fn main() -> int {
+    // (1) tupla como primer type-arg: el segundo NO puede quedar basura
+    match con_tupla(false) {
+        Result.Ok(p) => { assert(false, "no deberia haber valor") }
+        Result.Err(e) => { assert(e.msg == "hermano-vivo", "el slot hermano de una TUPLA se lee bien") }
+    }
+
+    // (2) Fn con flecha: el `>` de `->` no cierra el genérico
+    match con_fn(false) {
+        Result.Ok(f) => { assert(false, "no deberia haber valor") }
+        Result.Err(e) => { assert(e.msg == "hermano-vivo-fn", "el slot hermano de un Fn(...)->... se lee bien") }
+    }
+
+    // (3) anidamiento con tupla adentro
+    match anidado(false) {
+        Result.Ok(o) => { assert(false, "no deberia haber valor") }
+        Result.Err(e) => { assert(e.msg == "hermano-vivo-anidado", "el slot hermano con Option<(int,String)> se lee bien") }
+    }
+
+    // (4) el camino feliz al menos COMPILA, ENLAZA y no rompe el arm
+    match con_tupla(true) {
+        Result.Ok(p) => { assert(true, "el Ok con payload tupla dispara su arm") }
+        Result.Err(e) => { assert(false, "deberia ser Ok") }
+    }
+
+    print("OK test-403 type args splitter")
+    return 0
+}

@@ -1,0 +1,75 @@
+// test-390 — un valor `Fn` que devuelve Option<T>/Result<T,E> conserva el payload
+//
+// Reporte de fricción 2026-09-08: `let g: Fn(String) -> Option<String> = f` y
+// después `match g("hola")` entregaba el String como PUNTERO crudo
+// (187650925231008), sin error ni warning; con `Result<String, Error>` la rama
+// Err además mataba el proceso pidiendo ~10^19 bytes, que es lo que se espera
+// de un puntero leído como longitud.
+//
+// Causa: infer_enum_subject_type buscaba el nombre del callee en
+// function_return_types, y el callee de una llamada INDIRECTA es una VARIABLE
+// (no una función), así que devolvía "" — sin tipo, el payload se decodifica
+// como i64 crudo. Misma clase que el fix de `ensure_enum_mono` en el `?` (E7).
+//
+// La matriz del reporte, entera: lo que ya andaba tiene que seguir andando.
+
+import "std/error"
+
+fn mayus(s: String) -> String { return s.toUpper() }
+fn valida(s: String) -> Result<String, Error> {
+    if s.length() == 0 { return Result.Err(err_new(22, "invalid", "vacio")) }
+    return Result.Ok(s.toUpper())
+}
+fn opcional(s: String) -> Option<String> { return Option.Some(s) }
+fn vacio(s: String) -> Option<String> { return Option.None }
+fn numero(s: String) -> Option<int> { return Option.Some(s.length()) }
+
+fn main() -> int {
+    // Control 1: valor Fn con retorno String pelado (ya andaba)
+    let f: Fn(String) -> String = mayus
+    assert(f("j-296") == "J-296", "Fn -> String")
+
+    // Control 2: valor Fn con payload int (ya andaba)
+    let n: Fn(String) -> Option<int> = numero
+    match n("hola") {
+        Option.Some(v) => { assert(v == 4, "Fn -> Option<int> Some") }
+        Option.None => { assert(false, "Fn -> Option<int> no deberia ser None") }
+    }
+
+    // El caso del reporte: payload PUNTERO a través de un valor Fn
+    let g: Fn(String) -> Option<String> = opcional
+    match g("hola") {
+        Option.Some(v) => { assert(v == "hola", "Fn -> Option<String> Some conserva el texto") }
+        Option.None => { assert(false, "Fn -> Option<String> no deberia ser None") }
+    }
+
+    // La otra rama: None a través del valor Fn
+    let h: Fn(String) -> Option<String> = vacio
+    match h("hola") {
+        Option.Some(v) => { assert(false, "no deberia ser Some: " + v) }
+        Option.None => { assert(true, "Fn -> Option<String> None") }
+    }
+
+    // Llamada directa: control de que el camino que ya andaba sigue igual
+    match opcional("directo") {
+        Option.Some(v) => { assert(v == "directo", "llamada directa Some") }
+        Option.None => { assert(false, "llamada directa no deberia ser None") }
+    }
+
+    // Result<String, Error> a través del valor Fn: la rama Ok entregaba el
+    // String como puntero y la rama Err MATABA el proceso —«out of memory (GC
+    // heap exhausted) requesting 10536050504714693428 bytes»—, que es lo que
+    // pasa al leer un puntero como longitud.
+    let v: Fn(String) -> Result<String, Error> = valida
+    match v("j-296") {
+        Result.Ok(s) => { assert(s == "J-296", "Fn -> Result<String,E> Ok conserva el texto") }
+        Result.Err(e) => { assert(false, "no deberia ser Err") }
+    }
+    match v("") {
+        Result.Ok(s) => { assert(false, "no deberia ser Ok: " + s) }
+        Result.Err(e) => { assert(e.msg == "vacio", "Fn -> Result<String,E> Err conserva el payload") }
+    }
+
+    print("OK test-390 fn value generic return")
+    return 0
+}

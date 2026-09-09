@@ -1,0 +1,47 @@
+// test-397 — un `bool` donde va un `int` se extiende, no rompe el IR
+//
+// Ficha [ALTA, codegen]: `int_to_string(m.has(k))`, `int_to_string(a == b)` y
+// `b as int` emitían un `i1` donde el consumidor esperaba `i64`, y clang
+// rechazaba el módulo. `nyx check` daba el programa por bueno: el error salía
+// recién al enlazar, atribuido a un bug del compilador (lo era).
+//
+// Causa: `int_to_string` traía su propia coerción parcial (solo i8) en vez de
+// usar `coerce_to_i64`, que ya manejaba i1/i8/i16/i32; y `codegen_cast` no
+// tenía la regla i1 → entero, así que caía en un `bitcast` entre tipos de
+// distinto tamaño.
+//
+// Semántica: false = 0, true = 1 (zext), como en C y en Rust con `as`.
+
+fn main() -> int {
+    // ── int_to_string sobre un bool ─────────────────────────────────
+    var m: Map = map_new()
+    m.insert("a", 1)
+    assert(int_to_string(m.has("a")) == "1", "has() presente = 1")
+    assert(int_to_string(m.has("z")) == "0", "has() ausente = 0")
+
+    let x: int = 3
+    let y: int = 3
+    assert(int_to_string(x == y) == "1", "comparacion verdadera = 1")
+    assert(int_to_string(x != y) == "0", "comparacion falsa = 0")
+
+    // ── cast explícito `as int` ─────────────────────────────────────
+    let t: bool = true
+    let f: bool = false
+    assert((t as int) == 1, "true as int = 1")
+    assert((f as int) == 0, "false as int = 0")
+    assert((x == y) as int == 1, "expresion booleana as int")
+
+    // ── el bool extendido sirve en aritmética ───────────────────────
+    var suma: int = 0
+    suma = suma + (t as int)
+    suma = suma + (f as int)
+    suma = suma + (m.has("a") as int)
+    assert(suma == 2, "true + false + has() = 2")
+
+    // ── y en un contexto que ya andaba: el if ───────────────────────
+    if m.has("a") { assert(true, "has() sigue sirviendo como condicion") }
+    else { assert(false, "no deberia") }
+
+    print("OK test-397 bool en contexto int")
+    return 0
+}

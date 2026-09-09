@@ -854,6 +854,103 @@ else
     fi
 fi
 
+# ------------------------------------------------------------------
+# Check: fn `void` IMPORTADA de otro módulo del compilador, llamada como
+# statement. Hasta el 2026-09-09 el sitio de llamada genérico emitía
+# `%N = call void @f(...)` — IR inválido («instructions returning void cannot
+# have a name»), el módulo no linkeaba. Solo lo mostraban las fns importadas
+# (auto_import_declare registra "void" literal cuando no hay `->`); una fn
+# LOCAL sin `->` se define como i64 con `return 0` sintetizado y nunca lo
+# expuso. Se verifica el IR directo, sin linkear borrow.ll: el bug es de
+# emisión, no de ejecución. mark_moved es una export fn void real de
+# compiler/borrow.nx.
+# ------------------------------------------------------------------
+cat > "$TMPDIR/void_import.nx" <<'NX'
+import { mark_moved } from "compiler/borrow"
+
+fn main() -> int {
+    var st: Array = []
+    mark_moved(st, "x")
+    return 0
+}
+NX
+
+name="void-import-call-as-statement"
+cp "$TMPDIR/void_import.nx" script.nx
+NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap > "$TMPDIR/void_import.out" 2>&1
+vi_rc=$?
+grep -c "= call void @mark_moved" script.ll > "$TMPDIR/void_named.cnt" 2>/dev/null || echo 0 > "$TMPDIR/void_named.cnt"
+grep -c "^  call void @mark_moved" script.ll > "$TMPDIR/void_ok.cnt" 2>/dev/null || echo 0 > "$TMPDIR/void_ok.cnt"
+named=$(cat "$TMPDIR/void_named.cnt")
+okcall=$(cat "$TMPDIR/void_ok.cnt")
+
+# Negativo: ningún `%N = call void`. Control positivo: la llamada SÍ se emitió
+# (sin esto, un codegen que omitiera la llamada entera pasaría en verde).
+if [ "$vi_rc" -eq 0 ] && [ "$named" -eq 0 ] && [ "$okcall" -ge 1 ]; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s\n" "$name"
+    printf "    rc=%d (esperado 0), '%%N = call void' = %s (esperado 0), 'call void @mark_moved' = %s (esperado >= 1)\n" "$vi_rc" "$named" "$okcall"
+    sed 's/^/      /' "$TMPDIR/void_import.out" | tail -5
+    FAIL=$((FAIL + 1))
+fi
+
+# ------------------------------------------------------------------
+# Check: campo ALUCINADO sobre el binding de payload de un `match`.
+# Hasta el 2026-09-09 pasaba el checker EN VERDE —el binding se declaraba con
+# ty_unknown(), así que ty_of_expr no veía un TyStruct y check_field_exists se
+# salteaba— mientras el MISMO campo sobre una variable normal daba NYX1017.
+# La forma `Enum.Variante(x)` con UN binding genera nested_match_pattern (no
+# match_pattern), que es la rama que faltaba tipar.
+# ------------------------------------------------------------------
+cat > "$TMPDIR/bad_match_field.nx" <<'NX'
+struct P { a: int, b: String }
+enum Caja { Lleno(P), Vacio }
+
+fn main() -> int {
+    let c: Caja = Caja.Lleno(P { a: 1, b: "x" })
+    match c {
+        Caja.Lleno(p) => { print(int_to_string(p.zzz)) }
+        Caja.Vacio => { print("vacio") }
+    }
+    return 0
+}
+NX
+
+cat > "$TMPDIR/good_match_field.nx" <<'NX'
+struct P { a: int, b: String }
+enum Caja { Lleno(P), Vacio }
+
+fn main() -> int {
+    let c: Caja = Caja.Lleno(P { a: 7, b: "x" })
+    match c {
+        Caja.Lleno(p) => { print(int_to_string(p.a)) }
+        Caja.Vacio => { print("vacio") }
+    }
+    return 0
+}
+NX
+
+name="silent-field-hallucination-match-binding"
+cp "$TMPDIR/bad_match_field.nx" script.nx
+./nyx_bootstrap > "$TMPDIR/bad_match_field.out" 2>&1
+bad_rc=$?
+cp "$TMPDIR/good_match_field.nx" script.nx
+./nyx_bootstrap > "$TMPDIR/good_match_field.out" 2>&1
+good_rc=$?
+
+if [ "$bad_rc" -ne 0 ] && grep -q "does not exist in struct 'P'" "$TMPDIR/bad_match_field.out" \
+   && [ "$good_rc" -eq 0 ]; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s\n" "$name"
+    printf "    bad rc=%d (esperado != 0 con NYX1017), good rc=%d (esperado 0 — control positivo)\n" "$bad_rc" "$good_rc"
+    sed 's/^/      bad: /' "$TMPDIR/bad_match_field.out" | head -3
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 

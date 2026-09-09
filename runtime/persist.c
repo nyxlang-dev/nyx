@@ -53,22 +53,35 @@ int64_t nyx_rename_file(const char* old_path, const char* new_path) {
 static void* shutdown_fn_ptr = NULL;
 static void* shutdown_env_ptr = NULL;
 
-// FICHA: este handler llama un closure Nyx (potencialmente alocador) EN
-// CONTEXTO DE SEÑAL -- el mismo hazard que el trampolín viejo de runtime.c
-// tenía antes del self-pipe S2 (puede deadlockear si la señal cae con el
-// lock del GC/malloc tomado). Sin resolver a propósito: ver TASKS.md.
-// EN: FICHA (ticket): this handler calls a Nyx closure (potentially
-// allocating) IN SIGNAL CONTEXT -- the same hazard runtime.c's old
-// trampoline had before the S2 self-pipe (can deadlock if the signal lands
-// with the GC/malloc lock held). Left unresolved on purpose: see TASKS.md.
-static void shutdown_signal_handler(int sig) {
+// El closure de shutdown corre en el THREAD DRENADOR de señales (contexto
+// normal), no en contexto de señal. Antes se llamaba directo desde el handler
+// —el mismo hazard que el trampolín viejo de runtime.c tenía antes del
+// self-pipe S2—: cualquier alocación del closure (una concatenación, un print)
+// podía DEADLOCKEAR si la señal caía con el lock del GC o de malloc tomado.
+// Arreglado el 2026-09-09 delegando en el mecanismo que runtime.c ya tenía
+// resuelto, en vez de mantener un segundo camino de señales en paralelo.
+//
+// EN: the shutdown closure now runs on the signal DRAIN THREAD (normal
+// context) instead of in signal context, where any allocation could deadlock
+// against the GC/malloc lock. Delegates to runtime.c's existing self-pipe.
+
+// Declarada en runtime.c (self-pipe S2): registra un closure Nyx para una señal
+// y lo ejecuta en el thread drenador, no en contexto de señal.
+void nyx_signal_handle(int64_t signum, void* handler);
+
+static int64_t nyx_shutdown_drain_cb(int64_t sig) {
     (void)sig;
     if (shutdown_fn_ptr) {
         typedef int64_t (*closure_fn_t)(void*);
         closure_fn_t fn = (closure_fn_t)shutdown_fn_ptr;
         fn(shutdown_env_ptr);
     }
+    // _exit(0) y no exit(0): igual que antes, no se corren atexit handlers ni
+    // se vacían buffers de otros threads. El contrato observable —el proceso
+    // termina con 0 después del closure— no cambia; lo que cambia es DÓNDE
+    // corre el closure.
     _exit(0);
+    return 0;
 }
 
 // Register a Nyx closure as the shutdown handler for SIGTERM + SIGINT.
@@ -78,20 +91,20 @@ void nyx_setup_shutdown_handler(void* closure_pair) {
     shutdown_fn_ptr = pair[0];
     shutdown_env_ptr = pair[1];
 
-    // os_sig_install_no_restart (NO os_sig_install): el sigaction manual que
-    // este archivo tenía antes de migrar a la capa usaba sa_mask vacía y
-    // flags 0 -- sin SA_RESTART. os_sig_install (via signal()) SÍ agrega
-    // SA_RESTART, un delta observable (ver nyx_os.h) aunque este handler en
-    // particular nunca retorne (_exit siempre) -- se usa la variante fiel
-    // para no introducir un cambio de semántica silencioso.
-    // EN: os_sig_install_no_restart (NOT os_sig_install): the manual
-    // sigaction this file had before migrating to the layer used an empty
-    // sa_mask and flags 0 -- no SA_RESTART. os_sig_install (via signal())
-    // DOES add SA_RESTART, an observable delta (see nyx_os.h) even though
-    // this particular handler never returns (always _exit) -- the faithful
-    // variant is used to avoid a silent semantics change.
-    os_sig_install_no_restart(OS_SIGTERM, shutdown_signal_handler);
-    os_sig_install_no_restart(OS_SIGINT, shutdown_signal_handler);
+    // Se registra por el SELF-PIPE de runtime.c (nyx_signal_handle), que ya
+    // resolvió esta clase de hazard: el handler de señal solo escribe un byte
+    // en un pipe non-blocking y un thread drenador ejecuta el callback en
+    // contexto normal. Mantener acá un segundo camino de señales en paralelo
+    // era justamente el problema.
+    //
+    // El drenador espera un par {fn_ptr, env_ptr} y lo invoca con
+    // nyx_call_closure_i64: con env NULL llama fn(sig) directo, que es
+    // exactamente la firma de nyx_shutdown_drain_cb.
+    static void* shutdown_cb_pair[2];
+    shutdown_cb_pair[0] = (void*)nyx_shutdown_drain_cb;
+    shutdown_cb_pair[1] = NULL;
+    nyx_signal_handle(OS_SIGTERM, (void*)shutdown_cb_pair);
+    nyx_signal_handle(OS_SIGINT, (void*)shutdown_cb_pair);
 }
 
 // Create a nyx_string from a slice of a byte array.

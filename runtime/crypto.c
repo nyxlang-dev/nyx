@@ -422,21 +422,19 @@ static void md5_raw(const uint8_t* data, size_t len, uint8_t out[16]) {
 //  HMAC-SHA256  (RFC 2104)
 // ============================================================
 
-nyx_string* nyx_hmac_sha256(nyx_string* key, nyx_string* data) {
-    if (!key || !data) return nyx_string_from_cstr("");
-
-    const uint8_t* key_data = (const uint8_t*)key->data;
-    size_t key_len = key->length;
-    const uint8_t* msg_data = (const uint8_t*)data->data;
-    size_t msg_len = data->length;
-
+// Cálculo del HMAC-SHA256 (RFC 2104), compartido por las dos variantes
+// públicas: la histórica devuelve HEX y la nueva devuelve los BYTES. El
+// algoritmo vive UNA sola vez — duplicarlo para cambiar la representación de
+// salida es exactamente cómo dos copias empiezan a divergir.
+static void hmac_sha256_digest(const uint8_t* key_data, size_t key_len,
+                               const uint8_t* msg_data, size_t msg_len,
+                               uint8_t out[32]) {
     uint8_t k[64];
     memset(k, 0, 64);
 
     if (key_len > 64) {
-        // Hash the key if longer than block size
+        // Clave más larga que el bloque: se hashea primero
         sha256_raw(key_data, key_len, k);
-        // k is now 32 bytes of hash + 32 bytes of zeros
     } else {
         memcpy(k, key_data, key_len);
     }
@@ -447,7 +445,6 @@ nyx_string* nyx_hmac_sha256(nyx_string* key, nyx_string* data) {
         i_key_pad[i] = k[i] ^ 0x36;
     }
 
-    // Concatenate i_key_pad + message
     size_t inner_len = 64 + msg_len;
     uint8_t* inner_msg = (uint8_t*)GC_MALLOC_ATOMIC(inner_len);
     memcpy(inner_msg, i_key_pad, 64);
@@ -466,8 +463,15 @@ nyx_string* nyx_hmac_sha256(nyx_string* key, nyx_string* data) {
     memcpy(outer_msg, o_key_pad, 64);
     memcpy(outer_msg + 64, inner_hash, 32);
 
+    sha256_raw(outer_msg, 96, out);
+}
+
+nyx_string* nyx_hmac_sha256(nyx_string* key, nyx_string* data) {
+    if (!key || !data) return nyx_string_from_cstr("");
+
     uint8_t digest[32];
-    sha256_raw(outer_msg, 96, digest);
+    hmac_sha256_digest((const uint8_t*)key->data, key->length,
+                       (const uint8_t*)data->data, data->length, digest);
 
     // Hex encode
     char* hex = (char*)GC_MALLOC_ATOMIC(65);
@@ -477,6 +481,67 @@ nyx_string* nyx_hmac_sha256(nyx_string* key, nyx_string* data) {
     hex[64] = '\0';
 
     return nyx_string_from_ptr(hex, 64);
+}
+
+// ===== nyx_sha256_raw =====
+// Wrapper con nombre PROPIO sobre nyx_sha256_bytes. Existe para que el builtin
+// `sha256_raw` no colisione con el `extern "C" fn nyx_sha256_bytes` que
+// std/webpushcrypto.nx:13 ya declara: el `declare` del codegen y el extern del
+// módulo chocaban con «invalid redefinition of function» en cualquier programa
+// que importara webpushcrypto (rompió test-248/249/250). El símbolo del builtin
+// y el que un módulo declara a mano tienen que ser distintos.
+nyx_string* nyx_sha256_raw(nyx_string* input) {
+    return nyx_sha256_bytes(input);
+}
+
+// ===== nyx_hmac_sha256_raw =====
+// Los 32 BYTES del HMAC, sin formatear. SCRAM (y cualquier protocolo que
+// componga hashes) opera sobre bytes: usar la variante hex ahí produce un
+// resultado que el otro extremo rechaza sin explicar por qué.
+nyx_string* nyx_hmac_sha256_raw(nyx_string* key, nyx_string* data) {
+    if (!key || !data) return nyx_string_from_cstr("");
+
+    uint8_t* digest = (uint8_t*)GC_MALLOC_ATOMIC(32);
+    hmac_sha256_digest((const uint8_t*)key->data, key->length,
+                       (const uint8_t*)data->data, data->length, digest);
+
+    return nyx_string_from_ptr((const char*)digest, 32);
+}
+
+// ===== nyx_pbkdf2_hmac_sha256 =====
+// PBKDF2-HMAC-SHA256 (RFC 2898 §5.2). Va en C porque SCRAM usa 4096+
+// iteraciones y hacerlas sobre el builtin desde Nyx alocaría un String por
+// vuelta. Devuelve dklen bytes CRUDOS. Se apoya en la OpenSSL que crypto.c ya
+// linkea (-lcrypto), así que no agrega dependencias.
+nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
+                                   int64_t iters, int64_t dklen) {
+    if (!pw || !salt) return nyx_string_from_cstr("");
+    if (iters <= 0 || dklen <= 0) return nyx_string_from_cstr("");
+    if (dklen > (1 << 20)) return nyx_string_from_cstr("");  // techo sano: 1 MiB
+
+    unsigned char* out = (unsigned char*)GC_MALLOC_ATOMIC((size_t)dklen);
+    if (PKCS5_PBKDF2_HMAC((const char*)pw->data, (int)pw->length,
+                          (const unsigned char*)salt->data, (int)salt->length,
+                          (int)iters, EVP_sha256(), (int)dklen, out) != 1) {
+        return nyx_string_from_cstr("");
+    }
+    return nyx_string_from_ptr((const char*)out, (size_t)dklen);
+}
+
+// ===== nyx_constant_time_eq =====
+// Compara SIEMPRE todos los bytes, sin cortar en la primera diferencia. Un `==`
+// normal filtra por timing cuánto prefijo coincide, que es justo lo que hace
+// falta para adivinar un hash o un token byte por byte. La diferencia de
+// LARGO sí se filtra (es inevitable sin padding) y no es el secreto.
+int64_t nyx_constant_time_eq(nyx_string* a, nyx_string* b) {
+    if (!a || !b) return 0;
+    if (a->length != b->length) return 0;
+
+    unsigned char diff = 0;
+    for (size_t i = 0; i < a->length; i++) {
+        diff |= (unsigned char)(a->data[i] ^ b->data[i]);
+    }
+    return diff == 0 ? 1 : 0;
 }
 
 // ===== nyx_md5 =====

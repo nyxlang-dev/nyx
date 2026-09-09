@@ -1,0 +1,55 @@
+// test-398 — `for k in m.keys()` tipa `k` como String, no como int
+//
+// Ficha [ALTA, codegen], hallazgo del 2026-09-05 escribiendo la guía web:
+// `let ks: Array = m.keys()` quedaba como `Array` PELADO, así que el `for`
+// tipaba el elemento como int (el default). Dos síntomas, uno ruidoso y otro
+// mudo:
+//   - `m.get(k)` → IR inválido, el error lo daba LLVM y no un diagnóstico NYX;
+//   - `print("  " + k)` → concatenaba la DIRECCIÓN de la clave en vez del
+//     texto, en silencio, que es el peor de los dos.
+//
+// La información existía: las claves de un Map en Nyx son String por
+// definición. Solo no se propagaba.
+
+fn main() -> int {
+    var m: Map = map_new()
+    m.insert("alfa", "1")
+    m.insert("beta", "2")
+
+    // (1) con variable intermedia — el caso del reporte
+    let ks: Array = m.keys()
+    var vistos: int = 0
+    var concat: String = ""
+    for k in ks {
+        // si `k` fuera int, esto sería IR inválido
+        let v: String = m.get(k)
+        assert(v == "1" or v == "2", "el valor se lee con la clave")
+        // si `k` fuera int, esto concatenaría la direccion en vez del texto
+        concat = concat + k
+        vistos = vistos + 1
+    }
+    assert(vistos == 2, "recorre las dos claves")
+    assert(concat.length() == 8, "concatena el TEXTO de las claves (alfa+beta), no direcciones")
+    assert(concat.contains("alfa"), "la clave alfa aparece como texto")
+    assert(concat.contains("beta"), "la clave beta aparece como texto")
+
+    // (2) iterando la llamada directa, sin variable intermedia
+    var directo: int = 0
+    for k2 in m.keys() {
+        let v2: String = m.get(k2)
+        assert(v2.length() == 1, "valor leido en el for directo")
+        directo = directo + 1
+    }
+    assert(directo == 2, "el for sobre m.keys() directo tambien anda")
+
+    // (3) split sigue funcionando igual (control: ya andaba)
+    var partes: int = 0
+    for p in "a,b,c".split(",") {
+        assert(p.length() == 1, "cada parte es un String de 1 char")
+        partes = partes + 1
+    }
+    assert(partes == 3, "split da tres partes")
+
+    print("OK test-398 for keys string")
+    return 0
+}

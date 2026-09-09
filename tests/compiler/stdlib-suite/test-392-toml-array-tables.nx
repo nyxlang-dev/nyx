@@ -1,0 +1,49 @@
+// test-392 — std/toml: [[arrays de tablas]]
+//
+// Reporte de fricción 2026-09-08: un manifiesto declarativo con
+// `[[campos]]` repetido producía UNA sola clave, literal `[campos.nombre` —con
+// el corchete de apertura ADENTRO—, cuyo valor era el del ÚLTIMO elemento.
+// `toml_get(m, "campos.nombre", …)` devolvía el default y
+// `toml_get(m, "[campos.nombre", …)` sí devolvía el valor: el síntoma exacto de
+// que el nombre de sección se leía desde el índice 1 en vez del 2.
+//
+// Forma acordada: el índice entra en la clave (`campos.0.nombre`) y el conteo
+// se lee con `toml_array_len`, así el manifiesto se recorre sin adivinar.
+
+import "std/toml"
+
+fn main() -> int {
+    let t: String = "[[campos]]\nnombre = \"rif\"\ntipo = \"texto\"\n\n[[campos]]\nnombre = \"activo\"\ntipo = \"bool\"\n"
+    let m: Map = toml_parse(t)
+
+    assert(toml_array_len(m, "campos") == 2, "dos elementos en el array de tablas")
+    assert(toml_get(m, "campos.0.nombre", "SIN") == "rif", "primer elemento conservado")
+    assert(toml_get(m, "campos.1.nombre", "SIN") == "activo", "segundo elemento conservado")
+    assert(toml_get(m, "campos.0.tipo", "SIN") == "texto", "segundo campo del primer elemento")
+    assert(toml_get(m, "campos.1.tipo", "SIN") == "bool", "segundo campo del segundo elemento")
+
+    // El corchete ya no queda dentro de la clave
+    assert(toml_get(m, "[campos.nombre", "SIN") == "SIN", "la clave con corchete ya no existe")
+
+    // Recorrer el manifiesto como haría el usuario del reporte
+    var nombres: String = ""
+    var i: int = 0
+    while i < toml_array_len(m, "campos") {
+        nombres = nombres + toml_get(m, "campos." + int_to_string(i) + ".nombre", "?") + ","
+        i = i + 1
+    }
+    assert(nombres == "rif,activo,", "recorrido completo del manifiesto")
+
+    // Un array de tablas que no existe da 0, no explota
+    assert(toml_array_len(m, "no_existe") == 0, "array ausente da 0")
+
+    // Las tablas NORMALES siguen andando igual (control)
+    let t2: String = "[server]\nhost = \"localhost\"\nport = 8080\n"
+    let m2: Map = toml_parse(t2)
+    assert(toml_get(m2, "server.host", "SIN") == "localhost", "tabla normal: string")
+    assert(toml_get_int(m2, "server.port", 0) == 8080, "tabla normal: int")
+    assert(toml_array_len(m2, "server") == 0, "una tabla normal no es un array")
+
+    print("OK test-392 toml array tables")
+    return 0
+}

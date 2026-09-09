@@ -1,0 +1,85 @@
+// test-396 — el return SINTETIZADO de una fn que devuelve puntero usa `null`
+//
+// Bug encontrado el 2026-09-09 escribiendo `pg_read_message` (arco
+// postgres-wire-v3): una función `-> Result<Array, Error>` que termina en un
+// `match` exhaustivo recibe igual un return por defecto, y ese emitía
+// `ret i8* 0` — clang lo rechaza con «integer constant must have integer type»
+// y el módulo NO LINKEA.
+//
+// Causa: el codegen decidía «es puntero» por «empieza con %», así que listaba
+// `%nyx_string*` a mano y todo lo demás caía en `0`. Result/Option/Map/Fn se
+// representan como `i8*`, y Array como `{ i64, i8* }*`: ninguno empieza con %.
+// El criterio correcto es el `*` FINAL.
+//
+// Este test no verifica un valor: verifica que estos programas COMPILEN Y
+// LINKEEN. Si el bug vuelve, el test ni siquiera llega a correr.
+
+import "std/error"
+
+// (1) Result<Array, E> — el caso exacto del arco
+fn con_array(x: int) -> Result<Array, Error> {
+    match interno(x) {
+        Result.Ok(v) => { return Result.Ok([v]) }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+}
+
+// (2) Result<String, E> — %nyx_string* ya andaba (estaba listado a mano)
+fn con_string(x: int) -> Result<String, Error> {
+    match interno(x) {
+        Result.Ok(v) => { return Result.Ok("v=" + int_to_string(v)) }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+}
+
+// (3) Option<Array> — Option también se representa como i8*
+fn con_option(x: int) -> Option<Array> {
+    match interno(x) {
+        Result.Ok(v) => { return Option.Some([v]) }
+        Result.Err(e) => { return Option.None }
+    }
+}
+
+// (4) Map como retorno directo — i8* pelado
+fn con_map(x: int) -> Map {
+    match interno(x) {
+        Result.Ok(v) => { var m: Map = map_new() m.insert("v", v) return m }
+        Result.Err(e) => { return map_new() }
+    }
+}
+
+fn interno(x: int) -> Result<int, Error> {
+    if x > 0 { return Result.Ok(x) }
+    return Result.Err(err_new(1, "arg", "no positivo"))
+}
+
+fn main() -> int {
+    match con_array(5) {
+        Result.Ok(a) => { assert(a.length() == 1, "Result<Array,E>: Ok") }
+        Result.Err(e) => { assert(false, "no deberia fallar") }
+    }
+    match con_array(0 - 1) {
+        Result.Ok(a) => { assert(false, "deberia fallar") }
+        Result.Err(e) => { assert(e.msg == "no positivo", "Result<Array,E>: Err") }
+    }
+
+    match con_string(7) {
+        Result.Ok(s) => { assert(s == "v=7", "Result<String,E>: Ok") }
+        Result.Err(e) => { assert(false, "no deberia fallar") }
+    }
+
+    match con_option(3) {
+        Option.Some(a) => { assert(a.length() == 1, "Option<Array>: Some") }
+        Option.None => { assert(false, "no deberia ser None") }
+    }
+    match con_option(0) {
+        Option.Some(a) => { assert(false, "no deberia ser Some") }
+        Option.None => { assert(true, "Option<Array>: None") }
+    }
+
+    let m: Map = con_map(9)
+    assert(m.get("v") == 9, "Map como retorno")
+
+    print("OK test-396 default ret pointer")
+    return 0
+}

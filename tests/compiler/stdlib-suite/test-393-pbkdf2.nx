@@ -1,0 +1,70 @@
+// test-393 — PBKDF2-HMAC-SHA256, comparación en tiempo constante y hashes CRUDOS
+//
+// Task 1 del arco postgres-wire-v3. Las cuatro primitivas entran juntas porque
+// registrarlas obliga a recompilar codegen.nx (~12 min, >1.5 GB de RAM): se
+// toca UNA sola vez en todo el arco.
+//
+// Por qué en C y no en Nyx: SCRAM usa 4096+ iteraciones, y hacerlas sobre el
+// builtin desde Nyx aloca un String por vuelta.
+//
+// Por qué los hashes CRUDOS: el `hmac_sha256` histórico devuelve HEX (64
+// caracteres). SCRAM opera sobre BYTES — un proof calculado sobre la
+// representación hex es inválido y el servidor responde «authentication failed»
+// sin decir por qué. El hex se conserva intacto: tiene consumidores.
+//
+// Vectores contrastados contra python hashlib antes de escribir el test.
+
+fn hex(s: String) -> String {
+    let d: String = "0123456789abcdef"
+    var out: String = ""
+    var i: int = 0
+    while i < s.byte_length() {
+        let b: int = s.charAt(i)
+        out = out + d.substring(b / 16, b / 16 + 1) + d.substring(b % 16, b % 16 + 1)
+        i = i + 1
+    }
+    return out
+}
+
+fn main() -> int {
+    // ── PBKDF2-HMAC-SHA256 ──────────────────────────────────────────
+    let k1: String = pbkdf2_hmac_sha256("password", "salt", 1, 32)
+    assert(hex(k1) == "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b", "pbkdf2 1 iteracion")
+
+    let k2: String = pbkdf2_hmac_sha256("password", "salt", 2, 32)
+    assert(hex(k2) == "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43", "pbkdf2 2 iteraciones")
+
+    // 4096 es el conteo que usa SCRAM por defecto
+    let k3: String = pbkdf2_hmac_sha256("password", "salt", 4096, 32)
+    assert(hex(k3) == "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a", "pbkdf2 4096 iteraciones")
+
+    // dklen distinto del tamaño del hash: se extiende con más bloques
+    let k4: String = pbkdf2_hmac_sha256("passwd", "salt", 1, 64)
+    assert(k4.byte_length() == 64, "dklen 64 devuelve 64 bytes")
+
+    // ── hashes CRUDOS ───────────────────────────────────────────────
+    let hr: String = hmac_sha256_raw("key", "data")
+    assert(hr.byte_length() == 32, "hmac_sha256_raw da 32 BYTES")
+    assert(hex(hr) == "5031fe3d989c6d1537a013fa6e739da23463fdaec3b70137d828e36ace221bd0", "hmac_sha256_raw contra el vector")
+
+    // el hex histórico NO cambia: hay consumidores
+    assert(hmac_sha256("key", "data").byte_length() == 64, "hmac_sha256 sigue devolviendo 64 chars hex")
+    assert(hmac_sha256("key", "data") == hex(hr), "el hex y el crudo son el MISMO hash, distinta representacion")
+
+    let sr: String = sha256_raw("abc")
+    assert(sr.byte_length() == 32, "sha256_raw da 32 bytes")
+    assert(hex(sr) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256(abc) del NIST")
+
+    // ── comparación en tiempo constante ─────────────────────────────
+    assert(constant_time_eq("abc", "abc"), "iguales")
+    assert(not constant_time_eq("abc", "abd"), "distintos en el ultimo byte")
+    assert(not constant_time_eq("abc", "ab"), "distinto largo")
+    assert(constant_time_eq("", ""), "ambos vacios")
+    assert(not constant_time_eq("", "a"), "vacio contra no vacio")
+    // binary-safe: los NUL son datos, no terminadores
+    assert(constant_time_eq("a" + chr(0) + "b", "a" + chr(0) + "b"), "con NUL embebido: iguales")
+    assert(not constant_time_eq("a" + chr(0) + "b", "a" + chr(0) + "c"), "con NUL embebido: distintos DESPUES del NUL")
+
+    print("OK test-393 pbkdf2")
+    return 0
+}

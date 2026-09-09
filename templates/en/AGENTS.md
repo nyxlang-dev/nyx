@@ -28,18 +28,17 @@ a web page.
    (skip this step with no network — `CAPABILITIES.md` is enough).
 4. **Write the program.** Prefer the smallest thing that works.
 5. **Self-check first:** `nyx check` type-checks WITHOUT linking or running — the fastest
-   feedback you have, and it exits non-zero on error. LIMIT (v0.31): it only sees the ONE file
-   it is given — it does not follow `import "src/..."` (every imported name comes back as
-   NYX1002 "not declared"), so in a multi-module project the type gate is `nyx build`.
-   `nyx vet` catches unused vars and dead code, and flags the grep-able gotchas below with
+   feedback you have, and it exits non-zero on error. It resolves `import "src/..."`,
+   `import "std/..."` and the prelude just like `nyx build`, so it holds as the type gate in a
+   multi-module project. `nyx vet` catches unused vars and dead code, and flags the grep-able gotchas below with
    `warning[W1NN] <file>:<line>` — so you get the gotcha by name instead of a parser error.
    Both default to `src/main.nx`.
 6. **Run it:** `nyx run` (or `nyx build`). Read the compiler output.
 7. **Test it:** `nyx test` runs `tests/*.nx`. Tests MUST use `test "name" { ... }` blocks —
    a file with functions named `test_*` is SILENTLY SKIPPED ("No files with test blocks found"),
-   so you would wrongly believe your code is tested. `nyx test` does NOT type-check (v0.31: it
-   compiles each test with the checker off), so a type error in a module or in a test still
-   passes green — run `nyx build` before trusting a green `nyx test`.
+   so you would wrongly believe your code is tested. `nyx test` DOES type-check: a type error
+   in a module or in a test brings the run down with its NYX diagnostic instead of passing
+   green.
 8. **If it doesn't compile:** read the error (it has file:line and often a "did you mean").
    Check the Gotchas below — most first-try failures are one of them. Fix and re-run.
 9. **If you hit a real wall** — the language or stdlib genuinely can't do it, or you found a
@@ -62,7 +61,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,string-order-is-bytewise,throw-deprecated -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
@@ -86,7 +85,12 @@ on BYTES — for *character* counts use `char_length()` (UTF-8 codepoints).**
 `if http_serve(8080, handler) < 0 { return 1 }`.**
 13. **`assert()` aborts the process (`exit(1)`) on the first failure**
 14. **A bare `return` (no value) works in a `void`-returning function**
-15. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
+15. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
+16. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
+17. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+nonces, or any other cryptographic material; use `csprng_bytes` instead.**
+18. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
+19. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
 
 <!-- /gen:gotchas -->
 

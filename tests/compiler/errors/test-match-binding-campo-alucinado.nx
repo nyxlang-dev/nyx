@@ -1,0 +1,30 @@
+// Campo ALUCINADO sobre el binding de payload de un `match`.
+//
+// Hasta el 2026-09-09 esto pasaba el checker EN VERDE: el binding se declaraba
+// con ty_unknown(), así que ty_of_expr no veía un TyStruct y check_field_exists
+// se salteaba. El MISMO campo sobre una variable normal sí daba NYX1017 — o sea
+// que la guarda de campos alucinados tenía un hueco justo donde el tipo viene
+// de un patrón. Encontrado por accidente escribiendo `e.message` en vez de
+// `e.msg` al probar otro fix: el programa imprimió 0 en vez de fallar.
+//
+// Expected stderr (contains): "campo 'zzz' no existe en struct 'P'"
+// Expected exit: non-zero (semantic check fails)
+
+struct P {
+    a: int,
+    b: String
+}
+
+enum Caja {
+    Lleno(P),
+    Vacio
+}
+
+fn main() -> int {
+    let c: Caja = Caja.Lleno(P { a: 1, b: "x" })
+    match c {
+        Caja.Lleno(p) => { print(int_to_string(p.zzz)) }
+        Caja.Vacio => { print("vacio") }
+    }
+    return 0
+}

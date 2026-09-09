@@ -1,0 +1,73 @@
+// test-402 — fn genérica `<T>` que devuelve Result<T,E>/Option<T> + `?` + match
+//
+// Ficha [ALTA, codegen] del 2026-09-07 (review de la Task 1 del arco E6): con el
+// `<T>` genérico el programa daba «Error: campo no encontrado: int:msg» y
+// valores basura, mientras la versión monomórfica escrita a mano corría bien;
+// y el caso `Option<T>` genérico + `?` ni siquiera enlazaba
+// («'%429' defined with type 'i64' but expected 'ptr'»).
+//
+// Verificado el 2026-09-09: los DOS casos funcionan. El bug se arregló en el
+// camino —probablemente con `ensure_enum_mono` del arco E7, que registra la
+// instancia <T,E> ANTES de decodificar el payload—, pero nunca hubo test que lo
+// fijara. Este es ese test: la ficha lo pedía explícitamente.
+
+struct MiError { code: int, msg: String }
+
+fn primero_res<T>(xs: Array) -> Result<T, MiError> {
+    if xs.length() == 0 {
+        return Result.Err(MiError { code: 1, msg: "vacio" })
+    }
+    let v: T = xs[0]
+    return Result.Ok(v)
+}
+
+fn doble_res(xs: Array) -> Result<int, MiError> {
+    let v: int = primero_res<int>(xs)?
+    return Result.Ok(v * 2)
+}
+
+fn primero_opt<T>(xs: Array) -> Option<T> {
+    if xs.length() == 0 { return Option.None }
+    let v: T = xs[0]
+    return Option.Some(v)
+}
+
+fn doble_opt(xs: Array) -> Option<int> {
+    let v: int = primero_opt<int>(xs)?
+    return Option.Some(v * 2)
+}
+
+fn main() -> int {
+    // Result<T, MiError> genérico + ? + match
+    match doble_res([21, 5]) {
+        Result.Ok(n) => { assert(n == 42, "el payload sobrevive al generico") }
+        Result.Err(e) => { assert(false, "no deberia fallar") }
+    }
+    match doble_res([]) {
+        Result.Ok(n) => { assert(false, "no deberia haber valor") }
+        Result.Err(e) => {
+            // el campo del struct de error se lee bien: era el «campo no encontrado»
+            assert(e.msg == "vacio", "el campo msg del error propio se lee")
+            assert(e.code == 1, "y el campo code tambien")
+        }
+    }
+
+    // Option<T> genérico + ? + match (el caso que no enlazaba)
+    match doble_opt([21]) {
+        Option.Some(n) => { assert(n == 42, "Option generico conserva el payload") }
+        Option.None => { assert(false, "no deberia ser None") }
+    }
+    match doble_opt([]) {
+        Option.Some(n) => { assert(false, "no deberia ser Some") }
+        Option.None => { assert(true, "None se propaga por el ?") }
+    }
+
+    // el String como payload del genérico (puntero, no int)
+    match primero_res<String>(["hola", "chau"]) {
+        Result.Ok(s) => { assert(s == "hola", "payload String en generico") }
+        Result.Err(e) => { assert(false, "no deberia fallar") }
+    }
+
+    print("OK test-402 generica result option")
+    return 0
+}

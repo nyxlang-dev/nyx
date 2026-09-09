@@ -1,0 +1,42 @@
+// test-400 — `enumerate()` devuelve pares (índice, valor) de verdad
+//
+// Ficha [ALTA, runtime]: `nyx_iter_next` (case NYX_ITER_ENUMERATE) devolvía el
+// VALOR de la fuente y guardaba el índice adentro del iterador, donde nadie
+// podía leerlo. La receta publicada
+// (examples/by-example/31-iterator-enumerate.nx) documenta desde siempre que
+// «cada elemento es un array [indice, valor]»: la doc decía la verdad y el
+// runtime no la cumplía, así que `par[0]` no era el índice.
+
+fn main() -> int {
+    let xs: Array = [10, 20, 30]
+    let pares: Array = xs.iter().enumerate().collect()
+
+    assert(pares.length() == 3, "un par por elemento")
+
+    let p0: Array = pares[0]
+    assert(p0.length() == 2, "cada elemento es un par de 2")
+    assert(p0[0] == 0, "el indice del primero es 0")
+    assert(p0[1] == 10, "el valor del primero es 10")
+
+    let p1: Array = pares[1]
+    assert(p1[0] == 1, "indice 1")
+    assert(p1[1] == 20, "valor 20")
+
+    let p2: Array = pares[2]
+    assert(p2[0] == 2, "indice 2")
+    assert(p2[1] == 30, "valor 30")
+
+    // combinado con otro adapter, como muestra la receta
+    let primeros: Array = xs.iter().enumerate().take(2).collect()
+    assert(primeros.length() == 2, "take(2) sobre enumerate")
+    let q1: Array = primeros[1]
+    assert(q1[0] == 1 and q1[1] == 20, "el segundo par sigue siendo (1, 20)")
+
+    // un array vacío no produce pares
+    let vacio: Array = []
+    let sin: Array = vacio.iter().enumerate().collect()
+    assert(sin.length() == 0, "sin elementos no hay pares")
+
+    print("OK test-400 enumerate pares")
+    return 0
+}

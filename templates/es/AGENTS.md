@@ -30,18 +30,17 @@ EN/ES), que es una página web.
 4. **Escribe el programa.** Prefiere la cosa más chica que funcione.
 5. **Auto-verifica primero:** `nyx check` chequea tipos SIN linkear ni ejecutar — es la
    retroalimentación más rápida que tienes, y sale con código distinto de cero ante un error.
-   LÍMITE (v0.31): solo ve el ÚNICO archivo que recibe — no sigue `import "src/..."` (todo
-   nombre importado sale como NYX1002 «not declared»), así que en un proyecto multi-módulo la
-   puerta de tipos es `nyx build`. `nyx vet` caza variables sin usar y código muerto, y marca
-   los gotchas grepeables de abajo con `warning[W1NN] <archivo>:<línea>` — recibes el gotcha
-   por nombre en vez de un error del parser. Ambos usan `src/main.nx` por defecto.
+   Resuelve `import "src/..."`, `import "std/..."` y el prelude igual que `nyx build`, así que
+   en un proyecto multi-módulo vale como puerta de tipos. `nyx vet` caza variables sin usar
+   y código muerto, y marca los gotchas grepeables de abajo con
+   `warning[W1NN] <archivo>:<línea>` — recibes el gotcha por nombre en vez de un error del
+   parser. Ambos usan `src/main.nx` por defecto.
 6. **Ejecútalo:** `nyx run` (o `nyx build`). Lee la salida del compilador.
 7. **Pruébalo:** `nyx test` corre `tests/*.nx`. Las pruebas TIENEN que usar bloques
    `test "nombre" { ... }` — un archivo con funciones llamadas `test_*` se SALTA EN SILENCIO
    («No files with test blocks found») y creerías, mal, que tu código está probado. `nyx test`
-   NO chequea tipos (v0.31: compila cada prueba con el checker apagado), así que un error de
-   tipos en un módulo o en una prueba pasa en verde — corre `nyx build` antes de confiar en un
-   `nyx test` verde.
+   SÍ chequea tipos: un error de tipos en un módulo o en una prueba tumba la corrida con su
+   diagnóstico NYX, no pasa en verde.
 8. **Si no compila:** lee el error (trae archivo:línea y muchas veces un «did you mean»).
    Revisa las trampas de más abajo — la mayoría de las fallas del primer intento son una de
    ellas. Corrige y vuelve a correr.
@@ -66,7 +65,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,string-order-is-bytewise,throw-deprecated -->
 
 1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
@@ -91,7 +90,12 @@ operan todas sobre BYTES — para conteos de *caracteres* se usa `char_length()`
 ocupado) retorna `-1` — `if http_serve(8080, handler) < 0 { return 1 }`.**
 13. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
 14. **Un `return` sin valor funciona en una función que retorna `void`**
-15. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
+15. **Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`**
+16. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
+17. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
+nonces, ni ningún otro material criptográfico; para eso usa `csprng_bytes`.**
+18. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
+19. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
 
 <!-- /gen:gotchas -->
 

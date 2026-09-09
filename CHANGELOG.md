@@ -20,6 +20,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`std/postgres`: cliente PostgreSQL nativo, sin libpq ni ninguna dependencia**
+  `[arco: postgres-wire-v3]`. Un reporte de fricción del 2026-09-08 mostró que un proyecto que
+  exige PostgreSQL quedaba FUERA de Nyx. Ahora el protocolo v3 se habla en Nyx puro sobre
+  `std/net`: `try_pg_connect` (cadena de conexión con el formato de libpq), `try_pg_exec` /
+  `try_pg_query` (filas como `Array` de String en formato text), `try_pg_query_params` /
+  `try_pg_exec_params`, transacciones, migraciones (`pg_migrate*`, con el estado en una tabla del
+  servidor) y pool de conexiones. Todo con la forma de `std/sqlite`: `Result<_, Error>` con
+  `kind: "db"`, conservando el SQLSTATE en el mensaje.
+  **Autenticación SCRAM-SHA-256**, que es lo que exige cualquier PostgreSQL moderno, con la firma
+  del servidor verificada en tiempo constante —saltear esa verificación es aceptar un servidor
+  impostor— y el nonce sacado de `csprng_bytes`, no de `random_bytes`, que es un PRNG.
+  **Los parámetros van por VALOR** en el mensaje Bind, nunca interpolados en el SQL: el test E2E
+  pasa `'; DROP TABLE t_par; --` como valor y verifica después que la tabla sigue existiendo.
+  **NULL con sentinel** (`pg_is_null`): un NULL y un string vacío son valores distintos, y
+  confundirlos es un bug esperando en cualquier `WHERE campo IS NULL` (gotcha `pg-null-sentinel`).
+  Un error del servidor deja la conexión USABLE: el lector consume hasta ReadyForQuery en vez de
+  cortar y desincronizar el socket. Suite E2E contra un PostgreSQL real (`run_postgres_tests.sh`,
+  4 programas) con SKIP limpio y la receta para montarlo si no hay servidor.
+- **`pbkdf2_hmac_sha256`, `constant_time_eq`, `hmac_sha256_raw` y `sha256_raw`** en
+  `runtime/crypto.c` `[arco: postgres-wire-v3]`. SCRAM las necesita, y cierran de paso el pedido
+  de una KDF de contraseñas con coste configurable del otro reporte del 2026-09-08. El
+  `hmac_sha256` histórico devuelve HEX y sigue igual: las variantes `_raw` dan los 32 bytes del
+  digest, que es lo que necesita cualquier protocolo que COMPONGA hashes.
 - **Andamiaje SDD opcional: `nyx init --sdd` y `nyx sdd init`** `[arco: andamiaje-sdd]`. Un
   segundo nivel, **opt-in y reversible**, para proyectos donde lo caro no es teclear sino
   decidir: siembra `docs/constitution.md` (7 secciones vacías con el marcador
@@ -141,6 +164,82 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **`dyn Trait` funciona fuera del paso de parámetros: `let` anotado, `Array` y acceso por índice**
+  (reporte de fricción 2026-09-08). Guardar structs en un `Array` y recorrerlo con
+  `for x: dyn T in arr` compilaba limpio —`nyx vet` sin quejas, «build complete»— y SEGFAULTEABA
+  sin imprimir nada, ni siquiera la línea anterior al bucle; la variante por índice
+  (`let y: dyn T = arr[0]`) no compilaba. Causa: el fat pointer `{ dato, vtable }` se construía
+  SOLO en el sitio de llamada cuando el parámetro era `dyn`. Un `let d: dyn T = concreto` guardaba
+  el struct PELADO mientras el consumidor —el despacho por vtable y el `for`— asumía el fat
+  pointer: se leía el primer campo del struct como vtable y se saltaba ahí. El upcast se extrajo a
+  `emit_dyn_upcast` y ahora lo comparten el sitio de llamada, el `let` anotado, el acceso por
+  índice y las dos ramas del `for` (la de iteradores y la de arrays, que son caminos distintos en
+  `codegen_for` — parchear una sola fue el primer intento fallido).
+- **`Array<dyn Trait>`: el tipo en el contenedor hace funcionar la lista heterogénea.** La solución de
+  raíz del punto anterior: convertir a `dyn` cambia la representación, así que tiene que ocurrir
+  cuando el valor se ESCRIBE — una vez en el array todo elemento es un `i64` indistinguible y el
+  lector no puede saber si tiene un struct o un fat pointer. Con el tipo declarado en el array, el
+  `push` upcastea cada elemento a SU propia vtable al entrar, y así conviven varios impls en la misma
+  colección: `var r: Array<dyn Saluda> = []` + `r.push(Es{…})` + `r.push(En{…})` recorre y despacha
+  bien. El upcast vive en un helper único (`upcast_for_array_elem`) usado por los DOS sitios de
+  `push` del codegen —hay uno por forma de receptor, y parchear el equivocado fue el primer intento
+  fallido acá también—. Límite documentado en el gotcha `dyn-trait-needs-annotation`: un `Array` SIN
+  tipo con structs pelados leído como `dyn` sigue reventando, y no se puede rechazar al compilar sin
+  romper el caso legítimo del array pelado que sí contiene fat pointers. Test:
+  `test-391-dyn-trait-array`, las cinco formas.
+- **`std/toml` entiende `[[arrays de tablas]]`** (reporte de fricción 2026-09-08). Un manifiesto con
+  `[[campos]]` repetido producía UNA sola clave, literal `[campos.nombre` —con el corchete de
+  apertura ADENTRO, porque `toml_parse_section` buscaba el `]` desde la posición 1 en vez de la 2—
+  y las entradas se pisaban entre sí, así que solo sobrevivía la última. Ahora cada `[[t]]` abre un
+  elemento y el índice entra en la clave (`campos.0.nombre`, `campos.1.nombre`), con
+  `toml_array_len(parsed, "campos")` para recorrer sin adivinar dónde termina la lista. Las tablas
+  normales `[t]` no cambian. Test: `test-392-toml-array-tables`, con control de que `[server]` sigue
+  funcionando igual.
+- **Un valor `Fn` que devuelve `Option<T>`/`Result<T,E>` conserva el payload** (reporte de fricción
+  2026-09-08). `let g: Fn(String) -> Option<String> = f` y después `match g("hola")` entregaba el
+  String como PUNTERO crudo (`187650925231008`), sin error ni warning — el peor modo de fallar; con
+  `Result<String, Error>`, la rama `Err` además MATABA el proceso pidiendo ~10^19 bytes, que es lo
+  que se obtiene al leer un puntero como longitud. Causa: `infer_enum_subject_type` buscaba el
+  nombre del callee en `function_return_types`, pero el callee de una llamada INDIRECTA es una
+  VARIABLE, no una función, así que devolvía `""`; sin tipo, el `match` decodifica el payload como
+  `i64` crudo. El tipo estaba en la anotación `Fn(...) -> R` todo el tiempo. Misma clase que el fix
+  de `ensure_enum_mono` en el `?` (E7). El parseo del `->` se EXTRAJO a `fn_annotation_return_type`
+  y lo comparten los dos consumidores, en vez de copiarlo al segundo. Andaba ya y sigue andando
+  (controles en el test): llamada directa, `Fn -> String` pelado y `Fn -> Option<int>`.
+  Test: `test-390-fn-value-generic-return` con la matriz completa del reporte.
+- **`<` `<=` `>` `>=` entre dos `String` comparan el TEXTO, no el puntero** (reporte de fricción
+  2026-09-08). Los cuatro operadores de orden emitían `icmp slt i64` sobre dos `%nyx_string*`: IR
+  inválido que clang rechazaba al enlazar («'%618' defined with type 'ptr' but expected 'i64'»),
+  mientras `nyx check` y `nyx vet` daban el programa por bueno. La causa era un HUECO, no una
+  decisión: la rama de comparación de punteros excluye `%nyx_string*` a propósito —comparar
+  direcciones no es comparar texto— pero nunca se agregó la rama que compara por contenido, así que
+  caía al fallback entero; `==`/`!=` sí tenían la suya desde siempre. El ladrillo ya estaba:
+  `nyx_string_compare()` vivía en `runtime/strings.c` sin que el codegen lo llamara nunca. Semántica: lexicográfica por BYTES (prefijo común, y a igual prefijo gana la más corta),
+  coherente con «Strings = bytes» del resto del lenguaje — no por codepoints ni con locale. Cubre
+  también el caso mixto `i64`/`String` (el que llega de `arr[i]`/`Map.get`), igual que `==`. Caso de
+  uso del reporte: ordenar fechas `AAAA-MM-DD` comparándolas como texto, que para ese formato es el
+  idioma natural. Tests: `test-389-string-order-compare` (regression) y `tests/ai-first/26` (tabla de
+  vigencias por fecha, el programa que una IA escribe sin pensarlo).
+- **`nyx check` y `nyx test` vuelven a ser la puerta de tipos que la doc promete**
+  `[arco: tooling-type-gates]`. Dos reportes de fricción del 2026-09-08 mostraron que
+  `nyx check && nyx test` —el paso 5 de `AGENTS.md`, el «terminado» de un agente— dejaba pasar
+  un error de tipos inequívoco en un proyecto multi-módulo: solo `nyx build` lo detectaba. La
+  causa era **una sola para los dos síntomas**: la resolución de módulos estaba TRIPLICADA (la
+  buena en `nyx.nx`, una copia de abril degradada en `nyx_check.nx`, y `test.nx` esquivándola
+  con `NYX_SKIP_SEMANTIC=1` desde el Sprint 12). Se extrae `compiler/resolve.nx` y los tres
+  drivers lo consumen; `nyx test` compila con el checker encendido. En el camino se cerraron
+  cuatro defectos que ninguna ficha registraba: (1) `nyx check` daba rc 1 sobre proyectos
+  **correctos** —no era ciego, era inservible—; (2) el tier de `NYX_HOME` duplicaba el prefijo
+  (`NYX_HOME/std/` + `std/web` → `std/std/web.nx`), invisible mientras el único consumidor fue
+  `nyx build`, que hace `cd $NYX_HOME`, y responsable de que el prelude entero no resolviera
+  fuera del repo (el `map_new not declared` del reporte); (3) `scripts/nyx` exportaba
+  `NYX_PROJECT_DIR` DESPUÉS del `exec` de la rama `check|vet|fmt`, así que `nyx check` nunca lo
+  recibía; (4) los `DEF:` del LSP salían con las líneas del prelude (`println:1000003`) porque
+  el offset se restaba a mano en vez de filtrar por la marca `//#line`. Verificado:
+  `serve.nyxlang.com/src/main.nx` pasa de 44 errores a 0. Guarda permanente:
+  `scripts/testing/run_tooling_gates.sh` (en `make test-ai-first`), que ejerce las tres vías de
+  resolución —proyecto, prelude y `std/`— con control positivo, porque el bug rompía las tres y
+  probar una sola da falso verde.
 - **Sello de versión en lo que siembra `nyx init`** (F3 del informe de fricción del scaffold,
   hallazgo A2 «cero marcas»): cada archivo de contexto IA (AGENTS.md, CLAUDE.md, .cursorrules,
   CHEATSHEET.md, LLM.md, copilot-instructions y las 3 skills) termina con

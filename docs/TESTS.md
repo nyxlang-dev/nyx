@@ -12,13 +12,13 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **409 archivos / 408 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura); +2 (test-387-checked-math y test-388-mul-div-round, 2026-09-08, arco checked-math Tasks 1 y 2) |
+| Regression | `make test` | **424 archivos / 423 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura); +3 el 2026-09-08 (test-387/388 checked-math, 389-392 fricción); +11 el 2026-09-09 (393-395 postgres-wire-v3, 396-403 fixes de raíz de fichas ALTA) |
 | Error paths (parse+semantic) | `make test-errors` | **266** | verificado con corrida real 2026-09-08 |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
 | Runtime C unit (B4) | `make test-runtime` | **34 suites / 1587 asserts** | verificado con corrida real 2026-08-30; discrepancia vs. el `1444` documentado el 2026-08-29 (main avanzó con W3 Task 2/3 antes del corte de esta rama) — el número real gana |
-| AI-first (objetivo) | `make test-ai-first` | **25 programas + 18 guardas** | corre 19 scripts: `run_ai_first_tests.sh` (25 `.nx`) + 17 scripts de guardas (18 guardas — `run_templates_parity.sh` trae dos) + `scripts/sdd/selftest`; ver las 9 filas siguientes |
+| AI-first (objetivo) | `make test-ai-first` | **26 programas + 26 guardas** | corre 21 scripts: `run_ai_first_tests.sh` (26 `.nx`) + 19 scripts de guardas (26 guardas — `run_templates_parity.sh` trae dos y `run_tooling_gates.sh` cinco) + `scripts/sdd/selftest`; ver las 10 filas siguientes |
 | Coherencia de manuales | (dentro de `make test-ai-first`) `run_template_coherence.sh` | **4 checks** | mentiras resucitadas + anclas de trampas/reglas vivas + imports sin comillas + ids de gotcha citados, sobre lo sembrado en ambos idiomas; ANCLAS/MENTIRAS de `gotchas_generated.sh` |
 | Bloques sembrados compilan | (dentro de `make test-ai-first`) `run_seeded_blocks_compile.sh` | **1 check** | cada bloque ` ```nyx ` sembrado (ambos idiomas) compila con bootstrap semántico + clang; sin `fn main` debe ser ` ```nyx-fragment ` o falla |
 | Paridad EN/ES + español neutro | (dentro de `make test-ai-first`) `run_templates_parity.sh` | **2 checks** | twins EN/ES coherentes (marca de template, encabezados `##`, `gen:ids`) + denylist de voseo/vosotros (regla 9) en `## es` de los gotchas, `templates/es/**` y los adaptadores ES |
@@ -28,9 +28,12 @@
 | Capabilities index | (dentro de `make test-ai-first`) `run_capabilities_test.sh` | **3 checks + frescura** | balance de paréntesis en firmas extraídas + chequeo de mtime `build.nx` vs `nyx_build` |
 | Generador gendocs | (dentro de `make test-ai-first`) `run_gendocs_test.sh` + `run_gendocs_noop.sh` | **23 asserts + 4 checks** | fixture de 2 gotchas de juguete (regiones, tabla, arrays, `--check`, `fixed-since`) + no-op de regenerar + smoke de `gotchas_table.nx` |
 | Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **6 casos + auditoría de 161 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107–W108) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (102) + std (59) |
+| Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **5 checks** (3 negativos + 2 positivos) | `nyx check`/`nyx test` acusan el error de tipos y salen limpios sobre un proyecto correcto; ejerce las 3 vías (`src/`, prelude, `std/`) |
+| Recetas by-example | `make test-examples` | **109** (99 ejecutan, 10 solo compilan+enlazan) | compila, ENLAZA y CORRE cada receta con exit 0; los 10 que necesitan servidor/red/entrada están listados con su motivo en el script. Hasta el 2026-09-09 solo emitía el `.ll` y ni linkeaba |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **15 checks** | tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4) |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
+| PostgreSQL E2E | (dentro de `make test-integration`) `run_postgres_tests.sh` | **4 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **9 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm stub 3 + HTTP/2 1 + body cap 6 + std/serve contrato 10 + smoke 63 + serve+kv 10) | smoke 63 = el de nyx-serve, portado al congelarlo; serve+kv SKIPea sin el daemon kv |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
 | WASM (wasm32-wasi) | `make test-wasm` | **22** | SKIP limpio sin toolchain; 1 falla pre-existente no relacionada (ver TASKS.md) |

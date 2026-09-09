@@ -29,7 +29,7 @@ if command -v pkg-config > /dev/null 2>&1; then
 fi
 
 # Verificar que los .ll semilla existen
-for component in lexer parser types semantic borrow licm codegen nyx; do
+for component in lexer parser types semantic borrow licm resolve codegen nyx; do
     if [ ! -f "compiler/${component}.ll" ]; then
         echo "  ❌ Falta compiler/${component}.ll (IR semilla)"
         exit 1
@@ -91,6 +91,7 @@ clang $EXTRA_CFLAGS $EXTRA_LDFLAGS \
     compiler/semantic.ll \
     compiler/borrow.ll \
     compiler/licm.ll \
+    compiler/resolve.ll \
     compiler/codegen.ll \
     compiler/nyx.ll \
     $RUNTIME_SRCS \

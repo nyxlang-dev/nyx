@@ -3281,13 +3281,20 @@ let ch2: Map = channel_new(4)
 channel_send(ch1, 42)
 
 select {
-    case ch1 => { print("ch1 received") }
-    case ch2 => { print("ch2 received") }
-    default => { print("nothing ready") }
+    case v = ch1 => { print("ch1 recibió " + int_to_string(v)) }
+    case w = ch2 => { print("ch2 recibió " + int_to_string(w)) }
+    default => { print("nada listo") }
 }
 ```
 
-Channels are created with `channel_new(buffer_size)`, sent to with `channel_send(ch, value)`, and received from via `select`.
+`case v = ch =>` **liga el valor recibido** a `v`. La forma sin binding
+(`case ch => { … }`) sigue siendo válida cuando solo interesa saber que llegó
+algo, pero **no se puede recuperar el valor después**: `select` ya lo sacó del
+canal, y un `channel_recv(ch)` dentro del cuerpo bloquearía esperando un dato
+que ya no está. Si el valor importa, se liga (2026-09-09).
+
+Los canales se crean con `channel_new(buffer_size)`, se escriben con
+`channel_send(ch, value)` y se leen con `select` o `channel_recv`.
 
 ---
 

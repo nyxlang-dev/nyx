@@ -1,0 +1,792 @@
+// std/postgres.nx — cliente PostgreSQL nativo (protocolo v3) en Nyx puro.
+//
+// Sin dependencias: no necesita libpq ni ninguna lib instalada, solo std/net.
+// Arco postgres-wire-v3 · spec: docs/design/specs/2026-09-09-postgres-wire-v3-design.md
+//
+// ── Lo que hay que saber del protocolo antes de leer el código ──
+//
+// Todo mensaje es [tipo: 1 byte][longitud: int32][payload], con dos trampas:
+//   1. la LONGITUD SE INCLUYE A SÍ MISMA pero NO al byte de tipo;
+//   2. el StartupMessage NO lleva byte de tipo (es el único).
+// Y todos los enteros van en BIG-ENDIAN, que no es el orden nativo de la
+// máquina. Por eso esta capa tiene test propio (test-394) y se escribió antes
+// que cualquier cosa que hable por un socket.
+
+import "std/base64"
+import "std/error"
+import "std/net"
+// csprng_bytes vive acá (no en std/random, cuyo random_bytes es xorshift64 y NO
+// es criptográficamente seguro). Se IMPORTA el módulo en vez de declarar otro
+// `extern "C" fn nyx_csprng_bytes`: dos módulos declarando el mismo símbolo C
+// chocan con «invalid redefinition» en cualquier programa que importe ambos.
+import "std/webpushcrypto"
+
+// ── Enteros big-endian ──────────────────────────────────────────────
+
+// int32 big-endian: el byte MÁS significativo primero.
+pub fn pg_be32(n: int) -> String {
+    var v: int = n
+    // Un negativo se escribe en complemento a dos de 32 bits: -1 → FF FF FF FF.
+    // El protocolo lo usa como marcador (longitud -1 = NULL en DataRow).
+    if v < 0 { v = v + 4294967296 }
+    return chr((v / 16777216) % 256) + chr((v / 65536) % 256) + chr((v / 256) % 256) + chr(v % 256)
+}
+
+// int16 big-endian: cantidad de columnas, de parámetros, códigos de formato.
+pub fn pg_be16(n: int) -> String {
+    var v: int = n
+    if v < 0 { v = v + 65536 }
+    return chr((v / 256) % 256) + chr(v % 256)
+}
+
+// Lee un int32 big-endian CON SIGNO desde `off`.
+pub fn pg_read_be32(s: String, off: int) -> int {
+    let b0: int = s.charAt(off)
+    let b1: int = s.charAt(off + 1)
+    let b2: int = s.charAt(off + 2)
+    let b3: int = s.charAt(off + 3)
+    var v: int = b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
+    // CON SIGNO: -1 es el marcador de NULL y tiene que volver como -1, no como
+    // 4294967295. Leerlo sin signo convierte «esta columna es NULL» en «esta
+    // columna mide 4 GB», que es el tipo de error que revienta lejos del origen.
+    if v > 2147483647 { v = v - 4294967296 }
+    return v
+}
+
+pub fn pg_read_be16(s: String, off: int) -> int {
+    return s.charAt(off) * 256 + s.charAt(off + 1)
+}
+
+// String terminado en NUL, como los pide el protocolo.
+pub fn pg_cstr(s: String) -> String {
+    return s + chr(0)
+}
+
+// Mensaje completo: tipo + longitud (que se incluye a sí misma, sin el tipo).
+pub fn pg_msg(tipo: String, payload: String) -> String {
+    return tipo + pg_be32(payload.byte_length() + 4) + payload
+}
+
+// ── SCRAM-SHA-256 (RFC 5802 / RFC 7677) ─────────────────────────────
+//
+// El cálculo va SEPARADO del handshake a propósito: un byte mal puesto acá
+// produce «authentication failed» del servidor, sin ninguna pista de dónde
+// estuvo el error. Con el cálculo fijado contra los vectores del RFC (test-395),
+// cualquier fallo posterior es del encuadre o del flujo, no de la criptografía.
+//
+//   SaltedPassword  = PBKDF2(password, salt, i, 32)
+//   ClientKey       = HMAC(SaltedPassword, "Client Key")
+//   StoredKey       = SHA256(ClientKey)
+//   AuthMessage     = client-first-bare + "," + server-first + "," + client-final-sin-proof
+//   ClientSignature = HMAC(StoredKey, AuthMessage)
+//   ClientProof     = ClientKey XOR ClientSignature
+//   ServerKey       = HMAC(SaltedPassword, "Server Key")
+//   ServerSignature = HMAC(ServerKey, AuthMessage)
+//
+// Todo opera sobre BYTES: por eso hmac_sha256_raw/sha256_raw y no las variantes
+// hex. Devuelve [client_proof_b64, server_signature_esperada_b64]; la segunda
+// se compara con lo que manda el servidor —en tiempo constante— para no aceptar
+// un impostor.
+pub fn pg_scram_proof(password: String, salt_b64: String, iters: int,
+                      client_first_bare: String, server_first: String,
+                      client_final_bare: String) -> Array {
+    let salt: String = base64_decode(salt_b64)
+    let salted: String = pbkdf2_hmac_sha256(password, salt, iters, 32)
+
+    let client_key: String = hmac_sha256_raw(salted, "Client Key")
+    let stored_key: String = sha256_raw(client_key)
+    let auth_msg: String = client_first_bare + "," + server_first + "," + client_final_bare
+    let client_sig: String = hmac_sha256_raw(stored_key, auth_msg)
+
+    var proof: String = ""
+    var i: int = 0
+    while i < client_key.byte_length() {
+        proof = proof + chr(client_key.charAt(i) ^ client_sig.charAt(i))
+        i = i + 1
+    }
+
+    let server_key: String = hmac_sha256_raw(salted, "Server Key")
+    let server_sig: String = hmac_sha256_raw(server_key, auth_msg)
+
+    return [base64_encode(proof), base64_encode(server_sig)]
+}
+
+// Extrae un atributo de un mensaje SCRAM ("r=abc,s=xyz,i=4096" → attr "s" = "xyz").
+// Devuelve "" si no está.
+pub fn pg_scram_attr(msg: String, attr: String) -> String {
+    let partes: Array = msg.split(",")
+    var i: int = 0
+    while i < partes.length() {
+        let p: String = partes[i]
+        if p.length() > 1 {
+            if p.substring(0, 2) == attr + "=" {
+                return p.substring(2, p.length())
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// ── Conexión ────────────────────────────────────────────────────────
+
+pub struct PgConn {
+    fd: int,
+    abierta: bool
+}
+
+// Lee un valor de la cadena de conexión estilo libpq:
+//   "host=127.0.0.1 port=5432 dbname=app user=app password=secreto"
+// Se usa el MISMO formato que libpq para que alguien que viene de otro lenguaje
+// no tenga que aprender nada nuevo.
+pub fn pg_conninfo_get(conninfo: String, clave: String, por_defecto: String) -> String {
+    let partes: Array = conninfo.split(" ")
+    var i: int = 0
+    while i < partes.length() {
+        let p: String = partes[i]
+        let eq: int = p.indexOf("=")
+        if eq > 0 {
+            if p.substring(0, eq) == clave {
+                return p.substring(eq + 1, p.length())
+            }
+        }
+        i = i + 1
+    }
+    return por_defecto
+}
+
+// Lee UN mensaje del servidor: devuelve [tipo, payload] (payload SIN el campo
+// de longitud). El protocolo es binario y un read puede volver parcial, por eso
+// se usa try_tcp_read_exact y no try_tcp_read.
+pub fn pg_read_message(fd: int) -> Result<Array, Error> {
+    match try_tcp_read_exact(fd, 5) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(cab) => {
+            let tipo: String = cab.substring(0, 1)
+            // La longitud SE INCLUYE A SÍ MISMA: el payload son 4 bytes menos.
+            let largo: int = pg_read_be32(cab, 1)
+            if largo < 4 {
+                return Result.Err(err_new(0, "db", "mensaje con longitud invalida: " + int_to_string(largo)))
+            }
+            if largo == 4 {
+                return Result.Ok([tipo, ""])
+            }
+            match try_tcp_read_exact(fd, largo - 4) {
+                Result.Err(e2) => { return Result.Err(e2) }
+                Result.Ok(payload) => { return Result.Ok([tipo, payload]) }
+            }
+        }
+    }
+}
+
+// ErrorResponse ('E'): campos [código: 1 byte][valor NUL-terminado]*, terminados
+// por un byte 0. Interesan 'M' (mensaje humano) y 'C' (SQLSTATE).
+pub fn pg_parse_error(payload: String) -> Error {
+    var msg: String = ""
+    var sqlstate: String = ""
+    var i: int = 0
+    while i < payload.byte_length() {
+        let campo: int = payload.charAt(i)
+        if campo == 0 { i = payload.byte_length() }
+        else {
+            var j: int = i + 1
+            while j < payload.byte_length() and payload.charAt(j) != 0 { j = j + 1 }
+            let valor: String = payload.substring(i + 1, j)
+            if campo == 77 { msg = valor }        // 'M'
+            if campo == 67 { sqlstate = valor }   // 'C'
+            i = j + 1
+        }
+    }
+    if msg == "" { msg = "error del servidor sin mensaje" }
+    // El SQLSTATE es alfanumérico ("42P01"), no cabe en el int del Error: viaja
+    // en el mensaje, que es donde el usuario lo va a leer igual.
+    if sqlstate != "" { msg = msg + " [SQLSTATE " + sqlstate + "]" }
+    return err_new(0, "db", msg)
+}
+
+// Conecta y autentica. Soporta SCRAM-SHA-256, que es el método por defecto de
+// todo PostgreSQL moderno (pg_hba.conf lo exige para TCP desde la instalación
+// estándar). Los métodos viejos (md5, trust) no se implementan a propósito:
+// están deprecados y ningún servidor actual los usa por defecto.
+pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error> {
+    let host: String = pg_conninfo_get(conninfo, "host", "127.0.0.1")
+    let port: int = string_to_int(pg_conninfo_get(conninfo, "port", "5432"))
+    let user: String = pg_conninfo_get(conninfo, "user", "postgres")
+    let dbname: String = pg_conninfo_get(conninfo, "dbname", user)
+    let password: String = pg_conninfo_get(conninfo, "password", "")
+
+    match try_tcp_connect(host, port) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "no se pudo conectar a " + host + ":" + int_to_string(port) + ": " + e.msg)) }
+        Result.Ok(fd) => {
+            // StartupMessage: el ÚNICO mensaje sin byte de tipo. Lleva la
+            // versión del protocolo (196608 = 3.0) y pares clave/valor
+            // NUL-terminados, cerrados por un NUL extra.
+            var cuerpo: String = pg_be32(196608)
+            cuerpo = cuerpo + pg_cstr("user") + pg_cstr(user)
+            cuerpo = cuerpo + pg_cstr("database") + pg_cstr(dbname)
+            cuerpo = cuerpo + pg_cstr("client_encoding") + pg_cstr("UTF8")
+            cuerpo = cuerpo + chr(0)
+            let startup: String = pg_be32(cuerpo.byte_length() + 4) + cuerpo
+
+            match try_tcp_write(fd, startup) {
+                Result.Err(e) => { return Result.Err(err_new(0, "db", "startup: " + e.msg)) }
+                Result.Ok(_) => {}
+            }
+
+            match pg_auth_loop(fd, user, password) {
+                Result.Err(e) => { return Result.Err(e) }
+                Result.Ok(_) => { return Result.Ok(PgConn { fd: fd, abierta: true }) }
+            }
+        }
+    }
+}
+
+// Bucle de autenticación: lee mensajes hasta ReadyForQuery ('Z').
+// Cualquier tipo inesperado es un Err explícito, nunca un `continue` mudo: un
+// protocolo binario que ignora lo que no entiende se desincroniza y falla mucho
+// después, en un lugar que no tiene nada que ver.
+fn pg_auth_loop(fd: int, user: String, password: String) -> Result<int, Error> {
+    var listo: bool = false
+    var vueltas: int = 0
+    while not listo {
+        vueltas = vueltas + 1
+        if vueltas > 64 {
+            return Result.Err(err_new(0, "db", "el handshake no termino en 64 mensajes"))
+        }
+        match pg_read_message(fd) {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(m) => {
+                let tipo: String = m[0]
+                let payload: String = m[1]
+                if tipo == "E" {
+                    return Result.Err(pg_parse_error(payload))
+                } else if tipo == "R" {
+                    let sub: int = pg_read_be32(payload, 0)
+                    if sub == 0 {
+                        // AuthenticationOk: sigue el resto del arranque
+                    } else if sub == 10 {
+                        // AuthenticationSASL: el servidor lista mecanismos
+                        match pg_scram_handshake(fd, password, payload) {
+                            Result.Err(e) => { return Result.Err(e) }
+                            Result.Ok(_) => {}
+                        }
+                    } else {
+                        return Result.Err(err_new(0, "db", "metodo de autenticacion no soportado (codigo " + int_to_string(sub) + "): este cliente implementa SCRAM-SHA-256"))
+                    }
+                } else if tipo == "Z" {
+                    listo = true
+                } else if tipo == "S" or tipo == "K" or tipo == "N" {
+                    // ParameterStatus / BackendKeyData / NoticeResponse: se ignoran
+                } else {
+                    return Result.Err(err_new(0, "db", "mensaje inesperado durante el handshake: '" + tipo + "'"))
+                }
+            }
+        }
+    }
+    return Result.Ok(0)
+}
+
+// El intercambio SCRAM propiamente dicho, ya con el AuthenticationSASL leído.
+// Tres mensajes: client-first → server-first → client-final → server-final.
+fn pg_scram_handshake(fd: int, password: String, sasl_payload: String) -> Result<int, Error> {
+    // El nonce del cliente tiene que ser impredecible: es lo que impide que
+    // alguien reuse un intercambio grabado. csprng_bytes viene de std/random.
+    let nonce: String = pg_nonce()
+    let client_first_bare: String = "n=,r=" + nonce
+    let client_first: String = "n,," + client_first_bare
+
+    // SASLInitialResponse: nombre del mecanismo + longitud + payload
+    var ini: String = pg_cstr("SCRAM-SHA-256")
+    ini = ini + pg_be32(client_first.byte_length()) + client_first
+    match try_tcp_write(fd, pg_msg("p", ini)) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "SASLInitialResponse: " + e.msg)) }
+        Result.Ok(_) => {}
+    }
+
+    // AuthenticationSASLContinue ('R' con subcódigo 11): server-first
+    match pg_read_message(fd) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(m) => {
+            let tipo: String = m[0]
+            let payload: String = m[1]
+            if tipo == "E" { return Result.Err(pg_parse_error(payload)) }
+            if tipo != "R" { return Result.Err(err_new(0, "db", "esperaba SASLContinue, llego '" + tipo + "'")) }
+            let sub: int = pg_read_be32(payload, 0)
+            if sub != 11 { return Result.Err(err_new(0, "db", "esperaba SASLContinue (11), llego " + int_to_string(sub))) }
+
+            let server_first: String = payload.substring(4, payload.byte_length())
+            let salt_b64: String = pg_scram_attr(server_first, "s")
+            let iters: int = string_to_int(pg_scram_attr(server_first, "i"))
+            let nonce_comb: String = pg_scram_attr(server_first, "r")
+
+            // El nonce del servidor DEBE empezar con el nuestro: si no, no está
+            // respondiendo a ESTE intercambio.
+            if not nonce_comb.startsWith(nonce) {
+                return Result.Err(err_new(0, "db", "el nonce del servidor no extiende el del cliente"))
+            }
+
+            // c=biws es base64("n,,") — el channel binding vacío
+            let client_final_bare: String = "c=biws,r=" + nonce_comb
+            let pr: Array = pg_scram_proof(password, salt_b64, iters,
+                                           client_first_bare, server_first, client_final_bare)
+            let proof: String = pr[0]
+            let server_sig_esperada: String = pr[1]
+
+            let client_final: String = client_final_bare + ",p=" + proof
+            match try_tcp_write(fd, pg_msg("p", client_final)) {
+                Result.Err(e) => { return Result.Err(err_new(0, "db", "SASLResponse: " + e.msg)) }
+                Result.Ok(_) => {}
+            }
+
+            // AuthenticationSASLFinal ('R' subcódigo 12): verificar la firma
+            match pg_read_message(fd) {
+                Result.Err(e) => { return Result.Err(e) }
+                Result.Ok(m2) => {
+                    let t2: String = m2[0]
+                    let p2: String = m2[1]
+                    if t2 == "E" { return Result.Err(pg_parse_error(p2)) }
+                    if t2 != "R" { return Result.Err(err_new(0, "db", "esperaba SASLFinal, llego '" + t2 + "'")) }
+                    let sub2: int = pg_read_be32(p2, 0)
+                    if sub2 != 12 { return Result.Err(err_new(0, "db", "esperaba SASLFinal (12), llego " + int_to_string(sub2))) }
+
+                    let server_final: String = p2.substring(4, p2.byte_length())
+                    let v: String = pg_scram_attr(server_final, "v")
+                    // En tiempo constante y NO opcional: saltear esta
+                    // verificación es aceptar un servidor impostor que no
+                    // conoce la contraseña.
+                    if not constant_time_eq(v, server_sig_esperada) {
+                        return Result.Err(err_new(0, "db", "la firma del servidor no valida: puede no ser el servidor que dice ser"))
+                    }
+                    return Result.Ok(0)
+                }
+            }
+        }
+    }
+}
+
+// Nonce de 18 bytes en base64, sin comas (el protocolo SCRAM las usa de
+// separador). csprng_bytes es criptográficamente seguro; random_bytes NO lo es
+// (es xorshift64) y acá importa.
+fn pg_nonce() -> String {
+    let crudo: String = csprng_bytes(18)
+    var b64: String = base64_encode(crudo)
+    var salida: String = ""
+    var i: int = 0
+    while i < b64.byte_length() {
+        let c: int = b64.charAt(i)
+        if c != 44 and c != 61 { salida = salida + chr(c) }
+        i = i + 1
+    }
+    return salida
+}
+
+pub fn try_pg_close(conn: PgConn) -> Result<int, Error> {
+    if not conn.abierta { return Result.Ok(0) }
+    // Terminate ('X'): el cierre ordenado. Sin esto el servidor loguea
+    // «unexpected EOF on client connection» en cada desconexión.
+    match try_tcp_write(conn.fd, pg_msg("X", "")) {
+        Result.Err(e) => {}
+        Result.Ok(_) => {}
+    }
+    tcp_close(conn.fd)
+    return Result.Ok(0)
+}
+
+// ── Consultas ───────────────────────────────────────────────────────
+
+// Sentinel de NULL: un String de UN byte 0x00. Los strings de Nyx son
+// binary-safe (llevan longitud explícita), así que un NUL es un valor legal.
+// Se pregunta con pg_is_null() y no comparando a mano: el día que haga falta
+// afinar la representación, se cambia en un solo lugar. Un `bytea` que
+// contenga exactamente ese byte y nada más se leería como NULL — el precio de
+// no cambiar la firma a Option<String>, documentado en el gotcha del módulo.
+pub fn pg_null() -> String {
+    return chr(0)
+}
+
+pub fn pg_is_null(valor: String) -> bool {
+    if valor.byte_length() != 1 { return false }
+    return valor.charAt(0) == 0
+}
+
+// Lee la respuesta a una consulta hasta ReadyForQuery ('Z').
+// Devuelve [filas, afectadas]: `filas` es un Array de filas (cada una un Array
+// de String) y `afectadas` el número que informa CommandComplete.
+fn pg_read_result(fd: int) -> Result<Array, Error> {
+    var filas: Array = []
+    var afectadas: int = 0
+    var listo: bool = false
+    // El primer error se GUARDA y se sigue leyendo hasta ReadyForQuery: cortar
+    // en el medio deja bytes sin consumir en el socket y la conexión queda
+    // desincronizada para la consulta siguiente. Es la diferencia entre «esta
+    // query falló» y «esta conexión ya no sirve».
+    var hubo_error: bool = false
+    var el_error: Error = err_new(0, "db", "")
+
+    while not listo {
+        match pg_read_message(fd) {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(m) => {
+                let tipo: String = m[0]
+                let payload: String = m[1]
+                if tipo == "D" {
+                    // DataRow: int16 con la cantidad de columnas y, por cada
+                    // una, int32 de longitud (-1 = NULL) seguido de los bytes.
+                    let ncols: int = pg_read_be16(payload, 0)
+                    var fila: Array = []
+                    var off: int = 2
+                    var ci: int = 0
+                    while ci < ncols {
+                        let largo: int = pg_read_be32(payload, off)
+                        off = off + 4
+                        if largo < 0 {
+                            fila.push(pg_null())
+                        } else {
+                            fila.push(payload.substring(off, off + largo))
+                            off = off + largo
+                        }
+                        ci = ci + 1
+                    }
+                    filas.push(fila)
+                } else if tipo == "C" {
+                    // CommandComplete: "INSERT 0 2", "UPDATE 3", "SELECT 5".
+                    // El ÚLTIMO número del tag es el de filas afectadas.
+                    afectadas = pg_tag_rows(payload)
+                } else if tipo == "E" {
+                    hubo_error = true
+                    el_error = pg_parse_error(payload)
+                } else if tipo == "Z" {
+                    listo = true
+                }
+                // T (RowDescription), I (EmptyQuery), N (Notice), S, 1, 2, n:
+                // se ignoran a propósito — no aportan al resultado.
+            }
+        }
+    }
+
+    if hubo_error { return Result.Err(el_error) }
+    return Result.Ok([filas, afectadas])
+}
+
+// Número de filas del tag de CommandComplete.
+//
+// Los tags con filas terminan en un número —"INSERT 0 2", "UPDATE 3",
+// "SELECT 5", "DELETE 1"— pero MUCHOS no lo llevan: "DROP TABLE", "CREATE
+// TABLE", "BEGIN", "COMMIT". Convertir la última palabra a ciegas hacía
+// reventar el programa entero con «String 'TABLE' no es un número válido»
+// (medido con DROP TABLE): un DDL correcto mataba el proceso. Sin número, la
+// respuesta honesta es 0 filas afectadas.
+fn pg_tag_rows(payload: String) -> int {
+    var fin: int = 0
+    while fin < payload.byte_length() and payload.charAt(fin) != 0 { fin = fin + 1 }
+    let tag: String = payload.substring(0, fin)
+    let partes: Array = tag.split(" ")
+    if partes.length() == 0 { return 0 }
+    let ultima: String = partes[partes.length() - 1]
+    if not pg_es_numero(ultima) { return 0 }
+    return string_to_int(ultima)
+}
+
+// ¿Es una secuencia de dígitos no vacía? (Los conteos del protocolo nunca son
+// negativos ni traen signo.)
+fn pg_es_numero(s: String) -> bool {
+    if s.byte_length() == 0 { return false }
+    var i: int = 0
+    while i < s.byte_length() {
+        let c: int = s.charAt(i)
+        if c < 48 or c > 57 { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Ejecuta una sentencia sin resultados y devuelve las filas AFECTADAS.
+pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error> {
+    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    match try_tcp_write(conn.fd, pg_msg("Q", pg_cstr(sql))) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
+        Result.Ok(_) => {}
+    }
+    match pg_read_result(conn.fd) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(r) => {
+            let afectadas: int = r[1]
+            return Result.Ok(afectadas)
+        }
+    }
+}
+
+// Ejecuta una consulta y devuelve las filas: Array de filas, cada fila un
+// Array de String en formato TEXT. Un NULL viene como pg_null().
+pub fn try_pg_query(conn: PgConn, sql: String) -> Result<Array, Error> {
+    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    match try_tcp_write(conn.fd, pg_msg("Q", pg_cstr(sql))) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
+        Result.Ok(_) => {}
+    }
+    match pg_read_result(conn.fd) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(r) => {
+            let filas: Array = r[0]
+            return Result.Ok(filas)
+        }
+    }
+}
+
+// ── Consultas parametrizadas (extended query) ───────────────────────
+//
+// Los parámetros viajan POR VALOR en el mensaje Bind, nunca interpolados en el
+// SQL. Ese es el punto entero de tener parametrizadas y la única defensa real
+// contra inyección: el servidor recibe la consulta y los valores por separado,
+// así que un valor con comillas o punto y coma es solo texto.
+//
+// Secuencia: Parse → Bind → Describe → Execute → Sync, y la respuesta trae
+// ParseComplete ('1'), BindComplete ('2'), RowDescription ('T'), DataRow* y
+// ReadyForQuery. Statement y portal SIN NOMBRE (""), formato text (0).
+pub fn try_pg_query_params(conn: PgConn, sql: String, params: Array) -> Result<Array, Error> {
+    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+
+    // Parse: nombre del statement (vacío) + query + 0 tipos declarados
+    // (el servidor los infiere).
+    var parse: String = pg_cstr("") + pg_cstr(sql) + pg_be16(0)
+
+    // Bind: portal "" + statement "" + 0 formatos de parámetro (todos text)
+    var bind: String = pg_cstr("") + pg_cstr("")
+    bind = bind + pg_be16(0)
+    bind = bind + pg_be16(params.length())
+    var i: int = 0
+    while i < params.length() {
+        let p: String = params[i]
+        if pg_is_null(p) {
+            // Longitud -1 = NULL, igual que en DataRow. Sin esto no habría
+            // forma de PASAR un NULL como parámetro.
+            bind = bind + pg_be32(0 - 1)
+        } else {
+            bind = bind + pg_be32(p.byte_length()) + p
+        }
+        i = i + 1
+    }
+    bind = bind + pg_be16(0)   // 0 formatos de resultado → todo text
+
+    // Execute: portal "" + sin límite de filas
+    let execute: String = pg_cstr("") + pg_be32(0)
+
+    let paquete: String = pg_msg("P", parse) + pg_msg("B", bind) + pg_msg("E", execute) + pg_msg("S", "")
+    match try_tcp_write(conn.fd, paquete) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar parametrizada: " + e.msg)) }
+        Result.Ok(_) => {}
+    }
+
+    match pg_read_result(conn.fd) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(r) => {
+            let filas: Array = r[0]
+            return Result.Ok(filas)
+        }
+    }
+}
+
+// Igual que la anterior pero para sentencias sin resultado: devuelve las filas
+// afectadas.
+pub fn try_pg_exec_params(conn: PgConn, sql: String, params: Array) -> Result<int, Error> {
+    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+
+    var parse: String = pg_cstr("") + pg_cstr(sql) + pg_be16(0)
+    var bind: String = pg_cstr("") + pg_cstr("")
+    bind = bind + pg_be16(0)
+    bind = bind + pg_be16(params.length())
+    var i: int = 0
+    while i < params.length() {
+        let p: String = params[i]
+        if pg_is_null(p) {
+            bind = bind + pg_be32(0 - 1)
+        } else {
+            bind = bind + pg_be32(p.byte_length()) + p
+        }
+        i = i + 1
+    }
+    bind = bind + pg_be16(0)
+    let execute: String = pg_cstr("") + pg_be32(0)
+
+    let paquete: String = pg_msg("P", parse) + pg_msg("B", bind) + pg_msg("E", execute) + pg_msg("S", "")
+    match try_tcp_write(conn.fd, paquete) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar parametrizada: " + e.msg)) }
+        Result.Ok(_) => {}
+    }
+
+    match pg_read_result(conn.fd) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(r) => {
+            let afectadas: int = r[1]
+            return Result.Ok(afectadas)
+        }
+    }
+}
+
+// ── Transacciones ───────────────────────────────────────────────────
+
+pub fn try_pg_begin(conn: PgConn) -> Result<int, Error> {
+    return try_pg_exec(conn, "BEGIN")
+}
+
+pub fn try_pg_commit(conn: PgConn) -> Result<int, Error> {
+    return try_pg_exec(conn, "COMMIT")
+}
+
+pub fn try_pg_rollback(conn: PgConn) -> Result<int, Error> {
+    return try_pg_exec(conn, "ROLLBACK")
+}
+
+// ── Migraciones ─────────────────────────────────────────────────────
+//
+// Espejo de sqlite_migrate_init / _version / sqlite_migrate. El estado vive en
+// una tabla del propio servidor, así que dos procesos ven la misma versión.
+
+pub fn pg_migrate_init(conn: PgConn) -> bool {
+    match try_pg_exec(conn, "CREATE TABLE IF NOT EXISTS nyx_migrations (version int PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())") {
+        Result.Ok(_) => { return true }
+        Result.Err(e) => { return false }
+    }
+}
+
+// Versión más alta aplicada, o 0 si no hay ninguna.
+pub fn pg_migrate_version(conn: PgConn) -> int {
+    match try_pg_query(conn, "SELECT coalesce(max(version), 0) FROM nyx_migrations") {
+        Result.Ok(filas) => {
+            if filas.length() == 0 { return 0 }
+            let f: Array = filas[0]
+            let v: String = f[0]
+            if pg_is_null(v) { return 0 }
+            return string_to_int(v)
+        }
+        Result.Err(e) => { return 0 }
+    }
+}
+
+// Aplica una migración SOLO si su versión es mayor que la actual. Idempotente:
+// llamarla dos veces con la misma versión no reaplica el SQL.
+//
+// El SQL y el registro van en UNA transacción: si la migración falla a la
+// mitad, no queda registrada como aplicada. Lo contrario deja una base en un
+// estado que ninguna migración posterior puede arreglar.
+pub fn pg_migrate(conn: PgConn, version: int, name: String, sql: String) -> bool {
+    let actual: int = pg_migrate_version(conn)
+    if version <= actual { return true }
+
+    match try_pg_begin(conn) {
+        Result.Ok(_) => {}
+        Result.Err(e) => { return false }
+    }
+
+    match try_pg_exec(conn, sql) {
+        Result.Err(e) => {
+            let _r = try_pg_rollback(conn)
+            return false
+        }
+        Result.Ok(_) => {}
+    }
+
+    match try_pg_exec_params(conn, "INSERT INTO nyx_migrations (version, name) VALUES ($1, $2)",
+                             [int_to_string(version), name]) {
+        Result.Err(e) => {
+            let _r2 = try_pg_rollback(conn)
+            return false
+        }
+        Result.Ok(_) => {}
+    }
+
+    match try_pg_commit(conn) {
+        Result.Ok(_) => { return true }
+        Result.Err(e) => {
+            let _r3 = try_pg_rollback(conn)
+            return false
+        }
+    }
+}
+
+// ── Pool de conexiones ──────────────────────────────────────────────
+//
+// Un pool simple: N conexiones abiertas y un flag de uso por cada una. Sin
+// bloqueo ni espera — `try_pg_pool_get` devuelve Err si están todas ocupadas,
+// que es más honesto que colgar al llamador sin decirle por qué.
+
+pub struct PgPool {
+    conninfo: String,
+    conns: Array,
+    en_uso: Array
+}
+
+pub fn pg_pool_new(conninfo: String, size: int) -> PgPool {
+    var conns: Array = []
+    var en_uso: Array = []
+    var i: int = 0
+    while i < size {
+        // Las conexiones se abren PEREZOSAMENTE: un pool de 10 no debería
+        // abrir 10 sockets antes de que nadie pida el primero, y un servidor
+        // caído al arrancar no tiene por qué impedir crear el pool.
+        conns.push(0)
+        en_uso.push(0)
+        i = i + 1
+    }
+    return PgPool { conninfo: conninfo, conns: conns, en_uso: en_uso }
+}
+
+// Toma una conexión libre; la abre si es la primera vez que se usa ese slot.
+pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error> {
+    var i: int = 0
+    while i < pool.en_uso.length() {
+        let usado: int = pool.en_uso[i]
+        if usado == 0 {
+            pool.en_uso[i] = 1
+            let fd_guardado: int = pool.conns[i]
+            if fd_guardado > 0 {
+                return Result.Ok(PgConn { fd: fd_guardado, abierta: true })
+            }
+            match try_pg_connect(pool.conninfo) {
+                Result.Ok(c) => {
+                    pool.conns[i] = c.fd
+                    return Result.Ok(c)
+                }
+                Result.Err(e) => {
+                    // El slot vuelve a quedar libre: un fallo de conexión no
+                    // puede consumir un slot del pool para siempre.
+                    pool.en_uso[i] = 0
+                    return Result.Err(e)
+                }
+            }
+        }
+        i = i + 1
+    }
+    return Result.Err(err_new(0, "db", "el pool no tiene conexiones libres (" + int_to_string(pool.en_uso.length()) + " en uso)"))
+}
+
+// Devuelve la conexión al pool. Hace ROLLBACK por las dudas: una conexión
+// devuelta con una transacción abierta contaminaría al próximo que la tome —
+// vería datos a medias y su primer BEGIN fallaría.
+pub fn pg_pool_put(pool: PgPool, conn: PgConn) {
+    let _r = try_pg_rollback(conn)
+    var i: int = 0
+    while i < pool.conns.length() {
+        let fd_guardado: int = pool.conns[i]
+        if fd_guardado == conn.fd {
+            pool.en_uso[i] = 0
+            i = pool.conns.length()
+        } else {
+            i = i + 1
+        }
+    }
+}
+
+// Cierra todas las conexiones abiertas del pool.
+pub fn pg_pool_close(pool: PgPool) {
+    var i: int = 0
+    while i < pool.conns.length() {
+        let fd_guardado: int = pool.conns[i]
+        if fd_guardado > 0 {
+            let _c = try_pg_close(PgConn { fd: fd_guardado, abierta: true })
+            pool.conns[i] = 0
+        }
+        pool.en_uso[i] = 0
+        i = i + 1
+    }
+}

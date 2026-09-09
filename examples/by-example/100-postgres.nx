@@ -1,0 +1,57 @@
+// PostgreSQL: conectar, migrar, insertar con parámetros y leer
+//
+// std/postgres habla el protocolo v3 en Nyx puro: no necesita libpq ni ninguna
+// biblioteca instalada. La autenticación es SCRAM-SHA-256, que es la que exige
+// cualquier PostgreSQL moderno.
+//
+// Para correrlo hace falta un servidor. Con uno local:
+//   sudo -u postgres psql -c "CREATE USER app WITH PASSWORD 'secreto';"
+//   sudo -u postgres psql -c "CREATE DATABASE midb OWNER app;"
+
+import "std/postgres"
+
+fn main() -> int {
+    let conninfo: String = "host=127.0.0.1 port=5432 dbname=midb user=app password=secreto"
+
+    match try_pg_connect(conninfo) {
+        Result.Err(e) => {
+            print("no se pudo conectar: " + e.msg)
+            return 1
+        }
+        Result.Ok(conn) => {
+            // Migraciones: el estado vive en el servidor, así que dos procesos
+            // ven la misma versión. Aplicar dos veces la misma es un no-op.
+            pg_migrate_init(conn)
+            pg_migrate(conn, 1, "crear clientes",
+                       "CREATE TABLE clientes (id serial PRIMARY KEY, nombre text, email text)")
+
+            // Los parámetros van POR VALOR: un nombre con comillas es solo un
+            // nombre, nunca SQL.
+            match try_pg_exec_params(conn,
+                    "INSERT INTO clientes (nombre, email) VALUES ($1, $2)",
+                    ["O'Brien", "obrien@ejemplo.com"]) {
+                Result.Ok(n) => { print("insertadas: " + int_to_string(n)) }
+                Result.Err(e) => { print("insert fallo: " + e.msg) }
+            }
+
+            match try_pg_query(conn, "SELECT id, nombre, email FROM clientes ORDER BY id") {
+                Result.Ok(filas) => {
+                    var i: int = 0
+                    while i < filas.length() {
+                        let f: Array = filas[i]
+                        // Todo llega como texto; un NULL se pregunta con
+                        // pg_is_null, NUNCA comparando con "".
+                        var email: String = "(sin email)"
+                        if not pg_is_null(f[2]) { email = f[2] }
+                        print(f[0] + " · " + f[1] + " · " + email)
+                        i = i + 1
+                    }
+                }
+                Result.Err(e) => { print("select fallo: " + e.msg) }
+            }
+
+            let _c = try_pg_close(conn)
+            return 0
+        }
+    }
+}

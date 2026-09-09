@@ -1,6 +1,21 @@
 // std/toml.nx — TOML configuration file parser for Nyx (v4.9.0)
-// Supports: key = "value", key = 42, key = true, [section], [section.sub]
-// Returns nested Map<String> with dot-notation keys: "section.key" = "value"
+// Supports: key = "value", key = 42, key = true, [section], [section.sub],
+// and [[array of tables]].
+// Returns a FLAT Map<String> with dot-notation keys: "section.key" = "value".
+//
+// Arrays de tablas: cada aparición de [[t]] abre un elemento nuevo y sus claves
+// llevan el índice — [[campos]] dos veces produce "campos.0.nombre" y
+// "campos.1.nombre". El conteo se lee con toml_array_len(parsed, "campos"), que
+// evita adivinar dónde termina la lista. Hasta el 2026-09-08 [[t]] caía en el
+// camino de [t]: toml_parse_section devolvía "[campos" —con el corchete de
+// apertura ADENTRO, porque buscaba el primer ']' desde la posición 1— y las
+// entradas se pisaban entre sí, así que del manifiesto solo sobrevivía la
+// última. Reporte de fricción.
+
+// Sufijo reservado donde toml_parse deja el conteo de cada array de tablas.
+// Lleva un carácter que una clave TOML válida no puede tener a secas, para no
+// colisionar con una clave del usuario.
+const TOML_ARRAY_LEN_SUFFIX: String = ".#len"
 
 // ── Tokenizer ─────────────────────────────────────────────────────────────────
 
@@ -73,16 +88,29 @@ fn toml_is_section(line: String) -> bool {
     return trimmed.charAt(0) == '['
 }
 
+// ¿Es un array de tablas — [[t]] — y no una tabla normal — [t]?
+fn toml_is_array_table(line: String) -> bool {
+    let trimmed = line.trim()
+    if trimmed.length() < 4 { return false }
+    if trimmed.charAt(0) != '[' { return false }
+    return trimmed.charAt(1) == '['
+}
+
 fn toml_parse_section(line: String) -> String {
     let trimmed = line.trim()
     let n = trimmed.length()
     if n < 2 { return "" }
-    // Find closing ]
-    var end = 1
+    // [[t]] abre en el índice 2; [t] en el 1. Sin este salto el nombre salía
+    // con el corchete adentro ("[campos") y toml_get(m, "campos.x") no
+    // encontraba nada, mientras toml_get(m, "[campos.x") sí — el síntoma que
+    // trajo el reporte.
+    var start = 1
+    if toml_is_array_table(trimmed) { start = 2 }
+    var end = start
     while end < n and trimmed.charAt(end) != ']' {
         end = end + 1
     }
-    return trimmed.substring(1, end).trim()
+    return trimmed.substring(start, end).trim()
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -94,6 +122,10 @@ pub fn toml_parse(content: String) -> Map<String> {
     var result: Map<String> = map_new()
     let lines = content.split("\n")
     var section = ""
+    // Cuántos elementos vio cada [[array de tablas]]: la clave de conteo se
+    // guarda en el propio Map (bajo un sufijo reservado) para que
+    // toml_array_len pueda responder sin re-parsear.
+    var arr_counts: Map<int> = map_new()
     var i = 0
     while i < lines.length() {
         let line: String = lines[i]
@@ -105,7 +137,18 @@ pub fn toml_parse(content: String) -> Map<String> {
         } else if trimmed.charAt(0) == '#' {
             i = i + 1
         } else if toml_is_section(trimmed) {
-            section = toml_parse_section(trimmed)
+            let sec_name: String = toml_parse_section(trimmed)
+            if toml_is_array_table(trimmed) {
+                // Cada [[t]] abre un elemento NUEVO: el índice entra en el
+                // prefijo, así que las entradas ya no se pisan.
+                var idx: int = 0
+                if arr_counts.contains(sec_name) { idx = arr_counts.get(sec_name) }
+                section = sec_name + "." + int_to_string(idx)
+                arr_counts.insert(sec_name, idx + 1)
+                result.insert(sec_name + TOML_ARRAY_LEN_SUFFIX, int_to_string(idx + 1))
+            } else {
+                section = sec_name
+            }
             i = i + 1
         } else {
             // Find = sign
@@ -124,6 +167,19 @@ pub fn toml_parse(content: String) -> Map<String> {
         }
     }
     return result
+}
+
+// Cuántos elementos tiene el [[array de tablas]] `name` (0 si no existe).
+// Con esto el manifiesto se recorre sin adivinar dónde termina:
+//   var i = 0
+//   while i < toml_array_len(m, "campos") {
+//       let n = toml_get(m, "campos." + int_to_string(i) + ".nombre", "")
+//       i = i + 1
+//   }
+pub fn toml_array_len(parsed: Map<String>, name: String) -> int {
+    let key: String = name + TOML_ARRAY_LEN_SUFFIX
+    if not parsed.contains(key) { return 0 }
+    return string_to_int(parsed.get(key))
 }
 
 // Get a string value from parsed TOML (returns default if not found)

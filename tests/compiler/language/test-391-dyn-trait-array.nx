@@ -1,0 +1,81 @@
+// test-391 — `dyn Trait` guardado en un Array: el registro de plugins
+//
+// Reporte de fricción 2026-09-08: `r.push(A { v: 1 })` + `for x: dyn Saluda in r`
+// compilaba limpio («build complete», `nyx vet` sin quejas) y SEGFAULTEABA sin
+// imprimir nada, ni siquiera el print anterior al bucle. La variante por índice
+// (`let y: dyn Saluda = r[0]`) directamente no compilaba.
+//
+// Causa: `dyn` solo construía el fat pointer { data, vtable } en el paso de
+// PARÁMETROS. Un `let x: dyn T = concreto` guardaba el struct PELADO, mientras
+// el consumidor —el despacho por vtable y el `for`— asumía el fat pointer: se
+// leía el primer campo del struct como vtable y se saltaba ahí.
+//
+// Este test fija las cuatro formas juntas, porque el bug estaba justo en la
+// costura entre ellas.
+
+trait Saluda {
+    fn hola(self) -> String
+}
+
+struct Es { nombre: String }
+impl Saluda for Es { fn hola(self) -> String { return "hola " + self.nombre } }
+
+struct En { veces: int }
+impl Saluda for En { fn hola(self) -> String { return "hello x" + int_to_string(self.veces) } }
+
+// (1) parámetro dyn — lo que ya andaba antes del fix (control)
+fn saluda_uno(g: dyn Saluda) -> String { return g.hola() }
+
+fn main() -> int {
+    let e: Es = Es { nombre: "mundo" }
+    let n: En = En { veces: 3 }
+
+    // (1) control: parámetro dyn
+    assert(saluda_uno(e) == "hola mundo", "parametro dyn con Es")
+    assert(saluda_uno(n) == "hello x3", "parametro dyn con En")
+
+    // (2) let anotado dyn + llamada por vtable
+    let d: dyn Saluda = e
+    assert(d.hola() == "hola mundo", "let dyn + metodo")
+
+    // (3) el caso del reporte: Array heterogéneo de dyn, recorrido con for
+    var registro: Array = []
+    let d1: dyn Saluda = e
+    let d2: dyn Saluda = n
+    registro.push(d1)
+    registro.push(d2)
+    assert(registro.length() == 2, "el array tiene los dos plugins")
+
+    var vistos: String = ""
+    for x: dyn Saluda in registro {
+        vistos = vistos + x.hola() + "|"
+    }
+    assert(vistos == "hola mundo|hello x3|", "for sobre dyn despacha a cada impl")
+
+    // (4) acceso por índice, que antes ni compilaba
+    let primero: dyn Saluda = registro[0]
+    assert(primero.hola() == "hola mundo", "indice + metodo por vtable")
+    let segundo: dyn Saluda = registro[1]
+    assert(segundo.hola() == "hello x3", "indice al segundo impl")
+
+    // (5) LA FORMA DE RAÍZ: el tipo en el CONTENEDOR. El push upcastea cada
+    // elemento a SU vtable al entrar, así que no hace falta anotar valor por
+    // valor y la lista puede ser HETEROGÉNEA — que es lo que un registro de
+    // plugins necesita y ninguna otra variante resuelve.
+    var plugins: Array<dyn Saluda> = []
+    plugins.push(Es { nombre: "directo" })
+    plugins.push(En { veces: 7 })
+    assert(plugins.length() == 2, "Array<dyn T> guarda los dos")
+
+    var salida: String = ""
+    for p: dyn Saluda in plugins {
+        salida = salida + p.hola() + "|"
+    }
+    assert(salida == "hola directo|hello x7|", "Array<dyn T>: cada impl despacha al suyo")
+
+    let pri: dyn Saluda = plugins[0]
+    assert(pri.hola() == "hola directo", "Array<dyn T> por indice")
+
+    print("OK test-391 dyn trait array")
+    return 0
+}

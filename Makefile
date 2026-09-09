@@ -14,7 +14,7 @@ NO_GC_LIBS   = -lpthread -ldl -lm -lssl -lcrypto
 # for-loop de verificación de compiler/*.ll en bootstrap: arriba.
 BOOTSTRAP_LL := compiler/lexer.ll compiler/parser.ll compiler/types.ll \
                 compiler/semantic.ll compiler/borrow.ll compiler/licm.ll \
-                compiler/codegen.ll compiler/nyx.ll
+                compiler/resolve.ll compiler/codegen.ll compiler/nyx.ll
 
 # ── WASM (wasm32-wasi) — toolchain liviano Debian, sin wasi-sdk ──
 # Requiere: sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19
@@ -112,7 +112,7 @@ recompile:
 
 ## Recompilar todos los módulos y reconstruir el bootstrap
 recompile-all:
-	@for mod in lexer parser types semantic borrow licm codegen nyx; do \
+	@for mod in lexer parser types semantic borrow licm resolve codegen nyx; do \
 	  echo "→ Compilando $$mod.nx ..."; \
 	  cp compiler/$$mod.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/$$mod.ll; \
 	done
@@ -201,6 +201,8 @@ test-ai-first:
 	bash scripts/testing/run_vet_gotchas.sh
 	bash scripts/testing/run_ai_first_tests.sh
 	bash scripts/testing/run_silent_failure_checks.sh
+	bash scripts/testing/run_tooling_gates.sh
+	bash scripts/testing/run_shutdown_test.sh
 	bash scripts/testing/run_codegen_mute_audit.sh
 	bash scripts/testing/run_capabilities_test.sh
 	bash scripts/testing/run_toolchain_recipe_audit.sh
@@ -395,7 +397,7 @@ build-check:
 		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
 		cp script.ll compiler/nyx_check.ll; \
 	fi
-	$(CLANG) compiler/nyx_check.ll compiler/lexer.ll compiler/parser.ll compiler/types.ll compiler/semantic.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_check
+	$(CLANG) compiler/nyx_check.ll compiler/lexer.ll compiler/parser.ll compiler/types.ll compiler/semantic.ll compiler/resolve.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_check
 	@echo "✓ nyx_check listo"
 
 ## Run nyx_check on a file
@@ -418,6 +420,13 @@ build-nyx-build:
 	fi
 	cp compiler/build.nx script.nx
 	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
+	@# REFRESCAR LA SEED, como hacen build-check y build-test: este target
+	@# enlazaba directo desde script.ll y nunca copiaba, así que
+	@# compiler/build.ll —seed TRACKEADA y publicada al mirror— quedó congelada
+	@# en 0.22.10 mientras build.nx ya decía 0.31.0. Los instaladores externos
+	@# construyen DESDE esa seed: un seed stale es un fallo silencioso para
+	@# quien clona el repo público (2026-09-09).
+	cp script.ll compiler/build.ll
 	$(CLANG) script.ll compiler/gotchas_table.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_build
 	@echo "✓ nyx_build listo"
 

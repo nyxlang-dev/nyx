@@ -1,0 +1,46 @@
+// test-395 — cálculo de SCRAM-SHA-256 contra los vectores del RFC 7677
+//
+// Task 3 del arco postgres-wire-v3. Va SIN RED a propósito: un error en el
+// cálculo se manifiesta como «authentication failed» del servidor, que no dice
+// nada de dónde estuvo el problema. Con esto fijado, cualquier fallo posterior
+// del handshake es del encuadre o del flujo, no de la criptografía.
+//
+// Los dos valores esperados se verificaron con python hashlib/hmac antes de
+// escribir el test — un vector inventado hace perder una tarde entera.
+
+import "std/postgres"
+
+fn main() -> int {
+    // RFC 7677 §3, el ejemplo completo: user=user, password=pencil
+    let client_first_bare: String = "n=user,r=rOprNGfwEbeRWgbNEkqO"
+    let server_first: String = "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096"
+    let client_final_bare: String = "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0"
+
+    let r: Array = pg_scram_proof("pencil", "W22ZaJ0SNY7soEsUEjb6gQ==", 4096,
+                                  client_first_bare, server_first, client_final_bare)
+    let proof: String = r[0]
+    let server_sig: String = r[1]
+
+    assert(proof == "dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=", "client proof del RFC 7677")
+    assert(server_sig == "6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=", "server signature del RFC 7677")
+
+    // La verificación del servidor va en tiempo constante: aceptar un
+    // ServerSignature equivocado es aceptar un servidor impostor.
+    assert(constant_time_eq(server_sig, "6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4="), "la firma del servidor valida")
+    assert(not constant_time_eq(server_sig, "6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G5="), "una firma alterada NO valida")
+
+    // ── parseo de atributos del mensaje SCRAM ───────────────────────
+    assert(pg_scram_attr(server_first, "s") == "W22ZaJ0SNY7soEsUEjb6gQ==", "salt del server-first")
+    assert(pg_scram_attr(server_first, "i") == "4096", "iteraciones del server-first")
+    assert(pg_scram_attr(server_first, "r") == "rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0", "nonce combinado")
+    assert(pg_scram_attr(server_first, "z") == "", "atributo ausente da vacio")
+
+    // Una contraseña distinta da un proof distinto (control: no devuelve algo fijo)
+    let otro: Array = pg_scram_proof("lapicera", "W22ZaJ0SNY7soEsUEjb6gQ==", 4096,
+                                     client_first_bare, server_first, client_final_bare)
+    let otro_proof: String = otro[0]
+    assert(otro_proof != proof, "otra password da otro proof")
+
+    print("OK test-395 pg scram")
+    return 0
+}
