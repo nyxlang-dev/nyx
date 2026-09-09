@@ -206,6 +206,7 @@ test-ai-first:
 	bash scripts/testing/run_codegen_mute_audit.sh
 	bash scripts/testing/run_capabilities_test.sh
 	bash scripts/testing/run_toolchain_recipe_audit.sh
+	bash scripts/testing/run_prelude_divergence.sh
 	bash scripts/testing/run_os_layer_ratchet.sh
 	bash scripts/testing/run_template_coherence.sh
 	bash scripts/testing/run_seeded_blocks_compile.sh

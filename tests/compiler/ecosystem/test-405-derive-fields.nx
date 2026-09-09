@@ -1,0 +1,78 @@
+// test-405 — #[derive(Fields)]: el struct se describe a sí mismo
+//
+// Arco struct-campos-reflexion (GO Ottavio 2026-09-09), nacido de un reporte de
+// fricción del equipo de nyxerp: hoy cada modelo se escribe DOS veces —el struct
+// y su descripción a mano— y nada detecta que divergieron. Renombrar un campo
+// compila, pasa `nyx vet`, y la descripción sigue mintiendo.
+//
+// El derive emite tres funciones que comparten un contrato: el ORDEN DE
+// DECLARACIÓN de los campos. `valores()[i]` describe al campo de `campos()[i]`,
+// y `desde_fila` consume esa misma posición. Si alguna ordenara distinto, un ORM
+// escribiría cada dato en la columna del vecino — por eso el test compara las
+// tres entre sí, y no cada una contra una constante.
+
+#[derive(Fields)]
+struct Contacto {
+    nombre: String,
+    rif: String,
+    activo: bool,
+    saldo: int,
+    tasa: float
+}
+
+fn main() -> int {
+    // (1) el esquema: nombre y tipo, en orden de declaración, SIN instancia
+    let campos: Array = Contacto_campos()
+    assert(campos.length() == 5, "campos() devuelve un elemento por campo")
+    assert(campos[0] == "nombre:String", "nombre y tipo del primer campo")
+    assert(campos[1] == "rif:String", "segundo campo")
+    assert(campos[2] == "activo:bool", "el bool se describe como bool")
+    assert(campos[3] == "saldo:int", "cuarto campo")
+    assert(campos[4] == "tasa:float", "el float también se describe")
+
+    // (2) los valores, alineados por índice con el esquema
+    let c = Contacto { nombre: "El Tornillo", rif: "J-29643190-6", activo: true, saldo: 1500, tasa: 16.0 }
+    let vals: Array = Contacto_valores(c)
+    assert(vals.length() == campos.length(), "valores() y campos() tienen el mismo largo")
+    assert(vals[0] == "El Tornillo", "el String viaja tal cual")
+    assert(vals[1] == "J-29643190-6", "segundo valor")
+    assert(vals[2] == "true", "el bool es 'true', no '1'")
+    assert(vals[3] == "1500", "el int se serializa en decimal")
+
+    // (3) la vuelta: una fila reconstruye el struct
+    let recuperado: Contacto = Contacto_desde_fila(vals)
+    assert(recuperado.nombre == c.nombre, "ida y vuelta: nombre")
+    assert(recuperado.rif == c.rif, "ida y vuelta: rif")
+    assert(recuperado.activo == c.activo, "ida y vuelta: bool")
+    assert(recuperado.saldo == c.saldo, "ida y vuelta: int")
+    assert(recuperado.tasa == c.tasa, "ida y vuelta: float")
+
+    // (3b) el bool en su OTRO valor. Sin este caso, las aserciones de arriba
+    // pasarían igual si `desde_fila` emitiera `true` constante en vez de
+    // comparar contra el texto: un test que solo prueba `true` no distingue
+    // una comparación correcta de una que siempre dice que sí.
+    let apagado = Contacto { nombre: "n", rif: "r", activo: false, saldo: 0, tasa: 0.0 }
+    let vf: Array = Contacto_valores(apagado)
+    assert(vf[2] == "false", "el bool en false se serializa como 'false'")
+    let rf: Contacto = Contacto_desde_fila(vf)
+    assert(rf.activo == false, "y vuelve como false, no como true")
+
+    // (4) el caso del reporte: la descripción NO se mantiene a mano, así que no
+    // puede divergir del struct. Se verifica por construcción — campos() sale
+    // del mismo lugar del que sale el struct.
+    //
+    // Los valores se ligan a `String` antes de compararlos, y NO es cosmético:
+    // comparar dos lecturas de slots sin tag (`a[i] == b[j]`) compara los
+    // PUNTEROS, no los textos. Es la familia «slots Array sin tag» ya fichada,
+    // no algo de este derive — la concatenación sí quedó arreglada hoy.
+    let vals2: Array = Contacto_valores(recuperado)
+    let b1: String = vals2[2]
+    let b0: String = vals[2]
+    assert(b1 == b0, "el bool sobrevive el ciclo completo")
+    let i1: String = vals2[3]
+    let i0: String = vals[3]
+    assert(i1 == i0, "y el int también")
+
+    print("OK test-405 derive fields")
+    return 0
+}

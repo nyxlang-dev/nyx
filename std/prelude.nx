@@ -324,6 +324,7 @@ pub fn sort_int(arr: Array) -> Array {
 pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array {
     let n = arr.length()
     if n <= 1 { return arr }
+    // Insertion sort — estable, simple, eficiente para arrays pequenos
     var i = 1
     while i < n {
         let key = arr[i]
@@ -345,6 +346,7 @@ pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array {
 }
 
 // str_compare: compara dos strings lexicograficamente
+// retorna negativo si a < b, 0 si iguales, positivo si a > b
 pub fn str_compare(a: String, b: String) -> int {
     let la = a.length()
     let lb = b.length()

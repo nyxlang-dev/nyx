@@ -2,7 +2,7 @@
 
 > Comparativa honesta. **La versión NORMATIVA es [COMPARISON.md](COMPARISON.md) (inglés)** —
 > esta traducción se sincroniza a mano y puede atrasarse en la prosa.
-> Sync: 2026-08-30.
+> Sync: 2026-09-09.
 > Última actualización de fondo: 2026-07-15 en la normativa (Seguridad de memoria 2→3 por el
 > borrow checker; Concurrencia 3→4 por async real v0.19-v0.20; Rendimiento 3→4 por paridad
 > de cómputo con C bajo medición justa + internado + LICM). Auditoría original: 2026-03-24.
@@ -108,7 +108,7 @@
 - Un solo desarrollador, sin comunidad
 - Toolchain portable instalable via `curl -sSf https://nyxlang.com/install.sh | sh` (se instala en `~/.nyx/`)
 - Package manager funcional: `nyx init`, `nyx build`, `nyx run`, `nyx test` funcionan desde cualquier directorio
-- 8 paquetes publicados como librerías PM (kv, serve, proxy, queue, db, http2, edit, shell)
+- 6 paquetes publicados como librerías PM (kv, proxy, queue, db, edit, shell), cada uno en su propio repo; http2 (2026-07-05) y serve (2026-09-03) absorbidos al core como `std/http2` y `std/serve` + `std/template` + `std/multipart`
 - CI público, playground en nyxlang.com, VS Code extension
 - Todavía: un solo desarrollador, sin adopción externa, SPEC parcialmente desactualizado
 
@@ -124,13 +124,14 @@
   (limitación de closure-capture)
 
 ### Full-Stack nativo: 4
-- 8 productos como librerías PM: nyx-kv, nyx-serve, nyx-proxy, nyx-queue, nyx-db, nyx-http2, nyx-edit, nyx-shell
+- 6 productos como librerías PM, cada uno extraído a su propio repo: nyx-kv, nyx-proxy, nyx-queue, nyx-db, nyx-edit, nyx-shell; http2 y serve absorbidos al core (`std/http2`, `std/serve`)
 - 2 servicios en producción: gateway (HTTPS :443, routing SNI), nyxkv (RESP2 :6380 con TLS)
-- 4 landing sites bilingues (sites/*.com/) consumiendo nyx-serve como paquete
+- Landing sites bilingues (repo ~/nyx/web/sites) que consumen `std/serve` directo de la stdlib (sin vendoring desde 2026-09-03)
 - Benchmarks documentados: HTTP 73K req/s (multi-threaded), KV 6.76M SET ops/s / 21.57M GET ops/s
-- fibonacci(40) a 0.87x C (Nyx supera a C en cómputo puro)
-- Web playground vivo en nyxlang.com/playground
-- Gap restante: sin browser target, sin sandboxing, async/await es sintáctico (no paralelismo real)
+- Benchmarks de core re-medidos en v0.20.1+LICM con medición justa (el init lazy del GC excluido con warmup): primos 0.80x C (Nyx más rápido), fibonacci ~1.02x, map ~1.0x, strings ~1.1x — **paridad o mejor en todo el cómputo medido** (el histórico «~11-18x strings» era casi todo el artefacto del init del GC dentro de la región medida)
+- Bases de datos sin salir del lenguaje: `std/sqlite` (SQL embebido) y, desde v0.31.0, `std/postgres` — un **cliente PostgreSQL nativo**: protocolo wire v3 hablado en Nyx puro sobre `std/net`, autenticación SCRAM-SHA-256, consultas parametrizadas (los valores van en el mensaje Bind, nunca interpolados en el SQL), transacciones, migraciones y pool de conexiones, **sin libpq ni ninguna dependencia externa**. `#[derive(Fields)]` cierra el lazo: un struct describe su propio esquema, así el modelo se escribe una vez y no dos
+- Web playground vivo en nyxlang.com/playground; target real wasm32-wasi para el browser (extern "js", std/dom, std/browser)
+- Gap restante: sin sandboxing; async/await ya es real (goroutines stackful) y el target de browser está entregado
 
 ### Curva de aprendizaje: 3
 - Sintaxis familiar (C/Rust-like)
@@ -234,6 +235,7 @@
 - Pattern matching, ADTs, operator overloading — Go no tiene
 - Closures retornables con captura
 - Derive macros, inline assembly
+- Un cliente PostgreSQL **sin dependencias externas** — `std/postgres` habla el wire v3 en Nyx puro, donde `database/sql` de Go necesita un driver de terceros (`pq`/`pgx`)
 
 **Dónde Nyx es comparable:**
 - Goroutines (M:N scheduler) — ambos tienen modelos similares
@@ -246,9 +248,9 @@
 - Go tiene go build, go test, go vet integrados y confiables
 - Cross-compilation trivial en Go
 - Docker, Kubernetes, Terraform escritos en Go — ecosistema probado en producción
-- async/await de Nyx es falso; goroutines de Go son reales
+- `database/sql` es un ecosistema de drivers; Nyx tiene dos clientes (`std/sqlite`, `std/postgres`) y ninguna capa de drivers enchufables
 
-**Qué se necesita para superarlo:** async real (alto), stdlib probada en producción (alto), ecosystem (muy alto)
+**Qué se necesita para superarlo:** stdlib probada en producción (alto), ecosystem (muy alto). Async ya salió de esta lista — `await`/`spawn` son goroutines stackful reales desde v0.19 (ver Concurrencia arriba)
 
 ---
 
@@ -454,7 +456,7 @@
 - GC automático (Zig no tiene GC ni manejo automático)
 - Strings como tipo nativo
 - try/catch vs error handling manual
-- Stdlib más completa (JSON, HTTP, WebSocket, SQLite)
+- Stdlib más completa (JSON, HTTP, WebSocket, SQLite, PostgreSQL nativo)
 
 **Dónde Nyx es comparable:**
 - Compilación a nativo via LLVM
@@ -539,8 +541,8 @@
 - **Self-hosting showcase**: demostración técnica impresionante
 
 ### ¿Qué falta para v1.0.0?
-1. Fix bugs críticos (tipos, .length, generics, nested structs)
-2. Documentación consistente y completa
-3. async/await real o documentar honestamente que es sintáctico
+1. Fix de los bugs de primitivos que quedan (aristas de u8/u16/char, nested structs); el contrato `.length`/bytes, la monomorfización de generics y el async real ya están
+2. Documentación consistente y completa (SPEC vs compilador entregado)
+3. Borrow checker: inferencia de lifetimes completa + gating sobre código con GC (hoy es un subconjunto sólido, lint opt-in)
 4. Adopción externa (comunidad, usuarios reales, Stripe/dashboard)
 5. Enforcement de tiers (features Pro/Enterprise con gate real)

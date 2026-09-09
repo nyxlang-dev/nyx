@@ -138,6 +138,13 @@ TESTS=(
   "tests/compiler/errors/test-throw-payload-not-string.nx|NYX1026"
   "tests/compiler/errors/test-panic-payload-enum.nx|NYX1026"
   "tests/compiler/errors/test-catch-typed-not-string.nx|NYX1027"
+  # 2026-09-09: los dos silencios de la maquinaria de derives, encontrados al
+  # investigar el derive de campos que pide el ORM. Un derive desconocido se
+  # ignoraba sin decir nada (el usuario lo descubría como NYX1002 en el sitio de
+  # uso), y un derive sobre un struct genérico declaraba el símbolo igual y
+  # explotaba en el ENLAZADO, después de un `nyx check` en verde.
+  "tests/compiler/errors/test-derive-desconocido.nx|NYX1029"
+  "tests/compiler/errors/test-derive-sobre-generico.nx|NYX1030"
   # I-1 de la review final: la variante UNITARIA (`Color.Red`) parsea como
   # field_access, no como method_call — se escapaba del chequeo y el binario
   # segfaulteaba. Las dos formas (`panic` y `throw`) tienen que dar NYX1026.
@@ -1584,6 +1591,21 @@ if [ "$n7_rc" -ne 0 ] && echo "$n7_out" | grep -qF "NYX2007" && echo "$n7_out" |
 else
   printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2007 nombrando 'push')\n" "$n7_rc"
   echo "$n7_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+# NYX2013 (arco struct-campos-reflexion): el límite de tipos de #[derive(Fields)]
+# tiene que ser un ABORTO de codegen, no una aproximación — el Display derivado
+# aplana un campo Array/Map/struct a la cadena literal "ptr", y heredarlo haría
+# que un ORM escribiera "ptr" en una columna de la base. Va acá y NO en la tabla
+# de arriba porque semantic PASA: el que corta es el generador, así que no hay
+# "check FAILED" que buscar — la prueba es el exit code.
+name="codegen-nyx2013-derive-fields-no-primitivo"
+n13_out=$(NYX_SRC=tests/compiler/errors/test-derive-fields-campo-no-primitivo.nx ./nyx_bootstrap 2>&1); n13_rc=$?
+if [ "$n13_rc" -ne 0 ] && echo "$n13_out" | grep -qF "NYX2013" && echo "$n13_out" | grep -qF "etiquetas"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2013 nombrando el campo)\n" "$n13_rc"
+  echo "$n13_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
 # NYX2007 en el MISMO bloque field_access, ronda 2: `length` sobre un campo Map

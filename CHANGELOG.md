@@ -164,6 +164,50 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **`std/sqlite`: tres silently-wrong reportados desde un ERP, verificados con valores reales
+  antes de tocar nada.** (1) **Truncamiento a 32 bits.** `runtime/sqlite_adapter.c` usaba
+  `sqlite3_column_int`/`sqlite3_bind_int`: todo valor ≥ 2³¹ se truncaba SIN ninguna señal, tanto
+  al leer como al escribir. Medido: se guardaba `5000000000` y volvía `705032704`. Lo peor es
+  que la vía que la documentación recomendaba como la SEGURA para columnas numéricas
+  (`sqlite_query_int`/`sqlite_query_one_int`) era justo la que truncaba — un importe en centavos
+  o un id grande de un ERP cae de lleno en ese rango. Ahora las cuatro funciones (lectura y
+  bind, columna y parámetro) usan las variantes `_int64`. (2) **`NULL` indistinguible del texto
+  `'NULL'`.** Una celda SQL NULL llegaba como la cadena `"NULL"`, idéntica byte a byte a una
+  columna TEXT que dijera literalmente eso: dos valores distintos colapsaban en uno, sin señal.
+  Ahora hay un centinela explícito — `sqlite_null()`/`sqlite_is_null()` —, la MISMA
+  representación (un String de un byte `0x00`) que `std/postgres` ya usa (`pg_null`/
+  `pg_is_null`, gotcha `pg-null-sentinel`): quien migra de una base a otra no aprende una tercera
+  convención. El centinela viaja en los dos sentidos — también se puede PASAR un NULL como
+  parámetro con `sqlite_bind_cell`, donde antes se ligaba como texto y llegaba a la base como
+  cadena vacía. (3) **Leer una celda como `int` devolvía el PUNTERO como número.** La causa raíz
+  no es de `sqlite` — es la lectura de slots de `Array` sin tag, fichada aparte —, pero la vía
+  tipada (`sqlite_query_int`) ahora sí es la salida segura que la doc siempre dijo que era.
+  Test: `test-406-sqlite-tipos-null`, gotcha `sqlite-null-sentinel`.
+- **Los dos silencios de la maquinaria de `#[derive(...)]`.** Encontrados al investigar el derive de campos que hace falta para
+  escribir un ORM; los dos existían desde antes y ninguno daba un error. (1) Un derive **desconocido** se ignoraba sin decir nada:
+  `#[derive(Displai)]` compilaba, no emitía nada, y el usuario descubría el problema como un `NYX1002` en el sitio de uso
+  —«'X_to_string' no declarada»— sin ninguna pista de que el derive había sido descartado. Ahora es **NYX1029**, con did-you-mean
+  sobre los siete derives válidos. (2) Un derive sobre un struct **genérico** mentía dos veces: el checker declaraba el símbolo sin
+  mirar los type params y el codegen ni siquiera llama a los derives para un template, así que `Caja_default()` pasaba `nyx check`
+  en verde y fallaba recién al ENLAZAR con «undefined symbol», sin línea del usuario. Ahora es **NYX1030** en la declaración.
+  Los dos sitios que registraban derives (struct pelado y `pub struct`) estaban duplicados y ahora comparten un solo helper — la
+  duplicación era justo la que produjo, tres veces en dos días, un fix aplicado a la mitad de los caminos.
+- **Un campo `bool` en `Debug`/`Display` derivados se mostraba como `1`/`0`.** El campo es `bool` y la salida decía otra cosa,
+  mientras `print(un_bool)` fuera de un derive ya imprimía `true`/`false` por el mismo helper del runtime. Las dos ramas —`Debug` y
+  `Display`— tenían el código duplicado y las dos se corrigieron.
+- **Leer una TUPLA desde el payload de un genérico devolvía 0, en silencio.** `fn f() ->
+  Result<(int, String), E>` + `match` + `par.0` daba `0` con el dato INTACTO en memoria: el
+  programa compilaba, enlazaba, disparaba el arm correcto y mentía en la lectura. Causa raíz: un
+  guard del codegen (A5, agosto 2026) degradaba a propósito cualquier payload con sintaxis de
+  tupla al camino histórico —el i64 crudo— y después el indexador de tuplas no encontraba la
+  clave, imprimía un error que nadie mira y devolvía el literal `i64 0`. Las DOS premisas del
+  guard ya eran falsas: el nombre inventado que temía lo producía el splitter de type-args roto
+  (arreglado en test-403), y las tuplas SÍ se registran como tipo. El guard se retira y
+  `ensure_tuple_struct_registered` garantiza el tipo antes de decodificar —en `decode_payload`,
+  que es donde cubre de una a los seis callers (`?`, `unwrap`, `unwrap_or`, `expect_err`, el
+  `match` y la construcción)— en vez de depender del ORDEN de declaración, que lo habría vuelto
+  intermitente. test-404 cubre 2 y 3 campos, `Option` y el arm hermano; test-367, que documentaba
+  la degradación, ahora documenta que no volvió.
 - **`dyn Trait` funciona fuera del paso de parámetros: `let` anotado, `Array` y acceso por índice**
   (reporte de fricción 2026-09-08). Guardar structs en un `Array` y recorrerlo con
   `for x: dyn T in arr` compilaba limpio —`nyx vet` sin quejas, «build complete»— y SEGFAULTEABA

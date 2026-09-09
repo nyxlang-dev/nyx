@@ -67,6 +67,9 @@ SOLO_COMPILA=(
     "80-llm-basic" "81-llm-stream" "82-http-download"
     # necesita un PostgreSQL con la base y el usuario de la receta
     "100-postgres"
+    # mismo servidor/base que 100-postgres (ver ese archivo para montarlo
+    # local): sin él, #[derive(Fields)] compila igual pero la conexión falla
+    "103-orm-sin-mapeo"
 )
 
 en_lista_solo_compila() {

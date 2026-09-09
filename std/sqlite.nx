@@ -8,6 +8,14 @@
 // de esta rama: try_sqlite_open/exec/query/query_named. begin/commit/
 // rollback/exec_int/exec_str/query_int quedan afuera (ficha E5.5b, mismo
 // patrón mecánico) — las centinelas actuales siguen intactas.
+//
+// Corrección de datos (2026-09-09): dos silently-wrong reportados desde un ERP.
+// (a) La vía TIPADA truncaba a 32 bits — sqlite3_column_int/bind_int — y
+//     5000000000 volvía como 705032704, sin señal. Ahora usa las variantes
+//     _int64 (runtime/sqlite_adapter.c).
+// (b) Una celda SQL NULL volvía como la cadena "NULL", indistinguible de un
+//     TEXT que dijera "NULL". Ahora hay centinela explícito: sqlite_null() /
+//     sqlite_is_null(), la MISMA representación que pg_null/pg_is_null.
 
 import "std/error"
 
@@ -22,13 +30,62 @@ extern "C" fn nyx_sqlite_column_count(stmt: *int) -> int
 extern "C" fn nyx_sqlite_column_str(stmt: *int, col: int) -> String
 extern "C" fn nyx_sqlite_column_name(stmt: *int, col: int) -> String
 extern "C" fn nyx_sqlite_column_int(stmt: *int, col: int) -> int
+extern "C" fn nyx_sqlite_column_is_null(stmt: *int, col: int) -> int
 extern "C" fn nyx_sqlite_bind_str(stmt: *int, idx: int, val: String) -> int
+extern "C" fn nyx_sqlite_bind_null(stmt: *int, idx: int) -> int
 extern "C" fn nyx_sqlite_bind_int(stmt: *int, idx: int, val: int) -> int
 extern "C" fn nyx_sqlite_bind_double(stmt: *int, idx: int, val: float) -> int
 extern "C" fn nyx_sqlite_column_float(stmt: *int, col: int) -> float
 extern "C" fn nyx_sqlite_last_insert_id(db: *int) -> int
 extern "C" fn nyx_sqlite_changes(db: *int) -> int
 extern "C" fn nyx_sqlite_errmsg(db: *int) -> String
+
+// === NULL: centinela explícito (mismo patrón que std/postgres) ===
+//
+// Antes, una celda SQL NULL volvía como la cadena "NULL" — indistinguible de
+// un TEXT que dijera literalmente "NULL". Dos valores distintos colapsaban en
+// uno y la información se perdía sin ninguna señal.
+//
+// La representación es la MISMA que en std/postgres (pg_null/pg_is_null): un
+// String de UN byte 0x00. Los strings de Nyx son binary-safe (llevan longitud
+// explícita), así que un NUL es un valor legal. Las dos bases se usan igual a
+// propósito: quien migra de una a otra no tiene que aprender una tercera
+// convención.
+//
+// Se pregunta con sqlite_is_null() y NUNCA comparando a mano: el día que haya
+// que afinar la representación, se cambia en un solo lugar. La única arista es
+// un BLOB/TEXT que contenga exactamente ese byte y nada más — el precio de
+// mantener las filas como Array de String en vez de Option<String>.
+/// Centinela de SQL NULL: el String de un byte 0x00 que devuelven las celdas nulas. Para PASAR un NULL como parámetro también.
+pub fn sqlite_null() -> String {
+    return chr(0)
+}
+
+/// true si la celda es SQL NULL. La ÚNICA forma correcta de preguntarlo: `v == ""` confunde un NULL con un texto vacío.
+pub fn sqlite_is_null(valor: String) -> bool {
+    if valor.byte_length() != 1 { return false }
+    return valor.charAt(0) == 0
+}
+
+// Lee la celda `col` del stmt como String, con la centinela de NULL. Privada:
+// es el único punto por el que las filas del módulo materializan una celda,
+// para que la regla de NULL no se pueda olvidar en una de las seis copias del
+// loop de step.
+fn sqlite_cell(stmt: *int, col: int) -> String {
+    if nyx_sqlite_column_is_null(stmt, col) == 1 {
+        return sqlite_null()
+    }
+    return nyx_sqlite_column_str(stmt, col)
+}
+
+// Liga el parámetro `idx` (1-based). Simétrico a sqlite_cell: la centinela de
+// NULL viaja también de ida, o `sqlite_null()` se guardaría como texto vacío.
+fn sqlite_bind_cell(stmt: *int, idx: int, valor: String) -> int {
+    if sqlite_is_null(valor) {
+        return nyx_sqlite_bind_null(stmt, idx)
+    }
+    return nyx_sqlite_bind_str(stmt, idx, valor)
+}
 
 // High-level wrappers
 
@@ -50,7 +107,7 @@ pub fn sqlite_exec(db: *int, sql: String) -> bool {
 }
 
 // Query: returns Array of rows, each row is an Array of String values
-/// Array de filas; cada fila es Array y TODA celda es String — incluidas columnas INTEGER (pasar por string_to_int; leerla como int devuelve el PUNTERO como número, silencioso). Celda SQL NULL llega como la cadena "NULL". Para ints reales: sqlite_query_int.
+/// Array de filas; cada fila es Array y TODA celda es String, incluidas las columnas INTEGER: convertir con string_to_int(), o pedir la columna por la vía tipada sqlite_query_int/sqlite_query_one_int (int de 64 bits reales). Anotar la celda como `int` NO la convierte: lee los bits del String. Una celda SQL NULL vuelve como sqlite_null() — preguntar con sqlite_is_null(), nunca con `== ""`.
 pub fn sqlite_query(db: *int, sql: String) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var rows = []
@@ -62,7 +119,7 @@ pub fn sqlite_query(db: *int, sql: String) -> Array {
             var row = []
             var c = 0
             while c < ncols {
-                let val: String = nyx_sqlite_column_str(stmt, c)
+                let val: String = sqlite_cell(stmt, c)
                 row.push(val)
                 c = c + 1
             }
@@ -76,7 +133,7 @@ pub fn sqlite_query(db: *int, sql: String) -> Array {
 }
 
 // Query returning column names (first call) then rows
-/// Como sqlite_query pero ANTEPONE una fila de headers: N+1 elementos, la fila 0 son los nombres de columna.
+/// Como sqlite_query pero ANTEPONE una fila de headers: N+1 elementos, la fila 0 son los nombres de columna. Mismas reglas de celda: String siempre, NULL vía sqlite_is_null().
 pub fn sqlite_query_named(db: *int, sql: String) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var result = []
@@ -100,7 +157,7 @@ pub fn sqlite_query_named(db: *int, sql: String) -> Array {
             var row = []
             var c = 0
             while c < ncols {
-                let val: String = nyx_sqlite_column_str(stmt, c)
+                let val: String = sqlite_cell(stmt, c)
                 row.push(val)
                 c = c + 1
             }
@@ -225,7 +282,7 @@ pub fn try_sqlite_query(db: *int, sql: String) -> Result<Array, Error> {
             var row = []
             var c = 0
             while c < ncols {
-                let val: String = nyx_sqlite_column_str(stmt, c)
+                let val: String = sqlite_cell(stmt, c)
                 row.push(val)
                 c = c + 1
             }
@@ -284,7 +341,7 @@ pub fn try_sqlite_query_named(db: *int, sql: String) -> Result<Array, Error> {
             var row = []
             var c = 0
             while c < ncols {
-                let val: String = nyx_sqlite_column_str(stmt, c)
+                let val: String = sqlite_cell(stmt, c)
                 row.push(val)
                 c = c + 1
             }
@@ -323,7 +380,7 @@ pub fn sqlite_rollback(db: *int) -> bool {
 // === Typed query results ===
 
 // Query returning rows of int values
-/// Filas de int REALES (sqlite3_column_int) — la vía tipada para columnas numéricas, sin string_to_int.
+/// Filas de int REALES de 64 bits (sqlite3_column_int64) — la vía tipada para columnas numéricas, sin string_to_int. Una columna no numérica da 0, y un NULL también: si hay que distinguirlos, leer esa columna con sqlite_query y sqlite_is_null().
 pub fn sqlite_query_int(db: *int, sql: String) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var rows = []
@@ -349,7 +406,7 @@ pub fn sqlite_query_int(db: *int, sql: String) -> Array {
 }
 
 // Query returning single int value (first column of first row)
-/// Primera columna de la primera fila como int real; 0 si no hay filas.
+/// Primera columna de la primera fila como int real de 64 bits; 0 si no hay filas (y 0 también si la celda es NULL — para distinguirlos, sqlite_query_one_str + sqlite_is_null()).
 pub fn sqlite_query_one_int(db: *int, sql: String) -> int {
     let stmt = nyx_sqlite_prepare(db, sql)
     let rc = nyx_sqlite_step(stmt)
@@ -362,13 +419,13 @@ pub fn sqlite_query_one_int(db: *int, sql: String) -> int {
 }
 
 // Query returning single string value (first column of first row)
-/// Primera columna de la primera fila como String; "" si no hay filas. NULL llega como "NULL".
+/// Primera columna de la primera fila como String; "" si no hay filas. Una celda SQL NULL vuelve como sqlite_null() — preguntar con sqlite_is_null().
 pub fn sqlite_query_one_str(db: *int, sql: String) -> String {
     let stmt = nyx_sqlite_prepare(db, sql)
     let rc = nyx_sqlite_step(stmt)
     var result: String = ""
     if rc == 1 {
-        result = nyx_sqlite_column_str(stmt, 0)
+        result = sqlite_cell(stmt, 0)
     }
     nyx_sqlite_finalize(stmt)
     return result
@@ -377,14 +434,14 @@ pub fn sqlite_query_one_str(db: *int, sql: String) -> String {
 // === Multi-parameter binding ===
 
 // Execute with int + string parameters (e.g., UPDATE ... SET name=? WHERE id=?)
-/// TODOS los params como String (binding textual), también los numéricos: ["7", "ana"] y no [7, "ana"].
+/// TODOS los params como String (binding textual), también los numéricos: ["7", "ana"] y no [7, "ana"]. Para pasar un SQL NULL, sqlite_null() en esa posición.
 pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool {
     let stmt = nyx_sqlite_prepare(db, sql)
     var i: int = 0
     while i < params.length() {
         // Bind all params as strings (most flexible)
         let val: String = params[i]
-        nyx_sqlite_bind_str(stmt, i + 1, val)
+        sqlite_bind_cell(stmt, i + 1, val)
         i = i + 1
     }
     nyx_sqlite_step(stmt)
@@ -393,13 +450,13 @@ pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool {
 }
 
 // Query with string parameters
-/// Query con params (todos String, binding textual). Celdas del resultado: String, como sqlite_query.
+/// Query con params (todos String, binding textual; sqlite_null() para pasar un SQL NULL). Celdas del resultado: String, como sqlite_query — NULL vía sqlite_is_null().
 pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array {
     let stmt = nyx_sqlite_prepare(db, sql)
     var i: int = 0
     while i < params.length() {
         let val: String = params[i]
-        nyx_sqlite_bind_str(stmt, i + 1, val)
+        sqlite_bind_cell(stmt, i + 1, val)
         i = i + 1
     }
     var rows = []
@@ -411,7 +468,7 @@ pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array {
             var row = []
             var c = 0
             while c < ncols {
-                let val: String = nyx_sqlite_column_str(stmt, c)
+                let val: String = sqlite_cell(stmt, c)
                 row.push(val)
                 c = c + 1
             }

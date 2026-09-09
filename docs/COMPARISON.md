@@ -89,7 +89,7 @@
 - Single developer, no community
 - Portable toolchain installable via `curl -sSf https://nyxlang.com/install.sh | sh` (installs to `~/.nyx/`)
 - Package manager functional: `nyx init`, `nyx build`, `nyx run`, `nyx test` work from any directory
-- 7 packages published as PM libraries (kv, serve, proxy, queue, db, edit, shell), each in its own repo; http2 absorbed into the core as `std/http2`
+- 6 packages published as PM libraries (kv, proxy, queue, db, edit, shell), each in its own repo; http2 (2026-07-05) and serve (2026-09-03) absorbed into the core as `std/http2` and `std/serve` + `std/template` + `std/multipart`
 - Public CI, playground at nyxlang.com, VS Code extension
 - Still: single developer, no external adoption, SPEC partially outdated
 
@@ -101,11 +101,12 @@
 - However: `spawn` cannot directly capture outer-scope variables (closure-capture limitation)
 
 ### Native Full-Stack: 4
-- 7 products as PM libraries (extracted to their own repos ~/nyx-*-stack): nyx-kv, nyx-serve, nyx-proxy, nyx-queue, nyx-db, nyx-edit, nyx-shell; http2 absorbed into the core (`std/http2`)
+- 6 products as PM libraries, each extracted to its own repo: nyx-kv, nyx-proxy, nyx-queue, nyx-db, nyx-edit, nyx-shell; http2 and serve absorbed into the core (`std/http2`, `std/serve`)
 - 2 services running in production: gateway (HTTPS :443, SNI routing), nyxkv (RESP2 :6380 with TLS)
-- Bilingual landing sites (repo ~/nyx-sites) consuming nyx-serve as a package
+- Bilingual landing sites (repo ~/nyx/web/sites) consuming `std/serve` straight from the stdlib (no vendoring since 2026-09-03)
 - Benchmarks documented: HTTP 73K req/s (multi-threaded), KV 6.76M SET ops/s / 21.57M GET ops/s
 - Core benchmarks re-measured v0.20.1+LICM with fair measurement (one-time GC lazy-init excluded via warmup): primes 0.80x C (Nyx faster), fibonacci ~1.02x, map ~1.0x, strings ~1.1x — **parity or better on all measured compute benchmarks** (the historical "~11-18x strings" was mostly the GC-init artifact inside the timed region)
+- Databases without leaving the language: `std/sqlite` (embedded SQL) and, since v0.31.0, `std/postgres` — a **native PostgreSQL client**: wire protocol v3 spoken in pure Nyx over `std/net`, SCRAM-SHA-256 auth, parameterized queries (values in the Bind message, never interpolated into the SQL), transactions, migrations and a connection pool, with **no libpq and no external dependency**. `#[derive(Fields)]` closes the loop: a struct describes its own schema, so a model is written once instead of twice
 - Web playground live at nyxlang.com/playground; real wasm32-wasi browser target (extern "js", std/dom, std/browser)
 - Remaining gap: no sandboxing; async/await is now real (stackful goroutines), browser target shipped
 
@@ -211,6 +212,7 @@
 - Pattern matching, ADTs, operator overloading — Go has none
 - Returnable closures with capture
 - Derive macros, inline assembly
+- A PostgreSQL client with **no external dependency** — `std/postgres` speaks wire v3 in pure Nyx, where Go's `database/sql` needs a third-party driver (`pq`/`pgx`)
 
 **Where Nyx is comparable:**
 - Goroutines (M:N scheduler) — both have similar models
@@ -223,9 +225,9 @@
 - Go has integrated, reliable go build, go test, go vet
 - Trivial cross-compilation in Go
 - Docker, Kubernetes, Terraform written in Go — production-proven ecosystem
-- Nyx's async/await is fake; Go's goroutines are real
+- `database/sql` is a driver ecosystem; Nyx has two clients (`std/sqlite`, `std/postgres`) and no pluggable driver layer
 
-**What's needed to surpass it:** Real async (high), production-tested stdlib (high), ecosystem (very high)
+**What's needed to surpass it:** Production-tested stdlib (high), ecosystem (very high). Async is no longer on this list — `await`/`spawn` are real stackful goroutines since v0.19 (see Concurrency above)
 
 ---
 
@@ -431,7 +433,7 @@
 - Automatic GC (Zig has no GC or automatic memory management)
 - Native String type
 - try/catch vs manual error handling
-- More complete stdlib (JSON, HTTP, WebSocket, SQLite)
+- More complete stdlib (JSON, HTTP, WebSocket, SQLite, native PostgreSQL)
 
 **Where Nyx is comparable:**
 - Native compilation via LLVM

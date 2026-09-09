@@ -61,7 +61,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,string-order-is-bytewise,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,derive-fields-pg-bool-text,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
@@ -70,27 +70,31 @@ draining a second bounded channel — size each channel to at least the total nu
 carry.**
 3. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
 bits) — a negative C value crosses as a huge positive number, never as a negative one.**
-4. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
+4. **A row from `std/postgres` cannot be handed straight to `<Struct>_desde_fila()` if it has a `bool`
+column — PostgreSQL's text format for boolean is `t`/`f`, and `desde_fila` only recognizes the exact
+string `"true"`.**
+5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
 saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.**
-5. **Callbacks: prefer `Fn(Type) -> Ret`**
-6. **`await` of a `float`-returning function is gated (NYX1021)**
-7. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**
-8. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.**
-9. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.**
-10. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
+6. **Callbacks: prefer `Fn(Type) -> Ret`**
+7. **`await` of a `float`-returning function is gated (NYX1021)**
+8. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**
+9. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.**
+10. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.**
+11. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
 literal and fails loudly with `NYX0106`.**
-11. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
+12. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
 on BYTES — for *character* counts use `char_length()` (UTF-8 codepoints).**
-12. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
+13. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
 `if http_serve(8080, handler) < 0 { return 1 }`.**
-13. **`assert()` aborts the process (`exit(1)`) on the first failure**
-14. **A bare `return` (no value) works in a `void`-returning function**
-15. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
-16. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
-17. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+14. **`assert()` aborts the process (`exit(1)`) on the first failure**
+15. **A bare `return` (no value) works in a `void`-returning function**
+16. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
+17. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
+18. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.**
-18. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
-19. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
+19. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`**
+20. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
+21. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
 
 <!-- /gen:gotchas -->
 

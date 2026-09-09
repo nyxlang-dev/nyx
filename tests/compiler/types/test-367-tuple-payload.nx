@@ -1,0 +1,31 @@
+// test-367 (A5, review adversarial 2026-08-13 — ACTUALIZADO el 2026-09-09):
+// payload de enum genérico que es una TUPLA (`Result<(int, String), String>`).
+// Recorte de docs/design/reviews/2026-08-13-arco-e1-e2-repros/r6-tuple-payload.nx.
+//
+// HISTORIA: este test nació documentando una DEGRADACIÓN. La cadena medida era:
+// extract_type_args_from_str no respetaba paréntesis al partir los type-args, el
+// slot 0 de Ok terminaba con el tipo basura "(int", nyx_type_to_llvm lo mapeaba a
+// un "%__Tuple_in" que nadie registraba, y decode_payload no podía emitir
+// inttoptr+load sobre eso sin producir IR inválido. El expected decía `0` para el
+// match: el i64 crudo, un puntero interpretado como número.
+//
+// HOY las dos causas están arregladas —el splitter respeta paréntesis (test-403) y
+// ensure_tuple_struct_registered garantiza el tipo antes de decodificar
+// (test-404)— así que el contrato cambia: el match lee el MISMO 7 que ya leía
+// `unwrap()`. Este test se queda como el testigo histórico de que la degradación
+// no volvió, con el caso mínimo original intacto.
+fn mk() -> Result<(int, String), String> {
+    return Result.Ok((7, "cosa"))
+}
+
+fn main() -> int {
+    let r: Result<(int, String), String> = mk()
+    match r {
+        Result.Ok(t) => { print(t.0) },
+        Result.Err(e) => { print("err") }
+    }
+    let u = mk()
+    let t2: (int, String) = u.unwrap()
+    print(t2.0)
+    return 0
+}

@@ -1,0 +1,14 @@
+// Un derive sobre un struct GENÉRICO mentía dos veces: semantic declaraba el
+// símbolo sin mirar los type params, y el codegen ni siquiera llamaba a
+// dispatch_derives para un template. Resultado: `Caja_default()` pasaba
+// `nyx check` y fallaba recién al ENLAZAR, con «undefined symbol» y sin línea
+// del usuario. Ahora es NYX1030 en la declaración.
+#[derive(Default)]
+struct Caja<T> {
+    valor: T
+}
+
+fn main() -> int {
+    print("no llega")
+    return 0
+}

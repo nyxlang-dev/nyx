@@ -1,0 +1,70 @@
+// test-404 — leer una TUPLA desde el payload de un enum genérico
+//
+// Ficha [ALTA silent-wrong]: `match` sobre `Result<(int,String), E>` bindeaba el
+// payload como i64 CRUDO —el guard A5 de bind_payload_var degradaba a propósito
+// cualquier tipo que empezara con `(`— y después `codegen_tuple_index` no
+// encontraba la clave `i64:0`, imprimía un error que nadie mira y devolvía el
+// LITERAL `i64 0`. O sea: `par.0` daba 0 y `par.1` string vacío, con el dato
+// intacto en memoria y el programa enlazando sin una sola queja.
+//
+// Las dos premisas del guard ya eran falsas: el splitter de type-args se
+// arregló (test-403) y las tuplas SÍ se registran en ctx.struct_types. El
+// fail-safe correcto —`if not ctx.struct_types.contains(...)` dentro de
+// decode_payload— ya existía; faltaba garantizar la registración del tipo
+// tupla ANTES de decodificar, que es lo que hace ensure_tuple_struct_registered.
+
+struct MiErr { msg: String }
+
+fn con_tupla(ok: bool) -> Result<(int, String), MiErr> {
+    if not ok { return Result.Err(MiErr { msg: "sin-valor" }) }
+    return Result.Ok((7, "siete"))
+}
+
+fn con_tres(ok: bool) -> Result<(int, String, bool), MiErr> {
+    if not ok { return Result.Err(MiErr { msg: "sin-valor" }) }
+    return Result.Ok((42, "cuarenta y dos", true))
+}
+
+fn opcional(hay: bool) -> Option<(int, String)> {
+    if not hay { return Option.None }
+    return Option.Some((99, "noventa y nueve"))
+}
+
+fn main() -> int {
+    // (1) el caso de la ficha: los DOS campos, no solo el primero
+    match con_tupla(true) {
+        Result.Ok(par) => {
+            assert(par.0 == 7, "par.0 devuelve el int guardado, no 0")
+            assert(par.1 == "siete", "par.1 devuelve el String guardado")
+        }
+        Result.Err(e) => { assert(false, "deberia ser Ok") }
+    }
+
+    // (2) tres elementos y tipos mezclados: el mangle no se queda en pares
+    match con_tres(true) {
+        Result.Ok(t) => {
+            assert(t.0 == 42, "t.0 con tres campos")
+            assert(t.1 == "cuarenta y dos", "t.1 con tres campos")
+            assert(t.2, "t.2 (bool) con tres campos")
+        }
+        Result.Err(e) => { assert(false, "deberia ser Ok") }
+    }
+
+    // (3) el otro genérico de la stdlib, con el arm vacío de por medio
+    match opcional(true) {
+        Option.Some(par) => {
+            assert(par.0 == 99, "Option.Some tambien decodifica la tupla")
+            assert(par.1 == "noventa y nueve", "y su segundo campo")
+        }
+        Option.None => { assert(false, "deberia haber valor") }
+    }
+
+    // (4) el arm hermano sigue vivo: decodificar la tupla no rompe el Err
+    match con_tupla(false) {
+        Result.Ok(par) => { assert(false, "no deberia haber valor") }
+        Result.Err(e) => { assert(e.msg == "sin-valor", "el slot hermano se lee bien") }
+    }
+
+    print("OK test-404 tuple payload read")
+    return 0
+}

@@ -1,0 +1,99 @@
+// test-406 — std/sqlite: el valor de una columna entera y el NULL que no es
+// la cadena "NULL".
+//
+// Dos silently-wrong reportados desde un ERP, los dos verificados antes de
+// tocar nada:
+//
+//   1. La vía TIPADA (sqlite_query_int / sqlite_query_one_int), que es la que
+//      la documentación recomienda para columnas numéricas, pasaba por
+//      sqlite3_column_int — 32 bits — y truncaba en silencio: 5000000000
+//      volvía como 705032704. Un importe en centavos o un id grande cae de
+//      lleno ahí. El bind tenía el mismo agujero en el otro sentido: el valor
+//      GUARDADO ya era el equivocado.
+//   2. Una celda SQL NULL volvía como la cadena "NULL", indistinguible de un
+//      TEXT que dijera literalmente "NULL". Dos valores distintos colapsaban
+//      en uno.
+//
+// El centinela de NULL es el MISMO que en std/postgres (un String de un byte
+// 0x00, preguntado con sqlite_is_null / pg_is_null) a propósito: quien migra
+// de una base a otra no aprende una tercera convención.
+
+import "std/sqlite"
+
+fn main() -> int {
+    let path = "/tmp/nyx_test_406_sqlite.db"
+    remove_file(path)
+
+    let db = sqlite_open(path)
+    assert(db != 0, "la base se abre")
+
+    sqlite_exec(db, "CREATE TABLE t(id INTEGER PRIMARY KEY, nota TEXT, monto INTEGER)")
+    sqlite_exec(db, "INSERT INTO t (id, nota, monto) VALUES (1, 'hola', 42)")
+    sqlite_exec(db, "INSERT INTO t (id, nota, monto) VALUES (2, NULL, 5000000000)")
+    sqlite_exec(db, "INSERT INTO t (id, nota, monto) VALUES (3, 'NULL', 9)")
+    sqlite_exec(db, "INSERT INTO t (id, nota, monto) VALUES (4, '', 0)")
+
+    // ── (1) una columna entera vale lo que dice ─────────────────────
+    // Vía tipada: el valor, no un puntero ni un número truncado.
+    assert(sqlite_query_one_int(db, "SELECT monto FROM t WHERE id=1") == 42, "monto chico = 42")
+
+    // 5000000000 > 2^31: con sqlite3_column_int volvía 705032704.
+    let grande: int = sqlite_query_one_int(db, "SELECT monto FROM t WHERE id=2")
+    assert(grande == 5000000000, "monto de 64 bits sin truncar")
+
+    // Y la vía genérica sigue dando el texto correcto, convertible a mano.
+    let celda: String = sqlite_query_one_str(db, "SELECT monto FROM t WHERE id=2")
+    assert(celda == "5000000000", "la celda como texto es el mismo número")
+    assert(string_to_int(celda) == 5000000000, "string_to_int sobre la celda da el valor")
+
+    // El bind entero tampoco trunca: lo guardado es lo que se pidió guardar.
+    sqlite_exec(db, "CREATE TABLE b(v INTEGER)")
+    sqlite_exec_int(db, "INSERT INTO b (v) VALUES (?)", 5000000000)
+    assert(sqlite_query_one_int(db, "SELECT v FROM b") == 5000000000, "bind de 64 bits sin truncar")
+
+    // ── (2) NULL distinguido del texto "NULL" ───────────────────────
+    let filas: Array = sqlite_query(db, "SELECT id, nota, monto FROM t ORDER BY id")
+    assert(filas.length() == 4, "cuatro filas")
+
+    let f_nula: Array = filas[1]
+    let nota_nula: String = f_nula[1]
+    assert(sqlite_is_null(nota_nula), "la celda NULL se reconoce como NULL")
+
+    let f_texto: Array = filas[2]
+    let nota_texto: String = f_texto[1]
+    assert(nota_texto == "NULL", "el TEXT 'NULL' conserva sus cuatro bytes")
+    assert(not sqlite_is_null(nota_texto), "el TEXT 'NULL' NO es un NULL")
+    assert(not (nota_nula == nota_texto), "NULL y el texto 'NULL' son valores distintos")
+
+    // El texto vacío tampoco es NULL: es el otro lado del mismo colapso.
+    let f_vacia: Array = filas[3]
+    let nota_vacia: String = f_vacia[1]
+    assert(nota_vacia == "", "el TEXT vacío sigue vacío")
+    assert(not sqlite_is_null(nota_vacia), "el TEXT vacío NO es un NULL")
+
+    // ── control: una columna de texto normal ────────────────────────
+    let f_ok: Array = filas[0]
+    let nota_ok: String = f_ok[1]
+    assert(nota_ok == "hola", "columna TEXT normal, sin sorpresas")
+    assert(not sqlite_is_null(nota_ok), "un texto normal no es NULL")
+
+    // ── el NULL viaja también de ida ────────────────────────────────
+    // Sin bind_null, sqlite_null() se ligaba como texto y llegaba a la base
+    // como cadena vacía: otro valor equivocado en silencio.
+    var params: Array = []
+    params.push("5")
+    params.push(sqlite_null())
+    params.push("1")
+    sqlite_exec_params(db, "INSERT INTO t (id, nota, monto) VALUES (?, ?, ?)", params)
+
+    let ida: Array = sqlite_query(db, "SELECT nota FROM t WHERE id=5")
+    let f_ida: Array = ida[0]
+    let nota_ida: String = f_ida[0]
+    assert(sqlite_is_null(nota_ida), "el NULL pasado como parámetro se guardó como NULL")
+    assert(sqlite_query_one_int(db, "SELECT COUNT(*) FROM t WHERE nota IS NULL") == 2, "sqlite también lo ve como NULL")
+
+    sqlite_close(db)
+    remove_file(path)
+    print("OK test-406 sqlite tipos y null")
+    return 0
+}

@@ -1,0 +1,18 @@
+// #[derive(Fields)] sobre un campo que no es primitivo debe ABORTAR (NYX2013),
+// no emitir algo aproximado.
+//
+// El porqué: el Display derivado aplana un campo Array/Map/struct a la cadena
+// literal "ptr". Si el derive de campos heredara esa rama, un ORM escribiría
+// literalmente "ptr" en una columna de la base — un dato falso que compila y
+// corre. Un límite declarado es mejor que un dato inventado.
+#[derive(Fields)]
+struct Modelo {
+    nombre: String,
+    etiquetas: Array
+}
+
+fn main() -> int {
+    let m = Modelo { nombre: "x", etiquetas: [] }
+    print(m.nombre)
+    return 0
+}

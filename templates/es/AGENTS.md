@@ -65,7 +65,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,string-order-is-bytewise,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,derive-fields-pg-bool-text,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated -->
 
 1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
@@ -74,28 +74,32 @@ a drenar un segundo canal acotado — dimensiona cada canal para al menos el tot
 transportar.**
 3. **Un `int` de C (32 bits) retornado por una función `extern "C"` NO hace sign-extend a un `int` de Nyx
 (64 bits) — un valor negativo de C cruza como un número positivo enorme, nunca como negativo.**
-4. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay
+4. **Una fila de `std/postgres` no se le puede pasar directo a `<Struct>_desde_fila()` si tiene una
+columna `bool` — el formato text de PostgreSQL para boolean es `t`/`f`, y `desde_fila` solo reconoce la
+cadena exacta `"true"`.**
+5. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay
 función saturada, ni flag del compilador, ni tipo de 128 bits; usa `checked_add`/`checked_sub`/`checked_mul`/`checked_div` para DETECTARLO y `mul_div_round` para `a*b/c`.**
-5. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
-6. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
-7. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**
-8. **`charAt()` retorna int (ASCII/codepoint), NO String — hay que comparar contra números:
+6. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
+7. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
+8. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**
+9. **`charAt()` retorna int (ASCII/codepoint), NO String — hay que comparar contra números:
 `if c == 65`.**
-9. **Las variantes de enum usan `.`, no `::`: `Shape.Circle(5)`, nunca `Shape::Circle(5)`.**
-10. **Las claves de un map literal deben ser STRINGS: `{"k": 1}` y `{}` funcionan (v0.16), pero
+10. **Las variantes de enum usan `.`, no `::`: `Shape.Circle(5)`, nunca `Shape::Circle(5)`.**
+11. **Las claves de un map literal deben ser STRINGS: `{"k": 1}` y `{}` funcionan (v0.16), pero
 `{ident: 1}` NO es un map literal y falla en voz alta con `NYX0106`.**
-11. **La API de String opera sobre BYTES (v0.14): `length()`, `substring()`, `indexOf()` y `charAt()`
+12. **La API de String opera sobre BYTES (v0.14): `length()`, `substring()`, `indexOf()` y `charAt()`
 operan todas sobre BYTES — para conteos de *caracteres* se usa `char_length()` (codepoints UTF-8).**
-12. **Hay que chequear el retorno de `http_serve`/`tcp_listen`/`udp_bind`: un bind que falla (puerto
+13. **Hay que chequear el retorno de `http_serve`/`tcp_listen`/`udp_bind`: un bind que falla (puerto
 ocupado) retorna `-1` — `if http_serve(8080, handler) < 0 { return 1 }`.**
-13. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
-14. **Un `return` sin valor funciona en una función que retorna `void`**
-15. **Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`**
-16. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
-17. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
+14. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
+15. **Un `return` sin valor funciona en una función que retorna `void`**
+16. **Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`**
+17. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
+18. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
 nonces, ni ningún otro material criptográfico; para eso usa `csprng_bytes`.**
-18. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
-19. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
+19. **Una columna NULL de `std/sqlite` NO es un string vacío — se pregunta con `sqlite_is_null(v)`**
+20. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
+21. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
 
 <!-- /gen:gotchas -->
 

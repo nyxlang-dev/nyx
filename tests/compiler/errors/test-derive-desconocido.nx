@@ -1,0 +1,15 @@
+// Un derive que no existe se IGNORABA en silencio: el struct compilaba, no se
+// emitía nada, y el error aparecía recién en el sitio de uso como NYX1002
+// («'Contacto_campos' no declarada»), sin ninguna pista de que el derive había
+// sido descartado. Ahora es NYX1029 en la declaración, con did-you-mean.
+#[derive(Displai)]
+struct Contacto {
+    nombre: String,
+    activo: bool
+}
+
+fn main() -> int {
+    let c = Contacto { nombre: "x", activo: true }
+    print(c.nombre)
+    return 0
+}

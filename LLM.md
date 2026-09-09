@@ -280,6 +280,36 @@ impl Display for Point {
 struct User { name: String, age: int }
 ```
 
+Los ocho derives válidos son `Clone`, `PartialEq`, `Debug`, `Display`, `Default`,
+`Fields`, `Copy` y `Hash` (los dos últimos son marcadores: se aceptan y no emiten
+código). Cualquier otro nombre es **NYX1029** con did-you-mean, y un derive sobre un
+struct **genérico** es **NYX1030** (el codegen no emite derives para un template).
+
+**`#[derive(Fields)]`** (v0.31.0) hace que el struct se describa a sí mismo. Emite tres
+**funciones libres** —no métodos— resueltas en compilación, sin reflexión en runtime:
+
+```nyx
+#[derive(Fields)]
+struct Contacto { nombre: String, rif: String, activo: bool, saldo: int }
+
+Contacto_campos()      // ["nombre:String", "rif:String", "activo:bool", "saldo:int"]
+Contacto_valores(c)    // ["El Tornillo", "J-29643190-6", "true", "1500"]
+Contacto_desde_fila(f) // -> Contacto, desde un Array de String
+```
+
+El **orden de declaración** es el contrato entre las tres: `valores()[i]` es el valor del
+campo que describe `campos()[i]`, y `desde_fila` lee esa misma posición. Es lo que
+permite escribir un ORM sin repetir el modelo dos veces: el `CREATE TABLE`, la lista de
+columnas y los placeholders del `INSERT` salen todos de `campos()`, así que renombrar un
+campo cambia el SQL solo. Receta completa: `examples/by-example/103-orm-sin-mapeo.nx`.
+
+Dos límites que hay que saber ANTES de usarlo:
+- Solo convierte `int`, `bool`, `float` y `String`. Un campo `Array`/`Map`/struct anidado
+  **aborta la compilación** con **NYX2013** (gotcha `derive-fields-solo-primitivos`, §5.3).
+- `desde_fila` lee un `bool` comparando la celda contra el literal `"true"`; PostgreSQL
+  manda `t`/`f`, así que una fila que salió de `try_pg_query` hay que normalizarla antes
+  (gotcha `derive-fields-pg-bool-text`, §5.1).
+
 ### Generics (monomorphized)
 
 ```nyx
@@ -909,9 +939,22 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   Renombra lo tuyo (p. ej. `my_checked_add`).
 
 ### Crypto
-- `sha256(s)`, `md5(s)`, `hmac_sha256(key, data)`
+- `sha256(s)`, `md5(s)`, `hmac_sha256(key, data)` — devuelven **hex**.
+- `sha256_raw(s)`, `hmac_sha256_raw(key, data)` — los **32 bytes** del digest, sin
+  formatear. Un protocolo que COMPONE hashes (SCRAM, HKDF, PBKDF2) opera sobre bytes:
+  pasarle el hex da un resultado que el otro extremo rechaza sin decir por qué.
+- `pbkdf2_hmac_sha256(pw, salt, iters, dklen) -> String` — PBKDF2-HMAC-SHA256 (RFC 2898),
+  `dklen` bytes crudos. Es la KDF de contraseñas con coste configurable; `iters <= 0`,
+  `dklen <= 0` o `dklen > 1 MiB` devuelven `""`.
+- `constant_time_eq(a, b) -> bool` — compara SIEMPRE todos los bytes. Un `==` normal corta
+  en la primera diferencia y filtra por timing cuánto prefijo coincide, que es justo lo que
+  hace falta para adivinar un hash o un token byte por byte. Usarlo para comparar cualquier
+  secreto. La diferencia de LARGO sí se filtra (inevitable sin padding) y no es el secreto.
+- Los cuatro son **builtins globales** (sin `import`), en `runtime/crypto.c`.
+- El material aleatorio (salts, nonces) sale de `csprng_bytes`, NO de `random_bytes` —
+  ver el gotcha 13 de §5.1.
 
-### `std/sqlite` — el contrato empírico (verificado contra el runtime 2026-08-11)
+### `std/sqlite` — el contrato empírico (verificado contra el runtime 2026-08-11; NULL e int64 al 2026-09-09)
 `import "std/sqlite"`. Lo que las firmas no dicen y cuesta horas descubrir:
 - `sqlite_query(db, sql) -> Array` de filas; cada fila es `Array` y **toda
   celda es `String` — incluidas las columnas INTEGER**. Pasar por
@@ -921,10 +964,68 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   la fila 0 son los nombres de columna.
 - `sqlite_exec_params(db, sql, params)`: **todos los params como `String`**
   (también los numéricos — el binding es textual).
-- Una celda SQL `NULL` llega como **la cadena `"NULL"`** (no `""`, no un
-  null real — `runtime/sqlite_adapter.c`, `column_str`).
+- Una celda SQL `NULL` vuelve como `sqlite_null()` (un String de un byte `0x00`,
+  la MISMA representación que `pg_null` en `std/postgres`) y se pregunta con
+  **`sqlite_is_null(v)`**, nunca con `== ""`. Para PASAR un NULL, `sqlite_null()`
+  en esa posición del array de params. Hasta v0.31.0 volvía como la cadena
+  `"NULL"`, indistinguible de un TEXT que dijera literalmente `NULL` — ver el
+  gotcha `sqlite-null-sentinel` en §5.2.
+- La **vía tipada** (`sqlite_query_int`, `sqlite_query_one_int`, y el binding de
+  enteros) da int de **64 bits reales** desde v0.31.0: antes truncaba a 32
+  (`5000000000` volvía como `705032704`, sin ninguna señal). Una columna no
+  numérica da `0`, y un NULL también: para distinguirlos hay que leer esa columna
+  con `sqlite_query` y `sqlite_is_null()`.
 - `sqlite_open(path) -> *int` — handle real de puntero; capturarlo en
   closures funciona (fn de std con retorno declarado).
+
+### `std/postgres` — cliente PostgreSQL nativo, sin libpq (v0.31.0)
+`import "std/postgres"`. El protocolo wire v3 hablado en **Nyx puro** sobre
+`std/net`: no hay `libpq` ni ninguna otra dependencia externa. La forma es la de
+`std/sqlite`: `Result<T, Error>` con `kind: "db"`, conservando el SQLSTATE en el
+mensaje.
+
+```nyx
+import "std/postgres"
+
+// La cadena tiene el formato de libpq.
+match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
+    Result.Err(e) => { print("no conecta: " + e.msg) }
+    Result.Ok(conn) => {
+        let _ = try_pg_exec(conn, "CREATE TABLE IF NOT EXISTS t (id int, nombre text)")
+        // Los params van por VALOR en el mensaje Bind, NUNCA interpolados en el SQL.
+        let _ = try_pg_exec_params(conn, "INSERT INTO t VALUES ($1, $2)", ["1", "ana"])
+        match try_pg_query(conn, "SELECT id, nombre FROM t") {
+            Result.Ok(filas) => { /* Array de Array de String */ }
+            Result.Err(e) => { print(e.msg) }
+        }
+        let _ = try_pg_close(conn)
+    }
+}
+```
+
+- **Consultas**: `try_pg_exec` / `try_pg_exec_params` (→ filas afectadas),
+  `try_pg_query` / `try_pg_query_params` (→ `Array` de filas, cada fila `Array` de
+  `String` en formato **text** — igual que sqlite, toda celda es String, incluidas
+  las numéricas).
+- **NULL**: centinela explícito. `pg_is_null(v)` es la ÚNICA forma correcta de
+  preguntarlo; `pg_null()` para pasar un NULL como parámetro. Ver el gotcha
+  `pg-null-sentinel` en §5.2.
+- **Transacciones**: `try_pg_begin` / `try_pg_commit` / `try_pg_rollback`.
+- **Migraciones**: `pg_migrate_init`, `pg_migrate_version`, `pg_migrate(conn,
+  version, name, sql)` — el estado vive en una tabla del servidor.
+- **Pool**: `pg_pool_new(conninfo, size)`, `try_pg_pool_get`, `pg_pool_put`,
+  `pg_pool_close`.
+- **Autenticación SCRAM-SHA-256** (lo que exige cualquier PostgreSQL moderno), con
+  la firma del servidor verificada en tiempo constante y el nonce sacado de
+  `csprng_bytes`.
+- Un error del servidor deja la conexión **USABLE**: el lector consume hasta
+  `ReadyForQuery` en vez de cortar y desincronizar el socket.
+- **`bool` en filas leídas del servidor**: PostgreSQL manda `t`/`f` en formato
+  text, no `true`/`false`. Importa al combinar con `#[derive(Fields)]` — gotcha
+  `derive-fields-pg-bool-text` en §5.1.
+- Lo que NO hay todavía: **TLS** (la conexión es en claro; el diseño está fichado
+  en `docs/design/specs/2026-09-09-postgres-tls-design.md`), tipado de columnas
+  (todo vuelve como `String` en formato text) y `COPY`/streaming.
 
 ### Terminal (for CLI apps)
 - `raw_mode_enter()`, `raw_mode_exit()`
@@ -960,7 +1061,7 @@ These are the ones that can hurt you without saying so. Everything else in
 this section is either a language rule or an external limitation.
 
 <!-- gen:gotchas kinds=trap lang=en form=long -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,int-wraps-silently -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,derive-fields-pg-bool-text,int-wraps-silently -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.** `outer.insert("i", inner)` where `inner`
@@ -1003,7 +1104,20 @@ declare the C side `int64_t` when you control it (NOT `long` — Win64 is LLP64:
 there and re-truncates; measured in the W0 audit, spec Windows §9.3), or on the Nyx side never compare
 a raw FFI return against an exact negative sentinel. [test: 22-ffi-int-truncation]
 
-4. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
+4. **A row from `std/postgres` cannot be handed straight to `<Struct>_desde_fila()` if it has a `bool`
+column — PostgreSQL's text format for boolean is `t`/`f`, and `desde_fila` only recognizes the exact
+string `"true"`.** The generated `desde_fila` (`compiler/codegen.nx`, `emit_derived_from_row`) converts
+a `bool` field by comparing the cell against the literal `"true"`; anything else — silently — becomes
+`false`. No error, no crash, just a wrong value that compiles and runs (the same shape of bug
+`pg-null-sentinel` fixed for `NULL`). This is safe when the row comes from `<Struct>_valores()` itself,
+which writes exactly `"true"`/`"false"` (verified round-trip in `test-405-derive-fields.nx`) — the trap
+is specifically a row that came from a live `try_pg_query`/`try_pg_query_params` call, where
+PostgreSQL's own text encoding of `boolean` is `t`/`f` (`tests/postgres/03-params.nx` shows the raw
+value: `SELECT $1::text IS NULL` comes back as `"t"`, not `"true"`). Normalize every `bool` column to
+`"true"`/`"false"` before calling `desde_fila` on a row read from the database — see the pattern in
+`examples/by-example/103-orm-sin-mapeo.nx`. [test: postgres/03-params] [test: compiler/ecosystem/test-405-derive-fields]
+
+5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
 saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.** `codegen.nx` emits plain
 `add i64`/`sub i64`/`mul i64` with no `nsw`/`nuw` (`compiler/codegen.nx:1988`, `:2056`, the `mul i64`
 branch under `:2070`), so the largest representable `int` (`9223372036854775807`) plus `1` silently
@@ -1040,7 +1154,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,string-order-is-bytewise,throw-deprecated -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1130,13 +1244,22 @@ Use `random_bytes`/`random_int`/`random_float` for anything where predictability
 use `csprng_bytes` for anything where predictability is a security breach (password salts, session
 tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
 
-14. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+14. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
+`sqlite_query`/`sqlite_query_named` and their `Result`-returning twins return every value as
+text, and SQL NULL comes back as a one-byte sentinel, not as `""`. Comparing with `== ""` treats
+a real NULL as an empty string and, worse, treats a genuinely empty column as if it were NULL:
+two different values collapse into one. Always use `sqlite_is_null(v)`, never a comparison by
+hand — the day the representation needs to change, it changes in one place. The one edge: a BLOB
+or TEXT column holding exactly one zero byte and nothing else reads as NULL; that is the price of
+keeping rows as `Array` of String instead of `Option<String>`. [test: compiler/stdlib-suite/test-406-sqlite-tipos-null]
+
+15. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
 decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
 lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
 which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
 does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
 
-15. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+16. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
 <!-- /gen:gotchas -->
@@ -1147,7 +1270,7 @@ Not Nyx bugs: these come from POSIX, from the Boehm GC, or from codegen
 internals you never touch directly.
 
 <!-- gen:gotchas kinds=limit lang=en form=long -->
-<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,hkt-gats-parse-only -->
+<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only -->
 
 1. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is
 inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC interacts with POSIX
@@ -1166,7 +1289,19 @@ disk. This is why the E4 `try_read_file`/`try_write_file` pair lives in a NEW mo
 collide with. Re-exporting from `std/file.nx` once the prelude stops being hand-frozen is a tracked
 follow-up (`TASKS.md`, cosecha E4-std-error).
 
-4. **HKT (higher-kinded types) and GATs (generic associated types) parse but do not instantiate** — the
+4. **`#[derive(Fields)]` only converts `int`, `bool`, `float` and `String` — an `Array`, `Map`, or nested
+struct field aborts compilation with `NYX2013`.** The limit is deliberate, not an oversight:
+`#[derive(Display)]` flattens any non-primitive field to the literal string `"ptr"`, and if the fields
+derive inherited that same fallback, an ORM built on `campos()`/`valores()`/`desde_fila()` would
+silently write `"ptr"` into a real database column — a value that compiles, links, and runs, and is
+simply false. Rather than emit that approximation, all three generated functions
+(`compiler/codegen.nx`, `fields_abort_tipo`) refuse together at compile time, naming the offending
+field, its struct and its type. There is no per-field escape hatch (`#[column(...)]`/`#[skip]` are out
+of scope for this derive): to model a struct with a non-primitive field, either describe that one
+field by hand outside the derive, or pull it out into its own struct that only holds the four
+supported primitive types and derive `Fields` there. [test: compiler/ecosystem/test-405-derive-fields]
+
+5. **HKT (higher-kinded types) and GATs (generic associated types) parse but do not instantiate** — the
 syntax is accepted so code using it won't fail at parse time, but the compiler doesn't do the actual
 type-level machinery. Don't rely on either for real generic-over-container code yet.
 

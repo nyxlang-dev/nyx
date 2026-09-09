@@ -875,6 +875,8 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1026 | `throw`/`panic` payload is not `String` or `int` |
 | NYX1027 | `catch (e: T)` annotation is not `String` (`catch` is untyped; the annotation is reserved, not a promise of a future typed catch) |
 | NYX1028 | `?` mixes `Option` and `Result` across the operand and the function's return type (v0.31.0) — `Option` operand in a `Result`-returning fn: hint `.ok_or(e)?`; `Result` operand in an `Option`-returning fn: hint `match`/`unwrap_or` |
+| NYX1029 | unknown `#[derive(...)]` on a struct — an unrecognized derive used to be ignored silently, and the error only surfaced as NYX1002 at the call site of the function it would have generated; includes a did-you-mean over the eight valid derives (`Clone`, `PartialEq`, `Debug`, `Display`, `Default`, `Fields`, `Copy`, `Hash`) |
+| NYX1030 | `#[derive(...)]` on a **generic** struct — codegen does not emit derives for a template, but the symbol was declared anyway: `nyx check` passed and the program failed at LINK time with «undefined symbol» |
 | NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
 | NYX1210 | borrow: `&mut` exclusivity violation (statement-scoped lint) |
 | NYX1211 | borrow: `&mut` aliasing with an active `&` borrow (lint, sibling of NYX1210) |
@@ -914,6 +916,11 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2006 | field assignment whose receiver is neither a simple identifier nor a field chain — `f().field = v` (call), `a[0].field = v` (index). Write-side counterpart of NYX2003 |
 | NYX2007 | receiver-type backstop in method dispatch (v0.24.0): a recognized method dispatched to a receiver whose type doesn't have it (`m.length()`/`m.length` on a `Map`, methods on `&String`/`&Array`/`&Map` receivers). The codegen twin of semantic's NYX1022 — the only layer that covers unannotated code and `NYX_SKIP_SEMANTIC=1` |
 | NYX2008 | RUNTIME slot-type mismatch (static-tag spec 2026-08-03): an Array slot whose runtime tag names a pointer type (String/Array/Map/pointer) read as float — pointer bits as double are guaranteed garbage. Orderly abort instead of silently-wrong; `NYX_SLOT_CHECK=off` disables it |
+| NYX2009 | a file-scope `global`/`const` whose initializer cannot be evaluated at startup — the constant-folding path of globals accepts literals and a closed set of expressions; anything else (the offending `node_type` is named in the message) used to be dropped silently |
+| NYX2010 | AMBIGUOUS unqualified call: the same function name is exported by several imported modules and none of them is the current one. The message lists the modules that define it — qualify the call instead of letting the resolver pick one (it used to pick silently) |
+| NYX2011 | `generic_call` with no registered generic template for the base name (turbofish over a name that is not a generic function in scope) |
+| NYX2012 | unknown enum variant in a **pattern** — the variant named in a `match` arm is not registered for that enum (enum not defined/imported, or the variant misspelled) |
+| NYX2013 | `#[derive(Fields)]` on a struct with a field the derive cannot convert. Only `int`, `bool`, `float` and `String` are supported; an `Array`/`Map`/nested-struct field aborts compilation on purpose, because inheriting `Display`'s `"ptr"` fallback would write false data into a database column (see the `Fields` row in [Derive Macros](#derive-macros)) |
 
 **Interpreter-phase errors (NYX30xx series)** — emitted by `compiler/interpreter.nx`
 (the REPL's evaluator), printed in the message text like the NYX20xx series. The
@@ -1490,8 +1497,10 @@ módulo, para las funciones de la stdlib que antes fallaban con centinelas
 mudos (`""`, `-1`, `NULL`) o abortando el proceso. Cubre hoy `std/fs`
 (`try_read_file`/`try_write_file`), `std/net` (conexión, E/S y resolución),
 `std/http` (`try_http_get`/`try_http_post`/`try_http_request`), `std/json`
-(`try_json_parse`) y `std/sqlite` (`try_sqlite_open`/`try_sqlite_exec`/
-`try_sqlite_query`/`try_sqlite_query_named`). Las funciones viejas
+(`try_json_parse`), `std/sqlite` (`try_sqlite_open`/`try_sqlite_exec`/
+`try_sqlite_query`/`try_sqlite_query_named`) y `std/postgres`, que nace
+entero en esta forma (`try_pg_connect`/`try_pg_exec`/`try_pg_query`/…: no
+tiene familia vieja con centinelas). Las funciones viejas
 equivalentes (`read_file`, `tcp_connect`, `http_get`, etc.) siguen existiendo
 por compatibilidad hacia atrás — no tienen `try_*` retirado, conviven.
 
@@ -2938,6 +2947,42 @@ print(signature)  // 64-char hex digest
 
 Used for JWT signing, API authentication, and webhook verification. Implemented in `runtime/crypto.c`.
 
+### Primitivas en bytes crudos y comparacion en tiempo constante (v0.31.0)
+
+`sha256`/`hmac_sha256` devuelven **hex**, que es lo que hace falta para imprimir o
+firmar una cabecera. Un protocolo que **compone** hashes (SCRAM-SHA-256, HKDF, PBKDF2)
+opera sobre los 32 **bytes** del digest: pasarle el hex produce un resultado que el otro
+extremo rechaza sin explicar por que. Para eso estan las variantes `_raw`, builtins
+globales (sin `import`), todas en `runtime/crypto.c`:
+
+```nyx
+let d: String = sha256_raw(data)                 // los 32 bytes del digest, no hex
+let m: String = hmac_sha256_raw(key, data)       // los 32 bytes del HMAC, no hex
+
+// PBKDF2-HMAC-SHA256 (RFC 2898 5.2): coste configurable, dklen bytes crudos.
+let dk: String = pbkdf2_hmac_sha256(password, salt, 4096, 32)
+
+// Compara SIEMPRE todos los bytes, sin cortar en la primera diferencia.
+if constant_time_eq(hash_guardado, hash_calculado) { ... }
+```
+
+| Builtin | Firma | Nota |
+|---------|-------|------|
+| `sha256_raw` | `(input: String) -> String` | 32 bytes crudos |
+| `hmac_sha256_raw` | `(key: String, data: String) -> String` | 32 bytes crudos |
+| `pbkdf2_hmac_sha256` | `(pw: String, salt: String, iters: int, dklen: int) -> String` | `dklen` bytes crudos; `iters <= 0`, `dklen <= 0` o `dklen > 1 MiB` devuelven `""` |
+| `constant_time_eq` | `(a: String, b: String) -> bool` | La diferencia de LARGO si se filtra (inevitable sin padding) y no es el secreto |
+
+`constant_time_eq` existe porque un `==` normal corta en la primera diferencia y filtra
+por timing cuanto prefijo coincide — justo lo que hace falta para adivinar un hash o un
+token byte por byte. Usarlo para comparar cualquier secreto (hash de contrasena, token
+de sesion, firma de webhook).
+
+> El material aleatorio de estas primitivas (salts, nonces) sale de `csprng_bytes`
+> (`std/webpushcrypto`, envoltorio sobre `RAND_bytes` de OpenSSL), NO de `random_bytes`
+> (`std/random`), que es un PRNG `xorshift64` de 64 bits de estado y no resiste la
+> reconstruccion del estado a partir de unas pocas salidas observadas.
+
 ---
 
 ## TLS/HTTPS
@@ -3379,6 +3424,68 @@ let c3 = Color.default() // Color { r: 0, g: 0, b: 0 } (Default)
 | `Debug` | `debug_str(self) -> String` | Struct name + fields |
 | `Display` | `display_str(self) -> String` | Compact representation |
 | `Default` | `T.default() -> T` | All fields zeroed/empty |
+| `Fields` | `T_campos()`, `T_valores(self)`, `T_desde_fila(row)` | The struct describes its own schema (v0.31.0+) |
+| `Copy` | — | Marker only: accepted by the checker, emits no code |
+| `Hash` | — | Marker only: accepted by the checker, emits no code |
+
+Anything outside those eight names is **NYX1029** (with a did-you-mean), and any derive
+on a *generic* struct is **NYX1030** — codegen does not emit derives for a template, so
+the program used to fail at link time instead.
+
+### `#[derive(Fields)]` — the struct describes itself
+
+Generates three **free functions** (not methods) named after the struct, all resolved at
+compile time — there is no runtime reflection:
+
+```nyx
+#[derive(Fields)]
+struct Contacto {
+    nombre: String,
+    rif: String,
+    activo: bool,
+    saldo: int
+}
+
+let c = Contacto { nombre: "El Tornillo", rif: "J-29643190-6", activo: true, saldo: 1500 }
+
+Contacto_campos()
+// ["nombre:String", "rif:String", "activo:bool", "saldo:int"]
+
+Contacto_valores(c)
+// ["El Tornillo", "J-29643190-6", "true", "1500"]
+
+let back: Contacto = Contacto_desde_fila(["El Tornillo", "J-29643190-6", "true", "1500"])
+```
+
+| Function | Signature | Returns |
+|----------|-----------|---------|
+| `T_campos` | `() -> Array` | `"name:type"` per field, in **declaration order**; the type is the text the user wrote (`String`, not `%nyx_string*`) |
+| `T_valores` | `(self: T) -> Array` | Every field as `String`, **index-aligned with `T_campos()`** |
+| `T_desde_fila` | `(row: Array) -> T` | Rebuilds the struct from a row of `String` cells, consuming the same positions |
+
+Declaration order is the contract between the three: `valores()[i]` is the value of the
+field described by `campos()[i]`, and `desde_fila` reads that same index. This is what
+lets a model be written **once** — an ORM can build its `CREATE TABLE`, its column list
+and its `INSERT` placeholders straight from `campos()`, so renaming a field changes the
+SQL by itself. Worked example: `examples/by-example/103-orm-sin-mapeo.nx`.
+
+**Supported field types: `int`, `bool`, `float` and `String` — and nothing else.** An
+`Array`, `Map` or nested-struct field **aborts compilation** with **NYX2013**. The limit
+is deliberate: `#[derive(Display)]` flattens a non-primitive to the literal string
+`"ptr"`, and inheriting that fallback here would write `"ptr"` into a real database
+column — a value that compiles, links, runs, and is simply false. There is no per-field
+escape hatch; move the non-primitive field out of the derived struct.
+
+Two conversion details that matter when the rows come from a database:
+
+- `T_valores` renders a `bool` as `"true"`/`"false"`.
+- `T_desde_fila` reads a `bool` by comparing the cell against the exact string `"true"`;
+  anything else becomes `false`. PostgreSQL's text format for `boolean` is `t`/`f`, so a
+  row read from `try_pg_query` must be normalized before it is handed to `desde_fila`
+  (gotcha `derive-fields-pg-bool-text`).
+
+Reading a row shorter than the struct aborts rather than reading garbage
+(`nyx_array_get_checked`).
 
 ---
 
@@ -3715,7 +3822,75 @@ sqlite_migrate(db, version, name, sql)
 
 // Introspection (v0.11.0)
 sqlite_tables(db), sqlite_table_exists(db, name), sqlite_count(db, table)
+
+// NULL: centinela explicito (v0.31.0)
+sqlite_null(), sqlite_is_null(valor)
 ```
+
+Dos correcciones de datos de v0.31.0, ambas silently-wrong reportadas desde un ERP:
+
+- **NULL con centinela.** Una celda SQL `NULL` volvia como la cadena `"NULL"`,
+  indistinguible de un TEXT que dijera literalmente `NULL`. Ahora vuelve como
+  `sqlite_null()` (un String de un byte `0x00`, la **misma** representacion que
+  `pg_null` en `std/postgres`) y se pregunta con `sqlite_is_null(v)`, nunca con
+  `== ""` — comparar a mano confunde un NULL real con un texto vacio, y viceversa.
+  El centinela viaja tambien de ida: pasar `sqlite_null()` como parametro liga un
+  NULL de verdad. Arista conocida: un BLOB/TEXT que contenga exactamente ese byte
+  y nada mas se lee como NULL.
+- **La via tipada ya no trunca a 32 bits.** `sqlite_query_int`/`sqlite_query_one_int`
+  y el binding de enteros usaban `sqlite3_column_int`/`bind_int`: `5000000000` volvia
+  como `705032704`, sin ninguna senal. Ahora usan las variantes `_int64`, y son int de
+  64 bits reales.
+
+Recordar que en la via NO tipada **toda celda es `String`**, incluidas las columnas
+INTEGER: hay que convertir con `string_to_int()` o pedir la columna por la via tipada.
+
+### std/postgres.nx
+
+Cliente PostgreSQL **nativo**: el protocolo wire v3 hablado en Nyx puro sobre `std/net`.
+Sin `libpq` y sin ninguna otra dependencia externa (v0.31.0).
+
+```
+// Conexion (cadena con el formato de libpq) y cierre
+try_pg_connect(conninfo) -> Result<PgConn, Error>
+try_pg_close(conn)
+
+// Consultas: las filas son Array de Array de String (formato text del protocolo)
+try_pg_exec(conn, sql)                    // -> filas afectadas
+try_pg_query(conn, sql)
+try_pg_exec_params(conn, sql, params)     // params por VALOR en el mensaje Bind
+try_pg_query_params(conn, sql, params)
+
+// NULL: centinela explicito, NUNCA `== ""`
+pg_null(), pg_is_null(valor)
+
+// Transacciones
+try_pg_begin(conn), try_pg_commit(conn), try_pg_rollback(conn)
+
+// Migraciones (el estado vive en una tabla del servidor)
+pg_migrate_init(conn), pg_migrate_version(conn), pg_migrate(conn, version, name, sql)
+
+// Pool de conexiones
+pg_pool_new(conninfo, size), try_pg_pool_get(pool), pg_pool_put(pool, conn), pg_pool_close(pool)
+```
+
+Decisiones que importan y no se ven en las firmas:
+
+- **Autenticacion SCRAM-SHA-256**, que es lo que exige cualquier PostgreSQL moderno. La
+  firma del servidor se verifica en tiempo constante (`constant_time_eq`) — saltearla es
+  aceptar un servidor impostor — y el nonce del cliente sale de `csprng_bytes`, no de
+  `random_bytes`.
+- **Los parametros van por VALOR en el mensaje Bind, nunca interpolados en el SQL**: el
+  E2E pasa `'; DROP TABLE t_par; --` como valor y verifica despues que la tabla sigue ahi.
+- **NULL con centinela** (`pg_is_null`): un NULL y un string vacio son valores distintos.
+  Es la misma representacion que `sqlite_null`/`sqlite_is_null`.
+- **Un error del servidor deja la conexion USABLE**: el lector consume hasta
+  `ReadyForQuery` en vez de cortar y desincronizar el socket.
+- La forma de los errores es la de `std/sqlite`: `Result<_, Error>` con `kind: "db"`,
+  conservando el SQLSTATE en el mensaje.
+
+Combinado con `#[derive(Fields)]` alcanza para un ORM sin escribir el mapeo a mano — ver
+`examples/by-example/103-orm-sin-mapeo.nx`.
 
 ### std/websocket.nx
 ```
@@ -4089,7 +4264,7 @@ let original: String = base64url_decode(url_safe)
 | Spawn/Select | Soportado | M:N scheduler, channels, work-stealing |
 | Async/Await | Soportado | `await` = goroutine real + join cooperativo sobre el scheduler M:N (ver nota 2) |
 | Event Loop | Soportado | epoll real en runtime/event_loop.c |
-| Clone/Derive | Soportado | #[derive(Clone, PartialEq, Debug, Display, Default)] |
+| Clone/Derive | Soportado | #[derive(Clone, PartialEq, Debug, Display, Default, Fields)] — `Copy`/`Hash` se aceptan como marcadores sin codegen; cualquier otro nombre es NYX1029 |
 | Fixed-size arrays | Soportado | `[int: 5]` stack-allocated |
 | HKT/GATs | Decorativo | Parseados, sin enforcement semántico |
 | Lifetime annotations | Parcial | Se parsean end-to-end (incl. `struct S<'a>`) y los consulta el chequeo de dangling refs (NYX1222 gating / NYX1223 lint); NO hay sistema de regiones verificado — la inferencia inter-procedural es follow-up (ver nota 3) |

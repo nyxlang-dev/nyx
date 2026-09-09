@@ -1,0 +1,195 @@
+// #[derive(Fields)]: el struct describe su propio esquema — ORM sin mapeo escrito a mano
+//
+// #[derive(Fields)] emite tres funciones a partir de los campos del struct,
+// TODO en compilación (nada de reflexión en runtime):
+//   Contacto_campos()         -> Array de "nombre:tipo", en el orden de declaración
+//   Contacto_valores(c)       -> Array de String, alineado por índice con campos()
+//   Contacto_desde_fila(fila) -> Contacto, la vuelta desde una fila de la base
+//
+// El derive solo sabe convertir int, bool, float y String — un campo Array,
+// Map o struct anidado aborta la compilación con NYX2013 a propósito: ver
+// docs/gotchas/derive-fields-solo-primitivos.md. Inventar un valor ahí
+// escribiría un dato falso en una columna de la base.
+//
+// Hace falta un servidor PostgreSQL para correr esta receta (ver
+// examples/by-example/100-postgres.nx para montar uno local). Sin servidor
+// el programa lo dice por stdout y sale con código 1 — no hay panic ni
+// segfault por no tener con quién hablar.
+
+import "std/postgres"
+
+#[derive(Fields)]
+struct Contacto {
+    nombre: String,
+    rif: String,
+    activo: bool,
+    saldo: int
+}
+
+// bool -> texto: no hay conversión automática (mismo gotcha que en
+// 07-strings.nx), así que se escribe explícita. "true"/"false" y no "si"/"no"
+// porque es lo que este programa también manda a la base.
+fn bool_texto(b: bool) -> String {
+    if b { return "true" }
+    return "false"
+}
+
+// Mapea el tipo Nyx (tal como aparece en "nombre:tipo") al tipo de columna
+// SQL. Un solo lugar: si el derive soporta otro primitivo el día de mañana,
+// el mapeo se extiende acá y no en cada CREATE TABLE escrito a mano.
+fn tipo_sql(nyx_tipo: String) -> String {
+    if nyx_tipo == "int" { return "integer" }
+    if nyx_tipo == "bool" { return "boolean" }
+    if nyx_tipo == "float" { return "double precision" }
+    return "text"  // String, y cualquier otro primitivo cae en texto
+}
+
+// CREATE TABLE armado ENTERAMENTE desde campos(): el struct de arriba es la
+// única fuente de verdad del esquema. Agregar o renombrar un campo en
+// Contacto cambia esta sentencia sola, sin tocar una sola línea acá.
+fn crear_tabla_sql(tabla: String, campos: Array) -> String {
+    var columnas: String = ""
+    var i: int = 0
+    while i < campos.length() {
+        let campo: String = campos[i]
+        let partes: Array = campo.split(":")
+        let nombre: String = partes[0]
+        let tipo: String = partes[1]
+        if i > 0 { columnas = columnas + ", " }
+        columnas = columnas + nombre + " " + tipo_sql(tipo)
+        i = i + 1
+    }
+    return "CREATE TABLE IF NOT EXISTS " + tabla + " (" + columnas + ")"
+}
+
+// "nombre, rif, activo, saldo" — lista de columnas en el mismo orden que
+// campos() y, por lo tanto, que valores(): el INSERT no necesita mantener
+// esa lista a mano.
+fn nombres_columnas(campos: Array) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < campos.length() {
+        let partes: Array = campos[i].split(":")
+        if i > 0 { out = out + ", " }
+        out = out + partes[0]
+        i = i + 1
+    }
+    return out
+}
+
+// "$1, $2, $3, $4" — placeholders posicionales para try_pg_exec_params, uno
+// por cada campo del struct.
+fn placeholders(n: int) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < n {
+        if i > 0 { out = out + ", " }
+        out = out + "$" + int_to_string(i + 1)
+        i = i + 1
+    }
+    return out
+}
+
+// Encuentra el índice del primer campo bool en campos() — hace falta para
+// la trampa de abajo, y buscarlo en vez de asumir un número fijo evita que
+// la receta mienta si alguien reordena los campos de Contacto.
+fn indice_del_bool(campos: Array) -> int {
+    var i: int = 0
+    while i < campos.length() {
+        let partes: Array = campos[i].split(":")
+        if partes[1] == "bool" { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// TRAMPA: PostgreSQL manda un boolean en formato text como "t"/"f", NUNCA
+// como "true"/"false" (ver docs/gotchas/derive-fields-solo-primitivos.md,
+// que documenta esto junto al límite de tipos del derive). Por su lado,
+// Contacto_desde_fila compara la celda EXACTAMENTE contra "true" — es lo
+// único que puede hacer sin adivinar, y "true" es lo que Contacto_valores()
+// efectivamente escribe. El resultado: una fila que sale DE VERDAD de
+// try_pg_query necesita esta normalización antes de reconstruirse, o el
+// campo activo vuelve siempre en false. Una fila armada a mano con
+// Contacto_valores() no la necesita, porque valores() ya escribe
+// "true"/"false" y no "t"/"f".
+fn normalizar_bool_pg(fila: Array, idx: int) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i < fila.length() {
+        if i == idx {
+            if fila[i] == "t" { out.push("true") } else { out.push("false") }
+        } else {
+            out.push(fila[i])
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn main() -> int {
+    let conninfo: String = "host=127.0.0.1 port=5432 dbname=nyx_test user=nyx_test password=nyx_test_pw"
+
+    match try_pg_connect(conninfo) {
+        Result.Err(e) => {
+            // Degradar limpio: sin servidor no hay ORM que mostrar, pero
+            // tampoco hay por qué reventar el proceso.
+            print("no se pudo conectar a PostgreSQL: " + e.msg)
+            print("esta receta necesita un servidor local — ver examples/by-example/100-postgres.nx")
+            return 1
+        }
+        Result.Ok(conn) => {
+            // 1. El struct de arriba es la ÚNICA fuente de verdad: nombre,
+            //    rif, activo y saldo se escriben acá y en ningún otro lugar
+            //    de este archivo.
+            let campos: Array = Contacto_campos()
+            let idx_bool: int = indice_del_bool(campos)
+
+            // 2. El esquema sale de campos(), no de un CREATE TABLE tipeado
+            //    a mano que se puede desincronizar del struct.
+            let _d = try_pg_exec(conn, "DROP TABLE IF EXISTS contactos")
+            match try_pg_exec(conn, crear_tabla_sql("contactos", campos)) {
+                Result.Ok(_) => { print("tabla creada desde Contacto_campos()") }
+                Result.Err(e) => { print("crear tabla fallo: " + e.msg) }
+            }
+
+            // 3. Insertar: valores() emite la fila en el mismo orden que
+            //    campos(), así que la lista de columnas y los placeholders
+            //    calzan solos, sin escribir "nombre, rif, activo, saldo" una
+            //    segunda vez a mano.
+            let c: Contacto = Contacto { nombre: "El Tornillo", rif: "J-29643190-6", activo: true, saldo: 1500 }
+            let sql_insert: String = "INSERT INTO contactos (" + nombres_columnas(campos) + ") VALUES (" + placeholders(campos.length()) + ")"
+            match try_pg_exec_params(conn, sql_insert, Contacto_valores(c)) {
+                Result.Ok(n) => { print("insertadas: " + int_to_string(n)) }
+                Result.Err(e) => { print("insert fallo: " + e.msg) }
+            }
+
+            // 4. Leer y reconstruir con desde_fila() — con la normalización
+            //    del punto anterior aplicada ANTES, porque la fila viene de
+            //    verdad del servidor.
+            match try_pg_query(conn, "SELECT " + nombres_columnas(campos) + " FROM contactos ORDER BY nombre") {
+                Result.Ok(filas) => {
+                    var i: int = 0
+                    while i < filas.length() {
+                        let fila_cruda: Array = filas[i]
+                        let fila: Array = normalizar_bool_pg(fila_cruda, idx_bool)
+                        let reconstruido: Contacto = Contacto_desde_fila(fila)
+                        let linea: String = reconstruido.nombre + " · " + reconstruido.rif + " · activo=" + bool_texto(reconstruido.activo) + " · saldo=" + int_to_string(reconstruido.saldo)
+                        print(linea)
+                        i = i + 1
+                    }
+                }
+                Result.Err(e) => { print("select fallo: " + e.msg) }
+            }
+
+            let _c = try_pg_close(conn)
+
+            // 5. El modelo se escribió UNA sola vez: el struct Contacto del
+            //    principio. campos(), valores() y desde_fila() salieron
+            //    todos de ahí — en ningún otro lugar de este archivo aparece
+            //    "nombre text, rif text, activo boolean, saldo integer"
+            //    tipeado a mano.
+            return 0
+        }
+    }
+}
