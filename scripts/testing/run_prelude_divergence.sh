@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# run_prelude_divergence.sh — el prelude es una COPIA A MANO de 5 módulos de
-# la std, y nadie avisa cuando la copia se desincroniza.
+# run_prelude_divergence.sh — el prelude es una copia de 5 módulos de la std,
+# y nadie avisa cuando la copia se desincroniza.
+#
+# Desde que std/prelude.nx lo GENERA scripts/gen_prelude.sh la copia ya no se
+# hace a mano, pero el gate sigue siendo necesario: el generador puede no
+# haberse corrido (eso lo caza el --check de más abajo) y la premisa de que
+# concatenar los módulos basta para tener un prelude correcto es exactamente
+# lo que estos tres ejes verifican.
 #
 # `compiler/resolve.nx::resolve_source` concatena `std/prelude.nx` al fuente de
 # TODO programa de usuario y, acto seguido, pre-registra std/math, std/io,
@@ -29,9 +35,12 @@
 #   - const y extern "C" fn: la línea entera.
 #   - El modificador (pub / export / nada) se compara APARTE del cuerpo, para
 #     poder decir cuál de los tres problemas es.
-#   - Los comentarios PRECEDENTES a una declaración NO se comparan: map_size
-#     usa los suyos para referenciarse cruzado ("mismo que std/prelude.nx" de
-#     un lado, "mismo que std/map.nx" del otro) y eso es deliberado.
+#   - Los comentarios PRECEDENTES a una declaración NO se comparan: cuando el
+#     prelude se copiaba a mano, map_size usaba los suyos para referenciarse
+#     cruzado ("mismo que std/prelude.nx" de un lado, "mismo que std/map.nx"
+#     del otro). Con el prelude generado esos comentarios ya salen idénticos,
+#     pero el eje se deja fuera igual: el --check de arriba compara el archivo
+#     ENTERO byte a byte, que es más fuerte que cualquier regla por comentario.
 #
 # set -u sin pipefail (regla del repo: `grep -q` sobre un pipe ya mordió acá
 # con rc=141 por SIGPIPE).
@@ -85,6 +94,24 @@ trap 'rm -rf "$TMPDIR"' EXIT
 if [ ! -f "$PRELUDE" ]; then
     echo "  ✗ falta $PRELUDE"
     exit 1
+fi
+
+# --- Staleness: el prelude es GENERADO ---------------------------------------
+# Desde que std/prelude.nx lo produce scripts/gen_prelude.sh (banner "ARCHIVO
+# GENERADO" en la línea 1), el modo de divergencia más probable ya no es una
+# copia mal hecha sino la trampa clásica del archivo derivado y trackeado:
+# alguien toca un std/*.nx, no regenera, y commitea. La comparación
+# declaración-por-declaración de más abajo caza casi todo eso, pero no todo —
+# un cambio en un comentario suelto, en el core, o en el orden, pasaría — así
+# que se pregunta primero, y directo, si el archivo commiteado es exactamente
+# lo que el generador produce hoy.
+if [ -x scripts/gen_prelude.sh ] || [ -f scripts/gen_prelude.sh ]; then
+    if ! bash scripts/gen_prelude.sh --check; then
+        FAIL=$((FAIL + 1))
+    fi
+else
+    echo "  ✗ falta scripts/gen_prelude.sh — $PRELUDE es un archivo generado y se quedó sin generador"
+    FAIL=$((FAIL + 1))
 fi
 
 # --- La lista de módulos del gate contra la de resolve.nx -------------------

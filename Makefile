@@ -59,21 +59,42 @@ else
 endif
 
 CLANG        = clang $(EXTRA_CFLAGS) $(EXTRA_LDFLAGS)
+
+# std/prelude.nx es un ARCHIVO GENERADO (scripts/gen_prelude.sh): el core del
+# lenguaje escrito a mano + los 5 módulos que resolve.nx pre-registra. Se
+# trackea porque el compilador lo lee en runtime, y por eso necesita regla de
+# staleness: sin ella, tocar std/array.nx y olvidar regenerar deja la función
+# nueva INVISIBLE para todo programa de usuario (el prelude tapa al módulo).
 STD_PRELUDE  = std/prelude.nx
+PRELUDE_SRCS = std/io.nx std/math.nx std/array.nx std/file.nx std/map.nx \
+               scripts/prelude_core.nx.in scripts/gen_prelude.sh
 
 # ─────────────────────────────────────────────
 #  BUILD
 # ─────────────────────────────────────────────
 
+## Regenerar std/prelude.nx desde sus fuentes (se dispara solo por mtime;
+## el script no reescribe el archivo si el contenido no cambió)
+$(STD_PRELUDE): $(PRELUDE_SRCS)
+	@bash scripts/gen_prelude.sh
+
+## Regenerar el prelude a mano (alias del archivo generado)
+prelude: $(STD_PRELUDE)
+
+## Verificar que el prelude commiteado sea exactamente lo que genera el script
+## (lo mismo que corre dentro de run_prelude_divergence.sh / make test-ai-first)
+prelude-check:
+	@bash scripts/gen_prelude.sh --check
+
 ## Construir nyx_bootstrap desde los .ll semilla
-bootstrap:
+bootstrap: $(STD_PRELUDE)
 	bash scripts/build_bootstrap.sh
 
 ## Sincronizar el toolchain local (~/.nyx o NYX_HOME) con los artefactos
 ## del repo: bootstrap + nyx_build + runtime C + std. Correr al final de
 ## toda sesión que toque compiler/, runtime/ o std/ — los productos y
 ## services compilan con el toolchain instalado, no con el del repo.
-install-local:
+install-local: $(STD_PRELUDE)
 	@NYX_HOME_DIR="$${NYX_HOME:-$$HOME/.nyx}"; \
 	if [ ! -d "$$NYX_HOME_DIR/bin" ]; then \
 		echo "✗ $$NYX_HOME_DIR no existe — correr scripts/install.sh primero"; exit 1; \
@@ -125,7 +146,7 @@ recompile-all:
 
 ## Compilar y ejecutar un programa Nyx (prelude auto-loaded por el driver)
 ## Uso: make run FILE=examples/hello.nx
-run:
+run: $(STD_PRELUDE)
 	@test -n "$(FILE)" || (echo "Uso: make run FILE=<archivo.nx>"; exit 1)
 	cp $(FILE) script.nx
 	./nyx_bootstrap
@@ -134,7 +155,7 @@ run:
 
 ## Solo compilar a LLVM IR (sin ejecutar, prelude auto-loaded por el driver)
 ## Uso: make compile FILE=examples/hello.nx
-compile:
+compile: $(STD_PRELUDE)
 	@test -n "$(FILE)" || (echo "Uso: make compile FILE=<archivo.nx>"; exit 1)
 	cp $(FILE) script.nx
 	./nyx_bootstrap
@@ -588,4 +609,4 @@ sdd-check:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check
+.PHONY: prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check

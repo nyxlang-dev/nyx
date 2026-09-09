@@ -66,8 +66,8 @@ SOLO_COMPILA=(
     # necesitan red externa o un modelo local
     "80-llm-basic" "81-llm-stream" "82-http-download"
     # necesita un PostgreSQL con la base y el usuario de la receta
-    "100-postgres"
-    # mismo servidor/base que 100-postgres (ver ese archivo para montarlo
+    "104-postgres"
+    # mismo servidor/base que 104-postgres (ver ese archivo para montarlo
     # local): sin él, #[derive(Fields)] compila igual pero la conexión falla
     "103-orm-sin-mapeo"
 )

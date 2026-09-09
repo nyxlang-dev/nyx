@@ -15,6 +15,7 @@
 import "std/base64"
 import "std/error"
 import "std/net"
+import "std/tls"
 // csprng_bytes vive acá (no en std/random, cuyo random_bytes es xorshift64 y NO
 // es criptográficamente seguro). Se IMPORTA el módulo en vez de declarar otro
 // `extern "C" fn nyx_csprng_bytes`: dos módulos declarando el mismo símbolo C
@@ -132,7 +133,12 @@ pub fn pg_scram_attr(msg: String, attr: String) -> String {
 
 pub struct PgConn {
     fd: int,
-    abierta: bool
+    abierta: bool,
+    // Handle TLS, o 0 si la conexión es en claro. Los dos son `int` en Nyx, así
+    // que el transporte se elige con un branch y no con closures ni handles
+    // abstractos — mismo patrón que `std/resp.nx` usa para servir RESP sobre
+    // los dos transportes.
+    tls: int
 }
 
 // Lee un valor de la cadena de conexión estilo libpq:
@@ -158,8 +164,43 @@ pub fn pg_conninfo_get(conninfo: String, clave: String, por_defecto: String) -> 
 // Lee UN mensaje del servidor: devuelve [tipo, payload] (payload SIN el campo
 // de longitud). El protocolo es binario y un read puede volver parcial, por eso
 // se usa try_tcp_read_exact y no try_tcp_read.
-pub fn pg_read_message(fd: int) -> Result<Array, Error> {
-    match try_tcp_read_exact(fd, 5) {
+// ── Transporte: en claro o cifrado ────────────────────────────────────────
+//
+// Todo el protocolo pasa por estas dos. `tls` es 0 en una conexión en claro y
+// el handle devuelto por `tls_upgrade_fd*` en una cifrada. Tenerlas en UN solo
+// lugar es lo que hace que agregar TLS no sea reescribir el módulo: los 11
+// sitios de E/S no saben cuál de los dos transportes están usando.
+fn pg_w(fd: int, tls: int, datos: String) -> Result<int, Error> {
+    if tls != 0 {
+        let n: int = tls_write(tls, datos)
+        if n < 0 { return Result.Err(err_new(0, "db", "escritura TLS fallida")) }
+        return Result.Ok(n)
+    }
+    match try_tcp_write(fd, datos) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", e.msg)) }
+        Result.Ok(n) => { return Result.Ok(n) }
+    }
+}
+
+// Lee EXACTAMENTE n bytes. Un short-read es un error y no un valor parcial: en
+// un protocolo binario, seguir con menos bytes de los pedidos desincroniza el
+// socket y falla mucho después, lejos de la causa.
+fn pg_rx(fd: int, tls: int, n: int) -> Result<String, Error> {
+    if tls != 0 {
+        let datos: String = tls_read(tls, n)
+        if datos.byte_length() != n {
+            return Result.Err(err_new(0, "db", "lectura TLS incompleta: se esperaban " + int_to_string(n) + " bytes, llegaron " + int_to_string(datos.byte_length())))
+        }
+        return Result.Ok(datos)
+    }
+    match try_tcp_read_exact(fd, n) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", e.msg)) }
+        Result.Ok(datos) => { return Result.Ok(datos) }
+    }
+}
+
+pub fn pg_read_message(fd: int, tls: int) -> Result<Array, Error> {
+    match pg_rx(fd, tls, 5) {
         Result.Err(e) => { return Result.Err(e) }
         Result.Ok(cab) => {
             let tipo: String = cab.substring(0, 1)
@@ -171,7 +212,7 @@ pub fn pg_read_message(fd: int) -> Result<Array, Error> {
             if largo == 4 {
                 return Result.Ok([tipo, ""])
             }
-            match try_tcp_read_exact(fd, largo - 4) {
+            match pg_rx(fd, tls, largo - 4) {
                 Result.Err(e2) => { return Result.Err(e2) }
                 Result.Ok(payload) => { return Result.Ok([tipo, payload]) }
             }
@@ -215,9 +256,24 @@ pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error> {
     let dbname: String = pg_conninfo_get(conninfo, "dbname", user)
     let password: String = pg_conninfo_get(conninfo, "password", "")
 
+    let sslmode: String = pg_conninfo_get(conninfo, "sslmode", "disable")
+    if not pg_sslmode_valido(sslmode) {
+        return Result.Err(err_new(0, "db", pg_sslmode_error(sslmode)))
+    }
+
     match try_tcp_connect(host, port) {
         Result.Err(e) => { return Result.Err(err_new(0, "db", "no se pudo conectar a " + host + ":" + int_to_string(port) + ": " + e.msg)) }
         Result.Ok(fd) => {
+            // El cifrado se negocia ANTES del StartupMessage — es el único
+            // punto posible: después, las credenciales de SCRAM ya viajaron.
+            var tls: int = 0
+            if sslmode != "disable" {
+                match pg_negociar_tls(fd, host, sslmode) {
+                    Result.Err(e) => { return Result.Err(e) }
+                    Result.Ok(h) => { tls = h }
+                }
+            }
+
             // StartupMessage: el ÚNICO mensaje sin byte de tipo. Lleva la
             // versión del protocolo (196608 = 3.0) y pares clave/valor
             // NUL-terminados, cerrados por un NUL extra.
@@ -228,15 +284,96 @@ pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error> {
             cuerpo = cuerpo + chr(0)
             let startup: String = pg_be32(cuerpo.byte_length() + 4) + cuerpo
 
-            match try_tcp_write(fd, startup) {
+            match pg_w(fd, tls, startup) {
                 Result.Err(e) => { return Result.Err(err_new(0, "db", "startup: " + e.msg)) }
                 Result.Ok(_) => {}
             }
 
-            match pg_auth_loop(fd, user, password) {
+            match pg_auth_loop(fd, tls, user, password) {
                 Result.Err(e) => { return Result.Err(e) }
-                Result.Ok(_) => { return Result.Ok(PgConn { fd: fd, abierta: true }) }
+                Result.Ok(_) => { return Result.Ok(PgConn { fd: fd, abierta: true, tls: tls }) }
             }
+        }
+    }
+}
+
+// ── sslmode ───────────────────────────────────────────────────────────────
+//
+// Se soportan `disable`, `require`, `verify-ca` y `verify-full`. Los otros dos
+// de libpq —`allow` y `prefer`— se RECHAZAN en vez de aceptarse como sinónimos,
+// y esa es la decisión de diseño del arco: los dos aceptan caer a texto plano si
+// el servidor dice que no, DESPUÉS de que el usuario pidió cifrado. Con SCRAM
+// eso no es «degradar»: es mandar las credenciales en claro creyendo que van
+// cifradas. Un lenguaje que se propone hospedar una plataforma web no puede
+// tener eso como default silencioso — y `prefer` es, justamente, el default de
+// libpq.
+//
+// El default de Nyx es `disable`, no `require`: con `disable` nadie CREE estar
+// cifrado, que es el pecado que este diseño evita; con `require` por default se
+// rompería todo `docker run postgres` de desarrollo. Los servidores gestionados
+// (RDS, Supabase, Neon) rechazan la conexión sin cifrar, así que el caso que
+// motiva el arco no queda desprotegido: falla ruidoso y el usuario pone
+// sslmode=require. Mover el default queda fichado para el freeze pre-1.0.
+fn pg_sslmode_valido(modo: String) -> bool {
+    if modo == "disable" { return true }
+    if modo == "require" { return true }
+    if modo == "verify-ca" { return true }
+    if modo == "verify-full" { return true }
+    return false
+}
+
+fn pg_sslmode_error(modo: String) -> String {
+    if modo == "prefer" or modo == "allow" {
+        return "sslmode='" + modo + "' no se soporta a propósito: acepta caer a texto plano si el servidor rechaza TLS, lo que con SCRAM significa mandar la contraseña en claro creyendo que va cifrada. Usá 'require' (cifra o falla) o 'disable' (explícitamente sin cifrar)"
+    }
+    return "sslmode='" + modo + "' desconocido — valores aceptados: disable, require, verify-ca, verify-full"
+}
+
+// SSLRequest: 8 bytes, sin byte de tipo (la misma irregularidad del
+// StartupMessage), con el código mágico 80877103. La respuesta NO es un mensaje
+// del protocolo: es UN byte suelto, sin longitud ni framing, así que no se puede
+// leer con pg_read_message.
+fn pg_negociar_tls(fd: int, host: String, sslmode: String) -> Result<int, Error> {
+    let peticion: String = pg_be32(8) + pg_be32(80877103)
+    match pg_w(fd, 0, peticion) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "SSLRequest: " + e.msg)) }
+        Result.Ok(_) => {}
+    }
+    match pg_rx(fd, 0, 1) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "SSLRequest sin respuesta: " + e.msg)) }
+        Result.Ok(resp) => {
+            let marca: String = resp
+            if marca != "S" {
+                // 'N' = el servidor no tiene TLS. 'E' = un servidor pre-7.4
+                // respondiendo un error con framing normal. En los dos casos el
+                // usuario pidió cifrado y no lo hay: se falla, no se sigue en
+                // claro.
+                tcp_close(fd)
+                if marca == "N" {
+                    return Result.Err(err_new(0, "db", "el servidor no acepta TLS (respondió 'N' al SSLRequest) y sslmode=" + sslmode + " lo exige"))
+                }
+                return Result.Err(err_new(0, "db", "respuesta inesperada al SSLRequest: '" + marca + "'"))
+            }
+            // A partir de acá el socket es del handle: con éxito lo cierra
+            // tls_close, y con fracaso ya quedó cerrado adentro.
+            var h: int = 0
+            if sslmode == "require" {
+                // require NO verifica el certificado, igual que libpq: cifra
+                // contra un impostor sin chistar. Está dicho en el gotcha del
+                // módulo, porque es exactamente la clase de garantía que la
+                // gente cree tener y no tiene.
+                h = tls_upgrade_fd(fd, host)
+            } else {
+                if sslmode == "verify-ca" {
+                    h = tls_upgrade_fd_ca_only(fd, host)
+                } else {
+                    h = tls_upgrade_fd_verified(fd, host)
+                }
+            }
+            if h == 0 {
+                return Result.Err(err_new(0, "db", "el handshake TLS falló con sslmode=" + sslmode + " contra " + host + " (con verify-ca/verify-full: revisá la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)"))
+            }
+            return Result.Ok(h)
         }
     }
 }
@@ -245,7 +382,7 @@ pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error> {
 // Cualquier tipo inesperado es un Err explícito, nunca un `continue` mudo: un
 // protocolo binario que ignora lo que no entiende se desincroniza y falla mucho
 // después, en un lugar que no tiene nada que ver.
-fn pg_auth_loop(fd: int, user: String, password: String) -> Result<int, Error> {
+fn pg_auth_loop(fd: int, tls: int, user: String, password: String) -> Result<int, Error> {
     var listo: bool = false
     var vueltas: int = 0
     while not listo {
@@ -253,7 +390,7 @@ fn pg_auth_loop(fd: int, user: String, password: String) -> Result<int, Error> {
         if vueltas > 64 {
             return Result.Err(err_new(0, "db", "el handshake no termino en 64 mensajes"))
         }
-        match pg_read_message(fd) {
+        match pg_read_message(fd, tls) {
             Result.Err(e) => { return Result.Err(e) }
             Result.Ok(m) => {
                 let tipo: String = m[0]
@@ -266,7 +403,7 @@ fn pg_auth_loop(fd: int, user: String, password: String) -> Result<int, Error> {
                         // AuthenticationOk: sigue el resto del arranque
                     } else if sub == 10 {
                         // AuthenticationSASL: el servidor lista mecanismos
-                        match pg_scram_handshake(fd, password, payload) {
+                        match pg_scram_handshake(fd, tls, password, payload) {
                             Result.Err(e) => { return Result.Err(e) }
                             Result.Ok(_) => {}
                         }
@@ -288,7 +425,7 @@ fn pg_auth_loop(fd: int, user: String, password: String) -> Result<int, Error> {
 
 // El intercambio SCRAM propiamente dicho, ya con el AuthenticationSASL leído.
 // Tres mensajes: client-first → server-first → client-final → server-final.
-fn pg_scram_handshake(fd: int, password: String, sasl_payload: String) -> Result<int, Error> {
+fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String) -> Result<int, Error> {
     // El nonce del cliente tiene que ser impredecible: es lo que impide que
     // alguien reuse un intercambio grabado. csprng_bytes viene de std/random.
     let nonce: String = pg_nonce()
@@ -298,13 +435,13 @@ fn pg_scram_handshake(fd: int, password: String, sasl_payload: String) -> Result
     // SASLInitialResponse: nombre del mecanismo + longitud + payload
     var ini: String = pg_cstr("SCRAM-SHA-256")
     ini = ini + pg_be32(client_first.byte_length()) + client_first
-    match try_tcp_write(fd, pg_msg("p", ini)) {
+    match pg_w(fd, tls, pg_msg("p", ini)) {
         Result.Err(e) => { return Result.Err(err_new(0, "db", "SASLInitialResponse: " + e.msg)) }
         Result.Ok(_) => {}
     }
 
     // AuthenticationSASLContinue ('R' con subcódigo 11): server-first
-    match pg_read_message(fd) {
+    match pg_read_message(fd, tls) {
         Result.Err(e) => { return Result.Err(e) }
         Result.Ok(m) => {
             let tipo: String = m[0]
@@ -333,13 +470,13 @@ fn pg_scram_handshake(fd: int, password: String, sasl_payload: String) -> Result
             let server_sig_esperada: String = pr[1]
 
             let client_final: String = client_final_bare + ",p=" + proof
-            match try_tcp_write(fd, pg_msg("p", client_final)) {
+            match pg_w(fd, tls, pg_msg("p", client_final)) {
                 Result.Err(e) => { return Result.Err(err_new(0, "db", "SASLResponse: " + e.msg)) }
                 Result.Ok(_) => {}
             }
 
             // AuthenticationSASLFinal ('R' subcódigo 12): verificar la firma
-            match pg_read_message(fd) {
+            match pg_read_message(fd, tls) {
                 Result.Err(e) => { return Result.Err(e) }
                 Result.Ok(m2) => {
                     let t2: String = m2[0]
@@ -384,11 +521,18 @@ pub fn try_pg_close(conn: PgConn) -> Result<int, Error> {
     if not conn.abierta { return Result.Ok(0) }
     // Terminate ('X'): el cierre ordenado. Sin esto el servidor loguea
     // «unexpected EOF on client connection» en cada desconexión.
-    match try_tcp_write(conn.fd, pg_msg("X", "")) {
+    match pg_w(conn.fd, conn.tls, pg_msg("X", "")) {
         Result.Err(e) => {}
         Result.Ok(_) => {}
     }
-    tcp_close(conn.fd)
+    if conn.tls != 0 {
+        // tls_close cierra también el fd: un tcp_close encima sería un doble
+        // close(), que en un proceso con varias conexiones puede cerrar el
+        // socket de OTRA que acaba de recibir ese mismo número.
+        tls_close(conn.tls)
+    } else {
+        tcp_close(conn.fd)
+    }
     return Result.Ok(0)
 }
 
@@ -412,7 +556,7 @@ pub fn pg_is_null(valor: String) -> bool {
 // Lee la respuesta a una consulta hasta ReadyForQuery ('Z').
 // Devuelve [filas, afectadas]: `filas` es un Array de filas (cada una un Array
 // de String) y `afectadas` el número que informa CommandComplete.
-fn pg_read_result(fd: int) -> Result<Array, Error> {
+fn pg_read_result(fd: int, tls: int) -> Result<Array, Error> {
     var filas: Array = []
     var afectadas: int = 0
     var listo: bool = false
@@ -424,7 +568,7 @@ fn pg_read_result(fd: int) -> Result<Array, Error> {
     var el_error: Error = err_new(0, "db", "")
 
     while not listo {
-        match pg_read_message(fd) {
+        match pg_read_message(fd, tls) {
             Result.Err(e) => { return Result.Err(e) }
             Result.Ok(m) => {
                 let tipo: String = m[0]
@@ -503,11 +647,11 @@ fn pg_es_numero(s: String) -> bool {
 // Ejecuta una sentencia sin resultados y devuelve las filas AFECTADAS.
 pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error> {
     if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
-    match try_tcp_write(conn.fd, pg_msg("Q", pg_cstr(sql))) {
+    match pg_w(conn.fd, conn.tls, pg_msg("Q", pg_cstr(sql))) {
         Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
         Result.Ok(_) => {}
     }
-    match pg_read_result(conn.fd) {
+    match pg_read_result(conn.fd, conn.tls) {
         Result.Err(e) => { return Result.Err(e) }
         Result.Ok(r) => {
             let afectadas: int = r[1]
@@ -520,11 +664,11 @@ pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error> {
 // Array de String en formato TEXT. Un NULL viene como pg_null().
 pub fn try_pg_query(conn: PgConn, sql: String) -> Result<Array, Error> {
     if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
-    match try_tcp_write(conn.fd, pg_msg("Q", pg_cstr(sql))) {
+    match pg_w(conn.fd, conn.tls, pg_msg("Q", pg_cstr(sql))) {
         Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
         Result.Ok(_) => {}
     }
-    match pg_read_result(conn.fd) {
+    match pg_read_result(conn.fd, conn.tls) {
         Result.Err(e) => { return Result.Err(e) }
         Result.Ok(r) => {
             let filas: Array = r[0]
@@ -572,12 +716,12 @@ pub fn try_pg_query_params(conn: PgConn, sql: String, params: Array) -> Result<A
     let execute: String = pg_cstr("") + pg_be32(0)
 
     let paquete: String = pg_msg("P", parse) + pg_msg("B", bind) + pg_msg("E", execute) + pg_msg("S", "")
-    match try_tcp_write(conn.fd, paquete) {
+    match pg_w(conn.fd, conn.tls, paquete) {
         Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar parametrizada: " + e.msg)) }
         Result.Ok(_) => {}
     }
 
-    match pg_read_result(conn.fd) {
+    match pg_read_result(conn.fd, conn.tls) {
         Result.Err(e) => { return Result.Err(e) }
         Result.Ok(r) => {
             let filas: Array = r[0]
@@ -609,12 +753,12 @@ pub fn try_pg_exec_params(conn: PgConn, sql: String, params: Array) -> Result<in
     let execute: String = pg_cstr("") + pg_be32(0)
 
     let paquete: String = pg_msg("P", parse) + pg_msg("B", bind) + pg_msg("E", execute) + pg_msg("S", "")
-    match try_tcp_write(conn.fd, paquete) {
+    match pg_w(conn.fd, conn.tls, paquete) {
         Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar parametrizada: " + e.msg)) }
         Result.Ok(_) => {}
     }
 
-    match pg_read_result(conn.fd) {
+    match pg_read_result(conn.fd, conn.tls) {
         Result.Err(e) => { return Result.Err(e) }
         Result.Ok(r) => {
             let afectadas: int = r[1]
@@ -713,11 +857,17 @@ pub fn pg_migrate(conn: PgConn, version: int, name: String, sql: String) -> bool
 pub struct PgPool {
     conninfo: String,
     conns: Array,
+    // Handle TLS por slot (0 = en claro), paralelo a `conns`. Va aparte y no
+    // en un struct por slot porque los slots de un Array son i64: guardar un
+    // PgConn adentro exigiría un box, y dos arrays paralelos son lo que ya
+    // hace `en_uso`.
+    tls: Array,
     en_uso: Array
 }
 
 pub fn pg_pool_new(conninfo: String, size: int) -> PgPool {
     var conns: Array = []
+    var tls: Array = []
     var en_uso: Array = []
     var i: int = 0
     while i < size {
@@ -725,10 +875,11 @@ pub fn pg_pool_new(conninfo: String, size: int) -> PgPool {
         // abrir 10 sockets antes de que nadie pida el primero, y un servidor
         // caído al arrancar no tiene por qué impedir crear el pool.
         conns.push(0)
+        tls.push(0)
         en_uso.push(0)
         i = i + 1
     }
-    return PgPool { conninfo: conninfo, conns: conns, en_uso: en_uso }
+    return PgPool { conninfo: conninfo, conns: conns, tls: tls, en_uso: en_uso }
 }
 
 // Toma una conexión libre; la abre si es la primera vez que se usa ese slot.
@@ -740,11 +891,13 @@ pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error> {
             pool.en_uso[i] = 1
             let fd_guardado: int = pool.conns[i]
             if fd_guardado > 0 {
-                return Result.Ok(PgConn { fd: fd_guardado, abierta: true })
+                let tls_guardado: int = pool.tls[i]
+                return Result.Ok(PgConn { fd: fd_guardado, abierta: true, tls: tls_guardado })
             }
             match try_pg_connect(pool.conninfo) {
                 Result.Ok(c) => {
                     pool.conns[i] = c.fd
+                    pool.tls[i] = c.tls
                     return Result.Ok(c)
                 }
                 Result.Err(e) => {
@@ -783,8 +936,10 @@ pub fn pg_pool_close(pool: PgPool) {
     while i < pool.conns.length() {
         let fd_guardado: int = pool.conns[i]
         if fd_guardado > 0 {
-            let _c = try_pg_close(PgConn { fd: fd_guardado, abierta: true })
+            let tls_guardado: int = pool.tls[i]
+            let _c = try_pg_close(PgConn { fd: fd_guardado, abierta: true, tls: tls_guardado })
             pool.conns[i] = 0
+            pool.tls[i] = 0
         }
         pool.en_uso[i] = 0
         i = i + 1

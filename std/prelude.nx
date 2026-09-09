@@ -1,8 +1,16 @@
+// ⚠ ARCHIVO GENERADO — NO EDITAR A MANO.
+// Regenerar con:  bash scripts/gen_prelude.sh   (verificar: --check)
+// Fuentes, en este orden: std/{io,math,array,file,map}.nx + scripts/prelude_core.nx.in
+// Para agregar algo al prelude se edita el MÓDULO std/ que corresponda
+// (o el core, si no pertenece a ninguno) y se regenera. Un edit directo
+// acá lo borra la próxima regeneración, y `make test-ai-first` lo caza antes.
+
 // std/io.nx — Funciones de entrada/salida de la Standard Library v0.21
 
 pub fn println(s: String) {
     print(s)
 }
+
 // std/math.nx — Funciones matemáticas de la Standard Library v6.0
 
 // Constants
@@ -388,6 +396,7 @@ pub fn sort_str(arr: Array) -> Array {
     }
     return arr
 }
+
 // std/file.nx — Funciones de archivo de la Standard Library v0.21
 
 pub fn read_text(path: String) -> String {
@@ -397,6 +406,7 @@ pub fn read_text(path: String) -> String {
 pub fn write_text(path: String, content: String) {
     write_file(path, content)
 }
+
 // std/map.nx — Funciones de mapa de la Standard Library v0.21
 
 pub fn map_new() -> Map {
@@ -416,15 +426,23 @@ pub fn map_has(m: Map, k: String) -> bool {
 }
 
 // Task 2 (campaña "cerrar-silently-wrong"): el bug de tamaño documentado acá
-// (mismo que std/map.nx::map_size) era EXACTAMENTE el caso que motivó NYX1022
-// — m.length() sobre un Map coincidía con la rama de Array en codegen y
-// devolvía basura en vez de fallar. NYX1022 lo detectó en cuanto se activó
-// (rompía la compilación de CUALQUIER programa, porque prelude.nx se compila
-// siempre). Sigue sin pub-earse porque nadie la necesitaba con ese nombre;
-// usar directamente `m.size()`.
+// (mismo que std/prelude.nx::map_size, copia duplicada verbatim) era
+// EXACTAMENTE el caso que motivó NYX1022 — m.length() sobre un Map coincidía
+// con la rama de Array en codegen y devolvía basura en vez de fallar. NYX1022
+// lo detectó en cuanto se activó. Sigue sin pub-earse porque nadie la
+// necesitaba con ese nombre; usar directamente `m.size()`.
 fn map_size(m: Map) -> int {
     return m.size()
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// CORE DEL LENGUAJE (scripts/prelude_core.nx.in) — las 13 declaraciones que
+// NO vienen de ningún módulo std/: Option, Result y los 11 traits de
+// sobrecarga de operadores. El compilador las busca POR NOMBRE y sin ellas
+// no compila NI UN programa (tampoco el propio compilador), así que no se
+// pueden regenerar concatenando: son la única parte del prelude escrita a
+// mano. Todo el resto de std/prelude.nx es copia literal de los 5 módulos.
+// ─────────────────────────────────────────────────────────────────────────
 
 // === Option<T> and Result<T,E> — builtin generic enums ===
 

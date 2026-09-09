@@ -20,6 +20,33 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **TLS para `std/postgres`: `sslmode` y el `SSLRequest`** `[arco: postgres-tls]`. Sin esto el cliente solo servía contra un
+  PostgreSQL local o autoalojado sin cifrar: **RDS, Supabase, Neon y Azure rechazan la conexión antes del StartupMessage**, así que
+  era una capacidad de desarrollo y no de producción. El bloqueante real no era el protocolo sino `std/tls`, que no sabía subir a
+  TLS un fd YA CONECTADO —sus cuatro caminos cliente abren el socket ellos mismos, y el único que recibe un fd es el lado
+  servidor—, y PostgreSQL exige exactamente eso: conectarse en claro, mandar un `SSLRequest`, y solo si el servidor responde `'S'`
+  hacer el handshake sobre ese mismo socket. La pieza nueva es `nyx_tls_client_upgrade` en el runtime, expuesta como
+  `tls_upgrade_fd` / `tls_upgrade_fd_verified` / `tls_upgrade_fd_ca_only` — por `extern "C"`, no como builtin, así que no toca el
+  compilador ni el fixed point. Sirve para cualquier protocolo que negocie el cifrado después de conectarse (STARTTLS de SMTP e
+  IMAP tienen la misma forma).
+  **`sslmode` soporta `disable` (default), `require`, `verify-ca` y `verify-full`, y RECHAZA `prefer` y `allow`** — los dos modos
+  de libpq que caen a texto plano si el servidor rechaza TLS. Con SCRAM eso no es «degradar»: es mandar la contraseña en claro
+  creyendo que va cifrada, y `prefer` es justamente el default de libpq. El default de Nyx es `disable` porque con `disable` nadie
+  CREE estar cifrado, que es el pecado que este diseño evita.
+  Verificado contra un PostgreSQL 17.11 real: la aserción central la responde el BACKEND (`SELECT ssl FROM pg_stat_ssl WHERE pid =
+  pg_backend_pid()` devuelve `t`), no el cliente, y el caso negativo —`verify-full` contra `127.0.0.1`, que falla porque el
+  certificado no trae SAN de tipo IP— prueba que verificar es verificar. Gotcha `pg-require-no-verifica`: `require` cifra pero NO
+  valida el certificado, igual que libpq; es la garantía que la mayoría cree tener y no tiene.
+- **`#[derive(Fields)]`: un struct se describe a sí mismo** `[arco: struct-campos-reflexion]`. Nace de un reporte de
+  fricción: hoy cada modelo se escribe DOS veces —el `struct` y su descripción a mano— y nada detecta que divergieron;
+  renombrar un campo compila, pasa `nyx vet`, y la descripción sigue mintiendo. El derive emite tres funciones que
+  comparten un contrato, el orden de declaración: `<S>_campos()` (el esquema, `"nombre:tipo"`), `<S>_valores(s)` (los
+  datos, en el mismo orden) y `<S>_desde_fila(fila)` (la vuelta desde una fila de la base). Con eso se escribe un ORM sin
+  repetir cada modelo. **Ningún camino inventa un valor**: un campo `Array`/`Map`/struct anidado ABORTA la compilación
+  (NYX2013) en vez de heredar el `"ptr"` que aplana el `Display` derivado —que habría escrito un dato falso en una
+  columna—, una fila más corta que el struct aborta en vez de leer basura, y un booleano ininteligible aborta nombrando
+  el texto en vez de asumir `false`. Acepta las tres formas de booleano de los productores reales (`true`/`false`,
+  `t`/`f` de PostgreSQL, `1`/`0`). Verificado de punta a punta contra un PostgreSQL 17.11 real.
 - **`std/postgres`: cliente PostgreSQL nativo, sin libpq ni ninguna dependencia**
   `[arco: postgres-wire-v3]`. Un reporte de fricción del 2026-09-08 mostró que un proyecto que
   exige PostgreSQL quedaba FUERA de Nyx. Ahora el protocolo v3 se habla en Nyx puro sobre

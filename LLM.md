@@ -1027,6 +1027,14 @@ match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
   en `docs/design/specs/2026-09-09-postgres-tls-design.md`), tipado de columnas
   (todo vuelve como `String` en formato text) y `COPY`/streaming.
 
+**TLS (v0.31.1)**: va en el `conninfo`, como libpq. `sslmode=disable` (default),
+`require` (cifra pero NO verifica el certificado — gotcha `pg-require-no-verifica`),
+`verify-ca` (la CA de `tls_set_ca_file()` tiene que firmar) y `verify-full` (eso más el
+nombre del host). **`prefer` y `allow` se rechazan con `Err`**: caen a texto plano si el
+servidor rechaza TLS, y con SCRAM eso es mandar la contraseña en claro creyendo que va
+cifrada. `verify-full` contra un literal IP falla salvo que el certificado traiga SAN de
+tipo IP — es la verificación funcionando, no un bug.
+
 ### Terminal (for CLI apps)
 - `raw_mode_enter()`, `raw_mode_exit()`
 - `read_byte()` — from stdin in raw mode

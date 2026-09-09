@@ -891,6 +891,92 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     return (int64_t)(uintptr_t)h;
 }
 
+// ===== nyx_tls_client_upgrade =====
+//
+// Sube a TLS un fd YA CONECTADO, del lado CLIENTE. Existe porque PostgreSQL no
+// hace «TLS desde el primer byte» como HTTPS: el cliente se conecta en claro,
+// manda un SSLRequest de 8 bytes, y solo si el servidor responde 'S' se hace el
+// handshake SOBRE ESE MISMO SOCKET. Ninguna de las cuatro funciones cliente de
+// este archivo servía: las cuatro abren el socket ellas mismas con
+// tcp_connect_fd, y la única que recibe un fd (nyx_tls_accept) es el lado
+// servidor, que es la mitad opuesta del handshake.
+//
+// Es nyx_tls_connect_ex sin la línea que abre el socket. Se conserva todo lo
+// demás: SNI, y la validación de identidad por SAN DNS o SAN IP según
+// corresponda.
+//
+// PROPIEDAD DEL FD: el handle se queda con el socket SIEMPRE, con éxito y con
+// fracaso. Con éxito porque nyx_tls_close ya cierra el fd; con fracaso porque un
+// handshake abortado deja el socket inservible —el peer ya vio bytes de TLS—, y
+// devolverlo al caller solo invita a un doble close() o a mandar texto plano por
+// un canal que el servidor cree cifrado.
+//
+// verify_mode: 0 = sin verificar, 1 = blando (conecta y reporta vía
+// tls_verify_result), 2 = estricto (cadena + hostname, o falla),
+// 3 = solo cadena (el `verify-ca` de libpq: la CA tiene que firmar, pero el
+// nombre no se compara — sirve para un servidor detrás de una IP interna cuyo
+// certificado no trae SAN de tipo IP).
+int64_t nyx_tls_client_upgrade(int64_t fd_in, nyx_string* host, int64_t verify_mode) {
+    if (fd_in < 0) return 0;
+    int fd = (int)fd_in;
+    if (!host) { os_sock_close(fd); return 0; }
+    const char* host_cstr = nyx_string_to_cstr(host);
+    if (!host_cstr || host_cstr[0] == '\0') { os_sock_close(fd); return 0; }
+
+    SSL_CTX* ctx = (verify_mode >= 2) ? get_verify_ctx() : get_ssl_ctx();
+    if (!ctx) { os_sock_close(fd); return 0; }
+
+    // El fd viene de try_tcp_connect, que NO pone timeout — a diferencia de
+    // tcp_connect_fd, que sí. Sin esto, un handshake contra un servidor mudo
+    // bloquea para siempre.
+    os_sock_set_timeout(fd, 10);
+
+    SSL* ssl = SSL_new(ctx);
+    if (!ssl) { os_sock_close(fd); return 0; }
+
+    SSL_set_fd(ssl, fd);
+    SSL_set_tlsext_host_name(ssl, host_cstr);
+
+    if (verify_mode == 3) {
+        // Solo cadena: la CA firma o falla, sin comparar el nombre.
+        SSL_set_verify(ssl, SSL_VERIFY_PEER, NULL);
+    }
+    if (verify_mode == 2) {
+        SSL_set_verify(ssl, SSL_VERIFY_PEER, NULL);
+        // Uno solo de los dos criterios de identidad: OpenSSL exige que TODOS
+        // los configurados pasen, y setear ambos rechazaría un certificado
+        // legítimo con SAN IP pero sin SAN DNS (o al revés).
+        int is_ip = os_addr_is_ip(host_cstr);
+        int idok;
+        if (is_ip) {
+            idok = X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), host_cstr);
+        } else {
+            idok = SSL_set1_host(ssl, host_cstr);
+        }
+        if (idok != 1) { SSL_free(ssl); os_sock_close(fd); return 0; }
+    }
+
+    if (SSL_connect(ssl) != 1) {
+        SSL_free(ssl);
+        os_sock_close(fd);
+        return 0;
+    }
+
+    NyxTlsHandle* h = (NyxTlsHandle*)GC_MALLOC(sizeof(NyxTlsHandle));
+    if (!h) {
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        os_sock_close(fd);
+        return 0;
+    }
+    h->ssl     = ssl;
+    h->fd      = fd;
+    h->buf_pos = 0;
+    h->buf_len = 0;
+
+    return (int64_t)(uintptr_t)h;
+}
+
 // ===== nyx_tls_read =====
 
 nyx_string* nyx_tls_read(int64_t handle, int64_t max_bytes) {

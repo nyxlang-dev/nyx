@@ -3872,9 +3872,28 @@ pg_migrate_init(conn), pg_migrate_version(conn), pg_migrate(conn, version, name,
 
 // Pool de conexiones
 pg_pool_new(conninfo, size), try_pg_pool_get(pool), pg_pool_put(pool, conn), pg_pool_close(pool)
+
+// TLS: parte del conninfo, como en libpq (v0.31.1)
+//   sslmode=disable       (default) sin cifrar
+//   sslmode=require       cifra, NO verifica el certificado (igual que libpq)
+//   sslmode=verify-ca     la CA cargada con tls_set_ca_file() tiene que firmar
+//   sslmode=verify-full   eso, y ademas el nombre del host tiene que coincidir
+// sslmode=prefer y sslmode=allow se RECHAZAN con Err a proposito: caen a texto
+// plano si el servidor rechaza TLS, lo que con SCRAM significa mandar la
+// contrasena en claro creyendo que va cifrada.
 ```
 
 Decisiones que importan y no se ven en las firmas:
+
+- **TLS se negocia DESPUES de conectarse en claro**, no desde el primer byte como HTTPS: el
+  cliente manda un `SSLRequest` de 8 bytes y solo si el servidor responde `'S'` se hace el
+  handshake sobre ese mismo socket, antes del StartupMessage — el unico punto posible, porque
+  despues las credenciales de SCRAM ya viajaron. Un servidor que responde `'N'` con un modo que
+  exige cifrado da `Err`, nunca una conexion en claro silenciosa.
+- **`require` no verifica el certificado** (gotcha `pg-require-no-verifica`): cifra contra un
+  impostor sin chistar, igual que libpq. Para fijar el servidor hay que usar `verify-ca` o
+  `verify-full`. Ojo: `verify-full` contra un literal IP falla salvo que el certificado traiga un
+  SAN de tipo IP, y eso es la verificacion funcionando.
 
 - **Autenticacion SCRAM-SHA-256**, que es lo que exige cualquier PostgreSQL moderno. La
   firma del servidor se verifica en tiempo constante (`constant_time_eq`) — saltearla es

@@ -12,7 +12,7 @@
 // escribiría un dato falso en una columna de la base.
 //
 // Hace falta un servidor PostgreSQL para correr esta receta (ver
-// examples/by-example/100-postgres.nx para montar uno local). Sin servidor
+// examples/by-example/104-postgres.nx para montar uno local). Sin servidor
 // el programa lo dice por stdout y sale con código 1 — no hay panic ni
 // segfault por no tener con quién hablar.
 
@@ -98,7 +98,7 @@ fn main() -> int {
             // Degradar limpio: sin servidor no hay ORM que mostrar, pero
             // tampoco hay por qué reventar el proceso.
             print("no se pudo conectar a PostgreSQL: " + e.msg)
-            print("esta receta necesita un servidor local — ver examples/by-example/100-postgres.nx")
+            print("esta receta necesita un servidor local — ver examples/by-example/104-postgres.nx")
             return 1
         }
         Result.Ok(conn) => {

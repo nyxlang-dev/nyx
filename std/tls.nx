@@ -33,6 +33,7 @@ extern "C" fn nyx_tls_peer_chain(h: int) -> Array
 extern "C" fn nyx_tls_peer_cert_pem(h: int) -> String
 extern "C" fn nyx_tls_set_ca_file(path: String) -> int
 extern "C" fn nyx_tls_connect_ex(host: String, port: int, verify_mode: int) -> int
+extern "C" fn nyx_tls_client_upgrade(fd: int, host: String, verify_mode: int) -> int
 
 // ── Forma del Array de certificado (copia normativa: runtime/tls.h) ─────────
 // Array PLANO de 8 slots, sin Map ni anidamiento:
@@ -157,6 +158,43 @@ pub fn tls_connect_checked(host: String, port: int) -> int {
 // Devuelve 0 si algo de eso falla — no hay conexión insegura silenciosa.
 pub fn tls_connect_verified(host: String, port: int) -> int {
     return nyx_tls_connect_ex(host, port, 2)
+}
+
+// ── Subir a TLS un socket YA CONECTADO ────────────────────────────────────
+//
+// Para protocolos que negocian el cifrado DESPUÉS de conectarse en claro, en
+// vez de hablar TLS desde el primer byte como HTTPS. PostgreSQL es el caso
+// que las trajo: el cliente se conecta, manda un SSLRequest, y solo si el
+// servidor responde 'S' se hace el handshake sobre ese mismo socket. (STARTTLS
+// de SMTP e IMAP tienen la misma forma.)
+//
+// El handle TOMA LA PROPIEDAD del fd, con éxito y con fracaso: un handshake
+// abortado deja el socket inservible —el peer ya vio bytes de TLS— y devolverlo
+// solo invita a un doble close() o, peor, a mandar texto plano por un canal que
+// el servidor cree cifrado. Después de llamar a cualquiera de estas dos, el fd
+// NO se toca más: se usa el handle con tls_read/tls_write/tls_close.
+
+// Sube a TLS sin verificar el certificado. Devuelve el handle, o 0 si el
+// handshake falló (y en ese caso el fd ya quedó cerrado).
+pub fn tls_upgrade_fd(fd: int, host: String) -> int {
+    return nyx_tls_client_upgrade(fd, host, 0)
+}
+
+// Igual, pero VERIFICANDO: la cadena tiene que validar contra las CAs cargadas
+// (ver tls_set_ca_file) Y el nombre del host tiene que corresponder al
+// certificado. Devuelve 0 si algo de eso falla — no hay conexión insegura
+// silenciosa.
+pub fn tls_upgrade_fd_verified(fd: int, host: String) -> int {
+    return nyx_tls_client_upgrade(fd, host, 2)
+}
+
+// Solo la CADENA: la CA cargada tiene que firmar el certificado, pero el nombre
+// del host no se compara. Es el `verify-ca` de libpq — sirve para un servidor
+// detrás de una IP interna cuyo certificado no trae SAN de tipo IP. Protege
+// contra un impostor sin certificado firmado; NO contra uno que consiguió un
+// certificado válido de la misma CA para otro nombre.
+pub fn tls_upgrade_fd_ca_only(fd: int, host: String) -> int {
+    return nyx_tls_client_upgrade(fd, host, 3)
 }
 
 // ── Las respuestas de una línea a lo que el usuario no podía hacer ─────────

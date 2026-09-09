@@ -54,14 +54,23 @@ if [ ! -x ./nyx_bootstrap ]; then
     exit 1
 fi
 
-PASS=0; FAIL=0; FAILED=()
+PASS=0; FAIL=0; SKIP=0; FAILED=()
 for f in tests/postgres/*.nx; do
     [ -e "$f" ] || continue
     name="$(basename "$f")"
     cp "$f" script.nx
     if ./nyx_bootstrap >/tmp/pg_c.log 2>&1 && clang -O2 script.ll $RT $LIBS -o script_bin 2>/tmp/pg_cl.log; then
         out="$(timeout 60 ./script_bin 2>&1)"; ec=$?
-        if [ $ec -eq 0 ]; then
+        if [ $ec -eq 0 ] && printf '%s' "$out" | grep -q '^SKIP '; then
+            # Segundo sondeo, independiente del de arriba: el programa detectó
+            # una condición del entorno que no es «no hay Postgres» (hoy:
+            # 06-tls contra un servidor sin TLS) y lo dice con su receta.
+            # Es un skip, no un pase — se muestra distinto para que no se
+            # confunda con una prueba que corrió.
+            echo "  · $name — $(printf '%s' "$out" | grep '^SKIP ' | head -1)"
+            printf '%s\n' "$out" | grep -v '^SKIP ' | sed 's/^/      /'
+            SKIP=$((SKIP+1))
+        elif [ $ec -eq 0 ]; then
             echo "  ✅ $name — $(printf '%s' "$out" | tail -1)"
             PASS=$((PASS+1))
         else
@@ -78,7 +87,11 @@ done
 
 rm -f script.nx script.ll script_bin
 echo "────────────────────────────────────────────────"
-echo "  POSTGRES E2E: $PASS pasados, $FAIL fallidos"
+if [ "$SKIP" -gt 0 ]; then
+    echo "  POSTGRES E2E: $PASS pasados, $FAIL fallidos, $SKIP salteados"
+else
+    echo "  POSTGRES E2E: $PASS pasados, $FAIL fallidos"
+fi
 if [ "$FAIL" -gt 0 ]; then
     echo "  Fallidos: ${FAILED[*]}"
     echo "  (el log del servidor suele decir el motivo real:"
