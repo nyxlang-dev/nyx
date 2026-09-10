@@ -3733,7 +3733,10 @@ unsafe {
 make cross FILE=prog.nx TARGET=aarch64-linux-gnu
 
 # WASM (requires wasi-sdk)
-make wasm FILE=prog.nx
+nyx build --target wasm32-wasi   # desde un proyecto: lee nyx.toml
+                                 #   -> target/wasm32-wasi/<name>.wasm
+nyx run --target wasm32-wasi     # lo construye y lo ejecuta con wasmtime
+make wasm FILE=prog.nx           # de un archivo suelto
 ```
 
 ---

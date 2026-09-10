@@ -31,10 +31,11 @@ nyx_testroot_lock_acquire
 if [ -t 1 ]; then
     GREEN='\033[0;32m'
     RED='\033[0;31m'
+    YELLOW='\033[0;33m'
     BOLD='\033[1m'
     NC='\033[0m'
 else
-    GREEN='' RED='' BOLD='' NC=''
+    GREEN='' RED='' YELLOW='' BOLD='' NC=''
 fi
 
 WASI_SYSROOT="${WASI_SYSROOT:-/usr}"
@@ -57,14 +58,10 @@ if [ ! -x ./nyx_bootstrap ]; then
     exit 0
 fi
 
-# Subset esencial — mantener en sync con WASM_RUNTIME_SRCS del Makefile
-# os_wasm.c (W1): runtime.c ahora usa os_monotonic_ns/os_sleep_ms sin ifdef
-# (nyx_sleep/nyx_time_ms/nyx_time_us) — sin el stub el link falla.
-WASM_RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
-    runtime/maps.c runtime/iterators.c runtime/file-io.c \
-    runtime/time.c runtime/random.c runtime/url.c \
-    runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c \
-    runtime/os/os_wasm.c"
+# La lista viene de runtime/wasm.srcs: fuente ÚNICA. El comentario que estaba
+# acá decía «mantener en sync con WASM_RUNTIME_SRCS del Makefile», que era la
+# prueba de que se mantenía a mano.
+WASM_RUNTIME_SRCS="$(grep -v '^#' runtime/wasm.srcs | grep -v '^$' | tr '\n' ' ')"
 WASM_CFLAGS="--target=wasm32-wasi --sysroot=$WASI_SYSROOT -O2 -Iruntime/wasi -Wl,-z,stack-size=1048576 -Wl,--export-table"
 
 TMP_DIR="$(mktemp -d)"
@@ -190,6 +187,63 @@ else
     echo -e "${RED}FAIL (build)${NC}"
     tail -3 "$TMP_DIR/multifile-build.log" | sed 's/^/      /'
     FAILED=$((FAILED + 1))
+fi
+
+# ── Proyecto completo por el CLI: `nyx build --target wasm32-wasi` ──────
+#
+# Hasta el 2026-09-10 NINGUNA suite cubría este camino: se probaba `make wasm`
+# (que compila UN archivo) y nunca el del CLI, así que la ruta que usa un
+# proyecto real pudo estar rota meses sin que nadie se enterara — y de hecho
+# tenía tres fallas mudas cuando se la fue a mirar.
+#
+# La aserción es la que pidió el equipo de nyxerp y no podía automatizar: **el
+# mismo código produce la misma salida en nativo y en wasm**. Contra una salida
+# esperada escrita a mano probaría mi idea de lo que hace el programa; contra el
+# nativo prueba lo único que importa, que los dos coinciden.
+echo -n "  [proyecto] nyx build --target wasm32-wasi ... "
+PROJ_SRC="tests/wasm/fixtures/project"
+if [ ! -d "$PROJ_SRC" ]; then
+    echo -e "${YELLOW}SKIP (sin fixture)${NC}"
+else
+    PROJ_TMP="$TMP_DIR/proj"
+    rm -rf "$PROJ_TMP"; mkdir -p "$PROJ_TMP"
+    cp -r "$PROJ_SRC"/. "$PROJ_TMP"/
+    NYX_BIN=""
+    for cand in "$ROOT/nyx_build" "$HOME/.nyx/nyx_build" "$HOME/.nyx/bin/nyx_build"; do
+        [ -x "$cand" ] && NYX_BIN="$cand" && break
+    done
+    if [ -z "$NYX_BIN" ]; then
+        echo -e "${YELLOW}SKIP (sin nyx_build)${NC}"
+    else
+        proj_ok=0
+        # Nativo primero: es la referencia contra la que se compara.
+        if (cd "$PROJ_TMP" && NYX_HOME="$ROOT" "$NYX_BIN" build > build-nat.log 2>&1) \
+           && (cd "$PROJ_TMP" && ./wasmproj > out-nativo.txt 2>&1); then
+            if (cd "$PROJ_TMP" && NYX_HOME="$ROOT" "$NYX_BIN" build --target wasm32-wasi > build-wasm.log 2>&1) \
+               && [ -f "$PROJ_TMP/target/wasm32-wasi/wasmproj.wasm" ]; then
+                if command -v wasmtime > /dev/null 2>&1; then
+                    if (cd "$PROJ_TMP" && timeout 30 wasmtime target/wasm32-wasi/wasmproj.wasm > out-wasm.txt 2>&1) \
+                       && diff -q "$PROJ_TMP/out-nativo.txt" "$PROJ_TMP/out-wasm.txt" > /dev/null 2>&1; then
+                        proj_ok=1
+                    fi
+                else
+                    # Sin runtime de wasm no se puede comparar la salida, pero
+                    # que el .wasm se haya construido ya vale: es la mitad del
+                    # camino y es la que estaba sin cubrir.
+                    proj_ok=1
+                fi
+            fi
+        fi
+        if [ "$proj_ok" -eq 1 ]; then
+            echo -e "${GREEN}PASS${NC}"; PASSED=$((PASSED + 1))
+        else
+            echo -e "${RED}FAIL${NC}"
+            echo "      nativo vs wasm:"
+            diff "$PROJ_TMP/out-nativo.txt" "$PROJ_TMP/out-wasm.txt" 2>/dev/null | head -6 | sed 's/^/      /'
+            tail -3 "$PROJ_TMP/build-wasm.log" 2>/dev/null | sed 's/^/      /'
+            FAILED=$((FAILED + 1))
+        fi
+    fi
 fi
 
 echo ""

@@ -1,0 +1,26 @@
+# Fuentes del runtime que entran al target wasm32-wasi.
+#
+# FUENTE ÚNICA. Antes esta lista estaba copiada en TRES lugares —el Makefile,
+# scripts/testing/run_wasm_tests.sh y el script que genera compiler/build.nx—
+# con un comentario que decía «mantener en sync», que es exactamente la prueba
+# de que se gestionaba a mano. Cuando W1 sumó runtime/os/os_wasm.c hubo que
+# agregarlo a los tres, y olvidarse de uno rompe el link con símbolos os_*
+# indefinidos: un fallo que aparece lejos de su causa.
+#
+# Una ruta por línea, relativa a la raíz del repo. Las líneas vacías y las que
+# empiezan con # se ignoran.
+#
+# Es un SUBSET a propósito: en wasm no hay red, ni threads, ni procesos, ni
+# OpenSSL. Agregar un .c acá que dependa de algo de eso rompe el link.
+runtime/runtime.c
+runtime/strings.c
+runtime/runtime-arrays.c
+runtime/maps.c
+runtime/iterators.c
+runtime/file-io.c
+runtime/time.c
+runtime/random.c
+runtime/url.c
+runtime/wasi/main_shim.c
+runtime/wasi/nyx_arena.c
+runtime/os/os_wasm.c

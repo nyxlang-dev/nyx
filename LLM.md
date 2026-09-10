@@ -1833,6 +1833,10 @@ Nyx compiles to real `.wasm` that runs under wasmtime OR in the browser (a
 production site already runs its front-end in Nyx→WASM.
 
 ```bash
+# Desde un PROYECTO (lo normal): lee nyx.toml — main, nombre, dependencias
+nyx build --target wasm32-wasi   # → target/wasm32-wasi/<name>.wasm
+nyx run --target wasm32-wasi     # lo construye y lo ejecuta con wasmtime
+# De UN archivo suelto:
 make wasm FILE=app/main.nx    # → main.wasm; multi-file: imports resolve
                               #   PROJECT-relative to the FILE's dir
                               #   (import "util" → app/util.nx; "std/X" → stdlib)

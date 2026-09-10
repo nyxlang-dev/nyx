@@ -34,6 +34,9 @@ a web page.
    `warning[W1NN] <file>:<line>` — so you get the gotcha by name instead of a parser error.
    Both default to `src/main.nx`.
 6. **Run it:** `nyx run` (or `nyx build`). Read the compiler output.
+   To target WebAssembly from this project: `nyx build --target wasm32-wasi`
+   (reads `nyx.toml`, writes `target/wasm32-wasi/<name>.wasm`), or
+   `nyx run --target wasm32-wasi` to build and run it under `wasmtime`.
 7. **Test it:** `nyx test` runs `tests/*.nx`. Tests MUST use `test "name" { ... }` blocks —
    a file with functions named `test_*` is SILENTLY SKIPPED ("No files with test blocks found"),
    so you would wrongly believe your code is tested. `nyx test` DOES type-check: a type error

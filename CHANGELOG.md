@@ -20,6 +20,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`nyx build --target wasm32-wasi` documentado, endurecido y probado** `[arco: nyx-build-wasm]`. El equipo de nyxerp pidió
+  poder compilar un PROYECTO a WebAssembly y **el comando ya existía desde julio**: la resolución de imports no vive en el camino
+  de wasm sino en el driver del compilador, que recibe un archivo y cierra el grafo solo. El pedido era de DESCUBRIBILIDAD —
+  `--target` no aparecía en `nyx --help`, ni en `LLM.md`, ni en el README, ni en las plantillas que siembra `nyx init`; lo único
+  publicado era `make wasm FILE=...`, así que hicieron lo lógico y leyeron el Makefile. Es el cuarto pedido del día de algo que ya
+  existía.
+  Lo que este arco sí agrega: **una fuente única** para la lista de fuentes del runtime wasm (`runtime/wasm.srcs`), que estaba
+  copiada en TRES lugares con un comentario «mantener en sync» — cuando W1 sumó `os_wasm.c` hubo que agregarlo a los tres, y
+  olvidarse de uno rompe el link con símbolos indefinidos. Un **destino con convención**, `target/<triple>/<name>.wasm`, con el
+  triple adentro para que el target de Windows no colisione, y `/target/` en el `.gitignore` sembrado (antes eran ~350 KB sin
+  trackear en el repo del usuario). Y **la prueba que el reporte pedía y no podía automatizar**: un fixture de proyecto con dos
+  módulos cuya salida en wasm se compara contra la nativa — contra una salida escrita a mano probaría mi idea de lo que hace el
+  programa; contra el nativo prueba lo único que importa, que los dos coinciden. Ninguna suite cubría ese camino hasta hoy.
 - **`std/postgres` deja de obligar a mantener el esquema en dos lugares: nombres de columnas, lectura tipada y
   ligado tipado** `[arco: postgres-tipado-erp]`. Sale de un reporte de fricción del equipo de **nyxerp** (2026-09-09) que
   pedía cuatro cosas ordenadas por importancia; **las dos que más le importaban ya estaban hechas** unas horas antes en
@@ -214,6 +227,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **`nyx run --target wasm32-wasi` ejecutaba el binario NATIVO.** Construía el `.wasm` y después corría `./<name>`, el ELF de un
+  build anterior: imprimía la salida correcta y salía 0, así que parecía que había corrido el wasm. No corría. Ahora se ejecuta el
+  artefacto del target con `wasmtime`, o se falla diciendo qué falta y cómo hacerlo a mano — nunca otra cosa en silencio. Y un
+  target no nativo sin runner conocido falla explícito.
 - **`#[derive(PartialEq)]` no enlazaba, y detrás del crash comparaba `String` por DIRECCIÓN.** Un struct con un campo
   `String` y ese derive hacía que clang rechazara el módulo entero: «instruction expected to be numbered '%N' or
   greater». El registro del resultado se pedía ANTES de la rama y la rama de punteros pedía dos temporales más que

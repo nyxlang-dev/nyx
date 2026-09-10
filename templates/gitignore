@@ -11,3 +11,6 @@ packages/
 *.bak.*
 __pycache__/
 .DS_Store
+
+# Artefactos de targets no nativos (nyx build --target <triple>)
+/target/

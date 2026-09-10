@@ -44,11 +44,10 @@ WASM_CLANG        ?= clang
 # runtime/os/os_wasm.c: stub de la capa nyx_os_* (W1) — el link no falla si
 # algo referencia sus símbolos; los dominios 1-7 son no-op/ENOSYS (wasi es
 # single-thread), tiempo es real vía clock_gettime/nanosleep de wasi-libc.
-WASM_RUNTIME_SRCS = runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
-                    runtime/maps.c runtime/iterators.c runtime/file-io.c \
-                    runtime/time.c runtime/random.c runtime/url.c \
-                    runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c \
-                    runtime/os/os_wasm.c
+# La lista vive en runtime/wasm.srcs — fuente ÚNICA, compartida con
+# run_wasm_tests.sh y con el script que genera compiler/build.nx. Antes estaba
+# copiada en los tres, a mano.
+WASM_RUNTIME_SRCS = $(shell grep -v '^\#' runtime/wasm.srcs | grep -v '^$$')
 # stack de 1MB: el default de wasm-ld (64KB) es chico para recursión
 # --export-table: expone __indirect_function_table para que JS pueda llamar
 # closures Nyx (table.get(fn_idx)(env_ptr) — handlers de eventos, handoff #3b)
@@ -124,6 +123,7 @@ install-local: $(STD_PRELUDE)
 	if [ -f "$$NYX_HOME_DIR/nyx_bootstrap" ]; then cp nyx_bootstrap "$$NYX_HOME_DIR/nyx_bootstrap"; fi; \
 	if [ -f "$$NYX_HOME_DIR/nyx_build" ] && [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/nyx_build"; fi; \
 	cp runtime/*.c runtime/*.h "$$NYX_HOME_DIR/runtime/"; \
+	cp runtime/wasm.srcs "$$NYX_HOME_DIR/runtime/"; \
 	mkdir -p "$$NYX_HOME_DIR/runtime/wasi" && cp -r runtime/wasi/* "$$NYX_HOME_DIR/runtime/wasi/"; \
 	mkdir -p "$$NYX_HOME_DIR/runtime/os" && cp runtime/os/*.c runtime/os/*.h "$$NYX_HOME_DIR/runtime/os/"; \
 	cp VERSION "$$NYX_HOME_DIR/VERSION" 2>/dev/null || true; \

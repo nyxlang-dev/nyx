@@ -36,6 +36,9 @@ EN/ES), que es una página web.
    `warning[W1NN] <archivo>:<línea>` — recibes el gotcha por nombre en vez de un error del
    parser. Ambos usan `src/main.nx` por defecto.
 6. **Ejecútalo:** `nyx run` (o `nyx build`). Lee la salida del compilador.
+   Para compilar este proyecto a WebAssembly: `nyx build --target wasm32-wasi`
+   (lee `nyx.toml` y escribe `target/wasm32-wasi/<nombre>.wasm`), o
+   `nyx run --target wasm32-wasi` para construirlo y ejecutarlo con `wasmtime`.
 7. **Pruébalo:** `nyx test` corre `tests/*.nx`. Las pruebas TIENEN que usar bloques
    `test "nombre" { ... }` — un archivo con funciones llamadas `test_*` se SALTA EN SILENCIO
    («No files with test blocks found») y creerías, mal, que tu código está probado. `nyx test`

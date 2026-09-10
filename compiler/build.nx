@@ -1140,16 +1140,20 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
             "cd \"" + nyx_home + "\"\n" +
             "NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_SRC=\"$SRCNX\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
             "|| { echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
+            // La lista de fuentes sale de runtime/wasm.srcs, no de una copia
+            // acá: era la TERCERA (Makefile, run_wasm_tests.sh y esta), con un
+            // comentario que decía «mantener en sync» — o sea, a mano. Cuando
+            // W1 sumó os_wasm.c hubo que agregarlo a las tres, y olvidarse de
+            // una rompe el link con símbolos os_* indefinidos.
+            "WASM_SRCS=\"$(grep -v '^" + "#" + "' \"$RT/wasm.srcs\" | grep -v '^$' | sed \"s|^runtime/|$RT/|\" | tr '\\n' ' ')\"\n" +
+            "test -n \"$WASM_SRCS\" || { echo \"error: runtime/wasm.srcs vacío o ausente en $RT\" >&2; exit 1; }\n" +
+            "mkdir -p \"$ORIG_DIR/target/wasm32-wasi\"\n" +
             "clang --target=wasm32-wasi --sysroot=\"$SYSROOT\" -O2 -I$RT/wasi " +
             "-Wl,-z,stack-size=1048576 -Wl,--export-table \"$SRC.ll\" " +
-            "$RT/runtime.c $RT/strings.c $RT/runtime-arrays.c " +
-            "$RT/maps.c $RT/iterators.c $RT/file-io.c " +
-            "$RT/time.c $RT/random.c $RT/url.c " +
-            "$RT/wasi/main_shim.c $RT/wasi/nyx_arena.c " +
-            "$RT/os/os_wasm.c " +
-            "-o \"$ORIG_DIR/" + output_name + ".wasm\" 2> \"$LOG\" " +
+            "$WASM_SRCS " +
+            "-o \"$ORIG_DIR/target/wasm32-wasi/" + output_name + ".wasm\" 2> \"$LOG\" " +
             "|| { echo \"error: clang wasm link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
-            "echo 'built " + output_name + ".wasm (run: wasmtime " + output_name + ".wasm)'\n"
+            "echo 'built target/wasm32-wasi/" + output_name + ".wasm (run: wasmtime target/wasm32-wasi/" + output_name + ".wasm)'\n"
     }
 
     // Path unico por proceso: el path fijo colisionaba en builds concurrentes
@@ -1801,6 +1805,48 @@ fn shell_quote_arg(s: String) -> String {
             // funcionara). Los flags del PM (--release/--target <v>) se consumen
             // acá; tras un `--` TODO va literal al programa, incluso si parece
             // un flag del PM.
+            // `nyx run --target <no-nativo>` ejecutaba `./<name>` — el binario
+            // NATIVO de un build anterior. Imprimía la salida correcta y salía
+            // 0, así que parecía que había corrido el wasm: no corría. Medido
+            // el 2026-09-10. Ahora se ejecuta el artefacto del target con su
+            // runner, o se falla diciendo qué falta — nunca otra cosa en
+            // silencio.
+            var eff_run_target: String = config.target
+            if target_flag != "" { eff_run_target = target_flag }
+            if eff_run_target == "wasm32-wasi" {
+                let artefacto: String = "target/wasm32-wasi/" + config.name + ".wasm"
+                if not file_exists(artefacto) {
+                    print("error: no se encontró " + artefacto)
+                    return 1
+                }
+                // El runner se busca igual que en run_wasm_tests.sh: si no
+                // está, se dice qué falta y cómo correrlo a mano, en vez de
+                // ejecutar otra cosa.
+                if exec_code("command -v wasmtime >/dev/null 2>&1") != 0 {
+                    print("error: el artefacto es " + artefacto + " pero no hay runtime de wasm para ejecutarlo")
+                    print("  instalá wasmtime, o corrélo vos: wasmtime " + artefacto)
+                    return 1
+                }
+                var wcmd: String = "wasmtime " + artefacto
+                var wi: int = 2
+                var w_dash: bool = false
+                while wi < args.length() {
+                    let wa: String = args[wi]
+                    if w_dash { wcmd = wcmd + " " + shell_quote_arg(wa) }
+                    else {
+                        if wa == "--" { w_dash = true }
+                        else if wa == "--target" { wi = wi + 1 }
+                    }
+                    wi = wi + 1
+                }
+                return exec_code(wcmd)
+            }
+            if eff_run_target != "" {
+                print("error: `nyx run` no sabe ejecutar un artefacto de " + eff_run_target)
+                print("  usá `nyx build --target " + eff_run_target + "` y ejecutalo con el runner de esa plataforma")
+                return 1
+            }
+
             var cmd_line: String = "./" + config.name
             var pi: int = 2
             var after_dashdash: bool = false
