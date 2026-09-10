@@ -1109,6 +1109,22 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // NYX_NO_GC forzado (no hay Boehm en wasm) y salida <name>.wasm.
     // Esto reemplaza el "exporta NYX_TARGET a mano": [build] target en
     // nyx.toml o `nyx build --target wasm32-wasi` alcanzan.
+    // Un TRIPLE desconocido construía NATIVO y salía 0: `--target wasm32-wasy`
+    // (con typo) producía un ELF aarch64 mientras el banner decía
+    // «[wasm32-wasy]». El valor nunca llegaba al compilador —que sí lo habría
+    // rechazado— porque esta rama solo mira si es exactamente "wasm32-wasi".
+    // Pedir wasm y recibir nativo sin una palabra es la misma familia que la
+    // flag desconocida que se arregló hoy, un nivel más adentro: en el VALOR.
+    // (fricción nyxerp 2026-09-10)
+    if eff_target != "" and eff_target != "wasm32-wasi" {
+        if eff_target != "x86_64-pc-windows-msvc" and eff_target != "aarch64-pc-windows-msvc" {
+            print("error: target desconocido: " + eff_target)
+            print("  targets soportados: wasm32-wasi, x86_64-pc-windows-msvc, aarch64-pc-windows-msvc")
+            print("  sin --target se compila para la plataforma actual")
+            return false
+        }
+    }
+
     var final_script: String = build_script
     if eff_target == "wasm32-wasi" {
         final_script = "#!/bin/bash\nset -e\n" +
@@ -1470,18 +1486,56 @@ fn shell_quote_arg(s: String) -> String {
         command = cmd
     }
     // Flags: --release / --target <triple> (en cualquier orden tras el comando)
+    //
+    // Una flag DESCONOCIDA es un error, no silencio. Antes
+    // `nyx build --flag-que-no-existe` compilaba y salía 0 ignorándola: una flag
+    // mal escrita no hacía nada y nadie se enteraba — así fue como un equipo
+    // terminó leyendo el Makefile para descubrir cómo compilar a wasm
+    // (fricción nyxerp, 2026-09-10). `nyx init` ya validaba así desde antes; lo
+    // que faltaba era aplicar el mismo criterio acá.
+    //
+    // Solo se validan las flags de los comandos que las tienen (`build`, `run`,
+    // `test`): los demás parsean sus argumentos en su propio bloque más abajo y
+    // rechazar acá lo que ellos aceptan sería peor que no validar.
     var fi = 2
+    var flag_desconocida = ""
+    var pide_ayuda = false
+    let valida_flags: bool = command == "build" or command == "run" or command == "test"
     while fi < args.length() {
         let flag: String = args[fi]
         if flag == "--release" { release = true }
-        if flag == "--target" {
+        else if flag == "--help" or flag == "-h" { pide_ayuda = true }
+        else if flag == "--target" {
             if fi + 1 < args.length() {
                 let tval: String = args[fi + 1]
                 target_flag = tval
                 fi = fi + 1
+            } else {
+                flag_desconocida = "--target necesita un valor (por ejemplo: --target wasm32-wasi)"
+            }
+        } else {
+            if valida_flags and flag.length() > 1 {
+                if flag.charAt(0) == '-' and flag_desconocida == "" {
+                    flag_desconocida = "flag desconocida para `nyx " + command + "`: " + flag
+                }
             }
         }
         fi = fi + 1
+    }
+
+    if pide_ayuda and valida_flags {
+        print("nyx " + command + " — flags disponibles:")
+        print("  --release            compila optimizado")
+        print("  --target <triple>    destino de compilación (por defecto, el de [build] en nyx.toml)")
+        print("  --help, -h           esta ayuda")
+        print("")
+        print("El proyecto se lee de nyx.toml: nombre, versión, main y dependencias.")
+        return 0
+    }
+    if flag_desconocida != "" {
+        print("error: " + flag_desconocida)
+        print("  `nyx " + command + " --help` lista las flags disponibles")
+        return 1
     }
 
     // Banner único y honesto (adiós "Build System v1.9.0" de la era pre-reset)
