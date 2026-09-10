@@ -131,6 +131,7 @@ declare %nyx_string* @nyx_string_concat(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_string_from_int(i64)
 declare %nyx_string* @nyx_string_from_char(i8)
 declare %nyx_string* @nyx_string_from_bool(i64)
+declare i64 @nyx_bool_from_text(%nyx_string*)
 
 declare void @nyx_print_int(i64)
 declare void @nyx_print_float(double)
@@ -323,6 +324,7 @@ declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
 declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_int_checked({ i64, i8* }*, i64)
 declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
@@ -749,7 +751,7 @@ while_body22:
   call void @llvm.stackrestore(i8* %190)
   %194 = load { i64, i8* }*, { i64, i8* }** %172
   %195 = load i64, i64* %189
-  %196 = call i64 @nyx_array_get({ i64, i8* }* %194, i64 %195)
+  %196 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %194, i64 %195)
   %197 = alloca i64
   store i64 %196, i64* %197
   %198 = load i64, i64* %197

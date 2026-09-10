@@ -660,6 +660,7 @@ declare %nyx_string* @nyx_string_concat(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_string_from_int(i64)
 declare %nyx_string* @nyx_string_from_char(i8)
 declare %nyx_string* @nyx_string_from_bool(i64)
+declare i64 @nyx_bool_from_text(%nyx_string*)
 
 declare void @nyx_print_int(i64)
 declare void @nyx_print_float(double)
@@ -807,6 +808,10 @@ declare i64 @nyx_datetime_weekday(i64)
 declare %nyx_string* @nyx_sha256(%nyx_string*)
 declare %nyx_string* @nyx_md5(%nyx_string*)
 declare %nyx_string* @nyx_hmac_sha256(%nyx_string*, %nyx_string*)
+declare %nyx_string* @nyx_hmac_sha256_raw(%nyx_string*, %nyx_string*)
+declare %nyx_string* @nyx_sha256_raw(%nyx_string*)
+declare %nyx_string* @nyx_pbkdf2_hmac_sha256(%nyx_string*, %nyx_string*, i64, i64)
+declare i64 @nyx_constant_time_eq(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_https_get(%nyx_string*)
 declare %nyx_string* @nyx_https_post(%nyx_string*, %nyx_string*, %nyx_string*)
 declare i64 @nyx_tls_connect(%nyx_string*, i64)
@@ -848,6 +853,7 @@ declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
 declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_int_checked({ i64, i8* }*, i64)
 declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
@@ -868,6 +874,7 @@ declare %nyx_string* @nyx_string_substring(%nyx_string*, i64, i64)
 declare %nyx_string* @nyx_string_char_substring(%nyx_string*, i64, i64)
 declare i1 @nyx_string_contains(%nyx_string*, %nyx_string*)
 declare i1 @nyx_string_equals(%nyx_string*, %nyx_string*)
+declare i32 @nyx_string_compare(%nyx_string*, %nyx_string*)
 declare { i64, i8* }* @nyx_string_split(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_read_line()
 declare i64 @nyx_stdin_eof()
@@ -3605,7 +3612,7 @@ define internal i64 @fmt_let(
   %1610 = alloca %nyx_string*
   store %nyx_string* %1609, %nyx_string** %1610
   %1611 = load { i64, i8* }*, { i64, i8* }** %1602
-  %1612 = call i64 @nyx_array_get({ i64, i8* }* %1611, i64 1)
+  %1612 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1611, i64 1)
   %1613 = alloca i64
   store i64 %1612, i64* %1613
   %1614 = load { i64, i8* }*, { i64, i8* }** %1602

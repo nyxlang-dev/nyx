@@ -108,7 +108,29 @@ bootstrap: $(STD_PRELUDE)
 ## del repo: bootstrap + nyx_build + runtime C + std. Correr al final de
 ## toda sesión que toque compiler/, runtime/ o std/ — los productos y
 ## services compilan con el toolchain instalado, no con el del repo.
-install-local: $(STD_PRELUDE)
+# Las herramientas se COPIAN acá, no se reconstruyen — y cada una enlaza semillas
+# del compilador. Si una quedó más vieja que lo que enlaza, el toolchain se
+# sincroniza con una herramienta OBSOLETA y nadie avisa. Medido el 2026-09-10:
+# tras agregar un chequeo nuevo al checker, `nyx check` seguía dando rc=0 sobre
+# código que el compilador ya rechazaba, porque su binario era del día anterior.
+# Es la misma familia que nyx_build, pero peor: la herramienta que miente es la
+# que un usuario usa para confiar en que su código está bien.
+#
+# Se declaran como targets de archivo con sus prerequisitos REALES, así make
+# reconstruye SOLO lo que quedó viejo (y no reconstruye nada si todo está al
+# día). Los .ll de la lista son exactamente los que cada `$(CLANG) ... -o` enlaza
+# unas líneas más abajo: si una receta cambia de lista, esta también.
+TOOL_CORE_LL = compiler/lexer.ll compiler/parser.ll
+nyx_check: compiler/nyx_check.ll $(TOOL_CORE_LL) compiler/types.ll compiler/semantic.ll compiler/resolve.ll
+	@$(MAKE) --no-print-directory build-check
+nyx_vet: compiler/vet.ll $(TOOL_CORE_LL) compiler/gotchas_table.ll
+	@$(MAKE) --no-print-directory build-vet
+nyx_fmt: compiler/fmt.ll $(TOOL_CORE_LL)
+	@$(MAKE) --no-print-directory build-fmt
+nyx_test: compiler/test.ll
+	@$(MAKE) --no-print-directory build-test
+
+install-local: $(STD_PRELUDE) nyx_check nyx_vet nyx_fmt nyx_test
 	@NYX_HOME_DIR="$${NYX_HOME:-$$HOME/.nyx}"; \
 	if [ ! -d "$$NYX_HOME_DIR/bin" ]; then \
 		echo "✗ $$NYX_HOME_DIR no existe — correr scripts/install.sh primero"; exit 1; \
@@ -135,6 +157,12 @@ install-local: $(STD_PRELUDE)
 	mkdir -p "$$NYX_HOME_DIR/templates/en/docs/nyx"; \
 	cp LLM.md "$$NYX_HOME_DIR/templates/en/docs/nyx/LLM.md"; \
 	bash scripts/install_purge_legacy_templates.sh "$$NYX_HOME_DIR"; \
+	for t in nyx_check nyx_vet nyx_fmt nyx_test; do \
+		if [ -f "$$t" ] && [ compiler/semantic.ll -nt "$$t" ]; then \
+			echo "⚠  $$t es MÁS VIEJO que compiler/semantic.ll — se copió igual, pero puede mentir."; \
+			echo "   Reconstruilo con: make build-$${t#nyx_}"; \
+		fi; \
+	done; \
 	echo "✓ Toolchain sincronizado en $$NYX_HOME_DIR (bin + runtime + std + wrapper + LLM.md + templates, sin restos pre-ADR-1)"
 
 ## Recompilar un módulo específico con el bootstrap actual

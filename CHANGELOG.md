@@ -227,6 +227,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **`make install-local` copiaba las herramientas sin reconstruirlas.** `nyx_check`, `nyx_vet`, `nyx_test` y `nyx_fmt` se
+  compilan con su propio target y `install-local` solo hacía `cp`: tras tocar `compiler/semantic.nx` el toolchain quedaba con las
+  herramientas del día anterior y nadie avisaba. Se descubrió verificando NYX1031 — `nyx check` daba rc=0 sobre el mismo programa
+  que el compilador rechazaba. Es la familia de «artefactos derivados que no se regeneran solos» que `CLAUDE.md` ya documentaba
+  para `nyx_build`, pero peor: **la herramienta que miente es justo la que un usuario usa para confiar en que su código está
+  bien**. Ahora cada binario declara como prerequisitos las semillas que enlaza, así que `make` reconstruye solo lo que quedó
+  viejo y no reconstruye nada si todo está al día (verificado en las dos direcciones). Y si por algún camino una herramienta
+  igual queda vieja, la copia avisa en vez de sincronizar en silencio.
 - **Los argumentos de un builtin no se chequeaban NUNCA.** Había una tabla de tipos de RETORNO de los builtins pero de sus
   parámetros solo se registraba la aridad, así que llamar a uno con el tipo equivocado pasaba el checker sin una palabra y
   codegen emitía IR inválido — el error salía de clang y no nombraba la línea del usuario. Es la causa raíz detrás del reporte
