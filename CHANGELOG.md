@@ -227,6 +227,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **Los accesores `datetime_*` emitían IR inválido y el compilador no decía nada.** `datetime_year(datetime_now())` producía
+  `call i64 @nyx_datetime_year(i64 %<string*>)` y el error lo tiraba clang, sin la línea del usuario (fricción nyxerp). Ahora es
+  **NYX2016** en los siete accesores, y el mensaje dice cuál es el camino correcto: `datetime_parse` sí devuelve un epoch. Al
+  medirlo apareció que **las 16 funciones de la familia están coherentes** —firma emitida y firma C coinciden una a una—: el
+  problema no son dos firmas mal sino DOS MUNDOS en la misma familia (epoch `int` y texto `String`), donde `datetime_now()`, que
+  es el nombre que todos escriben primero, resulta ser el único productor que no devuelve la moneda canónica. La causa raíz de
+  fondo es que el checker registra el tipo de RETORNO de los builtins pero solo la aridad de sus parámetros: los argumentos de un
+  builtin no se chequean nunca. Este diagnóstico es la red mientras el arco `std-time` decide la representación.
 - **`nyx run --target wasm32-wasi` ejecutaba el binario NATIVO.** Construía el `.wasm` y después corría `./<name>`, el ELF de un
   build anterior: imprimía la salida correcta y salía 0, así que parecía que había corrido el wasm. No corría. Ahora se ejecuta el
   artefacto del target con `wasmtime`, o se falla diciendo qué falta y cómo hacerlo a mano — nunca otra cosa en silencio. Y un

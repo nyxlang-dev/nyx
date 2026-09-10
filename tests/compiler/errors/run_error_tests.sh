@@ -1593,6 +1593,19 @@ else
   echo "$n7_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+# NYX2016 (fricción nyxerp 2026-09-09): los accesores de datetime esperan un
+# epoch y datetime_now() devuelve un String. Antes se emitía IR inválido en
+# silencio y el error lo tiraba clang, sin la línea del usuario. Va acá y no en
+# la tabla semántica porque el checker PASA: corta el generador.
+name="codegen-nyx2016-datetime-accesor-string"
+n16_out=$(NYX_SRC=tests/compiler/errors/test-datetime-accesor-string.nx ./nyx_bootstrap 2>&1); n16_rc=$?
+if [ "$n16_rc" -ne 0 ] && echo "$n16_out" | grep -qF "NYX2016" && echo "$n16_out" | grep -qF "datetime_parse"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2016 nombrando la salida datetime_parse)\n" "$n16_rc"
+  echo "$n16_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 # NYX2013 (arco struct-campos-reflexion): el límite de tipos de #[derive(Fields)]
 # tiene que ser un ABORTO de codegen, no una aproximación — el Display derivado
 # aplana un campo Array/Map/struct a la cadena literal "ptr", y heredarlo haría

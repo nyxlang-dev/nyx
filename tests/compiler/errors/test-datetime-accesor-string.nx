@@ -1,0 +1,16 @@
+// Los accesores de datetime esperan un EPOCH (int) y `datetime_now()` devuelve
+// un String: son dos representaciones distintas en la misma familia de builtins.
+//
+// Hasta el 2026-09-10 el compilador emitía `call i64 @nyx_datetime_year(i64
+// %<string*>)` —IR inválido— y no decía nada: el usuario se enteraba por un
+// error de clang que no nombra su línea. Reportado por el equipo de nyxerp como
+// «los accesores datetime no enlazan».
+//
+// El rediseño de la familia es el arco std-time; esto es el diagnóstico
+// mientras tanto, y tiene que decir CUÁL es el camino correcto.
+fn main() -> int {
+    let ahora: String = datetime_now()
+    let anio: int = datetime_year(ahora)
+    print(int_to_string(anio))
+    return 0
+}
