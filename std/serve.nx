@@ -23,6 +23,7 @@ import "std/web"
 import "std/http"
 import "std/json"
 import "std/websocket"
+import "std/time"
 
 // ===== sección: dispatcher (ex server.nx) =====
 
@@ -847,35 +848,25 @@ pub fn app_static_cached(app: App, prefix: String, directory: String, max_age: i
     return 0
 }
 
-// Format a Unix epoch as an HTTP date per RFC 7231.
-// Format: "Mon, 22 Apr 2026 14:32:10 GMT"
-// NOTE: assumes the system timezone is UTC (production servers do). If TZ
-// is not UTC the local extractors below will drift — no bug here, but a
-// deployment constraint.
+// Formatea un epoch como fecha HTTP de RFC 7231:
+// "Mon, 22 Apr 2026 14:32:10 GMT".
+//
+// ARREGLO (arco std-time, 2026-09-10). Lo que había acá eran siete llamadas a
+// los accesores datetime_*, que son LOCALES: pasaban por localtime(). El
+// comentario que acompañaba a esa versión decía que "asume que el huso del
+// sistema es UTC (los servidores de producción lo son)" y que si TZ no era UTC
+// los extractores "derivaban", presentándolo como una restricción de
+// despliegue. No lo era: RFC 7231 EXIGE GMT, así que en cualquier máquina con
+// huso local esta cabecera salía sencillamente incorrecta — un cliente que
+// cachea por Date recibía una fecha corrida las horas del huso. La causa era
+// que el runtime no tenía ningún camino UTC; ahora lo tiene.
+//
+// time_to_http_date es UTC por construcción (aritmética entera, sin localtime
+// y sin TZ), así que la cabecera es correcta en cualquier máquina y ya no hay
+// nada que "asumir". De paso, el instante se descompone UNA vez en vez de
+// siete: se fueron 7 llamadas FFI y 7 localtime() por cabecera.
 fn __format_http_date(epoch: int) -> String {
-    let year: int = datetime_year(epoch)
-    let month: int = datetime_month(epoch)
-    let day: int = datetime_day(epoch)
-    let hour: int = datetime_hour(epoch)
-    let minute: int = datetime_minute(epoch)
-    let second: int = datetime_second(epoch)
-    let wday: int = datetime_weekday(epoch)
-
-    let days: Array = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-    let months: Array = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-
-    let day_name: String = days[wday]
-    let month_name: String = months[month - 1]
-
-    return day_name + ", " + __pad2(day) + " " + month_name + " " +
-           int_to_string(year) + " " + __pad2(hour) + ":" + __pad2(minute) +
-           ":" + __pad2(second) + " GMT"
-}
-
-fn __pad2(n: int) -> String {
-    if n < 10 { return "0" + int_to_string(n) }
-    return int_to_string(n)
+    return time_to_http_date(epoch)
 }
 
 // Return the UNIX mtime of a file, or 0 if stat fails.

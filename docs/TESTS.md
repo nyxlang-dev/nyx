@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **428 archivos / 427 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas recientes: +3 el 2026-09-08 y +14 el 2026-09-09 (detalle en `CHANGELOG.md`) |
+| Regression | `make test` | **430 archivos / 429 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas recientes: +3 el 2026-09-08 y +14 el 2026-09-09 (detalle en `CHANGELOG.md`) |
 | Error paths (parse+semantic) | `make test-errors` | **266** | verificado con corrida real 2026-09-08 |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
@@ -36,7 +36,7 @@
 | PostgreSQL E2E | (dentro de `make test-integration`) `run_postgres_tests.sh` | **4 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **9 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm stub 3 + HTTP/2 1 + body cap 6 + std/serve contrato 10 + smoke 63 + serve+kv 10) | smoke 63 = el de nyx-serve, portado al congelarlo; serve+kv SKIPea sin el daemon kv |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
-| WASM (wasm32-wasi) | `make test-wasm` | **24** | SKIP limpio sin toolchain; +1 el 2026-09-10 (proyecto por el CLI, compara nativo vs wasm) |
+| WASM (wasm32-wasi) | `make test-wasm` | **27** | SKIP limpio sin toolchain; +4 el 2026-09-10 (proyecto por el CLI que compara nativo vs wasm; lifetime de cierres: captura de String, dos listeners, y anclaje sin fuga) |
 | Verify + compiler-unit + fmt | `make test-unit` | **21** (13 verify + 3 compiler-unit + 5 fmt) | compiler-unit activos: test-lexer, test-types-unify, test-borrow-classify (3 de 6; resto SKIP, ver abajo) |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +

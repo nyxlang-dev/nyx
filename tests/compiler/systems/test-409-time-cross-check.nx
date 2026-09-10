@@ -1,0 +1,155 @@
+// test-409 — std/time: la aritmética civil de Nyx contra la de C.
+//
+// POR QUÉ EXISTE ESTE TEST
+// El algoritmo civil (days_from_civil / civil_from_days) está escrito DOS
+// VECES a propósito:
+//   - en `std/time.nx`, en Nyx, para que time_breakdown no cruce la frontera
+//     FFI una vez por campo (std/serve hacía 7 llamadas + 7 localtime() para
+//     formatear UN instante);
+//   - en `runtime/time.c`, en C, porque su strftime y su strptime lo necesitan
+//     del lado de allá.
+//
+// Esa duplicación es un riesgo REAL de divergencia: son dos implementaciones
+// de un algoritmo con casos borde finos (años bisiestos por la regla 4/100/400,
+// epochs negativos, redondeo hacia abajo). El arco la aceptó a cambio de este
+// test, que las cruza sobre miles de instantes. Si alguien toca una y no la
+// otra, esto se pone rojo — que era la condición para permitir la duplicación.
+//
+// Es TZ-independiente por construcción: las dos caras son UTC puro.
+import "std/time"
+
+// La cara C. Se re-declaran acá porque las de std/time.nx son privadas del
+// módulo — y que este test las declare por su cuenta es lo correcto: verifica
+// el runtime tal como está, no lo que el módulo dice de él.
+extern "C" fn nyx_time_year_utc(epoch: int) -> int
+extern "C" fn nyx_time_month_utc(epoch: int) -> int
+extern "C" fn nyx_time_day_utc(epoch: int) -> int
+extern "C" fn nyx_time_hour_utc(epoch: int) -> int
+extern "C" fn nyx_time_minute_utc(epoch: int) -> int
+extern "C" fn nyx_time_second_utc(epoch: int) -> int
+extern "C" fn nyx_time_weekday_utc(epoch: int) -> int
+extern "C" fn nyx_time_yday_utc(epoch: int) -> int
+extern "C" fn nyx_time_from_civil_utc(y: int, mo: int, d: int, h: int, mi: int, s: int) -> int
+
+// Cruza los 8 campos de un instante. Aborta con el epoch en el mensaje si
+// alguno difiere: sin el valor, un fallo acá no se puede reproducir.
+fn cruzar(epoch: int) {
+    let dt: DateTime = time_breakdown(epoch)
+    if dt.year != nyx_time_year_utc(epoch) {
+        print("DIVERGE year @" + int_to_string(epoch))
+        assert(false)
+    }
+    if dt.month != nyx_time_month_utc(epoch) {
+        print("DIVERGE month @" + int_to_string(epoch))
+        assert(false)
+    }
+    if dt.day != nyx_time_day_utc(epoch) {
+        print("DIVERGE day @" + int_to_string(epoch))
+        assert(false)
+    }
+    if dt.hour != nyx_time_hour_utc(epoch) {
+        print("DIVERGE hour @" + int_to_string(epoch))
+        assert(false)
+    }
+    if dt.minute != nyx_time_minute_utc(epoch) {
+        print("DIVERGE minute @" + int_to_string(epoch))
+        assert(false)
+    }
+    if dt.second != nyx_time_second_utc(epoch) {
+        print("DIVERGE second @" + int_to_string(epoch))
+        assert(false)
+    }
+    if dt.weekday != nyx_time_weekday_utc(epoch) {
+        print("DIVERGE weekday @" + int_to_string(epoch))
+        assert(false)
+    }
+    if dt.yday != nyx_time_yday_utc(epoch) {
+        print("DIVERGE yday @" + int_to_string(epoch))
+        assert(false)
+    }
+}
+
+fn main() -> int {
+    // ── 1. Barrido ancho: ±63 años alrededor del epoch, paso primo ──────────
+    // El paso es primo y no divisor de 86400 para que las muestras no caigan
+    // siempre a la misma hora del día — un paso de 86400 no probaría nunca la
+    // descomposición horaria.
+    var e: int = 0 - 2000000000
+    var n: int = 0
+    while e < 2000000000 {
+        cruzar(e)
+        e = e + 999983
+        n = n + 1
+    }
+    print("barrido ancho OK: " + int_to_string(n) + " instantes")
+
+    // ── 2. Denso alrededor de los bordes que rompen ─────────────────────────
+    // Cada uno es una frontera donde las dos implementaciones podrían
+    // discrepar: el epoch (cambio de signo), fin de año, y el 29-feb de un
+    // bisiesto por regla 400 (2000) y de uno normal (2020).
+    let bordes: Array = [
+        0,                                              // el epoch
+        nyx_time_from_civil_utc(2000, 2, 29, 0, 0, 0),  // bisiesto regla 400
+        nyx_time_from_civil_utc(1900, 3, 1, 0, 0, 0),   // el 1900 NO es bisiesto
+        nyx_time_from_civil_utc(2020, 2, 29, 0, 0, 0),  // bisiesto regla 4
+        nyx_time_from_civil_utc(2020, 12, 31, 23, 59, 59),
+        nyx_time_from_civil_utc(2021, 1, 1, 0, 0, 0),
+        nyx_time_from_civil_utc(1969, 12, 31, 23, 59, 59),
+        nyx_time_from_civil_utc(1970, 1, 1, 0, 0, 0)
+    ]
+    var b: int = 0
+    var densos: int = 0
+    while b < bordes.length() {
+        let centro: int = bordes[b]
+        var off: int = 0 - 90000
+        while off <= 90000 {
+            cruzar(centro + off)
+            off = off + 997
+            densos = densos + 1
+        }
+        b = b + 1
+    }
+    print("bordes densos OK: " + int_to_string(densos) + " instantes")
+
+    // ── 3. La composición, en el otro sentido ──────────────────────────────
+    // time_from_civil (Nyx) contra nyx_time_from_civil_utc (C), incluida la
+    // normalización de meses fuera de [1,12], que es donde es más fácil que
+    // una de las dos se desvíe.
+    var y: int = 1890
+    var comp: int = 0
+    while y < 2140 {
+        var m: int = 0 - 2          // arranca fuera de rango a propósito
+        while m <= 14 {
+            let a: int = time_from_civil(y, m, 15, 6, 7, 8)
+            let c: int = nyx_time_from_civil_utc(y, m, 15, 6, 7, 8)
+            if a != c {
+                print("DIVERGE from_civil " + int_to_string(y) + "/" + int_to_string(m))
+                assert(false)
+            }
+            m = m + 1
+            comp = comp + 1
+        }
+        y = y + 1
+    }
+    print("composicion OK: " + int_to_string(comp) + " fechas")
+
+    // ── 4. Ida y vuelta: descomponer y recomponer da el mismo instante ─────
+    // Cierra el círculo: no alcanza con que las dos caras coincidan, tienen
+    // que ser inversas entre sí.
+    var k: int = 0 - 1500000000
+    var rt: int = 0
+    while k < 1500000000 {
+        let dt: DateTime = time_breakdown(k)
+        let vuelta: int = time_from_civil(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+        if vuelta != k {
+            print("DIVERGE round-trip @" + int_to_string(k))
+            assert(false)
+        }
+        k = k + 999979
+        rt = rt + 1
+    }
+    print("round-trip OK: " + int_to_string(rt) + " instantes")
+
+    print("test-409 time-cross-check OK")
+    return 0
+}

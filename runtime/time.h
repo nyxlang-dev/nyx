@@ -36,4 +36,46 @@ int64_t nyx_datetime_minute(int64_t epoch);   // Minute: 0-59
 int64_t nyx_datetime_second(int64_t epoch);   // Second: 0-59
 int64_t nyx_datetime_weekday(int64_t epoch);  // Day of week: 0=Sunday, 6=Saturday
 
+// ============================================================================
+// Camino UTC (arco std-time, incremento 1). El instante canónico de Nyx es
+// int64 segundos desde 1970-01-01T00:00:00Z. Estas funciones son el único
+// camino que NO depende del TZ del proceso; los datetime_* de arriba son
+// locales y se conservan tal cual por compatibilidad (67 usos medidos).
+// Implementadas con aritmética entera pura: sin gmtime_r/timegm (que no
+// existen en MSVC), sin lock y sin estado global.
+// ============================================================================
+
+// Accesores UTC. No pueden fallar: todo int64 es un instante válido.
+int64_t nyx_time_year_utc(int64_t epoch);
+int64_t nyx_time_month_utc(int64_t epoch);    // 1-12
+int64_t nyx_time_day_utc(int64_t epoch);      // 1-31
+int64_t nyx_time_hour_utc(int64_t epoch);
+int64_t nyx_time_minute_utc(int64_t epoch);
+int64_t nyx_time_second_utc(int64_t epoch);
+int64_t nyx_time_weekday_utc(int64_t epoch);  // 0=domingo
+int64_t nyx_time_yday_utc(int64_t epoch);     // 0-365
+
+// Fecha civil UTC -> epoch. Normaliza meses fuera de [1,12] por aritmética.
+int64_t nyx_time_from_civil_utc(int64_t y, int64_t mo, int64_t d,
+                                int64_t h, int64_t mi, int64_t s);
+
+// strftime sobre la descomposición UTC.
+nyx_string* nyx_time_format_utc(int64_t epoch, nyx_string* fmt);
+
+// Parseo. Devuelven nyx_time_invalid() si no matchea y nyx_time_unsupported()
+// si la plataforma no tiene strptime. NUNCA un instante inventado: a
+// diferencia del -1 de nyx_datetime_parse, estos sentinelas están fuera del
+// rango representable y no se confunden con 1969-12-31.
+int64_t nyx_time_parse_utc(nyx_string* date_str, nyx_string* fmt);
+int64_t nyx_time_parse_local(nyx_string* date_str, nyx_string* fmt);
+
+// Segundos al este de UTC vigentes EN ese instante (varía con el horario de
+// verano). nyx_time_unsupported() si la plataforma no resuelve la hora local
+// — nunca 0, que sería afirmar "es UTC" sin saberlo.
+int64_t nyx_time_utc_offset(int64_t epoch);
+
+// Los sentinelas, para que la capa Nyx no los hardcodee.
+int64_t nyx_time_invalid(void);
+int64_t nyx_time_unsupported(void);
+
 #endif // NYX_TIME_H

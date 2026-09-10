@@ -1,0 +1,543 @@
+// std/time.nx — La capa Nyx sobre el instante canónico.
+// Arco std-time (docs/design/specs/2026-09-10-std-time-design.md), incremento 1.
+//
+// ============================================================================
+// EL CONTRATO, EN UNA LÍNEA
+// ============================================================================
+// Un INSTANTE es un `int`: segundos desde 1970-01-01T00:00:00Z. Siempre UTC.
+//
+// Por qué epoch int y no un String ISO 8601 ni un struct, con las alternativas
+// que se descartaron y el porqué: §Decisión D1 del spec del arco. El resumen
+// operativo: ordena con `<` y siempre bien, resta a segundos exactos, y no
+// tiene ambigüedad de huso. Un String ISO ordenado lexicográficamente miente
+// en cuanto dos filas traen distinta precisión u offset ("+00" vs "Z"), que es
+// exactamente lo que devuelve una base de datos real; un struct de campos no
+// nombra un instante sino una hora civil, que sin huso es ambigua.
+//
+// `DateTime` existe acá, pero como VISTA derivada (time_breakdown), no como la
+// forma canónica. Se mira, no se guarda.
+//
+// ============================================================================
+// LA REGLA QUE GOBIERNA TODO ESTE MÓDULO
+// ============================================================================
+// NINGÚN CAMINO INVENTA UN VALOR.
+//   - Una fecha que no se puede parsear NO es 1969, y no es 0: es un Err.
+//   - Un huso que no se conoce NO es UTC por defecto silencioso. Si el texto no
+//     trae offset, `try_time_from_iso` FALLA y te manda a la función cuyo
+//     nombre dice la suposición que estás haciendo
+//     (`try_time_from_iso_assuming_utc`). La suposición se declara, no se hereda.
+//
+// El builtin viejo `datetime_parse` devuelve -1 al fallar, y -1 ES UN INSTANTE
+// VÁLIDO (1969-12-31 23:59:59Z): medido, `datetime_year(-1)` da 1969, una
+// respuesta correcta e indistinguible de un error. Un ERP que parsea una fecha
+// mal tipeada guardaba 1969 en la base sin ninguna señal. Este módulo no
+// repite esa colisión: los sentinelas del runtime están FUERA del rango
+// representable y se traducen a Result antes de que nadie los vea.
+//
+// ============================================================================
+// QUÉ ES FFI Y QUÉ ES NYX, Y POR QUÉ
+// ============================================================================
+// Baja a C SOLO lo que necesita libc de verdad: strftime (formato arbitrario),
+// strptime (parseo arbitrario) y el offset del huso local. Todo lo demás
+// —descomposición civil, ISO 8601, aritmética de calendario— es aritmética
+// entera pura y vive acá, en Nyx:
+//   - es testeable con `nyx test`,
+//   - no cruza la frontera FFI una vez por campo (hoy std/serve hace 7 llamadas
+//     FFI y 7 localtime() para formatear UN instante),
+//   - y no depende de ningún estado global de libc.
+//
+// El algoritmo civil está DUPLICADO a propósito entre acá y runtime/time.c
+// (que lo necesita para su propio strftime/strptime). Esa duplicación es un
+// riesgo real de divergencia y por eso está blindada: test-409 cruza las dos
+// implementaciones sobre miles de epochs. Si divergen, el test se pone rojo.
+
+import "std/error"
+
+// ── FFI: solo lo que exige libc ──────────────────────────────────────────────
+// Implementadas en runtime/time.c. Los accesores UTC de C existen para que el
+// test de cruce pueda verificar la aritmética de este módulo contra ellos.
+extern "C" fn nyx_time_format_utc(epoch: int, fmt: String) -> String
+extern "C" fn nyx_time_parse_utc(date_str: String, fmt: String) -> int
+extern "C" fn nyx_time_parse_local(date_str: String, fmt: String) -> int
+extern "C" fn nyx_time_utc_offset(epoch: int) -> int
+extern "C" fn nyx_time_invalid() -> int
+extern "C" fn nyx_time_unsupported() -> int
+extern "C" fn nyx_time_year_utc(epoch: int) -> int
+extern "C" fn nyx_time_month_utc(epoch: int) -> int
+extern "C" fn nyx_time_day_utc(epoch: int) -> int
+extern "C" fn nyx_time_hour_utc(epoch: int) -> int
+extern "C" fn nyx_time_minute_utc(epoch: int) -> int
+extern "C" fn nyx_time_second_utc(epoch: int) -> int
+extern "C" fn nyx_time_weekday_utc(epoch: int) -> int
+extern "C" fn nyx_time_yday_utc(epoch: int) -> int
+
+// ── La vista ────────────────────────────────────────────────────────────────
+
+/// Vista descompuesta de un instante. Derivada, no canónica: se obtiene con `time_breakdown(epoch)` y se descarta. Lo que se guarda y se ordena es el epoch.
+pub struct DateTime {
+    year: int,
+    month: int,    // 1-12
+    day: int,      // 1-31
+    hour: int,     // 0-23
+    minute: int,   // 0-59
+    second: int,   // 0-59
+    weekday: int,  // 0=domingo .. 6=sábado
+    yday: int      // 0-365
+}
+
+// ── Aritmética civil (Howard Hinnant, dominio público) ───────────────────────
+// Gregoriano proléptico. Espejo exacto de nyx_days_from_civil /
+// nyx_civil_from_days en runtime/time.c; test-409 cruza las dos.
+
+// División entera con redondeo HACIA ABAJO. Nyx (como C) trunca hacia cero, y
+// para epochs negativos eso da el día equivocado: -1 / 86400 es 0 truncando,
+// pero -1 segundo cae en 1969-12-31, que es el día -1. Sin esto todo el
+// pre-1970 se corre un día — y el pre-1970 no es hipotético: una fecha de
+// nacimiento en un ERP lo es.
+fn floor_div(a: int, b: int) -> int {
+    var q: int = a / b
+    if a % b != 0 and ((a < 0) != (b < 0)) { q = q - 1 }
+    return q
+}
+
+fn floor_mod(a: int, b: int) -> int {
+    return a - floor_div(a, b) * b
+}
+
+// Días desde 1970-01-01 para una fecha civil. m en [1,12], d en [1,31].
+fn days_from_civil(y0: int, m: int, d: int) -> int {
+    var y: int = y0
+    if m <= 2 { y = y - 1 }
+    let era: int = floor_div(y, 400)
+    let yoe: int = y - era * 400
+    var mp: int = m - 3
+    if m <= 2 { mp = m + 9 }
+    let doy: int = (153 * mp + 2) / 5 + d - 1
+    let doe: int = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+// Inversa exacta. Devuelve [año, mes, día].
+fn civil_from_days(z0: int) -> Array {
+    let z: int = z0 + 719468
+    let era: int = floor_div(z, 146097)
+    let doe: int = z - era * 146097
+    let yoe: int = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let y: int = yoe + era * 400
+    let doy: int = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp: int = (5 * doy + 2) / 153
+    let d: int = doy - (153 * mp + 2) / 5 + 1
+    var m: int = mp + 3
+    if mp >= 10 { m = mp - 9 }
+    var yy: int = y
+    if m <= 2 { yy = y + 1 }
+    return [yy, m, d]
+}
+
+// ── Descomposición y composición ────────────────────────────────────────────
+
+/// Descompone un instante en su vista UTC. Aritmética pura: cero FFI, cero `localtime()`, sin lock. Reemplaza las 7 llamadas por campo que costaba antes.
+pub fn time_breakdown(epoch: int) -> DateTime {
+    let days: int = floor_div(epoch, 86400)
+    let secs: int = floor_mod(epoch, 86400)
+    let civil: Array = civil_from_days(days)
+    let y: int = civil[0]
+    let m: int = civil[1]
+    let d: int = civil[2]
+    return DateTime {
+        year: y,
+        month: m,
+        day: d,
+        hour: secs / 3600,
+        minute: (secs % 3600) / 60,
+        second: secs % 60,
+        // 1970-01-01 fue jueves = 4; floor_mod para que los epochs negativos
+        // no den un día de la semana negativo.
+        weekday: floor_mod(days + 4, 7),
+        yday: days - days_from_civil(y, 1, 1)
+    }
+}
+
+/// Instante UTC a partir de una fecha civil. Normaliza meses fuera de [1,12] (mes 13 = enero del año siguiente) y días fuera de rango, igual que `mktime`, pero sin depender del huso del proceso.
+pub fn time_from_civil(y: int, mo: int, d: int, h: int, mi: int, s: int) -> int {
+    // Normalizar el mes ANTES de days_from_civil, que exige m en [1,12].
+    let m_adj: int = mo - 1
+    let y_norm: int = y + floor_div(m_adj, 12)
+    let m_norm: int = floor_mod(m_adj, 12) + 1
+    return days_from_civil(y_norm, m_norm, d) * 86400 + h * 3600 + mi * 60 + s
+}
+
+// ── Calendario ──────────────────────────────────────────────────────────────
+
+/// true si `y` es bisiesto en el calendario gregoriano (regla 4 / 100 / 400).
+pub fn time_is_leap_year(y: int) -> bool {
+    if y % 4 != 0 { return false }
+    if y % 100 != 0 { return true }
+    return y % 400 == 0
+}
+
+/// Días que tiene el mes `m` (1-12) del año `y`. 0 si el mes está fuera de rango.
+pub fn time_days_in_month(y: int, m: int) -> int {
+    if m < 1 or m > 12 { return 0 }
+    if m == 2 {
+        if time_is_leap_year(y) { return 29 }
+        return 28
+    }
+    if m == 4 or m == 6 or m == 9 or m == 11 { return 30 }
+    return 31
+}
+
+// ── Aritmética de fechas ────────────────────────────────────────────────────
+
+/// Suma (o resta, con `n` negativo) segundos.
+pub fn time_add_seconds(epoch: int, n: int) -> int {
+    return epoch + n
+}
+
+/// Suma (o resta) días. Un día son 86400 s EXACTOS porque el instante canónico es UTC — en hora local un día civil puede durar 23 o 25 h al cruzar un cambio de horario de verano, y esta cuenta sería falsa. Otra razón por la que el canónico es UTC y no local.
+pub fn time_add_days(epoch: int, n: int) -> int {
+    return epoch + n * 86400
+}
+
+/// Suma (o resta) meses de calendario, con SATURACIÓN DE FIN DE MES:
+/// 31-ene + 1 mes = 28-feb (29 en bisiesto), no el 3 de marzo.
+///
+/// Es la convención que usan los ERP para vencimientos y es la que esperan las
+/// personas, pero hay que saber lo que se compra: la operación NO es reversible
+/// (31-ene +1 mes -1 mes = 28-ene) ni asociativa. Ninguna convención logra las
+/// dos cosas —el problema es del calendario, no de la implementación—; ésta se
+/// eligió porque «vence el 31 y febrero no tiene 31» tiene una sola respuesta
+/// razonable en un vencimiento, y desbordar al mes siguiente no lo es.
+pub fn time_add_months(epoch: int, n: int) -> int {
+    let dt: DateTime = time_breakdown(epoch)
+    let total: int = (dt.year * 12 + (dt.month - 1)) + n
+    let y: int = floor_div(total, 12)
+    let m: int = floor_mod(total, 12) + 1
+    var d: int = dt.day
+    let tope: int = time_days_in_month(y, m)
+    if d > tope { d = tope }   // la saturación
+    return time_from_civil(y, m, d, dt.hour, dt.minute, dt.second)
+}
+
+/// Suma (o resta) años, con la misma saturación: 29-feb + 1 año = 28-feb.
+pub fn time_add_years(epoch: int, n: int) -> int {
+    return time_add_months(epoch, n * 12)
+}
+
+/// Diferencia `a - b` en segundos. Exacta, sin bordes.
+pub fn time_diff_seconds(a: int, b: int) -> int {
+    return a - b
+}
+
+/// Diferencia en DÍAS CIVILES UTC entre `a` y `b`: cuenta fronteras de medianoche cruzadas, no bloques de 86400 s. De 23:59 a 00:01 hay 1 día, no 0 — que es lo que quiere decir «cuántos días faltan para el vencimiento».
+pub fn time_diff_days(a: int, b: int) -> int {
+    return floor_div(a, 86400) - floor_div(b, 86400)
+}
+
+/// Medianoche UTC del día en que cae `epoch`.
+pub fn time_start_of_day(epoch: int) -> int {
+    return floor_div(epoch, 86400) * 86400
+}
+
+/// Último segundo del día UTC (23:59:59) en que cae `epoch`.
+pub fn time_end_of_day(epoch: int) -> int {
+    return time_start_of_day(epoch) + 86399
+}
+
+/// Medianoche UTC del día 1 del mes en que cae `epoch`.
+pub fn time_start_of_month(epoch: int) -> int {
+    let dt: DateTime = time_breakdown(epoch)
+    return time_from_civil(dt.year, dt.month, 1, 0, 0, 0)
+}
+
+/// Último segundo del último día del mes en que cae `epoch`. El vencimiento «fin de mes» de un ERP.
+pub fn time_end_of_month(epoch: int) -> int {
+    let dt: DateTime = time_breakdown(epoch)
+    let ultimo: int = time_days_in_month(dt.year, dt.month)
+    return time_from_civil(dt.year, dt.month, ultimo, 23, 59, 59)
+}
+
+// ── Formato ─────────────────────────────────────────────────────────────────
+
+fn pad2(n: int) -> String {
+    if n < 10 and n >= 0 { return "0" + int_to_string(n) }
+    return int_to_string(n)
+}
+
+// Año a 4 dígitos. Los años < 1000 y los negativos son raros pero existen (una
+// fecha mal cargada, un test); rellenar es lo que pide ISO 8601 y evita que
+// "999-01-01" se lea como un offset roto más adelante.
+fn pad_year(y: int) -> String {
+    if y < 0 { return "-" + pad_year(0 - y) }
+    if y < 10   { return "000" + int_to_string(y) }
+    if y < 100  { return "00" + int_to_string(y) }
+    if y < 1000 { return "0" + int_to_string(y) }
+    return int_to_string(y)
+}
+
+/// ISO 8601 en UTC, forma extendida: `2020-06-15T12:30:00Z`.
+pub fn time_to_iso(epoch: int) -> String {
+    let dt: DateTime = time_breakdown(epoch)
+    return pad_year(dt.year) + "-" + pad2(dt.month) + "-" + pad2(dt.day) +
+           "T" + pad2(dt.hour) + ":" + pad2(dt.minute) + ":" + pad2(dt.second) + "Z"
+}
+
+/// ISO 8601 con un offset explícito en segundos al este de UTC, forma EXTENDIDA: `2020-06-15T08:30:00-04:00`.
+///
+/// El offset se escribe `-04:00` y no `-0400` a propósito: la forma básica es
+/// la que emite `strftime("%z")` y es la que rechazan los parsers estrictos de
+/// JSON Schema (`format: date-time`, que exige RFC 3339). Que el formato de
+/// salida por omisión sea el que todo el mundo puede leer es la mitad del valor
+/// de tener este módulo.
+pub fn time_to_iso_offset(epoch: int, offset_s: int) -> String {
+    let local: int = epoch + offset_s
+    let dt: DateTime = time_breakdown(local)
+    var signo: String = "+"
+    var off: int = offset_s
+    if off < 0 {
+        signo = "-"
+        off = 0 - off
+    }
+    let oh: int = off / 3600
+    let om: int = (off % 3600) / 60
+    return pad_year(dt.year) + "-" + pad2(dt.month) + "-" + pad2(dt.day) +
+           "T" + pad2(dt.hour) + ":" + pad2(dt.minute) + ":" + pad2(dt.second) +
+           signo + pad2(oh) + ":" + pad2(om)
+}
+
+/// ISO 8601 en la hora local del proceso, con su offset real en ese instante. Err si la plataforma no sabe resolver la hora local — nunca cae a UTC en silencio.
+pub fn try_time_to_iso_local(epoch: int) -> Result<String, Error> {
+    let off: int = nyx_time_utc_offset(epoch)
+    if off == nyx_time_unsupported() {
+        return Result.Err(err_new(38, "unsupported",
+            "try_time_to_iso_local: la plataforma no resuelve la hora local"))
+    }
+    return Result.Ok(time_to_iso_offset(epoch, off))
+}
+
+/// Fecha HTTP de RFC 7231: `Mon, 15 Jun 2020 12:30:00 GMT`. SIEMPRE GMT, como exige la norma, sin depender del huso de la máquina.
+pub fn time_to_http_date(epoch: int) -> String {
+    let dt: DateTime = time_breakdown(epoch)
+    let dias: Array = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    let meses: Array = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    let dn: String = dias[dt.weekday]
+    let mn: String = meses[dt.month - 1]
+    return dn + ", " + pad2(dt.day) + " " + mn + " " + int_to_string(dt.year) +
+           " " + pad2(dt.hour) + ":" + pad2(dt.minute) + ":" + pad2(dt.second) + " GMT"
+}
+
+/// `strftime` sobre la descomposición UTC. Para formatos arbitrarios; para ISO 8601 usar `time_to_iso`, que no depende de libc.
+pub fn time_format_utc(epoch: int, fmt: String) -> String {
+    return nyx_time_format_utc(epoch, fmt)
+}
+
+// ── Parseo por formato (strptime) ───────────────────────────────────────────
+
+fn parse_err(quien: String, texto: String, fmt: String, raw: int) -> Error {
+    if raw == nyx_time_unsupported() {
+        return err_new(38, "unsupported",
+            quien + ": la plataforma no sabe parsear fechas por formato")
+    }
+    return err_new(5, "parse",
+        quien + ": no se pudo parsear '" + texto + "' con formato '" + fmt + "'")
+}
+
+/// Parsea `texto` con un formato estilo `strptime` y lo interpreta como UTC. El resultado NO depende del `TZ` del proceso — a diferencia del builtin `datetime_parse`, que con `TZ=America/Caracas` da un epoch 4 h distinto del que da con `TZ=UTC` para el mismo texto.
+pub fn try_time_parse_utc(texto: String, fmt: String) -> Result<int, Error> {
+    let raw: int = nyx_time_parse_utc(texto, fmt)
+    if raw == nyx_time_invalid() or raw == nyx_time_unsupported() {
+        return Result.Err(parse_err("try_time_parse_utc", texto, fmt, raw))
+    }
+    return Result.Ok(raw)
+}
+
+/// Igual que `try_time_parse_utc` pero interpreta el texto en el huso LOCAL del proceso. Para cuando «las 9 de la mañana» significa las 9 de acá; el resultado depende del `TZ`, y ése es el punto.
+pub fn try_time_parse_local(texto: String, fmt: String) -> Result<int, Error> {
+    let raw: int = nyx_time_parse_local(texto, fmt)
+    if raw == nyx_time_invalid() or raw == nyx_time_unsupported() {
+        return Result.Err(parse_err("try_time_parse_local", texto, fmt, raw))
+    }
+    return Result.Ok(raw)
+}
+
+// ── Parseo ISO 8601 ─────────────────────────────────────────────────────────
+// Escrito en Nyx y no delegado a strptime porque strptime no cubre lo que las
+// bases devuelven de verdad: el `+00` de dos dígitos de PostgreSQL, la `Z`, los
+// segundos fraccionarios, y el separador espacio en vez de `T`. Además así el
+// parseo no depende de libc ni del huso.
+
+fn es_digito(c: char) -> bool {
+    return c >= '0' and c <= '9'
+}
+
+// Lee `n` dígitos desde `i`. Devuelve [valor, siguiente_i] o [-1, i] si no hay
+// n dígitos. El -1 no escapa del módulo: los callers lo convierten en Err.
+fn leer_n(s: String, i: int, n: int) -> Array {
+    if i + n > s.length() { return [-1, i] }
+    var v: int = 0
+    var k: int = 0
+    while k < n {
+        let c: char = s.charAt(i + k)
+        if !es_digito(c) { return [-1, i] }
+        v = v * 10 + ((c as int) - 48)
+        k = k + 1
+    }
+    return [v, i + n]
+}
+
+// El corazón compartido de las dos entradas ISO. `exigir_offset` decide si un
+// texto sin huso es un error o se toma como UTC — la diferencia entre las dos
+// funciones públicas, y la razón por la que son dos y no una con un booleano
+// suelto en la firma.
+// Devuelve [epoch, 1] si salió, [código, 0] si no: 1=forma inválida, 2=sin offset.
+fn iso_core(s0: String, exigir_offset: bool) -> Array {
+    let s: String = s0.trim()
+    if s.length() < 10 { return [1, 0] }
+
+    let ry: Array = leer_n(s, 0, 4)
+    if ry[0] < 0 { return [1, 0] }
+    if s.charAt(4) != '-' { return [1, 0] }
+    let rmo: Array = leer_n(s, 5, 2)
+    if rmo[0] < 0 { return [1, 0] }
+    if s.charAt(7) != '-' { return [1, 0] }
+    let rd: Array = leer_n(s, 8, 2)
+    if rd[0] < 0 { return [1, 0] }
+
+    let y: int = ry[0]
+    let mo: int = rmo[0]
+    let d: int = rd[0]
+
+    // Rango real de calendario. Sin esto "2020-13-45" pasaría y
+    // time_from_civil lo normalizaría a otra fecha: inventar un valor.
+    if mo < 1 or mo > 12 { return [1, 0] }
+    if d < 1 or d > time_days_in_month(y, mo) { return [1, 0] }
+
+    var i: int = 10
+    var h: int = 0
+    var mi: int = 0
+    var sec: int = 0
+
+    if i < s.length() {
+        let sep: char = s.charAt(i)
+        // 'T' es la forma ISO; el espacio es lo que devuelven PostgreSQL y
+        // SQLite, y rechazarlo sería rechazar el caso mayoritario real.
+        if sep != 'T' and sep != 't' and sep != ' ' { return [1, 0] }
+        i = i + 1
+        let rh: Array = leer_n(s, i, 2)
+        if rh[0] < 0 { return [1, 0] }
+        h = rh[0]
+        i = rh[1]
+        if i >= s.length() or s.charAt(i) != ':' { return [1, 0] }
+        let rmi: Array = leer_n(s, i + 1, 2)
+        if rmi[0] < 0 { return [1, 0] }
+        mi = rmi[0]
+        i = rmi[1]
+        // Los segundos son opcionales en ISO 8601 (2020-06-15T12:30 es válido).
+        if i < s.length() and s.charAt(i) == ':' {
+            let rs: Array = leer_n(s, i + 1, 2)
+            if rs[0] < 0 { return [1, 0] }
+            sec = rs[0]
+            i = rs[1]
+        }
+        // Segundos fraccionarios: se consumen y se DESCARTAN, porque el
+        // instante canónico es en segundos. Truncar hacia abajo (no redondear)
+        // es lo que hace que el orden se conserve.
+        if i < s.length() and (s.charAt(i) == '.' or s.charAt(i) == ',') {
+            i = i + 1
+            var vistos: int = 0
+            while i < s.length() and es_digito(s.charAt(i)) {
+                i = i + 1
+                vistos = vistos + 1
+            }
+            if vistos == 0 { return [1, 0] }
+        }
+    }
+
+    if h > 23 or mi > 59 or sec > 60 { return [1, 0] }   // 60 = segundo intercalar
+    let base: int = time_from_civil(y, mo, d, h, mi, sec)
+
+    if i >= s.length() {
+        // Sin huso. Acá se aplica la regla del módulo: no se supone UTC.
+        if exigir_offset { return [2, 0] }
+        return [base, 1]
+    }
+
+    let z: char = s.charAt(i)
+    if z == 'Z' or z == 'z' {
+        if i + 1 != s.length() { return [1, 0] }
+        return [base, 1]
+    }
+    if z != '+' and z != '-' { return [1, 0] }
+
+    let roh: Array = leer_n(s, i + 1, 2)
+    if roh[0] < 0 { return [1, 0] }
+    var j: int = roh[1]
+    var om: int = 0
+    if j < s.length() {
+        // Extendida "+00:00", básica "+0000" — y "+00" a secas, que es lo que
+        // manda PostgreSQL por el cable.
+        if s.charAt(j) == ':' { j = j + 1 }
+        let rom: Array = leer_n(s, j, 2)
+        if rom[0] < 0 { return [1, 0] }
+        om = rom[0]
+        j = rom[1]
+    }
+    if j != s.length() { return [1, 0] }
+    if roh[0] > 23 or om > 59 { return [1, 0] }
+
+    var off: int = roh[0] * 3600 + om * 60
+    if z == '-' { off = 0 - off }
+    return [base - off, 1]
+}
+
+/// Parsea ISO 8601 / RFC 3339 y devuelve el instante. Acepta lo que las bases
+/// devuelven de verdad: `Z`, `+00:00`, `+0000`, el `+00` de PostgreSQL,
+/// separador `T` o espacio, y segundos fraccionarios (que trunca).
+///
+/// **EXIGE huso explícito.** Un texto sin offset (`"2020-06-15 12:30:00"`) da
+/// Err, no un instante: el texto no dice qué instante es, y suponer UTC sería
+/// inventar el dato. Si sabés que es UTC, decilo con
+/// `try_time_from_iso_assuming_utc` — el nombre deja la suposición escrita en
+/// el código que la hace, que es donde tiene que estar cuando alguien la
+/// audite.
+pub fn try_time_from_iso(s: String) -> Result<int, Error> {
+    let r: Array = iso_core(s, true)
+    if r[1] == 1 { return Result.Ok(r[0]) }
+    if r[0] == 2 {
+        return Result.Err(err_new(22, "invalid",
+            "try_time_from_iso: '" + s + "' no trae huso horario. Si sabés que es UTC usá try_time_from_iso_assuming_utc; si es hora local, try_time_parse_local"))
+    }
+    return Result.Err(err_new(5, "parse",
+        "try_time_from_iso: '" + s + "' no es una fecha ISO 8601 valida"))
+}
+
+/// Igual que `try_time_from_iso`, pero un texto SIN huso se interpreta como UTC. La suposición la hace quien llama, y el nombre la deja escrita. Para columnas `timestamp without time zone` que se sabe que se guardaron en UTC.
+pub fn try_time_from_iso_assuming_utc(s: String) -> Result<int, Error> {
+    let r: Array = iso_core(s, false)
+    if r[1] == 1 { return Result.Ok(r[0]) }
+    return Result.Err(err_new(5, "parse",
+        "try_time_from_iso_assuming_utc: '" + s + "' no es una fecha ISO 8601 valida"))
+}
+
+// ── Huso local ──────────────────────────────────────────────────────────────
+
+/// Segundos al este de UTC vigentes en ese instante (varía con el horario de verano). Err si la plataforma no lo resuelve — nunca devuelve 0, que sería afirmar «es UTC» sin saberlo.
+pub fn try_time_utc_offset(epoch: int) -> Result<int, Error> {
+    let off: int = nyx_time_utc_offset(epoch)
+    if off == nyx_time_unsupported() {
+        return Result.Err(err_new(38, "unsupported",
+            "try_time_utc_offset: la plataforma no resuelve la hora local"))
+    }
+    return Result.Ok(off)
+}
+
+/// Vista descompuesta en la hora LOCAL del proceso. Err si no se puede resolver el huso. Los campos son hora local; el instante sigue siendo el epoch que se pasó.
+pub fn try_time_breakdown_local(epoch: int) -> Result<DateTime, Error> {
+    let off: int = nyx_time_utc_offset(epoch)
+    if off == nyx_time_unsupported() {
+        return Result.Err(err_new(38, "unsupported",
+            "try_time_breakdown_local: la plataforma no resuelve la hora local"))
+    }
+    return Result.Ok(time_breakdown(epoch + off))
+}

@@ -5,8 +5,13 @@
 // una fn Nyx exportada con #[export_name]. El shim provee browserBindings()
 // (examples/browser/nyx-wasi-shim.js) sobre el browser real o mocks (tests).
 //
+// Desde el arco del lifetime de cierres hay además variantes `*_fn` de
+// fetch/timeout/interval que toman un CLOSURE en vez del nombre de un export:
+// el entorno capturado viaja con el callback. Ver más abajo.
+//
 // EN: browser gateway for the WASM target. Async APIs call back into Nyx
-// exports BY NAME (same pattern as dom_on) until real async/await exists.
+// exports BY NAME (same pattern as dom_on) until real async/await exists;
+// the `*_fn` variants take a closure instead, carrying their environment.
 //
 // Uso / usage:
 //   import "std/browser"
@@ -31,6 +36,11 @@ extern "js" fn js_match_media(query: String) -> int
 // hash (atrás/adelante del browser, o un link `#/...`).
 extern "js" fn js_browser_get_hash() -> String
 extern "js" fn js_browser_on_hashchange_fn(handler: Fn)
+// Variantes por CLOSURE de fetch/timeout/interval: el handler es un `Fn`, no
+// el nombre de un export, así que el ENTORNO viaja con el callback.
+extern "js" fn js_browser_fetch_fn(url: String, method: String, body: String, handler: Fn)
+extern "js" fn js_browser_timeout_fn(ms: int, handler: Fn) -> int
+extern "js" fn js_browser_interval_fn(ms: int, handler: Fn) -> int
 
 // HTTP fetch: al resolver, llama al export `handler(status: int, body: String)`.
 // status 0 = error de red (body = mensaje). body de request "" = sin body.
@@ -49,9 +59,59 @@ export fn browser_timeout(ms: int, handler: String) -> int {
     return js_browser_timeout(ms, handler)
 }
 
-// Cancela un timer (interval o timeout) por id
+// Cancela un timer (interval o timeout) por id. Para los timers con CLOSURE
+// (browser_interval_fn/browser_timeout_fn) esta llamada es además la que
+// suelta el entorno del cierre — cancelar es desanclar.
 export fn browser_clear_timer(id: int) {
     js_browser_clear_timer(id)
+}
+
+// ── Variantes con CLOSURE ────────────────────────────────────────────────
+//
+// Lo mismo que browser_fetch/timeout/interval, pero el handler es un cierre
+// en vez del nombre de un export: el entorno capturado viaja con el callback
+// y llega intacto cuando dispara, en otro turno de evento.
+//
+//   browser_fetch_fn("/api/total?linea=7", "GET", "", fn(status: int, body: String) {
+//       dom_set_text("#linea-7-total", body)      // la línea se sabe: se capturó
+//   })
+//
+// Contra el patrón por nombre (`browser_fetch(..., "al_llegar_el_total")`),
+// que obliga a pasar el contexto por un global porque la fn exportada no
+// captura nada.
+//
+// El entorno lo mantiene vivo el binding del shim anclando el turno en que se
+// creó el cierre (runtime/wasi/nyx_arena.c). El desanclaje también es del
+// binding: fetch y timeout disparan una vez y liberan al disparar; el interval
+// libera en browser_clear_timer. NO hay nada que liberar desde acá.
+//
+// LÍMITE (el mismo que ya rige para los handlers, ver
+// docs/gotchas/wasm-arena-closure-env.md): el cierre puede LEER lo que
+// capturó, pero no debe GUARDAR en su entorno un String/Array creado durante
+// el disparo — esa memoria es del turno del disparo y muere en su reset.
+// Guardar ints/floats por valor siempre es seguro.
+//
+// EN: closure-taking variants of fetch/timeout/interval. The captured
+// environment travels with the callback; the shim binding keeps it alive and
+// releases it (on fire for fetch/timeout, on clear_timer for interval).
+
+// HTTP fetch con cierre: al resolver llama a `handler(status, body)`.
+// status 0 = error de red (body = mensaje). body de request "" = sin body.
+export fn browser_fetch_fn(url: String, method: String, body: String, handler: Fn) {
+    js_browser_fetch_fn(url, method, body, handler)
+}
+
+// setTimeout con cierre: llama a `handler()` una vez tras `ms`. Devuelve id
+// para browser_clear_timer (cancelarlo antes de que dispare es válido).
+export fn browser_timeout_fn(ms: int, handler: Fn) -> int {
+    return js_browser_timeout_fn(ms, handler)
+}
+
+// setInterval con cierre: llama a `handler()` cada `ms`. Devuelve id — es
+// MULTI-disparo, así que hay que cancelarlo con browser_clear_timer: hasta
+// entonces retiene el turno en que se creó.
+export fn browser_interval_fn(ms: int, handler: Fn) -> int {
+    return js_browser_interval_fn(ms, handler)
 }
 
 // Geolocalización: llama al export `handler(lat: float, lon: float)`.

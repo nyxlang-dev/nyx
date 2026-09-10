@@ -20,6 +20,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`std/time.nx` y el camino UTC que no existía** `[arco: std-time]`. `runtime/time.c` siempre llamaba `localtime()`, así que el
+  mismo `datetime_parse` daba dos epochs distintos según `TZ` — y `std/serve` emitía una cabecera `Date` rotulada `GMT` que era
+  incorrecta en toda máquina con huso local, presentándolo en un comentario como «restricción de despliegue». Ahora la aritmética
+  civil es entera pura y **no usa `gmtime_r`/`timegm` a propósito**: ninguna existe en la CRT de MSVC y ese archivo ya compila en
+  el port de Windows. Es reentrante por construcción y exacta incluido pre-1970. La capa Nyx nueva trae ISO 8601 con offset
+  extendido, aritmética de calendario y `time_breakdown` como vista — que le ahorra a `std/serve` siete llamadas FFI y siete
+  `localtime()` por cabecera.
+  **Ningún camino inventa un valor**: `try_time_from_iso("2020-06-15 12:30:00")` da `Err` porque ese texto no dice qué instante
+  es, y la suposición se declara en el nombre (`try_time_from_iso_assuming_utc`); `2021-02-29` es `Err`, no el 1 de marzo
+  normalizado; y `try_time_utc_offset` falla si la plataforma no resuelve el huso, en vez de devolver un `0` que afirmaría que es
+  UTC. El centinela `-1` de `datetime_parse` —que colisionaba con 1969-12-31, así que una fecha mal tipeada se guardaba como 1969
+  en silencio— se reemplaza por uno fuera de rango, **sin cambiar ninguna firma**: los 67 usos existentes siguen andando.
+- **Cierres asíncronos en wasm: `browser_fetch_fn`, `browser_timeout_fn`, `browser_interval_fn`** `[arco: wasm-closure-lifetime]`.
+  Aceptan un cierre donde antes iba el nombre de un export, que al ser global perdía el contexto. La pieza que lo hace posible es
+  la retención por turno en el allocador: si durante un turno alguien ancló un cierre, el reset no recicla la cadena de bloques de
+  ese turno, así que **todo lo que el cierre capturó queda vivo por construcción**. Arregla además `dom_on_fn`, que ya estaba roto
+  bajo la arena — dos listeners distintos colapsaban en un mismo entorno. El desanclaje vive en el binding y no en el usuario.
 - **`nyx build --target wasm32-wasi` documentado, endurecido y probado** `[arco: nyx-build-wasm]`. El equipo de nyxerp pidió
   poder compilar un PROYECTO a WebAssembly y **el comando ya existía desde julio**: la resolución de imports no vive en el camino
   de wasm sino en el driver del compilador, que recibe un archivo y cierra el grafo solo. El pedido era de DESCUBRIBILIDAD —

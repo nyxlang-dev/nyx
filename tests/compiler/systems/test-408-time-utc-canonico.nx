@@ -1,0 +1,224 @@
+// test-408 — std/time: el instante canónico es UTC (arco std-time, inc. 1).
+//
+// Lo que blinda, en orden de por qué existe:
+//
+//  1. TZ-INDEPENDENCIA. El triage del arco midió que el mismo
+//     `datetime_parse("2020-06-15 12:30:00", ...)` devuelve 1592224200 con
+//     TZ=UTC y 1592238600 con TZ=America/Caracas — 4 h de diferencia. Todo lo
+//     que este test afirma vale en CUALQUIER huso, y por eso el runner puede
+//     correrlo sin fijar TZ. Si alguien vuelve a meter localtime() en el camino
+//     canónico, los valores literales de acá dejan de dar.
+//
+//  2. EL SENTINELA QUE NO COLISIONA. `datetime_parse` devuelve -1 al fallar y
+//     -1 ES un instante válido (1969-12-31T23:59:59Z). Acá se verifica que -1
+//     se sigue descomponiendo como el instante que es, y que una fecha que no
+//     parsea da Err y no un número que se pueda confundir con una fecha.
+//
+//  3. PRE-1970. Los epochs negativos necesitan división con redondeo hacia
+//     abajo; con la truncación normal de C/Nyx todo el pre-1970 se corre un
+//     día. Una fecha de nacimiento en un ERP es pre-1970 todo el tiempo.
+//
+//  4. ISO 8601 con offset EXTENDIDO (+00:00), que es lo que exige RFC 3339 y
+//     lo que rechaza un parser estricto si se le manda el +0000 de strftime.
+import "std/time"
+
+fn main() -> int {
+    // ── 1. Composición y descomposición, con valores absolutos ──────────────
+    let e: int = time_from_civil(2020, 6, 15, 12, 30, 0)
+    assert(e == 1592224200)
+
+    let dt: DateTime = time_breakdown(e)
+    assert(dt.year == 2020)
+    assert(dt.month == 6)
+    assert(dt.day == 15)
+    assert(dt.hour == 12)
+    assert(dt.minute == 30)
+    assert(dt.second == 0)
+    assert(dt.weekday == 1)     // lunes
+    assert(dt.yday == 166)
+    print("breakdown OK")
+
+    // ── 2. Epoch 0 y el instante -1 que colisiona con el sentinela viejo ────
+    let z: DateTime = time_breakdown(0)
+    assert(z.year == 1970 and z.month == 1 and z.day == 1)
+    assert(z.weekday == 4)      // 1970-01-01 fue jueves
+    assert(z.yday == 0)
+
+    // -1 NO es un error: es 1969-12-31T23:59:59Z. Que se descomponga bien es
+    // justo lo que hace que el -1 de datetime_parse sea indistinguible de un
+    // acierto, y por lo que std/time usa sentinelas fuera de rango.
+    let m1: DateTime = time_breakdown(-1)
+    assert(m1.year == 1969 and m1.month == 12 and m1.day == 31)
+    assert(m1.hour == 23 and m1.minute == 59 and m1.second == 59)
+    print("epoch-cero-y-negativo OK")
+
+    // ── 3. Pre-1970 lejano (redondeo hacia abajo) ──────────────────────────
+    let e50: int = time_from_civil(1950, 3, 1, 0, 0, 0)
+    assert(e50 < 0)
+    let d50: DateTime = time_breakdown(e50)
+    assert(d50.year == 1950 and d50.month == 3 and d50.day == 1)
+    assert(d50.hour == 0 and d50.minute == 0 and d50.second == 0)
+    print("pre-1970 OK")
+
+    // ── 4. Bisiestos: la regla 4 / 100 / 400 completa ───────────────────────
+    assert(time_is_leap_year(2020))
+    assert(!time_is_leap_year(2021))
+    assert(!time_is_leap_year(1900))    // divisible por 100 y no por 400
+    assert(time_is_leap_year(2000))     // divisible por 400
+    assert(time_days_in_month(2020, 2) == 29)
+    assert(time_days_in_month(2021, 2) == 28)
+    assert(time_days_in_month(2021, 4) == 30)
+    assert(time_days_in_month(2021, 12) == 31)
+    print("bisiestos OK")
+
+    // ── 5. ISO 8601 ────────────────────────────────────────────────────────
+    assert(time_to_iso(e) == "2020-06-15T12:30:00Z")
+    assert(time_to_iso(0) == "1970-01-01T00:00:00Z")
+    assert(time_to_iso(-1) == "1969-12-31T23:59:59Z")
+
+    // Offset EXTENDIDO: "-04:00", no el "-0400" que emite strftime("%z").
+    assert(time_to_iso_offset(e, 0 - 4 * 3600) == "2020-06-15T08:30:00-04:00")
+    assert(time_to_iso_offset(e, 5 * 3600 + 1800) == "2020-06-15T18:00:00+05:30")
+    print("iso-formato OK")
+
+    // ── 6. Parseo ISO: las formas que devuelven las bases de verdad ────────
+    let formas: Array = [
+        "2020-06-15T12:30:00Z",
+        "2020-06-15T12:30:00+00:00",
+        "2020-06-15T12:30:00+0000",
+        "2020-06-15 12:30:00+00",      // PostgreSQL por el cable
+        "2020-06-15T12:30:00.123456Z", // fraccionarios, se truncan
+        "2020-06-15t12:30:00z"
+    ]
+    var i: int = 0
+    while i < formas.length() {
+        let s: String = formas[i]
+        let r: Result<int, Error> = try_time_from_iso(s)
+        assert(r.is_ok())
+        assert(r.unwrap() == 1592224200)
+        i = i + 1
+    }
+
+    // Con offset real: las 08:30 en -04:00 son las 12:30Z.
+    let ro: Result<int, Error> = try_time_from_iso("2020-06-15T08:30:00-04:00")
+    assert(ro.is_ok() and ro.unwrap() == 1592224200)
+    print("iso-parseo OK")
+
+    // ── 7. NINGÚN CAMINO INVENTA UN VALOR ──────────────────────────────────
+    // Sin huso explícito: Err, no "supongamos UTC".
+    let sin_huso: Result<int, Error> = try_time_from_iso("2020-06-15 12:30:00")
+    assert(sin_huso.is_err())
+
+    // La misma entrada, por la puerta que DECLARA la suposición: Ok.
+    let asumido: Result<int, Error> = try_time_from_iso_assuming_utc("2020-06-15 12:30:00")
+    assert(asumido.is_ok() and asumido.unwrap() == 1592224200)
+
+    // Basura: Err. Y fechas que NO existen en el calendario: Err, no una fecha
+    // vecina normalizada (que sería inventar el dato).
+    let basura: Array = ["no-es-fecha", "",
+                         "2020-13-01T00:00:00Z",    // mes 13
+                         "2021-02-29T00:00:00Z",    // 29-feb en año no bisiesto
+                         "2020-06-15T25:00:00Z",    // hora 25
+                         "2020-06-15T12:30:00+99:00"]
+    var j: int = 0
+    while j < basura.length() {
+        let mala: String = basura[j]
+        let rb: Result<int, Error> = try_time_from_iso(mala)
+        assert(rb.is_err())
+        j = j + 1
+    }
+    let rbis: Result<int, Error> = try_time_from_iso_assuming_utc("2021-02-29")
+    assert(rbis.is_err())
+    print("no-inventar OK")
+
+    // Parseo por formato, en UTC: TZ-independiente por construcción.
+    let pu: Result<int, Error> = try_time_parse_utc("2020-06-15 12:30:00", "%Y-%m-%d %H:%M:%S")
+    assert(pu.is_ok() and pu.unwrap() == 1592224200)
+    let pmal: Result<int, Error> = try_time_parse_utc("no-es-fecha", "%Y-%m-%d %H:%M:%S")
+    assert(pmal.is_err())
+    print("parse-utc OK")
+
+    // ── 8. Aritmética de fechas ────────────────────────────────────────────
+    assert(time_add_days(e, 1) == e + 86400)
+    assert(time_to_iso(time_add_days(e, 1)) == "2020-06-16T12:30:00Z")
+
+    // Cruce de fin de mes y de año.
+    let fin: int = time_from_civil(2020, 12, 31, 23, 0, 0)
+    assert(time_to_iso(time_add_days(fin, 1)) == "2021-01-01T23:00:00Z")
+
+    // Saturación de fin de mes: 31-ene + 1 mes = 29-feb en bisiesto, 28 si no.
+    let ene31_b: int = time_from_civil(2020, 1, 31, 10, 0, 0)
+    assert(time_to_iso(time_add_months(ene31_b, 1)) == "2020-02-29T10:00:00Z")
+    let ene31_n: int = time_from_civil(2021, 1, 31, 10, 0, 0)
+    assert(time_to_iso(time_add_months(ene31_n, 1)) == "2021-02-28T10:00:00Z")
+
+    // La saturación NO es reversible, y el test lo deja escrito a propósito:
+    // es la consecuencia que se compró al elegir la convención.
+    assert(time_to_iso(time_add_months(time_add_months(ene31_b, 1), -1)) == "2020-01-29T10:00:00Z")
+
+    // Meses hacia atrás y cruce de año.
+    assert(time_to_iso(time_add_months(e, -6)) == "2019-12-15T12:30:00Z")
+    assert(time_to_iso(time_add_months(e, 12)) == "2021-06-15T12:30:00Z")
+
+    // 29-feb + 1 año satura a 28-feb.
+    let bis: int = time_from_civil(2020, 2, 29, 0, 0, 0)
+    assert(time_to_iso(time_add_years(bis, 1)) == "2021-02-28T00:00:00Z")
+    print("aritmetica OK")
+
+    // ── 9. Diferencias y bordes de día/mes ─────────────────────────────────
+    assert(time_diff_seconds(e + 60, e) == 60)
+
+    // time_diff_days cuenta MEDIANOCHES cruzadas, no bloques de 86400 s: de
+    // 23:59 a 00:01 hay un día, que es lo que quiere decir "cuántos días
+    // faltan para el vencimiento".
+    let a: int = time_from_civil(2020, 6, 15, 23, 59, 0)
+    let b: int = time_from_civil(2020, 6, 16, 0, 1, 0)
+    assert(time_diff_days(b, a) == 1)
+    assert(time_diff_seconds(b, a) == 120)
+
+    assert(time_to_iso(time_start_of_day(e)) == "2020-06-15T00:00:00Z")
+    assert(time_to_iso(time_end_of_day(e)) == "2020-06-15T23:59:59Z")
+    assert(time_to_iso(time_start_of_month(e)) == "2020-06-01T00:00:00Z")
+    assert(time_to_iso(time_end_of_month(e)) == "2020-06-30T23:59:59Z")
+
+    // Fin de mes en febrero bisiesto — el vencimiento clásico de un ERP.
+    let feb: int = time_from_civil(2020, 2, 10, 0, 0, 0)
+    assert(time_to_iso(time_end_of_month(feb)) == "2020-02-29T23:59:59Z")
+    print("bordes OK")
+
+    // ── 10. Fecha HTTP de RFC 7231: SIEMPRE GMT ────────────────────────────
+    // Este es el valor que std/serve manda en la cabecera Date. Antes salía de
+    // los accesores locales, así que en una máquina con huso local la cabecera
+    // era incorrecta y el propio código lo documentaba como "asume UTC".
+    assert(time_to_http_date(e) == "Mon, 15 Jun 2020 12:30:00 GMT")
+    assert(time_to_http_date(0) == "Thu, 01 Jan 1970 00:00:00 GMT")
+    assert(time_to_http_date(784111777) == "Sun, 06 Nov 1994 08:49:37 GMT") // el ejemplo de la RFC
+    print("http-date OK")
+
+    // ── 11. Huso local: invariantes, no valores ────────────────────────────
+    // No se puede afirmar un valor (depende del TZ del runner), pero sí las
+    // relaciones — y que NUNCA se invente un 0.
+    let roff: Result<int, Error> = try_time_utc_offset(e)
+    assert(roff.is_ok())
+    let off: int = roff.unwrap()
+    assert(off > 0 - 15 * 3600 and off < 15 * 3600)
+
+    let rloc: Result<DateTime, Error> = try_time_breakdown_local(e)
+    assert(rloc.is_ok())
+    let loc: DateTime = rloc.unwrap()
+    let shifted: DateTime = time_breakdown(e + off)
+    assert(loc.year == shifted.year and loc.month == shifted.month)
+    assert(loc.day == shifted.day and loc.hour == shifted.hour)
+    assert(loc.minute == shifted.minute and loc.second == shifted.second)
+
+    let riso: Result<String, Error> = try_time_to_iso_local(e)
+    assert(riso.is_ok())
+    // El ISO local vuelve a parsear al MISMO instante: el offset que escribe
+    // es el que corresponde, no un adorno.
+    let vuelta: Result<int, Error> = try_time_from_iso(riso.unwrap())
+    assert(vuelta.is_ok() and vuelta.unwrap() == e)
+    print("huso-local OK")
+
+    print("test-408 time-utc-canonico OK")
+    return 0
+}
