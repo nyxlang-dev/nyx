@@ -1,0 +1,34 @@
+// ─────────────────────────────────────────────────────────────────────────
+// CORE DEL LENGUAJE (scripts/prelude_core.nx.in) — las 13 declaraciones que
+// NO vienen de ningún módulo std/: Option, Result y los 11 traits de
+// sobrecarga de operadores. El compilador las busca POR NOMBRE y sin ellas
+// no compila NI UN programa (tampoco el propio compilador), así que no se
+// pueden regenerar concatenando: son la única parte del prelude escrita a
+// mano. Todo el resto de std/prelude.nx es copia literal de los 5 módulos.
+// ─────────────────────────────────────────────────────────────────────────
+
+// === Option<T> and Result<T,E> — builtin generic enums ===
+
+enum Option<T> {
+    Some(T),
+    None
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E)
+}
+
+// === Operator Overloading Traits ===
+
+trait Add { fn add(self, other: Self) -> Self }
+trait Sub { fn sub(self, other: Self) -> Self }
+trait Mul { fn mul(self, other: Self) -> Self }
+trait Div { fn div(self, other: Self) -> Self }
+trait Rem { fn rem(self, other: Self) -> Self }
+trait Neg { fn neg(self) -> Self }
+trait PartialEq { fn eq(self, other: Self) -> bool }
+trait PartialOrd { fn lt(self, other: Self) -> bool }
+trait Clone { fn clone(self) -> Self }
+trait Debug { fn debug_str(self) -> String }
+trait Copy { }
