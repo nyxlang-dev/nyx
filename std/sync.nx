@@ -86,10 +86,10 @@ pub fn wg_wait_timeout(wg: WaitGroup, timeout_ms: int) -> bool {
     // despertar espurio o por un done() intermedio con count todavía > 0 —
     // re-esperar el REMANENTE, no el timeout entero (o un tren de despertares
     // estiraría la espera sin límite).
-    let deadline: int = time_ms() + timeout_ms
+    let deadline: int = monotonic_ms() + timeout_ms
     mutex_lock(wg.mutex)
     while wg.count[0] > 0 {
-        let remaining: int = deadline - time_ms()
+        let remaining: int = deadline - monotonic_ms()
         if remaining <= 0 {
             mutex_unlock(wg.mutex)
             return false

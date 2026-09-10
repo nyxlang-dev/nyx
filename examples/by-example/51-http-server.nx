@@ -11,7 +11,7 @@ fn on_request(req: Array) -> String {
         return http_response(200, "Hello from Nyx!")
     }
     if path == "/time" {
-        let t: int = time()
+        let t: int = time_epoch()
         return http_response(200, "timestamp: " + int_to_string(t))
     }
     return http_response(404, "not found: " + path)

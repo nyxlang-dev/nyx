@@ -68,7 +68,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,derive-fields-pg-bool-text,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated -->
 
 1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
@@ -77,32 +77,41 @@ a drenar un segundo canal acotado — dimensiona cada canal para al menos el tot
 transportar.**
 3. **Un `int` de C (32 bits) retornado por una función `extern "C"` NO hace sign-extend a un `int` de Nyx
 (64 bits) — un valor negativo de C cruza como un número positivo enorme, nunca como negativo.**
-4. **Una fila de `std/postgres` no se le puede pasar directo a `<Struct>_desde_fila()` si tiene una
-columna `bool` — el formato text de PostgreSQL para boolean es `t`/`f`, y `desde_fila` solo reconoce la
-cadena exacta `"true"`.**
-5. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay
-función saturada, ni flag del compilador, ni tipo de 128 bits; usa `checked_add`/`checked_sub`/`checked_mul`/`checked_div` para DETECTARLO y `mul_div_round` para `a*b/c`.**
-6. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
-7. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
-8. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**
-9. **`charAt()` retorna int (ASCII/codepoint), NO String — hay que comparar contra números:
+4. **`time_epoch()` (y su alias exacto `time()`) es el reloj de pared (segundos desde el epoch Unix);
+`time_ms()` y `time_us()` son el reloj MONOTÓNICO (desde que arrancó la máquina) — cuatro nombres
+para dos relojes, y el prefijo `time_` compartido esconde cuál es cuál, así que dividir cualquiera de
+ellos es casi siempre el bug.**
+5. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — usa
+`checked_add`/`checked_sub`/`checked_mul`/`checked_div` para DETECTARLO, y `mul_div_round(a, b, c,
+modo)` para la forma `a*b/c`, que calcula el producto intermedio en 128 bits.**
+6. **`sslmode=require` cifra la conexión pero NO verifica el certificado del servidor: completa el
+handshake TLS con un impostor sin chistar.**
+7. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
+8. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
+9. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**
+10. **`charAt()` retorna int (ASCII/codepoint), NO String — hay que comparar contra números:
 `if c == 65`.**
-10. **Las variantes de enum usan `.`, no `::`: `Shape.Circle(5)`, nunca `Shape::Circle(5)`.**
-11. **Las claves de un map literal deben ser STRINGS: `{"k": 1}` y `{}` funcionan (v0.16), pero
+11. **Las variantes de enum usan `.`, no `::`: `Shape.Circle(5)`, nunca `Shape::Circle(5)`.**
+12. **Las claves de un map literal deben ser STRINGS: `{"k": 1}` y `{}` funcionan (v0.16), pero
 `{ident: 1}` NO es un map literal y falla en voz alta con `NYX0106`.**
-12. **La API de String opera sobre BYTES (v0.14): `length()`, `substring()`, `indexOf()` y `charAt()`
+13. **La API de String opera sobre BYTES (v0.14): `length()`, `substring()`, `indexOf()` y `charAt()`
 operan todas sobre BYTES — para conteos de *caracteres* se usa `char_length()` (codepoints UTF-8).**
-13. **Hay que chequear el retorno de `http_serve`/`tcp_listen`/`udp_bind`: un bind que falla (puerto
+14. **Hay que chequear el retorno de `http_serve`/`tcp_listen`/`udp_bind`: un bind que falla (puerto
 ocupado) retorna `-1` — `if http_serve(8080, handler) < 0 { return 1 }`.**
-14. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
-15. **Un `return` sin valor funciona en una función que retorna `void`**
-16. **Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`**
-17. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
-18. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
+15. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
+16. **Un `return` sin valor funciona en una función que retorna `void`**
+17. **`<Struct>_desde_fila()` acepta todas las formas de booleano que emiten sus dos productores
+—`true`/`false`, `t`/`f` y `1`/`0`— y ABORTA nombrando el valor ante cualquier otra.**
+18. **Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`**
+19. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
+20. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
 nonces, ni ningún otro material criptográfico; para eso usa `csprng_bytes`.**
-19. **Una columna NULL de `std/sqlite` NO es un string vacío — se pregunta con `sqlite_is_null(v)`**
-20. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
-21. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
+21. **Una columna NULL de `std/sqlite` NO es un string vacío — se pregunta con `sqlite_is_null(v)`**
+22. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
+23. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
+24. **`time()`, `time_ms()` y `time_us()` son nombres deprecados: usa `time_epoch()` para el reloj de
+pared y `monotonic_ms()` / `monotonic_us()` para el monotónico — misma llamada al runtime, con un
+nombre que dice CUÁL reloj es.**
 
 <!-- /gen:gotchas -->
 

@@ -1599,7 +1599,7 @@ error [NYX1027] in 'main' (line 15): 'catch' only accepts the annotation 'String
 No es una limitación temporal a resolver después: el runtime solo transporta un `String`, y esta
 spec **no promete** un catch tipado futuro — es la Opción C de
 `docs/design/specs/2026-08-11-errores-tipados-design.md` (excepciones para lo irrecuperable, sin
-dispatch por tipo). Para distinguir errores por tipo, usá `Result<T, E>` con `match`.
+dispatch por tipo). Para distinguir errores por tipo, usa `Result<T, E>` con `match`.
 
 La anotación del `catch` se limita a un **identificador simple** (`String`): una forma calificada o
 genérica (`catch (e: mod.Error)`, `catch (e: Result<int, E>)`) es error de SINTAXIS (NYX0101), no
@@ -3097,15 +3097,60 @@ print(format("Pi={}, Valid={}", f, b))  // "Pi=3.14, Valid=true"
 
 ## Sleep and Time
 
-Nyx soporta funciones de tiempo:
+Nyx expone **DOS relojes distintos**, y el nombre dice cuál es cuál:
 
 ```nyx
 sleep(1000)  // pausa 1000 ms
 
-let t1 = time()      // timestamp en segundos
-let t2 = time_ms()   // timestamp en milisegundos
-let t3 = time_us()   // timestamp en microsegundos
+// Reloj de PARED — `time(NULL)`. Instantes ABSOLUTOS: lo que guardás,
+// logueás, mandás o comparás contra una fecha.
+let ahora: int = time_epoch()      // segundos desde el epoch Unix (1970)
+
+// Reloj MONOTÓNICO — `os_monotonic_ns()` escalado. Cuenta desde que arrancó
+// LA MÁQUINA, así que una lectura suelta NO es una fecha: es un uptime.
+let m1: int = monotonic_ms()       // milisegundos desde el arranque
+let m2: int = monotonic_us()       // microsegundos desde el arranque
 ```
+
+**Nombres deprecados desde v0.31.0** (siguen compilando; `nyx vet` los marca con
+**W110**, gotcha `time-clock-names-deprecated`). Son alias EXACTOS, así que la
+migración es mecánica:
+
+| Deprecado | Usar | Reloj |
+|---|---|---|
+| `time()` | `time_epoch()` | pared |
+| `time_ms()` | `monotonic_ms()` | monotónico |
+| `time_us()` | `monotonic_us()` | monotónico |
+
+La regla: `time_epoch()` para todo lo absoluto; `monotonic_ms()`/`monotonic_us()`
+**solo para DURACIONES, y siempre como diferencia entre dos lecturas**:
+
+```nyx
+let inicio: int = monotonic_us()
+trabajo_pesado()
+let transcurrido_ms: int = (monotonic_us() - inicio) / 1000   // ✅ diferencia, después se escala
+```
+
+La duración es justamente donde el monotónico gana: un salto de NTP o un cambio
+manual de hora no pueden hacer que el tiempo transcurrido salte ni retroceda.
+
+**Dividir una lectura absoluta no la cambia de dominio**, y esa es la forma que
+`nyx vet` marca con **W109** (gotcha `clock-domain-time-builtins`):
+
+```nyx
+let mal_1: int = time_epoch() / 1000000    // ❌ ya está en segundos: avanza 1 cada 11,6 días
+let mal_2: int = monotonic_us() / 1000000  // ❌ no es un epoch: es el uptime de la máquina
+```
+
+> **Histórico**: hasta el 2026-09-10 esta sección llamaba a `time_ms()`/`time_us()`
+> «timestamp en milisegundos/microsegundos», y un barrido encontró seis sitios en
+> cuatro bases de código que hicieron exactamente lo que la spec decía — entre
+> ellos una ventana de rate limiter congelada 11,6 días y tokens de auth cuya
+> expiración, calculada en el reloj monotónico y persistida, sobrevivía un reboot
+> del host por años. El texto viejo también escribía `time()` sin decir que es
+> un alias exacto de `time_epoch()`, con lo cual quedaban cuatro nombres para dos
+> relojes y ninguna pista de cuál era cuál. De ahí salieron `monotonic_ms()` y
+> `monotonic_us()`: el arreglo de raíz no era el lint, era el nombre.
 
 ---
 

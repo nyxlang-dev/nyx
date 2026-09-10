@@ -157,10 +157,18 @@ install-local: $(STD_PRELUDE) nyx_check nyx_vet nyx_fmt nyx_test
 	mkdir -p "$$NYX_HOME_DIR/templates/en/docs/nyx"; \
 	cp LLM.md "$$NYX_HOME_DIR/templates/en/docs/nyx/LLM.md"; \
 	bash scripts/install_purge_legacy_templates.sh "$$NYX_HOME_DIR"; \
+	: "Red de seguridad: una herramienta compilada POR el bootstrap no puede ser"; \
+	: "más vieja que él. Antes se comparaba contra compiler/semantic.ll, que es un"; \
+	: "proxy incompleto: nyx_fmt enlaza lexer+parser y nyx_test solo test.ll, así"; \
+	: "que ninguno declara semantic.ll como prerequisito y make no los reconstruye"; \
+	: "—pero los dos se COMPILAN con ./nyx_bootstrap, y un cambio en codegen o en"; \
+	: "el lexer los deja viejos sin que semantic.ll se mueva. Medido el 2026-09-10"; \
+	: "al agregar monotonic_ms/monotonic_us. Comparar contra el bootstrap cubre"; \
+	: "cualquier cambio del compilador, no solo los de semantic."; \
 	for t in nyx_check nyx_vet nyx_fmt nyx_test; do \
-		if [ -f "$$t" ] && [ compiler/semantic.ll -nt "$$t" ]; then \
-			echo "⚠  $$t es MÁS VIEJO que compiler/semantic.ll — se copió igual, pero puede mentir."; \
-			echo "   Reconstruilo con: make build-$${t#nyx_}"; \
+		if [ -f "$$t" ] && [ nyx_bootstrap -nt "$$t" ]; then \
+			echo "⚠  $$t es MÁS VIEJO que nyx_bootstrap — se copió igual, pero puede mentir."; \
+			echo "   Reconstruir con: make build-$${t#nyx_}"; \
 		fi; \
 	done; \
 	echo "✓ Toolchain sincronizado en $$NYX_HOME_DIR (bin + runtime + std + wrapper + LLM.md + templates, sin restos pre-ADR-1)"

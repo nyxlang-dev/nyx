@@ -883,7 +883,17 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
 - `spawn_task(fn)`, `task_await(t)`, `task_cancel(t)`, `task_race(t1, t2)`
 
 ### Time
-- `time()` / `time_ms()` / `time_us()` — Unix timestamp
+**Two clocks, and the name says which** (see gotcha `time-clock-names-deprecated`):
+- `time_epoch()` — WALL clock, seconds since the Unix epoch. For anything absolute: a timestamp you
+  store, log, send, or compare against a date.
+- `monotonic_ms()` / `monotonic_us()` — MONOTONIC clock, counting from when the MACHINE booted. A
+  single reading is an uptime, NOT a date. Use them only for DURATIONS, as a difference between two
+  readings (`monotonic_us() - inicio`), which is where they win: an NTP step cannot make elapsed
+  time jump or go backwards.
+- DEPRECATED (`nyx vet` W110), exact aliases, migration is mechanical: `time()` → `time_epoch()`,
+  `time_ms()` → `monotonic_ms()`, `time_us()` → `monotonic_us()`. The old line here read
+  "`time()` / `time_ms()` / `time_us()` — Unix timestamp", which is false for two of the three and
+  is how six sites in four codebases got written wrong.
 - `sleep(ms)`
 - `datetime_now()`, `datetime_format(dt)`, `datetime_from_epoch(n)`
 - `datetime_{year, month, day, hour, minute, second, weekday}(dt)`
@@ -1101,7 +1111,7 @@ These are the ones that can hurt you without saying so. Everything else in
 this section is either a language rule or an external limitation.
 
 <!-- gen:gotchas kinds=trap lang=en form=long -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,derive-fields-pg-bool-text,int-wraps-silently -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.** `outer.insert("i", inner)` where `inner`
@@ -1144,21 +1154,40 @@ declare the C side `int64_t` when you control it (NOT `long` — Win64 is LLP64:
 there and re-truncates; measured in the W0 audit, spec Windows §9.3), or on the Nyx side never compare
 a raw FFI return against an exact negative sentinel. [test: 22-ffi-int-truncation]
 
-4. **A row from `std/postgres` cannot be handed straight to `<Struct>_desde_fila()` if it has a `bool`
-column — PostgreSQL's text format for boolean is `t`/`f`, and `desde_fila` only recognizes the exact
-string `"true"`.** The generated `desde_fila` (`compiler/codegen.nx`, `emit_derived_from_row`) converts
-a `bool` field by comparing the cell against the literal `"true"`; anything else — silently — becomes
-`false`. No error, no crash, just a wrong value that compiles and runs (the same shape of bug
-`pg-null-sentinel` fixed for `NULL`). This is safe when the row comes from `<Struct>_valores()` itself,
-which writes exactly `"true"`/`"false"` (verified round-trip in `test-405-derive-fields.nx`) — the trap
-is specifically a row that came from a live `try_pg_query`/`try_pg_query_params` call, where
-PostgreSQL's own text encoding of `boolean` is `t`/`f` (`tests/postgres/03-params.nx` shows the raw
-value: `SELECT $1::text IS NULL` comes back as `"t"`, not `"true"`). Normalize every `bool` column to
-`"true"`/`"false"` before calling `desde_fila` on a row read from the database — see the pattern in
-`examples/by-example/103-orm-sin-mapeo.nx`. [test: postgres/03-params] [test: compiler/ecosystem/test-405-derive-fields]
+4. **`time_epoch()` (and its exact alias `time()`) is the wall clock (seconds since the Unix epoch);
+`time_ms()` and `time_us()` are the MONOTONIC clock (since the machine booted) — four names for two
+clocks, and the shared `time_` prefix hides which is which, so dividing any of them is almost always
+the bug.** `time_epoch()` is
+`time(NULL)`, so it already returns seconds: dividing it produces neither seconds nor milliseconds
+nor anything else — `time_epoch() / 1000000` advances once every 11.6 days, and `time_epoch() / 1000`
+once every 16.7 minutes. `time_ms()` and `time_us()` are `os_monotonic_ns()` scaled, so an absolute
+reading of either is "how long this machine has been up", never a date; scaling it down to seconds
+(`time_us() / 1000000`) turns it into something that LOOKS like a timestamp and is not. The rule that
+sorts it out: use `time_epoch()` for anything absolute — a timestamp you store, log, send, or compare
+against a date — and `time_ms()`/`time_us()` only for DURATIONS, always as a difference between two
+readings (`fin - inicio`), never divided on their own. Durations are exactly where the monotonic
+clock wins: an NTP step or a manual clock change cannot make the elapsed time jump or go backwards.
+The failure is silent in the worst way — the value keeps growing, so nothing crashes and no log
+complains; it just grows at the wrong rate or from the wrong origin. Real cases found on 2026-09-10,
+six sites across four codebases written by different hands: a rate limiter whose one-second window
+advanced once every 11.6 days (every request for almost two weeks landed in the same bucket, so an IP
+that hit the limit stayed blocked); an access log that wrote `1789` instead of `1789048733` on every
+line; an uptime gauge stuck at 0 until the process had been running 11.6 days; auth tokens whose
+expiry was computed on the monotonic clock and then PERSISTED, so a host reboot (not a service
+restart — `CLOCK_MONOTONIC` survives that) left 24-hour tokens valid for years; and a snapshot file
+whose "timestamp" field held an uptime. Two lints split the job so neither shouts twice on one line: **W109** here flags a division applied
+directly to `time_epoch()` (the wall clock is already in seconds — there is no legitimate divisor),
+and **W110** (`time-clock-names-deprecated`) flags every use of the old names `time()`, `time_ms()`
+and `time_us()`, which covers their divisions too. Between them, every site listed above is flagged.
+One shape from the same sweep is NOT covered, on purpose: a client-supplied epoch stored into a field compared
+against the monotonic clock has no textual shape — that one is a typing problem, and pretending a
+regex catches it would be worse than saying so. [test: compiler/systems/test-410-clock-domain]
 
-5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
-saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.** `codegen.nx` emits plain
+5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — use
+`checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it, and `mul_div_round(a, b, c,
+mode)` for the `a*b/c` shape, which computes the intermediate product in 128 bits.** Both are global
+via the prelude, so neither needs an `import`. (An out-of-range integer LITERAL is a different case
+and no longer silent: since NYX2015 it is a compile error instead of being truncated.) `codegen.nx` emits plain
 `add i64`/`sub i64`/`mul i64` with no `nsw`/`nuw` (`compiler/codegen.nx:1988`, `:2056`, the `mul i64`
 branch under `:2070`), so the largest representable `int` (`9223372036854775807`) plus `1` silently
 becomes the smallest one (`-9223372036854775808`), and a square like `3037000500 * 3037000500` also
@@ -1186,6 +1215,19 @@ tasa) / 1_000_000` — still arithmetically correct, but `mul_div_round` superse
 exact 128-bit product, explicit rounding.) `float` is not a substitute for money either: it silently
 loses integer precision starting at 2^53. [test: compiler/language/test-385-int-wraparound]
 
+6. **`sslmode=require` encrypts the connection but does NOT verify the server's certificate — it will
+happily complete a TLS handshake with an impostor.** This is exactly libpq's behavior, kept on purpose
+so a `conninfo` string means the same thing in Nyx as everywhere else, but it is the guarantee most
+people believe they have and don't: `require` protects against a passive eavesdropper on the wire, not
+against a man-in-the-middle holding any certificate at all. To actually pin the server, use
+`sslmode=verify-ca` (the certificate must be signed by a CA you loaded with `tls_set_ca_file`) or
+`sslmode=verify-full` (that, plus the hostname must match the certificate's SAN). Note that
+`verify-full` against an IP literal like `127.0.0.1` fails unless the certificate carries a SAN of
+type IP — which the default snakeoil certificate does not — and that is the check working, not a
+bug. The two libpq modes that fall back to plaintext when the server refuses TLS (`prefer`, `allow`)
+are **rejected** in Nyx: with SCRAM, silently downgrading means sending the password in clear while
+believing it is encrypted. [test: postgres/06-tls]
+
 <!-- /gen:gotchas -->
 
 ### 5.2 Language rules — not bugs, just how Nyx works
@@ -1194,7 +1236,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1247,7 +1289,18 @@ treat `assert()` as fatal, not recoverable. [test: 24-bare-return-assert]
 `return 0` under the hood, so `fn f() { return }` is valid and behaves like `fn f() { return 0 }`.
 Only meaningful in `void` functions; a non-void function still needs an explicit value. [test: 24-bare-return-assert]
 
-11. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`** — pushing a bare
+11. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
+`t`/`f` and `1`/`0` — and ABORTS naming the value on anything else.** This matters because the rows it
+consumes come from two sources that disagree: `<Struct>_valores()` writes `"true"`/`"false"`, while
+PostgreSQL's text format for `boolean` is `t`/`f`. Until 0.31.1 the generated code compared the cell
+against the literal `"true"` and anything else silently became `false`, so a live row read through
+`try_pg_query` came back with every `true` flipped — no error, no crash, just a wrong value that
+compiled and ran. The conversion now lives in the runtime (`nyx_bool_from_text`), and an
+unrecognized text aborts instead of assuming `false`: a boolean nobody can read is not `false`, and
+assuming it would write a wrong decision into a system that bills people. Verified end to end against
+a real PostgreSQL server in `tests/postgres/05-orm-fields.nx`, with rows in both states. [test: postgres/05-orm-fields] [test: compiler/ecosystem/test-405-derive-fields]
+
+12. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`** — pushing a bare
 struct into an untyped `Array` and then reading it back with `for x: dyn Trait in arr` crashes with a
 SIGSEGV. Converting to `dyn` changes the REPRESENTATION (a pointer to the struct becomes a fat pointer
 `{ data, vtable }`), so it has to happen when the value is WRITTEN: once it is in the array every
@@ -1258,7 +1311,7 @@ heterogeneous list — several impls in the same collection — work. Annotating
 than failing to compile, is pushing the concrete struct into an untyped `Array` and reading it as
 `dyn`. [test: compiler/language/test-391-dyn-trait-array]
 
-12. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
+13. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
 `try_pg_query` returns every value as text, and SQL NULL comes back as a one-byte sentinel, not
 as `""`. Comparing with `== ""` treats a real NULL as an empty string and, worse, treats a
 genuinely empty column as if it were NULL: two different values collapse into one. Always use
@@ -1267,7 +1320,7 @@ changes in one place. The one edge: a `bytea` column holding exactly one zero by
 else reads as NULL; that is the price of keeping rows as `Array` of String instead of
 `Option<String>`. [test: postgres/02-query]
 
-13. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+14. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.** `random_bytes` is backed
 by `nyx_random_bytes` (`runtime/random.c`), which draws from a single `xorshift64` generator seeded
 once from `/dev/urandom` (`rng_init`, `runtime/random.c`) — fine for simulation, sampling, jitter, or
@@ -1284,7 +1337,7 @@ Use `random_bytes`/`random_int`/`random_float` for anything where predictability
 use `csprng_bytes` for anything where predictability is a security breach (password salts, session
 tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
 
-14. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
+15. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
 `sqlite_query`/`sqlite_query_named` and their `Result`-returning twins return every value as
 text, and SQL NULL comes back as a one-byte sentinel, not as `""`. Comparing with `== ""` treats
 a real NULL as an empty string and, worse, treats a genuinely empty column as if it were NULL:
@@ -1293,14 +1346,29 @@ hand — the day the representation needs to change, it changes in one place. Th
 or TEXT column holding exactly one zero byte and nothing else reads as NULL; that is the price of
 keeping rows as `Array` of String instead of `Option<String>`. [test: compiler/stdlib-suite/test-406-sqlite-tipos-null]
 
-15. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+16. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
 decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
 lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
 which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
 does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
 
-16. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+17. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
+
+18. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
+WHICH clock.** The three old names still compile (removing them would be a MAJOR change) but `nyx
+vet` flags them with W110. The problem was never the behaviour, it was that four names described two
+clocks and none of them said which: `time()` and `time_epoch()` are both `time(NULL)`, while
+`time_ms()` and `time_us()` are `os_monotonic_ns()` scaled and count from when the MACHINE booted.
+A reader seeing `time_ms()` next to `time_epoch()` reasonably concludes they are the same clock in
+different units, and that conclusion is wrong in a way nothing reports: the value keeps growing, so
+no crash, no log, just a wrong rate or a wrong origin. Six sites in four codebases were written that
+way before the rename (see `clock-domain-time-builtins` for what each one did). The migration is
+mechanical and safe, because the aliases are exact: `time()` → `time_epoch()`, `time_ms()` →
+`monotonic_ms()`, `time_us()` → `monotonic_us()`. Doing it also makes the code say out loud which
+clock it meant, which is the whole point — a duration measured as `monotonic_us() - inicio` is
+self-evidently right, whereas `time_us() - inicio` still needs the reader to know. [test: compiler/systems/test-410-clock-domain]
 
 <!-- /gen:gotchas -->
 
@@ -1310,7 +1378,7 @@ Not Nyx bugs: these come from POSIX, from the Boehm GC, or from codegen
 internals you never touch directly.
 
 <!-- gen:gotchas kinds=limit lang=en form=long -->
-<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only -->
+<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env -->
 
 1. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is
 inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC interacts with POSIX
@@ -1344,6 +1412,23 @@ supported primitive types and derive `Fields` there. [test: compiler/ecosystem/t
 5. **HKT (higher-kinded types) and GATs (generic associated types) parse but do not instantiate** — the
 syntax is accepted so code using it won't fail at parse time, but the compiler doesn't do the actual
 type-level machinery. Don't rely on either for real generic-over-container code yet.
+
+6. **Under the wasm arena, an async closure can READ what it captured but must not STORE a
+String/Array into its environment during a fire.** Since 0.31.0 a closure handed to `dom_on_fn`,
+`browser_fetch_fn`, `browser_timeout_fn` or `browser_interval_fn` keeps everything it captured at
+CREATION time: the shim binding pins the whole turn the closure was born in
+(`nyx_arena_pin_turn`, `runtime/wasi/nyx_arena.c`), so a captured `String` or `Array` survives the
+`nyx_arena_event_reset()` at the end of that turn and arrives intact whenever the closure fires.
+What is NOT covered is memory allocated during the FIRE and written back into the environment:
+`fn() { ultimo = "visita-" + int_to_string(n) }` stores a String belonging to the *firing* turn,
+which dies in that turn's reset, and the next fire reads whatever overwrote it — measured
+`ultimo previo=zzzzzzzz0` instead of `visita-1`, silently, with no trap. This is the arena's
+existing contract ("a handler must not store pointers to turn memory in globals", documented at
+the top of `nyx_arena.c`) applied to closure environments, and only a tracing GC — which wasm does
+not have — would lift it. Mutating captured `int`/`float` by value is always safe, so counters,
+flags and ids work; keep anything string-shaped outside the environment (a module global built in
+`_start`, or re-derive it on each fire). Note this only applies with the arena on: without
+`nyx_arena_begin()` nothing is ever freed and the question does not arise. [test: wasm/test-wasm-23-closure-lifetime] [test: wasm/test-wasm-24-dom-on-fn-turnos]
 
 <!-- /gen:gotchas -->
 
@@ -1936,7 +2021,7 @@ nyx report [--send]              # write FRICTION.md locally (--send opts in to 
 dir ya existe, `nyx build` nunca clona de nuevo ni hace `git pull`/chequea
 versión. `rm -rf packages/<dep>` fuerza re-fetch, y vendorear una lib local
 ahí es un override de dev válido. Ojo con el `.gitignore`: `nyx init` NO
-siembra uno, así que en tu proyecto agregá `packages/` al tuyo a mano — el
+siembra uno, así que en tu proyecto agrega `packages/` al tuyo a mano — el
 repo del lenguaje ignora `**/packages/nyx-*/`, pero ese patrón vale solo acá.
 
 Imports from dependencies: `import { something } from "nyx-kv/src/commands"`.

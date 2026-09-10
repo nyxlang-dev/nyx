@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **430 archivos / 429 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas recientes: +3 el 2026-09-08 y +14 el 2026-09-09 (detalle en `CHANGELOG.md`) |
+| Regression | `make test` | **431 archivos / 430 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas recientes: +3 el 2026-09-08, +14 el 2026-09-09 y +1 el 2026-09-10 (`test-410-clock-domain`; detalle en `CHANGELOG.md`) |
 | Error paths (parse+semantic) | `make test-errors` | **266** | verificado con corrida real 2026-09-08 |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
@@ -27,7 +27,7 @@
 | Migración de `--sync-docs` | (dentro de `make test-ai-first`) `run_sync_docs_migration.sh` | **5 escenarios + 2 checks estáticos** | layout viejo CON/SIN sello, idempotencia, copia real de `nyxlang.com` (SKIP si no clonado), purga de `templates/` legacy, wiring de `nyx_gendocs fixed-since` |
 | Capabilities index | (dentro de `make test-ai-first`) `run_capabilities_test.sh` | **3 checks + frescura** | balance de paréntesis en firmas extraídas + chequeo de mtime `build.nx` vs `nyx_build` |
 | Generador gendocs | (dentro de `make test-ai-first`) `run_gendocs_test.sh` + `run_gendocs_noop.sh` | **23 asserts + 4 checks** | fixture de 2 gotchas de juguete (regiones, tabla, arrays, `--check`, `fixed-since`) + no-op de regenerar + smoke de `gotchas_table.nx` |
-| Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **6 casos + auditoría de 161 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107–W108) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (102) + std (59) |
+| Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **8 casos + auditoría de 165 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107–W110) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (104) + std (61) |
 | Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **5 checks** (3 negativos + 2 positivos) | `nyx check`/`nyx test` acusan el error de tipos y salen limpios sobre un proyecto correcto; ejerce las 3 vías (`src/`, prelude, `std/`) |
 | Recetas by-example | `make test-examples` | **109** (99 ejecutan, 10 solo compilan+enlazan) | compila, ENLAZA y CORRE cada receta con exit 0; los 10 que necesitan servidor/red/entrada están listados con su motivo en el script. Hasta el 2026-09-09 solo emitía el `.ll` y ni linkeaba |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |

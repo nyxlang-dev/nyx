@@ -1,0 +1,120 @@
+// test-410 — los dos dominios de reloj de los builtins `time_*`.
+//
+// POR QUÉ EXISTE ESTE TEST (gotcha clock-domain-time-builtins, vet W109)
+//
+// Tres builtins comparten el prefijo `time_` y contestan preguntas distintas:
+//
+//   time_epoch()  -> time(NULL)             : reloj de PARED, segundos desde 1970
+//   time_ms()     -> os_monotonic_ns()/1e6  : reloj MONOTÓNICO, desde el arranque
+//   time_us()     -> os_monotonic_ns()/1e3  : idem, en microsegundos
+//
+// El nombre invita a tratarlos como la misma familia en distintas escalas, y ese
+// error costó seis sitios en cuatro bases de código, encontrados el 2026-09-10:
+// una ventana de rate limiter que avanzaba una vez cada 11,6 días, un access log
+// que escribía `1789` como marca de tiempo, un gauge de uptime clavado en 0, y
+// tokens de auth con la expiración calculada en el reloj monotónico Y persistida
+// —así que un reboot del host los dejaba vigentes años—.
+//
+// Este test fija el CONTRATO que hace válido al lint. Si alguien alguna vez
+// cambiara `time_ms()` para que devuelva epoch (o `time_epoch()` para que
+// devuelva otra cosa), W109 pasaría a ser ruido y este test se pone rojo antes.
+//
+// Todo lo que se afirma acá vale en cualquier huso horario y con cualquier
+// uptime: no hay valores absolutos salvo el piso de epoch.
+
+fn main() -> int {
+    // ── 1. time_epoch() es reloj de pared ───────────────────────────────────
+    // Piso fijo: 1700000000 = 2023-11-14. Un uptime no lo alcanza salvo que la
+    // máquina lleve 53 años encendida.
+    let epoch: int = time_epoch()
+    assert(epoch > 1700000000)
+    print("epoch es reloj de pared OK")
+
+    // ── 2. Los monotónicos NO son epoch ─────────────────────────────────────
+    // La lectura de time_us() en segundos es el uptime de la máquina, que es
+    // estrictamente menor que el epoch: para que fueran iguales, la máquina
+    // tendría que haber arrancado en 1970. Esta es LA afirmación que separa los
+    // dos dominios, y la que se rompe si alguien reimplementa time_us() sobre
+    // el reloj de pared.
+    let mono_us: int = time_us()
+    assert(mono_us / 1000000 < epoch)
+    let mono_ms: int = time_ms()
+    assert(mono_ms / 1000 < epoch)
+    print("monotonicos NO son epoch OK")
+
+    // ── 3. time_ms() y time_us() son el MISMO reloj a distinta escala ───────
+    // Se leen con un instante de diferencia, así que se comparan con holgura:
+    // 2 segundos cubre cualquier scheduling adverso sin dejar pasar un cambio
+    // real de origen.
+    let ms_desde_us: int = time_us() / 1000
+    var brecha: int = ms_desde_us - time_ms()
+    if brecha < 0 { brecha = 0 - brecha }
+    assert(brecha < 2000)
+    print("ms y us son el mismo reloj OK")
+
+    // ── 4. Los monotónicos avanzan, y avanzan como duración ─────────────────
+    // Es para esto que existen: la DIFERENCIA entre dos lecturas mide tiempo
+    // transcurrido, y es lo único que se debe hacer con ellos.
+    let antes_us: int = time_us()
+    let antes_ms: int = time_ms()
+    sleep(120)
+    let transcurrido_us: int = time_us() - antes_us
+    let transcurrido_ms: int = time_ms() - antes_ms
+    // Cota inferior generosa (el sleep no puede devolver antes) y superior
+    // amplia (una máquina cargada puede tardar bastante más).
+    assert(transcurrido_us >= 100000)
+    assert(transcurrido_us < 10000000)
+    assert(transcurrido_ms >= 100)
+    assert(transcurrido_ms < 10000)
+    print("los monotonicos miden duracion OK")
+
+    // ── 5. El reloj de pared también avanza, en segundos ────────────────────
+    // No retrocede en el curso de un test y no salta: acá solo se afirma que no
+    // es una constante ni corre a otra escala.
+    let epoch2: int = time_epoch()
+    assert(epoch2 >= epoch)
+    assert(epoch2 - epoch < 60)
+    print("epoch avanza en segundos OK")
+
+    // ── 6. Dividir una lectura absoluta no la convierte de dominio ──────────
+    // La forma exacta que marca vet W109. `time_epoch()` YA está en segundos,
+    // así que dividirlo solo lo achica: el resultado no es una marca de tiempo
+    // en ninguna unidad. Se afirma explícitamente para que quede escrito por
+    // qué el lint no tiene excepciones.
+    let achicado: int = epoch / 1000
+    assert(achicado < 1700000000)
+    assert(achicado * 1000 <= epoch)
+    print("dividir epoch no da otra unidad OK")
+
+    // ── 7. Los nombres nuevos son ALIAS EXACTOS de los viejos ──────────────
+    // `monotonic_ms`/`monotonic_us` existen para que el nombre diga de qué
+    // reloj se trata; NO son un reloj nuevo. Si alguna vez divergieran, la
+    // deprecación de `time_ms`/`time_us` (vet W110) pasaría a ser un cambio de
+    // comportamiento disfrazado de rename, que es exactamente lo que no debe
+    // ser. Se comparan con holgura porque las lecturas no son simultáneas.
+    var d_ms: int = monotonic_ms() - time_ms()
+    if d_ms < 0 { d_ms = 0 - d_ms }
+    assert(d_ms < 2000)
+    var d_us: int = monotonic_us() - time_us()
+    if d_us < 0 { d_us = 0 - d_us }
+    assert(d_us < 2000000)
+    print("monotonic_* son alias exactos OK")
+
+    // `time()` es alias de `time_epoch()`: el MISMO time(NULL). Acá sí se puede
+    // exigir igualdad estricta salvo que el segundo cambie entre las dos
+    // lecturas, así que se admite una diferencia de a lo sumo 1.
+    var d_epoch: int = time() - time_epoch()
+    if d_epoch < 0 { d_epoch = 0 - d_epoch }
+    assert(d_epoch <= 1)
+    print("time() es alias de time_epoch() OK")
+
+    // Y los nombres nuevos sirven para lo mismo que los viejos: medir duración.
+    let ini: int = monotonic_us()
+    sleep(50)
+    let dur: int = monotonic_us() - ini
+    assert(dur >= 40000)
+    print("monotonic_us mide duracion OK")
+
+    print("test-410 clock-domain OK")
+    return 0
+}

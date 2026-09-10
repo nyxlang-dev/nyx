@@ -243,6 +243,42 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   (`checked_*`) y test-388 (`mul_div_round`/`try_mul_div_round`, con oráculo validado contra
   `fractions.Fraction` de python); regression 407→409 archivos.
 
+- **`nyx vet` W109: el dominio de reloj de los builtins `time_*`** (gotcha
+  `clock-domain-time-builtins`, test `tests/compiler/systems/test-410-clock-domain.nx`). Tres
+  builtins comparten el prefijo `time_` y contestan preguntas distintas: `time_epoch()` es el
+  reloj de pared (`time(NULL)`, segundos desde 1970) y `time_ms()`/`time_us()` son
+  `os_monotonic_ns()` escalado — el reloj MONOTÓNICO, desde que arrancó la máquina. El nombre
+  invita a tratarlos como la misma familia en distintas escalas.
+  Un barrido del 2026-09-10 encontró **seis sitios en cuatro bases de código, escritos por manos
+  distintas**: un rate limiter cuya ventana de un segundo avanzaba una vez cada 11,6 días (todas
+  las peticiones de casi dos semanas caían en el mismo cubo); un access log que escribía `1789` en
+  vez de `1789048733`; un gauge de uptime clavado en 0; tokens de auth con la expiración calculada
+  en el reloj monotónico **y persistida**, así que un reboot del host dejaba tokens de 24 h
+  vigentes años; y un snapshot cuyo campo «timestamp» guardaba un uptime. Ninguno rompía nada:
+  el valor seguía creciendo, al ritmo o desde el origen equivocado.
+  El lint marca una división aplicada **directamente** sobre `time_epoch()` — el reloj de pared ya
+  está en segundos, no hay divisor legítimo. Una diferencia entre dos lecturas —que es el único uso
+  correcto del monotónico— no se marca, y por eso el patrón da **cero avisos en los 165 archivos**
+  de `examples/by-example` + `std`. Junto con W110 (abajo) quedan marcados todos los sitios del
+  barrido salvo uno: un epoch del cliente guardado en un campo que se compara contra el monotónico
+  no tiene forma textual —es de tipos— y queda fuera a propósito en vez de fingirse cubierto.
+  El gotcha es un `.md` con `pattern:`, y `make gen-agent-docs` lo lleva al lint, a `LLM.md` §5 y a
+  los dos `AGENTS.md` sin tocar el compilador.
+- **`monotonic_ms()` y `monotonic_us()`: los nombres honestos del reloj monotónico** (gotcha
+  `time-clock-names-deprecated`, `nyx vet` **W110**). El lint de arriba ataca el síntoma; la causa
+  era el nombre. Había **cuatro nombres para dos relojes** y ninguno decía cuál: `time()` y
+  `time_epoch()` son los dos `time(NULL)`, mientras que `time_ms()` y `time_us()` son
+  `os_monotonic_ns()` escalado y cuentan desde que arrancó la máquina. Quien leía `time_ms()` al
+  lado de `time_epoch()` concluía —razonablemente— que eran el mismo reloj en otra unidad.
+  Los dos builtins nuevos son **alias exactos** del mismo `nyx_time_ms`/`nyx_time_us`: no hay reloj
+  nuevo, hay un nombre que dice cuál es. `test-410` fija esa igualdad, para que la deprecación no
+  pueda convertirse en un cambio de comportamiento disfrazado de rename.
+  `time()`, `time_ms()` y `time_us()` quedan **deprecados** y `nyx vet` los marca con W110. Siguen
+  compilando —retirarlos sería MAJOR— pero `std/` y `examples/by-example/` ya están migrados
+  (`std/sync`, `std/serve`, `std/tls` y cinco recetas). De paso, `time`/`time_ms`/`time_us` no
+  tenían tipo de retorno declarado en el checker (caían a `TyUnknown`); ahora los cinco nombres
+  devuelven `int` explícitamente.
+
 ### Fixed
 - **`make install-local` copiaba las herramientas sin reconstruirlas.** `nyx_check`, `nyx_vet`, `nyx_test` y `nyx_fmt` se
   compilan con su propio target y `install-local` solo hacía `cp`: tras tocar `compiler/semantic.nx` el toolchain quedaba con las

@@ -43,7 +43,7 @@ fn get_user(req: Request) -> Response {
 
 fn update_user(req: Request) -> Response {
     let id: String = req.params.get("id")
-    kv_hset("user:" + id, "updated_at", int_to_string(time()))
+    kv_hset("user:" + id, "updated_at", int_to_string(time_epoch()))
     return response_json(200, "{\"updated\": true}")
 }
 

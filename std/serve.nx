@@ -218,7 +218,7 @@ fn __emit_access_log(req: Request, resp: Response) -> int {
     let t0s: String = ctx.get_or("__t0_us", "")
     var dur: int = 0
     if t0s.length() > 0 {
-        dur = time_us() - string_to_int_or(t0s, time_us())
+        dur = monotonic_us() - string_to_int_or(t0s, monotonic_us())
     }
     var sb: StringBuilder = StringBuilder.new()
     sb.append("{\"ts\":")
@@ -284,7 +284,7 @@ fn __serve_mt_dispatch(raw: Array) -> String {
     // t0 del access-log viaja por ctx (v0.5.1) — el gap de method-call
     // sobre campo encadenado obliga al binding (no "simplificar").
     let ctx0: Map = req.ctx
-    ctx0.insert("__t0_us", int_to_string(time_us()))
+    ctx0.insert("__t0_us", int_to_string(monotonic_us()))
 
     var extra: Array = []
     try {

@@ -5,7 +5,7 @@ var ip_counts: Map = Map.new()
 var window_start: Map = Map.new()
 
 fn now_seconds() -> int {
-    return time()
+    return time_epoch()
 }
 
 // Check if an IP has exceeded the rate limit

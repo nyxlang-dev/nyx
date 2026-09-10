@@ -1,12 +1,16 @@
 // 19: Date and time — timestamps, formatting, sleep
 fn main() -> int {
-    // Current Unix timestamp
-    let now: int = time()
+    // Current Unix timestamp — the WALL clock
+    let now: int = time_epoch()
     print("Unix timestamp: " + int_to_string(now))
 
-    // Millisecond precision
-    let ms: int = time_ms()
-    print("Milliseconds: " + int_to_string(ms))
+    // NOT the same clock with more precision: monotonic_ms() counts from when
+    // the MACHINE booted, so it is a duration source, never a date. Read it
+    // twice and subtract; a single reading is not a timestamp.
+    let t0: int = monotonic_ms()
+    sleep(5)
+    let elapsed_ms: int = monotonic_ms() - t0
+    print("Elapsed ms: " + int_to_string(elapsed_ms))
 
     // Formatted datetime
     let dt: String = datetime_now()

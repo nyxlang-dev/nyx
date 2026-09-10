@@ -206,14 +206,14 @@ pub fn tls_upgrade_fd_ca_only(fd: int, host: String) -> int {
 pub fn cert_is_expired(cert: Array) -> bool {
     let na: int = cert_not_after(cert)
     if na == 0 { return false }
-    return na < time()
+    return na < time_epoch()
 }
 
 // Días que faltan para el vencimiento. Negativo si ya venció, 0 si no se sabe.
 pub fn cert_days_to_expiry(cert: Array) -> int {
     let na: int = cert_not_after(cert)
     if na == 0 { return 0 }
-    return (na - time()) / 86400
+    return (na - time_epoch()) / 86400
 }
 
 // true si el certificado se firmó a sí mismo (emisor == sujeto). Un

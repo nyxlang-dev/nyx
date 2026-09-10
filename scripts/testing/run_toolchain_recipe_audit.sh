@@ -92,29 +92,74 @@ TRACKED_RECIPE_FILES=$(git ls-files -- '*.sh' '*.nx' '**/Makefile' 'Makefile' '*
     | grep -v '^\.github/workflows/windows\.yml$' \
     | grep -v '^scripts/testing/run_toolchain_recipe_audit\.sh$' \
     | grep -v '^scripts/testing/run_os_layer_ratchet\.sh$')
-mapfile -t LINUX_RECIPES < <(
-    printf '%s\n' "$TRACKED_RECIPE_FILES" \
-    | xargs -d '\n' grep -lE '(runtime/|\$RT/|\$NYX_HOME/runtime/)thread\.c' 2>/dev/null \
-    | LC_ALL=C sort
-)
+
+# Una MENCIÓN en prosa no es una receta. El descubrimiento greppea el nombre
+# del .c sobre el archivo entero, así que un comentario que cita
+# `runtime/wasi/nyx_arena.c` para explicar un diseño convertía a ese archivo en
+# "receta WASM" y le exigía os_wasm.c — que no linkea nada porque no hay ningún
+# link ahí. Las dos exclusiones de arriba (este script y run_os_layer_ratchet)
+# son ESE mismo falso positivo resuelto a mano, archivo por archivo; no escala,
+# y se comprobó: el arco wasm-closure-lifetime agregó tres comentarios nuevos
+# (std/browser.nx, test-wasm-23, test-wasm-25) y el gate se puso rojo sin que
+# nada dejara de linkear.
+#
+# recipe_body() descarta las líneas que son comentario COMPLETO (`//` en .nx,
+# `#` en sh/Makefile/yml, con espacios adelante). Deliberadamente NO toca el
+# comentario al final de una línea de código: recortar desde un `#` a mitad de
+# línea puede comerse parte de un comando real (`${#var}`, un `#` entre
+# comillas) y eso convertiría un falso positivo en un falso NEGATIVO, que es el
+# error caro — una fuente fuera de una receta que el gate deja pasar.
+recipe_body() {
+    sed -E '/^[[:space:]]*(#|\/\/)/d' "$1"
+}
+
+# grep -l sobre el CUERPO (sin comentarios de línea completa) en vez del archivo.
+recipes_matching() {
+    local patron="$1"
+    local f
+    printf '%s\n' "$TRACKED_RECIPE_FILES" | while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        [ -f "$f" ] || continue
+        if recipe_body "$f" | grep -qE "$patron"; then printf '%s\n' "$f"; fi
+    done | LC_ALL=C sort
+}
+mapfile -t LINUX_RECIPES < <(recipes_matching '(runtime/|\$RT/|\$NYX_HOME/runtime/)thread\.c')
 for r in "${LINUX_RECIPES[@]:-}"; do
     [ -n "$r" ] && check os_posix.c "$r"
 done
 
 # Recetas WASM: cualquiera de esos mismos archivos que liste
-# runtime/wasi/nyx_arena.c. Nota: Makefile, compiler/build.nx y
-# playground/server.nx aparecen en AMBAS listas (Linux y WASM) — cada uno
-# tiene una sección de runtime "nativo" y otra de runtime "wasm" en el mismo
-# archivo, así que matchean los dos greps y se auditan por las dos reglas,
-# cada una independiente.
-mapfile -t WASM_RECIPES < <(
-    printf '%s\n' "$TRACKED_RECIPE_FILES" \
-    | xargs -d '\n' grep -l 'nyx_arena\.c' 2>/dev/null \
-    | LC_ALL=C sort
-)
+# runtime/wasi/nyx_arena.c FUERA de un comentario. Hoy eso es exactamente uno,
+# playground/server.nx. El Makefile y compiler/build.nx NO aparecen acá —y no
+# es un agujero—: su lado wasm no nombra los .c, los lee de runtime/wasm.srcs,
+# que es la fuente única de esa lista. Esa lista se audita aparte, abajo.
+# (El comentario anterior afirmaba que Makefile y build.nx caían en AMBAS
+# listas; era falso desde que wasm.srcs centralizó las fuentes.)
+mapfile -t WASM_RECIPES < <(recipes_matching 'nyx_arena\.c')
 for r in "${WASM_RECIPES[@]:-}"; do
     [ -n "$r" ] && check os_wasm.c "$r"
 done
+
+# --- runtime/wasm.srcs: la FUENTE ÚNICA de las fuentes del link wasm32-wasi.
+#     El Makefile, run_wasm_tests.sh y el generador de compiler/build.nx la
+#     leen en vez de repetir la lista (antes estaba copiada en los tres, y
+#     cuando W1 sumó os_wasm.c hubo que tocar los tres). Como ninguno de esos
+#     archivos nombra los .c, el descubrimiento por grep no los ve: sin este
+#     check, os_wasm.c podría desaparecer de wasm.srcs y romper el link de
+#     TODO el target wasm con este gate en verde.
+if [ -f runtime/wasm.srcs ]; then
+    for req in runtime/wasi/nyx_arena.c runtime/os/os_wasm.c runtime/wasi/main_shim.c; do
+        if grep -vE '^[[:space:]]*(#|$)' runtime/wasm.srcs | grep -qxF "$req"; then
+            :
+        else
+            echo "  ✗ $req falta en runtime/wasm.srcs (fuente única del link wasm32-wasi)"
+            FAIL=$((FAIL + 1))
+        fi
+    done
+else
+    echo "  ✗ runtime/wasm.srcs no existe — el link wasm lo lee como fuente única"
+    FAIL=$((FAIL + 1))
+fi
 
 # --- Recetas por GLOB (hallazgo Critical del review de Task 6): el glob bash
 #     `runtime/*.c` NO desciende a subdirectorios — un script que linkea o

@@ -64,7 +64,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,derive-fields-pg-bool-text,int-wraps-silently,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
@@ -73,31 +73,40 @@ draining a second bounded channel — size each channel to at least the total nu
 carry.**
 3. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
 bits) — a negative C value crosses as a huge positive number, never as a negative one.**
-4. **A row from `std/postgres` cannot be handed straight to `<Struct>_desde_fila()` if it has a `bool`
-column — PostgreSQL's text format for boolean is `t`/`f`, and `desde_fila` only recognizes the exact
-string `"true"`.**
-5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no
-saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.**
-6. **Callbacks: prefer `Fn(Type) -> Ret`**
-7. **`await` of a `float`-returning function is gated (NYX1021)**
-8. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**
-9. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.**
-10. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.**
-11. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
+4. **`time_epoch()` (and its exact alias `time()`) is the wall clock (seconds since the Unix epoch);
+`time_ms()` and `time_us()` are the MONOTONIC clock (since the machine booted) — four names for two
+clocks, and the shared `time_` prefix hides which is which, so dividing any of them is almost always
+the bug.**
+5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — use
+`checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it, and `mul_div_round(a, b, c,
+mode)` for the `a*b/c` shape, which computes the intermediate product in 128 bits.**
+6. **`sslmode=require` encrypts the connection but does NOT verify the server's certificate — it will
+happily complete a TLS handshake with an impostor.**
+7. **Callbacks: prefer `Fn(Type) -> Ret`**
+8. **`await` of a `float`-returning function is gated (NYX1021)**
+9. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**
+10. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.**
+11. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.**
+12. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
 literal and fails loudly with `NYX0106`.**
-12. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
+13. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
 on BYTES — for *character* counts use `char_length()` (UTF-8 codepoints).**
-13. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
+14. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
 `if http_serve(8080, handler) < 0 { return 1 }`.**
-14. **`assert()` aborts the process (`exit(1)`) on the first failure**
-15. **A bare `return` (no value) works in a `void`-returning function**
-16. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
-17. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
-18. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+15. **`assert()` aborts the process (`exit(1)`) on the first failure**
+16. **A bare `return` (no value) works in a `void`-returning function**
+17. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
+`t`/`f` and `1`/`0` — and ABORTS naming the value on anything else.**
+18. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
+19. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
+20. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.**
-19. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`**
-20. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
-21. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
+21. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`**
+22. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
+23. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
+24. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
+WHICH clock.**
 
 <!-- /gen:gotchas -->
 
