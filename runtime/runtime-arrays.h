@@ -74,6 +74,14 @@ int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_
 // (sitofp); STRING → abort diagnosticado.
 double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index);
 
+// Lectura int chequeada: denuncia SOLO los dos tags en los que el i64 crudo
+// significa otra cosa — STRING (una dirección) y FLOAT (los bits de un double)
+// → abort NYX2014. BOOL/INT/UNKNOWN y los tags opacos (ARRAY/MAP/PTR) devuelven
+// el valor crudo, como siempre (`let b: int = a[0]` sobre un bool sigue dando 1).
+// NO se usa nyx_array_get_checked con expected_tag=INT: su regla
+// definido/definido abortaría sobre BOOL.
+int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index);
+
 // ===== TAG ESTÁTICO DE FALLBACK (spec 2026-08-03, "la anotación manda") =====
 // El tipo DECLARADO del receptor viaja como static_tag y SOLO gana cuando el
 // tag runtime es UNKNOWN — nunca pisa un tag conocido. Cierra la familia

@@ -691,6 +691,7 @@ declare %nyx_string* @nyx_string_concat(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_string_from_int(i64)
 declare %nyx_string* @nyx_string_from_char(i8)
 declare %nyx_string* @nyx_string_from_bool(i64)
+declare i64 @nyx_bool_from_text(%nyx_string*)
 
 declare void @nyx_print_int(i64)
 declare void @nyx_print_float(double)
@@ -883,6 +884,7 @@ declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
 declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_int_checked({ i64, i8* }*, i64)
 declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
@@ -1392,12 +1394,12 @@ while_body36:
   call void @llvm.stackrestore(i8* %185)
   %188 = load { i64, i8* }*, { i64, i8* }** %180
   %189 = load i64, i64* %184
-  %190 = call i64 @nyx_array_get({ i64, i8* }* %188, i64 %189)
+  %190 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %188, i64 %189)
   %191 = alloca i64
   store i64 %190, i64* %191
   %192 = load { i64, i8* }*, { i64, i8* }** %183
   %193 = load i64, i64* %184
-  %194 = call i64 @nyx_array_get({ i64, i8* }* %192, i64 %193)
+  %194 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %192, i64 %193)
   %195 = alloca i64
   store i64 %194, i64* %195
   %196 = load i64, i64* %191
@@ -3203,13 +3205,13 @@ while_body272:
   call void @llvm.stackrestore(i8* %1217)
   %1220 = load { i64, i8* }*, { i64, i8* }** %1198
   %1221 = load i64, i64* %1216
-  %1222 = call i64 @nyx_array_get({ i64, i8* }* %1220, i64 %1221)
+  %1222 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1220, i64 %1221)
   %1223 = alloca i64
   store i64 %1222, i64* %1223
   %1224 = load { i64, i8* }*, { i64, i8* }** %1198
   %1225 = load i64, i64* %1216
   %1226 = sub i64 %1225, 1
-  %1227 = call i64 @nyx_array_get({ i64, i8* }* %1224, i64 %1226)
+  %1227 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1224, i64 %1226)
   %1228 = alloca i64
   store i64 %1227, i64* %1228
   %1229 = load { i64, i8* }*, { i64, i8* }** %1046
@@ -3271,7 +3273,7 @@ while_body278:
   call void @llvm.stackrestore(i8* %1258)
   %1263 = load { i64, i8* }*, { i64, i8* }** %1198
   %1264 = load i64, i64* %1257
-  %1265 = call i64 @nyx_array_get({ i64, i8* }* %1263, i64 %1264)
+  %1265 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1263, i64 %1264)
   %1266 = alloca i64
   store i64 %1265, i64* %1266
   %1267 = load { i64, i8* }*, { i64, i8* }** %1046

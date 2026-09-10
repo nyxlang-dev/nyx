@@ -993,9 +993,17 @@ match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
     Result.Ok(conn) => {
         let _ = try_pg_exec(conn, "CREATE TABLE IF NOT EXISTS t (id int, nombre text)")
         // Los params van por VALOR en el mensaje Bind, NUNCA interpolados en el SQL.
-        let _ = try_pg_exec_params(conn, "INSERT INTO t VALUES ($1, $2)", ["1", "ana"])
-        match try_pg_query(conn, "SELECT id, nombre FROM t") {
-            Result.Ok(filas) => { /* Array de Array de String */ }
+        let _ = try_pg_exec_params(conn, "INSERT INTO t VALUES ($1, $2)",
+                                   [pg_int(1), pg_text("ana")])
+        // Por nombre de columna, sin escribir el orden a mano:
+        match try_pg_query_cols(conn, "SELECT nombre, id FROM t") {
+            Result.Ok(r) => {
+                let cols: Array = r[0]
+                let filas: Array = r[1]
+                let i_id: int = pg_col(cols, "id")   // aborta si no existe
+                let f: Array = filas[0]
+                print(int_to_string(pg_row_int(f, i_id)))  // aborta si es NULL
+            }
             Result.Err(e) => { print(e.msg) }
         }
         let _ = try_pg_close(conn)
@@ -1007,6 +1015,30 @@ match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
   `try_pg_query` / `try_pg_query_params` (→ `Array` de filas, cada fila `Array` de
   `String` en formato **text** — igual que sqlite, toda celda es String, incluidas
   las numéricas).
+- **Nombres de columnas**: `try_pg_query_cols(conn, sql) -> Result<Array, Error>`
+  devuelve **`[columnas, filas]`** — `r[0]` es un `Array` de `String` con los
+  nombres, `r[1]` las filas de siempre. NO cuesta un viaje extra: el
+  `RowDescription` ya venía en la respuesta y se descartaba. Los nombres son los
+  del **SELECT**, no los del `CREATE TABLE`. `try_pg_query` no cambió.
+  `pg_col(columnas, nombre) -> int` da el índice; si el nombre no existe
+  **ABORTA** listando los que sí — devolver `-1` haría que el accesor de al lado
+  leyera otra columna, y un typo en un nombre es un bug del programa.
+- **Lectura tipada**: `pg_row_str` / `pg_row_int` / `pg_row_float` /
+  `pg_row_bool(fila, i)`. Es **ergonomía, no corrección** (toda celda es `String`
+  en formato text; convertir a mano da lo mismo). Lo que aportan es lo que a mano
+  se olvida: **un NULL leído como número NO es `0` — ABORTA**, y un índice mayor
+  que el largo de la fila tampoco es una celda vacía — ABORTA nombrando la
+  posición. Para no abortar, `pg_is_null(fila[i])` ANTES. `pg_row_bool` acepta
+  `t`/`f` (lo que manda PostgreSQL), `true`/`false` y `1`/`0`, y cualquier otra
+  cosa aborta en vez de asumir `false`.
+- **Ligado tipado de parámetros**: `pg_int(n)`, `pg_text(s)`, `pg_float(f)`,
+  `pg_bool(b)` — todos devuelven `String`, porque los params siguen viajando como
+  `Array` de `String`. **No cambian el valor que viaja** (formato text del
+  protocolo, exacto para enteros, sin configuración regional en el medio): existen
+  porque Nyx no tiene `Array` heterogéneo tipado y `[7, "ana"]` no se puede
+  escribir, así que hacen que el código DIGA qué es cada parámetro. `pg_float`
+  tiene un matiz: un float en text pierde lo que ya perdió al ser float — para
+  dinero, enteros en unidades mínimas.
 - **NULL**: centinela explícito. `pg_is_null(v)` es la ÚNICA forma correcta de
   preguntarlo; `pg_null()` para pasar un NULL como parámetro. Ver el gotcha
   `pg-null-sentinel` en §5.2.
@@ -1023,9 +1055,9 @@ match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
 - **`bool` en filas leídas del servidor**: PostgreSQL manda `t`/`f` en formato
   text, no `true`/`false`. Importa al combinar con `#[derive(Fields)]` — gotcha
   `derive-fields-pg-bool-text` en §5.1.
-- Lo que NO hay todavía: **TLS** (la conexión es en claro; el diseño está fichado
-  en `docs/design/specs/2026-09-09-postgres-tls-design.md`), tipado de columnas
-  (todo vuelve como `String` en formato text) y `COPY`/streaming.
+- Lo que NO hay todavía: **decodificación por OID** (toda celda vuelve como
+  `String` en formato text — los `pg_row_*` convierten, no decodifican el formato
+  binario) y **`COPY`/streaming**. TLS SÍ existe, ver abajo.
 
 **TLS (v0.31.1)**: va en el `conninfo`, como libpq. `sslmode=disable` (default),
 `require` (cifra pero NO verifica el certificado — gotcha `pg-require-no-verifica`),

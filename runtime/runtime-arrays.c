@@ -669,6 +669,34 @@ double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag)
     return (double)v;
 }
 
+// Lectura INT chequeada (hermana de nyx_slot_as_float_checked/_st). NO se
+// puede reutilizar nyx_array_get_checked con expected_tag=INT: su regla
+// «definido/definido» abortaría también sobre un slot BOOL, y `let b: int =
+// a[0]` sobre un bool devuelve 1 desde siempre y es idiomático. Acá el criterio
+// es más angosto y estructural: solo se denuncian los DOS tags en los que el
+// i64 crudo significa otra cosa —STRING (una dirección) y FLOAT (los bits de un
+// double)—, que son exactamente los que producen el número plausible y falso
+// (`let x: int = a[0]` sobre "hola" imprimía el puntero, exit 0). BOOL, INT,
+// UNKNOWN y los tags opacos (ARRAY/MAP/PTR) pasan con el valor crudo, igual
+// que antes.
+int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
+    if (!arr) {
+        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
+        exit(1);
+    }
+    nyx_array_bounds_check(arr, index);
+    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+    if ((t == NYX_TAG_STRING || t == NYX_TAG_FLOAT) && !nyx_slot_check_off()) {
+        fprintf(stderr,
+            "💥 Runtime Error [NYX2014]: el slot %" PRId64 " del Array contiene %s"
+            " pero se leyó como int — anota el tipo real o convertí explícito"
+            " (string_to_int, float_to_int, ...); NYX_SLOT_CHECK=off lo desactiva\n",
+            index, nyx_tag_name(t));
+        exit(1);
+    }
+    return arr->data[index];
+}
+
 void nyx_array_retag_unknown(nyx_array_t* arr, int64_t tag) {
     if (!arr || !arr->tags) return;
     if (tag <= NYX_TAG_UNKNOWN || tag > NYX_TAG_PTR) return;

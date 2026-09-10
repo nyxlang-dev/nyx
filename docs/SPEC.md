@@ -921,6 +921,8 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2011 | `generic_call` with no registered generic template for the base name (turbofish over a name that is not a generic function in scope) |
 | NYX2012 | unknown enum variant in a **pattern** — the variant named in a `match` arm is not registered for that enum (enum not defined/imported, or the variant misspelled) |
 | NYX2013 | `#[derive(Fields)]` on a struct with a field the derive cannot convert. Only `int`, `bool`, `float` and `String` are supported; an `Array`/`Map`/nested-struct field aborts compilation on purpose, because inheriting `Display`'s `"ptr"` fallback would write false data into a database column (see the `Fields` row in [Derive Macros](#derive-macros)) |
+| NYX2014 | RUNTIME slot-type mismatch, int side: an Array slot whose runtime tag is `String` or `float` read as `int` (`a.push("hola")` then `let x: int = a[0]` used to print the POINTER as a plausible number and exit 0). Only those two tags are reported — the ones where the raw i64 means something else (an address, or the bits of a double); `bool`, `int`, untagged slots and opaque pointers still yield the raw value, so `let b: int = a[0]` over a bool keeps returning 1. `NYX_SLOT_CHECK=off` disables it |
+| NYX2015 | integer literal out of range: a decimal literal whose text does not fit in a 64-bit `int` (`let c: int = 170141183460469231731687303715884105727` used to print `-1`, and `18446744073709551616` printed `0` — the lexer keeps the literal as TEXT and codegen emitted it verbatim, so clang truncated the constant with no error and no warning). The check is textual, on the digits, because converting is exactly what overflows. The inclusive cap is `2^63` and not `2^63-1` ON PURPOSE: `-9223372036854775808` is INT_MIN and is perfectly valid, but the lexer sees the POSITIVE literal with a separate unary minus — rejecting `9223372036854775808` would break `const INT_MIN` in `std/math` and in the prelude, which travels in EVERY program. The positive form of that one value still wraps to INT_MIN, which is standard two's-complement behaviour |
 
 **Interpreter-phase errors (NYX30xx series)** — emitted by `compiler/interpreter.nx`
 (the REPL's evaluator), printed in the message text like the NYX20xx series. The
@@ -3861,6 +3863,16 @@ try_pg_query(conn, sql)
 try_pg_exec_params(conn, sql, params)     // params por VALOR en el mensaje Bind
 try_pg_query_params(conn, sql, params)
 
+// Nombres de columnas + filas en un solo viaje: devuelve [columnas, filas]
+try_pg_query_cols(conn, sql) -> Result<Array, Error>
+pg_col(columnas, nombre) -> int           // indice por nombre; ABORTA si no existe
+
+// Lectura tipada de una celda. NULL o indice fuera de rango ABORTAN
+pg_row_str(fila, i), pg_row_int(fila, i), pg_row_float(fila, i), pg_row_bool(fila, i)
+
+// Ligado tipado de parametros: el valor viaja igual, el codigo lo DICE
+pg_int(n), pg_text(s), pg_float(f), pg_bool(b)
+
 // NULL: centinela explicito, NUNCA `== ""`
 pg_null(), pg_is_null(valor)
 
@@ -3903,6 +3915,28 @@ Decisiones que importan y no se ven en las firmas:
   E2E pasa `'; DROP TABLE t_par; --` como valor y verifica despues que la tabla sigue ahi.
 - **NULL con centinela** (`pg_is_null`): un NULL y un string vacio son valores distintos.
   Es la misma representacion que `sqlite_null`/`sqlite_is_null`.
+- **Los nombres de las columnas ya venian**: el `RowDescription` que manda el servidor se leia y
+  se descartaba, asi que `try_pg_query_cols` no cuesta un viaje extra — solo deja de tirar lo que
+  ya estaba ahi. Devuelve `[columnas, filas]`; `try_pg_query` no cambia, sigue devolviendo las
+  filas directo. Los nombres son los del **SELECT**, no los del `CREATE TABLE`.
+- **`pg_col` ABORTA si el nombre no existe**, nombrando las columnas que si estan. Devolver `-1`
+  haria que el accesor de al lado leyera la columna equivocada o se fuera de rango, y un error de
+  tipeo en un nombre de columna es un bug del programa, no un dato ausente.
+- **La lectura tipada es ergonomia, no correccion**: toda celda llega como `String` en formato
+  text, asi que convertir a mano da el mismo valor. Lo que aportan `pg_row_*` es el trato del NULL
+  y del fuera de rango, que a mano se olvida — **un NULL leido como numero NO es `0`: ABORTA**, y
+  una fila mas corta que el indice pedido tampoco es una celda vacia. Para preguntar por el NULL
+  en vez de abortar, `pg_is_null(fila[i])` primero. `pg_row_bool` entiende el `t`/`f` de
+  PostgreSQL ademas de `true`/`false` y `1`/`0`, y cualquier otra cosa aborta nombrando el valor
+  en vez de asumir `false`.
+- **`pg_int`/`pg_text`/`pg_float`/`pg_bool` no cambian lo que viaja**: el parametro sale igual, en
+  formato text del protocolo, que es **exacto para enteros** y no toca ninguna configuracion
+  regional. Existen porque Nyx no tiene un `Array` heterogeneo tipado (`[7, "ana"]` no se puede
+  escribir tal cual), y hacen que el codigo DIGA que es cada parametro. `pg_float` es el unico con
+  un matiz: un float en text pierde lo que ya perdio al ser float — para dinero, enteros en
+  unidades minimas.
+- **El bug silencioso de leer un INTEGER como `int` y obtener el PUNTERO es de `std/sqlite` y no
+  existe aca**: en este cliente la celda es un `String` y nadie la reinterpreta.
 - **Un error del servidor deja la conexion USABLE**: el lector consume hasta
   `ReadyForQuery` en vez de cortar y desincronizar el socket.
 - La forma de los errores es la de `std/sqlite`: `Result<_, Error>` con `kind: "db"`,
@@ -3910,6 +3944,8 @@ Decisiones que importan y no se ven en las firmas:
 
 Combinado con `#[derive(Fields)]` alcanza para un ORM sin escribir el mapeo a mano — ver
 `examples/by-example/103-orm-sin-mapeo.nx`.
+La lectura tipada por nombre de columna se prueba de punta a punta contra un servidor real en
+`tests/postgres/07-tipado.nx`.
 
 ### std/websocket.nx
 ```

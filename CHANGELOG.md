@@ -20,6 +20,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`std/postgres` deja de obligar a mantener el esquema en dos lugares: nombres de columnas, lectura tipada y
+  ligado tipado** `[arco: postgres-tipado-erp]`. Sale de un reporte de fricción del equipo de **nyxerp** (2026-09-09) que
+  pedía cuatro cosas ordenadas por importancia; **las dos que más le importaban ya estaban hechas** unas horas antes en
+  `postgres-wire-v3` (el SQLSTATE viaja en `Error.code`, y el NULL tiene centinela propio con `pg_is_null`), así que lo
+  que quedaba era ergonomía — y ergonomía que se paga con bugs. Sin nombres de columnas, quien quería saber en qué
+  posición viene `monto` tenía que escribir el orden del `SELECT` a mano en su código: el esquema en dos lugares, que es
+  exactamente el problema que `#[derive(Fields)]` resuelve del otro lado. **`try_pg_query_cols(conn, sql)` devuelve
+  `[columnas, filas]` y NO cuesta un viaje extra**: el `RowDescription` ya venía en la respuesta y el módulo lo leía
+  para descartarlo. `try_pg_query` no cambió — el que ya lo usa (los tests E2E incluidos) sigue igual. Los nombres son
+  los del `SELECT`, no los del `CREATE TABLE`, y el test lo prueba pidiendo las columnas en otro orden.
+  **`pg_col(columnas, nombre)` ABORTA si el nombre no existe**, listando los que sí: devolver `-1` haría que el accesor
+  de al lado leyera la columna equivocada o se fuera de rango, y un typo en un nombre de columna es un bug del programa,
+  no un dato ausente. **`pg_row_str`/`pg_row_int`/`pg_row_float`/`pg_row_bool(fila, i)` son ergonomía y no corrección**
+  —toda celda llega como `String` en formato text, así que convertir a mano da el mismo valor—, pero aportan lo que a
+  mano se olvida: **un NULL leído como número NO es `0`, ABORTA**, y una fila más corta que el índice pedido tampoco es
+  una celda vacía. `pg_row_bool` entiende el `t`/`f` que manda PostgreSQL además de `true`/`false` y `1`/`0`, y
+  cualquier otra cosa aborta nombrando el valor en vez de asumir `false`. **`pg_int`/`pg_text`/`pg_float`/`pg_bool` no
+  cambian lo que viaja** (formato text del protocolo, exacto para enteros, sin configuración regional en el medio):
+  existen porque Nyx no tiene `Array` heterogéneo tipado y `[7, "ana"]` no se puede escribir tal cual, así que el
+  código DICE qué es cada parámetro — el 80% del pedido, sin bloquearlo meses detrás de un arco de lenguaje. El bug
+  silencioso que el reporte denunciaba —leer un `INTEGER` como `int` y obtener el PUNTERO— **es de `std/sqlite` y no
+  existe acá**. Verificado contra un PostgreSQL real en `tests/postgres/07-tipado.nx`, con el caso que a un ERP le
+  importa: un `bigint` de `5000000000` vuelve entero, sin truncar.
 - **TLS para `std/postgres`: `sslmode` y el `SSLRequest`** `[arco: postgres-tls]`. Sin esto el cliente solo servía contra un
   PostgreSQL local o autoalojado sin cifrar: **RDS, Supabase, Neon y Azure rechazan la conexión antes del StartupMessage**, así que
   era una capacidad de desarrollo y no de producción. El bloqueante real no era el protocolo sino `std/tls`, que no sabía subir a
@@ -191,6 +214,39 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **`let x: int = a[i]` sobre un slot que guarda un String o un float devolvía el PUNTERO como un número plausible
+  (NYX2014).** Es la tercera pata del reporte del ERP —la que en su momento se fichó como «causa raíz aparte, no es de
+  `sqlite`»— y la más venenosa de las tres, porque no rompe nada: `a.push("hola")` seguido de `let x: int = a[0]`
+  imprimía una dirección de memoria de 12 dígitos y salía con **exit 0**. Un número creíble en un lugar donde se
+  esperaba un número. Ahora el mismo par aborta ordenadamente con `NYX2014` nombrando el tipo real del slot, apoyado en
+  los tags por slot que ya existían desde v0.22.15 (mismo mecanismo que `NYX2008`, que cubría el lado `float`).
+  **Solo se denuncian esos dos tags**, que son donde el `i64` crudo significa otra cosa (una dirección, o los bits de un
+  double): `bool`, `int`, los slots sin tag y los punteros opacos siguen devolviendo el valor crudo, así que
+  `let b: int = a[0]` sobre un `bool` sigue dando `1` y ningún programa que hoy corre se convierte en un abort.
+  El alcance es igual de deliberado del lado del receptor: solo aplica donde el codegen caía al `get` CRUDO (`Array` y
+  `Array<int>`), porque un `Array<float>` o un `Array<String>` ya devuelve un valor TIPADO por su propio camino —
+  chequear ahí convertiría programas que hoy funcionan en aborts, que es otra decisión y otro arco. `NYX_SLOT_CHECK=off`
+  lo desactiva.
+- **Un literal entero fuera de rango se truncaba en SILENCIO (NYX2015).** `[arco: decimal-exacto-dinero]` El lexer guarda el TEXTO del literal y el
+  codegen lo emitía verbatim al IR, así que `clang` recibía una constante que no entra en `i64`, la truncaba y no decía
+  nada: ni error de Nyx, ni error de LLVM, ni un warning. Medido el 2026-09-09 mientras se estudiaba un tipo de 128
+  bits: `let c: int = 170141183460469231731687303715884105727` (2¹²⁷−1) imprimía **`-1`**, y
+  `let d: int = 18446744073709551616` (2⁶⁴) imprimía **`0`**. El chequeo es **textual, sobre los dígitos**, porque
+  convertir es justamente lo que desborda — y porque el literal viaja como texto a propósito, que es lo que haría gratis
+  un futuro tipo de 128 bits. El tope inclusivo es `2^63` y no `2^63-1` **a propósito**: `-9223372036854775808` es
+  INT_MIN y es perfectamente válido, pero el lexer ve el literal POSITIVO con un menos aplicado aparte, así que rechazar
+  `9223372036854775808` rompería `const INT_MIN` de `std/math` y del prelude — y el prelude viaja en TODO programa, o
+  sea que rompería el lenguaje entero. La forma positiva de ese único valor sigue envolviendo a INT_MIN, que es el
+  comportamiento estándar de complemento a dos. El wraparound de la ARITMÉTICA no cambia (gotcha `int-wraps-silently`):
+  esto solo cierra el literal, que es el caso donde el valor ya estaba mal antes de que corriera una sola instrucción.
+- **Comparar dos variables `char` emitía IR inválido y clang rechazaba el programa.** Los seis comparadores
+  (`==`, `!=`, `<`, `>`, `<=`, `>=`) extendían a `i64` **solo el operando izquierdo** y emitían
+  `icmp i64 %ext, %i8` — un mismatch de anchura que LLVM no acepta. Sobrevivió tanto tiempo porque la forma común es
+  `c == '0'`, con un LITERAL a la derecha: un literal `char` ya sale como `i64`, así que ese caso siempre anduvo, y solo
+  se rompía al comparar dos variables (`c1 == c2`, `c1 < c2`) — justo lo que hace cualquier comparación lexicográfica de
+  dos cadenas byte a byte. La resta de `char`, tres ramas más arriba en el mismo `codegen_binop`, ya extendía los dos
+  lados desde siempre; era una omisión, no una decisión. Ahora los seis extienden el lado derecho también cuando es
+  `i8`.
 - **`std/sqlite`: tres silently-wrong reportados desde un ERP, verificados con valores reales
   antes de tocar nada.** (1) **Truncamiento a 32 bits.** `runtime/sqlite_adapter.c` usaba
   `sqlite3_column_int`/`sqlite3_bind_int`: todo valor ≥ 2³¹ se truncaba SIN ninguna señal, tanto

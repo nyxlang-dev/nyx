@@ -129,9 +129,9 @@ target triple = "x86_64-pc-linux-gnu"
 @.str62.c = internal global %nyx_string* null
 @.str63 = private unnamed_addr constant [51 x i8] c"tests/compiler/language/test-385-int-wraparound.nx\00"
 @.str63.c = internal global %nyx_string* null
-@.str64 = private unnamed_addr constant [265 x i8] c"`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — there is no saturating function, no compiler flag, and no 128-bit type; use `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it and `mul_div_round` for `a*b/c`.\00"
+@.str64 = private unnamed_addr constant [707 x i8] c"`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement). Two answers, both already in the prelude: `checked_add`/`checked_sub`/`checked_mul`/`checked_div` return `Option` instead of wrapping, and **`mul_div_round(a, b, c, mode)` computes `a*b/c` with the intermediate product in 128 bits** — which is what the classic financial formula `amount * rate / scale` needs, where the product overflows long before the quotient does. For a money type, wrap an `int` of minor units in a struct and give it `impl add`/`impl mul`: operator overloading already dispatches there. An out-of-range integer LITERAL is a different case and no longer silent: since NYX2015 it is a compile error.\00"
 @.str64.c = internal global %nyx_string* null
-@.str65 = private unnamed_addr constant [275 x i8] c"La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — no hay función saturada, ni flag del compilador, ni tipo de 128 bits; usa `checked_add`/`checked_sub`/`checked_mul`/`checked_div` para DETECTARLO y `mul_div_round` para `a*b/c`.\00"
+@.str65 = private unnamed_addr constant [727 x i8] c"La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos). Hay dos respuestas, las dos ya en el prelude: `checked_add`/`checked_sub`/`checked_mul`/`checked_div` devuelven `Option` en vez de envolver, y **`mul_div_round(a, b, c, modo)` calcula `a*b/c` con el producto intermedio en 128 bits** — que es lo que necesita la fórmula financiera clásica `monto * tasa / escala`, donde el producto desborda mucho antes que el cociente. Para un tipo de dinero, envolvé un `int` de unidades mínimas en un struct y dale `impl add`/`impl mul`: la sobrecarga de operadores ya despacha ahí. Un LITERAL entero fuera de rango es otro caso y ya NO es silencioso: desde NYX2015 es error de compilación.\00"
 @.str65.c = internal global %nyx_string* null
 @.str66 = private unnamed_addr constant [18 x i8] c"fn-callback-typed\00"
 @.str66.c = internal global %nyx_string* null
@@ -1111,6 +1111,7 @@ declare %nyx_string* @nyx_string_concat(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_string_from_int(i64)
 declare %nyx_string* @nyx_string_from_char(i8)
 declare %nyx_string* @nyx_string_from_bool(i64)
+declare i64 @nyx_bool_from_text(%nyx_string*)
 
 declare void @nyx_print_int(i64)
 declare void @nyx_print_float(double)
@@ -1303,6 +1304,7 @@ declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
 declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_int_checked({ i64, i8* }*, i64)
 declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
@@ -1827,12 +1829,12 @@ define { i64, i8* }* @gotchas_table(
   %274 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str63.c, i8* %273, i64 50)
   %275 = ptrtoint %nyx_string* %274 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %245, i64 %275, i64 2)
-  %276 = getelementptr [265 x i8], [265 x i8]* @.str64, i32 0, i32 0
-  %277 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str64.c, i8* %276, i64 264)
+  %276 = getelementptr [707 x i8], [707 x i8]* @.str64, i32 0, i32 0
+  %277 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str64.c, i8* %276, i64 706)
   %278 = ptrtoint %nyx_string* %277 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %245, i64 %278, i64 2)
-  %279 = getelementptr [275 x i8], [275 x i8]* @.str65, i32 0, i32 0
-  %280 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str65.c, i8* %279, i64 274)
+  %279 = getelementptr [727 x i8], [727 x i8]* @.str65, i32 0, i32 0
+  %280 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str65.c, i8* %279, i64 726)
   %281 = ptrtoint %nyx_string* %280 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %245, i64 %281, i64 2)
   %282 = ptrtoint { i64, i8* }* %245 to i64

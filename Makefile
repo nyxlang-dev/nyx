@@ -9,6 +9,21 @@ RUNTIME_SRCS = runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
 LIBS         = -lgc -lpthread -ldl -lm -lssl -lcrypto -lz
 NO_GC_LIBS   = -lpthread -ldl -lm -lssl -lcrypto
 
+# ── Lock de los artefactos compartidos de la raíz ──────────────────────
+# script.nx / script.ll / script_bin son de TODO el repo: los runners de test
+# los comparten y se serializan con flock (scripts/testing/lib_testroot_lock.sh),
+# pero las recetas de acá no lo tomaban. MEDIDO el 2026-09-09: con un
+# `make test-examples` en paralelo, el `cp script.ll compiler/codegen.ll` de
+# `make recompile` copió el IR de OTRO programa a la semilla (66 KB en vez de
+# 7,2 MB) y el enlace del bootstrap murió con «multiple definition of main»;
+# una semilla corrupta commiteada deja el bootstrap irreconstruible.
+#
+# Regla: TODA receta que toque esos tres archivos corre bajo este wrapper, y
+# la sección crítica entera (cp de entrada → nyx_bootstrap → cp/clang de
+# salida) va en UNA sola invocación — make abre un shell por línea de receta,
+# así que partirla deja una ventana sin lock justo donde se pisa.
+TESTROOT_LOCK = bash scripts/with_testroot_lock.sh
+
 # Seeds .ll del bootstrap, en orden de link — DEBE coincidir con
 # scripts/build_bootstrap.sh (el enlazado real de nyx_bootstrap) y con el
 # for-loop de verificación de compiler/*.ll en bootstrap: arriba.
@@ -88,7 +103,7 @@ prelude-check:
 
 ## Construir nyx_bootstrap desde los .ll semilla
 bootstrap: $(STD_PRELUDE)
-	bash scripts/build_bootstrap.sh
+	$(TESTROOT_LOCK) bash scripts/build_bootstrap.sh
 
 ## Sincronizar el toolchain local (~/.nyx o NYX_HOME) con los artefactos
 ## del repo: bootstrap + nyx_build + runtime C + std. Correr al final de
@@ -126,18 +141,16 @@ install-local: $(STD_PRELUDE)
 ## Uso: make recompile MODULE=lexer
 recompile:
 	@test -n "$(MODULE)" || (echo "Uso: make recompile MODULE=<nombre>"; exit 1)
-	cp compiler/$(MODULE).nx script.nx
-	./nyx_bootstrap
-	cp script.ll compiler/$(MODULE).ll
+	$(TESTROOT_LOCK) bash -c 'cp compiler/$(MODULE).nx script.nx && ./nyx_bootstrap && cp script.ll compiler/$(MODULE).ll'
 	@echo "✓ compiler/$(MODULE).ll actualizado"
 
 ## Recompilar todos los módulos y reconstruir el bootstrap
 recompile-all:
-	@for mod in lexer parser types semantic borrow licm resolve codegen nyx; do \
+	@$(TESTROOT_LOCK) bash -c 'for mod in lexer parser types semantic borrow licm resolve codegen nyx; do \
 	  echo "→ Compilando $$mod.nx ..."; \
-	  cp compiler/$$mod.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/$$mod.ll; \
-	done
-	bash scripts/build_bootstrap.sh
+	  cp compiler/$$mod.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/$$mod.ll || exit 1; \
+	done'
+	$(TESTROOT_LOCK) bash scripts/build_bootstrap.sh
 	@echo "✓ Nuevo nyx_bootstrap generado"
 
 # ─────────────────────────────────────────────
@@ -146,27 +159,27 @@ recompile-all:
 
 ## Compilar y ejecutar un programa Nyx (prelude auto-loaded por el driver)
 ## Uso: make run FILE=examples/hello.nx
+## El ./script_bin va DENTRO del lock a propósito: el binario también es un
+## artefacto compartido de la raíz, así que un runner que arranque mientras
+## corre el programa lo pisaría. Contrapartida asumida: `make run` de un
+## programa largo (un server) retiene el lock mientras vive — para eso está
+## `make playground`, que compila bajo lock y ejecuta afuera.
 run: $(STD_PRELUDE)
 	@test -n "$(FILE)" || (echo "Uso: make run FILE=<archivo.nx>"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_bootstrap
-	$(CLANG) -O2 script.ll $(RUNTIME_SRCS) $(LIBS) -o script_bin
-	./script_bin $(ARGS)
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && ./nyx_bootstrap && $(CLANG) -O2 script.ll $(RUNTIME_SRCS) $(LIBS) -o script_bin && ./script_bin $(ARGS)'
 
 ## Solo compilar a LLVM IR (sin ejecutar, prelude auto-loaded por el driver)
 ## Uso: make compile FILE=examples/hello.nx
 compile: $(STD_PRELUDE)
 	@test -n "$(FILE)" || (echo "Uso: make compile FILE=<archivo.nx>"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_bootstrap
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && ./nyx_bootstrap'
 	@echo "✓ IR generado en script.ll"
 
 ## Compilar y ejecutar sin GC (v1.5.0 — Systems Mode)
 ## Uso: make compile-no-gc FILE=examples/hello.nx
 compile-no-gc:
 	@test -n "$(FILE)" || (echo "Uso: make compile-no-gc FILE=<archivo.nx>"; exit 1)
-	cp $(FILE) script.nx
-	NYX_NO_GC=1 ./nyx_bootstrap
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && NYX_NO_GC=1 ./nyx_bootstrap'
 	@echo "✓ IR generado en script.ll (sin GC)"
 
 ## Compilar y ejecutar sin GC en el IR (el runtime C aún necesita -lgc para strings/arrays)
@@ -174,10 +187,7 @@ compile-no-gc:
 ## Uso: make run-no-gc FILE=examples/hello.nx
 run-no-gc:
 	@test -n "$(FILE)" || (echo "Uso: make run-no-gc FILE=<archivo.nx>"; exit 1)
-	cp $(FILE) script.nx
-	NYX_NO_GC=1 ./nyx_bootstrap
-	$(CLANG) -O2 script.ll $(RUNTIME_SRCS) $(LIBS) -o script_bin
-	./script_bin
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && NYX_NO_GC=1 ./nyx_bootstrap && $(CLANG) -O2 script.ll $(RUNTIME_SRCS) $(LIBS) -o script_bin && ./script_bin'
 
 # ─────────────────────────────────────────────
 #  TESTS
@@ -303,9 +313,7 @@ test-integration:
 ## y nadie los miraba). El guard de completitud del sync cubre la clase.
 build-test:
 	@if [ -f compiler/test.nx ]; then \
-		cp compiler/test.nx script.nx && \
-		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
-		cp script.ll compiler/test.ll; \
+		$(TESTROOT_LOCK) bash -c 'cp compiler/test.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/test.ll'; \
 	fi
 	$(CLANG) compiler/test.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_test
 	@echo "✓ nyx_test listo"
@@ -343,9 +351,7 @@ test-one:
 ## Uso: make compile-debug FILE=examples/hello.nx
 compile-debug:
 	@test -n "$(FILE)" || (echo "Uso: make compile-debug FILE=<archivo.nx>"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_bootstrap
-	$(CLANG) -O2 -g script.ll $(RUNTIME_SRCS) $(LIBS) -o $(notdir $(basename $(FILE)))_dbg
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && ./nyx_bootstrap && $(CLANG) -O2 -g script.ll $(RUNTIME_SRCS) $(LIBS) -o $(notdir $(basename $(FILE)))_dbg'
 	@echo "✓ $(notdir $(basename $(FILE)))_dbg compilado con debug info"
 
 ## Compilar con debug info y lanzar gdb
@@ -363,8 +369,7 @@ bootstrap-asan:
 ## Ejecutar con ASAN
 run-asan:
 	@test -n "$(FILE)" || (echo "Uso: make run-asan FILE=<archivo.nx>"; exit 1)
-	cp $(FILE) script.nx
-	ASAN_OPTIONS=halt_on_error=1 ./nyx_bootstrap_dbg 2>&1 | head -80
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && ASAN_OPTIONS=halt_on_error=1 ./nyx_bootstrap_dbg 2>&1 | head -80'
 
 # ─────────────────────────────────────────────
 #  TOOLS
@@ -373,27 +378,25 @@ run-asan:
 ## Build the formatter tool
 build-fmt:
 	@if [ -f compiler/fmt.nx ]; then \
-		cp compiler/fmt.nx script.nx && \
-		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
-		cp script.ll compiler/fmt.ll; \
+		$(TESTROOT_LOCK) bash -c 'cp compiler/fmt.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/fmt.ll'; \
 	fi
 	$(CLANG) compiler/fmt.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_fmt
 	@echo "✓ nyx_fmt listo"
 
 ## Format a Nyx source file
 ## Uso: make fmt FILE=examples/hello.nx
+## NYX_SRC y NO `cp $(FILE) script.nx`, igual que `vet`: nyx_fmt lee NYX_SRC
+## (compiler/fmt.nx:1002) y escribe el resultado a stdout, así que la copia al
+## scratch de la raíz no aportaba nada y sí podía pisar a un runner en curso.
 fmt:
 	@test -n "$(FILE)" || (echo "Uso: make fmt FILE=<archivo.nx>"; exit 1)
 	@test -f nyx_fmt || (echo "Primero ejecuta: make build-fmt"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_fmt
+	NYX_SRC=$(FILE) ./nyx_fmt
 
 ## Build the REPL
 ## se compilan desde .nx con el bootstrap; no llevan seed .ll
 build-repl:
-	cp compiler/repl.nx script.nx
-	./nyx_bootstrap
-	$(CLANG) script.ll compiler/lexer.ll compiler/parser.ll compiler/interpreter.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_repl
+	$(TESTROOT_LOCK) bash -c 'cp compiler/repl.nx script.nx && ./nyx_bootstrap && $(CLANG) script.ll compiler/lexer.ll compiler/parser.ll compiler/interpreter.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_repl'
 	@echo "✓ nyx_repl listo"
 
 ## Run the REPL
@@ -415,18 +418,18 @@ test-repl: build-repl
 # de publicar (la vez de test.nx nadie lo cazó y el install estuvo roto 4 días).
 build-check:
 	@if [ -f compiler/nyx_check.nx ]; then \
-		cp compiler/nyx_check.nx script.nx && \
-		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
-		cp script.ll compiler/nyx_check.ll; \
+		$(TESTROOT_LOCK) bash -c 'cp compiler/nyx_check.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/nyx_check.ll'; \
 	fi
 	$(CLANG) compiler/nyx_check.ll compiler/lexer.ll compiler/parser.ll compiler/types.ll compiler/semantic.ll compiler/resolve.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_check
 	@echo "✓ nyx_check listo"
 
 ## Run nyx_check on a file
+## NYX_SRC y NO `cp $(FILE) script.nx`, igual que `vet`/`fmt`: nyx_check lee
+## NYX_SRC (compiler/nyx_check.nx:127) y solo imprime diagnósticos — la copia
+## al scratch de la raíz podía pisar a un runner en curso.
 check:
 	@test -n "$(FILE)" || (echo "Uso: make check FILE=<archivo.nx>"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_check
+	NYX_SRC=$(FILE) ./nyx_check
 
 ## Build nyx_build (build system, v1.9.0)
 ## build.nx importa gotchas_table.nx (declaration-only, igual que vet.nx): el
@@ -436,20 +439,15 @@ check:
 ## fuente: el clon publico trae el .ll semilla y no el .nx.
 build-nyx-build:
 	@if [ -f compiler/gotchas_table.nx ]; then \
-		cp compiler/gotchas_table.nx script.nx && \
-		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
-		cp script.ll compiler/gotchas_table.ll; \
+		$(TESTROOT_LOCK) bash -c 'cp compiler/gotchas_table.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/gotchas_table.ll'; \
 	fi
-	cp compiler/build.nx script.nx
-	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
 	@# REFRESCAR LA SEED, como hacen build-check y build-test: este target
 	@# enlazaba directo desde script.ll y nunca copiaba, así que
 	@# compiler/build.ll —seed TRACKEADA y publicada al mirror— quedó congelada
 	@# en 0.22.10 mientras build.nx ya decía 0.31.0. Los instaladores externos
 	@# construyen DESDE esa seed: un seed stale es un fallo silencioso para
 	@# quien clona el repo público (2026-09-09).
-	cp script.ll compiler/build.ll
-	$(CLANG) script.ll compiler/gotchas_table.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_build
+	$(TESTROOT_LOCK) bash -c 'cp compiler/build.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/build.ll && $(CLANG) script.ll compiler/gotchas_table.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_build'
 	@echo "✓ nyx_build listo"
 
 ## Use nyx_build to build a project (v1.9.0)
@@ -465,14 +463,10 @@ nyx-build:
 ## sólo si están — el clon público trae los .ll semilla y no las fuentes.
 build-vet:
 	@if [ -f compiler/gotchas_table.nx ]; then \
-		cp compiler/gotchas_table.nx script.nx && \
-		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
-		cp script.ll compiler/gotchas_table.ll; \
+		$(TESTROOT_LOCK) bash -c 'cp compiler/gotchas_table.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/gotchas_table.ll'; \
 	fi
 	@if [ -f compiler/vet.nx ]; then \
-		cp compiler/vet.nx script.nx && \
-		NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && \
-		cp script.ll compiler/vet.ll; \
+		$(TESTROOT_LOCK) bash -c 'cp compiler/vet.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/vet.ll'; \
 	fi
 	$(CLANG) compiler/vet.ll compiler/lexer.ll compiler/parser.ll compiler/gotchas_table.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_vet
 	@echo "✓ nyx_vet listo"
@@ -492,9 +486,7 @@ vet:
 ## Mismo patrón que build-vet, pero gendocs.nx no usa módulos del compilador:
 ## sólo runtime (read_file/write_file/readdir/regex).
 build-gendocs:
-	cp compiler/gendocs.nx script.nx
-	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
-	cp script.ll compiler/gendocs.ll
+	$(TESTROOT_LOCK) bash -c 'cp compiler/gendocs.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && cp script.ll compiler/gendocs.ll'
 	$(CLANG) compiler/gendocs.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_gendocs
 	@echo "✓ nyx_gendocs listo"
 
@@ -509,9 +501,7 @@ gen-agent-docs: build-gendocs
 ## Build nyx_doc (documentation generator, v1.8.0)
 ## se compilan desde .nx con el bootstrap; no llevan seed .ll
 build-doc:
-	cp compiler/doc.nx script.nx
-	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
-	$(CLANG) script.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_doc
+	$(TESTROOT_LOCK) bash -c 'cp compiler/doc.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && $(CLANG) script.ll compiler/lexer.ll compiler/parser.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_doc'
 	@echo "✓ nyx_doc listo"
 
 ## Generate documentation for a Nyx source file (v1.8.0)
@@ -519,10 +509,7 @@ build-doc:
 doc:
 	@test -n "$(FILE)" || (echo "Uso: make doc FILE=<archivo.nx>"; exit 1)
 	@test -f nyx_doc || (echo "Primero ejecuta: make build-doc"; exit 1)
-	cp $(FILE) script.nx
-	echo "$(FILE)" > script_path.txt
-	./nyx_doc
-	@rm -f script_path.txt
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && echo "$(FILE)" > script_path.txt && ./nyx_doc; rc=$$?; rm -f script_path.txt; exit $$rc'
 
 ## Cross-compile a Nyx program for a specific target (v1.8.0)
 ## Uso: make cross FILE=prog.nx TARGET=aarch64-linux-gnu
@@ -531,9 +518,7 @@ doc:
 cross:
 	@test -n "$(FILE)" || (echo "Uso: make cross FILE=<archivo.nx> TARGET=<triple>"; exit 1)
 	@test -n "$(TARGET)" || (echo "Uso: make cross FILE=<archivo.nx> TARGET=<triple>"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_bootstrap
-	$(CLANG) -O2 --target=$(TARGET) script.ll $(RUNTIME_SRCS) $(LIBS) -o $(notdir $(basename $(FILE)))_$(TARGET)_bin
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && ./nyx_bootstrap && $(CLANG) -O2 --target=$(TARGET) script.ll $(RUNTIME_SRCS) $(LIBS) -o $(notdir $(basename $(FILE)))_$(TARGET)_bin'
 	@echo "✓ Cross-compiled: $(notdir $(basename $(FILE)))_$(TARGET)_bin"
 
 ## Compilar a WASM (wasm32-wasi) con el clang del sistema + wasi-libc de Debian
@@ -543,25 +528,23 @@ cross:
 ## (NYX_PROJECT_DIR) — `import "util"` busca <dir>/util.nx; "std/X" sigue
 ## resolviendo a la stdlib. OJO: la resolución es project-relative, no
 ## relativa-al-importador. Usa script.nx/script.ll del root como scratch
-## (compartido con el build nativo — no correr en paralelo con make run).
+## (compartido con el build nativo), pero YA NO hay que evitar el paralelo:
+## la receta corre bajo $(TESTROOT_LOCK), igual que los runners de test.
 ## Limitaciones: sin GC (leak-by-design, cómputo batch), sin red/threads/procesos.
 wasm:
 	@test -n "$(FILE)" || (echo "Uso: make wasm FILE=<archivo.nx>"; exit 1)
 	@test -f $(WASI_LIBC) || (echo "wasi-libc no encontrado en $(WASI_LIBC) — sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19"; exit 1)
-	cp $(FILE) script.nx
-	NYX_PROJECT_DIR=$(abspath $(dir $(FILE))) NYX_TARGET=wasm32-wasi NYX_NO_GC=1 ./nyx_bootstrap
-	$(WASM_CLANG) $(WASM_CFLAGS) script.ll $(WASM_RUNTIME_SRCS) -o $(notdir $(basename $(FILE))).wasm
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && NYX_PROJECT_DIR=$(abspath $(dir $(FILE))) NYX_TARGET=wasm32-wasi NYX_NO_GC=1 ./nyx_bootstrap && $(WASM_CLANG) $(WASM_CFLAGS) script.ll $(WASM_RUNTIME_SRCS) -o $(notdir $(basename $(FILE))).wasm'
 	@echo "✓ WASM: $(notdir $(basename $(FILE))).wasm — correr con: wasmtime $(notdir $(basename $(FILE))).wasm"
 
 ## Emitir IR con triple Windows (arco W0 — solo COMPILE, el link+run vive
 ## en CI windows-latest: .github/workflows/windows.yml). ARCH=x64 (default)
 ## o arm64. Salida: <archivo>.win.ll / <archivo>.arm64.win.ll junto al .nx.
-## Usa script.nx/script.ll del root como scratch (mismo caveat que wasm).
+## Usa script.nx/script.ll del root como scratch, bajo $(TESTROOT_LOCK)
+## (mismo caveat que wasm).
 win-compile:
 	@test -n "$(FILE)" || (echo "Uso: make win-compile FILE=<archivo.nx> [ARCH=x64|arm64]"; exit 1)
-	cp $(FILE) script.nx
-	NYX_PROJECT_DIR=$(abspath $(dir $(FILE))) NYX_TARGET=$(if $(filter arm64,$(ARCH)),aarch64-pc-windows-msvc,x86_64-pc-windows-msvc) ./nyx_bootstrap
-	cp script.ll $(basename $(FILE))$(if $(filter arm64,$(ARCH)),.arm64,).win.ll
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && NYX_PROJECT_DIR=$(abspath $(dir $(FILE))) NYX_TARGET=$(if $(filter arm64,$(ARCH)),aarch64-pc-windows-msvc,x86_64-pc-windows-msvc) ./nyx_bootstrap && cp script.ll $(basename $(FILE))$(if $(filter arm64,$(ARCH)),.arm64,).win.ll'
 	@echo "✓ IR Windows: $(basename $(FILE))$(if $(filter arm64,$(ARCH)),.arm64,).win.ll"
 
 ## Install nyx wrapper script to /usr/local/bin (v1.8.0)
@@ -575,9 +558,7 @@ install:
 ## Build nyx_bindgen (C header binding generator, v2.4.0)
 ## se compilan desde .nx con el bootstrap; no llevan seed .ll
 build-bindgen:
-	cp compiler/bindgen.nx script.nx
-	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
-	$(CLANG) script.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_bindgen
+	$(TESTROOT_LOCK) bash -c 'cp compiler/bindgen.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && $(CLANG) script.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_bindgen'
 	@echo "✓ nyx_bindgen listo"
 
 ## Genera bindings Nyx desde un header C (v2.4.0)
@@ -585,17 +566,22 @@ build-bindgen:
 bindgen:
 	@test -n "$(FILE)" || (echo "Uso: make bindgen FILE=<header.h>"; exit 1)
 	@test -f nyx_bindgen || (echo "Primero ejecuta: make build-bindgen"; exit 1)
-	cp $(FILE) script.nx
-	./nyx_bindgen
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && ./nyx_bindgen'
 
 ## Build and run the Nyx Playground web server (v0.10.0)
 ## Compiles playground/server.nx and starts on port 8080
 playground:
-	cp playground/server.nx script.nx
-	NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap
-	$(CLANG) -O2 script.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_playground
+	$(TESTROOT_LOCK) bash -c 'cp playground/server.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && $(CLANG) -O2 script.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_playground'
 	@echo "✓ nyx_playground compilado"
 	./nyx_playground
+
+## Ratchet del lock de la raíz: ninguna receta del Makefile puede tocar
+## script.nx/script.ll/script_bin sin pasar por $(TESTROOT_LOCK) (la clase de
+## fallo que corrompió una semilla el 2026-09-09). Todavía NO está cableado a
+## ninguna suite: sumarlo a test-ai-first cambia un conteo canónico y eso vive
+## en docs/TESTS.md.
+test-testroot-lock:
+	bash scripts/testing/run_testroot_lock_ratchet.sh
 
 ## Guardas documentales (run_docs_health.sh) — también corre dentro de test-ai-first
 docs-health:

@@ -1798,6 +1798,43 @@ else
   echo "$mga_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="slot-string-leido-como-int-abort"
+# Fricción 2026-09-09: `let x: int = a[0]` sobre un slot String devolvía el
+# PUNTERO como un número plausible y salía con 0 — el único miembro de la
+# familia slots-tag que seguía mintiendo (String y float ya abortaban). Ahora
+# lo denuncia nyx_slot_as_int_checked con NYX2014. El caso cubre las tres
+# direcciones, porque el riesgo acá es el falso positivo:
+#   (a) slot String leído como int → abort NYX2014 nombrando el tipo real;
+#   (b) slot BOOL leído como int   → SIGUE dando 1 (control negativo: es la
+#       razón por la que NO se reusa nyx_array_get_checked con expected_tag
+#       INT, cuya regla definido/definido abortaría sobre bool);
+#   (c) slot INT normal            → 42 y exit 0.
+sai_str=$(mktemp /tmp/sai-XXXX.nx)
+printf 'fn main() -> int {\n    var a = []\n    a.push("hola")\n    let x: int = a[0]\n    print(x)\n    return 0\n}\n' > "$sai_str"
+sai_out=$(bash "$(pwd)/scripts/nyx" run "$sai_str" 2>&1); sai_rc=$?
+
+sai_bool=$(mktemp /tmp/saib-XXXX.nx)
+printf 'fn main() -> int {\n    var a = []\n    a.push(true)\n    let b: int = a[0]\n    print(b)\n    return 0\n}\n' > "$sai_bool"
+saib_out=$(bash "$(pwd)/scripts/nyx" run "$sai_bool" 2>&1); saib_rc=$?
+
+sai_int=$(mktemp /tmp/saii-XXXX.nx)
+printf 'fn main() -> int {\n    var a = []\n    a.push(42)\n    let n: int = a[0]\n    print(n)\n    return 0\n}\n' > "$sai_int"
+saii_out=$(bash "$(pwd)/scripts/nyx" run "$sai_int" 2>&1); saii_rc=$?
+rm -f "$sai_str" "$sai_bool" "$sai_int"
+
+if [ "$sai_rc" -ne 0 ] && echo "$sai_out" | grep -qF "NYX2014" \
+   && echo "$sai_out" | grep -qF "contiene String" \
+   && [ "$saib_rc" -eq 0 ] && echo "$saib_out" | grep -qx "1" \
+   && [ "$saii_rc" -eq 0 ] && echo "$saii_out" | grep -qx "42"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (String rc=%d, bool rc=%d, int rc=%d)\n" "$name" "$sai_rc" "$saib_rc" "$saii_rc"
+  echo "$sai_out"  | tail -2 | sed 's/^/      String: /'
+  echo "$saib_out" | tail -2 | sed 's/^/      bool:   /'
+  echo "$saii_out" | tail -2 | sed 's/^/      int:    /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="assert-eq-expected-got"
 # C2 (fricción ERP 2026-08-10): assert(a == b) fallido dice "expected X, got
 # Y" (nyx_assert_eq_int, código muerto en runtime.c desde siempre, conectado)

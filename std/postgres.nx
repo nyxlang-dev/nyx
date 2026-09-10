@@ -558,6 +558,7 @@ pub fn pg_is_null(valor: String) -> bool {
 // de String) y `afectadas` el número que informa CommandComplete.
 fn pg_read_result(fd: int, tls: int) -> Result<Array, Error> {
     var filas: Array = []
+    var columnas: Array = []
     var afectadas: int = 0
     var listo: bool = false
     // El primer error se GUARDA y se sigue leyendo hasta ReadyForQuery: cortar
@@ -592,6 +593,11 @@ fn pg_read_result(fd: int, tls: int) -> Result<Array, Error> {
                         ci = ci + 1
                     }
                     filas.push(fila)
+                } else if tipo == "T" {
+                    // RowDescription: los nombres de las columnas. Antes se
+                    // descartaba entero — los nombres estaban ahí y el usuario
+                    // tenía que volver a escribirlos a mano en su código.
+                    columnas = pg_parse_row_description(payload)
                 } else if tipo == "C" {
                     // CommandComplete: "INSERT 0 2", "UPDATE 3", "SELECT 5".
                     // El ÚLTIMO número del tag es el de filas afectadas.
@@ -609,7 +615,42 @@ fn pg_read_result(fd: int, tls: int) -> Result<Array, Error> {
     }
 
     if hubo_error { return Result.Err(el_error) }
-    return Result.Ok([filas, afectadas])
+    return Result.Ok([filas, afectadas, columnas])
+}
+
+// RowDescription → Array de nombres. Por cada campo: el nombre NUL-terminado
+// seguido de 18 bytes de metadatos (OID de tabla, número de columna, OID de
+// tipo, tamaño, modificador y código de formato) que este cliente no usa —
+// decodificar por OID es el formato binario, que el arco anterior descartó a
+// propósito por no tener una medición que lo justifique.
+fn pg_parse_row_description(payload: String) -> Array {
+    var cols: Array = []
+    let nf: int = pg_read_be16(payload, 0)
+    var off: int = 2
+    var i: int = 0
+    let largo_total: int = payload.byte_length()
+    while i < nf {
+        if off >= largo_total { return cols }
+        var fin: int = off
+        while fin < largo_total {
+            if payload.charAt(fin) == 0 {
+                cols.push(payload.substring(off, fin))
+                off = fin + 19
+                fin = largo_total
+            } else {
+                fin = fin + 1
+                if fin >= largo_total {
+                    // Nombre sin NUL de cierre: el mensaje está truncado. Se
+                    // devuelve lo leído en vez de inventar un nombre — el
+                    // caller ve menos columnas de las que esperaba, que es
+                    // ruidoso, en vez de una etiqueta falsa.
+                    return cols
+                }
+            }
+        }
+        i = i + 1
+    }
+    return cols
 }
 
 // Número de filas del tag de CommandComplete.
@@ -675,6 +716,115 @@ pub fn try_pg_query(conn: PgConn, sql: String) -> Result<Array, Error> {
             return Result.Ok(filas)
         }
     }
+}
+
+// Igual que try_pg_query pero devuelve `[columnas, filas]`: los nombres salen
+// del RowDescription que el servidor manda igual, así que pedirlos no cuesta un
+// viaje extra. Sin esto, el usuario que quería saber en qué posición viene
+// "monto" tenía que escribir el orden de las columnas a mano en su código — o
+// sea, mantener el esquema en dos lugares, que es el mismo problema que
+// #[derive(Fields)] resuelve del otro lado.
+pub fn try_pg_query_cols(conn: PgConn, sql: String) -> Result<Array, Error> {
+    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    match pg_w(conn.fd, conn.tls, pg_msg("Q", pg_cstr(sql))) {
+        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
+        Result.Ok(_) => {}
+    }
+    match pg_read_result(conn.fd, conn.tls) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(r) => {
+            let filas: Array = r[0]
+            let columnas: Array = r[2]
+            return Result.Ok([columnas, filas])
+        }
+    }
+}
+
+// Índice de una columna por nombre. Si no existe, ABORTA nombrando las que sí
+// están: devolver -1 haría que el accesor de al lado leyera la columna
+// equivocada o se fuera de rango, y un error de tipeo en un nombre de columna
+// es un bug del programa, no un dato ausente.
+pub fn pg_col(columnas: Array, nombre: String) -> int {
+    var i: int = 0
+    while i < columnas.length() {
+        let c: String = columnas[i]
+        if c == nombre { return i }
+        i = i + 1
+    }
+    var disponibles: String = ""
+    var j: int = 0
+    while j < columnas.length() {
+        let c2: String = columnas[j]
+        if j > 0 { disponibles = disponibles + ", " }
+        disponibles = disponibles + c2
+        j = j + 1
+    }
+    panic("pg_col: la consulta no devolvio ninguna columna llamada '" + nombre + "' — devolvio: [" + disponibles + "]")
+    return -1
+}
+
+// ── Lectura tipada de una celda ─────────────────────────────────────
+//
+// Toda celda llega como String (formato text del protocolo v3), así que estos
+// accesores son ERGONOMÍA, no corrección: convertir a mano da el mismo valor.
+// Lo que sí aportan es el trato del NULL y del fuera de rango, que a mano se
+// olvida: un NULL leído como número NO es 0, y una fila más corta que el índice
+// pedido no es una celda vacía. Los dos ABORTAN nombrando la posición.
+//
+// (El bug que el reporte del ERP denunciaba —leer una columna INTEGER como int
+// y obtener el PUNTERO— es de std/sqlite y no existe acá: en este cliente la
+// celda es un String y nadie la reinterpreta.)
+
+fn pg_celda(fila: Array, i: int, quien: String) -> String {
+    if i < 0 or i >= fila.length() {
+        panic(quien + ": la fila tiene " + int_to_string(fila.length()) + " columnas y se pidio la " + int_to_string(i))
+    }
+    let v: String = fila[i]
+    if pg_is_null(v) {
+        panic(quien + ": la columna " + int_to_string(i) + " es NULL — preguntá con pg_is_null(fila[i]) antes de convertir")
+    }
+    return v
+}
+
+pub fn pg_row_str(fila: Array, i: int) -> String {
+    return pg_celda(fila, i, "pg_row_str")
+}
+
+pub fn pg_row_int(fila: Array, i: int) -> int {
+    return string_to_int(pg_celda(fila, i, "pg_row_int"))
+}
+
+pub fn pg_row_float(fila: Array, i: int) -> float {
+    return string_to_float(pg_celda(fila, i, "pg_row_float"))
+}
+
+// PostgreSQL emite los booleanos como "t"/"f" en formato text. Se aceptan
+// también las formas que escriben otros productores, y cualquier otra cosa
+// aborta nombrando el valor en vez de asumir false — la misma regla que sigue
+// `desde_fila` del derive de campos.
+pub fn pg_row_bool(fila: Array, i: int) -> bool {
+    let v: String = pg_celda(fila, i, "pg_row_bool")
+    if v == "t" or v == "true" or v == "1" or v == "T" or v == "TRUE" { return true }
+    if v == "f" or v == "false" or v == "0" or v == "F" or v == "FALSE" { return false }
+    panic("pg_row_bool: valor booleano no reconocido en la columna " + int_to_string(i) + ": '" + v + "'")
+    return false
+}
+
+// ── Ligado tipado de parámetros ─────────────────────────────────────
+//
+// Nyx no tiene un Array heterogéneo tipado, así que `[7, "ana"]` no se puede
+// escribir tal cual: los parámetros viajan como Array de String. Estos
+// constructores no cambian eso —el valor va igual en formato text del
+// protocolo, que es exacto para enteros y no toca ninguna configuración
+// regional— pero hacen que el código DIGA qué es cada parámetro, que era el
+// 80% del pedido. `pg_float` es el único con un matiz: un float en text pierde
+// lo que ya perdió al ser float; para dinero, enteros en unidades mínimas.
+pub fn pg_int(n: int) -> String { return int_to_string(n) }
+pub fn pg_text(s: String) -> String { return s }
+pub fn pg_float(f: float) -> String { return float_to_string(f) }
+pub fn pg_bool(b: bool) -> String {
+    if b { return "true" }
+    return "false"
 }
 
 // ── Consultas parametrizadas (extended query) ───────────────────────
