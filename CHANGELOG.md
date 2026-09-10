@@ -214,6 +214,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **`#[derive(PartialEq)]` no enlazaba, y detrás del crash comparaba `String` por DIRECCIÓN.** Un struct con un campo
+  `String` y ese derive hacía que clang rechazara el módulo entero: «instruction expected to be numbered '%N' or
+  greater». El registro del resultado se pedía ANTES de la rama y la rama de punteros pedía dos temporales más que
+  emitía antes, así que la numeración SSA salía al revés (reporte de fricción de nyxerp). Al arreglar eso apareció lo
+  que el crash tapaba: esa rama comparaba los `String` con `ptrtoint`, o sea por identidad de puntero — dos structs con
+  el mismo texto habrían dado DISTINTO. El día que alguien arreglara solo la numeración, `eq` habría empezado a mentir
+  en vez de no compilar. Ahora los `String` se comparan por contenido con `nyx_string_equals`. Y un tercer caso que
+  nadie había visto: un campo `float` emitía `ptrtoint double`, que es IR inválido — tampoco compilaba; ahora usa
+  `fcmp oeq`, con la semántica de IEEE 754 (NaN != NaN). Los punteros opacos (structs anidados, `Array`, `Map`) siguen
+  comparándose por identidad, que es lo único honesto sin recorrer la estructura. test-407 cubre los cinco tipos de
+  campo y el caso que distingue contenido de identidad: un `String` armado en pedazos compara igual que el literal.
 - **`let x: int = a[i]` sobre un slot que guarda un String o un float devolvía el PUNTERO como un número plausible
   (NYX2014).** Es la tercera pata del reporte del ERP —la que en su momento se fichó como «causa raíz aparte, no es de
   `sqlite`»— y la más venenosa de las tres, porque no rompe nada: `a.push("hola")` seguido de `let x: int = a[0]`

@@ -1,0 +1,54 @@
+// test-407 — #[derive(PartialEq)] con campos que no son enteros
+//
+// Reporte de fricción de nyxerp (2026-09-09): un struct con un campo String y
+// este derive NO ENLAZABA — clang rechazaba el módulo con «instruction expected
+// to be numbered '%N' or greater». El registro del resultado se pedía ANTES de
+// la rama, y la rama de punteros pedía dos temporales más y los emitía antes:
+// la numeración SSA salía al revés.
+//
+// Detrás del crash había un silently-wrong LATENTE: esa rama comparaba los
+// String por DIRECCIÓN (ptrtoint), no por contenido. El día que se arreglara la
+// numeración, `eq` habría empezado a mentir en vez de no compilar — dos structs
+// con el mismo texto habrían dado distinto.
+//
+// Y un tercero que nadie había visto: un campo `float` emitía `ptrtoint double`,
+// que es IR inválido. Ese caso tampoco compilaba.
+
+#[derive(PartialEq)]
+struct Persona {
+    nombre: String,
+    edad: int,
+    altura: float,
+    activo: bool
+}
+
+fn main() -> int {
+    // (1) el caso del reporte: dos instancias con el MISMO texto, construidas
+    // por separado — o sea, dos objetos String distintos en memoria.
+    let a = Persona { nombre: "ana", edad: 30, altura: 1.65, activo: true }
+    let b = Persona { nombre: "ana", edad: 30, altura: 1.65, activo: true }
+    assert(a.eq(b), "dos structs con el mismo contenido son iguales")
+
+    // (2) el control que prueba que compara de verdad y no dice siempre que sí
+    let c = Persona { nombre: "luis", edad: 30, altura: 1.65, activo: true }
+    assert(not a.eq(c), "distinto nombre, distintos")
+
+    // (3) cada campo por separado, para que ninguna rama quede sin ejercer
+    let d = Persona { nombre: "ana", edad: 31, altura: 1.65, activo: true }
+    assert(not a.eq(d), "distinto int, distintos")
+    let e = Persona { nombre: "ana", edad: 30, altura: 1.80, activo: true }
+    assert(not a.eq(e), "distinto float, distintos")
+    let f = Persona { nombre: "ana", edad: 30, altura: 1.65, activo: false }
+    assert(not a.eq(f), "distinto bool, distintos")
+
+    // (4) el String construido en pedazos: mismo texto, otro objeto. Si la
+    // comparación fuera por dirección, esto fallaría — es el caso que
+    // distingue contenido de identidad.
+    let parte: String = "an"
+    let armado: String = parte + "a"
+    let g = Persona { nombre: armado, edad: 30, altura: 1.65, activo: true }
+    assert(a.eq(g), "mismo texto armado en pedazos: iguales por CONTENIDO")
+
+    print("OK test-407 derive partialeq")
+    return 0
+}

@@ -1503,7 +1503,16 @@ fn shell_quote_arg(s: String) -> String {
     let valida_flags: bool = command == "build" or command == "run" or command == "test"
     while fi < args.length() {
         let flag: String = args[fi]
-        if flag == "--release" { release = true }
+        if flag == "--" {
+            // Todo lo que sigue es del PROGRAMA, no de nyx. Es la convención
+            // estándar y CLAUDE.md la documenta («usar `--` para args que
+            // parezcan flags de nyx»). Sin este corte, la validación de flags
+            // desconocidas rechazaba `nyx run -- --release`, que es
+            // exactamente para lo que existe `--`. Lo cazó
+            // run-wrapper-args-dashdash: el gate hizo su trabajo.
+            fi = args.length()
+        }
+        else if flag == "--release" { release = true }
         else if flag == "--help" or flag == "-h" { pide_ayuda = true }
         else if flag == "--target" {
             if fi + 1 < args.length() {
