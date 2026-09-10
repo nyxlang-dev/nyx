@@ -145,6 +145,13 @@ TESTS=(
   # explotaba en el ENLAZADO, después de un `nyx check` en verde.
   "tests/compiler/errors/test-derive-desconocido.nx|NYX1029"
   "tests/compiler/errors/test-derive-sobre-generico.nx|NYX1030"
+  # NYX1031 (fricción nyxerp 2026-09-09): los argumentos de un builtin NO se
+  # chequeaban NUNCA — había tabla de tipos de RETORNO pero de los parámetros
+  # solo aridad. `datetime_year(datetime_now())` pasaba el checker y codegen
+  # emitía IR inválido, con el error saliendo de clang sin la línea del usuario.
+  # El diagnóstico vivió unas horas en codegen y se movió acá, que es donde
+  # tiene la línea y donde `nyx check` lo ve.
+  "tests/compiler/errors/test-datetime-accesor-string.nx|NYX1031"
   # I-1 de la review final: la variante UNITARIA (`Color.Red`) parsea como
   # field_access, no como method_call — se escapaba del chequeo y el binario
   # segfaulteaba. Las dos formas (`panic` y `throw`) tienen que dar NYX1026.
@@ -1591,19 +1598,6 @@ if [ "$n7_rc" -ne 0 ] && echo "$n7_out" | grep -qF "NYX2007" && echo "$n7_out" |
 else
   printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2007 nombrando 'push')\n" "$n7_rc"
   echo "$n7_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
-fi
-
-# NYX2016 (fricción nyxerp 2026-09-09): los accesores de datetime esperan un
-# epoch y datetime_now() devuelve un String. Antes se emitía IR inválido en
-# silencio y el error lo tiraba clang, sin la línea del usuario. Va acá y no en
-# la tabla semántica porque el checker PASA: corta el generador.
-name="codegen-nyx2016-datetime-accesor-string"
-n16_out=$(NYX_SRC=tests/compiler/errors/test-datetime-accesor-string.nx ./nyx_bootstrap 2>&1); n16_rc=$?
-if [ "$n16_rc" -ne 0 ] && echo "$n16_out" | grep -qF "NYX2016" && echo "$n16_out" | grep -qF "datetime_parse"; then
-  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
-else
-  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2016 nombrando la salida datetime_parse)\n" "$n16_rc"
-  echo "$n16_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
 # NYX2013 (arco struct-campos-reflexion): el límite de tipos de #[derive(Fields)]

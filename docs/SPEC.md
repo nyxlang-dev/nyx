@@ -877,6 +877,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1028 | `?` mixes `Option` and `Result` across the operand and the function's return type (v0.31.0) — `Option` operand in a `Result`-returning fn: hint `.ok_or(e)?`; `Result` operand in an `Option`-returning fn: hint `match`/`unwrap_or` |
 | NYX1029 | unknown `#[derive(...)]` on a struct — an unrecognized derive used to be ignored silently, and the error only surfaced as NYX1002 at the call site of the function it would have generated; includes a did-you-mean over the eight valid derives (`Clone`, `PartialEq`, `Debug`, `Display`, `Default`, `Fields`, `Copy`, `Hash`) |
 | NYX1030 | `#[derive(...)]` on a **generic** struct — codegen does not emit derives for a template, but the symbol was declared anyway: `nyx check` passed and the program failed at LINK time with «undefined symbol» |
+| NYX1031 | a builtin is called with an argument whose type contradicts what it expects — the builtins had a table of RETURN types but only arity for their parameters, so their arguments were never checked at all; an out-of-place String reached codegen and became invalid IR, with clang reporting an error that did not name the user's line |
 | NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
 | NYX1210 | borrow: `&mut` exclusivity violation (statement-scoped lint) |
 | NYX1211 | borrow: `&mut` aliasing with an active `&` borrow (lint, sibling of NYX1210) |

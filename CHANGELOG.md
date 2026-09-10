@@ -227,6 +227,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `fractions.Fraction` de python); regression 407→409 archivos.
 
 ### Fixed
+- **Los argumentos de un builtin no se chequeaban NUNCA.** Había una tabla de tipos de RETORNO de los builtins pero de sus
+  parámetros solo se registraba la aridad, así que llamar a uno con el tipo equivocado pasaba el checker sin una palabra y
+  codegen emitía IR inválido — el error salía de clang y no nombraba la línea del usuario. Es la causa raíz detrás del reporte
+  de `datetime` de nyxerp: `datetime_year(datetime_now())` compilaba en silencio hasta que clang lo rechazaba. Ahora existe
+  `builtin_fn_params` y el error es **NYX1031**, con la línea: `'datetime_year' expects int for argument 1, got String`.
+  **Incremento 1: solo la familia datetime/time**, que es donde se midió el daño. La tabla toca a todos los builtins de un
+  compilador que se compila a sí mismo, así que un falso positivo no rompe un test sino el bootstrap; se agrega una familia por
+  vez, midiendo entre cada una. Y un `unknown` pasa en cualquier posición: si no, el tipado gradual deja de ser gradual. Radio
+  medido de este incremento: cero falsos positivos en la suite, en los tests de error y en los cinco stacks.
+  El diagnóstico vivió unas horas en codegen (NYX2016) y se RETIRÓ al llegar a semantic: ahí no tenía la línea del usuario y no
+  servía ni a `nyx check` ni al intérprete. Queda una nota en el sitio para que nadie lo vuelva a poner ahí.
 - **Los accesores `datetime_*` emitían IR inválido y el compilador no decía nada.** `datetime_year(datetime_now())` producía
   `call i64 @nyx_datetime_year(i64 %<string*>)` y el error lo tiraba clang, sin la línea del usuario (fricción nyxerp). Ahora es
   **NYX2016** en los siete accesores, y el mensaje dice cuál es el camino correcto: `datetime_parse` sí devuelve un epoch. Al

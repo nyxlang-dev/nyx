@@ -6,8 +6,12 @@
 // error de clang que no nombra su línea. Reportado por el equipo de nyxerp como
 // «los accesores datetime no enlazan».
 //
-// El rediseño de la familia es el arco std-time; esto es el diagnóstico
-// mientras tanto, y tiene que decir CUÁL es el camino correcto.
+// El diagnóstico vivió unas horas en CODEGEN y se movió a SEMANTIC, que es donde
+// tiene la línea del usuario y donde `nyx check` lo ve. Es NYX1031, de la tabla
+// `builtin_fn_params` — que antes no existía: había tipos de RETORNO de los
+// builtins, pero de los parámetros solo la aridad.
+//
+// El rediseño de la familia (dos mundos, epoch y texto) es el arco std-time.
 fn main() -> int {
     let ahora: String = datetime_now()
     let anio: int = datetime_year(ahora)
