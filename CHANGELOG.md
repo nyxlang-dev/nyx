@@ -280,6 +280,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`hacer_algo()?` en posición de SENTENCIA no se ejecutaba** (fricción de nyxerp, 2026-09-10,
+  clasificado LENGUAJE y urgente). Ni corría la llamada, ni propagaba el `Err`, y `nyx vet` decía
+  «No issues found»: un camino de error escrito explícitamente desaparecía del binario y la función
+  seguía de largo devolviendo `Ok`. El repro del reporte lo muestra limpio — los casos con `void`,
+  con `int` y con `Result` SIN `?` andaban bien; los dos que llevaban `?` no imprimían nada.
+  **La causa no era el `?`**: el despachador de sentencias del codegen conocía `call` y
+  `method_call` pero no `try_op`, y su caso por defecto era un `return 0` MUDO — cualquier tipo de
+  sentencia que el parser produjera y el codegen no tuviera listado se descartaba en silencio. Eso
+  convertía cada nodo nuevo en una bomba: alcanzaba con olvidarse de agregarlo acá.
+  Arreglado en las dos capas: `try_op` entra al despachador, y el default pasa a ser **NYX2017**,
+  que dice explícitamente que es un bug del COMPILADOR y no del código del usuario. El próximo nodo
+  que alguien olvide falla en compilación, que es donde se arregla barato.
+  `tests/compiler/language/test-412-try-op-sentencia.nx` cubre las dos mitades con un contador —que
+  la llamada CORRA y que el `Err` CORTE—, porque un test que solo mirara el `Result` final no
+  distingue «no ejecutó» de «ejecutó y dio Ok». Punto fijo verificado; NYX2017 no disparó en
+  ninguno de los 432 tests, o sea que ningún tipo legítimo caía en ese default.
+
 - **`go_sleep` perdía goroutines para siempre a partir de la 257ª concurrente** (encontrado midiendo el
   techo de goroutines en Windows, W3 Task 6 M2, pero el bug era del runtime COMPARTIDO y en POSIX era el
   que fallaba en silencio). `nyx_goroutine_sleep` marcaba la goroutina `BLOCKED`, llamaba a

@@ -1,0 +1,64 @@
+// test-412 — `?` en posición de SENTENCIA ejecuta la llamada y propaga.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-10 — clasificado LENGUAJE y
+// urgente)
+//
+// `hacer_algo()?` como sentencia NO SE EJECUTABA. Ni corría, ni propagaba el
+// error, y `nyx vet` decía «No issues found». Un camino de error que el autor
+// escribió explícitamente desaparecía del binario y la función devolvía Ok.
+//
+// La causa no era el `?`: el despachador de sentencias del codegen conocía
+// `call` y `method_call` pero no `try_op`, y su caso por defecto era un
+// `return 0` MUDO — cualquier tipo de sentencia no listado se descartaba en
+// silencio. Ese default ahora es un error NYX2017, así que el próximo nodo que
+// alguien olvide agregar falla en compilación en vez de evaporarse.
+//
+// El test cubre las dos mitades: que la llamada CORRA, y que el Err CORTE.
+
+import "std/error"
+
+var corridas: int = 0
+
+fn r_ok(n: int) -> Result<int, Error> {
+    corridas = corridas + n
+    return Result.Ok(n)
+}
+
+fn r_err() -> Result<int, Error> {
+    corridas = corridas + 100
+    return Result.Err(err_new(1, "invalid", "el error esperado"))
+}
+
+// El `?` como sentencia tiene que ejecutar las dos llamadas y devolver Ok.
+fn solo_oks() -> Result<int, Error> {
+    r_ok(1)?
+    r_ok(2)?
+    return Result.Ok(0)
+}
+
+// Acá el `?` del Err tiene que CORTAR: la línea de abajo no puede correr.
+fn corta_en_el_err() -> Result<int, Error> {
+    r_ok(4)?
+    r_err()?
+    corridas = corridas + 1000   // inalcanzable si el ? propagó
+    return Result.Ok(0)
+}
+
+fn main() -> int {
+    // 1. Las dos llamadas con `?` como sentencia SE EJECUTAN.
+    corridas = 0
+    let a: Result<int, Error> = solo_oks()
+    assert(a.is_ok())
+    assert(corridas == 3)   // 1 + 2: si el `?` se descartara, quedaría en 0
+
+    // 2. El `?` de un Err ejecuta la llamada Y corta la función.
+    corridas = 0
+    let b: Result<int, Error> = corta_en_el_err()
+    assert(b.is_err())
+    // 4 (la primera corrió) + 100 (la segunda corrió) y NADA más: el 1000 de
+    // después del `?` no puede haberse sumado.
+    assert(corridas == 104)
+
+    print("test-412 try-op-sentencia OK")
+    return 0
+}
