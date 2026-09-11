@@ -280,6 +280,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Un literal de `struct` al que le faltan campos ahora es ERROR (NYX1032)** (fricción de nyxerp,
+  2026-09-11, clasificado LENGUAJE). `P { a: 7 }` sobre un struct de tres campos compilaba, pasaba
+  `vet` y **corría**, rellenando los ausentes con el cero de su tipo (`0`, `""`, `false`). Sin error
+  y sin aviso.
+  Lo caro no era el caso aislado sino su consecuencia: **agregarle un campo a un `struct` dejaba
+  TODOS los literales existentes construyendo valores incompletos, en silencio**, y el compilador no
+  señalaba ni uno. En un ERP eso es un valor que el constructor jamás habría dejado pasar —una tasa
+  de cambio sin fuente— entrando por la puerta de al lado, y descubierto con el dato ya guardado.
+  El diagnóstico nombra TODOS los campos que faltan en una sola línea, porque la lista completa es
+  la que dice qué escribir. Respeta el guard que ya tenían los otros chequeos del literal: si el
+  struct vino de `scan_module_types` (solo el nombre, sin campos declarados) no se dice nada —
+  inventar un error ahí sería peor que callarse.
+  **Cero ocurrencias en los 432 tests de la regresión**, que era la pregunta que decidía si esto
+  podía ser un error y no un aviso: nadie dependía del relleno silencioso. Con test negativo y
+  control positivo (el mismo struct completo tiene que compilar y correr — sin eso, un checker roto
+  que rechazara todo literal pasaría el negativo en verde).
+
 - **SEGURIDAD: `https_get`, `https_post` y el HTTPS de `std/http` no verificaban el certificado del
   servidor** (fricción de nyxerp, 2026-09-11). Medido contra `badssl.com`: un certificado **vencido**,
   uno **autofirmado** y uno **emitido para otro nombre** devolvían los tres `200 OK`. HTTPS por esas

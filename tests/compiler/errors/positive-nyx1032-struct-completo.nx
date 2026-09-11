@@ -1,0 +1,18 @@
+// CONTROL POSITIVO de NYX1032: el MISMO struct con todos sus campos tiene que
+// compilar y correr. Sin este control, un checker roto que rechazara todo
+// literal de struct pasaría el test negativo en verde.
+//
+// Expected exit: 0
+
+struct P {
+    a: int,
+    b: String,
+    c: bool
+}
+
+fn main() -> int {
+    let p: P = P { a: 7, b: "hola", c: true }
+    print(int_to_string(p.a) + " " + p.b)
+    if p.c { print("c=true") }
+    return 0
+}

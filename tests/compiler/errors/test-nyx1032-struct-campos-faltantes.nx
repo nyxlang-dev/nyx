@@ -1,0 +1,30 @@
+// NYX1032 — un literal de struct al que le faltan campos es ERROR.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-11, clasificado LENGUAJE)
+//
+// Hasta esa fecha `P { a: 7 }` sobre un struct de tres campos compilaba, pasaba
+// `vet` y CORRÍA, rellenando los que faltaban con el cero de su tipo — 0 para
+// int, "" para String, false para bool. Sin error y sin aviso.
+//
+// Lo caro no es el caso aislado sino su consecuencia: agregarle un campo a un
+// struct dejaba TODOS los literales existentes construyendo valores
+// incompletos, en silencio, y el compilador no señalaba ni uno. En un ERP eso
+// significa que un valor que el constructor jamás habría dejado pasar entra por
+// la puerta de al lado y se descubre con el dato ya guardado.
+//
+// El diagnóstico nombra TODOS los campos que faltan en una sola línea: la lista
+// completa es la que dice qué escribir.
+//
+// Expected exit: 1
+
+struct P {
+    a: int,
+    b: String,
+    c: bool
+}
+
+fn main() -> int {
+    let p: P = P { a: 7 }
+    print(int_to_string(p.a))
+    return 0
+}
