@@ -701,6 +701,37 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   directo.
 - **`docs/TESTS.md`**: Regression pasa de 406/405 a 407/406 (test-386-option-struct-multifield).
 
+### Interno — arco Windows W3: threads y scheduler M:N nativos `[arco: w3-threads-scheduler-windows]`
+
+Arco CERRADO el 2026-09-11. **No anuncia soporte Windows** —eso es W6, decisión de Ottavio— y no
+cambia el comportamiento de ningún programa Nyx en Linux. Lo que entrega es que el scheduler M:N y
+los threads corran nativos en win32 sobre Fibers, con Boehm escaneando stacks que no son los del
+sistema.
+
+- **El bloqueante estructural, resuelto**: roots por rango COMITEADO medido con `VirtualQuery`
+  (`GetCurrentThreadStackLimits` devuelve la RESERVA y queda PROHIBIDA para roots) más un parche de
+  ~10 líneas a bdwgc 8.2.12 y un corrector de sp por exclusión. Ablación sobre la implementación
+  real: 0/50 muertes con el parche contra 2/50 sin él; sumando las series previas, 0/70 contra
+  5/~140.
+- **El primer `spawn` de Nyx corre en Windows** (Task 4) y el gate de concurrencia completo cierra
+  local con **36/36**: sync/mutex, spawn, scheduler, select, async, canales y WaitGroup con timeout.
+  Manifiesto del CI 26→38 entradas, con el piso subido en x64 y ARM64 (ARM64 preparado; ejecutarlo
+  depende del billing).
+- **Cuatro mediciones que corrigieron lo que creíamos** (Task 6). Los warnings de bdwgc NO inundan
+  la terminal: van a `<exe>.gc.log`, porque `CONSOLE_LOG` está apagado por defecto — la ficha dejó
+  de bloquear W6. El techo de goroutines concurrentes ES el techo de root sets de libgc, medido con
+  goroutines reales: **8176** con `enable_large_config=ON` y **2032** con el vcpkg stock, así que el
+  manifiesto tiene que exigir el build correcto. `SwitchToThread` resultó ejercido por 7 de 12
+  fixtures y **más rápido** con menos cores que con más: el busy-spin del idle cuesta cuando SOBRAN
+  cores, al revés de lo que la ficha temía. Y el pooling de fibers pasó de «probablemente ruido» a
+  **56-68%** del spawn+join.
+- **Diferencias de plataforma documentadas, no escondidas** (`docs/SPEC.md` §Async y §7.6 del spec de
+  Windows): en win32 cada goroutine viva cuesta su stack COMITIDO —N × 256 KB de pagefile, ~0 en
+  Linux— porque es la única forma de que el GC encuentre sus roots; y el techo de goroutines
+  concurrentes existe y depende de cómo se compiló libgc.
+- De la medición del techo salió un bug que **no era de Windows**: `go_sleep` perdía goroutines para
+  siempre pasada la 257ª concurrente, en silencio en POSIX. Arreglado aparte (ver Fixed).
+
 ### Interno — arco Windows W1: nace la capa `nyx_os_*` (8 incrementos, 2026-08-20 → 26)
 - **`runtime/os/`**: `nyx_os.h` (header único SIN un solo `#ifdef` de plataforma) +
   `os_posix.c` + `os_wasm.c` (stub single-thread: sync no-op, threads `-ENOSYS`). W2-W5
