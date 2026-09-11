@@ -58,6 +58,7 @@ GOTCHA_IDS=(
   "file-api-names"
   "array-index-float-write"
   "sync-global-init-reliable"
+  "nested-fn-sees-module"
 )
 
 ANCLAS=(

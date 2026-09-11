@@ -606,6 +606,15 @@ Las closures retornadas mantienen su environment via GC (heap-allocated).
 
 Nyx soporta funciones anidadas que capturan variables del scope exterior.
 
+El cuerpo de una funcion anidada —y el de una `async fn`— ve **todo lo que ve el
+modulo**: metodos de trait, llamadas genericas, constantes, `extern`, `static` y
+structs `repr(C)`. Hasta v0.31.0 no era asi, y el sintoma no era un error claro:
+un metodo de trait daba `method 'm' is not available on a receiver of type '%T'`
+(falso — el `impl` existia) y una llamada generica abortaba la generacion de
+codigo con exit 1 y **sin ningun mensaje**. La causa era el contexto de codegen
+de la funcion anidada, que compartia con el padre solo parte de las tablas del
+modulo.
+
 ```nyx
 fn accumulate(n: int) -> int {
     var total = 0

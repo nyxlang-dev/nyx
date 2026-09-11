@@ -1453,7 +1453,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,nested-fn-sees-module -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -1601,6 +1601,14 @@ lazy-init placeholder pattern (`if READY == 0 { MU = mutex_new(); READY = 1 }`) 
 data race — see the Threading section of LLM.md for its three failure modes. The same guarantee also
 covers `sync.wg_wait_timeout(wg, ms)` (both outcomes: quiesced
 early-exit and timeout). [test: 23-sync-global-mutex-wg-timeout]
+
+19. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
+trait methods, generic calls, constants, `extern`, `static`, `repr(C)` structs. Before the fix the
+codegen context of a nested function shared only part of the module's tables with its parent, and
+the symptom was misleading rather than clear: a trait method reported `method 'm' is not available
+on a receiver of type '%T'` — **false**, the `impl` existed — and a generic call aborted code
+generation with exit 1 and **no message at all** (no Nyx error, no LLVM error, no `.ll`). If you
+learned to hoist such calls out of nested functions, you no longer need to. [test: compiler/language/test-413-fn-anidada-ve-traits-y-genericos]
 
 <!-- /gen:gotchas -->
 

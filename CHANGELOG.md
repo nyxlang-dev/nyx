@@ -280,6 +280,34 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Una función anidada (y el cuerpo de una `async fn`) ya ve los traits, los genéricos y las
+  constantes de su módulo**. `codegen_nested_function` y `codegen_async_fn` construían su
+  `CodegenContext` compartiendo ~45 campos con el padre y dejando **33 al relleno silencioso** del
+  literal de struct — entre ellos `trait_methods`, `trait_impls`, `type_traits`,
+  `generic_fn_templates`, `monomorphized` y los tres `pending_*`. No era cosmético:
+  - un método de trait dentro de una fn anidada daba `method 'hola' is not available on a receiver
+    of type '%P'`, que es **falso** — el `impl` existe, el contexto anidado no lo veía;
+  - una llamada genérica dentro de una fn anidada abortaba codegen con **rc=1 y ningún mensaje**:
+    ni error de Nyx, ni de LLVM, ni `.ll` generado.
+  Los campos se comparten ahora con el padre por la misma razón que los otros ~45: son tablas de
+  consulta del MÓDULO, no estado de la función. Los acumuladores
+  (`monomorphized`/`pending_*`/`dyn_impls`/`meta_counter`) también, a propósito — lo que la anidada
+  encola tiene que emitirlo el loop del padre o se pierde. `unsafe_depth` sí arranca de cero, que es
+  estado por función como `temp_counter` y `label_counter`.
+  **Lo destapó NYX1032**, el error de literales de struct con campos faltantes agregado el mismo día:
+  al correr el checker sobre el propio compilador, `codegen.nx` resultó el ÚNICO de los veinte
+  módulos que no pasaba su propio chequeo. Estaba tapado porque el bootstrap compila con
+  `NYX_SKIP_SEMANTIC=1`. [test: compiler/language/test-413-fn-anidada-ve-traits-y-genericos]
+
+- **Guarda nueva: cada `compiler/*.nx` pasa el checker del propio compilador**
+  (`scripts/testing/run_self_check.sh`, dentro de `make test-ai-first`). El bootstrap compila los
+  módulos con `NYX_SKIP_SEMANTIC=1`, así que un módulo del compilador podía dejar de pasar su propio
+  chequeo semántico sin que ninguna suite lo notara — y eso fue exactamente lo que pasó con
+  `codegen.nx`. Usa `nyx_check` (que respeta `NYX_SRC` y devuelve exit code real) en vez de
+  recompilar: mide lo mismo sin pagar el codegen, 20 módulos en ~47s. Trae control positivo (un
+  error de tipos real tiene que dar rc≠0) y se niega a correr si `nyx_check` quedó más viejo que las
+  semillas que enlaza, que es la trampa del binario stale que ya documenta `CLAUDE.md`.
+  Verificado que caza el bug: contra el `codegen.nx` de antes del fix da rc=1 con 4 NYX1032.
 - **Ligar el resultado de una builtin que no devuelve nada ahora es ERROR con línea (NYX1003)**
   (fricción de nyxerp, 2026-09-11, clasificado LENGUAJE). `let x: int = sleep(1)` pasaba el chequeo
   semántico con «check OK» y recién moría en clang con `void type only allowed for function results`,

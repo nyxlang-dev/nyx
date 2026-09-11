@@ -1,0 +1,51 @@
+// Una función ANIDADA (y el cuerpo de una `async fn`) ve los traits, los
+// genéricos y las constantes de su módulo.
+//
+// POR QUÉ EXISTE (2026-09-11)
+//
+// `codegen_nested_function` y `codegen_async_fn` construían su CodegenContext
+// compartiendo ~45 campos con el padre y dejando 33 al relleno silencioso del
+// literal de struct — entre ellos `trait_methods`, `trait_impls`, `type_traits`,
+// `generic_fn_templates`, `monomorphized` y los `pending_*`. El resultado no era
+// cosmético:
+//
+//   - un método de trait dentro de una fn anidada daba
+//     «method 'hola' is not available on a receiver of type '%P'», que es FALSO:
+//     el impl existe, el contexto anidado no lo veía;
+//   - una llamada genérica abortaba codegen con rc=1 y NINGÚN mensaje —
+//     ni error de Nyx, ni de LLVM, ni `.ll` generado.
+//
+// Lo destapó NYX1032 (el error que marca literales de struct con campos
+// faltantes, agregado ese mismo día): al correr el checker sobre el compilador,
+// `codegen.nx` fue el único de los nueve módulos que no pasaba su propio
+// chequeo. El bootstrap lo tenía tapado porque `recompile-all` compila con
+// NYX_SKIP_SEMANTIC=1.
+
+const K: int = 7
+
+fn identidad<T>(x: T) -> T { return x }
+
+trait Saludo { fn hola(self) -> String }
+struct P { v: int }
+impl Saludo for P { fn hola(self) -> String { return "hola" } }
+
+async fn tarea(p: P) -> int {
+    print(p.hola())
+    return p.v
+}
+
+fn main() -> int {
+    fn anidada(p: P) -> int {
+        print(p.hola())              // trait: antes «method not available»
+        let g: int = identidad(5)    // generico: antes rc=1 MUDO
+        print(int_to_string(g))
+        print(int_to_string(K))      // constante del modulo
+        return g
+    }
+    print(int_to_string(anidada(P { v: 1 })))
+
+    let f = tarea(P { v: 3 })
+    let r: int = await f
+    print(int_to_string(r))
+    return 0
+}

@@ -12,13 +12,13 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **433 archivos / 432 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 11: +20 (detalle por test en `CHANGELOG.md`) |
+| Regression | `make test` | **434 archivos / 433 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 11: +21 (detalle por test en `CHANGELOG.md`) |
 | Error paths (parse+semantic) | `make test-errors` | **275** | verificado con corrida real 2026-09-11 (NYX1032 y NYX1003/builtin void, cada uno con su control positivo) |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
 | Runtime C unit (B4) | `make test-runtime` | **34 suites / 1587 asserts** | verificado con corrida real 2026-08-30; discrepancia vs. el `1444` documentado el 2026-08-29 (main avanzó con W3 Task 2/3 antes del corte de esta rama) — el número real gana |
-| AI-first (objetivo) | `make test-ai-first` | **26 programas + 26 guardas** | corre 21 scripts: `run_ai_first_tests.sh` (26 `.nx`) + 19 scripts de guardas (26 guardas — `run_templates_parity.sh` trae dos y `run_tooling_gates.sh` cinco) + `scripts/sdd/selftest`; ver las 10 filas siguientes |
+| AI-first (objetivo) | `make test-ai-first` | **26 programas + 27 guardas** | corre 22 scripts: `run_ai_first_tests.sh` (26 `.nx`) + 20 scripts de guardas (27 guardas — `run_templates_parity.sh` trae dos y `run_tooling_gates.sh` cinco) + `scripts/sdd/selftest`; ver las 11 filas siguientes |
 | Coherencia de manuales | (dentro de `make test-ai-first`) `run_template_coherence.sh` | **4 checks** | mentiras resucitadas + anclas de trampas/reglas vivas + imports sin comillas + ids de gotcha citados, sobre lo sembrado en ambos idiomas; ANCLAS/MENTIRAS de `gotchas_generated.sh` |
 | Bloques sembrados compilan | (dentro de `make test-ai-first`) `run_seeded_blocks_compile.sh` | **1 check** | cada bloque ` ```nyx ` sembrado (ambos idiomas) compila con bootstrap semántico + clang; sin `fn main` debe ser ` ```nyx-fragment ` o falla |
 | Paridad EN/ES + español neutro | (dentro de `make test-ai-first`) `run_templates_parity.sh` | **2 checks** | twins EN/ES coherentes (marca de template, encabezados `##`, `gen:ids`) + denylist de voseo/vosotros (regla 9) en `## es` de los gotchas, `templates/es/**` y los adaptadores ES |
@@ -29,6 +29,7 @@
 | Generador gendocs | (dentro de `make test-ai-first`) `run_gendocs_test.sh` + `run_gendocs_noop.sh` | **23 asserts + 4 checks** | fixture de 2 gotchas de juguete (regiones, tabla, arrays, `--check`, `fixed-since`) + no-op de regenerar + smoke de `gotchas_table.nx` |
 | Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **8 casos + auditoría de 165 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107–W110) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (104) + std (61) |
 | Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **5 checks** (3 negativos + 2 positivos) | `nyx check`/`nyx test` acusan el error de tipos y salen limpios sobre un proyecto correcto; ejerce las 3 vías (`src/`, prelude, `std/`) |
+| Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Recetas by-example | `make test-examples` | **109** (99 ejecutan, 10 solo compilan+enlazan) | compila, ENLAZA y CORRE cada receta con exit 0; los 10 que necesitan servidor/red/entrada están listados con su motivo en el script. Hasta el 2026-09-09 solo emitía el `.ll` y ni linkeaba |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **15 checks** | tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4) |
