@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **431 archivos / 430 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas recientes: +3 el 2026-09-08, +14 el 2026-09-09 y +1 el 2026-09-10 (`test-410-clock-domain`; detalle en `CHANGELOG.md`) |
+| Regression | `make test` | **432 archivos / 431 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas recientes: +3 el 2026-09-08, +14 el 2026-09-09 y +2 el 2026-09-10/11 (`test-410-clock-domain`, `test-411-go-sleep-mas-de-256`; detalle en `CHANGELOG.md`) |
 | Error paths (parse+semantic) | `make test-errors` | **266** | verificado con corrida real 2026-09-08 |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

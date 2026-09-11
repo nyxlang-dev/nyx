@@ -1568,7 +1568,38 @@ void nyx_goroutine_sleep(int64_t ms) {
     // Registered BEFORE the swapcontext(): if the timer were somehow to fire
     // before we suspend, wake_cb would just see parked==0 and defer the
     // requeue to the BLOCKED arm (no early-wake risk -- see its comment).
-    nyx_event_loop_add_timer(g_loop, (int)ms, wake_cb, g);
+    //
+    // The return value is NOT optional (measured 2026-09-10, W3 Task 6 M2):
+    // add_timer returns -1 when the loop runs out of concurrent timer slots,
+    // and this code used to ignore it and swap away regardless. A goroutine
+    // that is marked BLOCKED and suspended with no timer behind it is LOST
+    // FOREVER: nothing will ever requeue it, and its stack stays registered
+    // as a GC root until the process dies. That is not theoretical -- the
+    // measurement lost 7920 goroutines in a single run, and the limit is on
+    // CONCURRENT timers, which a server with one timeout per connection
+    // passes without trying. On win32 the failure at least printed a line;
+    // on POSIX add_timer returned -1 in complete silence.
+    //
+    // The fallback is the same one this function already uses a few lines
+    // above for the off-goroutine case: sleep for real. It costs this worker
+    // OS thread for `ms` -- strictly better than losing the goroutine -- and
+    // the sleep duration the caller asked for is still honoured. The state
+    // goes back to RUNNING because we never leave this context: no swap
+    // happens, so the worker's BLOCKED arm must not see us.
+    //
+    // This is a SAFETY NET, not a scaling strategy, and the difference is
+    // measurable: with the event loop pinned back to a fixed 256 slots,
+    // test-411 (400 goroutines sleeping at once) woke only 76 of them inside
+    // its window -- WORSE than the 256 the lost-goroutine bug woke -- because
+    // every fallback burns one of the 4 workers for the whole sleep and the
+    // ones that did suspend then have nobody left to resume them. What keeps
+    // this path cold is that the loop's table grows (event_loop.c,
+    // ev_claim_slot); reaching here at all means something is very wrong.
+    if (nyx_event_loop_add_timer(g_loop, (int)ms, wake_cb, g) < 0) {
+        g->state = NYX_GOROUTINE_RUNNING;
+        os_sleep_ms(ms);
+        return;
+    }
     // NO lock held here -- g_block_lock is only ever taken inside the
     // worker's BLOCKED arm (after this returns to the scheduler) and inside
     // wake_cb, never across this call.

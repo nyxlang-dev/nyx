@@ -1,0 +1,56 @@
+// test-411 — `go_sleep` con MÁS goroutines dormidas que slots de timer.
+//
+// POR QUÉ EXISTE (W3 Task 6 M2, 2026-09-10)
+//
+// El event loop tenía 256 slots de timer y `nyx_goroutine_sleep` llamaba a
+// `nyx_event_loop_add_timer` DESCARTANDO su valor de retorno. Cuando el add
+// fallaba (-1, tabla llena), la goroutina ya estaba marcada BLOCKED y hacía el
+// swap igual: quedaba parada PARA SIEMPRE, sin timer que la despertara, con su
+// stack registrado como raíz del GC hasta que muriera el proceso.
+//
+// Se encontró midiendo el techo de goroutines en Windows —7920 goroutinas
+// perdidas en una sola corrida— pero el bug es del runtime COMPARTIDO. Y en
+// POSIX era peor que en win32: allá `add_timer` al menos imprimía una línea por
+// fallo; acá devolvía -1 en silencio absoluto.
+//
+// 256 timers concurrentes no es una carga rara: un servidor con un timeout por
+// conexión lo pasa sin despeinarse.
+//
+// Dos arreglos, y este test cubre los dos a la vez:
+//   1. La tabla del event loop CRECE por demanda en vez de ser un techo duro.
+//   2. Si aun así no hay slot, `go_sleep` NO suspende: duerme de verdad. Cuesta
+//      el worker, que es estrictamente mejor que perder la goroutina.
+//
+// El test afirma que las 400 DESPIERTAN. Con el bug puesto, las que pasan de la
+// 256 no vuelven nunca y el contador se queda corto.
+
+import "std/sync"
+
+var despiertas: AtomicCounter = counter_new(0)
+
+fn dormir_corto() -> int {
+    // Todas duermen a la vez: el pico de timers concurrentes es ~400, muy por
+    // encima de los 256 slots iniciales.
+    go_sleep(150)
+    counter_inc(despiertas)
+    return 0
+}
+
+fn main() -> int {
+    var i: int = 0
+    while i < 400 {
+        spawn { return dormir_corto() }
+        i = i + 1
+    }
+
+    // Margen amplio sobre los 150 ms: la máquina puede estar cargada y lo que
+    // se afirma es que TODAS vuelven, no cuándo.
+    sleep(3000)
+
+    let n: int = counter_get(despiertas)
+    print("despiertas = " + int_to_string(n))
+    assert(n == 400)
+
+    print("test-411 go-sleep-mas-de-256 OK")
+    return 0
+}

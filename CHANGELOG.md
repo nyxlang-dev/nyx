@@ -280,6 +280,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`go_sleep` perdía goroutines para siempre a partir de la 257ª concurrente** (encontrado midiendo el
+  techo de goroutines en Windows, W3 Task 6 M2, pero el bug era del runtime COMPARTIDO y en POSIX era el
+  que fallaba en silencio). `nyx_goroutine_sleep` marcaba la goroutina `BLOCKED`, llamaba a
+  `nyx_event_loop_add_timer` **descartando su valor de retorno** y hacía el `os_ctx_swap` igual. Cuando el
+  add fallaba —tabla de timers llena— la goroutina quedaba suspendida sin nada que la despertara: parada
+  para siempre, con su stack registrado como raíz del GC hasta que muriera el proceso. No era teórico: la
+  medición perdió **7920 goroutinas en una sola corrida**, y el límite era de timers CONCURRENTES, que un
+  servidor con un timeout por conexión pasa sin despeinarse.
+  Arreglado en dos capas. (1) `nyx_goroutine_sleep` chequea el retorno: si no hay slot, NO suspende —
+  restaura el estado a `RUNNING` y duerme de verdad, el mismo fallback que ya usaba para el caso
+  off-goroutine. Cuesta el worker, que es estrictamente mejor que perder la goroutina, y vale para las dos
+  plataformas. (2) La tabla del event loop dejó de ser un techo duro de 256: arranca ahí y crece al doble
+  por demanda hasta un freno de 65536 entradas (~2,6 MB). El claim de slot quedó en UNA función — estaba
+  duplicado en `add()` y `add_timer()`, así que el arreglo habría que aplicarlo dos veces.
+  La capa (2) es la que importa y la (1) es la red: medido con `test-411`, con el fallback pero sin
+  crecimiento despiertan **76** de 400 —peor que las 256 del bug original— porque cada fallback quema uno
+  de los 4 workers durante todo el sleep y las que sí se suspendieron se quedan sin quién las reanude.
+  `tests/compiler/systems/test-411-go-sleep-mas-de-256.nx`: 400 goroutinas durmiendo a la vez, todas
+  tienen que despertar. RED verificado con el bug puesto (`rc=1`, «expected 400, got 256»).
+  Pendiente aparte: `runtime/os/event_loop_win32.c` conserva sus 256 slots (`EVW_MAX_SLOTS`). Con la capa
+  (1) ya no pierde goroutinas —y ahí sí imprime el fallo— pero el muro sigue; fichado.
+
 - **`make install-local` copiaba las herramientas sin reconstruirlas.** `nyx_check`, `nyx_vet`, `nyx_test` y `nyx_fmt` se
   compilan con su propio target y `install-local` solo hacía `cp`: tras tocar `compiler/semantic.nx` el toolchain quedaba con las
   herramientas del día anterior y nadie avisaba. Se descubrió verificando NYX1031 — `nyx check` daba rc=0 sobre el mismo programa

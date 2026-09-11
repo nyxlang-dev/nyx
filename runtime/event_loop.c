@@ -22,7 +22,15 @@
 #endif
 
 #define MAX_EVENTS 64
+// Capacidad INICIAL de la tabla de fds/timers. Era un techo duro de 256 y la
+// tabla un array inline; hoy es solo el arranque y crece por demanda (ver
+// ev_claim_slot). El nombre se conserva porque event_loop_win32.c lo cita por
+// paridad.
 #define MAX_FDS    256
+// Techo absoluto: ~40 B por entrada ⇒ ~2.6 MB. No es una capacidad esperada
+// sino un freno contra un programa desbocado; llegar acá sigue devolviendo -1,
+// y AHORA el llamador lo maneja (scheduler.c, nyx_goroutine_sleep).
+#define NYX_EV_MAX_SLOTS 65536
 
 typedef struct {
     int fd;
@@ -38,7 +46,8 @@ struct NyxEventLoop {
 #if HAS_EPOLL
     int epfd;
 #endif
-    FdEntry fds[MAX_FDS];
+    FdEntry* fds;      // fd_cap entradas; crece por demanda bajo `lock`
+    int fd_cap;
     int fd_count;
     int last_event_fd;
     int last_events;
@@ -66,9 +75,12 @@ static long long now_ms(void) {
 NyxEventLoop* nyx_event_loop_create(void) {
     NyxEventLoop* loop = (NyxEventLoop*)calloc(1, sizeof(NyxEventLoop));
     if (!loop) return NULL;
+    loop->fds = (FdEntry*)calloc(MAX_FDS, sizeof(FdEntry));
+    if (!loop->fds) { free(loop); return NULL; }
+    loop->fd_cap = MAX_FDS;
 #if HAS_EPOLL
     loop->epfd = epoll_create1(EPOLL_CLOEXEC);
-    if (loop->epfd < 0) { free(loop); return NULL; }
+    if (loop->epfd < 0) { free(loop->fds); free(loop); return NULL; }
 #endif
     loop->last_event_fd = -1;
     loop->last_events = 0;
@@ -82,27 +94,52 @@ void nyx_event_loop_destroy(NyxEventLoop* loop) {
     close(loop->epfd);
 #endif
     os_mutex_destroy(&loop->lock);
+    free(loop->fds);
     free(loop);
+}
+
+// Reserva un slot para un fd o un timer. UNA sola implementación a propósito:
+// la lógica estaba duplicada en add() y add_timer(), y el arreglo de 2026-09-10
+// (crecer en vez de fallar) habría tenido que aplicarse dos veces — el patrón
+// que ya costó caro en este repo. Se llama SIEMPRE con `loop->lock` tomado.
+//
+// Orden: primero reusar un slot inactivo (un timer one-shot que ya expiró o un
+// fd removido), y solo si no hay, crecer. Reusar antes de crecer es lo que hace
+// que una carga estable de N timers no infle la tabla.
+//
+// Devuelve el índice, o -1 si se llegó a NYX_EV_MAX_SLOTS o falla el realloc.
+// El -1 NO es decorativo: hasta el 2026-09-10 `nyx_goroutine_sleep` lo ignoraba
+// y suspendía la goroutina igual, que es como se pierden goroutines para
+// siempre (W3 Task 6 M2: 7920 en una corrida).
+static int ev_claim_slot(NyxEventLoop* loop) {
+    for (int i = 0; i < loop->fd_count; i++) {
+        if (!loop->fds[i].active) return i;
+    }
+    if (loop->fd_count >= loop->fd_cap) {
+        if (loop->fd_cap >= NYX_EV_MAX_SLOTS) return -1;
+        int nueva = loop->fd_cap * 2;
+        if (nueva > NYX_EV_MAX_SLOTS) nueva = NYX_EV_MAX_SLOTS;
+        // realloc y no una lista: todos los accesos son por índice bajo el
+        // lock y ningún FdEntry* escapa (run_once copia cb/userdata a un
+        // DispatchEntry ANTES de soltar el lock), así que mover la tabla es
+        // seguro. Si el realloc falla, la tabla vieja sigue intacta.
+        FdEntry* mayor = (FdEntry*)realloc(loop->fds, (size_t)nueva * sizeof(FdEntry));
+        if (!mayor) return -1;
+        memset(mayor + loop->fd_cap, 0, (size_t)(nueva - loop->fd_cap) * sizeof(FdEntry));
+        loop->fds = mayor;
+        loop->fd_cap = nueva;
+    }
+    return loop->fd_count++;
 }
 
 int nyx_event_loop_add(NyxEventLoop* loop, int fd, int events,
                         nyx_ev_callback cb, void* userdata) {
     if (!loop || fd < 0) return -1;
     os_mutex_lock(&loop->lock);
-    // Reclamar un slot inactivo antes de crecer fd_count: los slots de fd/timer
-    // desactivados (remove / expiración de timer one-shot) no se compactaban, así
-    // que fd_count solo crecía y tras MAX_FDS registros de por vida add fallaba en
-    // silencio → una goroutine bloqueada en el bridge parkeaba para siempre.
-    int slot = -1;
-    for (int i = 0; i < loop->fd_count; i++) {
-        if (!loop->fds[i].active) { slot = i; break; }
-    }
+    int slot = ev_claim_slot(loop);
     if (slot < 0) {
-        if (loop->fd_count >= MAX_FDS) {
-            os_mutex_unlock(&loop->lock);
-            return -1;
-        }
-        slot = loop->fd_count++;
+        os_mutex_unlock(&loop->lock);
+        return -1;
     }
     loop->fds[slot].fd = fd;
     loop->fds[slot].events = events;
@@ -152,18 +189,10 @@ int nyx_event_loop_modify(NyxEventLoop* loop, int fd, int events) {
 int nyx_event_loop_add_timer(NyxEventLoop* loop, int delay_ms, nyx_ev_callback cb, void* userdata) {
     if (!loop) return -1;
     os_mutex_lock(&loop->lock);
-    // Reusar slot inactivo (ver nota en nyx_event_loop_add) — sin esto, los timers
-    // one-shot agotan fd_count y add_timer falla en silencio.
-    int slot = -1;
-    for (int i = 0; i < loop->fd_count; i++) {
-        if (!loop->fds[i].active) { slot = i; break; }
-    }
+    int slot = ev_claim_slot(loop);
     if (slot < 0) {
-        if (loop->fd_count >= MAX_FDS) {
-            os_mutex_unlock(&loop->lock);
-            return -1;
-        }
-        slot = loop->fd_count++;
+        os_mutex_unlock(&loop->lock);
+        return -1;
     }
     loop->fds[slot].fd = -1;
     loop->fds[slot].events = 0;

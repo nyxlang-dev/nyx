@@ -2,6 +2,13 @@
 // Misma causa raíz que test-256: el spawn-block se desugariza a una lambda
 // hoisteada prependeada en posición 0 → los locals (c, ch) no entraban al
 // SharedEnv → @ch/@c undefined en __spawn_0.
+//
+// EL ASSERT ES LO QUE HACE AL TEST (agregado 2026-09-10, review pre-merge de
+// W3 H1): sin él, este test NO PODÍA DETECTAR SU PROPIO BUG. Si la captura se
+// rompiera y `c` entrara como 0, `v` sería 3 en vez de 43, el print diría "3"
+// y el proceso saldría con rc=0 — verde. No tiene `expected`, así que ni en
+// Linux ni en el subset de Windows (donde entra como NONE, gate = rc=0) había
+// nada comparando el valor.
 fn main() {
     let c: int = 40
     let ch: Map = channel_new(8)
@@ -9,5 +16,7 @@ fn main() {
         channel_send(ch, c + 3)
     }
     let v: int = channel_recv(ch)
+    // 43 = 40 + 3: el 40 SOLO puede venir del local capturado.
+    assert(v == 43)
     print(int_to_string(v))
 }

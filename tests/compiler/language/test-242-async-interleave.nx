@@ -3,19 +3,37 @@
 // legacy `spawn { }` thread). S sleeps 40ms then prints "S"; main sleeps
 // 20ms then prints "M". Wide margin (20 vs 40ms) to avoid flakiness:
 // "M" must print before "S".
+//
+// EL ORDEN ES EL TEST, y hasta el 2026-09-10 nada lo verificaba (review
+// pre-merge de W3 H1): el test solo imprimía, y en el subset de Windows entra
+// como NONE —gate = rc=0—, así que si "S" saliera ANTES que "M" —o sea, si
+// go_sleep no suspendiera y bloqueara el thread— el test pasaba igual. Ahora
+// cada lado toma su turno de una secuencia compartida y se afirma que a S le
+// tocó el segundo.
+import "std/sync"
+
+var secuencia: AtomicCounter = counter_new(0)
+var s_fue_segundo: AtomicCounter = counter_new(0)
 
 fn main() {
     spawn {
         go_sleep(40)
         print("S")
+        // Toma su turno DESPUÉS de imprimir, para que el número refleje el
+        // orden real de los dos prints.
+        if counter_inc(secuencia) == 2 { counter_inc(s_fue_segundo) }
         return 0
     }
 
     go_sleep(20)
     print("M")
+    counter_inc(secuencia)
 
     // Give S time to finish so both prints land before the process exits.
     sleep(100)
+
+    assert(counter_get(secuencia) == 2)
+    assert(counter_get(s_fue_segundo) == 1)
 
     print("test-242 OK")
 }

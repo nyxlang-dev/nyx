@@ -1,7 +1,15 @@
-// test-146-scheduler: verifica el scheduler M:N con goroutines
+// test-146-scheduler: verifica el scheduler M:N con goroutines.
+//
+// Los asserts miran el RESULTADO, no solo que la goroutine haya corrido
+// (review pre-merge de W3 H1): fib(10)=55 y fib(8)=21 solo salen si la
+// goroutine ejecutó su recursión completa sobre su propio stack. Antes el test
+// únicamente imprimía, y en el subset de Windows entra como NONE —gate = rc=0—,
+// así que una goroutine que devolviera basura pasaba verde.
+import "std/sync"
 
-// Test spawn { } como goroutines con el nuevo scheduler
-// goroutine_yield() permite ceder el control al scheduler
+var fib10_ok: AtomicCounter = counter_new(0)
+var fib8_ok: AtomicCounter = counter_new(0)
+var corridas: AtomicCounter = counter_new(0)
 
 fn fib(n: int) -> int {
     if n <= 1 { return n }
@@ -10,12 +18,32 @@ fn fib(n: int) -> int {
 
 fn main() -> int {
     // Test básico: spawn goroutines que ejecutan trabajo
-    spawn { let r: int = fib(10); print("fib(10)=" + r); return 0 }
-    spawn { let r: int = fib(8); print("fib(8)=" + r); return 0 }
-    spawn { print("goroutine simple"); return 0 }
+    spawn {
+        let r: int = fib(10)
+        print("fib(10)=" + r)
+        if r == 55 { counter_inc(fib10_ok) }
+        counter_inc(corridas)
+        return 0
+    }
+    spawn {
+        let r: int = fib(8)
+        print("fib(8)=" + r)
+        if r == 21 { counter_inc(fib8_ok) }
+        counter_inc(corridas)
+        return 0
+    }
+    spawn {
+        print("goroutine simple")
+        counter_inc(corridas)
+        return 0
+    }
 
     // Esperar que terminen
     sleep(100)
+
+    assert(counter_get(corridas) == 3)
+    assert(counter_get(fib10_ok) == 1)
+    assert(counter_get(fib8_ok) == 1)
 
     print("scheduler ok")
     return 0

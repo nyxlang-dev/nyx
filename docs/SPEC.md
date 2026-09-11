@@ -3313,6 +3313,27 @@ fn main() {
   `runtime/scheduler.c`), but the networking builtins do not route through it
   yet.
 
+**Platform difference — goroutine memory on Windows (not a bug):** on Linux a
+goroutine stack is reserved lazily, so N idle goroutines cost almost nothing in
+physical memory. On Windows the arc's design requires **commit == reserve** for
+every goroutine stack: the GC registers its roots by the COMMITTED range
+(`GetCurrentThreadStackLimits` returns the RESERVE, so it cannot be used for
+roots), and `CreateFiberEx` is called with commit size = reserve size. The
+consequence is a real charge against the pagefile of **N × the stack size**
+(256 KB by default) as soon as the goroutine exists, idle or not — 1000
+goroutines are ~256 MB of commit charge on Windows and near zero on Linux.
+It is a deliberate consequence of how the GC must find roots there, measured in
+the W3 spike, not a leak. A second ceiling comes from the collector itself: each
+goroutine registers a root set, and bdwgc caps how many it holds, so on Windows
+that cap is also the ceiling on **concurrently live** goroutines. Measured with
+real goroutines, three identical runs per build: **8176** with libgc built
+`enable_large_config=ON`, and **2032** with a stock `vcpkg install
+bdwgc:x64-windows`. Those match `MAX_ROOT_SETS` (8192 / 2048) minus the ~15 sets
+libgc registers at init — one live goroutine costs exactly one root set, with no
+hidden overhead. Which build you link therefore decides whether the program
+tops out near 2000 or near 8200, and past the cap the stock build **hangs** where
+the patched one aborts with a message.
+
 ### Async Executor (OS threads)
 
 `spawn_task` / `task_await` / `task_cancel` / `task_race` are a separate,
