@@ -21,7 +21,7 @@
 //   2. Si aun así no hay slot, `go_sleep` NO suspende: duerme de verdad. Cuesta
 //      el worker, que es estrictamente mejor que perder la goroutina.
 //
-// El test afirma que las 400 DESPIERTAN. Con el bug puesto, las que pasan de la
+// El test afirma que las 700 DESPIERTAN. Con el bug puesto, las que pasan de la
 // 256 no vuelven nunca y el contador se queda corto.
 
 import "std/sync"
@@ -29,8 +29,13 @@ import "std/sync"
 var despiertas: AtomicCounter = counter_new(0)
 
 fn dormir_corto() -> int {
-    // Todas duermen a la vez: el pico de timers concurrentes es ~400, muy por
-    // encima de los 256 slots iniciales.
+    // TODAS con el MISMO deadline a propósito: el pico de timers concurrentes
+    // es ~700 (muy por encima de los 256 slots iniciales) y además vencen
+    // JUNTAS, que es la segunda condición que hay que cubrir. El buffer de
+    // despacho de run_once es de stack y acotado (NYX_EV_SNAP_MAX = 512): una
+    // ráfaga mayor tiene que despacharse en varias vueltas, no desbordarlo.
+    // Sin la guarda, esto escribe fuera del stack — memoria corrompida, no un
+    // error limpio.
     go_sleep(150)
     counter_inc(despiertas)
     return 0
@@ -38,7 +43,7 @@ fn dormir_corto() -> int {
 
 fn main() -> int {
     var i: int = 0
-    while i < 400 {
+    while i < 700 {
         spawn { return dormir_corto() }
         i = i + 1
     }
@@ -49,7 +54,7 @@ fn main() -> int {
 
     let n: int = counter_get(despiertas)
     print("despiertas = " + int_to_string(n))
-    assert(n == 400)
+    assert(n == 700)
 
     print("test-411 go-sleep-mas-de-256 OK")
     return 0

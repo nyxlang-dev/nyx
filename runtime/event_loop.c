@@ -31,6 +31,10 @@
 // sino un freno contra un programa desbocado; llegar acá sigue devolviendo -1,
 // y AHORA el llamador lo maneja (scheduler.c, nyx_goroutine_sleep).
 #define NYX_EV_MAX_SLOTS 65536
+// Cuántos callbacks despacha UNA vuelta de run_once. Es el tamaño del buffer de
+// stack del snapshot, NO un límite de timers registrados: el sobrante se
+// despacha en la vuelta siguiente (ver run_once). 512 × 24 B ≈ 12 KB de stack.
+#define NYX_EV_SNAP_MAX 512
 
 typedef struct {
     int fd;
@@ -250,18 +254,36 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
     }
 
     // 2) Wait for I/O readiness (or the timer-driven timeout).
-    DispatchEntry snapshot[MAX_EVENTS + MAX_FDS];
+    //
+    // El snapshot es un buffer de STACK de tamaño fijo, y tiene que seguir
+    // siéndolo: una alocación por tick del poller (cada ~10 ms) para una
+    // ráfaga que casi nunca llega sería peor. Lo que NO puede pasar es
+    // escribir más allá de él — desde que la tabla de fds crece por demanda
+    // (ev_claim_slot, 2026-09-11), `fd_count` ya no está acotado por MAX_FDS,
+    // así que los bucles de abajo GUARDAN contra NYX_EV_SNAP_MAX en vez de
+    // confiar en el tamaño de la tabla. Sin esa guarda, 400 timers venciendo
+    // en el mismo tick desbordan el stack: memoria corrompida, no un error.
+    //
+    // Quedarse corto es SEGURO y se drena solo: un timer vencido que no entra
+    // sigue `active`, así que el próximo run_once lo ve, y como su deadline ya
+    // pasó el cálculo de `soonest` da eff_timeout = 0 — la próxima vuelta es
+    // inmediata. Una ráfaga mayor a NYX_EV_SNAP_MAX se despacha en dos o tres
+    // ticks seguidos en vez de uno, que es exactamente lo que uno quiere.
+    DispatchEntry snapshot[NYX_EV_SNAP_MAX];
     int snap_count = 0;
 
 #if HAS_EPOLL
     struct epoll_event events[MAX_EVENTS];
     int n = epoll_wait(loop->epfd, events, MAX_EVENTS, eff_timeout);
 #else
-    struct pollfd pfds[MAX_FDS];
-    int pfd_fd[MAX_FDS];
+    // Mismo razonamiento que el snapshot: buffers de stack fijos, y el bucle
+    // que los llena GUARDA contra su tamaño porque fd_count ya no está acotado
+    // por MAX_FDS. Este camino solo se compila fuera de Linux (sin epoll).
+    struct pollfd pfds[NYX_EV_SNAP_MAX];
+    int pfd_fd[NYX_EV_SNAP_MAX];
     int cnt = 0;
     os_mutex_lock(&loop->lock);
-    for (int i = 0; i < loop->fd_count; i++) {
+    for (int i = 0; i < loop->fd_count && cnt < NYX_EV_SNAP_MAX; i++) {
         if (!loop->fds[i].active || loop->fds[i].is_timer) continue;
         pfds[cnt].fd = loop->fds[i].fd;
         pfds[cnt].events = 0;
@@ -295,6 +317,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
         loop->last_event_fd = fd;
         loop->last_events = ev;
 
+        if (snap_count >= NYX_EV_SNAP_MAX) break;
         for (int j = 0; j < loop->fd_count; j++) {
             if (loop->fds[j].fd == fd && loop->fds[j].active && !loop->fds[j].is_timer) {
                 snapshot[snap_count].cb = loop->fds[j].cb;
@@ -316,6 +339,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
         if (pfds[i].revents & POLLERR) ev |= NYX_EV_ERROR;
         loop->last_event_fd = fd;
         loop->last_events = ev;
+        if (snap_count >= NYX_EV_SNAP_MAX) break;
         for (int j = 0; j < loop->fd_count; j++) {
             if (loop->fds[j].fd == fd && loop->fds[j].active && !loop->fds[j].is_timer) {
                 snapshot[snap_count].cb = loop->fds[j].cb;
@@ -332,7 +356,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
     // Timers: one-shot, deactivate now (under the lock) so they can't
     // double-fire across concurrent run_once calls, then queue for dispatch.
     long long tnow = now_ms();
-    for (int i = 0; i < loop->fd_count; i++) {
+    for (int i = 0; i < loop->fd_count && snap_count < NYX_EV_SNAP_MAX; i++) {
         if (loop->fds[i].active && loop->fds[i].is_timer &&
             loop->fds[i].timer_deadline_ms <= tnow) {
             snapshot[snap_count].cb = loop->fds[i].cb;
