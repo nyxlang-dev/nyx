@@ -280,6 +280,33 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Ligar el resultado de una builtin que no devuelve nada ahora es ERROR con línea (NYX1003)**
+  (fricción de nyxerp, 2026-09-11, clasificado LENGUAJE). `let x: int = sleep(1)` pasaba el chequeo
+  semántico con «check OK» y recién moría en clang con `void type only allowed for function results`,
+  apuntando a una línea de un `.ll` temporal que quien escribió el programa nunca ve. El mismo
+  programa con una función `void` **definida por el usuario** sí daba NYX1003: el checker conocía el
+  retorno de las funciones del programa y no el de las builtins, que caían a `TyUnknown` y por diseño
+  son compatibles con todo.
+  Lo caro es que el error es fácil de cometer *siguiendo una regla correcta*: el equipo tiene la
+  costumbre —nacida de otro reporte— de ligar SIEMPRE el resultado de una llamada, porque una llamada
+  con `?` en posición de sentencia no se ejecuta. Esa regla lleva derecho a escribir
+  `let _c: int = f(...)`, y cuando `f` es `void` el programa deja de compilar sin que el mensaje
+  nombre ni el archivo ni la función.
+  `builtin_fn_ret` (semantic.nx) devuelve ahora `ty_unit()` para los **35 builtins void** de
+  codegen.nx, así que el diagnóstico es el MISMO que el de una fn void del usuario:
+  `expected int, got ()`. La lista queda duplicada por fuerza entre las dos capas —codegen la tiene
+  como 35 bloques `if name == "X"`, no como tabla— y esa duplicación es justamente la trampa que ya
+  mordió a este repo varias veces, así que viene con guarda: `scripts/testing/check_void_builtins.py`
+  reextrae la lista de codegen siguiendo la profundidad de llaves (un `grep` hacia atrás atribuye el
+  `return` al `if` equivocado en ramas anidadas) y compara. Las dos direcciones del drift no son
+  simétricas y el script las trata distinto: *semantic dice void y codegen no* rechaza código válido
+  y es **error duro**; *codegen dice void y semantic no* solo pierde el diagnóstico para ese builtin
+  y es **aviso**.
+  Con test negativo y control positivo (las mismas builtins como sentencia tienen que seguir
+  compilando — sin ese control, un checker que rechazara toda llamada void pasaría el negativo en
+  verde y rompería el bootstrap, porque el compilador se compila a sí mismo llamando a `print()`).
+  Cero ocurrencias de ligadura en `compiler/`, `std/`, `tests/`, `examples/`, `playground/` y los
+  cinco stacks.
 - **Un literal de `struct` al que le faltan campos ahora es ERROR (NYX1032)** (fricción de nyxerp,
   2026-09-11, clasificado LENGUAJE). `P { a: 7 }` sobre un struct de tres campos compilaba, pasaba
   `vet` y **corría**, rellenando los ausentes con el cero de su tipo (`0`, `""`, `false`). Sin error

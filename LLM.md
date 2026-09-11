@@ -1243,7 +1243,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1376,6 +1376,14 @@ mechanical and safe, because the aliases are exact: `time()` → `time_epoch()`,
 `monotonic_ms()`, `time_us()` → `monotonic_us()`. Doing it also makes the code say out loud which
 clock it meant, which is the whole point — a duration measured as `monotonic_us() - inicio` is
 self-evidently right, whereas `time_us() - inicio` still needs the reader to know. [test: compiler/systems/test-410-clock-domain]
+
+19. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+`let x: int = sleep(1)` used to pass `check OK` and die in clang with `void type only allowed for
+function results`, pointing at a temporary `.ll` you never see; since 0.31.0 the checker names your
+file, function and line. Call them as a statement. The full list (35):
+`channel_destroy channel_send condvar_broadcast condvar_signal condvar_wait exit file_close file_flush free go_sleep mutex_destroy mutex_lock mutex_unlock panic print print_no_newline raw_mode_enter raw_mode_exit rwlock_destroy rwlock_rdlock rwlock_unlock rwlock_wrlock setenv signal_handle signal_ignore signal_reset sleep task_cancel tcp_close term_flush term_write throw tls_close tls_close_conn volatile_store`.
+Note this cuts against the habit of always binding a call's result (the rule that exists because a
+`?` call in statement position does not run): that rule is for calls that RETURN something. [test: compiler/errors/test-nyx1003-builtin-void-ligado]
 
 <!-- /gen:gotchas -->
 

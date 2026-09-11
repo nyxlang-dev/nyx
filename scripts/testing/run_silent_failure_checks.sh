@@ -951,6 +951,72 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Ligar el resultado de una builtin VOID (fricción nyxerp, 2026-09-11)
+#
+# `let x: int = sleep(0)` pasaba «check OK» y moría en clang con `alloca void`,
+# apuntando a un .ll temporal que el usuario nunca ve. El checker conocía el
+# retorno de las fns del PROGRAMA (esas sí daban NYX1003) y no el de las
+# builtins, que caían a TyUnknown — compatible con todo por diseño.
+#
+# CONTROL POSITIVO obligatorio: las mismas builtins como SENTENCIA deben seguir
+# compilando. Sin él, un checker que rechazara toda llamada void pasaría el lado
+# negativo en verde y rompería el bootstrap (el compilador llama a print()).
+cat > "$TMPDIR/bad_void_bind.nx" <<'NX'
+fn main() -> int {
+    let x: int = sleep(0)
+    print(int_to_string(x))
+    return 0
+}
+NX
+
+cat > "$TMPDIR/good_void_stmt.nx" <<'NX'
+fn main() -> int {
+    let m = mutex_new()
+    mutex_lock(m)
+    mutex_unlock(m)
+    mutex_destroy(m)
+    sleep(0)
+    print("ok")
+    return 0
+}
+NX
+
+name="silent-void-builtin-bound-to-let"
+cp "$TMPDIR/bad_void_bind.nx" script.nx
+./nyx_bootstrap > "$TMPDIR/bad_void_bind.out" 2>&1
+vb_bad_rc=$?
+cp "$TMPDIR/good_void_stmt.nx" script.nx
+./nyx_bootstrap > "$TMPDIR/good_void_stmt.out" 2>&1
+vb_good_rc=$?
+
+if [ "$vb_bad_rc" -ne 0 ] && grep -q "expected int, got ()" "$TMPDIR/bad_void_bind.out" \
+   && [ "$vb_good_rc" -eq 0 ]; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s\n" "$name"
+    printf "    bad rc=%d (esperado != 0 con NYX1003 'expected int, got ()'), good rc=%d (esperado 0 — control positivo)\n" "$vb_bad_rc" "$vb_good_rc"
+    sed 's/^/      bad: /' "$TMPDIR/bad_void_bind.out" | head -3
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name")
+fi
+
+# Drift entre las dos capas: la lista de builtins void vive duplicada (codegen
+# como 35 bloques `if name == "X"`, semantic como tabla en builtin_fn_ret).
+# Si semantic declara void algo que codegen no, el checker rechaza código
+# VÁLIDO — por eso es error duro y no aviso.
+name="silent-void-builtin-drift-codegen-vs-semantic"
+if python3 scripts/testing/check_void_builtins.py > "$TMPDIR/void_drift.out" 2>&1; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s\n" "$name"
+    sed 's/^/      /' "$TMPDIR/void_drift.out"
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name")
+fi
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 

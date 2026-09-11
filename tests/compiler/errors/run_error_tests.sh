@@ -22,6 +22,7 @@ FAILED_TESTS=()
 TESTS=(
   "tests/compiler/errors/test-m08-type-mismatch.nx|type mismatch in 'x': expected int, got String"
   "tests/compiler/errors/test-nyx1032-struct-campos-faltantes.nx|struct literal 'P' is missing fields: b, c"
+  "tests/compiler/errors/test-nyx1003-builtin-void-ligado.nx|type mismatch in 'x': expected int, got ()"
   "tests/compiler/errors/test-m08-unknown-type.nx|unknown type 'Str'"
   "tests/compiler/errors/test-m08-array-mismatch.nx|type mismatch in 'nums': expected Array<int>, got Array<String>"
   "tests/compiler/errors/test-m08-arg-mismatch.nx|argument 1 of 'greet': expected String, got int"
@@ -2010,6 +2011,7 @@ rm -f script.ll
 # ==============================================================
 POSITIVE_TESTS=(
   "tests/compiler/errors/positive-nyx1032-struct-completo.nx"
+  "tests/compiler/errors/positive-nyx1003-builtin-void-sentencia.nx"
   "tests/compiler/errors/fixtures/pub-struct-braced-import.nx"
   "tests/compiler/errors/fixtures/pub-type-alias-local.nx"
   # El mixto es la REGRESIÓN concreta que abrió la Task 3: `import { } from`

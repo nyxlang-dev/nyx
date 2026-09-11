@@ -849,7 +849,7 @@ Semantic-phase codes (`phase:"semantic"`):
 |------|---------|
 | NYX1001 | unknown type |
 | NYX1002 | identifier/variable not declared |
-| NYX1003 | type mismatch in `let`/`var` |
+| NYX1003 | type mismatch in `let`/`var` — includes binding the result of a builtin that returns NOTHING (`let x: int = sleep(1)`), which reads as `expected int, got ()`. Until v0.31.0 those passed `check OK` and died in clang with `void type only allowed for function results`, pointing at a temporary `.ll` the author never sees, because builtin return types fell to `TyUnknown` (compatible with everything by design) while user-defined `void` functions were already caught. The 35 void builtins: `channel_destroy channel_send condvar_broadcast condvar_signal condvar_wait exit file_close file_flush free go_sleep mutex_destroy mutex_lock mutex_unlock panic print print_no_newline raw_mode_enter raw_mode_exit rwlock_destroy rwlock_rdlock rwlock_unlock rwlock_wrlock setenv signal_handle signal_ignore signal_reset sleep task_cancel tcp_close term_flush term_write throw tls_close tls_close_conn volatile_store`. The list is duplicated between `codegen.nx` (as `if name == "X"` blocks) and `semantic.nx` (`builtin_fn_ret`); `scripts/testing/check_void_builtins.py` re-extracts it from codegen and fails on drift |
 | NYX1004 | return type mismatch |
 | NYX1005 | argument type mismatch (call/method) |
 | NYX1006 | arity mismatch |

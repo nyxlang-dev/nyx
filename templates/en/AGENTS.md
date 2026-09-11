@@ -64,7 +64,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
@@ -107,6 +107,7 @@ nonces, or any other cryptographic material; use `csprng_bytes` instead.**
 24. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.**
+25. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
 
 <!-- /gen:gotchas -->
 

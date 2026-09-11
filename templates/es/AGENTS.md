@@ -68,7 +68,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
@@ -112,6 +112,7 @@ nonces, ni ningún otro material criptográfico; para eso usa `csprng_bytes`.**
 24. **`time()`, `time_ms()` y `time_us()` son nombres deprecados: usa `time_epoch()` para el reloj de
 pared y `monotonic_ms()` / `monotonic_us()` para el monotónico — misma llamada al runtime, con un
 nombre que dice CUÁL reloj es.**
+25. **Algunas builtins no devuelven NADA — ligar su resultado es error (NYX1003, `expected T, got ()`).**
 
 <!-- /gen:gotchas -->
 

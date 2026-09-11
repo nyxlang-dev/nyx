@@ -1,0 +1,29 @@
+// NYX1003 — ligar el resultado de una builtin que no devuelve nada es ERROR.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-11, clasificado LENGUAJE)
+//
+// `let x: int = sleep(1)` pasaba el chequeo semántico con «check OK» y recién
+// moría en clang con `void type only allowed for function results`, apuntando a
+// una línea de un .ll temporal que el usuario nunca ve. El mismo programa con
+// una fn void DEFINIDA POR EL USUARIO sí daba NYX1003: el checker conocía el
+// retorno de las fns del programa y no el de las builtins, que caían a
+// TyUnknown y por diseño son compatibles con todo.
+//
+// Lo caro es que el error es fácil de cometer a propósito: el equipo tiene una
+// regla —nacida de otro reporte— de ligar SIEMPRE el resultado de una llamada,
+// porque una llamada con `?` en posición de sentencia no se ejecuta. Esa regla
+// lleva derecho a escribir `let _c: int = f(...)`, y cuando f es void el
+// programa deja de compilar con un mensaje que no nombra ni el archivo ni la
+// función.
+//
+// El arreglo: `builtin_fn_ret` (semantic.nx) devuelve ty_unit() para los 35
+// builtins void de codegen.nx. La lista está duplicada por fuerza entre las dos
+// capas; la guarda contra drift es scripts/testing/check_void_builtins.py.
+//
+// Expected exit: 1
+
+fn main() -> int {
+    let x: int = sleep(0)
+    print(int_to_string(x))
+    return 0
+}

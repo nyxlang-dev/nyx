@@ -13,7 +13,7 @@
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
 | Regression | `make test` | **433 archivos / 432 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 11: +20 (detalle por test en `CHANGELOG.md`) |
-| Error paths (parse+semantic) | `make test-errors` | **273** | verificado con corrida real 2026-09-11 (NYX1032 + su control positivo) |
+| Error paths (parse+semantic) | `make test-errors` | **275** | verificado con corrida real 2026-09-11 (NYX1032 y NYX1003/builtin void, cada uno con su control positivo) |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |

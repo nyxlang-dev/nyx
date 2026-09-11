@@ -1,0 +1,19 @@
+// CONTROL POSITIVO de NYX1003/void: las MISMAS builtins void, llamadas como
+// sentencia, tienen que seguir compilando y corriendo.
+//
+// Sin este control, un checker roto que rechazara toda llamada a una builtin
+// void pasaría el test negativo en verde — y rompería el bootstrap, porque el
+// compilador se compila a sí mismo llamando a print().
+//
+// Expected exit: 0
+
+fn main() -> int {
+    let m = mutex_new()
+    mutex_lock(m)
+    mutex_unlock(m)
+    mutex_destroy(m)
+    sleep(0)
+    setenv("NYX_VOID_TEST", "1")
+    print("ok")
+    return 0
+}

@@ -33,6 +33,7 @@ GOTCHA_IDS=(
   "string-order-is-bytewise"
   "throw-deprecated"
   "time-clock-names-deprecated"
+  "void-builtin-no-bind"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
   "prelude-frozen-snapshot"
@@ -84,6 +85,7 @@ ANCLAS=(
   "BYTES|string-order-is-bytewise"
   "panic(|throw-deprecated"
   "monotonic_ms|time-clock-names-deprecated"
+  "got ()|void-builtin-no-bind"
 )
 
 MENTIRAS=(
