@@ -488,17 +488,41 @@ case "${1:-}" in
         ;;
 esac
 
-# Route shell subcommand to nyx-shell (extraído a nyx-shell-stack 2026-07-05)
+# Subcomandos que delegan en un binario COMPAÑERO (productos extraídos del
+# monorepo: nyx-shell 2026-07-05, nyx-edit 2026-09-11). No viven acá, pero se
+# invocan como `nyx shell` / `nyx edit` desde cualquier proyecto.
+#
+# Resolución, en orden: PATH primero (una build de desarrollo gana), y después
+# el bin del toolchain — que es donde `make install` de cada producto lo deja,
+# así el binario viaja con el toolchain y no depende de que el usuario tenga
+# otro directorio en el PATH. Antes solo se miraba PATH, y `~/.nyx/bin` ni
+# siquiera suele estar ahí (el `nyx` que el usuario invoca es un symlink desde
+# ~/.local/bin), así que un producto instalado en el toolchain era invisible.
+_resolve_companion() {
+    local nombre="$1" hallado dir
+    hallado="$(command -v "$nombre" 2>/dev/null || true)"
+    if [ -n "$hallado" ]; then printf '%s\n' "$hallado"; return 0; fi
+    for dir in "$NYX_HOME/bin" "$HOME/.nyx/bin"; do
+        if [ -x "$dir/$nombre" ]; then printf '%s\n' "$dir/$nombre"; return 0; fi
+    done
+    return 1
+}
+
 case "${1:-}" in
-    shell)
-        NYX_SHELL="$(command -v nyx-shell || true)"
-        if [ -z "$NYX_SHELL" ]; then
-            echo "error: nyx-shell not found in PATH." >&2
-            echo "  Install: git clone https://github.com/nyxlang-dev/nyx-shell && cd nyx-shell && nyx build && cp nyx-shell ~/.local/bin/" >&2
+    shell|edit)
+        _sub="$1"
+        _bin="nyx-$_sub"
+        _repo="nyx-$_sub"
+        if ! _ruta="$(_resolve_companion "$_bin")"; then
+            echo "error: $_bin no está ni en el PATH ni en el bin del toolchain." >&2
+            echo "  Instalar:" >&2
+            echo "    git clone https://github.com/nyxlang-dev/$_repo && cd $_repo && make install" >&2
+            echo "  (make install compila y deja el binario junto al toolchain," >&2
+            echo "   así \`nyx $_sub\` anda desde cualquier proyecto)" >&2
             exit 1
         fi
         shift
-        exec "$NYX_SHELL" "$@"
+        exec "$_ruta" "$@"
         ;;
 esac
 

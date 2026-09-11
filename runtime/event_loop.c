@@ -116,6 +116,15 @@ void nyx_event_loop_destroy(NyxEventLoop* loop) {
 // y suspendía la goroutina igual, que es como se pierden goroutines para
 // siempre (W3 Task 6 M2: 7920 en una corrida).
 static int ev_claim_slot(NyxEventLoop* loop) {
+    // COSTO: el barrido de reuso es O(fd_count) por registro, así que registrar
+    // N timers es O(N²). Con el techo viejo de 256 eso era irrelevante (128
+    // comparaciones promedio); ahora que la tabla crece hasta 65536, NO lo es:
+    // llenarla entera sería del orden de 2e9 comparaciones.
+    // Medido en la práctica: 3000 timers (test_timer_burst_supera_el_buffer)
+    // y 700 goroutines dormidas (test-411) no lo notan. El arreglo de verdad
+    // es una free-list enhebrada por los slots inactivos —O(1) para reservar y
+    // liberar— y está fichado; no se hace acá porque toca los tres sitios que
+    // ponen `active = 0` y este archivo ya se llevó un bug mío hoy.
     for (int i = 0; i < loop->fd_count; i++) {
         if (!loop->fds[i].active) return i;
     }
