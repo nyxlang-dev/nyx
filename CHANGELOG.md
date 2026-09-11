@@ -280,6 +280,27 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **SEGURIDAD: `https_get`, `https_post` y el HTTPS de `std/http` no verificaban el certificado del
+  servidor** (fricción de nyxerp, 2026-09-11). Medido contra `badssl.com`: un certificado **vencido**,
+  uno **autofirmado** y uno **emitido para otro nombre** devolvían los tres `200 OK`. HTTPS por esas
+  vías daba CIFRADO pero **no AUTENTICACIÓN** — cualquiera en el camino podía responder por el
+  servidor y el programa no se enteraba.
+  Eran **dos caminos independientes**, y arreglar uno solo habría dejado el otro abierto: `std/http`
+  usaba `tls_connect` (la variante que no verifica) mientras `tls_connect_verified` existía sin
+  usarse, y los builtins `https_get`/`https_post` iban por un `SSL_CTX` con `SSL_VERIFY_NONE`
+  explícito. Ahora los dos verifican cadena **y** nombre de host contra el almacén de CAs del
+  sistema. Verificado: los tres certificados malos fallan y un servidor legítimo sigue andando.
+  El opt-out es explícito y para desarrollo contra un servidor autofirmado: `http_tls_inseguro(true)`
+  en `std/http`, `NYX_TLS_INSECURE=1` para los builtins. El API TLS **crudo** (`tls_connect`) sigue
+  sin verificar a propósito: es su contrato, y el modo «checked» de un escáner depende de él.
+  La decisión vieja estaba documentada en `runtime/tls.c` («para mantener el runtime sin
+  dependencias, quien necesite verificar que use el API crudo»). El almacén del sistema no es una
+  dependencia nueva —es el que usa cualquier cliente HTTPS de la máquina— y si faltara, la conexión
+  falla ruidosamente en vez de fingir seguridad.
+- **`std/http` no detectaba una conexión TLS caída** (encontrado arreglando lo anterior). El chequeo
+  era `if h < 0`, pero las dos funciones TLS devuelven **0** al fallar, así que nunca era cierto: un
+  handshake roto seguía de largo y escribía sobre el handle 0.
+
 - **`hacer_algo()?` en posición de SENTENCIA no se ejecutaba** (fricción de nyxerp, 2026-09-10,
   clasificado LENGUAJE y urgente). Ni corría la llamada, ni propagaba el `Err`, y `nyx vet` decía
   «No issues found»: un camino de error escrito explícitamente desaparecía del binario y la función

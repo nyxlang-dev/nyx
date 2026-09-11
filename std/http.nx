@@ -7,6 +7,11 @@
 import "std/json"
 import "std/net"
 import "std/error"
+// Para el camino HTTPS verificado: tls_connect_verified y tls_set_ca_file son
+// funciones de std/tls, no builtins (tls_connect sí lo es, y esa asimetría es
+// justamente por qué este módulo venía usando la variante que NO verifica).
+// std/tls no importa nada, así que no hay ciclo.
+import "std/tls"
 
 // Cap del body (bytes, default 1MiB, configurable con NYX_HTTP_MAX_BODY) —
 // compartido con el parser rápido del runtime (net.c). Sin este cap,
@@ -298,13 +303,56 @@ fn http_parse_raw_response(raw: String) -> Array {
     return result
 }
 
+// ── Verificación del certificado en HTTPS ─────────────────────────────────
+//
+// Hasta el 2026-09-11 este camino usaba `tls_connect`, que NO verifica nada:
+// un certificado vencido, uno autofirmado y uno emitido para otro nombre
+// devolvían los tres `200 OK`. O sea que `https_get` daba CIFRADO pero no
+// AUTENTICACIÓN — cualquiera en el camino podía responder por el servidor y el
+// programa no se enteraba. Lo reportó nyxerp midiéndolo contra badssl.com.
+//
+// Ahora se verifica por defecto. El opt-out existe porque un entorno de
+// desarrollo con certificado autofirmado es un caso legítimo, pero se pide
+// EXPLÍCITO y con un nombre que no se pueda confundir con otra cosa: nadie
+// escribe `http_tls_inseguro(true)` sin saber lo que hace.
+var g_http_tls_verificar: bool = true
+var g_http_tls_ca_cargado: bool = false
+
+// Desactiva la verificación del certificado para TODAS las llamadas HTTPS de
+// este proceso. Solo para desarrollo contra un servidor con certificado
+// autofirmado: con esto puesto, HTTPS deja de autenticar al servidor.
+pub fn http_tls_inseguro(si: bool) {
+    g_http_tls_verificar = !si
+}
+
 // Abre una conexión TLS, envía el request y lee la respuesta completa (hasta
 // EOF — los requests usan Connection: close), luego la parsea. Es el camino
 // HTTPS de http_get/http_post/http_request.
 fn http_tls_request(host: String, port: int, req: String) -> Array {
-    let h: int = tls_connect(host, port)
-    if h < 0 {
-        let err: Array = ["response", -1, [], "TLS connection failed"]
+    var h: int = 0
+    if g_http_tls_verificar {
+        // El almacén de CAs del sistema, una sola vez y ANTES del primer
+        // connect verificado (contrato de tls_set_ca_file).
+        if !g_http_tls_ca_cargado {
+            let _cargado: bool = tls_set_ca_file("")
+            g_http_tls_ca_cargado = true
+        }
+        h = tls_connect_verified(host, port)
+    } else {
+        h = tls_connect(host, port)
+    }
+    // `<= 0` y no `< 0`: LAS DOS devuelven 0 al fallar (runtime/tls.c), así que
+    // el `h < 0` que había acá NUNCA era cierto y una conexión TLS caída seguía
+    // de largo con el handle 0. Bug aparte del de la verificación, encontrado
+    // arreglando aquel.
+    if h <= 0 {
+        var porque: String = "TLS connection failed"
+        if g_http_tls_verificar {
+            porque = "TLS: no se pudo verificar el certificado de " + host +
+                     " (vencido, autofirmado, o emitido para otro nombre), o la conexion fallo" +
+                     " — si es un servidor de desarrollo, http_tls_inseguro(true) lo desactiva"
+        }
+        let err: Array = ["response", -1, [], porque]
         return err
     }
     tls_write(h, req)

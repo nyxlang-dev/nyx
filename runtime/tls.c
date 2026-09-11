@@ -11,12 +11,21 @@
 //   They must be released explicitly with SSL_free / SSL_CTX_free and the
 //   underlying socket must be closed with close().  nyx_tls_close() does all
 //   of this; the https_* helpers also clean up after themselves.
-// - A single SSL_CTX (TLS client mode, peer verification disabled for
-//   simplicity) is created once at first use and reused across calls.
-//   Peer verification is intentionally skipped here to keep the runtime
-//   dependency-free (no CA bundle path required); callers that need strict
-//   verification should use the raw nyx_tls_connect API and configure OpenSSL
-//   directly from Nyx FFI.
+// - A single SSL_CTX (TLS client mode) is created once at first use and reused.
+//   VERIFICACIÓN (cambiado 2026-09-11, reporte de fricción de nyxerp): el
+//   contexto carga el almacén de CAs del SISTEMA y los helpers https_* VERIFICAN
+//   el certificado del servidor —cadena Y nombre— antes de mandar nada.
+//   Hasta esa fecha la verificación estaba deshabilitada A PROPÓSITO «para
+//   mantener el runtime sin dependencias», y la nota decía que quien necesitara
+//   verificar usara el API TLS crudo. El costo de esa decisión era que
+//   `https_get` daba CIFRADO pero NO AUTENTICACIÓN: medido contra badssl.com, un
+//   certificado vencido, uno autofirmado y uno emitido para otro nombre
+//   devolvían los tres 200 OK. Un API llamado `https_get` que no autentica es
+//   una trampa, no una simplificación.
+//   El almacén del sistema no es una dependencia nueva: es el mismo que usa
+//   cualquier cliente HTTPS de la máquina, y si no estuviera, la conexión falla
+//   ruidosamente en vez de fingir seguridad. Para un servidor de desarrollo con
+//   certificado autofirmado, NYX_TLS_INSECURE=1 lo desactiva explícitamente.
 // - 10-second socket timeouts (SO_RCVTIMEO / SO_SNDTIMEO) are applied to
 //   every new socket.
 // - Chunked transfer encoding: DECODED here. read_http_response inspects the
@@ -78,11 +87,52 @@ static SSL_CTX* get_ssl_ctx(void) {
     g_ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!g_ssl_ctx) return NULL;
 
-    // Disable peer certificate verification so the runtime works without
-    // a CA bundle.  See design note at the top of the file.
+    // El modo del CONTEXTO sigue en NONE: quien decide es cada conexión.
+    // nyx_tls_connect (el API crudo, modo 0) tiene que poder seguir
+    // conectándose sin verificar —es su contrato documentado, y lo usa el modo
+    // "checked" de los escáneres—, así que subir la verificación acá rompería
+    // eso. Los helpers https_* la suben POR SSL con https_apply_verify().
     SSL_CTX_set_verify(g_ssl_ctx, SSL_VERIFY_NONE, NULL);
 
+    // El almacén de CAs del sistema. No falla si no está: la verificación por
+    // conexión es la que decide, y sin CAs cargadas fallará ruidosamente en el
+    // handshake en vez de dejar pasar un certificado sin validar.
+    SSL_CTX_set_default_verify_paths(g_ssl_ctx);
+
     return g_ssl_ctx;
+}
+
+// ¿El usuario pidió explícitamente NO verificar? Solo para desarrollo contra un
+// servidor con certificado autofirmado. Se lee una vez y se cachea: esto está
+// en el camino de cada request.
+static int https_insecure(void) {
+    // SIN caché a propósito: un getenv por request no se nota al lado de un
+    // handshake TLS y un viaje de red, y cachear lo hacía imposible de cambiar
+    // desde un test que ya hubiera hecho una llamada antes (el primer valor
+    // quedaba clavado para todo el proceso). La testabilidad vale más que
+    // ahorrar una lectura de entorno.
+    const char* v = getenv("NYX_TLS_INSECURE");
+    return (v && v[0] == '1' && v[1] == '\0') ? 1 : 0;
+}
+
+// Sube la verificación ESTRICTA sobre una conexión de los helpers https_*:
+// la cadena debe validar contra las CAs cargadas Y el nombre debe corresponder
+// al certificado. Misma lógica que el modo 2 de nyx_tls_connect_ex, en UNA sola
+// implementación — duplicarla entre https_get y https_post era garantía de que
+// una de las dos se quedara atrás.
+// Devuelve 1 si quedó configurada (o si el usuario pidió no verificar), 0 si
+// no se pudo configurar la identidad, en cuyo caso el llamador NO debe seguir.
+static int https_apply_verify(SSL* ssl, const char* host) {
+    if (https_insecure()) return 1;
+    SSL_set_verify(ssl, SSL_VERIFY_PEER, NULL);
+    // Identidad, no solo cadena. Un literal IP nunca matchea por SAN DNS: hay
+    // que compararlo contra los SAN de tipo IP. Se setea UNO SOLO — OpenSSL
+    // exige que TODOS los criterios configurados pasen, así que setear los dos
+    // rechazaría un certificado legítimo con SAN IP pero sin SAN DNS.
+    if (os_addr_is_ip(host)) {
+        return X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), host) == 1;
+    }
+    return SSL_set1_host(ssl, host) == 1;
 }
 
 // ===== Internal helpers =====
@@ -343,6 +393,16 @@ nyx_string* nyx_https_get(nyx_string* url) {
     // Set SNI so servers that host multiple domains respond correctly.
     SSL_set_tlsext_host_name(ssl, host);
 
+    // Verificación del certificado ANTES del handshake (ver nota de diseño
+    // arriba). Los tres sitios del API TLS crudo NO pasan por acá a propósito:
+    // su contrato es conectarse sin verificar, y el modo "checked" de un
+    // escáner depende de eso.
+    if (!https_apply_verify(ssl, host)) {
+        SSL_free(ssl);
+        os_sock_close(fd);
+        return nyx_string_from_cstr("");
+    }
+
     if (SSL_connect(ssl) != 1) {
         SSL_free(ssl);
         os_sock_close(fd);
@@ -404,6 +464,16 @@ nyx_string* nyx_https_post(nyx_string* url, nyx_string* body, nyx_string* conten
 
     SSL_set_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host);
+
+    // Verificación del certificado ANTES del handshake (ver nota de diseño
+    // arriba). Los tres sitios del API TLS crudo NO pasan por acá a propósito:
+    // su contrato es conectarse sin verificar, y el modo "checked" de un
+    // escáner depende de eso.
+    if (!https_apply_verify(ssl, host)) {
+        SSL_free(ssl);
+        os_sock_close(fd);
+        return nyx_string_from_cstr("");
+    }
 
     if (SSL_connect(ssl) != 1) {
         SSL_free(ssl);

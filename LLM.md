@@ -306,9 +306,16 @@ campo cambia el SQL solo. Receta completa: `examples/by-example/103-orm-sin-mape
 Dos límites que hay que saber ANTES de usarlo:
 - Solo convierte `int`, `bool`, `float` y `String`. Un campo `Array`/`Map`/struct anidado
   **aborta la compilación** con **NYX2013** (gotcha `derive-fields-solo-primitivos`, §5.3).
-- `desde_fila` lee un `bool` comparando la celda contra el literal `"true"`; PostgreSQL
-  manda `t`/`f`, así que una fila que salió de `try_pg_query` hay que normalizarla antes
-  (gotcha `derive-fields-pg-bool-text`, §5.1).
+- `desde_fila` acepta TODAS las formas booleanas que emiten sus dos productores:
+  `true`/`false` (que es lo que escribe `valores()`), `t`/`f` (el formato text de
+  PostgreSQL) y `1`/`0`. Una fila de `try_pg_query` **no hay que normalizarla**.
+  Cualquier otro texto ABORTA nombrando el valor, en vez de asumir `false` — un booleano
+  ininteligible no es `false`. (Esta línea decía lo contrario hasta el 2026-09-11: que
+  solo se reconocía `"true"` y que había que normalizar a mano. Era falso desde que el
+  conversor pasó al runtime, y hacía que un ORM escribiera una pasada de normalización
+  por cada lectura de cada modelo. Lo reportó nyxerp midiéndolo. Ver gotcha
+  `derive-fields-pg-bool-text`, §5.1, que ya decía lo correcto — la mentira vivía acá, en
+  la parte NO generada de este archivo.)
 
 ### Generics (monomorphized)
 

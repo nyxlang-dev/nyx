@@ -772,8 +772,19 @@ pub fn pg_col(columnas: Array, nombre: String) -> int {
 // pedido no es una celda vacía. Los dos ABORTAN nombrando la posición.
 //
 // (El bug que el reporte del ERP denunciaba —leer una columna INTEGER como int
-// y obtener el PUNTERO— es de std/sqlite y no existe acá: en este cliente la
-// celda es un String y nadie la reinterpreta.)
+// y obtener el PUNTERO— NO era de std/sqlite: el equipo lo midió contra
+// PostgreSQL 17.11 y `select 42` leído como `let n: int = fila[0]` imprimía
+// 281472863003808. Este comentario decía lo contrario hasta el 2026-09-11 y la
+// corrección la trajo el propio equipo, con el spike.
+//
+// El mecanismo es el que sigue abajo —la celda es un String y nadie la
+// reinterpreta— pero es JUSTAMENTE por eso que tiparla como `int` entregaba el
+// puntero de ese String: el problema nunca estuvo en el cliente de base de
+// datos sino en el `Array` sin tipar, así que aparecía igual en los dos.
+// Hoy lo corta NYX2014 (`nyx_slot_as_int_checked`), verificado sobre esta misma
+// forma. Importa no atribuirlo a sqlite: si quedara escrito así, alguien podría
+// concluir que del lado de PostgreSQL ese chequeo no hace falta, y es lo único
+// que separa un `bigint` leído mal de un número de ocho cifras plausible.)
 
 fn pg_celda(fila: Array, i: int, quien: String) -> String {
     if i < 0 or i >= fila.length() {
