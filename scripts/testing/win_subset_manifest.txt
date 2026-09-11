@@ -164,3 +164,37 @@ tests/compiler/stdlib-suite/test-130-if-let.nx	tests/compiler/stdlib-suite/expec
 tests/compiler/types/test-355-result-struct-payload.nx	tests/compiler/types/expected/test-355-result-struct-payload.expected
 tests/compiler/types/test-360-unwrap-familia.nx	tests/compiler/types/expected/test-360-unwrap-familia.expected
 tests/compiler/types/test-372-std-error.nx	tests/compiler/types/expected/test-372-std-error.expected
+
+# ============================================================================
+# W3 Task 5 — CONCURRENCIA (12 de los 13 tests del inventario del plan W3).
+# Gate local x64 completo: 12/12 x3 verdes (reporte
+# docs/design/spikes/2026-08-31-w3-task5-gate-concurrencia.md). ARM64
+# en ejecucion = PENDIENTE DE BILLING (decision de Ottavio 2026-08-31: W3
+# cierra con el gate x64 local; este manifiesto queda preparado).
+# - 145/146/242/257 entran como NONE porque su salida NO es determinista
+#   (orden de goroutines) y el diff plano de este job no soporta el comodin
+#   __ANY__ por linea que si usan los .expected de tests/win-fixtures/.
+#   NO es una desviacion de la regla "NONE => assert() propio": los cuatro
+#   TIENEN assert desde el 2026-09-11. Antes no, y entonces su unico gate
+#   era rc=0 -- un test-257 con la captura de locals rota habria salido con
+#   rc=0 igual, o sea que no podia detectar el bug para el que fue escrito
+#   (hallazgo H1 de docs/design/reviews/2026-09-10-w3-rama-pre-merge.md).
+#   OJO al re-correr el gate local: esos 4 .win.ll cambiaron DESPUES de
+#   medirse el 36/36, asi que hay que regenerarlos y re-correrlos.
+# - EXCLUIDO test-333-try-catch-mt: try/catch NO soportado en el target
+#   windows (guard del codegen; unwinding = deuda fichada aparte).
+# - EXCLUIDO test-352 (señales): W5 (SetConsoleCtrlHandler), exclusion
+#   heredada del plan W3 (misma clase que sqlite en W2).
+# ============================================================================
+tests/compiler/language/test-144-sync.nx	tests/compiler/language/expected/test-144-sync.expected
+tests/compiler/language/test-145-spawn.nx	NONE
+tests/compiler/language/test-146-scheduler.nx	NONE
+tests/compiler/language/test-147-select.nx	tests/compiler/language/expected/test-147-select.expected
+tests/compiler/language/test-229-async-alloc.nx	NONE
+tests/compiler/language/test-240-async-await-value.nx	NONE
+tests/compiler/language/test-241-async-nested.nx	NONE
+tests/compiler/language/test-242-async-interleave.nx	NONE
+tests/compiler/language/test-243-spawn-goroutines.nx	NONE
+tests/compiler/language/test-257-spawn-capture.nx	NONE
+tests/compiler/language/test-277-fn-run-name.nx	NONE
+tests/compiler/language/test-380-wg-wait-timeout.nx	tests/compiler/language/expected/test-380-wg-wait-timeout.expected

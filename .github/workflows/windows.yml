@@ -27,7 +27,8 @@
 #     normalizado en AMBOS lados (lección de W0: stdout de Windows emite \r\n y
 #     el checkout puede convertir el expected a CRLF). Tests sin expected/:
 #     exit code 0 (todos los que entran así tienen assert(), que aborta con
-#     exit 1 — ver el header del manifiesto).
+#     exit 1 — ver el header del manifiesto; verificado test por test el
+#     2026-09-11, cuando 4 entradas nuevas resultaron NO tenerlo).
 #     Es la primera vez que programas Nyx REALES —no un hello-world— corren en
 #     Windows: acá aparecen los bugs de semántica win32 que ninguna review
 #     puede ver.
@@ -162,6 +163,14 @@ jobs:
           CFLAGS="$CFLAGS -Wno-error=implicit-function-declaration -Wno-error=int-conversion"
 
           FAIL=0
+          # test_w3_task4_load.c SOLO en ESTA lista (W3 Task 5 P3): es el
+          # harness de la ablación del scheduler real y tiene main() — NO
+          # puede entrar a las listas de los jobs subset, cuyo objs/*.obj se
+          # linkea ENTERO contra cada .ll (el main duplicado rompería todos
+          # los links). Acá solo se compila: el gate es que siga compilando.
+          # EN: test_w3_task4_load.c ONLY in THIS list — it has main(), so it
+          # must stay out of the subset jobs (their objs/*.obj glob links
+          # whole); here it is compile-only.
           for src in runtime/strings.c \
                      runtime/runtime-arrays.c \
                      runtime/maps.c \
@@ -173,6 +182,7 @@ jobs:
                      runtime/thread.c \
                      runtime/scheduler.c \
                      runtime/os/event_loop_win32.c \
+                     tests/runtime-unit/win/test_w3_task4_load.c \
                      runtime/os/os_win32.c ; do
             base=$(basename "$src" .c)
             # M12 (review ronda 1): -Werror SOLO sobre os_win32.c — el archivo
@@ -548,6 +558,9 @@ jobs:
               # Sin expected/: el contrato es el exit code. Todos los tests que
               # entran así tienen assert(), y assert aborta con exit 1 — así
               # que "exit 0" acá SÍ afirma algo (ver header del manifiesto).
+              # Verificado test por test el 2026-09-11: 4 entradas nuevas
+              # (145/146/242/257) entraban SIN assert, así que su "exit 0" no
+              # afirmaba nada. Ya lo tienen.
               # EN: no expected/ — the contract is the exit code. Every test
               # entering this way has assert(), which aborts with exit 1.
               if [ "$rc" -eq 0 ]; then
@@ -627,7 +640,7 @@ jobs:
           # this number by hand, and that shows up in the diff. Growing needs
           # no edit; shrinking does. The repo's canonical test counts live in
           # docs/TESTS.md — this is only THIS job's floor.
-          FLOOR=26
+          FLOOR=38
           if [ "$PASS" -lt "$FLOOR" ]; then
             echo "w2-subset: el subset se ACHICÓ — $PASS verdes contra un piso de $FLOOR"
             echo "  (si un test salió del manifiesto con razón, bajá FLOOR en este workflow"
@@ -866,7 +879,10 @@ jobs:
 
             if [ "$exp" = "NONE" ]; then
               # Sin expected/: el contrato es el exit code. Todos los tests que
-              # entran así tienen assert(), y assert aborta con exit 1.
+              # entran así tienen assert(), y assert aborta con exit 1 — se
+              # verificó test por test el 2026-09-11: los 4 que entraban SIN
+              # assert (145/146/242/257) ahora lo tienen, así que la frase de
+              # arriba volvió a ser cierta en vez de ser una suposición.
               # EN: no expected/ — the contract is the exit code; every test
               # entering this way has assert(), which aborts with exit 1.
               if [ "$rc" -eq 0 ]; then
@@ -925,7 +941,7 @@ jobs:
           # EN: same floor as w2-subset — both architectures run the same
           # manifest. Lowering it only here would be a written admission that
           # ARM64 covers less than x64: explicit and visible in the diff.
-          FLOOR=26
+          FLOOR=38
           if [ "$PASS" -lt "$FLOOR" ]; then
             echo "w2-subset-arm64: el subset se ACHICÓ — $PASS verdes contra un piso de $FLOOR"
             echo "  (si un test salió del manifiesto con razón, bajá FLOOR en AMBOS jobs"
