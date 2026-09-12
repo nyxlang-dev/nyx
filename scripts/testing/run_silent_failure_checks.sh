@@ -1016,6 +1016,56 @@ else
     FAIL=$((FAIL + 1))
     FAILED+=("$name")
 fi
+# ─────────────────────────────────────────────────────────────────────────────
+# `nyx --version` identifica la INSTALACIÓN, no solo el número de release
+#
+# Fricción de nyxerp (2026-09-12): reportaron un bloqueo total y no pudieron
+# decir con qué compilación lo midieron — «nyx --version dice 0.31.0 y
+# ~/.nyx/VERSION también, pero durante esta misma sesión llegaron tres cambios de
+# comportamiento sin que ese número se moviera». Y el bug que reportaban ERA una
+# discrepancia entre las dos mitades del toolchain: prelude nuevo con compilador
+# viejo. Un número que no distingue binarios vuelve irreportable justo esa clase.
+#
+# Las huellas se CALCULAN de los archivos; un sello escrito al instalar es
+# exactamente lo que puede quedar viejo.
+name="version-identifies-the-install"
+VER_OUT="$TMPDIR/version.out"
+bash scripts/nyx --version > "$VER_OUT" 2>&1
+ver_rc=$?
+# Las dos huellas tienen que estar, ser hex de 8, y ser DISTINTAS entre sí
+# (si el helper devolviera siempre lo mismo, el check pasaría sin medir nada).
+ver_line="$(head -1 "$VER_OUT")"
+comp_id="$(sed -n 's/.*compiler \([0-9a-f?]*\),.*/\1/p' <<< "$ver_line")"
+prel_id="$(sed -n 's/.*prelude \([0-9a-f?]*\)).*/\1/p' <<< "$ver_line")"
+if [ "$ver_rc" -eq 0 ] \
+   && grep -qE '^nyx [0-9]+\.[0-9]+\.[0-9]+ \(compiler [0-9a-f]{8}, prelude [0-9a-f]{8}\)$' "$VER_OUT" \
+   && [ "$comp_id" != "$prel_id" ]; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s\n" "$name"
+    printf "    rc=%d, compiler='%s', prelude='%s' (se esperan dos hex de 8 DISTINTOS)\n" "$ver_rc" "$comp_id" "$prel_id"
+    sed 's/^/      /' "$VER_OUT" | head -3
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name")
+fi
+
+# CONTROL: la huella del prelude CAMBIA si el prelude cambia. Sin esto, el check
+# de arriba pasaría con un helper que devolviera una constante por archivo.
+name="version-prelude-id-tracks-content"
+cp std/prelude.nx "$TMPDIR/prelude.orig"
+printf '\n// sonda temporal del gate\n' >> std/prelude.nx
+prel_id2="$(bash scripts/nyx --version 2>/dev/null | head -1 | sed -n 's/.*prelude \([0-9a-f?]*\)).*/\1/p')"
+cp "$TMPDIR/prelude.orig" std/prelude.nx
+if [ -n "$prel_id2" ] && [ "$prel_id2" != "$prel_id" ]; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s — la huella no siguió al contenido ('%s' antes, '%s' después)\n" "$name" "$prel_id" "$prel_id2"
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name")
+fi
+
 
 echo ""
 echo "  $PASS passed, $FAIL failed"

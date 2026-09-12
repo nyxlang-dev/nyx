@@ -20,6 +20,35 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`nyx --version` identifica la INSTALACIÓN, no solo el número de release** (pedido de nyxerp,
+  2026-09-12, nombrado al margen de un reporte de bloqueo). Decían: «`nyx --version` dice 0.31.0 y
+  `~/.nyx/VERSION` también, pero durante esta misma sesión llegaron tres cambios de comportamiento
+  sin que ese número se moviera; si hay una forma de saber qué compilación exacta tenemos instalada,
+  nos sirve para el próximo reporte». Tenían razón, y de más maneras de las que decían: el bug que
+  estaban reportando **era** una discrepancia entre las dos mitades del toolchain —prelude nuevo con
+  compilador viejo—, o sea justo la clase de problema que un número indistinguible vuelve
+  irreportable.
+  ```
+  $ nyx --version
+  nyx 0.31.0 (compiler 6940d0de, prelude eb431d7a)
+    home:     /home/admin/.nyx
+    compiler: /home/admin/.nyx/nyx_bootstrap
+  ```
+  Las huellas se **calculan** de los archivos reales (`sha256sum`, con caída a `shasum` y `cksum`),
+  no se leen de un sello escrito al instalar: un sello es exactamente lo que puede quedar viejo, que
+  es el modo de fallo que se está arreglando. Se muestran las DOS mitades a propósito, porque
+  compilador y prelude se instalan por separado: dos instalaciones con el mismo número de versión y
+  distinto par de huellas no son la misma cosa, y ahora se ve. Verificado contra el escenario del
+  bloqueo — con el prelude viejo instalado la huella cambia de `eb431d7a` a `dc859382`.
+  Con dos guardas en `run_silent_failure_checks.sh`: el formato y que las dos huellas sean
+  distintas entre sí, más un control de que la huella del prelude **sigue al contenido** (sin eso, un
+  helper que devolviera una constante pasaría el primero).
+
+- **El driver crudo ya no imprime `nyx vunknown`** — invocarlo sin el wrapper (que es quien setea
+  `NYX_HOME`) y fuera del repo dejaba la versión en `unknown`, y esa línea existe justamente para
+  que el usuario sepa qué versión citar al reportar fricción: no decírsela es un fallo del propósito
+  de la línea. Ahora cae a `~/.nyx/VERSION`, espejando la cadena que `resolve_module_path` ya usa
+  para encontrar la stdlib instalada. Cierra la ficha BAJA UX de `TASKS.md`.
 - **`std/time.nx` y el camino UTC que no existía** `[arco: std-time]`. `runtime/time.c` siempre llamaba `localtime()`, así que el
   mismo `datetime_parse` daba dos epochs distintos según `TZ` — y `std/serve` emitía una cabecera `Date` rotulada `GMT` que era
   incorrecta en toda máquina con huso local, presentándolo en un comentario como «restricción de despliegue». Ahora la aritmética

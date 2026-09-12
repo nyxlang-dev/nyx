@@ -105,11 +105,46 @@ check_for_updates
 # Handle flags
 case "${1:-}" in
     --version|-v)
-        if [ -f "$NYX_HOME/VERSION" ]; then
-            echo "nyx $(cat "$NYX_HOME/VERSION")"
-        else
-            echo "nyx 0.31.0"
+        # Identidad de la INSTALACIÓN, no solo el número de release.
+        #
+        # POR QUÉ (fricción de nyxerp, 2026-09-12): un equipo reportó un bloqueo
+        # total y no pudo decir con qué compilación lo midió — «nyx --version dice
+        # 0.31.0 y ~/.nyx/VERSION también, pero durante esta misma sesión llegaron
+        # tres cambios de comportamiento sin que ese número se moviera». Tenían
+        # razón, y además el bug que reportaban ERA una discrepancia entre las dos
+        # mitades del toolchain: un prelude nuevo con un compilador viejo.
+        #
+        # Las huellas se CALCULAN de los archivos reales, no se leen de un sello
+        # escrito al instalar. Un sello es justamente lo que puede quedar viejo —
+        # el modo de fallo que estamos arreglando— mientras que el hash del binario
+        # que se va a ejecutar no puede mentir sobre qué binario es.
+        #
+        # Se muestran las DOS mitades a propósito: compilador y prelude se instalan
+        # por separado y pueden no corresponderse. Dos instalaciones con el mismo
+        # número de versión y distinto par de huellas no son la misma cosa, y ahora
+        # se ve.
+        _nyx_id() {   # $1 = archivo → 8 hex, o "?" si no se puede
+            [ -r "$1" ] || { printf '?'; return 0; }
+            if command -v sha256sum >/dev/null 2>&1; then
+                sha256sum "$1" 2>/dev/null | cut -c1-8 | tr -d '\n'
+            elif command -v shasum >/dev/null 2>&1; then
+                shasum -a 256 "$1" 2>/dev/null | cut -c1-8 | tr -d '\n'
+            elif command -v cksum >/dev/null 2>&1; then
+                cksum "$1" 2>/dev/null | awk '{printf "%08x", $1}'
+            else
+                printf '?'
+            fi
+        }
+        _ver="$(tr -d '[:space:]' < "$NYX_HOME/VERSION" 2>/dev/null || true)"
+        [ -n "$_ver" ] || _ver="unknown"
+        echo "nyx $_ver (compiler $(_nyx_id "$NYX_BOOTSTRAP"), prelude $(_nyx_id "$NYX_HOME/std/prelude.nx"))"
+        _home_abs="$(cd "$NYX_HOME" 2>/dev/null && pwd -P || echo "$NYX_HOME")"
+        echo "  home:     $_home_abs"
+        _bin_abs="$NYX_BOOTSTRAP"
+        if [ -e "$NYX_BOOTSTRAP" ] && command -v readlink >/dev/null 2>&1; then
+            _bin_abs="$(readlink -f "$NYX_BOOTSTRAP" 2>/dev/null || echo "$NYX_BOOTSTRAP")"
         fi
+        echo "  compiler: $_bin_abs"
         exit 0
         ;;
     --help|-h|help)
