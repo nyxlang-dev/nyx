@@ -218,6 +218,70 @@ else
     ok "test-roto-env — el ambiente no revierte el chequeo (rc $TEST_RC)"
 fi
 
+# ── Check D: `nyx build` chequea tipos aunque compile desde otro cwd ─
+# Tercera puerta. `nyx build` hace `cd $NYX_HOME` antes de invocar al driver y
+# le pasa NYX_PROJECT_DIR. El resolver honra esa variable; `scan_module_types`
+# (semantic.nx) NO la honraba: buscaba `src/x.nx` relativo al cwd —o sea dentro
+# de ~/.nyx—, no lo encontraba, y marcaba `g_import_unscanned`. Ese flag degrada
+# a comodín silencioso TODA anotación desconocida del archivo, no solo la del
+# módulo ilegible. Resultado medido (fricción nyxerp, 2026-09-11): bajo
+# `nyx build`, NYX1001 no existía para ningún archivo que importara un módulo del
+# proyecto, mientras que `nyx check` —que no hace cd— sí lo reportaba. La misma
+# anotación verificaba o no según con qué herramienta se mirara.
+#
+# El gate corre el DRIVER con cwd fuera del proyecto, que es lo que reproduce el
+# bug; invocar nyx_build entero metería el link de clang sin agregar cobertura.
+run_driver_desde_afuera() {  # $1=dir del proyecto → rc en $DRV_RC
+    cp "$1/src/main.nx" "$GATE_TMP/probe.nx"
+    ( cd "$GATE_TMP" && NYX_SRC="$GATE_TMP/probe.nx" NYX_PROJECT_DIR="$1" \
+        NYX_HOME="$ROOT" "$ROOT/nyx_bootstrap" ) > "$GATE_TMP/drv.out" 2>&1
+    DRV_RC=$?
+}
+
+# El proyecto del reporte: un módulo que NO declara el tipo que el main anota.
+BDIR="$GATE_TMP/buildcwd"
+mkdir -p "$BDIR/src"
+cat > "$BDIR/nyx.toml" <<'EOF'
+[package]
+name = "buildcwd"
+version = "0.1.0"
+main = "src/main.nx"
+EOF
+cat > "$BDIR/src/inventado.nx" <<'EOF'
+struct OtraCosa { valor: int }
+
+pub fn hacer_otra() -> OtraCosa { return OtraCosa { valor: 42 } }
+EOF
+cat > "$BDIR/src/main.nx" <<'EOF'
+import "src/inventado"
+
+fn main() -> int {
+    let a: Inventado = hacer_otra()
+    print(int_to_string(a.valor))
+    return 0
+}
+EOF
+
+run_driver_desde_afuera "$BDIR"
+if [ "$DRV_RC" -ne 0 ] && grep -q "unknown type 'Inventado'" "$GATE_TMP/drv.out"; then
+    ok "build-cwd — un tipo inexistente es NYX1001 aunque el compile corra desde otro cwd"
+else
+    bad "build-cwd — rc $DRV_RC sin NYX1001 'Inventado': el chequeo de tipos se apagó fuera del proyecto" "build-cwd"
+    head -6 "$GATE_TMP/drv.out" | sed 's/^/      /'
+fi
+
+# CONTROL POSITIVO: el MISMO proyecto con el tipo REAL del módulo importado
+# tiene que compilar. Sin esto, un scanner que no leyera ningún módulo pasaría
+# el negativo en verde — rechazando de paso todo proyecto multi-módulo válido.
+sed -i 's/let a: Inventado = /let a: OtraCosa = /' "$BDIR/src/main.nx"
+run_driver_desde_afuera "$BDIR"
+if [ "$DRV_RC" -eq 0 ]; then
+    ok "build-cwd-sano — control positivo: el tipo real del módulo importado compila"
+else
+    bad "build-cwd-sano — CONTROL POSITIVO CAÍDO: rc $DRV_RC sobre un tipo que SÍ existe" "build-cwd-sano"
+    head -6 "$GATE_TMP/drv.out" | sed 's/^/      /'
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  TOOLING GATES: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

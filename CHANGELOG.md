@@ -280,6 +280,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`nyx build` volvió a chequear tipos: NYX1001 estaba apagado para todo archivo que importara un
+  módulo del proyecto** (fricción de nyxerp, 2026-09-11, clasificado LENGUAJE; medido el 12).
+  El reporte decía que el nombre de un archivo importado, capitalizado, se aceptaba como tipo
+  (`import "src/conversion"` hacía compilar `let x: Conversion = ...` sin que existiera ningún
+  `struct Conversion`). Al reproducirlo apareció que el alcance era mayor: **ningún** tipo
+  desconocido se rechazaba — `let a: NoExiste = ...` compilaba igual.
+  Causa: `nyx build` hace `cd $NYX_HOME` antes de invocar al driver y le pasa `NYX_PROJECT_DIR`.
+  El resolver honra esa variable, pero `scan_module_types` (semantic.nx) tenía su propia copia de la
+  resolución, de solo dos tiers —CWD y `std/` CWD-relativo—: buscaba `src/x.nx` dentro de `~/.nyx`,
+  no lo encontraba y devolvía 0. El caller marca entonces `g_import_unscanned`, que degrada a
+  comodín silencioso TODA anotación desconocida del archivo, no solo la del módulo ilegible. Bajo
+  `nyx check` (que no hace `cd`) los mismos programas SÍ daban NYX1001: **la misma anotación
+  verificaba o no según con qué herramienta se la mirara**, y la que no verificaba era la que se usa
+  para construir.
+  Es el MISMO bug que ya se había arreglado en `resolve.nx` el 2026-09-08 por el otro lado (su
+  comentario lo narra: «el único consumidor era `nyx build`, que hace `cd $NYX_HOME`»). Eran dos
+  copias de la resolución de imports arregladas de a una; ahora `scan_module_types` llama a
+  `resolve_module_path` y hay una sola.
+  Gate: `run_tooling_gates.sh` suma su TERCERA puerta (`build-cwd`) — el driver corriendo desde
+  fuera del proyecto tiene que dar NYX1001 sobre un tipo inexistente, con control positivo (el tipo
+  REAL del módulo importado tiene que compilar; sin ese control, un scanner que no leyera ningún
+  módulo pasaría el negativo en verde rechazando todo proyecto multi-módulo válido). Verificado que
+  la puerta falla contra el compilador de antes del fix: `rc 0` y sin NYX1001.
 - **Una función anidada (y el cuerpo de una `async fn`) ya ve los traits, los genéricos y las
   constantes de su módulo**. `codegen_nested_function` y `codegen_async_fn` construían su
   `CodegenContext` compartiendo ~45 campos con el padre y dejando **33 al relleno silencioso** del
