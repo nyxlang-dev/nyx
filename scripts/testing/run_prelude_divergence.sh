@@ -53,11 +53,11 @@ PRELUDE="std/prelude.nx"
 # coincidir exactamente con los `imported.insert("std/...")` de
 # compiler/resolve.nx — si alguien suma un 6º módulo al prelude y no lo
 # registra acá, el gate dejaría de mirarlo. Se verifica más abajo.
-MODULES="math io array file map"
+MODULES="math io array file map error"
 
 # --- Excepciones: lo que el prelude tiene DE MÁS a propósito -----------------
 #
-# El prelude no es solo la copia de los 5 módulos: también es el CORE del
+# El prelude no es solo la copia de sus módulos: también es el CORE del
 # lenguaje, declarado una única vez y en ningún módulo. Nada de esto tiene
 # original con el que compararse, así que "sobra en el prelude" es lo correcto
 # para estas entradas y solo para estas. Lista EXPLÍCITA a propósito: un filtro
@@ -307,5 +307,5 @@ if [ "$FAIL" -gt 0 ]; then
     echo "   lo que diverge se vuelve invisible o miente, sin romper un solo test)"
     exit 1
 fi
-echo "  ✓ $PRELUDE en sincronía con los 5 módulos (presencia, cuerpo y modificador)"
+echo "  ✓ $PRELUDE en sincronía con sus módulos ($MODULES) — presencia, cuerpo y modificador"
 exit 0

@@ -280,6 +280,38 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **El prelude ya puede devolver `Result<T, Error>`: `std/error` entró al prelude, y los nombres del
+  prelude ahora colisionan con NYX1013 en vez de ganar en silencio** [arco: prelude-descongelado].
+  La ficha ALTA que motivó esto describía un problema que **ya no era el que describía** — medido
+  antes de escribir una línea: el prelude dejó de ser una copia a mano el 2026-09-09
+  (`scripts/gen_prelude.sh`, con guarda de staleness verde), las «6 funciones `array_*` divergidas»
+  no existen (las 10 de `std/array.nx` son `pub` y el prelude es su copia generada), y la colisión
+  con `test-372` que daba por refutado el camino elegido tampoco ocurre.
+  Lo que SÍ seguía vivo era una sola restricción, y era la que forzó a crear `std/fs.nx` y
+  `std/math_ext.nx`: **el checker valida el prelude COMPLETO se use o no**, así que nada adentro
+  podía nombrar algo de afuera. Sonda: una `pub fn try_x(...) -> Result<int, Error>` en
+  `std/math.nx` rompía TODO programa Nyx —incluido un hello world que nunca la llamaba— con
+  `'err_new' not declared` sobre una línea del prelude.
+  El arreglo son dos líneas: `std/error` a `MODULES` de `gen_prelude.sh` y a los pre-registrados de
+  `resolve.nx` (el generador ya verifica que ambas listas coincidan — un módulo pre-registrado que
+  no esté en el prelude simplemente NO EXISTE para el usuario). `std/error.nx` calificaba y no era
+  un candidato cualquiera: 80 líneas, **sin imports**, autocontenido, que es exactamente la
+  condición que el prelude impone. El pre-registro es además lo que evita la doble definición del
+  `import "std/error"` explícito: `test-372` sigue verde.
+  **El costo, decidido explícitamente**: `Error`, `err_new`, `errno_to_kind`, `error_to_string` e
+  `is_eof` pasan a existir en el namespace de todos los programas Nyx. Cero colisiones en el
+  ecosistema propio (core, los 5 stacks, web), pero `Error` es un nombre común afuera — así que la
+  colisión se volvió **ruidosa**, que era la condición para meterlo: `register_struct` acusa NYX1013
+  nombrando al prelude y pidiendo renombrar. Antes la declaración del prelude ganaba EN SILENCIO y
+  los errores que salían después hablaban de campos que el usuario nunca escribió
+  (`field 'codigo' does not exist in struct 'Error'`, sobre SU línea), mandando a depurar el
+  programa equivocado — la ficha de `TASKS.md:1047`, aplicada a un nombre mucho más común que
+  `RoundMode`. Solo se acusa prelude→usuario, distinguidos por el offset de línea (`//#line 1000001`).
+  Tres tests: `Result<T, Error>` usado SIN import y ejecutado (test-414), el negativo de la colisión,
+  y su control positivo (`struct ErrorDeNegocio` tiene que seguir compilando — sin ese control, un
+  chequeo roto que acusara toda declaración pasaría el negativo en verde rompiendo todo programa).
+  Habilita las dos fichas BAJA que esperaban esto: re-exportar `try_read_file`/`try_write_file` desde
+  `std/file.nx` y mover `try_mul_div_round` a `std/math.nx`. Cada mudanza va en su propio cambio.
 - **`nyx build` volvió a chequear tipos: NYX1001 estaba apagado para todo archivo que importara un
   módulo del proyecto** (fricción de nyxerp, 2026-09-11, clasificado LENGUAJE; medido el 12).
   El reporte decía que el nombre de un archivo importado, capitalizado, se aceptaba como tipo

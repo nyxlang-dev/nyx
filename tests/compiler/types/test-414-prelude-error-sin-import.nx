@@ -1,0 +1,37 @@
+// `Error` y la familia de `std/error` están disponibles SIN import, porque
+// `std/error` ahora forma parte del prelude.
+//
+// POR QUÉ EXISTE (arco prelude-descongelado, 2026-09-12)
+//
+// El prelude se concatena a todo programa y el checker lo valida COMPLETO, se
+// use o no. Eso lo obligaba a ser cerrado: nada adentro podía nombrar algo de
+// afuera. Consecuencia medida: una `pub fn try_x(...) -> Result<int, Error>` en
+// `std/math.nx` rompía TODO programa Nyx —incluido un hello world que nunca la
+// llamaba— con `'err_new' not declared` sobre una línea del prelude. Por eso
+// `try_read_file`/`try_write_file` viven en `std/fs.nx` y no en `std/file.nx`, y
+// `try_mul_div_round` en `std/math_ext.nx` y no en `std/math.nx`.
+//
+// Con `std/error` adentro del prelude (y pre-registrado en resolve.nx, que es lo
+// que evita la doble definición del `import` explícito — ver test-372), esa
+// restricción se levanta: un módulo del prelude ya puede devolver `Result<T, Error>`.
+//
+// Este test fija la mitad observable para el usuario: sin NINGÚN import.
+//
+// Expected exit: 0
+
+fn puede_fallar(x: int) -> Result<int, Error> {
+    if x < 0 { return Result.Err(err_new(22, errno_to_kind(22), "negativo")) }
+    return Result.Ok(x * 2)
+}
+
+fn main() -> int {
+    match puede_fallar(21) {
+        Result.Ok(n) => { print("ok " + int_to_string(n)) }
+        Result.Err(e) => { print("err " + e.kind) }
+    }
+    match puede_fallar(0 - 1) {
+        Result.Ok(n) => { print("ok " + int_to_string(n)) }
+        Result.Err(e) => { print("err " + e.kind + " " + e.msg) }
+    }
+    return 0
+}

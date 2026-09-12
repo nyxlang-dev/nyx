@@ -41,7 +41,7 @@ CORE="scripts/prelude_core.nx.in"
 # cubrir exactamente los `imported.insert("std/...")` de compiler/resolve.nx
 # (se verifica más abajo), porque un módulo pre-registrado que no esté en el
 # prelude simplemente NO EXISTE para el programa del usuario.
-MODULES="io math array file map"
+MODULES="io math array file map error"
 
 MODE="generate"
 while [ $# -gt 0 ]; do

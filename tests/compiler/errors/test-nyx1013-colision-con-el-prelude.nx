@@ -1,0 +1,26 @@
+// NYX1013 — declarar un tipo que el PRELUDE ya declara es ERROR, con nombre.
+//
+// POR QUÉ EXISTE (arco prelude-descongelado, 2026-09-12)
+//
+// El prelude se concatena a todo programa, así que sus tipos ocupan el
+// namespace global. Un `struct Error` propio NO reemplazaba al del prelude ni
+// daba NYX1013: ganaba el del prelude EN SILENCIO, y los errores que salían
+// después hablaban de campos que el usuario nunca escribió —
+// «field 'codigo' does not exist in struct 'Error' (did you mean 'code'?)»,
+// sobre SU propia línea. Eso manda a depurar el programa equivocado: el usuario
+// mira su struct, que está perfecto, y el compilador le describe otro.
+//
+// El arco que metió `std/error` al prelude convirtió esto de teórico en
+// probable: `Error` es un nombre mucho más común que `RoundMode`, que fue donde
+// se catalogó el problema por primera vez. Hacer la colisión ruidosa fue la
+// condición para meterlo.
+//
+// Expected exit: 1
+
+struct Error { codigo: int }
+
+fn main() -> int {
+    let e: Error = Error { codigo: 7 }
+    print(int_to_string(e.codigo))
+    return 0
+}

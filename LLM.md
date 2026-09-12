@@ -1243,7 +1243,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1327,7 +1327,16 @@ changes in one place. The one edge: a `bytea` column holding exactly one zero by
 else reads as NULL; that is the price of keeping rows as `Array` of String instead of
 `Option<String>`. [test: postgres/02-query]
 
-14. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+14. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
+prelude is concatenated into every program, so `Error`, `err_new`, `errno_to_kind`, `sort_int`,
+`checked_add`, `RoundMode` and the rest of `std/io`/`math`/`array`/`file`/`map`/`error` already
+occupy the namespace. `struct Error { codigo: int }` of your own does not shadow the prelude's — it
+collides, and the error names the prelude and tells you to rename yours. Until 2026-09-12 the
+prelude's declaration won SILENTLY and the errors that followed described fields you never wrote
+(`field 'codigo' does not exist in struct 'Error'`, pointing at YOUR line), which sent you to debug
+the wrong program. Pick a qualified name (`ErrorDeNegocio`, `AppError`) for anything domain-specific. [test: compiler/errors/test-nyx1013-colision-con-el-prelude]
+
+15. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.** `random_bytes` is backed
 by `nyx_random_bytes` (`runtime/random.c`), which draws from a single `xorshift64` generator seeded
 once from `/dev/urandom` (`rng_init`, `runtime/random.c`) — fine for simulation, sampling, jitter, or
@@ -1344,7 +1353,7 @@ Use `random_bytes`/`random_int`/`random_float` for anything where predictability
 use `csprng_bytes` for anything where predictability is a security breach (password salts, session
 tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
 
-15. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
+16. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
 `sqlite_query`/`sqlite_query_named` and their `Result`-returning twins return every value as
 text, and SQL NULL comes back as a one-byte sentinel, not as `""`. Comparing with `== ""` treats
 a real NULL as an empty string and, worse, treats a genuinely empty column as if it were NULL:
@@ -1353,16 +1362,16 @@ hand — the day the representation needs to change, it changes in one place. Th
 or TEXT column holding exactly one zero byte and nothing else reads as NULL; that is the price of
 keeping rows as `Array` of String instead of `Option<String>`. [test: compiler/stdlib-suite/test-406-sqlite-tipos-null]
 
-16. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+17. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
 decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
 lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
 which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
 does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
 
-17. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+18. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
-18. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+19. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.** The three old names still compile (removing them would be a MAJOR change) but `nyx
 vet` flags them with W110. The problem was never the behaviour, it was that four names described two
@@ -1377,7 +1386,7 @@ mechanical and safe, because the aliases are exact: `time()` → `time_epoch()`,
 clock it meant, which is the whole point — a duration measured as `monotonic_us() - inicio` is
 self-evidently right, whereas `time_us() - inicio` still needs the reader to know. [test: compiler/systems/test-410-clock-domain]
 
-19. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+20. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
 `let x: int = sleep(1)` used to pass `check OK` and die in clang with `void type only allowed for
 function results`, pointing at a temporary `.ll` you never see; since 0.31.0 the checker names your
 file, function and line. Call them as a statement. The full list (35):
@@ -1403,14 +1412,16 @@ inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC 
 write FFI. Not a Nyx bug: this comes from LLVM IR internals, not something a Nyx program can trigger
 by accident.
 
-3. **`std/prelude.nx` is a frozen copy of `std/file`/`math`/`io`/`array`/`map` (since v0.12.0),
-pre-registered as "already imported"** — a driver-level detail, not a per-program bug. Any function
-added to `std/file.nx` AFTER that snapshot is invisible to `import "std/file"`: the module is never
-re-inlined, so the checker reports the new symbol as "not declared" even though it's really there on
-disk. This is why the E4 `try_read_file`/`try_write_file` pair lives in a NEW module, `std/fs.nx`
-(`import "std/fs"`), instead of `std/file.nx` — a brand-new module name has no frozen snapshot to
-collide with. Re-exporting from `std/file.nx` once the prelude stops being hand-frozen is a tracked
-follow-up (`TASKS.md`, cosecha E4-std-error).
+3. **`std/prelude.nx` is concatenated into EVERY program and its modules are pre-registered as
+"already imported"** — a driver-level detail, not a per-program bug. Two consequences that do reach
+you. (1) The prelude is GENERATED from `std/io`, `math`, `array`, `file`, `map` and `error`
+(`scripts/gen_prelude.sh`, since 2026-09-09; `make prelude` regenerates it and `make prelude-check`
+fails if it is stale) — it stopped being a hand-maintained frozen copy, so a function added to
+`std/math.nx` is visible after regenerating, and `import "std/math"` runs the prelude's copy, never
+the file. (2) The checker validates the prelude COMPLETE whether you use it or not, so nothing
+inside it may name anything outside it: that is why only self-contained modules can join. `std/error`
+qualified (80 lines, no imports) and was added on 2026-09-12, which is what lets a prelude module
+return `Result<T, Error>` at all. See `prelude-names-are-global` for the cost.
 
 4. **`#[derive(Fields)]` only converts `int`, `bool`, `float` and `String` — an `Array`, `Map`, or nested
 struct field aborts compilation with `NYX2013`.** The limit is deliberate, not an oversight:

@@ -1,0 +1,16 @@
+// CONTROL POSITIVO de NYX1013/prelude: un nombre que el prelude NO declara
+// tiene que seguir compilando y corriendo.
+//
+// Sin este control, un chequeo roto que acusara colisión en toda declaración de
+// struct pasaría el test negativo en verde — y rompería todo programa Nyx, que
+// es exactamente el modo de fallo que el arco tiene que evitar.
+//
+// Expected exit: 0
+
+struct ErrorDeNegocio { codigo: int }
+
+fn main() -> int {
+    let e: ErrorDeNegocio = ErrorDeNegocio { codigo: 7 }
+    print(int_to_string(e.codigo))
+    return 0
+}

@@ -64,7 +64,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
@@ -99,15 +99,16 @@ on BYTES — for *character* counts use `char_length()` (UTF-8 codepoints).**
 `t`/`f` and `1`/`0` — and ABORTS naming the value on anything else.**
 18. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
 19. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
-20. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+20. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.**
+21. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.**
-21. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`**
-22. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
-23. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
-24. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+22. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`**
+23. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
+24. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
+25. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.**
-25. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+26. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
 
 <!-- /gen:gotchas -->
 
