@@ -80,20 +80,25 @@ for m in $MODULES; do
     [ -f "std/$m.nx" ] || die "falta std/$m.nx (módulo del prelude)"
 done
 
-# --- La lista de módulos contra la de resolve.nx ----------------------------
-# Si alguien pre-registra un 6º módulo en resolve.nx y no lo suma acá, el
-# prelude generado no lo incluiría y ese módulo dejaría de existir para los
-# programas de usuario, en silencio. Se descartan los comentarios antes de
-# grepear: resolve.nx cita `imported.insert("std/math", 1)` como texto.
+# --- resolve.nx NO puede tener su propia copia de la lista -------------------
+# Desde el 2026-09-12 la lista viaja EN el prelude (línea `//#prelude-modules:`)
+# y `resolve.nx` la lee de ahí. Antes vivía duplicada, y como el compilador es un
+# BINARIO y el prelude es un ARCHIVO que se instalan por separado, las dos mitades
+# podían quedar desparejas: un prelude nuevo leído por un compilador viejo hacía
+# que `import "std/error"` re-inlineara el módulo y el IR definiera %Error dos
+# veces — `redefinition of type`, todo programa rechazado por clang (fricción de
+# nyxerp, BLOQUEO TOTAL).
+#
+# Esta guarda impide que la copia vuelva a aparecer. Se descartan los comentarios
+# antes de grepear: resolve.nx cita `imported.insert("std/math", 1)` como texto.
 RESOLVE_MODS=$(grep -v '^[[:space:]]*//' compiler/resolve.nx \
     | grep -oE 'imported\.insert\("std/[a-z_]+"' \
     | sed 's/.*"std\///; s/"//' | grep -v '^prelude$' | LC_ALL=C sort -u | tr '\n' ' ')
-GEN_MODS=$(printf '%s\n' $MODULES | LC_ALL=C sort | tr '\n' ' ')
-if [ "$RESOLVE_MODS" != "$GEN_MODS" ]; then
-    die "la lista de módulos del prelude cambió en compiler/resolve.nx
-      resolve.nx pre-registra: $RESOLVE_MODS
-      este generador emite:    $GEN_MODS
-    (actualizar MODULES en scripts/gen_prelude.sh y en scripts/testing/run_prelude_divergence.sh)"
+if [ -n "$RESOLVE_MODS" ]; then
+    die "compiler/resolve.nx volvió a hardcodear módulos del prelude: $RESOLVE_MODS
+    La lista tiene UNA sola fuente: la línea //#prelude-modules del prelude, que
+    resolve.nx lee con prelude_module_list(). Una segunda copia se desincroniza
+    con el binario instalado y rompe todo programa que importe ese módulo."
 fi
 
 # --- Generación -------------------------------------------------------------
@@ -103,11 +108,25 @@ trap 'rm -f "$TMP"' EXIT
 {
     echo "// ⚠ ARCHIVO GENERADO — NO EDITAR A MANO."
     echo "// Regenerar con:  bash scripts/gen_prelude.sh   (verificar: --check)"
-    echo "// Fuentes, en este orden: std/{io,math,array,file,map}.nx + scripts/prelude_core.nx.in"
+    echo "// Fuentes, en este orden: los módulos de //#prelude-modules + scripts/prelude_core.nx.in"
     echo "// Para agregar algo al prelude se edita el MÓDULO std/ que corresponda"
     echo "// (o el core, si no pertenece a ninguno) y se regenera. Un edit directo"
     echo "// acá lo borra la próxima regeneración, y \`make test-ai-first\` lo caza antes."
     echo ""
+    # LÍNEA DE CONTRATO, legible por máquina. `compiler/resolve.nx` la lee para
+    # saber qué módulos pre-registrar como «ya importados», en vez de tener su
+    # propia copia hardcodeada de la lista.
+    #
+    # POR QUÉ (fricción de nyxerp, 2026-09-12, BLOQUEO TOTAL): la lista vivía
+    # duplicada entre este script y resolve.nx. El compilador es un BINARIO y el
+    # prelude es un ARCHIVO: se instalan por separado y pueden quedar desparejos.
+    # Un prelude NUEVO (con std/error adentro) leído por un compilador VIEJO (que
+    # no pre-registra "std/error") hace que `import "std/error"` re-inlinee el
+    # módulo, y el IR define %Error DOS VECES — `redefinition of type`, con clang
+    # rechazando TODO programa que importe std/error. Leyendo la lista DEL PRELUDE
+    # QUE SE ESTÁ USANDO, las dos mitades no pueden discrepar: el compilador
+    # pre-registra exactamente lo que ese archivo trae.
+    echo "//#prelude-modules: $MODULES"
     for m in $MODULES; do
         cat "std/$m.nx"
         echo ""

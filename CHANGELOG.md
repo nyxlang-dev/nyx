@@ -280,6 +280,31 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **BLOQUEO TOTAL corregido: `import "std/error"` definía `%Error` dos veces y clang rechazaba el
+  programa entero** (fricción de nyxerp, 2026-09-12, LENGUAJE y urgente). Un equipo se quedó sin
+  poder compilar, probar ni ejecutar nada en medio de su jornada, **sin haber tocado nada**:
+  `script.ll:6:1: error: redefinition of type / %Error = type { i64, %nyx_string*, %nyx_string* }`.
+  Causa: la lista de módulos que el prelude pre-registra como «ya importados» vivía DUPLICADA entre
+  `scripts/gen_prelude.sh` y `compiler/resolve.nx`. El compilador es un **binario** y el prelude es
+  un **archivo** en `$NYX_HOME/std`: se instalan por separado y pueden quedar desparejos. Un prelude
+  NUEVO —con `std/error` adentro, desde el arco `prelude-descongelado` del mismo día— leído por un
+  compilador VIEJO —que no pre-registraba `"std/error"`— hace que el `import` explícito re-inlinee
+  el módulo, y el IR define `%Error` dos veces.
+  **La lista viaja ahora DENTRO del prelude**, en la línea de contrato
+  `//#prelude-modules: io math array file map error` que escribe el generador, y `resolve.nx` la lee
+  del archivo que está usando (`prelude_module_list`). Las dos mitades ya no pueden discrepar. Sin
+  la línea —prelude anterior a este cambio— cae a los cinco módulos históricos, que es exactamente
+  lo que ese prelude trae: el fallback es correcto por construcción, verificado en las dos
+  direcciones (compilador nuevo + prelude nuevo, y compilador nuevo + prelude viejo de 471 líneas).
+  Las dos guardas que comparaban ambas listas hacen ahora lo contrario: **prohíben** que la copia
+  reaparezca en `resolve.nx`, y el gate de divergencia deriva su propia lista del prelude en vez de
+  mantener una cuarta a mano. Probado que las dos fallan al reintroducir la copia.
+  **Por qué no lo cazó la verificación del arco anterior**: se probó `test-372` (que hace
+  `import "std/error"`) y se leyó `check OK` + `✓ script.ll` como verde. `redefinition of type` es un
+  error de **clang**, no de la generación de IR — `✓ script.ll` dice que el IR se escribió, no que
+  sea válido. Además el fallo NO aparece por `nyx run`, solo por `nyx build`, que es la vía que usa
+  un proyecto. De paso: el banner del prelude anunciaba `std/{io,math,array,file,map}.nx` sin
+  `error`, un literal que ya mentía.
 - **El prelude ya puede devolver `Result<T, Error>`: `std/error` entró al prelude, y los nombres del
   prelude ahora colisionan con NYX1013 en vez de ganar en silencio** [arco: prelude-descongelado].
   La ficha ALTA que motivó esto describía un problema que **ya no era el que describía** — medido

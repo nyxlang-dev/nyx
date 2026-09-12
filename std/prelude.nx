@@ -1,10 +1,11 @@
 // ⚠ ARCHIVO GENERADO — NO EDITAR A MANO.
 // Regenerar con:  bash scripts/gen_prelude.sh   (verificar: --check)
-// Fuentes, en este orden: std/{io,math,array,file,map}.nx + scripts/prelude_core.nx.in
+// Fuentes, en este orden: los módulos de //#prelude-modules + scripts/prelude_core.nx.in
 // Para agregar algo al prelude se edita el MÓDULO std/ que corresponda
 // (o el core, si no pertenece a ninguno) y se regenera. Un edit directo
 // acá lo borra la próxima regeneración, y `make test-ai-first` lo caza antes.
 
+//#prelude-modules: io math array file map error
 // std/io.nx — Funciones de entrada/salida de la Standard Library v0.21
 
 pub fn println(s: String) {

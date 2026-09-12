@@ -1243,7 +1243,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1327,7 +1327,17 @@ changes in one place. The one edge: a `bytea` column holding exactly one zero by
 else reads as NULL; that is the price of keeping rows as `Array` of String instead of
 `Option<String>`. [test: postgres/02-query]
 
-14. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
+14. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
+line — never hardcoded in the compiler.** The compiler reads that line to know which `std/` modules
+to pre-register as "already imported"; a module in the prelude that is NOT pre-registered gets
+re-inlined by an explicit `import`, and the IR then defines its types twice (`redefinition of type`,
+clang rejects the whole program). Keeping a second copy of the list in `compiler/resolve.nx` is what
+made that possible: the compiler is a BINARY and the prelude is a FILE under `$NYX_HOME/std`, they
+install separately, and a new prelude read by an older compiler breaks every program that imports
+the new module — with nothing changed on the user's side. Two guards refuse to let the copy come
+back (`gen_prelude.sh`, `run_prelude_divergence.sh`). [test: compiler/types/test-372-std-error]
+
+15. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
 prelude is concatenated into every program, so `Error`, `err_new`, `errno_to_kind`, `sort_int`,
 `checked_add`, `RoundMode` and the rest of `std/io`/`math`/`array`/`file`/`map`/`error` already
 occupy the namespace. `struct Error { codigo: int }` of your own does not shadow the prelude's — it
@@ -1336,7 +1346,7 @@ prelude's declaration won SILENTLY and the errors that followed described fields
 (`field 'codigo' does not exist in struct 'Error'`, pointing at YOUR line), which sent you to debug
 the wrong program. Pick a qualified name (`ErrorDeNegocio`, `AppError`) for anything domain-specific. [test: compiler/errors/test-nyx1013-colision-con-el-prelude]
 
-15. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+16. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.** `random_bytes` is backed
 by `nyx_random_bytes` (`runtime/random.c`), which draws from a single `xorshift64` generator seeded
 once from `/dev/urandom` (`rng_init`, `runtime/random.c`) — fine for simulation, sampling, jitter, or
@@ -1353,7 +1363,7 @@ Use `random_bytes`/`random_int`/`random_float` for anything where predictability
 use `csprng_bytes` for anything where predictability is a security breach (password salts, session
 tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
 
-16. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
+17. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
 `sqlite_query`/`sqlite_query_named` and their `Result`-returning twins return every value as
 text, and SQL NULL comes back as a one-byte sentinel, not as `""`. Comparing with `== ""` treats
 a real NULL as an empty string and, worse, treats a genuinely empty column as if it were NULL:
@@ -1362,16 +1372,16 @@ hand — the day the representation needs to change, it changes in one place. Th
 or TEXT column holding exactly one zero byte and nothing else reads as NULL; that is the price of
 keeping rows as `Array` of String instead of `Option<String>`. [test: compiler/stdlib-suite/test-406-sqlite-tipos-null]
 
-17. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+18. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
 decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
 lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
 which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
 does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
 
-18. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+19. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
-19. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+20. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.** The three old names still compile (removing them would be a MAJOR change) but `nyx
 vet` flags them with W110. The problem was never the behaviour, it was that four names described two
@@ -1386,7 +1396,7 @@ mechanical and safe, because the aliases are exact: `time()` → `time_epoch()`,
 clock it meant, which is the whole point — a duration measured as `monotonic_us() - inicio` is
 self-evidently right, whereas `time_us() - inicio` still needs the reader to know. [test: compiler/systems/test-410-clock-domain]
 
-20. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+21. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
 `let x: int = sleep(1)` used to pass `check OK` and die in clang with `void type only allowed for
 function results`, pointing at a temporary `.ll` you never see; since 0.31.0 the checker names your
 file, function and line. Call them as a statement. The full list (35):

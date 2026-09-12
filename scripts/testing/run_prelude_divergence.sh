@@ -49,11 +49,15 @@ cd "$(dirname "$0")/../.."
 
 PRELUDE="std/prelude.nx"
 
-# Los 5 módulos que el prelude copia. NO es una lista libre: tiene que
-# coincidir exactamente con los `imported.insert("std/...")` de
-# compiler/resolve.nx — si alguien suma un 6º módulo al prelude y no lo
-# registra acá, el gate dejaría de mirarlo. Se verifica más abajo.
-MODULES="math io array file map error"
+# Los módulos que el prelude copia. NO es una lista a mano: se LEE del propio
+# prelude (línea de contrato `//#prelude-modules:` que escribe gen_prelude.sh y
+# que compiler/resolve.nx usa para pre-registrarlos). Una cuarta copia a mano
+# volvería a abrir la puerta a que el gate mire un conjunto distinto del real.
+MODULES=$(sed -n 's|^//#prelude-modules:[[:space:]]*||p' "$PRELUDE" | head -1)
+if [ -z "$MODULES" ]; then
+    echo "  ✗ $PRELUDE no trae la línea //#prelude-modules — regenerar con 'make prelude'"
+    exit 1
+fi
 
 # --- Excepciones: lo que el prelude tiene DE MÁS a propósito -----------------
 #
@@ -114,21 +118,21 @@ else
     FAIL=$((FAIL + 1))
 fi
 
-# --- La lista de módulos del gate contra la de resolve.nx -------------------
-# (mención ≠ cobertura: si el prelude crece y este gate no se entera, vuelve a
-#  ser posible divergir en silencio, que es justo lo que existe para impedir)
-# Se descartan las líneas de comentario antes de grepear: resolve.nx cita
-# `imported.insert("std/math", 1)` como TEXTO en un comentario (línea 46) y sin
-# el filtro std/math aparecía dos veces.
+# --- resolve.nx no puede volver a hardcodear la lista -----------------------
+# Desde el 2026-09-12 la lista tiene UNA fuente: la línea //#prelude-modules del
+# prelude, que resolve.nx lee con prelude_module_list(). Una segunda copia se
+# desincroniza con el BINARIO instalado —compilador y prelude se instalan por
+# separado— y un prelude nuevo con un compilador viejo hace que el import
+# re-inlinee el módulo: %Error dos veces, `redefinition of type`, todo programa
+# rechazado (fricción de nyxerp, BLOQUEO TOTAL). Se descartan los comentarios:
+# resolve.nx cita `imported.insert("std/math", 1)` como TEXTO.
 RESOLVE_MODS=$(grep -v '^[[:space:]]*//' compiler/resolve.nx \
     | grep -oE 'imported\.insert\("std/[a-z_]+"' \
     | sed 's/.*"std\///; s/"//' | grep -v '^prelude$' | LC_ALL=C sort -u | tr '\n' ' ')
-GATE_MODS=$(printf '%s\n' $MODULES | LC_ALL=C sort | tr '\n' ' ')
-if [ "$RESOLVE_MODS" != "$GATE_MODS" ]; then
-    echo "  ✗ la lista de módulos del prelude cambió en compiler/resolve.nx"
-    echo "      resolve.nx pre-registra: $RESOLVE_MODS"
-    echo "      este gate compara:       $GATE_MODS"
-    echo "    (actualizar MODULES en scripts/testing/run_prelude_divergence.sh)"
+if [ -n "$RESOLVE_MODS" ]; then
+    echo "  ✗ compiler/resolve.nx volvió a hardcodear módulos del prelude: $RESOLVE_MODS"
+    echo "      la lista vive en la línea //#prelude-modules del prelude y se lee con"
+    echo "      prelude_module_list(); una segunda copia se desincroniza con el binario"
     FAIL=$((FAIL + 1))
 fi
 
