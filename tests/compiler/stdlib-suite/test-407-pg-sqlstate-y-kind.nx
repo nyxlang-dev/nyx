@@ -1,0 +1,56 @@
+// `pg_sqlstate` y el `kind` de los errores de std/postgres.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-09 y 10, IDEA)
+//
+// Dos cosas que la stdlib sabía y no decía:
+//
+// 1. `pg_parse_error` extrae el SQLSTATE del ErrorResponse —lo tiene
+//    ESTRUCTURADO— y lo vuelve a meter dentro del texto, porque es alfanumérico
+//    ("42P01") y no entra en el `int` de `Error`. Quien necesitaba distinguir
+//    una violación de unicidad de cualquier otra falla —un ERP, en cada alta—
+//    tenía que buscar ese sufijo dentro de una cadena, y el día que el formato
+//    cambiara se rompía cada proyecto que lo leía.
+//
+// 2. Los 37 errores del módulo decían `kind = "db"`: servidor caído, contraseña
+//    equivocada, tabla inexistente y unicidad violada llegaban IDÉNTICOS salvo
+//    por el texto. Ante una falla de conexión corresponde reintentar; ante una
+//    unicidad violada, decirle a la persona que ese RIF ya existe.
+//
+// Este test NO necesita servidor: `pg_sqlstate` es pura, y el `kind` de
+// conexión se ejerce contra un puerto muerto.
+//
+// Expected exit: 0
+
+import "std/postgres"
+
+fn main() -> int {
+    // El caso que el ERP necesita en cada alta.
+    let unico: Error = err_new(0, "db",
+        "duplicate key value violates unique constraint \"rif_key\" [SQLSTATE 23505]")
+    assert(pg_sqlstate(unico) == "23505", "SQLSTATE de unicidad")
+
+    // Un ']' del propio mensaje ANTES del marcador no puede confundir la
+    // lectura: PostgreSQL cita identificadores, así que pasa de verdad.
+    let tabla: Error = err_new(0, "db",
+        "relation \"x[1]\" does not exist [SQLSTATE 42P01]")
+    assert(pg_sqlstate(tabla) == "42P01", "SQLSTATE con ] previo en el mensaje")
+
+    // Sin SQLSTATE: los errores de transporte no lo traen, porque el servidor
+    // nunca respondió. Tiene que dar "", no basura.
+    let sin: Error = err_new(0, "connection", "no se pudo conectar a host:5432")
+    assert(pg_sqlstate(sin) == "", "sin SQLSTATE devuelve vacio")
+    let roto: Error = err_new(0, "db", "mensaje con [SQLSTATE sin cierre")
+    assert(pg_sqlstate(roto) == "", "marcador sin cierre devuelve vacio")
+
+    // El kind separa transporte de servidor. Puerto 1: conexión rechazada.
+    match try_pg_connect("host=127.0.0.1 port=1 user=u password=p dbname=d") {
+        Result.Ok(c) => { assert(false, "no deberia conectar al puerto 1") }
+        Result.Err(e) => {
+            assert(e.kind == "connection", "una falla de transporte es connection, no db")
+            assert(pg_sqlstate(e) == "", "un error de conexion no trae SQLSTATE")
+        }
+    }
+
+    println("OK test-407 pg_sqlstate y kind")
+    return 0
+}

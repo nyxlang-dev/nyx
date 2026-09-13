@@ -173,11 +173,11 @@ pub fn pg_conninfo_get(conninfo: String, clave: String, por_defecto: String) -> 
 fn pg_w(fd: int, tls: int, datos: String) -> Result<int, Error> {
     if tls != 0 {
         let n: int = tls_write(tls, datos)
-        if n < 0 { return Result.Err(err_new(0, "db", "escritura TLS fallida")) }
+        if n < 0 { return Result.Err(err_new(0, "connection", "escritura TLS fallida")) }
         return Result.Ok(n)
     }
     match try_tcp_write(fd, datos) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", e.msg)) }
         Result.Ok(n) => { return Result.Ok(n) }
     }
 }
@@ -189,12 +189,12 @@ fn pg_rx(fd: int, tls: int, n: int) -> Result<String, Error> {
     if tls != 0 {
         let datos: String = tls_read(tls, n)
         if datos.byte_length() != n {
-            return Result.Err(err_new(0, "db", "lectura TLS incompleta: se esperaban " + int_to_string(n) + " bytes, llegaron " + int_to_string(datos.byte_length())))
+            return Result.Err(err_new(0, "connection", "lectura TLS incompleta: se esperaban " + int_to_string(n) + " bytes, llegaron " + int_to_string(datos.byte_length())))
         }
         return Result.Ok(datos)
     }
     match try_tcp_read_exact(fd, n) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", e.msg)) }
         Result.Ok(datos) => { return Result.Ok(datos) }
     }
 }
@@ -207,7 +207,7 @@ pub fn pg_read_message(fd: int, tls: int) -> Result<Array, Error> {
             // La longitud SE INCLUYE A SÍ MISMA: el payload son 4 bytes menos.
             let largo: int = pg_read_be32(cab, 1)
             if largo < 4 {
-                return Result.Err(err_new(0, "db", "mensaje con longitud invalida: " + int_to_string(largo)))
+                return Result.Err(err_new(0, "connection", "mensaje con longitud invalida: " + int_to_string(largo)))
             }
             if largo == 4 {
                 return Result.Ok([tipo, ""])
@@ -222,6 +222,33 @@ pub fn pg_read_message(fd: int, tls: int) -> Result<Array, Error> {
 
 // ErrorResponse ('E'): campos [código: 1 byte][valor NUL-terminado]*, terminados
 // por un byte 0. Interesan 'M' (mensaje humano) y 'C' (SQLSTATE).
+// CONTRATO DE ERRORES DE ESTE MÓDULO (fricción de nyxerp, 2026-09-09 y 10)
+//
+// Hasta el 2026-09-13 los 37 errores del módulo decían `kind = "db"` y
+// `code = 0`: servidor caído, contraseña equivocada, tabla inexistente y
+// unicidad violada llegaban IDÉNTICOS salvo por el texto. Para un ERP no es lo
+// mismo — ante una falla de conexión corresponde reintentar y avisar que el
+// sistema está caído; ante una violación de unicidad corresponde decirle a la
+// persona que ese RIF ya existe. La diferencia ya estaba clara adentro del
+// módulo; solo no salía.
+//
+// El `kind` (vocabulario cerrado de std/error) distingue ahora tres cosas:
+//
+//   "connection"  el fallo es de TRANSPORTE o AUTENTICACIÓN: no se pudo conectar,
+//                 el TLS falló, el SCRAM no cerró, la conexión está cerrada, o la
+//                 escritura al socket falló. El servidor nunca respondió, así que
+//                 estos NO traen SQLSTATE. Es el caso de «reintentar».
+//   "db"          el SERVIDOR respondió con un ErrorResponse: tabla inexistente,
+//                 unicidad violada, permiso denegado. Traen SQLSTATE, que se lee
+//                 con `pg_sqlstate(e)`.
+//   "in_use"      el pool se quedó sin conexiones libres. No es ninguna de las
+//                 dos: el servidor está bien y la red también.
+//
+// `code` sigue en 0 a propósito y no va a cambiar: es un errno, y el protocolo
+// de PostgreSQL no tiene errno. Poner uno inventado haría que `errno_to_kind(code)`
+// contradijera al `kind` real. Lo que el protocolo SÍ tiene —el SQLSTATE— se lee
+// con `pg_sqlstate`.
+
 pub fn pg_parse_error(payload: String) -> Error {
     var msg: String = ""
     var sqlstate: String = ""
@@ -245,6 +272,41 @@ pub fn pg_parse_error(payload: String) -> Error {
     return err_new(0, "db", msg)
 }
 
+// El SQLSTATE de un Error que produjo este módulo, o "" si no vino.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-10): `pg_parse_error` extrae el
+// campo 'C' del ErrorResponse —lo tiene ESTRUCTURADO— y lo vuelve a meter dentro
+// del texto, porque el SQLSTATE es alfanumérico ("42P01") y no entra en el `int`
+// de `Error`. Hasta acá, quien necesitaba distinguir una violación de unicidad
+// de cualquier otra falla —y un ERP la necesita en cada alta— tenía que buscar
+// ese sufijo dentro de una cadena. La stdlib lo sabía y lo entregaba como texto,
+// y del otro lado se lo volvía a parsear.
+//
+// Leerlo ACÁ, en el mismo módulo que escribe el formato, es lo que permite que
+// el formato cambie sin romper a nadie. Antes, el día que ese sufijo cambiara se
+// rompía cada proyecto que lo leía por su cuenta.
+//
+//     match try_pg_exec(conn, sql) {
+//         Result.Err(e) => {
+//             if pg_sqlstate(e) == "23505" { /* ese RIF ya existe */ }
+//         }
+//     }
+//
+// Devuelve "" cuando el error no trae SQLSTATE: los de transporte y
+// autenticación no lo tienen, porque el servidor nunca llegó a responder.
+pub fn pg_sqlstate(e: Error) -> String {
+    let marca: String = " [SQLSTATE "
+    let pos: int = e.msg.indexOf(marca)
+    if pos < 0 { return "" }
+    let desde: int = pos + marca.byte_length()
+    // El cierre se busca DESDE el marcador, no desde el principio: el mensaje
+    // del servidor puede traer su propio "]" antes (los de PostgreSQL citan
+    // identificadores), y tomar el primero devolvería basura o "".
+    let cierre: int = e.msg.indexOf("]", desde)
+    if cierre <= desde { return "" }
+    return e.msg.substring(desde, cierre)
+}
+
 // Conecta y autentica. Soporta SCRAM-SHA-256, que es el método por defecto de
 // todo PostgreSQL moderno (pg_hba.conf lo exige para TCP desde la instalación
 // estándar). Los métodos viejos (md5, trust) no se implementan a propósito:
@@ -258,11 +320,11 @@ pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error> {
 
     let sslmode: String = pg_conninfo_get(conninfo, "sslmode", "disable")
     if not pg_sslmode_valido(sslmode) {
-        return Result.Err(err_new(0, "db", pg_sslmode_error(sslmode)))
+        return Result.Err(err_new(0, "connection", pg_sslmode_error(sslmode)))
     }
 
     match try_tcp_connect(host, port) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "no se pudo conectar a " + host + ":" + int_to_string(port) + ": " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "no se pudo conectar a " + host + ":" + int_to_string(port) + ": " + e.msg)) }
         Result.Ok(fd) => {
             // El cifrado se negocia ANTES del StartupMessage — es el único
             // punto posible: después, las credenciales de SCRAM ya viajaron.
@@ -285,7 +347,7 @@ pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error> {
             let startup: String = pg_be32(cuerpo.byte_length() + 4) + cuerpo
 
             match pg_w(fd, tls, startup) {
-                Result.Err(e) => { return Result.Err(err_new(0, "db", "startup: " + e.msg)) }
+                Result.Err(e) => { return Result.Err(err_new(0, "connection", "startup: " + e.msg)) }
                 Result.Ok(_) => {}
             }
 
@@ -336,11 +398,11 @@ fn pg_sslmode_error(modo: String) -> String {
 fn pg_negociar_tls(fd: int, host: String, sslmode: String) -> Result<int, Error> {
     let peticion: String = pg_be32(8) + pg_be32(80877103)
     match pg_w(fd, 0, peticion) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "SSLRequest: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "SSLRequest: " + e.msg)) }
         Result.Ok(_) => {}
     }
     match pg_rx(fd, 0, 1) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "SSLRequest sin respuesta: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "SSLRequest sin respuesta: " + e.msg)) }
         Result.Ok(resp) => {
             let marca: String = resp
             if marca != "S" {
@@ -350,9 +412,9 @@ fn pg_negociar_tls(fd: int, host: String, sslmode: String) -> Result<int, Error>
                 // claro.
                 tcp_close(fd)
                 if marca == "N" {
-                    return Result.Err(err_new(0, "db", "el servidor no acepta TLS (respondió 'N' al SSLRequest) y sslmode=" + sslmode + " lo exige"))
+                    return Result.Err(err_new(0, "connection", "el servidor no acepta TLS (respondió 'N' al SSLRequest) y sslmode=" + sslmode + " lo exige"))
                 }
-                return Result.Err(err_new(0, "db", "respuesta inesperada al SSLRequest: '" + marca + "'"))
+                return Result.Err(err_new(0, "connection", "respuesta inesperada al SSLRequest: '" + marca + "'"))
             }
             // A partir de acá el socket es del handle: con éxito lo cierra
             // tls_close, y con fracaso ya quedó cerrado adentro.
@@ -371,7 +433,7 @@ fn pg_negociar_tls(fd: int, host: String, sslmode: String) -> Result<int, Error>
                 }
             }
             if h == 0 {
-                return Result.Err(err_new(0, "db", "el handshake TLS falló con sslmode=" + sslmode + " contra " + host + " (con verify-ca/verify-full: revisá la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)"))
+                return Result.Err(err_new(0, "connection", "el handshake TLS falló con sslmode=" + sslmode + " contra " + host + " (con verify-ca/verify-full: revisá la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)"))
             }
             return Result.Ok(h)
         }
@@ -388,7 +450,7 @@ fn pg_auth_loop(fd: int, tls: int, user: String, password: String) -> Result<int
     while not listo {
         vueltas = vueltas + 1
         if vueltas > 64 {
-            return Result.Err(err_new(0, "db", "el handshake no termino en 64 mensajes"))
+            return Result.Err(err_new(0, "connection", "el handshake no termino en 64 mensajes"))
         }
         match pg_read_message(fd, tls) {
             Result.Err(e) => { return Result.Err(e) }
@@ -408,14 +470,14 @@ fn pg_auth_loop(fd: int, tls: int, user: String, password: String) -> Result<int
                             Result.Ok(_) => {}
                         }
                     } else {
-                        return Result.Err(err_new(0, "db", "metodo de autenticacion no soportado (codigo " + int_to_string(sub) + "): este cliente implementa SCRAM-SHA-256"))
+                        return Result.Err(err_new(0, "connection", "metodo de autenticacion no soportado (codigo " + int_to_string(sub) + "): este cliente implementa SCRAM-SHA-256"))
                     }
                 } else if tipo == "Z" {
                     listo = true
                 } else if tipo == "S" or tipo == "K" or tipo == "N" {
                     // ParameterStatus / BackendKeyData / NoticeResponse: se ignoran
                 } else {
-                    return Result.Err(err_new(0, "db", "mensaje inesperado durante el handshake: '" + tipo + "'"))
+                    return Result.Err(err_new(0, "connection", "mensaje inesperado durante el handshake: '" + tipo + "'"))
                 }
             }
         }
@@ -438,7 +500,7 @@ fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String)
     var ini: String = pg_cstr("SCRAM-SHA-256")
     ini = ini + pg_be32(client_first.byte_length()) + client_first
     match pg_w(fd, tls, pg_msg("p", ini)) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "SASLInitialResponse: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "SASLInitialResponse: " + e.msg)) }
         Result.Ok(_) => {}
     }
 
@@ -449,9 +511,9 @@ fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String)
             let tipo: String = m[0]
             let payload: String = m[1]
             if tipo == "E" { return Result.Err(pg_parse_error(payload)) }
-            if tipo != "R" { return Result.Err(err_new(0, "db", "esperaba SASLContinue, llego '" + tipo + "'")) }
+            if tipo != "R" { return Result.Err(err_new(0, "connection", "esperaba SASLContinue, llego '" + tipo + "'")) }
             let sub: int = pg_read_be32(payload, 0)
-            if sub != 11 { return Result.Err(err_new(0, "db", "esperaba SASLContinue (11), llego " + int_to_string(sub))) }
+            if sub != 11 { return Result.Err(err_new(0, "connection", "esperaba SASLContinue (11), llego " + int_to_string(sub))) }
 
             let server_first: String = payload.substring(4, payload.byte_length())
             let salt_b64: String = pg_scram_attr(server_first, "s")
@@ -461,7 +523,7 @@ fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String)
             // El nonce del servidor DEBE empezar con el nuestro: si no, no está
             // respondiendo a ESTE intercambio.
             if not nonce_comb.startsWith(nonce) {
-                return Result.Err(err_new(0, "db", "el nonce del servidor no extiende el del cliente"))
+                return Result.Err(err_new(0, "connection", "el nonce del servidor no extiende el del cliente"))
             }
 
             // c=biws es base64("n,,") — el channel binding vacío
@@ -473,7 +535,7 @@ fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String)
 
             let client_final: String = client_final_bare + ",p=" + proof
             match pg_w(fd, tls, pg_msg("p", client_final)) {
-                Result.Err(e) => { return Result.Err(err_new(0, "db", "SASLResponse: " + e.msg)) }
+                Result.Err(e) => { return Result.Err(err_new(0, "connection", "SASLResponse: " + e.msg)) }
                 Result.Ok(_) => {}
             }
 
@@ -484,9 +546,9 @@ fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String)
                     let t2: String = m2[0]
                     let p2: String = m2[1]
                     if t2 == "E" { return Result.Err(pg_parse_error(p2)) }
-                    if t2 != "R" { return Result.Err(err_new(0, "db", "esperaba SASLFinal, llego '" + t2 + "'")) }
+                    if t2 != "R" { return Result.Err(err_new(0, "connection", "esperaba SASLFinal, llego '" + t2 + "'")) }
                     let sub2: int = pg_read_be32(p2, 0)
-                    if sub2 != 12 { return Result.Err(err_new(0, "db", "esperaba SASLFinal (12), llego " + int_to_string(sub2))) }
+                    if sub2 != 12 { return Result.Err(err_new(0, "connection", "esperaba SASLFinal (12), llego " + int_to_string(sub2))) }
 
                     let server_final: String = p2.substring(4, p2.byte_length())
                     let v: String = pg_scram_attr(server_final, "v")
@@ -494,7 +556,7 @@ fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String)
                     // verificación es aceptar un servidor impostor que no
                     // conoce la contraseña.
                     if not constant_time_eq(v, server_sig_esperada) {
-                        return Result.Err(err_new(0, "db", "la firma del servidor no valida: puede no ser el servidor que dice ser"))
+                        return Result.Err(err_new(0, "connection", "la firma del servidor no valida: puede no ser el servidor que dice ser"))
                     }
                     return Result.Ok(0)
                 }
@@ -689,9 +751,9 @@ fn pg_es_numero(s: String) -> bool {
 
 // Ejecuta una sentencia sin resultados y devuelve las filas AFECTADAS.
 pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error> {
-    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    if not conn.abierta { return Result.Err(err_new(0, "connection", "la conexion esta cerrada")) }
     match pg_w(conn.fd, conn.tls, pg_msg("Q", pg_cstr(sql))) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "enviar query: " + e.msg)) }
         Result.Ok(_) => {}
     }
     match pg_read_result(conn.fd, conn.tls) {
@@ -706,9 +768,9 @@ pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error> {
 // Ejecuta una consulta y devuelve las filas: Array de filas, cada fila un
 // Array de String en formato TEXT. Un NULL viene como pg_null().
 pub fn try_pg_query(conn: PgConn, sql: String) -> Result<Array, Error> {
-    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    if not conn.abierta { return Result.Err(err_new(0, "connection", "la conexion esta cerrada")) }
     match pg_w(conn.fd, conn.tls, pg_msg("Q", pg_cstr(sql))) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "enviar query: " + e.msg)) }
         Result.Ok(_) => {}
     }
     match pg_read_result(conn.fd, conn.tls) {
@@ -727,9 +789,9 @@ pub fn try_pg_query(conn: PgConn, sql: String) -> Result<Array, Error> {
 // sea, mantener el esquema en dos lugares, que es el mismo problema que
 // #[derive(Fields)] resuelve del otro lado.
 pub fn try_pg_query_cols(conn: PgConn, sql: String) -> Result<Array, Error> {
-    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    if not conn.abierta { return Result.Err(err_new(0, "connection", "la conexion esta cerrada")) }
     match pg_w(conn.fd, conn.tls, pg_msg("Q", pg_cstr(sql))) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar query: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "enviar query: " + e.msg)) }
         Result.Ok(_) => {}
     }
     match pg_read_result(conn.fd, conn.tls) {
@@ -851,7 +913,7 @@ pub fn pg_bool(b: bool) -> String {
 // ParseComplete ('1'), BindComplete ('2'), RowDescription ('T'), DataRow* y
 // ReadyForQuery. Statement y portal SIN NOMBRE (""), formato text (0).
 pub fn try_pg_query_params(conn: PgConn, sql: String, params: Array) -> Result<Array, Error> {
-    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    if not conn.abierta { return Result.Err(err_new(0, "connection", "la conexion esta cerrada")) }
 
     // Parse: nombre del statement (vacío) + query + 0 tipos declarados
     // (el servidor los infiere).
@@ -880,7 +942,7 @@ pub fn try_pg_query_params(conn: PgConn, sql: String, params: Array) -> Result<A
 
     let paquete: String = pg_msg("P", parse) + pg_msg("B", bind) + pg_msg("E", execute) + pg_msg("S", "")
     match pg_w(conn.fd, conn.tls, paquete) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar parametrizada: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "enviar parametrizada: " + e.msg)) }
         Result.Ok(_) => {}
     }
 
@@ -896,7 +958,7 @@ pub fn try_pg_query_params(conn: PgConn, sql: String, params: Array) -> Result<A
 // Igual que la anterior pero para sentencias sin resultado: devuelve las filas
 // afectadas.
 pub fn try_pg_exec_params(conn: PgConn, sql: String, params: Array) -> Result<int, Error> {
-    if not conn.abierta { return Result.Err(err_new(0, "db", "la conexion esta cerrada")) }
+    if not conn.abierta { return Result.Err(err_new(0, "connection", "la conexion esta cerrada")) }
 
     var parse: String = pg_cstr("") + pg_cstr(sql) + pg_be16(0)
     var bind: String = pg_cstr("") + pg_cstr("")
@@ -917,7 +979,7 @@ pub fn try_pg_exec_params(conn: PgConn, sql: String, params: Array) -> Result<in
 
     let paquete: String = pg_msg("P", parse) + pg_msg("B", bind) + pg_msg("E", execute) + pg_msg("S", "")
     match pg_w(conn.fd, conn.tls, paquete) {
-        Result.Err(e) => { return Result.Err(err_new(0, "db", "enviar parametrizada: " + e.msg)) }
+        Result.Err(e) => { return Result.Err(err_new(0, "connection", "enviar parametrizada: " + e.msg)) }
         Result.Ok(_) => {}
     }
 
@@ -1073,7 +1135,7 @@ pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error> {
         }
         i = i + 1
     }
-    return Result.Err(err_new(0, "db", "el pool no tiene conexiones libres (" + int_to_string(pool.en_uso.length()) + " en uso)"))
+    return Result.Err(err_new(0, "in_use", "el pool no tiene conexiones libres (" + int_to_string(pool.en_uso.length()) + " en uso)"))
 }
 
 // Devuelve la conexión al pool. Hace ROLLBACK por las dudas: una conexión

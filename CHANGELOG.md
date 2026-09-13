@@ -20,6 +20,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`pg_sqlstate(e: Error) -> String`** (fricción de nyxerp, 2026-09-10). `pg_parse_error` extrae el
+  campo `C` del ErrorResponse —lo tiene ESTRUCTURADO— y lo vuelve a meter dentro del texto, porque
+  el SQLSTATE es alfanumérico (`"42P01"`) y no entra en el `int` de `Error`. Quien necesitaba
+  distinguir una violación de unicidad de cualquier otra falla —un ERP, en cada alta— tenía que
+  buscar ese sufijo dentro de una cadena, y el día que el formato cambiara se rompía cada proyecto
+  que lo leía por su cuenta. Leerlo en el mismo módulo que lo escribe es lo que permite que el
+  formato cambie sin romper a nadie. Devuelve `""` cuando no vino: los errores de transporte no
+  traen SQLSTATE porque el servidor nunca respondió.
 - **`CAPABILITIES.md` incluye los 191 builtins globales — antes no tenía ni uno** (fricción de
   nyxerp, 2026-09-11, DOC). El índice que `AGENTS.md` le dice a un agente que consulte para saber
   QUÉ EXISTE se arma escaneando `std/*.nx`, y los builtins globales no viven ahí: los declara el
@@ -340,6 +348,32 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Los errores de `std/postgres` distinguen transporte de servidor** (fricción de nyxerp, pedido
+  dos veces: 2026-09-09 y 10). Los 37 decían `kind = "db"`: servidor caído, contraseña equivocada,
+  tabla inexistente y unicidad violada llegaban **idénticos** salvo por el texto. Para un ERP no es
+  lo mismo — ante una falla de conexión corresponde reintentar y avisar que el sistema está caído;
+  ante una unicidad violada, decirle a la persona que ese RIF ya existe. La diferencia ya estaba
+  clara adentro del módulo; solo no salía.
+  Clasificados por función contenedora, no a ojo: **34 `connection`** (transporte y autenticación),
+  **2 `db`** (el servidor respondió con un ErrorResponse) y **1 `in_use`** (el pool sin conexiones
+  libres — no es ninguna de las dos: ni la red ni el servidor fallaron, y `in_use` ya estaba en el
+  vocabulario cerrado de `std/error`).
+  `code` se queda en `0` y queda documentado como definitivo: es un errno y el protocolo de
+  PostgreSQL no tiene errno, así que inventar uno haría que `errno_to_kind(code)` contradijera al
+  `kind` real. Lo que el protocolo sí tiene es el SQLSTATE.
+
+- **`<S>_desde_fila` dice qué campo falta cuando la fila viene corta.** El error era «Índice fuera
+  de rango [0..1)», que no nombra ni el struct ni el campo — el propio reporte lo puso al lado de
+  los otros mensajes del derive: «los mensajes del booleano y de `pg_col` son de otra calidad; este
+  desentona». Ahora: «`Contacto_desde_fila`: la fila trae 1 columna(s) y el struct espera 3 — falta
+  el campo `'rif'` (posición 1)», con la pista de que la fila la arma el servidor y hay que revisar
+  el `SELECT`. Es `nyx_row_cell` en el runtime, que el derive invoca con el contexto que solo el
+  compilador conoce.
+  Es la mitad acotada del pedido 3; que `desde_fila` **no tire el proceso** ante un dato inesperado
+  queda montado como arco (`docs/design/specs/2026-09-13-derive-fila-sin-abortar-design.md`), con la
+  medición que lo ordena: las dos salidas posibles —una función que valida y la variante `Result`—
+  necesitan el MISMO sustrato de sondeos que no aborten, así que la barata no es trabajo tirado sino
+  la primera mitad de la cara.
 - **El test de paridad nativo↔wasm ya no dice `PASS` cuando no comparó nada.** Sin `wasmtime` en la
   máquina, la rama que solo verifica que el `.wasm` se construyó ponía la MISMA etiqueta `PASS` que
   el caso completo. Quien leyera la salida creería que la paridad se verificó, cuando lo único

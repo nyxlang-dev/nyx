@@ -69,6 +69,11 @@ int64_t nyx_array_index_of_tagged(nyx_array_t* arr, int64_t value, int64_t needl
 // y difieren, aborta ordenado con diagnóstico en vez de SEGV/basura silenciosa.
 // UNKNOWN y tags opacos (PTR/ARRAY/MAP) hacen passthrough histórico.
 int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_tag);
+// Celda de una fila de base, con el struct y el campo en el mensaje de error.
+// La usa `<S>_desde_fila` del #[derive(Fields)] — ver runtime-arrays.c.
+int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
+                     const char* struct_name, const char* field_name,
+                     int64_t n_campos);
 
 // Lectura float chequeada: FLOAT → bits; INT/BOOL/UNKNOWN → widening histórico
 // (sitofp); STRING → abort diagnosticado.

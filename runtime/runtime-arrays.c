@@ -574,6 +574,41 @@ static const char* nyx_tag_name(int64_t t) {
     }
 }
 
+// Celda de una FILA de base de datos, leída por `<S>_desde_fila` del
+// `#[derive(Fields)]`. Es nyx_array_get_checked con contexto.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-10): cuando la fila venía más
+// corta que el struct, el error era «Índice fuera de rango [0..1)» — no decía
+// qué campo faltaba ni de qué struct se trataba. El propio reporte lo puso al
+// lado de los otros mensajes del derive: «los mensajes del booleano y de pg_col
+// son de otra calidad; este desentona».
+//
+// La diferencia importa porque la fila la arma el SERVIDOR, no el compilador:
+// una migración a medias o un SELECT con menos columnas de las esperadas es un
+// dato del mundo, y el mensaje tiene que alcanzar para arreglarlo sin depurar.
+int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
+                     const char* struct_name, const char* field_name,
+                     int64_t n_campos) {
+    if (!fila) {
+        fprintf(stderr,
+            "💥 Runtime Error: %s_desde_fila recibió una fila NULL"
+            " (campo '%s', posición %" PRId64 ")\n",
+            struct_name ? struct_name : "?", field_name ? field_name : "?", index);
+        exit(1);
+    }
+    if (index < 0 || index >= fila->length) {
+        fprintf(stderr,
+            "💥 Runtime Error: %s_desde_fila: la fila trae %" PRId64 " columna(s)"
+            " y el struct espera %" PRId64 " — falta el campo '%s' (posición %" PRId64 ").\n"
+            "   La fila la arma el servidor: revisá que el SELECT traiga todas las"
+            " columnas, en el orden de los campos del struct.\n",
+            struct_name ? struct_name : "?", fila->length, n_campos,
+            field_name ? field_name : "?", index);
+        exit(1);
+    }
+    return nyx_array_get_checked(fila, index, expected_tag);
+}
+
 int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_tag) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
