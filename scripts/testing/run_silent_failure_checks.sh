@@ -1154,6 +1154,36 @@ fi
 
 fi   # clang disponible
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Los dos shims WASI son UNA copia, no dos artefactos
+#
+# `playground/static/nyx-wasi-shim.js` es el mismo archivo que
+# `examples/browser/nyx-wasi-shim.js`: el playground lo importa tal cual desde
+# su index.html. Estuvo DOS MESES sin actualizarse (4-jul contra 13-sep) y llegó
+# a 253 líneas de atraso sin que nada lo dijera.
+#
+# Lo que se midió al sincronizarlos, para no exagerar el problema ni minimizarlo:
+# la divergencia entera era maquinaria de cierres y bindings DOM/browser, que el
+# playground NO provee a los programas del usuario (llama a `runNyxWasm(bytes,
+# {onOutput})` y nada más). O sea que el atraso no cambiaba lo que el playground
+# hacía: los programas de stdout corrían igual con los dos. El riesgo es futuro,
+# no presente — y es exactamente por eso que hace falta una guarda: una copia que
+# deriva en silencio se descubre el día que la diferencia SÍ importa, que es el
+# peor día para descubrirla.
+name="shims-wasi-identicos"
+if diff -q examples/browser/nyx-wasi-shim.js playground/static/nyx-wasi-shim.js > /dev/null 2>&1; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s — playground/static/nyx-wasi-shim.js difiere de examples/browser/\n" "$name"
+    printf "    son UNA copia: sincronizar con\n"
+    printf "      cp examples/browser/nyx-wasi-shim.js playground/static/nyx-wasi-shim.js\n"
+    diff examples/browser/nyx-wasi-shim.js playground/static/nyx-wasi-shim.js 2>/dev/null \
+        | grep -c "^[<>]" | sed 's/^/    líneas distintas: /'
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name")
+fi
+
 
 echo ""
 echo "  $PASS passed, $FAIL failed"

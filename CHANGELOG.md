@@ -401,6 +401,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Los dos shims WASI vuelven a ser una sola copia.** `playground/static/nyx-wasi-shim.js` llevaba
+  desde el 4 de julio sin tocarse —253 líneas de atraso respecto de
+  `examples/browser/nyx-wasi-shim.js`, que es el mismo archivo— sin que nada lo dijera. Sincronizado,
+  con guarda que falla si vuelven a diferir (`run_silent_failure_checks.sh`, `shims-wasi-identicos`),
+  verificada en rojo contra la versión vieja.
+  **Lo que la medición desmintió, y vale decirlo**: la ficha suponía que el playground «iba a fallar
+  distinto que el real», y no era así. La divergencia entera era maquinaria de cierres y bindings
+  DOM/browser, que el playground NO provee a los programas del usuario —su `index.html` llama a
+  `runNyxWasm(bytes, {onOutput})` y nada más—, así que el núcleo WASI no difería en una sola línea y
+  tres programas reales corrieron idéntico por las dos versiones. El riesgo era FUTURO, no presente.
+  Lo que vale es la guarda: una copia que deriva en silencio se descubre el día que la diferencia sí
+  importa, que es el peor día para descubrirla.
 - **Los errores de `std/postgres` distinguen transporte de servidor** (fricción de nyxerp, pedido
   dos veces: 2026-09-09 y 10). Los 37 decían `kind = "db"`: servidor caído, contraseña equivocada,
   tabla inexistente y unicidad violada llegaban **idénticos** salvo por el texto. Para un ERP no es
