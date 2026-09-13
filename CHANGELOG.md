@@ -340,6 +340,33 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`toLower()`/`toUpper()` convierten Unicode, no solo ASCII** (fricción de nyxerp, 2026-09-10).
+  Convertían byte a byte con `tolower()`/`toupper()`, así que con cualquier letra acentuada devolvían
+  el texto **a medio convertir y sin avisar**: `"FERRETERÍA".toLower()` daba `"ferreterÍa"` —con la
+  `Í` en mayúscula en medio de una palabra en minúsculas— y `"Ñandú".toLower()` no tocaba la `Ñ`.
+  Lo grave no era la limitación —es razonable que una stdlib joven empiece por ASCII— sino que el
+  resultado no es ni el original ni el convertido: es una tercera cosa que no sirve para comparar y
+  que **se ve casi bien**, así que el error sobrevive a la inspección visual. Quien lo reportó lo
+  encontró escribiendo la búsqueda de contactos de un ERP: «PEÑA» no encontraba «Peña».
+  **Alcance**: ASCII + Latin-1 Supplement + Latin Extended-A — español, portugués, francés, italiano,
+  alemán, polaco, checo, croata, rumano, húngaro, báltico. Griego y cirílico quedan intactos (fuera
+  del alcance declarado, igual que antes: no empeora nada). Excluidos a propósito, cada uno con su
+  razón: `ß` (su mayúscula son dos letras), `ŉ` y `ſ` (mayúsculas de largo distinto), el par turco
+  `İ`/`ı` (el mapeo correcto depende del idioma y una stdlib sin locale no puede decidirlo), `µ` (su
+  mayúscula es griega) y `×` `÷` (símbolos, no letras).
+  **Todo par mapeado conserva la longitud en bytes**, y eso sostiene el resto del diseño: se escribe
+  sobre un buffer del mismo tamaño, no se mueve ningún índice de bytes que el llamador tuviera
+  calculado, y no hay reasignación que pueda fallar. El UTF-8 inválido se copia crudo, así que un
+  string con bytes binarios no se corrompe al cambiar de caja.
+  Se eligió arreglar las funciones existentes en vez de agregar un par nuevo —el reporte ofrecía las
+  dos salidas— porque el comportamiento viejo era silently-wrong: nadie puede depender de un texto a
+  medio convertir. Medido antes de decidir: 54 usos en el core y los cinco stacks, **ninguno** con
+  texto no-ASCII.
+  Tests: `test-415` fija conversión, exclusiones e invariante de longitud; el unitario de C agrega
+  los cuatro rangos par/impar de Latin Extended-A por separado, porque el pie cambia dos veces y una
+  regla única daría mal la mitad. Y `LLM.md` dice ahora el alcance **en la tabla de métodos de
+  String**, que era el segundo pedido del reporte: hasta acá aparecían sin ninguna nota y uno asume
+  que hacen lo que dice el nombre.
 - **BLOQUEO TOTAL corregido: `import "std/error"` definía `%Error` dos veces y clang rechazaba el
   programa entero** (fricción de nyxerp, 2026-09-12, LENGUAJE y urgente). Un equipo se quedó sin
   poder compilar, probar ni ejecutar nada en medio de su jornada, **sin haber tocado nada**:

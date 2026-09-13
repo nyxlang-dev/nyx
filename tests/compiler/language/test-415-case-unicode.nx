@@ -1,0 +1,58 @@
+// `toLower`/`toUpper` convierten Unicode, no solo ASCII.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-10, DOC + IDEA)
+//
+// Convertían byte a byte con tolower()/toupper(), así que con cualquier letra
+// acentuada devolvían el texto A MEDIO CONVERTIR y sin avisar:
+//
+//     "FERRETERÍA".toLower()  →  "ferreterÍa"     (la Í queda en mayúscula)
+//     "Ñandú".toLower()       →  "Ñandú"          (la Ñ no se toca)
+//
+// Lo grave no era la limitación sino que el resultado no es ni el original ni el
+// convertido: es una tercera cosa que no sirve para comparar y que SE VE CASI
+// BIEN, así que el error sobrevive a la inspección visual. Quien lo reportó lo
+// encontró buscando contactos en un ERP: «PEÑA» no encontraba «Peña», y eso en
+// Venezuela lo descubre la primera persona que teclea un apellido con acento.
+//
+// ALCANCE: ASCII + Latin-1 Supplement + Latin Extended-A. Griego y cirílico
+// quedan INTACTOS a propósito (fuera del alcance declarado), igual que antes.
+//
+// Este test fija las tres cosas que pueden romperse por separado: la conversión
+// correcta, las exclusiones deliberadas, y la INVARIANTE DE LONGITUD — todo par
+// mapeado conserva los bytes, que es lo que permite escribir sobre un buffer del
+// mismo tamaño sin reasignar ni mover índices.
+//
+// Expected exit: 0
+
+fn linea(etiqueta: String, s: String) {
+    println(etiqueta + "|" + s.toLower() + "|" + s.toUpper() + "|"
+            + int_to_string(s.length()) + "/"
+            + int_to_string(s.toLower().length()) + "/"
+            + int_to_string(s.toUpper().length()))
+}
+
+fn main() -> int {
+    linea("ascii", "Hello World 123")
+    linea("espanol", "PEÑA Peña peña")
+    linea("latin1", "ÀÖØÞ àöøþ")
+    linea("simbolos", "× ÷")
+    linea("eszett", "ß Straße")
+    linea("ydieresis", "ÿ Ÿ")
+    linea("latinApar", "ĀāĈĉĖėĲĳ")
+    linea("latinAimpar", "ĹĺŇňŹźŽž")
+    linea("turco", "İı")
+    linea("griego", "ΑΒΓ αβγ")
+    linea("cirilico", "АБВ абв")
+    linea("vacio", "")
+
+    // El caso de uso del reporte: comparar sin distinguir mayúsculas.
+    if "PEÑA".toLower() == "Peña".toLower() { println("PENA=SI") } else { println("PENA=NO") }
+    if "FERRETERÍA".toLower() == "Ferretería".toLower() { println("FERR=SI") } else { println("FERR=NO") }
+
+    // Bytes binarios / UTF-8 inválido: no se corrompen ni cambian de largo.
+    let crudo: String = chr(0xC3) + chr(0x28) + "A" + chr(0xFF) + chr(0x80) + "z"
+    println("crudo=" + int_to_string(crudo.length()) + "/"
+            + int_to_string(crudo.toLower().length()) + "/"
+            + int_to_string(crudo.toUpper().length()))
+    return 0
+}

@@ -628,7 +628,7 @@ defer cleanup()               // bare-expression form also works (v0.16+)
 | `split(sep)` | 1 | Array | — |
 | `contains(s)` | 1 | bool | — |
 | `trim()` | 0 | String | — |
-| `toUpper()` / `toLower()` | 0 | String | (aliases: `to_upper`, `to_lower`) |
+| `toUpper()` / `toLower()` | 0 | String | Unicode: ASCII + Latin-1 Supplement + Latin Extended-A (español, portugués, francés, italiano, alemán, polaco, checo, croata, rumano, húngaro, báltico). Griego y cirílico quedan INTACTOS, igual que `ß` (su mayúscula son dos letras), `İ`/`ı` (el par turco depende del idioma) y los símbolos `×` `÷`. La salida mide siempre lo mismo que la entrada, y el UTF-8 inválido se copia crudo. (aliases: `to_upper`, `to_lower`) |
 | `startsWith(p)` / `endsWith(s)` | 1 | bool | (aliases: `starts_with`, `ends_with`) |
 | `replace(old, new)` | 2 | String | — |
 | `repeat(n)` | 1 | String | — |
@@ -1255,7 +1255,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1308,7 +1308,18 @@ treat `assert()` as fatal, not recoverable. [test: 24-bare-return-assert]
 `return 0` under the hood, so `fn f() { return }` is valid and behaves like `fn f() { return 0 }`.
 Only meaningful in `void` functions; a non-void function still needs an explicit value. [test: 24-bare-return-assert]
 
-11. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
+11. **`toUpper()`/`toLower()` cover ASCII + Latin-1 Supplement + Latin Extended-A — Greek and Cyrillic
+are left untouched.** That covers Spanish, Portuguese, French, Italian, German, Polish, Czech,
+Croatian, Romanian, Hungarian and the Baltic languages. Deliberately unchanged: `ß` (its uppercase
+is two letters, `SS`), `İ`/`ı` (the Turkish pair — the correct mapping depends on the language, and
+a stdlib without locale cannot decide it), and `×` `÷` (math symbols, not letters). Output is always
+the same byte length as the input, and invalid UTF-8 is copied through untouched, so binary data
+survives a case change. Until 2026-09-10 these were byte-wise ASCII-only and returned text
+HALF-CONVERTED without warning — `"FERRETERÍA".toLower()` gave `"ferreterÍa"`, which is neither the
+original nor the converted string, and looks almost right. For language-aware collation (sorting,
+`ñ` after `n`) use the database: this is case mapping, not collation. [test: compiler/language/test-415-case-unicode]
+
+12. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
 `t`/`f` and `1`/`0` — and ABORTS naming the value on anything else.** This matters because the rows it
 consumes come from two sources that disagree: `<Struct>_valores()` writes `"true"`/`"false"`, while
 PostgreSQL's text format for `boolean` is `t`/`f`. Until 0.31.1 the generated code compared the cell
@@ -1319,7 +1330,7 @@ unrecognized text aborts instead of assuming `false`: a boolean nobody can read 
 assuming it would write a wrong decision into a system that bills people. Verified end to end against
 a real PostgreSQL server in `tests/postgres/05-orm-fields.nx`, with rows in both states. [test: postgres/05-orm-fields] [test: compiler/ecosystem/test-405-derive-fields]
 
-12. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`** — pushing a bare
+13. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`** — pushing a bare
 struct into an untyped `Array` and then reading it back with `for x: dyn Trait in arr` crashes with a
 SIGSEGV. Converting to `dyn` changes the REPRESENTATION (a pointer to the struct becomes a fat pointer
 `{ data, vtable }`), so it has to happen when the value is WRITTEN: once it is in the array every
@@ -1330,7 +1341,7 @@ heterogeneous list — several impls in the same collection — work. Annotating
 than failing to compile, is pushing the concrete struct into an untyped `Array` and reading it as
 `dyn`. [test: compiler/language/test-391-dyn-trait-array]
 
-13. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
+14. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
 `try_pg_query` returns every value as text, and SQL NULL comes back as a one-byte sentinel, not
 as `""`. Comparing with `== ""` treats a real NULL as an empty string and, worse, treats a
 genuinely empty column as if it were NULL: two different values collapse into one. Always use
@@ -1339,7 +1350,7 @@ changes in one place. The one edge: a `bytea` column holding exactly one zero by
 else reads as NULL; that is the price of keeping rows as `Array` of String instead of
 `Option<String>`. [test: postgres/02-query]
 
-14. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
+15. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
 line — never hardcoded in the compiler.** The compiler reads that line to know which `std/` modules
 to pre-register as "already imported"; a module in the prelude that is NOT pre-registered gets
 re-inlined by an explicit `import`, and the IR then defines its types twice (`redefinition of type`,
@@ -1349,7 +1360,7 @@ install separately, and a new prelude read by an older compiler breaks every pro
 the new module — with nothing changed on the user's side. Two guards refuse to let the copy come
 back (`gen_prelude.sh`, `run_prelude_divergence.sh`). [test: compiler/types/test-372-std-error]
 
-15. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
+16. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
 prelude is concatenated into every program, so `Error`, `err_new`, `errno_to_kind`, `sort_int`,
 `checked_add`, `RoundMode` and the rest of `std/io`/`math`/`array`/`file`/`map`/`error` already
 occupy the namespace. `struct Error { codigo: int }` of your own does not shadow the prelude's — it
@@ -1358,7 +1369,7 @@ prelude's declaration won SILENTLY and the errors that followed described fields
 (`field 'codigo' does not exist in struct 'Error'`, pointing at YOUR line), which sent you to debug
 the wrong program. Pick a qualified name (`ErrorDeNegocio`, `AppError`) for anything domain-specific. [test: compiler/errors/test-nyx1013-colision-con-el-prelude]
 
-16. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+17. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.** `random_bytes` is backed
 by `nyx_random_bytes` (`runtime/random.c`), which draws from a single `xorshift64` generator seeded
 once from `/dev/urandom` (`rng_init`, `runtime/random.c`) — fine for simulation, sampling, jitter, or
@@ -1375,7 +1386,7 @@ Use `random_bytes`/`random_int`/`random_float` for anything where predictability
 use `csprng_bytes` for anything where predictability is a security breach (password salts, session
 tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
 
-17. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
+18. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
 `sqlite_query`/`sqlite_query_named` and their `Result`-returning twins return every value as
 text, and SQL NULL comes back as a one-byte sentinel, not as `""`. Comparing with `== ""` treats
 a real NULL as an empty string and, worse, treats a genuinely empty column as if it were NULL:
@@ -1384,16 +1395,16 @@ hand — the day the representation needs to change, it changes in one place. Th
 or TEXT column holding exactly one zero byte and nothing else reads as NULL; that is the price of
 keeping rows as `Array` of String instead of `Option<String>`. [test: compiler/stdlib-suite/test-406-sqlite-tipos-null]
 
-18. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+19. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
 decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
 lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
 which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
 does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
 
-19. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+20. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
-20. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+21. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.** The three old names still compile (removing them would be a MAJOR change) but `nyx
 vet` flags them with W110. The problem was never the behaviour, it was that four names described two
@@ -1408,7 +1419,7 @@ mechanical and safe, because the aliases are exact: `time()` → `time_epoch()`,
 clock it meant, which is the whole point — a duration measured as `monotonic_us() - inicio` is
 self-evidently right, whereas `time_us() - inicio` still needs the reader to know. [test: compiler/systems/test-410-clock-domain]
 
-21. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+22. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
 `let x: int = sleep(1)` used to pass `check OK` and die in clang with `void type only allowed for
 function results`, pointing at a temporary `.ll` you never see; since 0.31.0 the checker names your
 file, function and line. Call them as a statement. The full list (35):

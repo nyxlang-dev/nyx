@@ -402,34 +402,166 @@ bool nyx_string_ends_with(nyx_string* str, nyx_string* suffix) {
 
 // ===== TRANSFORMACIONES =====
 
-// Convertir a mayúsculas
-nyx_string* nyx_string_to_upper(nyx_string* str) {
+// ---- Cambio de caja Unicode (fricción de nyxerp, 2026-09-10) ----------------
+//
+// `toLower`/`toUpper` convertían BYTE A BYTE con tolower()/toupper(), o sea solo
+// ASCII. Con una letra acentuada devolvían el texto A MEDIO CONVERTIR y sin
+// avisar: "FERRETERÍA".toLower() daba "ferreterÍa", con la Í en mayúscula en
+// medio de una palabra en minúsculas, y "Ñandú".toLower() no tocaba la Ñ.
+//
+// Lo grave no era la limitación —es razonable que una stdlib joven empiece por
+// ASCII— sino que el resultado no es ni el original ni el convertido: es una
+// tercera cosa que no sirve para comparar y que SE VE CASI BIEN, así que el
+// error sobrevive a la inspección visual. Quien reportó lo encontró buscando
+// contactos en un ERP: «PEÑA» no encontraba «Peña».
+//
+// ALCANCE: ASCII + Latin-1 Supplement (U+00C0–U+00FF) + Latin Extended-A
+// (U+0100–U+017F). Cubre español, portugués, francés, italiano, alemán, polaco,
+// checo, croata, rumano, húngaro, turco (parcial), báltico. NO cubre griego,
+// cirílico ni nada fuera de esos bloques: esos codepoints se dejan intactos, que
+// es lo mismo que hacían antes y no empeora nada.
+//
+// Todos los pares mapeados viven en el mismo rango de longitud UTF-8 (ASCII→1
+// byte, U+0080–U+07FF→2 bytes), así que la salida mide EXACTAMENTE lo mismo que
+// la entrada. Eso no es casualidad y sostiene el resto del diseño: se puede
+// escribir sobre un buffer del mismo tamaño, no cambia ningún índice de bytes
+// que el llamador tuviera calculado, y no hay reasignación que pueda fallar.
+//
+// EXCLUIDOS A PROPÓSITO (cada uno rompería esa invariante o daría un resultado
+// dependiente del idioma):
+//   U+00DF ß  — su mayúscula es "SS", dos codepoints.
+//   U+0149 ŉ, U+017F ſ — mayúsculas de largo distinto.
+//   U+0130 İ, U+0131 ı — el par turco: la minúscula de İ son dos codepoints y la
+//                        mayúscula de ı es 'I' de 1 byte. Además el mapeo
+//                        correcto depende del idioma (en turco 'i'→'İ'), y una
+//                        stdlib sin locale no puede decidirlo.
+//   U+00B5 µ  — su mayúscula es la Mu griega, fuera del alcance.
+//   U+00D7 ×, U+00F7 ÷ — son símbolos matemáticos, no letras.
+
+// Decodifica el codepoint que empieza en data[i]. Escribe en *len los bytes
+// consumidos. Ante UTF-8 inválido devuelve -1 con len=1, y el llamador copia el
+// byte tal cual: un string con bytes binarios no se corrompe al cambiar de caja.
+static int32_t utf8_decode_at(const char* data, size_t n, size_t i, int* len) {
+    unsigned char b0 = (unsigned char)data[i];
+    int need = utf8_char_len(b0);
+    if (need == 1) { *len = 1; return b0 < 0x80 ? (int32_t)b0 : -1; }
+    if (i + (size_t)need > n) { *len = 1; return -1; }
+    for (int k = 1; k < need; k++) {
+        if (((unsigned char)data[i + k] & 0xC0) != 0x80) { *len = 1; return -1; }
+    }
+    *len = need;
+    if (need == 2) {
+        return (int32_t)(((b0 & 0x1F) << 6) | ((unsigned char)data[i+1] & 0x3F));
+    }
+    if (need == 3) {
+        return (int32_t)(((b0 & 0x0F) << 12) | (((unsigned char)data[i+1] & 0x3F) << 6)
+                         | ((unsigned char)data[i+2] & 0x3F));
+    }
+    return (int32_t)(((b0 & 0x07) << 18) | (((unsigned char)data[i+1] & 0x3F) << 12)
+                     | (((unsigned char)data[i+2] & 0x3F) << 6)
+                     | ((unsigned char)data[i+3] & 0x3F));
+}
+
+// Escribe cp en out (que tiene sitio de sobra) y devuelve los bytes escritos.
+static int utf8_encode_to(uint32_t cp, char* out) {
+    if (cp < 0x80) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+// Los bloques Latin Extended-A alternan mayúscula/minúscula de a pares, pero el
+// pie cambia dos veces: U+0100–U+0137 y U+014A–U+0177 tienen la MAYÚSCULA en el
+// codepoint par, mientras U+0139–U+0148 y U+0179–U+017E la tienen en el IMPAR.
+// De ahí los cuatro rangos en vez de una sola regla.
+static int latin_a_upper_is_even(uint32_t cp) {
+    if (cp >= 0x100 && cp <= 0x137) return 1;
+    if (cp >= 0x14A && cp <= 0x177) return 1;
+    return 0;
+}
+static int latin_a_upper_is_odd(uint32_t cp) {
+    if (cp >= 0x139 && cp <= 0x148) return 1;
+    if (cp >= 0x179 && cp <= 0x17E) return 1;
+    return 0;
+}
+
+static uint32_t nyx_cp_to_lower(uint32_t cp) {
+    if (cp >= 'A' && cp <= 'Z') return cp + 32;
+    if (cp >= 0xC0 && cp <= 0xDE && cp != 0xD7) return cp + 0x20;   /* À-Þ sin × */
+    if (cp == 0x178) return 0xFF;                                   /* Ÿ → ÿ */
+    if (cp == 0x130 || cp == 0x131) return cp;                      /* par turco */
+    if (latin_a_upper_is_even(cp) && (cp % 2) == 0) return cp + 1;
+    if (latin_a_upper_is_odd(cp) && (cp % 2) == 1) return cp + 1;
+    return cp;
+}
+
+static uint32_t nyx_cp_to_upper(uint32_t cp) {
+    if (cp >= 'a' && cp <= 'z') return cp - 32;
+    if (cp >= 0xE0 && cp <= 0xFE && cp != 0xF7) return cp - 0x20;   /* à-þ sin ÷ */
+    if (cp == 0xFF) return 0x178;                                   /* ÿ → Ÿ */
+    if (cp == 0x130 || cp == 0x131) return cp;                      /* par turco */
+    if (latin_a_upper_is_even(cp) && (cp % 2) == 1) return cp - 1;
+    if (latin_a_upper_is_odd(cp) && (cp % 2) == 0) return cp - 1;
+    return cp;
+}
+
+// Motor común de las dos. `to_upper` elige la tabla; el resto es idéntico.
+static nyx_string* nyx_string_change_case(nyx_string* str, int to_upper) {
     if (!str) return nyx_string_from_cstr("");
-    
+
     nyx_string* result = nyx_string_with_capacity(str->length + 1);
     result->length = str->length;
-    
-    for (size_t i = 0; i < str->length; i++) {
-        result->data[i] = toupper(str->data[i]);
+
+    size_t i = 0;
+    size_t o = 0;
+    while (i < str->length) {
+        int len = 1;
+        int32_t cp = utf8_decode_at(str->data, str->length, i, &len);
+        if (cp < 0) {
+            /* UTF-8 inválido: se copia el byte crudo, sin tocarlo */
+            result->data[o++] = str->data[i++];
+            continue;
+        }
+        uint32_t mapped = to_upper ? nyx_cp_to_upper((uint32_t)cp)
+                                   : nyx_cp_to_lower((uint32_t)cp);
+        if (mapped == (uint32_t)cp) {
+            /* sin cambio: copiar los bytes originales, más barato y exacto */
+            for (int k = 0; k < len; k++) result->data[o++] = str->data[i + k];
+        } else {
+            o += (size_t)utf8_encode_to(mapped, result->data + o);
+        }
+        i += (size_t)len;
     }
-    result->data[str->length] = '\0';
-    
+    /* Invariante del alcance elegido: todo par mapeado conserva la longitud en
+       bytes. Si alguna vez deja de cumplirse, esto lo deja ver en vez de escribir
+       fuera del buffer. */
+    result->length = o;
+    result->data[o] = '\0';
+
     return result;
+}
+
+// Convertir a mayúsculas
+nyx_string* nyx_string_to_upper(nyx_string* str) {
+    return nyx_string_change_case(str, 1);
 }
 
 // Convertir a minúsculas
 nyx_string* nyx_string_to_lower(nyx_string* str) {
-    if (!str) return nyx_string_from_cstr("");
-    
-    nyx_string* result = nyx_string_with_capacity(str->length + 1);
-    result->length = str->length;
-    
-    for (size_t i = 0; i < str->length; i++) {
-        result->data[i] = tolower(str->data[i]);
-    }
-    result->data[str->length] = '\0';
-    
-    return result;
+    return nyx_string_change_case(str, 0);
 }
 
 // Trim (eliminar espacios al inicio y final)

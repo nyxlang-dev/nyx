@@ -1,0 +1,15 @@
+ascii|hello world 123|HELLO WORLD 123|15/15/15
+espanol|peña peña peña|PEÑA PEÑA PEÑA|17/17/17
+latin1|àöøþ àöøþ|ÀÖØÞ ÀÖØÞ|17/17/17
+simbolos|× ÷|× ÷|5/5/5
+eszett|ß straße|ß STRAßE|10/10/10
+ydieresis|ÿ ÿ|Ÿ Ÿ|5/5/5
+latinApar|āāĉĉėėĳĳ|ĀĀĈĈĖĖĲĲ|16/16/16
+latinAimpar|ĺĺňňźźžž|ĹĹŇŇŹŹŽŽ|16/16/16
+turco|İı|İı|4/4/4
+griego|ΑΒΓ αβγ|ΑΒΓ αβγ|13/13/13
+cirilico|АБВ абв|АБВ абв|13/13/13
+vacio|||0/0/0
+PENA=SI
+FERR=SI
+crudo=6/6/6
