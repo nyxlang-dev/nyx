@@ -1,0 +1,196 @@
+# ARCHIVO GENERADO — NO EDITAR A MANO.
+# Regenerar con: bash scripts/gen_builtins_index.sh   (verificar: --check)
+# Catálogo de los builtins GLOBALES (sin import). Fuente de verdad: las
+# llamadas scope_declare_fn(..., "builtin", N) de compiler/semantic.nx.
+# Formato: builtin<TAB>nombre<TAB>aridad<TAB>categoría<TAB>descripción
+builtin	__go_spawn	1	Concurrencia	
+builtin	alloc	1	Memoria	
+builtin	atomic_add	2	Concurrencia	
+builtin	atomic_cas	3	Concurrencia	
+builtin	atomic_sub	2	Concurrencia	
+builtin	c_fn_ptr	1	Otros	
+builtin	channel_destroy	1	Concurrencia	
+builtin	channel_new	1	Concurrencia	Map (NOT int!)
+builtin	channel_recv	1	Concurrencia	
+builtin	channel_send	2	Concurrencia	
+builtin	char_to_string	1	Strings & texto	
+builtin	chdir	1	Tooling & CLI	
+builtin	chr	1	Tooling & CLI	
+builtin	close_fd	1	Tooling & CLI	
+builtin	condvar_broadcast	1	Concurrencia	
+builtin	condvar_new	0	Concurrencia	Map (opaque handle), `condvar_wait(cv, m)` (hold m locked), `condvar_signal(cv)`, `condvar_broadcast(cv)`, `condvar_timedwait(cv, m, ms)` → 0 signaled / 1 timeout
+builtin	condvar_signal	1	Concurrencia	
+builtin	condvar_timedwait	3	Concurrencia	
+builtin	condvar_wait	2	Concurrencia	
+builtin	constant_time_eq	2	Cripto & seguridad	compara SIEMPRE todos los bytes.
+builtin	crc32_bytes	1	Cripto & seguridad	
+builtin	datetime_day	1	Tiempo	
+builtin	datetime_format	1	Tiempo	
+builtin	datetime_format_epoch	2	Tiempo	
+builtin	datetime_from_epoch	1	Tiempo	
+builtin	datetime_hour	1	Tiempo	
+builtin	datetime_minute	1	Tiempo	
+builtin	datetime_month	1	Tiempo	
+builtin	datetime_now	0	Tiempo	
+builtin	datetime_parse	2	Tiempo	
+builtin	datetime_second	1	Tiempo	
+builtin	datetime_weekday	1	Tiempo	
+builtin	datetime_year	1	Tiempo	
+builtin	dup2	2	Tooling & CLI	
+builtin	exec	1	Tooling & CLI	String — run shell command, capture its stdout (binary-safe, strips trailing `\n`s only).
+builtin	exec_code	1	Tooling & CLI	int — run shell command, return its exit code (-1 on error/signal).
+builtin	execvp	2	Tooling & CLI	
+builtin	exit	1	Tooling & CLI	
+builtin	fdatasync	1	Archivos & I/O	
+builtin	file_close	1	Archivos & I/O	
+builtin	file_exists	1	Archivos & I/O	bool
+builtin	file_flush	1	Archivos & I/O	
+builtin	file_open	2	Archivos & I/O	
+builtin	file_read_bytes	2	Archivos & I/O	
+builtin	file_read_line	1	Archivos & I/O	
+builtin	file_seek	3	Archivos & I/O	
+builtin	file_tell	1	Archivos & I/O	
+builtin	file_write_bytes	2	Archivos & I/O	
+builtin	file_write_string	2	Archivos & I/O	
+builtin	float_to_int	1	Strings & texto	
+builtin	float_to_string	1	Strings & texto	
+builtin	fork	0	Tooling & CLI	
+builtin	format	-1	Otros	
+builtin	free	1	Memoria	
+builtin	fsync	1	Archivos & I/O	
+builtin	get_args	0	Tooling & CLI	Array — CLI args
+builtin	getcwd	0	Tooling & CLI	
+builtin	getenv	1	Tooling & CLI	String
+builtin	getenv_default	2	Tooling & CLI	String
+builtin	getpeername	1	Red	
+builtin	getpid	0	Tooling & CLI	
+builtin	go_sleep	1	Concurrencia	
+builtin	hmac_sha256	2	Cripto & seguridad	devuelven **hex**.
+builtin	hmac_sha256_raw	2	Cripto & seguridad	los **32 bytes** del digest, sin formatear.
+builtin	http_parse_request_fast	1	Red	
+builtin	https_get	1	Red	simple GET, NO custom headers, returns the body as a `String`.
+builtin	https_post	3	Red	
+builtin	int_to_float	1	Strings & texto	
+builtin	int_to_string	1	Strings & texto	
+builtin	isatty	1	Tooling & CLI	
+builtin	kill_process	2	Tooling & CLI	
+builtin	map_scan	2	Otros	
+builtin	math_acos	1	Matemática	
+builtin	math_asin	1	Matemática	
+builtin	math_atan	1	Matemática	
+builtin	math_atan2	2	Matemática	
+builtin	math_ceil	1	Matemática	
+builtin	math_cos	1	Matemática	
+builtin	math_exp	1	Matemática	
+builtin	math_fabs	1	Matemática	
+builtin	math_floor	1	Matemática	
+builtin	math_fmod	2	Matemática	
+builtin	math_log	1	Matemática	
+builtin	math_log10	1	Matemática	
+builtin	math_log2	1	Matemática	
+builtin	math_round	1	Matemática	
+builtin	math_sin	1	Matemática	
+builtin	math_sqrt	1	Matemática	
+builtin	math_tan	1	Matemática	
+builtin	md5	1	Cripto & seguridad	devuelven **hex**.
+builtin	mkdir	1	Archivos & I/O	
+builtin	monotonic_ms	0	Tiempo	MONOTONIC clock, counting from when the MACHINE booted.
+builtin	monotonic_us	0	Tiempo	MONOTONIC clock, counting from when the MACHINE booted.
+builtin	mutex_destroy	1	Concurrencia	
+builtin	mutex_lock	1	Concurrencia	
+builtin	mutex_new	0	Concurrencia	Map (opaque handle, NOT int! — `let m: int = mutex_new()` is NYX1003 since v0.24.28;
+builtin	mutex_unlock	1	Concurrencia	
+builtin	net_interfaces	0	Red	interfaces IPv4 locales (v0.24.22): Array PLANO de tripletas String `[nombre, ip, máscara, ...]` (stride 3, loopback incluida)
+builtin	open_fd	2	Tooling & CLI	
+builtin	panic	1	Otros	
+builtin	pbkdf2_hmac_sha256	4	Cripto & seguridad	PBKDF2-HMAC-SHA256 (RFC 2898), `dklen` bytes crudos.
+builtin	pipe_new	0	Tooling & CLI	
+builtin	print	1	Archivos & I/O	to stdout
+builtin	print_no_newline	1	Archivos & I/O	to stdout
+builtin	raw_mode_enter	0	Tooling & CLI	
+builtin	raw_mode_exit	0	Tooling & CLI	
+builtin	read_byte	0	Tooling & CLI	from stdin in raw mode
+builtin	read_byte_timeout	1	Tooling & CLI	poll()-based: byte, -1 EOF, -2 timeout/signal (EINTR);
+builtin	read_file	1	Archivos & I/O	String
+builtin	read_line	0	Archivos & I/O	read a line from stdin.
+builtin	readdir	1	Archivos & I/O	
+builtin	regex_is_match	2	Strings & texto	
+builtin	regex_match	2	Strings & texto	
+builtin	regex_replace	3	Strings & texto	
+builtin	regex_replace_all	3	Strings & texto	
+builtin	remove_file	1	Archivos & I/O	
+builtin	rename_file	2	Archivos & I/O	
+builtin	resolve	1	Red	(IPv4 del hostname, "" si no resuelve)
+builtin	resolve_ptr	1	Red	reverse DNS (v0.24.22): hostname de una IPv4, "" si no hay PTR o la IP es inválida
+builtin	resp_read_command_fast	1	Serialización & datos	
+builtin	resp_write_bulk	2	Serialización & datos	
+builtin	run	1	Otros	
+builtin	rwlock_destroy	1	Concurrencia	
+builtin	rwlock_new	0	Concurrencia	Map (opaque handle), `rwlock_rdlock(l)` / `rwlock_wrlock(l)`, `rwlock_tryrdlock(l)` / `rwlock_trywrlock(l)` → 0 acquired / 1 busy, `rwlock_unlock(l)`, `rwlock_destroy(l)` — multi-reader/single-writer;
+builtin	rwlock_rdlock	1	Concurrencia	
+builtin	rwlock_tryrdlock	1	Concurrencia	
+builtin	rwlock_trywrlock	1	Concurrencia	
+builtin	rwlock_unlock	1	Concurrencia	
+builtin	rwlock_wrlock	1	Concurrencia	
+builtin	setenv	2	Tooling & CLI	
+builtin	setup_shutdown_handler	1	Otros	
+builtin	sha256	1	Cripto & seguridad	devuelven **hex**.
+builtin	sha256_raw	1	Cripto & seguridad	los **32 bytes** del digest, sin formatear.
+builtin	signal_handle	2	Tooling & CLI	
+builtin	signal_ignore	1	Tooling & CLI	
+builtin	signal_reset	1	Tooling & CLI	
+builtin	sleep	1	Tiempo	
+builtin	spawn_task	1	Concurrencia	
+builtin	stat	1	Tooling & CLI	
+builtin	stdin_eof	0	Archivos & I/O	
+builtin	str_byte_length	1	Strings & texto	byte length (for HTTP headers)
+builtin	string_from_bytes	3	Strings & texto	
+builtin	string_from_cstr	1	Strings & texto	
+builtin	string_to_float	1	Strings & texto	**abortan el proceso (exit 1)** si `s` es vacío o no numérico
+builtin	string_to_float_or	2	Strings & texto	variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
+builtin	string_to_int	1	Strings & texto	**abortan el proceso (exit 1)** si `s` es vacío o no numérico
+builtin	string_to_int_or	2	Strings & texto	variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
+builtin	task_await	1	Concurrencia	
+builtin	task_cancel	1	Concurrencia	
+builtin	task_race	2	Concurrencia	
+builtin	tcp_accept	1	Red	
+builtin	tcp_close	1	Red	
+builtin	tcp_connect	2	Red	
+builtin	tcp_listen	2	Red	
+builtin	tcp_read	2	Red	
+builtin	tcp_read_exact	2	Red	
+builtin	tcp_read_line	1	Red	
+builtin	tcp_read_partial	2	Red	
+builtin	tcp_set_timeout	2	Red	SO_RCVTIMEO/SO_SNDTIMEO en un socket cliente (0 = sin timeout).
+builtin	tcp_shutdown	2	Red	
+builtin	tcp_write	2	Red	
+builtin	term_cols	0	Tooling & CLI	
+builtin	term_flush	0	Tooling & CLI	stdout without per-call flush (buffered frames).
+builtin	term_rows	0	Tooling & CLI	
+builtin	term_write	1	Tooling & CLI	stdout without per-call flush (buffered frames).
+builtin	thread_join	1	Concurrencia	
+builtin	thread_spawn	1	Concurrencia	
+builtin	time	0	Tiempo	`time_epoch()`, `time_ms()` → `monotonic_ms()`, `time_us()` → `monotonic_us()`.
+builtin	time_epoch	0	Tiempo	WALL clock, seconds since the Unix epoch.
+builtin	time_ms	0	Tiempo	
+builtin	time_us	0	Tiempo	
+builtin	tls_accept	1	Red	
+builtin	tls_close	1	Red	
+builtin	tls_close_conn	1	Red	
+builtin	tls_connect	2	Red	, `tls_read`, `tls_write`, `tls_close`
+builtin	tls_read	2	Red	
+builtin	tls_read_line	1	Red	
+builtin	tls_read_nonblock	2	Red	
+builtin	tls_read_partial	2	Red	
+builtin	tls_server_add_cert	3	Red	
+builtin	tls_server_init	2	Red	, `tls_server_add_cert`, `tls_accept`, `tls_read_line`, `tls_write_conn`, `tls_close_conn`
+builtin	tls_wait_readable	2	Red	
+builtin	tls_write	2	Red	
+builtin	tls_write_conn	2	Red	
+builtin	udp_bind	2	Red	(fd, o -1;
+builtin	udp_recvfrom	2	Red	
+builtin	udp_sendto	4	Red	
+builtin	volatile_load	1	Memoria	
+builtin	volatile_store	2	Memoria	
+builtin	waitpid	2	Tooling & CLI	
+builtin	write_file	2	Archivos & I/O	bool

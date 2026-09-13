@@ -968,6 +968,18 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   hace falta para adivinar un hash o un token byte por byte. Usarlo para comparar cualquier
   secreto. La diferencia de LARGO sí se filtra (inevitable sin padding) y no es el secreto.
 - Los cuatro son **builtins globales** (sin `import`), en `runtime/crypto.c`.
+- **Hash de CONTRASEÑAS (password hashing, KDF)**: `pbkdf2_hmac_sha256` es la única que hay. **NO
+  existen `argon2`, `argon2id`, `scrypt` ni `bcrypt`** con ese ni con otro nombre — verificado en el
+  runtime y en el compilador el 2026-09-13. Se dice explícitamente porque un equipo probó esos tres
+  nombres, no los encontró, y quedó sin saber si existían con otro nombre; y porque el que SÍ existe
+  casi lo reimplementan a mano. Receta: sal de `csprng_bytes` (NO de `random_bytes`), iteraciones
+  guardadas junto al hash para poder subirlas sin invalidar las contraseñas viejas, y
+  `constant_time_eq` para comparar.
+- `csprng_bytes(n)` vive en **`std/webpushcrypto`**, no en `std/random` — el `random_bytes` de
+  `std/random` es xorshift64 y NO es criptográficamente seguro. El módulo tiene ese nombre por su
+  primer consumidor, no por su alcance; se importa igual para cualquier uso (`import
+  "std/webpushcrypto"`). Está así porque dos módulos declarando el mismo símbolo C chocan con
+  «invalid redefinition» en todo programa que importe los dos.
 - El material aleatorio (salts, nonces) sale de `csprng_bytes`, NO de `random_bytes` —
   ver el gotcha 13 de §5.1.
 

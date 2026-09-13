@@ -1411,6 +1411,54 @@ fn capabilities_module_section(std_dir: String, filename: String) -> String {
     return out
 }
 
+// Subsección de BUILTINS GLOBALES para una categoría, leída de
+// `<std_dir>/builtins.index` (generado por scripts/gen_builtins_index.sh).
+//
+// POR QUÉ (fricción de nyxerp, 2026-09-11): este índice se armaba escaneando
+// `std/*.nx`, y los builtins globales no viven ahí — los declara el compilador.
+// Los 191 estaban AUSENTES del índice que `AGENTS.md` manda consultar, incluida
+// toda la criptografía. Un equipo pidió una KDF de contraseñas, la KDF ya
+// existía, no la encontraron, y estuvieron a punto de escribir PBKDF2 a mano
+// sobre `hmac_sha256`. Su frase: «una primitiva que existe y no se puede
+// encontrar es, en la práctica, una primitiva que no existe».
+//
+// Si el archivo no está —toolchain viejo, o instalación parcial— se devuelve ""
+// y el índice sale como antes: sin builtins, pero sin romperse.
+fn capabilities_builtins_section(std_dir: String, cat: String) -> String {
+    let idx_path: String = std_dir + "/builtins.index"
+    if not file_exists(idx_path) { return "" }
+    let raw: String = read_file(idx_path)
+    let lines: Array = raw.split("\n")
+    var body: String = ""
+    var n: int = 0
+    var li: int = 0
+    while li < lines.length() {
+        let line: String = lines[li]
+        if line.length() > 8 {
+            if line.substring(0, 8) == "builtin\t" {
+                let f: Array = line.split("\t")
+                if f.length() >= 5 {
+                    let nombre: String = f[1]
+                    let aridad: String = f[2]
+                    let categoria: String = f[3]
+                    let desc: String = f[4]
+                    if categoria == cat {
+                        var fila: String = "- `" + nombre + "` (" + aridad + " arg"
+                        if aridad != "1" { fila = fila + "s" }
+                        fila = fila + ")"
+                        if desc != "" { fila = fila + " — " + desc }
+                        body = body + fila + "\n"
+                        n = n + 1
+                    }
+                }
+            }
+        }
+        li = li + 1
+    }
+    if n == 0 { return "" }
+    return "### Builtins globales (sin `import`)\n\n" + body + "\n"
+}
+
 fn run_capabilities(out_arg: String) -> bool {
     let std_dir: String = capabilities_std_dir()
     if std_dir == "" {
@@ -1418,7 +1466,9 @@ fn run_capabilities(out_arg: String) -> bool {
         return false
     }
     let entries: Array = readdir(std_dir)
-    let cats: Array<String> = ["HTTP & Web", "Bases de datos & KV", "Serialización & datos", "Archivos & I/O", "Red", "Concurrencia", "Cripto & seguridad", "Tiempo", "Strings & texto", "Colecciones & estructuras", "Memoria", "Tooling & CLI", "Otros"]
+    // "Matemática" la traen SOLO los builtins (math_*): no hay módulo std/ de
+    // matemática pura, así que la categoría no existía en este listado.
+    let cats: Array<String> = ["HTTP & Web", "Bases de datos & KV", "Serialización & datos", "Archivos & I/O", "Red", "Concurrencia", "Cripto & seguridad", "Tiempo", "Strings & texto", "Matemática", "Colecciones & estructuras", "Memoria", "Tooling & CLI", "Otros"]
     var doc = "# CAPABILITIES — índice de la stdlib de Nyx\n\n"
     doc = doc + "<!-- nyx-version: " + toolchain_version() + " -->\n"
     doc = doc + "> Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.\n"
@@ -1445,8 +1495,9 @@ fn run_capabilities(out_arg: String) -> bool {
             }
             ei = ei + 1
         }
-        if cat_body != "" {
-            doc = doc + "## " + cat + "\n\n" + cat_body
+        let bi_sect: String = capabilities_builtins_section(std_dir, cat)
+        if cat_body != "" or bi_sect != "" {
+            doc = doc + "## " + cat + "\n\n" + cat_body + bi_sect
         }
         ci = ci + 1
     }

@@ -104,6 +104,12 @@ prelude-check:
 bootstrap: $(STD_PRELUDE)
 	$(TESTROOT_LOCK) bash scripts/build_bootstrap.sh
 
+## Regenerar std/builtins.index (catálogo de builtins globales para CAPABILITIES.md)
+## Correr tras agregar o sacar un `scope_declare_fn(..., "builtin", N)` de semantic.nx.
+## La guarda que lo vigila es run_capabilities_test.sh (dentro de make test-ai-first).
+builtins-index:
+	@bash scripts/gen_builtins_index.sh
+
 ## Sincronizar el toolchain local (~/.nyx o NYX_HOME) con los artefactos
 ## del repo: bootstrap + nyx_build + runtime C + std. Correr al final de
 ## toda sesión que toque compiler/, runtime/ o std/ — los productos y
@@ -150,6 +156,7 @@ install-local: $(STD_PRELUDE) nyx_check nyx_vet nyx_fmt nyx_test
 	mkdir -p "$$NYX_HOME_DIR/runtime/os" && cp runtime/os/*.c runtime/os/*.h "$$NYX_HOME_DIR/runtime/os/"; \
 	cp VERSION "$$NYX_HOME_DIR/VERSION" 2>/dev/null || true; \
 	cp std/*.nx "$$NYX_HOME_DIR/std/"; \
+	cp std/builtins.index "$$NYX_HOME_DIR/std/"; \
 	if [ -f "$$NYX_HOME_DIR/scripts/nyx" ]; then cp scripts/nyx "$$NYX_HOME_DIR/scripts/nyx"; fi; \
 	cp LLM.md "$$NYX_HOME_DIR/LLM.md" 2>/dev/null || true; \
 	mkdir -p "$$NYX_HOME_DIR/templates"; \
@@ -632,4 +639,4 @@ sdd-check:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check
+.PHONY: builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check

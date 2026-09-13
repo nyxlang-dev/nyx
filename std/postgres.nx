@@ -427,7 +427,9 @@ fn pg_auth_loop(fd: int, tls: int, user: String, password: String) -> Result<int
 // Tres mensajes: client-first → server-first → client-final → server-final.
 fn pg_scram_handshake(fd: int, tls: int, password: String, sasl_payload: String) -> Result<int, Error> {
     // El nonce del cliente tiene que ser impredecible: es lo que impide que
-    // alguien reuse un intercambio grabado. csprng_bytes viene de std/random.
+    // alguien reuse un intercambio grabado. csprng_bytes viene de
+    // `std/webpushcrypto` (ver el import arriba y su porqué) — NO de std/random,
+    // cuyo random_bytes es xorshift64 y no es criptográficamente seguro.
     let nonce: String = pg_nonce()
     let client_first_bare: String = "n=,r=" + nonce
     let client_first: String = "n,," + client_first_bare

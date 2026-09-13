@@ -91,5 +91,38 @@ for EXPECTED in "$EXPECTED_1" "$EXPECTED_2" "$EXPECTED_3"; do
     fi
 done
 
+# ── Los BUILTINS GLOBALES están en el índice ────────────────────────────────
+# Fricción de nyxerp (2026-09-11): este índice se arma escaneando `std/*.nx`, y
+# los builtins globales no viven ahí — los declara el compilador. Los 191
+# estaban AUSENTES, incluida toda la criptografía. Un equipo pidió una KDF de
+# contraseñas, la KDF ya existía, no la encontraron, y estuvieron a punto de
+# escribir PBKDF2 a mano sobre `hmac_sha256`.
+#
+# Tres cosas, porque cada una falla distinto:
+#   1. el catálogo no quedó stale respecto de compiler/semantic.nx;
+#   2. el índice generado REALMENTE trae builtins (no solo que el archivo exista);
+#   3. trae los del reporte por nombre — un índice con 3 builtins pasaría (2).
+if ! bash scripts/gen_builtins_index.sh --check > "$OUT.bidx" 2>&1; then
+    echo "❌ std/builtins.index está stale respecto de compiler/semantic.nx:"
+    sed 's/^/   /' "$OUT.bidx"
+    exit 1
+fi
+
+BI_N=$(grep -c '^- `' "$OUT" || true)
+BI_SECTS=$(grep -c 'Builtins globales' "$OUT" || true)
+if [ "${BI_SECTS:-0}" -lt 5 ]; then
+    echo "❌ CAPABILITIES.md trae solo ${BI_SECTS:-0} secciones de builtins globales (se esperan >= 5)"
+    echo "   ¿falta std/builtins.index junto a la stdlib, o nyx_build quedó viejo?"
+    exit 1
+fi
+
+for B in pbkdf2_hmac_sha256 sha256 hmac_sha256 constant_time_eq; do
+    if ! grep -qF -- "\`$B\`" "$OUT"; then
+        echo "❌ el builtin \`$B\` no está en CAPABILITIES.md — es el caso exacto del reporte"
+        exit 1
+    fi
+done
+
 echo "✅ CAPABILITIES.md consistente: $REAL_N/$IDX_N funciones públicas de la stdlib presentes, firmas balanceadas, spot-check multi-línea ok"
+echo "   builtins globales: $BI_SECTS categorías, catálogo al día"
 exit 0

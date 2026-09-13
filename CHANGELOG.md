@@ -20,6 +20,37 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`CAPABILITIES.md` incluye los 191 builtins globales — antes no tenía ni uno** (fricción de
+  nyxerp, 2026-09-11, DOC). El índice que `AGENTS.md` le dice a un agente que consulte para saber
+  QUÉ EXISTE se arma escaneando `std/*.nx`, y los builtins globales no viven ahí: los declara el
+  compilador. Faltaban los 191, **incluida toda la criptografía** — `sha256`, `hmac_sha256`,
+  `pbkdf2_hmac_sha256`, `constant_time_eq`.
+  El costo no fue teórico: un equipo pidió una KDF de contraseñas, la KDF **ya existía**, no la
+  encontraron, y estuvieron a punto de escribir PBKDF2 a mano sobre `hmac_sha256` —con un ADR
+  planificado para justificarlo—. Su frase, que es la tesis de este cambio: «una primitiva
+  criptográfica que existe y no se puede encontrar es, en la práctica, una primitiva que no existe:
+  quien la necesita termina escribiendo la suya».
+  `std/builtins.index` es el catálogo nuevo, generado por `scripts/gen_builtins_index.sh` (`make
+  builtins-index`) desde las llamadas `scope_declare_fn(..., "builtin", N)` de `semantic.nx` — que
+  es lo que el CHECKER conoce, o sea exactamente lo que un programa puede llamar sin `import`. Viaja
+  junto a la stdlib (`install-local` y `sync_to_public.sh` lo copian) y `nyx capabilities` lo lee.
+  Las descripciones y la categoría salen de `LLM.md` §4, en tres redes: los nombres de la CABEZA de
+  cada bullet (precisa, da descripción), cualquier mención dentro de una sección (da categoría), y
+  el prefijo del nombre (`math_`, `datetime_`, `atomic_`…). Sin la tercera, 84 de 191 caían en
+  «Otros», que es tanto como no estar; con ella quedan 6. Un builtin sin descripción sale igual, con
+  su aridad: el índice responde «¿existe?» antes que «¿cómo se usa?», y omitirlo reproduciría el bug.
+  Tres guardas en `run_capabilities_test.sh`, cada una para un fallo distinto: el catálogo stale
+  respecto de `semantic.nx`, el índice generado sin secciones de builtins (nyx_build viejo), y los
+  builtins del reporte ausentes por nombre. **Las tres verificadas en rojo**: la segunda y la tercera
+  no son alcanzables mutando el catálogo —la primera se dispara antes—, así que se probaron con un
+  `nyx_build` que deliberadamente no emitía la sección.
+  Se resuelven además los otros dos pedidos del reporte: `LLM.md` §Crypto dice ahora explícitamente
+  que **NO existen `argon2`, `argon2id`, `scrypt` ni `bcrypt`** (probaron esos nombres y quedaron sin
+  saber si existían con otro), con la receta de hash de contraseñas y las palabras que uno teclea al
+  buscar; y que `csprng_bytes` vive en `std/webpushcrypto` —un módulo cuyo nombre viene de su primer
+  consumidor, no de su alcance—. De paso, `std/postgres.nx` tenía DOS comentarios contradictorios a
+  410 líneas de distancia sobre de dónde viene `csprng_bytes`; el falso decía `std/random`, que es
+  justo el generador que NO es criptográficamente seguro.
 - **`nyx --version` identifica la INSTALACIÓN, no solo el número de release** (pedido de nyxerp,
   2026-09-12, nombrado al margen de un reporte de bloqueo). Decían: «`nyx --version` dice 0.31.0 y
   `~/.nyx/VERSION` también, pero durante esta misma sesión llegaron tres cambios de comportamiento
