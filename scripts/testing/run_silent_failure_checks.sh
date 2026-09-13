@@ -1066,6 +1066,94 @@ else
     FAILED+=("$name")
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# El derive: preguntar no reemplaza a abortar (arco derive-fila-sin-abortar)
+#
+# El arco agregó `<S>_desde_fila_valida`, que pregunta si una fila se puede
+# convertir sin morir — porque la fila la arma la BASE, y un booleano raro de una
+# tabla de hace dos años volteaba el servidor de un ERP con todos sus usuarios
+# adentro. La variante que ABORTA tiene que seguir abortando: para un script de
+# migración es la conducta correcta, y el reporte de fricción lo pidió explícito.
+#
+# Sin este control, un refactor que hiciera que `desde_fila` devolviera un valor
+# de relleno ante un dato malo pasaría inadvertido — y sería justo el bug que
+# este derive existe para evitar: ningún camino inventa un valor.
+cat > "$TMPDIR/derive_aborta.nx" <<'NX'
+#[derive(Fields)]
+struct P { a: int, b: bool }
+
+fn main() -> int {
+    var mala: Array = ["1", "quizas"]
+    let p: P = P_desde_fila(mala)
+    println("no deberia llegar: " + int_to_string(p.a))
+    return 0
+}
+NX
+
+cat > "$TMPDIR/derive_valida.nx" <<'NX'
+#[derive(Fields)]
+struct P { a: int, b: bool }
+
+fn main() -> int {
+    var mala: Array = ["1", "quizas"]
+    let problema: String = P_desde_fila_valida(mala)
+    if problema == "" { println("MAL: dijo que estaba bien") return 1 }
+    println("reportado, proceso vivo")
+    return 0
+}
+NX
+
+# Mismo criterio que los otros bloques que necesitan enlazar: sin clang se
+# saltea, porque el abort es en RUNTIME y no en compilación.
+DV_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c runtime/os/os_posix.c"
+DV_LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+
+if ! command -v clang >/dev/null 2>&1; then
+    printf "  ⚠️  sin clang — se saltean los dos checks del derive (abortar / preguntar)\n"
+else
+
+name="derive-fila-aborta-sigue-abortando"
+cp "$TMPDIR/derive_aborta.nx" script.nx
+if ./nyx_bootstrap > "$TMPDIR/da_build.out" 2>&1 \
+   && clang -O0 script.ll $DV_SRCS $DV_LIBS -o "$TMPDIR/da_bin" > "$TMPDIR/da_link.out" 2>&1; then
+    "$TMPDIR/da_bin" > "$TMPDIR/da_run.out" 2>&1
+    da_rc=$?
+else
+    da_rc=-1
+fi
+if [ "$da_rc" -ne 0 ] && grep -q "valor booleano no reconocido" "$TMPDIR/da_run.out"; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s — rc=%d, se esperaba abortar nombrando el valor\n" "$name" "$da_rc"
+    head -3 "$TMPDIR/da_run.out" 2>/dev/null | sed 's/^/      /'
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name")
+fi
+
+# CONTROL POSITIVO: la MISMA fila mala, por la variante que pregunta, no mata el
+# proceso. Sin esto el check de arriba pasaría con un derive que abortara SIEMPRE.
+name="derive-fila-valida-no-mata-el-proceso"
+cp "$TMPDIR/derive_valida.nx" script.nx
+if ./nyx_bootstrap > "$TMPDIR/dv_build.out" 2>&1 \
+   && clang -O0 script.ll $DV_SRCS $DV_LIBS -o "$TMPDIR/dv_bin" > "$TMPDIR/dv_link.out" 2>&1; then
+    "$TMPDIR/dv_bin" > "$TMPDIR/dv_run.out" 2>&1
+    dv_rc=$?
+else
+    dv_rc=-1
+fi
+if [ "$dv_rc" -eq 0 ] && grep -q "reportado, proceso vivo" "$TMPDIR/dv_run.out"; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+else
+    printf "  ✗ %s — rc=%d, la variante que pregunta no debería matar el proceso\n" "$name" "$dv_rc"
+    head -3 "$TMPDIR/dv_run.out" 2>/dev/null | sed 's/^/      /'
+    FAIL=$((FAIL + 1))
+    FAILED+=("$name")
+fi
+
+fi   # clang disponible
+
 
 echo ""
 echo "  $PASS passed, $FAIL failed"

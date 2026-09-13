@@ -971,28 +971,76 @@ nyx_string* nyx_string_from_bool(int64_t value) {
 // booleano que no se entiende no es `false`, y asumirlo escribiría una decisión
 // equivocada en un sistema que factura. Es la misma regla que gobierna todo
 // este derive — ningún camino inventa un valor.
-int64_t nyx_bool_from_text(nyx_string* s) {
-    if (!s || !s->data) {
-        nyx_panic(nyx_string_from_cstr(
-            "desde_fila: campo booleano ausente (celda nula) — usa pg_is_null antes de convertir"));
-        return 0;
-    }
+// LA TABLA, una sola vez. `*ok` sale en 1 si el texto se reconoció, 0 si no;
+// el valor booleano va en el retorno y solo vale cuando *ok es 1.
+//
+// Existe separada porque hay DOS consumidores con conductas opuestas —el que
+// aborta y el que pregunta (arco derive-fila-sin-abortar)— y duplicar el
+// reconocimiento entre ambos es la trampa que este repo pisó tres veces en una
+// semana: la lista de builtins void, la de módulos del prelude y la de builtins
+// globales. Las tres derivaron, y las tres costaron un bug publicado o un índice
+// vacío. Acá se comparte por construcción: si alguien agrega "sí"/"no", los dos
+// caminos lo aprenden juntos.
+static int64_t nyx_bool_text_parse(nyx_string* s, int* ok) {
+    *ok = 0;
+    if (!s || !s->data) return 0;
     const char* d = s->data;
     int64_t n = s->length;
+    *ok = 1;
     if (n == 4 && strncmp(d, "true", 4) == 0) return 1;
     if (n == 1 && (d[0] == 't' || d[0] == 'T' || d[0] == '1')) return 1;
     if (n == 5 && strncmp(d, "false", 5) == 0) return 0;
     if (n == 1 && (d[0] == 'f' || d[0] == 'F' || d[0] == '0')) return 0;
     if (n == 4 && strncmp(d, "TRUE", 4) == 0) return 1;
     if (n == 5 && strncmp(d, "FALSE", 5) == 0) return 0;
+    *ok = 0;
+    return 0;
+}
+
+int64_t nyx_bool_from_text(nyx_string* s) {
+    if (!s || !s->data) {
+        nyx_panic(nyx_string_from_cstr(
+            "desde_fila: campo booleano ausente (celda nula) — usa pg_is_null antes de convertir"));
+        return 0;
+    }
+    int ok = 0;
+    int64_t v = nyx_bool_text_parse(s, &ok);
+    if (ok) return v;
     {
         char buf[256];
         snprintf(buf, sizeof(buf),
                  "desde_fila: valor booleano no reconocido: '%.*s' — se aceptan true/false, t/f, 1/0",
-                 (int)(n > 64 ? 64 : n), d);
+                 (int)(s->length > 64 ? 64 : s->length), s->data);
         nyx_panic(nyx_string_from_cstr(buf));
     }
     return 0;
+}
+
+// ¿`s` es un booleano que `nyx_bool_from_text` sabría convertir? Pregunta sin
+// morir. Una celda nula responde 0: no es convertible, que es la respuesta
+// correcta (la que aborta la trata aparte porque puede decir algo más útil).
+int64_t nyx_bool_text_ok(nyx_string* s) {
+    int ok = 0;
+    nyx_bool_text_parse(s, &ok);
+    return ok ? 1 : 0;
+}
+
+// ¿`s` es un entero decimal que `nyx_string_to_int` convertiría sin abortar?
+// Acepta signo y dígitos, y NADA más — ni espacios, ni vacío, ni sufijos: es
+// exactamente lo que el conversor exige, dicho en forma de pregunta.
+int64_t nyx_int_text_ok(nyx_string* s) {
+    if (!s || !s->data || s->length == 0) return 0;
+    const char* d = s->data;
+    int64_t n = s->length;
+    int64_t i = 0;
+    if (d[0] == '-' || d[0] == '+') {
+        if (n == 1) return 0;   /* solo el signo no es un número */
+        i = 1;
+    }
+    for (; i < n; i++) {
+        if (d[i] < '0' || d[i] > '9') return 0;
+    }
+    return 1;
 }
 
 // ===== WRAPPERS i8* PARA CODEGEN (métodos de string) =====

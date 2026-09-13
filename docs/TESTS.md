@@ -12,12 +12,12 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **437 archivos / 436 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 13: +24 (detalle por test en `CHANGELOG.md`) |
+| Regression | `make test` | **439 archivos / 438 ARM64** | `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 13: +26 (detalle por test en `CHANGELOG.md`) |
 | Error paths (parse+semantic) | `make test-errors` | **277** | verificado con corrida real 2026-09-12 (NYX1032, NYX1003/builtin void y NYX1013/colisión con el prelude, cada uno con su control positivo) |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
-| Runtime C unit (B4) | `make test-runtime` | **34 suites / 1616 asserts** | verificado con corrida real 2026-08-30; discrepancia vs. el `1444` documentado el 2026-08-29 (main avanzó con W3 Task 2/3 antes del corte de esta rama) — el número real gana |
+| Runtime C unit (B4) | `make test-runtime` | **34 suites / 1660 asserts** | verificado con corrida real 2026-08-30; discrepancia vs. el `1444` documentado el 2026-08-29 (main avanzó con W3 Task 2/3 antes del corte de esta rama) — el número real gana |
 | AI-first (objetivo) | `make test-ai-first` | **26 programas + 27 guardas** | corre 22 scripts: `run_ai_first_tests.sh` (26 `.nx`) + 20 scripts de guardas (27 guardas — `run_templates_parity.sh` trae dos y `run_tooling_gates.sh` siete) + `scripts/sdd/selftest`; ver las 11 filas siguientes |
 | Coherencia de manuales | (dentro de `make test-ai-first`) `run_template_coherence.sh` | **4 checks** | mentiras resucitadas + anclas de trampas/reglas vivas + imports sin comillas + ids de gotcha citados, sobre lo sembrado en ambos idiomas; ANCLAS/MENTIRAS de `gotchas_generated.sh` |
 | Bloques sembrados compilan | (dentro de `make test-ai-first`) `run_seeded_blocks_compile.sh` | **1 check** | cada bloque ` ```nyx ` sembrado (ambos idiomas) compila con bootstrap semántico + clang; sin `fn main` debe ser ` ```nyx-fragment ` o falla |

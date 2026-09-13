@@ -20,6 +20,41 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`try_<S>_desde_fila(fila) -> Result<S, Error>`** [arco: derive-fila-sin-abortar]. La API que
+  pidió el reporte de nyxerp: convertir una fila de la base sin que un dato inesperado tire el
+  proceso. La que aborta (`<S>_desde_fila`) **se queda** — para un script de migración es la
+  correcta.
+  Las tres funciones comparten **una sola definición** de qué hace que una fila no sirva: `try_`
+  consulta a `_valida`, y si la fila está bien construye llamando a `desde_fila`. No hay tres copias
+  de los mismos chequeos que puedan divergir, que era el riesgo declarado del arco.
+  La única incógnita del spec —si un `Result` emitido por un derive resolvería el `match` del
+  llamador sin que el programa escriba `Result<S, Error>` en ninguna anotación— se resolvió a favor:
+  alcanza con pedir `monomorphize_enum` desde el propio derive. El test lo fija, para que si eso
+  dejara de alcanzar lo diga la suite antes que un usuario.
+  Habilitado de rebote por el arco `prelude-descongelado` del día anterior: `Error` vive ahora en el
+  prelude, así que un derive puede devolver `Result<S, Error>` sin exigirle al usuario que importe
+  `std/error` ni romper a quien no lo hace.
+- **`<S>_desde_fila_valida(fila) -> String`: preguntar si una fila se puede convertir, sin morir**
+  [arco: derive-fila-sin-abortar]. `<S>_desde_fila` del `#[derive(Fields)]` aborta ante cualquier
+  dato que no cuadre —un NULL, un índice fuera de rango, un booleano irreconocible— y la fila la
+  arma la **base**, no el programa. Un solo booleano raro en una tabla de auditoría de hace dos años
+  volteaba el servidor de un ERP entero, con todos los usuarios adentro, en vez de mostrar «este
+  registro está corrupto». Consecuencia medida en el reporte: **no usaban `desde_fila` para nada que
+  viniera de la base**, que es justo para lo que existe.
+  La nueva devuelve `""` si la fila se puede convertir, o el problema nombrando struct, campo y
+  valor. La que aborta **se queda**: para un script de migración es la variante correcta, y el
+  reporte lo pidió explícito.
+  **Una sola tabla de qué es un booleano válido.** `nyx_bool_text_parse` es ahora la única
+  definición, y tanto el conversor que aborta como el sondeo que pregunta la usan. Era la
+  restricción que el plan del arco puso primero, porque este repo duplicó una lista tres veces en la
+  semana anterior —los builtins void, los módulos del prelude, los builtins globales— y las tres
+  derivaron. El unitario de C verifica la invariante valor por valor: para cada una de las diez
+  formas aceptadas, el sondeo dice «sí» **y** el conversor la convierte. Si divergieran, `_valida`
+  aprobaría una fila que después mata el proceso — el peor de los dos mundos.
+  Con control de no-regresión (la que aborta sigue abortando, con el mismo mensaje) y su control
+  positivo (la misma fila mala por la variante que pregunta no mata el proceso), los dos en
+  `run_silent_failure_checks.sh` y **verificados en rojo** invirtiendo la expectativa a propósito.
+  `try_<S>_desde_fila -> Result<S, Error>` es la Task 2 del mismo arco.
 - **`pg_sqlstate(e: Error) -> String`** (fricción de nyxerp, 2026-09-10). `pg_parse_error` extrae el
   campo `C` del ErrorResponse —lo tiene ESTRUCTURADO— y lo vuelve a meter dentro del texto, porque
   el SQLSTATE es alfanumérico (`"42P01"`) y no entra en el `int` de `Error`. Quien necesitaba

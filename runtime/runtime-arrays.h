@@ -74,6 +74,11 @@ int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_
 int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
                      const char* struct_name, const char* field_name,
                      int64_t n_campos);
+// `nyx_row_problema` —la versión de nyx_row_cell que responde en vez de abortar—
+// vive en runtime-arrays.c y NO se declara en ningún header a propósito: devuelve
+// nyx_string*, que acá todavía no se conoce, y su único llamador es el IR que
+// genera el derive, no otro .c. Un prototipo en un header sería una declaración
+// que nadie usa y que habría que mantener sincronizada.
 
 // Lectura float chequeada: FLOAT → bits; INT/BOOL/UNKNOWN → widening histórico
 // (sitofp); STRING → abort diagnosticado.

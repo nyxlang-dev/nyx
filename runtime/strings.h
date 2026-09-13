@@ -25,6 +25,16 @@ typedef struct {
 
 // Constructores
 nyx_string* nyx_string_from_cstr(const char* cstr);
+
+// ¿el texto es un booleano / un entero que el conversor aceptaría? Preguntan sin
+// abortar (arco derive-fila-sin-abortar). Comparten la tabla de reconocimiento
+// con nyx_bool_from_text, no la copian.
+int64_t nyx_bool_text_ok(nyx_string* s);
+int64_t nyx_int_text_ok(nyx_string* s);
+// El conversor que SÍ aborta, declarado acá junto a su sondeo para que los tests
+// puedan ejercer los dos contra la misma tabla. Su llamador real es el IR que
+// genera `#[derive(Fields)]`, no otro .c.
+int64_t nyx_bool_from_text(nyx_string* s);
 // Etapa 3 slots-tag: convierte un slot de Array a String según su TAG de tipo
 // (runtime-arrays.h). Con NYX_TAG_UNKNOWN conserva el comportamiento histórico
 // de leer el slot como entero, así que un array no tagueado no cambia de conducta.

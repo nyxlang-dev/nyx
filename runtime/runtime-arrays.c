@@ -586,6 +586,38 @@ static const char* nyx_tag_name(int64_t t) {
 // La diferencia importa porque la fila la arma el SERVIDOR, no el compilador:
 // una migración a medias o un SELECT con menos columnas de las esperadas es un
 // dato del mundo, y el mensaje tiene que alcanzar para arreglarlo sin depurar.
+// El problema de una celda, o "" si no hay ninguno. Es `nyx_row_cell` que
+// RESPONDE en vez de morir: mismo diagnóstico, distinta conducta.
+//
+// Lo usa `<S>_desde_fila_valida` (arco derive-fila-sin-abortar). La diferencia
+// importa porque la fila la arma el SERVIDOR: una migración a medias o un
+// registro viejo son datos del mundo, y un dato del mundo no debería voltear un
+// proceso con todos sus usuarios adentro.
+//
+// `expected_tag` == 2 (String) es lo único que emite el derive hoy: las celdas
+// llegan siempre como texto (formato text del protocolo) y la conversión al tipo
+// del campo la hacen los sondeos de strings.c.
+nyx_string* nyx_row_problema(nyx_array_t* fila, int64_t index,
+                             const char* struct_name, const char* field_name,
+                             int64_t n_campos) {
+    char buf[512];
+    if (!fila) {
+        snprintf(buf, sizeof(buf),
+            "%s_desde_fila: la fila es NULL (campo '%s', posición %" PRId64 ")",
+            struct_name ? struct_name : "?", field_name ? field_name : "?", index);
+        return nyx_string_from_cstr(buf);
+    }
+    if (index < 0 || index >= fila->length) {
+        snprintf(buf, sizeof(buf),
+            "%s_desde_fila: la fila trae %" PRId64 " columna(s) y el struct espera %"
+            PRId64 " — falta el campo '%s' (posición %" PRId64 ")",
+            struct_name ? struct_name : "?", fila->length, n_campos,
+            field_name ? field_name : "?", index);
+        return nyx_string_from_cstr(buf);
+    }
+    return nyx_string_from_cstr("");
+}
+
 int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
                      const char* struct_name, const char* field_name,
                      int64_t n_campos) {

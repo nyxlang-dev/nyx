@@ -1,0 +1,55 @@
+// `try_<S>_desde_fila(fila) -> Result<S, Error>`: la API que pidió el reporte.
+//
+// POR QUÉ EXISTE (arco derive-fila-sin-abortar, Task 2; fricción de nyxerp
+// 2026-09-10)
+//
+// `<S>_desde_fila` aborta ante un dato que no cuadre, y la fila la arma la BASE.
+// Un booleano raro de una tabla de hace dos años volteaba el servidor de un ERP
+// entero. La Task 1 dio `<S>_desde_fila_valida` (preguntar sin morir); esta da la
+// forma que el reporte pidió, con `Result`.
+//
+// LO QUE ESTE TEST FIJA, y que era la única incógnita del arco: el `match`
+// resuelve `Result.Ok` y `Result.Err` SIN que el programa escriba
+// `Result<Contacto, Error>` en ninguna anotación. El derive pide la
+// monomorfización por su cuenta (`monomorphize_enum` desde codegen); si eso
+// dejara de alcanzar, este test lo dice antes que un usuario.
+//
+// Los tres comparten una sola definición de qué hace que una fila no sirva:
+// `try_` consulta a `_valida`, y si está bien construye con `desde_fila`. No hay
+// tres copias de los mismos chequeos que puedan divergir.
+//
+// Expected exit: 0
+
+#[derive(Fields)]
+struct Contacto { id: int, rif: String, activo: bool }
+
+fn main() -> int {
+    var buena: Array = ["7", "J-123", "t"]
+    var bool_malo: Array = ["8", "J-456", "quizas"]
+    var corta: Array = ["9"]
+    var int_malo: Array = ["x", "J-789", "f"]
+
+    match try_Contacto_desde_fila(buena) {
+        Result.Ok(c) => { println("ok|" + int_to_string(c.id) + "|" + c.rif) }
+        Result.Err(e) => { println("err|" + e.kind + "|" + e.msg) }
+    }
+    match try_Contacto_desde_fila(bool_malo) {
+        Result.Ok(c) => { println("MAL: convirtio " + int_to_string(c.id)) }
+        Result.Err(e) => { println("err|" + e.kind) }
+    }
+    match try_Contacto_desde_fila(corta) {
+        Result.Ok(c) => { println("MAL: convirtio " + int_to_string(c.id)) }
+        Result.Err(e) => { println("err|" + e.kind) }
+    }
+    match try_Contacto_desde_fila(int_malo) {
+        Result.Ok(c) => { println("MAL: convirtio " + int_to_string(c.id)) }
+        Result.Err(e) => { println("err|" + e.kind) }
+    }
+
+    // La que aborta sigue existiendo y sirve para la fila buena.
+    let c2: Contacto = Contacto_desde_fila(buena)
+    println("aborta-tambien|" + int_to_string(c2.id))
+
+    println("el proceso sigue vivo")
+    return 0
+}

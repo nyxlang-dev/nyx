@@ -1,0 +1,52 @@
+// `<S>_desde_fila_valida`: preguntar si una fila se puede convertir, sin morir.
+//
+// POR QUÉ EXISTE (arco derive-fila-sin-abortar; fricción de nyxerp 2026-09-10)
+//
+// `<S>_desde_fila` aborta ante cualquier dato que no cuadre, y la fila la arma
+// la BASE, no el programa. Un solo booleano raro en una tabla de auditoría de
+// hace dos años volteaba el servidor de un ERP entero, con todos los usuarios
+// adentro, en vez de mostrar «este registro está corrupto». Medido en el
+// reporte: por eso NO usaban `desde_fila` para nada que viniera de la base, que
+// es justo para lo que existe.
+//
+// La que aborta SE QUEDA: para un script de migración es la variante correcta.
+// Ese control vive en el test de errores, no acá.
+//
+// Expected exit: 0
+
+#[derive(Fields)]
+struct Contacto { id: int, rif: String, activo: bool }
+
+fn revisar(etiqueta: String, f: Array) {
+    let problema: String = Contacto_desde_fila_valida(f)
+    if problema == "" {
+        let c: Contacto = Contacto_desde_fila(f)
+        println(etiqueta + "|OK|" + int_to_string(c.id) + "|" + c.rif)
+    } else {
+        println(etiqueta + "|CORRUPTO|" + problema)
+    }
+}
+
+fn main() -> int {
+    var buena: Array = ["7", "J-123", "t"]
+    var bool_raro: Array = ["8", "J-456", "quizas"]
+    var corta: Array = ["9"]
+    var int_raro: Array = ["no-soy-int", "J-789", "f"]
+
+    revisar("completa", buena)
+    revisar("boolmalo", bool_raro)
+    revisar("corta", corta)
+    revisar("intmalo", int_raro)
+
+    // Las otras formas que acepta el conversor de booleanos tienen que pasar por
+    // la MISMA tabla: si el sondeo y el que convierte divergieran, acá se ve.
+    var f2: Array = ["1", "x", "false"]
+    var f3: Array = ["2", "y", "TRUE"]
+    var f4: Array = ["3", "z", "0"]
+    revisar("false", f2)
+    revisar("TRUE", f3)
+    revisar("cero", f4)
+
+    println("el proceso sigue vivo")
+    return 0
+}

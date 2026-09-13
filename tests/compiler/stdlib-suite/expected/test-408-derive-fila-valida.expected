@@ -1,0 +1,8 @@
+completa|OK|7|J-123
+boolmalo|CORRUPTO|Contacto_desde_fila: el campo 'activo' esperaba un booleano (true/false, t/f, 1/0) y la celda trae: quizas
+corta|CORRUPTO|Contacto_desde_fila: la fila trae 1 columna(s) y el struct espera 3 — falta el campo 'rif' (posición 1)
+intmalo|CORRUPTO|Contacto_desde_fila: el campo 'id' esperaba un entero y la celda trae: no-soy-int
+false|OK|1|x
+TRUE|OK|2|y
+cero|OK|3|z
+el proceso sigue vivo
