@@ -98,4 +98,24 @@ if [ "$FAIL" = "1" ]; then
     exit 1
 fi
 echo "✓ VERSION ($V) coincide en todos los sitios (incluidas las seeds .ll)"
+
+# Las semillas .ll tienen que describir al compilador ACTUAL, no a uno viejo.
+# Acá y no en test-ai-first porque son NUEVE compilaciones del compilador; y acá
+# sí, porque `scripts/install.sh` construye desde estas semillas en la máquina
+# del usuario: publicarlas atrasadas le entrega un compilador distinto del que
+# este repo probó. Medido el 2026-09-13: siete de las nueve estaban viejas, y los
+# 40 cambios de código eran todos el slot-check de NYX2014 sin propagar.
+#
+# Se puede saltear con NYX_SKIP_SEEDS_CHECK=1 para una corrida rápida del resto
+# —es lo más caro de este script—, pero saltearlo antes de publicar es
+# exactamente lo que dejó las semillas atrasadas durante meses.
+if [ "${NYX_SKIP_SEEDS_CHECK:-0}" = "1" ]; then
+    echo "⚠️  seeds-check SALTEADO (NYX_SKIP_SEEDS_CHECK=1) — no publicar así"
+else
+    echo ""
+    echo "— semillas del bootstrap —"
+    if ! bash scripts/testing/run_seeds_check.sh; then
+        exit 1
+    fi
+fi
 exit 0

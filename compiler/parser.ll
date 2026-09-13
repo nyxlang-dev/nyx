@@ -2199,6 +2199,7 @@ declare %nyx_string* @nyx_string_concat(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_string_from_int(i64)
 declare %nyx_string* @nyx_string_from_char(i8)
 declare %nyx_string* @nyx_string_from_bool(i64)
+declare i64 @nyx_bool_from_text(%nyx_string*)
 
 declare void @nyx_print_int(i64)
 declare void @nyx_print_float(double)
@@ -2389,8 +2390,13 @@ declare void @nyx_array_set_tagged({ i64, i8* }*, i64, i64, i64)
 declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
+declare i64 @nyx_row_cell({ i64, i8* }*, i64, i64, i8*, i8*, i64)
+declare %nyx_string* @nyx_row_problema({ i64, i8* }*, i64, i8*, i8*, i64)
+declare i64 @nyx_bool_text_ok(%nyx_string*)
+declare i64 @nyx_int_text_ok(%nyx_string*)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
 declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_int_checked({ i64, i8* }*, i64)
 declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
@@ -7649,7 +7655,7 @@ merge141:
 then148:
   %558 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
   %559 = load { i64, i8* }*, { i64, i8* }** %12
-  %560 = call i64 @nyx_array_get({ i64, i8* }* %559, i64 0)
+  %560 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %559, i64 0)
   %561 = alloca i64
   store i64 %560, i64* %561
   %562 = load { i64, i8* }*, { i64, i8* }** %12
@@ -10508,7 +10514,7 @@ define internal { i64, i8* }* @parse__parse_spawn_stmt(%SharedEnv_parse* %env.pa
   %22 = getelementptr %SharedEnv_parse, %SharedEnv_parse* %env.param, i32 0, i32 21
   %23 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
   %24 = load { i64, i8* }*, { i64, i8* }** %12
-  %25 = call i64 @nyx_array_get({ i64, i8* }* %24, i64 0)
+  %25 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %24, i64 0)
   %26 = alloca i64
   store i64 %25, i64* %26
   %27 = load { i64, i8* }*, { i64, i8* }** %12
@@ -11419,7 +11425,7 @@ while_end11:
   store %nyx_string* %70, %nyx_string** %71
   %72 = load { i64, i8* }*, { i64, i8* }** %14
   %73 = load i64, i64* %49
-  %74 = call i64 @nyx_array_get({ i64, i8* }* %72, i64 %73)
+  %74 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %72, i64 %73)
   %75 = alloca i64
   store i64 %74, i64* %75
   %76 = call { i64, i8* }* @nyx_array_new_ptr()

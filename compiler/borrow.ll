@@ -563,6 +563,7 @@ declare %nyx_string* @nyx_string_concat(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_string_from_int(i64)
 declare %nyx_string* @nyx_string_from_char(i8)
 declare %nyx_string* @nyx_string_from_bool(i64)
+declare i64 @nyx_bool_from_text(%nyx_string*)
 
 declare void @nyx_print_int(i64)
 declare void @nyx_print_float(double)
@@ -710,6 +711,10 @@ declare i64 @nyx_datetime_weekday(i64)
 declare %nyx_string* @nyx_sha256(%nyx_string*)
 declare %nyx_string* @nyx_md5(%nyx_string*)
 declare %nyx_string* @nyx_hmac_sha256(%nyx_string*, %nyx_string*)
+declare %nyx_string* @nyx_hmac_sha256_raw(%nyx_string*, %nyx_string*)
+declare %nyx_string* @nyx_sha256_raw(%nyx_string*)
+declare %nyx_string* @nyx_pbkdf2_hmac_sha256(%nyx_string*, %nyx_string*, i64, i64)
+declare i64 @nyx_constant_time_eq(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_https_get(%nyx_string*)
 declare %nyx_string* @nyx_https_post(%nyx_string*, %nyx_string*, %nyx_string*)
 declare i64 @nyx_tls_connect(%nyx_string*, i64)
@@ -749,8 +754,13 @@ declare void @nyx_array_set_tagged({ i64, i8* }*, i64, i64, i64)
 declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
+declare i64 @nyx_row_cell({ i64, i8* }*, i64, i64, i8*, i8*, i64)
+declare %nyx_string* @nyx_row_problema({ i64, i8* }*, i64, i8*, i8*, i64)
+declare i64 @nyx_bool_text_ok(%nyx_string*)
+declare i64 @nyx_int_text_ok(%nyx_string*)
 declare double @nyx_slot_as_float_checked({ i64, i8* }*, i64)
 declare double @nyx_slot_as_float_st({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_int_checked({ i64, i8* }*, i64)
 declare void @nyx_array_retag_unknown({ i64, i8* }*, i64)
 declare i64 @nyx_array_get_tag({ i64, i8* }*, i64)
 declare %nyx_string* @nyx_string_from_tagged(i64, i64, i64)
@@ -771,6 +781,7 @@ declare %nyx_string* @nyx_string_substring(%nyx_string*, i64, i64)
 declare %nyx_string* @nyx_string_char_substring(%nyx_string*, i64, i64)
 declare i1 @nyx_string_contains(%nyx_string*, %nyx_string*)
 declare i1 @nyx_string_equals(%nyx_string*, %nyx_string*)
+declare i32 @nyx_string_compare(%nyx_string*, %nyx_string*)
 declare { i64, i8* }* @nyx_string_split(%nyx_string*, %nyx_string*)
 declare %nyx_string* @nyx_read_line()
 declare i64 @nyx_stdin_eof()
@@ -2348,7 +2359,7 @@ merge205:
   %712 = alloca { i64, i8* }*
   store { i64, i8* }* %711, { i64, i8* }** %712
   %713 = load { i64, i8* }*, { i64, i8* }** %708
-  %714 = call i64 @nyx_array_get({ i64, i8* }* %713, i64 1)
+  %714 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %713, i64 1)
   %715 = alloca i64
   store i64 %714, i64* %715
   %716 = load %ASTNode, %ASTNode* %expr.ptr
@@ -2377,7 +2388,7 @@ while_body210:
   call void @llvm.stackrestore(i8* %726)
   %731 = load { i64, i8* }*, { i64, i8* }** %712
   %732 = load i64, i64* %722
-  %733 = call i64 @nyx_array_get({ i64, i8* }* %731, i64 %732)
+  %733 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %731, i64 %732)
   %734 = alloca i64
   store i64 %733, i64* %734
   %735 = load i64, i64* %734
@@ -7537,7 +7548,7 @@ merge975:
   store { i64, i8* }* %3716, { i64, i8* }** %3717
   %3718 = load { i64, i8* }*, { i64, i8* }** %3717
   %3719 = load i64, i64* %3711
-  %3720 = call i64 @nyx_array_get({ i64, i8* }* %3718, i64 %3719)
+  %3720 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3718, i64 %3719)
   %3721 = alloca i64
   store i64 %3720, i64* %3721
   %3722 = load i64, i64* %3721
@@ -7593,7 +7604,7 @@ merge978:
   store { i64, i8* }* %3742, { i64, i8* }** %3743
   %3744 = load { i64, i8* }*, { i64, i8* }** %3743
   %3745 = load i64, i64* %3737
-  %3746 = call i64 @nyx_array_get({ i64, i8* }* %3744, i64 %3745)
+  %3746 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3744, i64 %3745)
   %3747 = alloca i64
   store i64 %3746, i64* %3747
   %3748 = load i64, i64* %3747
@@ -7674,7 +7685,7 @@ merge981:
   store { i64, i8* }* %3779, { i64, i8* }** %3780
   %3781 = load { i64, i8* }*, { i64, i8* }** %3780
   %3782 = load i64, i64* %3774
-  %3783 = call i64 @nyx_array_get({ i64, i8* }* %3781, i64 %3782)
+  %3783 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3781, i64 %3782)
   %3784 = alloca i64
   store i64 %3783, i64* %3784
   %3785 = load i64, i64* %3784
@@ -7883,12 +7894,12 @@ while_body995:
   store %nyx_string* %3882, %nyx_string** %3883
   %3884 = load { i64, i8* }*, { i64, i8* }** %3856
   %3885 = load i64, i64* %3873
-  %3886 = call i64 @nyx_array_get({ i64, i8* }* %3884, i64 %3885)
+  %3886 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3884, i64 %3885)
   %3887 = alloca i64
   store i64 %3886, i64* %3887
   %3888 = load { i64, i8* }*, { i64, i8* }** %3860
   %3889 = load i64, i64* %3873
-  %3890 = call i64 @nyx_array_get({ i64, i8* }* %3888, i64 %3889)
+  %3890 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3888, i64 %3889)
   %3891 = alloca i64
   store i64 %3890, i64* %3891
   %3892 = load { i64, i8* }*, { i64, i8* }** %3864
@@ -8053,7 +8064,7 @@ else1004:
 merge1005:
   %3994 = load { i64, i8* }*, { i64, i8* }** %3956
   %3995 = load i64, i64* %3969
-  %3996 = call i64 @nyx_array_get({ i64, i8* }* %3994, i64 %3995)
+  %3996 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3994, i64 %3995)
   %3997 = alloca i64
   store i64 %3996, i64* %3997
   %3998 = load i64, i64* %3997
@@ -8075,7 +8086,7 @@ else1007:
 merge1008:
   %4007 = load { i64, i8* }*, { i64, i8* }** %3960
   %4008 = load i64, i64* %3969
-  %4009 = call i64 @nyx_array_get({ i64, i8* }* %4007, i64 %4008)
+  %4009 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %4007, i64 %4008)
   %4010 = alloca i64
   store i64 %4009, i64* %4010
   %4011 = load i64, i64* %3985

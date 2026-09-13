@@ -104,6 +104,13 @@ prelude-check:
 bootstrap: $(STD_PRELUDE)
 	$(TESTROOT_LOCK) bash scripts/build_bootstrap.sh
 
+## Las semillas .ll del bootstrap describen al compilador ACTUAL (punto fijo).
+## NO va en test-ai-first: son 9 compilaciones del compilador. Lo invoca
+## release-check, que es donde importa — el instalador público construye desde
+## estas semillas y publicarlas viejas se lo lleva el usuario.
+seeds-check:
+	@bash scripts/testing/run_seeds_check.sh
+
 ## Regenerar std/builtins.index (catálogo de builtins globales para CAPABILITIES.md)
 ## Correr tras agregar o sacar un `scope_declare_fn(..., "builtin", N)` de semantic.nx.
 ## La guarda que lo vigila es run_capabilities_test.sh (dentro de make test-ai-first).
@@ -639,4 +646,4 @@ sdd-check:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check
+.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check

@@ -401,6 +401,45 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`test_net_result.c` dejaba de pasar cuando otro proceso del equipo tenía una conexión abierta —
+  y no era mala suerte.** Sus tres casos de error de red usaban puertos fijos (58732 y 58733) con el
+  comentario «improbable colisión real». Los dos caen **dentro del rango de puertos efímeros** del
+  kernel (32768–60999 en Linux por defecto), que es de donde sale el puerto LOCAL de cualquier
+  conexión saliente de cualquier proceso. Medido con `ss -tanp`: otra sesión tenía el 58732 como
+  puerto local de un HTTPS a `:443`, y mientras esa conexión vivía el primer `listen` del test
+  fallaba **5 de 5** (`Errno 98`). La ficha de `TASKS.md` llamaba a esa colisión «no vista».
+  Se descubrió porque `make test-runtime` falló durante la verificación de un cambio de semillas que
+  no podía afectarlo —el runtime no había cambiado desde la última corrida verde—, y en vez de
+  reintentar hasta que pasara se midió qué ocupaba el puerto.
+  Ahora los puertos los asigna el kernel (puerto 0) y se leen con `getsockname()`: el segundo
+  `listen`/`bind` apunta al puerto que el primero retiene, así que la colisión es la que el test
+  provoca y ninguna otra. Para `ECONNREFUSED`, un socket **bindeado sin `listen`** retiene su puerto
+  y el kernel rechaza con RST, así que no hay carrera. Lo que el test afirma —el errno exacto— no
+  cambió. Verificado bajo la condición que lo rompía: con la otra sesión reteniendo los puertos, el
+  test original falla y el corregido pasa 5 de 5 (109 asserts). El tercer caso, un `bind` UDP que
+  usaba el puerto fijo + 1, apareció al revisar el parche antes de compilarlo.
+  `test-374-try-net.nx` tiene la misma fragilidad en sus `listen` al 58735 y queda pendiente: es un
+  test Nyx y el runtime no expone `getsockname`.
+- **Las nueve semillas `.ll` del bootstrap vuelven a describir al compilador actual** — siete
+  estaban atrasadas. Se regeneran A MANO (`make recompile MODULE=x`), así que un cambio del
+  compilador que afecte lo que EMITE se propaga solo a los módulos que alguien se acuerde de
+  recompilar.
+  **Los 40 cambios de código eran todos la MISMA sustitución**: `nyx_array_get` →
+  `nyx_slot_as_int_checked`, el slot-check de NYX2014. No eran siete derivas independientes sino un
+  solo cambio sin propagar. Consecuencia concreta: el `nyx_bootstrap` que construye el proyecto —y
+  el que `scripts/install.sh` construye en la máquina de un usuario externo— corría **sin esa red**
+  en `lexer`, `parser`, `types`, `borrow` y `licm`. No producía código incorrecto; le faltaba una
+  protección que el compilador actual sí emite. El resto de la diferencia eran `declare` de builtins
+  agregados después.
+  **Cierra en UNA vuelta**: regenerar las siete y reconstruir el bootstrap deja las nueve en punto
+  fijo, incluidas `semantic` y `codegen`, que no se tocaron. No había nada que no convergiera.
+  Guarda nueva: `make seeds-check` (`scripts/testing/run_seeds_check.sh`), invocada desde
+  `release-check`. **Fuera de `test-ai-first` a propósito** — son nueve compilaciones del compilador
+  y en máquinas chicas `codegen` muere por OOM —, y dentro de `release-check` porque es ahí donde
+  importa: publicar semillas viejas le entrega al usuario un compilador distinto del que este repo
+  probó. El criterio es PUNTO FIJO, no «idéntico siempre», y el mensaje de error lo dice: tras un
+  cambio que altere lo que el compilador emite hacen falta dos vueltas, porque la primera usa el
+  bootstrap viejo.
 - **Los dos shims WASI vuelven a ser una sola copia.** `playground/static/nyx-wasi-shim.js` llevaba
   desde el 4 de julio sin tocarse —253 líneas de atraso respecto de
   `examples/browser/nyx-wasi-shim.js`, que es el mismo archivo— sin que nada lo dijera. Sincronizado,
