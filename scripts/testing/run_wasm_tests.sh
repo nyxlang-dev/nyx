@@ -227,15 +227,25 @@ else
                         proj_ok=1
                     fi
                 else
-                    # Sin runtime de wasm no se puede comparar la salida, pero
-                    # que el .wasm se haya construido ya vale: es la mitad del
-                    # camino y es la que estaba sin cubrir.
-                    proj_ok=1
+                    # Sin runtime de wasm no se puede comparar la salida. Que el
+                    # .wasm se haya construido igual vale —es la mitad del camino
+                    # y es la que estaba sin cubrir—, pero se REPORTA DISTINTO.
+                    #
+                    # Antes esta rama también decía «PASS», idéntico al caso
+                    # completo: quien leyera la salida en una máquina sin wasmtime
+                    # creería que la paridad nativo↔wasm se verificó, cuando lo
+                    # único verificado fue que el archivo se generó. Un verde que
+                    # no distingue qué midió es la clase de cosa que después se
+                    # cita como evidencia de algo que nadie comprobó.
+                    proj_ok=2
                 fi
             fi
         fi
         if [ "$proj_ok" -eq 1 ]; then
             echo -e "${GREEN}PASS${NC}"; PASSED=$((PASSED + 1))
+        elif [ "$proj_ok" -eq 2 ]; then
+            echo -e "${GREEN}PASS${NC} ${YELLOW}(solo build — sin wasmtime no se comparó la salida)${NC}"
+            PASSED=$((PASSED + 1))
         else
             echo -e "${RED}FAIL${NC}"
             echo "      nativo vs wasm:"

@@ -340,6 +340,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **El test de paridad nativo↔wasm ya no dice `PASS` cuando no comparó nada.** Sin `wasmtime` en la
+  máquina, la rama que solo verifica que el `.wasm` se construyó ponía la MISMA etiqueta `PASS` que
+  el caso completo. Quien leyera la salida creería que la paridad se verificó, cuando lo único
+  verificado fue que el archivo se generó. Ahora dice `PASS (solo build — sin wasmtime no se comparó
+  la salida)`. Encontrado al MEDIR si el pedido de wasm de nyxerp ya estaba resuelto, que es
+  exactamente para lo que sirve medir antes de trabajar: el pedido lo estaba, esto no.
 - **`toLower()`/`toUpper()` convierten Unicode, no solo ASCII** (fricción de nyxerp, 2026-09-10).
   Convertían byte a byte con `tolower()`/`toupper()`, así que con cualquier letra acentuada devolvían
   el texto **a medio convertir y sin avisar**: `"FERRETERÍA".toLower()` daba `"ferreterÍa"` —con la
