@@ -20,6 +20,24 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **SSE en wasm: `browser_sse_fn(url, fn(evento, datos) {...}) -> int` y `browser_sse_close(id)`**
+  (fricción de nyxerp, 2026-09-10, IDEA). Una pantalla de wasm solo podía **preguntar** cada tanto.
+  En un ERP eso significa que dos personas mirando el mismo inventario no ven lo que hizo la otra, y
+  que el servidor recibe una consulta por pantalla abierta por intervalo, casi siempre para
+  responder «nada nuevo».
+  Va sobre **`fetch` con el cuerpo en streaming, no sobre `EventSource`**, y las dos razones se
+  midieron antes de elegir: `EventSource` exige registrar cada nombre de evento de antemano —no
+  tiene catch-all— y el contrato que pidió el reporte es `fn(evento, datos)` con nombres arbitrarios
+  («stock», «factura»); y node 20 no trae `EventSource` pero sí `fetch` y `ReadableStream`, así que
+  sobre `fetch` esto **se puede testear** bajo node con el mismo `opts.fetch` que ya inyectan los
+  tests. Es además lo que el propio reporte describe: «un `fetch` que no se cierra».
+  Multi-disparo: el cierre queda anclado hasta `browser_sse_close`, y también se suelta si el stream
+  termina o falla — un canal que se cae no puede dejar el entorno anclado para siempre.
+
+- **`browser_geo_fn(fn(lat, lon) {...})`** — era la última de las asíncronas que solo aceptaba el
+  **nombre** de un export; `fetch`, `timeout` e `interval` ya tenían su variante con cierre. Con eso
+  queda cerrado el primer pedido del mismo reporte: el contexto viaja, y no hace falta una tabla de
+  correlación escrita a mano para saber a qué pedido corresponde cada respuesta.
 - **`try_<S>_desde_fila(fila) -> Result<S, Error>`** [arco: derive-fila-sin-abortar]. La API que
   pidió el reporte de nyxerp: convertir una fila de la base sin que un dato inesperado tire el
   proceso. La que aborta (`<S>_desde_fila`) **se queda** — para un script de migración es la

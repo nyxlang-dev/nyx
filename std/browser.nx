@@ -41,6 +41,9 @@ extern "js" fn js_browser_on_hashchange_fn(handler: Fn)
 extern "js" fn js_browser_fetch_fn(url: String, method: String, body: String, handler: Fn)
 extern "js" fn js_browser_timeout_fn(ms: int, handler: Fn) -> int
 extern "js" fn js_browser_interval_fn(ms: int, handler: Fn) -> int
+extern "js" fn js_browser_geo_fn(handler: Fn)
+extern "js" fn js_browser_sse_fn(url: String, handler: Fn) -> int
+extern "js" fn js_browser_sse_close(id: int)
 
 // HTTP fetch: al resolver, llama al export `handler(status: int, body: String)`.
 // status 0 = error de red (body = mensaje). body de request "" = sin body.
@@ -118,6 +121,62 @@ export fn browser_interval_fn(ms: int, handler: Fn) -> int {
 // Si el permiso falla, el handler NO se llama (mismo contrato que el portal).
 export fn browser_geo(handler: String) {
     js_browser_geo(handler)
+}
+
+// Geolocalización con CLOSURE: el entorno viaja, así que el manejador sabe para
+// qué parte de la pantalla pidió la posición. Era la última de las asíncronas
+// que solo aceptaba el NOMBRE de un export (fricción de nyxerp, 2026-09-10):
+// fetch, timeout e interval ya tenían su variante `_fn`, geo no.
+//
+// Un solo disparo, igual que fetch y timeout: el shim suelta el entorno después
+// de llamar. Si el permiso falla, el manejador NO se llama — mismo contrato que
+// `browser_geo`, y el cierre se suelta igual para no filtrarlo.
+export fn browser_geo_fn(handler: Fn) {
+    js_browser_geo_fn(handler)
+}
+
+// ── Eventos enviados por el servidor (SSE) ──────────────────────────────────
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-10, IDEA)
+//
+// Una pantalla de wasm solo podía PREGUNTAR cada tanto. En un ERP eso significa
+// que dos personas mirando el mismo inventario no ven lo que hizo la otra, y que
+// el servidor recibe una consulta por pantalla abierta por intervalo, casi
+// siempre para responder «nada nuevo».
+//
+// SSE es la mitad chica del problema y cubre el caso: el navegador manda por
+// `fetch` y escucha por este canal. Un WebSocket de cliente sería más completo;
+// esto alcanza para «cambió el stock», «otra caja facturó», «terminó tu reporte».
+//
+// El manejador es un CLOSURE, no el nombre de un export: el entorno viaja, así
+// que sabe a qué parte de la pantalla corresponde el aviso.
+//
+//   let id: int = browser_sse_fn("/eventos", fn(evento: String, datos: String) {
+//       if evento == "stock" { dom_set_text("#stock", datos) }
+//   })
+//   ...
+//   browser_sse_close(id)   // al desmontar la vista
+//
+// CONTRATO
+//   - El manejador recibe (evento, datos). Un frame sin `event:` llega como
+//     "message", que es el nombre por defecto del protocolo.
+//   - Es MULTI-DISPARO: el entorno del cierre queda anclado hasta
+//     `browser_sse_close`. Una vista que se desmonta sin cerrar filtra el
+//     cierre — mismo contrato que `browser_interval_fn` y su `clear_timer`.
+//   - Devuelve un id > 0. Si el transporte no está disponible devuelve 0 y el
+//     manejador no se llama nunca.
+//   - Va sobre `fetch` con el cuerpo en streaming, no sobre `EventSource`: así
+//     entrega eventos con NOMBRE ARBITRARIO (EventSource exige registrar cada
+//     nombre de antemano) y funciona igual en el navegador y bajo node, que es
+//     lo que permite testearlo.
+export fn browser_sse_fn(url: String, handler: Fn) -> int {
+    return js_browser_sse_fn(url, handler)
+}
+
+// Cierra el canal y SUELTA el entorno del cierre. Llamarlo al desmontar la
+// vista: sin esto el cierre queda anclado toda la vida de la página.
+export fn browser_sse_close(id: int) {
+    js_browser_sse_close(id)
 }
 
 // localStorage.getItem ("" si no existe)

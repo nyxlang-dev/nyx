@@ -2029,12 +2029,29 @@ table). Inside a handler, the CURRENT event is readable: `ev_type()`, `ev_key()`
 `ev_target_attr(name)`, `ev_target_value()`, `ev_client_x()/ev_client_y()`,
 `ev_prevent_default()`.
 
-**std/browser** (wasm-only, callback-by-export-name until real async lands):
-`browser_fetch(url, method, body, "handler")` → handler gets `(status: int,
-body: String)`; `browser_interval(ms, "h") -> id`, `browser_timeout`,
-`browser_clear_timer(id)`; `browser_geo("h")` → `(lat: float, lon: float)`;
-`ls_get/ls_set` (localStorage); `tz_offset()` (minutes east of UTC);
-`match_media(query) -> int`.
+**std/browser** (wasm-only). **Prefer the `*_fn` variants: they take a CLOSURE, so the
+environment travels** — the handler knows which part of the screen it was for. The
+name-of-an-export forms stay for compatibility, but a global export name carries no
+context, which is exactly what forced hand-written correlation tables:
+`browser_fetch_fn(url, method, body, fn(status: int, body: String) {...})`,
+`browser_timeout_fn(ms, fn(){...}) -> id`, `browser_interval_fn(ms, fn(){...}) -> id`,
+`browser_geo_fn(fn(lat: float, lon: float) {...})`, `browser_on_hashchange(fn(){...})`.
+Single-shot ones (fetch, timeout, geo) release the environment when they fire;
+multi-shot ones (interval) release it in `browser_clear_timer(id)`.
+
+**Server push**: `browser_sse_fn(url, fn(evento: String, datos: String) {...}) -> id` and
+`browser_sse_close(id)` — Server-Sent Events, so a screen learns about a change instead of
+polling every few seconds. A frame with no `event:` arrives as `"message"`; repeated `data:`
+lines are joined with a newline. It is MULTI-SHOT: the closure stays anchored until
+`browser_sse_close`, so a view that unmounts without closing leaks it (same contract as
+`browser_interval_fn`). It runs over `fetch` with a streaming body, not `EventSource` — that
+is what allows arbitrary event names (EventSource needs each name registered up front) and
+what makes it testable under node. Returns 0 if no transport is available.
+
+Name-of-export forms: `browser_fetch(url, method, body, "handler")`,
+`browser_interval(ms, "h") -> id`, `browser_timeout`, `browser_clear_timer(id)`,
+`browser_geo("h")`. Plus `ls_get/ls_set` (localStorage); `tz_offset()` (minutes east of
+UTC); `match_media(query) -> int`.
 
 **Memory**: wasm has no Boehm GC. Default = calloc, leak-by-design (fine for
 short-lived pages). For long-lived pages opt into the **per-event arena**:
