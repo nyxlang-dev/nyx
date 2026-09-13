@@ -61,6 +61,7 @@ GOTCHA_IDS=(
   "file-api-names"
   "array-index-float-write"
   "sync-global-init-reliable"
+  "continue-in-for-loop"
   "nested-fn-sees-module"
 )
 

@@ -401,6 +401,32 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`continue` dentro de un `for … in` colgaba el programa en un bucle infinito** (fricción de nyxerp,
+  2026-09-13, LENGUAJE). Afectaba a todo `for` sobre un **array** (`for x in arr`, `for x: T in arr`)
+  y sobre un **rango** (`for i in 0..n`, `0..=n`). `codegen_for` apuntaba el destino de `continue` a
+  `for_cond`, pero el incremento del índice vivía al final del cuerpo: `continue` saltaba a la
+  condición **sin incrementar**, y el bucle volvía a visitar el mismo elemento para siempre. Bajo
+  `nyx test` aparecía como un corte por tiempo con `0 passed, 0 failed` y la salida ya emitida
+  perdida, lejos de la línea culpable — al equipo le costó «una hora larga» encontrarla.
+  El reporte creía que era solo `continue` + brazo de `match` + `for … in`. **Al reproducirlo, un
+  `if` pelado alcanzaba**: el `match` no tenía nada que ver, y la versión con `while` funcionaba
+  solo porque el incremento lo escribía el usuario antes del `continue`. No había un solo test de
+  `continue` dentro de un `for … in` en toda la suite, que es como sobrevivió.
+  Ahora rango y array tienen un bloque `for_step` con el incremento, al que caen tanto `continue`
+  como el final del cuerpo. El camino de **iterador** (`for x in arr.iter()`) nunca tuvo el bug —su
+  avance es el `nyx_iter_next` que vive dentro de `for_cond`— y se dejó como estaba, con un caso de
+  control en el test para que un arreglo futuro no lo rompa en la dirección opuesta.
+  `test-416` cubre el caso literal del reporte, el `if` pelado, array sin anotar, rango exclusivo e
+  inclusivo, strings, bucles anidados, `continue` como última sentencia, el iterador y `break`, cada
+  uno con tope de vueltas para que una regresión **falle con mensaje en vez de colgarse**.
+  **nyx-db lo tenía latente, y en una capacidad que anuncia**: diez `continue` dentro de `for … in`
+  sobre arrays, uno de ellos incondicional al final de cada fila de un JOIN (`store.nx:858`) y otro
+  para saltar NULL en MIN/MAX (`executor.nx`). Medido con un programa que hace INNER JOIN, LEFT JOIN
+  y MIN sobre una columna con NULL: con el compilador anterior se colgaba hasta el timeout y perdía
+  la salida ya impresa; con este termina (`LEFT JOIN filas=3`, `MIN filas=1`). Ningún test de
+  nyx-db arma un JOIN, que es por lo que `make test-stacks` pasaba. De paso se
+  verificó que el intérprete del REPL no tiene el bug —no implementa `break` ni `continue` y los
+  rechaza con NYX3002— y quedó fichado aparte.
 - **`test_net_result.c` dejaba de pasar cuando otro proceso del equipo tenía una conexión abierta —
   y no era mala suerte.** Sus tres casos de error de red usaban puertos fijos (58732 y 58733) con el
   comentario «improbable colisión real». Los dos caen **dentro del rango de puertos efímeros** del

@@ -1497,7 +1497,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,nested-fn-sees-module -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,nested-fn-sees-module -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -1646,7 +1646,16 @@ data race — see the Threading section of LLM.md for its three failure modes. T
 covers `sync.wg_wait_timeout(wg, ms)` (both outcomes: quiesced
 early-exit and timeout). [test: 23-sync-global-mutex-wg-timeout]
 
-19. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
+19. **`continue` inside a `for … in` loop moves to the next iteration (fixed 2026-09-13)** — over an
+array (`for x in arr`, `for x: T in arr`) and over a range (`for i in 0..n`, `0..=n`). Until then
+every such `continue` hung the program in an INFINITE loop: it jumped to the loop condition without
+incrementing the index, so the same element was revisited forever. It had nothing to do with
+`match` or `Result` — a plain `if` was enough — and under `nyx test` it showed up as a timeout
+reporting `0 passed, 0 failed` with the output lost, far from the offending line. If you rewrote a
+`for … in` as a `while` with a manual index to avoid this, you can go back. `for x in arr.iter()`
+never had the bug. [test: compiler/language/test-416-continue-en-for-in]
+
+20. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
 trait methods, generic calls, constants, `extern`, `static`, `repr(C)` structs. Before the fix the
 codegen context of a nested function shared only part of the module's tables with its parent, and
 the symptom was misleading rather than clear: a trait method reported `method 'm' is not available

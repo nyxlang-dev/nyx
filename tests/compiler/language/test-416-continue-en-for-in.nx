@@ -1,0 +1,136 @@
+// `continue` dentro de un `for … in` pasa a la SIGUIENTE vuelta.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-13, LENGUAJE)
+//
+// Hasta esa fecha, todo `continue` dentro de un `for` sobre un ARRAY o un RANGO
+// colgaba el programa en un bucle infinito. `codegen_for` apuntaba el destino de
+// `continue` a `for_cond`, pero el incremento del índice vivía al final del
+// cuerpo: `continue` saltaba a la condición SIN incrementar, y el bucle volvía a
+// visitar el mismo elemento para siempre. Un `nyx test` lo cortaba por tiempo y
+// reportaba `0 passed, 0 failed`, con la salida ya emitida perdida — el síntoma
+// aparecía lejos de la causa y costó una hora larga encontrar la línea.
+//
+// El reporte creía que era solo `continue` + brazo de `match` + `for … in`. Al
+// reproducirlo, un `if` pelado alcanzaba: el `match` no tenía nada que ver.
+// Tampoco había un solo test de `continue` dentro de un `for … in` en la suite,
+// que es como sobrevivió.
+//
+// El camino de ITERADOR (`for x in arr.iter()`) nunca tuvo el bug: su avance es
+// el `nyx_iter_next` que vive DENTRO de `for_cond`. Se prueba igual, como
+// control, para que un arreglo futuro no lo rompa en la dirección opuesta.
+//
+// Cada caso tiene un tope de vueltas: si el bug vuelve, el test FALLA con un
+// mensaje en vez de colgarse, que es la diferencia entre un rojo y un timeout
+// mudo.
+//
+// Expected exit: 0
+
+fn falla(n: int) -> Result<int, Error> {
+    if n == 2 { return Result.Err(err_new(2, "not_found", "no")) }
+    return Result.Ok(n)
+}
+
+fn main() -> int {
+    let nums: Array = [1, 2, 3, 4]
+
+    // 1. El caso literal del reporte: continue en un brazo de match.
+    var s1: int = 0
+    var v1: int = 0
+    for n: int in nums {
+        v1 = v1 + 1
+        if v1 > 20 { println("FALLA match: bucle infinito") return 1 }
+        var v: int = 0
+        match falla(n) {
+            Result.Ok(x) => { v = x }
+            Result.Err(_e) => { continue }
+        }
+        s1 = s1 + v
+    }
+    println("match|" + int_to_string(s1) + "|" + int_to_string(v1))
+
+    // 2. Sin match: un if pelado alcanzaba para colgarlo.
+    var s2: int = 0
+    var v2: int = 0
+    for n: int in nums {
+        v2 = v2 + 1
+        if v2 > 20 { println("FALLA if: bucle infinito") return 1 }
+        if n == 2 { continue }
+        s2 = s2 + n
+    }
+    println("if|" + int_to_string(s2) + "|" + int_to_string(v2))
+
+    // 3. Array sin anotar el tipo del elemento.
+    var s3: int = 0
+    var v3: int = 0
+    for n in nums {
+        v3 = v3 + 1
+        if v3 > 20 { println("FALLA sin-anotar: bucle infinito") return 1 }
+        if n == 2 { continue }
+        s3 = s3 + n
+    }
+    println("sin-anotar|" + int_to_string(s3) + "|" + int_to_string(v3))
+
+    // 4. Rango exclusivo e inclusivo.
+    var s4: int = 0
+    var v4: int = 0
+    for i in 0..5 {
+        v4 = v4 + 1
+        if v4 > 30 { println("FALLA rango: bucle infinito") return 1 }
+        if i == 2 { continue }
+        s4 = s4 + i
+    }
+    println("rango|" + int_to_string(s4) + "|" + int_to_string(v4))
+    var s5: int = 0
+    for i in 1..=4 {
+        if i == 3 { continue }
+        s5 = s5 + i
+    }
+    println("rango-incl|" + int_to_string(s5))
+
+    // 5. Strings: el elemento no es int, el incremento tiene que seguir igual.
+    let palabras: Array<String> = ["a", "salta", "b", "salta", "c"]
+    var junto: String = ""
+    for p: String in palabras {
+        if p == "salta" { continue }
+        junto = junto + p
+    }
+    println("strings|" + junto)
+
+    // 6. Anidados: continue del bucle INTERNO no puede tocar el externo.
+    var pares: int = 0
+    for i in 0..3 {
+        for j in 0..3 {
+            if j == 1 { continue }
+            pares = pares + 1
+        }
+    }
+    println("anidado|" + int_to_string(pares))
+
+    // 7. continue como ÚLTIMA sentencia del cuerpo (el cuerpo termina con br).
+    var s7: int = 0
+    for n: int in nums {
+        s7 = s7 + n
+        continue
+    }
+    println("final|" + int_to_string(s7))
+
+    // 8. CONTROL — iterador: nunca tuvo el bug, no puede ganarlo.
+    var s8: int = 0
+    var v8: int = 0
+    for n in nums.iter() {
+        v8 = v8 + 1
+        if v8 > 20 { println("FALLA iter: bucle infinito") return 1 }
+        if n == 2 { continue }
+        s8 = s8 + n
+    }
+    println("iter|" + int_to_string(s8) + "|" + int_to_string(v8))
+
+    // 9. break sigue funcionando.
+    var s9: int = 0
+    for n: int in nums {
+        if n == 3 { break }
+        s9 = s9 + n
+    }
+    println("break|" + int_to_string(s9))
+    return 0
+}
