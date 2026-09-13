@@ -401,6 +401,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`make install-local` decía «✓ Toolchain sincronizado» aunque no hubiera instalado el
+  compilador.** Cada `cp` de la receta iba encadenado con `;`, así que un fallo seguía de largo
+  hasta el `✓`. El fallo real fue `Text file busy`: al publicar el arreglo del `continue`, algo
+  estaba ejecutando `~/.nyx/nyx_bootstrap`, `cp` no pudo sobrescribirlo, y ese binario —el que el
+  wrapper prefiere sobre `bin/nyx`— quedó con el codegen anterior. Se descubrió porque, antes de
+  archivar el reporte de fricción, se repitió el caso literal de nyxerp con el `nyx` instalado y
+  seguía colgando. nyxerp vive en esta misma máquina: el arreglo estaba publicado y no le llegaba.
+  Ahora cada binario se instala copiándolo al lado y **renombrándolo encima** (`mv` sobre un
+  ejecutable en uso funciona: el proceso que corre conserva el archivo anterior), y la receta corre
+  con `set -e`, así que ningún paso puede fallar y terminar con `✓`. Verificado sobre un `NYX_HOME`
+  de prueba: con los binarios ocupados, la receta vieja los deja viejos y la nueva los actualiza
+  sin dejar temporales; con un archivo de solo lectura, la vieja da `rc=0` y `✓` y la nueva
+  `rc=2` sin `✓`. `nyx update` tenía el mismo patrón, peor (`cp … 2>/dev/null || true`), y recibió
+  el mismo arreglo, verificado igual.
 - **`continue` dentro de un `for … in` colgaba el programa en un bucle infinito** (fricción de nyxerp,
   2026-09-13, LENGUAJE). Afectaba a todo `for` sobre un **array** (`for x in arr`, `for x: T in arr`)
   y sobre un **rango** (`for i in 0..n`, `0..=n`). `codegen_for` apuntaba el destino de `continue` a

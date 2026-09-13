@@ -409,8 +409,15 @@ case "${1:-}" in
         # refrescar binarios de bin/ y limpiar dev files (lista CANONICA
         # compartida con install.sh - antes habia dos listas desincronizadas)
         mkdir -p bin
-        cp nyx_bootstrap bin/nyx 2>/dev/null || true
-        cp nyx_build bin/nyx_build 2>/dev/null || true
+        # Copiar AL LADO y renombrar encima, nunca cp directo: si un programa está
+        # corriendo con bin/nyx, cp falla con 'Text file busy' y el binario viejo
+        # queda instalado. Antes el error se tiraba (2>/dev/null || true) y el
+        # update terminaba anunciando la versión nueva con el compilador anterior.
+        for par in "nyx_bootstrap:bin/nyx" "nyx_build:bin/nyx_build"; do
+            src="${par%%:*}"; dst="${par#*:}"
+            { cp "$src" "$dst.nuevo.$$" && mv -f "$dst.nuevo.$$" "$dst"; } \
+                || { rm -f "$dst.nuevo.$$"; echo "error: no se pudo instalar $dst" >&2; exit 1; }
+        done
         bash scripts/dist-clean.sh "$NYX_HOME"
         NEW_VERSION=$(cat VERSION 2>/dev/null || echo "?")
         printf "\n  \033[1;32mNyx updated: %s -> %s\033[0m\n" "${OLD_VERSION:-?}" "$NEW_VERSION"

@@ -144,19 +144,31 @@ nyx_test: compiler/test.ll
 	@$(MAKE) --no-print-directory build-test
 
 install-local: $(STD_PRELUDE) nyx_check nyx_vet nyx_fmt nyx_test
-	@NYX_HOME_DIR="$${NYX_HOME:-$$HOME/.nyx}"; \
+	@set -e; \
+	: "set -e: ningún paso de la instalación puede fallar y seguir. Antes cada cp"; \
+	: "iba encadenado con ';' y la receta terminaba con '✓ Toolchain sincronizado'"; \
+	: "aunque una copia hubiera fallado."; \
+	NYX_HOME_DIR="$${NYX_HOME:-$$HOME/.nyx}"; \
 	if [ ! -d "$$NYX_HOME_DIR/bin" ]; then \
 		echo "✗ $$NYX_HOME_DIR no existe — correr scripts/install.sh primero"; exit 1; \
 	fi; \
-	cp nyx_bootstrap "$$NYX_HOME_DIR/bin/nyx"; \
-	if [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/bin/nyx_build"; fi; \
-	if [ -f nyx_check ]; then cp nyx_check "$$NYX_HOME_DIR/nyx_check"; fi; \
-	if [ -f nyx_test ]; then cp nyx_test "$$NYX_HOME_DIR/nyx_test"; fi; \
-	if [ -f nyx_vet ]; then cp nyx_vet "$$NYX_HOME_DIR/nyx_vet"; fi; \
-	if [ -f nyx_fmt ]; then cp nyx_fmt "$$NYX_HOME_DIR/nyx_fmt"; fi; \
-	if [ -f nyx_gendocs ]; then cp nyx_gendocs "$$NYX_HOME_DIR/nyx_gendocs"; fi; \
-	if [ -f "$$NYX_HOME_DIR/nyx_bootstrap" ]; then cp nyx_bootstrap "$$NYX_HOME_DIR/nyx_bootstrap"; fi; \
-	if [ -f "$$NYX_HOME_DIR/nyx_build" ] && [ -f nyx_build ]; then cp nyx_build "$$NYX_HOME_DIR/nyx_build"; fi; \
+	: "Un binario se instala copiándolo al lado y RENOMBRÁNDOLO encima, nunca con"; \
+	: "cp directo: si alguien lo está ejecutando, cp falla con 'Text file busy'"; \
+	: "(ETXTBSY) y el viejo queda en su lugar. mv sobre un ejecutable en uso sí"; \
+	: "funciona: el proceso que corre conserva el archivo anterior y el próximo"; \
+	: "arranque toma el nuevo. Medido el 2026-09-13: ~/.nyx/nyx_bootstrap quedó"; \
+	: "con el codegen anterior al arreglo del continue mientras la receta decía"; \
+	: "'✓', y el wrapper prefiere ese binario sobre bin/nyx."; \
+	instalar() { cp "$$1" "$$2.nuevo.$$$$" && mv -f "$$2.nuevo.$$$$" "$$2" || { rm -f "$$2.nuevo.$$$$"; echo "✗ no se pudo instalar $$2"; exit 1; }; }; \
+	instalar nyx_bootstrap "$$NYX_HOME_DIR/bin/nyx"; \
+	if [ -f nyx_build ]; then instalar nyx_build "$$NYX_HOME_DIR/bin/nyx_build"; fi; \
+	if [ -f nyx_check ]; then instalar nyx_check "$$NYX_HOME_DIR/nyx_check"; fi; \
+	if [ -f nyx_test ]; then instalar nyx_test "$$NYX_HOME_DIR/nyx_test"; fi; \
+	if [ -f nyx_vet ]; then instalar nyx_vet "$$NYX_HOME_DIR/nyx_vet"; fi; \
+	if [ -f nyx_fmt ]; then instalar nyx_fmt "$$NYX_HOME_DIR/nyx_fmt"; fi; \
+	if [ -f nyx_gendocs ]; then instalar nyx_gendocs "$$NYX_HOME_DIR/nyx_gendocs"; fi; \
+	if [ -f "$$NYX_HOME_DIR/nyx_bootstrap" ]; then instalar nyx_bootstrap "$$NYX_HOME_DIR/nyx_bootstrap"; fi; \
+	if [ -f "$$NYX_HOME_DIR/nyx_build" ] && [ -f nyx_build ]; then instalar nyx_build "$$NYX_HOME_DIR/nyx_build"; fi; \
 	cp runtime/*.c runtime/*.h "$$NYX_HOME_DIR/runtime/"; \
 	cp runtime/wasm.srcs "$$NYX_HOME_DIR/runtime/"; \
 	mkdir -p "$$NYX_HOME_DIR/runtime/wasi" && cp -r runtime/wasi/* "$$NYX_HOME_DIR/runtime/wasi/"; \
