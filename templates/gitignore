@@ -12,5 +12,6 @@ packages/
 __pycache__/
 .DS_Store
 
-# Artefactos de targets no nativos (nyx build --target <triple>)
+# Artefactos de targets no nativos (nyx build --target <triple>) y de otros
+# puntos de entrada (nyx build --main <archivo.nx> → target/<name>-<archivo>)
 /target/

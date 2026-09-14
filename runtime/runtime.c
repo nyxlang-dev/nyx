@@ -110,18 +110,16 @@ void nyx_print_int(int64_t value) {
 }
 
 void nyx_print_float(double value) {
+    // Mismo formato que float_to_string (nyx_float_format en strings.c): antes
+    // cada uno tenía su copia del %g, y dos copias derivan.
     char buffer[64];
-    snprintf(buffer, sizeof(buffer), "%g", value);
-    // Ensure float always has decimal point (e.g., 42.0 not 42).
-    // Bounded append of ".0" — avoids unbounded strcat.
-    if (strchr(buffer, '.') == NULL && strchr(buffer, 'e') == NULL && strchr(buffer, 'E') == NULL) {
-        size_t blen = strlen(buffer);
-        if (blen + 3 <= sizeof(buffer)) {
-            buffer[blen] = '.';
-            buffer[blen + 1] = '0';
-            buffer[blen + 2] = '\0';
-        }
-    }
+    nyx_float_format(value, buffer, sizeof(buffer));
+    printf("%s\n", buffer);
+}
+
+void nyx_print_float32(float value) {
+    char buffer[64];
+    nyx_float32_format(value, buffer, sizeof(buffer));
     printf("%s\n", buffer);
 }
 
@@ -707,8 +705,21 @@ double nyx_math_fmod(double x, double y) { return fmod(x, y); }
 // fórmula financiera `monto * tasa / escala` devuelve basura en cuanto el
 // producto pasa de 2^63 — aunque el COCIENTE entre de sobra en un `int`
 // (9.3e12 * 1e6 ya desborda; 9.3e12 * 1e6 / 1e6 es un número chico). Acá el
-// producto vive en `__int128` (|a*b| <= 2^126: jamás desborda) y solo el
+// producto vive en 128 bits (|a*b| <= 2^126: jamás desborda) y solo el
 // cociente final vuelve a 64 bits, con el redondeo elegido explícitamente.
+//
+// Por qué los 128 bits son un PAR de `uint64_t` y no `__int128` (2026-09-14):
+// la primera versión dividía `__int128` y clang resuelve esa división con
+// `__divti3`, un builtin de compiler-rt. En Linux lo provee libgcc y nadie lo
+// ve; contra el target MSVC (x64 y arm64) clang no enlaza `clang_rt.builtins`
+// y la CRT no trae el símbolo, así que NADA que enlazara runtime.c linkeaba en
+// Windows (medido en la laptop: los 12 fixtures del gate, `undefined symbol:
+// __divti3`). Regla: el runtime no depende de builtins de compiler-rt
+// (`__divti3`, `__udivti3`, `__modti3`, `__multi3`...); la aritmética ancha se
+// escribe a mano. Guarda: run_no_compiler_rt_builtins.sh.
+// Se opera sobre MAGNITUDES sin signo y el signo se aplica al final: el
+// resultado es bit a bit el de la versión `__int128` (verificado con un
+// diferencial en todos los modos, bordes de INT64_MIN incluidos).
 //
 // Frontera FFI: todo `int64_t` y sin punteros (gotcha ffi-c-int-no-sign-extend:
 // un `int` de C, 32 bits, no se sign-extiende al cruzar a un `int` de Nyx). El
@@ -738,6 +749,40 @@ double nyx_math_fmod(double x, double y) { return fmod(x, y); }
 // desde el mismo thread devuelve 0.
 static _Thread_local int64_t __nyx_mul_div_round_status = 0;
 
+// x * y exacto en 128 bits (hi:lo), por mitades de 32 bits. Ningún producto
+// parcial desborda: cada uno es < 2^64, y `mid` suma a lo sumo tres términos
+// < 2^32.
+static void nyx_mdr_mul_u64(uint64_t x, uint64_t y, uint64_t* hi, uint64_t* lo) {
+    uint64_t x0 = x & 0xffffffffu, x1 = x >> 32;
+    uint64_t y0 = y & 0xffffffffu, y1 = y >> 32;
+    uint64_t p00 = x0 * y0, p01 = x0 * y1, p10 = x1 * y0, p11 = x1 * y1;
+    uint64_t mid = (p00 >> 32) + (p01 & 0xffffffffu) + (p10 & 0xffffffffu);
+    *lo = (p00 & 0xffffffffu) | (mid << 32);
+    *hi = p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32);
+}
+
+// (hi:lo) / d con hi < d (el cociente entra en 64 bits): división larga bit a
+// bit, 64 vueltas de desplazar-y-restar. Se eligió por sobre la división de
+// Knuth normalizada porque es obviamente correcta y no necesita `clz` (otro
+// candidato a builtin según el target); `nyx_mul_div_round` no es un camino
+// caliente. `carry` es la cuenta del bit 64 que se cae al desplazar: con hi < d
+// no ocurre mientras d <= 2^63 (siempre acá), pero se contempla para que el
+// invariante no dependa del llamador.
+static uint64_t nyx_mdr_div_128_64(uint64_t hi, uint64_t lo, uint64_t d, uint64_t* rem) {
+    uint64_t q = 0;
+    for (int i = 63; i >= 0; i--) {
+        uint64_t carry = hi >> 63;
+        hi = (hi << 1) | ((lo >> i) & 1u);
+        q <<= 1;
+        if (carry || hi >= d) {
+            hi -= d;
+            q |= 1u;
+        }
+    }
+    *rem = hi;
+    return q;
+}
+
 int64_t nyx_mul_div_round_status(void) {
     return __nyx_mul_div_round_status;
 }
@@ -754,45 +799,60 @@ int64_t nyx_mul_div_round(int64_t a, int64_t b, int64_t c, int64_t mode) {
         return 0;
     }
 
-    // |p| <= 2^126: ni el producto ni `p / c` pueden desbordar el __int128
-    // (el UB clásico INT_MIN/-1 es inalcanzable acá, porque p nunca vale el
-    // mínimo de 128 bits).
-    __int128 p = (__int128)a * (__int128)b;
-    __int128 q = p / (__int128)c;   // trunca hacia cero (C99 6.5.5p6)
-    __int128 r = p % (__int128)c;   // resto con el signo de `p`
+    // Magnitudes sin signo: `0 - (uint64_t)x` da |x| también para INT64_MIN
+    // (2^63), sin el UB de negar el mínimo con signo.
+    uint64_t ua = (a < 0) ? (uint64_t)0 - (uint64_t)a : (uint64_t)a;
+    uint64_t ub = (b < 0) ? (uint64_t)0 - (uint64_t)b : (uint64_t)b;
+    uint64_t uc = (c < 0) ? (uint64_t)0 - (uint64_t)c : (uint64_t)c;
+    // Signo del cociente EXACTO. Si el producto es 0 el resultado es 0 y el
+    // signo no importa; si no, es el del cociente truncado y el del redondeo.
+    int neg = ((a < 0) != (b < 0)) != (c < 0);
+
+    // |p| = ua*ub <= 2^126. Cociente truncado Q = qhi:qlo y resto R = r, en
+    // magnitud: truncar hacia cero (C99 6.5.5p6) es truncar la magnitud.
+    uint64_t phi, plo;
+    nyx_mdr_mul_u64(ua, ub, &phi, &plo);
+    uint64_t qhi = phi / uc;
+    uint64_t r;
+    uint64_t qlo = nyx_mdr_div_128_64(phi % uc, plo, uc, &r);
 
     if (r != 0) {
-        // Signo del cociente exacto: con `r != 0`, signo(r) == signo(p), así
-        // que alcanza con comparar los signos de `r` y `c` (evita mirar `p`,
-        // que puede ser 0 solo cuando r también lo es).
-        __int128 s = ((r < 0) == (c < 0)) ? 1 : -1;
-        if (mode == 1) {                    // Floor
-            if (s < 0) q -= 1;
-        } else if (mode == 2) {             // Ceil
-            if (s > 0) q += 1;
+        // Cada ajuste de la versión con signo (`q -= 1` con cociente negativo,
+        // `q += s`) aleja el resultado de cero en una unidad: en magnitud es
+        // siempre Q + 1, y el signo lo pone `neg` al final.
+        int bump = 0;
+        if (mode == 1) {                    // Floor: se aleja si es negativo
+            bump = neg;
+        } else if (mode == 2) {             // Ceil: se aleja si es positivo
+            bump = !neg;
         } else if (mode == 3 || mode == 4) {
-            // Comparar 2*|r| con |c| en vez de |r| con |c|/2: exacto y sin
-            // dividir. |r| < |c| <= 2^63, así que 2*|r| < 2^64 y entra
-            // holgado en __int128; |c| tampoco desborda con c == INT64_MIN.
-            __int128 twice = (r < 0 ? -r : r) * 2;
-            __int128 ac = (c < 0) ? -(__int128)c : (__int128)c;
-            if (twice > ac) {
-                q += s;                     // más de la mitad: al vecino lejano
-            } else if (twice == ac) {
-                // Empate: HalfUp SIEMPRE se aleja de cero; HalfEven solo se
-                // mueve si `q` (el vecino hacia cero) quedó impar, porque
-                // entonces el par es el otro.
-                if (mode == 3 || (q % 2) != 0) q += s;
+            // Comparar 2*R con |c| en vez de R con |c|/2: exacto y sin
+            // dividir. R < |c| <= 2^63, así que 2*R < 2^64 y entra en uint64.
+            uint64_t twice = r << 1;
+            if (twice > uc) {
+                bump = 1;                   // más de la mitad: al vecino lejano
+            } else if (twice == uc) {
+                // Empate: HalfUp SIEMPRE se aleja de cero; HalfEven solo si Q
+                // (el vecino hacia cero) es impar — la paridad de ±Q es la de Q.
+                bump = (mode == 3) || ((qlo & 1u) != 0);
             }
-            // twice < ac: menos de la mitad, `q` ya es el más cercano.
+            // twice < uc: menos de la mitad, Q ya es el más cercano.
+        }
+        if (bump) {
+            qlo += 1;
+            if (qlo == 0) qhi += 1;
         }
     }
 
-    if (q > (__int128)INT64_MAX || q < (__int128)INT64_MIN) {
+    // Rango de int64_t en magnitud: hasta 2^63 si es negativo, 2^63-1 si no.
+    uint64_t lim = neg ? ((uint64_t)1 << 63) : (((uint64_t)1 << 63) - 1);
+    if (qhi != 0 || qlo > lim) {
         __nyx_mul_div_round_status = 2;
         return 0;
     }
-    return (int64_t)q;
+    if (!neg || qlo == 0) return (int64_t)qlo;
+    // -(Q-1)-1 en vez de -(int64_t)Q: con Q == 2^63 el cast directo no entra.
+    return -(int64_t)(qlo - 1) - 1;
 }
 
 // ===== SIGNAL HANDLING (v6.0) =====

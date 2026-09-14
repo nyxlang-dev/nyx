@@ -6,9 +6,10 @@
 // resolve; este test cierra las 7 que quedaban (kind "eof" nuevo,
 // std/error.nx).
 //
-// Puertos fijos altos (mismo criterio best-effort de test-374/375, sin
-// getsockname en Nyx para leer el puerto efímero): 58742 para el par
-// read_line, 58743 para el par read_exact/getpeername/timeout/shutdown.
+// SIN PUERTOS FIJOS (2026-09-14): antes usaba 58742 y 58743, dentro del
+// rango efímero del kernel (32768–60999), de donde salen los puertos
+// locales de las conexiones salientes de cualquier proceso. Ahora cada
+// listen va al puerto 0 y try_local_port lee cuál asignó el kernel.
 //
 // Mecánica de "servidor manda X y cierra" (patrón test-375): listen +
 // connect + accept sobre el mismo puerto (connect a un listen backlog
@@ -28,11 +29,15 @@ fn main() -> int {
     // suelto), y el fragmento "resto" sin '\n' antes del cierre, que se
     // DESCARTA (Err kind "eof", no un Ok con "resto"). Una cuarta lectura
     // confirma que el EOF queda estable (no cuelga, sigue dando "eof").
-    let listen1: int = match try_tcp_listen("127.0.0.1", 58742) {
+    let listen1: int = match try_tcp_listen("127.0.0.1", 0) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-listen1") ; 0 - 1 }
     }
-    let client1: int = match try_tcp_connect("127.0.0.1", 58742) {
+    let puerto1: int = match try_local_port(listen1) {
+        Result.Ok(p) => { p }
+        Result.Err(e) => { print("no-deberia-puerto1") ; 0 - 1 }
+    }
+    let client1: int = match try_tcp_connect("127.0.0.1", puerto1) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-connect1") ; 0 - 1 }
     }
@@ -73,11 +78,15 @@ fn main() -> int {
     // (b) segundo par: try_tcp_read_exact feliz y cortado, try_getpeername,
     // try_tcp_set_timeout, try_tcp_shutdown — todos sobre client2, que
     // sigue vivo LOCALMENTE aunque el peer remoto (peer2) ya cerró.
-    let listen2: int = match try_tcp_listen("127.0.0.1", 58743) {
+    let listen2: int = match try_tcp_listen("127.0.0.1", 0) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-listen2") ; 0 - 1 }
     }
-    let client2: int = match try_tcp_connect("127.0.0.1", 58743) {
+    let puerto2: int = match try_local_port(listen2) {
+        Result.Ok(p) => { p }
+        Result.Err(e) => { print("no-deberia-puerto2") ; 0 - 1 }
+    }
+    let client2: int = match try_tcp_connect("127.0.0.1", puerto2) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-connect2") ; 0 - 1 }
     }

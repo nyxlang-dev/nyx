@@ -306,6 +306,186 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── Casos 15-20: rangos, break, continue y return dentro de bucles ─────
+# Medido el 2026-09-14 antes del arreglo: `for i in 0..3` daba NYX3002
+# («range» no soportado) aunque la cabecera del intérprete lo prometía;
+# break/continue daban NYX3002; `for x in 5` NO iteraba y seguía MUDO; y un
+# `return` dentro de un for/while se DESCARTABA — f() seguía el bucle y
+# devolvía el valor de después (9 en vez de 2), sin ningún error. Los
+# valores impresos son distintivos (3 o 4 cifras) para que el grep no
+# matchee por substring los números de los prompts ni otros casos.
+run_case 15 <<'EOF'
+for i in 3..6 {
+print(i * 111)
+}
+
+for i in 1..=3 {
+print(i * 1001)
+}
+
+print("FIN-15")
+:quit
+EOF
+if grep -qa "333" "$TMP/out15.txt" && grep -qa "555" "$TMP/out15.txt" && ! grep -qa "666" "$TMP/out15.txt"; then
+    echo "  ✓ rango exclusivo 3..6 recorre 3, 4, 5 y no el extremo"
+else
+    echo "  ✗ rango exclusivo mal recorrido (esperado 333..555, sin 666)"
+    sed 's/^/      /' "$TMP/out15.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+if grep -qa "1001" "$TMP/out15.txt" && grep -qa "3003" "$TMP/out15.txt" && grep -qa "FIN-15" "$TMP/out15.txt"; then
+    echo "  ✓ rango inclusivo 1..=3 incluye el extremo"
+else
+    echo "  ✗ rango inclusivo mal recorrido (esperado 1001..3003)"
+    FAIL=$((FAIL + 1))
+fi
+
+run_case 16 <<'EOF'
+for i in 0..6 {
+if i == 1 { continue }
+if i == 4 { break }
+print((i + 1) * 1111)
+}
+
+for x in [7, 8, 9] {
+if x == 8 { break }
+print(x * 101)
+}
+
+var k = 0
+while k < 10 {
+k = k + 1
+if k == 2 { continue }
+if k == 4 { break }
+print(k * 1231)
+}
+
+print(k * 1000)
+:quit
+EOF
+if grep -qa "1111" "$TMP/out16.txt" && grep -qa "3333" "$TMP/out16.txt" && grep -qa "4444" "$TMP/out16.txt" \
+   && ! grep -qa "2222" "$TMP/out16.txt" && ! grep -qa "5555" "$TMP/out16.txt"; then
+    echo "  ✓ continue salta y break corta en for sobre rango"
+else
+    echo "  ✗ break/continue en for sobre rango (esperado 1111 3333 4444, sin 2222 ni 5555)"
+    sed 's/^/      /' "$TMP/out16.txt" | head -10
+    FAIL=$((FAIL + 1))
+fi
+if grep -qa "707" "$TMP/out16.txt" && ! grep -qa "808" "$TMP/out16.txt" && ! grep -qa "909" "$TMP/out16.txt"; then
+    echo "  ✓ break corta en for sobre array"
+else
+    echo "  ✗ break en for sobre array (esperado 707, sin 808 ni 909)"
+    FAIL=$((FAIL + 1))
+fi
+if grep -qa "1231" "$TMP/out16.txt" && grep -qa "3693" "$TMP/out16.txt" && ! grep -qa "2462" "$TMP/out16.txt" \
+   && ! grep -qa "4924" "$TMP/out16.txt" && grep -qa "4000" "$TMP/out16.txt"; then
+    echo "  ✓ continue y break en while (el bucle se corta en k == 4)"
+else
+    echo "  ✗ break/continue en while (esperado 1231 3693 4000, sin 2462 ni 4924)"
+    FAIL=$((FAIL + 1))
+fi
+
+run_case 17 <<'EOF'
+fn f() {
+for x in [1, 2, 3] {
+if x == 2 { return x * 3000 }
+}
+return 9999
+}
+
+fn g() {
+var i = 0
+while i < 10 {
+i = i + 1
+if i == 5 { return i * 1300 }
+}
+return 8888
+}
+
+fn h() {
+for i in 0..10 {
+if i == 3 { return i * 2500 }
+}
+return 7777
+}
+
+print(f())
+print(g())
+print(h())
+:quit
+EOF
+if grep -qa "6000" "$TMP/out17.txt" && grep -qa "6500" "$TMP/out17.txt" && grep -qa "7500" "$TMP/out17.txt" \
+   && ! grep -qaE "9999|8888|7777" "$TMP/out17.txt"; then
+    echo "  ✓ return dentro de for (array y rango) y de while corta la función"
+else
+    echo "  ✗ return dentro de un bucle no cortó la función (esperado 6000 6500 7500)"
+    sed 's/^/      /' "$TMP/out17.txt" | head -10
+    FAIL=$((FAIL + 1))
+fi
+
+run_case 18 <<'EOF'
+for i in 0..2 {
+for j in 0..5 {
+if j == 2 { break }
+print(i * 100 + j + 7000)
+}
+}
+
+print("FIN-18")
+:quit
+EOF
+if grep -qa "7000" "$TMP/out18.txt" && grep -qa "7101" "$TMP/out18.txt" && ! grep -qa "7002" "$TMP/out18.txt" \
+   && ! grep -qa "7102" "$TMP/out18.txt" && grep -qa "FIN-18" "$TMP/out18.txt"; then
+    echo "  ✓ break en un bucle anidado corta solo el interno"
+else
+    echo "  ✗ break anidado (esperado 7000 7001 7100 7101, sin 7002 ni 7102)"
+    sed 's/^/      /' "$TMP/out18.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+
+# Control positivo: ninguno de los programas VÁLIDOS de 15-18 emite error.
+if cat "$TMP/out15.txt" "$TMP/out16.txt" "$TMP/out17.txt" "$TMP/out18.txt" | grep -qa "error \[NYX"; then
+    echo "  ✗ un programa válido de bucles emitió un error del intérprete"
+    FAIL=$((FAIL + 1))
+else
+    echo "  ✓ los programas válidos de bucles corren sin ningún error"
+fi
+
+# ── Caso 19: lo que NO es válido falla RUIDOSO, y la sesión sigue ───────
+# `for x in 5` antes no iteraba y no decía nada. `break` fuera de un bucle
+# (en la raíz o escapando de una fn) es NYX1015, el mismo código que da el
+# checker del compilador.
+run_case 19 <<'EOF'
+for x in 5 {
+print(x)
+}
+
+break
+
+fn escapa() {
+continue
+}
+
+escapa()
+print("VIVA-19")
+:quit
+EOF
+if grep -qa "NYX3002" "$TMP/out19.txt"; then
+    echo "  ✓ for sobre un int emite NYX3002 (antes: no iteraba y callaba)"
+else
+    echo "  ✗ for sobre un int sigue mudo"
+    sed 's/^/      /' "$TMP/out19.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+n19=$(grep -ac "error \[NYX1015\]" "$TMP/out19.txt")
+if [ "$n19" -eq 2 ] && grep -qa "VIVA-19" "$TMP/out19.txt"; then
+    echo "  ✓ break/continue fuera de un bucle emiten NYX1015 y la sesión sigue"
+else
+    echo "  ✗ break/continue fuera de bucle: $n19 NYX1015 (esperado 2) o la sesión murió"
+    sed 's/^/      /' "$TMP/out19.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 if [ "$FAIL" -gt 0 ]; then
     echo "  smoke del REPL: FALLÓ ($FAIL check(s))"

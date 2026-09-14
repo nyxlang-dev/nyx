@@ -246,6 +246,7 @@ extern "C" fn nyx_tcp_read_exact_result(fd: int, n: int) -> Array
 extern "C" fn nyx_tcp_shutdown_result(fd: int, how: int) -> int
 extern "C" fn nyx_tcp_set_timeout_result(fd: int, seconds: int) -> int
 extern "C" fn nyx_getpeername_result(fd: int) -> Array
+extern "C" fn nyx_local_port_result(fd: int) -> int
 extern "C" fn nyx_resolve_ptr_result(ip: String) -> Array
 
 // Sentinel de EOF limpio devuelto en el slot `code` de read_line/read_exact
@@ -398,6 +399,22 @@ pub fn try_getpeername(fd: int) -> Result<String, Error> {
         return Result.Ok(ip)
     }
     return Result.Err(err_new(code, errno_to_kind(code), "getpeername"))
+}
+
+// Puerto LOCAL de un socket (getsockname): el que el kernel asignó a un
+// try_tcp_listen/try_udp_bind sobre el puerto 0. Es la forma correcta de
+// pedir «un puerto libre» — elegir uno fijo alto (58735, 50000...) cae dentro
+// del rango efímero del kernel (32768–60999), de donde salen los puertos
+// locales de las conexiones salientes de CUALQUIER proceso, y el listen falla
+// con in_use cuando otro lo tiene tomado. Error = errno real (EBADF 9 si el
+// fd es inválido, ENOTSOCK 88 si no es un socket). Ok(0) es legítimo: un
+// socket sin bind/listen/connect todavía no tiene puerto — no es un error,
+// y tratarlo como tal daba un Err con code 0 que no nombra ningún errno.
+pub fn try_local_port(fd: int) -> Result<int, Error> {
+    let h: int = nyx_local_port_result(fd)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "local_port"))
 }
 
 // E5.2b: hermana Result de resolve_ptr (resolución inversa DNS, IP →

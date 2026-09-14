@@ -1380,6 +1380,21 @@ int64_t nyx_tcp_set_timeout_result(int64_t fd, int64_t seconds) {
     return rc < 0 ? rc : 0; // ya es -errno en fallo
 }
 
+// Puerto LOCAL de un socket (getsockname): el que el kernel asignó a un
+// listen/bind sobre el puerto 0. Existe para que un server —o un test— pida
+// un puerto libre en vez de elegir uno fijo: los fijos altos caen dentro del
+// rango efímero (32768–60999), de donde el kernel reparte los puertos locales
+// de las conexiones SALIENTES de cualquier proceso, y chocan con ellas
+// (medido 2026-09-13, test_net_result.c). Éxito = puerto (>= 0: 0 si el socket
+// todavía no tiene dirección local), fallo = -errno.
+int64_t nyx_local_port_result(int64_t fd) {
+    if (fd < 0) return -9; // EBADF
+    os_addr_t addr;
+    int rc = os_sock_local(fd, &addr);
+    if (rc < 0) return rc; // ya es -errno
+    return (int64_t)os_addr_port(&addr);
+}
+
 nyx_array_t* nyx_getpeername_result(int64_t fd) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {

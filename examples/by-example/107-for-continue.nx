@@ -1,0 +1,23 @@
+// `continue` dentro de un `for ... in` — sobre un array y sobre un rango —
+// salta al siguiente elemento, igual que en `while`.
+
+fn main() -> int {
+    // for sobre un ARRAY
+    let numeros: Array = [1, 2, 3, 4, 5, 6]
+    for n: int in numeros {
+        if n % 2 == 0 {
+            continue
+        }
+        print("impar: " + int_to_string(n))
+    }
+
+    // for sobre un RANGO
+    for i in 0..6 {
+        if i == 3 {
+            continue
+        }
+        print("i = " + int_to_string(i))
+    }
+
+    return 0
+}

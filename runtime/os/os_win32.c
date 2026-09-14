@@ -1053,6 +1053,7 @@ int64_t os_sock_recvfrom(int64_t fd, void* buf, size_t len, os_addr_t* from) {
 int os_sock_close(int64_t fd) { (void)fd; return -ENOSYS; }
 int os_sock_shutdown(int64_t fd, int64_t how) { (void)fd; (void)how; return -ENOSYS; }
 int os_sock_peer(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return -ENOSYS; }
+int os_sock_local(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return -ENOSYS; }
 int os_sock_set_reuseaddr(int64_t fd) { (void)fd; return -ENOSYS; }
 int os_sock_set_nodelay(int64_t fd) { (void)fd; return -ENOSYS; }
 int os_sock_set_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }

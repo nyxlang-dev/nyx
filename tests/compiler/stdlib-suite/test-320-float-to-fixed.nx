@@ -39,7 +39,10 @@ fn main() {
     // el saturado de i64 formateado como decimal plausible pero falso
     // ("9223.372036854775807"). Ahora cae a float_to_string(x), honesto.
     print(float_to_fixed(1000000.0, 15))
-    assert(float_to_fixed(1000000.0, 15) == "1e+06")
+    // El fallback es float_to_string(x). Desde el 2026-09-13 float_to_string
+    // emite los dígitos mínimos de ida y vuelta en notación fija dentro de
+    // [1e-4, 1e16): antes, con %g, esto salía "1e+06".
+    assert(float_to_fixed(1000000.0, 15) == "1000000.0")
 
     // Mismo problema con decimals chico pero x enorme (1e18).
     print(float_to_fixed(1000000000000000000.0, 2))

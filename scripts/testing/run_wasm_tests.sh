@@ -256,6 +256,72 @@ else
     fi
 fi
 
+# ── Otro punto de entrada: `nyx build --target wasm32-wasi --main <archivo>` ──
+#
+# Fricción nyxerp 2026-09-14: el main del proyecto dibuja (puro) Y sirve
+# (sockets), así que el proyecto entero no compila a wasm, y no había forma de
+# llevar solo la parte pura. El fixture reproduce eso: src/main.nx usa
+# tcp_read_line; src/navegador.nx solo llama al dibujante.
+#
+# Tres aserciones, en este orden:
+#   1. CONTROL NEGATIVO: sin --main el build wasm falla por `not supported` —
+#      si pasara, el fixture no estaría probando nada y el verde de abajo
+#      no demostraría que --main hace falta.
+#   2. `--main` en nativo produce target/<nombre>-navegador y NO pisa el binario <nombre>.
+#   3. `--target wasm32-wasi --main` produce target/wasm32-wasi/<nombre>-navegador.wasm
+#      y, con un argumento, su salida es idéntica a la del nativo.
+echo -n "  [proyecto] nyx build --target wasm32-wasi --main ... "
+PM_SRC="tests/wasm/fixtures/project-main"
+if [ ! -d "$PM_SRC" ] || [ -z "${NYX_BIN:-}" ]; then
+    echo -e "${YELLOW}SKIP (sin fixture o sin nyx_build)${NC}"
+else
+    PM_TMP="$TMP_DIR/proj-main"
+    rm -rf "$PM_TMP"; mkdir -p "$PM_TMP"
+    cp -r "$PM_SRC"/. "$PM_TMP"/
+    pm_ok=0; pm_why=""
+    (cd "$PM_TMP" && NYX_HOME="$ROOT" "$NYX_BIN" build --target wasm32-wasi > build-sin-main.log 2>&1)
+    pm_rc=$?
+    # El guard imprime en castellano con NYX_LANG=es: se aceptan los dos textos.
+    if [ "$pm_rc" -eq 0 ] || ! grep -qE "(is not supported on target|no está soportado en el target) 'wasm32-wasi'" "$PM_TMP/build-sin-main.log"; then
+        pm_why="control negativo caído: sin --main el build wasm dio rc $pm_rc sin «not supported»"
+    elif ! (cd "$PM_TMP" && NYX_HOME="$ROOT" "$NYX_BIN" build --main src/navegador.nx > build-nat.log 2>&1) \
+         || [ ! -x "$PM_TMP/target/dosentradas-navegador" ]; then
+        pm_why="el build nativo con --main no produjo ./target/dosentradas-navegador"
+    elif [ -e "$PM_TMP/dosentradas" ]; then
+        pm_why="--main pisó el binario principal ./dosentradas"
+    elif ! (cd "$PM_TMP" && ./target/dosentradas-navegador portada > out-nativo.txt 2>&1); then
+        pm_why="el binario nativo de --main no corrió"
+    elif ! (cd "$PM_TMP" && NYX_HOME="$ROOT" "$NYX_BIN" build --target wasm32-wasi --main src/navegador.nx > build-wasm.log 2>&1) \
+         || [ ! -f "$PM_TMP/target/wasm32-wasi/dosentradas-navegador.wasm" ]; then
+        pm_why="el build wasm con --main no produjo target/wasm32-wasi/dosentradas-navegador.wasm"
+    elif command -v wasmtime > /dev/null 2>&1; then
+        if (cd "$PM_TMP" && timeout 30 wasmtime target/wasm32-wasi/dosentradas-navegador.wasm portada > out-wasm.txt 2>&1) \
+           && diff -q "$PM_TMP/out-nativo.txt" "$PM_TMP/out-wasm.txt" > /dev/null 2>&1; then
+            pm_ok=1
+        else
+            pm_why="la salida wasm difiere de la nativa"
+        fi
+    else
+        pm_ok=2
+    fi
+    if [ "$pm_ok" -eq 1 ]; then
+        echo -e "${GREEN}PASS${NC}"; PASSED=$((PASSED + 1))
+    elif [ "$pm_ok" -eq 2 ]; then
+        echo -e "${GREEN}PASS${NC} ${YELLOW}(solo build — sin wasmtime no se comparó la salida)${NC}"
+        PASSED=$((PASSED + 1))
+    else
+        echo -e "${RED}FAIL${NC}"
+        echo "      $pm_why"
+        diff "$PM_TMP/out-nativo.txt" "$PM_TMP/out-wasm.txt" 2>/dev/null | head -6 | sed 's/^/      /'
+        # El error de compilación sale por stderr ANTES de lo que nyx_build
+        # imprime por stdout: con pocas líneas de cola se ve el banner y no la causa.
+        for lg in build-sin-main.log build-nat.log build-wasm.log; do
+            [ -f "$PM_TMP/$lg" ] && grep -v '^\s*$' "$PM_TMP/$lg" | head -8 | sed "s/^/      $lg: /"
+        done
+        FAILED=$((FAILED + 1))
+    fi
+fi
+
 echo ""
 echo -e "  ${GREEN}$PASSED passed${NC}, ${RED}$FAILED failed${NC}"
 [ "$FAILED" -eq 0 ] && echo -e "  ${GREEN}All WASM tests passed${NC}"

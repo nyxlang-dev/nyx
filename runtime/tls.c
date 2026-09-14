@@ -67,12 +67,20 @@
 
 // The context is intentionally file-static so it is created at most once
 // per process.  SSL_CTX is thread-safe for concurrent SSL_new() calls after
-// initialisation, so no mutex is needed here.
+// initialisation.
+//
+// INICIALIZACIÓN BAJO os_once (2026-09-14). Antes era un `if (g_ssl_ctx)
+// return` sin lock que publicaba el puntero ANTES de cargar el almacén del
+// sistema: un segundo hilo podía llevarse un contexto todavía sin CAs, y dos
+// hilos podían crear dos contextos. Mientras solo lo usaban https_get/post era
+// un fallo cerrado (la verificación fallaba), pero desde que std/http verifica
+// contra ESTE contexto (nyx_tls_connect_ex modo 4, ver el bloque de la
+// verificación opt-in) su almacén es parte del contrato de seguridad: se
+// publica ya configurado, una sola vez, igual que g_ssl_verify_ctx.
 static SSL_CTX* g_ssl_ctx = NULL;
+static os_once_t g_ssl_once = OS_ONCE_STATIC_INIT;
 
-static SSL_CTX* get_ssl_ctx(void) {
-    if (g_ssl_ctx) return g_ssl_ctx;
-
+static void ssl_ctx_init(void) {
     // OpenSSL 1.1+ initialises itself automatically; the explicit
     // SSL_library_init / OpenSSL_add_all_algorithms calls are no-ops but
     // kept for compatibility with older distributions.
@@ -84,21 +92,29 @@ static SSL_CTX* get_ssl_ctx(void) {
     OPENSSL_init_ssl(0, NULL);
 #endif
 
-    g_ssl_ctx = SSL_CTX_new(TLS_client_method());
-    if (!g_ssl_ctx) return NULL;
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx) return;
 
     // El modo del CONTEXTO sigue en NONE: quien decide es cada conexión.
     // nyx_tls_connect (el API crudo, modo 0) tiene que poder seguir
     // conectándose sin verificar —es su contrato documentado, y lo usa el modo
     // "checked" de los escáneres—, así que subir la verificación acá rompería
     // eso. Los helpers https_* la suben POR SSL con https_apply_verify().
-    SSL_CTX_set_verify(g_ssl_ctx, SSL_VERIFY_NONE, NULL);
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 
     // El almacén de CAs del sistema. No falla si no está: la verificación por
     // conexión es la que decide, y sin CAs cargadas fallará ruidosamente en el
     // handshake en vez de dejar pasar un certificado sin validar.
-    SSL_CTX_set_default_verify_paths(g_ssl_ctx);
+    // Este almacén NUNCA recibe lo que carga tls_set_ca_file (que escribe en
+    // g_ssl_verify_ctx): la confianza del sistema y la explícita del usuario no
+    // se mezclan en ninguna dirección.
+    SSL_CTX_set_default_verify_paths(ctx);
 
+    g_ssl_ctx = ctx;  // se publica recién configurado
+}
+
+static SSL_CTX* get_ssl_ctx(void) {
+    os_once(&g_ssl_once, ssl_ctx_init);
     return g_ssl_ctx;
 }
 
@@ -842,6 +858,15 @@ int64_t nyx_tls_connect(nyx_string* host, int64_t port) {
 // que ningún camino que hoy funciona (https_get, https_post, nyx_tls_connect,
 // std/http, el proxy en producción) lee un solo byte que este bloque escriba.
 //
+// Esa afirmación se ROMPIÓ el 2026-09-11 y se restauró el 2026-09-14
+// (SEGURIDAD): al hacer verificar a std/http se lo cableó a
+// tls_set_ca_file("") + modo 2, o sea a ESTE contexto con las CAs del sistema
+// sumadas. Como el almacén es del proceso y acumula, el primer https le
+// agregaba las CAs públicas a la confianza del verify-ca/verify-full de
+// std/postgres. std/http usa ahora el modo 4 (g_ssl_ctx con verificación por
+// SSL). Regla: el almacén de este contexto lo escribe SOLO el usuario, con
+// tls_set_ca_file; ningún módulo de la stdlib lo llama en su nombre.
+//
 // EXPLÍCITAMENTE RECHAZADO: que una variable de entorno global haga verificar a
 // g_ssl_ctx. Es acción a distancia, y su modo de falla —https_get devolviendo
 // ""— es indistinguible de un error de red.
@@ -887,7 +912,9 @@ int64_t nyx_tls_set_ca_file(nyx_string* path) {
     if (!p || p[0] == '\0') return -1;
     // Los anclas se ACUMULAN en el almacén del contexto: llamar dos veces con
     // CAs distintas deja las dos confiadas (es lo que quiere un escáner que
-    // mezcla CAs corporativas con las del sistema).
+    // mezcla CAs corporativas con las del sistema). No hay forma de quitarlas, y
+    // el almacén es del proceso entero: por eso NINGÚN módulo de la stdlib debe
+    // llamar a esta función en nombre del usuario (ver el bloque de arriba).
     return SSL_CTX_load_verify_locations(ctx, p, NULL) == 1 ? 0 : -1;
 }
 
@@ -903,7 +930,14 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     const char* host_cstr = nyx_string_to_cstr(host);
     if (!host_cstr || host_cstr[0] == '\0') return 0;
 
-    SSL_CTX* ctx = get_verify_ctx();
+    // Modo 4 = estricto (igual que el 2) pero contra el almacén del SISTEMA
+    // (g_ssl_ctx, el de https_get), no contra el que llena tls_set_ca_file. Lo
+    // usa el HTTPS de std/http. Existe porque sin él std/http tenía que cargar
+    // las CAs del sistema en g_ssl_verify_ctx, que es del proceso entero y
+    // acumula: el primer https contaminaba la confianza del verify-ca de
+    // std/postgres (SEGURIDAD, 2026-09-14). La verificación sube POR SSL más
+    // abajo, así que compartir g_ssl_ctx con el modo 0 no afloja nada.
+    SSL_CTX* ctx = (verify_mode == 4) ? get_ssl_ctx() : get_verify_ctx();
     if (!ctx) return 0;
 
     int fd = tcp_connect_fd(host_cstr, (int)port);

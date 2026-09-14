@@ -20,6 +20,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`nyx build --main <archivo.nx>` y `nyx run --main`: otro punto de entrada del mismo proyecto**
+  (fricción de nyxerp, 2026-09-14, IDEA). Un `main` que dibuja (puro) y sirve (sockets) no compila a
+  wasm —`tcp_read_line` no existe ahí— y no había forma de llevar solo la parte pura sin partir el
+  repositorio en dos: `nyx build --target wasm32-wasi --main src/navegador.nx` ahora lo hace, con las
+  mismas dependencias y la misma resolución de imports. El artefacto se llama
+  `<name>-<archivo>` (nativo `target/<name>-navegador`, wasm `target/wasm32-wasi/<name>-navegador.wasm`)
+  para **no pisar el binario principal**: con el nombre del paquete, un `nyx run` posterior habría
+  ejecutado otro programa sin decir nada. El nativo va a `target/` y no a la raíz porque el
+  `.gitignore` que siembra `nyx init` solo cubre `/<name>`, y un patrón `/<name>-*` habría escondido
+  en silencio archivos legítimos del usuario (un script `miapp-deploy`); `run_build_manifest.sh` lo
+  verifica con `git status` sobre la plantilla real, con ese script como control negativo. Ruta absoluta, archivo sin `.nx` o inexistente, y
+  `--main` sin valor son errores antes de compilar; ni la flag ni su valor llegan al programa en
+  `nyx run`. `test-wasm` suma el caso con el proyecto del reporte (control negativo: sin `--main` el
+  build wasm falla por «not supported»; con `--main`, salida wasm idéntica a la nativa) y
+  `run_build_manifest.sh` los errores y el nombre del artefacto. Quedan fichados en `TASKS.md` el
+  error con la cadena de llamadas y la poda de lo inalcanzable.
 - **SSE en wasm: `browser_sse_fn(url, fn(evento, datos) {...}) -> int` y `browser_sse_close(id)`**
   (fricción de nyxerp, 2026-09-10, IDEA). Una pantalla de wasm solo podía **preguntar** cada tanto.
   En un ERP eso significa que dos personas mirando el mismo inventario no ven lo que hizo la otra, y
@@ -401,6 +417,141 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Windows: nada que enlazara el runtime linkeaba desde `main` — faltaba `__divti3`.** Medido en la
+  laptop: los 12 fixtures del gate de concurrencia fallaban con `undefined symbol: __divti3`, pedido
+  por `nyx_mul_div_round` (arco checked-math), que dividía en `__int128`. clang resuelve esa división
+  con un builtin de compiler-rt que libgcc provee en Linux y que la CRT de MSVC no trae, en x64 ni en
+  arm64; el único gate que lo habría visto, el CI de Windows, está apagado por billing. Arreglo B (GO
+  de Ottavio): la función hace el producto 64x64 y la división 128/64 **a mano** sobre pares de
+  `uint64_t`, con el signo aplicado al final, en vez de enlazar `clang_rt.builtins` (arreglo A, que en
+  arm64 no se podía verificar). Resultado bit a bit idéntico: diferencial de 48.477.042 casos contra
+  la versión `__int128` —bordes de `INT64_MIN`/`INT64_MAX`, los cinco modos más el inválido, empates
+  exactos, productos cerca de 2^126, overflow del cociente— con 0 diferencias; compilada para los dos
+  triples MSVC ya no pide ningún `__*ti3`. Guarda nueva `run_no_compiler_rt_builtins.sh` en
+  `test-ai-first` (compila los 25 TUs del runtime portable en -O0 y -O2 y falla ante cualquier builtin
+  de 128 bits; `--self-test` es su control negativo) y suite C nueva `test_mul_div_round.c` (tabla de
+  bordes generada con la versión vieja + 1M de casos contra una referencia de 64 bits).
+- **`make install-local` podía instalar herramientas compiladas por un compilador anterior sin
+  reconstruirlas.** Las reglas de `nyx_check`, `nyx_vet`, `nyx_fmt` y `nyx_test` declaraban como
+  prerequisito su propio `.ll`, pero `build-*` **regenera** ese `.ll` compilando la fuente con
+  `nyx_bootstrap`: se declaraba la SALIDA como entrada. Así, ni editar `compiler/test.nx` ni
+  reconstruir el bootstrap volvían a armar la herramienta. Medido el 2026-09-13: `make nyx_test`
+  respondía «up to date» con el binario cuatro horas más viejo que el bootstrap, y el único rastro
+  era el aviso «MÁS VIEJO» que `install-local` imprime pero no corrige.
+  Importa porque el arreglo del `continue` cambió lo que el compilador EMITE: sin esto, `nyx test`
+  podía seguir instalándose con el `for` que colgaba. Cada herramienta depende ahora de su fuente
+  `.nx` y de `nyx_bootstrap`; el aviso queda como red, ya no como la única defensa. Guarda nueva en
+  `run_toolchain_recipe_audit.sh` (dentro de `test-ai-first`): lee la base de reglas de make y
+  falla si una herramienta no depende de su fuente o declara su propio `.ll`; contra el Makefile
+  anterior da 14 fallos (control negativo medido).
+- **`[build]` de `nyx.toml` ya no se ignora en silencio** (fricción de nyxerp, 2026-09-14). La ayuda
+  de `nyx build` dice «por defecto, el de [build] en nyx.toml», el spec del arco nyx-build-wasm lo
+  documenta y el fixture de `test-wasm` lo usa, pero el parser solo leía `[package]` y
+  `[dependencies]`: `[build] target = "wasm32-wasi"` construía un binario NATIVO y salía 0, y
+  `[build] main` compilaba `src/main.nx` dijera lo que dijera. Ahora `[build]` acepta `main` y
+  `target` (las dos siguen valiendo en `[package]`), una clave desconocida en `[build]` es un error
+  con su nombre, y declarar la misma clave en las dos secciones con valores distintos también.
+  `nyx info` muestra el target efectivo. Guarda nueva `run_build_manifest.sh` en `test-ai-first`
+  (7 checks, 4 negativos + 3 controles positivos, con una compilación real).
+- **test-374, test-375 y test-376 dejan los puertos fijos del rango efímero, y `std/net` gana
+  `try_local_port(fd)`.** Los tres tests de red en Nyx hacían `listen`/`bind` sobre puertos fijos
+  (58735, 58740-58743) dentro del rango del que el kernel reparte los puertos locales de las
+  conexiones salientes de cualquier proceso (32768–60999): la misma fragilidad que
+  `test_net_result.c` mostró el 2026-09-13, cuando fallaba 5 de 5 con otra sesión conectada. No se
+  había arreglado porque desde Nyx no había forma de saber qué puerto asignó el kernel a un
+  `listen` en 0. Ahora sí: `try_local_port(fd)` (getsockname; TCP y UDP; `Err` con el errno real,
+  EBADF 9 o ENOTSOCK 88) y los tests piden puerto 0 y lo leen. Sirve igual para un server que
+  quiera loguear dónde quedó escuchando. Sin builtin nuevo: es un extern de `std/net` sobre
+  `os_sock_local`, así que no toca semantic ni codegen. Control negativo con los puertos viejos
+  ocupados y conteos: ver `docs/TESTS.md`. Un socket sin puerto asignado da `Ok(0)`, no un `Err`
+  con code 0 que no nombra ningún errno (caso C `test_local_port_result_unbound`).
+- **`float_to_string` y `print(float)` emiten ahora los dígitos mínimos que releen al mismo double,
+  en vez de las 6 cifras significativas de `%g`** (fricción de nyxerp, 2026-09-13, DOC + IDEA).
+  `0.013426971` salía `0.013427`, `1.0 / 9.0` salía `0.111111` y `123456789.0` salía `1.23457e+08`:
+  un double guarda unas 17 cifras y el texto tiraba 11 en silencio. nyxerp lo encontró guardando
+  embeddings en pgvector: cada componente leído de JSON y reescrito vía `float` cambiaba.
+  Es el comportamiento de Rust, Go, JS y Python. Dígitos: se prueba con 1..17 cifras y se toma la
+  primera que `strtod` relee idéntica. Notación: la de `repr` de Python —decimal fija si el exponente
+  decimal está en [-4, 16), científica fuera—, así `1000000.0` sale `1000000.0` y no `1e+06`.
+  **Cambia salidas visibles**: `0.1 + 0.2` imprime `0.30000000000000004`, que es el valor que el
+  programa tiene de verdad. Medido sobre 2M de doubles (bits crudos, decimales típicos, subnormales):
+  0 fallos de ida y vuelta, salida más larga 24 bytes. **Una revisión independiente del parche
+  encontró tres cosas antes de mergear**, las tres corregidas: con exponente 16 y 17 cifras salía
+  en notación fija, contra la regla documentada (ahora `%.*e`); formatear un `f32` como el double al
+  que se ensancha imprimía `0.1` como `0.10000000149011612` (ahora tiene su propio formateador, que
+  busca entre 1 y 9 cifras con `strtof`, y codegen lo llama desde `print` y `to_string`); y el peor
+  caso costaba ~25 veces un `%g` —justo un embedding de 1536 componentes—, que el camino rápido de
+  15→16→17 cifras con recorte de ceros baja a ~6, idéntico al algoritmo completo en 2M de valores. Los dos formatos (`nyx_string_from_float` y
+  `nyx_print_float`) eran copias del mismo `%g` en archivos distintos; ahora comparten
+  `nyx_float_format`.
+  Parte del reporte **no se confirmó al medirlo**: decía que un documento JSON «no se puede volver a
+  emitir como entró». `json_parse` guarda el TEXTO original de cada número, así que
+  `json_stringify(json_parse(doc))` ya devolvía `0.013426971` exacto; los dígitos se perdían solo al
+  pasar por un `float` (`json_as_float` + `float_to_string`, o `json_float(x)`). Y el texto crudo
+  que pedían con `json_as_raw` ya existe: `json_stringify(nodo)` de un número —o de un array de
+  números, que es su literal de pgvector— devuelve los dígitos tal como vinieron. Queda documentado.
+  `test-418-float-ida-y-vuelta` fija los tres casos del reporte, los bordes de la notación, el `f32`
+  y 2000 valores de ida y vuelta (regresión: 443 archivos / 442 ARM64).
+- **SEGURIDAD: el primer HTTPS de `std/http` hacía que el `sslmode=verify-ca`/`verify-full` de
+  `std/postgres` aceptara certificados de cualquier CA pública.** Hallado revisando la fricción del
+  cliente HTTP/TLS de nyxerp (2026-09-14). Desde el arreglo de verificación del 2026-09-11,
+  `std/http` llamaba `tls_set_ca_file("")` en su primera petición https y conectaba con
+  `tls_connect_verified`. Ese almacén de CAs es **uno para todo el proceso y acumula**: es el
+  mismo en el que el usuario carga su CA privada para postgres. Un programa que confiaba solo en
+  esa CA, después de un `http_get` a cualquier sitio, aceptaba en `verify-ca` un servidor con
+  certificado de cualquier CA pública, y a la vez `std/http` confiaba en la CA privada.
+  Ahora `std/http` usa `tls_connect_verified_system` (nueva en `std/tls`, modo 4 de
+  `nyx_tls_connect_ex`), que verifica cadena y nombre contra el almacén del sistema de
+  `https_get` sin leer ni escribir el explícito. De paso, la creación de ese contexto pasó a
+  `os_once`: publicaba el puntero antes de cargar las CAs y dos hilos podían crear dos.
+  Regresión `test-424-http-no-contamina-cas` (dos CAs generadas en el test, `SSL_CERT_FILE` como
+  almacén del sistema, listeners locales): falla con el código anterior («tls_connect_verified NO
+  acepta una CA que el usuario no cargó») y verifica las dos direcciones con control positivo.
+  Regression: 442 → 443 archivos.
+- **Un cambio en el runtime C no rearmaba nada de lo que `install-local` instala.** Las herramientas
+  compilan `$(RUNTIME_SRCS)` en su línea de clang, pero ninguna regla lo declaraba: tocar
+  `runtime/strings.c` o `runtime/tls.c` dejaba `nyx_check`/`vet`/`fmt`/`test` «up to date» con el
+  runtime anterior. Peor con el compilador: `nyx_bootstrap`, `nyx_build` y `nyx_gendocs` se
+  instalan y no tenían regla de archivo, así que `install-local` copiaba lo que hubiera. Ahora las
+  seis herramientas dependen del runtime (fuentes y headers), `nyx_bootstrap` es target de archivo
+  (semillas + el subconjunto del runtime que enlaza `build_bootstrap.sh`, sin `http2.c` ni
+  `llama_adapter.c`, para no rearmarlo de más) e `install-local` depende de él, y de `nyx_build` y
+  `nyx_gendocs` cuando existen. La guarda de `run_toolchain_recipe_audit.sh` exige la dependencia
+  sin copiarla del Makefile: los `.c` salen de `RUNTIME_SRCS` y de la lista real de
+  `build_bootstrap.sh`, y los headers de sus `#include`, transitivos. Contra el Makefile anterior da
+  218 fallos (control negativo medido).
+- **`tests/postgres/` (7 programas E2E) estaba roto desde antes de esta sesión y nadie se enteró:
+  1 de 7 pasaba.** Dos causas independientes, ninguna del runner: (1) el arco postgres-tls
+  (cerrado 2026-09-09) agregó el campo `tls` a `PgConn` y los literales `PgConn { fd: .., abierta:
+  .. }` de las funciones `conectar()` de prueba (02, 03, 04, 05) quedaron sin ese campo — `NYX1032`,
+  no compilaban; (2) el commit d54216cf (2026-09-13) separó el `kind` de los errores de
+  `std/postgres` en `"connection"` (falla de transporte/autenticación, antes de que el servidor
+  respondiera), `"db"` (el servidor respondió con un `ErrorResponse`, trae SQLSTATE) e `"in_use"`
+  (pool sin conexiones libres), y `tests/postgres` no se tocó desde el 2026-09-10 — seguía
+  esperando `"db"` para los tres. Se revisó cada aserción contra el código actual, no al revés:
+  puerto cerrado (01), `sslmode` rechazado antes de tocar la red y el handshake TLS fallido sin
+  CA o por nombre que no coincide (06) pasan a `"connection"`; pool de 2 conexiones agotado (04)
+  pasa a `"in_use"`; los `ErrorResponse` reales del servidor (contraseña incorrecta, usuario
+  inexistente, tabla inexistente, sintaxis inválida — 01, 02, 03, 06) se quedan en `"db"`, que
+  sigue siendo el `kind` correcto para esos casos. Verificado corriendo la suite completa contra
+  un PostgreSQL 17 local: 7 pasados, 0 fallidos.
+  **La causa raíz de fondo**: `run_postgres_tests.sh` nunca estuvo enganchado a ningún `make
+  test-*` que corra siempre — ni a `test-integration` (que sí lo documentaba `docs/TESTS.md`, mal)
+  ni a ningún otro target del `Makefile` — así que dos arcos sucesivos rompieron sus tests sin que
+  ninguna corrida automática lo notara. Enganchado después a `make test-integration`
+  (`run_integration_tests.sh`), con el SKIP limpio que ya traía (`psql`/servidor ausentes → SKIP,
+  no fallo), para que la próxima rotura falle a la vista.
+- **REPL: un `return` dentro de un `for` o un `while` se ignoraba en silencio, y los rangos,
+  `break` y `continue` no funcionaban.** `fn f() { for x in [1, 2, 3] { if x == 2 { return x } }
+  return 9 }` devolvía **9**: `eval_for`/`eval_while` solo miraban si el cuerpo había dado error y
+  descartaban el `return`, así que la función seguía iterando. Además `for i in 0..n` y `1..=n`
+  daban NYX3002 aunque la cabecera del intérprete los prometía, `break`/`continue` también, y
+  `for x in 5` no corría ni una vuelta sin decir nada. Ahora `break`, `continue` y `return` viajan
+  como valor de control que los bucles consumen; los rangos de int se recorren con los extremos
+  evaluados una sola vez (como en el compilado); un iterable de otro tipo da NYX3002; y un
+  `break`/`continue` fuera de todo bucle da NYX1015, el mismo código que el checker. `make
+  test-repl` pasa de 15 a 25 checks (casos 15-19, con control positivo de que los programas
+  válidos no emiten ningún error).
 - **Una lambda o una función ligada a un `let` sin anotar devolvía basura en silencio al llamarla.**
   `let g = fn(s: String) -> String { return s + "!" }` y después `print("x|" + g("y"))` imprimía
   `x|281473650728896`: el número del puntero al string. Lo mismo con `let f = saludar` para cualquier
@@ -1106,6 +1257,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   esperable.
 
 ### Docs
+- **`docs/SPEC.md` documenta `continue` en `for … in`, los campos `Fn` de un struct, el formato de
+  ida y vuelta de `float_to_string` y los números JSON que conservan su texto**, con tres recetas
+  nuevas (`105-struct-fn-field`, `106-json-exact-numbers`, `107-for-continue`). Conteos: `make
+  test-examples` 114 (102 ejecutan, 12 solo compilan+enlazan; la tabla decía 109, atrasada en dos
+  recetas previas) y la auditoría de `nyx vet` 168 archivos (107 de by-example + 61 de std).
 - **`LLM.md` §std/serve documenta los 9 campos de `Request`** (F7 del informe de fricción,
   hallazgo A3c): `method`, `path` (sin la query string), `query` (decodificada), `headers_flat`
   (+ `http_find_header` es exact-case; `http_find_headers` para case-insensitive/repetidos),

@@ -1,0 +1,31 @@
+// JSON: json_stringify sobre un nodo reemite el número EXACTO tal como vino
+// (con sus ceros de más incluidos), a diferencia de json_as_float +
+// float_to_string, que pasa por un double y devuelve la forma MÍNIMA que
+// vuelve a ese mismo double. float_to_fixed sirve para volver a un ancho
+// fijo de decimales (precios).
+
+import "std/json"
+import "std/math_ext"
+
+fn main() -> int {
+    let doc: String = "{\"precio\": 19.90, \"embedding\": [0.013426971, 0.1]}"
+    let parsed: Array = json_parse(doc)
+
+    // El documento completo reemitido: cada número, tal como vino.
+    print(json_stringify(parsed))
+
+    let precio_node: Array = json_get(parsed, "precio")
+    print(json_stringify(precio_node))          // texto exacto: conserva el cero
+
+    let embedding_node: Array = json_get(parsed, "embedding")
+    print(json_stringify(embedding_node))       // literal exacto, sirve para pgvector
+
+    // json_as_float + float_to_string: pasa por un double.
+    let precio: float = json_as_float(precio_node)
+    print(float_to_string(precio))              // perdió el cero de más
+
+    // Ancho fijo de decimales para mostrar el precio de nuevo:
+    print(float_to_fixed(precio, 2))
+
+    return 0
+}

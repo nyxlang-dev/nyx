@@ -275,6 +275,7 @@ int64_t os_sock_recvfrom(int64_t fd, void* buf, size_t len, os_addr_t* from); //
 int     os_sock_close(int64_t fd);                // close / closesocket
 int     os_sock_shutdown(int64_t fd, int64_t how); // 0=RD, 1=WR, otro=RDWR (contrato medido de net.c)
 int     os_sock_peer(int64_t fd, os_addr_t* out);  // getpeername
+int     os_sock_local(int64_t fd, os_addr_t* out); // getsockname (puerto que asignó el kernel a un bind/listen en 0)
 int     os_sock_set_reuseaddr(int64_t fd);
 int     os_sock_set_nodelay(int64_t fd);
 int     os_sock_set_timeout(int64_t fd, int64_t seconds); // RCVTIMEO+SNDTIMEO; <=0 desactiva; si el 1ro falla reporta ESE -errno

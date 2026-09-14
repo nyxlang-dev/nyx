@@ -1,8 +1,11 @@
 listen-ok
 connection
 111
+port-ok
 in_use
 98
 invalid
 22
+io
+9
 sigo-vivo

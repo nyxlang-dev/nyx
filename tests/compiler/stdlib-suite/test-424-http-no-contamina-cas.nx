@@ -1,0 +1,147 @@
+// test-424-http-no-contamina-cas — el HTTPS de std/http y las CAs que el usuario
+// carga con tls_set_ca_file NO se mezclan, en ninguna de las dos direcciones.
+//
+// EL BUG (seguridad, 2026-09-14): la primera petición https de std/http llamaba
+// tls_set_ca_file(""), que SUMA las CAs públicas del sistema al almacén de las
+// conexiones verificadas de TODO el proceso — el mismo que usan
+// tls_connect_verified y el sslmode=verify-ca/verify-full de std/postgres. Un
+// programa que confiaba SOLO en su CA privada para postgres, después de un
+// http_get cualquiera, pasaba a aceptar certificados firmados por cualquier CA
+// pública. Y al revés: std/http confiaba en la CA privada del usuario.
+//
+// Cómo se prueba sin internet: SSL_CERT_FILE hace de «almacén del sistema»
+// (OpenSSL lo lee al cargar las CAs por defecto) y apunta a la CA B, que acá
+// juega el papel de una CA pública. La CA A es la privada del usuario. Cada
+// servidor es un listener TLS local y efímero con una hoja firmada por A o por B
+// y SAN IP:127.0.0.1.
+//
+// Las cuatro aserciones, con control positivo en cada dirección:
+//   1. http_get contra la hoja B → 200 (std/http verifica contra el sistema).
+//   2. tls_connect_verified contra la hoja B → 0 (LA DEL BUG: el almacén
+//      explícito tiene solo A, aunque ya hubo un https).
+//   3. tls_connect_verified contra la hoja A → conecta (la verificación
+//      explícita sigue sirviendo, no «rechaza todo»).
+//   4. http_get contra la hoja A → falla (std/http no hereda la CA privada).
+
+import "std/http"
+import "std/tls"
+
+let PUERTO_BASE: int = 17424
+
+var g_cert: String = ""
+var g_key: String = ""
+var g_port: int = 0
+var g_modo_http: bool = true
+var g_ready: Map = Map.new()
+var g_done: Map = Map.new()
+
+// Un servidor TLS de UNA conexión. En modo http lee el request y responde 200;
+// en modo crudo solo intenta el handshake (el cliente puede abortarlo).
+fn servidor() -> int {
+    let srv: int = tcp_listen("127.0.0.1", g_port)
+    channel_send(g_ready, 1)
+    if srv < 0 {
+        channel_send(g_done, 1)
+        return 0
+    }
+    let fd: int = tcp_accept(srv)
+    let h: int = tls_accept(fd)
+    if h != 0 {
+        if g_modo_http {
+            var leyendo: bool = true
+            while leyendo {
+                let linea: String = tls_read_line(h)
+                if linea.length() <= 1 { leyendo = false }
+            }
+            tls_write_conn(h, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        }
+        tls_close_conn(h)
+    } else {
+        tcp_close(fd)
+    }
+    tcp_close(srv)
+    channel_send(g_done, 1)
+    return 0
+}
+
+fn levantar(cert: String, key: String, port: int, modo_http: bool) {
+    g_cert = cert
+    g_key = key
+    g_port = port
+    g_modo_http = modo_http
+    assert(tls_server_init(cert, key) == 0, "tls_server_init con " + cert)
+    thread_spawn(servidor)
+    let _r: int = channel_recv(g_ready)
+}
+
+fn esperar() {
+    let _d: int = channel_recv(g_done)
+}
+
+fn sh(cmd: String) {
+    let r: String = exec(cmd + " >/dev/null 2>&1 && echo ok")
+    assert(r == "ok", "falló: " + cmd)
+}
+
+fn generar(dir: String, c: String) {
+    let ec: String = "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 "
+    sh(ec + "-keyout " + dir + "/ca" + c + ".key -out " + dir + "/ca" + c + ".pem -subj '/CN=Nyx T424 CA " + c + "'")
+    sh(ec + "-keyout " + dir + "/hoja" + c + ".key -out " + dir + "/hoja" + c + ".pem -subj '/CN=127.0.0.1' " +
+       "-CA " + dir + "/ca" + c + ".pem -CAkey " + dir + "/ca" + c + ".key " +
+       "-addext subjectAltName=IP:127.0.0.1 -addext basicConstraints=critical,CA:FALSE")
+}
+
+fn main() {
+    // SIGPIPE (13) ignorado: el runtime no lo ignora (solo os_sock_send usa
+    // MSG_NOSIGNAL) y el close_notify de SSL_shutdown va por write() crudo.
+    // Cuando un extremo cierra primero, el shutdown del otro escribe en un
+    // socket muerto y la señal mata el proceso con rc=141 sin decir en qué
+    // paso. Medido en la primera corrida de este test. Es una carrera del
+    // listener de prueba, no lo que se verifica acá.
+    signal_ignore(13)
+    g_ready = channel_new(1)
+    g_done = channel_new(1)
+    let dir: String = exec("mktemp -d /tmp/nyx_t424_XXXXXX")
+    assert(dir.length() > 0, "mktemp -d")
+    generar(dir, "A")
+    generar(dir, "B")
+
+    // B es «el sistema» para std/http; A es la CA privada que el usuario carga,
+    // como haría para postgres con sslmode=verify-ca. ANTES de cualquier https.
+    setenv("SSL_CERT_FILE", dir + "/caB.pem")
+    assert(tls_set_ca_file(dir + "/caA.pem"), "tls_set_ca_file con la CA privada")
+
+    // 1. std/http verifica contra el almacén del sistema.
+    levantar(dir + "/hojaB.pem", dir + "/hojaB.key", PUERTO_BASE, true)
+    let r1: Array = http_get("https://127.0.0.1:" + PUERTO_BASE.to_string() + "/")
+    esperar()
+    let s1: int = r1[1]
+    assert(s1 == 200, "http_get contra una hoja de la CA del sistema da 200")
+    print("1 ok: std/http confía en el almacén del sistema")
+
+    // 2. Ese https NO contaminó el almacén explícito.
+    levantar(dir + "/hojaB.pem", dir + "/hojaB.key", PUERTO_BASE + 1, false)
+    let h2: int = tls_connect_verified("127.0.0.1", PUERTO_BASE + 1)
+    if h2 != 0 { tls_close(h2) }
+    esperar()
+    assert(h2 == 0, "tls_connect_verified NO acepta una CA que el usuario no cargó")
+    print("2 ok: la verificación explícita no hereda las CAs del sistema")
+
+    // 3. Control positivo: la CA que el usuario sí cargó sigue valiendo.
+    levantar(dir + "/hojaA.pem", dir + "/hojaA.key", PUERTO_BASE + 2, false)
+    let h3: int = tls_connect_verified("127.0.0.1", PUERTO_BASE + 2)
+    if h3 != 0 { tls_close(h3) }
+    esperar()
+    assert(h3 != 0, "tls_connect_verified acepta la CA cargada con tls_set_ca_file")
+    print("3 ok: la CA privada cargada sigue verificando")
+
+    // 4. Y al revés: std/http no confía en la CA privada del usuario.
+    levantar(dir + "/hojaA.pem", dir + "/hojaA.key", PUERTO_BASE + 3, true)
+    let r4: Array = http_get("https://127.0.0.1:" + (PUERTO_BASE + 3).to_string() + "/")
+    esperar()
+    let s4: int = r4[1]
+    assert(s4 == -1, "http_get NO acepta la CA privada cargada con tls_set_ca_file")
+    print("4 ok: std/http no hereda la CA privada")
+
+    sh("rm -rf " + dir)
+}

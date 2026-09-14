@@ -1,0 +1,47 @@
+// Campo `Fn` en un struct: ligar el campo a una variable SIN anotar el tipo
+// y llamar la variable — funciona con el receptor como variable local,
+// parámetro por valor y campo anidado (también con parámetro puntero,
+// `c: *Contrato`, no mostrado aquí). Llamar el campo DIRECTO
+// (`pais.calcular_impuesto(monto)`) sigue sin soportarse (NYX1016): hay que
+// ligarlo a una variable primero.
+
+struct Pais {
+    nombre: String,
+    calcular_impuesto: Fn(float) -> float
+}
+
+struct Region {
+    pais: Pais
+}
+
+fn impuesto_ar(monto: float) -> float {
+    return monto * 0.21
+}
+
+fn impuesto_uy(monto: float) -> float {
+    return monto * 0.22
+}
+
+// Receptor: parámetro POR VALOR
+fn cobrar(p: Pais, monto: float) -> float {
+    let calcular = p.calcular_impuesto   // sin anotar
+    return calcular(monto)
+}
+
+fn main() -> int {
+    let ar: Pais = Pais { nombre: "Argentina", calcular_impuesto: impuesto_ar }
+
+    // Receptor: variable local
+    let f = ar.calcular_impuesto
+    print(ar.nombre + ": " + float_to_string(f(100.0)))
+
+    print("cobrar(): " + float_to_string(cobrar(ar, 100.0)))
+
+    // Receptor: campo anidado
+    let uy: Pais = Pais { nombre: "Uruguay", calcular_impuesto: impuesto_uy }
+    let r: Region = Region { pais: uy }
+    let calcular_anidado = r.pais.calcular_impuesto
+    print(r.pais.nombre + ": " + float_to_string(calcular_anidado(100.0)))
+
+    return 0
+}

@@ -427,6 +427,12 @@ for i in 0..100 {
 }
 ```
 
+`continue` pasa al siguiente elemento en las tres formas de `for ... in`: sobre
+un rango (`0..n`, `0..=n`), sobre un array (`for x in arr`, `for x: T in arr`) y
+sobre un iterador (`for x in arr.iter()`). A diferencia de `while`, donde el
+avance lo escribe el programa, en `for ... in` el avance es del bucle: `continue`
+no lo saltea.
+
 ---
 
 ## Funciones
@@ -599,6 +605,32 @@ print(add5(10))  // 15
 ```
 
 Las closures retornadas mantienen su environment via GC (heap-allocated).
+
+### Campos de tipo Fn en structs
+
+Un campo de struct puede declararse `Fn(...) -> R`. Ligarlo a una variable
+SIN anotar el tipo funciona — el compilador lo infiere desde la declaración
+del campo — con el receptor como variable local, parámetro por valor,
+parámetro puntero (`c: *Contrato`) o campo anidado (`r.contrato.hacer`):
+
+```nyx
+struct Contrato {
+    hacer: Fn(String) -> String
+}
+
+fn saludar(nombre: String) -> String {
+    return "Hola, " + nombre
+}
+
+let c = Contrato { hacer: saludar }
+
+let f = c.hacer          // sin anotar: infiere Fn(String) -> String
+print(f("Nyx"))          // "Hola, Nyx"
+```
+
+Llamar el campo DIRECTO, sin ligarlo antes (`c.hacer(x)`), **no está
+soportado** — da `NYX1016` (unknown method): hay que ligar el campo a una
+variable y llamar la variable, como en el ejemplo de arriba.
 
 ---
 
@@ -1280,7 +1312,7 @@ se perderia (el puente es `match` o `unwrap_or`). Ver la tabla de codigos y
 
 ## String Interpolation
 
-Desde v0.24, Nyx soporta interpolacion de strings con `${}`:
+Desde v0.24, Nyx soporta interpolación de strings con `${}`:
 
 ```nyx
 let name = "Nyx"
@@ -1296,7 +1328,7 @@ let pi: float = 3.14
 print("pi = ${pi}")  // pi = 3.14
 ```
 
-La interpolacion se desugarea en el lexer a concatenacion con `+`.
+La interpolación se desugarea en el lexer a concatenacion con `+`.
 
 ---
 
@@ -1708,6 +1740,35 @@ let s2 = float_to_string(3.14)   // "3.14"
 let s3 = char_to_string('A')     // "A"
 ```
 
+### `float_to_string` — dígitos mínimos con ida y vuelta exacta
+
+`float_to_string` (y el `print`/interpolación de un `float`) emite los
+DÍGITOS MÍNIMOS que, releídos, reproducen el mismo double — no una cifra fija
+como `%g` (6 significativas). Notación decimal fija cuando el exponente
+decimal cae en `[-4, 16)`, científica fuera de ese rango (misma regla que
+`repr()` de Python):
+
+```nyx
+float_to_string(0.013426971)     // "0.013426971"
+float_to_string(1.0 / 9.0)       // "0.1111111111111111"
+float_to_string(123456789.0)     // "123456789.0"
+float_to_string(0.1 + 0.2)       // "0.30000000000000004"
+float_to_string(1000000.0)       // "1000000.0"
+float_to_string(0.0001)          // "0.0001"
+float_to_string(0.00001)         // "1e-05"
+float_to_string(1e16)            // "1e+16"
+```
+
+Para un ANCHO FIJO de decimales (precios, por ejemplo) usar
+`float_to_fixed(x, decimales)` de `import "std/math_ext"` — redondeo half-up,
+máximo 15 decimales:
+
+```nyx
+import "std/math_ext"
+
+float_to_fixed(8.5, 2)    // "8.50"
+```
+
 ---
 
 ## File I/O
@@ -1912,9 +1973,18 @@ name = "my-project"
 version = "0.1.0"
 main = "src/main.nx"
 
+[build]                      # opcional
+target = "wasm32-wasi"       # destino por defecto de `nyx build`/`nyx run` (el flag --target gana)
+
 [dependencies]
 nyx-db = "*"
 ```
+
+Claves de `[build]`: `main` (punto de entrada; también se acepta en `[package]`) y `target`
+(`wasm32-wasi`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`; también se acepta en
+`[package]`). Una clave desconocida en `[build]` es un error con su nombre, y declarar `main` o
+`target` en las dos secciones con valores distintos también: el manifiesto nunca se ignora en
+silencio. `nyx info` muestra el `main` y el `target` efectivos.
 
 Dependencies are cloned to `packages/` (project-local) from `github.com/nyxlang-dev/<name>` by default. Lock file `nyx.lock` is generated for reproducible builds.
 
@@ -2842,22 +2912,53 @@ kill_process(pid, 15)  // send signal (15=SIGTERM)
 
 ## JSON
 
-Nyx incluye un parser/serializer JSON puro (en `std/json.nx`):
+Nyx incluye un parser/serializer JSON puro (en `std/json.nx`). Un valor JSON
+es un `Array` taggeado (`json_type` devuelve el tag: `"null"`, `"bool"`,
+`"number"`, `"float"`, `"string"`, `"array"`, `"object"`) — no un `Map`:
 
 ```nyx
+import "std/json"
+
 // Parse
-let data: Map = json_parse("{\"name\": \"nyx\", \"version\": 5}")
-let name: String = data.get("name")    // "nyx"
+let data: Array = json_parse("{\"name\": \"nyx\", \"version\": 5}")
+let name: String = json_as_string(json_get(data, "name"))    // "nyx"
 
 // Stringify
-var obj = Map.new()
-obj.insert("language", "nyx")
-obj.insert("version", 52)
-let json: String = json_stringify(obj)
-print(json)  // {"language":"nyx","version":52}
+let keys: Array = ["language", "version"]
+let vals: Array = []
+vals.push(json_string("nyx"))
+vals.push(json_number(52))
+let obj: Array = json_object(keys, vals)
+print(json_stringify(obj))  // {"language":"nyx","version":52}
 ```
 
 Soporta: strings, numeros (int/float), booleans, null, arrays y objetos anidados.
+
+### Números exactos
+
+`json_parse` guarda el TEXTO original de cada número con decimales o exponente
+(tag `"float"`), no solo el double; un entero sin punto ni exponente se guarda
+como `int` (tag `"number"`). Por eso `json_stringify` sobre el documento
+completo, o sobre un nodo suelto (`json_get`/`json_array_get`), reemite un
+número con decimales tal como vino — sin redondeo ni cambio de notación —, lo que sirve por ejemplo para reemitir un array de
+floats de un embedding, que es a la vez su literal para pgvector:
+
+```nyx
+let doc: String = "{\"precio\": 19.90, \"embedding\": [0.013426971, 0.1]}"
+let parsed: Array = json_parse(doc)
+
+json_stringify(parsed)                            // {"precio":19.90,"embedding":[0.013426971,0.1]}
+json_stringify(json_get(parsed, "precio"))        // 19.90 — texto exacto
+```
+
+`json_as_float` (seguido de `float_to_string`) en cambio pasa por un
+`double`: con la ida y vuelta exacta de `float_to_string` (ver
+`Conversiones de Tipo`) alcanza para la enorme mayoría de los casos, pero el
+resultado es la forma MÍNIMA que reproduce ese double, no necesariamente el
+texto decimal original — un `19.90` parseado vuelve como `"19.9"`, y un texto
+con más de 15 cifras significativas puede perder precisión al pasar por el
+double (`9007199254740993` ya no cabe). `json_as_string` sobre un nodo `"number"`/`"float"` devuelve `""` —
+no convierte, solo extrae strings JSON.
 
 ---
 
@@ -3021,6 +3122,31 @@ tls_close(tls_sock)
 ```
 
 Requiere OpenSSL instalado (`libssl-dev`, `libcrypto`).
+
+### Confianza: dos almacenes de CAs que no se mezclan
+
+`https_get`, `https_post` y el HTTPS de `std/http` verifican cadena y nombre de host
+contra el **almacén del sistema** (el mismo que cualquier cliente HTTPS de la maquina;
+`SSL_CERT_FILE` lo reemplaza). `tls_connect_verified_system(host, port)` de `std/tls`
+verifica igual.
+
+`tls_set_ca_file(path)` de `std/tls` llena un **almacén explícito**, distinto, que usan
+`tls_connect_checked`, `tls_connect_verified`, `tls_upgrade_fd_verified`,
+`tls_upgrade_fd_ca_only` y el `sslmode=verify-ca`/`verify-full` de `std/postgres`. Ese
+almacén es único para todo el proceso, **acumula** y **no se puede deshacer**:
+`tls_set_ca_file("")` suma las CAs del sistema a la confianza de todas esas conexiones.
+
+```nyx
+import "std/tls"
+import "std/http"
+
+let _ok: bool = tls_set_ca_file("/etc/miapp/ca-privada.pem")  // solo esta CA para postgres verify-ca
+let r: Array = http_get("https://example.com") // verifica contra el sistema, NO toca lo de arriba
+```
+
+Hasta el 2026-09-14 la primera peticion HTTPS de `std/http` llamaba `tls_set_ca_file("")`,
+asi que el `verify-ca` de postgres pasaba a aceptar certificados de cualquier CA publica
+(corregido; regresion en `test-424-http-no-contamina-cas`).
 
 ---
 
@@ -3813,7 +3939,22 @@ nyx build --target wasm32-wasi   # desde un proyecto: lee nyx.toml
                                  #   -> target/wasm32-wasi/<name>.wasm
 nyx run --target wasm32-wasi     # lo construye y lo ejecuta con wasmtime
 make wasm FILE=prog.nx           # de un archivo suelto
+
+# Otro punto de entrada del MISMO proyecto (con o sin --target)
+nyx build --target wasm32-wasi --main src/navegador.nx
+                                 #   -> target/wasm32-wasi/<name>-navegador.wasm
+nyx run --main src/navegador.nx -- arg   # compila y ejecuta ./target/<name>-navegador
 ```
+
+`--main <archivo.nx>` compila otro archivo del proyecto como punto de entrada, con las mismas
+dependencias y la misma resolución de imports que el `main` de `nyx.toml`. La ruta es relativa a la
+raíz del proyecto; una ruta absoluta, un archivo que no termina en `.nx` o que no existe es un error
+antes de compilar. El artefacto se llama `<name>-<archivo>` (sin `.nx`) y va a `target/` —en wasm, a
+`target/wasm32-wasi/`— para no pisar el binario principal ni quedar sin cubrir por el `.gitignore`
+que siembra `nyx init`; si `--main` coincide con el `main` del manifiesto, el nombre es el de siempre. Sirve para
+llevar a wasm la parte pura de un proyecto cuyo `main` usa sockets u otras funciones que no existen
+en `wasm32-wasi`. Límite vigente: el chequeo «no soportado en este destino» se hace sobre todo lo
+que el archivo importa, no solo sobre lo alcanzable desde `main`.
 
 ---
 

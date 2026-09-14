@@ -205,14 +205,135 @@ for src in runtime/os/*.c; do
     esac
 done
 
+# --- Makefile: cada herramienta derivada depende de su FUENTE y del bootstrap
+#     (2026-09-14). build-check/vet/fmt/test REGENERAN el .ll de la herramienta
+#     compilando su .nx con nyx_bootstrap. Las reglas declaraban ese .ll como
+#     prerequisito —la SALIDA como entrada—, así que ni editar la fuente ni
+#     reconstruir el bootstrap rearmaban nada, e install-local copiaba un
+#     binario hecho por el compilador anterior («up to date», sin error).
+#     Se lee la base de reglas de make (-p) y no el texto del Makefile, para que
+#     $(TOOL_CORE_LL) y cualquier variable futura lleguen expandidas. -q con un
+#     objetivo inexistente: no corre ninguna receta, ni siquiera las $(MAKE).
+#     AUDIT_MAKEFILE existe para probar la guarda contra una copia sin tocar el
+#     árbol (control negativo: el Makefile anterior al arreglo tiene que fallar).
+#
+#     Y el RUNTIME (misma fecha, segunda vuelta): cada receta compila los .c del
+#     runtime en su línea de clang, así que tocar runtime/strings.c tampoco
+#     rearmaba nada — y nyx_bootstrap/nyx_build/nyx_gendocs, que install-local
+#     también instala, ni siquiera tenían regla de archivo. Lo exigido NO se copia
+#     del Makefile (sería validarlo contra sí mismo): los .c salen de RUNTIME_SRCS
+#     y, para el bootstrap, de la lista que enlaza DE VERDAD scripts/build_bootstrap.sh;
+#     los headers, de los `#include "…"` de esos .c, transitivos.
+AUDIT_MAKEFILE="${AUDIT_MAKEFILE:-Makefile}"
+MAKE_DB="$(mktemp)"
+make -pq -f "$AUDIT_MAKEFILE" .audit_objetivo_inexistente >"$MAKE_DB" 2>/dev/null
+
+rule_prereqs() {   # " prereq1 prereq2 … " de la regla $1, o vacío si no hay regla
+    local line
+    line=$(grep -m1 "^$1:" "$MAKE_DB") || return 0
+    printf ' %s ' "${line#*:}"
+}
+
+# Headers que incluyen (con comillas) los archivos dados, transitivamente y
+# resueltos relativo a cada archivo — un `#include "os/nyx_os.h"` desde runtime/
+# y un `#include "nyx_os.h"` desde runtime/os/ son el mismo header.
+included_headers() {
+    local -a pend=("$@")
+    local seen=" " f d h
+    while [ ${#pend[@]} -gt 0 ]; do
+        f=${pend[0]}; pend=("${pend[@]:1}")
+        [ -f "$f" ] || continue
+        d=$(dirname "$f")
+        while IFS= read -r h; do
+            h=$(realpath -m --relative-to=. "$d/$h")
+            [ -f "$h" ] || continue
+            case "$seen" in *" $h "*) continue ;; esac
+            seen="$seen$h "; pend+=("$h")
+        done < <(sed -nE 's/^[[:space:]]*#[[:space:]]*include[[:space:]]*"([^"]+)".*/\1/p' "$f")
+    done
+    printf '%s\n' $seen
+}
+
+RT_SRCS=$(grep -m1 '^RUNTIME_SRCS = ' "$MAKE_DB" | sed 's/^RUNTIME_SRCS = //')
+if [ -z "$RT_SRCS" ]; then
+    echo "  ✗ $AUDIT_MAKEFILE: no se encontró RUNTIME_SRCS"
+    FAIL=$((FAIL + 1))
+fi
+# shellcheck disable=SC2086
+RT_DEPS="$RT_SRCS $(included_headers $RT_SRCS | tr '\n' ' ')"
+
+# herramienta|prerequisitos obligatorios|prerequisitos prohibidos (su propia salida)
+for spec in "nyx_check|compiler/nyx_check.nx nyx_bootstrap|compiler/nyx_check.ll" \
+            "nyx_vet|compiler/vet.nx compiler/gotchas_table.nx nyx_bootstrap|compiler/vet.ll compiler/gotchas_table.ll" \
+            "nyx_fmt|compiler/fmt.nx nyx_bootstrap|compiler/fmt.ll" \
+            "nyx_test|compiler/test.nx nyx_bootstrap|compiler/test.ll" \
+            "nyx_build|compiler/build.nx compiler/gotchas_table.nx nyx_bootstrap|compiler/build.ll compiler/gotchas_table.ll" \
+            "nyx_gendocs|compiler/gendocs.nx nyx_bootstrap|compiler/gendocs.ll"; do
+    IFS='|' read -r tool need forbid <<<"$spec"
+    prereqs=$(rule_prereqs "$tool")
+    # Control positivo: sin la regla, los chequeos de abajo pasarían en verde sin mirar nada.
+    if [ -z "$prereqs" ]; then
+        echo "  ✗ $AUDIT_MAKEFILE: no se encontró la regla de $tool"
+        FAIL=$((FAIL + 1)); continue
+    fi
+    for p in $need $RT_DEPS; do
+        case "$prereqs" in *" $p "*) ;; *)
+            echo "  ✗ $AUDIT_MAKEFILE: $tool no depende de $p — cambiarlo no rearma la herramienta"
+            FAIL=$((FAIL + 1)) ;;
+        esac
+    done
+    for p in $forbid; do
+        case "$prereqs" in *" $p "*)
+            echo "  ✗ $AUDIT_MAKEFILE: $tool declara $p como prerequisito, pero su receta build-* lo GENERA"
+            FAIL=$((FAIL + 1)) ;;
+        esac
+    done
+done
+
+# nyx_bootstrap: sus semillas + EXACTAMENTE el runtime que enlaza build_bootstrap.sh.
+# Exacto en los dos sentidos: un .c de menos no lo rearma; uno de más lo rearma
+# cuando no cambió nada que lleve adentro (y delata que las listas se separaron).
+BS_SRCS=$(sed -n '/^RUNTIME_SRCS="/,/^"/p' scripts/build_bootstrap.sh | grep -oE 'runtime/[A-Za-z0-9_/.-]+\.c')
+BS_LL=$(sed -nE 's#^[[:space:]]*(compiler/[A-Za-z0-9_]+\.ll)[[:space:]]*\\?$#\1#p' scripts/build_bootstrap.sh)
+prereqs=$(rule_prereqs nyx_bootstrap)
+if [ -z "$prereqs" ]; then
+    echo "  ✗ $AUDIT_MAKEFILE: no se encontró la regla de nyx_bootstrap"
+    FAIL=$((FAIL + 1))
+elif [ -z "$BS_SRCS" ] || [ -z "$BS_LL" ]; then
+    echo "  ✗ no se pudo leer la lista de .c o de .ll de scripts/build_bootstrap.sh"
+    FAIL=$((FAIL + 1))
+else
+    # shellcheck disable=SC2086
+    for p in $BS_LL $BS_SRCS $(included_headers $BS_SRCS); do
+        case "$prereqs" in *" $p "*) ;; *)
+            echo "  ✗ $AUDIT_MAKEFILE: nyx_bootstrap no depende de $p — cambiarlo no rearma el compilador"
+            FAIL=$((FAIL + 1)) ;;
+        esac
+    done
+    for p in $prereqs; do
+        case "$p" in runtime/*.c)
+            if ! printf '%s\n' $BS_SRCS | grep -qxF "$p"; then
+                echo "  ✗ $AUDIT_MAKEFILE: nyx_bootstrap depende de $p, que build_bootstrap.sh NO enlaza"
+                FAIL=$((FAIL + 1))
+            fi ;;
+        esac
+    done
+fi
+case "$(rule_prereqs install-local)" in *" nyx_bootstrap "*) ;; *)
+    echo "  ✗ $AUDIT_MAKEFILE: install-local no depende de nyx_bootstrap — instalaría un compilador viejo"
+    FAIL=$((FAIL + 1)) ;;
+esac
+rm -f "$MAKE_DB"
+
 echo "  recetas Linux descubiertas: ${#LINUX_RECIPES[@]} (+ 2 canónicas: scripts/nyx, compiler/build.nx) — recetas WASM descubiertas: ${#WASM_RECIPES[@]} — consumidores del glob runtime/*.c: ${#GLOB_RECIPES[@]}"
 
 if [ "$FAIL" -gt 0 ]; then
     echo "  audit de recetas del toolchain: FALLÓ ($FAIL faltante(s))"
     echo "  (un runtime/*.c u os_posix.c/os_wasm.c fuera de una receta = feature"
     echo "   publicada que no linkea para usuarios, con todos los gates internos"
-    echo "   verdes — friction A10, extendida a la capa nyx_os_* en W1)"
+    echo "   verdes — friction A10, extendida a la capa nyx_os_* en W1; o una"
+    echo "   herramienta del Makefile que no se rearma al cambiar su fuente)"
     exit 1
 fi
-echo "  ✓ audit de recetas: scripts/nyx + build.nx completos (A10); os_posix.c/os_wasm.c en toda receta descubierta; runtime/os/*.c no-posix/wasm en windows.yml"
+echo "  ✓ audit de recetas: scripts/nyx + build.nx completos (A10); os_posix.c/os_wasm.c en toda receta descubierta; runtime/os/*.c no-posix/wasm en windows.yml; nyx_check/vet/fmt/test/build/gendocs dependen de su fuente, del bootstrap y del runtime; nyx_bootstrap de sus semillas y del runtime que enlaza"
 exit 0

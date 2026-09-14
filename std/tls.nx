@@ -131,14 +131,21 @@ pub fn cert_sans(cert: Array) -> String { return cert_str(cert, TLS_CERT_SANS) }
 // ── Verificación de certificados (OPT-IN) ──────────────────────────────────
 //
 // El builtin `tls_connect` NO verifica nada y NO cambia: sigue abriendo la
-// conexión contra el contexto compartido de todo el runtime. Las tres funciones
-// de acá abajo trabajan sobre un contexto SEPARADO, con su propio almacén de
-// CAs, así que activarlas no altera el comportamiento de ninguna conexión
-// existente (ni de http_get/https_get, ni del proxy).
+// conexión contra el contexto compartido de todo el runtime. tls_set_ca_file,
+// tls_connect_checked, tls_connect_verified y las tls_upgrade_fd_* verificadas
+// trabajan sobre un contexto SEPARADO, con su propio almacén de CAs, así que
+// activarlas no altera el comportamiento de ninguna conexión existente (ni de
+// http_get/https_get, ni del proxy). tls_connect_verified_system es la
+// excepción a propósito: verifica contra el almacén del sistema.
 
 // Carga anclas de confianza para las conexiones verificadas.
 // path == "" usa el almacén del sistema. Devuelve true si cargó.
 // Llamarla ANTES del primer tls_connect_checked / tls_connect_verified.
+// ⚠️ ACUMULA y NO se deshace: cada llamada suma CAs a un almacén único de todo
+// el proceso, que también usa el sslmode=verify-ca/verify-full de std/postgres.
+// Llamarla con "" en un programa que confía en una CA privada suma TODAS las
+// CAs públicas a esa confianza. Para verificar contra el sistema sin tocar este
+// almacén está tls_connect_verified_system.
 pub fn tls_set_ca_file(path: String) -> bool {
     return nyx_tls_set_ca_file(path) == 0
 }
@@ -158,6 +165,22 @@ pub fn tls_connect_checked(host: String, port: int) -> int {
 // Devuelve 0 si algo de eso falla — no hay conexión insegura silenciosa.
 pub fn tls_connect_verified(host: String, port: int) -> int {
     return nyx_tls_connect_ex(host, port, 2)
+}
+
+// Conexión VERIFICADA (cadena + nombre) contra el almacén de CAs del SISTEMA,
+// el mismo de https_get. NO lee ni escribe el almacén de tls_set_ca_file: una
+// CA privada cargada ahí no vale acá, y las CAs públicas del sistema no se
+// suman allá. Es la que usa el HTTPS de std/http. Devuelve 0 si la
+// verificación o la conexión fallan.
+//
+// Por qué existe (seguridad, 2026-09-14): std/http llamaba
+// tls_set_ca_file("") + tls_connect_verified, y como ese almacén es del proceso
+// entero y ACUMULA, el primer https sumaba las CAs públicas a la confianza del
+// sslmode=verify-ca/verify-full de std/postgres. Un servidor con certificado de
+// cualquier CA pública pasaba por el postgres de un programa que solo confiaba
+// en su CA privada.
+pub fn tls_connect_verified_system(host: String, port: int) -> int {
+    return nyx_tls_connect_ex(host, port, 4)
 }
 
 // ── Subir a TLS un socket YA CONECTADO ────────────────────────────────────

@@ -40,7 +40,9 @@ struct ProjectConfig {
     no_gc: bool,
     target: String,      // [build] target (p.ej. wasm32-wasi) — evita exportar NYX_TARGET a mano
     dep_names: Array,   // dependency names
-    dep_versions: Array // dependency versions (parallel to dep_names)
+    dep_versions: Array, // dependency versions (parallel to dep_names)
+    toml_error: String, // "" si el manifiesto es válido; si no, el mensaje a mostrar
+    bin_name: String    // nombre del artefacto; "" = el de [package] name (lo cambia --main)
 }
 
 // Parse a simple key = "value" line, return value or ""
@@ -102,8 +104,24 @@ fn parse_toml(content: String) -> ProjectConfig {
         no_gc: false,
         target: "",
         dep_names: dep_names_arr,
-        dep_versions: dep_versions_arr
+        dep_versions: dep_versions_arr,
+        toml_error: "",
+        bin_name: ""
     }
+
+    // `main` y `target` se aceptan en [package] y en [build]. [build] es lo que
+    // promete la ayuda de `nyx build` («por defecto, el de [build] en nyx.toml»),
+    // el spec del arco nyx-build-wasm y el fixture de test-wasm — pero este
+    // parser solo leía [package] y [dependencies], así que `[build] target =
+    // "wasm32-wasi"` construía NATIVO sin una palabra, y `[build] main` compilaba
+    // src/main.nx aunque dijera otra cosa. [package] se mantiene porque `main`
+    // está documentado ahí desde siempre y `target` es donde el binario lo leía
+    // de verdad. Si las dos secciones declaran la misma clave con valores
+    // DISTINTOS es un error: elegir una en silencio es la misma falla muda.
+    var pkg_main = ""
+    var build_main = ""
+    var pkg_target = ""
+    var build_target = ""
 
     let lines: Array<String> = content.split("\n")
     var current_section = ""
@@ -126,10 +144,20 @@ fn parse_toml(content: String) -> ProjectConfig {
                 if current_section == "package" {
                     if key == "name" { config.name = val }
                     if key == "version" { config.version = val }
-                    if key == "main" { config.main_file = val }
+                    if key == "main" { pkg_main = val }
                     if key == "description" { config.description = val }
                     if key == "no_gc" and val == "true" { config.no_gc = true }
-                    if key == "target" { config.target = val }
+                    if key == "target" { pkg_target = val }
+                }
+                if current_section == "build" {
+                    // Una clave desconocida en [build] es un error, no silencio:
+                    // `[build] tarjet = "wasm32-wasi"` construiría nativo y
+                    // saldría 0, igual que la flag mal escrita que ya se rechaza.
+                    if key == "main" { build_main = val }
+                    else if key == "target" { build_target = val }
+                    else if config.toml_error == "" {
+                        config.toml_error = "clave desconocida en [build] de nyx.toml: '" + key + "' (claves válidas: main, target)"
+                    }
                 }
                 if current_section == "dependencies" {
                     if key != "" and val != "" {
@@ -141,6 +169,20 @@ fn parse_toml(content: String) -> ProjectConfig {
             }
         }
     }
+    if pkg_main != "" and build_main != "" and pkg_main != build_main {
+        if config.toml_error == "" {
+            config.toml_error = "nyx.toml declara main dos veces con valores distintos: [package] main = \"" + pkg_main + "\" y [build] main = \"" + build_main + "\" (deja uno solo)"
+        }
+    }
+    if pkg_target != "" and build_target != "" and pkg_target != build_target {
+        if config.toml_error == "" {
+            config.toml_error = "nyx.toml declara target dos veces con valores distintos: [package] target = \"" + pkg_target + "\" y [build] target = \"" + build_target + "\" (deja uno solo)"
+        }
+    }
+    if build_main != "" { config.main_file = build_main }
+    else if pkg_main != "" { config.main_file = pkg_main }
+    if build_target != "" { config.target = build_target }
+    else if pkg_target != "" { config.target = pkg_target }
     return config
 }
 
@@ -1033,7 +1075,20 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     print("   compiling " + config.main_file)
 
     // Write build script
-    let output_name: String = config.name
+    var output_name: String = config.name
+    if config.bin_name != "" { output_name = config.bin_name }
+    // El binario de un `--main` va a target/, no a la raíz. En la raíz, el
+    // .gitignore que siembra `nyx init` no lo cubría (solo /<name>), y ningún
+    // patrón lo arregla sin tapar archivos legítimos: `/<name>-*` escondería
+    // en silencio un script `miapp-deploy` del usuario. target/ ya está
+    // ignorado y es donde wasm deja sus artefactos. El binario principal no se
+    // mueve: `./<name>` es contrato de `nyx run` y de los deploys.
+    var native_out: String = output_name
+    var mkdir_native: String = ""
+    if config.bin_name != "" {
+        native_out = "target/" + output_name
+        mkdir_native = "mkdir -p \"$ORIG_DIR/target\"\n"
+    }
     var opt_flags = ""
     if release { opt_flags = "-O2" }
 
@@ -1084,6 +1139,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         "cd \"" + nyx_home + "\"\n" +
         gc_flag + "NYX_SRC=\"$SRCNX\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
         "|| { echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
+        mkdir_native +
         "clang " + opt_flags + " \"$SRC.ll\" " +
         "$RT/runtime.c $RT/strings.c $RT/runtime-arrays.c " +
         "$RT/maps.c $RT/file-io.c $RT/iterators.c " +
@@ -1100,9 +1156,9 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         "$RT/llama_adapter.c " +
         "$RT/os/os_posix.c " +
         "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz " +
-        "-o \"$ORIG_DIR/" + output_name + "\" 2> \"$LOG\" " +
+        "-o \"$ORIG_DIR/" + native_out + "\" 2> \"$LOG\" " +
         "|| { echo \"error: clang link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
-        "echo '✓ Built: " + output_name + "'\n"
+        "echo '✓ Built: " + native_out + "'\n"
 
     // Target WASM: script alternativo — subset portable del runtime, clang
     // wasm32-wasi (paquetes Debian: wasi-libc + libclang-rt wasm32 + lld),
@@ -1167,6 +1223,9 @@ fn print_info(config: ProjectConfig) {
     print("Project: " + config.name)
     print("Version: " + config.version)
     print("Main:    " + config.main_file)
+    if config.target != "" {
+        print("Target:  " + config.target)
+    }
     if config.description != "" {
         print("Desc:    " + config.description)
     }
@@ -1175,6 +1234,51 @@ fn print_info(config: ProjectConfig) {
     } else {
         print("Mode:    GC (default)")
     }
+}
+
+// `--main <archivo.nx>`: compilar otro punto de entrada del MISMO proyecto
+// (fricción nyxerp 2026-09-14). El caso que lo pidió: un main que dibuja (puro)
+// y sirve (sockets) no compila a wasm, y la parte pura no tenía cómo viajar sola
+// sin partir el repositorio en dos. La ruta es relativa a la raíz del proyecto,
+// igual que `main` en nyx.toml: el build hace `cp "$ORIG_DIR/<main>"`, y los
+// imports del proyecto se resuelven desde ahí.
+// Devuelve "" si la ruta es usable; si no, el mensaje de error.
+fn main_flag_error(main_flag: String) -> String {
+    if main_flag.startsWith("/") {
+        return "--main espera una ruta relativa a la raíz del proyecto (donde está nyx.toml), no una absoluta: " + main_flag
+    }
+    if not main_flag.endsWith(".nx") {
+        return "--main espera un archivo .nx: " + main_flag
+    }
+    if not file_exists(main_flag) {
+        return "--main: no existe el archivo '" + main_flag + "' (la ruta es relativa a la raíz del proyecto)"
+    }
+    return ""
+}
+
+// Quita un "./" inicial para comparar rutas escritas de dos formas.
+fn strip_dot_slash(p: String) -> String {
+    if p.startsWith("./") { return p.substring(2, p.length()) }
+    return p
+}
+
+// Nombre del artefacto para un `--main`: `<name>-<stem>` (src/navegador.nx →
+// miapp-navegador; nativo en target/, wasm en target/wasm32-wasi/). Con el nombre del paquete a secas, un `nyx build --main`
+// PISABA el binario principal, y un `nyx run` posterior ejecutaba otro programa
+// sin decir nada. Si el --main es el mismo archivo que el del manifiesto, el
+// artefacto es el de siempre.
+fn bin_name_for_main(config: ProjectConfig, main_flag: String) -> String {
+    if main_flag == "" { return "" }
+    if strip_dot_slash(main_flag) == strip_dot_slash(config.main_file) { return "" }
+    var base: String = main_flag
+    var i: int = 0
+    while i < main_flag.length() {
+        let c: char = main_flag.charAt(i)
+        if c == '/' { base = main_flag.substring(i + 1, main_flag.length()) }
+        i = i + 1
+    }
+    let stem: String = base.substring(0, base.length() - 3)
+    return config.name + "-" + stem
 }
 
 // ===== MAIN =====
@@ -1535,6 +1639,7 @@ fn shell_quote_arg(s: String) -> String {
     var command = "build"
     var release = false
     var target_flag = ""
+    var main_flag = ""
 
     if args.length() >= 2 {
         let cmd: String = args[1]
@@ -1568,6 +1673,21 @@ fn shell_quote_arg(s: String) -> String {
             fi = args.length()
         }
         else if flag == "--release" { release = true }
+        else if flag == "--main" {
+            var mval: String = ""
+            if fi + 1 < args.length() {
+                let mv: String = args[fi + 1]
+                if not mv.startsWith("--") { mval = mv }
+            }
+            if mval == "" {
+                if flag_desconocida == "" {
+                    flag_desconocida = "--main necesita un archivo (por ejemplo: --main src/navegador.nx)"
+                }
+            } else {
+                main_flag = mval
+                fi = fi + 1
+            }
+        }
         else if flag == "--help" or flag == "-h" { pide_ayuda = true }
         else if flag == "--target" {
             if fi + 1 < args.length() {
@@ -1591,6 +1711,8 @@ fn shell_quote_arg(s: String) -> String {
         print("nyx " + command + " — flags disponibles:")
         print("  --release            compila optimizado")
         print("  --target <triple>    destino de compilación (por defecto, el de [build] en nyx.toml)")
+        print("  --main <archivo.nx>  otro punto de entrada del proyecto (por defecto, el main de nyx.toml);")
+        print("                       el artefacto va a target/<nombre>-<archivo> para no pisar el principal")
         print("  --help, -h           esta ayuda")
         print("")
         print("El proyecto se lee de nyx.toml: nombre, versión, main y dependencias.")
@@ -1751,7 +1873,7 @@ fn shell_quote_arg(s: String) -> String {
         let dummy: ProjectConfig = ProjectConfig {
             name: "project", version: "0.1.0", main_file: "",
             description: "", no_gc: false, target: "",
-            dep_names: dummy_names, dep_versions: dummy_versions
+            dep_names: dummy_names, dep_versions: dummy_versions, toml_error: "", bin_name: ""
         }
         let ok: bool = run_add(pkg_name, pkg_url, dummy)
         if ok { return 0 }
@@ -1803,11 +1925,33 @@ fn shell_quote_arg(s: String) -> String {
     }
 
     let toml_content: String = read_file("nyx.toml")
-    let config: ProjectConfig = parse_toml(toml_content)
+    var config: ProjectConfig = parse_toml(toml_content)
+
+    if config.toml_error != "" {
+        print("error: " + config.toml_error)
+        return 1
+    }
 
     if config.name == "" {
         print("error: nyx.toml missing [package] name field")
         return 1
+    }
+
+    // `--main` solo tiene sentido para lo que compila. Se valida ANTES de
+    // resolver dependencias o compilar: un archivo mal escrito se dice en el
+    // acto, no tras un build entero.
+    if main_flag != "" {
+        if command != "build" and command != "run" {
+            print("error: --main solo vale para `nyx build` y `nyx run`")
+            return 1
+        }
+        let merr: String = main_flag_error(main_flag)
+        if merr != "" {
+            print("error: " + merr)
+            return 1
+        }
+        config.bin_name = bin_name_for_main(config, main_flag)
+        config.main_file = main_flag
     }
 
     if command == "info" {
@@ -1836,7 +1980,7 @@ fn shell_quote_arg(s: String) -> String {
                 hi = args.length()
             } else {
                 if ha == "--help" or ha == "-h" {
-                    print("Usage: nyx run [--release] [--target <triple>] [args...]")
+                    print("Usage: nyx run [--release] [--target <triple>] [--main <archivo.nx>] [args...]")
                     print("       nyx run -- <args...>   (todo tras -- va al programa)")
                     print("")
                     print("Compila el proyecto (nyx.toml) y lo ejecuta, reenviando")
@@ -1847,6 +1991,8 @@ fn shell_quote_arg(s: String) -> String {
             }
         }
         let ok: bool = run_build(config, false, target_flag)
+        var run_bin: String = config.name
+        if config.bin_name != "" { run_bin = config.bin_name }
         if ok {
             write_lockfile(config)
             // P1 friction-portscan: reenviar al binario los args posteriores a
@@ -1865,7 +2011,7 @@ fn shell_quote_arg(s: String) -> String {
             var eff_run_target: String = config.target
             if target_flag != "" { eff_run_target = target_flag }
             if eff_run_target == "wasm32-wasi" {
-                let artefacto: String = "target/wasm32-wasi/" + config.name + ".wasm"
+                let artefacto: String = "target/wasm32-wasi/" + run_bin + ".wasm"
                 if not file_exists(artefacto) {
                     print("error: no se encontró " + artefacto)
                     return 1
@@ -1886,7 +2032,7 @@ fn shell_quote_arg(s: String) -> String {
                     if w_dash { wcmd = wcmd + " " + shell_quote_arg(wa) }
                     else {
                         if wa == "--" { w_dash = true }
-                        else if wa == "--target" { wi = wi + 1 }
+                        else if wa == "--target" or wa == "--main" { wi = wi + 1 }
                     }
                     wi = wi + 1
                 }
@@ -1898,7 +2044,8 @@ fn shell_quote_arg(s: String) -> String {
                 return 1
             }
 
-            var cmd_line: String = "./" + config.name
+            var cmd_line: String = "./" + run_bin
+            if config.bin_name != "" { cmd_line = "./target/" + run_bin }
             var pi: int = 2
             var after_dashdash: bool = false
             while pi < args.length() {
@@ -1912,7 +2059,9 @@ fn shell_quote_arg(s: String) -> String {
                         if pa == "--release" {
                             pi = pi
                         } else {
-                            if pa == "--target" {
+                            // --target y --main son del PM: ni la flag ni su
+                            // valor llegan al programa.
+                            if pa == "--target" or pa == "--main" {
                                 pi = pi + 1
                             } else {
                                 cmd_line = cmd_line + " " + shell_quote_arg(pa)
@@ -1929,6 +2078,6 @@ fn shell_quote_arg(s: String) -> String {
     }
 
     print("error: unknown command " + command)
-    print("hint: nyx [init|add|build|run|info|report|capabilities] [--release] [--target <triple>]")
+    print("hint: nyx [init|add|build|run|info|report|capabilities] [--release] [--target <triple>] [--main <archivo.nx>]")
     return 1
 }

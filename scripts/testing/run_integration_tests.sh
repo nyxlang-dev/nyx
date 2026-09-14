@@ -249,6 +249,19 @@ else
 fi
 rm -f "$SS_SMOKE_BIN"
 
+# PostgreSQL E2E. docs/TESTS.md lo daba «dentro de make test-integration» desde
+# el arco postgres-tls, pero nadie lo invocaba: el 2026-09-14 estaba en 1/7
+# (literales PgConn sin `tls`, kinds viejos) y nada lo había gritado. Hace SKIP
+# limpio (exit 0, con la receta) si no hay psql o servidor; el lock de la raíz
+# ya lo tenemos y el hijo lo hereda por NYX_TESTROOT_LOCK_HELD.
+echo -e "\n${BOLD}--- PostgreSQL E2E ---${NC}"
+if bash "$SCRIPT_DIR/run_postgres_tests.sh"; then
+    echo -e "  ${GREEN}postgres E2E passed (o SKIP sin servidor)${NC}"
+else
+    echo -e "  ${RED}postgres E2E failed${NC}"
+    OVERALL=1
+fi
+
 if [ "$OVERALL" -eq 0 ]; then
     echo -e "\n${GREEN}Integration tests passed${NC}"
 else

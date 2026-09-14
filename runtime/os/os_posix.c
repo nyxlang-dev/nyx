@@ -583,6 +583,15 @@ int os_sock_peer(int64_t fd, os_addr_t* out) {
     int rc = getpeername((int)fd, SA(out), &len);
     return rc < 0 ? -errno : rc;
 }
+int os_sock_local(int64_t fd, os_addr_t* out) {
+    memset(out, 0, sizeof(*out));
+    // Largo completo del blob (>= sockaddr_storage), no sizeof(sockaddr_in):
+    // getsockname TRUNCA en silencio si el buffer declarado es menor que la
+    // dirección, y un socket v6 dejaría el puerto a medias.
+    socklen_t len = sizeof(*out);
+    int rc = getsockname((int)fd, SA(out), &len);
+    return rc < 0 ? -errno : rc;
+}
 int os_sock_set_reuseaddr(int64_t fd) {
     int opt = 1;
     int rc = setsockopt((int)fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));

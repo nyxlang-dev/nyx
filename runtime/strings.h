@@ -89,6 +89,13 @@ nyx_string* nyx_string_trim(nyx_string* str);
 // Conversiones
 nyx_string* nyx_string_from_int(int64_t value);
 nyx_string* nyx_string_from_float(double value);
+// Formato ÚNICO de un double como texto, compartido por float_to_string,
+// la interpolación y print(float): los dígitos mínimos que releen al mismo
+// double. Escribe en `buf` (64 bytes alcanzan: la salida más larga medida
+// es de 24).
+void nyx_float_format(double value, char* buf, size_t size);
+void nyx_float32_format(float value, char* buf, size_t size);
+nyx_string* nyx_string_from_float32(float value);
 nyx_string* nyx_string_from_bool(int64_t value);
 int64_t nyx_string_to_int(nyx_string* str);
 double nyx_string_to_float(nyx_string* str);

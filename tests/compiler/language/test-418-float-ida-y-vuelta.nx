@@ -1,0 +1,49 @@
+// test-418 — float_to_string y print(float) emiten los dígitos MÍNIMOS que
+// releen al mismo double (ida y vuelta exacta), no las 6 cifras de %g.
+//
+// Fricción de nyxerp (2026-09-13): `0.013426971` salía `0.013427` y
+// `123456789.0` salía `1.23457e+08`; un embedding leído de JSON y guardado vía
+// float perdía once cifras por componente en silencio.
+// Notación: decimal fija si el exponente decimal está en [-4, 16), científica
+// fuera de ahí (la regla de `repr` de Python).
+
+fn ida_y_vuelta(x: float) -> bool {
+    return string_to_float(float_to_string(x)) == x
+}
+
+fn main() {
+    // los tres casos del reporte
+    print("reporte|" + float_to_string(0.013426971))
+    print("noveno|" + float_to_string(1.0 / 9.0))
+    print("grande|" + float_to_string(123456789.0))
+    // lo que %g escondía
+    print("suma|" + float_to_string(0.1 + 0.2))
+    // lo que no cambia: valores cortos y el ".0" de los enteros
+    print("corto|" + float_to_string(3.14))
+    print("entero|" + float_to_string(42.0))
+    print("millon|" + float_to_string(1000000.0))
+    print("cero|" + float_to_string(0.0))
+    print("negcero|" + float_to_string(-0.0))
+    print("negativo|" + float_to_string(-4.567))
+    // bordes de la notación
+    print("chico|" + float_to_string(0.0001))
+    print("muychico|" + float_to_string(0.00001))
+    print("enorme|" + float_to_string(10000000000000000.0))
+    // exponente 16 con 17 cifras: científica (con %.*g y 17 cifras salía fija)
+    print("exp16|" + float_to_string(10000000000000002.0))
+    // print directo de un float usa el mismo formato
+    print(0.013426971)
+    // f32: sus propios dígitos mínimos, no los del double al que se ensancha
+    let f32v: f32 = 0.1
+    print(f32v)
+    print("f32|" + f32v.to_string())
+    // ida y vuelta sobre un rango de valores
+    var ok: int = 0
+    var i: int = 1
+    while i <= 2000 {
+        let x: float = int_to_float(i) / 7.0
+        if ida_y_vuelta(x) { ok = ok + 1 }
+        i = i + 1
+    }
+    print("ida-y-vuelta|" + int_to_string(ok) + "/2000")
+}

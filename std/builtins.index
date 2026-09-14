@@ -13,7 +13,7 @@ builtin	channel_destroy	1	Concurrencia
 builtin	channel_new	1	Concurrencia	Map (NOT int!)
 builtin	channel_recv	1	Concurrencia	
 builtin	channel_send	2	Concurrencia	
-builtin	char_to_string	1	Strings & texto	
+builtin	char_to_string	1	Strings & texto	String
 builtin	chdir	1	Tooling & CLI	
 builtin	chr	1	Tooling & CLI	
 builtin	close_fd	1	Tooling & CLI	
@@ -53,7 +53,7 @@ builtin	file_tell	1	Archivos & I/O
 builtin	file_write_bytes	2	Archivos & I/O	
 builtin	file_write_string	2	Archivos & I/O	
 builtin	float_to_int	1	Strings & texto	
-builtin	float_to_string	1	Strings & texto	
+builtin	float_to_string	1	Strings & texto	(y `print` de un `float`) emite los dígitos MÍNIMOS que releen al mismo double: `0.1 + 0.2` → `0.30000000000000004`, `123456789.0` → `123456789.0`;
 builtin	fork	0	Tooling & CLI	
 builtin	format	-1	Otros	
 builtin	free	1	Memoria	
@@ -71,7 +71,7 @@ builtin	http_parse_request_fast	1	Red
 builtin	https_get	1	Red	simple GET, NO custom headers, returns the body as a `String`.
 builtin	https_post	3	Red	
 builtin	int_to_float	1	Strings & texto	
-builtin	int_to_string	1	Strings & texto	
+builtin	int_to_string	1	Strings & texto	String
 builtin	isatty	1	Tooling & CLI	
 builtin	kill_process	2	Tooling & CLI	
 builtin	map_scan	2	Otros	

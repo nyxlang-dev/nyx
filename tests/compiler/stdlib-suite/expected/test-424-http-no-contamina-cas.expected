@@ -1,0 +1,4 @@
+1 ok: std/http confía en el almacén del sistema
+2 ok: la verificación explícita no hereda las CAs del sistema
+3 ok: la CA privada cargada sigue verificando
+4 ok: std/http no hereda la CA privada

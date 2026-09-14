@@ -93,6 +93,7 @@ nyx_array_t* nyx_tcp_read_partial_result(int64_t fd, int64_t max_bytes);
 nyx_array_t* nyx_tcp_read_exact_result(int64_t fd, int64_t n);
 int64_t nyx_tcp_shutdown_result(int64_t fd, int64_t how);
 int64_t nyx_tcp_set_timeout_result(int64_t fd, int64_t seconds);
+int64_t nyx_local_port_result(int64_t fd);
 nyx_array_t* nyx_getpeername_result(int64_t fd);
 nyx_array_t* nyx_resolve_ptr_result(nyx_string* ip);
 

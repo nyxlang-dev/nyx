@@ -6,22 +6,27 @@
 // el header de try_tcp_read en std/net.nx) → resolve (éxito y fallo) →
 // eco UDP → cierre de todos los fds.
 //
-// Puerto fijo alto (best-effort, mismo criterio que test-374): no existe
-// forma de leer el puerto efímero asignado por el kernel desde Nyx (sin
-// builtin de getsockname), así que se fija un puerto alto poco probable
-// de colisionar en el runner en vez de usar 0.
+// SIN PUERTOS FIJOS (2026-09-14): antes usaba 58740 (TCP) y 58741 (UDP),
+// dentro del rango efímero del kernel (32768–60999), de donde salen los
+// puertos locales de las conexiones salientes de cualquier proceso — si
+// otro lo tenía tomado, el listen/bind fallaba. Ahora el server va al
+// puerto 0 y try_local_port lee cuál asignó el kernel.
 
 import "std/net"
 import "std/error"
 
 fn main() -> int {
-    // (a) listen + connect + accept sobre el mismo puerto fijo.
-    let listen_fd: int = match try_tcp_listen("127.0.0.1", 58740) {
+    // (a) listen en puerto 0 + connect + accept sobre el puerto asignado.
+    let listen_fd: int = match try_tcp_listen("127.0.0.1", 0) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-listen") ; 0 - 1 }
     }
+    let puerto_tcp: int = match try_local_port(listen_fd) {
+        Result.Ok(p) => { p }
+        Result.Err(e) => { print("no-deberia-puerto-tcp") ; 0 - 1 }
+    }
 
-    let client_fd: int = match try_tcp_connect("127.0.0.1", 58740) {
+    let client_fd: int = match try_tcp_connect("127.0.0.1", puerto_tcp) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-connect") ; 0 - 1 }
     }
@@ -77,19 +82,24 @@ fn main() -> int {
         Result.Err(e) => { print(e.kind) }
     }
 
-    // (e) eco UDP: server bindeado en puerto fijo, cliente bindeado
-    // efímero (su propio puerto no importa — sendto no lo necesita, y
-    // recvfrom no devuelve remitente en esta familia, ver header).
-    let udp_server_fd: int = match try_udp_bind("127.0.0.1", 58741) {
+    // (e) eco UDP: server bindeado en puerto 0 (el kernel asigna, se lee con
+    // try_local_port), cliente bindeado efímero (su propio puerto no importa
+    // — sendto no lo necesita, y recvfrom no devuelve remitente en esta
+    // familia, ver header).
+    let udp_server_fd: int = match try_udp_bind("127.0.0.1", 0) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-udp-bind-server") ; 0 - 1 }
+    }
+    let puerto_udp: int = match try_local_port(udp_server_fd) {
+        Result.Ok(p) => { p }
+        Result.Err(e) => { print("no-deberia-puerto-udp") ; 0 - 1 }
     }
     let udp_client_fd: int = match try_udp_bind("127.0.0.1", 0) {
         Result.Ok(fd) => { fd }
         Result.Err(e) => { print("no-deberia-udp-bind-client") ; 0 - 1 }
     }
 
-    match try_udp_sendto(udp_client_fd, "eco-e5.2", "127.0.0.1", 58741) {
+    match try_udp_sendto(udp_client_fd, "eco-e5.2", "127.0.0.1", puerto_udp) {
         Result.Ok(n) => { print(int_to_string(n)) }
         Result.Err(e) => { print("no-deberia-sendto") }
     }

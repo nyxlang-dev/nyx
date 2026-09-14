@@ -23,21 +23,36 @@ fn main() -> int {
     }
 
     // (b) connect a un puerto alto cerrado (nadie escucha ahí) — Err con
-    // kind "connection" y code 111 (ECONNREFUSED, salida MEDIDA).
+    // kind "connection" y code 111 (ECONNREFUSED, salida MEDIDA). El 58734
+    // está dentro del rango efímero, pero un connect no es vulnerable a eso:
+    // un puerto que otro proceso usa como LOCAL de una conexión saliente no
+    // acepta conexiones, así que igual da ECONNREFUSED.
     match try_tcp_connect("127.0.0.1", 58734) {
         Result.Ok(fd) => { print("no-deberia") ; tcp_close(fd) }
         Result.Err(e) => { print(e.kind) ; print(int_to_string(e.code)) }
     }
 
-    // (c) listen duplicado del mismo puerto alto fijo — el primero
-    // reserva el puerto, el segundo choca contra EADDRINUSE. Salida
-    // MEDIDA de kind/code (decisión in_use documentada en std/error.nx).
-    let first: Result<int, Error> = try_tcp_listen("127.0.0.1", 58735)
+    // (c) listen duplicado del MISMO puerto — el primero reserva el puerto,
+    // el segundo choca contra EADDRINUSE. Salida MEDIDA de kind/code
+    // (decisión in_use documentada en std/error.nx).
+    // SIN PUERTO FIJO (2026-09-14): antes eran dos listen al 58735, dentro del
+    // rango efímero del kernel (32768–60999), de donde salen los puertos
+    // locales de las conexiones salientes de cualquier proceso; si otro lo
+    // tenía tomado, el PRIMER listen fallaba (medido en test_net_result.c el
+    // 2026-09-13). Ahora el primero va al puerto 0 y try_local_port lee
+    // cuál asignó el kernel: la colisión es la que el test provoca y ninguna otra.
+    let first: Result<int, Error> = try_tcp_listen("127.0.0.1", 0)
     match first {
         Result.Ok(fd1) => {
-            match try_tcp_listen("127.0.0.1", 58735) {
-                Result.Ok(fd2) => { print("no-deberia") ; tcp_close(fd2) }
-                Result.Err(e2) => { print(e2.kind) ; print(int_to_string(e2.code)) }
+            match try_local_port(fd1) {
+                Result.Ok(puerto) => {
+                    if puerto > 0 { print("port-ok") }
+                    match try_tcp_listen("127.0.0.1", puerto) {
+                        Result.Ok(fd2) => { print("no-deberia") ; tcp_close(fd2) }
+                        Result.Err(e2) => { print(e2.kind) ; print(int_to_string(e2.code)) }
+                    }
+                }
+                Result.Err(ep) => { print("no-deberia-puerto") }
             }
             tcp_close(fd1)
         }
@@ -51,6 +66,13 @@ fn main() -> int {
     match try_tcp_listen("localhost", 0) {
         Result.Ok(fd3) => { print("no-deberia-tampoco-2") ; tcp_close(fd3) }
         Result.Err(e3) => { print(e3.kind) ; print(int_to_string(e3.code)) }
+    }
+
+    // (e) try_local_port sobre un fd inválido — Err con EBADF (9), que
+    // errno_to_kind lleva a "io".
+    match try_local_port(-1) {
+        Result.Ok(p) => { print("no-deberia-puerto-2") }
+        Result.Err(e4) => { print(e4.kind) ; print(int_to_string(e4.code)) }
     }
 
     // smoke de convivencia: los builtins viejos (tcp_listen/tcp_close)

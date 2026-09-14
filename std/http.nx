@@ -316,7 +316,6 @@ fn http_parse_raw_response(raw: String) -> Array {
 // EXPLÍCITO y con un nombre que no se pueda confundir con otra cosa: nadie
 // escribe `http_tls_inseguro(true)` sin saber lo que hace.
 var g_http_tls_verificar: bool = true
-var g_http_tls_ca_cargado: bool = false
 
 // Desactiva la verificación del certificado para TODAS las llamadas HTTPS de
 // este proceso. Solo para desarrollo contra un servidor con certificado
@@ -331,13 +330,14 @@ pub fn http_tls_inseguro(si: bool) {
 fn http_tls_request(host: String, port: int, req: String) -> Array {
     var h: int = 0
     if g_http_tls_verificar {
-        // El almacén de CAs del sistema, una sola vez y ANTES del primer
-        // connect verificado (contrato de tls_set_ca_file).
-        if !g_http_tls_ca_cargado {
-            let _cargado: bool = tls_set_ca_file("")
-            g_http_tls_ca_cargado = true
-        }
-        h = tls_connect_verified(host, port)
+        // Contra el almacén de CAs del SISTEMA, sin tocar el de tls_set_ca_file.
+        // SEGURIDAD (2026-09-14): hasta acá esto era tls_set_ca_file("") +
+        // tls_connect_verified. Ese almacén es del proceso entero y ACUMULA, así
+        // que el primer https le sumaba las CAs públicas a la confianza que el
+        // usuario había acotado a su CA privada —la del sslmode=verify-ca de
+        // std/postgres—, y a la vez este cliente confiaba en esa CA privada.
+        // Regresión: tests/compiler/stdlib-suite/test-424-http-no-contamina-cas.nx.
+        h = tls_connect_verified_system(host, port)
     } else {
         h = tls_connect(host, port)
     }

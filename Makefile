@@ -131,19 +131,53 @@ builtins-index:
 #
 # Se declaran como targets de archivo con sus prerequisitos REALES, así make
 # reconstruye SOLO lo que quedó viejo (y no reconstruye nada si todo está al
-# día). Los .ll de la lista son exactamente los que cada `$(CLANG) ... -o` enlaza
-# unas líneas más abajo: si una receta cambia de lista, esta también.
+# día). Cada regla lista: la FUENTE .nx que `build-*` compila, `nyx_bootstrap`
+# (el compilador que la compila) y las semillas AJENAS que el `$(CLANG) ... -o`
+# enlaza unas líneas más abajo — si una receta cambia de lista, esta también.
+#
+# Nunca el .ll PROPIO de la herramienta: `build-*` lo REGENERA, así que
+# declararlo como prerequisito era declarar la SALIDA como entrada. Hasta el
+# 2026-09-14 fue así, y ni editar compiler/test.nx ni reconstruir el bootstrap
+# volvían a armar nyx_test (medido el 2026-09-13: `make nyx_test` decía «up to
+# date» con el binario 4 h más viejo que el bootstrap) — un cambio de codegen
+# dejaba las herramientas con el código del compilador anterior, bugs incluidos.
+#
+# Y el RUNTIME C: cada `$(CLANG) ... -o` compila $(RUNTIME_SRCS) en la misma
+# línea, y esos .c incluyen runtime/*.h y runtime/os/*.h, así que un fix del
+# runtime (strings.c, tls.c…) es tan entrada del binario como su fuente. Sin
+# esto, install-local dejaba en ~/.nyx herramientas —y el propio compilador—
+# con el runtime anterior, «up to date» y sin aviso.
+#
+# nyx_bootstrap, nyx_build y nyx_gendocs también son targets de archivo: los tres
+# se instalan, y ninguna regla sabía cuándo estaban viejos (`bootstrap` y
+# `build-*` son .PHONY: reconstruyen siempre, pero solo si alguien se acuerda).
+# nyx_bootstrap enlaza un SUBCONJUNTO del runtime —sin http2.c ni
+# llama_adapter.c, ver scripts/build_bootstrap.sh—; depender de más lo
+# rearmaría de más. nyx_build y nyx_gendocs son opcionales en install-local
+# (se copian si existen): se exigen al día solo cuando existen.
+# Guarda: scripts/testing/run_toolchain_recipe_audit.sh (lee la base de reglas).
+RUNTIME_HDRS = $(wildcard runtime/*.h runtime/os/*.h)
+RUNTIME_DEPS = $(RUNTIME_SRCS) $(RUNTIME_HDRS)
+BOOTSTRAP_RUNTIME_DEPS = $(filter-out runtime/http2.c runtime/llama_adapter.c runtime/http2.h runtime/llama_api.h,$(RUNTIME_DEPS))
 TOOL_CORE_LL = compiler/lexer.ll compiler/parser.ll
-nyx_check: compiler/nyx_check.ll $(TOOL_CORE_LL) compiler/types.ll compiler/semantic.ll compiler/resolve.ll
+# Order-only (`|`) el prelude: el compilador lo LEE al compilar, no lo enlaza —
+# regenerarlo no cambia el binario, solo tiene que existir antes.
+nyx_bootstrap: $(BOOTSTRAP_LL) $(BOOTSTRAP_RUNTIME_DEPS) scripts/build_bootstrap.sh | $(STD_PRELUDE)
+	$(TESTROOT_LOCK) bash scripts/build_bootstrap.sh
+nyx_check: compiler/nyx_check.nx nyx_bootstrap $(TOOL_CORE_LL) compiler/types.ll compiler/semantic.ll compiler/resolve.ll $(RUNTIME_DEPS)
 	@$(MAKE) --no-print-directory build-check
-nyx_vet: compiler/vet.ll $(TOOL_CORE_LL) compiler/gotchas_table.ll
+nyx_vet: compiler/vet.nx compiler/gotchas_table.nx nyx_bootstrap $(TOOL_CORE_LL) $(RUNTIME_DEPS)
 	@$(MAKE) --no-print-directory build-vet
-nyx_fmt: compiler/fmt.ll $(TOOL_CORE_LL)
+nyx_fmt: compiler/fmt.nx nyx_bootstrap $(TOOL_CORE_LL) $(RUNTIME_DEPS)
 	@$(MAKE) --no-print-directory build-fmt
-nyx_test: compiler/test.ll
+nyx_test: compiler/test.nx nyx_bootstrap $(RUNTIME_DEPS)
 	@$(MAKE) --no-print-directory build-test
+nyx_build: compiler/build.nx compiler/gotchas_table.nx nyx_bootstrap $(RUNTIME_DEPS)
+	@$(MAKE) --no-print-directory build-nyx-build
+nyx_gendocs: compiler/gendocs.nx nyx_bootstrap $(RUNTIME_DEPS)
+	@$(MAKE) --no-print-directory build-gendocs
 
-install-local: $(STD_PRELUDE) nyx_check nyx_vet nyx_fmt nyx_test
+install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $(if $(wildcard nyx_build),nyx_build) $(if $(wildcard nyx_gendocs),nyx_gendocs)
 	@set -e; \
 	: "set -e: ningún paso de la instalación puede fallar y seguir. Antes cada cp"; \
 	: "iba encadenado con ';' y la receta terminaba con '✓ Toolchain sincronizado'"; \
@@ -295,6 +329,7 @@ test-ai-first:
 	bash scripts/testing/run_ai_first_tests.sh
 	bash scripts/testing/run_silent_failure_checks.sh
 	bash scripts/testing/run_tooling_gates.sh
+	bash scripts/testing/run_build_manifest.sh
 	bash scripts/testing/run_self_check.sh
 	bash scripts/testing/run_shutdown_test.sh
 	bash scripts/testing/run_codegen_mute_audit.sh
@@ -302,6 +337,8 @@ test-ai-first:
 	bash scripts/testing/run_toolchain_recipe_audit.sh
 	bash scripts/testing/run_prelude_divergence.sh
 	bash scripts/testing/run_os_layer_ratchet.sh
+	bash scripts/testing/run_no_compiler_rt_builtins.sh --self-test
+	bash scripts/testing/run_no_compiler_rt_builtins.sh
 	bash scripts/testing/run_template_coherence.sh
 	bash scripts/testing/run_seeded_blocks_compile.sh
 	bash scripts/testing/run_templates_parity.sh

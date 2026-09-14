@@ -166,6 +166,7 @@ case "${1:-}" in
         echo "                  --release                      optimized build"
         echo "                  --target wasm32-wasi           WebAssembly -> target/wasm32-wasi/<name>.wasm"
         echo "                  --target x86_64-pc-windows-msvc  Windows (cross)"
+        echo "                  --main src/other.nx            another entry point -> <name>-other"
         echo "  run [args...] Build and run the project (args go to the program;"
         echo "                use -- to pass args that look like nyx flags)"
         echo "                  --target wasm32-wasi           build and run under wasmtime"

@@ -378,7 +378,7 @@ port)` / `try_tcp_listen(host, port)` / `try_udp_bind(host, port)` /
 `try_udp_recvfrom(fd, max)` / `try_resolve(host)` / `try_tcp_read_line(fd)`
 / `try_tcp_read_partial(fd, max)` / `try_tcp_read_exact(fd, n)` /
 `try_tcp_shutdown(fd, mode)` / `try_tcp_set_timeout(fd, secs)` /
-`try_getpeername(fd)` / `try_resolve_ptr(ip)` are the full
+`try_getpeername(fd)` / `try_local_port(fd)` / `try_resolve_ptr(ip)` are the full
 Result-returning family over the old `tcp_connect`/`tcp_listen`/
 `tcp_accept`/`tcp_read`/`tcp_write`/`udp_bind`/`udp_sendto`/
 `udp_recvfrom`/`resolve`/`tcp_read_line`/`tcp_read_partial`/
@@ -724,7 +724,10 @@ single `Error` struct.
 - `file_exists(path)` → bool
 
 ### Conversion
-- `int_to_string(n)`, `float_to_string(n)`, `char_to_string(c)`
+- `int_to_string(n)`, `char_to_string(c)` → String
+- `float_to_string(n)` — (y `print` de un `float`) emite los dígitos MÍNIMOS que releen al mismo double: `0.1 + 0.2` → `0.30000000000000004`,
+  `123456789.0` → `123456789.0`; notación científica solo si el exponente sale de [-4, 16)
+  (`1e-05`, `1e+16`). Para un ancho fijo de decimales (precios): `float_to_fixed` de `std/math_ext`
 - `string_to_int(s)`, `string_to_float(s)` — **abortan el proceso (exit 1)** si `s` es vacío o no numérico
 - `string_to_int_or(s, def)`, `string_to_float_or(s, def)` — variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
 - `int_to_float(n)`, `float_to_int(n)`
@@ -732,10 +735,12 @@ single `Error` struct.
 
 ### JSON — values are tagged Arrays, NOT Map (JSON is recursive; nested Map support is only heuristic — see §5.1)
 - `json_parse(s)` → JSON value as a tagged Array: `["object", keys, vals]` |
-  `["array", items]` | `["string", s]` | `["number", n]` | `["bool", b]` | `["null"]`
+  `["array", items]` | `["string", s]` | `["number", n]` (entero) | `["float", texto]` (con decimales o exponente: guarda el texto original) | `["bool", b]` | `["null"]`
 - read a field: `json_get(obj, key)` → value (or json_null); `json_as_string(v)` / `json_as_int(v)` extract
 - build: `json_object(keys, vals)`, `json_string(s)`, `json_number(n)`, `json_array(items)`, `json_bool(b)`, `json_null()`
-- `json_stringify(v)` → String — takes the tagged-Array value, NOT a Map
+- `json_stringify(v)` → String — takes the tagged-Array value, NOT a Map. A parsed number keeps its
+  ORIGINAL text: `json_stringify(json_get(doc, "x"))` returns the digits as they came (an array of
+  numbers too), while `json_as_float` → `float_to_string` goes through a double
 - `try_json_parse(s) -> Result<Array, Error>` / `try_json_get(obj, key) -> Result<Array,
   Error>` / `try_json_array_get(arr, i) -> Result<Array, Error>` (E5.4, `import "std/json"`)
   are the Result-returning siblings of `json_parse`/`json_get`/`json_array_get` — same
@@ -860,6 +865,22 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   se lee fácil como "no hay red" en vez de "no configuré el trust store". Llegar al
   almacén de CAs del sistema es **opt-in**: `tls_set_ca_file("")` (path vacío).
   Llamarlo antes del primer `tls_connect_checked`/`tls_connect_verified`.
+- **Dos almacenes de confianza que NO se mezclan** (seguridad, 2026-09-14):
+  - El **del sistema**: lo usan `https_get`/`https_post`, el HTTPS de `std/http` y
+    `tls_connect_verified_system(host, port) -> int` (cadena + hostname contra las CAs
+    del sistema; 0 si falla). Para que confíe en una CA privada, exportar
+    `SSL_CERT_FILE` (reemplaza el archivo de CAs por defecto de OpenSSL) antes del
+    primer https.
+  - El **explícito**: el que llena `tls_set_ca_file`. Lo usan `tls_connect_checked`,
+    `tls_connect_verified`, `tls_upgrade_fd_verified`/`tls_upgrade_fd_ca_only` y el
+    `sslmode=verify-ca`/`verify-full` de `std/postgres`. `tls_set_ca_file` **ACUMULA y no
+    se deshace**: el almacén es uno para todo el proceso, así que `tls_set_ca_file("")`
+    en un programa que confía en su CA privada para postgres le suma TODAS las CAs
+    públicas a esa confianza. Ningún módulo de la stdlib lo llama en tu nombre.
+  - Hasta el 2026-09-14 el HTTPS de `std/http` llamaba `tls_set_ca_file("")` en su
+    primera petición: después de un `http_get` a cualquier sitio, el `verify-ca` de
+    postgres aceptaba certificados de cualquier CA pública. Regresión:
+    `tests/compiler/stdlib-suite/test-424-http-no-contamina-cas.nx`.
 
 ### Threading / Concurrency
 - `thread_spawn(fn)`, `thread_join(tid)`
@@ -1614,8 +1635,10 @@ tree-walking interpreter, NOT the compiler: it covers basic types, control flow,
 15 builtin methods (12 String, 3 Array — no Map values, no structs-with-methods, no generics). Anything
 outside the subset raises a loud `NYX30xx` error and the session survives. Until v0.24.3 it was worse
 than limited — it was wrong: every array literal evaluated to `[nil]`, `for x in [...]` segfaulted,
-`5 % 0` returned 5. All fixed and guarded (`make test-repl`). Trust the compiled binary (`nyx
-build`/`nyx run`) as ground truth; use the REPL for quick arithmetic/string exploration only.
+`5 % 0` returned 5. Until 2026-09-14 a `return` inside a `for`/`while` was silently dropped (the
+function kept looping) and ranges, `break` and `continue` were rejected. All fixed and guarded
+(`make test-repl`). Trust the compiled binary (`nyx build`/`nyx run`) as ground truth; use the REPL for
+quick arithmetic/string exploration only.
 
 15. **A failed bind is LOUD now (v0.24.4)**. `http_serve`/`tcp_listen`/`udp_bind` on a taken port used to
 fail in complete silence: return -1, no message — and since the old canonical example discarded the
@@ -1997,6 +2020,8 @@ production site already runs its front-end in Nyx→WASM.
 # Desde un PROYECTO (lo normal): lee nyx.toml — main, nombre, dependencias
 nyx build --target wasm32-wasi   # → target/wasm32-wasi/<name>.wasm
 nyx run --target wasm32-wasi     # lo construye y lo ejecuta con wasmtime
+# Otro punto de entrada del proyecto (p.ej. solo la parte pura, sin sockets):
+nyx build --target wasm32-wasi --main src/navegador.nx   # → target/wasm32-wasi/<name>-navegador.wasm
 # De UN archivo suelto:
 make wasm FILE=app/main.nx    # → main.wasm; multi-file: imports resolve
                               #   PROJECT-relative to the FILE's dir
@@ -2093,6 +2118,9 @@ version = "0.1.0"
 main = "src/main.nx"
 description = "What this does"
 
+[build]                  # optional — keys: main, target (an unknown key is an error)
+target = "wasm32-wasi"   # default target for nyx build/run; --target overrides it
+
 [dependencies]
 nyx-kv = "*"
 nyx-serve = "*"
@@ -2103,6 +2131,8 @@ nyx init my-project              # scaffold nyx.toml, src/main.nx, AGENTS.md, CA
 nyx add nyx-kv                   # adds to [dependencies] + clones to packages/
 nyx build                        # compiles (reads nyx.toml, resolves deps, self-heals CAPABILITIES.md)
 nyx build --release              # optimized (-O2)
+nyx build --main src/other.nx    # another entry point of the same project → ./<name>-other
+                                 #   (also with --target; nyx run --main forwards only the args)
 nyx run [args...]                # build + execute (args forwarded to the binary;
                                  #   `--` ends nyx flags: nyx run -- --release)
 nyx test                         # run project tests

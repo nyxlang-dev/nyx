@@ -5,6 +5,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>   // isnan/isinf/signbit de nyx_float_format
+#include <float.h>  // DBL_MIN: subnormales al loop completo
 #include <string.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -592,21 +594,87 @@ nyx_string* nyx_string_from_int(int64_t value) {
     return nyx_string_from_cstr(buffer);
 }
 
+// Los dígitos MÍNIMOS que releen al mismo double, no las 6 cifras de %g.
+//
+// POR QUÉ (fricción de nyxerp, 2026-09-13): con %g, `0.013426971` salía
+// `0.013427` y `123456789.0` salía `1.23457e+08`. Un double guarda unas 17
+// cifras; imprimirlo tiraba 11 en silencio, y un embedding leído de JSON y
+// reescrito vía float cambiaba cada componente. Rust, Go, JS y Python emiten
+// la representación más corta de ida y vuelta; ahora Nyx también.
+//
+// Dígitos: se prueba con 1..17 cifras significativas y se toma la primera que
+// `strtod` devuelve IDÉNTICA (17 siempre alcanzan para IEEE 754 double).
+// Notación: la de `repr` de Python — decimal fija si el exponente decimal está
+// en [-4, 16), científica fuera de ahí —, así 1000000.0 no sale `1e+06`.
+// Medido sobre 2M de doubles (bits crudos, decimales, subnormales): 0 fallos
+// de ida y vuelta, salida más larga 24 bytes. Revisión del 2026-09-13: la
+// científica va con %.*e (con %.*g y 17 cifras elegía fija para exponente 16),
+// y el camino rápido 15→16→17 + recorte de ceros baja el peor caso de ~25x a
+// ~6x frente a %g, idéntico al loop completo salvo en subnormales, que usan el
+// loop completo. Un f32 busca entre 1 y 9 cifras con strtof: formatearlo como
+// el double al que se ensancha imprimía 0.1f como 0.10000000149011612.
+static void nff_emitir(double value, int digits, int exp10, char* buf, size_t size) {
+    if (exp10 < -4 || exp10 >= 16) {
+        snprintf(buf, size, "%.*e", digits - 1, value);
+    } else {
+        int decimals = digits - 1 - exp10;
+        if (decimals < 0) decimals = 0;
+        snprintf(buf, size, "%.*f", decimals, value);
+    }
+    if (strchr(buf, '.') == NULL && strchr(buf, 'e') == NULL) {
+        size_t blen = strlen(buf);
+        if (blen + 3 <= size) { buf[blen] = '.'; buf[blen + 1] = '0'; buf[blen + 2] = '\0'; }
+    }
+}
+
+void nyx_float_format(double value, char* buf, size_t size) {
+    if (isnan(value) || isinf(value)) { snprintf(buf, size, "%g", value); return; }
+    if (value == 0.0) { snprintf(buf, size, "%s", signbit(value) ? "-0.0" : "0.0"); return; }
+    char sci[40];
+    int digits;
+    if (fabs(value) < DBL_MIN) {
+        for (digits = 1; digits <= 17; digits++) {
+            snprintf(sci, sizeof(sci), "%.*e", digits - 1, value);
+            if (strtod(sci, NULL) == value) break;
+        }
+        if (digits > 17) digits = 17;
+    } else {
+        for (digits = 15; digits <= 17; digits++) {
+            snprintf(sci, sizeof(sci), "%.*e", digits - 1, value);
+            if (strtod(sci, NULL) == value) break;
+        }
+        if (digits > 17) digits = 17;
+        char* q = strchr(sci, 'e') - 1;
+        while (digits > 1 && *q == '0') { digits--; q--; }
+    }
+    int exp10 = atoi(strchr(sci, 'e') + 1);
+    nff_emitir(value, digits, exp10, buf, size);
+}
+
+void nyx_float32_format(float value, char* buf, size_t size) {
+    if (isnan(value) || isinf(value)) { snprintf(buf, size, "%g", (double)value); return; }
+    if (value == 0.0f) { snprintf(buf, size, "%s", signbit(value) ? "-0.0" : "0.0"); return; }
+    char sci[40];
+    int digits;
+    for (digits = 1; digits <= 9; digits++) {
+        snprintf(sci, sizeof(sci), "%.*e", digits - 1, (double)value);
+        if (strtof(sci, NULL) == value) break;
+    }
+    if (digits > 9) digits = 9;
+    int exp10 = atoi(strchr(sci, 'e') + 1);
+    nff_emitir((double)value, digits, exp10, buf, size);
+}
+
+nyx_string* nyx_string_from_float32(float value) {
+    char buffer[64];
+    nyx_float32_format(value, buffer, sizeof(buffer));
+    return nyx_string_from_cstr(buffer);
+}
+
 // String desde float
 nyx_string* nyx_string_from_float(double value) {
     char buffer[64];
-    snprintf(buffer, sizeof(buffer), "%g", value);
-    // Ensure float always has decimal point (e.g., 42.0 not 42).
-    // Bounded append of ".0" — avoids unbounded strcat (buffer is 64B, %g
-    // output is well under that, but guard makes it provably safe).
-    if (strchr(buffer, '.') == NULL && strchr(buffer, 'e') == NULL && strchr(buffer, 'E') == NULL) {
-        size_t blen = strlen(buffer);
-        if (blen + 3 <= sizeof(buffer)) {
-            buffer[blen] = '.';
-            buffer[blen + 1] = '0';
-            buffer[blen + 2] = '\0';
-        }
-    }
+    nyx_float_format(value, buffer, sizeof(buffer));
     return nyx_string_from_cstr(buffer);
 }
 
