@@ -1,0 +1,122 @@
+// test-417 — ligar un campo `Fn` de un struct a un `let` SIN anotar.
+//
+// Fricción de nyxerp (2026-09-13): `let f = c.hacer` pasaba `nyx check` y
+// `nyx vet`, y después clang rechazaba el IR. codegen tipaba la variable como
+// "Map" y la llamada `f(x)` salía como `call @f` directo:
+//   - retorno String → «use of undefined value '@f'»
+//   - retorno Result → «'%N' defined with type 'i64' but expected 'ptr'»
+// Con el tipo anotado ya funcionaba; queda como caso de control.
+import "std/error"
+
+struct ConString {
+    nombre: String,
+    hacer: Fn(String) -> String,
+}
+
+struct ConResult {
+    nombre: String,
+    hacer: Fn(String) -> Result<String, Error>,
+}
+
+struct ConInt {
+    doble: Fn(int) -> int,
+}
+
+struct Registro {
+    contrato: ConString,
+}
+
+struct ConFloat {
+    calc: Fn(float) -> float,
+}
+
+fn saludar(a: String) -> String {
+    return "hola " + a
+}
+
+fn saludar_res(a: String) -> Result<String, Error> {
+    if a == "" { return Result.Err(err_new(1, "vacio", "sin nombre")) }
+    return Result.Ok("hola " + a)
+}
+
+fn doblar(n: int) -> int {
+    return n * 2
+}
+
+// El receptor llega por puntero: el parámetro se registra como "*ConString".
+fn por_puntero(c: *ConString) -> String {
+    let f = c.hacer
+    return f("puntero")
+}
+
+fn por_parametro(c: ConString) -> String {
+    let f = c.hacer
+    return f("param")
+}
+
+fn por_referencia(c: &ConString) -> String {
+    let f = c.hacer
+    return f("ref")
+}
+
+fn por_dos_y_medio(x: float) -> float {
+    return x * 2.5
+}
+
+// Una función con closure: el env de la lambda se arma en un pre-scan que
+// también tiene que saber que `f` es una función. La lambda va ANOTADA a
+// propósito: una lambda ligada sin anotar es otro bug, con su propio test.
+fn con_lambda(c: ConString) -> String {
+    let f = c.hacer
+    let g: Fn(String) -> String = fn(s: String) -> String { return f(s) + "!" }
+    return f("afuera") + "/" + g("adentro")
+}
+
+fn main() {
+    // 1. retorno String, sin anotar (el «@f indefinido» del reporte)
+    let c1: ConString = ConString { nombre: "s", hacer: saludar }
+    let f1 = c1.hacer
+    print("string|" + f1("mundo"))
+
+    // 2. retorno Result, sin anotar (el «i64 but expected ptr» del reporte)
+    let c2: ConResult = ConResult { nombre: "r", hacer: saludar_res }
+    let f2 = c2.hacer
+    match f2("mundo") {
+        Result.Ok(s) => { print("result-ok|" + s) }
+        Result.Err(e) => { print("result-err|" + e.msg) }
+    }
+    match f2("") {
+        Result.Ok(s) => { print("result-ok|" + s) }
+        Result.Err(e) => { print("result-err|" + e.msg) }
+    }
+
+    // 3. retorno int, sin anotar
+    let c3: ConInt = ConInt { doble: doblar }
+    let f3 = c3.doble
+    print("int|" + int_to_string(f3(21)))
+
+    // 4. receptor parámetro, puntero y campo anidado
+    print("param|" + por_parametro(c1))
+    var cm: ConString = ConString { nombre: "m", hacer: saludar }
+    print("puntero|" + por_puntero(&cm))
+    let reg: Registro = Registro { contrato: c1 }
+    let f4 = reg.contrato.hacer
+    print("anidado|" + f4("anidado"))
+
+    // 5. más formas: referencia, var, retorno float, struct literal sin anotar,
+    //    y un let dentro de una función que tiene closures
+    print("ref|" + por_referencia(&c1))
+    var fv = c1.hacer
+    print("var|" + fv("var"))
+    let cf: ConFloat = ConFloat { calc: por_dos_y_medio }
+    let ff = cf.calc
+    print("float|" + float_to_string(ff(2.0)))
+    let cu = ConString { nombre: "u", hacer: saludar }
+    let fu = cu.hacer
+    print("literal|" + fu("literal"))
+    print("lambda|" + con_lambda(c1))
+
+    // 6. control: anotado, que ya funcionaba
+    let g: Fn(String) -> String = c1.hacer
+    print("anotado|" + g("control"))
+}

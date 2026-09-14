@@ -1,0 +1,13 @@
+string|hola mundo
+result-ok|hola mundo
+result-err|sin nombre
+int|42
+param|hola param
+puntero|hola puntero
+anidado|hola anidado
+ref|hola ref
+var|hola var
+float|5.0
+literal|hola literal
+lambda|hola afuera/hola adentro!
+anotado|hola control

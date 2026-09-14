@@ -401,6 +401,34 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`let f = c.hacer` con `hacer: Fn(...)` ya no rompe el enlace con un error crudo de clang**
+  (fricción de nyxerp, 2026-09-13, LENGUAJE + DOC). Pasaba `nyx check` y `nyx vet`, y `nyx build`
+  fallaba con `use of undefined value '@f'` (retorno `String`) o `'%708' defined with type 'i64' but
+  expected 'ptr'` (retorno `Result`): dos mensajes distintos para la misma causa, sin archivo ni
+  línea del programa. Con el tipo anotado ya funcionaba.
+  **La causa estaba solo en codegen**: `semantic` infería bien `TyFn` con la firma del campo —por eso
+  ningún checker decía nada—, pero `codegen_let` no miraba el tipo de un `field_access` y tipaba la
+  variable como `"Map"`. `codegen_call_expr` decide la llamada indirecta solo si el tipo guardado
+  empieza con `Fn(`; con `"Map"` emitía `call @f` directo, con retorno `int` por defecto (de ahí el
+  `i64` del segundo mensaje). Ahora el `let` sin anotar toma el tipo Nyx del campo del struct.
+  Es el patrón que recomienda NYX1016 («ligar el campo a una variable antes de llamarlo»), así que
+  cualquiera que siguiera el consejo sin anotar caía acá. `test-417` cubre retorno `String`,
+  `Result` (Ok y Err) e `int`; receptor parámetro, puntero y campo anidado; y el caso anotado de
+  control.
+  **Arreglar solo el `let` no alcanzaba**, y lo midió una sonda por forma de receptor: el parámetro por
+  valor andaba, pero el parámetro puntero (`c: *Contrato`, que se registra con el tipo crudo
+  `"*Contrato"`) y el campo anidado (`r.contrato.hacer`) seguían en `@f` indefinido, porque
+  `struct_field_nyx_type` solo resolvía un receptor identificador con el nombre exacto del struct.
+  Ahora resuelve en recursión un receptor que sea a su vez un campo y deriva el símbolo con
+  `normalize_struct_type_symbol_ex`, la función que ya usaba el acceso a campos (puntero, referencia,
+  alias, genérico), en vez de una quinta copia a mano. Una **revisión independiente** del arreglo
+  encontró un hueco más: en una función con closures, el pre-scan que arma el entorno no tipaba
+  `let f = c.hacer`, así que una lambda que capturaba `f` volvía a llamar a `@f`; ahora también lo
+  tipa. Los otros usos de `struct_field_nyx_type` (tag de `push`, value-type de un `Map`) reciben la
+  misma información que ya tenían con un identificador. La misma revisión, al aislar una sonda, llevó
+  a un bug distinto y silencioso —una lambda ligada sin anotar devolvía basura— que va en el commit
+  siguiente. Queda fichado aparte que NYX1016 diga «método no reconocido (¿typo?)» para `c.hacer(x)`,
+  y que leer un campo de un parámetro `Caja<int>` rompa el enlace (no depende de `Fn`).
 - **`make install-local` decía «✓ Toolchain sincronizado» aunque no hubiera instalado el
   compilador.** Cada `cp` de la receta iba encadenado con `;`, así que un fallo seguía de largo
   hasta el `✓`. El fallo real fue `Text file busy`: al publicar el arreglo del `continue`, algo
