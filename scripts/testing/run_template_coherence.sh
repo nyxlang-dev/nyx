@@ -57,7 +57,7 @@ source scripts/testing/lib_seeded_files.sh
 
 GOTCHAS_GENERATED="scripts/testing/gotchas_generated.sh"
 if [ ! -f "$GOTCHAS_GENERATED" ]; then
-    printf "  ✗ %s no existe — corré 'make gen-agent-docs' primero\n" "$GOTCHAS_GENERATED"
+    printf "  ✗ %s no existe — ejecuta 'make gen-agent-docs' primero\n" "$GOTCHAS_GENERATED"
     exit 1
 fi
 # shellcheck disable=SC1090

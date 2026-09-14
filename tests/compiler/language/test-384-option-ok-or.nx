@@ -3,7 +3,7 @@
 // `Some(x).ok_or(e)` = `Ok(x)` y `None.ok_or(e)` = `Err(e)`, con `e` de
 // CUALQUIER tipo `E`: el resultado se tipa `Result<T, E>`. Es el puente
 // explícito Option → Result que pide el hint del NYX1028 de la Task 1
-// («convertí la ausencia en error antes de propagarla con '.ok_or(e)?'»):
+// («convierte la ausencia en error antes de propagarla con '.ok_or(e)?'»):
 // sin él, la única salida era un `match` a mano en cada sitio.
 //
 // Cubre: E = String y E = Error (el struct canónico de std/error, que se

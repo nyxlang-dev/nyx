@@ -36,7 +36,7 @@ FAIL=0
 GOLDEN_DIR="tests/ai-first/golden"
 
 if [ ! -x ./nyx_build ]; then
-    echo "  ✗ falta ./nyx_build — corré 'make build-nyx-build' primero"
+    echo "  ✗ falta ./nyx_build — ejecuta 'make build-nyx-build' primero"
     exit 1
 fi
 

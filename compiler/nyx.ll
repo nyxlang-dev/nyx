@@ -7,7 +7,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str1.c = internal global %nyx_string* null
 @.str2 = private unnamed_addr constant [31 x i8] c"error: argumento desconocido '\00"
 @.str2.c = internal global %nyx_string* null
-@.str3 = private unnamed_addr constant [109 x i8] c"' — el driver crudo no acepta argumentos; usá el CLI `nyx build|run|init` (wrapper) o NYX_SRC=archivo.nx.\00"
+@.str3 = private unnamed_addr constant [108 x i8] c"' — el driver crudo no acepta argumentos; usa el CLI `nyx build|run|init` (wrapper) o NYX_SRC=archivo.nx.\00"
 @.str3.c = internal global %nyx_string* null
 @.str4 = private unnamed_addr constant [26 x i8] c"error: unknown argument '\00"
 @.str4.c = internal global %nyx_string* null
@@ -59,7 +59,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str27.c = internal global %nyx_string* null
 @.str28 = private unnamed_addr constant [37 x i8] c"error: no existe el archivo fuente '\00"
 @.str28.c = internal global %nyx_string* null
-@.str29 = private unnamed_addr constant [82 x i8] c"' (o está vacío) — pasá NYX_SRC=archivo.nx o corré desde un directorio con \00"
+@.str29 = private unnamed_addr constant [82 x i8] c"' (o está vacío) — pasa NYX_SRC=archivo.nx o ejecuta desde un directorio con \00"
 @.str29.c = internal global %nyx_string* null
 @.str30 = private unnamed_addr constant [2 x i8] c".\00"
 @.str30.c = internal global %nyx_string* null
@@ -73,7 +73,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str34.c = internal global %nyx_string* null
 @.str35 = private unnamed_addr constant [27 x i8] c"error: el archivo fuente '\00"
 @.str35.c = internal global %nyx_string* null
-@.str36 = private unnamed_addr constant [92 x i8] c"' está vacío (o no existe) — pasá NYX_SRC=archivo.nx o corré desde un directorio con \00"
+@.str36 = private unnamed_addr constant [92 x i8] c"' está vacío (o no existe) — pasa NYX_SRC=archivo.nx o ejecuta desde un directorio con \00"
 @.str36.c = internal global %nyx_string* null
 @.str37 = private unnamed_addr constant [2 x i8] c".\00"
 @.str37.c = internal global %nyx_string* null
@@ -534,8 +534,8 @@ then0:
   %18 = call i64 @nyx_array_get_tag({ i64, i8* }* %16, i64 1)
   %19 = call %nyx_string* @nyx_string_from_tagged(i64 %17, i64 %18, i64 2)
   %20 = call %nyx_string* @nyx_string_concat(%nyx_string* %15, %nyx_string* %19)
-  %21 = getelementptr [109 x i8], [109 x i8]* @.str3, i32 0, i32 0
-  %22 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3.c, i8* %21, i64 108)
+  %21 = getelementptr [108 x i8], [108 x i8]* @.str3, i32 0, i32 0
+  %22 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3.c, i8* %21, i64 107)
   %23 = call %nyx_string* @nyx_string_concat(%nyx_string* %20, %nyx_string* %22)
   %24 = getelementptr [26 x i8], [26 x i8]* @.str4, i32 0, i32 0
   %25 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str4.c, i8* %24, i64 25)

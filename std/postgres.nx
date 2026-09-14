@@ -386,7 +386,7 @@ fn pg_sslmode_valido(modo: String) -> bool {
 
 fn pg_sslmode_error(modo: String) -> String {
     if modo == "prefer" or modo == "allow" {
-        return "sslmode='" + modo + "' no se soporta a propósito: acepta caer a texto plano si el servidor rechaza TLS, lo que con SCRAM significa mandar la contraseña en claro creyendo que va cifrada. Usá 'require' (cifra o falla) o 'disable' (explícitamente sin cifrar)"
+        return "sslmode='" + modo + "' no se soporta a propósito: acepta caer a texto plano si el servidor rechaza TLS, lo que con SCRAM significa mandar la contraseña en claro creyendo que va cifrada. Usa 'require' (cifra o falla) o 'disable' (explícitamente sin cifrar)"
     }
     return "sslmode='" + modo + "' desconocido — valores aceptados: disable, require, verify-ca, verify-full"
 }
@@ -433,7 +433,7 @@ fn pg_negociar_tls(fd: int, host: String, sslmode: String) -> Result<int, Error>
                 }
             }
             if h == 0 {
-                return Result.Err(err_new(0, "connection", "el handshake TLS falló con sslmode=" + sslmode + " contra " + host + " (con verify-ca/verify-full: revisá la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)"))
+                return Result.Err(err_new(0, "connection", "el handshake TLS falló con sslmode=" + sslmode + " contra " + host + " (con verify-ca/verify-full: revisa la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)"))
             }
             return Result.Ok(h)
         }

@@ -18,7 +18,7 @@ if [ ! -x "$NYX_BUILD" ]; then
     # (make bootstrap no lo construye) y test-ai-first no lo exige para sus
     # otros checks — mismo criterio que clang-link-failure-attribution-ir-bug
     # en run_silent_failure_checks.sh (Fase 4 Task 10).
-    echo "⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta este check)"
+    echo "⚠️  nyx_build no existe — ejecuta 'make build-nyx-build' primero (se salta este check)"
     exit 0
 fi
 
@@ -32,7 +32,7 @@ fi
 # acá en vez de dejar que el resto del script falle con un diff críptico.
 if [ "compiler/build.nx" -nt "$NYX_BUILD" ]; then
     echo "❌ nyx_build está STALE: compiler/build.nx es más nuevo que el binario."
-    echo "   Corré 'make build-nyx-build' y reintentá (make bootstrap NO lo reconstruye)."
+    echo "   Ejecuta 'make build-nyx-build' y reintentá (make bootstrap NO lo reconstruye)."
     exit 1
 fi
 

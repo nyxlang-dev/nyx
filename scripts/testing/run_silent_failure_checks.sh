@@ -339,7 +339,7 @@ fi
 # ==============================================================
 NYX_BUILD="./nyx_build"
 if [ ! -x "$NYX_BUILD" ]; then
-    echo "  ⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta este check)"
+    echo "  ⚠️  nyx_build no existe — ejecuta 'make build-nyx-build' primero (se salta este check)"
 else
     REPO_ROOT="$(pwd)"
     PROJ_BAD="$TMPDIR/proj_bad"
@@ -700,7 +700,7 @@ fi
 # Necesita make build-nyx-build corrido antes (usa nyx_build, no bootstrap).
 # ------------------------------------------------------------------
 if [ ! -x ./nyx_build ]; then
-    echo "  ⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta seed-version-stamp)"
+    echo "  ⚠️  nyx_build no existe — ejecuta 'make build-nyx-build' primero (se salta seed-version-stamp)"
 else
     name="seed-version-stamp"
     REPO_ROOT="$(pwd)"
@@ -774,7 +774,7 @@ fi
 # {{binary}} = nombre del proyecto y NUNCA pisa uno existente. Sin git init.
 # ------------------------------------------------------------------
 if [ ! -x ./nyx_build ]; then
-    echo "  ⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta seed-gitignore)"
+    echo "  ⚠️  nyx_build no existe — ejecuta 'make build-nyx-build' primero (se salta seed-gitignore)"
 else
     name="seed-gitignore"
     REPO_ROOT="$(pwd)"
@@ -814,7 +814,7 @@ fi
 # (no fatal: nyx.toml y src/main.nx se crean igual).
 # ------------------------------------------------------------------
 if [ ! -x ./nyx_build ]; then
-    echo "  ⚠️  nyx_build no existe — corré 'make build-nyx-build' primero (se salta seed-home-fallback)"
+    echo "  ⚠️  nyx_build no existe — ejecuta 'make build-nyx-build' primero (se salta seed-home-fallback)"
 else
     name="seed-home-fallback"
     REPO_ROOT="$(pwd)"

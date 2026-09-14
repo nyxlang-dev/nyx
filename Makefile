@@ -342,6 +342,7 @@ test-ai-first:
 	bash scripts/testing/run_template_coherence.sh
 	bash scripts/testing/run_seeded_blocks_compile.sh
 	bash scripts/testing/run_templates_parity.sh
+	bash scripts/testing/run_voseo_messages.sh
 	bash scripts/testing/run_init_golden.sh
 	bash scripts/testing/run_sdd_init.sh
 	bash scripts/testing/run_sync_docs_migration.sh

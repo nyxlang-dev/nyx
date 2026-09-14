@@ -19,7 +19,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 if [ ! -x ./nyx_repl ]; then
-    echo "  ✗ falta ./nyx_repl — corré 'make build-repl' primero"
+    echo "  ✗ falta ./nyx_repl — ejecuta 'make build-repl' primero"
     exit 1
 fi
 

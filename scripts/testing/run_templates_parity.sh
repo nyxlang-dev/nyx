@@ -27,13 +27,12 @@ source scripts/testing/lib_seeded_files.sh
 FAIL=0
 
 # ── Denylist de español neutro (regla 9) ─────────────────────────────────
-# \b...\b para no cazar "vosotros" adentro de otra palabra ni "usa" dentro
-# de "usable"; extendible.
-# Segunda tanda (review final del arco andamiaje-sdd): las formas de voseo de
-# más frecuencia en documentación técnica, que la lista de la spec no traía.
-# El contenido sembrado ya está limpio contra todas ellas — esto es blindaje
-# para que la regla 9 no se erosione en el próximo cambio de plantilla.
-DENY_RE='\b(sos|tenés|podés|querés|sabés|hacé|seguí|ofrecé|leé|probá|declará|borrá|usá|corré|mirá|fijate|acordate|vos|vosotros|tenéis|podéis|sabéis|ejecutá|agregá|revisá|instalá|escribí|elegí|poné|dejá|decí|tené|asegurate|necesitás|debés|hacés|abrí|cambiá|verificá)\b'
+# La lista vive en lib_voseo.sh, sourceada acá — la comparte con
+# run_voseo_messages.sh (2026-09-14). Dos copias de la misma denylist es la
+# trampa que este repo pisó cuatro veces en una semana (builtins void,
+# módulos del prelude, builtins globales, tabla de booleanos).
+source scripts/testing/lib_voseo.sh
+DENY_RE="$VOSEO_DENY_RE"
 
 # ── Autotest del instrumento (primero — sin esto, verde no prueba nada) ──
 TMPDIR="$(mktemp -d)"

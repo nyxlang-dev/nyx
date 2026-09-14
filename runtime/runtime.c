@@ -1129,7 +1129,7 @@ int64_t nyx_read_byte(void) {
 // señal y nunca despierta — pero poll() está exento de SA_RESTART
 // (signal(7)) y retorna EINTR al instante.
 // ms < 0 = sin timeout. Retorna: byte 0-255; -1 EOF/error; -2 timeout o
-// señal (unificados: "no hay byte, revisá tus flags").
+// señal (unificados: "no hay byte, revisa tus flags").
 int64_t nyx_read_byte_timeout(int64_t timeout_ms) {
     int t = -1;
     if (timeout_ms >= 0) {

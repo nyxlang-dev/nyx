@@ -497,7 +497,7 @@ fn iso_core(s0: String, exigir_offset: bool) -> Array {
 ///
 /// **EXIGE huso explícito.** Un texto sin offset (`"2020-06-15 12:30:00"`) da
 /// Err, no un instante: el texto no dice qué instante es, y suponer UTC sería
-/// inventar el dato. Si sabés que es UTC, decilo con
+/// inventar el dato. Si sabes que es UTC, dilo con
 /// `try_time_from_iso_assuming_utc` — el nombre deja la suposición escrita en
 /// el código que la hace, que es donde tiene que estar cuando alguien la
 /// audite.
@@ -506,7 +506,7 @@ pub fn try_time_from_iso(s: String) -> Result<int, Error> {
     if r[1] == 1 { return Result.Ok(r[0]) }
     if r[0] == 2 {
         return Result.Err(err_new(22, "invalid",
-            "try_time_from_iso: '" + s + "' no trae huso horario. Si sabés que es UTC usá try_time_from_iso_assuming_utc; si es hora local, try_time_parse_local"))
+            "try_time_from_iso: '" + s + "' no trae huso horario. Si sabes que es UTC usa try_time_from_iso_assuming_utc; si es hora local, try_time_parse_local"))
     }
     return Result.Err(err_new(5, "parse",
         "try_time_from_iso: '" + s + "' no es una fecha ISO 8601 valida"))

@@ -169,7 +169,7 @@ pub fn kv_get(h: int, key: String) -> String {
 }
 
 // DEL key. Retorna la cantidad de claves borradas (0 si no existía);
-// respuestas de error del server parsean a 0 — verificá con kv_exists si importa.
+// respuestas de error del server parsean a 0 — verifica con kv_exists si importa.
 pub fn kv_del(h: int, key: String) -> int {
     let parts: Array = ["DEL", key]
     return string_to_int(kv_cmd(h, parts))

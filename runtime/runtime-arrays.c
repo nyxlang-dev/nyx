@@ -632,7 +632,7 @@ int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
         fprintf(stderr,
             "💥 Runtime Error: %s_desde_fila: la fila trae %" PRId64 " columna(s)"
             " y el struct espera %" PRId64 " — falta el campo '%s' (posición %" PRId64 ").\n"
-            "   La fila la arma el servidor: revisá que el SELECT traiga todas las"
+            "   La fila la arma el servidor: revisa que el SELECT traiga todas las"
             " columnas, en el orden de los campos del struct.\n",
             struct_name ? struct_name : "?", fila->length, n_campos,
             field_name ? field_name : "?", index);
@@ -657,7 +657,7 @@ int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_
             && !nyx_slot_check_off()) {
             fprintf(stderr,
                 "💥 Runtime Error: el slot %" PRId64 " del Array contiene %s (valor %" PRId64 ")"
-                " pero se leyó como %s — anota el tipo real o convertí explícito"
+                " pero se leyó como %s — anota el tipo real o convierte explícito"
                 " (string_to_int/float, from_int, ...); NYX_SLOT_CHECK=off lo desactiva\n",
                 index, nyx_tag_name(t), arr->data[index], nyx_tag_name(expected_tag));
             exit(1);
@@ -720,7 +720,7 @@ double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag)
         // garantizada — abort ordenado en vez de silently-wrong.
         fprintf(stderr,
             "💥 Runtime Error [NYX2008]: el slot %" PRId64 " del Array contiene %s"
-            " pero se leyó como float — anota el tipo real o convertí explícito"
+            " pero se leyó como float — anota el tipo real o convierte explícito"
             " (string_to_float, ...); NYX_SLOT_CHECK=off lo desactiva\n",
             index, nyx_tag_name(t));
         exit(1);
@@ -756,7 +756,7 @@ int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
     if ((t == NYX_TAG_STRING || t == NYX_TAG_FLOAT) && !nyx_slot_check_off()) {
         fprintf(stderr,
             "💥 Runtime Error [NYX2014]: el slot %" PRId64 " del Array contiene %s"
-            " pero se leyó como int — anota el tipo real o convertí explícito"
+            " pero se leyó como int — anota el tipo real o convierte explícito"
             " (string_to_int, float_to_int, ...); NYX_SLOT_CHECK=off lo desactiva\n",
             index, nyx_tag_name(t));
         exit(1);

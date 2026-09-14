@@ -54,7 +54,7 @@ GOLDEN_DIR="tests/ai-first/golden"
 SEED_VER="$(tr -d '[:space:]' < VERSION)"
 
 if [ ! -x ./nyx_build ]; then
-    echo "  ✗ falta ./nyx_build — corré 'make build-nyx-build' primero"
+    echo "  ✗ falta ./nyx_build — ejecuta 'make build-nyx-build' primero"
     exit 1
 fi
 

@@ -417,6 +417,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **«'X' is not supported on target 'wasm32-wasi'» ahora dice DÓNDE, y lista todos los usos de una
+  vez** (fricción nyxerp 2026-09-14, lo que `--main` no cubría). El error nombraba solo el builtin y
+  salía con `exit(1)` en el primero: en un proyecto con imports no había forma de saber qué archivo
+  lo arrastraba, y arreglar un uso para descubrir el siguiente costaba otra compilación entera (1m59s
+  en el proyecto del reporte). Ahora cada uso lleva `archivo:línea` —el módulo importado, el prelude
+  o el archivo principal, con el nombre real también bajo `nyx build`, que compila una copia
+  temporal— y la función que lo contiene, sin el prefijo de manglado de módulo. Los usos se
+  acumulan con `note_codegen_error`, sin duplicados, y el driver aborta al terminar el codegen sin
+  escribir el `.ll`. Una nota única recuerda que un módulo importado se emite entero y apunta a
+  `--main`. Los 7 sitios de `codegen_target_guard` (inline asm ×2, `try`/`catch`, builtins no
+  portables, 3 atómicos) pasan el nodo. Caso nuevo en `make test-wasm`, que corre aunque falte el
+  toolchain: tres usos en tres archivos listados con archivo:línea y función, rc != 0 y sin `.ll`;
+  control positivo con un programa wasm válido.
 - **Windows: nada que enlazara el runtime linkeaba desde `main` — faltaba `__divti3`.** Medido en la
   laptop: los 12 fixtures del gate de concurrencia fallaban con `undefined symbol: __divti3`, pedido
   por `nyx_mul_div_round` (arco checked-math), que dividía en `__int128`. clang resuelve esa división
@@ -552,6 +565,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `break`/`continue` fuera de todo bucle da NYX1015, el mismo código que el checker. `make
   test-repl` pasa de 15 a 25 checks (casos 15-19, con control positivo de que los programas
   válidos no emiten ningún error).
+- **Voseo rioplatense en diagnósticos del compilador, runtime, `std/` y scripts — 67 líneas en
+  22 archivos, todas a español neutro (tú)** (barrido completo del toolchain, 2026-09-14). La
+  guarda de español neutro (`run_templates_parity.sh`) solo vigilaba `templates/` y los gotchas;
+  nadie miraba lo que imprime el compilador. Afectaba mensajes que ve cualquier usuario: hints de
+  `codegen.nx` (NYX2002/2004/2007/2010/2013 y otros), `semantic.nx` (NYX1013/1023/1025/1026/1027/
+  1028/1031), `build.nx` (`nyx build`/`nyx run`/`nyx report`), `nyx.nx`, `parser.nx` (NYX0106),
+  runtime C (`nyx_row_cell`, slots), `std/postgres`, `std/kvclient`, `std/time`, `scripts/sdd/
+  arc-close`, `scripts/sync_to_public.sh` y varios `scripts/testing/*.sh`; también
+  `templates/gitignore` (sembrado por `nyx init`) y el skill interno `.claude/skills/
+  kv-friction-pull/SKILL.md`. La lista de formas prohibidas se extrajo a `scripts/testing/
+  lib_voseo.sh`, compartida por `run_templates_parity.sh` (recableado para sourcearla) y la guarda
+  nueva `scripts/testing/run_voseo_messages.sh`, sumada a `make test-ai-first`. Las 9 semillas del
+  bootstrap recompiladas y verificadas en punto fijo (`make seeds-check`); `nyx_build` reconstruido
+  (`build.nx` cambió).
 - **Una lambda o una función ligada a un `let` sin anotar devolvía basura en silencio al llamarla.**
   `let g = fn(s: String) -> String { return s + "!" }` y después `print("x|" + g("y"))` imprimía
   `x|281473650728896`: el número del puntero al string. Lo mismo con `let f = saludar` para cualquier

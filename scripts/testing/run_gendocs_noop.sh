@@ -53,7 +53,7 @@ fi
 if ./nyx_gendocs --check > "$T/check.log" 2>&1; then
     echo "  ✓ gendocs: regenerar es un no-op (todo lo generado está en sync con docs/gotchas/)"
 else
-    echo "  ✗ hay destinos generados STALE — corré: make gen-agent-docs"
+    echo "  ✗ hay destinos generados STALE — ejecuta: make gen-agent-docs"
     sed 's/^/      /' "$T/check.log"
     FAIL=1
 fi

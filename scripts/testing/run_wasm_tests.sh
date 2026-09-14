@@ -38,6 +38,60 @@ else
     GREEN='' RED='' YELLOW='' BOLD='' NC=''
 fi
 
+PASSED=0
+FAILED=0
+# Sale con 1 si algo de lo que SÍ corrió falló, aunque después se salte el resto.
+salida_parcial() { [ "$FAILED" -eq 0 ] && echo 0 || echo 1; }
+
+# ── Guard de target con ubicación (NO necesita el toolchain wasm) ──────────
+# El error «'X' is not supported on target 'wasm32-wasi'» sale del codegen,
+# antes de clang, así que se prueba aunque falten wasi-libc o wasmtime. El
+# fixture tiene tres usos no soportados en tres archivos: el driver tiene que
+# listarlos TODOS (acumulados, sin duplicar), cada uno con archivo:línea y la
+# función que lo contiene, salir con rc != 0 y NO escribir el .ll. Control
+# positivo: un programa wasm válido no emite el error.
+if [ -x ./nyx_bootstrap ]; then
+    printf "  %-32s" "[guard] usos con archivo:línea"
+    GT_FIX="tests/wasm/fixtures/target-guard"
+    GT_DIR="$(mktemp -d)"
+    cp "$GT_FIX/main.nx" "$GT_DIR/principal.nx"
+    NYX_LANG=en NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_SRC="$GT_DIR/principal.nx" \
+        NYX_SRC_DISPLAY="main.nx" NYX_PROJECT_DIR="$ROOT/$GT_FIX" ./nyx_bootstrap > "$GT_DIR/guard.log" 2>&1
+    gt_rc=$?
+    gt_why=""
+    gt_n=$(grep -c "is not supported on target 'wasm32-wasi'" "$GT_DIR/guard.log")
+    if [ "$gt_rc" -eq 0 ]; then
+        gt_why="rc 0: el driver no abortó ante usos no soportados"
+    elif [ -f "$GT_DIR/principal.ll" ]; then
+        gt_why="escribió el .ll pese al error (PROJECT_STATE #25)"
+    elif [ "$gt_n" -ne 3 ]; then
+        gt_why="esperaba 3 usos no soportados (acumulados y sin duplicar), hubo $gt_n"
+    else
+        for esperado in "--> main.nx:8, in function 'servir'" \
+                        "--> modulo_a.nx:3, in function 'leer_linea'" \
+                        "--> modulo_b.nx:3, in function 'contar'"; do
+            grep -qF -- "$esperado" "$GT_DIR/guard.log" || gt_why="falta «$esperado»"
+        done
+    fi
+    if [ -z "$gt_why" ]; then
+        cp tests/wasm/test-wasm-03-fib.nx "$GT_DIR/fib.nx"
+        if ! NYX_LANG=en NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_SRC="$GT_DIR/fib.nx" ./nyx_bootstrap > "$GT_DIR/fib.log" 2>&1; then
+            gt_why="control positivo: test-wasm-03-fib no compiló para wasm32-wasi"
+        elif grep -q "not supported on target" "$GT_DIR/fib.log"; then
+            gt_why="control positivo: un programa wasm válido emitió «not supported»"
+        fi
+    fi
+    if [ -z "$gt_why" ]; then
+        echo -e "${GREEN}PASS${NC}"; PASSED=$((PASSED + 1))
+    else
+        echo -e "${RED}FAIL${NC}"
+        echo "      $gt_why"
+        grep -v '^\s*$' "$GT_DIR/guard.log" | head -12 | sed 's/^/      /'
+        FAILED=$((FAILED + 1))
+    fi
+    rm -rf "$GT_DIR"
+fi
+
 WASI_SYSROOT="${WASI_SYSROOT:-/usr}"
 WASI_LIBC="$WASI_SYSROOT/lib/wasm32-wasi/libc.a"
 WASMTIME="$(command -v wasmtime || true)"
@@ -47,11 +101,11 @@ WASMTIME="$(command -v wasmtime || true)"
 if [ ! -f "$WASI_LIBC" ]; then
     echo "SKIP: wasi-libc no encontrado en $WASI_LIBC"
     echo "      (sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19)"
-    exit 0
+    exit $(salida_parcial)
 fi
 if [ -z "$WASMTIME" ] || [ ! -x "$WASMTIME" ]; then
     echo "SKIP: wasmtime no encontrado (PATH ni ~/.local/bin)"
-    exit 0
+    exit $(salida_parcial)
 fi
 if [ ! -x ./nyx_bootstrap ]; then
     echo "SKIP: nyx_bootstrap no compilado (make bootstrap)"
@@ -70,9 +124,6 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 echo -e "\n${BOLD}=======================================${NC}"
 echo -e "${BOLD}   Nyx WASM Tests (wasm32-wasi)${NC}"
 echo -e "${BOLD}=======================================${NC}\n"
-
-PASSED=0
-FAILED=0
 
 for t in tests/wasm/test-wasm-*.nx; do
     name="$(basename "$t" .nx)"

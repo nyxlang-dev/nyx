@@ -2029,6 +2029,22 @@ make wasm FILE=app/main.nx    # → main.wasm; multi-file: imports resolve
 wasmtime main.wasm            # or: node examples/browser/run-node.mjs main.wasm
 ```
 
+**Unsupported on the target** (sockets, threads, regex, sqlite, `try`/`catch`, inline asm,
+atomics…) is a compile error that lists EVERY use in one pass, each with `file:line` and the
+enclosing function, and writes no `.ll`:
+
+```
+error: 'tcp_read_line' is not supported on target 'wasm32-wasi'
+  --> modulo_a.nx:3, in function 'leer_linea'
+  note: an imported module is compiled whole even if the program never reaches that function;
+        to build only part of the project for wasm32-wasi, use `nyx build --target wasm32-wasi --main <file.nx>`
+error: 'tcp_listen' is not supported on target 'wasm32-wasi'
+  --> main.nx:8, in function 'servir'
+```
+
+An imported module is emitted whole, so importing `std/http` breaks a wasm build even if that
+branch never runs — split the entry point with `--main` (above).
+
 **Toolchain** (no wasi-sdk, ~700MB): system clang + Debian `wasi-libc` +
 `libclang-rt-19-dev-wasm32` + `lld-19` (`--sysroot=/usr`) + `wasmtime` (release
 binary, not in apt). Tests: `make test-wasm` — SKIPs clean (exit 0) if that

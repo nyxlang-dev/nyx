@@ -18,7 +18,8 @@
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
 | Runtime C unit (B4) | `make test-runtime` | **35 suites / 1675 asserts** | verificado con corrida real 2026-09-14; +2 de la suite nueva `test_mul_div_round` y +8 de `test_net_result` (detalle en `CHANGELOG.md`) |
-| AI-first (objetivo) | `make test-ai-first` | **26 programas + 43 guardas** | 24 scripts: `run_ai_first_tests.sh` + 22 de guardas (43: `run_templates_parity.sh` 2, `run_tooling_gates.sh` 7, `run_build_manifest.sh` 14, `run_no_compiler_rt_builtins.sh` 2) + `scripts/sdd/selftest` |
+| AI-first (objetivo) | `make test-ai-first` | **26 programas + 44 guardas** | 25 scripts: `run_ai_first_tests.sh` + 23 de guardas (44: `run_templates_parity.sh` 2, `run_tooling_gates.sh` 7, `run_build_manifest.sh` 14, `run_no_compiler_rt_builtins.sh` 2, voseo 1) + `scripts/sdd/selftest` |
+| Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** | denylist de voseo compartida con `run_templates_parity.sh` (`lib_voseo.sh`) sobre `compiler/`, `runtime/`, `std/`, `scripts/` y `templates/gitignore` |
 | Coherencia de manuales | (dentro de `make test-ai-first`) `run_template_coherence.sh` | **4 checks** | mentiras resucitadas + anclas de trampas/reglas vivas + imports sin comillas + ids de gotcha citados, sobre lo sembrado en ambos idiomas; ANCLAS/MENTIRAS de `gotchas_generated.sh` |
 | Bloques sembrados compilan | (dentro de `make test-ai-first`) `run_seeded_blocks_compile.sh` | **1 check** | cada bloque ` ```nyx ` sembrado (ambos idiomas) compila con bootstrap semántico + clang; sin `fn main` debe ser ` ```nyx-fragment ` o falla |
 | Paridad EN/ES + español neutro | (dentro de `make test-ai-first`) `run_templates_parity.sh` | **2 checks** | twins EN/ES coherentes (marca de template, encabezados `##`, `gen:ids`) + denylist de voseo/vosotros (regla 9) en `## es` de los gotchas, `templates/es/**` y los adaptadores ES |
@@ -39,7 +40,7 @@
 | PostgreSQL E2E | (dentro de `make test-integration`, enganchado el 2026-09-14) `run_postgres_tests.sh` | **7 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **9 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm stub 3 + HTTP/2 1 + body cap 6 + std/serve contrato 10 + smoke 63 + serve+kv 10) | smoke 63 = el de nyx-serve, portado al congelarlo; serve+kv SKIPea sin el daemon kv |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
-| WASM (wasm32-wasi) | `make test-wasm` | **29** | SKIP sin toolchain; +1 el 2026-09-14 (`--main`); +4 el 2026-09-10 (proyecto por el CLI, nativo vs wasm; lifetime de cierres: captura de String, dos listeners, y anclaje sin fuga); +1 el 2026-09-13 (SSE y `browser_geo_fn`, con `fetch` falso) |
+| WASM (wasm32-wasi) | `make test-wasm` | **30** | SKIP sin toolchain (salvo el guard); +2 el 2026-09-14 (`--main`; guard con archivo:línea); +1 el 09-13 (SSE); +4 el 09-10 (proyecto por el CLI; lifetime de cierres). Detalle en `CHANGELOG.md` |
 | Verify + compiler-unit + fmt | `make test-unit` | **21** (13 verify + 3 compiler-unit + 5 fmt) | compiler-unit activos: test-lexer, test-types-unify, test-borrow-classify (3 de 6; resto SKIP, ver abajo) |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +

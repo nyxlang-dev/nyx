@@ -1667,7 +1667,10 @@ decisión de diseño (D5 del arco E6), no una limitación temporal: en wasm lo e
 `Result<T, E>` (es un valor, funciona idéntico en ambos targets) y lo irrecuperable mata la
 instancia, el modelo estándar de wasm. Dos capas independientes lo garantizan:
 
-- **Compile-time**: `codegen_target_guard(ctx, "try/catch")` rechaza cualquier `try` bajo `make wasm`.
+- **Compile-time**: `codegen_target_guard(node, ctx, "try/catch")` rechaza cualquier `try` bajo `make wasm`.
+  Como todo uso no soportado en el target, el error dice `archivo:línea` y la función que lo
+  contiene, se acumula con los demás usos de la misma compilación y el driver aborta al final sin
+  escribir el `.ll`.
 - **Runtime**: si igual se linkea (código viejo, FFI directa), `nyx_try_push()` bajo `__wasi__`
   imprime `error: try/catch is not supported on wasm32-wasi` y hace `exit(1)`, en vez de ofrecer un
   try-catch roto a medias.

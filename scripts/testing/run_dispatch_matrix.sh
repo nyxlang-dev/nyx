@@ -135,7 +135,7 @@ runtime/llama_adapter.c runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 
 if [ ! -x ./nyx_bootstrap ]; then
-    echo "✗ falta ./nyx_bootstrap — corré 'make bootstrap' primero"
+    echo "✗ falta ./nyx_bootstrap — ejecuta 'make bootstrap' primero"
     exit 1
 fi
 

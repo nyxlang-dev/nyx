@@ -436,7 +436,7 @@ fn scaffold_project_files(dir: String, lang: String, agents: String) {
     }
     if tpl_ok == false {
         print("error: no encuentro la toolchain de Nyx (NYX_HOME vacío o sin templates/" + lang + "/): el contexto para agentes (AGENTS.md, CAPABILITIES.md, docs/nyx/) NO se sembró.")
-        print("  Exportá NYX_HOME (o reinstalá con install.sh) y corré: nyx update --sync-docs")
+        print("  Exporta NYX_HOME (o reinstala con install.sh) y ejecuta: nyx update --sync-docs")
         return
     }
 
@@ -460,7 +460,7 @@ fn scaffold_project_files(dir: String, lang: String, agents: String) {
         // con 8 de 9 archivos y el agente no tiene dónde mirar la forma de las
         // cosas. No es fatal (el resto ya se sembró), pero se dice en voz alta.
         print("error: falta " + llm_tpl + " en la toolchain: docs/nyx/LLM.md (la referencia densa) NO se sembró.")
-        print("  Reinstalá con install.sh (o corré make install-local desde el monorepo) y después: nyx update --sync-docs")
+        print("  Reinstala con install.sh (o ejecuta make install-local desde el monorepo) y después: nyx update --sync-docs")
     }
     let gdir: String = ldir + "/docs/nyx/guides"
     if file_exists(gdir) {
@@ -777,7 +777,7 @@ fn write_constitution_test(dir: String) -> int {
 fn add_agents_triggers(dir: String, lang: String) -> bool {
     let path: String = dir + "/AGENTS.md"
     if file_exists(path) == false {
-        print("warning: no hay AGENTS.md en " + dir + ": el disparador del andamiaje NO se insertó (corré `nyx update --sync-docs`)")
+        print("warning: no hay AGENTS.md en " + dir + ": el disparador del andamiaje NO se insertó (ejecuta `nyx update --sync-docs`)")
         return false
     }
     let body: String = read_file(path)
@@ -1031,19 +1031,19 @@ fn clang_failure_attribution_bash(main_file: String) -> String {
 
     return "if grep -qE '" + ir_patterns + "' \"$LOG\"; then " +
         "if [ \"$NYX_LANG\" = \"es\" ]; then " +
-        "echo \"  -> esto es casi seguro un BUG del compilador Nyx (IR invalido), no de tu codigo (archivo: " + main_file + "). Reportalo con 'nyx report' (el reporte incluye contexto util).\" >&2; " +
+        "echo \"  -> esto es casi seguro un BUG del compilador Nyx (IR invalido), no de tu codigo (archivo: " + main_file + "). Repórtalo con 'nyx report' (el reporte incluye contexto util).\" >&2; " +
         "else " +
         "echo \"  -> this is almost certainly a Nyx compiler BUG (invalid IR), not your code (file: " + main_file + "). Report it with 'nyx report' (the report includes useful context).\" >&2; " +
         "fi; " +
         "elif grep -qE '" + link_patterns + "' \"$LOG\"; then " +
         "if [ \"$NYX_LANG\" = \"es\" ]; then " +
-        "echo \"  -> simbolo no encontrado al linkear: si es una funcion extern C tuya, revisa el nombre/lib; si es de la stdlib de Nyx, es un bug -- reportalo con 'nyx report'.\" >&2; " +
+        "echo \"  -> simbolo no encontrado al linkear: si es una funcion extern C tuya, revisa el nombre/lib; si es de la stdlib de Nyx, es un bug -- repórtalo con 'nyx report'.\" >&2; " +
         "else " +
         "echo \"  -> symbol not found at link time: if this is your own extern C function, check the name/lib; if it is a stdlib function, it is a Nyx bug -- report it with 'nyx report'.\" >&2; " +
         "fi; " +
         "else " +
         "if [ \"$NYX_LANG\" = \"es\" ]; then " +
-        "echo \"  -> fallo de link sin patron reconocido; si sospechas que es un bug del compilador, reportalo con 'nyx report'.\" >&2; " +
+        "echo \"  -> fallo de link sin patron reconocido; si sospechas que es un bug del compilador, repórtalo con 'nyx report'.\" >&2; " +
         "else " +
         "echo \"  -> link failure with no recognized pattern; if you suspect a compiler bug, report it with 'nyx report'.\" >&2; " +
         "fi; " +
@@ -1137,7 +1137,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         "trap 'rm -f \"$LOG\" \"$SRC\" \"$SRCNX\" \"$" + "{SRC}.ll\"' EXIT\n" +
         "cp \"$ORIG_DIR/" + config.main_file + "\" \"$SRCNX\"\n" +
         "cd \"" + nyx_home + "\"\n" +
-        gc_flag + "NYX_SRC=\"$SRCNX\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
+        gc_flag + "NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
         "|| { echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
         mkdir_native +
         "clang " + opt_flags + " \"$SRC.ll\" " +
@@ -1194,7 +1194,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
             "test -f \"$SYSROOT/lib/wasm32-wasi/libc.a\" || { echo \"error: wasi-libc no encontrado - sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19\" >&2; exit 1; }\n" +
             "cp \"$ORIG_DIR/" + config.main_file + "\" \"$SRCNX\"\n" +
             "cd \"" + nyx_home + "\"\n" +
-            "NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_SRC=\"$SRCNX\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
+            "NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
             "|| { echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
             // La lista de fuentes sale de runtime/wasm.srcs, no de una copia
             // acá: era la TERCERA (Makefile, run_wasm_tests.sh y esta), con un
@@ -1356,7 +1356,7 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
     var src = local_path
     if file_arg != "" { src = file_arg }
     if not file_exists(src) {
-        print("error: no existe " + src + " — corré `nyx report` primero para crear FRICTION.md")
+        print("error: no existe " + src + " — ejecuta `nyx report` primero para crear FRICTION.md")
         return false
     }
     let contenido: String = read_file(src)
@@ -1381,7 +1381,7 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
     let h: int = kv_connect_auth("nyxkv.com", 6380, token)
     if h < 0 {
         print("error: no se pudo conectar al buzón (nyxkv.com:6380)")
-        print("el reporte quedó en " + src + " — podés abrir un issue:")
+        print("el reporte quedó en " + src + " — puedes abrir un issue:")
         print("  https://github.com/nyxlang-dev/nyx/issues")
         return false
     }
@@ -2021,7 +2021,7 @@ fn shell_quote_arg(s: String) -> String {
                 // ejecutar otra cosa.
                 if exec_code("command -v wasmtime >/dev/null 2>&1") != 0 {
                     print("error: el artefacto es " + artefacto + " pero no hay runtime de wasm para ejecutarlo")
-                    print("  instalá wasmtime, o corrélo vos: wasmtime " + artefacto)
+                    print("  instala wasmtime, o ejecútalo tú mismo: wasmtime " + artefacto)
                     return 1
                 }
                 var wcmd: String = "wasmtime " + artefacto
@@ -2040,7 +2040,7 @@ fn shell_quote_arg(s: String) -> String {
             }
             if eff_run_target != "" {
                 print("error: `nyx run` no sabe ejecutar un artefacto de " + eff_run_target)
-                print("  usá `nyx build --target " + eff_run_target + "` y ejecutalo con el runner de esa plataforma")
+                print("  usa `nyx build --target " + eff_run_target + "` y ejecútalo con el runner de esa plataforma")
                 return 1
             }
 
