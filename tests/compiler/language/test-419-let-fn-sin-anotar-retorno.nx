@@ -1,0 +1,59 @@
+// test-419 — ligar una función o una lambda a un `let` SIN anotar y llamarla.
+//
+// Hasta el 2026-09-13 la variable quedaba tipada como "Fn" a secas, sin firma:
+// la llamada indirecta no conocía el retorno y usaba i64, así que un String
+// volvía como el NÚMERO del puntero (`g("y")` imprimía `281473650728896`), en
+// silencio. Con el tipo anotado ya funcionaba; queda como control.
+
+fn saludar(a: String) -> String {
+    return "hola " + a
+}
+
+fn mitad(x: float) -> float {
+    return x / 2.0
+}
+
+fn es_par(n: int) -> bool {
+    return n % 2 == 0
+}
+
+fn doble(n: int) -> int {
+    return n * 2
+}
+
+fn anotar(msg: String) {
+    print("void|" + msg)
+}
+
+fn main() {
+    // lambda sin anotar que devuelve String (el caso que devolvía basura)
+    let g = fn(s: String) -> String { return s + "!" }
+    print("lambda-string|" + g("y"))
+
+    // lambda sin anotar con captura
+    let suf: String = "?"
+    let h = fn(s: String) -> String { return s + suf }
+    print("lambda-captura|" + h("que"))
+
+    // función nombrada ligada sin anotar
+    let f = saludar
+    print("fn-string|" + f("mundo"))
+
+    // otros retornos
+    let m = mitad
+    print("fn-float|" + float_to_string(m(5.0)))
+    let p = es_par
+    if p(4) { print("fn-bool|par") }
+    let lb = fn(n: int) -> bool { return n > 10 }
+    if lb(3) == false { print("lambda-bool|no") }
+
+    // control: int (ya funcionaba porque i64 es el default) y void
+    let d = doble
+    print("fn-int|" + int_to_string(d(21)))
+    let a = anotar
+    a("ok")
+
+    // control: anotado
+    let ga: Fn(String) -> String = fn(s: String) -> String { return s + "#" }
+    print("anotado|" + ga("z"))
+}

@@ -401,6 +401,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Una lambda o una función ligada a un `let` sin anotar devolvía basura en silencio al llamarla.**
+  `let g = fn(s: String) -> String { return s + "!" }` y después `print("x|" + g("y"))` imprimía
+  `x|281473650728896`: el número del puntero al string. Lo mismo con `let f = saludar` para cualquier
+  función que no devuelva `int`. Compilaba sin aviso, corría y el valor era falso. Con la anotación
+  `let g: Fn(String) -> String = …` funcionaba, y el patrón sin anotar es el que escribe cualquiera.
+  **Se encontró revisando el arreglo del campo `Fn`**: una sonda de «lambda que llama a un `Fn`
+  capturado» salía con basura, y al aislarla resultó que la captura no tenía nada que ver; bastaba
+  una lambda sin anotar que devolviera `String`. Causa: `codegen_let` registraba la variable con el
+  tipo `"Fn"` a secas, sin firma; `fn_annotation_return_type("Fn")` no encuentra retorno y la llamada
+  indirecta usaba `i64`. Ahora el `let` toma la firma completa de la función (`Fn(String) -> String`),
+  la misma forma que una anotación escrita a mano. **Eso solo alcanzó para las funciones nombradas**
+  (con el compilador anterior, `let m = mitad` con retorno `float` ni siquiera enlazaba): una lambda
+  el parser la hoistea como función ANIDADA, y a las anidadas codegen les registraba el retorno pero
+  no los tipos de parámetros, así que no había firma que armar. Ahora se registran igual que las de
+  nivel superior. Las funciones `void` o con firma incompleta siguen con `"Fn"`, que no tenía el bug. `test-419` cubre lambdas y funciones sin anotar que devuelven
+  `String`, `float` y `bool`, una lambda con captura, y `int`, `void` y el caso anotado como control.
 - **`let f = c.hacer` con `hacer: Fn(...)` ya no rompe el enlace con un error crudo de clang**
   (fricción de nyxerp, 2026-09-13, LENGUAJE + DOC). Pasaba `nyx check` y `nyx vet`, y `nyx build`
   fallaba con `use of undefined value '@f'` (retorno `String`) o `'%708' defined with type 'i64' but
