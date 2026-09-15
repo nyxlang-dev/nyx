@@ -1,0 +1,285 @@
+// test-431 — una salida temprana (`return`, `?`, `break`, `continue`) que
+// abandona un try abierto tiene que quitar su nivel de la pila de try.
+//
+// Bug de producción (2026-09-15): `nyx_try_push` al entrar al try solo tenía
+// su pop en el fin NORMAL del cuerpo (el catch queda equilibrado porque
+// nyx_throw hace --depth antes del longjmp). Cada `return` desde adentro del
+// try dejaba un nivel colgado en la pila _Thread_local de 64 entradas, y la
+// llamada 64 del mismo hilo moría con «panic: try-catch nesting too deep».
+// std/serve hace `return __finalize(...)` dentro de su try en cada pedido:
+// 901 caídas en nyxlang.com.
+//
+// Cada caso corre 200 vueltas (> 64). Además, TODO main corre dentro de un try
+// exterior que al final lanza: un pop DE MÁS (un `return` en el catch que
+// vuelve a hacer pop, una lambda que hereda el contador del padre, un `break`
+// de un bucle interno que quita el try de afuera) se come ese nivel y el
+// throw final sale sin capturar.
+
+fn ret_simple(i: int) -> int {
+    try {
+        return i + 1
+    } catch(e: String) {
+        return -1
+    }
+}
+
+fn ret_anidado(i: int) -> int {
+    try {
+        try {
+            if i < 0 { throw("neg") }
+            return i * 2
+        } catch(e: String) {
+            return -2
+        }
+    } catch(e: String) {
+        return -3
+    }
+}
+
+// return desde el catch INTERNO: el longjmp ya quitó el nivel interno; queda
+// abierto solo el exterior, que el return tiene que quitar (uno, no dos).
+fn ret_catch_interno(i: int) -> int {
+    try {
+        try {
+            throw("interno")
+        } catch(e: String) {
+            return i
+        }
+    } catch(e: String) {
+        return -4
+    }
+    // inalcanzable: NYX1008 no ve que un cuerpo que solo lanza nunca sigue
+    return -40
+}
+
+// return desde el catch: no hay nada que quitar (lo quitó el longjmp).
+fn ret_catch(i: int) -> int {
+    try {
+        throw("x")
+    } catch(e: String) {
+        return i + 7
+    }
+    // inalcanzable (ver ret_catch_interno)
+    return -70
+}
+
+fn tabla(k: int) -> Option<int> {
+    if k % 2 == 0 { return Option.Some(k) }
+    return Option.None
+}
+
+// `?` sobre Option dentro de un try: el camino None es un return temprano.
+fn q_option(k: int) -> Option<int> {
+    try {
+        let v = tabla(k)?
+        return Option.Some(v + 1)
+    } catch(e: String) {
+        return Option.None
+    }
+}
+
+fn dividir(a: int, b: int) -> Result<int, String> {
+    if b == 0 { return Result.Err("div0") }
+    return Result.Ok(a / b)
+}
+
+// `?` sobre Result dentro de un try: el camino Err es un return temprano.
+fn q_result(a: int, b: int) -> Result<int, String> {
+    try {
+        let v = dividir(a, b)?
+        return Result.Ok(v)
+    } catch(e: String) {
+        return Result.Err("catch")
+    }
+}
+
+fn noop() {
+    let z = 0
+}
+
+// return desde un try en una fn con defer (el return pasa por el cleanup).
+fn ret_con_defer(i: int) -> int {
+    defer noop()
+    try {
+        return i
+    } catch(e: String) {
+        return -5
+    }
+}
+
+// Lambda con su propio try, definida DENTRO de un try: cada fn cuenta sus
+// tries desde cero (la lambda no hereda el try del padre).
+fn con_lambda(i: int) -> int {
+    try {
+        let f = fn(x: int) -> int {
+            try {
+                return x * 3
+            } catch(e: String) {
+                return 0
+            }
+        }
+        return f(i)
+    } catch(e: String) {
+        return -6
+    }
+}
+
+fn main() -> int {
+    try {
+        var s1 = 0
+        var s2 = 0
+        var s3 = 0
+        var s4 = 0
+        var s5 = 0
+        var s6 = 0
+        var i = 0
+        while i < 200 {
+            s1 = s1 + ret_simple(i)
+            s2 = s2 + ret_anidado(i)
+            s3 = s3 + ret_catch_interno(i)
+            s4 = s4 + ret_catch(i)
+            s5 = s5 + ret_con_defer(i)
+            s6 = s6 + con_lambda(i)
+            i = i + 1
+        }
+        print("ret_simple: " + int_to_string(s1))
+        print("ret_anidado: " + int_to_string(s2))
+        print("ret_catch_interno: " + int_to_string(s3))
+        print("ret_catch: " + int_to_string(s4))
+        print("ret_con_defer: " + int_to_string(s5))
+        print("con_lambda: " + int_to_string(s6))
+
+        var some = 0
+        var suma = 0
+        var none = 0
+        var k = 0
+        while k < 200 {
+            match q_option(k) {
+                Option.Some(v) => {
+                    some = some + 1
+                    suma = suma + v
+                },
+                Option.None => {
+                    none = none + 1
+                }
+            }
+            k = k + 1
+        }
+        print("q_option: some=" + int_to_string(some) + " suma=" + int_to_string(suma) + " none=" + int_to_string(none))
+
+        var oks = 0
+        var errs = 0
+        k = 0
+        while k < 200 {
+            match q_result(k, k % 3) {
+                Result.Ok(v) => {
+                    oks = oks + 1
+                },
+                Result.Err(e) => {
+                    if e == "div0" { errs = errs + 1 }
+                }
+            }
+            k = k + 1
+        }
+        print("q_result: ok=" + int_to_string(oks) + " err_div0=" + int_to_string(errs))
+
+        // continue desde un try en un for de rango (camino for_step)
+        var cont = 0
+        for r in 0..200 {
+            try {
+                if r % 2 == 0 { continue }
+                cont = cont + 1
+            } catch(e: String) {
+                cont = -1000
+            }
+        }
+        print("continue_rango: " + int_to_string(cont))
+
+        // continue desde un try en un for sobre array (camino iterador)
+        var xs: Array = []
+        var n = 0
+        while n < 200 {
+            xs.push(n)
+            n = n + 1
+        }
+        var cont_it = 0
+        for x in xs {
+            try {
+                if x % 2 == 0 { continue }
+                cont_it = cont_it + 1
+            } catch(e: String) {
+                cont_it = -1000
+            }
+        }
+        print("continue_iterador: " + int_to_string(cont_it))
+
+        // break desde un try en un while
+        var brk = 0
+        n = 0
+        while n < 200 {
+            while true {
+                try {
+                    brk = brk + 1
+                    break
+                } catch(e: String) {
+                    brk = -1000
+                }
+            }
+            n = n + 1
+        }
+        print("break_while: " + int_to_string(brk))
+
+        // break desde un try en un while let
+        var wl = 0
+        n = 0
+        while n < 200 {
+            while let Option.Some(v) = tabla(0) {
+                try {
+                    wl = wl + v + 1
+                    break
+                } catch(e: String) {
+                    wl = -1000
+                }
+            }
+            n = n + 1
+        }
+        print("break_while_let: " + int_to_string(wl))
+
+        // break de un bucle INTERNO (no quita el try de afuera) + continue
+        // del bucle externo (sí lo quita)
+        var mix = 0
+        for r in 0..200 {
+            try {
+                for j in 0..3 {
+                    if j == 1 { break }
+                    mix = mix + 1
+                }
+                continue
+            } catch(e: String) {
+                mix = -1000
+            }
+        }
+        print("break_interno_continue_externo: " + int_to_string(mix))
+
+        // control positivo: un throw dentro de un try sigue cayendo en su catch
+        var capt = 0
+        for r in 0..200 {
+            try {
+                throw("t")
+            } catch(e: String) {
+                capt = capt + 1
+            }
+        }
+        print("throw_capturado: " + int_to_string(capt))
+
+        throw("control")
+    } catch(e: String) {
+        print("exterior capturado: " + e)
+    }
+    try {
+        throw("final")
+    } catch(e: String) {
+        print("final: " + e)
+    }
+    return 0
+}

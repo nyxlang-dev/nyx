@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **446 archivos / 445 ARM64** | medido 2026-09-15: 445/444 en el cierre de la tercera entrega, +1 `test-425-http-plazos-y-causa` (arco `http-tls-cliente`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
+| Regression | `make test` | **447 archivos / 446 ARM64** | medido 2026-09-15: 446/445 tras `http-tls-cliente`, +1 `test-431-try-salida-temprana-pop`. `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **282** | +5 el 2026-09-15 (NYX2003/NYX2006 con línea, `nyx check`, positivo), medido 2026-09-15; 277 medido 2026-09-12 (NYX1032, NYX1003/builtin void y NYX1013/colisión con el prelude, cada uno con su control positivo) |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

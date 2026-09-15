@@ -1,0 +1,16 @@
+ret_simple: 20100
+ret_anidado: 39800
+ret_catch_interno: 19900
+ret_catch: 21300
+ret_con_defer: 19900
+con_lambda: 59700
+q_option: some=100 suma=10000 none=100
+q_result: ok=133 err_div0=67
+continue_rango: 100
+continue_iterador: 100
+break_while: 200
+break_while_let: 200
+break_interno_continue_externo: 200
+throw_capturado: 200
+exterior capturado: control
+final: final

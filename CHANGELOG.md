@@ -460,6 +460,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`try`: una salida temprana (`return`, `?`, `break`, `continue`) ya no deja un nivel de try
+  colgado — PRODUCCIÓN, 901 caídas** (2026-09-15). `codegen_try_catch` hacía `nyx_try_push()` +
+  `setjmp` al entrar y solo emitía `nyx_try_pop()` cuando el cuerpo terminaba SIN terminador; el
+  `catch` quedaba equilibrado porque `nyx_throw` hace `--depth` antes del `longjmp`. Un `return`
+  desde adentro del `try` salía de la función sin quitar su nivel de la pila `_Thread_local` de 64
+  (`runtime.c`, `NYX_TRY_STACK_MAX`): en un hilo de larga vida la llamada 64 moría con
+  `panic: try-catch nesting too deep`. `std/serve` hace `return __finalize(...)` dentro de su `try`
+  en cada pedido, así que los 5 sitios sobre `std/serve` se caían ~26 veces por día desde agosto.
+  `CodegenContext` suma `try_depth` (tries cuyo cuerpo se está generando en la fn en curso) y
+  `loop_try_base` (su valor al entrar al bucle); `emit_try_exit_pops` emite un pop por nivel
+  abandonado antes del terminador: `return` y `?` (camino Err/None) quitan todos los de la fn,
+  `break`/`continue` solo los abiertos dentro del bucle (`for` rango e iterador, `while`,
+  `while let`), el `catch` corre con el nivel ya quitado, y las fns anidadas, lambdas, `spawn` y
+  cuerpos `async` cuentan desde cero. Sin `try` el IR no cambia (semillas en punto fijo). Test
+  `test-431-try-salida-temprana-pop` (regresión 446 → 447 archivos): cada caso 200 vueltas, dentro
+  de un `try` exterior que detecta un pop DE MÁS. Gotcha `try-early-exit-pop` (`kind: fixed`).
 - **`nyx build --main <archivo.nx>` ya no reescribe `nyx.lock` con el main de esa corrida**
   (fricción de nyxerp, 2026-09-14, reporte `20260914-210002-team-4`, sobre la flag `--main` del
   mismo día). `nyx build --target wasm32-wasi --main src/web/dibujante_main.nx` compilaba el

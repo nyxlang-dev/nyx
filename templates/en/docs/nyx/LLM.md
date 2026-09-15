@@ -1595,7 +1595,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -1787,6 +1787,16 @@ the symptom was misleading rather than clear: a trait method reported `method 'm
 on a receiver of type '%T'` — **false**, the `impl` existed — and a generic call aborted code
 generation with exit 1 and **no message at all** (no Nyx error, no LLVM error, no `.ll`). If you
 learned to hoist such calls out of nested functions, you no longer need to. [test: compiler/language/test-413-fn-anidada-ve-traits-y-genericos]
+
+23. **Leaving a `try` early with `return`, `?`, `break` or `continue` no longer leaks a try level (fixed 2026-09-15)** — until then
+only the normal end of the `try` body and the `catch` released the level that entering the `try`
+took from a per-thread stack of 64. Each `return` from inside a `try` left one level behind, so a
+long-lived thread (a server loop) died on the 64th such call with `panic: try-catch nesting too
+deep`. `std/serve` returns from inside its `try` on every request, which crashed every site built on
+it. Now each early exit releases exactly the `try` blocks it leaves: `return` and `?` release all
+of the function's, `break`/`continue` only those opened inside the loop, a `return` inside a
+`catch` releases nothing extra, and a lambda or nested function counts its own. If you moved a
+`return` out of a `try` (storing the result in a variable) to avoid the panic, you can put it back. [test: compiler/language/test-431-try-salida-temprana-pop]
 
 <!-- /gen:gotchas -->
 

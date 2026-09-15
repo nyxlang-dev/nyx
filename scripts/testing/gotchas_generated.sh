@@ -66,6 +66,7 @@ GOTCHA_IDS=(
   "http-host-header-port"
   "json-truncated-rejected"
   "nested-fn-sees-module"
+  "try-early-exit-pop"
 )
 
 ANCLAS=(

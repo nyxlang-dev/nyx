@@ -121,6 +121,7 @@ pub fn gotchas_table() -> Array {
     rows.push(["http-host-header-port", "fixed", "n/a", "0.31.0", "0.31.0", "", "", "", "", "tests/ai-first/28-http-host-port.nx", "The `std/http` client sends `Host` with the port when it is not the scheme default (fixed 2026-09-14)", "El cliente de `std/http` manda `Host` con el puerto cuando no es el de omisión del esquema (arreglado el 2026-09-14)"])
     rows.push(["json-truncated-rejected", "fixed", "n/a", "0.31.0", "0.31.0", "", "", "", "", "tests/ai-first/27-json-truncado.nx", "A truncated JSON document is an `Err`, not a shorter `Ok` (fixed 2026-09-14)", "Un JSON truncado es un `Err`, no un `Ok` más corto (arreglado el 2026-09-14)"])
     rows.push(["nested-fn-sees-module", "fixed", "n/a", "0.31.0", "0.31.0", "", "", "", "", "tests/compiler/language/test-413-fn-anidada-ve-traits-y-genericos.nx", "A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)", "Una función anidada —y el cuerpo de una `async fn`— ve todo lo que ve su módulo (arreglado el 2026-09-11)"])
+    rows.push(["try-early-exit-pop", "fixed", "n/a", "0.31.0", "0.31.0", "", "", "", "", "tests/compiler/language/test-431-try-salida-temprana-pop.nx", "Leaving a `try` early with `return`, `?`, `break` or `continue` no longer leaks a try level (fixed 2026-09-15)", "Salir de un `try` antes de tiempo con `return`, `?`, `break` o `continue` ya no pierde un nivel de try (arreglado el 2026-09-15)"])
     return rows
 }
 
