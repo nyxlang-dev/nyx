@@ -34,6 +34,10 @@ extern "C" fn nyx_tls_peer_cert_pem(h: int) -> String
 extern "C" fn nyx_tls_set_ca_file(path: String) -> int
 extern "C" fn nyx_tls_connect_ex(host: String, port: int, verify_mode: int) -> int
 extern "C" fn nyx_tls_client_upgrade(fd: int, host: String, verify_mode: int) -> int
+extern "C" fn nyx_tls_connect_result(host: String, port: int, verify_mode: int, connect_ms: int) -> Array
+extern "C" fn nyx_tls_read_timed(h: int, max_bytes: int, timeout_ms: int) -> String
+extern "C" fn nyx_tls_read_cause(h: int) -> int
+extern "C" fn nyx_tls_read_error(h: int) -> String
 
 // ── Forma del Array de certificado (copia normativa: runtime/tls.h) ─────────
 // Array PLANO de 8 slots, sin Map ni anidamiento:
@@ -259,4 +263,92 @@ pub fn tls_is_weak(h: int) -> bool {
     let bits: int = tls_cipher_bits(h)
     if bits < 0 { return false }
     return bits < 128
+}
+
+// ── Conexión y lectura con plazo y CAUSA ──────────────────────────────────
+//
+// tls_connect y las tls_connect_* devuelven 0 al fallar, y ese 0 es el mismo
+// para «no hay red», «el puerto está cerrado», «no respondió a tiempo» y «el
+// certificado no verifica». Las acciones son opuestas —reintentar más tarde
+// contra dejar de usar esa fuente—, así que estas dos devuelven Result con la
+// causa. Arco http-tls-cliente (2026-09-14); std/http las usa por debajo.
+
+// Estado del Array de nyx_tls_connect_result que significa «falló el TLS»
+// (copia normativa: runtime/tls.h).
+const TLS_STATUS_TLS: int = 1
+
+// Causas de nyx_tls_read_cause (copia normativa: runtime/tls.h).
+const TLS_READ_DATA: int = 0
+const TLS_READ_CLOSED: int = 1
+const TLS_READ_EOF_UNCLEAN: int = 2
+const TLS_READ_TIMEOUT: int = 3
+const TLS_READ_INVALID: int = 5
+
+// Abre una conexión TLS con un plazo TOTAL de `connect_ms` milisegundos para el
+// connect y el handshake juntos (<= 0 = sin plazo propio). La resolución DNS NO
+// entra en el plazo: es un getaddrinfo bloqueante que nada corta.
+// verify_mode: 0 = cifra pero NO autentica (como tls_connect); 1 = conecta
+// siempre y tls_verify_result dice si habría verificado; 2 = cadena + nombre
+// contra las CAs de tls_set_ca_file; 4 = cadena + nombre contra las CAs del
+// sistema (lo que usa std/http).
+//   Ok(h)  handle usable con tls_read/tls_write/tls_close y con try_tls_read.
+//   Err, según lo que pasó:
+//     kind "connection" code 111  el puerto está cerrado
+//     kind "timeout"    code 110  el connect o el handshake no terminaron a tiempo
+//     kind "tls"        code 18/10/62/64/...  el certificado no verifica
+//                       (X509_V_ERR_*: autofirmado, vencido, nombre, IP)
+//     kind "tls"        code 71   el handshake falló por protocolo (¿habla TLS?)
+//     kind "invalid"    code 22   host vacío o puerto fuera de rango
+//     otro kind/errno             el resto de los fallos de transporte
+//                                 (113 = el host no resuelve o no hay ruta)
+pub fn try_tls_connect(host: String, port: int, verify_mode: int, connect_ms: int) -> Result<int, Error> {
+    let r: Array = nyx_tls_connect_result(host, port, verify_mode, connect_ms)
+    let status: int = r[0]
+    let h: int = r[1]
+    let verify_code: int = r[2]
+    let detalle: String = r[3]
+    if status == 0 {
+        return Result.Ok(h)
+    }
+    if status == TLS_STATUS_TLS {
+        if verify_code != 0 {
+            return Result.Err(err_new(verify_code, "tls", detalle))
+        }
+        return Result.Err(err_new(71, "tls", detalle))
+    }
+    let code: int = 0 - status
+    return Result.Err(err_new(code, errno_to_kind(code), detalle))
+}
+
+// Lee lo que llegue dentro de `timeout_ms` milisegundos: vuelve en cuanto hay al
+// menos un byte, sin esperar a juntar `max_bytes` (< 0 = sin plazo). Para un plazo
+// TOTAL, pasar en cada vuelta el tiempo que queda (con monotonic_ms()).
+//   Ok(datos)
+//   Err kind "eof"     code 0    el peer cerró; el msg dice si mandó close_notify
+//   Err kind "timeout" code 110  venció el plazo
+//   Err kind "io"      code 5    error de TLS o de socket, incluido un corte a
+//                                mitad de un registro TLS
+//   Err kind "invalid" code 9    handle 0 o ya cerrado
+// ⚠️ Tras "timeout" o "io" el handle queda MUERTO: quedó un registro TLS a medio
+// leer y la conexión no se puede retomar. Toda lectura siguiente repite el error;
+// lo único que queda por hacer es tls_close.
+pub fn try_tls_read(h: int, max_bytes: int, timeout_ms: int) -> Result<String, Error> {
+    let datos: String = nyx_tls_read_timed(h, max_bytes, timeout_ms)
+    let causa: int = nyx_tls_read_cause(h)
+    if causa == TLS_READ_DATA {
+        return Result.Ok(datos)
+    }
+    if causa == TLS_READ_CLOSED {
+        return Result.Err(err_new(0, "eof", "el peer cerró la conexión TLS (close_notify)"))
+    }
+    if causa == TLS_READ_EOF_UNCLEAN {
+        return Result.Err(err_new(0, "eof", nyx_tls_read_error(h)))
+    }
+    if causa == TLS_READ_TIMEOUT {
+        return Result.Err(err_new(110, "timeout", nyx_tls_read_error(h)))
+    }
+    if causa == TLS_READ_INVALID {
+        return Result.Err(err_new(9, "invalid", "handle TLS inválido o cerrado"))
+    }
+    return Result.Err(err_new(5, "io", nyx_tls_read_error(h)))
 }

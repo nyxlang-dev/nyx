@@ -1,0 +1,82 @@
+// Nyx by Example: pedir algo por HTTP sin quedarse colgado, y saber POR QUÉ falló.
+//
+// Un programa que consulta una fuente externa —la tasa de cambio del día, un
+// modelo— necesita dos cosas del cliente HTTP:
+//   1. poder rendirse: un plazo para conectar y otro para la respuesta COMPLETA;
+//   2. distinguir la causa: ante un certificado inválido se deja de usar la
+//      fuente, ante una red caída o lenta se reintenta más tarde.
+//
+// try_http_request_opts recibe los plazos en un HttpOpts (armado con http_opts())
+// y devuelve un Error con kind/code reales: "tls" para el certificado,
+// "timeout" para los plazos, "connection" para el puerto cerrado, "io" para una
+// respuesta cortada a la mitad. try_http_get/post/request usan los valores por
+// defecto (10 s para conectar, 30 s para la respuesta).
+//
+// La receta levanta su propio servidor local lento, así que corre sin red.
+
+import "std/http"
+import "std/net"
+import "std/error"
+
+var g_listo: Map = Map.new()
+
+// Un servidor que responde de a un byte cada medio segundo: sin plazo total, un
+// cliente se quedaría esperando todo lo que el servidor quiera.
+fn servidor_lento() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let puerto: Result<int, Error> = try_local_port(srv)
+    channel_send(g_listo, puerto.unwrap())
+    let fd: int = tcp_accept(srv)
+    var linea: String = tcp_read_line(fd)
+    while linea.length() > 1 { linea = tcp_read_line(fd) }
+    tcp_write(fd, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n")
+    var i: int = 0
+    while i < 10 {
+        sleep(500)
+        tcp_write(fd, "x")
+        i = i + 1
+    }
+    tcp_close(fd)
+    return 0
+}
+
+// Qué hacer según la causa. Es la decisión que justifica que el Error tenga kind.
+fn decidir(e: Error) -> String {
+    if e.kind == "tls" { return "dejar de usar la fuente (certificado inválido)" }
+    if e.kind == "timeout" { return "reintentar más tarde (no respondió a tiempo)" }
+    if e.kind == "connection" { return "reintentar más tarde (no hay servicio)" }
+    return "registrar y avisar (" + e.kind + ")"
+}
+
+fn main() {
+    g_listo = channel_new(1)
+    thread_spawn(servidor_lento)
+    let puerto: int = channel_recv(g_listo)
+
+    var opts: HttpOpts = http_opts()
+    opts.connect_ms = 2000
+    opts.respuesta_ms = 1500   // plazo TOTAL: no se reinicia con cada byte
+
+    let t0: int = monotonic_ms()
+    let sin_headers: Array = []
+    let r: Result<Array, Error> = try_http_request_opts("GET", "http://127.0.0.1:" + int_to_string(puerto) + "/tasa", sin_headers, "", opts)
+    let tardo: int = monotonic_ms() - t0
+    match r {
+        Result.Ok(resp) => { print("tasa: " + http_body(resp)) }
+        Result.Err(e) => {
+            print("falló con " + e.kind + " (code " + int_to_string(e.code) + ") → " + decidir(e))
+        }
+    }
+    assert(tardo < 3000, "el plazo total cortó la espera")
+
+    // Puerto cerrado: connection/111, sin esperar ningún plazo.
+    let libre: int = tcp_listen("127.0.0.1", 0)
+    let cerrado: Result<int, Error> = try_local_port(libre)
+    let p: int = cerrado.unwrap()
+    tcp_close(libre)
+    match try_http_get("http://127.0.0.1:" + int_to_string(p) + "/") {
+        Result.Ok(_resp) => { print("inesperado: respondió") }
+        Result.Err(e) => { print("falló con " + e.kind + " (code " + int_to_string(e.code) + ") → " + decidir(e)) }
+    }
+    exit(0)
+}

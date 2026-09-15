@@ -4,7 +4,7 @@
 // incluido) — `Err` es exclusivo de connect/DNS/socket rotos o una
 // "respuesta" que no es HTTP válido con la conexión abierta.
 //
-// SONDA (ver header de try_http_exec en std/http.nx): http_parse_url nunca
+// SONDA (ver try_http_request_opts en std/http.nx): http_parse_url nunca
 // "falla" con un flag explícito — el detector de URL inválida es
 // `host == ""` (MEDIDO: "" da host=""). Servidor canned levantado con
 // thread_spawn + sleep, mismo patrón que test-192-http-mt (http_serve_mt
@@ -90,7 +90,7 @@ fn main() -> int {
         Result.Err(e) => { print("no-deberia-err-404") }
     }
 
-    // (f) try_http_post — mismo contrato Ok, delega en try_http_exec.
+    // (f) try_http_post — mismo contrato Ok, delega en try_http_request_opts.
     let _t3: int = thread_spawn(run_server_post)
     sleep(300)
     match try_http_post("http://127.0.0.1:" + int_to_string(T377_PORT_POST) + "/", "body=1") {

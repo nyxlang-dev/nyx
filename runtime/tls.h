@@ -94,6 +94,53 @@ int64_t nyx_tls_set_ca_file(nyx_string* path);
 //                    para literales IP). Handshake fallido -> 0.
 int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode);
 
+// ===== Canal con plazo y causa (arco http-tls-cliente, 2026-09-14) ==========
+//
+// nyx_tls_connect / nyx_tls_connect_ex devuelven 0 para DNS, connect rechazado,
+// connect vencido, verificación fallida y handshake roto: el llamador no puede
+// separar «el certificado no verifica» de «no hay red», que piden acciones
+// opuestas. Estas funciones dicen la causa.
+//
+// nyx_tls_connect_result(host, port, verify_mode, connect_ms) -> Array PLANO
+// de 4 slots, con tag:
+//   [0] int    status: 0 = conectado; < 0 = -errno de transporte (-111 puerto
+//              cerrado, -110 plazo vencido, -113 host sin resolver, ...);
+//              NYX_TLS_STATUS_TLS = falló el TLS (verificación o protocolo).
+//   [1] int    handle (0 si status != 0), intercambiable con nyx_tls_read /
+//              write / close y con nyx_tls_read_timed.
+//   [2] int    verify_code: el X509_V_ERR_* si lo que falló fue la verificación
+//              del certificado (18 autofirmado, 10 vencido, 62 nombre, 64 IP);
+//              0 en cualquier otro caso.
+//   [3] String detalle legible de la causa ("" si conectó).
+// verify_mode: los mismos que nyx_tls_connect_ex (0, 1, 2, 4).
+// connect_ms: plazo TOTAL para connect + handshake; <= 0 = sin plazo propio.
+// La resolución DNS NO entra en el plazo: getaddrinfo es bloqueante y ningún
+// poll lo corta (un resolvedor asíncrono queda fuera de alcance).
+#define NYX_TLS_STATUS_TLS 1
+nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,
+                                    int64_t verify_mode, int64_t connect_ms);
+
+// Lectura con plazo: devuelve hasta max_bytes de datos de aplicación que lleguen
+// dentro de timeout_ms (con al menos 1 byte), sin esperar a llenar el pedido.
+// Devuelve "" cuando no hay datos, y la CAUSA queda guardada en el handle
+// (nyx_tls_read_cause). timeout_ms < 0 = sin plazo; 0 = no espera.
+// Para un plazo TOTAL por respuesta, el llamador pasa en cada vuelta el tiempo
+// que le queda. Tras un timeout o un error el handle queda MUERTO: toda lectura
+// siguiente devuelve "" con la misma causa (un registro TLS a medio leer no se
+// puede retomar). nyx_tls_read no cambia.
+nyx_string* nyx_tls_read_timed(int64_t handle, int64_t max_bytes, int64_t timeout_ms);
+
+#define NYX_TLS_READ_DATA        0  // la última lectura trajo datos
+#define NYX_TLS_READ_CLOSED      1  // fin limpio: el peer mandó close_notify
+#define NYX_TLS_READ_EOF_UNCLEAN 2  // el peer cerró el socket sin close_notify
+#define NYX_TLS_READ_TIMEOUT     3  // venció el plazo (handle muerto)
+#define NYX_TLS_READ_ERROR       4  // error de TLS o de socket (handle muerto)
+#define NYX_TLS_READ_INVALID     5  // handle 0 o ya cerrado
+int64_t nyx_tls_read_cause(int64_t handle);
+
+// Detalle legible del último error de lectura del handle ("" si no hubo).
+nyx_string* nyx_tls_read_error(int64_t handle);
+
 // Reads up to max_bytes from an open TLS connection.
 // Returns the data as a nyx_string*. Returns an empty string on error or EOF.
 nyx_string* nyx_tls_read(int64_t handle, int64_t max_bytes);

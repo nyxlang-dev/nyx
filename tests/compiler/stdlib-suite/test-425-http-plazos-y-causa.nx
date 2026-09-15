@@ -1,0 +1,235 @@
+// test-425-http-plazos-y-causa — try_http_request_opts: plazos configurables y el
+// kind/code de lo que realmente pasó, en https:// y en http://. Arco
+// http-tls-cliente (2026-09-14), fricción de nyxerp 20260914-000000.
+//
+// Antes de este arco, en https:// todo fallo era `Err{5, "connection"}` con cuatro
+// causas posibles en el texto, los plazos eran fijos y POR operación (un servidor
+// que gotea no se cortaba nunca) y un cuerpo cortado antes de Content-Length volvía
+// como `Ok` truncado. Medido el 2026-09-14 contra main 09583185: ver el commit.
+//
+// Cada caso es un servidor local y efímero (puerto 0 + try_local_port), sin red
+// externa. SSL_CERT_FILE hace de «almacén del sistema» con una CA generada acá. Los
+// casos con plazo fijan el kind/code Y que el corte llegó cerca del plazo pedido. El
+// texto del msg no se fija a propósito: volvería frágil cualquier mejora de redacción.
+//
+// El connect colgado (cola de accept llena) necesita listen(fd, 0), que Nyx no
+// expone: lo cubre tests/runtime-unit/test_tls.c y test_net_result.c.
+
+import "std/http"
+import "std/tls"
+import "std/net"
+import "std/error"
+
+var g_modo: String = ""
+var g_ready: Map = Map.new()
+
+fn sh(cmd: String) {
+    let r: String = exec(cmd + " >/dev/null 2>&1 && echo ok")
+    assert(r == "ok", "falló: " + cmd)
+}
+
+fn leer_request_tls(h: int) {
+    var leyendo: bool = true
+    while leyendo {
+        let linea: String = tls_read_line(h)
+        if linea.length() <= 1 { leyendo = false }
+    }
+}
+
+fn leer_request_tcp(fd: int) {
+    var leyendo: bool = true
+    while leyendo {
+        let linea: String = tcp_read_line(fd)
+        if linea.length() <= 1 { leyendo = false }
+    }
+}
+
+// Lo que escribe el servidor en cada modo, después del request.
+fn respuesta(modo: String) -> String {
+    if modo == "truncado" { return "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n0123456789" }
+    if modo == "chunked" { return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n" }
+    if modo == "chunked_cortado" { return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n" }
+    return "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+}
+
+fn servidor_tcp(fd: int, modo: String) {
+    if modo == "mudo" {
+        sleep(3000)
+        tcp_close(fd)
+        return
+    }
+    if modo == "no_tls" {
+        let _hello: String = tcp_read(fd, 16)
+        tcp_write(fd, respuesta("feliz"))
+        sleep(300)
+        tcp_close(fd)
+        return
+    }
+    leer_request_tcp(fd)
+    if modo == "gotea" {
+        tcp_write(fd, "HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n")
+        var i: int = 0
+        while i < 8 {
+            sleep(500)
+            tcp_write(fd, "x")
+            i = i + 1
+        }
+        tcp_close(fd)
+        return
+    }
+    tcp_write(fd, respuesta(modo))
+    if modo == "abierta" {
+        // Respuesta completa por Content-Length, pero la conexión sigue abierta:
+        // el cliente tiene que terminar sin esperar el cierre.
+        sleep(3000)
+    }
+    tcp_close(fd)
+}
+
+fn servidor_tls(fd: int, modo: String) {
+    let h: int = tls_accept(fd)
+    if h == 0 {
+        tcp_close(fd)
+        return
+    }
+    leer_request_tls(h)
+    if modo == "gotea" {
+        tls_write_conn(h, "HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\n")
+        var i: int = 0
+        while i < 8 {
+            sleep(500)
+            tls_write_conn(h, "x")
+            i = i + 1
+        }
+        tls_close_conn(h)
+        return
+    }
+    tls_write_conn(h, respuesta(modo))
+    tls_close_conn(h)
+}
+
+fn servidor() -> int {
+    let modo: String = g_modo
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let pr: Result<int, Error> = try_local_port(srv)
+    channel_send(g_ready, pr.unwrap())
+    let fd: int = tcp_accept(srv)
+    tcp_close(srv)
+    if modo.startsWith("tls_") {
+        servidor_tls(fd, modo.substring(4, modo.length()))
+    } else {
+        servidor_tcp(fd, modo)
+    }
+    return 0
+}
+
+fn levantar(modo: String) -> int {
+    g_modo = modo
+    thread_spawn(servidor)
+    let port: int = channel_recv(g_ready)
+    return port
+}
+
+fn url(esquema: String, port: int) -> String {
+    return esquema + "://127.0.0.1:" + int_to_string(port) + "/"
+}
+
+fn opts(connect_ms: int, respuesta_ms: int) -> HttpOpts {
+    var o: HttpOpts = http_opts()
+    o.connect_ms = connect_ms
+    o.respuesta_ms = respuesta_ms
+    return o
+}
+
+// Pide `u` y verifica el kind/code esperado; con `plazo_ms > 0`, además que el corte
+// llegó entre el plazo y el plazo + 1 s.
+fn espera_err(caso: String, u: String, o: HttpOpts, kind: String, code: int, plazo_ms: int) {
+    let t0: int = monotonic_ms()
+    let empty: Array = []
+    let r: Result<Array, Error> = try_http_request_opts("GET", u, empty, "", o)
+    let dt: int = monotonic_ms() - t0
+    assert(r.is_err(), caso + ": se esperaba Err")
+    let e: Error = r.unwrap_err()
+    assert(e.kind == kind, caso + ": kind " + e.kind + " (msg: " + e.msg + ")")
+    assert(e.code == code, caso + ": code " + int_to_string(e.code) + " (msg: " + e.msg + ")")
+    if plazo_ms > 0 {
+        assert(dt >= plazo_ms - 100, caso + ": cortó antes del plazo (" + int_to_string(dt) + " ms)")
+        assert(dt < plazo_ms + 1000, caso + ": cortó tarde (" + int_to_string(dt) + " ms)")
+    }
+    print(caso + ": " + e.kind + " " + int_to_string(e.code))
+}
+
+fn espera_ok(caso: String, u: String, o: HttpOpts, limite_ms: int) {
+    let t0: int = monotonic_ms()
+    let empty: Array = []
+    let r: Result<Array, Error> = try_http_request_opts("GET", u, empty, "", o)
+    let dt: int = monotonic_ms() - t0
+    if r.is_err() {
+        let e: Error = r.unwrap_err()
+        assert(false, caso + ": Err inesperado " + error_to_string(e))
+    }
+    let resp: Array = r.unwrap()
+    assert(http_status(resp) == 200, caso + ": status")
+    assert(http_body(resp) == "ok", caso + ": body")
+    assert(dt < limite_ms, caso + ": tardó " + int_to_string(dt) + " ms")
+    print(caso + ": ok")
+}
+
+fn main() {
+    signal_ignore(13)
+    g_ready = channel_new(1)
+    let dir: String = exec("mktemp -d /tmp/nyx_t425_XXXXXX")
+    assert(dir.length() > 0, "mktemp -d")
+    let ec: String = "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 "
+    sh(ec + "-keyout " + dir + "/ca.key -out " + dir + "/ca.pem -subj '/CN=Nyx T425 CA'")
+    let firma: String = " -CA " + dir + "/ca.pem -CAkey " + dir + "/ca.key -addext basicConstraints=critical,CA:FALSE"
+    sh(ec + "-keyout " + dir + "/hoja.key -out " + dir + "/hoja.pem -subj '/CN=127.0.0.1' -addext subjectAltName=IP:127.0.0.1" + firma)
+    sh(ec + "-keyout " + dir + "/nombre.key -out " + dir + "/nombre.pem -subj '/CN=otro.example' -addext subjectAltName=DNS:otro.example" + firma)
+    sh(ec + "-keyout " + dir + "/auto.key -out " + dir + "/auto.pem -subj '/CN=127.0.0.1' -addext subjectAltName=IP:127.0.0.1")
+    setenv("SSL_CERT_FILE", dir + "/ca.pem")
+
+    let normal: HttpOpts = opts(5000, 5000)
+
+    // ── https:// ──
+    assert(tls_server_init(dir + "/hoja.pem", dir + "/hoja.key") == 0, "tls_server_init hoja")
+    espera_ok("https feliz", url("https", levantar("tls_feliz")), normal, 3000)
+    espera_ok("https chunked", url("https", levantar("tls_chunked")), normal, 3000)
+    espera_err("https truncado", url("https", levantar("tls_truncado")), normal, "io", 5, 0)
+    espera_err("https gotea", url("https", levantar("tls_gotea")), opts(5000, 1500), "timeout", 110, 1500)
+    espera_err("https handshake mudo", url("https", levantar("mudo")), opts(700, 5000), "timeout", 110, 700)
+    espera_err("https no habla tls", url("https", levantar("no_tls")), normal, "tls", 71, 0)
+    assert(tls_server_init(dir + "/auto.pem", dir + "/auto.key") == 0, "tls_server_init auto")
+    espera_err("https autofirmado", url("https", levantar("tls_feliz")), normal, "tls", 18, 0)
+    assert(tls_server_init(dir + "/nombre.pem", dir + "/nombre.key") == 0, "tls_server_init nombre")
+    espera_err("https nombre equivocado", url("https", levantar("tls_feliz")), normal, "tls", 64, 0)
+
+    // Puerto cerrado: se pide uno libre y se suelta.
+    let tmp: int = tcp_listen("127.0.0.1", 0)
+    let tpr: Result<int, Error> = try_local_port(tmp)
+    let cerrado: int = tpr.unwrap()
+    tcp_close(tmp)
+    espera_err("https cerrado", url("https", cerrado), normal, "connection", 111, 0)
+    // URL sin host y host que no resuelve. `.invalid` está reservado (RFC 6761):
+    // ningún resolvedor lo resuelve, mismo recurso que test-375 para try_resolve.
+    espera_err("https url sin host", "https:///x", normal, "invalid", 22, 0)
+    espera_err("https host que no resuelve", "https://nyx-no-existe.invalid/", normal, "io", 113, 0)
+
+    // ── http:// ──
+    espera_err("http cerrado", url("http", cerrado), normal, "connection", 111, 0)
+    espera_err("http host que no resuelve", "http://nyx-no-existe.invalid/", normal, "io", 113, 0)
+    espera_ok("http feliz", url("http", levantar("feliz")), normal, 3000)
+    espera_ok("http completa con la conexion abierta", url("http", levantar("abierta")), normal, 2000)
+    espera_ok("http chunked", url("http", levantar("chunked")), normal, 3000)
+    espera_err("http chunked cortado", url("http", levantar("chunked_cortado")), normal, "io", 5, 0)
+    espera_err("http truncado", url("http", levantar("truncado")), normal, "io", 5, 0)
+    espera_err("http gotea", url("http", levantar("gotea")), opts(5000, 1500), "timeout", 110, 1500)
+    espera_err("http mudo", url("http", levantar("mudo")), opts(5000, 700), "timeout", 110, 700)
+
+    // Las funciones de siempre siguen iguales en el camino feliz.
+    let r: Result<Array, Error> = try_http_get(url("http", levantar("feliz")))
+    assert(r.is_ok(), "try_http_get sin opciones sigue dando Ok")
+    print("try_http_get sin opciones: ok")
+
+    sh("rm -rf " + dir)
+    exit(0)
+}

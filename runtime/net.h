@@ -60,6 +60,14 @@ nyx_string* nyx_resolve(const char* hostname);
 // E5.1 -- trío *_result: errno como valor de retorno, sin stderr
 int64_t nyx_tcp_listen_result(nyx_string* host, int64_t port);
 int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port);
+// Igual que nyx_tcp_connect_result con el plazo del connect como parámetro
+// (timeout_ms <= 0 = sin plazo). nyx_tcp_connect_result = esta con 3000.
+int64_t nyx_tcp_connect_ms_result(nyx_string* host, int64_t port, int64_t timeout_ms);
+// Lectura con plazo sobre un fd: [status, data]. status 0 = llegaron datos
+// (data no vacío, hasta max_bytes, sin esperar a llenarlo); NYX_NET_EOF = el
+// peer cerró; -110 = venció timeout_ms (< 0 = sin plazo); otro < 0 = -errno.
+// Para un plazo TOTAL, el llamador pasa en cada vuelta lo que le queda.
+nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t timeout_ms);
 int64_t nyx_udp_bind_result(nyx_string* host, int64_t port);
 
 // E5.2 -- familia *_result de E/S y resolución (ver runtime/net.c para el

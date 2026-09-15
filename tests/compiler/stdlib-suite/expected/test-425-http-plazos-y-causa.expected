@@ -1,0 +1,21 @@
+https feliz: ok
+https chunked: ok
+https truncado: io 5
+https gotea: timeout 110
+https handshake mudo: timeout 110
+https no habla tls: tls 71
+https autofirmado: tls 18
+https nombre equivocado: tls 64
+https cerrado: connection 111
+https url sin host: invalid 22
+https host que no resuelve: io 113
+http cerrado: connection 111
+http host que no resuelve: io 113
+http feliz: ok
+http completa con la conexion abierta: ok
+http chunked: ok
+http chunked cortado: io 5
+http truncado: io 5
+http gotea: timeout 110
+http mudo: timeout 110
+try_http_get sin opciones: ok

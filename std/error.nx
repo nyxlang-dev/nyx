@@ -27,6 +27,14 @@
 //                  control de flujo, como io.EOF en Go. errno_to_kind NO lo
 //                  mapea (code 0 real jamás llega a esta función) — el
 //                  kind lo arma el caller directo vía err_new(0, "eof", …).
+//   "tls"        — el TLS falló, no la red (agregado el 2026-09-14, arco
+//                  http-tls-cliente, decisión D-4): el certificado no
+//                  verifica (`code` = X509_V_ERR_*: 18 autofirmado, 10
+//                  vencido, 62 nombre, 64 IP) o el handshake se rompió por
+//                  protocolo (`code` 71, EPROTO). Separarlo de "connection"
+//                  es la razón de existir: ante un certificado malo se deja
+//                  la fuente; ante una red caída se reintenta. errno_to_kind
+//                  NO lo mapea: lo arma std/tls con err_new.
 //   "db"         — fallo de motor de base de datos EMBEBIDO (agregado en
 //                  E5.5 para try_sqlite_*/std/sqlite.nx). Los result codes
 //                  de sqlite3 (1-27: SQLITE_ERROR, SQLITE_INTERNAL,

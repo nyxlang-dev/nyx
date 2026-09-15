@@ -37,6 +37,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `LLM.md` (sección I/O). Tests self-asserting nuevos en `tests/ai-first/stdin/` (bytes 0 y
   entrada vacía), corridos en nativo Y wasm32-wasi por `scripts/testing/run_stdin_io_tests.sh`
   (dentro de `make test-ai-first`).
+- **`std/http`: `HttpOpts` + `try_http_request_opts` — plazos configurables en el cliente HTTP**
+  `[arco: http-tls-cliente]` (fricción de nyxerp 20260914-000000). `http_opts()` arma
+  `HttpOpts { connect_ms: 10000, respuesta_ms: 30000, verificar_tls }` y
+  `try_http_request_opts(method, url, headers, body, opts)` los aplica: `connect_ms` a connect +
+  handshake TLS, `respuesta_ms` como plazo TOTAL de la respuesta (no se reinicia con cada byte).
+  `std/tls` suma `try_tls_connect(host, port, verify_mode, connect_ms) -> Result<int, Error>` y
+  `try_tls_read(h, max_bytes, timeout_ms) -> Result<String, Error>`, sobre
+  `nyx_tls_connect_result`/`nyx_tls_read_timed` (runtime/tls.c, sin builtins nuevos: `extern "C"`).
+  Vocabulario de `std/error` + `kind "tls"` (certificado que no verifica o handshake roto).
+  Receta `examples/by-example/108-http-plazo-y-causa.nx`; spec y plan en `docs/design/`.
+  Conteos (`docs/TESTS.md`): regresión +1 (`test-425-http-plazos-y-causa`, un caso por fila de la
+  tabla de la spec §2 con control positivo), runtime C +68 asserts (`test_tls` 13 casos, `test_net_result` 3), recetas 114 → 115 (la 108 corre).
 - **`std/serve`: `serve_app_en(app, host, port, workers)` — elegir la dirección de escucha**
   (fricción de nyxerp, 2026-09-14, IDEA). `serve_app(app, port, workers)` no dejaba elegir host:
   un proyecto con `servidor.direccion` en su config (por omisión `127.0.0.1`, solo la propia
@@ -603,6 +615,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   por un channel un `int` que codifica los dos, lambda que captura un local; comprueba el VALOR, no
   solo que compile) y `test-428-bench-captura` para el bench. Aparte, fichado: `channel_send` de un
   `String` emite IR inválido en cualquier contexto, también en `main`.
+- **`try_http_*` ya no devuelve `Ok` con un cuerpo truncado, ni se queda esperando a un servidor
+  que gotea** `[arco: http-tls-cliente]`. Medido el 2026-09-14 contra `main` 09583185 con servidores
+  locales: un cuerpo cortado antes de `Content-Length` volvía `Ok` con 10 de 100 bytes (en `http://`
+  y en `https://`); un servidor que mandaba un byte cada 2 s daba `Ok` a los 40 s; uno que aceptaba
+  y callaba daba `parse`/5 a los 92 s en `http://` (30 s POR lectura, tres lecturas) y a los 10 s en
+  `https://`. Ahora la respuesta se verifica contra `Content-Length`/chunked (`io`/5 si falta) y el
+  plazo es total (`timeout`/110). La afirmación del reporte de que un servidor mudo esperaba «sin
+  límite» no se confirmó tal cual: el límite existía, pero era por lectura. `test-425`.
 - **«'X' is not supported on target 'wasm32-wasi'» ahora dice DÓNDE, y lista todos los usos de una
   vez** (fricción nyxerp 2026-09-14, lo que `--main` no cubría). El error nombraba solo el builtin y
   salía con `exit(1)` en el primero: en un proyecto con imports no había forma de saber qué archivo
@@ -1490,6 +1510,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   fuente de esa lista de rutas — la usa `install-local` Y la guardia, sin duplicar la lógica.
 
 ### Changed
+- **CAMBIO DE COMPORTAMIENTO — los `Err` de `try_http_*` sobre `https://` dicen la causa real**
+  `[arco: http-tls-cliente]`. Antes todo fallo TLS era `Err{5, "connection"}` con cuatro causas en
+  el texto. Ahora: `connection`/111 puerto cerrado, `timeout`/110 connect/handshake/respuesta
+  vencidos, `tls`/`X509_V_ERR_*` certificado (18 autofirmado, 10 vencido, 62 nombre, 64 IP),
+  `tls`/71 handshake por protocolo, `io`/113 host sin resolver, `io`/5 respuesta cortada. Quien
+  compare `e.code == 5` deja de coincidir (buscado en ~/nyx/products, ~/nyx/web y nyxerp: ningún
+  consumidor lo hace; nyxerp propaga con `?`). **Aviso a nyxerp**: su reporte queda resuelto.
+  También cambian los plazos por defecto: `http://` conecta con 10 s (antes 3 s) y las dos
+  respuestas tienen 30 s TOTALES (antes 30 s por lectura en `http://`, 10 s por lectura en
+  `https://`). `nyx_tls_connect` y `nyx_tls_connect_ex` conservan su contrato (handle o 0), pero su
+  connect + handshake pasa de 10 s POR operación a 10 s en total.
 - **CAMBIO DE COMPORTAMIENTO — `std/serve`: `serve_app` ahora escucha SOLO en `127.0.0.1`
   (antes `0.0.0.0`)** (GO de Ottavio, 2026-09-14, sobre la fricción de nyxerp 20260914-180000
   que trajo `serve_app_en`). Un servidor recién creado con `serve_app(app, port, workers)` y

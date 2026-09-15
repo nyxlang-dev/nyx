@@ -810,7 +810,11 @@ int64_t nyx_tcp_listen_result(nyx_string* host, int64_t port) {
     return fd;
 }
 
-int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port) {
+// Connect tipado con plazo propio (arco http-tls-cliente, 2026-09-14): el cuerpo
+// de siempre de nyx_tcp_connect_result, con el poll de 3000 ms fijos pasado a
+// parámetro. timeout_ms <= 0 = sin plazo (poll infinito). nyx_tcp_connect_result
+// delega acá con 3000, así que no hay dos copias del camino.
+int64_t nyx_tcp_connect_ms_result(nyx_string* host, int64_t port, int64_t timeout_ms) {
     if (!host || !host->data) return -22; // EINVAL
 
     os_addr_t addr[1];
@@ -841,8 +845,9 @@ int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port) {
             os_sock_close(fd);
             return ret; // ya es -errno
         }
-        // Wait up to 3 seconds for connection (mismo timeout que la centinela)
-        int pret = os_sock_poll1(fd, OS_POLLOUT, 3000);
+        // Espera el plazo pedido (nyx_tcp_connect_result: 3 s, el de la centinela).
+        int pret = os_sock_poll1(fd, OS_POLLOUT,
+                                 timeout_ms <= 0 ? -1 : (timeout_ms > 0x7fffffff ? 0x7fffffff : (int)timeout_ms));
         if (pret < 0) {
             os_sock_close(fd);
             return pret; // ya es -errno
@@ -872,6 +877,54 @@ int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port) {
     os_sock_set_nonblocking(fd, 0);
 
     return fd;
+}
+
+int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port) {
+    return nyx_tcp_connect_ms_result(host, port, 3000);
+}
+
+// Lectura con plazo (arco http-tls-cliente, 2026-09-14). La familia *_result de
+// lectura se apoya en SO_RCVTIMEO, que es POR operación y en segundos: un
+// servidor que gotea un byte cada pocos segundos no la vence nunca. Acá el plazo
+// es un poll sobre lo que queda, y el llamador lleva el total.
+// [status, data] — contrato en runtime/net.h.
+nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t timeout_ms) {
+    nyx_array_t* out = nyx_array_new(2);
+    if (fd < 0) {
+        nyx_array_push_tagged(out, -9 /* EBADF */, NYX_TAG_INT);
+        nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+        return out;
+    }
+    if (max_bytes <= 0) max_bytes = 4096;
+    int64_t deadline = timeout_ms >= 0 ? os_monotonic_ns() + timeout_ms * 1000000LL : 0;
+    int64_t status = 0;
+    nyx_string* data = NULL;
+    for (;;) {
+        int ms = -1;
+        if (timeout_ms >= 0) {
+            int64_t rem = (deadline - os_monotonic_ns()) / 1000000;
+            if (rem < 0) rem = 0;
+            ms = rem > 0x7fffffff ? 0x7fffffff : (int)rem;
+        }
+        int pr = os_sock_poll1(fd, OS_POLLIN, ms);
+        if (pr == -EINTR) continue;
+        if (pr < 0) { status = pr; break; }
+        if (pr == 0) { status = -(int64_t)ETIMEDOUT; break; }
+        char* buf = (char*)GC_MALLOC_ATOMIC((size_t)max_bytes + 1);
+        if (!buf) { status = -(int64_t)ENOMEM; break; }
+        int64_t n = os_sock_recv(fd, buf, (size_t)max_bytes);
+        // Un wake espurio (o datos que se llevó otro lector) no es un error:
+        // se vuelve a esperar con lo que queda del plazo.
+        if (n == -EINTR || n == -EAGAIN || n == -EWOULDBLOCK) continue;
+        if (n < 0) { status = n; break; }
+        if (n == 0) { status = NYX_NET_EOF; break; }
+        buf[n] = '\0';
+        data = nyx_string_from_ptr(buf, (size_t)n);
+        break;
+    }
+    nyx_array_push_tagged(out, status, NYX_TAG_INT);
+    nyx_array_push_tagged(out, (int64_t)(data ? data : nyx_string_from_cstr("")), NYX_TAG_STRING);
+    return out;
 }
 
 int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) {

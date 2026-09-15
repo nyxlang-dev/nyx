@@ -466,30 +466,51 @@ real consumer. The old `http_get`/`http_post`/`http_request` sentinels
 for backward compat. **The two-tier rule applied to HTTP: a status code
 is application data, not a transport failure.** ANY well-formed HTTP
 response — 200, 404, 500 — is `Ok(response)`: the server answered, that's
-transport success. `Err` is exclusive to real transport failures: a URL
-with no parseable host (`Err{22, "invalid"}`), connect refused/timeout/DNS
-failure (the real `Error` from `try_tcp_connect`, e.g. `kind:
-"connection", code: 111` for ECONNREFUSED), or a "response" that isn't
-valid HTTP with the connection still open (`Err{5, "parse"}` — `status ==
-0`, the never-a-real-HTTP-code sentinel `http_read_response` leaves
-unparsed). A caller who wants 4xx/5xx treated as failure must check
-`http_status(r) >= 400` explicitly after unwrapping `Ok` — the function
-never decides that for you. TLS (`https://` URLs) degrades honestly
-instead of faking an errno the channel doesn't have: `http_tls_request`
-(the runtime's own `tls_connect`/`tls_read`/`tls_write` channel) has no
-errno path, only a `-1` status sentinel with a free-text message, so the
-`try_` wrapper maps that sentinel to `Err{5, "connection", msg}` (5 =
-generic EIO, not a measured errno) — ficha open in TASKS.md for a typed
-`nyx_tls_connect_result` channel that would replace it with a real one.
+transport success. `Err` is exclusive to real transport failures, and since
+2026-09-14 (arc `http-tls-cliente`) it carries the real cause on BOTH
+`http://` and `https://`:
+
+| What happened | `kind` | `code` |
+|---|---|---|
+| URL with no parseable host | `invalid` | 22 |
+| port closed | `connection` | 111 |
+| host doesn't resolve / no route | `io` | 113 |
+| connect, TLS handshake or the whole response took longer than allowed | `timeout` | 110 |
+| certificate doesn't verify (`https://`) | `tls` | the `X509_V_ERR_*`: 18 self-signed, 10 expired, 62 hostname, 64 IP |
+| TLS handshake broken by protocol (the server doesn't speak TLS) | `tls` | 71 |
+| connection cut before the response was complete (`Content-Length` or chunked not finished) | `io` | 5 |
+| what arrived isn't an HTTP response | `parse` | 5 |
+
+`kind: "tls"` vs `"connection"`/`"timeout"` is the point: a bad certificate means
+stop using that source, a dead network means retry later. A cut body is now `Err`,
+never a truncated `Ok` (before this arc it came back as `Ok` with the partial body).
+
+Timeouts: `try_http_request_opts(method, url, headers, body, opts)` takes an
+`HttpOpts { connect_ms, respuesta_ms, verificar_tls }` built with `http_opts()`
+(defaults: 10 000 ms to connect, 30 000 ms for the WHOLE response, verification
+on unless `http_tls_inseguro(true)`); `try_http_get`/`try_http_post`/
+`try_http_request` use those defaults. `respuesta_ms` is a TOTAL budget from the
+moment the request is sent — a server that drips one byte every few seconds is
+still cut at the limit (the old per-read `SO_RCVTIMEO` never cut it: measured 40 s
+for 20 bytes). Tweak one field: `var o: HttpOpts = http_opts()` then
+`o.respuesta_ms = 1500`. Limits: DNS resolution is NOT inside `connect_ms`
+(`getaddrinfo` blocks and nothing interrupts it); the response is complete as
+soon as `Content-Length`/chunked says so, so a server that keeps the connection
+open doesn't hold the call.
 Gotcha: `http_parse_url` never fails with an explicit flag, so URL-invalid
 detection is `host == ""` (measured: `""`, `"http://"`, `"http:///path"`
 all give `host == ""`) — a non-empty but nonsensical host like
 `"not-a-url"` is NOT caught here, it falls through and fails later as a
-real connect/DNS error instead. Gotcha #2: the response read still runs
-over the sentinel `tcp_read_line`/`tcp_read` channel underneath (not the
-`try_` family), so a peer that accepts but never responds surfaces as
-`Err{5, "parse"}` instead of a real timeout kind — misattributed, not a
-bug, until the typed-read follow-up (ficha in TASKS.md) lands.
+real connect/DNS error instead.
+
+The TLS layer underneath is public in `import "std/tls"`:
+`try_tls_connect(host, port, verify_mode, connect_ms) -> Result<int, Error>`
+(same kinds as the table; `verify_mode` 0 = no verification, 2 = CAs from
+`tls_set_ca_file`, 4 = system CAs) and `try_tls_read(h, max_bytes, timeout_ms)
+-> Result<String, Error>` (returns as soon as ≥1 byte arrives; `Err{0, "eof"}` on
+close, `Err{110, "timeout"}`, `Err{5, "io"}` for a TLS error or a cut in the middle
+of a TLS record). ⚠️ After `timeout` or `io` the handle is DEAD — a TLS record was
+left half-read and cannot be resumed; only `tls_close` is left.
 
 For an embedded SQL database (E5.5, `import "std/sqlite"`),
 `try_sqlite_open(path)` / `try_sqlite_exec(db, sql)` / `try_sqlite_query(db,

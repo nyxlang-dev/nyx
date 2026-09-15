@@ -12,12 +12,12 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **445 archivos / 444 ARM64** | medido 2026-09-15 (cierre de la tercera entrega). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 (detalle por test en `CHANGELOG.md`) |
+| Regression | `make test` | **446 archivos / 445 ARM64** | medido 2026-09-15: 445/444 en el cierre de la tercera entrega, +1 `test-425-http-plazos-y-causa` (arco `http-tls-cliente`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **282** | +5 el 2026-09-15 (NYX2003/NYX2006 con línea, `nyx check`, positivo), medido 2026-09-15; 277 medido 2026-09-12 (NYX1032, NYX1003/builtin void y NYX1013/colisión con el prelude, cada uno con su control positivo) |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
-| Runtime C unit (B4) | `make test-runtime` | **35 suites / 1680 asserts** | verificado con corrida real 2026-09-15; +5 de `test_write_file_binary_safe` (fix de raíz de `write_file()`, `nyx_write_file_safe`, fricción 20260914-190001-team-1; detalle en `CHANGELOG.md`) |
+| Runtime C unit (B4) | `make test-runtime` | **35 suites / 1748 asserts** | verificado con corrida real 2026-09-15; +68 del arco `http-tls-cliente` (`test_tls` 13 casos, `test_net_result` 3) sobre los 1680 de `test_write_file_binary_safe`; detalle en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **29 programas + 6 casos stdin (x2 targets) + 54 guardas** | 26 scripts: ai_first + stdin_io + 23 de guardas (54: templates 2, tooling 11, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
 | Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** | denylist de voseo compartida con `run_templates_parity.sh` (`lib_voseo.sh`) sobre `compiler/`, `runtime/`, `std/`, `scripts/` y `templates/gitignore` |
@@ -34,7 +34,7 @@
 | Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **20 checks** (9 negativos + 11 positivos) | `[build]`/`--main` (errores previos; no pisa el principal); +6 (2026-09-15): `--main` no reescribe `nyx.lock` (nativo/wasm) ni contradice el manifiesto |
 | Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
-| Recetas by-example | `make test-examples` | **114** (102 ejecutan, 12 solo compilan+enlazan) | compila, ENLAZA y CORRE cada receta con exit 0; los 10 que necesitan servidor/red/entrada están listados con su motivo en el script. Hasta el 2026-09-09 solo emitía el `.ll` y ni linkeaba |
+| Recetas by-example | `make test-examples` | **115** (103 ejecutan, 12 solo compilan+enlazan) | compila, ENLAZA y CORRE cada receta con exit 0; los 10 que necesitan servidor/red/entrada están listados con su motivo en el script. Hasta el 2026-09-09 solo emitía el `.ll` y ni linkeaba |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **25 checks** | tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |

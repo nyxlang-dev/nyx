@@ -571,6 +571,17 @@ typedef struct {
     // until someone actually reads it and sees 0/error). GC_MALLOC zeroes the
     // handle, so this starts at 0 ("alive") with no separate init needed.
     int  eof;
+    // Causa de la última nyx_tls_read_timed (NYX_TLS_READ_*, tls.h) y su detalle.
+    // Vive EN EL HANDLE y no en un thread-local a propósito: con el scheduler
+    // M:N una fibra puede migrar de hilo del SO entre la lectura y la consulta
+    // de la causa, y un thread-local le devolvería la de otra fibra. Un handle
+    // no se comparte entre fibras, así que acá es seguro. (Campos agregados al
+    // tipo del runtime con acuerdo: decisión D-6 del arco http-tls-cliente,
+    // precedente `eof`.) `dead` marca que un timeout o un error dejaron un
+    // registro TLS a medio leer: esa conexión no se puede retomar.
+    int  read_cause;
+    int  dead;
+    char read_err[200];
 } NyxTlsHandle;
 
 // ===== TLS Server API =====
@@ -809,44 +820,26 @@ void nyx_tls_close_conn(int64_t handle) {
 
 // ===== nyx_tls_connect =====
 
+// Camino único de conexión cliente con plazo y causa: definido más abajo, junto a
+// nyx_tls_connect_result, después de los dos contextos que elige según el modo.
+static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
+                                int64_t connect_ms, int* status, int* vcode,
+                                char* detail, size_t dlen);
+
+// Plazo de connect + handshake de las funciones de conexión SIN causa. Son los
+// 10 s que ya tenían como SO_SNDTIMEO/SO_RCVTIMEO, ahora como plazo total.
+#define TLS_LEGACY_CONNECT_MS 10000
+
+// Contrato intacto: handle o 0. Delega en tls_connect_core y descarta la causa,
+// así que no hay una segunda copia del camino caliente que pueda divergir.
 int64_t nyx_tls_connect(nyx_string* host, int64_t port) {
     if (!host) return 0;
     const char* host_cstr = nyx_string_to_cstr(host);
     if (!host_cstr || host_cstr[0] == '\0') return 0;
-
-    SSL_CTX* ctx = get_ssl_ctx();
-    if (!ctx) return 0;
-
-    int fd = tcp_connect_fd(host_cstr, (int)port);
-    if (fd < 0) return 0;
-
-    SSL* ssl = SSL_new(ctx);
-    if (!ssl) { os_sock_close(fd); return 0; }
-
-    SSL_set_fd(ssl, fd);
-    SSL_set_tlsext_host_name(ssl, host_cstr);
-
-    if (SSL_connect(ssl) != 1) {
-        SSL_free(ssl);
-        os_sock_close(fd);
-        return 0;
-    }
-
-    // GC_MALLOC because the struct contains a pointer field (ssl) that we
-    // want the GC to keep alive as long as the handle is reachable.
-    NyxTlsHandle* h = (NyxTlsHandle*)GC_MALLOC(sizeof(NyxTlsHandle));
-    if (!h) {
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-        os_sock_close(fd);
-        return 0;
-    }
-    h->ssl     = ssl;
-    h->fd      = fd;
-    h->buf_pos = 0;
-    h->buf_len = 0;
-
-    return (int64_t)(uintptr_t)h;
+    int status = 0, vcode = 0;
+    char detail[256];
+    return tls_connect_core(host_cstr, (int)port, 0, TLS_LEGACY_CONNECT_MS,
+                            &status, &vcode, detail, sizeof(detail));
 }
 
 // ===== Verificación de certificados OPT-IN (contexto SEPARADO) ==============
@@ -929,6 +922,103 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     if (!host) return 0;
     const char* host_cstr = nyx_string_to_cstr(host);
     if (!host_cstr || host_cstr[0] == '\0') return 0;
+    int status = 0, vcode = 0;
+    char detail[256];
+    return tls_connect_core(host_cstr, (int)port, verify_mode, TLS_LEGACY_CONNECT_MS,
+                            &status, &vcode, detail, sizeof(detail));
+}
+
+// ===== Connect con plazo y causa (arco http-tls-cliente, 2026-09-14) =========
+//
+// Antes, las dos funciones de arriba devolvían 0 para DNS, puerto cerrado,
+// connect vencido, verificación fallida y handshake roto, y nunca consultaban
+// SSL_get_verify_result ni SSL_get_error. std/http tenía que traducir ese 0 a
+// un `connection`/5 con cuatro causas posibles en el texto, y quien consultaba
+// una tasa de cambio no podía separar «el certificado no verifica» (dejar de
+// usar la fuente) de «no hay red» (reintentar): acciones opuestas.
+//
+// El plazo es TOTAL (connect + handshake) y se hace con el socket NO bloqueante
+// y os_sock_poll1 sobre el resto del plazo. Los SO_RCVTIMEO/SO_SNDTIMEO de
+// antes eran POR operación y en segundos enteros: un servidor que responde un
+// byte cada 9 s no los vencía nunca.
+//
+// La resolución DNS queda FUERA del plazo: os_addr_resolve_any es un
+// getaddrinfo bloqueante que ningún poll corta. Acotarla exige un resolvedor
+// asíncrono, fuera de alcance (spec §1).
+
+// Milisegundos que quedan hasta deadline_ns. -1 = sin plazo; 0 = venció.
+static int64_t tls_remaining_ms(int64_t deadline_ns) {
+    if (deadline_ns <= 0) return -1;
+    int64_t rem = (deadline_ns - os_monotonic_ns()) / 1000000;
+    return rem > 0 ? rem : 0;
+}
+
+// Espera a que fd esté listo para `events` sin pasarse del plazo.
+// 1 = listo (incluye ERR/HUP: la operación siguiente dirá qué pasó),
+// 0 = venció el plazo, < 0 = -errno.
+static int tls_wait_fd(int fd, int events, int64_t deadline_ns) {
+    for (;;) {
+        int64_t rem = tls_remaining_ms(deadline_ns);
+        if (rem == 0) return 0;
+        int ms = rem < 0 ? -1 : (rem > 0x7fffffff ? 0x7fffffff : (int)rem);
+        int r = os_sock_poll1(fd, events, ms);
+        if (r == -EINTR) continue;
+        if (r < 0) return r;
+        return r > 0 ? 1 : 0;
+    }
+}
+
+// Connect TCP con plazo total sobre todas las direcciones del host. Devuelve el
+// fd conectado y todavía NO bloqueante (el handshake sigue con el mismo plazo),
+// o -1 con *status = -errno y el detalle escrito.
+static int tcp_connect_deadline(const char* host, int port, int64_t deadline_ns,
+                                int* status, char* detail, size_t dlen) {
+    os_addr_t addrs[8];
+    int n = os_addr_resolve_any(host, port, addrs, 8, NULL);
+    if (n < 1) {
+        // Mismo código que try_tcp_connect para «no resuelve» (runtime/net.c).
+        *status = -113;
+        snprintf(detail, dlen, "no se pudo resolver el host '%s'", host);
+        return -1;
+    }
+    int last = -ECONNREFUSED;
+    for (int i = 0; i < n; i++) {
+        int64_t s = os_sock_stream_for(&addrs[i]);
+        if (s < 0) { last = (int)s; continue; }
+        int fd = (int)s;
+        if (os_sock_set_nonblocking(fd, 1) < 0) { last = -EIO; os_sock_close(fd); continue; }
+        int rc = os_sock_connect(fd, &addrs[i]);
+        if (rc == -EINPROGRESS) {
+            int w = tls_wait_fd(fd, OS_POLLOUT, deadline_ns);
+            if (w == 0) {
+                // El plazo es del intento entero: vencido, no se prueba la
+                // dirección siguiente.
+                os_sock_close(fd);
+                *status = -ETIMEDOUT;
+                snprintf(detail, dlen, "el connect a %s:%d no respondió dentro del plazo", host, port);
+                return -1;
+            }
+            if (w < 0) { last = w; os_sock_close(fd); continue; }
+            // os_sock_error: errno pendiente en POSITIVO, o -errno si el propio
+            // getsockopt falló (mismo cuidado que nyx_tcp_connect_result).
+            int err = os_sock_error(fd);
+            if (err != 0) { last = err < 0 ? err : -err; os_sock_close(fd); continue; }
+            rc = 0;
+        }
+        if (rc < 0) { last = rc; os_sock_close(fd); continue; }
+        return fd;
+    }
+    *status = last;
+    snprintf(detail, dlen, "connect a %s:%d: %s", host, port, strerror(-last));
+    return -1;
+}
+
+static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
+                                int64_t connect_ms, int* status, int* vcode,
+                                char* detail, size_t dlen) {
+    *status = 0;
+    *vcode = 0;
+    if (dlen > 0) detail[0] = '\0';
 
     // Modo 4 = estricto (igual que el 2) pero contra el almacén del SISTEMA
     // (g_ssl_ctx, el de https_get), no contra el que llena tls_set_ca_file. Lo
@@ -937,17 +1027,26 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     // acumula: el primer https contaminaba la confianza del verify-ca de
     // std/postgres (SEGURIDAD, 2026-09-14). La verificación sube POR SSL más
     // abajo, así que compartir g_ssl_ctx con el modo 0 no afloja nada.
-    SSL_CTX* ctx = (verify_mode == 4) ? get_ssl_ctx() : get_verify_ctx();
-    if (!ctx) return 0;
+    SSL_CTX* ctx = (verify_mode <= 0 || verify_mode == 4) ? get_ssl_ctx() : get_verify_ctx();
+    if (!ctx) {
+        *status = NYX_TLS_STATUS_TLS;
+        snprintf(detail, dlen, "no se pudo crear el contexto TLS");
+        return 0;
+    }
 
-    int fd = tcp_connect_fd(host_cstr, (int)port);
+    int64_t deadline = connect_ms > 0 ? os_monotonic_ns() + connect_ms * 1000000LL : 0;
+    int fd = tcp_connect_deadline(host, port, deadline, status, detail, dlen);
     if (fd < 0) return 0;
 
     SSL* ssl = SSL_new(ctx);
-    if (!ssl) { os_sock_close(fd); return 0; }
-
+    if (!ssl) {
+        os_sock_close(fd);
+        *status = NYX_TLS_STATUS_TLS;
+        snprintf(detail, dlen, "no se pudo crear la sesión TLS");
+        return 0;
+    }
     SSL_set_fd(ssl, fd);
-    SSL_set_tlsext_host_name(ssl, host_cstr);
+    SSL_set_tlsext_host_name(ssl, host);
 
     if (verify_mode >= 2) {
         // Estricto: la cadena DEBE verificar y el nombre DEBE corresponder.
@@ -959,14 +1058,16 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
         // tipo IP. Se setea UNO SOLO de los dos: OpenSSL exige que todos los
         // criterios de identidad configurados pasen, así que setear ambos
         // rechazaría un certificado legítimo con SAN IP pero sin SAN DNS.
-        int is_ip = os_addr_is_ip(host_cstr);
-        int idok;
-        if (is_ip) {
-            idok = X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), host_cstr);
-        } else {
-            idok = SSL_set1_host(ssl, host_cstr);
+        int idok = os_addr_is_ip(host)
+            ? X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), host)
+            : SSL_set1_host(ssl, host);
+        if (idok != 1) {
+            SSL_free(ssl);
+            os_sock_close(fd);
+            *status = NYX_TLS_STATUS_TLS;
+            snprintf(detail, dlen, "no se pudo configurar la identidad a verificar para '%s'", host);
+            return 0;
         }
-        if (idok != 1) { SSL_free(ssl); os_sock_close(fd); return 0; }
     }
     // Modo 1 ("checked"): NO se sube el modo de verificación. El handshake
     // siempre tiene éxito y SSL_get_verify_result() (nyx_tls_verify_result)
@@ -974,25 +1075,101 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     // conectarse a una máquina con el certificado vencido y REPORTARLO, no que
     // se lo rechacen.
 
-    if (SSL_connect(ssl) != 1) {
+    for (;;) {
+        // La cola de errores de OpenSSL es por hilo del SO: se limpia antes de
+        // cada llamada para no leer un error viejo de otra fibra.
+        ERR_clear_error();
+        errno = 0;
+        int r = SSL_connect(ssl);
+        if (r == 1) break;
+        int e = SSL_get_error(ssl, r);
+        int sys_errno = errno;
+        if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) {
+            int w = tls_wait_fd(fd, e == SSL_ERROR_WANT_READ ? OS_POLLIN : OS_POLLOUT, deadline);
+            if (w == 1) continue;
+            SSL_free(ssl);
+            os_sock_close(fd);
+            if (w == 0) {
+                *status = -ETIMEDOUT;
+                snprintf(detail, dlen, "el handshake TLS con %s:%d no terminó dentro del plazo", host, port);
+            } else {
+                *status = w;
+                snprintf(detail, dlen, "handshake TLS con %s:%d: %s", host, port, strerror(-w));
+            }
+            return 0;
+        }
+        // Falla definitiva. La verificación manda: si el certificado no
+        // verificó, ESA es la causa aunque OpenSSL la reporte como error de
+        // protocolo (el alert que corta el handshake).
+        long vr = SSL_get_verify_result(ssl);
+        unsigned long ec = ERR_peek_error();
+        if (verify_mode >= 2 && vr != X509_V_OK) {
+            *status = NYX_TLS_STATUS_TLS;
+            *vcode = (int)vr;
+            snprintf(detail, dlen, "el certificado de %s no verifica: %s",
+                     host, X509_verify_cert_error_string(vr));
+        } else if (e == SSL_ERROR_SYSCALL && ec == 0 && sys_errno != 0 && sys_errno != EAGAIN) {
+            *status = -sys_errno;
+            snprintf(detail, dlen, "handshake TLS con %s:%d: %s", host, port, strerror(sys_errno));
+        } else if (e == SSL_ERROR_SYSCALL && ec == 0) {
+            *status = NYX_TLS_STATUS_TLS;
+            snprintf(detail, dlen, "%s:%d cerró la conexión durante el handshake (¿habla TLS?)", host, port);
+        } else {
+            char eb[160] = "error de protocolo TLS";
+            if (ec != 0) ERR_error_string_n(ec, eb, sizeof(eb));
+            *status = NYX_TLS_STATUS_TLS;
+            snprintf(detail, dlen, "handshake TLS con %s:%d falló: %s", host, port, eb);
+        }
         SSL_free(ssl);
         os_sock_close(fd);
         return 0;
     }
 
+    // El resto del runtime asume fds bloqueantes. Los 10 s por operación se
+    // conservan para quien lea el handle con nyx_tls_read (el contrato de
+    // siempre); nyx_tls_read_timed pasa a no bloqueante solo mientras lee.
+    os_sock_set_nonblocking(fd, 0);
+    os_sock_set_timeout(fd, 10);
+
+    // GC_MALLOC because the struct contains a pointer field (ssl) that we
+    // want the GC to keep alive as long as the handle is reachable. Zeroed:
+    // buf_pos/buf_len/eof/read_cause/dead empiezan en 0.
     NyxTlsHandle* h = (NyxTlsHandle*)GC_MALLOC(sizeof(NyxTlsHandle));
     if (!h) {
         SSL_shutdown(ssl);
         SSL_free(ssl);
         os_sock_close(fd);
+        *status = -ENOMEM;
+        snprintf(detail, dlen, "sin memoria para el handle TLS");
         return 0;
     }
-    h->ssl     = ssl;
-    h->fd      = fd;
-    h->buf_pos = 0;
-    h->buf_len = 0;
-
+    h->ssl = ssl;
+    h->fd  = fd;
     return (int64_t)(uintptr_t)h;
+}
+
+nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,
+                                    int64_t verify_mode, int64_t connect_ms) {
+    nyx_array_t* out = nyx_array_new(4);
+    int status = 0, vcode = 0;
+    char detail[320] = "";
+    int64_t handle = 0;
+    const char* host_cstr = host ? nyx_string_to_cstr(host) : NULL;
+    if (!host_cstr || host_cstr[0] == '\0') {
+        status = -EINVAL;
+        snprintf(detail, sizeof(detail), "host vacío");
+    } else if (port <= 0 || port > 65535) {
+        status = -EINVAL;
+        snprintf(detail, sizeof(detail), "puerto fuera de rango: %lld", (long long)port);
+    } else {
+        handle = tls_connect_core(host_cstr, (int)port, verify_mode, connect_ms,
+                                  &status, &vcode, detail, sizeof(detail));
+    }
+    nyx_array_push_tagged(out, (int64_t)status, NYX_TAG_INT);
+    nyx_array_push_tagged(out, handle, NYX_TAG_INT);
+    nyx_array_push_tagged(out, (int64_t)vcode, NYX_TAG_INT);
+    nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(detail), NYX_TAG_STRING);
+    return out;
 }
 
 // ===== nyx_tls_client_upgrade =====
@@ -1153,6 +1330,144 @@ nyx_string* nyx_tls_read_partial(int64_t handle, int64_t max_bytes) {
     if (total == 0) return nyx_string_from_cstr("");
     out[total] = '\0';
     return nyx_string_from_ptr(out, total);
+}
+
+// ===== nyx_tls_read_timed (arco http-tls-cliente, 2026-09-14) =====
+//
+// nyx_tls_read sale del bucle con `n <= 0` sin distinguir fin de flujo, error y
+// timeout: una respuesta que el servidor corta a la mitad —o que deja de llegar
+// porque venció el SO_RCVTIMEO— se devolvía como si estuviera completa. Esta
+// hermana lee con un plazo y deja la CAUSA en el handle (NYX_TLS_READ_*).
+// nyx_tls_read, nyx_tls_read_partial, nyx_tls_read_nonblock y
+// nyx_tls_wait_readable no cambian.
+//
+// Devuelve los datos que haya en cuanto llega al menos un byte (no espera a
+// llenar max_bytes): el plazo TOTAL de una respuesta lo lleva el llamador,
+// pasando en cada vuelta lo que le queda.
+
+static nyx_string* tls_read_fail(NyxTlsHandle* h, int cause, const char* msg) {
+    h->read_cause = cause;
+    snprintf(h->read_err, sizeof(h->read_err), "%s", msg);
+    if (cause == NYX_TLS_READ_TIMEOUT || cause == NYX_TLS_READ_ERROR) h->dead = 1;
+    if (cause == NYX_TLS_READ_CLOSED || cause == NYX_TLS_READ_EOF_UNCLEAN) h->eof = 1;
+    return nyx_string_from_cstr("");
+}
+
+nyx_string* nyx_tls_read_timed(int64_t handle, int64_t max_bytes, int64_t timeout_ms) {
+    if (!handle) return nyx_string_from_cstr("");
+    NyxTlsHandle* h = (NyxTlsHandle*)(uintptr_t)handle;
+    if (!h->ssl) return nyx_string_from_cstr("");
+    // Tras un timeout o un error queda un registro TLS a medio leer: no hay
+    // forma de retomar esa conexión. Tampoco hay nada más que leer tras el fin.
+    if (h->dead || h->eof) {
+        // eof pudo quedar marcado por nyx_tls_read_nonblock sin pasar por acá:
+        // sin esto la causa seguiría en DATA y un bucle de lectura no terminaría.
+        if (h->read_cause == NYX_TLS_READ_DATA) h->read_cause = NYX_TLS_READ_EOF_UNCLEAN;
+        return nyx_string_from_cstr("");
+    }
+    if (max_bytes <= 0) max_bytes = 4096;
+
+    // Bytes que nyx_tls_read_line ya dejó en el buffer propio.
+    int avail = h->buf_len - h->buf_pos;
+    if (avail > 0) {
+        int take = avail < (int)max_bytes ? avail : (int)max_bytes;
+        char* bout = (char*)GC_MALLOC_ATOMIC((size_t)take + 1);
+        if (!bout) return tls_read_fail(h, NYX_TLS_READ_ERROR, "sin memoria");
+        memcpy(bout, h->buf + h->buf_pos, take);
+        h->buf_pos += take;
+        bout[take] = '\0';
+        h->read_cause = NYX_TLS_READ_DATA;
+        h->read_err[0] = '\0';
+        return nyx_string_from_ptr(bout, take);
+    }
+
+    char* out = (char*)GC_MALLOC_ATOMIC((size_t)max_bytes + 1);
+    if (!out) return tls_read_fail(h, NYX_TLS_READ_ERROR, "sin memoria");
+
+    int64_t deadline = timeout_ms >= 0 ? os_monotonic_ns() + timeout_ms * 1000000LL : 0;
+    int fd = h->fd;
+    if (os_sock_set_nonblocking(fd, 1) < 0) {
+        return tls_read_fail(h, NYX_TLS_READ_ERROR, "no se pudo pasar el socket a no bloqueante");
+    }
+
+    int cause = NYX_TLS_READ_DATA;
+    char msg[200] = "";
+    int got = 0;
+    for (;;) {
+        ERR_clear_error();
+        errno = 0;
+        int n = SSL_read(h->ssl, out, (int)max_bytes);
+        if (n > 0) { got = n; break; }
+        int e = SSL_get_error(h->ssl, n);
+        int sys_errno = errno;
+        if (e == SSL_ERROR_WANT_READ || e == SSL_ERROR_WANT_WRITE) {
+            int w = tls_wait_fd(fd, e == SSL_ERROR_WANT_READ ? OS_POLLIN : OS_POLLOUT, deadline);
+            if (w == 1) continue;
+            if (w == 0) {
+                cause = NYX_TLS_READ_TIMEOUT;
+                snprintf(msg, sizeof(msg), "no llegaron datos dentro del plazo");
+            } else {
+                cause = NYX_TLS_READ_ERROR;
+                snprintf(msg, sizeof(msg), "esperando datos: %s", strerror(-w));
+            }
+            break;
+        }
+        if (e == SSL_ERROR_ZERO_RETURN) {
+            cause = NYX_TLS_READ_CLOSED;
+            break;
+        }
+        unsigned long ec = ERR_peek_error();
+        int unexpected_eof = (e == SSL_ERROR_SYSCALL && ec == 0 && sys_errno == 0);
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
+        if (ec != 0 && ERR_GET_REASON(ec) == SSL_R_UNEXPECTED_EOF_WHILE_READING) unexpected_eof = 1;
+#endif
+        if (unexpected_eof) {
+            // OpenSSL informa igual un cierre en frontera de registro que uno a
+            // mitad de registro. SSL_has_pending dice si quedaron bytes de un
+            // registro sin completar: ese es el corte que trunca datos.
+            if (SSL_has_pending(h->ssl)) {
+                cause = NYX_TLS_READ_ERROR;
+                snprintf(msg, sizeof(msg), "el peer cortó la conexión a mitad de un registro TLS");
+            } else {
+                cause = NYX_TLS_READ_EOF_UNCLEAN;
+                snprintf(msg, sizeof(msg), "el peer cerró la conexión sin close_notify");
+            }
+            break;
+        }
+        cause = NYX_TLS_READ_ERROR;
+        if (ec != 0) {
+            ERR_error_string_n(ec, msg, sizeof(msg));
+        } else if (sys_errno != 0) {
+            snprintf(msg, sizeof(msg), "%s", strerror(sys_errno));
+        } else {
+            snprintf(msg, sizeof(msg), "error de TLS al leer");
+        }
+        break;
+    }
+    // SIEMPRE se restaura: el resto del runtime asume fds bloqueantes.
+    os_sock_set_nonblocking(fd, 0);
+
+    if (got > 0) {
+        out[got] = '\0';
+        h->read_cause = NYX_TLS_READ_DATA;
+        h->read_err[0] = '\0';
+        return nyx_string_from_ptr(out, got);
+    }
+    return tls_read_fail(h, cause, msg);
+}
+
+int64_t nyx_tls_read_cause(int64_t handle) {
+    if (!handle) return NYX_TLS_READ_INVALID;
+    NyxTlsHandle* h = (NyxTlsHandle*)(uintptr_t)handle;
+    if (!h->ssl) return NYX_TLS_READ_INVALID;
+    return h->read_cause;
+}
+
+nyx_string* nyx_tls_read_error(int64_t handle) {
+    if (!handle) return nyx_string_from_cstr("handle TLS inválido");
+    NyxTlsHandle* h = (NyxTlsHandle*)(uintptr_t)handle;
+    if (!h->ssl) return nyx_string_from_cstr("handle TLS cerrado");
+    return nyx_string_from_cstr(h->read_err);
 }
 
 // ===== nyx_tls_wait_readable =====

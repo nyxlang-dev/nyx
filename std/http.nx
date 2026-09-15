@@ -511,133 +511,303 @@ pub fn http_request(method: String, url: String, headers: Array, body: String) -
 // necesite tratar 4xx/5xx como fallo debe chequear `http_status(r) >= 400`
 // explícitamente después del `Ok` — la función no decide eso por el caller.
 //
-// TLS degradado (secure==1): `http_tls_request` (canal propio del runtime,
-// `tls_connect`/`tls_read`/`tls_write`) NO expone el errno real de la falla
-// — devuelve el centinela status -1 con un mensaje de texto libre. v1 de
-// las try_ mapea ESE centinela a `Err{5, "connection", msg}` (5 = EIO
-// genérico, no un errno real medido — es lo mejor que da el canal actual)
-// en vez de fingir un errno que no existe. Ficha pendiente: un canal
-// `nyx_tls_connect_result` que exponga el errno real de connect/TLS
-// handshake, análogo a `nyx_tcp_connect_result` (ver TASKS.md).
+// Plazos y causa (arco http-tls-cliente, 2026-09-14). Hasta esa fecha:
+// - `https://` iba por http_tls_request (tls_connect + tls_read), cuyo 0 no
+//   distinguía DNS, puerto cerrado, plazo vencido, certificado ni protocolo:
+//   todo llegaba como `Err{5, "connection"}` con cuatro causas en el texto.
+// - los plazos eran fijos y POR operación (10 s en TLS, 3 s de connect y 30 s
+//   por lectura en claro): un servidor que gotea un byte cada pocos segundos
+//   no se cortaba nunca.
+// - la lectura no verificaba `Content-Length`: un cuerpo cortado a mitad de
+//   recepción volvía como `Ok` con el cuerpo truncado, indistinguible de uno
+//   completo.
+// Ahora los dos esquemas pasan por try_http_request_opts: plazo de conexión y
+// plazo TOTAL de respuesta configurables (HttpOpts), el `kind`/`code` real de
+// cada falla (std/tls: try_tls_connect/try_tls_read) y la respuesta verificada
+// contra su `Content-Length` o su terminador chunked antes de devolver `Ok`.
 
-// Helper interno compartido por las 3 públicas: parse → connect → timeout →
-// build request → write → read respuesta → close. NO expone http_parse_url
-// tal cual — SONDA (2026-08-19): http_parse_url nunca "falla" con un flag
-// explícito, así que el detector de URL inválida es `host == ""` (MEDIDO:
-// "", "http://", "http:///path" dan host="" — cualquier URL sin autoridad
-// parseable cae ahí; un host no-vacío pero sin sentido como "not-a-url" NO
-// se cacha acá, sigue de largo y falla más adelante como connect/DNS real).
-//
-// LÍMITE CONOCIDO (review final, 2026-08-19): la lectura de la respuesta
-// corre sobre las centinelas `tcp_read_line`/`tcp_read` (vía
-// `http_read_response`), NO sobre la familia `try_` — dos consecuencias:
-// (1) un timeout de recepción (peer acepta pero no responde) se reporta
-// como `Err{5, "parse"}` en vez de un kind de timeout real: misatribución
-// conocida, no un bug de esta rama. (2) un body cortado a mitad de
-// recepción (peer cierra la conexión tras mandar solo parte del body) puede
-// devolver `Ok` con un body truncado silenciosamente, sin que nada lo
-// distinga de una respuesta completa. Cerrar esto de raíz requiere migrar
-// la lectura a `try_tcp_read_line`/`try_tcp_read_exact` + verificar
-// `Content-Length` contra los bytes recibidos — ficha en TASKS.md
-// (`[arco:E5.3-http]`, "mitad de lectura tipada"), fuera de alcance de
-// esta ola de fixes.
-fn try_http_exec(method: String, url: String, headers: Array, body: String) -> Result<Array, Error> {
+extern "C" fn nyx_tcp_connect_ms_result(host: String, port: int, timeout_ms: int) -> int
+extern "C" fn nyx_tcp_read_timed_result(fd: int, max_bytes: int, timeout_ms: int) -> Array
+
+// Opciones de una petición tipada. Se arman con http_opts() y se ajusta lo que
+// haga falta: `var o: HttpOpts = http_opts()` + `o.respuesta_ms = 1500`.
+pub struct HttpOpts {
+    // Plazo para connect + handshake TLS, en milisegundos. <= 0 = sin plazo
+    // propio. La resolución DNS NO entra: es bloqueante y nada la corta.
+    connect_ms: int,
+    // Plazo TOTAL para recibir la respuesta completa, en milisegundos, desde
+    // que se envió el request. No se reinicia con cada byte que llega.
+    // <= 0 = sin plazo propio.
+    respuesta_ms: int,
+    // true = verificar el certificado (cadena + nombre, CAs del sistema).
+    // false = cifrar sin autenticar, SOLO para desarrollo.
+    verificar_tls: bool,
+}
+
+// Opciones por defecto: 10 s para conectar, 30 s para la respuesta completa, y
+// verificación según http_tls_inseguro (activada salvo que se la haya apagado).
+pub fn http_opts() -> HttpOpts {
+    return HttpOpts { connect_ms: 10000, respuesta_ms: 30000, verificar_tls: g_http_tls_verificar }
+}
+
+// Primer valor de un header, sin distinguir mayúsculas (RFC 9110). "" si falta.
+fn http_header_ci(headers: Array, name: String) -> String {
+    let vals: Array = http_find_headers(headers, name)
+    if vals.length() == 0 { return "" }
+    let v: String = vals[0]
+    return v.trim()
+}
+
+// ¿Está completo un cuerpo chunked? Recorre los chunks como http_dechunk_str y
+// solo da true al llegar al chunk de tamaño 0 seguido de su CRLF final.
+fn http_chunked_completo(body: String) -> bool {
+    var pos: int = 0
+    let n: int = body.length()
+    while pos < n {
+        let rest: String = body.substring(pos, n)
+        let crlf: int = rest.indexOf("\r\n")
+        if crlf < 0 { return false }
+        let size: int = http_parse_hex(rest.substring(0, crlf))
+        let data_start: int = pos + crlf + 2
+        if size <= 0 {
+            // Trailers opcionales y la línea vacía que cierra.
+            let tail: String = body.substring(data_start, n)
+            return tail.indexOf("\r\n") >= 0
+        }
+        if data_start + size + 2 > n { return false }
+        pos = data_start + size + 2
+    }
+    return false
+}
+
+// Estado de una respuesta cruda: 1 = completa, 0 = faltan bytes, y en `falta`
+// (slot 0) el motivo legible para cuando la conexión se corta antes.
+// Sin Content-Length ni chunked, el cuerpo termina con el cierre de la
+// conexión (los requests mandan `Connection: close`): no se puede decidir antes.
+fn http_respuesta_completa(method: String, raw: String, falta: Array) -> int {
+    let sep: int = raw.indexOf("\r\n\r\n")
+    if sep < 0 {
+        falta[0] = "la conexión se cerró antes de terminar los headers"
+        return 0
+    }
+    let resp: Array = http_parse_raw_response(raw.substring(0, sep + 4))
+    let status: int = resp[1]
+    let headers: Array = resp[2]
+    // Sin cuerpo por definición (RFC 9110 §6.4.1).
+    if method == "HEAD" or status == 204 or status == 304 or (status >= 100 and status < 200) {
+        return 1
+    }
+    let body: String = raw.substring(sep + 4, raw.length())
+    if http_header_ci(headers, "Transfer-Encoding").indexOf("chunked") >= 0 {
+        if http_chunked_completo(body) { return 1 }
+        falta[0] = "el cuerpo chunked se cortó antes del chunk final"
+        return 0
+    }
+    let cl_str: String = http_header_ci(headers, "Content-Length")
+    if cl_str.length() > 0 {
+        let cl: int = http_parse_int(cl_str)
+        if body.length() >= cl { return 1 }
+        falta[0] = "el cuerpo se cortó: llegaron " + int_to_string(body.length()) + " de " + int_to_string(cl) + " bytes"
+        return 0
+    }
+    falta[0] = ""
+    return 0
+}
+
+// Estado de fin de flujo de nyx_tcp_read_timed_result (NYX_NET_EOF, runtime/net.h).
+const NYX_HTTP_EOF: int = 1000
+
+// La conexión terminó: la respuesta vale solo si ya estaba entera, o si su
+// cuerpo se delimita por el cierre (sin Content-Length ni chunked). Si faltaban
+// bytes es un corte, no una respuesta: `Err{5, "io"}` en vez del `Ok` truncado
+// que devolvía antes.
+fn http_fin_de_conexion(esquema: String, method: String, host: String, port: int, raw: String, falta: Array) -> Result<Array, Error> {
+    let estado: int = http_respuesta_completa(method, raw, falta)
+    let motivo: String = falta[0]
+    if estado == 0 and motivo.length() > 0 {
+        return Result.Err(err_new(5, "io", esquema + " " + host + ":" + int_to_string(port) + ": " + motivo))
+    }
+    return http_cerrar_respuesta(esquema, host, port, raw)
+}
+
+// Arma el Ok/Err final a partir de la respuesta cruda completa.
+fn http_cerrar_respuesta(esquema: String, host: String, port: int, raw: String) -> Result<Array, Error> {
+    let resp: Array = http_parse_raw_response(raw)
+    let status: int = resp[1]
+    // Rango 100-599 (RFC 9110 §15): una status-line basura tipo "FOO 12 X"
+    // parsea "12" sin error y no es un status HTTP real.
+    if status < 100 or status > 599 {
+        return Result.Err(err_new(5, "parse", esquema + " " + host + ":" + int_to_string(port) + ": respuesta HTTP invalida o vacia"))
+    }
+    return Result.Ok(resp)
+}
+
+// Milisegundos que quedan hasta `limite` (monotonic_ms). -1 = sin plazo.
+fn http_resto_ms(limite: int) -> int {
+    if limite <= 0 { return -1 }
+    let r: int = limite - monotonic_ms()
+    if r < 0 { return 0 }
+    return r
+}
+
+fn http_err_plazo(esquema: String, host: String, port: int, ms: int) -> Error {
+    return err_new(110, "timeout", esquema + " " + host + ":" + int_to_string(port) +
+                   ": la respuesta no llegó completa en " + int_to_string(ms) + " ms")
+}
+
+fn http_https_opts(method: String, host: String, port: int, req: String, opts: HttpOpts) -> Result<Array, Error> {
+    var modo: int = 0
+    if opts.verificar_tls { modo = 4 }
+    let con_r: Result<int, Error> = try_tls_connect(host, port, modo, opts.connect_ms)
+    if con_r.is_err() {
+        let e: Error = con_r.unwrap_err()
+        return Result.Err(err_new(e.code, e.kind, "https " + host + ":" + int_to_string(port) + ": " + e.msg))
+    }
+    let h: int = con_r.unwrap()
+    if tls_write(h, req) < str_byte_length(req) {
+        tls_close(h)
+        return Result.Err(err_new(5, "io", "https " + host + ":" + int_to_string(port) + ": no se pudo enviar el request completo"))
+    }
+    var limite: int = 0
+    if opts.respuesta_ms > 0 { limite = monotonic_ms() + opts.respuesta_ms }
+    var raw: String = ""
+    var falta: Array = [""]
+    var leyendo: bool = true
+    while leyendo {
+        if http_respuesta_completa(method, raw, falta) == 1 {
+            leyendo = false
+        } else {
+            let resto: int = http_resto_ms(limite)
+            if resto == 0 {
+                tls_close(h)
+                return Result.Err(http_err_plazo("https", host, port, opts.respuesta_ms))
+            }
+            let rd: Result<String, Error> = try_tls_read(h, 65536, resto)
+            if rd.is_ok() {
+                let chunk: String = rd.unwrap()
+                raw = raw + chunk
+            } else {
+                let e: Error = rd.unwrap_err()
+                tls_close(h)
+                if e.kind == "timeout" {
+                    return Result.Err(http_err_plazo("https", host, port, opts.respuesta_ms))
+                }
+                if e.kind != "eof" {
+                    return Result.Err(err_new(e.code, e.kind, "https " + host + ":" + int_to_string(port) + ": " + e.msg))
+                }
+                return http_fin_de_conexion("https", method, host, port, raw, falta)
+            }
+        }
+    }
+    tls_close(h)
+    return http_cerrar_respuesta("https", host, port, raw)
+}
+
+fn http_plano_opts(method: String, host: String, port: int, req: String, opts: HttpOpts) -> Result<Array, Error> {
+    let fd: int = nyx_tcp_connect_ms_result(host, port, opts.connect_ms)
+    if fd < 0 {
+        let code: int = 0 - fd
+        return Result.Err(err_new(code, errno_to_kind(code), "http " + host + ":" + int_to_string(port) + ": connect"))
+    }
+    let write_r: Result<int, Error> = try_tcp_write(fd, req)
+    if write_r.is_err() {
+        tcp_close(fd)
+        return Result.Err(write_r.unwrap_err())
+    }
+    // try_tcp_write puede devolver Ok(n) con n < lo pedido (short write): el
+    // servidor recibiría un request truncado y su respuesta sería indistinguible
+    // de una legítima. Se trata como fallo de transporte explícito.
+    if write_r.unwrap() < str_byte_length(req) {
+        tcp_close(fd)
+        return Result.Err(err_new(5, "io", "short write: " + int_to_string(write_r.unwrap()) + " de " + int_to_string(str_byte_length(req)) + " bytes"))
+    }
+    var limite: int = 0
+    if opts.respuesta_ms > 0 { limite = monotonic_ms() + opts.respuesta_ms }
+    var raw: String = ""
+    var falta: Array = [""]
+    var leyendo: bool = true
+    while leyendo {
+        if http_respuesta_completa(method, raw, falta) == 1 {
+            leyendo = false
+        } else {
+            let resto: int = http_resto_ms(limite)
+            if resto == 0 {
+                tcp_close(fd)
+                return Result.Err(http_err_plazo("http", host, port, opts.respuesta_ms))
+            }
+            let rd: Array = nyx_tcp_read_timed_result(fd, 65536, resto)
+            let st: int = rd[0]
+            let datos: String = rd[1]
+            if st == 0 {
+                raw = raw + datos
+            } else {
+                tcp_close(fd)
+                if st == -110 {
+                    return Result.Err(http_err_plazo("http", host, port, opts.respuesta_ms))
+                }
+                if st != NYX_HTTP_EOF {
+                    let code: int = 0 - st
+                    return Result.Err(err_new(code, errno_to_kind(code), "http " + host + ":" + int_to_string(port) + ": leyendo la respuesta"))
+                }
+                return http_fin_de_conexion("http", method, host, port, raw, falta)
+            }
+        }
+    }
+    tcp_close(fd)
+    return http_cerrar_respuesta("http", host, port, raw)
+}
+
+// Request tipado con plazos y verificación explícitos. Mismo contrato de DOS
+// NIVELES que try_http_get: `Ok(response)` para CUALQUIER status HTTP; `Err`
+// solo ante fallo de transporte, con el kind/code de lo que pasó:
+//   invalid/22    URL sin host
+//   connection/111  puerto cerrado          timeout/110  connect, handshake o
+//   tls/X509_V_ERR_* certificado no verifica                respuesta vencidos
+//   tls/71        handshake roto (¿habla TLS?)
+//   io/5          la conexión se cortó antes de completar la respuesta
+//                 (Content-Length o chunked sin terminar)
+//   parse/5       lo recibido no es una respuesta HTTP
+pub fn try_http_request_opts(method: String, url: String, headers: Array, body: String, opts: HttpOpts) -> Result<Array, Error> {
     let parsed: Array = http_parse_url(url)
     let host: String = parsed[1]
     let port: int = parsed[2]
     let path: String = parsed[3]
     let secure: int = parsed[4]
+    // http_parse_url nunca "falla" con un flag: el detector de URL inválida es
+    // host == "" (MEDIDO 2026-08-19: "", "http://", "http:///path").
     if host.length() == 0 {
         return Result.Err(err_new(22, "invalid", "http_parse_url: sin host valido en '" + url + "'"))
     }
     if secure == 1 {
         let host_hdr_s: String = http_host_header(host, port, 443)
         let sreq: String = http_build_request(method, host_hdr_s, path, headers, body)
-        let resp: Array = http_tls_request(host, port, sreq)
-        let status: int = resp[1]
-        // Mismo rango 100-599 que el camino claro (RFC 7231 §6) — sin esto
-        // una status-line basura tipo "FOO 12 X" da status 12 (> 0, no
-        // -1) y colaba como Ok por TLS, el mismo hueco ya cerrado abajo.
-        // (status < 100 ya cubre <= 0, incluido -1/0, no hace falta chequeo aparte.)
-        if status < 100 or status > 599 {
-            let msg: String = resp[3]
-            if status == -1 {
-                return Result.Err(err_new(5, "connection", "https " + host + ":" + int_to_string(port) + ": " + msg))
-            }
-            return Result.Err(err_new(5, "parse", "https " + host + ":" + int_to_string(port) + ": respuesta HTTP invalida o vacia"))
-        }
-        return Result.Ok(resp)
-    }
-    let connect_r: Result<int, Error> = try_tcp_connect(host, port)
-    if connect_r.is_err() {
-        return Result.Err(connect_r.unwrap_err())
-    }
-    let fd: int = connect_r.unwrap()
-    // Timeout de 30s, mismo valor que las centinelas — evita que un host
-    // que acepta pero no responde cuelgue el caller indefinidamente.
-    let to_r: Result<int, Error> = try_tcp_set_timeout(fd, 30)
-    if to_r.is_err() {
-        tcp_close(fd)
-        return Result.Err(to_r.unwrap_err())
+        return http_https_opts(method, host, port, sreq, opts)
     }
     let host_hdr: String = http_host_header(host, port, 80)
     let req: String = http_build_request(method, host_hdr, path, headers, body)
-    let write_r: Result<int, Error> = try_tcp_write(fd, req)
-    if write_r.is_err() {
-        tcp_close(fd)
-        return Result.Err(write_r.unwrap_err())
-    }
-    // Contrato documentado de std/net: try_tcp_write puede devolver
-    // Ok(n) con n < req.length() (short write, ej. buffer del kernel
-    // lleno) — NO es un fallo pero tampoco significa "se mandó todo".
-    // Si lo dejamos pasar, el server del otro lado recibe una request
-    // HTTP truncada y la respuesta que venga es indistinguible de un
-    // 200 legítimo: corrupción silenciosa. Se trata como fallo de
-    // transporte explícito en vez de arriesgar esa ambigüedad.
-    if write_r.unwrap() < req.length() {
-        tcp_close(fd)
-        return Result.Err(err_new(5, "io", "short write: " + int_to_string(write_r.unwrap()) + " de " + int_to_string(req.length()) + " bytes"))
-    }
-    let resp: Array = http_read_response(fd)
-    tcp_close(fd)
-    // http_read_response nunca falla explícito (usa las centinelas
-    // tcp_read_line/tcp_read por debajo) — ante conexión OK pero respuesta
-    // vacía o basura (peer cierra sin escribir, o escribe algo que no es
-    // una status-line HTTP), status_code queda en 0 (default sin parsear:
-    // ver http_read_response, `parts.length() >= 2` nunca se cumple).
-    // Rango 100-599 (en vez de solo `<= 0`): una status-line basura tipo
-    // "FOO 12 X" SÍ matchea `parts.length() >= 2` y parsea "12" como int
-    // sin levantar ningún error — status quedaría en 12, que pasaría el
-    // viejo chequeo `<= 0` como si fuera un status HTTP real. El rango
-    // 100-599 (RFC 7231 §6: ningún status HTTP real cae fuera) cierra esa
-    // rendija sin tocar http_read_response ni sus centinelas internas.
-    let status: int = resp[1]
-    if status < 100 or status > 599 {
-        return Result.Err(err_new(5, "parse", "http_read_response: respuesta HTTP invalida o vacia de " + host + ":" + int_to_string(port)))
-    }
-    return Result.Ok(resp)
+    return http_plano_opts(method, host, port, req, opts)
 }
 
 // GET tipado. `Ok(response)` para CUALQUIER status (404/500 incluidos —
 // ver el header de esta sección, regla de dos niveles). `Err` solo ante
 // fallo real de transporte: URL sin host, connect/write/read fallidos, o
-// respuesta no-HTTP con conexión OK.
+// respuesta no-HTTP con conexión OK. Plazos de http_opts().
 pub fn try_http_get(url: String) -> Result<Array, Error> {
     let empty_headers: Array = []
-    return try_http_exec("GET", url, empty_headers, "")
+    return try_http_request_opts("GET", url, empty_headers, "", http_opts())
 }
 
 // POST tipado — mismo contrato que try_http_get. Content-Type fijo
 // text/plain, igual que la centinela http_post.
 pub fn try_http_post(url: String, body: String) -> Result<Array, Error> {
     let headers: Array = ["Content-Type", "text/plain"]
-    return try_http_exec("POST", url, headers, body)
+    return try_http_request_opts("POST", url, headers, body, http_opts())
 }
 
 // Request tipado genérico (método/headers/body a elección) — mismo
 // contrato que try_http_get.
 pub fn try_http_request(method: String, url: String, headers: Array, body: String) -> Result<Array, Error> {
-    return try_http_exec(method, url, headers, body)
+    return try_http_request_opts(method, url, headers, body, http_opts())
 }
 
 pub fn http_status(resp: Array) -> int {

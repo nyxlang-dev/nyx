@@ -3151,6 +3151,52 @@ Hasta el 2026-09-14 la primera peticion HTTPS de `std/http` llamaba `tls_set_ca_
 asi que el `verify-ca` de postgres pasaba a aceptar certificados de cualquier CA publica
 (corregido; regresion en `test-424-http-no-contamina-cas`).
 
+### Plazos y causa del fallo en el cliente HTTP/TLS
+
+Desde el 2026-09-14 (arco `http-tls-cliente`), `try_http_get`, `try_http_post` y
+`try_http_request` de `std/http` devuelven el `kind`/`code` de lo que realmente paso,
+igual en `http://` y en `https://`, y aceptan plazos con `try_http_request_opts`:
+
+```nyx
+import "std/http"
+import "std/error"
+
+var o: HttpOpts = http_opts()   // connect_ms 10000, respuesta_ms 30000, verificar_tls true
+o.respuesta_ms = 1500           // plazo TOTAL de la respuesta, desde que se envio el request
+let r: Result<Array, Error> = try_http_request_opts("GET", "https://api.ejemplo.com/tasa", [], "", o)
+match r {
+    Result.Ok(resp) => { print(http_body(resp)) }
+    Result.Err(e) => {
+        if e.kind == "tls" { print("certificado invalido: dejar de usar la fuente") }
+        else if e.kind == "timeout" or e.kind == "connection" { print("reintentar mas tarde") }
+    }
+}
+```
+
+| Situacion | `kind` | `code` |
+|---|---|---|
+| URL sin host | `invalid` | 22 |
+| Puerto cerrado | `connection` | 111 |
+| El host no resuelve / sin ruta | `io` | 113 |
+| Connect, handshake o respuesta completa fuera de plazo | `timeout` | 110 |
+| El certificado no verifica | `tls` | `X509_V_ERR_*` (18 autofirmado, 10 vencido, 62 nombre, 64 IP) |
+| Handshake TLS roto por protocolo | `tls` | 71 |
+| La conexion se corto antes de completar `Content-Length` o el chunked | `io` | 5 |
+| Lo recibido no es una respuesta HTTP | `parse` | 5 |
+
+- `connect_ms` cubre connect + handshake; la resolucion DNS **no** entra en el plazo.
+- `respuesta_ms` es un plazo **total**: no se reinicia con cada byte que llega.
+- La respuesta termina en cuanto `Content-Length` o el chunk final la completan, aunque el
+  servidor deje la conexion abierta.
+- Valores `<= 0` desactivan el plazo propio.
+
+La capa de abajo esta en `std/tls`: `try_tls_connect(host, port, verify_mode, connect_ms)
+-> Result<int, Error>` (mismos kinds; `verify_mode` 0 sin verificar, 2 CAs de
+`tls_set_ca_file`, 4 CAs del sistema) y `try_tls_read(h, max_bytes, timeout_ms) ->
+Result<String, Error>` (vuelve con al menos un byte; `Err{0, "eof"}` al cerrar,
+`Err{110, "timeout"}`, `Err{5, "io"}` por error de TLS o corte a mitad de registro). Tras
+`timeout` o `io` el handle queda muerto: solo queda `tls_close`.
+
 ---
 
 ## Logging
@@ -3403,6 +3449,8 @@ json_parse(str) json_stringify(val)
 http_response(status, body) http_serve(port, handler)
 http_get(url) http_post(url, body) http_request(method, url, body)
 http_parse_url(url) http_status_text(code)
+try_http_get(url) try_http_post(url, body) try_http_request(method, url, headers, body)
+http_opts() -> HttpOpts   try_http_request_opts(method, url, headers, body, opts)
 ```
 
 ---
