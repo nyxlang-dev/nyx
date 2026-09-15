@@ -39,22 +39,37 @@ fn http_parse_int(s: String) -> int {
     return result
 }
 
+// Tabla de textos de estado (reason phrase) de RFC 9110 §15. Ampliada por el
+// bug de fricción 20260914-170002 (nyxerp): un 303 salía como
+// "303 Unknown" contra el servidor real — faltaban 303/307/308 (los tres
+// redirects que std/serve puede emitir) y varios 4xx/5xx de uso común. La
+// lista cubre los códigos que un handler de std/serve/std/web puede
+// devolver hoy más los que un cliente HTTP (std/http) puede recibir de un
+// servidor de terceros.
 pub fn http_status_text(code: int) -> String {
     if code == 200 { return "OK" }
     if code == 201 { return "Created" }
     if code == 204 { return "No Content" }
     if code == 301 { return "Moved Permanently" }
     if code == 302 { return "Found" }
+    if code == 303 { return "See Other" }
     if code == 304 { return "Not Modified" }
+    if code == 307 { return "Temporary Redirect" }
+    if code == 308 { return "Permanent Redirect" }
     if code == 400 { return "Bad Request" }
     if code == 401 { return "Unauthorized" }
     if code == 403 { return "Forbidden" }
     if code == 404 { return "Not Found" }
     if code == 405 { return "Method Not Allowed" }
+    if code == 409 { return "Conflict" }
     if code == 413 { return "Payload Too Large" }
+    if code == 415 { return "Unsupported Media Type" }
+    if code == 422 { return "Unprocessable Content" }
+    if code == 429 { return "Too Many Requests" }
     if code == 500 { return "Internal Server Error" }
     if code == 502 { return "Bad Gateway" }
     if code == 503 { return "Service Unavailable" }
+    if code == 504 { return "Gateway Timeout" }
     return "Unknown"
 }
 

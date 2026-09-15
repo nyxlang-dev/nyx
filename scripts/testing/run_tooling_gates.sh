@@ -282,6 +282,52 @@ else
     head -6 "$GATE_TMP/drv.out" | sed 's/^/      /'
 fi
 
+# ── Check E (negativo): opción desconocida de `nyx test` es un error ─
+# Fricción nyxerp (20260914-110000-team-1): `nyx test --coverage archivo.nx`
+# se aceptaba EN SILENCIO — rc 0, salida sin cambios, nada escrito al disco.
+# Quien lo pone en un script de CI cree que está midiendo cobertura. El
+# arreglo (compiler/test.nx, main()) hace que CUALQUIER "-opción" que no esté
+# en el vocabulario de la herramienta sea un error explícito, detectado antes
+# de compilar o correr nada. --coverage/--cover llevan un mensaje aparte
+# (no prometen fecha, solo dicen que todavía no existe).
+run_test_args() {  # $1=dir, resto=args → stdout+stderr a $GATE_TMP/testargs.out, rc a $TA_RC
+    local dir="$1"; shift
+    ( cd "$dir" && NYX_HOME="$ROOT" timeout 30 "$ROOT/nyx_test" "$@" ) \
+        > "$GATE_TMP/testargs.out" 2>&1
+    TA_RC=$?
+}
+
+run_test_args "$GATE_TMP/sano" --coverage
+if [ "$TA_RC" -eq 0 ]; then
+    bad "test-coverage — rc 0: '--coverage' se acepta en silencio (el bug del reporte)" "test-coverage"
+elif grep -q -- "--coverage" "$GATE_TMP/testargs.out"; then
+    ok "test-coverage — '--coverage' es un error explícito (rc $TA_RC) que nombra la opción"
+else
+    bad "test-coverage — rc $TA_RC pero sin nombrar '--coverage' en el mensaje" "test-coverage"
+    head -5 "$GATE_TMP/testargs.out" | sed 's/^/      /'
+fi
+
+run_test_args "$GATE_TMP/sano" --una-opcion-inventada
+if [ "$TA_RC" -eq 0 ]; then
+    bad "test-opcion-desconocida — rc 0: una opción inventada se acepta en silencio" "test-opcion-desconocida"
+elif grep -q -- "--una-opcion-inventada" "$GATE_TMP/testargs.out"; then
+    ok "test-opcion-desconocida — opción inventada rechazada (rc $TA_RC) nombrando la opción"
+else
+    bad "test-opcion-desconocida — rc $TA_RC pero sin nombrar la opción en el mensaje" "test-opcion-desconocida"
+    head -5 "$GATE_TMP/testargs.out" | sed 's/^/      /'
+fi
+
+# CONTROL POSITIVO: opciones válidas + un archivo de test siguen andando —
+# sin esto, un gate que solo mirara "rc != 0 con -algo" pasaría en verde
+# aunque el fix hubiera roto --filter/--verbose/--timeout de paso.
+run_test_args "$GATE_TMP/sano" --verbose --filter modulo
+if [ "$TA_RC" -eq 0 ] && grep -q "ALL TESTS PASSED" "$GATE_TMP/testargs.out"; then
+    ok "test-opciones-validas — CONTROL POSITIVO: --verbose --filter siguen funcionando"
+else
+    bad "test-opciones-validas — CONTROL POSITIVO CAÍDO: rc $TA_RC con opciones válidas" "test-opciones-validas"
+    head -8 "$GATE_TMP/testargs.out" | sed 's/^/      /'
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  TOOLING GATES: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

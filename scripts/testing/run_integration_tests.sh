@@ -193,6 +193,37 @@ else
     fi
 fi
 
+# ── std/serve: bind address (serve_app_en + default de serve_app) ────────
+# Regresión de dos fricciones de nyxerp: 20260914-180000 (serve_app() no
+# dejaba elegir la dirección de escucha) y el GO de Ottavio del mismo día
+# (el default de serve_app pasó de "0.0.0.0" a "127.0.0.1"). Fixture propio
+# (server_bind.nx) + harness que lee /proc/net/tcp del proceso real para
+# confirmar el bind exacto — ver test_serve_std_bind.py.
+echo -e "\n${BOLD}-- std/serve: serve_app_en (bind) --${NC}"
+SB_BIN="/tmp/nyx-serve-std-bind-server"
+if [ ! -x ./nyx_bootstrap ]; then
+    echo -e "  SKIP: falta ./nyx_bootstrap (make bootstrap)"
+else
+    echo -e "  Compiling tests/integration/serve_std/server_bind.nx..."
+    cp tests/integration/serve_std/server_bind.nx script.nx
+    if ./nyx_bootstrap >/dev/null 2>&1 && \
+       clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+           -o "$SB_BIN" 2>/dev/null; then
+        rm -f script.nx script.ll
+        if python3 tests/integration/test_serve_std_bind.py "$SB_BIN"; then
+            echo -e "  ${GREEN}std/serve bind E2E passed${NC}"
+        else
+            echo -e "  ${RED}std/serve bind E2E failed${NC}"
+            OVERALL=1
+        fi
+        rm -f "$SB_BIN"
+    else
+        rm -f script.nx script.ll
+        echo -e "  ${RED}std/serve bind: no se pudo compilar el fixture${NC}"
+        OVERALL=1
+    fi
+fi
+
 # ── std/serve: smoke COMPLETO (los 64 checks de nyx-serve v0.7.1) ─────────
 # Fixture tests/integration/serve_std/standalone.nx = examples/standalone.nx
 # del producto con los imports en std/*; harness test_serve_std_smoke.py =

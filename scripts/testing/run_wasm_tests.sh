@@ -92,6 +92,53 @@ if [ -x ./nyx_bootstrap ]; then
     rm -rf "$GT_DIR"
 fi
 
+# ── Guard de target: concurrencia (NO necesita el toolchain wasm) ──────────
+# spawn/await/select/go_sleep/spawn_task/task_* no tienen runtime en wasm (sin
+# thread.c ni scheduler.c en runtime/wasm.srcs). Hasta el 2026-09-14 pasaban
+# codegen y morían en wasm-ld con `undefined symbol: nyx_goroutine_*`, sin
+# archivo ni línea. Tienen que frenarse en el codegen, cada uno con su
+# ubicación, más UNA nota con la alternativa del navegador (std/browser).
+if [ -x ./nyx_bootstrap ]; then
+    printf "  %-32s" "[guard] concurrencia en wasm"
+    GC_FIX="tests/wasm/fixtures/target-guard-concurrencia"
+    GC_DIR="$(mktemp -d)"
+    cp "$GC_FIX/main.nx" "$GC_DIR/principal.nx"
+    NYX_LANG=en NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_SRC="$GC_DIR/principal.nx" \
+        NYX_SRC_DISPLAY="main.nx" NYX_PROJECT_DIR="$ROOT/$GC_FIX" ./nyx_bootstrap > "$GC_DIR/guard.log" 2>&1
+    gc_rc=$?
+    gc_why=""
+    gc_n=$(grep -c "is not supported on target 'wasm32-wasi'" "$GC_DIR/guard.log")
+    gc_nota=$(grep -c "has no threads or goroutine scheduler" "$GC_DIR/guard.log")
+    if [ "$gc_rc" -eq 0 ]; then
+        gc_why="rc 0: spawn/await/select no se frenaron en el codegen"
+    elif [ -f "$GC_DIR/principal.ll" ]; then
+        gc_why="escribió el .ll pese al error (PROJECT_STATE #25)"
+    elif [ "$gc_n" -ne 6 ]; then
+        gc_why="esperaba 6 usos no soportados, hubo $gc_n"
+    elif [ "$gc_nota" -ne 1 ]; then
+        gc_why="esperaba UNA nota con la alternativa de std/browser, hubo $gc_nota"
+    else
+        for esperado in "'spawn' is not supported" "'await' is not supported" \
+                        "'select' is not supported" "'go_sleep' is not supported" \
+                        "--> main.nx:14, in function 'main'" \
+                        "--> main.nx:15, in function 'main'" \
+                        "--> main.nx:16, in function 'main'" \
+                        "--> main.nx:17, in function 'main'" \
+                        "--> main.nx:6, in function 'escuchar'"; do
+            grep -qF -- "$esperado" "$GC_DIR/guard.log" || gc_why="falta «$esperado»"
+        done
+    fi
+    if [ -z "$gc_why" ]; then
+        echo -e "${GREEN}PASS${NC}"; PASSED=$((PASSED + 1))
+    else
+        echo -e "${RED}FAIL${NC}"
+        echo "      $gc_why"
+        grep -v '^\s*$' "$GC_DIR/guard.log" | head -14 | sed 's/^/      /'
+        FAILED=$((FAILED + 1))
+    fi
+    rm -rf "$GC_DIR"
+fi
+
 WASI_SYSROOT="${WASI_SYSROOT:-/usr}"
 WASI_LIBC="$WASI_SYSROOT/lib/wasm32-wasi/libc.a"
 WASMTIME="$(command -v wasmtime || true)"

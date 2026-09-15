@@ -103,22 +103,67 @@ fn __format_http_response(resp: Response) -> String {
     let status: int = resp.status
     let body: String = resp.body
 
-    // Handle Location-based redirects (301/302/303/307/308). The redirect URL
-    // travels in resp.body (see response_redirect in std/web); resp.headers_flat
-    // is still emitted so a handler can set Set-Cookie/Cache-Control on a
-    // redirect (e.g. login/logout that sets or clears a session cookie).
+    // Handle Location-based redirects (301/302/303/307/308). Two paths can
+    // both want to name the destination: resp.body (the convention used by
+    // response_redirect in std/web) and an explicit "Location" entry in
+    // resp.headers_flat (a handler that builds the Response by hand, e.g.
+    // `response_new(303, "")` + `r.headers_flat = ["Location", "/x"]`).
+    //
+    // CAUSA RAÍZ del bug de fricción 20260914-170002 (nyxerp): esta función
+    // SIEMPRE emitía "Location: " + body y luego, en el loop de abajo,
+    // filtraba explícitamente cualquier "Location" que viniera en
+    // headers_flat (`k != "Location"`) — pensado para no duplicar la
+    // cabecera cuando ambas fuentes coinciden, pero con response_new(status,
+    // "") + headers_flat el body es "" y la cabecera salía vacía SIN avisar
+    // (el reproductor sintético de request_with no pasa por esta función,
+    // así que ningún test con Response armado a mano lo veía).
+    //
+    // Regla adoptada (documentada también en LLM.md §std/serve):
+    //   1. Nunca se emite "Location:" vacía.
+    //   2. Un "Location" explícito y no vacío en headers_flat se respeta.
+    //   3. Si headers_flat no trae "Location" (el caso de response_redirect,
+    //      que deja headers_flat vacío), se usa la dirección de resp.body.
+    //   4. Si las dos fuentes están presentes y difieren, headers_flat GANA
+    //      (es la señal más explícita: el handler la tocó a mano después de
+    //      construir el Response) y solo se emite una vez — nunca dos
+    //      "Location".
     if status == 301 or status == 302 or status == 303 or status == 307 or status == 308 {
+        let headers: Array = resp.headers_flat
+        var explicit_location: String = ""
+        var has_explicit_location: bool = false
+        var si: int = 0
+        while si + 1 < headers.length() {
+            let sk: String = headers[si]
+            let sv: String = headers[si + 1]
+            if sk == "Location" and sv.length() > 0 {
+                explicit_location = sv
+                has_explicit_location = true
+            }
+            si = si + 2
+        }
+        var location: String = body
+        if has_explicit_location {
+            location = explicit_location
+        }
+
         var sb: StringBuilder = StringBuilder.new()
         sb.append("HTTP/1.1 ")
         sb.append(int_to_string(status))
         sb.append(" ")
         sb.append(http_status_text(status))
-        sb.append("\r\nLocation: ")
-        sb.append(body)
         sb.append("\r\n")
+        // Regla 1: si ninguna de las dos fuentes trae una dirección no
+        // vacía, no se emite "Location:" en absoluto (mejor ausente que
+        // vacío y engañoso).
+        if location.length() > 0 {
+            sb.append("Location: ")
+            sb.append(location)
+            sb.append("\r\n")
+        }
 
-        // Emit custom headers (Set-Cookie, etc.), skipping ones we control here
-        let headers: Array = resp.headers_flat
+        // Emit custom headers (Set-Cookie, etc.), skipping ones we control
+        // here: Location (ya emitida arriba, con la fuente correcta) y
+        // Content-Length (calculada abajo).
         var i: int = 0
         while i + 1 < headers.length() {
             let k: String = headers[i]
@@ -148,7 +193,17 @@ fn __format_http_response(resp: Response) -> String {
     sb.append(int_to_string(str_byte_length(body)))
     sb.append("\r\n")
 
-    // Add custom headers from Response
+    // Revisado como parte del fix de la Location vacía (fricción
+    // 20260914-170002): Content-Type SÍ respeta headers_flat (has_content_type
+    // abajo suprime el auto-detect si el handler ya lo puso) — mismo patrón
+    // que la regla nueva de Location. Content-Length y Connection NO tienen
+    // el bug de la Location (nunca salen vacías: siempre se calculan/fijan
+    // acá), pero tampoco filtran un "Content-Length"/"Connection" que un
+    // handler haya puesto a mano en headers_flat — ese valor se emitiría
+    // duplicado (una vez desde acá, otra del loop de abajo) en vez de
+    // pisado o respetado. Distinto de este bug (no hay pérdida de dato ni
+    // valor vacío) y sin caso de uso conocido hoy — fichado en TASKS.md en
+    // vez de tocarlo en este commit (una causa raíz por commit).
     let headers: Array = resp.headers_flat
     var has_content_type: bool = false
     var i: int = 0
@@ -665,16 +720,47 @@ fn __serve_ka_worker() -> int {
     return 0
 }
 
-// Start the app server on the given port with the given number of workers.
+// Start the app server on the given port with the given number of workers,
+// listening on LOOPBACK ONLY (127.0.0.1) by default.
+//
+// CAMBIO DE COMPORTAMIENTO (GO de Ottavio, 2026-09-14, tras la fricción de
+// nyxerp 20260914-180000): hasta acá el default era "0.0.0.0" (todas las
+// interfaces) — un servidor recién creado con `serve_app(app, port,
+// workers)` y CERO líneas más quedaba expuesto a toda la red sin que nadie
+// lo pidiera explícitamente. El propio reporte lo mostró: nyxerp CREÍA que
+// escuchaba solo en la máquina local (su `servidor.direccion` por omisión
+// es `127.0.0.1`) y en realidad no tenía forma de aplicarlo — el ejemplo
+// mínimo del reporte es justo ese: "se sirve con serve_app en la dirección
+// que el servidor use por su cuenta, y la configuración queda declarada
+// sin efecto". Seguridad por defecto: un bind amplio (`0.0.0.0`) es una
+// decisión que el que escribe el programa debe tomar a propósito, nunca
+// heredarla en silencio de haber usado la función corta. Quien quiera
+// escuchar en todas las interfaces (sin proxy delante, o detrás de un LB
+// que reenvía tal cual) lo pide con `serve_app_en(app, "0.0.0.0", port,
+// workers)`.
 // This function blocks (runs the accept loop forever).
 pub fn serve_app(app: App, port: int, workers: int) -> int {
+    return serve_app_en(app, "127.0.0.1", port, workers)
+}
+
+// Igual que serve_app, pero con la dirección de bind explícita (fricción de
+// nyxerp, 2026-09-14: `servidor.direccion` de su config no tenía forma de
+// aplicarse — serve_app solo recibía el puerto). Misma semántica de `host`
+// que tcp_listen/try_tcp_listen (std/net.nx): "" o "0.0.0.0" = todas las
+// interfaces (INADDR_ANY); una IP numérica puntual (ej. "127.0.0.1") liga
+// SOLO esa interfaz — nunca un hostname (no se resuelve; ver el contrato
+// completo en std/net.nx). `serve_app` delega acá con "127.0.0.1" — el
+// default seguro; pasar "0.0.0.0" a mano es la forma explícita de pedir
+// todas las interfaces (ver el comentario de serve_app).
+// This function blocks (runs the accept loop forever).
+pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     __serve_app = app
-    print("nyx-serve starting on port " + int_to_string(port) + " with " + int_to_string(workers) + " workers")
+    print("nyx-serve starting on " + host + ":" + int_to_string(port) + " with " + int_to_string(workers) + " workers")
 
     __serve_ch = channel_new(512)
-    let server: int = tcp_listen("0.0.0.0", port)
+    let server: int = tcp_listen(host, port)
     if server < 0 {
-        print("ERROR: cannot listen on port " + int_to_string(port))
+        print("ERROR: cannot listen on " + host + ":" + int_to_string(port))
         // -1 en bind fallido (campaña 2026-08-11, T6b): devolver 0 acá era
         // indistinguible del shutdown limpio — un supervisor/systemd veía
         // exit 0 con el puerto ocupado y no reintentaba ni alertaba.

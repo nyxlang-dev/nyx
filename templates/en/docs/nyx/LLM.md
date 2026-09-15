@@ -110,6 +110,14 @@ nyx test               # run tests/*.nx
 With no argument they use `src/main.nx` (the project entry point). All four
 honour `NYX_SRC=path` too.
 
+`nyx test` takes `--filter <string>` (only run files whose name matches),
+`--verbose`/`-v` (show output even on pass) and `--timeout <seconds>` (per
+test, default 30). Any other `-option` — including `--coverage`/`--cover`,
+which does not exist yet — is a hard error naming the option, checked before
+compiling or running anything; it used to be accepted in silence (rc 0, no
+change in output, nothing written to disk), which is exactly the kind of
+tooling lie this section exists to warn you about.
+
 **Tests must use `test` blocks, not functions named `test_*`.** A file whose
 tests are plain functions is silently skipped — `nyx test` reports "No files
 with test blocks found" and you would wrongly conclude your code is tested:
@@ -1894,6 +1902,62 @@ fn main() -> int {
 
   All the `Map` fields follow the Map contract: `get` on a missing key
   ABORTS — use `get_or(k, default)` or `contains(k)` first.
+- **`Response` — the 3 fields** (the struct lives in `std/web`; built with
+  `response_new(status, body)`, `response_text/html/json(status, ...)` or
+  `response_redirect(url)`, or a literal `Response { status: ..., headers_flat:
+  ..., body: ... }`):
+  - `status: int` — the HTTP status code. `http_status_text(status)` (from
+    `std/http`) gives the RFC 9110 reason phrase for the status line;
+    unrecognized codes fall back to `"Unknown"` — extend that table if you
+    need one it doesn't have yet.
+  - `headers_flat: Array` — flat `[name, value, name, value, …]`, same shape
+    as `Request.headers_flat`. Appending to it (`r.headers_flat.push("Set-Cookie");
+    r.headers_flat.push("sid=...")`, or replacing it wholesale) is how a
+    handler sets any header the framework doesn't compute for you.
+  - `body: String` — the response body, EXCEPT for a 301/302/303/307/308
+    Response: for those, `body` is read as the redirect **destination**
+    (see `response_redirect` below), not sent to the client — a redirect's
+    HTTP body is always empty (`Content-Length: 0`).
+  - `std/serve` fills in `Content-Length`, `Content-Type` (auto-detected
+    from the body only if `headers_flat` didn't already set one) and
+    `Connection: keep-alive` itself — a handler doesn't need to (and for
+    `Content-Length`/`Connection`, currently shouldn't: setting those by
+    hand in `headers_flat` duplicates the header instead of overriding it,
+    unlike `Content-Type`/`Location`, which do respect an explicit value —
+    fichado en `TASKS.md`, sin caso de uso conocido hoy).
+- **Redirects (301/302/303/307/308)**: `response_redirect(url)` builds a
+  **302** Response whose destination is `url` (carried in `body`, with an
+  empty `headers_flat`) — read it as `response_redirect(url) == Response {
+  status: 302, headers_flat: [], body: url }`, not as a Response you'd read
+  `body` from. To redirect with a different status (e.g. **303 See Other**,
+  the correct code after a `POST` that succeeded — a 302 lets some clients
+  replay the POST on the new URL, 303 forces a GET), either:
+  ```nyx
+  // (a) response_redirect + overwrite status — simplest, reads as "a redirect,
+  // but 303":
+  var r: Response = response_redirect("/dest")
+  r.status = 303
+  return r
+
+  // (b) build the Response by hand and put Location in headers_flat — useful
+  // when you also need another header (Set-Cookie, Cache-Control) on the
+  // same response:
+  var r: Response = response_new(303, "")
+  r.headers_flat = ["Location", "/dest", "Set-Cookie", "sid=abc; Path=/"]
+  return r
+  ```
+  Both forms reach the client with a correct, non-empty `Location` — fixed
+  2026-09-14 (fricción 20260914-170002, nyxerp): `__format_http_response` in
+  `std/serve.nx` used to build `Location` from `body` unconditionally and
+  explicitly DROP any `Location` entry in `headers_flat`, so form (b) above
+  (or any handler setting `Location` only in `headers_flat`, with `body`
+  left `""`) sent `Location: ` **empty** to a real client — invisible to a
+  test built on `request_with`/a synthetic `Response`, since neither goes
+  through `__format_http_response`. The rule now: an explicit, non-empty
+  `Location` in `headers_flat` wins over `body`; if neither is set, no
+  `Location` header is emitted at all (never an empty one); when a redirect
+  reaches the client with an empty or missing `Location`, that is the bug
+  class to suspect first.
 - **Static files**: `app_static(app, prefix, dir)` serves any file under
   `dir` at `prefix` (no caching headers); `app_static_cached(app, prefix,
   dir, max_age_secs)` adds a weak ETag + `Cache-Control: public,
@@ -1913,6 +1977,18 @@ fn main() -> int {
   that runs during the SIGTERM drain, after in-flight requests finish and
   before `serve_app` returns 0. `NYX_SERVE_DRAIN_SECS` overrides the
   10s default deadline (`0` = no wait).
+- **Bind address**: `serve_app(app, port, workers)` listens on **loopback
+  only** (`127.0.0.1`) — reachable from the same machine, not from the
+  network. **Behavior change (2026-09-14)**: earlier versions defaulted to
+  `0.0.0.0` (every interface); a fresh server with zero extra lines now
+  needs an explicit opt-in to be reachable from outside the machine, so it
+  is never exposed to the network by accident. To listen on every interface
+  (no proxy in front, or behind a load balancer that forwards as-is), call
+  `serve_app_en(app, "0.0.0.0", port, workers)` — the old default, now
+  explicit — instead of `serve_app`. `host` follows the same contract as
+  `tcp_listen`/`try_tcp_listen` (`std/net.nx`): `""` or `"0.0.0.0"` = all
+  interfaces, a numeric IP (`"127.0.0.1"`) = only that one — never a
+  hostname (it is not resolved).
 - **Windows**: the network builtins `std/serve` depends on (`tcp_listen`,
   `tcp_accept`, ...) don't exist yet on that target (arc W in progress) —
   importing `std/serve` on Windows fails loud at the existing builtin
@@ -2044,6 +2120,15 @@ error: 'tcp_listen' is not supported on target 'wasm32-wasi'
 
 An imported module is emitted whole, so importing `std/http` breaks a wasm build even if that
 branch never runs — split the entry point with `--main` (above).
+
+**No concurrency runtime in wasm.** The target links neither threads nor the goroutine scheduler,
+so `spawn { }`, `await`/`async fn` called through `await` or `run()`, `select`, `go_sleep`,
+`spawn_task`/`task_await`/`task_race`/`task_cancel`, `thread_*`, `channel_*`, `mutex_*`,
+`condvar_*` and `rwlock_*` are all the compile error above (with `file:line`), plus one note.
+Before 2026-09-14 `spawn`/`await`/`select` got past codegen and died in `wasm-ld` with
+`undefined symbol: nyx_goroutine_*` and no location. The browser replacement is the
+closure-callback API of `std/browser` (below): `browser_fetch_fn` to wait for a response,
+`browser_timeout_fn`/`browser_interval_fn` to schedule, `browser_sse_fn` for server push.
 
 **Toolchain** (no wasi-sdk, ~700MB): system clang + Debian `wasi-libc` +
 `libclang-rt-19-dev-wasm32` + `lld-19` (`--sysroot=/usr`) + `wasmtime` (release

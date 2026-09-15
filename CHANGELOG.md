@@ -20,6 +20,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`std/serve`: `serve_app_en(app, host, port, workers)` — elegir la dirección de escucha**
+  (fricción de nyxerp, 2026-09-14, IDEA). `serve_app(app, port, workers)` no dejaba elegir host:
+  un proyecto con `servidor.direccion` en su config (por omisión `127.0.0.1`, solo la propia
+  máquina detrás de un proxy) no tenía forma de aplicarla, aunque `tcp_listen(host, port)` más
+  abajo en `std/net` ya recibía el host. Al momento de agregar esta función `serve_app` seguía
+  bindeando `0.0.0.0` sin cambios (aditiva); ese default cambió DESPUÉS, en esta misma
+  sección — ver el `### Changed` de más abajo (`serve_app` pasa a `127.0.0.1`; `serve_app_en`
+  es justamente cómo se pide `0.0.0.0` ahora). Misma semántica de `host` que
+  `tcp_listen`/`try_tcp_listen` (`""`/`"0.0.0.0"` = todas las interfaces, una IP numérica puntual
+  liga solo esa — nunca un hostname). Era la única función de arranque de `std/serve` con el
+  hueco (no hay variante TLS ni con opciones ahí todavía). Documentado en `LLM.md` (sección
+  std/serve). Regresión contra el servidor real en `tests/integration/serve_std/server_bind.nx` +
+  `test_serve_std_bind.py`, con `/proc/net/tcp` del proceso real para confirmar el bind exacto
+  (actualizada junto con el cambio de default — ver `### Changed`).
 - **`nyx build --main <archivo.nx>` y `nyx run --main`: otro punto de entrada del mismo proyecto**
   (fricción de nyxerp, 2026-09-14, IDEA). Un `main` que dibuja (puro) y sirve (sockets) no compila a
   wasm —`tcp_read_line` no existe ahí— y no había forma de llevar solo la parte pura sin partir el
@@ -417,6 +431,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`await`, `spawn { }`, `select` y el executor async en wasm32-wasi ya no mueren en el enlace sin
+  decir dónde.** Medido el 2026-09-14 contra la toolchain instalada, construcción por construcción:
+  `await` y `run()` (nyx_goroutine_spawn_closure/join), `spawn { }` (…_detached), `go_sleep`,
+  `spawn_task`/`task_await` (nyx_thread_*) y `task_race`/`task_cancel` pasaban el codegen y `wasm-ld`
+  moría con `undefined symbol`, sin archivo ni línea; `select` igual en cuanto la función se usa
+  (`nyx_channel_try_recv`). `thread_*`, `channel_*` y `mutex_*` ya los frenaba el guard. Ahora
+  `await`, `run`, `spawn`, `select`, `go_sleep`, `spawn_task` y `task_*` pasan por
+  `codegen_target_guard` con `archivo:línea` y función (`spawn { }` se nombra `spawn`, no el
+  `__go_spawn` desazucarado), acumulados, más UNA nota: wasm no tiene threads ni
+  planificador, y en el navegador la alternativa son los callbacks con cierre de `std/browser`
+  (`browser_fetch_fn`, `browser_timeout_fn`, `browser_interval_fn`). Caso nuevo en `make test-wasm`
+  («[guard] concurrencia en wasm», sin toolchain): con el compilador anterior el fixture salía rc 0 y
+  escribía el `.ll`. De paso, el parser fija en los nodos de `spawn { }` y `select { }` la línea de
+  la palabra clave: tomaban la del `}` de cierre, así que todo diagnóstico sobre ellos señalaba el
+  final del bloque.
 - **«'X' is not supported on target 'wasm32-wasi'» ahora dice DÓNDE, y lista todos los usos de una
   vez** (fricción nyxerp 2026-09-14, lo que `--main` no cubría). El error nombraba solo el builtin y
   salía con `exit(1)` en el primero: en un proyecto con imports no había forma de saber qué archivo
@@ -430,6 +459,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   portables, 3 atómicos) pasan el nodo. Caso nuevo en `make test-wasm`, que corre aunque falte el
   toolchain: tres usos en tres archivos listados con archivo:línea y función, rc != 0 y sin `.ll`;
   control positivo con un programa wasm válido.
+- **`nyx test` ya no acepta opciones desconocidas en silencio** (fricción de nyxerp,
+  2026-09-14, reporte `20260914-110000-team-1`, pedido 1 de 3). `nyx test --coverage
+  archivo.nx` daba rc 0, salida idéntica a sin la flag y nada en disco — quien lo puso en
+  un script de CI creyó que estaba midiendo cobertura. El parser de `compiler/test.nx`
+  (`main()`) caía al fondo del if/else sin match y seguía como si nada; ahora cualquier
+  argumento que empieza con `-` y no es `--filter`, `--verbose`/`-v` o `--timeout` es un
+  error explícito con el nombre de la opción y la lista de válidas, detectado ANTES de
+  compilar o correr ningún test. `--coverage`/`--cover` llevan un mensaje aparte que dice
+  que la cobertura todavía no existe, sin prometer fecha (la cobertura real — funciones
+  nunca llamadas, % por línea/rama, lcov — es otro arco, pedidos 2 y 3 del mismo reporte).
+  `nyx help` documenta las tres opciones reales de `test` (antes solo decía «Run
+  tests/*.nx»). Guarda nueva en `run_tooling_gates.sh` (dentro de `test-ai-first`):
+  `--coverage` y una opción inventada dan rc≠0 nombrando la opción; control positivo con
+  `--verbose --filter` sigue pasando.
+- **`std/serve`: un 3xx con `Location` puesta SOLO en `headers_flat` llegaba con la cabecera VACÍA
+  a un cliente real** (fricción de nyxerp, 2026-09-14, ALTA — silencioso). `__format_http_response`
+  armaba siempre `Location: ` + `resp.body` (la convención de `response_redirect`) y descartaba
+  explícitamente cualquier `Location` de `headers_flat`; un handler que arma el `Response` a mano
+  (`response_new(303, "")` + `r.headers_flat = ["Location", "/x"]`, con `body` en `""`) mandaba la
+  cabecera vacía — el navegador no iba a ningún lado. Invisible en tests: un `Request`/`Response`
+  sintético (`request_with`) no pasa por `__format_http_response`, así que una prueba con la API de
+  testing daba verde. Regla nueva: un `Location` explícito y no vacío en `headers_flat` gana sobre
+  `body`; si ninguna de las dos fuentes trae dirección, no se emite `Location` (nunca vacía); nunca
+  se emiten dos. De paso, `http_status_text` (std/http) sumó los `303/307/308/409/415/422/429/504`
+  que le faltaban de RFC 9110 — el mismo reporte notaba `303 Unknown` en vez de `303 See Other`.
+  Documentado en `LLM.md` (campos de `Response`, y cómo pedir un 303 tras un POST); Content-Length/
+  Connection tienen un patrón de duplicado (no de vacío) relacionado pero distinto, fichado en
+  `TASKS.md` sin caso de uso conocido. Regresión en `tests/integration/serve_std/standalone.nx` +
+  `test_serve_std_smoke.py` (7 checks nuevos, contra el servidor real, con socket crudo para ver la
+  línea de estado y las cabeceras exactas — `docs/TESTS.md`).
 - **Windows: nada que enlazara el runtime linkeaba desde `main` — faltaba `__divti3`.** Medido en la
   laptop: los 12 fixtures del gate de concurrencia fallaban con `undefined symbol: __divti3`, pedido
   por `nyx_mul_div_round` (arco checked-math), que dividía en `__int128`. clang resuelve esa división
@@ -1254,6 +1313,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   fuente de esa lista de rutas — la usa `install-local` Y la guardia, sin duplicar la lógica.
 
 ### Changed
+- **CAMBIO DE COMPORTAMIENTO — `std/serve`: `serve_app` ahora escucha SOLO en `127.0.0.1`
+  (antes `0.0.0.0`)** (GO de Ottavio, 2026-09-14, sobre la fricción de nyxerp 20260914-180000
+  que trajo `serve_app_en`). Un servidor recién creado con `serve_app(app, port, workers)` y
+  cero líneas más quedaba expuesto a toda la red sin que nadie lo pidiera — el propio reporte lo
+  mostró: nyxerp creía escuchar solo en la máquina local (su `servidor.direccion` por omisión es
+  `127.0.0.1`) y no tenía forma de lograrlo. Seguridad por defecto: el bind amplio pasa a ser una
+  decisión explícita, no heredada de usar la función corta. **Migración**: quien necesitaba
+  `0.0.0.0` (sin proxy delante, o detrás de un LB que reenvía tal cual) llama
+  `serve_app_en(app, "0.0.0.0", port, workers)` en vez de `serve_app(app, port, workers)`.
+  Documentado en `LLM.md` (sección std/serve); regresión actualizada en
+  `tests/integration/serve_std/server_bind.nx` + `test_serve_std_bind.py` (confirma, leyendo
+  `/proc/net/tcp` del proceso real, que `serve_app` liga `127.0.0.1` y que `serve_app_en(...,
+  "0.0.0.0", ...)` sigue ligando todas las interfaces cuando se pide a propósito).
 - **`nyx init` cambia lo que siembra por defecto (ADR-1, decisión de Ottavio 2026-09-04)**
   `[arco: andamiaje-sdd]`. Un proyecto nuevo recibe ahora **`AGENTS.md` + `CAPABILITIES.md` +
   `docs/nyx/`** (la referencia densa `docs/nyx/LLM.md` y tres guías neutrales:
