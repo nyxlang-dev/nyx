@@ -598,6 +598,11 @@ error, wrong function, blank screen). Now:
   (**NYX2010**) naming both modules — qualify it or rename.
 - Module fns are emitted as `<module_path>__<fn>` in the IR; the main file
   and the prelude keep bare names (single-file programs: zero change).
+- `nyx check` (and the checker inside `nyx build`) resolves the same way
+  since 0.31.x: two modules can each keep a private helper with the same
+  name and DIFFERENT signatures, and each call is type-checked against the
+  helper of its own module (before, each module was checked against the
+  other's signature: NYX1006/NYX1005 in a file nobody touched).
 - Note `pub` is still cosmetic — this arc changed HOW names resolve, not
   what is visible.
 

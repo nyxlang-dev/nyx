@@ -159,8 +159,8 @@ elif [ "$current" -gt "$BASELINE" ]; then
     FAIL=$((FAIL + 1))
 else
     printf "  ⚠ ratchet de prints-mudos: %s sitios (< baseline %s) — bajó, ¡buenas noticias!\n" "$current" "$BASELINE"
-    printf "    para que el ratchet no quede flojo, actualizá BASELINE=%s en %s\n" "$current" "$0"
-    printf "    (y actualizá también la lista de sitios en el comentario de arriba)\n"
+    printf "    para que el ratchet no quede flojo, actualiza BASELINE=%s en %s\n" "$current" "$0"
+    printf "    (y actualiza también la lista de sitios en el comentario de arriba)\n"
     FAIL=$((FAIL + 1))
 fi
 

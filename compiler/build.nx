@@ -1340,7 +1340,7 @@ fn toolchain_version() -> String {
 
 fn report_template() -> String {
     var t = "# FRICTION — reporte para el mantenedor de Nyx\n\n"
-    t = t + "> Completá las secciones. El USUARIO revisa este archivo (FRICTION.md).\n"
+    t = t + "> Completa las secciones. El USUARIO revisa este archivo (FRICTION.md).\n"
     t = t + "> No hace falta enviar nada. Opcional (canal del equipo, público): nyx report --send\n\n"
     t = t + "## Que intentaba hacer\n\n(objetivo en 1-3 lineas)\n\n"
     t = t + "## Codigo minimo reproducible\n\n```nyx\n// el .nx mas chico que reproduce el problema\n```\n\n"
@@ -1360,14 +1360,14 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
         if file_exists(local_path) {
             let cur: String = read_file(local_path)
             if cur.length() >= 40 {
-                print("FRICTION.md ya existe con contenido — avisale al usuario para que lo revise.")
+                print("FRICTION.md ya existe con contenido — avísale al usuario para que lo revise.")
                 print("(opcional, para enviarlo al equipo de Nyx: nyx report --send)")
                 return true
             }
         }
         write_file(local_path, report_template())
-        print("creado FRICTION.md — completá las secciones (tu asistente IA puede hacerlo)")
-        print("y AVISALE AL USUARIO. No hace falta enviar nada: el usuario lo revisa.")
+        print("creado FRICTION.md — completa las secciones (tu asistente IA puede hacerlo)")
+        print("y AVÍSALE AL USUARIO. No hace falta enviar nada: el usuario lo revisa.")
         print("(opcional, para el equipo de Nyx: nyx report --send)")
         return true
     }
@@ -1381,7 +1381,7 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
     }
     let contenido: String = read_file(src)
     if contenido.length() < 40 {
-        print("error: el reporte parece vacío — completá la plantilla primero")
+        print("error: el reporte parece vacío — completa la plantilla primero")
         return false
     }
 

@@ -956,7 +956,7 @@ pub fn http_cors_response(origin: String) -> String {
 
 // Sirve HTTP en 0.0.0.0:port, un request por vez. NO retorna en éxito
 // (loop infinito); retorna -1 si el bind falla (puerto ocupado/permiso —
-// el runtime además lo grita por stderr desde v0.24.4). CHEQUEÁ el
+// el runtime además lo grita por stderr desde v0.24.4). CHEQUEA el
 // retorno: descartarlo deja el programa "corriendo" sin servidor.
 //   if http_serve(8080, handler) < 0 { return 1 }
 pub fn http_serve(port: int, handler: Fn) -> int {

@@ -7757,9 +7757,9 @@ target triple = "x86_64-pc-linux-gnu"
 @.str3890.c = internal global %nyx_string* null
 @.str3891 = private unnamed_addr constant [120 x i8] c"' es un campo, revisa que exista en ese tipo; si es una propiedad builtin, no está soportada sobre un receptor anidado\00"
 @.str3891.c = internal global %nyx_string* null
-@.str3892 = private unnamed_addr constant [46 x i8] c"  bindeá el receptor primero: let v: Tipo = \00"
+@.str3892 = private unnamed_addr constant [45 x i8] c"  bindea el receptor primero: let v: Tipo = \00"
 @.str3892.c = internal global %nyx_string* null
-@.str3893 = private unnamed_addr constant [21 x i8] c"-owner; y accedé v.\00"
+@.str3893 = private unnamed_addr constant [22 x i8] c"-owner; y accede a v.\00"
 @.str3893.c = internal global %nyx_string* null
 @.str3894 = private unnamed_addr constant [51 x i8] c"error [NYX2007]: unresolved nested field access: '\00"
 @.str3894.c = internal global %nyx_string* null
@@ -7787,9 +7787,9 @@ target triple = "x86_64-pc-linux-gnu"
 @.str3905.c = internal global %nyx_string* null
 @.str3906 = private unnamed_addr constant [142 x i8] c"  cubre cualquier receiver que no sea un identificador simple: llamadas (f().campo), índices (a[0].campo), struct-literals (Tipo{...}.campo)\00"
 @.str3906.c = internal global %nyx_string* null
-@.str3907 = private unnamed_addr constant [69 x i8] c"  bindeá el resultado primero: let v: Tipo = f(); y accedé v.campo\00"
+@.str3907 = private unnamed_addr constant [69 x i8] c"  bindea el resultado primero: let v: Tipo = f(); y accede a v.campo\00"
 @.str3907.c = internal global %nyx_string* null
-@.str3908 = private unnamed_addr constant [56 x i8] c"  con un índice: let e: Tipo = a[0]; y accedé e.campo\00"
+@.str3908 = private unnamed_addr constant [57 x i8] c"  con un índice: let e: Tipo = a[0]; y accede a e.campo\00"
 @.str3908.c = internal global %nyx_string* null
 @.str3909 = private unnamed_addr constant [82 x i8] c"error [NYX2003]: field_access on a complex expression is not supported in codegen\00"
 @.str3909.c = internal global %nyx_string* null
@@ -11819,7 +11819,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str5921.c = internal global %nyx_string* null
 @.str5922 = private unnamed_addr constant [14 x i8] c"[i] = <valor>\00"
 @.str5922.c = internal global %nyx_string* null
-@.str5923 = private unnamed_addr constant [59 x i8] c"  asigná sobre un eslabón que SÍ sea un struct conocido\00"
+@.str5923 = private unnamed_addr constant [58 x i8] c"  asigna sobre un eslabón que SÍ sea un struct conocido\00"
 @.str5923.c = internal global %nyx_string* null
 @.str5924 = private unnamed_addr constant [70 x i8] c"error [NYX2005]: could not resolve the receiver of field assignment '\00"
 @.str5924.c = internal global %nyx_string* null
@@ -11875,7 +11875,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str5949.c = internal global %nyx_string* null
 @.str5950 = private unnamed_addr constant [132 x i8] c"  cubre cualquier receiver que no sea un identificador ni una cadena de campos: llamadas (f().campo = v), índices (a[0].campo = v)\00"
 @.str5950.c = internal global %nyx_string* null
-@.str5951 = private unnamed_addr constant [75 x i8] c"  bindeá el receiver primero: var v: Tipo = a[0]; v.campo = ...; a[0] = v\00"
+@.str5951 = private unnamed_addr constant [74 x i8] c"  bindea el receiver primero: var v: Tipo = a[0]; v.campo = ...; a[0] = v\00"
 @.str5951.c = internal global %nyx_string* null
 @.str5952 = private unnamed_addr constant [86 x i8] c"error [NYX2006]: field assignment on a complex expression is not supported in codegen\00"
 @.str5952.c = internal global %nyx_string* null
@@ -65758,12 +65758,12 @@ then4091:
   %32467 = call %nyx_string* @nyx_string_concat(%nyx_string* %32464, %nyx_string* %32466)
   %32468 = call i8* @nyx_string_to_cstr(%nyx_string* %32467)
   call void @nyx_print_string(i8* %32468)
-  %32469 = getelementptr [46 x i8], [46 x i8]* @.str3892, i32 0, i32 0
-  %32470 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3892.c, i8* %32469, i64 45)
+  %32469 = getelementptr [45 x i8], [45 x i8]* @.str3892, i32 0, i32 0
+  %32470 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3892.c, i8* %32469, i64 44)
   %32471 = load %nyx_string*, %nyx_string** %32150
   %32472 = call %nyx_string* @nyx_string_concat(%nyx_string* %32470, %nyx_string* %32471)
-  %32473 = getelementptr [21 x i8], [21 x i8]* @.str3893, i32 0, i32 0
-  %32474 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3893.c, i8* %32473, i64 20)
+  %32473 = getelementptr [22 x i8], [22 x i8]* @.str3893, i32 0, i32 0
+  %32474 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3893.c, i8* %32473, i64 21)
   %32475 = call %nyx_string* @nyx_string_concat(%nyx_string* %32472, %nyx_string* %32474)
   %32476 = load %nyx_string*, %nyx_string** %32150
   %32477 = call %nyx_string* @nyx_string_concat(%nyx_string* %32475, %nyx_string* %32476)
@@ -65852,8 +65852,8 @@ then4097:
   %32538 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3907.c, i8* %32537, i64 68)
   %32539 = call i8* @nyx_string_to_cstr(%nyx_string* %32538)
   call void @nyx_print_string(i8* %32539)
-  %32540 = getelementptr [56 x i8], [56 x i8]* @.str3908, i32 0, i32 0
-  %32541 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3908.c, i8* %32540, i64 55)
+  %32540 = getelementptr [57 x i8], [57 x i8]* @.str3908, i32 0, i32 0
+  %32541 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str3908.c, i8* %32540, i64 56)
   %32542 = call i8* @nyx_string_to_cstr(%nyx_string* %32541)
   call void @nyx_print_string(i8* %32542)
   br label %merge4099
@@ -85159,8 +85159,8 @@ then5463:
   call void @nyx_print_string(i8* %47248)
   br label %merge5465
 else5464:
-  %47249 = getelementptr [59 x i8], [59 x i8]* @.str5923, i32 0, i32 0
-  %47250 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str5923.c, i8* %47249, i64 58)
+  %47249 = getelementptr [58 x i8], [58 x i8]* @.str5923, i32 0, i32 0
+  %47250 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str5923.c, i8* %47249, i64 57)
   %47251 = call i8* @nyx_string_to_cstr(%nyx_string* %47250)
   call void @nyx_print_string(i8* %47251)
   br label %merge5465
@@ -85339,8 +85339,8 @@ then5484:
   %47366 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str5950.c, i8* %47365, i64 131)
   %47367 = call i8* @nyx_string_to_cstr(%nyx_string* %47366)
   call void @nyx_print_string(i8* %47367)
-  %47368 = getelementptr [75 x i8], [75 x i8]* @.str5951, i32 0, i32 0
-  %47369 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str5951.c, i8* %47368, i64 74)
+  %47368 = getelementptr [74 x i8], [74 x i8]* @.str5951, i32 0, i32 0
+  %47369 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str5951.c, i8* %47368, i64 73)
   %47370 = call i8* @nyx_string_to_cstr(%nyx_string* %47369)
   call void @nyx_print_string(i8* %47370)
   br label %merge5486

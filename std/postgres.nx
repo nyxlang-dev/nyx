@@ -856,7 +856,7 @@ fn pg_celda(fila: Array, i: int, quien: String) -> String {
     }
     let v: String = fila[i]
     if pg_is_null(v) {
-        panic(quien + ": la columna " + int_to_string(i) + " es NULL — preguntá con pg_is_null(fila[i]) antes de convertir")
+        panic(quien + ": la columna " + int_to_string(i) + " es NULL — pregunta con pg_is_null(fila[i]) antes de convertir")
     }
     return v
 }

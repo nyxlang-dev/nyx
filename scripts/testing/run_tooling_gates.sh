@@ -371,6 +371,124 @@ else
     head -8 "$GATE_TMP/test.out" | sed 's/^/      /'
 fi
 
+# ── Check G: fns privadas HOMÓNIMAS en módulos distintos ─────────────────────
+# Fricción nyxerp 2026-09-14 (20260914-200001-team-1): `src/uno.nx` con
+# `fn ayuda(x: String)` y `src/dos.nx` con `fn ayuda(a: int, x: String)`, las
+# dos privadas. El codegen ya resolvía cada llamada al módulo propio, pero el
+# checker registraba las firmas por nombre pelado: `nyx check` y `nyx build`
+# daban NYX1006 en uno_saludo y NYX1005 en dos_saludo. Agregar un archivo nuevo
+# rompía el chequeo de uno viejo que nadie tocó.
+#
+# El proyecto cubre a la vez: firmas distintas (uno/dos), la MISMA firma en un
+# tercer módulo (tres, el caso que ya andaba y escondía la colisión), una
+# `pub fn` de otro módulo llamada sin calificar desde un módulo (dos_y_uno) y
+# desde main. `nyx test` lo compila Y lo corre: el valor prueba que cada módulo
+# llamó a SU ayuda, no solo que el checker calló.
+mk_homonimas() {  # $1=dir, $2=1 → con un error de tipos por módulo
+    local dir="$1" roto="$2"
+    mkdir -p "$dir/src" "$dir/tests"
+    cat > "$dir/nyx.toml" <<'EOF'
+[package]
+name = "homonimas"
+version = "0.1.0"
+main = "src/main.nx"
+EOF
+    local llamada_uno='ayuda("a")' llamada_dos='ayuda(1, "b")'
+    if [ "$roto" = "1" ]; then
+        # Cada error contra la firma de SU módulo: un int donde uno espera
+        # String, y un solo argumento donde dos espera dos.
+        llamada_uno='ayuda(1)'; llamada_dos='ayuda("b")'
+    fi
+    cat > "$dir/src/uno.nx" <<EOF
+fn ayuda(x: String) -> String {
+    return "uno:" + x
+}
+
+pub fn uno_saludo() -> String {
+    return $llamada_uno
+}
+EOF
+    cat > "$dir/src/dos.nx" <<EOF
+import "src/uno"
+
+fn ayuda(a: int, x: String) -> String {
+    return "dos:" + x
+}
+
+pub fn dos_saludo() -> String {
+    return $llamada_dos
+}
+
+pub fn dos_y_uno() -> String {
+    return uno_saludo()
+}
+EOF
+    cat > "$dir/src/tres.nx" <<'EOF'
+fn ayuda(x: String) -> String {
+    return "tres:" + x
+}
+
+pub fn tres_saludo() -> String {
+    return ayuda("c")
+}
+EOF
+    cat > "$dir/src/main.nx" <<'EOF'
+import "src/uno"
+import "src/dos"
+import "src/tres"
+
+fn main() -> int {
+    println(uno_saludo())
+    println(dos_saludo())
+    println(tres_saludo())
+    return 0
+}
+EOF
+    cat > "$dir/tests/homonimas_test.nx" <<'EOF'
+import "src/uno"
+import "src/dos"
+import "src/tres"
+
+test "cada módulo llama a SU ayuda privada" {
+    assert(uno_saludo() == "uno:a", "uno")
+    assert(dos_saludo() == "dos:b", "dos")
+    assert(tres_saludo() == "tres:c", "tres")
+    assert(dos_y_uno() == "uno:a", "pub de otro módulo sin calificar")
+}
+EOF
+}
+
+HDIR="$GATE_TMP/homonimas"
+mk_homonimas "$HDIR" 0
+NYX_LANG=en run_check "$HDIR"
+if [ "$CHECK_RC" -eq 0 ]; then
+    ok "check-homonimas — privadas homónimas de firma distinta en dos módulos: 'nyx check' rc 0"
+else
+    bad "check-homonimas — rc $CHECK_RC: el checker cruzó las firmas de 'ayuda' entre módulos" "check-homonimas"
+    grep -E "NYX1" "$GATE_TMP/check.out" | head -4 | sed 's/^/      /'
+fi
+run_test "$HDIR"
+if [ "$TEST_RC" -eq 0 ] && grep -q "ALL TESTS PASSED" "$GATE_TMP/test.out"; then
+    ok "test-homonimas — compila y corre: uno:a, dos:b, tres:c y la pub de otro módulo"
+else
+    bad "test-homonimas — rc $TEST_RC: el proyecto de homónimas no compila o no da los valores de cada módulo" "test-homonimas"
+    head -8 "$GATE_TMP/test.out" | sed 's/^/      /'
+fi
+
+# NEGATIVO: la resolución por módulo no puede apagar el chequeo. Cada error
+# tiene que salir, en SU fn, contra la firma de SU módulo.
+HRDIR="$GATE_TMP/homonimas_roto"
+mk_homonimas "$HRDIR" 1
+NYX_LANG=en run_check "$HRDIR"
+if [ "$CHECK_RC" -ne 0 ] \
+   && grep -qE "NYX1005\] in 'uno_saludo'.*argument 1 of 'ayuda': expected String, got int" "$GATE_TMP/check.out" \
+   && grep -qE "NYX1006\] in 'dos_saludo'.*'ayuda' expects 2 arguments, got 1" "$GATE_TMP/check.out"; then
+    ok "check-homonimas-roto — cada error sale contra la firma de su propio módulo (rc $CHECK_RC)"
+else
+    bad "check-homonimas-roto — rc $CHECK_RC sin NYX1005 en uno_saludo y NYX1006 en dos_saludo" "check-homonimas-roto"
+    grep -E "NYX1" "$GATE_TMP/check.out" | head -4 | sed 's/^/      /'
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  TOOLING GATES: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

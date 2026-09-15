@@ -104,7 +104,7 @@ ocupado) retorna `-1` — `if http_serve(8080, handler) < 0 { return 1 }`.**
 quedan intactos.**
 18. **`<Struct>_desde_fila()` acepta todas las formas de booleano que emiten sus dos productores
 —`true`/`false`, `t`/`f` y `1`/`0`— y ABORTA nombrando el valor ante cualquier otra.**
-19. **Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`**
+19. **Para guardar objetos de trait en una colección, tipa la colección: `Array<dyn Trait>`**
 20. **Un campo solo se lee desde un nombre o una cadena de campos: `f().x`, `a[0].x` y `T{...}.x` son error (NYX2003; escribirlos, NYX2006).**
 21. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
 22. **La lista de módulos que trae el prelude vive DENTRO del prelude, en la línea

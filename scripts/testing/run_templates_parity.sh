@@ -32,7 +32,8 @@ FAIL=0
 # trampa que este repo pisó cuatro veces en una semana (builtins void,
 # módulos del prelude, builtins globales, tabla de booleanos).
 source scripts/testing/lib_voseo.sh
-DENY_RE="$VOSEO_DENY_RE"
+# Se filtra con voseo_filter (lista explícita + regla general en -á, sin
+# distinguir mayúsculas), la misma función que usa run_voseo_messages.sh.
 
 # ── Autotest del instrumento (primero — sin esto, verde no prueba nada) ──
 TMPDIR="$(mktemp -d)"
@@ -108,7 +109,7 @@ scan_file_deny() {
         local lineno="${line%%:*}" content="${line#*:}"
         printf "  ✗ %s:%s: %s\n" "$f" "$lineno" "$(printf '%s' "$content" | sed -E 's/^[[:space:]]+//')"
         deny_hits=$((deny_hits + 1)); FAIL=$((FAIL + 1))
-    done < <(grep -niE -- "$DENY_RE" "$f" 2>/dev/null)
+    done < <(grep -n '' "$f" 2>/dev/null | voseo_filter)
 }
 
 if check_twin_pair "$TMPDIR/fixture/templates/en/AGENTS.md" "$TMPDIR/fixture/templates/es/AGENTS.md" > "$TMPDIR/autotest_a.log" 2>&1; then
@@ -202,7 +203,7 @@ for f in docs/gotchas/*.md; do
         lineno="${line%%:*}"; content="${line#*:}"
         printf "  ✗ %s:%s: %s\n" "$f" "$lineno" "$(printf '%s' "$content" | sed -E 's/^[[:space:]]+//')"
         deny_hits=$((deny_hits + 1)); FAIL=$((FAIL + 1))
-    done < <(awk '/^## es/{flag=1} flag{print NR": "$0}' "$f" | grep -inE -- "$DENY_RE")
+    done < <(awk '/^## es/{flag=1} flag{print NR": "$0}' "$f" | voseo_filter)
 done
 
 if [ "$deny_hits" -eq 0 ]; then

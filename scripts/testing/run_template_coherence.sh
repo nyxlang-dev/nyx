@@ -95,7 +95,7 @@ check_cited_ids() {
         case "$linetext" in
             *docs/nyx/LLM.md*) continue ;;
         esac
-        printf "  ✗ %s:%s cita el gotcha «%s», que no está en %s — apuntá la cita a docs/nyx/LLM.md o sacala\n" \
+        printf "  ✗ %s:%s cita el gotcha «%s», que no está en %s — apunta la cita a docs/nyx/LLM.md o sácala\n" \
             "$f" "$lineno" "$id" "$manual"
         bad=1
     done < <(grep -noE '`[a-z0-9]+(-[a-z0-9]+)+`' "$f" 2>/dev/null)

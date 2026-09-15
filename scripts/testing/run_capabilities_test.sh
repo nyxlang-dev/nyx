@@ -32,7 +32,7 @@ fi
 # acá en vez de dejar que el resto del script falle con un diff críptico.
 if [ "compiler/build.nx" -nt "$NYX_BUILD" ]; then
     echo "❌ nyx_build está STALE: compiler/build.nx es más nuevo que el binario."
-    echo "   Ejecuta 'make build-nyx-build' y reintentá (make bootstrap NO lo reconstruye)."
+    echo "   Ejecuta 'make build-nyx-build' y reintenta (make bootstrap NO lo reconstruye)."
     exit 1
 fi
 

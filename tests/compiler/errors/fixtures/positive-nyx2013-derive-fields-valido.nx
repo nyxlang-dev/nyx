@@ -1,0 +1,28 @@
+// Control POSITIVO de NYX2013 en el checker (fricción nyxerp 2026-09-14): los
+// cuatro tipos que #[derive(Fields)] sabe convertir, un alias a uno de ellos, y
+// un struct SIN el derive que sí tiene un Array — el chequeo mira solo los
+// structs derivados. Tiene que pasar `check OK` y compilar.
+type Clave = int
+
+#[derive(Fields)]
+struct Producto {
+    id: Clave,
+    nombre: String,
+    activo: bool,
+    precio: float,
+    stock: int
+}
+
+struct Carrito {
+    productos: Array
+}
+
+fn main() -> int {
+    let p = Producto { id: 1, nombre: "Tornillo", activo: true, precio: 2.5, stock: 40 }
+    let c = Carrito { productos: [] }
+    let campos: Array = Producto_campos()
+    print(int_to_string(campos.length()))
+    print(p.nombre)
+    print(int_to_string(c.productos.length()))
+    return 0
+}

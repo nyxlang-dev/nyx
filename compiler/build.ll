@@ -1416,7 +1416,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str706.c = internal global %nyx_string* null
 @.str707 = private unnamed_addr constant [51 x i8] c"# FRICTION — reporte para el mantenedor de Nyx\0a\0a\00"
 @.str707.c = internal global %nyx_string* null
-@.str708 = private unnamed_addr constant [74 x i8] c"> Completá las secciones. El USUARIO revisa este archivo (FRICTION.md).\0a\00"
+@.str708 = private unnamed_addr constant [73 x i8] c"> Completa las secciones. El USUARIO revisa este archivo (FRICTION.md).\0a\00"
 @.str708.c = internal global %nyx_string* null
 @.str709 = private unnamed_addr constant [88 x i8] c"> No hace falta enviar nada. Opcional (canal del equipo, público): nyx report --send\0a\0a\00"
 @.str709.c = internal global %nyx_string* null
@@ -1436,13 +1436,13 @@ target triple = "x86_64-pc-linux-gnu"
 @.str716.c = internal global %nyx_string* null
 @.str717 = private unnamed_addr constant [12 x i8] c"FRICTION.md\00"
 @.str717.c = internal global %nyx_string* null
-@.str718 = private unnamed_addr constant [79 x i8] c"FRICTION.md ya existe con contenido — avisale al usuario para que lo revise.\00"
+@.str718 = private unnamed_addr constant [80 x i8] c"FRICTION.md ya existe con contenido — avísale al usuario para que lo revise.\00"
 @.str718.c = internal global %nyx_string* null
 @.str719 = private unnamed_addr constant [62 x i8] c"(opcional, para enviarlo al equipo de Nyx: nyx report --send)\00"
 @.str719.c = internal global %nyx_string* null
-@.str720 = private unnamed_addr constant [79 x i8] c"creado FRICTION.md — completá las secciones (tu asistente IA puede hacerlo)\00"
+@.str720 = private unnamed_addr constant [78 x i8] c"creado FRICTION.md — completa las secciones (tu asistente IA puede hacerlo)\00"
 @.str720.c = internal global %nyx_string* null
-@.str721 = private unnamed_addr constant [71 x i8] c"y AVISALE AL USUARIO. No hace falta enviar nada: el usuario lo revisa.\00"
+@.str721 = private unnamed_addr constant [72 x i8] c"y AVÍSALE AL USUARIO. No hace falta enviar nada: el usuario lo revisa.\00"
 @.str721.c = internal global %nyx_string* null
 @.str722 = private unnamed_addr constant [53 x i8] c"(opcional, para el equipo de Nyx: nyx report --send)\00"
 @.str722.c = internal global %nyx_string* null
@@ -1452,7 +1452,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str724.c = internal global %nyx_string* null
 @.str725 = private unnamed_addr constant [57 x i8] c" — ejecuta `nyx report` primero para crear FRICTION.md\00"
 @.str725.c = internal global %nyx_string* null
-@.str726 = private unnamed_addr constant [67 x i8] c"error: el reporte parece vacío — completá la plantilla primero\00"
+@.str726 = private unnamed_addr constant [66 x i8] c"error: el reporte parece vacío — completa la plantilla primero\00"
 @.str726.c = internal global %nyx_string* null
 @.str727 = private unnamed_addr constant [1 x i8] c"\00"
 @.str727.c = internal global %nyx_string* null
@@ -10088,8 +10088,8 @@ define internal %nyx_string* @report_template(
   %4703 = alloca %nyx_string*
   store %nyx_string* %4702, %nyx_string** %4703
   %4704 = load %nyx_string*, %nyx_string** %4703
-  %4705 = getelementptr [74 x i8], [74 x i8]* @.str708, i32 0, i32 0
-  %4706 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str708.c, i8* %4705, i64 73)
+  %4705 = getelementptr [73 x i8], [73 x i8]* @.str708, i32 0, i32 0
+  %4706 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str708.c, i8* %4705, i64 72)
   %4707 = call %nyx_string* @nyx_string_concat(%nyx_string* %4704, %nyx_string* %4706)
   store %nyx_string* %4707, %nyx_string** %4703
   %4708 = load %nyx_string*, %nyx_string** %4703
@@ -10165,8 +10165,8 @@ then744:
   %4756 = icmp sge i64 %4755, 40
   br i1 %4756, label %then747, label %else748
 then747:
-  %4757 = getelementptr [79 x i8], [79 x i8]* @.str718, i32 0, i32 0
-  %4758 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str718.c, i8* %4757, i64 78)
+  %4757 = getelementptr [80 x i8], [80 x i8]* @.str718, i32 0, i32 0
+  %4758 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str718.c, i8* %4757, i64 79)
   %4759 = call i8* @nyx_string_to_cstr(%nyx_string* %4758)
   call void @nyx_print_string(i8* %4759)
   %4760 = getelementptr [62 x i8], [62 x i8]* @.str719, i32 0, i32 0
@@ -10185,12 +10185,12 @@ merge746:
   %4764 = call %nyx_string* @report_template()
   %4765 = call i8* @nyx_string_to_cstr(%nyx_string* %4763)
   %4766 = call i1 @nyx_write_file_safe(i8* %4765, %nyx_string* %4764)
-  %4767 = getelementptr [79 x i8], [79 x i8]* @.str720, i32 0, i32 0
-  %4768 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str720.c, i8* %4767, i64 78)
+  %4767 = getelementptr [78 x i8], [78 x i8]* @.str720, i32 0, i32 0
+  %4768 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str720.c, i8* %4767, i64 77)
   %4769 = call i8* @nyx_string_to_cstr(%nyx_string* %4768)
   call void @nyx_print_string(i8* %4769)
-  %4770 = getelementptr [71 x i8], [71 x i8]* @.str721, i32 0, i32 0
-  %4771 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str721.c, i8* %4770, i64 70)
+  %4770 = getelementptr [72 x i8], [72 x i8]* @.str721, i32 0, i32 0
+  %4771 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str721.c, i8* %4770, i64 71)
   %4772 = call i8* @nyx_string_to_cstr(%nyx_string* %4771)
   call void @nyx_print_string(i8* %4772)
   %4773 = getelementptr [53 x i8], [53 x i8]* @.str722, i32 0, i32 0
@@ -10246,8 +10246,8 @@ merge755:
   %4802 = icmp slt i64 %4801, 40
   br i1 %4802, label %then756, label %else757
 then756:
-  %4803 = getelementptr [67 x i8], [67 x i8]* @.str726, i32 0, i32 0
-  %4804 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str726.c, i8* %4803, i64 66)
+  %4803 = getelementptr [66 x i8], [66 x i8]* @.str726, i32 0, i32 0
+  %4804 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str726.c, i8* %4803, i64 65)
   %4805 = call i8* @nyx_string_to_cstr(%nyx_string* %4804)
   call void @nyx_print_string(i8* %4805)
   ret i1 0

@@ -1,0 +1,13 @@
+// #[derive(Fields)] sobre un struct de TUPLA tiene que dar NYX2013 en el
+// checker (fricción nyxerp 2026-09-14, 20260914-210002-team-3): sus campos no
+// tienen nombre —el parser los llama _0— y un esquema con una columna "_0" es
+// ruido con forma de esquema. Antes el error nacía en codegen, después de un
+// `nyx check` en verde.
+#[derive(Fields)]
+struct Codigo(int)
+
+fn main() -> int {
+    let c = Codigo(7)
+    print(int_to_string(c._0))
+    return 0
+}

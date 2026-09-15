@@ -467,7 +467,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str231.c = internal global %nyx_string* null
 @.str232 = private unnamed_addr constant [80 x i8] c"To store trait objects in a collection, type the collection: `Array<dyn Trait>`\00"
 @.str232.c = internal global %nyx_string* null
-@.str233 = private unnamed_addr constant [89 x i8] c"Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`\00"
+@.str233 = private unnamed_addr constant [88 x i8] c"Para guardar objetos de trait en una colección, tipa la colección: `Array<dyn Trait>`\00"
 @.str233.c = internal global %nyx_string* null
 @.str234 = private unnamed_addr constant [30 x i8] c"field-access-complex-receiver\00"
 @.str234.c = internal global %nyx_string* null
@@ -2904,8 +2904,8 @@ define { i64, i8* }* @gotchas_table(
   %823 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str232.c, i8* %822, i64 79)
   %824 = ptrtoint %nyx_string* %823 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %791, i64 %824, i64 2)
-  %825 = getelementptr [89 x i8], [89 x i8]* @.str233, i32 0, i32 0
-  %826 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str233.c, i8* %825, i64 88)
+  %825 = getelementptr [88 x i8], [88 x i8]* @.str233, i32 0, i32 0
+  %826 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str233.c, i8* %825, i64 87)
   %827 = ptrtoint %nyx_string* %826 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %791, i64 %827, i64 2)
   %828 = ptrtoint { i64, i8* }* %791 to i64

@@ -437,7 +437,7 @@ if [ "$CELDAS_OK" -lt "$CELDAS_MINIMAS" ]; then
     echo "  La matriz verifica MENOS que antes. Causas típicas, en orden:"
     echo "    1. el runtime no compiló → toda celda falla al linkear (IR_INVALIDO)"
     echo "    2. una regresión de codegen hace rechazar celdas que antes corrían"
-    echo "    3. una celda pasó legítimamente a rechazo ruidoso → bajá"
+    echo "    3. una celda pasó legítimamente a rechazo ruidoso → baja"
     echo "       CELDAS_MINIMAS a conciencia, en un commit que lo explique"
     echo "  Sin este piso la matriz saldría VERDE con 0 celdas verificadas."
     FAILED=1

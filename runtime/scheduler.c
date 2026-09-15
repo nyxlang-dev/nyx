@@ -276,7 +276,7 @@ static int nyx_stack_fault_on_fault(void* addr_v) {
             char* lo = __atomic_load_n(&g_guards[i].lo, __ATOMIC_ACQUIRE);
             char* hi = g_guards[i].hi;
             if (lo && hi && addr >= lo && addr < hi) {
-                static const char m1[] = "[nyx] goroutine stack overflow — subí NYX_GOROUTINE_STACK_KB (actual: ";
+                static const char m1[] = "[nyx] goroutine stack overflow — sube NYX_GOROUTINE_STACK_KB (actual: ";
                 // os_fd_write: en posix es write() crudo (async-signal-safe,
                 // misma syscall que antes); en win32, _write del CRT.
                 // EN: raw write() on posix (same syscall as before); CRT

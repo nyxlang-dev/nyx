@@ -1604,18 +1604,102 @@ else
 fi
 
 # NYX2013 (arco struct-campos-reflexion): el límite de tipos de #[derive(Fields)]
-# tiene que ser un ABORTO de codegen, no una aproximación — el Display derivado
-# aplana un campo Array/Map/struct a la cadena literal "ptr", y heredarlo haría
-# que un ORM escribiera "ptr" en una columna de la base. Va acá y NO en la tabla
-# de arriba porque semantic PASA: el que corta es el generador, así que no hay
-# "check FAILED" que buscar — la prueba es el exit code.
-name="codegen-nyx2013-derive-fields-no-primitivo"
-n13_out=$(NYX_SRC=tests/compiler/errors/test-derive-fields-campo-no-primitivo.nx ./nyx_bootstrap 2>&1); n13_rc=$?
-if [ "$n13_rc" -ne 0 ] && echo "$n13_out" | grep -qF "NYX2013" && echo "$n13_out" | grep -qF "etiquetas"; then
+# no puede ser una aproximación — el Display derivado aplana un campo
+# Array/Map/struct a la cadena literal "ptr", y heredarlo haría que un ORM
+# escribiera "ptr" en una columna de la base.
+#
+# Fricción nyxerp 2026-09-14 (20260914-210002-team-3): el error nacía SOLO en
+# codegen, así que `nyx check` salía 0 y `nyx build` fallaba después de imprimir
+# «check OK». Desde entonces lo detecta el checker (check_derive_fields_campos,
+# semantic.nx) y el abort de codegen queda como red para NYX_SKIP_SEMANTIC.
+# (a) Camino normal: lo corta el CHECKER («check FAILED»), nombrando el campo y
+# la línea del nodo struct (12 en el fixture: la del cierre de la declaración).
+name="nyx2013-semantic-derive-fields-no-primitivo"
+n13_out=$(NYX_LANG=en NYX_SRC=tests/compiler/errors/test-derive-fields-campo-no-primitivo.nx ./nyx_bootstrap 2>&1); n13_rc=$?
+if [ "$n13_rc" -ne 0 ] && echo "$n13_out" | grep -q "check   FAILED" \
+   && echo "$n13_out" | grep -qF "error [NYX2013] (line 12): #[derive(Fields)] does not support field 'etiquetas' of 'Modelo' (type 'Array')"; then
   printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
 else
-  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2013 nombrando el campo)\n" "$n13_rc"
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0, check FAILED y NYX2013 del checker nombrando 'etiquetas' en la línea 12)\n" "$n13_rc"
   echo "$n13_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+# (b) La red de codegen sigue viva sin el checker.
+name="codegen-nyx2013-derive-fields-no-primitivo"
+n13c_out=$(NYX_SKIP_SEMANTIC=1 NYX_SRC=tests/compiler/errors/test-derive-fields-campo-no-primitivo.nx ./nyx_bootstrap 2>&1); n13c_rc=$?
+if [ "$n13c_rc" -ne 0 ] && echo "$n13c_out" | grep -qF "NYX2013" && echo "$n13c_out" | grep -qF "etiquetas"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2013 nombrando el campo)\n" "$n13c_rc"
+  echo "$n13c_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+# (c) `nyx check` lo ve: el caso del reporte y el struct de tupla, cada uno con
+# SU diagnóstico (regla 22: un rc != 0 por otro error no cuenta).
+if [ ! -x ./nyx_check ]; then
+  printf "  ⚠️  nyx_check no existe — ejecuta 'make build-check' (se saltan los checks de NYX2013 en nyx check)\n"
+else
+  name="nyx2013-nyx-check-campo"
+  n13k_out=$(NYX_LANG=en NYX_SRC=tests/compiler/errors/test-derive-fields-campo-no-primitivo.nx ./nyx_check 2>&1); n13k_rc=$?
+  if [ "$n13k_rc" -ne 0 ] && echo "$n13k_out" | grep -qF "[NYX2013] (line 12): #[derive(Fields)] does not support field 'etiquetas' of 'Modelo'"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2013 nombrando 'etiquetas')\n" "$n13k_rc"
+    echo "$n13k_out" | grep -v "^SYM:\|^DEF:\|^END" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  name="nyx2013-nyx-check-tupla"
+  n13t_out=$(NYX_LANG=en NYX_SRC=tests/compiler/errors/test-nyx2013-derive-fields-tupla.nx ./nyx_check 2>&1); n13t_rc=$?
+  if [ "$n13t_rc" -ne 0 ] && echo "$n13t_out" | grep -qF "[NYX2013] (line 7): #[derive(Fields)] cannot be used on tuple struct 'Codigo'"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2013 sobre el struct de tupla 'Codigo')\n" "$n13t_rc"
+    echo "$n13t_out" | grep -v "^SYM:\|^DEF:\|^END" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  # CONTROL POSITIVO: un derive válido (los cuatro tipos, un alias, y un struct
+  # sin derive con un Array) pasa `nyx check` con 0.
+  name="nyx2013-nyx-check-positivo"
+  n13p_out=$(NYX_SRC=tests/compiler/errors/fixtures/positive-nyx2013-derive-fields-valido.nx ./nyx_check 2>&1); n13p_rc=$?
+  if [ "$n13p_rc" -eq 0 ] && ! echo "$n13p_out" | grep -qF "NYX2013"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado 0 y sin NYX2013 sobre un derive válido)\n" "$n13p_rc"
+    echo "$n13p_out" | grep -v "^SYM:\|^DEF:\|^END" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  # PARIDAD checker ↔ codegen. La lista de tipos que el derive sabe convertir
+  # vive en DOS lugares por necesidad: codegen la usa para EMITIR la conversión
+  # (fields_tipo_soportado, sobre el tipo LLVM) y el checker para PREDECIR el
+  # abort (derive_fields_tipo_soportado, sobre el tipo Nyx). No se pueden
+  # compartir —trabajan sobre representaciones distintas y codegen no importa
+  # nada de semantic—, así que se comparan por CONDUCTA: por cada tipo de campo,
+  # el veredicto de `nyx check` tiene que coincidir con el del codegen solo
+  # (NYX_SKIP_SEMANTIC). Si alguien agrega un tipo a una lista y no a la otra,
+  # esto se pone rojo nombrando el tipo — el repo ya se quemó con listas gemelas
+  # que derivan (run_prelude_divergence.sh, nyx_bool_text_parse).
+  name="nyx2013-paridad-checker-codegen"
+  par_tmp=$(mktemp -d /tmp/n13par-XXXX)
+  par_bad=""
+  for par_ty in int i64 u64 usize float bool String char i8 i16 i32 u8 u16 u32 f32 \
+                Array "Array<int>" Map "Map<String,int>" "Option<int>" "Result<int,String>" \
+                "*int" StringBuilder Otro Color Clave Lista; do
+    par_src="$par_tmp/caso.nx"
+    printf 'struct Otro {\n    v: int\n}\n\nenum Color {\n    Rojo,\n    Verde\n}\n\ntype Clave = int\ntype Lista = Array\n\n#[derive(Fields)]\nstruct Caso {\n    nombre: String,\n    campo: %s\n}\n\nfn main() -> int {\n    print("x")\n    return 0\n}\n' "$par_ty" > "$par_src"
+    par_k_out=$(NYX_SRC="$par_src" ./nyx_check 2>&1); par_k_rc=$?
+    ( cd "$par_tmp" && NYX_SKIP_SEMANTIC=1 NYX_SRC="$par_src" NYX_HOME="$OLDPWD" "$OLDPWD/nyx_bootstrap" ) > "$par_tmp/cg.out" 2>&1; par_c_rc=$?
+    if [ "$par_k_rc" -eq 0 ]; then par_k="acepta"
+    elif echo "$par_k_out" | grep -qF "NYX2013"; then par_k="rechaza"
+    else par_k="otro-error"; fi
+    if [ "$par_c_rc" -eq 0 ]; then par_c="acepta"
+    elif grep -qF "NYX2013" "$par_tmp/cg.out"; then par_c="rechaza"
+    else par_c="otro-error"; fi
+    if [ "$par_k" != "$par_c" ] || [ "$par_k" = "otro-error" ]; then
+      par_bad="$par_bad $par_ty(check=$par_k,codegen=$par_c)"
+    fi
+  done
+  rm -rf "$par_tmp"
+  if [ -z "$par_bad" ]; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    veredictos distintos entre nyx check y codegen:%s\n" "$par_bad"
+    FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
 fi
 
 # NYX2007 en el MISMO bloque field_access, ronda 2: `length` sobre un campo Map
@@ -1701,7 +1785,7 @@ fi
 
 name="check-diag-carries-code"
 if [ ! -x ./nyx_check ]; then
-  printf "  ⚠️  nyx_check no existe — corré 'make build-check' (se salta este check)\n"
+  printf "  ⚠️  nyx_check no existe — ejecuta 'make build-check' (se salta este check)\n"
 else
   cdc_src=$(mktemp /tmp/cdc-XXXX.nx)
   printf 'fn main() -> int {\n    prinln("x")\n    return 0\n}\n' > "$cdc_src"
@@ -2072,6 +2156,9 @@ POSITIVE_TESTS=(
   # Control POSITIVO de NYX2003/NYX2006 en el checker (fricción nyxerp
   # 2026-09-14): cadenas de campos, self, propiedades, tuplas y métodos pasan.
   "tests/compiler/errors/fixtures/positive-nyx2003-receptores-soportados.nx"
+  # Control POSITIVO de NYX2013 en el checker (fricción nyxerp 2026-09-14): un
+  # derive(Fields) válido —con alias y un struct vecino sin derive— compila.
+  "tests/compiler/errors/fixtures/positive-nyx2013-derive-fields-valido.nx"
 )
 
 for file in "${POSITIVE_TESTS[@]}"; do

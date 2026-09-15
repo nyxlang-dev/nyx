@@ -51,8 +51,8 @@ static void* nyx_gc_oom_handler(size_t bytes_requested) {
         "\xF0\x9F\x92\xA5 Runtime Error: out of memory (GC heap exhausted) "
         "requesting %zu bytes\n"
         "   Error de ejecución: memoria agotada (heap del GC) al pedir %zu bytes\n"
-        "   Hint: demasiadas allocaciones vivas a la vez — procesá en bloques, o "
-        "ajustá el tope con GC_MAXIMUM_HEAP_SIZE.\n",
+        "   Hint: demasiadas allocaciones vivas a la vez — procesa en bloques, o "
+        "ajusta el tope con GC_MAXIMUM_HEAP_SIZE.\n",
         bytes_requested, bytes_requested);
     fflush(stderr);
     // _Exit (C99, <stdlib.h>) en vez de _exit (POSIX, <unistd.h>): mismo

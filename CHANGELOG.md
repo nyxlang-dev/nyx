@@ -460,6 +460,46 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **Español neutro: la plantilla de `nyx report` decía «Completá las secciones», y la guarda no lo
+  veía** (fricción nyxerp `20260914-210002-team-3`). `lib_voseo.sh` era una lista de palabras
+  sueltas y distinguía mayúsculas: se escapaba toda forma que nadie había anotado. Ahora
+  `voseo_filter` (compartida por `run_voseo_messages.sh` y `run_templates_parity.sh`) suma una
+  REGLA GENERAL para el imperativo voseante en -á, sin distinguir mayúsculas, que excluye el futuro
+  (vocal/b/d + «rá»: hará, podrá, tendrá) y cuatro adverbios (acá, allá, está, quizá): medido, cero
+  falsos positivos en compilador, runtime, std, scripts, templates y tests. Las formas en -é/-í
+  siguen en la lista explícita porque coinciden con el pretérito de primera persona («probé»,
+  «subí»). Al activarla aparecieron 28 formas más, casi todas en texto que ve un usuario, corregidas:
+  `build.nx` (3 de `nyx report`, más «avisale»), hints de `codegen.nx` («bindeá», «accedé»,
+  «asigná»), `semantic.nx` («envolvé»), el gotcha `dyn-trait-needs-annotation` («tipá»,
+  regenerado), `runtime.c` y `scheduler.c` (mensajes de memoria agotada y de stack de goroutine),
+  `std/postgres.nx`, `std/http.nx` y seis scripts. La guarda mira también los runners de `tests/`
+  (`run_error_tests.sh` imprimía «corré») y trae autotest: rojo con «Completá», «Corré» y
+  «CHEQUEÁ», verde con español neutro.
+- **`nyx check` ve el NYX2013 de `#[derive(Fields)]`: ya no sale con 0 sobre un programa que
+  `nyx build` rechaza** (fricción nyxerp `20260914-210002-team-3`). El límite de tipos del derive
+  (campo que no es int/bool/float/String, o struct de tupla) solo lo detectaba codegen, así que
+  `build` fallaba después de imprimir `check OK` y un proyecto grande no podía usar `check` como
+  puerta. `check_derive_fields_campos` (semantic.nx) lo detecta nombrando el struct, el campo y su
+  tipo, con la línea del nodo struct (la del cierre de su declaración); el abort de codegen queda como red bajo `NYX_SKIP_SEMANTIC`. La lista de tipos
+  vive en dos representaciones (tipo Nyx en el checker, tipo LLVM en codegen) y no se puede
+  compartir: la guarda `nyx2013-paridad-checker-codegen` compila un struct por cada uno de 27 tipos
+  de campo con los dos y exige el mismo veredicto. Tests en `run_error_tests.sh`: checker con
+  línea, red de codegen, `nyx check` sobre el caso del reporte y el struct de tupla (cada uno con su
+  NYX2013), control positivo y la paridad.
+- **El checker resuelve las fns POR MÓDULO, como el codegen: dos módulos con una fn privada
+  homónima de firmas distintas ya no se chequean uno contra el otro** (fricción nyxerp
+  `20260914-200001-team-1`). `semantic.nx` registraba aridad y firma por nombre pelado: la aridad
+  salía del ÚLTIMO registro (`scope_get_arity`) y los tipos del PRIMERO (`lookup_fn_sig`), así que
+  `src/uno.nx` con `fn ayuda(x: String)` y `src/dos.nx` con `fn ayuda(a: int, x: String)` daban
+  NYX1006 en `uno_saludo` y NYX1005 en `dos_saludo` en `nyx check` y `nyx build`. Agregar un archivo
+  rompía el chequeo de otro que nadie tocó. Ahora cada fn top-level lleva su módulo (las marcas
+  `//#module` que ya mira el codegen) y `fn_module_resolve` elige la firma con las mismas reglas que
+  `resolve_module_fn_soft`: propio módulo, principal/prelude para un caller del principal, match
+  único entre módulos. Solo los nombres declarados en más de un módulo pagan la resolución. Una
+  llamada ambigua apaga el chequeo de firma (el codegen la corta con NYX2010). Guarda: 3 checks
+  nuevos en `run_tooling_gates.sh` (firmas distintas + la misma firma + `pub fn` de otro módulo sin
+  calificar compilan y CORREN con el valor de cada módulo; el negativo acusa cada error contra la
+  firma de SU módulo).
 - **`try`: una salida temprana (`return`, `?`, `break`, `continue`) ya no deja un nivel de try
   colgado — PRODUCCIÓN, 901 caídas** (2026-09-15). `codegen_try_catch` hacía `nyx_try_push()` +
   `setjmp` al entrar y solo emitía `nyx_try_pop()` cuando el cuerpo terminaba SIN terminador; el
