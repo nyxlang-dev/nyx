@@ -1,0 +1,3 @@
+=== Nyx Benchmarks ===
+bench lambda captura un local del bench: __ANY__
+bench spawn captura un local del bench: __ANY__

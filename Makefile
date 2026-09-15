@@ -327,6 +327,7 @@ test-ai-first:
 	bash scripts/testing/run_gotcha_coverage.sh
 	bash scripts/testing/run_vet_gotchas.sh
 	bash scripts/testing/run_ai_first_tests.sh
+	bash scripts/testing/run_stdin_io_tests.sh
 	bash scripts/testing/run_silent_failure_checks.sh
 	bash scripts/testing/run_tooling_gates.sh
 	bash scripts/testing/run_build_manifest.sh

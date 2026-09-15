@@ -20,6 +20,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`std/io`: `read_stdin_all() -> String`** (fricción de nyxerp, reporte
+  `20260914-210002-team-2`, pedido 2). Leer la entrada estándar ENTERA (un JSON de una sola
+  línea que un programa wasm recibe del navegador, un filtro, cualquier programa WASI que un
+  anfitrión alimenta por fd 0) no tenía forma directa — había que armarla a mano con
+  `read_line()` sorteando sus dos conductas (ver el `### Fixed` de abajo). Binary-safe (bytes 0
+  incluidos, `fread` por longitud explícita, nunca `strlen`) y sin tocar los saltos de línea del
+  contenido. `extern "C" fn nyx_read_stdin_all()` + wrapper `pub fn` en `std/io.nx` — A
+  PROPÓSITO no es builtin (mismo patrón que `std/tls.nx`/`std/webpushcrypto.nx`): no toca
+  `semantic.nx`/`codegen.nx`, así que no exige re-verificar el punto fijo del bootstrap ni
+  regenerar semillas/`std/builtins.index`. `std/io` ya estaba en el prelude (pre-registrado en
+  `compiler/resolve.nx` para dar `println` sin import), así que la función queda GLOBAL sin
+  `import "std/io"` igual que `read_line` — `make bootstrap` regenera `std/prelude.nx` por su
+  dependencia declarada. Funciona igual en wasm32-wasi (WASI expone fd 0 como
+  el stdin de libc, mismo `runtime/runtime.c` que ambos targets comparten). Documentado en
+  `LLM.md` (sección I/O). Tests self-asserting nuevos en `tests/ai-first/stdin/` (bytes 0 y
+  entrada vacía), corridos en nativo Y wasm32-wasi por `scripts/testing/run_stdin_io_tests.sh`
+  (dentro de `make test-ai-first`).
 - **`std/serve`: `serve_app_en(app, host, port, workers)` — elegir la dirección de escucha**
   (fricción de nyxerp, 2026-09-14, IDEA). `serve_app(app, port, workers)` no dejaba elegir host:
   un proyecto con `servidor.direccion` en su config (por omisión `127.0.0.1`, solo la propia
@@ -431,6 +448,79 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   devuelven `int` explícitamente.
 
 ### Fixed
+- **`nyx build --main <archivo.nx>` ya no reescribe `nyx.lock` con el main de esa corrida**
+  (fricción de nyxerp, 2026-09-14, reporte `20260914-210002-team-4`, sobre la flag `--main` del
+  mismo día). `nyx build --target wasm32-wasi --main src/web/dibujante_main.nx` compilaba el
+  artefacto correcto y no tocaba el binario principal, como anuncia `--main`, pero `write_lockfile`
+  recibía el `ProjectConfig` YA pisado por el flag (`config.main_file = main_flag`, la misma
+  variable que usa el compilador para saber qué compilar) y dejaba el `nyx.lock` VERSIONADO
+  diciendo que el punto de entrada del proyecto era el de esa única corrida — un `git add` de
+  rutina lo hubiera commiteado. `ProjectConfig` suma `manifest_main_file` (el main del manifiesto,
+  fijado en `parse_toml` antes de que `--main` pise `main_file`); `write_lockfile` escribe ese
+  campo, nunca el efectivo. De paso, `write_lockfile` salta la escritura entera si el contenido
+  calculado es idéntico al que ya está en disco (antes reescribía — y tocaba la fecha del
+  archivo — en CADA build, aunque nada cambiara). `--target` y el resto de las flags de una sola
+  corrida no llegan al lock (nunca tocan `config` fuera de `main_file`/`bin_name`); dependencias
+  resueltas SÍ lo siguen actualizando (control positivo). `run_build_manifest.sh` suma 6 checks
+  (14 → 20): `--main` nativo y con `--target wasm32-wasi` no tocan `nyx.lock` en un repo git real,
+  el lock sigue diciendo el main del manifiesto/`[build]`, y agregar una dependencia sí lo cambia.
+- **`std/json`: `try_json_parse`/`json_parse` ya no aceptan un JSON truncado como si estuviera
+  completo — CAMBIO DE COMPORTAMIENTO** (fricción de nyxerp, 2026-09-14, PRIORIDAD MÁXIMA —
+  silencioso). `try_json_parse("{\"a\": [1, 2], \"b\": \"x\""` (sin la `}` final) devolvía `Ok`
+  con un objeto/arreglo sintetizado a partir de lo que había, indistinguible de uno completo — un
+  ERP que leyera una respuesta HTTP cortada a mitad de una lista de facturas mostraba menos filas,
+  o un monto recortado, sin ningún error. `parse_object`/`parse_array`/`parse_string` siempre
+  sintetizaban una estructura y nunca propagaban el tag `"null"`, así que la desambiguación
+  existente de `try_json_parse` (E5.4, basada en el tag) no lo detectaba — límite conocido y
+  fichado en `LLM.md`/`test-378` como "arco de parser con pos-tracking". Fix: `std/json.nx`
+  trackea la posición de lectura end-to-end (`pos = [posicion, error_flag, mensaje]`); cualquier
+  fin de entrada dentro de un objeto/arreglo/string, una clave sin valor, una coma final, un
+  número o literal a medias, o contenido no-blanco sobrante tras el valor raíz (RFC 8259: un
+  documento es UN valor) ahora es `Err{5,"parse"}` con un mensaje que dice qué se esperaba y el
+  byte donde. `json_parse` (la centinela) comparte la misma pasada y colapsa cualquiera de estos
+  casos a `["null"]` — el mismo centinela que ya usaba para basura sin estructura, sin sumarle
+  ambigüedad nueva. Efecto colateral esperado (RFC 8259 estricto): un token inválido en cualquier
+  punto de un arreglo/objeto ahora invalida el documento ENTERO, no solo ese elemento —
+  `json_parse("[true,tomato]")` pasa de `Ok(["array",[true,null]])` a `Ok(["null"])`
+  (`test-319`, actualizado). Sin `json_parse_tolerante`: no se encontró ningún consumidor real
+  (`std/web.nx#req_json` sale mejor parado — antes poblaba un `Map` con datos parciales/corruptos,
+  ahora devuelve el `Map` vacío ya documentado para "no es JSON válido") que dependiera de la
+  tolerancia vieja. Caso nuevo en `tests/ai-first/27-json-truncado.nx`: los 4 ejemplos exactos del
+  reporte, fin de entrada en cada tipo de estructura, escape `\u` a medias sin cierre, número/
+  literal a medias, clave sin valor, coma final, basura tras el valor raíz, y una PROPIEDAD (todo
+  prefijo propio de un documento objeto/arreglo válido es `Err`). `test-378-try-json` y
+  `test-319-json-parse-strict` actualizados a la conducta nueva.
+- **`write_file(path, content)` ya NO trunca el contenido en el primer byte NUL — arreglo de raíz**
+  (fricción 20260914-190001-team-1, equipo nyxerp; seguimiento del fix de doc de más arriba, mismo
+  reporte, 2026-09-15). `nyx_write_file` (runtime/file-io.c) recibía `content` como `char*` y
+  dimensionaba el `fwrite` con `strlen(content)` — un `String` con un NUL embebido (`"AB" +
+  char_to_string(0) + "CD"`) se cortaba a los primeros 2 bytes en disco, sin error ni aviso: el
+  mismo defecto que ya se había arreglado en `nyx_file_write_string`/`nyx_file_write_result` en
+  2026-07-30, pero nunca se propagó a la centinela simple. El fix vive en una función NUEVA,
+  `nyx_write_file_safe(path, content: nyx_string*)`, que escribe `content->length` bytes reales, no
+  `strlen` — **`nyx_write_file` en sí NO cambió de firma**: sigue tomando `char*` y con el bug
+  viejo intacto, a propósito. Motivo medido en vivo durante esta sesión: `compiler/nyx.nx` (el
+  propio driver del compilador) usa `write_file()` para volcar su `.ll` de salida, así que cualquier
+  semilla `.ll` ya compilada con el codegen anterior (`compiler/codegen.ll`/`compiler/nyx.ll` sin
+  regenerar) trae ese `call` horneado con la firma vieja — cambiarle el tipo al segundo argumento de
+  `nyx_write_file` habría roto la ABI en el acto: la semilla vieja sigue pasando un `char*` crudo
+  donde la función ahora leería `->length`/`->data` de un `nyx_string*`, un `write_file()` mudo
+  volviéndose un `write_file()` que corrompe memoria. `compiler/codegen.nx` emite el `call` al
+  símbolo nuevo (mismo patrón que `file_write_string`: `%nyx_string*` directo, con `inttoptr` de
+  respaldo si el tipo estático no lo garantiza) y declara ambos símbolos. Auditoría del resto de
+  `runtime/` (`tcp_write`, `tls_write`/`tls_write_conn`, `https_post`, `udp_sendto`, `exec`) no
+  encontró otro caso: todos ya sizeaban por longitud real desde arreglos previos (2026-07-25/30);
+  `nyx_write_file` era el único sobreviviente, y ahora es aditivo, no reemplazado. `read_file` no
+  cambia — siempre fue binary-safe en lectura. `compiler/codegen.ll` SÍ se regeneró en esta sesión
+  (`make recompile MODULE=codegen` + rebuild del bootstrap, verificado con el nuevo símbolo en el
+  `.ll` y con `tests/ai-first/29-read-file-nul-safe.nx` compilando y corriendo contra el bootstrap
+  nuevo); `compiler/nyx.ll` (el driver) queda sin regenerar — su propio `write_file()` interno sigue
+  la ruta vieja, sin riesgo (nunca escribe un `.ll` con NUL embebido) — fichado en `TASKS.md` para
+  el próximo `chore(seeds)` que traiga las 9 semillas a punto fijo. Blindado en
+  `tests/ai-first/29-read-file-nul-safe.nx` (escritura + relectura byte a byte, incluidos los dos
+  NULs internos y el final) y en `tests/runtime-unit/test_file_io.c`
+  (`test_write_file_binary_safe`, +5 asserts — `make test-runtime` 35 suites / 1680 asserts).
+  Documentado en `LLM.md` y en el gotcha `chr-zero-nul-byte` (EN+ES).
 - **`await`, `spawn { }`, `select` y el executor async en wasm32-wasi ya no mueren en el enlace sin
   decir dónde.** Medido el 2026-09-14 contra la toolchain instalada, construcción por construcción:
   `await` y `run()` (nyx_goroutine_spawn_closure/join), `spawn { }` (…_detached), `go_sleep`,
@@ -446,6 +536,73 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   escribía el `.ll`. De paso, el parser fija en los nodos de `spawn { }` y `select { }` la línea de
   la palabra clave: tomaban la del `}` de cierre, así que todo diagnóstico sobre ellos señalaba el
   final del bloque.
+- **wasm con arena: un cierre que se cancela o se re-registra DESDE SU PROPIO DISPARO ya no lee
+  memoria liberada.** Es el patrón normal de una interfaz: un click que llama a `update()` y el VDOM
+  re-registra el listener de ese mismo botón, un `browser_interval_fn` que se apaga a sí mismo, un
+  `browser_sse_fn` que se cierra al recibir «fin», un router que re-suscribe `hashchange`. El
+  binding desancla el cierre viejo en ese momento —es su cancelación— y `nyx_arena_unpin_turn`
+  liberaba la cadena de bloques del turno MIENTRAS el cierre seguía corriendo: medido trap
+  `memory access out of bounds` en `nyx_string_concat` dentro del cierre, apenas leía su captura
+  después de re-registrarse. Ahora `anchorClosure` (shim) cuenta las llamadas en curso y posterga el
+  desanclaje hasta que la última vuelve. La retención por turno ya existía desde `33be4a01`; la ficha
+  ALTA de TASKS.md que la pedía había quedado abierta, y los tests con arena solo cubrían
+  `browser_fetch_fn` y `dom_on_fn`. `test-wasm-29-arena-autocancelacion` (arena) y
+  `test-wasm-30-autocancelacion-sin-arena` (mismo `.nx`) cubren los ocho bindings con cierre,
+  miden desde adentro del cierre que su turno sigue retenido mientras corre, y verifican que nada
+  llega después de `browser_sse_close` ni de un timeout cancelado. Shim del playground sincronizado.
+- **`f().campo` (NYX2003) ahora dice DÓNDE, y `nyx check` lo ve** (fricción nyxerp 2026-09-14). Leer
+  un campo sobre una llamada, un índice o un literal de struct no está soportado, y el mensaje lo
+  explicaba bien, pero sin archivo, línea ni función: en un archivo de pruebas de 128.000 fichas hubo
+  que buscar cada `).` con grep. Y como el error nacía en codegen, `nyx check` —la puerta rápida que
+  recomienda `AGENTS.md`— daba el archivo por bueno. Ahora semantic caza la FORMA del receptor
+  (llamada, índice, literal de struct o método) con el mismo código, NYX2003 en lectura y NYX2006 en
+  escritura, con función y línea como NYX1003; el chequeo es por forma y no por tipo, así que coincide
+  exactamente con lo que codegen rechaza (cadenas `a.b.c`, `self`, tuplas `t.0` y métodos siguen
+  pasando: control positivo `positive-nyx2003-receptores-soportados`). Los aborts de codegen
+  NYX2001-NYX2007 quedan como red para `NYX_SKIP_SEMANTIC` y ahora imprimen `--> archivo:línea, in
+  function 'f'` —o `in test "nombre"` dentro de un bloque test—, el mismo formato del guard de target;
+  queda sin ubicación solo `abort_method_type_mismatch` (fichado). Gotcha nuevo
+  `field-access-complex-receiver`.
+- **`read_line()` ya no parte una línea larga en trozos, y la última línea sin salto final ya no
+  se pierde** (fricción de nyxerp, reporte `20260914-210002-team-2`, medido igual en nativo y
+  wasm32-wasi bajo `wasmtime`). Dos conductas, ninguna documentada:
+  1. `read_line()` leía con `fgets(buf, 4096, stdin)` — un `char[4096]` fijo — así que una línea
+     de más de 4095 bytes volvía PARTIDA en varias llamadas sin nada que distinguiera un trozo de
+     una línea entera; quien las reunía con `"\n"` (lo natural) metía saltos de línea que nadie
+     había escrito. Fix de raíz: el buffer CRECE (lectura byte a byte con `fgetc` + `GC_REALLOC`
+     doblando capacidad, binary-safe — no usa `strlen`), sin cota de largo, en `runtime/runtime.c`
+     — el mismo `.c` en los dos targets (`runtime/wasm.srcs` lo incluye; stdin bajo WASI es el
+     mismo `FILE*` de libc).
+  2. La última línea sin salto final llegaba con `stdin_eof()` ya en verdadero, y el bucle que
+     mostraba la documentación (`while true { let l = read_line() if stdin_eof() { break } ... }`)
+     la descartaba: con `"uno\ndos"` (sin `\n` final), `dos` nunca se procesaba. Esto es
+     INHERENTE a la semántica de stdio — para saber que no queda nada más, `read_line` tiene que
+     tocar el EOF físico del stream en esa misma lectura, así que `stdin_eof()` no puede demorar
+     su señal sin romper su propio contrato («se activa tras la lectura que tocó el EOF»,
+     v0.24.21). El fix es el bucle de EJEMPLO: procesar la línea devuelta ANTES de mirar
+     `stdin_eof()`, usar `stdin_eof()` solo para decidir si sigue — nunca descartar por el solo
+     hecho de que ya esté en verdadero. Corregido en `LLM.md` (sección I/O).
+  Otras lecturas con el mismo buffer fijo de 4096 (`nyx_file_read_line` en `runtime/file-io.c`,
+  `nyx_tcp_read_line`/`buffered_read_line` en `runtime/net.c`) comparten el patrón pero NO el
+  cambio — archivo y socket son código distinto (fread por handle / recv bufferizado) y quedan
+  fichados en `TASKS.md`, fuera de alcance de este fix (el reporte es específicamente sobre
+  stdin). Tests self-asserting nuevos en `tests/ai-first/stdin/` (línea de 10000 bytes con y sin
+  salto final, `"uno\ndos"`, entrada vacía), corridos en nativo Y wasm32-wasi por
+  `scripts/testing/run_stdin_io_tests.sh` (dentro de `make test-ai-first`).
+- **Un `spawn` o una lambda escritos dentro de un bloque `test` (o `bench`) no veían los locals
+  del bloque** (fricción de nyxerp, 2026-09-14). `test "x" { let x: int = 5; spawn { .. x .. } }`
+  daba `NYX1002 in '__spawn_0': 'x' not declared`, y lo mismo una lambda (`__lambda_N`); el mismo
+  código dentro de `main` andaba. Dos causas en dos capas: el parser bajaba el cuerpo del `test` y
+  del `bench` con `parse_block` en vez de `parse_fn_body_block`, así que las fns sintéticas
+  quedaban pendientes y el drain final del programa las hoisteaba al top-level, fuera del scope; y
+  codegen emitía `__test_N` con un `define` a mano más `codegen_block`, sin la maquinaria de
+  closures (SharedEnv, fns anidadas) que un cuerpo de función sí tiene. Ahora los dos bloques se
+  parsean como cuerpos de función y codegen los baja por `codegen_function` con un nodo sintético
+  (`synth_void_fn_node`); el cuerpo del bench va en `__bench_body_N`, que el loop llama. Guarda:
+  check `test-captura` de `run_tooling_gates.sh` (spawn que captura un `int` y un `String` y manda
+  por un channel un `int` que codifica los dos, lambda que captura un local; comprueba el VALOR, no
+  solo que compile) y `test-428-bench-captura` para el bench. Aparte, fichado: `channel_send` de un
+  `String` emite IR inválido en cualquier contexto, también en `main`.
 - **«'X' is not supported on target 'wasm32-wasi'» ahora dice DÓNDE, y lista todos los usos de una
   vez** (fricción nyxerp 2026-09-14, lo que `--main` no cubría). El error nombraba solo el builtin y
   salía con `exit(1)` en el primero: en un proyecto con imports no había forma de saber qué archivo
@@ -564,6 +721,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   números, que es su literal de pgvector— devuelve los dígitos tal como vinieron. Queda documentado.
   `test-418-float-ida-y-vuelta` fija los tres casos del reporte, los bordes de la notación, el `f32`
   y 2000 valores de ida y vuelta (regresión: 443 archivos / 442 ARM64).
+- **El cliente de `std/http` mandaba `Host` sin el puerto cuando el puerto NO era el de omisión
+  del esquema** (fricción de nyxerp, 2026-09-14). RFC 9110 §7.2: `Host = uri-host [ ":" port ]`,
+  y el puerto solo se omite si coincide con el de omisión (80 http / 443 https). Pidiendo
+  `http://127.0.0.1:8124/x`, el servidor recibía `Host: 127.0.0.1` en vez de
+  `Host: 127.0.0.1:8124` — **silencioso**: la conexión y la respuesta eran normales, solo el
+  header salía mal. Rompía cualquier defensa CSRF que compara `Origin` (que un navegador manda
+  CON puerto) contra `Host`, y cualquier servidor virtual por nombre+puerto o proxy que
+  reconstruye la URL desde `Host`. Causa raíz: `http_build_request` (único sitio de `std/http.nx`
+  que arma la cabecera) recibía el hostname pelado, nunca el puerto — los 8 call-sites (`http_get`,
+  `http_post`, `http_request` y la tipada `try_http_exec`, cada una en su variante TLS y plana)
+  pasaban `host` directo. Ahora todos pasan por `http_host_header(host, port, default_port)`
+  (nueva, `pub`, en `std/http.nx`), que arma `host` o `host:puerto` según el criterio del RFC.
+  `http_parse_url` no soporta literales IPv6 (`[::1]:puerto`) hoy — parte host:puerto por el
+  primer `:`, así que un host IPv6 nunca llega entero a la cabecera — fuera de alcance de este
+  fix, respetado tal cual. Regresión `tests/ai-first/28-http-host-port.nx`: server RAW
+  (`tcp_listen`/`tcp_accept`, sin `std/serve`) que devuelve el valor EXACTO de `Host` recibido por
+  `http_get` y por `try_http_request` contra un puerto no-privilegiado no-estándar (control
+  positivo: CON puerto), más el control del caso de omisión vía `http_host_header` directo (no se
+  puede bindear 80/443 sin privilegios en CI) — falla con el código anterior, pasa 5/5 corridas
+  seguidas con el fix.
 - **SEGURIDAD: el primer HTTPS de `std/http` hacía que el `sslmode=verify-ca`/`verify-full` de
   `std/postgres` aceptara certificados de cualquier CA pública.** Hallado revisando la fricción del
   cliente HTTP/TLS de nyxerp (2026-09-14). Desde el arreglo de verificación del 2026-09-11,
@@ -1356,6 +1533,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   esperable.
 
 ### Docs
+- **`LLM.md` corrige el contrato de binary-safety de archivos y saca dos funciones inventadas**
+  (fricción 20260914-190001-team-1, equipo nyxerp, DOC). La doc decía que `read_file`/`write_file`
+  NO eran binary-safe con bytes 0 como par — medido contra `runtime/file-io.c` (y confirmado con un
+  test nuevo, `tests/ai-first/29-read-file-nul-safe.nx`), el contrato es asimétrico: `read_file` y
+  `try_read_file` SÍ son binary-safe en LECTURA (`fread` por tamaño real + `nyx_string_from_ptr` con
+  longitud explícita, nunca `strlen`); solo `write_file` trunca en el primer NUL en ESCRITURA
+  (`strlen` en su ABI `char*`) — `try_write_file` tampoco trunca. El ejemplo "Defer for cleanup"
+  llamaba a `file_read_all`, que no existe (NYX1002 al compilarlo) — se reemplazó por la receta real
+  para leer un archivo entero con la API de buffer (`file_seek`+`file_tell`+`file_read_bytes`+
+  `string_from_bytes`), documentada por primera vez. Una auditoría de todos los identificadores
+  llamados en los bloques ```nyx de LLM.md (extraídos y cruzados contra builtins/`std/*.nx`/fns
+  locales del propio bloque) encontró un segundo fantasma sin relación con el reporte: el ejemplo de
+  Structs llamaba a `to_float(...)`, que tampoco existe — es `int_to_float(...)`. Los tres bloques
+  corregidos se compilaron y corrieron a mano para verificarlos (ninguna guardia automática cubre hoy
+  los bloques de `LLM.md` — fichado en `TASKS.md`). Comentarios desactualizados con la misma
+  afirmación incorrecta corregidos en `std/fs.nx` y `runtime/file-io.c`.
 - **`docs/SPEC.md` documenta `continue` en `for … in`, los campos `Fn` de un struct, el formato de
   ida y vuelta de `float_to_string` y los números JSON que conservan su texto**, con tres recetas
   nuevas (`105-struct-fn-field`, `106-json-exact-numbers`, `107-for-continue`). Conteos: `make

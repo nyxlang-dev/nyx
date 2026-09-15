@@ -68,7 +68,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
@@ -105,19 +105,20 @@ quedan intactos.**
 18. **`<Struct>_desde_fila()` acepta todas las formas de booleano que emiten sus dos productores
 —`true`/`false`, `t`/`f` y `1`/`0`— y ABORTA nombrando el valor ante cualquier otra.**
 19. **Para guardar objetos de trait en una colección, tipá la colección: `Array<dyn Trait>`**
-20. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
-21. **La lista de módulos que trae el prelude vive DENTRO del prelude, en la línea
+20. **Un campo solo se lee desde un nombre o una cadena de campos: `f().x`, `a[0].x` y `T{...}.x` son error (NYX2003; escribirlos, NYX2006).**
+21. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
+22. **La lista de módulos que trae el prelude vive DENTRO del prelude, en la línea
 `//#prelude-modules:` — nunca hardcodeada en el compilador.**
-22. **Los nombres del prelude son GLOBALES: declarar uno propio con el mismo nombre es NYX1013.**
-23. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
+23. **Los nombres del prelude son GLOBALES: declarar uno propio con el mismo nombre es NYX1013.**
+24. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
 nonces, ni ningún otro material criptográfico; para eso usa `csprng_bytes`.**
-24. **Una columna NULL de `std/sqlite` NO es un string vacío — se pregunta con `sqlite_is_null(v)`**
-25. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
-26. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
-27. **`time()`, `time_ms()` y `time_us()` son nombres deprecados: usa `time_epoch()` para el reloj de
+25. **Una columna NULL de `std/sqlite` NO es un string vacío — se pregunta con `sqlite_is_null(v)`**
+26. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
+27. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
+28. **`time()`, `time_ms()` y `time_us()` son nombres deprecados: usa `time_epoch()` para el reloj de
 pared y `monotonic_ms()` / `monotonic_us()` para el monotónico — misma llamada al runtime, con un
 nombre que dice CUÁL reloj es.**
-28. **Algunas builtins no devuelven NADA — ligar su resultado es error (NYX1003, `expected T, got ()`).**
+29. **Algunas builtins no devuelven NADA — ligar su resultado es error (NYX1003, `expected T, got ()`).**
 
 <!-- /gen:gotchas -->
 

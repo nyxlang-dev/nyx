@@ -12,6 +12,35 @@ pub fn println(s: String) {
     print(s)
 }
 
+// read_stdin_all — lee TODA la entrada estándar de una, binary-safe (bytes 0
+// incluidos), sin tocar saltos de línea finales. Se expone por `extern "C"`
+// en vez de builtin A PROPÓSITO: no toca el compilador (semantic/codegen) y
+// por lo tanto no toca el fixed point del bootstrap ni obliga a regenerar
+// semillas/`std/builtins.index` — mismo patrón que std/tls.nx y
+// std/webpushcrypto.nx. El usuario llama SIEMPRE al wrapper `pub fn`, que
+// recibe chequeo semántico completo; `extern` es el borde crudo.
+//
+// std/io ya estaba en el prelude (compiler/resolve.nx lo pre-registra como
+// ya-importado para poder ofrecer println() sin import) así que esta función
+// queda GLOBAL sin `import "std/io"`, igual que read_line() -- pero NO es un
+// builtin de compiler/semantic.nx: sigue el patrón "wrapper pub fn sobre un
+// extern crudo", no el de scope_declare_fn(..., "builtin", N). Tras editar
+// este archivo hace falta `bash scripts/gen_prelude.sh` (o `make bootstrap`,
+// que ya depende de std/prelude.nx) para que el cambio llegue al prelude
+// commiteado -- si no, `make prelude-check` lo marca stale.
+//
+// A diferencia de `read_line()` (builtin, línea por línea, separador '\n'),
+// esta función es para el caso "necesito el documento entero" — un filtro,
+// un programa WASI al que el anfitrión le pasa un buffer por fd 0 (el caso
+// del reporte: un JSON de una sola línea desde el navegador, en wasm). Sin
+// largo máximo (buffer que crece) y funciona igual en wasm32-wasi (WASI
+// expone fd 0 como el stdin de libc — ver runtime/runtime.c).
+//
+// Runtime: runtime/runtime.c (nyx_read_stdin_all).
+extern "C" fn nyx_read_stdin_all() -> String
+
+pub fn read_stdin_all() -> String { return nyx_read_stdin_all() }
+
 // std/math.nx — Funciones matemáticas de la Standard Library v6.0
 
 // Constants

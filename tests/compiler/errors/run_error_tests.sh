@@ -1948,6 +1948,48 @@ else
   echo "$fac_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+# Fricción nyxerp 2026-09-14: NYX2003 no decía DÓNDE y `nyx check` no lo veía.
+# (a) Camino normal: semantic lo caza con función y línea (el `hacer_punto().x`
+# del fixture está en la línea 19).
+name="nyx2003-semantic-con-linea"
+if [ "$fac_rc" -ne 0 ] && echo "$fac_out" | grep -qF "NYX2003" && echo "$fac_out" | grep -qE "in 'main' \((line|línea) 19\)|en 'main' \((line|línea) 19\)"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2003 en 'main' línea 19)\n" "$fac_rc"
+  echo "$fac_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+# (b) Red de codegen (NYX_SKIP_SEMANTIC): el abort lleva archivo:línea y función.
+name="nyx2003-codegen-con-ubicacion"
+fcu_out=$(NYX_SKIP_SEMANTIC=1 NYX_LANG=en NYX_SRC=tests/compiler/errors/fixtures/codegen-field-access-complex-receiver.nx ./nyx_bootstrap 2>&1); fcu_rc=$?
+if [ "$fcu_rc" -ne 0 ] && echo "$fcu_out" | grep -qF "NYX2003" && echo "$fcu_out" | grep -qF -- "--> tests/compiler/errors/fixtures/codegen-field-access-complex-receiver.nx:19, in function 'main'"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2003 y --> archivo:19, in function 'main')\n" "$fcu_rc"
+  echo "$fcu_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+# (b') Mismo mecanismo en la escritura: NYX2006 con ubicación (`arr[0].x = 9`, línea 16).
+name="nyx2006-codegen-con-ubicacion"
+fau_out=$(NYX_SKIP_SEMANTIC=1 NYX_LANG=en NYX_SRC=tests/compiler/errors/fixtures/codegen-field-assign-index-receiver.nx ./nyx_bootstrap 2>&1); fau_rc=$?
+if [ "$fau_rc" -ne 0 ] && echo "$fau_out" | grep -qF "NYX2006" && echo "$fau_out" | grep -qF -- "codegen-field-assign-index-receiver.nx:16, in function 'main'"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2006 y archivo:16, in function 'main')\n" "$fau_rc"
+  echo "$fau_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+# (c) `nyx check` lo ve: antes daba el archivo por bueno porque el error nacía en codegen.
+name="nyx2003-nyx-check"
+if [ ! -x ./nyx_check ]; then
+  printf "  ⚠️  nyx_check no existe — ejecuta 'make build-check' (se salta este check)\n"
+else
+  fck_out=$(NYX_LANG=en NYX_SRC=tests/compiler/errors/fixtures/codegen-field-access-complex-receiver.nx ./nyx_check 2>&1); fck_rc=$?
+  if [ "$fck_rc" -ne 0 ] && echo "$fck_out" | grep -qF "NYX2003" && echo "$fck_out" | grep -qF "(line 19)"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2003 y (line 19))\n" "$fck_rc"
+    echo "$fck_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+fi
+
 # 4d: bound de trait violado en un generic call con TURBOFISH EXPLÍCITO
 # (`show_it<Point>(p)` sin `impl Display2 for Point`) — camino NORMAL con
 # semantic activo, sin env especial: el chequeo de bounds de semantic
@@ -2027,6 +2069,9 @@ POSITIVE_TESTS=(
   # tipo no puede romper los métodos homónimos sobre campos String/Array/Map
   # (length/contains sobre String y Array eran, de hecho, silently-wrong antes).
   "tests/compiler/errors/fixtures/nyx2007-field-string-array-methods.nx"
+  # Control POSITIVO de NYX2003/NYX2006 en el checker (fricción nyxerp
+  # 2026-09-14): cadenas de campos, self, propiedades, tuplas y métodos pasan.
+  "tests/compiler/errors/fixtures/positive-nyx2003-receptores-soportados.nx"
 )
 
 for file in "${POSITIVE_TESTS[@]}"; do

@@ -226,6 +226,91 @@ else
     ls "$P" | sed 's/^/      ls: /'
 fi
 
+# ── `--main` (con o sin --target) NO reescribe nyx.lock ──────
+# Fricción nyxerp 2026-09-14 (20260914-210002-team-4): --main es una flag de
+# ESTA compilación, no del proyecto. nyx.lock es un archivo versionado — si
+# --main lo reescribe con su propio main, un `git add` de rutina deja al
+# proyecto diciendo que su punto de entrada es el que se compiló al pasar.
+# Repo git real (no solo diff de contenido): es lo que ve el usuario.
+P="$GATE_TMP/lockmain"
+mk_proj "$P" "$PKG
+main = \"src/main.nx\""
+( cd "$P" && git init -q . && git add -A && git -c user.email=t@t -c user.name=t commit -q -m inicial )
+
+nb "$P" build
+LOCK_BEFORE="$(cat "$P/nyx.lock" 2>/dev/null)"
+if [ "$RC" -eq 0 ] && ( cd "$P" && git diff --quiet -- nyx.lock ); then
+    ok "lock-build-normal — un build sin flags de una sola corrida deja nyx.lock intacto"
+else
+    bad "lock-build-normal — un build sin --main ya toca nyx.lock" "lock-build-normal"
+    ( cd "$P" && git diff -- nyx.lock ) | sed 's/^/      /'
+fi
+
+nb "$P" build --main src/otro.nx
+if [ "$RC" -eq 0 ] && ( cd "$P" && git diff --quiet -- nyx.lock ); then
+    ok "lock-main-nativo — nyx build --main no reescribe nyx.lock (nativo)"
+else
+    bad "lock-main-nativo — nyx.lock quedó modificado por --main (nativo)" "lock-main-nativo"
+    ( cd "$P" && git diff -- nyx.lock ) | sed 's/^/      /'
+fi
+
+nb "$P" build --target wasm32-wasi --main src/otro.nx
+if [ "$RC" -eq 0 ] && ( cd "$P" && git diff --quiet -- nyx.lock ); then
+    ok "lock-main-wasm — nyx build --target wasm32-wasi --main no reescribe nyx.lock"
+else
+    bad "lock-main-wasm — nyx.lock quedó modificado por --main (wasm)" "lock-main-wasm"
+    ( cd "$P" && git diff -- nyx.lock ) | sed 's/^/      /'
+fi
+
+# CONTROL POSITIVO: nyx.lock SÍ debe reflejar el main real del proyecto (el
+# del manifiesto, sin --main) y no contradecir a nyx.toml.
+if grep -q '^main = "src/main.nx"$' "$P/nyx.lock"; then
+    ok "lock-main-sano — control positivo: nyx.lock sigue diciendo el main del manifiesto"
+else
+    bad "lock-main-sano — CONTROL POSITIVO CAÍDO: nyx.lock no tiene el main del manifiesto" "lock-main-sano"
+    sed 's/^/      lock: /' "$P/nyx.lock"
+fi
+
+# CONTROL POSITIVO: [build] main (sin --main) SÍ se refleja en nyx.lock — el
+# lock no puede quedar contradiciendo lo que declara [build]/[package].
+P="$GATE_TMP/lockbuildmain"
+mk_proj "$P" "$PKG
+
+[build]
+main = \"src/otro.nx\""
+nb "$P" build
+if [ "$RC" -eq 0 ] && grep -q '^main = "src/otro.nx"$' "$P/nyx.lock"; then
+    ok "lock-build-main-sano — control positivo: [build] main se refleja en nyx.lock"
+else
+    bad "lock-build-main-sano — CONTROL POSITIVO CAÍDO: [build] main no llegó a nyx.lock" "lock-build-main-sano"
+    sed 's/^/      lock: /' "$P/nyx.lock" 2>/dev/null
+fi
+
+# CONTROL POSITIVO: agregar una dependencia SÍ debe tocar nyx.lock (lo que de
+# verdad es del proyecto no queda congelado por el guard de "no reescribir").
+# packages/foo se pre-crea para que resolve_deps salte el `git clone` (sin red
+# en este entorno) — el punto del check es el contenido del lock, no la
+# resolución de dependencias en sí.
+P="$GATE_TMP/lockdep"
+mk_proj "$P" "$PKG"
+nb "$P" build
+LOCK_SIN_DEP="$(cat "$P/nyx.lock" 2>/dev/null)"
+printf '\n[dependencies]\nfoo = "*"\n' >> "$P/nyx.toml"
+mkdir -p "$P/packages/foo"
+nb "$P" build
+LOCK_CON_DEP="$(cat "$P/nyx.lock" 2>/dev/null)"
+if [ "$RC" -eq 0 ] && [ "$LOCK_SIN_DEP" != "$LOCK_CON_DEP" ] && grep -q 'foo = "\*"' "$P/nyx.lock"; then
+    ok "lock-dep-sano — control positivo: agregar una dependencia sí actualiza nyx.lock"
+else
+    bad "lock-dep-sano — CONTROL POSITIVO CAÍDO: la dependencia nueva no llegó a nyx.lock" "lock-dep-sano"
+    sed 's/^/      lock: /' "$P/nyx.lock" 2>/dev/null
+fi
+
+# Las secciones de abajo reusan la $P de "── `--main <archivo.nx>`: otro punto
+# de entrada ──" (el proyecto "flagmain", con git init): se restaura acá para
+# no arrastrar el "lockdep" de este bloque.
+P="$GATE_TMP/flagmain"
+
 # El artefacto de --main no debe quedar como archivo sin trackear con el
 # .gitignore que siembra `nyx init` (templates/gitignore, {{binary}} = name).
 # En la raíz no lo cubría nada, y un patrón `/<name>-*` lo habría tapado junto

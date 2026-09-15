@@ -128,6 +128,9 @@ nyx_string* nyx_string_format(nyx_string* template, int arg_count, ...);
 
 // I/O para REPL
 nyx_string* nyx_read_line();
+// Lee TODA la entrada estándar de una, binary-safe (bytes 0 incluidos) —
+// expuesta a Nyx vía std/io.nx (extern "C"), no builtin. Ver runtime.c.
+nyx_string* nyx_read_stdin_all(void);
 void nyx_print_no_newline(nyx_string* str);
 
 // ===== STRING BUILDER (v0.12.0+) =====

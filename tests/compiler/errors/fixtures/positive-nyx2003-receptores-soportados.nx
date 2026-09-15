@@ -1,0 +1,36 @@
+// Control POSITIVO de NYX2003/NYX2006 en el checker (fricción nyxerp
+// 2026-09-14): semantic rechaza ahora un field_access cuyo receptor es una
+// llamada, un índice o un literal de struct. Las formas que codegen SÍ baja
+// no pueden caer: identificador, cadena de campos (lectura y asignación),
+// propiedad sobre una cadena, self dentro de un método, tuplas (tuple_index,
+// otro nodo) y métodos (method_call, otro nodo).
+struct Interno {
+    v: int,
+}
+
+struct Externo {
+    i: Interno,
+    nombre: String,
+}
+
+impl Externo {
+    fn valor(self) -> int {
+        return self.i.v
+    }
+}
+
+fn hacer() -> Externo {
+    return Externo { i: Interno { v: 3 }, nombre: "abc" }
+}
+
+fn main() -> int {
+    let e: Externo = hacer()
+    var m: Externo = hacer()
+    m.i.v = 4
+    let n: int = e.nombre.length
+    let t = (1, "dos")
+    let primero: int = t.0
+    let w: int = e.valor()
+    print(e.i.v + m.i.v + n + primero + w)
+    return 0
+}

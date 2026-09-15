@@ -4,21 +4,24 @@
 // "índice fuera de rango" como para "el valor JSON legítimo es null" — las tres
 // hermanas try_ de este test arbitran esa ambigüedad vía Result<Array, Error>.
 //
-// (e) es el caso interesante para lectores futuros: "{oops" (objeto malformado
-// sin cerrar) NO cae en el mecanismo de desambiguación de try_json_parse — pasa
-// como Ok con contenido corrupto. Es un límite CONOCIDO y documentado en el
-// header de try_json_parse (std/json.nx): parse_object/parse_array siempre
-// sintetizan una estructura, nunca propagan tag "null", así que solo la basura
-// que cae en el fallback final de parse_value (input vacío, o un primer
-// carácter/keyword sin match) se cachea. Detectar basura estructural es del
-// arco de parser con pos-tracking (fichado, no esta tarea) — este test fija el
-// comportamiento ACTUAL para que no cambie en silencio.
+// (e) fija el arco de pos-tracking (2026-09-14, fricción nyxerp): ANTES,
+// "{oops" (objeto malformado sin cerrar) NO caía en el mecanismo de
+// desambiguación de try_json_parse — pasaba como Ok con contenido corrupto,
+// porque parse_object/parse_array siempre sintetizaban una estructura, nunca
+// propagaban tag "null". Con `pos` trackeando fin-de-entrada/basura
+// estructural end-to-end (std/json.nx), este caso ahora es Err — mismo
+// mecanismo que detecta un objeto/arreglo/string truncado en cualquier punto.
 //
-// Caso (n) fija el fix de review: la desambiguación recorta con json_trim
-// (helper interno, espeja skip_whitespace) en vez de `.trim()` de libc —
-// isspace() también considera whitespace a \v y \f, que JSON NO reconoce
-// (RFC 8259 §2 es exactamente espacio/\t/\n/\r), así que `.trim()` genérico
-// dejaba colar basura con VT/FF como si fuera el "null" legítimo.
+// Caso (n): VT (0x0B, whitespace que JSON NO reconoce — RFC 8259 §2 es
+// exactamente espacio/\t/\n/\r) antepuesto a "null" no lo hace colar como el
+// "null" legítimo: parse_value no lo saltea (no está en el set de
+// skip_whitespace) y cae al fallback de token inválido → Err. Antes del fix
+// original esto colaba como Ok(null) porque `.trim()` genérico de libc SÍ
+// considera VT whitespace.
+//
+// (l2): trailing garbage tras un valor válido ("5 xyz") — ANTES Ok leniente
+// (parse_value nunca chequeaba que `pos` llegara al final). Con pos-tracking,
+// un documento JSON es UN valor (RFC 8259): basura no-blanco después es Err.
 
 import "std/json"
 import "std/error"
@@ -67,11 +70,11 @@ fn main() -> int {
         Result.Err(e) => { print("d-vacio=" + e.kind) }
     }
 
-    // (e) basura ESTRUCTURAL — límite conocido, ver header del archivo: pasa
-    // como Ok con contenido corrupto (NO Err). Pin de comportamiento actual.
+    // (e) basura ESTRUCTURAL ("{oops" sin cerrar) → Err (ver header: arco de
+    // pos-tracking, 2026-09-14).
     match try_json_parse("{oops") {
-        Result.Ok(v) => { print("e-estructural-ok=" + json_stringify(v)) }
-        Result.Err(e) => { print("e-estructural-no-deberia") }
+        Result.Ok(v) => { print("e-estructural-no-deberia") }
+        Result.Err(e) => { print("e-estructural=" + e.kind) }
     }
 
     // (l1) trailing garbage tras "null" → Err (gratis del mismo mecanismo).
@@ -79,10 +82,11 @@ fn main() -> int {
         Result.Ok(v) => { print("l1-trailnull-no-deberia") }
         Result.Err(e) => { print("l1-trailnull=" + e.kind) }
     }
-    // (l2) trailing garbage tras un valor válido → Ok leniente (heredado).
+    // (l2) trailing garbage tras un valor válido → Err (ver header: ya no es
+    // leniente).
     match try_json_parse("5 xyz") {
-        Result.Ok(v) => { print("l2-trailvalido=" + int_to_string(json_as_int(v))) }
-        Result.Err(e) => { print("l2-trailvalido-no-deberia") }
+        Result.Ok(v) => { print("l2-trailvalido-no-deberia") }
+        Result.Err(e) => { print("l2-trailvalido=" + e.kind) }
     }
 
     // (n) FIX DE REVIEW: whitespace fuera del set JSON (RFC 8259 §2) NO debe

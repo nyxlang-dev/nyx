@@ -25,9 +25,11 @@ fn main() {
     let bad3: Array = json_parse("fx")
     assert(json_type(bad3) == "null")
 
-    // Dentro de una estructura tampoco
+    // Dentro de una estructura tampoco — y desde el arco de pos-tracking
+    // (2026-09-14) un token inválido en cualquier punto del arreglo invalida
+    // el documento ENTERO (json_parse colapsa a null), no solo ese elemento.
     let arr: Array = json_parse("[true,tomato]")
-    assert(json_type(arr) == "array")
+    assert(json_type(arr) == "null")
 
     // ROUND-TRIP: parse(stringify(x)) == x
     let with_cr: String = "linea1\rlinea2"

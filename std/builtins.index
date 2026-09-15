@@ -111,7 +111,7 @@ builtin	raw_mode_enter	0	Tooling & CLI
 builtin	raw_mode_exit	0	Tooling & CLI	
 builtin	read_byte	0	Tooling & CLI	from stdin in raw mode
 builtin	read_byte_timeout	1	Tooling & CLI	poll()-based: byte, -1 EOF, -2 timeout/signal (EINTR);
-builtin	read_file	1	Archivos & I/O	String
+builtin	read_file	1	Archivos & I/O	String — binary-safe on read (NUL bytes included, see `chr-zero-nul-byte` gotcha);
 builtin	read_line	0	Archivos & I/O	read a line from stdin.
 builtin	readdir	1	Archivos & I/O	
 builtin	regex_is_match	2	Strings & texto	
@@ -193,4 +193,4 @@ builtin	udp_sendto	4	Red
 builtin	volatile_load	1	Memoria	
 builtin	volatile_store	2	Memoria	
 builtin	waitpid	2	Tooling & CLI	
-builtin	write_file	2	Archivos & I/O	bool
+builtin	write_file	2	Archivos & I/O	bool — binary-safe on write, NUL bytes included (fixed at the root 2026-09-15, see `chr-zero-nul-byte` gotcha);

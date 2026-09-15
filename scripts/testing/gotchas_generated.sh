@@ -28,6 +28,7 @@ GOTCHA_IDS=(
   "case-unicode-scope"
   "derive-fields-pg-bool-text"
   "dyn-trait-needs-annotation"
+  "field-access-complex-receiver"
   "pg-null-sentinel"
   "prelude-module-list-contract"
   "prelude-names-are-global"
@@ -62,6 +63,8 @@ GOTCHA_IDS=(
   "array-index-float-write"
   "sync-global-init-reliable"
   "continue-in-for-loop"
+  "http-host-header-port"
+  "json-truncated-rejected"
   "nested-fn-sees-module"
 )
 
@@ -85,6 +88,7 @@ ANCLAS=(
   "Latin Extended-A|case-unicode-scope"
   "desde_fila|derive-fields-pg-bool-text"
   "Array<dyn|dyn-trait-needs-annotation"
+  "NYX2003|field-access-complex-receiver"
   "pg_is_null|pg-null-sentinel"
   "prelude-modules|prelude-module-list-contract"
   "NYX1013|prelude-names-are-global"

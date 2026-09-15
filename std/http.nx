@@ -159,10 +159,33 @@ pub fn http_parse_url(url: String) -> Array {
 
 // === Client functions ===
 
-fn http_build_request(method: String, host: String, path: String, headers: Array, body: String) -> String {
+// Valor de la cabecera `Host` (RFC 9110 §7.2: `Host = uri-host [ ":" port ]`).
+// El puerto se omite SOLO cuando coincide con el de omisión del esquema (80
+// http / 443 https); cualquier otro puerto va explícito "host:puerto". Sin
+// esto el cliente mandaba SIEMPRE "Host: host" sin puerto — silencioso,
+// rompía cualquier defensa CSRF que compara `Origin` (que un navegador manda
+// CON puerto) contra `Host` (reportado por nyxerp contra 127.0.0.1:8124).
+// NO soporta literales IPv6 (`[::1]:puerto`): http_parse_url tampoco los
+// soporta hoy (parte host:puerto por el primer ":", así que un host IPv6
+// nunca llega hasta acá entero) — fuera de alcance de este fix.
+//
+// pub: útil también para quien arma requests a mano (proxies, clientes
+// custom) y necesita el mismo criterio de omisión que usa este módulo; y
+// permite testear el caso "puerto por defecto → sin puerto" sin bindear
+// los puertos privilegiados 80/443 (test de regresión en tests/ai-first).
+pub fn http_host_header(host: String, port: int, default_port: int) -> String {
+    if port == default_port {
+        return host
+    }
+    return host + ":" + int_to_string(port)
+}
+
+// host_header: valor YA armado para la cabecera Host (ver http_host_header)
+// — "host" o "host:puerto" según corresponda, no el hostname pelado.
+fn http_build_request(method: String, host_header: String, path: String, headers: Array, body: String) -> String {
     let crlf: String = "\r\n"
     var req: String = method + " " + path + " HTTP/1.1" + crlf
-    req = req + "Host: " + host + crlf
+    req = req + "Host: " + host_header + crlf
     // Custom headers (flat array [k, v, k, v, ...])
     var i: int = 0
     let len: int = headers.length()
@@ -392,8 +415,9 @@ pub fn http_get(url: String) -> Array {
     let path: String = parsed[3]
     let secure: int = parsed[4]
     if secure == 1 {
+        let host_hdr_s: String = http_host_header(host, port, 443)
         let empty_h: Array = []
-        let sreq: String = http_build_request("GET", host, path, empty_h, "")
+        let sreq: String = http_build_request("GET", host_hdr_s, path, empty_h, "")
         return http_tls_request(host, port, sreq)
     }
     let fd: int = tcp_connect(host, port)
@@ -405,8 +429,9 @@ pub fn http_get(url: String) -> Array {
     // que acepta la conexión pero no responde ya no cuelga el hilo indefinidamente.
     // (El camino TLS/HTTPS trae su propio timeout de 10s en el runtime.)
     let _to: int = tcp_set_timeout(fd, 30)
+    let host_hdr: String = http_host_header(host, port, 80)
     let empty_headers: Array = []
-    let req: String = http_build_request("GET", host, path, empty_headers, "")
+    let req: String = http_build_request("GET", host_hdr, path, empty_headers, "")
     tcp_write(fd, req)
     let resp: Array = http_read_response(fd)
     tcp_close(fd)
@@ -421,7 +446,8 @@ pub fn http_post(url: String, body: String) -> Array {
     let secure: int = parsed[4]
     let headers: Array = ["Content-Type", "text/plain"]
     if secure == 1 {
-        let sreq: String = http_build_request("POST", host, path, headers, body)
+        let host_hdr_s: String = http_host_header(host, port, 443)
+        let sreq: String = http_build_request("POST", host_hdr_s, path, headers, body)
         return http_tls_request(host, port, sreq)
     }
     let fd: int = tcp_connect(host, port)
@@ -433,7 +459,8 @@ pub fn http_post(url: String, body: String) -> Array {
     // que acepta la conexión pero no responde ya no cuelga el hilo indefinidamente.
     // (El camino TLS/HTTPS trae su propio timeout de 10s en el runtime.)
     let _to: int = tcp_set_timeout(fd, 30)
-    let req: String = http_build_request("POST", host, path, headers, body)
+    let host_hdr: String = http_host_header(host, port, 80)
+    let req: String = http_build_request("POST", host_hdr, path, headers, body)
     tcp_write(fd, req)
     let resp: Array = http_read_response(fd)
     tcp_close(fd)
@@ -447,7 +474,8 @@ pub fn http_request(method: String, url: String, headers: Array, body: String) -
     let path: String = parsed[3]
     let secure: int = parsed[4]
     if secure == 1 {
-        let sreq: String = http_build_request(method, host, path, headers, body)
+        let host_hdr_s: String = http_host_header(host, port, 443)
+        let sreq: String = http_build_request(method, host_hdr_s, path, headers, body)
         return http_tls_request(host, port, sreq)
     }
     let fd: int = tcp_connect(host, port)
@@ -459,7 +487,8 @@ pub fn http_request(method: String, url: String, headers: Array, body: String) -
     // que acepta la conexión pero no responde ya no cuelga el hilo indefinidamente.
     // (El camino TLS/HTTPS trae su propio timeout de 10s en el runtime.)
     let _to: int = tcp_set_timeout(fd, 30)
-    let req: String = http_build_request(method, host, path, headers, body)
+    let host_hdr: String = http_host_header(host, port, 80)
+    let req: String = http_build_request(method, host_hdr, path, headers, body)
     tcp_write(fd, req)
     let resp: Array = http_read_response(fd)
     tcp_close(fd)
@@ -522,7 +551,8 @@ fn try_http_exec(method: String, url: String, headers: Array, body: String) -> R
         return Result.Err(err_new(22, "invalid", "http_parse_url: sin host valido en '" + url + "'"))
     }
     if secure == 1 {
-        let sreq: String = http_build_request(method, host, path, headers, body)
+        let host_hdr_s: String = http_host_header(host, port, 443)
+        let sreq: String = http_build_request(method, host_hdr_s, path, headers, body)
         let resp: Array = http_tls_request(host, port, sreq)
         let status: int = resp[1]
         // Mismo rango 100-599 que el camino claro (RFC 7231 §6) — sin esto
@@ -550,7 +580,8 @@ fn try_http_exec(method: String, url: String, headers: Array, body: String) -> R
         tcp_close(fd)
         return Result.Err(to_r.unwrap_err())
     }
-    let req: String = http_build_request(method, host, path, headers, body)
+    let host_hdr: String = http_host_header(host, port, 80)
+    let req: String = http_build_request(method, host_hdr, path, headers, body)
     let write_r: Result<int, Error> = try_tcp_write(fd, req)
     if write_r.is_err() {
         tcp_close(fd)

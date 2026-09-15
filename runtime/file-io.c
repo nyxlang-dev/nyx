@@ -39,6 +39,21 @@ nyx_string* nyx_read_file(char* path) {
     return nyx_string_from_ptr(buffer, bytes_read);
 }
 
+// nyx_write_file — SIN TOCAR (2026-09-15): sigue tomando `content` como
+// `char*` y dimensionando el `fwrite` con `strlen(content)`, con el mismo bug
+// de siempre (corta en el primer NUL embebido). Su firma es el contrato ABI
+// que emite CUALQUIER semilla `.ll` ya compilada con el codegen viejo
+// (`compiler/codegen.ll`/`compiler/nyx.ll` sin regenerar) — cambiarla acá
+// mismo habría roto en el acto todo binario levantado desde esas semillas
+// (medido: el propio driver del compilador, `compiler/nyx.nx`, usa
+// `write_file()` para volcar su `.ll` de salida — con la firma nueva y la
+// semilla vieja, ESE `write_file()` interno pasaría un `char*` crudo donde
+// la función ahora espera un `nyx_string*`, leyendo longitud/puntero de
+// memoria ajena). El fix de raíz vive en `nyx_write_file_safe` (abajo, nueva
+// función, aditiva) — `compiler/codegen.nx` ya emite el `call` al símbolo
+// nuevo para `write_file()`; esta función queda tal cual hasta que las
+// semillas se regeneren (`make recompile-all` + `make seeds-check`, aparte,
+// documentado como pesado — TASKS.md) y entonces se puede retirar.
 int nyx_write_file(char* path, char* content) {
     if (path == NULL) {
         fprintf(stderr, "💥 Runtime Error: write_file() recibió path NULL\n");
@@ -59,6 +74,45 @@ int nyx_write_file(char* path, char* content) {
 
     size_t content_len = strlen(content);
     size_t bytes_written = fwrite(content, 1, content_len, file);
+    fclose(file);
+
+    if (bytes_written != content_len) {
+        fprintf(stderr, "💥 Runtime Error: Error escribiendo a archivo '%s'\n", path);
+        exit(1);
+    }
+
+    return 1;
+}
+
+// nyx_write_file_safe — FIX de raíz (2026-09-15, fricción
+// 20260914-190001-team-1): la versión binary-safe de write_file(), aditiva
+// para no romper la ABI de las semillas viejas (ver nota de nyx_write_file
+// arriba). Recibe el `nyx_string*` completo y escribe `content->length`
+// bytes reales, nunca `strlen`, mismo mecanismo que ya usan
+// `nyx_file_write_string`/`nyx_file_write_result`. `compiler/codegen.nx`
+// emite el `call` a ESTE símbolo para el builtin `write_file()`; una vez que
+// las semillas se regeneren con ese codegen, `nyx_write_file` (arriba) queda
+// sin llamadores y se puede borrar.
+int nyx_write_file_safe(char* path, nyx_string* content) {
+    if (path == NULL) {
+        fprintf(stderr, "💥 Runtime Error: write_file() recibió path NULL\n");
+        exit(1);
+    }
+
+    if (content == NULL || content->data == NULL) {
+        fprintf(stderr, "💥 Runtime Error: write_file() recibió content NULL\n");
+        exit(1);
+    }
+
+    FILE* file = fopen(path, "w");
+    if (file == NULL) {
+        fprintf(stderr, "💥 Runtime Error: No se pudo escribir archivo '%s'\n", path);
+        fprintf(stderr, "   %s\n", strerror(errno));
+        exit(1);
+    }
+
+    size_t content_len = (size_t)content->length;
+    size_t bytes_written = fwrite(content->data, 1, content_len, file);
     fclose(file);
 
     if (bytes_written != content_len) {
@@ -255,9 +309,16 @@ int64_t nyx_fdatasync(int64_t fd) {
 
 // E4 (spec errores-tipados §4.2.1): lectura NO-abortante con errno.
 // Devuelve [errno, contenido] — errno 0 = éxito. A diferencia de
-// nyx_read_file (que devuelve "" ambiguo y trunca en NUL), esta variante
-// distingue vacío-real de error y es binary-safe. La centinela vieja NO
-// se toca: el cutover es decisión MAJOR (1.0.0).
+// nyx_read_file (que devuelve "" ambiguo entre vacío-real y error), esta
+// variante distingue los dos casos por errno. Ambas son binary-safe en
+// LECTURA (fread por tamaño real + nyx_string_from_ptr con longitud
+// explícita, nunca strlen) — medido 2026-09-14, ver LLM.md gotcha
+// chr-zero-nul-byte. El lado de ESCRITURA de la centinela (`write_file()`)
+// también es binary-safe desde el 2026-09-15, pero vía una función NUEVA,
+// `nyx_write_file_safe` — ver su comentario y el de `nyx_write_file` (arriba)
+// para el porqué del símbolo aparte (ABI de las semillas `.ll` sin
+// regenerar). El cutover a Result como API única sigue siendo decisión
+// MAJOR (1.0.0).
 //
 // El slot 1 va taggeado NYX_TAG_STRING (obligatorio desde v0.22.18 — ver
 // nyx_array_push_tagged en runtime-arrays.c): un consumidor Nyx que lea el

@@ -184,21 +184,105 @@ int64_t nyx_stdin_eof() {
     return feof(stdin) ? 1 : 0;
 }
 
+// nyx_read_line — buffer que CRECE (fix friction report 20260914-210002-team-2,
+// 2026-09-14): la versión vieja usaba fgets(buf, 4096, stdin) con un char[4096]
+// fijo, así que una línea más larga volvía PARTIDA en varias llamadas y nada
+// distinguía un trozo de una línea entera — quien las reunía con "\n" metía
+// saltos de línea que nadie había escrito (silenciosamente incorrecto). Acá se
+// lee byte a byte con fgetc (binary-safe: no depende de strlen, así que un '\0'
+// embebido en la línea no la trunca) hacia un buffer que dobla su capacidad con
+// GC_REALLOC — sin cota de largo, en los dos targets (nativo y wasm32-wasi
+// comparten este .c: stdin bajo WASI es el mismo FILE* de libc).
+//
+// Contrato de EOF sin cambios: `any` distingue "no llegó NADA" (EOF real, se
+// devuelve el centinela ":EOF:") de "llegaron bytes pero sin '\n' final" (la
+// ÚLTIMA línea de un archivo sin salto final SE DEVUELVE como línea real, no
+// se descarta). fgetc() consume el EOF físico del stream para darse cuenta de
+// que no hay más datos, así que feof(stdin) — y por lo tanto stdin_eof() —
+// queda en verdadero en ESA MISMA llamada que ya trae el contenido real: es
+// inherente a la semántica de stdio (no hay forma de "espiar" el EOF sin
+// consumirlo), y es justamente el contrato documentado de stdin_eof ("se activa
+// tras la lectura que tocó el EOF"). La consecuencia correcta NO es tocar este
+// contrato sino el bucle de ejemplo (LLM.md): procesar la línea devuelta ANTES
+// de mirar stdin_eof(), nunca descartarla por el solo hecho de que stdin_eof()
+// ya esté en verdadero.
+//
+// EN: nyx_read_line — GROWING buffer (fix for friction report
+// 20260914-210002-team-2): the old version used fgets(buf, 4096, stdin) with a
+// fixed char[4096], so a longer line came back SPLIT across several calls with
+// nothing to tell a chunk from a whole line — whoever rejoined them with "\n"
+// injected newlines nobody wrote (silently wrong). This reads byte-by-byte via
+// fgetc (binary-safe: no strlen involved, so an embedded '\0' doesn't truncate
+// it) into a buffer that doubles via GC_REALLOC — no length cap, on both
+// targets (native and wasm32-wasi share this .c: stdin under WASI is the same
+// libc FILE*). EOF contract unchanged: `any` tells "nothing arrived at all"
+// (real EOF, sentinel ":EOF:") from "bytes arrived but no trailing '\n'" (the
+// LAST line of a file with no final newline IS returned as a real line, never
+// dropped). fgetc() has to consume the physical EOF to know there's no more
+// data, so feof(stdin) — hence stdin_eof() — is already true on that SAME call
+// that carries real content: that's inherent to stdio semantics (EOF can't be
+// peeked without consuming it), and matches stdin_eof's documented contract
+// ("activates after the read that hit EOF"). The right fix is the EXAMPLE LOOP
+// (LLM.md): process the returned line BEFORE checking stdin_eof(), never
+// discard it just because stdin_eof() is already true.
 nyx_string* nyx_read_line() {
-    char buf[4096];
-    if (fgets(buf, sizeof(buf), stdin) == NULL) {
+    size_t cap = 256;
+    char* buf = (char*)GC_MALLOC_ATOMIC(cap);
+    size_t len = 0;
+    int any = 0;
+    int c;
+    while ((c = fgetc(stdin)) != EOF) {
+        any = 1;
+        if (c == '\n') break;
+        if (len + 1 >= cap) {
+            cap *= 2;
+            buf = (char*)GC_REALLOC(buf, cap);
+        }
+        buf[len++] = (char)c;
+    }
+    if (!any) {
         return nyx_string_from_cstr(":EOF:");
     }
-    // Strip trailing newline
-    size_t len = strlen(buf);
-    if (len > 0 && buf[len-1] == '\n') {
-        buf[len-1] = '\0';
+    // El '\r' final solo es separador CRLF si la línea terminó en '\n' real
+    // -- si se cortó por EOF sin salto final, un '\r' final es dato, no ruido.
+    if (c == '\n' && len > 0 && buf[len-1] == '\r') {
         len--;
     }
-    if (len > 0 && buf[len-1] == '\r') {
-        buf[len-1] = '\0';
+    return nyx_string_from_ptr(buf, (int64_t)len);
+}
+
+// nyx_read_stdin_all — lee TODA la entrada estándar de una (item 3 del mismo
+// reporte): segura con bytes 0 (fread por longitud explícita, nunca strlen) y
+// con los saltos de línea finales intactos (no se toca el contenido). Se
+// expone a Nyx vía std/io.nx (extern "C" + wrapper pub fn read_stdin_all), NO
+// como builtin -- no toca el compilador (semantic/codegen), así que no exige
+// re-verificar el punto fijo del bootstrap ni regenerar semillas/índice de
+// builtins (mismo patrón que std/tls.nx y std/webpushcrypto.nx). Funciona
+// igual en wasm32-wasi: WASI expone fd 0 como el stdin de libc, y fread/feof
+// son la misma implementación C que usa nyx_read_line arriba.
+//
+// EN: nyx_read_stdin_all — reads ALL of stdin at once (item 3 of the same
+// report): NUL-safe (fread by explicit length, never strlen) and final
+// newlines untouched (content passed through as-is). Exposed to Nyx via
+// std/io.nx (extern "C" + pub fn wrapper, NOT a builtin — doesn't touch the
+// compiler, so no bootstrap fixed-point re-check or seed/builtins-index
+// regen, same pattern as std/tls.nx and std/webpushcrypto.nx). Works the same
+// under wasm32-wasi: WASI exposes fd 0 as libc's stdin, and fread/feof are the
+// same C implementation nyx_read_line uses above.
+nyx_string* nyx_read_stdin_all(void) {
+    size_t cap = 65536;
+    char* buf = (char*)GC_MALLOC_ATOMIC(cap);
+    size_t len = 0;
+    for (;;) {
+        if (len == cap) {
+            cap *= 2;
+            buf = (char*)GC_REALLOC(buf, cap);
+        }
+        size_t got = fread(buf + len, 1, cap - len, stdin);
+        len += got;
+        if (got == 0) break;
     }
-    return nyx_string_from_cstr(buf);
+    return nyx_string_from_ptr(buf, (int64_t)len);
 }
 
 

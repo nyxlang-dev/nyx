@@ -328,6 +328,49 @@ else
     head -8 "$GATE_TMP/testargs.out" | sed 's/^/      /'
 fi
 
+# ── Check F: un `spawn` o una lambda DENTRO de un bloque `test` capturan ─────
+# los locals del test (fricción nyxerp 2026-09-14). El parser bajaba el cuerpo
+# del test con parse_block: las fns sintéticas `__spawn_N`/`__lambda_N` se
+# hoisteaban al top-level y el checker daba NYX1002 «'x' not declared»; y
+# codegen emitía el test sin la maquinaria de closures. El caso comprueba el
+# VALOR recibido, no solo que compile: un env mal armado compila y lee basura.
+SDIR="$GATE_TMP/spawntest"
+mkdir -p "$SDIR/src" "$SDIR/tests"
+cat > "$SDIR/nyx.toml" <<'EOF'
+[package]
+name = "spawntest"
+version = "0.1.0"
+main = "src/main.nx"
+EOF
+printf 'fn main() -> int {\n    return 0\n}\n' > "$SDIR/src/main.nx"
+cat > "$SDIR/tests/captura_test.nx" <<'EOF'
+test "spawn captura un int y un String del test" {
+    let x: int = 5
+    let s: String = "hola"
+    let ch = channel_new(1)
+    // Un int y no un String por el channel: `channel_send` de un String emite
+    // IR inválido en cualquier contexto (también en main) — otro bug, fichado.
+    // El int codifica los DOS capturados: 5 * 10 + length("hola") = 54.
+    spawn { channel_send(ch, x * 10 + s.length()) }
+    let got: int = channel_recv(ch)
+    assert(got == 54, "el spawn ve x y s")
+}
+
+test "lambda captura un local del test" {
+    let base: int = 40
+    let f = fn(n: int) -> int { return base + n }
+    assert(f(2) == 42, "la lambda ve base")
+}
+EOF
+run_test "$SDIR"
+# «(2 tests)» y no solo rc 0: un runner que no corriera ningún test también sale 0.
+if [ "$TEST_RC" -eq 0 ] && grep -q "(2 tests)" "$GATE_TMP/test.out"; then
+    ok "test-captura — spawn y lambda dentro de un test capturan sus locals con el valor correcto"
+else
+    bad "test-captura — rc $TEST_RC: un spawn/lambda dentro de un test no captura los locals del test" "test-captura"
+    head -8 "$GATE_TMP/test.out" | sed 's/^/      /'
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  TOOLING GATES: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

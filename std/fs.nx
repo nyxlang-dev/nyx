@@ -23,9 +23,16 @@
 //
 // La centinela vieja de std/file.nx (read_text/write_text, y los
 // builtins read_file/write_file que envuelve) NO se toca acá: read_file
-// devuelve "" ambiguo (vacío-real vs error) y write_file aborta el
-// proceso ante cualquier fallo. El cutover a Result como firma única es
-// decisión MAJOR (1.0.0); hoy conviven.
+// devuelve "" ambiguo (vacío-real vs error) y write_file aborta el proceso
+// ante cualquier fallo. Ambas son binary-safe — read_file (nyx_read_file)
+// siempre lo fue en lectura (fread por tamaño real + nyx_string_from_ptr con
+// longitud explícita, nunca strlen; medido 2026-09-14). write_file() lo es
+// desde el 2026-09-15 (antes truncaba en el primer NUL — ver LLM.md gotcha
+// chr-zero-nul-byte) vía una función runtime NUEVA, nyx_write_file_safe —
+// nyx_write_file en sí no cambió de firma (romperla habría desajustado la
+// ABI de cualquier semilla .ll sin regenerar, incluido el propio driver del
+// compilador). El cutover a Result como firma única sigue siendo decisión
+// MAJOR (1.0.0); hoy conviven.
 //
 // ⚠️ Límite conocido heredado (M1, review final E4, 2026-08-14): archivos
 // que REPORTAN tamaño 0 pero SÍ tienen contenido (ej. /proc/*, que no
@@ -42,8 +49,9 @@ import "std/error"
 extern "C" fn nyx_file_read_result(path: String) -> Array
 extern "C" fn nyx_file_write_result(path: String, content: String) -> int
 
-// E4: hermana Result de read_file. Distingue vacío-real de error y es
-// binary-safe (la centinela devuelve "" ambiguo y trunca en NUL).
+// E4: hermana Result de read_file. Distingue vacío-real de error (la
+// centinela devuelve "" ambiguo para ambos casos; en binary-safety de
+// LECTURA las dos son equivalentes — ver nota arriba).
 pub fn try_read_file(path: String) -> Result<String, Error> {
     let r: Array = nyx_file_read_result(path)
     let code: int = r[0]

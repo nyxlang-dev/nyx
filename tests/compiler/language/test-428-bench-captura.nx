@@ -1,0 +1,24 @@
+// test-428-bench-captura: el cuerpo de un bench es un cuerpo de función — una lambda y un
+// spawn escritos adentro capturan sus locals con el valor correcto. Antes el
+// parser hoisteaba `__lambda_N`/`__spawn_N` al top-level (NYX1002 «not
+// declared») y codegen emitía el cuerpo sin la maquinaria de closures.
+// assert() fuera de `nyx test` aborta el proceso: si la captura leyera basura,
+// el programa sale con rc 1 y el test falla.
+
+bench "lambda captura un local del bench" 10 {
+    let base: int = 40
+    let f = fn(n: int) -> int { return base + n }
+    assert(f(2) == 42, "la lambda ve base")
+}
+
+bench "spawn captura un local del bench" 3 {
+    let x: int = 7
+    let s: String = "ok"
+    let ch = channel_new(1)
+    // Se manda un int y no un String: `channel_send` de un String emite IR
+    // inválido (i64 donde hay un ptr) en CUALQUIER contexto, también en main —
+    // es otro bug, fichado aparte. El int codifica los DOS capturados.
+    spawn { channel_send(ch, x * 10 + s.length()) }
+    let got: int = channel_recv(ch)
+    assert(got == 72, "el spawn ve x y s")
+}

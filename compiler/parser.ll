@@ -2210,6 +2210,7 @@ declare %nyx_string* @nyx_string_from_float(double)
 declare %nyx_string* @nyx_string_from_float32(float)
 declare %nyx_string* @nyx_read_file(i8*)
 declare i1 @nyx_write_file(i8*, i8*)
+declare i1 @nyx_write_file_safe(i8*, %nyx_string*)
 declare i1 @nyx_file_exists(i8*)
 declare i8* @nyx_file_open(i8*, i8*)
 declare void @nyx_file_close(i8*)
@@ -10872,7 +10873,7 @@ then0:
 else1:
   br label %merge2
 merge2:
-  %41 = call { i64, i8* }* @parse__parse_block(%SharedEnv_parse* %env.param)
+  %41 = call { i64, i8* }* @parse__parse_fn_body_block(%SharedEnv_parse* %env.param)
   %42 = alloca { i64, i8* }*
   store { i64, i8* }* %41, { i64, i8* }** %42
   %43 = getelementptr [11 x i8], [11 x i8]* @.str599, i32 0, i32 0
@@ -10926,7 +10927,7 @@ define internal { i64, i8* }* @parse__parse_test_decl(%SharedEnv_parse* %env.par
   %31 = call %nyx_string* @get_token_value(%Token %30)
   %32 = alloca %nyx_string*
   store %nyx_string* %31, %nyx_string** %32
-  %33 = call { i64, i8* }* @parse__parse_block(%SharedEnv_parse* %env.param)
+  %33 = call { i64, i8* }* @parse__parse_fn_body_block(%SharedEnv_parse* %env.param)
   %34 = alloca { i64, i8* }*
   store { i64, i8* }* %33, { i64, i8* }** %34
   %35 = getelementptr [10 x i8], [10 x i8]* @.str602, i32 0, i32 0

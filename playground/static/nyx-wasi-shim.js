@@ -218,18 +218,43 @@ export function makeNyxHelpers(state) {
         //
         // Con la arena apagada pinTurn devuelve 0 y esto es un envoltorio sin
         // costo: nada se libera nunca, no hay qué anclar.
+        //
+        // release() DURANTE el propio disparo se POSTERGA hasta que la llamada
+        // vuelve. Es el caso normal de una interfaz, no uno raro: un click que
+        // llama a update() y el VDOM re-registra el listener de ese mismo botón,
+        // un interval que se apaga a sí mismo, un SSE que se cierra al recibir
+        // «fin», un router que re-suscribe hashchange. Los cinco bindings
+        // desanclan el cierre viejo en ese momento, y el cierre SIGUE CORRIENDO:
+        // si el unpin soltara ya el turno, lo que el cierre lea después de
+        // re-registrarse está en memoria liberada. Medido 2026-09-14: trap
+        // «memory access out of bounds» en nyx_string_concat dentro del cierre
+        // (test-wasm-29). `depth` y no un booleano: un cierre puede dispararse
+        // a sí mismo de forma síncrona (un handler que dispara el mismo evento).
         // EN: anchors a closure fired in a LATER event turn; the binding owns
-        // release(), never user code.
+        // release(), never user code. A release() while the closure is running
+        // is deferred until the outermost call returns.
         anchorClosure(pairPtr) {
             const tok = state.pinTurn ? state.pinTurn() : 0;
             let live = true;
+            let depth = 0;          // llamadas en curso de ESTE cierre
+            let pending = false;    // release() pedido mientras corría
+            const unpin = () => { if (tok && state.unpinTurn) state.unpinTurn(tok); };
             return {
                 get alive() { return live; },
-                call: (...args) => (live ? callClosureImpl(pairPtr, ...args) : undefined),
+                call: (...args) => {
+                    if (!live) return undefined;
+                    depth++;
+                    try { return callClosureImpl(pairPtr, ...args); }
+                    finally {
+                        depth--;
+                        if (depth === 0 && pending) { pending = false; unpin(); }
+                    }
+                },
                 release() {
                     if (!live) return;
                     live = false;
-                    if (tok && state.unpinTurn) state.unpinTurn(tok);
+                    if (depth > 0) { pending = true; return; }
+                    unpin();
                 },
             };
         },

@@ -203,7 +203,7 @@ struct Point { x: int, y: int }
 
 impl Point {
     fn distance(self) -> float {
-        return math_sqrt(to_float(self.x * self.x + self.y * self.y))
+        return math_sqrt(int_to_float(self.x * self.x + self.y * self.y))
     }
 }
 
@@ -374,7 +374,18 @@ Error>` / `try_write_file(path, content) -> Result<int, Error>`
 (`import "std/fs"`) are the canonical Result-returning I/O for new code —
 prefer them over the old `read_file`/`write_file` sentinels (`""` for
 both empty-file and error; `write_file` aborts the process on any
-failure). See `examples/by-example/101-file-errors-two-tier.nx`.
+failure). **Binary safety (measured 2026-09-14, root-caused 2026-09-15,
+friction report)**: `read_file`/`try_read_file`/`write_file`/`try_write_file`
+are ALL safe with embedded NUL bytes — every one of them sizes its
+`fread`/`fwrite` from a `nyx_string`'s real length, never `strlen`.
+`write_file` used to be the one exception (it sized its `fwrite` with
+`strlen(content)`, truncating at the first NUL); fixed at the root
+2026-09-15 via a new runtime function the compiler now routes `write_file()`
+to (`nyx_write_file_safe`, writing `content->length` bytes) — see gotcha
+item 6 (`chr-zero-nul-byte`) below for why it's a new symbol instead of a
+changed one. See gotcha item 6 also for how to read a whole file through
+the buffered `file_open`/`file_read_bytes` handle API instead. See
+`examples/by-example/101-file-errors-two-tier.nx`.
 Gotcha: `let w = try_write_file(...)` WITHOUT a type annotation loses the
 generic `Result<T,E>` (opaque `i8*` to the checker) — `w.unwrap()` then
 fails with "method 'unwrap' is not available on a receiver of type
@@ -720,15 +731,41 @@ single `Error` struct.
 
 ### I/O
 - `print(x)` / `print_no_newline(x)` — to stdout
-- `read_line()` — read a line from stdin. **EOF contract (documented 2026-08-06,
-  friction report)**: at EOF it returns the SENTINEL string `":EOF:"` (legacy,
+- `read_line()` — read a line from stdin. **No length cap** (fixed 2026-09-14,
+  friction report 20260914-210002-team-2): it used to `fgets` into a fixed
+  4096-byte buffer, so a longer line came back SPLIT across several calls with
+  nothing telling a chunk from a whole line — rejoining chunks with `"\n"`
+  injected newlines nobody wrote. Now the buffer grows (no max length, same in
+  native and wasm32-wasi) and always returns one whole line per call.
+  **EOF contract (documented 2026-08-06, friction report)**: at EOF (nothing
+  left to read at all) it returns the SENTINEL string `":EOF:"` (legacy,
   load-bearing — editor/grep examples compare against it). A stdio-server loop is
   `while true { let l = read_line()  if l == ":EOF:" { break } ... }`. Caveat: a
   real input line containing exactly `:EOF:` is indistinguishable — for binary-safe
   detection use `read_byte()`, which returns < 0 at EOF (build your own line loop
-  on top). Or use `stdin_eof() -> bool` (v0.24.21): the UNAMBIGUOUS signal — read, then ask (`feof` activates after the read that hit EOF): `while true { let l = read_line()  if stdin_eof() { break }  ... }`.
-- `read_file(path)` → String
-- `write_file(path, content)` → bool
+  on top). Or use `stdin_eof() -> bool` (v0.24.21): the UNAMBIGUOUS signal — read,
+  then ask (`feof` activates after the read that hit EOF). **The LAST line of an
+  input with no trailing newline is still real content, not EOF** — `read_line`
+  reads until it physically hits the end of the stream to know there's nothing
+  more coming, so `stdin_eof()` is already true on that SAME call that returns
+  the line. A loop that checks `stdin_eof()` BEFORE using the line drops that
+  last line (the bug in the friction report — `"uno\ndos"` with no final `\n`
+  never yielded `dos`). Process the line FIRST, check `stdin_eof()` only to
+  decide whether to loop again:
+  `while true { let l = read_line()  let fin = stdin_eof()  if fin and l ==
+  ":EOF:" { break }  ...use l...  if fin { break } }`.
+  To read the WHOLE of stdin at once instead of line by line (a filter, a wasm
+  program fed a document over fd 0) use `read_stdin_all() -> String` (`std/io`,
+  in the prelude — no `import` needed, same as `read_line`) — NUL-safe, no
+  length cap, trailing newlines untouched.
+- `read_file(path)` → String — binary-safe on read (NUL bytes included, see
+  `chr-zero-nul-byte` gotcha); `""` is an ambiguous sentinel for both
+  empty-file and error, prefer `try_read_file(path)` (`import "std/fs"`)
+- `write_file(path, content)` → bool — binary-safe on write, NUL bytes
+  included (fixed at the root 2026-09-15, see `chr-zero-nul-byte` gotcha);
+  aborts the process (`exit 1`) on any failure instead of returning an
+  error — prefer `try_write_file` (`import "std/fs"`) when the caller
+  should react instead of dying
 - `file_exists(path)` → bool
 
 ### Conversion
@@ -757,28 +794,29 @@ single `Error` struct.
   situations, and callers can't tell them apart from the value alone —
   `json_parse("garbage")` and `json_parse("null")` both give `["null"]`;
   `json_get(obj, "missing_key")` and `json_get(obj, "key_with_null_value")` both give
-  `["null"]`. The `try_` versions disambiguate by construction, not by re-parsing:
-  `try_json_parse` only treats input as legitimate `Ok(null)` if the trimmed input is
-  LITERALLY the word `null` — anything else that falls through to `["null"]` (empty
-  input, unrecognized keyword/prefix) is `Err{5,"parse"}`. Trimming uses an internal
-  `json_trim` helper that mirrors the parser's own whitespace set (space/`\t`/`\n`/`\r`,
-  RFC 8259 §2) — NOT the generic `.trim()` String method, which delegates to libc
-  `isspace()` and also eats `\v`/`\f`, whitespace JSON doesn't recognize (found in
-  review; `.trim()` would have let `\v`-padded garbage masquerade as the `null`
-  literal). `try_json_get` disambiguates by re-walking the object's key list itself
+  `["null"]`. `try_json_get` disambiguates by re-walking the object's key list itself
   (never delegates to `json_get`, which would lose the distinction): key present with
   a `null` value → `Ok(["null"])` (a real value); key absent → `Err{2,"not_found"}`.
   `try_json_array_get` does the analogous thing for out-of-range vs. a legitimate
-  `null` element → `Err{22,"invalid"}` for out-of-range/non-array. **Known structural
-  limit (ficha, not fixed here)**: `try_json_parse("{oops")` (an unclosed object) does
-  NOT hit the disambiguation — `parse_object`/`parse_array` always synthesize SOME
-  structure (partial/corrupt but never tag `"null"`), so malformed-but-started JSON
-  passes as `Ok` with corrupt content instead of `Err`. Catching that needs the parser
-  to track position/well-formedness end-to-end — a separate arc (TASKS.md). See
-  `tests/compiler/types/test-378-try-json.nx` for the full behavior matrix (incl. the
-  trailing-garbage asymmetry: `"null xyz"` → `Err` for free from the same trim
-  mechanism, but `"5 xyz"` → `Ok(5)`, lenient, inherited from `parse_value` never
-  checking that the read position reached the end of input).
+  `null` element → `Err{22,"invalid"}` for out-of-range/non-array.
+  **`try_json_parse` is STRICT (2026-09-14, fricción nyxerp)**: the parser tracks byte
+  position end-to-end (`pos = [posicion, error_flag, mensaje]` in `std/json.nx`), so
+  every point where the input ends before a structure closes, or where non-whitespace
+  content remains after the root value, is `Err{5,"parse"}` with a message naming what
+  was expected and the byte offset — not just the `"null"` sentinel ambiguity. Covered:
+  an object/array/string that never closes (`try_json_parse("{\"a\": [1, 2"` →
+  `Err`, previously `Ok` with the arrays/object silently missing their tail — this was
+  the actual bug reported: a truncated HTTP body parsed as if it were complete, with
+  fewer records than the text had), a key without a value (`"{\"a\":"`), a trailing
+  comma with nothing after it (`"[1,"`), a number or literal cut short (`"1."`, `"1e"`,
+  `"-"`, `"tru"`, `"nul"`), and trailing garbage after a complete root value
+  (`"{} x"`, `"5 xyz"` — RFC 8259: a JSON document is ONE value, not a value followed
+  by more bytes). `json_parse` (the sentinel) shares the same pass and collapses any of
+  these to `["null"]` — same sentinel already used for "nothing parseable", no new
+  ambiguity added, just fewer silent partial-content escapes. See
+  `tests/compiler/types/test-378-try-json.nx` and `tests/ai-first/27-json-truncado.nx`
+  for the full behavior matrix, including the property test (every proper prefix of a
+  valid object/array-rooted document is `Err`).
 
 ### Process / Environment
 - `get_args()` → Array — CLI args
@@ -1284,7 +1322,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1370,7 +1408,14 @@ heterogeneous list — several impls in the same collection — work. Annotating
 than failing to compile, is pushing the concrete struct into an untyped `Array` and reading it as
 `dyn`. [test: compiler/language/test-391-dyn-trait-array]
 
-14. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
+14. **A field can only be read from a name or a chain of fields: `f().x`, `a[0].x` and `T{...}.x` are an error (NYX2003; writing them is NYX2006).**
+Bind first: `let p: Punto = f()` then `p.x`; with an index, `let e: Punto = a[0]` then `e.x`; to write,
+`var e: Punto = a[0]`, `e.x = 9`, `a[0] = e`. Chains (`a.b.c`, `self.i.v`), properties on a chain
+(`s.name.length`), tuple elements (`t.0`) and method calls (`f().length()`) are other forms and do work.
+Since 0.31.0 `nyx check` reports it with function and line; before, only the build failed, without a
+location. [test: compiler/errors/fixtures/codegen-field-access-complex-receiver] [test: compiler/errors/fixtures/positive-nyx2003-receptores-soportados]
+
+15. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
 `try_pg_query` returns every value as text, and SQL NULL comes back as a one-byte sentinel, not
 as `""`. Comparing with `== ""` treats a real NULL as an empty string and, worse, treats a
 genuinely empty column as if it were NULL: two different values collapse into one. Always use
@@ -1379,7 +1424,7 @@ changes in one place. The one edge: a `bytea` column holding exactly one zero by
 else reads as NULL; that is the price of keeping rows as `Array` of String instead of
 `Option<String>`. [test: postgres/02-query]
 
-15. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
+16. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
 line — never hardcoded in the compiler.** The compiler reads that line to know which `std/` modules
 to pre-register as "already imported"; a module in the prelude that is NOT pre-registered gets
 re-inlined by an explicit `import`, and the IR then defines its types twice (`redefinition of type`,
@@ -1389,7 +1434,7 @@ install separately, and a new prelude read by an older compiler breaks every pro
 the new module — with nothing changed on the user's side. Two guards refuse to let the copy come
 back (`gen_prelude.sh`, `run_prelude_divergence.sh`). [test: compiler/types/test-372-std-error]
 
-16. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
+17. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
 prelude is concatenated into every program, so `Error`, `err_new`, `errno_to_kind`, `sort_int`,
 `checked_add`, `RoundMode` and the rest of `std/io`/`math`/`array`/`file`/`map`/`error` already
 occupy the namespace. `struct Error { codigo: int }` of your own does not shadow the prelude's — it
@@ -1398,7 +1443,7 @@ prelude's declaration won SILENTLY and the errors that followed described fields
 (`field 'codigo' does not exist in struct 'Error'`, pointing at YOUR line), which sent you to debug
 the wrong program. Pick a qualified name (`ErrorDeNegocio`, `AppError`) for anything domain-specific. [test: compiler/errors/test-nyx1013-colision-con-el-prelude]
 
-17. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+18. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.** `random_bytes` is backed
 by `nyx_random_bytes` (`runtime/random.c`), which draws from a single `xorshift64` generator seeded
 once from `/dev/urandom` (`rng_init`, `runtime/random.c`) — fine for simulation, sampling, jitter, or
@@ -1415,7 +1460,7 @@ Use `random_bytes`/`random_int`/`random_float` for anything where predictability
 use `csprng_bytes` for anything where predictability is a security breach (password salts, session
 tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
 
-18. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
+19. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
 `sqlite_query`/`sqlite_query_named` and their `Result`-returning twins return every value as
 text, and SQL NULL comes back as a one-byte sentinel, not as `""`. Comparing with `== ""` treats
 a real NULL as an empty string and, worse, treats a genuinely empty column as if it were NULL:
@@ -1424,16 +1469,16 @@ hand — the day the representation needs to change, it changes in one place. Th
 or TEXT column holding exactly one zero byte and nothing else reads as NULL; that is the price of
 keeping rows as `Array` of String instead of `Option<String>`. [test: compiler/stdlib-suite/test-406-sqlite-tipos-null]
 
-19. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+20. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
 decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
 lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
 which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
 does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
 
-20. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+21. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
-21. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+22. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.** The three old names still compile (removing them would be a MAJOR change) but `nyx
 vet` flags them with W110. The problem was never the behaviour, it was that four names described two
@@ -1448,7 +1493,7 @@ mechanical and safe, because the aliases are exact: `time()` → `time_epoch()`,
 clock it meant, which is the whole point — a duration measured as `monotonic_us() - inicio` is
 self-evidently right, whereas `time_us() - inicio` still needs the reader to know. [test: compiler/systems/test-410-clock-domain]
 
-22. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+23. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
 `let x: int = sleep(1)` used to pass `check OK` and die in clang with `void type only allowed for
 function results`, pointing at a temporary `.ll` you never see; since 0.31.0 the checker names your
 file, function and line. Call them as a statement. The full list (35):
@@ -1503,10 +1548,13 @@ type-level machinery. Don't rely on either for real generic-over-container code 
 
 6. **Under the wasm arena, an async closure can READ what it captured but must not STORE a
 String/Array into its environment during a fire.** Since 0.31.0 a closure handed to `dom_on_fn`,
-`browser_fetch_fn`, `browser_timeout_fn` or `browser_interval_fn` keeps everything it captured at
+`dom_on_h`, `browser_on_hashchange`, `browser_fetch_fn`, `browser_timeout_fn`,
+`browser_interval_fn`, `browser_geo_fn` or `browser_sse_fn` keeps everything it captured at
 CREATION time: the shim binding pins the whole turn the closure was born in
 (`nyx_arena_pin_turn`, `runtime/wasi/nyx_arena.c`), so a captured `String` or `Array` survives the
-`nyx_arena_event_reset()` at the end of that turn and arrives intact whenever the closure fires.
+`nyx_arena_event_reset()` at the end of that turn and arrives intact whenever the closure fires —
+including after the closure cancels or re-registers itself from inside its own fire (the release
+is deferred until the call returns).
 What is NOT covered is memory allocated during the FIRE and written back into the environment:
 `fn() { ultimo = "visita-" + int_to_string(n) }` stores a String belonging to the *firing* turn,
 which dies in that turn's reset, and the next fire reads whatever overwrote it — measured
@@ -1516,7 +1564,7 @@ the top of `nyx_arena.c`) applied to closure environments, and only a tracing GC
 not have — would lift it. Mutating captured `int`/`float` by value is always safe, so counters,
 flags and ids work; keep anything string-shaped outside the environment (a module global built in
 `_start`, or re-derive it on each fire). Note this only applies with the arena on: without
-`nyx_arena_begin()` nothing is ever freed and the question does not arise. [test: wasm/test-wasm-23-closure-lifetime] [test: wasm/test-wasm-24-dom-on-fn-turnos]
+`nyx_arena_begin()` nothing is ever freed and the question does not arise. [test: wasm/test-wasm-23-closure-lifetime] [test: wasm/test-wasm-24-dom-on-fn-turnos] [test: wasm/test-wasm-29-arena-autocancelacion]
 
 <!-- /gen:gotchas -->
 
@@ -1526,7 +1574,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,nested-fn-sees-module -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -1560,17 +1608,26 @@ value, makes exhaustion deterministic for testing.
 UTF-8 — see the byte-based String API rule, `strings-are-bytes`) and now length-explicit end to end:
 `chr(65) + chr(0) + chr(66)` has `length() == 3`. Before
 this fix, `chr(0)` collapsed to the empty String (a C-string/`strlen` path truncated it), so binary
-buffers built byte-by-byte with `chr()` silently lost NULs. **Still open**: `write_file(path,
-content)`/`read_file(path)` (the simple path-based pair) are NOT binary-safe — `write_file` truncates
-content at the first NUL (its `char*` ABI, not a `chr()` problem) — don't round-trip NUL-containing
-Strings through them yet. **`file_write_string(handle, s)` (the buffered
-`file_open`/`file_write_string`/`file_close` API) IS binary-safe (fixed 2026-07-30)** — it writes `s`'s
-real byte length, not `strlen`, so a blob with embedded NULs (`"AB" + char_to_string(0) + "CDE"`)
-round-trips intact; prefer it over `write_file` for any content that isn't known-text. For codepoints
-beyond a byte, use `utf8_encode(codepoint)` from `import "std/unicode"` (v0.22.x+): encodes any
-Unicode codepoint to its 1-4 UTF-8 bytes; invalid input (negative, > 0x10FFFF, surrogates
+buffers built byte-by-byte with `chr()` silently lost NULs. **`read_file`/`write_file` are BOTH
+binary-safe now (write side fixed at the root 2026-09-15, friction report)**: `read_file(path)`/
+`try_read_file(path)` `fread()` the real file size and build the returned `String` with an explicit
+length via `nyx_string_from_ptr`, never `strlen` — always were. `write_file(path, content)` used to
+size its `fwrite` with `strlen(content)`, truncating at the first embedded NUL; the compiler now
+routes `write_file()` to a NEW runtime function, `nyx_write_file_safe(path, content: nyx_string*)`,
+which writes `content->length` bytes, same fix applied to
+`nyx_file_write_string`/`nyx_file_write_result` earlier. `nyx_write_file` itself keeps its old
+`char*` signature and its old bug — a new symbol, not a changed one, specifically so an unregenerated
+`.ll` seed (the compiler's own driver, `compiler/nyx.nx`, uses `write_file()` to save its output)
+keeps calling the old, still-working function instead of an ABI mismatch. `try_write_file(path, content)`
+was already binary-safe on write (writes `content`'s real byte length, not `strlen`). A blob with
+embedded NULs (`"AB" + char_to_string(0) + "CDE"`) now round-trips intact through any of
+`read_file`/`write_file`/`try_read_file`/`try_write_file`/`file_write_string`. To read a whole file
+through an open handle (no `file_read_all` — that function does not exist), size it first
+(`file_seek`/`file_tell`) then `file_read_bytes(handle, size)` + `string_from_bytes(bytes, 0, size)`.
+For codepoints beyond a byte, use `utf8_encode(codepoint)` from `import "std/unicode"` (v0.22.x+):
+encodes any Unicode codepoint to its 1-4 UTF-8 bytes; invalid input (negative, > 0x10FFFF, surrogates
 U+D800..U+DFFF) yields U+FFFD instead of aborting — HTML numeric-entity semantics, so it composes
-directly with entity decoding. [test: 11-chr-nul-safe]
+directly with entity decoding. [test: 29-read-file-nul-safe] [test: 11-chr-nul-safe]
 
 7. **Methods chained on a user function's `Array` return (FIXED v0.22.x+, 2026-07-26)** —
 `f(args).length()` used to compile and silently return 0 (the expression-receiver path had no Array
@@ -1686,7 +1743,23 @@ reporting `0 passed, 0 failed` with the output lost, far from the offending line
 `for … in` as a `while` with a manual index to avoid this, you can go back. `for x in arr.iter()`
 never had the bug. [test: compiler/language/test-416-continue-en-for-in]
 
-20. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
+20. **The `std/http` client sends `Host` with the port when it is not the scheme default (fixed 2026-09-14)**
+— `http://127.0.0.1:8124/x` now sends `Host: 127.0.0.1:8124`; the port is omitted only for 80 on
+`http://` and 443 on `https://` (RFC 9110 §7.2). Until then the port was always dropped. The bug was
+silent: the connection and the response were normal, only the header was wrong, which breaks any CSRF
+defense that compares `Origin` (sent by browsers WITH the port) against `Host`, and any virtual host
+keyed by port. If you worked around it by adding your own `Host` header, you can remove it. [test: 28-http-host-port]
+
+21. **A truncated JSON document is an `Err`, not a shorter `Ok` (fixed 2026-09-14)** — `try_json_parse` and
+the `json_parse` sentinel now reject input that ends before an object, array or string closes, a key
+without a value, a trailing comma, a number or literal cut short (`"1."`, `"tru"`), and anything but
+whitespace after the root value (`"{} x"`). Until then `try_json_parse("{\"a\": [1, 2]")` returned
+`Ok` with whatever had been read, indistinguishable from a complete document: an HTTP body cut in the
+middle of a list parsed as a valid list with fewer records, and no error anywhere. `try_json_parse`
+gives `Err{5, "parse"}` with the byte offset; `json_parse` collapses to its usual `["null"]`. If you
+added your own "does it end in `}`" check before parsing, you no longer need it. [test: 27-json-truncado]
+
+22. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
 trait methods, generic calls, constants, `extern`, `static`, `repr(C)` structs. Before the fix the
 codegen context of a nested function shared only part of the module's tables with its parent, and
 the symptom was misleading rather than clear: a trait method reported `method 'm' is not available
@@ -2074,15 +2147,28 @@ waitpid(pid, 0)
 
 ### Defer for cleanup
 
+`file_read_all` does not exist — reading a whole file through an open handle means sizing it first
+(`file_seek`/`file_tell`) and reading exactly that many bytes (`file_read_bytes`, binary-safe):
+
 ```nyx
 fn read_and_process(path: String) -> String {
     let f = file_open(path, "r")
-    defer { file_close(f) }
+    defer { file_close(f) }    // runs on every exit path, including early return
 
-    let content: String = file_read_all(f)
-    return process(content)     // file_close runs automatically
+    file_seek(f, 0, 2)                          // 2 = SEEK_END
+    let size: int = file_tell(f)
+    file_seek(f, 0, 0)                          // 0 = SEEK_SET, back to the start
+
+    let raw: Array = file_read_bytes(f, size)   // binary-safe: exact fread, no strlen
+    let content: String = string_from_bytes(raw, 0, size)
+    return content     // file_close runs automatically
 }
 ```
+
+For the common case — no need to keep the handle open across other work — `read_file(path)` /
+`try_read_file(path)` (`import "std/fs"`) already do this in one call and are binary-safe on read too
+(see gotcha item 6 below); only reach for the handle dance above when the defer/cleanup pattern itself
+is what you need to demonstrate.
 
 ---
 
@@ -2172,7 +2258,9 @@ context, which is exactly what forced hand-written correlation tables:
 `browser_timeout_fn(ms, fn(){...}) -> id`, `browser_interval_fn(ms, fn(){...}) -> id`,
 `browser_geo_fn(fn(lat: float, lon: float) {...})`, `browser_on_hashchange(fn(){...})`.
 Single-shot ones (fetch, timeout, geo) release the environment when they fire;
-multi-shot ones (interval) release it in `browser_clear_timer(id)`.
+multi-shot ones release it on cancel (`browser_clear_timer(id)` for interval,
+`browser_sse_close(id)` for SSE, a new registration for a DOM listener or hashchange) — also
+when the closure cancels itself from inside its own fire.
 
 **Server push**: `browser_sse_fn(url, fn(evento: String, datos: String) {...}) -> id` and
 `browser_sse_close(id)` — Server-Sent Events, so a screen learns about a change instead of
@@ -2196,16 +2284,19 @@ persistent; per-event allocations are discarded by `nyx_arena_event_reset()`
 DISCIPLINE: handlers must NOT store pointers to event-time Strings/Arrays in
 globals (store ints/floats by value, or build persistent state in `_start`).
 
-**Handler state**: closure capture of locals WORKS since 2026-07-27 (see §5.4)
-— that gotcha is gone. It was verified on the native target; the wasm path
-reuses the same codegen pass but has not been re-verified end to end, so if a
-DOM handler misbehaves, module globals remain the safe fallback:
-```nyx
-var g_count: int = 0
-dom_on_fn("#btn", "click", fn() { g_count = g_count + 1 })   // always OK
-```
-Independently of capture, the **arena discipline above still applies**: a
-handler must not stash pointers to event-time Strings/Arrays in globals.
+**Handler state**: closure capture of locals WORKS on both targets. On wasm it is verified end to
+end under the shim, with the arena ON and OFF, for every closure binding: `dom_on_fn`,
+`dom_on_h`, `browser_on_hashchange`, `browser_fetch_fn`, `browser_timeout_fn`,
+`browser_interval_fn`, `browser_geo_fn` and `browser_sse_fn` (tests wasm 23-25, 28-30). With
+the arena on, each binding anchors the turn the closure was created in and releases it on fire
+(single-shot) or on cancel (multi-shot: `browser_clear_timer`, `browser_sse_close`, or
+re-registering the same node/event). **A closure may cancel or replace ITSELF while it runs** —
+a click that calls `update()` and re-binds its own button, an interval that clears itself, an
+SSE handler that closes its channel on `"fin"`: the release is deferred until the call returns,
+so what the closure reads after that point is still valid (before 2026-09-14 this trapped with
+«memory access out of bounds»).
+Independently of capture, the **arena discipline above still applies**: a handler must not
+stash pointers to event-time Strings/Arrays in globals or in its own environment (§5.6).
 
 ---
 
