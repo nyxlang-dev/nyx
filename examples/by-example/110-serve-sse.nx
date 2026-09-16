@@ -1,0 +1,83 @@
+// std/serve Server-Sent Events — a normal route opens the channel, rooms broadcast
+// Eventos del servidor (SSE) con std/serve — una ruta normal abre el canal, los rooms difunden
+//
+// The browser side is browser_sse_fn(url, fn(evento, datos) {...}) from
+// std/browser. This recipe plays the client with a raw TCP socket so it can
+// run (and finish) on its own.
+//
+// WARNING: behind the nyx-proxy gateway SSE does not work yet and can break
+// other users' requests (the proxy pools an fd with an unread body). Until
+// that fix ships, expose SSE endpoints only on a server reached directly.
+
+import "std/http"
+import "std/web"
+import "std/serve"
+
+// A NORMAL route: it runs through hooks, middlewares, mounts and wraps, so
+// an auth middleware that answers 401 stops it before any channel opens.
+fn open_inventory(req: Request) -> Response {
+    return sse_open(req, "inventario")
+}
+
+fn main() -> int {
+    let app: App = app_new()
+    let port: int = 18208
+    app_get(app, "/eventos/inventario", open_inventory)
+
+    // Real server in a detached goroutine; it dies with the process.
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    // Wait for the listener.
+    var fd: int = 0 - 1
+    var tries: int = 0
+    while fd < 0 and tries < 50 {
+        fd = tcp_connect("127.0.0.1", port)
+        if fd < 0 {
+            sleep(100)
+        }
+        tries = tries + 1
+    }
+    if fd < 0 {
+        print("the server did not start")
+        return 1
+    }
+    tcp_set_timeout(fd, 5)
+
+    // Open the channel like a browser would.
+    tcp_write(fd, "GET /eventos/inventario HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n")
+    let head: String = tcp_read_partial(fd, 4096)
+    if head.indexOf("text/event-stream") >= 0 {
+        print("head: 200 text/event-stream, no Content-Length")
+    } else {
+        print("unexpected head: " + head)
+        tcp_close(fd)
+        return 1
+    }
+
+    // The channel is registered once the head is written; it does NOT hold
+    // a worker, so the server keeps answering other requests meanwhile.
+    var waited: int = 0
+    while sse_count_room("inventario") == 0 and waited < 50 {
+        sleep(20)
+        waited = waited + 1
+    }
+    print("open channels in the room: " + int_to_string(sse_count_room("inventario")))
+
+    // From any handler or thread: one event to everyone in the room. The
+    // return value counts clients that received the WHOLE frame.
+    let delivered: int = sse_broadcast("inventario", "stock", "{\"sku\":\"A-1\",\"cantidad\":7}")
+    print("delivered to: " + int_to_string(delivered))
+
+    // What the client reads: `event:` + one `data:` per line + a blank line.
+    let frame: String = tcp_read_partial(fd, 4096)
+    print(frame)
+
+    // An event name with a line break is rejected (0), never sanitized.
+    let rejected: int = sse_broadcast("inventario", "bad\nname", "x")
+    print("rejected event name delivered to: " + int_to_string(rejected))
+
+    tcp_close(fd)
+    return 0
+}

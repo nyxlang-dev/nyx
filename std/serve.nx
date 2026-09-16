@@ -242,11 +242,33 @@ fn __collect_headers(dst: Array, src: Array) -> int {
     return 0
 }
 
+// Lo que el pipeline le entrega al worker: los bytes a escribir y, si la
+// Response final es un sse_open, la marca de canal con su room.
+//
+// Por qué un struct y no el String de antes (arco serve-sse, Task 3): el
+// worker necesita saber si tiene que soltar la conexión (canal SSE) o seguir
+// el loop keep-alive, y esa decisión se toma DESPUÉS de los after-hooks, que
+// corren acá adentro. Alternativas descartadas: una cabecera interna que el
+// worker buscara en el String ya formateado (parsear lo que uno mismo acaba de
+// formatear), o formatear afuera del try (un panic al formatear mataría al
+// worker en vez de volverse un 500).
+struct ServeOutput {
+    wire: String,
+    sse: bool,
+    room: String
+}
+
 // Single exit point for every response path: merge headers contributed by
 // before-hooks/middlewares that continued, run after-hooks so they can
 // observe/modify the final status & headers (access-log, request-id,
 // analytics by status), then format the response to an HTTP string.
-fn __finalize(req: Request, resp: Response, extra_headers: Array) -> String {
+//
+// Una Response de sse_open trae la marca interna en headers_flat (ver
+// __SSE_MARCA). Si llega con status 200 al final del pipeline, se formatea
+// la cabecera de text/event-stream en vez de una respuesta con cuerpo. Si un
+// after-hook le cambió el status, la marca se descarta y sale la respuesta
+// normal: quien cambió el status decidió no abrir el canal.
+fn __finalize(req: Request, resp: Response, extra_headers: Array) -> ServeOutput {
     __collect_headers(resp.headers_flat, extra_headers)
 
     var r: Response = resp
@@ -262,7 +284,85 @@ fn __finalize(req: Request, resp: Response, extra_headers: Array) -> String {
         __emit_access_log(req, r)
     }
 
-    return __format_http_response(r)
+    let marca: int = __sse_marca_idx(r.headers_flat)
+    if marca >= 0 {
+        let hdrs: Array = r.headers_flat
+        let room: String = hdrs[marca + 1]
+        if r.status == 200 {
+            return ServeOutput { wire: __format_sse_head(r), sse: true, room: room }
+        }
+        r.headers_flat = __sse_sin_marca(hdrs)
+    }
+    return ServeOutput { wire: __format_http_response(r), sse: false, room: "" }
+}
+
+// Nombre de la cabecera interna con la que sse_open marca su Response. Lleva
+// un ESPACIO a propósito: un nombre de cabecera HTTP no puede contenerlo
+// (RFC 9110, token), así que ninguna cabecera real que un handler copie de
+// otro servidor puede hacerse pasar por la marca. Nunca llega al cliente.
+var __SSE_MARCA: String = "nyx sse-room"
+
+// Índice del nombre de la marca en headers_flat, o -1.
+fn __sse_marca_idx(headers: Array) -> int {
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        if k == __SSE_MARCA {
+            return i
+        }
+        i = i + 2
+    }
+    return 0 - 1
+}
+
+fn __sse_sin_marca(headers: Array) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        if k != __SSE_MARCA {
+            out.push(k)
+            out.push(v)
+        }
+        i = i + 2
+    }
+    return out
+}
+
+// Cabecera de un canal SSE (spec §2.1, D-2 i: cerrado por conexión, sin
+// Content-Length ni chunked). Lleva las cabeceras que agregaron hooks,
+// middlewares, wraps y after-hooks, salvo la marca y las que este formato
+// fija por su cuenta (se comparan sin distinguir mayúsculas para no emitirlas
+// duplicadas).
+fn __format_sse_head(resp: Response) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("HTTP/1.1 200 OK\r\n")
+    let headers: Array = resp.headers_flat
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        let kl: String = k.toLower()
+        var propia: bool = false
+        if k == __SSE_MARCA { propia = true }
+        if kl == "content-type" or kl == "content-length" or kl == "connection" { propia = true }
+        if kl == "cache-control" or kl == "transfer-encoding" or kl == "x-accel-buffering" { propia = true }
+        if !propia {
+            sb.append(k)
+            sb.append(": ")
+            sb.append(v)
+            sb.append("\r\n")
+        }
+        i = i + 2
+    }
+    sb.append("Content-Type: text/event-stream; charset=utf-8\r\n")
+    sb.append("Cache-Control: no-cache\r\n")
+    // Para proxies nginx intermedios: sin esto bufferizan el stream.
+    sb.append("X-Accel-Buffering: no\r\n")
+    sb.append("Connection: close\r\n")
+    sb.append("\r\n")
+    return sb.to_string()
 }
 
 // Una línea JSON por request a stdout (app_access_log). Campos: ts (epoch
@@ -309,7 +409,7 @@ fn __emit_access_log(req: Request, resp: Response) -> int {
 // El pipeline corre ENTERO dentro de un try: cualquier panic/throw de un
 // hook/middleware/handler/static/after-hook se convierte en 500 (registrable
 // via app_error) — el proceso no muere jamás por un request.
-fn __serve_mt_dispatch(raw: Array) -> String {
+fn __serve_mt_dispatch(raw: Array) -> ServeOutput {
     let method: String = raw[1]
     let path: String = raw[2]
     let headers: Array = raw[3]
@@ -317,7 +417,7 @@ fn __serve_mt_dispatch(raw: Array) -> String {
 
     // Empty method = client disconnected
     if method.length() == 0 {
-        return ""
+        return ServeOutput { wire: "", sse: false, room: "" }
     }
 
     // Clean path (strip query string for routing)
@@ -363,13 +463,13 @@ fn __serve_mt_dispatch(raw: Array) -> String {
     }
     // Unreachable: both try/catch branches return above — the toolchain's
     // return-path checker doesn't (yet) treat a try/catch as exhaustive.
-    return ""
+    return ServeOutput { wire: "", sse: false, room: "" }
 }
 
 // Camino de error: handler registrable (app_error) con guard propio — si el
 // handler custom (o un after-hook en esta segunda pasada) también panickea,
 // cae al default de std/web formateado directo, sin hooks.
-fn __error_response(req: Request, err: String) -> String {
+fn __error_response(req: Request, err: String) -> ServeOutput {
     try {
         let eh: Fn(Request, String) -> Response = __serve_app.error_handler
         let resp: Response = eh(req, err)
@@ -380,10 +480,10 @@ fn __error_response(req: Request, err: String) -> String {
         // __format_http_response only format constant strings from std/web,
         // never user/handler code, so there's nothing left here that can
         // panic — this is the reliable bottom of the fallback chain.
-        return __format_http_response(default_error(req, e2))
+        return ServeOutput { wire: __format_http_response(default_error(req, e2)), sse: false, room: "" }
     }
     // Unreachable: both try/catch branches return above — same checker gap.
-    return ""
+    return ServeOutput { wire: "", sse: false, room: "" }
 }
 
 // Motor de la cadena de wraps (contrato: Fn(Request, Fn) -> Response, con
@@ -627,6 +727,9 @@ fn __serve_ka_worker() -> int {
         // Set by a WS handler that returns 1 (took ownership of the fd):
         // the worker must not read from or close it afterward.
         var ws_owned: bool = false
+        // Lo mismo para un canal SSE registrado por __sse_attach: el fd pasa
+        // a ser del registro de SSE y el worker queda libre para otra conexión.
+        var sse_owned: bool = false
         while keep_alive {
             let request: Array = http_parse_request_fast(client)
             let method: String = request[1]
@@ -691,9 +794,23 @@ fn __serve_ka_worker() -> int {
                     }
                     keep_alive = false
                 } else {
-                    let response: String = __serve_mt_dispatch(request)
+                    let out: ServeOutput = __serve_mt_dispatch(request)
+                    let response: String = out.wire
+                    let es_sse: bool = out.sse
+                    if es_sse {
+                        // Canal SSE: la decisión se tomó DESPUÉS del pipeline
+                        // completo (hooks, middlewares, mounts, wraps y
+                        // after-hooks), a diferencia del upgrade WS de arriba.
+                        // Una conexión SSE no se reutiliza nunca.
+                        let room: String = out.room
+                        if __sse_attach(client, response, room) == 1 {
+                            sse_owned = true
+                        }
+                        keep_alive = false
+                    } else {
                     if response.length() > 0 {
                         tcp_write(client, response)
+                    }
                     }
                     let conn: String = http_find_header(headers, "Connection")
                     if conn == "close" {
@@ -713,7 +830,7 @@ fn __serve_ka_worker() -> int {
                 }
             }
         }
-        if !ws_owned {
+        if !ws_owned and !sse_owned {
             tcp_close(client)
         }
     }
@@ -774,6 +891,7 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     // Single-threaded here (no workers spawned yet) — pthread_create below
     // establishes happens-before for every worker, so this is race-free.
     ws_init_registry()
+    __sse_init_registry()
 
     var i: int = 0
     while i < workers {
@@ -815,6 +933,10 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
                 // quiet. Raw app_ws fds not registered via src/ws are still
                 // the handler's problem (documented).
                 ws_drain_close()
+                // Mismo lugar y mismo motivo para los canales SSE (arco
+                // serve-sse): el cliente ve el fin del stream y un hook que
+                // saca un snapshot encuentra el registro ya quieto.
+                sse_drain_close()
                 __run_shutdown_hooks()
                 print("[nyx-serve] drain complete, exiting")
                 return 0
@@ -1329,4 +1451,337 @@ pub fn ws_drain_close() -> int {
         i = i + 1
     }
     return 0
+}
+
+// ===== sección: sse (arco serve-sse, 2026-09-15) =====
+
+// Server-Sent Events: canales text/event-stream de un solo sentido, en rooms.
+// Spec: docs/design/specs/2026-09-14-serve-sse-design.md.
+//
+// Mismo modelo que la sección ws de arriba (registro fd <-> room bajo un
+// mutex, broadcast serializado para que dos frames nunca se intercalen en un
+// fd), con UNA diferencia de fondo: no hay thread lector por conexión. En SSE
+// el cliente no manda nada después del pedido, así que un cliente que se fue
+// se detecta ESCRIBIENDO: cualquier write que no escriba el frame completo
+// saca al fd del registro y lo cierra (el broadcast y el heartbeat aplican la
+// misma regla). Medido en la Task 1: tras un cierre normal del cliente, el
+// primer write entra al buffer del kernel y el segundo falla (EPIPE), así que
+// la detección toma a lo sumo dos escrituras.
+//
+// Dueño del fd: mientras está en el registro, el registro. Quien lo saca
+// (broadcast/heartbeat que falla, o el drain) lo cierra. Nadie más lo toca.
+
+var __sse_mu: Map = Map.new()
+var __sse_fds: Array = []
+var __sse_rooms: Array = []
+var __sse_ready: int = 0
+// 1 desde que sse_drain_close vació el registro (se escribe bajo __sse_mu):
+// ninguna apertura posterior se registra y el heartbeat termina.
+var __sse_draining: int = 0
+// 1 desde que se lanzó el thread de heartbeat (uno por proceso, bajo __sse_mu).
+var __sse_hb_started: int = 0
+
+// Misma regla que ws_init_registry: serve_app_en la llama single-threaded
+// antes de lanzar workers (pthread_create da el happens-before). Las
+// funciones públicas la llaman igual como red de seguridad para programas que
+// usan el registro fuera de serve_app (tests, scripts).
+fn __sse_init_registry() -> int {
+    if __sse_ready == 0 {
+        __sse_mu = mutex_new()
+        __sse_ready = 1
+    }
+    return 0
+}
+
+// Un evento en el formato de text/event-stream. Es el INVERSO EXACTO del
+// parser del cliente del navegador (examples/browser/nyx-wasi-shim.js,
+// js_browser_sse_fn): el shim corta por \n, quita un \r final y une varios
+// data: con \n; así que acá cada línea de `datos` va en su propia línea
+// data: (un \r final se quita) y un \n final de los datos queda como un
+// data: vacío, que el shim vuelve a unir. `event:` se omite para "message"
+// (y para "", que el shim lee igual).
+//
+// Un `evento` con \r o \n permitiría inyectar campos ("x\ndata: falso"): es
+// un error de programación y se RECHAZA devolviendo "" (sse_broadcast lo
+// traduce en 0 clientes), en vez de sanearlo en silencio (spec §2.2).
+//
+// El corte es un recorrido por bytes con charAt (lineal), no split + substring
+// sucesivos del resto (cuadrático con datos grandes de muchas líneas).
+fn __sse_frame(evento: String, datos: String) -> String {
+    if evento.contains("\n") or evento.contains("\r") {
+        return ""
+    }
+    var sb: StringBuilder = StringBuilder.new()
+    if evento.length() > 0 and evento != "message" {
+        sb.append("event: ")
+        sb.append(evento)
+        sb.append("\n")
+    }
+    let n: int = datos.length()
+    var ini: int = 0
+    var i: int = 0
+    while i <= n {
+        var corta: bool = false
+        if i == n {
+            corta = true
+        } else {
+            if datos.charAt(i) == 10 {
+                corta = true
+            }
+        }
+        if corta {
+            var fin: int = i
+            if fin > ini {
+                if datos.charAt(fin - 1) == 13 {
+                    fin = fin - 1
+                }
+            }
+            let linea: String = datos.substring(ini, fin)
+            sb.append("data: ")
+            sb.append(linea)
+            sb.append("\n")
+            ini = i + 1
+        }
+        i = i + 1
+    }
+    sb.append("\n")
+    return sb.to_string()
+}
+
+// Escribe `frame` a cada canal del room (o a todos, con todos == true) con el
+// mutex tomado: dos frames nunca se intercalan en un fd y ningún fd se cierra
+// mientras otro thread le escribe. Un write que no escribe el frame completo
+// saca al fd del registro y lo cierra (cliente que se fue, o que no lee: con
+// tcp_set_timeout(fd, 2) el write se rinde en vez de trabar a todos).
+// Devuelve a cuántos canales se les escribió el frame completo.
+//
+// Costo medido (Task 1): un cliente con ventana cero traba este loop de 2 a
+// 4 s (uno o dos vencimientos del SO_SNDTIMEO dentro de tcp_write) y SOLO
+// después de que el kernel absorbió unos 2,6 MiB. Como ese fd sale del
+// registro, lo paga un único broadcast por cliente trabado, no todos.
+fn __sse_write(room: String, todos: bool, frame: String) -> int {
+    let flen: int = str_byte_length(frame)
+    mutex_lock(__sse_mu)
+    var nf: Array = []
+    var nr: Array = []
+    var ok: int = 0
+    var i: int = 0
+    while i < __sse_fds.length() {
+        let fd: int = __sse_fds[i]
+        let r: String = __sse_rooms[i]
+        var sigue: bool = true
+        if todos or r == room {
+            let escrito: int = tcp_write(fd, frame)
+            if escrito == flen {
+                ok = ok + 1
+            } else {
+                tcp_close(fd)
+                sigue = false
+            }
+        }
+        if sigue {
+            nf.push(fd)
+            nr.push(r)
+        }
+        i = i + 1
+    }
+    __sse_fds = nf
+    __sse_rooms = nr
+    mutex_unlock(__sse_mu)
+    return ok
+}
+
+// Difunde un evento a todos los canales abiertos de un room. Se llama desde
+// cualquier handler o thread. Devuelve a cuántos clientes se les escribió el
+// frame completo; 0 también si `evento` trae \r o \n (rechazado, ver
+// __sse_frame). Un room por usuario ("usuario:42") cubre «mandarle algo a uno».
+pub fn sse_broadcast(room: String, evento: String, datos: String) -> int {
+    let frame: String = __sse_frame(evento, datos)
+    if frame.length() == 0 {
+        return 0
+    }
+    __sse_init_registry()
+    return __sse_write(room, false, frame)
+}
+
+// Canales SSE abiertos (todos los rooms / uno). Un cliente que se fue sigue
+// contando hasta la próxima escritura que falle: a lo sumo dos heartbeats.
+pub fn sse_count() -> int {
+    __sse_init_registry()
+    mutex_lock(__sse_mu)
+    let n: int = __sse_fds.length()
+    mutex_unlock(__sse_mu)
+    return n
+}
+
+pub fn sse_count_room(room: String) -> int {
+    __sse_init_registry()
+    mutex_lock(__sse_mu)
+    var n: int = 0
+    var i: int = 0
+    while i < __sse_rooms.length() {
+        let r: String = __sse_rooms[i]
+        if r == room {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    mutex_unlock(__sse_mu)
+    return n
+}
+
+// Abre un canal text/event-stream desde una ruta NORMAL:
+//
+//     app_get(app, "/eventos/inventario", fn(req: Request) -> Response {
+//         return sse_open(req, "inventario")
+//     })
+//
+// Devuelve una Response marcada. Como es el retorno de un handler, el pedido
+// ya pasó por before-hooks, middlewares, mounts y wraps (la autenticación
+// incluida): si uno corta antes con un 401/403, el cliente recibe esa
+// respuesta y no se abre nada. Los after-hooks la ven como un 200. Al final
+// del pipeline, el worker escribe la cabecera SSE (con las cabeceras que el
+// pipeline agregó), registra el fd en el room y suelta la conexión: el canal
+// NO ocupa un worker mientras dure.
+//
+// `req` no se usa hoy; está en la firma para que la apertura pueda mirar el
+// pedido (Last-Event-ID, D-5) sin cambiar la API.
+//
+// Tope (D-6): con NYX_SSE_MAX canales abiertos (default 1024), devuelve un
+// 503 normal (pasa por los after-hooks y el access-log como cualquier
+// respuesta) en vez de dejar al proceso sin fds para los pedidos comunes. Este
+// chequeo es el camino habitual; __sse_attach repite el chequeo bajo el mutex
+// para cerrar la carrera entre dos aperturas simultáneas.
+pub fn sse_open(req: Request, room: String) -> Response {
+    if sse_count() >= __sse_max() {
+        var r503: Response = response_text(503, "demasiados canales SSE abiertos")
+        r503.headers_flat.push("Retry-After")
+        r503.headers_flat.push("5")
+        return r503
+    }
+    var hdrs: Array = []
+    hdrs.push(__SSE_MARCA)
+    hdrs.push(room)
+    return Response { status: 200, headers_flat: hdrs, body: "" }
+}
+
+// NYX_SSE_MAX: tope de canales abiertos (default 1024). Techo medido en la
+// Task 1: runtime/net.c indexa su buffer de conexión por fd hasta 4096
+// (NYX_MAX_CONN_BUFS); un fd mayor recibe un pedido vacío y se cierra sin
+// respuesta. 1024 deja holgura para los pedidos comunes debajo de ese techo.
+fn __sse_max() -> int {
+    let env: String = getenv("NYX_SSE_MAX")
+    if env.length() == 0 { return 1024 }
+    let n: int = string_to_int_or(env, 1024)
+    if n < 0 { return 1024 }
+    return n
+}
+
+// NYX_SSE_HEARTBEAT_SECS (D-3): cada cuánto se escribe el comentario de
+// heartbeat (default 15; un valor inválido o menor que 1 usa el default).
+fn __sse_heartbeat_secs() -> int {
+    let env: String = getenv("NYX_SSE_HEARTBEAT_SECS")
+    if env.length() == 0 { return 15 }
+    let n: int = string_to_int_or(env, 15)
+    if n < 1 { return 15 }
+    return n
+}
+
+// El único thread nuevo del arco: uno por proceso, lanzado en la primera
+// apertura. Escribe ":\n\n" (un comentario, que el shim ignora) a TODOS los
+// canales. Sirve para dos cosas: que un proxy o un NAT no corte una conexión
+// callada, y detectar clientes que se fueron (la misma regla de
+// __sse_write: el fd cuyo write falla sale del registro y se cierra). Un
+// cliente que cerró se detecta como mucho en dos heartbeats (Task 1: el primer
+// write tras el FIN entra, el segundo falla).
+fn __sse_heartbeat_loop() -> int {
+    let ms: int = __sse_heartbeat_secs() * 1000
+    while __sse_draining == 0 {
+        sleep(ms)
+        if __sse_draining == 0 {
+            __sse_write("", true, ":\n\n")
+        }
+    }
+    return 0
+}
+
+fn __sse_heartbeat_start() -> int {
+    var lanzar: bool = false
+    mutex_lock(__sse_mu)
+    if __sse_hb_started == 0 {
+        __sse_hb_started = 1
+        lanzar = true
+    }
+    mutex_unlock(__sse_mu)
+    if lanzar {
+        thread_spawn(__sse_heartbeat_loop)
+    }
+    return 0
+}
+
+// Drain de SIGTERM (spec §2.7): lo llama serve_app_en junto a ws_drain_close,
+// ANTES de los shutdown hooks. Vacía el registro bajo el mutex (desde acá el
+// drain es el dueño de cada fd que sacó, y ninguna apertura nueva se registra),
+// y fuera del lock escribe un comentario final, pone un timeout de 1 s para
+// que un cliente trabado no cuelgue la salida, y cierra. El cliente ve el fin
+// del stream. Devuelve cuántos canales cerró.
+pub fn sse_drain_close() -> int {
+    __sse_init_registry()
+    mutex_lock(__sse_mu)
+    __sse_draining = 1
+    let fds: Array = __sse_fds
+    __sse_fds = []
+    __sse_rooms = []
+    mutex_unlock(__sse_mu)
+
+    var i: int = 0
+    while i < fds.length() {
+        let fd: int = fds[i]
+        tcp_set_timeout(fd, 1)
+        tcp_write(fd, ": cierre\n\n")
+        tcp_close(fd)
+        i = i + 1
+    }
+    return fds.length()
+}
+
+// El worker le entrega el fd de un canal SSE ya aprobado por el pipeline.
+// Devuelve 1 si el registro tomó posesión del fd (el worker no lo toca más) o
+// 0 si no se pudo abrir (el worker lo cierra).
+//
+// La cabecera se escribe CON el mutex tomado y recién después se registra el
+// fd: si se registrara antes, un broadcast concurrente podría escribir un
+// evento antes que la línea de estado. Escribirla bajo el lock no traba a
+// nadie: la conexión es nueva, el buffer del kernel está vacío y la cabecera
+// es chica.
+//
+// tcp_set_timeout(fd, 2) (D-4): un cliente que deja de leer hace fallar el
+// write a los 2-4 s (medido en la Task 1) en vez de trabar el broadcast de
+// todos; el fd sale del registro en ese write.
+//
+// Bajo el mutex se repiten dos chequeos que pueden haber cambiado desde
+// sse_open: el tope (dos aperturas simultáneas en workers distintos) y el
+// drain (una apertura en vuelo cuando sse_drain_close ya vació el registro:
+// registrarla dejaría un fd que nadie cierra). En los dos casos el cliente
+// recibe un 503 formateado acá, sin pipeline, porque ese ya corrió.
+fn __sse_attach(fd: int, head: String, room: String) -> int {
+    __sse_init_registry()
+    tcp_set_timeout(fd, 2)
+    mutex_lock(__sse_mu)
+    if __sse_draining == 1 or __sse_fds.length() >= __sse_max() {
+        mutex_unlock(__sse_mu)
+        tcp_write(fd, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        return 0
+    }
+    let hlen: int = str_byte_length(head)
+    let escrito: int = tcp_write(fd, head)
+    if escrito != hlen {
+        mutex_unlock(__sse_mu)
+        return 0
+    }
+    __sse_fds.push(fd)
+    __sse_rooms.push(room)
+    mutex_unlock(__sse_mu)
+    __sse_heartbeat_start()
+    return 1
 }

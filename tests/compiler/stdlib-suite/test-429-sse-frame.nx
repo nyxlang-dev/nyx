@@ -1,0 +1,54 @@
+// test-429 — formato de un evento SSE y registro vacío de std/serve (arco
+// serve-sse, Task 2).
+//
+// El formato es el INVERSO EXACTO del parser del cliente del navegador
+// (examples/browser/nyx-wasi-shim.js, js_browser_sse_fn): corta por \n y quita
+// un \r final; varios `data:` se unen con \n; `event:` ausente = "message".
+// Por eso: "message" omite la línea event:, cada línea de los datos va en su
+// propia línea data:, y un \n final de los datos se preserva como un data:
+// vacío (el shim lo vuelve a unir con \n).
+//
+// Un evento con \r o \n es un error de programación que permitiría inyectar
+// campos (`"x\ndata: falso"`): __sse_frame devuelve "" y sse_broadcast lo
+// rechaza con 0 clientes, en vez de sanearlo en silencio (spec §2.2).
+import "std/web"
+import "std/serve"
+
+fn main() {
+    // "message" (y "", que el shim lee igual) omiten event:
+    let f1: String = __sse_frame("message", "hola")
+    assert(f1 == "data: hola\n\n", "message omite event:")
+    let f0: String = __sse_frame("", "z")
+    assert(f0 == "data: z\n\n", "evento vacío = message")
+
+    // Evento con nombre
+    let f2: String = __sse_frame("stock", "{\"sku\":\"A-1\"}")
+    assert(f2 == "event: stock\ndata: {\"sku\":\"A-1\"}\n\n", "evento con nombre")
+
+    // Datos multilínea: \r\n y \n dan una línea data: por línea
+    let f3: String = __sse_frame("x", "a\r\nb\nc")
+    assert(f3 == "event: x\ndata: a\ndata: b\ndata: c\n\n", "multilínea")
+
+    // Un \n final se preserva como data: vacío
+    let f4: String = __sse_frame("x", "a\n")
+    assert(f4 == "event: x\ndata: a\ndata: \n\n", "salto final")
+
+    // Datos vacíos: data: y línea vacía
+    let f5: String = __sse_frame("message", "")
+    assert(f5 == "data: \n\n", "datos vacíos")
+
+    // Evento con \n o \r: se rechaza (vacío)
+    let m1: String = __sse_frame("mal\ndata: inyectado", "y")
+    assert(m1 == "", "evento con LF")
+    let m2: String = __sse_frame("mal\r", "y")
+    assert(m2 == "", "evento con CR")
+
+    // Registro sin servidor: conteos en 0; broadcast a nadie = 0; evento
+    // inválido = 0 aunque hubiera clientes.
+    assert(sse_count() == 0, "sse_count vacío")
+    assert(sse_count_room("r") == 0, "sse_count_room vacío")
+    assert(sse_broadcast("r", "e", "d") == 0, "broadcast sin clientes")
+    assert(sse_broadcast("r", "a\nb", "d") == 0, "broadcast evento inválido")
+
+    print("sse frame ok")
+}

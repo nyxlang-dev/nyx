@@ -20,6 +20,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 > anuncio es una decisión de Ottavio (W6).
 
 ### Added
+- **`std/serve`: Server-Sent Events del lado servidor** [arco: serve-sse] (fricción de nyxerp,
+  `20260910-020002-team-1`, punto 2). `sse_open(req, room)` desde una ruta NORMAL abre un canal
+  `text/event-stream` que pasa por el pipeline completo (hooks, middlewares, mounts, wraps: un 401
+  no abre nada); `sse_broadcast(room, evento, datos) -> int` difunde desde cualquier handler o
+  thread; `sse_count()`/`sse_count_room(room)`. El canal NO ocupa un worker: tras el pipeline el
+  worker escribe la cabecera, registra el fd en el room y suelta la conexión. Un solo thread de
+  heartbeat por proceso (`NYX_SSE_HEARTBEAT_SECS`, default 15) detecta clientes caídos escribiendo;
+  un cliente que no lee se corta con `tcp_set_timeout(fd, 2)`. Tope `NYX_SSE_MAX` (default 1024)
+  con 503; `sse_drain_close()` en el drain de SIGTERM. Un evento con `\r`/`\n` se rechaza (0), no
+  se sanea. Cero builtins nuevos. Pareja del cliente `browser_sse_fn` del navegador. **Aviso**:
+  detrás del gateway `nyx-proxy` SSE todavía no funciona y puede romper pedidos de otros usuarios
+  (encargo en `docs/design/briefs/2026-09-14-serve-sse/task-6.md`). Receta:
+  `examples/by-example/110-serve-sse.nx`; doc en `LLM.md` §std/serve. Tests: regression +1
+  (`test-429-sse-frame`: formato del evento, rechazo de `\r`/`\n`, registro vacío) y smoke de
+  std/serve 70 -> 103 (+33 checks de SSE: cabecera, pipeline y 401, rooms, multilínea, heartbeat,
+  conteo que baja, cien canales sin fuga de fds, tope 503 y comentario final del drain).
 - **`std/io`: `read_stdin_all() -> String`** (fricción de nyxerp, reporte
   `20260914-210002-team-2`, pedido 2). Leer la entrada estándar ENTERA (un JSON de una sola
   línea que un programa wasm recibe del navegador, un filtro, cualquier programa WASI que un

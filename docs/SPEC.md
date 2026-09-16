@@ -4423,6 +4423,50 @@ if ws_is_close(received_data) {
 
 ---
 
+## Server-Sent Events (`std/serve`)
+
+Canales `text/event-stream` de un solo sentido (servidor → navegador), en rooms. El cliente del
+navegador es `browser_sse_fn(url, fn(evento, datos) {...})` de `std/browser`.
+
+```nyx
+import "std/web"
+import "std/serve"
+
+// Una ruta NORMAL abre el canal: pasa por hooks, middlewares, mounts y wraps
+// (un 401 de un middleware de auth no abre nada).
+fn abrir(req: Request) -> Response {
+    return sse_open(req, "inventario")
+}
+app_get(app, "/eventos/inventario", abrir)
+
+// Desde cualquier handler o thread:
+let n: int = sse_broadcast("inventario", "stock", "{\"sku\":\"A-1\"}")
+```
+
+| Función | Descripción |
+|---------|-------------|
+| `sse_open(req, room) -> Response` | Response marcada: al final del pipeline el worker escribe la cabecera SSE, registra el fd en `room` y suelta la conexión (el canal no ocupa un worker). Con el tope alcanzado devuelve 503 |
+| `sse_broadcast(room, evento, datos) -> int` | Difunde un evento; devuelve a cuántos clientes se les escribió el frame completo. Un `evento` con `\r` o `\n` se rechaza (0) |
+| `sse_count() -> int` / `sse_count_room(room) -> int` | Canales abiertos, en total o en un room |
+| `sse_drain_close() -> int` | Cierra todos los canales; `serve_app` lo llama en el drain de SIGTERM |
+
+Conducta:
+- **Cabecera**: `200 OK`, `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache`,
+  `X-Accel-Buffering: no`, `Connection: close`, más las cabeceras del pipeline; sin `Content-Length`
+  ni chunked (cuerpo cerrado por conexión).
+- **Formato**: `event: <evento>` (omitido para `"message"`), una línea `data: ` por cada línea de
+  `datos` (se corta por `\n` y se quita un `\r` final) y una línea vacía.
+- **Heartbeat**: un thread por proceso escribe `:\n\n` cada `NYX_SSE_HEARTBEAT_SECS` segundos
+  (default 15). Un cliente que se fue sale del registro en a lo sumo dos heartbeats; uno que no lee
+  se corta a los 2–4 s de ventana cero.
+- **Tope**: `NYX_SSE_MAX` (default 1024). El techo duro del servidor es de 4096 fds en total.
+- **Fase 1 sin** `id:`, `retry:` ni reenvío por `Last-Event-ID`; sin SSE sobre HTTP/2.
+- **Aviso**: detrás del gateway `nyx-proxy` SSE todavía no funciona y puede romper pedidos de otros
+  usuarios. Hasta que se entregue ese arreglo, exponer SSE solo en un servidor al que el cliente llega
+  directo.
+
+---
+
 ## Middleware and Sessions
 
 ### Middleware (`std/web.nx`)

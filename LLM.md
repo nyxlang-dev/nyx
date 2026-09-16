@@ -2082,6 +2082,46 @@ fn main() -> int {
 - **Multipart uploads** (`std/multipart`): `multipart_parse(body, boundary)`
   — boundary comes from the `Content-Type: multipart/form-data;
   boundary=...` request header.
+- **Server-Sent Events** (`text/event-stream`, server → browser push):
+  ```nyx
+  // A NORMAL route opens the channel: it runs through before-hooks,
+  // middlewares, mounts and wraps, so auth applies (a 401 opens nothing).
+  app_get(app, "/eventos/inventario", fn(req: Request) -> Response {
+      return sse_open(req, "inventario")      // the room; "usuario:42" targets one user
+  })
+  // From any handler or thread, whenever something changes:
+  let n: int = sse_broadcast("inventario", "stock", "{\"sku\":\"A-1\"}")
+  let abiertos: int = sse_count_room("inventario")   // sse_count() = all rooms
+  ```
+  The browser side is `browser_sse_fn(url, fn(evento, datos) {...})` (§9).
+  - The channel does NOT hold a worker: after the pipeline, the worker writes
+    the SSE head (with the headers hooks/middlewares added), registers the fd
+    in the room and goes back to serving. No thread per connection.
+  - Wire format: `event: <evento>` (omitted for `"message"`), one `data:` line
+    per line of `datos` (`\r\n` and `\n` both split; a trailing `\n` survives
+    as an empty `data:`), then a blank line. The response is closed by
+    connection (`Connection: close`, no `Content-Length`, no chunked).
+  - `sse_broadcast` returns how many clients got the WHOLE frame. An `evento`
+    containing `\r` or `\n` is rejected (returns 0, nothing sent) instead of
+    being silently sanitized — it would let the caller inject fields.
+  - Disconnects are detected by WRITING: a heartbeat comment (`:`) goes to
+    every channel each `NYX_SSE_HEARTBEAT_SECS` (default 15). A client that
+    closed drops out of `sse_count` within two heartbeats. A client that
+    stops reading is cut after 2–4 s of zero window (its fd is removed, so
+    one broadcast pays that once, not every broadcast).
+  - `NYX_SSE_MAX` (default 1024) caps open channels; the next `sse_open`
+    gets a normal **503**. The hard ceiling is 4096 fds for the whole server
+    (`runtime/net.c` indexes its per-connection buffer by fd; a connection on
+    fd ≥ 4096 is closed without a response).
+  - SIGTERM drain: `sse_drain_close()` runs next to `ws_drain_close()`,
+    before shutdown hooks — clients see the stream end.
+  - Not in phase 1: `id:`, `retry:`, replay from `Last-Event-ID` (the header
+    is still visible in `req.headers_flat`), SSE over HTTP/2.
+  - **⚠ Behind the `nyx-proxy` gateway SSE does NOT work yet, and it can
+    break OTHER users' requests**: the proxy returns an upstream fd with an
+    unread body to its pool (bug fixed separately in `nyx-proxy`, tunnel
+    tracked as Task 6 of the serve-sse arc). Until that ships, expose SSE
+    endpoints only on a server clients reach directly.
 - **Graceful shutdown**: `serve_on_shutdown(fn() -> int)` registers a hook
   that runs during the SIGTERM drain, after in-flight requests finish and
   before `serve_app` returns 0. `NYX_SERVE_DRAIN_SECS` overrides the
