@@ -1535,7 +1535,7 @@ Not Nyx bugs: these come from POSIX, from the Boehm GC, or from codegen
 internals you never touch directly.
 
 <!-- gen:gotchas kinds=limit lang=en form=long -->
-<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env -->
+<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack -->
 
 1. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is
 inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC interacts with POSIX
@@ -1591,6 +1591,18 @@ not have — would lift it. Mutating captured `int`/`float` by value is always s
 flags and ids work; keep anything string-shaped outside the environment (a module global built in
 `_start`, or re-derive it on each fire). Note this only applies with the arena on: without
 `nyx_arena_begin()` nothing is ever freed and the question does not arise. [test: wasm/test-wasm-23-closure-lifetime] [test: wasm/test-wasm-24-dom-on-fn-turnos] [test: wasm/test-wasm-29-arena-autocancelacion]
+
+7. **In wasm32-wasi only ONE function can be suspended in `await` at a time: events that arrive meanwhile are queued and delivered after it finishes.**
+`await browser_fetch_await(...)` (and any `#[suspends]` import) suspends the wasm stack with
+Asyncify, which has a single global unwind state and a single shared C shadow stack. So while a
+function waits, a click, a timer, an SSE frame or a JS call to an export does NOT run: the shim
+queues it and delivers it, in order, when the waiting function returns. Consequences that are easy
+to miss: a click during a slow fetch is handled only after the fetch; `preventDefault()` inside a
+queued event handler has no effect (the browser already finished dispatching it); interval ticks
+pile up and fire together. A `#[suspends]` import reached from a nested synchronous entry
+(JS→wasm→JS→wasm, e.g. a handler triggered synchronously from inside another call) is a loud
+runtime error, never a corrupted stack. `spawn`, channels and goroutines do not exist in wasm; to
+wait for several things, `await` them one after another. [test: wasm/test-wasm-31-asyncify-shim] [test: wasm/test-wasm-33-await-fetch]
 
 <!-- /gen:gotchas -->
 
@@ -1898,6 +1910,12 @@ fn main() {
 Gotcha: `await` of a function returning `float` is compile-rejected
 (`NYX1021`) — an ABI hazard in the join path. `async fn` without any `await`
 inside stays synchronous sugar.
+
+In **wasm32-wasi** there are no goroutines: `await f()` of an `async fn` called by name is a
+direct call (sequential semantics, same result as native), `spawn`/`select`/channels are a
+compile error, and `await` of a `#[suspends]` host operation (`browser_fetch_await`,
+`browser_sleep_await`) suspends the wasm stack until the JS Promise settles — one suspended
+stack at a time, events queue meanwhile. See §9.
 
 ---
 
@@ -2283,14 +2301,50 @@ error: 'tcp_listen' is not supported on target 'wasm32-wasi'
 An imported module is emitted whole, so importing `std/http` breaks a wasm build even if that
 branch never runs — split the entry point with `--main` (above).
 
-**No concurrency runtime in wasm.** The target links neither threads nor the goroutine scheduler,
-so `spawn { }`, `await`/`async fn` called through `await` or `run()`, `select`, `go_sleep`,
+**No goroutine runtime in wasm — but `await` works.** The target links neither threads nor the
+goroutine scheduler, so `spawn { }`, `run()`, `select`, `go_sleep`,
 `spawn_task`/`task_await`/`task_race`/`task_cancel`, `thread_*`, `channel_*`, `mutex_*`,
 `condvar_*` and `rwlock_*` are all the compile error above (with `file:line`), plus one note.
-Before 2026-09-14 `spawn`/`await`/`select` got past codegen and died in `wasm-ld` with
-`undefined symbol: nyx_goroutine_*` and no location. The browser replacement is the
-closure-callback API of `std/browser` (below): `browser_fetch_fn` to wait for a response,
-`browser_timeout_fn`/`browser_interval_fn` to schedule, `browser_sse_fn` for server push.
+`await f()` of an `async fn` called BY NAME compiles to a direct call (same value and order of
+effects as sequential native `await`); `await` of any other expression is the target error.
+
+**`await` that waits for the host (Asyncify).** `std/browser_await` has `async fn`s that SUSPEND the
+wasm stack until a JS Promise settles, then continue on the next line with the value — no callbacks.
+It is a separate module ON PURPOSE: imported modules are compiled whole, so importing it is what
+makes the build run Asyncify; apps that only `import "std/browser"` keep their exact `.wasm`.
+
+```nyx
+import "std/browser_await"
+import "std/error"
+
+async fn load_invoice(id: int) -> String {
+    let res = await browser_fetch_await_opts("/api/invoices/" + int_to_string(id), "GET", "", 5000)
+    match res {
+        Result.Ok(r) => { return r.body }                 // a 404 is Ok with r.status == 404
+        Result.Err(e) => { return "error: " + e.kind }    // "connection" | "timeout"
+    }
+}
+```
+
+- API: `browser_fetch_await(url, method, body) -> Result<HttpResp, Error>` (`HttpResp { status, body }`),
+  `browser_fetch_await_opts(url, method, body, timeout_ms)`, `browser_sleep_await(ms)`.
+- **ONE suspended stack at a time.** Events arriving while a function waits (clicks, timers, SSE
+  frames, JS calls to exports) are QUEUED and delivered in order when it finishes: a click during a
+  slow fetch runs after the fetch. `preventDefault()` on a queued event has no effect, and interval
+  ticks pile up. A `#[suspends]` import reached from a nested synchronous entry (JS→wasm→JS→wasm)
+  is a loud runtime error, never a corrupted stack.
+- **Build needs binaryen** (`wasm-opt`) ONLY when the program uses a `#[suspends]` import (the
+  compiler writes `; nyx-asyncify-imports: ...` into the `.ll`); every other `.wasm` is byte-identical
+  to before. Missing binaryen is a clear error: `sudo apt install binaryen`, or
+  `NYX_WASM_OPT=/path/to/wasm-opt`. Cost measured: +3-4 % size on small programs, up to ~+12 % with
+  many closures (VDOM); ~1 s of `wasm-opt`.
+- From JS, an exported fn of such a module returns a Promise when it waits (`await exports.f()`).
+- Arena: the shim pins the running turn while a stack is suspended, so a reset during the wait
+  cannot corrupt it (measured without the pin: silently wrong strings).
+
+The closure-callback API of `std/browser` (below) is still there and still the choice for
+multi-shot events: `browser_timeout_fn`/`browser_interval_fn` to schedule, `browser_sse_fn` for
+server push, `dom_on_fn` for listeners.
 
 **Toolchain** (no wasi-sdk, ~700MB): system clang + Debian `wasi-libc` +
 `libclang-rt-19-dev-wasm32` + `lld-19` (`--sysroot=/usr`) + `wasmtime` (release

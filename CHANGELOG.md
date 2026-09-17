@@ -36,6 +36,31 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   (`test-429-sse-frame`: formato del evento, rechazo de `\r`/`\n`, registro vacío) y smoke de
   std/serve 70 -> 103 (+33 checks de SSE: cabecera, pipeline y 401, rooms, multilínea, heartbeat,
   conteo que baja, cien canales sin fuga de fds, tope 503 y comentario final del drain).
+- **`await` en wasm32-wasi, y una `async fn` que ESPERA al anfitrión JS sin callbacks**
+  `[arco: async-real-wasm]` (pedido de nyxerp del 2026-09-10, prioridad ALTA). En wasm, `await f()`
+  de una async fn llamada por nombre baja a llamada directa (antes: error de target). Nuevo atributo
+  `#[suspends]` sobre `extern "js" fn`: el import suspende la pila wasm con Asyncify hasta que su
+  Promise resuelve. Módulo nuevo `std/browser_await`: `browser_fetch_await`/`browser_fetch_await_opts`
+  (`Result<HttpResp, Error>`, kinds `connection`/`timeout`; el status HTTP no es error) y
+  `browser_sleep_await`. Va APARTE de `std/browser` porque los módulos importados se compilan enteros:
+  si viviera ahí, toda app que importa `std/browser` pasaría a necesitar binaryen y cambiaría su
+  `.wasm`. El shim encola los eventos que llegan durante una suspensión (una sola pila
+  suspendida a la vez) y ancla el turno de arena mientras dura: medido sin el anclaje, la pila
+  rebobinada lee Strings pisados en silencio. `nyx build --target wasm32-wasi`, `make wasm` y los
+  runners corren `wasm-opt --asyncify` SOLO si el `.ll` trae `; nyx-asyncify-imports:`; un programa
+  sin `#[suspends]` sale byte a byte igual. Dependencia nueva, solo para esos programas: binaryen
+  (`wasm-opt`, o `NYX_WASM_OPT`). Costo medido: +3,4 % de tamaño y ~0,8 s de `wasm-opt` en un
+  programa chico (`test-wasm-33-await-fetch`: +2,9 %). Tests: `test-wasm-31-asyncify-shim` (shim,
+  cola, arena, 1000 ciclos, entrada anidada), `test-wasm-32-await-puro` (paridad nativo↔wasm),
+  `test-wasm-33-await-fetch`; dos tests de NYX0105; receta `109-await-fetch-wasm`. Sin binaryen,
+  los tests async hacen SKIP contado aparte. `export async fn`/`pub async fn` (necesario para que
+  `std/browser_await` sea importable) no se registraba en semantic/codegen — cazado con `await`
+  de una async fn EXPORTADA; y `let x = await f()` sin anotar no averiguaba el tipo real de
+  retorno (la firma cruda de una async fn es "Fn", el retorno vive en `__async_body_NAME`) —
+  rompía el acceso a campos de `Result<Struct, Error>` awaited, en NATIVO también, no solo wasm.
+  Un tercer hallazgo, ajeno al runtime: una cadena larga de `+` en `compiler/build.nx`
+  (script bash del build wasm) hacía segfaultear al compilador self-hosted compilándose a sí mismo
+  con `NYX_SKIP_SEMANTIC=1` — partida en dos statements, sin tocar el compilador.
 - **`std/io`: `read_stdin_all() -> String`** (fricción de nyxerp, reporte
   `20260914-210002-team-2`, pedido 2). Leer la entrada estándar ENTERA (un JSON de una sola
   línea que un programa wasm recibe del navegador, un filtro, cualquier programa WASI que un

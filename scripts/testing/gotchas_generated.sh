@@ -44,6 +44,7 @@ GOTCHA_IDS=(
   "derive-fields-solo-primitivos"
   "hkt-gats-parse-only"
   "wasm-arena-closure-env"
+  "wasm-await-one-suspended-stack"
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"

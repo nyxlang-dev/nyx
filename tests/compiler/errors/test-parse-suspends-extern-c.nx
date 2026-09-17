@@ -1,0 +1,9 @@
+// Arco async-real-wasm (D-4): `#[suspends]` solo tiene sentido sobre un import
+// `extern "js"` — en un extern "C" no hay Promise que esperar ni Asyncify que
+// lo instrumente. Es el único atributo de un extern, y solo ahí: NYX0105.
+#[suspends]
+extern "C" fn puts(s: String) -> int
+
+fn main() {
+    print("inalcanzable")
+}

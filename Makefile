@@ -636,7 +636,7 @@ cross:
 wasm:
 	@test -n "$(FILE)" || (echo "Uso: make wasm FILE=<archivo.nx>"; exit 1)
 	@test -f $(WASI_LIBC) || (echo "wasi-libc no encontrado en $(WASI_LIBC) — sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19"; exit 1)
-	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && NYX_PROJECT_DIR=$(abspath $(dir $(FILE))) NYX_TARGET=wasm32-wasi NYX_NO_GC=1 ./nyx_bootstrap && $(WASM_CLANG) $(WASM_CFLAGS) script.ll $(WASM_RUNTIME_SRCS) -o $(notdir $(basename $(FILE))).wasm'
+	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && NYX_PROJECT_DIR=$(abspath $(dir $(FILE))) NYX_TARGET=wasm32-wasi NYX_NO_GC=1 ./nyx_bootstrap && $(WASM_CLANG) $(WASM_CFLAGS) script.ll $(WASM_RUNTIME_SRCS) -o $(notdir $(basename $(FILE))).wasm && { ASY=$$(grep -m1 "^; nyx-asyncify-imports: " script.ll | sed "s/^; nyx-asyncify-imports: //"); if [ -n "$$ASY" ]; then WOPT="$${NYX_WASM_OPT:-$$(command -v wasm-opt || true)}"; test -n "$$WOPT" || { echo "error: el programa usa imports que suspenden ($$ASY) y falta wasm-opt - sudo apt install binaryen, o NYX_WASM_OPT=/ruta/a/wasm-opt" >&2; exit 1; }; "$$WOPT" $(notdir $(basename $(FILE))).wasm --asyncify --pass-arg=asyncify-imports@"$$ASY" -O2 -o $(notdir $(basename $(FILE))).wasm; fi; }'
 	@echo "✓ WASM: $(notdir $(basename $(FILE))).wasm — correr con: wasmtime $(notdir $(basename $(FILE))).wasm"
 
 ## Emitir IR con triple Windows (arco W0 — solo COMPILE, el link+run vive

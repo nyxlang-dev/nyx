@@ -1228,7 +1228,33 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
             "-Wl,-z,stack-size=1048576 -Wl,--export-table \"$SRC.ll\" " +
             "$WASM_SRCS " +
             "-o \"$ORIG_DIR/target/wasm32-wasi/" + output_name + ".wasm\" 2> \"$LOG\" " +
-            "|| { echo \"error: clang wasm link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
+            "|| { echo \"error: clang wasm link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n"
+        // Asyncify (arco async-real-wasm, D-5): solo si el compilador dejó en
+        // el .ll la lista de imports que suspenden. Sin esa línea no se toca
+        // nada: el .wasm sale byte a byte como antes y binaryen no hace falta.
+        // Con la línea y sin wasm-opt, error con la receta — nunca un .wasm
+        // que trapea al primer await.
+        //
+        // Statement APARTE (no seguir el `+` de arriba): esa cadena de
+        // concatenación ya venía larga (script wasm completo en un solo
+        // literal) y sumarle estos 7 términos más hacía que compilar ESTE
+        // ARCHIVO con NYX_SKIP_SEMANTIC=1 (nyx_build/nyx_check) segfaulteara
+        // por profundidad de recursión del codegen sobre el árbol de binops
+        // `+` — reproducido aislado, cero relación con async/wasm en tiempo
+        // de ejecución. Partir la expresión en dos statements (acumulando
+        // en `final_script`) resuelve la causa raíz sin tocar el compilador:
+        // cada AST de concatenación queda con ~7-25 términos en vez de ~32.
+        // Ya estamos dentro del `if eff_target == "wasm32-wasi"` de arriba —
+        // sin repetir la condición.
+        final_script = final_script +
+            "ASY=\"$(grep -m1 '^; nyx-asyncify-imports: ' \"$SRC.ll\" | sed 's/^; nyx-asyncify-imports: //')\"\n" +
+            "if [ -n \"$ASY\" ]; then\n" +
+            "  WOPT=\"$" + "{NYX_WASM_OPT:-$(command -v wasm-opt || true)}\"\n" +
+            "  test -n \"$WOPT\" || { echo \"error: el programa usa imports que suspenden (await que espera al anfitrion: $ASY) y falta wasm-opt - sudo apt install binaryen, o NYX_WASM_OPT=/ruta/a/wasm-opt\" >&2; exit 1; }\n" +
+            "  \"$WOPT\" \"$ORIG_DIR/target/wasm32-wasi/" + output_name + ".wasm\" --asyncify --pass-arg=asyncify-imports@\"$ASY\" -O2 " +
+            "-o \"$ORIG_DIR/target/wasm32-wasi/" + output_name + ".wasm\" 2> \"$LOG\" " +
+            "|| { echo \"error: wasm-opt --asyncify fallo:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
+            "fi\n" +
             "echo 'built target/wasm32-wasi/" + output_name + ".wasm (run: wasmtime target/wasm32-wasi/" + output_name + ".wasm)'\n"
     }
 

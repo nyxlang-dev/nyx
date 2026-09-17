@@ -135,7 +135,167 @@ export function makeNyxHelpers(state) {
         }
         const fnIdx = mem().getUint32(pairPtr, true);
         const envPtr = mem().getUint32(pairPtr + 4, true);
-        return state.table.get(fnIdx)(envPtr, ...args);
+        // Por enterWasm: un cierre que llega a un import #[suspends] devuelve
+        // una Promise en vez del valor (y rebobina con los mismos argumentos).
+        return enterWasm(() => state.table.get(fnIdx)(envPtr, ...args));
+    };
+
+    // ── Asyncify: una pila wasm que ESPERA al anfitrión (arco async-real-wasm) ──
+    //
+    // Solo existe si el módulo pasó por `wasm-opt --asyncify` —lo hace el build
+    // cuando el programa usa un import `#[suspends]`— y por lo tanto exporta
+    // asyncify_*. Sin eso `state.asy` es null y cada helper de abajo es la
+    // llamada directa de siempre: un módulo sin await sigue EXACTAMENTE igual.
+    //
+    // El ciclo, medido a mano antes de escribir esto (ledger del arco):
+    //   1. JS entra a wasm (_start, un export o un cierre) por enterWasm.
+    //   2. Nyx llama a un import que suspende; el import (vía `suspend`) arranca
+    //      la Promise, llama asyncify_start_unwind y vuelve. Asyncify desenrolla
+    //      la pila wasm guardando los locals en un buffer de memoria lineal.
+    //   3. enterWasm ve el estado «unwinding», lo detiene y espera la Promise.
+    //   4. Al resolver: convierte el resultado a valor wasm (p.ej. makeString,
+    //      EN ESTE turno), asyncify_start_rewind y vuelve a llamar la MISMA
+    //      entrada. Asyncify rebobina hasta el import, que ahora entrega el valor.
+    //   5. Nyx sigue en la línea siguiente. Puede volver a suspender (bucle).
+    //
+    // UNA SOLA PILA SUSPENDIDA (D-3). Asyncify tiene un estado global y un solo
+    // buffer, y la pila sombra de C (__stack_pointer) es compartida: una
+    // segunda computación suspendida pisaría a la primera. Por eso los eventos
+    // que llegan mientras hay una suspensión se ENCOLAN (`turn`) y se entregan
+    // en orden al terminar, y un import que suspende alcanzado desde una
+    // entrada anidada (JS→wasm→JS→wasm) es un error ruidoso: Asyncify no puede
+    // desenrollar a través de un marco JS.
+    //
+    // ARENA. La pila suspendida guarda punteros a memoria del turno en que
+    // corría. Si algo resetea la arena durante la espera, al rebobinar lee
+    // basura EN SILENCIO (medido: «antes-107» donde iba «antes-7»). Por eso al
+    // desenrollar se ancla el turno vivo (nyx_arena_pin_turn) y se suelta
+    // cuando la entrada termina de verdad. Medido: 1000 ciclos sin crecer la
+    // memoria y sin turnos retenidos.
+    //
+    // NO TOCAR el puntero actual del buffer entre stop_unwind y start_rewind:
+    // rewind lee desde la CIMA de lo guardado. Reiniciarlo rebobina con índices
+    // vacíos y trapea «unreachable» lejos de la causa (en fputs).
+    const resetAsyncify = (a) => {
+        const s = a.ex.asyncify_get_state();
+        if (s === 1) a.ex.asyncify_stop_unwind();
+        else if (s === 2) a.ex.asyncify_stop_rewind();
+    };
+    // Un trap DURANTE el desenrollado casi siempre es el buffer de Asyncify
+    // desbordado (medido: con menos bytes de los que la pila necesita,
+    // «unreachable» sin más). Se dice la causa en vez de dejar el trap pelado.
+    const explainUnwindTrap = (a, e) => {
+        if (e instanceof WebAssembly.RuntimeError && a.ex.asyncify_get_state() === 1) {
+            e.message += ` — ocurrió mientras Asyncify desenrollaba la pila: probablemente desbordó ` +
+                `su buffer (${a.dataBytes} bytes; una pila suspendida demasiado profunda)`;
+        }
+        return e;
+    };
+    const callCounted = (a, fn) => {
+        a.depth++;
+        try { return fn(); }
+        catch (e) { explainUnwindTrap(a, e); resetAsyncify(a); throw e; }
+        finally { a.depth--; }
+    };
+    const resumeSuspended = async (a, fn) => {
+        const tokens = [];
+        try {
+            for (;;) {
+                a.suspended = true;
+                if (state.pinTurn) tokens.push(state.pinTurn());
+                const { promise, toWasm } = a.pending;
+                a.pending = null;
+                try { a.value = toWasm(await promise); a.error = null; }
+                catch (e) { a.value = undefined; a.error = e; }
+                a.suspended = false;
+                a.ex.asyncify_start_rewind(a.dataPtr);
+                const r = callCounted(a, fn);
+                if (a.ex.asyncify_get_state() !== 1) return r;
+                a.ex.asyncify_stop_unwind();
+            }
+        } finally {
+            a.suspended = false;
+            if (state.unpinTurn) for (const t of tokens) state.unpinTurn(t);
+        }
+    };
+    // Entrar a wasm. Devuelve el valor, o una Promise si la llamada suspendió.
+    const enterWasm = (fn) => {
+        const a = state.asy;
+        if (!a) return fn();
+        const r = callCounted(a, fn);
+        if (a.ex.asyncify_get_state() !== 1) return r;
+        a.ex.asyncify_stop_unwind();
+        return resumeSuspended(a, fn);
+    };
+    // Cuerpo de un import que suspende. `start()` corre YA (leer los punteros
+    // de los argumentos acá, no después) y devuelve una Promise; `toWasm`
+    // convierte su resultado al valor que el import devuelve, en el turno de
+    // la reanudación. `zero` es lo que se devuelve mientras desenrolla: tiene
+    // que tener el tipo del retorno (0n para un `int` Nyx, que es i64).
+    const suspend = (start, toWasm, zero) => {
+        const a = state.asy;
+        if (!a) {
+            throw new Error("import que suspende: el módulo no pasó por wasm-opt --asyncify " +
+                "(declarar el extern con #[suspends] y construir con nyx build --target wasm32-wasi)");
+        }
+        if (a.ex.asyncify_get_state() === 2) {
+            a.ex.asyncify_stop_rewind();
+            if (a.error) { const e = a.error; a.error = null; throw e; }
+            const v = a.value;
+            a.value = undefined;
+            return v;
+        }
+        if (a.suspended || a.pending) {
+            throw new Error("wasm: ya hay una pila suspendida esperando al anfitrión; una segunda " +
+                "suspensión la pisaría (una sola pila suspendida a la vez)");
+        }
+        if (a.depth !== 1) {
+            throw new Error("wasm: un import que suspende se alcanzó desde una entrada anidada " +
+                "(JS→wasm→JS→wasm); Asyncify no desenrolla a través de un marco JS");
+        }
+        a.pending = { promise: Promise.resolve(start()), toWasm: toWasm || ((v) => v) };
+        a.ex.asyncify_start_unwind(a.dataPtr);
+        return zero;
+    };
+    // `try { thunk() } finally { fin() }` que respeta la suspensión: si thunk
+    // devolvió una Promise, fin corre cuando termina, no cuando desenrolla.
+    // Los bindings sueltan anclajes y resetean la arena en `fin`.
+    const finish = (thunk, fin) => {
+        let r;
+        try { r = thunk(); }
+        catch (e) { fin(); throw e; }
+        if (r instanceof Promise) {
+            return r.then((v) => { fin(); return v; }, (e) => { fin(); throw e; });
+        }
+        fin();
+        return r;
+    };
+    // Un TURNO de evento: todo lo que un binding hace al dispararse (armar
+    // Strings, llamar, resetear) va adentro, para que un evento encolado arme
+    // sus argumentos cuando le toca y no en un turno que ya se reseteó.
+    // Anidado síncrono (dentro de otro turno o con wasm en la pila): corre ya.
+    const drainTurns = (a) => {
+        while (!a.busy && a.queue.length > 0) {
+            const { body, res, rej } = a.queue.shift();
+            try {
+                const r = runTurn(a, body);
+                if (r instanceof Promise) r.then(res, rej); else res(r);
+            } catch (e) { rej(e); }
+        }
+    };
+    const runTurn = (a, body) => {
+        let r;
+        a.turnDepth++;
+        try { r = body(); } finally { a.turnDepth--; }
+        if (!(r instanceof Promise)) return r;
+        a.busy = true;
+        return r.finally(() => { a.busy = false; drainTurns(a); });
+    };
+    const turn = (body) => {
+        const a = state.asy;
+        if (!a || a.turnDepth > 0 || a.depth > 0) return body();
+        if (a.busy) return new Promise((res, rej) => a.queue.push({ body, res, rej }));
+        return runTurn(a, body);
     };
     // Construye un String Nyx en memoria wasm (vía nyx_wasi_malloc exportado)
     // → puntero i32 usable como retorno `-> String` de un extern "js"
@@ -206,6 +366,13 @@ export function makeNyxHelpers(state) {
         // function table exportada. fn_ptr en wasm ES un índice de tabla.
         // Requiere link con -Wl,--export-table (make wasm ya lo hace).
         callClosure: callClosureImpl,
+        // Asyncify (ver arriba). Para bindings: `suspend` en un import
+        // #[suspends], `turn` alrededor de todo lo que un evento hace, `finish`
+        // en vez de try/finally. `enterWasm` lo usa runNyxWasm en las entradas.
+        suspend,
+        turn,
+        finish,
+        enterWasm,
         // Ancla un CLOSURE que se va a disparar en OTRO turno de evento
         // (fetch en vuelo, listener, timer). Sin esto el entorno del cierre
         // —memoria de turno— muere en el nyx_arena_event_reset() siguiente y
@@ -244,11 +411,13 @@ export function makeNyxHelpers(state) {
                 call: (...args) => {
                     if (!live) return undefined;
                     depth++;
-                    try { return callClosureImpl(pairPtr, ...args); }
-                    finally {
+                    // finish y no try/finally: un cierre que suspende SIGUE
+                    // corriendo hasta que su Promise termina, y su entorno
+                    // tiene que seguir anclado hasta entonces.
+                    return finish(() => callClosureImpl(pairPtr, ...args), () => {
                         depth--;
                         if (depth === 0 && pending) { pending = false; unpin(); }
-                    }
+                    });
                 },
                 release() {
                     if (!live) return;
@@ -312,17 +481,16 @@ export function domBindings(doc) {
             const handler = nyx.readString(handlerPtr);
             const el = d.querySelector(sel);
             if (!el) return;
-            el.addEventListener(event, (ev) => {
+            el.addEventListener(event, (ev) => nyx.turn(() => {
                 if (!ref.exports || !ref.exports[handler]) {
                     throw new Error(`dom_on: export Nyx '${handler}' no encontrado (¿#[export_name = "${handler}"]? ¿ref.exports seteado?)`);
                 }
                 ref.currentEvent = ev || null;
-                try { ref.exports[handler](); }
-                finally {
+                return nyx.finish(() => ref.exports[handler](), () => {
                     ref.currentEvent = null;
                     if (ref.afterEvent) ref.afterEvent();
-                }
-            });
+                });
+            }));
         },
         js_console_log(msgPtr) {
             console.log(nyx.readString(msgPtr));
@@ -422,14 +590,13 @@ export function domBindings(doc) {
                 if (el.__nyxHandlers[event].__anchor) el.__nyxHandlers[event].__anchor.release();
             }
             const anchor = nyx.anchorClosure(pairPtr);
-            const cb = (ev) => {
+            const cb = (ev) => nyx.turn(() => {
                 ref.currentEvent = ev || null;
-                try { anchor.call(); }
-                finally {
+                return nyx.finish(() => anchor.call(), () => {
                     ref.currentEvent = null;
                     if (ref.afterEvent) ref.afterEvent();
-                }
-            };
+                });
+            });
             cb.__anchor = anchor;
             el.__nyxHandlers[event] = cb;
             el.addEventListener(event, cb);
@@ -513,14 +680,13 @@ export function domBindings(doc) {
                 if (n.__nyxHandlers[event].__anchor) n.__nyxHandlers[event].__anchor.release();
             }
             const anchor = nyx.anchorClosure(pairPtr);
-            const cb = (ev) => {
+            const cb = (ev) => nyx.turn(() => {
                 ref.currentEvent = ev || null;
-                try { anchor.call(); }
-                finally {
+                return nyx.finish(() => anchor.call(), () => {
                     ref.currentEvent = null;
                     if (ref.afterEvent) ref.afterEvent();
-                }
-            };
+                });
+            });
             cb.__anchor = anchor;
             n.__nyxHandlers[event] = cb;
             n.addEventListener(event, cb);
@@ -544,6 +710,9 @@ export function browserBindings(opts = {}) {
     // cerrar, o si el stream termina/falla — nunca se deja anclado.
     const sseChannels = new Map();
     let sseSeq = 0;
+    // Resultado de la última operación que suspendió (js_browser_*_await). UNO
+    // alcanza: hay una sola pila suspendida a la vez (D-3).
+    const ultimoAwait = { status: 0, kind: "", msg: "" };
     const fetchImpl = opts.fetch ||
         (globalThis.fetch ? globalThis.fetch.bind(globalThis) : null);
     // window/location: inyectables por opts (tests) — default al browser
@@ -573,26 +742,28 @@ export function browserBindings(opts = {}) {
     // cancelación y por lo tanto el punto de desanclaje (ver *_fn abajo).
     const timerAnchors = new Map();
     let timerSeq = 0;
-    const callExport = (name, ...args) => {
+    // `args` es una FUNCIÓN que arma los argumentos, y corre DENTRO del turno:
+    // un evento encolado detrás de una pila suspendida (D-3) arma sus Strings
+    // cuando le toca, no en un turno que para entonces ya se reseteó.
+    const callExport = (nyx, name, args) => nyx.turn(() => {
         if (!ref.exports || !ref.exports[name]) {
             throw new Error(`browser: export Nyx '${name}' no encontrado (¿#[export_name]? ¿ref.exports seteado?)`);
         }
-        try { return ref.exports[name](...args); }
-        finally { if (ref.afterEvent) ref.afterEvent(); }
-    };
+        return nyx.finish(() => ref.exports[name](...args()), () => { if (ref.afterEvent) ref.afterEvent(); });
+    });
     const imports = (nyx) => ({
         js_browser_fetch(urlPtr, methodPtr, bodyPtr, handlerPtr) {
             const url = nyx.readString(urlPtr);
             const method = nyx.readString(methodPtr);
             const body = nyx.readString(bodyPtr);
             const handler = nyx.readString(handlerPtr);
-            if (!fetchImpl) { callExport(handler, 0n, nyx.makeString("fetch no disponible")); return; }
+            if (!fetchImpl) { callExport(nyx, handler, () => [0n, nyx.makeString("fetch no disponible")]); return; }
             Promise.resolve(fetchImpl(url, { method: method || "GET", body: body === "" ? undefined : body }))
                 .then(async (r) => {
                     const text = await r.text();
-                    callExport(handler, BigInt(r.status), nyx.makeString(text));
+                    callExport(nyx, handler, () => [BigInt(r.status), nyx.makeString(text)]);
                 })
-                .catch((e) => { callExport(handler, 0n, nyx.makeString(String(e))); });
+                .catch((e) => { callExport(nyx, handler, () => [0n, nyx.makeString(String(e))]); });
         },
         // — Variantes con CLOSURE (el entorno viaja: qué línea de la pantalla
         //   era) — mismo transporte {fn_ptr, env_ptr} que js_dom_on_fn.
@@ -606,13 +777,12 @@ export function browserBindings(opts = {}) {
             const anchor = nyx.anchorClosure(pairPtr);
             // un solo disparo: se llame como se llame (ok, error, sin fetch),
             // el cierre corre a lo sumo una vez y el entorno se suelta ahí.
-            const fire = (status, text) => {
-                try { anchor.call(BigInt(status), nyx.makeString(text)); }
-                finally {
+            const fire = (status, text) => nyx.turn(() => nyx.finish(
+                () => anchor.call(BigInt(status), nyx.makeString(text)),
+                () => {
                     if (ref.afterEvent) ref.afterEvent();
                     anchor.release();
-                }
-            };
+                }));
             if (!fetchImpl) { fire(0, "fetch no disponible"); return; }
             Promise.resolve(fetchImpl(url, { method: method || "GET", body: body === "" ? undefined : body }))
                 .then(async (r) => { fire(r.status, await r.text()); })
@@ -623,12 +793,11 @@ export function browserBindings(opts = {}) {
             const id = ++timerSeq;
             timers.set(id, setTimeout(() => {
                 timers.delete(id);
-                try { anchor.call(); }
-                finally {
+                nyx.turn(() => nyx.finish(() => anchor.call(), () => {
                     if (ref.afterEvent) ref.afterEvent();
                     anchor.release();          // un solo disparo
                     timerAnchors.delete(id);   // no dejar el anclaje muerto en la tabla
-                }
+                }));
             }, Number(ms)));
             timerAnchors.set(id, anchor);      // por si lo cancelan antes de disparar
             return BigInt(id);
@@ -636,9 +805,12 @@ export function browserBindings(opts = {}) {
         js_browser_interval_fn(ms, pairPtr) {
             const anchor = nyx.anchorClosure(pairPtr);
             const id = ++timerSeq;
+            // Con una pila suspendida (D-3) cada tick se encola: un interval corto
+            // durante un fetch lento entrega sus ticks juntos al terminar.
             timers.set(id, setInterval(() => {
-                try { anchor.call(); }
-                finally { if (ref.afterEvent) ref.afterEvent(); }
+                nyx.turn(() => nyx.finish(() => anchor.call(), () => {
+                    if (ref.afterEvent) ref.afterEvent();
+                }));
             }, Number(ms)));
             timerAnchors.set(id, anchor);      // multi-disparo: libera clear_timer
             return BigInt(id);
@@ -646,13 +818,13 @@ export function browserBindings(opts = {}) {
         js_browser_interval(ms, handlerPtr) {
             const handler = nyx.readString(handlerPtr);
             const id = ++timerSeq;
-            timers.set(id, setInterval(() => callExport(handler), Number(ms)));
+            timers.set(id, setInterval(() => callExport(nyx, handler, () => []), Number(ms)));
             return BigInt(id);
         },
         js_browser_timeout(ms, handlerPtr) {
             const handler = nyx.readString(handlerPtr);
             const id = ++timerSeq;
-            timers.set(id, setTimeout(() => { timers.delete(id); callExport(handler); }, Number(ms)));
+            timers.set(id, setTimeout(() => { timers.delete(id); callExport(nyx, handler, () => []); }, Number(ms)));
             return BigInt(id);
         },
         js_browser_clear_timer(id) {
@@ -666,7 +838,7 @@ export function browserBindings(opts = {}) {
         js_browser_geo(handlerPtr) {
             const handler = nyx.readString(handlerPtr);
             // lat/lon son float Nyx (f64) → cruzan como Number, sin BigInt
-            geoImpl((lat, lon) => callExport(handler, lat, lon));
+            geoImpl((lat, lon) => callExport(nyx, handler, () => [lat, lon]));
         },
         js_browser_geo_fn(pairPtr) {
             // Un solo disparo: si el permiso falla, geoImpl no llama y el
@@ -678,11 +850,10 @@ export function browserBindings(opts = {}) {
             const fire = (lat, lon) => {
                 if (done) return;
                 done = true;
-                try { anchor.call(lat, lon); }
-                finally {
+                nyx.turn(() => nyx.finish(() => anchor.call(lat, lon), () => {
                     if (ref.afterEvent) ref.afterEvent();
                     anchor.release();
-                }
+                }));
             };
             try {
                 geoImpl((lat, lon) => fire(lat, lon));
@@ -734,8 +905,13 @@ export function browserBindings(opts = {}) {
                 const cuerpo = datos.join("\n");
                 evento = ""; datos = [];
                 if (ctl.closed) return;
-                try { anchor.call(nyx.makeString(nombre), nyx.makeString(cuerpo)); }
-                finally { if (ref.afterEvent) ref.afterEvent(); }
+                // Con una pila suspendida el frame se encola (D-3): al tocarle
+                // puede ser que el canal ya se haya cerrado, y ahí no se entrega.
+                nyx.turn(() => {
+                    if (ctl.closed) return undefined;
+                    return nyx.finish(() => anchor.call(nyx.makeString(nombre), nyx.makeString(cuerpo)),
+                        () => { if (ref.afterEvent) ref.afterEvent(); });
+                });
             };
             const consumir = (texto) => {
                 buf += texto;
@@ -789,6 +965,65 @@ export function browserBindings(opts = {}) {
                 ctl.anchor.release();
             }
         },
+        // ── Operaciones que SUSPENDEN (imports #[suspends], arco async-real-wasm) ──
+        //
+        // `await browser_fetch_await(...)` en Nyx llega acá: el import arranca la
+        // Promise y la pila wasm se desenrolla (nyx.suspend); al resolver, la
+        // función Nyx sigue en la línea siguiente con el valor. Sin callbacks.
+        //
+        // El import devuelve SOLO el cuerpo. status, kind y msg quedan en
+        // `ultimoAwait` y std/browser_await los lee con los imports de abajo justo
+        // después de reanudar: con una sola pila suspendida (D-3) no corre nada
+        // entre la reanudación y esas lecturas. Así no hay que armar un
+        // Result<HttpResp, Error> de Nyx desde JS.
+        //
+        // Errores (vocabulario cerrado de std/error): "connection" si no hubo
+        // respuesta, "timeout" si venció timeout_ms. El status HTTP NO es error.
+        js_browser_fetch_await(urlPtr, methodPtr, bodyPtr, timeoutMs) {
+            return nyx.suspend(() => {
+                const url = nyx.readString(urlPtr);
+                const method = nyx.readString(methodPtr);
+                const body = nyx.readString(bodyPtr);
+                const ms = Number(timeoutMs);
+                if (!fetchImpl) {
+                    return { status: 0, text: "", kind: "connection", msg: "fetch no disponible" };
+                }
+                const init = { method: method || "GET", body: body === "" ? undefined : body };
+                const ctl = ms > 0 && typeof AbortController !== "undefined" ? new AbortController() : null;
+                if (ctl) init.signal = ctl.signal;
+                const pedido = Promise.resolve()
+                    .then(() => fetchImpl(url, init))
+                    .then(async (r) => ({ status: r.status, text: await r.text(), kind: "", msg: "" }))
+                    .catch((e) => ({ status: 0, text: "", kind: "connection",
+                                     msg: String(e && e.message ? e.message : e) }));
+                if (!(ms > 0)) return pedido;
+                let reloj = null;
+                const plazo = new Promise((res) => {
+                    reloj = setTimeout(() => {
+                        if (ctl) ctl.abort();
+                        res({ status: 0, text: "", kind: "timeout", msg: `sin respuesta en ${ms} ms` });
+                    }, ms);
+                });
+                return Promise.race([pedido, plazo]).finally(() => clearTimeout(reloj));
+            }, (res) => {
+                ultimoAwait.status = res.status;
+                ultimoAwait.kind = res.kind;
+                ultimoAwait.msg = res.msg;
+                return nyx.makeString(res.text);
+            }, 0);
+        },
+        js_browser_sleep_await(ms) {
+            return nyx.suspend(() => new Promise((r) => setTimeout(r, Number(ms))), () => undefined, undefined);
+        },
+        js_browser_await_status() {
+            return BigInt(ultimoAwait.status);
+        },
+        js_browser_await_error_kind() {
+            return nyx.makeString(ultimoAwait.kind);
+        },
+        js_browser_await_error_msg() {
+            return nyx.makeString(ultimoAwait.msg);
+        },
         js_ls_get(keyPtr) {
             const v = storage.getItem(nyx.readString(keyPtr));
             return nyx.makeString(v == null ? "" : v);
@@ -823,10 +1058,9 @@ export function browserBindings(opts = {}) {
                 }
             }
             const anchor = nyx.anchorClosure(pairPtr);
-            const cb = () => {
-                try { anchor.call(); }
-                finally { if (ref.afterEvent) ref.afterEvent(); }
-            };
+            const cb = () => nyx.turn(() => nyx.finish(() => anchor.call(), () => {
+                if (ref.afterEvent) ref.afterEvent();
+            }));
             cb.__anchor = anchor;
             windowImpl.__nyxHandlers["hashchange"] = cb;
             windowImpl.addEventListener("hashchange", cb);
@@ -884,9 +1118,32 @@ export async function runNyxWasm(wasmBytes, opts = {}) {
         state.pinTurn = () => instance.exports.nyx_arena_pin_turn();
         state.unpinTurn = (t) => instance.exports.nyx_arena_unpin_turn(t);
     }
+    // Asyncify (arco async-real-wasm): el módulo pasó por wasm-opt --asyncify
+    // porque usa imports #[suspends]. El buffer donde Asyncify guarda la pila
+    // suspendida se aloca ACÁ, antes de _start y de la arena: es memoria
+    // persistente y la reusan todas las suspensiones (hay una sola a la vez).
+    // 1 MB, como la pila sombra (-z stack-size): desbordarlo es un trap ruidoso.
+    if (instance.exports.asyncify_get_state) {
+        if (!state.malloc) throw new Error("asyncify: el módulo no exporta nyx_wasi_malloc");
+        const bytesAsyncify = 1 << 20;
+        const dataPtr = state.malloc(16 + bytesAsyncify);
+        const dv = new DataView(state.memory.buffer);
+        dv.setUint32(dataPtr, dataPtr + 16, true);                   // posición actual
+        dv.setUint32(dataPtr + 4, dataPtr + 16 + bytesAsyncify, true); // fin
+        state.asy = {
+            ex: instance.exports, dataPtr, dataBytes: bytesAsyncify,
+            pending: null, value: undefined, error: null, suspended: false,
+            depth: 0, turnDepth: 0, busy: false, queue: [],
+        };
+    }
     let exitCode = 0;
     try {
-        instance.exports._start();
+        // Con Asyncify, main puede esperar al anfitrión: runNyxWasm resuelve
+        // cuando _start termina DE VERDAD. Sin Asyncify es la llamada síncrona
+        // de siempre, sin un solo tick de más (un await extra cambiaría el
+        // orden en que corren los callbacks que main dejó registrados).
+        const r = helpers.turn(() => helpers.enterWasm(() => instance.exports._start()));
+        if (r instanceof Promise) await r;
     } catch (e) {
         if (e instanceof NyxExit) { exitCode = e.code; } else { throw e; }
     }
@@ -913,6 +1170,21 @@ export async function runNyxWasm(wasmBytes, opts = {}) {
     const arenaReset = instance.exports.nyx_arena_event_reset
         ? () => instance.exports.nyx_arena_event_reset()
         : () => {};
+    // Con Asyncify, cada fn exportada por el programa es una ENTRADA que puede
+    // suspender: devuelve una Promise si espera al anfitrión, y se encola si ya
+    // hay una pila suspendida (D-3). Los exports internos quedan crudos: el shim
+    // y los drivers los llaman DURANTE una suspensión (malloc, arena). Sin
+    // Asyncify, `exports` es el objeto de siempre, sin envoltorio.
+    let exports = instance.exports;
+    if (state.asy) {
+        const internos = /^(_start|nyx_wasi_malloc|nyx_arena_\w+|asyncify_\w+)$/;
+        exports = {};
+        for (const [k, v] of Object.entries(instance.exports)) {
+            exports[k] = typeof v === "function" && !internos.test(k)
+                ? (...args) => helpers.turn(() => helpers.enterWasm(() => v(...args)))
+                : v;
+        }
+    }
     return { exitCode, stdout: state.stdout, stderr: state.stderr,
-             exports: instance.exports, nyx: helpers, arenaReset };
+             exports, nyx: helpers, arenaReset };
 }

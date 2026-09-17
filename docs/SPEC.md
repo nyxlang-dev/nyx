@@ -880,7 +880,7 @@ A compilation with parse errors always stops before semantic analysis (exit 1):
 | NYX0102 | keyword used as an identifier (`let match = ...`) |
 | NYX0103 | too many parse errors, parse aborted |
 | NYX0104 | unexpected end of file (unclosed block) |
-| NYX0105 | invalid construct (`export`/`pub` before something not exportable) |
+| NYX0105 | invalid construct (`export`/`pub` before something not exportable; an attribute before an item that cannot take it, e.g. `#[suspends]` outside `extern "js" fn`) |
 | NYX0106 | map literal key is not a String (`{1: v}`/`{ident: v}`) |
 | NYX0107 | unexpected token in expression (`parse_primary` catch-all) |
 
@@ -1824,6 +1824,36 @@ fn main() -> int {
 Para parametros `String`, el compilador automaticamente convierte `%nyx_string*` a `i8*` via `nyx_string_to_cstr` antes de la llamada.
 
 El compilador emite `declare <ret> @<name>(<params>)` en el IR y registra la funcion para que pueda ser llamada normalmente.
+
+### `extern "js"` y `#[suspends]` (solo wasm32-wasi)
+
+`extern "js" fn` declara un import del módulo `js` que resuelve el anfitrión (el shim
+`examples/browser/nyx-wasi-shim.js` en el navegador o bajo node). Fuera de `NYX_TARGET=wasm32-wasi`
+es un error de compilación.
+
+`#[suspends]` marca un import que **espera** a una Promise del anfitrión (arco async-real-wasm):
+
+```nyx
+#[suspends]
+extern "js" fn js_browser_fetch_await(url: String, method: String, body: String, timeout_ms: int) -> String
+```
+
+- La pila wasm se suspende en la llamada (Asyncify) y la función Nyx sigue en la línea siguiente con
+  el valor. Lo normal es no declararlo a mano: `import "std/browser_await"` ofrece
+  `browser_fetch_await`, `browser_fetch_await_opts` y `browser_sleep_await` como `async fn`. Es un
+  módulo aparte de `std/browser` a propósito: los módulos importados se compilan enteros, así que
+  importarlo es lo que activa Asyncify, y una app que solo importa `std/browser` no cambia su `.wasm`.
+- `await f()` de una `async fn` Nyx en wasm es una **llamada directa** (no hay goroutinas): mismo
+  valor y mismo orden de efectos que el `await` secuencial nativo. Tiene que ser una llamada a una
+  async fn por nombre; otra expresión es error de target con `archivo:línea`. `spawn`, `select`,
+  `run()` y los canales siguen sin existir en wasm.
+- **Una sola pila suspendida a la vez**: los eventos que llegan mientras una función espera se
+  encolan y se entregan en orden al terminar.
+- El compilador deja la lista de imports en el `.ll` (`; nyx-asyncify-imports: js.a,js.b`) y
+  `nyx build --target wasm32-wasi` corre `wasm-opt --asyncify` **solo** si la lista existe; sin
+  `wasm-opt` (binaryen) es un error con la receta. Un programa sin `#[suspends]` produce el mismo
+  `.wasm` que antes.
+- `#[suspends]` fuera de un `extern "js" fn`, u otro atributo sobre un `extern`, es **NYX0105**.
 
 ---
 

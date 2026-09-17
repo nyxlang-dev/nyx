@@ -1,0 +1,11 @@
+// Arco async-real-wasm (D-4): `#[suspends]` marca un import `extern "js"` que
+// suspende la pila wasm (Asyncify). Sobre una fn común no significa nada, y un
+// atributo ignorado en silencio es peor que un error: NYX0105 contado.
+#[suspends]
+fn esperar() -> int {
+    return 1
+}
+
+fn main() {
+    print(int_to_string(esperar()))
+}

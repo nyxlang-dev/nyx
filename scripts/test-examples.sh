@@ -86,10 +86,55 @@ RT="$(ls runtime/*.c | tr '\n' ' ')runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 CLANG="${CLANG:-clang}"
 
+# Recetas SOLO-navegador (std/browser, std/dom o extern "js"): en nativo abortan
+# a propósito, así que se compilan a wasm32-wasi y se enlazan, con Asyncify si el
+# .ll trae imports que suspenden (arco async-real-wasm). No se ejecutan: los
+# imports js:: los pone un navegador o el shim; su conducta la fija make test-wasm.
+WASI_SYSROOT="${WASI_SYSROOT:-/usr}"
+WASM_OPT="${NYX_WASM_OPT:-$(command -v wasm-opt || true)}"
+correr_ejemplo_wasm() {
+    local name="$1"
+    if [ ! -f "$WASI_SYSROOT/lib/wasm32-wasi/libc.a" ]; then
+        printf "  \033[1;33m○\033[0m %s (SKIP: receta wasm32-wasi y falta wasi-libc)\n" "$name"
+        return 0
+    fi
+    if ! NYX_TARGET=wasm32-wasi NYX_NO_GC=1 "$NYX_BIN" > /tmp/ex_c.log 2>&1; then
+        printf "  \033[1;31m✗\033[0m %s (compila a wasm32-wasi)\n" "$name"
+        grep -iE "error|NYX[0-9]" /tmp/ex_c.log | head -2 | sed 's/^/      /'
+        return 1
+    fi
+    local srcs asy
+    srcs="$(grep -v '^#' runtime/wasm.srcs | grep -v '^$' | tr '\n' ' ')"
+    if ! $CLANG --target=wasm32-wasi --sysroot="$WASI_SYSROOT" -O2 -Iruntime/wasi \
+            -Wl,-z,stack-size=1048576 -Wl,--export-table script.ll $srcs -o script.wasm > /tmp/ex_l.log 2>&1; then
+        printf "  \033[1;31m✗\033[0m %s (enlaza a wasm32-wasi)\n" "$name"
+        grep -iE "error" /tmp/ex_l.log | head -2 | sed 's/^/      /'
+        return 1
+    fi
+    asy="$(grep -m1 '^; nyx-asyncify-imports: ' script.ll | sed 's/^; nyx-asyncify-imports: //')"
+    if [ -n "$asy" ]; then
+        if [ -z "$WASM_OPT" ]; then
+            printf "  \033[1;33m○\033[0m %s (compila+enlaza a wasm; Asyncify SIN verificar: falta wasm-opt)\n" "$name"
+            return 0
+        fi
+        if ! "$WASM_OPT" script.wasm --asyncify --pass-arg=asyncify-imports@"$asy" -O2 -o script.wasm > /tmp/ex_o.log 2>&1; then
+            printf "  \033[1;31m✗\033[0m %s (wasm-opt --asyncify)\n" "$name"
+            head -2 /tmp/ex_o.log | sed 's/^/      /'
+            return 1
+        fi
+    fi
+    printf "  \033[1;33m○\033[0m %s (solo compila+enlaza a wasm32-wasi: corre en el navegador)\n" "$name"
+    return 0
+}
+
 # Compila, enlaza y (si corresponde) ejecuta UN ejemplo.
 correr_ejemplo() {
     local nx_file="$1" name="$2"
     cp "$nx_file" script.nx
+    if grep -qE 'extern "js"|import "std/(browser|browser_await|dom)"' "$nx_file"; then
+        correr_ejemplo_wasm "$name"
+        return $?
+    fi
 
     if ! "$NYX_BIN" > /tmp/ex_c.log 2>&1; then
         printf "  \033[1;31m✗\033[0m %s (compila)\n" "$name"
@@ -130,7 +175,7 @@ for nx_file in "$EXAMPLES_DIR"/*.nx; do
     fi
 done
 
-rm -f script.nx script.ll script_bin
+rm -f script.nx script.ll script_bin script.wasm
 
 # examples/ raíz (no by-example): puñado curado de ejemplos citados por docs/scripts
 # vivos — cada uno vuelve a compilar acá para que no se pudran en silencio
@@ -148,7 +193,7 @@ for nx_file in examples/*.nx; do
     fi
 done
 
-rm -f script.nx script.ll script_bin
+rm -f script.nx script.ll script_bin script.wasm
 
 echo ""
 echo "────────────────────────────────────────"

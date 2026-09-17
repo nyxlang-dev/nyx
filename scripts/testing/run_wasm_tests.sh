@@ -113,14 +113,17 @@ if [ -x ./nyx_bootstrap ]; then
         gc_why="rc 0: spawn/await/select no se frenaron en el codegen"
     elif [ -f "$GC_DIR/principal.ll" ]; then
         gc_why="escribió el .ll pese al error (PROJECT_STATE #25)"
-    elif [ "$gc_n" -ne 6 ]; then
-        gc_why="esperaba 6 usos no soportados, hubo $gc_n"
+    elif [ "$gc_n" -ne 5 ]; then
+        gc_why="esperaba 5 usos no soportados, hubo $gc_n"
     elif [ "$gc_nota" -ne 1 ]; then
         gc_why="esperaba UNA nota con la alternativa de std/browser, hubo $gc_nota"
+    elif grep -qF "'await' is not supported" "$GC_DIR/guard.log"; then
+        # Arco async-real-wasm: `await doble(21)` (main.nx:15) ya NO es un uso no
+        # soportado — en wasm baja a llamada directa. spawn y compañía siguen.
+        gc_why="'await' de una async fn por nombre se reportó como no soportado"
     else
-        for esperado in "'spawn' is not supported" "'await' is not supported" \
+        for esperado in "'spawn' is not supported" \
                         "'select' is not supported" "'go_sleep' is not supported" \
-                        "--> main.nx:14, in function 'main'" \
                         "--> main.nx:15, in function 'main'" \
                         "--> main.nx:16, in function 'main'" \
                         "--> main.nx:17, in function 'main'" \
@@ -143,6 +146,15 @@ WASI_SYSROOT="${WASI_SYSROOT:-/usr}"
 WASI_LIBC="$WASI_SYSROOT/lib/wasm32-wasi/libc.a"
 WASMTIME="$(command -v wasmtime || true)"
 [ -z "$WASMTIME" ] && [ -x "$HOME/.local/bin/wasmtime" ] && WASMTIME="$HOME/.local/bin/wasmtime"
+# binaryen: solo lo necesitan los programas con imports que suspenden (Asyncify,
+# arco async-real-wasm). NYX_WASM_OPT gana sobre el PATH: binaryen extraído sin
+# root (apt-get download + dpkg -x) se usa con un wrapper que setea LD_LIBRARY_PATH.
+WASM_OPT="${NYX_WASM_OPT:-$(command -v wasm-opt || true)}"
+if [ -n "$WASM_OPT" ] && [ ! -x "$WASM_OPT" ]; then
+    echo "AVISO: NYX_WASM_OPT=$WASM_OPT no es ejecutable; los tests que suspenden se saltan"
+    WASM_OPT=""
+fi
+SKIPPED=0
 
 # ── Skip limpio si falta el toolchain (patrón run_integration_tests.sh) ──
 if [ ! -f "$WASI_LIBC" ]; then
@@ -191,7 +203,7 @@ for t in tests/wasm/test-wasm-*.nx; do
     if grep -q 'extern "js"' "$t"; then uses_js_ffi=1; fi
     # std/dom y std/browser son SOLO-js (declaran extern "js" adentro):
     # importar cualquiera implica FFI aunque el test no tenga el literal.
-    if grep -qE 'import .*"std/(dom|browser)"' "$t"; then uses_js_ffi=1; fi
+    if grep -qE 'import .*"std/(dom|browser|browser_await)"' "$t"; then uses_js_ffi=1; fi
     # Tests de RE-ENTRADA (afterStart en su .imports.mjs): el output esperado
     # incluye lo que pasa post-_start — wasmtime no tiene ese hook.
     if [ -f "$imports_mjs" ] && grep -q "afterStart" "$imports_mjs"; then uses_js_ffi=1; fi
@@ -204,11 +216,36 @@ for t in tests/wasm/test-wasm-*.nx; do
         continue
     fi
 
+    # Imports que SUSPENDEN (arco async-real-wasm): la lista sale del .ll, donde
+    # la escribe el compilador, o de un archivo lateral del test que ejerce el
+    # shim sin la sintaxis. Sin lista, el .wasm es el de siempre, sin wasm-opt.
+    asy_list="$(grep -m1 '^; nyx-asyncify-imports: ' script.ll 2>/dev/null | sed 's/^; nyx-asyncify-imports: //')"
+    if [ -z "$asy_list" ] && [ -f "tests/wasm/$name.asyncify-imports" ]; then
+        asy_list="$(grep -v '^#' "tests/wasm/$name.asyncify-imports" | grep -v '^$' | sed 's/^/js./' | paste -sd, -)"
+    fi
+    if [ -n "$asy_list" ] && [ -z "$WASM_OPT" ]; then
+        # SKIP y no PASS: sin wasm-opt no se verificó nada del camino async.
+        echo -e "${YELLOW}SKIP (sin wasm-opt: usa imports que suspenden — apt install binaryen, o NYX_WASM_OPT)${NC}"
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+
     if ! clang $WASM_CFLAGS script.ll $WASM_RUNTIME_SRCS -o "$TMP_DIR/$name.wasm" > "$TMP_DIR/link.log" 2>&1; then
         echo -e "${RED}FAIL (wasm link)${NC}"
         tail -3 "$TMP_DIR/link.log" | sed 's/^/      /'
         FAILED=$((FAILED + 1))
         continue
+    fi
+
+    if [ -n "$asy_list" ]; then
+        if ! "$WASM_OPT" "$TMP_DIR/$name.wasm" --asyncify --pass-arg=asyncify-imports@"$asy_list" -O2 \
+               -o "$TMP_DIR/$name.async.wasm" > "$TMP_DIR/opt.log" 2>&1; then
+            echo -e "${RED}FAIL (wasm-opt --asyncify)${NC}"
+            tail -3 "$TMP_DIR/opt.log" | sed 's/^/      /'
+            FAILED=$((FAILED + 1))
+            continue
+        fi
+        mv "$TMP_DIR/$name.async.wasm" "$TMP_DIR/$name.wasm"
     fi
 
     if [ "$uses_js_ffi" -eq 1 ]; then
@@ -421,6 +458,13 @@ else
 fi
 
 echo ""
-echo -e "  ${GREEN}$PASSED passed${NC}, ${RED}$FAILED failed${NC}"
-[ "$FAILED" -eq 0 ] && echo -e "  ${GREEN}All WASM tests passed${NC}"
+if [ "$SKIPPED" -gt 0 ]; then
+    echo -e "  ${GREEN}$PASSED passed${NC}, ${RED}$FAILED failed${NC}, ${YELLOW}$SKIPPED skipped (sin wasm-opt)${NC}"
+    # Un verde con saltos no es el verde completo: el camino que espera al
+    # anfitrión (Asyncify) quedó SIN verificar, y así se dice.
+    [ "$FAILED" -eq 0 ] && echo -e "  ${YELLOW}Sin fallos, pero $SKIPPED test(s) async NO se verificaron (falta binaryen)${NC}"
+else
+    echo -e "  ${GREEN}$PASSED passed${NC}, ${RED}$FAILED failed${NC}"
+    [ "$FAILED" -eq 0 ] && echo -e "  ${GREEN}All WASM tests passed${NC}"
+fi
 exit $([ "$FAILED" -eq 0 ] && echo 0 || echo 1)

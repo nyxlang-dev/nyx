@@ -1,0 +1,47 @@
+// 109 — await en el navegador: una pantalla que carga una factura sin callbacks
+//
+// Target wasm32-wasi (corre en el navegador, o bajo node con
+// examples/browser/run-node.mjs). `await browser_fetch_await(...)` ESPERA la
+// respuesta del servidor y la función sigue en la línea siguiente con el
+// valor: sin partir el flujo en un cierre por cada pedido.
+//
+// Construir:  nyx build --target wasm32-wasi
+//   (necesita binaryen: `sudo apt install binaryen`, o NYX_WASM_OPT=/ruta/a/wasm-opt;
+//    nyx build lo usa SOLO porque el programa espera al anfitrión)
+//
+// Lo que conviene saber:
+//   - El status HTTP no es error: un 404 llega como Ok con r.status == 404.
+//     Err es «no hubo respuesta» (kind "connection") o «venció el plazo» ("timeout").
+//   - UNA sola función puede estar esperando a la vez. Un click que llega
+//     durante el fetch se procesa cuando el fetch termina, en orden.
+//   - spawn y los canales siguen sin existir en wasm: await es secuencial.
+
+import "std/browser_await"
+import "std/dom"
+import "std/error"
+
+async fn cargar_factura(id: int) -> String {
+    let res = await browser_fetch_await_opts("/api/facturas/" + int_to_string(id), "GET", "", 5000)
+    match res {
+        Result.Ok(r) => {
+            if r.status != 200 {
+                return "la factura " + int_to_string(id) + " no está (HTTP " + int_to_string(r.status) + ")"
+            }
+            return r.body
+        }
+        Result.Err(e) => { return "sin respuesta del servidor: " + e.kind + " (" + e.msg + ")" }
+    }
+}
+
+// El botón «abrir» de cada fila llama a este export con el número de factura.
+#[export_name = "abrir_factura"]
+fn abrir_factura(id: int) {
+    dom_set_text("#estado", "cargando la factura " + int_to_string(id) + "...")
+    let texto: String = await cargar_factura(id)
+    dom_set_text("#factura", texto)
+    dom_set_text("#estado", "listo")
+}
+
+fn main() {
+    abrir_factura(7)
+}

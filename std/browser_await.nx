@@ -1,0 +1,85 @@
+// std/browser_await.nx — esperar al anfitrión con await (arco async-real-wasm).
+// SOLO compila bajo NYX_TARGET=wasm32-wasi (extern "js" aborta en nativo a propósito).
+//
+// POR QUÉ EXISTE (pedido de nyxerp, 2026-09-10, prioridad ALTA)
+//
+// Con `browser_fetch_fn` una pantalla que pide datos parte el flujo en dos: lo
+// que pasa después del pedido vive en un cierre, y dos pedidos seguidos son dos
+// cierres anidados. Con estas funciones la función Nyx ESPERA y sigue en la
+// línea siguiente con el valor:
+//
+//   import "std/browser_await"
+//
+//   async fn cargar_factura(id: int) -> String {
+//       let res = await browser_fetch_await("/api/facturas/" + int_to_string(id), "GET", "")
+//       match res {
+//           Result.Ok(r) => { return r.body }
+//           Result.Err(e) => { return "error: " + e.kind }
+//       }
+//   }
+//
+// POR QUÉ ES UN MÓDULO APARTE Y NO PARTE DE std/browser. Un import `#[suspends]`
+// hace que el build pase el .wasm por `wasm-opt --asyncify` (binaryen). resolve
+// compila los módulos importados ENTEROS, así que si esto viviera en std/browser
+// TODA app que importa std/browser —aunque nunca espere nada— necesitaría
+// binaryen y saldría con otro .wasm (+3-12 % de tamaño). La decisión D-5 del arco
+// es la contraria: Asyncify solo para el programa que de verdad espera al
+// anfitrión. Importar este módulo ES esa señal.
+//
+// CONTRATO
+//   - El status HTTP NO es error: un 404 llega como Ok con status 404. Err con
+//     kind "connection" si no hubo respuesta; "timeout" si venció el plazo de
+//     browser_fetch_await_opts (timeout_ms <= 0 = sin plazo).
+//   - UNA SOLA PILA SUSPENDIDA: mientras una función espera, los eventos (clicks,
+//     timers, SSE, llamadas JS a exports) se encolan y se entregan en orden al
+//     terminar. Un click durante un fetch lento se atiende cuando el fetch termina.
+//   - Requiere binaryen (wasm-opt) al construir: `sudo apt install binaryen`, o
+//     NYX_WASM_OPT=/ruta/a/wasm-opt.
+//   - El shim provee los imports en browserBindings() (examples/browser/nyx-wasi-shim.js).
+//
+// CÓMO FUNCIONA. Los imports #[suspends] suspenden la pila wasm con Asyncify y
+// el shim la reanuda al resolver la Promise. El import devuelve solo el cuerpo;
+// status y error se leen justo después con imports síncronos: con una sola pila
+// suspendida no corre nada entre la reanudación y esas lecturas, y así no hay
+// que armar un Result de Nyx desde JS.
+//
+// EN: host operations that SUSPEND the wasm stack (Asyncify) so an async fn can
+// `await` a fetch or a timer and continue with the value. A separate module so
+// that only programs that import it pay for Asyncify. One suspended stack at a
+// time: events that arrive meanwhile are queued.
+
+import "std/error"
+
+pub struct HttpResp {
+    status: int,
+    body: String,
+}
+
+#[suspends]
+extern "js" fn js_browser_fetch_await(url: String, method: String, body: String, timeout_ms: int) -> String
+#[suspends]
+extern "js" fn js_browser_sleep_await(ms: int)
+extern "js" fn js_browser_await_status() -> int
+extern "js" fn js_browser_await_error_kind() -> String
+extern "js" fn js_browser_await_error_msg() -> String
+
+// fetch que espera, con plazo en milisegundos (<= 0 = sin plazo).
+// body de request "" = sin body.
+export async fn browser_fetch_await_opts(url: String, method: String, body: String, timeout_ms: int) -> Result<HttpResp, Error> {
+    let cuerpo: String = js_browser_fetch_await(url, method, body, timeout_ms)
+    let kind: String = js_browser_await_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_browser_await_error_msg()))
+    }
+    return Result.Ok(HttpResp { status: js_browser_await_status(), body: cuerpo })
+}
+
+// fetch que espera, sin plazo.
+export async fn browser_fetch_await(url: String, method: String, body: String) -> Result<HttpResp, Error> {
+    return await browser_fetch_await_opts(url, method, body, 0)
+}
+
+// Duerme `ms` milisegundos sin bloquear el navegador y sigue.
+export async fn browser_sleep_await(ms: int) {
+    js_browser_sleep_await(ms)
+}

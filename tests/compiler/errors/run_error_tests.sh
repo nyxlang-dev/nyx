@@ -316,7 +316,10 @@ PARSE_TESTS=(
   "tests/compiler/errors/test-parse-multi-error.nx|cannot use keyword 'while' as an identifier"
   # T14: fallback del dispatcher de atributos ahora es un NYX0105 contado
   # (antes silencioso — el nodo desaparecía del AST sin error).
-  "tests/compiler/errors/test-parse-attr-unexpected-item.nx|#[...] is only supported before fn, struct, enum, or pub fn/struct/enum"
+  "tests/compiler/errors/test-parse-attr-unexpected-item.nx|#[...] is only supported before fn, struct, enum, extern, or pub fn/struct/enum"
+  # Arco async-real-wasm (D-4): #[suspends] solo sobre extern "js" fn.
+  "tests/compiler/errors/test-parse-suspends-misplaced.nx|#[suspends] only applies to extern \"js\" fn"
+  "tests/compiler/errors/test-parse-suspends-extern-c.nx|the only attribute allowed on an extern is #[suspends], and only on extern \"js\" fn"
   # Campaña "Primer intento verde" Fase 2 Task 3: catch-all de parse_primary
   # ahora es un NYX0107 contado (antes silencioso — print sin p_diag).
   "tests/compiler/errors/test-parse-primary-unexpected.nx|unexpected token in expression: ')' (RIGHT_PAREN)"
