@@ -154,6 +154,30 @@ else
     FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS $name"
 fi
 
+# test-emit-bytes-global.nx: arco include-bytes, Task 1 — emisor lineal de
+# globales de bytes (emit_bytes_global, compiler/codegen.nx, justo después
+# de escape_string). Inlinea SOLO codegen.nx (~21K líneas, no importa nada —
+# no pisa el bloqueo de tipo `Token` que afecta a combinar lexer+parser+
+# semantic). timeout MUCHO más alto que los de arriba (600s, no 120s):
+# medido en esta máquina compartida, el ciclo completo (lex+parse+check+gen
+# de todo codegen.nx inlineado + clang) tarda ~5 min — codegen.nx es ~17x
+# lexer.nx en líneas, así que no es la cuadrática bajo prueba, es el costo
+# de inlinear un módulo grande. Verifica: 3 controles positivos contra
+# escape_string como oráculo (256 valores×4 con NUL, dos globales en el
+# mismo ctx sin estado cruzado, contenido vacío) + un umbral de 1 MiB en
+# 2000 ms (medido ~54-67 ms, ~30x de margen — ver el comentario del test).
+name="compiler-unit/test-emit-bytes-global"
+out=$(NYX_INLINE_COMPILER=1 timeout 600 make run FILE="tests/compiler-unit/test-emit-bytes-global.nx" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "TEST-EMIT-BYTES-GLOBAL: OK"; then
+    echo -e "${GREEN}ok ${name}${NC}"
+    PASS=$((PASS + 1))
+else
+    echo -e "${RED}x ${name}: exit=$rc${NC}"
+    printf '%s\n' "$out" | tail -5 | sed 's/^/    /'
+    FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS $name"
+fi
+
 
 # ── tests/fmt: nyx fmt (compiler/fmt.nx) golden/property tests ──
 # Runner propio (necesita levantar nyx_fmt + comparar/idempotencia/compile,

@@ -1,0 +1,132 @@
+// ===== TEST UNITARIO: emisor lineal de globales de bytes (emit_bytes_global) =====
+// Arco include-bytes, Task 1 (docs/design/plans/2026-09-15-include-bytes.md).
+// Ejecutar: NYX_INLINE_COMPILER=1 make run FILE=tests/compiler-unit/test-emit-bytes-global.nx
+//
+// Qué verifica:
+//   1. Control positivo: emit_bytes_global produce EXACTAMENTE el mismo
+//      global (`@.strN = ... c"...\00"`) que armar a mano la misma cadena
+//      con escape_string, para un contenido con los 256 valores de byte
+//      posibles ×4 (1024 bytes, incluido el NUL). Si esto falla, el emisor
+//      nuevo diverge del oráculo (escape_string) y NO se mergea (self-review
+//      del plan).
+//   2. Umbral de tiempo: 1 MB de bytes deterministas (pseudoaleatorios, LCG
+//      fijo — reproducible) emite por debajo de un umbral con margen 5x
+//      sobre lo medido en esta corrida (Step 1 de la Task 1: 40 KB/400 KB
+//      con escape_string tardan 2,31 s / 197,2 s — cuadrática; el umbral de
+//      abajo es MUCHO más chico porque emit_bytes_global es lineal).
+//
+// NYX_INLINE_COMPILER=1 (compiler/nyx.nx): permite inlinear
+// `import { ... } from "compiler/codegen"` como un import normal — codegen.nx
+// no importa nada (self-contenido, define su propio ASTNode/CodegenContext),
+// así que este es un import de UN SOLO módulo, sin el bloqueo de tipo `Token`
+// que afecta a test-parser/test-semantic/test-interpreter (combinar VARIOS
+// módulos compiler/*.nx en un mismo inline).
+
+import { escape_string, emit_bytes_global, make_context, str_byte_length } from "compiler/codegen"
+
+// LCG determinista (Numerical Recipes) — genera bytes reproducibles sin usar
+// nada externo. Es SOLO el fixture de prueba, no el emisor bajo test.
+fn next_lcg(state: int) -> int {
+    return (state * 1103515245 + 12345) % 2147483648
+}
+
+fn build_random_bytes(n: int, seed: int) -> String {
+    var arr = []
+    var state = seed
+    var i = 0
+    while i < n {
+        state = next_lcg(state)
+        var b: int = state % 256
+        if b < 0 { b = b + 256 }
+        arr.push(b)
+        i = i + 1
+    }
+    return string_from_bytes(arr, 0, n)
+}
+
+// Los 256 valores de byte posibles, ×4, en orden — 1024 bytes con el NUL
+// incluido (índice 0 aparece 4 veces, uno de ellos es el byte 0x00 real).
+fn build_all256_x4() -> String {
+    var arr = []
+    var rep = 0
+    while rep < 4 {
+        var v = 0
+        while v < 256 {
+            arr.push(v)
+            v = v + 1
+        }
+        rep = rep + 1
+    }
+    return string_from_bytes(arr, 0, 1024)
+}
+
+fn expected_definition(name: String, content: String) -> String {
+    let escaped: String = escape_string(content)
+    let byte_len: int = str_byte_length(content) + 1
+    return name + " = private unnamed_addr constant [" + int_to_string(byte_len) + " x i8] c\"" + escaped + "\\00\""
+}
+
+fn main() {
+    // ── Control positivo 1: 1024 bytes, los 256 valores ×4 ──
+    let content1: String = build_all256_x4()
+    assert(str_byte_length(content1) == 1024)
+    let ctx1 = make_context()
+    let name1: String = emit_bytes_global(ctx1, content1)
+    let defs1: Array = ctx1.string_definitions
+    assert(defs1.length() == 1)
+    let actual1: String = defs1[0]
+    let expected1: String = expected_definition(name1, content1)
+    assert(actual1 == expected1)
+
+    // ── Control positivo 2: dos llamadas en el mismo ctx → dos globales
+    // distintos, cada uno correcto por separado (nombres consecutivos,
+    // ningún estado cruzado entre llamadas) ──
+    let content2: String = build_random_bytes(777, 999331)
+    let name2: String = emit_bytes_global(ctx1, content2)
+    assert(name2 != name1)
+    let defs2: Array = ctx1.string_definitions
+    assert(defs2.length() == 2)
+    let actual2: String = defs2[1]
+    let expected2: String = expected_definition(name2, content2)
+    assert(actual2 == expected2)
+
+    // ── Control positivo 3: contenido vacío → sin bytes en el body, solo
+    // el \00 final (mismo camino que codegen_string_value para "") ──
+    let content3: String = ""
+    let ctx3 = make_context()
+    let name3: String = emit_bytes_global(ctx3, content3)
+    let defs3: Array = ctx3.string_definitions
+    let actual3: String = defs3[0]
+    let expected3: String = expected_definition(name3, content3)
+    assert(actual3 == expected3)
+
+    // ── Umbral de tiempo: 1 MB, emisor lineal ──
+    // Construcción del fixture por FUERA de la medición (no es lo que se
+    // mide: build_random_bytes usa Array.push, O(n) amortizado, y
+    // string_from_bytes copia una vez — ninguno de los dos es la cuadrática
+    // bajo prueba).
+    let big: String = build_random_bytes(1048576, 42)
+    assert(str_byte_length(big) == 1048576)
+    let ctx_big = make_context()
+    let t0: int = monotonic_us()
+    let name_big: String = emit_bytes_global(ctx_big, big)
+    let t1: int = monotonic_us()
+    let elapsed_ms: int = (t1 - t0) / 1000
+    // Umbral MEDIDO (Task 1, Step 1 de la SONDA + esta misma corrida, bajo
+    // heavy.lock, misma máquina): emit_bytes_global hace 1 MiB en ~54-67 ms
+    // (el probe aislado dio 54,1 ms; esta corrida del test, con el ctx recién
+    // creado y la máquina compartida bajo carga, dio 67 ms). 2000 ms es
+    // ~30x eso — bien por encima del margen mínimo ≥5x que pide el
+    // self-review del plan, con margen extra por ser una máquina compartida
+    // (otros agentes + nyxerp corriendo en paralelo). Sigue siendo miles de
+    // veces más chico que lo que tardaría una regresión a la cuadrática vieja
+    // de escape_string (~20 min proyectados para 1 MiB, medido: 116,5 s YA a
+    // 400 KB — ver docs/design/plans/2026-09-15-include-bytes.md, Task 1).
+    if elapsed_ms > 2000 {
+        print("TEST-EMIT-BYTES-GLOBAL: umbral excedido, elapsed_ms=" + int_to_string(elapsed_ms))
+        assert(false)
+    }
+    print("TEST-EMIT-BYTES-GLOBAL: 1MB en " + int_to_string(elapsed_ms) + " ms")
+
+    print("TEST-EMIT-BYTES-GLOBAL: OK")
+}
