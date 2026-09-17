@@ -43,7 +43,8 @@ EN/ES), que es una página web.
    `test "nombre" { ... }` — un archivo con funciones llamadas `test_*` se SALTA EN SILENCIO
    («No files with test blocks found») y creerías, mal, que tu código está probado. `nyx test`
    SÍ chequea tipos: un error de tipos en un módulo o en una prueba tumba la corrida con su
-   diagnóstico NYX, no pasa en verde.
+   diagnóstico NYX, no pasa en verde. `nyx test --coverage` lista las funciones de `src/` que
+   ninguna prueba llamó (`archivo:línea nombre`).
 8. **Si no compila:** lee el error (trae archivo:línea y muchas veces un «did you mean»).
    Revisa las trampas de más abajo — la mayoría de las fallas del primer intento son una de
    ellas. Corrige y vuelve a correr.

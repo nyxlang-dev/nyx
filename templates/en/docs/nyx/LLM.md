@@ -111,12 +111,30 @@ With no argument they use `src/main.nx` (the project entry point). All four
 honour `NYX_SRC=path` too.
 
 `nyx test` takes `--filter <string>` (only run files whose name matches),
-`--verbose`/`-v` (show output even on pass) and `--timeout <seconds>` (per
-test, default 30). Any other `-option` — including `--coverage`/`--cover`,
-which does not exist yet — is a hard error naming the option, checked before
+`--verbose`/`-v` (show output even on pass), `--timeout <seconds>` (per
+test, default 30), `--coverage` and `--coverage=lcov`. Any other `-option`
+(`--cover` included) is a hard error naming the option, checked before
 compiling or running anything; it used to be accepted in silence (rc 0, no
 change in output, nothing written to disk), which is exactly the kind of
 tooling lie this section exists to warn you about.
+
+`nyx test --coverage` adds, after the summary, the **functions of `src/` that no
+test called**, per file, as `src/file.nx:line name` (the line of the `fn`), and
+lists whole modules no test imports. `--coverage=lcov` also writes
+`target/coverage.lcov`. Limits, so you do not over-read the number:
+- **Functions only, not lines or branches.** A function whose `if` never took one
+  side still counts as called.
+- **Called / not called**, no hit counts. It does not fail the run below any
+  threshold: the exit code is the tests' exit code.
+- **Native target only** (`--target` is an error with `--coverage`); no wasm, no
+  Windows. Needs `llvm-profdata` matching clang's major version and compiler-rt's
+  profile runtime (`libclang_rt.profile`); without them it fails with the install
+  recipe instead of printing an empty report.
+- **A test file that hangs (timeout), crashes or does not compile leaves no
+  profile.** The report lists it under "Sin perfil", and the functions only that
+  file imported show up as "sin datos", never as not called.
+- Nested functions, lambdas and `spawn` bodies are not listed on their own; a
+  generic function counts as called if any of its instantiations ran.
 
 **Tests must use `test` blocks, not functions named `test_*`.** A file whose
 tests are plain functions is silently skipped — `nyx test` reports "No files

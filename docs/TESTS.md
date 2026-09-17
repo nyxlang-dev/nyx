@@ -18,7 +18,7 @@
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
 | Runtime C unit (B4) | `make test-runtime` | **35 suites / 1748 asserts** | verificado con corrida real 2026-09-15; +68 del arco `http-tls-cliente` (`test_tls` 13 casos, `test_net_result` 3) sobre los 1680 de `test_write_file_binary_safe`; detalle en `CHANGELOG.md` |
-| AI-first (objetivo) | `make test-ai-first` | **29 programas + 6 casos stdin (x2 targets) + 57 guardas** | 26 scripts: ai_first + stdin_io + 23 de guardas (57: templates 2, tooling 14, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
+| AI-first (objetivo) | `make test-ai-first` | **29 programas + 6 casos stdin (x2 targets) + 67 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (67: templates 2, tooling 15, coverage 9, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
 | Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** + autotest | `voseo_filter` (`lib_voseo.sh`: lista + regla general en -á) sobre `compiler/`, `runtime/`, `std/`, `scripts/`, `templates/gitignore` y `tests/**/*.sh` |
 | Coherencia de manuales | (dentro de `make test-ai-first`) `run_template_coherence.sh` | **4 checks** | mentiras resucitadas + anclas de trampas/reglas vivas + imports sin comillas + ids de gotcha citados, sobre lo sembrado en ambos idiomas; ANCLAS/MENTIRAS de `gotchas_generated.sh` |
@@ -30,11 +30,12 @@
 | Capabilities index | (dentro de `make test-ai-first`) `run_capabilities_test.sh` | **6 checks + frescura** | balance de paréntesis en firmas extraídas + mtime `build.nx` vs `nyx_build` + los 191 builtins globales (catálogo al día, secciones emitidas, y los del reporte por nombre) |
 | Generador gendocs | (dentro de `make test-ai-first`) `run_gendocs_test.sh` + `run_gendocs_noop.sh` | **23 asserts + 4 checks** | fixture de 2 gotchas de juguete (regiones, tabla, arrays, `--check`, `fixed-since`) + no-op de regenerar + smoke de `gotchas_table.nx` |
 | Lint de gotchas de `nyx vet` | (dentro de `make test-ai-first`) `run_vet_gotchas.sh` | **8 casos + auditoría de 168 archivos** | código Y línea exactos por cada `pattern:` vivo (W101–W104, W107–W110) en `tests/vet/gotchas_fixture.nx`; 0 W1xx en `clean.nx` y en by-example (107) + std (61) |
-| Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **14 checks** (7 negativos + 7 positivos) | check/test/build acusan el error de tipos y pasan un proyecto sano; +3 (09-14) opción desconocida de `nyx test`; +3 (09-15) fns privadas homónimas por módulo |
+| Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **15 checks** (7 negativos + 8 positivos) | check/test/build acusan el error de tipos; opción desconocida de `nyx test` (`--cover` sí, `--coverage` ya no); fns privadas homónimas por módulo |
+| Cobertura de `nyx test` | (dentro de `make test-ai-first`) `run_coverage_tests.sh` | **9 checks** | fixture `tests/tooling/coverage/`: tabla + IR idéntico, informe, lcov, sin llvm-profdata, `--target` (2), prueba colgada, sin `--coverage`; SKIP sin llvm-profdata |
 | Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **20 checks** (9 negativos + 11 positivos) | `[build]`/`--main` (errores previos; no pisa el principal); +6 (2026-09-15): `--main` no reescribe `nyx.lock` (nativo/wasm) ni contradice el manifiesto |
 | Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
-| Recetas by-example | `make test-examples` | **117** (104 ejecutan, 13 solo compilan+enlazan) | compila, ENLAZA y CORRE cada receta con exit 0; los que necesitan servidor/red/entrada están listados con su motivo. +1 el 09-17 (`109-await-fetch-wasm`, async-real-wasm) |
+| Recetas by-example | `make test-examples` | **118** (105 ejecutan, 13 solo compilan+enlazan) | compila, ENLAZA y CORRE cada receta con exit 0; motivo listado en el script. +1 `109-await-fetch-wasm`; +1 `111-nyx-test-coverage` |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **25 checks** | tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
@@ -42,17 +43,20 @@
 | Integration E2E | `make test-integration` | **10 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm 3 + HTTP/2 1 + body cap 6 + serve contrato 10 + serve bind 6-9 + smoke 103 + serve+kv 10) | detalle de las altas en `CHANGELOG.md` |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
 | WASM (wasm32-wasi) | `make test-wasm` | **37** | SKIP sin toolchain (salvo guards); +4 el 2026-09-17 sobre 33 (arco async-real-wasm: tests 31-33, binaryen real, 0 SKIP async); +5 el 09-14; +1 el 09-13 (SSE); +4 el 09-10. Detalle en `CHANGELOG.md` |
-| Verify + compiler-unit + fmt | `make test-unit` | **21** (13 verify + 3 compiler-unit + 5 fmt) | compiler-unit activos: test-lexer, test-types-unify, test-borrow-classify (3 de 6; resto SKIP, ver abajo) |
+| Verify + compiler-unit + fmt | `make test-unit` | **22** (13 verify + 4 compiler-unit + 5 fmt) | compiler-unit activos: test-lexer, test-parser-declline, test-types-unify, test-borrow-classify (4 de 7; resto SKIP, ver abajo); +1 el 2026-09-15 (`test-parser-declline`, arco nyx-test-cobertura) |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +
 advanced + stdlib + errors + m08-types + runtime + unit + dispatch-matrix +
 integration + wasm + examples + load + ai-first + repl + stacks.
 
-## Compiler-unit — detalle (`tests/compiler-unit/`, 6 archivos)
+## Compiler-unit — detalle (`tests/compiler-unit/`, 7 archivos)
 
 Corridos por `scripts/testing/run_unit_tests.sh` vía `NYX_INLINE_COMPILER=1`
 (inlinea internals del compilador para testing real, path default intacto).
-**Activos (3)**: `test-lexer`, `test-types-unify`, `test-borrow-classify`.
+**Activos (4)**: `test-lexer`, `test-parser-declline`, `test-types-unify`, `test-borrow-classify`.
+`test-parser-declline` corre con `NYX_SKIP_SEMANTIC=1` SOLO para ese programa: importa
+lexer+parser y choca con el mismo bloqueo del tipo `Token` que tiene en SKIP a `test-parser`;
+lo que prueba es la forma del AST.
 **SKIP (3)**: `test-parser`/`test-semantic`/`test-interpreter` — bloqueadas
 por un tipo `Token` sin resolver al inlinear lexer+parser+semantic juntos
 (la colisión de nested fns homónimas que las bloqueaba antes ya está

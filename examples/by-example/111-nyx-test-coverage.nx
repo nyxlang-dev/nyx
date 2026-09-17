@@ -1,0 +1,73 @@
+// Nyx by Example: qué función de src/ ninguna prueba llamó (`nyx test --coverage`).
+//
+// Un equipo con decenas de archivos de prueba no tenía forma de saber si una
+// función quedó sin ejercitar — el runner solo dice "pasó/falló" por archivo,
+// nunca "esto de src/ nadie lo tocó" (fricción real de un ERP en Nyx). Este
+// archivo demuestra el LENGUAJE (dos funciones `valor` homónimas en módulos
+// distintos no se mezclan al medir); la HERRAMIENTA (`nyx test --coverage`)
+// es un flag del runner de pruebas, no algo invocable desde un programa, así
+// que no se puede correr dentro de esta receta — se documenta con la salida
+// REAL de su fixture (`tests/tooling/coverage/`, run_coverage_tests.sh).
+//
+// Un proyecto real así:
+//   src/calc.nx:  pub fn sumar(a, b)        <- la llama un test
+//                 pub fn no_llamada(n)      <- ninguna prueba la llama
+//                 pub fn valor()            <- ninguna prueba la llama
+//                 pub fn correr_en_fibra()  <- llama a en_fibra() DENTRO de un spawn
+//   src/aux.nx:   pub fn valor()            <- homónima de calc.valor; SÍ se llama
+//   src/otro.nx:  pub fn nadie()            <- ningún archivo de tests/ lo importa
+//   tests/calc_test.nx:  importa calc, llama sumar() y correr_en_fibra()
+//   tests/calc2_test.nx: importa calc Y aux, llama solo aux.valor()
+//
+// `nyx test --coverage` (necesita llvm-profdata, misma versión mayor que
+// clang) imprime, tras el resumen de la corrida, exactamente esto — captura
+// real de `run_coverage_tests.sh`, caso "informe" (docs/TESTS.md, fila
+// "Cobertura de nyx test"):
+//
+//   == Cobertura de funciones (src/) ==
+//     src/aux.nx: 1/1 llamadas
+//     src/calc.nx: 3/5 llamadas
+//       src/calc.nx:9 no_llamada
+//       src/calc.nx:27 valor
+//     src/otro.nx: 0/1 llamadas (ninguna prueba lo importa)
+//       src/otro.nx:2 nadie
+//     Total: 4/7 funciones llamadas
+//
+// Notar lo que NO aparece: `sumar` (la llama un test), `correr_en_fibra` (la
+// llama un test) NI `en_fibra` (corre solo dentro del `spawn` de
+// correr_en_fibra, pero cuenta como llamada), y `aux.valor` (SÍ se llama,
+// aunque comparta nombre con `calc.valor`, que no). `main`, los `__test_N`
+// sintéticos y el prelude tampoco cuentan — la tabla es solo funciones de
+// src/ atribuibles a código de usuario.
+//
+// Límites (no son bugs, son el alcance de esta primera fase):
+//   - Solo funciones, no líneas ni ramas: un `if` que nunca tomó un lado
+//     sigue contando la función entera como llamada.
+//   - Corrió/no corrió, sin conteo de veces.
+//   - Solo target nativo (`--coverage --target wasm32-wasi` es error).
+//   - Una prueba que se cuelga (timeout), revienta o no compila NO deja
+//     perfil: sale aparte, bajo "Sin perfil", y las funciones que SOLO esa
+//     prueba importaba quedan "sin datos" — nunca como "no llamadas". Sin
+//     esto, matar un test con --timeout falsearía el informe.
+//   - `--coverage=lcov` además escribe `target/coverage.lcov`
+//     (SF/FN/FNDA/FNF/FNH) para un visor externo.
+//
+// La parte que SÍ se ejecuta en esta receta: las dos `valor` homónimas de
+// arriba, para probar que llamar a la de un módulo nunca llama a la del otro
+// —la garantía de la que depende todo el informe de cobertura por módulo.
+
+fn calc_valor() -> int {
+    return 1
+}
+
+fn aux_valor() -> int {
+    return 2
+}
+
+fn main() {
+    let de_calc: int = calc_valor()
+    let de_aux: int = aux_valor()
+    assert(de_calc == 1 and de_aux == 2, "las homónimas no se mezclan")
+    print("calc.valor() = " + int_to_string(de_calc) + ", aux.valor() = " + int_to_string(de_aux))
+    exit(0)
+}

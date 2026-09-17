@@ -1,0 +1,121 @@
+// ===== TEST UNITARIO: línea de DECLARACIÓN de una fn en el AST =====
+// Ejecutar: NYX_INLINE_COMPILER=1 make run FILE=tests/compiler-unit/test-parser-declline.nx
+//
+// Arco nyx-test-cobertura (D-A, 2026-09-15). El slot [2] de un ASTNode es la
+// línea del ÚLTIMO token del constructo (make_astnode), así que para una fn es
+// la de su `}`. La cobertura necesita la línea del `fn`: parse_function y
+// parse_async_function la agregan a data como centinela ["__declline__", N].
+// Las variantes con atributo (#[...] fn, #[...] pub fn, safe fn) la
+// reenvían. Los consumidores la buscan por tag desde el slot 6 (el 5 es el
+// atributo String, ver borrow.nx).
+//
+// Control: node[2] de `plano` sigue siendo la línea de su `}` (3): la marca
+// es aditiva y no cambia la posición que usan los diagnósticos.
+
+import { tokenize } from "compiler/lexer"
+import { parse } from "compiler/parser"
+
+fn declline_of(node: Array) -> int {
+    let d: Array = node[1]
+    var s = 6
+    while s < d.length() {
+        let ent: Array = d[s]
+        if ent.length() >= 2 {
+            let tag: String = ent[0]
+            if tag == "__declline__" {
+                let n: int = ent[1]
+                return n
+            }
+        }
+        s = s + 1
+    }
+    return -1
+}
+
+fn find_fn(stmts: Array, name: String) -> Array {
+    var i = 0
+    while i < stmts.length() {
+        var node: Array = stmts[i]
+        let t: String = node[0]
+        if t == "export" {
+            let ed: Array = node[1]
+            node = ed[0]
+        }
+        let nt: String = node[0]
+        if nt == "function" or nt == "async_fn" {
+            let nd: Array = node[1]
+            let nm: String = nd[0]
+            if nm == name {
+                return node
+            }
+        }
+        i = i + 1
+    }
+    return []
+}
+
+fn check_decl(stmts: Array, name: String, want: int) {
+    let node: Array = find_fn(stmts, name)
+    if node.length() == 0 {
+        print("no está en el AST: " + name)
+        exit(1)
+    }
+    let got: int = declline_of(node)
+    if got != want {
+        print(name + ": __declline__ = " + int_to_string(got) + ", esperaba " + int_to_string(want))
+        exit(1)
+    }
+}
+
+fn main() {
+    var lines: Array = []
+    lines.push("fn plano(a: int) -> int {")          // 1
+    lines.push("    return a")                       // 2
+    lines.push("}")                                  // 3
+    lines.push("pub fn publica() -> int {")          // 4
+    lines.push("    return 1")                       // 5
+    lines.push("}")                                  // 6
+    lines.push("#[inline]")                          // 7
+    lines.push("fn con_attr() -> int {")             // 8
+    lines.push("    return 2")                       // 9
+    lines.push("}")                                  // 10
+    lines.push("async fn asinc() -> int {")          // 11
+    lines.push("    return 3")                       // 12
+    lines.push("}")                                  // 13
+    lines.push("fn multilinea(")                     // 14
+    lines.push("    a: int,")                        // 15
+    lines.push("    b: int")                         // 16
+    lines.push(") -> int {")                         // 17
+    lines.push("    return a + b")                   // 18
+    lines.push("}")                                  // 19
+    lines.push("#[inline]")                          // 20
+    lines.push("pub fn attr_pub() -> int {")         // 21
+    lines.push("    return 4")                       // 22
+    lines.push("}")                                  // 23
+    lines.push("safe fn segura() -> int {")          // 24
+    lines.push("    return 5")                       // 25
+    lines.push("}")                                  // 26
+    let src: String = lines.join("\n")
+
+    let ast: Array = parse(tokenize(src), src)
+    let root: Array = ast[1]
+    let stmts: Array = root[0]
+
+    check_decl(stmts, "plano", 1)
+    check_decl(stmts, "publica", 4)
+    check_decl(stmts, "con_attr", 8)
+    check_decl(stmts, "asinc", 11)
+    check_decl(stmts, "multilinea", 14)
+    check_decl(stmts, "attr_pub", 21)
+    check_decl(stmts, "segura", 24)
+
+    // Control: la posición del nodo NO cambió (sigue en la `}`).
+    let plano: Array = find_fn(stmts, "plano")
+    let plano_line: int = plano[2]
+    if plano_line != 3 {
+        print("node.line de plano cambió: " + int_to_string(plano_line) + ", esperaba 3")
+        exit(1)
+    }
+
+    print("TEST-PARSER-DECLLINE: OK")
+}

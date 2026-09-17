@@ -41,7 +41,7 @@ a web page.
    a file with functions named `test_*` is SILENTLY SKIPPED ("No files with test blocks found"),
    so you would wrongly believe your code is tested. `nyx test` DOES type-check: a type error
    in a module or in a test brings the run down with its NYX diagnostic instead of passing
-   green.
+   green. `nyx test --coverage` lists the `src/` functions no test called (`file:line name`).
 8. **If it doesn't compile:** read the error (it has file:line and often a "did you mean").
    Check the Gotchas below — most first-try failures are one of them. Fix and re-run.
 9. **If you hit a real wall** — the language or stdlib genuinely can't do it, or you found a

@@ -330,6 +330,7 @@ test-ai-first:
 	bash scripts/testing/run_stdin_io_tests.sh
 	bash scripts/testing/run_silent_failure_checks.sh
 	bash scripts/testing/run_tooling_gates.sh
+	bash scripts/testing/run_coverage_tests.sh
 	bash scripts/testing/run_build_manifest.sh
 	bash scripts/testing/run_self_check.sh
 	bash scripts/testing/run_shutdown_test.sh

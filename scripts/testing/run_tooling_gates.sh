@@ -288,8 +288,11 @@ fi
 # Quien lo pone en un script de CI cree que está midiendo cobertura. El
 # arreglo (compiler/test.nx, main()) hace que CUALQUIER "-opción" que no esté
 # en el vocabulario de la herramienta sea un error explícito, detectado antes
-# de compilar o correr nada. --coverage/--cover llevan un mensaje aparte
-# (no prometen fecha, solo dicen que todavía no existe).
+# de compilar o correr nada.
+# Desde el arco nyx-test-cobertura (2026-09-15) `--coverage` y `--coverage=lcov`
+# EXISTEN (su guarda es run_coverage_tests.sh). Acá queda el vecino que no:
+# `--cover` sigue siendo un error que nombra la opción y remite a --coverage, y
+# `--coverage` ya no cae en «unknown option».
 run_test_args() {  # $1=dir, resto=args → stdout+stderr a $GATE_TMP/testargs.out, rc a $TA_RC
     local dir="$1"; shift
     ( cd "$dir" && NYX_HOME="$ROOT" timeout 30 "$ROOT/nyx_test" "$@" ) \
@@ -297,14 +300,22 @@ run_test_args() {  # $1=dir, resto=args → stdout+stderr a $GATE_TMP/testargs.o
     TA_RC=$?
 }
 
-run_test_args "$GATE_TMP/sano" --coverage
+run_test_args "$GATE_TMP/sano" --cover
 if [ "$TA_RC" -eq 0 ]; then
-    bad "test-coverage — rc 0: '--coverage' se acepta en silencio (el bug del reporte)" "test-coverage"
-elif grep -q -- "--coverage" "$GATE_TMP/testargs.out"; then
-    ok "test-coverage — '--coverage' es un error explícito (rc $TA_RC) que nombra la opción"
+    bad "test-cover — rc 0: '--cover' se acepta en silencio" "test-cover"
+elif grep -q -- "--cover" "$GATE_TMP/testargs.out" && grep -q -- "--coverage" "$GATE_TMP/testargs.out"; then
+    ok "test-cover — '--cover' es un error explícito (rc $TA_RC) que remite a --coverage"
 else
-    bad "test-coverage — rc $TA_RC pero sin nombrar '--coverage' en el mensaje" "test-coverage"
+    bad "test-cover — rc $TA_RC pero sin nombrar '--cover' ni remitir a --coverage" "test-cover"
     head -5 "$GATE_TMP/testargs.out" | sed 's/^/      /'
+fi
+
+run_test_args "$GATE_TMP/sano" --coverage --una-opcion-inventada
+if grep -q -- "unknown option: --coverage" "$GATE_TMP/testargs.out"; then
+    bad "test-coverage-existe — '--coverage' sigue cayendo en «unknown option»" "test-coverage-existe"
+    head -5 "$GATE_TMP/testargs.out" | sed 's/^/      /'
+else
+    ok "test-coverage-existe — '--coverage' es una opción válida (el error nombra solo la inventada)"
 fi
 
 run_test_args "$GATE_TMP/sano" --una-opcion-inventada

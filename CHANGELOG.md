@@ -61,6 +61,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Un tercer hallazgo, ajeno al runtime: una cadena larga de `+` en `compiler/build.nx`
   (script bash del build wasm) hacía segfaultear al compilador self-hosted compilándose a sí mismo
   con `NYX_SKIP_SEMANTIC=1` — partida en dos statements, sin tocar el compilador.
+- **`nyx test --coverage`: funciones de `src/` que ninguna prueba llamó** (fricción de nyxerp,
+  reporte `20260914-110000-team-1`, pedido 2) `[arco: nyx-test-cobertura]`. Después del resumen,
+  por archivo de `src/`: `N/M llamadas` y `src/archivo.nx:línea nombre` de las que no. También
+  lista los módulos que ninguna prueba importa y, aparte, los archivos de prueba sin perfil
+  (timeout, crash o sin compilar); las funciones que solo esos archivos importaban quedan como
+  «sin datos», nunca como no llamadas. `--coverage=lcov` escribe además `target/coverage.lcov`.
+  - Cómo mide: PGO de IR de LLVM (`-fprofile-generate` con `-disable-preinline`, porque con `-O2`
+    el inliner previo a la instrumentación dejaba en 0 las fns chicas) y una tabla lateral de
+    codegen (`NYX_COVERAGE_MAP`) con la línea de declaración.
+  - Límites: solo funciones (no líneas ni ramas), corrió/no corrió, no cambia el código de salida,
+    solo el target nativo. Necesita `llvm-profdata` y `libclang_rt.profile`; sin ellos falla con la
+    receta.
+  - Sin `--coverage`, el IR y el enlace de `nyx test` no cambian.
 - **`std/io`: `read_stdin_all() -> String`** (fricción de nyxerp, reporte
   `20260914-210002-team-2`, pedido 2). Leer la entrada estándar ENTERA (un JSON de una sola
   línea que un programa wasm recibe del navegador, un filtro, cualquier programa WASI que un
@@ -1781,6 +1794,25 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   workaround de empaquetar los campos en `Option<Array>`/`Result<Array, E>`; retorna el struct
   directo.
 - **`docs/TESTS.md`**: Regression pasa de 406/405 a 407/406 (test-386-option-struct-multifield).
+
+### Interno — arco nyx-test-cobertura: línea de declaración en el AST `[arco: nyx-test-cobertura]`
+- **Parser**: el nodo `function` (y `async_fn`) lleva la marca aditiva `["__declline__", N]` con
+  la línea del token `fn`. `node.line` es la línea del ÚLTIMO token (la `}`), y la cobertura de
+  `nyx test` necesita la de la declaración. Mismo patrón que `__retlt__`/`__paramlt__`; la firma
+  de ASTNode y `node.line` no cambian, y las 9 semillas siguen en punto fijo. Sin cambio
+  observable para un programa Nyx.
+- **`docs/TESTS.md`**: `make test-unit` pasa de 21 a 22 (`test-parser-declline`, con control
+  negativo: el parser anterior da `__declline__ = -1`).
+- **Codegen**: con `NYX_COVERAGE_MAP=<ruta>`, codegen escribe una fila TSV por función emitida
+  (`nombre_ir`, módulo, línea de declaración, fn de origen, tipo). Sin la variable no hace nada, y
+  con ella tampoco toca el IR. Las filas de nivel superior salen del pase 2 de `generate_llvm`; las
+  anidadas, las monomorfizaciones y las sintéticas se registran con una línea cada una. Cada fila
+  se agrega abriendo el archivo en modo `"a"`, porque codegen no puede tener globales String/Array.
+- **`docs/TESTS.md`**: `make test-ai-first` suma `run_coverage_tests.sh` (9 checks, corrida real) y
+  `run_tooling_gates.sh` pasa de 14 a 15 checks (7 negativos + 8 positivos, corrida real):
+  el positivo que probaba que `--coverage` caía en «unknown option» pasa a probar lo mismo de
+  `--cover` (que sigue sin existir y remite a `--coverage`), y se agrega un positivo nuevo que
+  confirma que `--coverage` ya es una opción válida.
 
 ### Interno — arco Windows W3: threads y scheduler M:N nativos `[arco: w3-threads-scheduler-windows]`
 

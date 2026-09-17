@@ -4658,7 +4658,7 @@ let original: String = base64url_decode(url_safe)
 | Networking | Soportado | TCP, UDP, DNS |
 | Threading | Soportado | Threads, mutexes, channels |
 | Process/OS | Soportado (v0.12.0) | exec, getenv, setenv, exit, get_args, fork, execvp, waitpid, dup2, pipe_new, close_fd, open_fd, getcwd, chdir, stat, isatty, getpid, kill_process |
-| nyx test | Soportado (v0.12.0) | Integrated test runner: `nyx test file.nx`, `nyx test` (project discovery) |
+| nyx test | Soportado (v0.12.0) | Integrated test runner: `nyx test file.nx`, `nyx test` (project discovery), `--filter`, `--verbose`, `--timeout`. `--coverage`: funciones de `src/` que ninguna prueba llamó (`archivo:línea nombre`, módulos no importados, pruebas sin perfil aparte); `--coverage=lcov` escribe además `target/coverage.lcov`. Solo funciones (no líneas ni ramas), corrió/no corrió, solo target nativo; necesita `llvm-profdata` y `libclang_rt.profile` |
 | JSON | Soportado | json_parse, json_stringify |
 | HTTP | Soportado | Server + client library |
 | Spawn/Select | Soportado | M:N scheduler, channels, work-stealing |

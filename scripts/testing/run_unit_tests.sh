@@ -91,6 +91,28 @@ else
     FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS $name"
 fi
 
+# test-parser-declline.nx: arco nyx-test-cobertura (D-A, 2026-09-15). Fija que
+# parse_function / parse_async_function (y las variantes #[...] fn, #[...] pub
+# fn y safe fn) dejan ["__declline__", N] con la línea del `fn`, y que node[2]
+# sigue en la `}`. Control negativo medido: con el parser anterior da
+# "plano: __declline__ = -1".
+# NYX_SKIP_SEMANTIC=1 SOLO para este programa de prueba: importa lexer+parser y
+# choca con el bloqueo preexistente del checker descrito arriba (tipo 'Token'
+# sin resolver al inlinearlos, el mismo que deja en SKIP a test-parser). Lo que
+# se prueba es la forma del AST, no tipos; el compilador en sí sigue
+# compilándose con el checker encendido.
+name="compiler-unit/test-parser-declline"
+out=$(NYX_INLINE_COMPILER=1 NYX_SKIP_SEMANTIC=1 timeout 300 make run FILE="tests/compiler-unit/test-parser-declline.nx" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qF "TEST-PARSER-DECLLINE: OK"; then
+    echo -e "${GREEN}ok ${name}${NC}"
+    PASS=$((PASS + 1))
+else
+    echo -e "${RED}x ${name}: exit=$rc${NC}"
+    printf '%s\n' "$out" | tail -5 | sed 's/^/    /'
+    FAIL=$((FAIL + 1)); FAILED_TESTS="$FAILED_TESTS $name"
+fi
+
 # test-types-unify.nx: Fase 1a — motor de unificación por-id (TyVar,
 # subst_new/subst_resolve, occurs_check, unify_var, freshen_params) en
 # compiler/types.nx. Infra ADITIVA, no cableada al pipeline existente —
