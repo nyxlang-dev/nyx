@@ -500,6 +500,151 @@ else
     grep -E "NYX1" "$GATE_TMP/check.out" | head -4 | sed 's/^/      /'
 fi
 
+# ════════════════════════════════════════════════════════════
+#  Los tres reportes de nyxerp del 2026-09-17 sobre el COSTO de `nyx test`
+# ════════════════════════════════════════════════════════════
+# Una suite de 100 archivos tardaba 2 h 25 min en una máquina de 3,8 GB. Los
+# tres arreglos atacan partes distintas de ese costo y los tres se verifican
+# mirando la LÍNEA DE CLANG que arma el runner, no el reloj: un gate que midiera
+# tiempo sería flaky en una caja cargada.
+#
+# Cómo se ve la línea: un `clang` propio primero en el PATH que la registra y
+# delega en el real. Es la misma técnica que los dos reportes dicen haber
+# evaluado y descartado COMO SOLUCIÓN —y con razón, no querían una herramienta
+# que se hiciera pasar por otra— pero como INSTRUMENTO DE PRUEBA es legítimo:
+# vive tres comandos y lo que afirma es justamente lo que la toolchain ejecuta.
+
+FAKEBIN="$GATE_TMP/fakebin"
+mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/clang" <<EOF
+#!/bin/bash
+echo "CLANGCALL: \$*" >> "$GATE_TMP/clang-calls.log"
+exec $(command -v clang) "\$@"
+EOF
+chmod +x "$FAKEBIN/clang"
+
+run_test_spy() {  # \$1=dir, resto=args → línea(s) de clang en \$GATE_TMP/clang-calls.log
+    local dir="$1"; shift
+    rm -f "$GATE_TMP/clang-calls.log"
+    ( cd "$dir" && PATH="$FAKEBIN:$PATH" NYX_HOME="$ROOT" timeout 120 "$ROOT/nyx_test" "$@" ) \
+        > "$GATE_TMP/spy.out" 2>&1
+    SPY_RC=$?
+    touch "$GATE_TMP/clang-calls.log"
+}
+
+# ── Check I (control positivo del instrumento) ───────────────
+# Sin esto, los tres checks de abajo pasarían en verde con un espía que no
+# registra nada: «no vi -O2» y «no vi el archivo» son afirmaciones vacías si
+# el log está vacío porque el wrapper nunca corrió.
+run_test_spy "$GATE_TMP/sano"
+if [ -s "$GATE_TMP/clang-calls.log" ] && grep -q "script.ll" "$GATE_TMP/clang-calls.log"; then
+    ok "spy-clang — el instrumento registra la línea de clang que arma nyx test"
+else
+    bad "spy-clang — el wrapper no registró ninguna llamada: los checks de abajo no prueban nada" "spy-clang"
+fi
+
+# ── Check J: las pruebas NO se compilan optimizadas por omisión ─
+# Fricción nyxerp (20260917-234222-team-2): `nyx test` tenía "-O2" fijo en la
+# línea de clang, y era el único camino de la toolchain que forzaba la
+# optimización máxima — sobre binarios que viven segundos y se borran. El costo
+# no era el tiempo sino la MEMORIA: midieron 1.357 MB de pico por compilación,
+# y en 3,8 GB dos no entran a la vez, así que corrían la suite de a una con un
+# núcleo ocioso el 42% del tiempo. Ahora el default es sin -O, como `nyx build`.
+if grep -q '^CLANGCALL:.*-O2' "$GATE_TMP/clang-calls.log"; then
+    bad "test-sin-O2 — las pruebas se siguen compilando con -O2 por omisión" "test-sin-O2"
+    grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
+else
+    ok "test-sin-O2 — sin --release, nyx test no optimiza (pico de memoria más bajo)"
+fi
+
+# ── Check K (control positivo): --release sí optimiza ────────
+# El check anterior por sí solo pasaría en verde si alguien rompiera el armado
+# de la línea y clang dejara de recibir banderas: este exige que el camino
+# optimizado siga existiendo.
+run_test_spy "$GATE_TMP/sano" --release
+if grep -q '^CLANGCALL:.*-O2' "$GATE_TMP/clang-calls.log"; then
+    ok "test-release — --release recupera -O2 para quien mida rendimiento real"
+else
+    bad "test-release — --release no llegó a la línea de clang" "test-release"
+    grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
+fi
+
+# ── Check L: NYX_RT_ARCHIVE reemplaza las 24 unidades del runtime ─
+# Fricción nyxerp (20260917-234222-team-1): compilar el runtime entero es
+# idéntico en todas las corridas y se pagaba una vez POR ARCHIVO de prueba —
+# cien veces los mismos objetos en su suite. La técnica ya existía en el repo
+# (run_integration_tests.sh, run_dispatch_matrix.sh: ~4s -> ~0.3s por celda)
+# pero la variable solo la leían esos scripts.
+#
+# El .a es VACÍO a propósito: lo que este gate afirma es que la línea de clang
+# deja de traer los .c, no que el binario enlace. Construir un runtime real
+# serían 24 compilaciones dentro de un gate que corre en cada test-all —
+# exactamente el costo que este arreglo vino a eliminar. Por eso tampoco se
+# mira el rc: con un archivo vacío el link falla, y está bien.
+: > "$GATE_TMP/vacio.o.list"
+ar rcs "$GATE_TMP/libnyxrt.a" 2>/dev/null || true
+if [ -f "$GATE_TMP/libnyxrt.a" ]; then
+    NYX_RT_ARCHIVE="$GATE_TMP/libnyxrt.a" run_test_spy "$GATE_TMP/sano"
+    if grep -q "^CLANGCALL:.*$GATE_TMP/libnyxrt.a" "$GATE_TMP/clang-calls.log" \
+       && ! grep -q '^CLANGCALL:.*runtime/runtime\.c' "$GATE_TMP/clang-calls.log"; then
+        ok "test-rt-archive — con NYX_RT_ARCHIVE, nyx test linkea el archivo y no compila los 24 .c"
+    else
+        bad "test-rt-archive — NYX_RT_ARCHIVE no reemplazó las fuentes del runtime" "test-rt-archive"
+        grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
+    fi
+else
+    bad "test-rt-archive — no se pudo crear el .a de prueba (¿falta ar?)" "test-rt-archive"
+fi
+
+# ── Check M (control positivo): una ruta que no existe NO rompe nada ─
+# La comprobación de existencia no es cosmética: sin ella, un NYX_RT_ARCHIVE mal
+# escrito dejaría fuera medio runtime y el link fallaría con símbolos faltantes
+# en vez de decir qué pasó. Con ella, se cae de vuelta a las fuentes en silencio,
+# que es el comportamiento de siempre.
+NYX_RT_ARCHIVE="$GATE_TMP/no-existe-jamas.a" run_test_spy "$GATE_TMP/sano"
+if grep -q '^CLANGCALL:.*runtime/runtime\.c' "$GATE_TMP/clang-calls.log"; then
+    ok "test-rt-archive-inexistente — una ruta inválida cae a las fuentes, no a un link roto"
+else
+    bad "test-rt-archive-inexistente — no volvió a compilar las fuentes del runtime" "test-rt-archive-inexistente"
+    grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
+fi
+
+# ── Check N: el orden de ejecución es determinista ───────────
+# Fricción nyxerp (20260917-234222-team-3): `discover_tests` usaba `readdir`
+# sin ordenar, así que dos corridas seguidas ejecutaban las pruebas en orden
+# distinto. Eso vuelve INTERMITENTE cualquier cruce entre pruebas que comparten
+# un recurso externo (ellos comparten una base PostgreSQL), y además les hizo
+# creer durante semanas que el runner era paralelo — no lo es, el bucle de
+# `run_tests` es estrictamente en serie.
+ODIR="$GATE_TMP/orden"
+mkdir -p "$ODIR/tests"
+cat > "$ODIR/nyx.toml" <<'EOF'
+[package]
+name = "orden"
+version = "0.1.0"
+EOF
+for n in m07 a01 z99 k42 b13 x77 c05 t31; do
+    printf 'test "%s ok" {\n    assert(1 == 1)\n}\n' "$n" > "$ODIR/tests/${n}_test.nx"
+done
+orden_de_una_corrida() {
+    ( cd "$ODIR" && NYX_HOME="$ROOT" timeout 120 "$ROOT/nyx_test" ) 2>&1 \
+        | grep -oE 'tests/[a-z0-9]+_test\.nx' | tr '\n' ' '
+}
+ORDEN1="$(orden_de_una_corrida)"
+ORDEN2="$(orden_de_una_corrida)"
+ESPERADO="$(printf '%s\n' tests/a01_test.nx tests/b13_test.nx tests/c05_test.nx tests/k42_test.nx tests/m07_test.nx tests/t31_test.nx tests/x77_test.nx tests/z99_test.nx | tr '\n' ' ')"
+if [ -z "$ORDEN1" ]; then
+    bad "test-orden — no se ejecutó ninguna prueba: el check no prueba nada" "test-orden"
+elif [ "$ORDEN1" != "$ORDEN2" ]; then
+    bad "test-orden — dos corridas seguidas dieron ORDEN DISTINTO" "test-orden"
+    echo "      1: $ORDEN1" ; echo "      2: $ORDEN2"
+elif [ "$ORDEN1" != "$ESPERADO" ]; then
+    bad "test-orden — estable pero no alfabético (readdir crudo)" "test-orden"
+    echo "      obtenido: $ORDEN1" ; echo "      esperado: $ESPERADO"
+else
+    ok "test-orden — las 8 pruebas corren en orden alfabético y reproducible"
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  TOOLING GATES: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

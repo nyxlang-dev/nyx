@@ -51,6 +51,10 @@
 //     esto, matar un test con --timeout falsearía el informe.
 //   - `--coverage=lcov` además escribe `target/coverage.lcov`
 //     (SF/FN/FNDA/FNF/FNH) para un visor externo.
+//   - Cuesta tiempo: +13,6% en una suite real de 93 archivos de prueba
+//     (105m23s -> 119m41s, medido el 2026-09-17 en 2 núcleos). Ahí cada
+//     archivo enlaza por separado y el enlace domina ese sobrecosto, así
+//     que una suite de un solo enlace pagará una fracción mayor.
 //
 // La parte que SÍ se ejecuta en esta receta: las dos `valor` homónimas de
 // arriba, para probar que llamar a la de un módulo nunca llama a la del otro

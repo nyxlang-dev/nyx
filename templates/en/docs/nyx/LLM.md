@@ -112,11 +112,33 @@ honour `NYX_SRC=path` too.
 
 `nyx test` takes `--filter <string>` (only run files whose name matches),
 `--verbose`/`-v` (show output even on pass), `--timeout <seconds>` (per
-test, default 30), `--coverage` and `--coverage=lcov`. Any other `-option`
-(`--cover` included) is a hard error naming the option, checked before
+test, default 30), `--release`, `--coverage` and `--coverage=lcov`. Any other
+`-option` (`--cover` included) is a hard error naming the option, checked before
 compiling or running anything; it used to be accepted in silence (rc 0, no
 change in output, nothing written to disk), which is exactly the kind of
 tooling lie this section exists to warn you about.
+
+**How `nyx test` runs, and what it costs.** Three things worth knowing before you
+blame the wrong part of your build:
+
+- **Tests run in SERIES, one file after another.** There is no parallelism: no
+  `spawn`, no thread pool, no `-jobs`. The output order is the order of
+  execution, and since 2026-09-17 that order is **alphabetical and reproducible**
+  (it used to follow `readdir`, so two runs could differ — which made any
+  interference between tests sharing an external resource, say one database,
+  look intermittent, and read like the runner was concurrent).
+- **Tests compile WITHOUT optimization by default**, same as `nyx build`. Pass
+  `--release` to get `-O2`, which only pays off if a test measures real
+  performance — these binaries live seconds and are deleted. The default matters
+  for memory, not speed: one optimized test compile peaked at ~1.35 GB on a
+  project that inlines a large import closure, which is what stops a small
+  machine from compiling two at once.
+- **`NYX_RT_ARCHIVE=/abs/path/libnyxrt.a` skips recompiling the C runtime.**
+  Without it, every single test file recompiles all 24 runtime units — identical
+  output, every time. Build the archive once (compile the runtime `.c` files to
+  objects, `ar rcs` them together) and each file only links: measured 8.9s → 1.1s
+  on a three-file suite. A relative path is resolved against your project; a path
+  that does not exist falls back to the sources instead of failing the link.
 
 `nyx test --coverage` adds, after the summary, the **functions of `src/` that no
 test called**, per file, as `src/file.nx:line name` (the line of the `fn`), and
@@ -135,6 +157,11 @@ lists whole modules no test imports. `--coverage=lcov` also writes
   file imported show up as "sin datos", never as not called.
 - Nested functions, lambdas and `spawn` bodies are not listed on their own; a
   generic function counts as called if any of its instantiations ran.
+- **Cost, measured on a real suite** (93 test files, 2 cores, 2026-09-17):
+  105m23s without `--coverage` against 119m41s with it, **+13.6%**. There each
+  test file is compiled and linked on its own and linking dominates the extra
+  time, so a suite that links once should expect a larger share, not a smaller
+  one.
 
 **Tests must use `test` blocks, not functions named `test_*`.** A file whose
 tests are plain functions is silently skipped — `nyx test` reports "No files

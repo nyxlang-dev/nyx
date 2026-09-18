@@ -74,6 +74,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
     solo el target nativo. Necesita `llvm-profdata` y `libclang_rt.profile`; sin ellos falla con la
     receta.
   - Sin `--coverage`, el IR y el enlace de `nyx test` no cambian.
+  - Costo medido sobre una suite real (93 archivos de prueba, 2 núcleos, 2026-09-17): 105m23s sin
+    `--coverage` contra 119m41s con él, **+13,6%**. Ahí cada archivo se compila y enlaza por
+    separado y el enlace domina el sobrecosto: una suite de un solo enlace debería esperar una
+    fracción mayor.
 - **`std/io`: `read_stdin_all() -> String`** (fricción de nyxerp, reporte
   `20260914-210002-team-2`, pedido 2). Leer la entrada estándar ENTERA (un JSON de una sola
   línea que un programa wasm recibe del navegador, un filtro, cualquier programa WASI que un
@@ -1620,6 +1624,32 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   fuente de esa lista de rutas — la usa `install-local` Y la guardia, sin duplicar la lógica.
 
 ### Changed
+- **CAMBIO DE COMPORTAMIENTO — `nyx test` ya no compila las pruebas con `-O2`** (fricción de
+  nyxerp, `20260917-234222-team-2`). Por omisión las pruebas compilan SIN optimizar, igual que
+  `nyx build` (que solo optimiza con `--release`); la opción nueva `nyx test --release` recupera
+  `-O2` para quien mida rendimiento real dentro de una prueba. Un `-O2` fijo era el único camino
+  de la toolchain que forzaba la optimización máxima, y lo hacía sobre binarios que viven segundos
+  y se borran al terminar. Lo que se gana no es velocidad sino MEMORIA: el equipo midió 1.357 MB
+  de pico por compilación sobre un `.ll` que trae inlineado todo el cierre de imports, y en una
+  máquina de 3,8 GB dos de esas no entran a la vez — corrían su suite de a una con un núcleo
+  ocioso el 42% del tiempo. Quien tenga una prueba que mida rendimiento tiene que pasar
+  `--release` para seguir viendo los números de antes.
+- **`nyx test` honra `NYX_RT_ARCHIVE`: el runtime C se compila una vez, no una por archivo de
+  prueba** (fricción de nyxerp, `20260917-234222-team-1`). Si la variable apunta a un archivo
+  estático que existe, `nyx test` linkea contra él en vez de compilar las 24 unidades del runtime;
+  si no está o no existe, todo sigue igual que antes. Es el mismo contrato que ya usaban
+  `run_integration_tests.sh` y `run_dispatch_matrix.sh` —que lo miden en ~4s -> ~0.3s por celda—
+  pero hasta ahora solo lo leían esos scripts, así que ningún proyecto de afuera se beneficiaba:
+  una suite de 100 archivos compilaba cien veces los mismos objetos. Medido acá: 8,9 s -> 1,1 s en
+  una suite de tres archivos. Una ruta relativa se resuelve contra el proyecto (el runner hace
+  `cd $NYX_HOME` antes de llamar a clang) y una ruta inexistente cae a las fuentes en vez de
+  romper el link.
+- **`nyx test` ejecuta las pruebas en orden alfabético y reproducible** (fricción de nyxerp,
+  `20260917-234222-team-3`). `discover_tests` usaba `readdir` sin ordenar, así que dos corridas
+  seguidas podían ejecutar en orden distinto: eso vuelve intermitente cualquier cruce entre
+  pruebas que comparten un recurso externo (ellos comparten una base PostgreSQL) y hace imposible
+  perseguirlo. El desorden además se leía como señal de que el runner era paralelo — no lo es y no
+  lo fue nunca: el bucle es estrictamente en serie, y ahora `LLM.md` lo dice.
 - **CAMBIO DE COMPORTAMIENTO — los `Err` de `try_http_*` sobre `https://` dicen la causa real**
   `[arco: http-tls-cliente]`. Antes todo fallo TLS era `Err{5, "connection"}` con cuatro causas en
   el texto. Ahora: `connection`/111 puerto cerrado, `timeout`/110 connect/handshake/respuesta
@@ -1674,6 +1704,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   esperable.
 
 ### Docs
+- **El ledger de un arco nace con las marcas que su cierre va a exigir** (método SDD-nyx).
+  `arc-close` pide, por cada task del plan, `Task N: review` seguida de `Task N: complete` (o
+  `skipped` con su ruling) y un `task-N-report.md`; nada obligaba a escribirlas DURANTE la
+  ejecución, así que la falta se descubría al cerrar, con los ejecutores ya fuera y el cierre
+  firmado por quien no hizo el trabajo — les pasó a `nyx-test-cobertura` y a `http-tls-cliente`,
+  los dos el 2026-09-17. Ahora `ledger-new` siembra «## Marcas por task» con una línea
+  `- [ ] Task N — <título>` por cada `### Task N` del plan (mismo patrón de heading que
+  `task-brief` y `arc-close`, fences respetados: un `### Task 9` dentro de ``` no es una task),
+  más el formato exacto de las dos líneas ancladas y el recordatorio del report.
+  - Lo sembrado **no puede hacer cerrar un arco que nadie revisó**: el ejemplo va indentado, así
+    que no matchea las regex ancladas que lee el cierre, y un caso del selftest lo fija.
+  - `arc-new` NO siembra el ledger: un plan recién nacido está en BORRADOR y todavía no declara
+    sus tasks, así que el checklist saldría vacío y el ledger sería huérfano para `state-check`
+    (h). Solo nombra el paso siguiente, por stderr para no ensuciar la ruta que imprime.
+  - Spec §4 enmendada. `make sdd-check` pasa de 79 a 83 casos, y el fixture de cierre del
+    selftest ahora nace sembrado: su cierre verde prueba E2E que un ledger con checklist cierra
+    igual, que es lo único que la siembra podía romper.
 - **`LLM.md` corrige el contrato de binary-safety de archivos y saca dos funciones inventadas**
   (fricción 20260914-190001-team-1, equipo nyxerp, DOC). La doc decía que `read_file`/`write_file`
   NO eran binary-safe con bytes 0 como par — medido contra `runtime/file-io.c` (y confirmado con un
