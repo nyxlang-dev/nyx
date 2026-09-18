@@ -4,6 +4,8 @@
 # Uso: bash scripts/build_bootstrap.sh
 set -e
 cd "$(dirname "$0")/.."
+# Stack: compilar lexer.nx necesita ~9 MB en x86_64 y el default son 8 (ver lib_stack.sh).
+. "$(dirname "$0")/lib_stack.sh"; nyx_raise_stack
 
 echo "=== Building Nyx Bootstrap ==="
 

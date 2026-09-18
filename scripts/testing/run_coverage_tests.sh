@@ -80,7 +80,10 @@ if [ "$T_RC" -ne 0 ]; then
 elif ! [ -s "$COV_TMP/map.tsv" ]; then
     bad "tabla — NYX_COVERAGE_MAP no escribió nada" "tabla-vacia"
 else
-    awk -F'\t' '$5 != "prelude"' "$COV_TMP/map.tsv" | sort > "$COV_TMP/map.sin_prelude"
+    # LC_ALL=C: el fixture está en orden de BYTES. Con un locale como
+    # en_US.UTF-8 el collation ignora los `_`, y la tabla sale reordenada
+    # (mismas filas, otro orden) -> falso negativo. Medido en x86_64/WSL2.
+    awk -F'\t' '$5 != "prelude"' "$COV_TMP/map.tsv" | LC_ALL=C sort > "$COV_TMP/map.sin_prelude"
     if diff -u tests/tooling/coverage/expected_map_calc_test.tsv "$COV_TMP/map.sin_prelude" > "$COV_TMP/map.diff"; then
         ok "tabla — línea de declaración, módulo, spawn atribuido y sintéticas"
     else

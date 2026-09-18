@@ -16,6 +16,9 @@
 # ============================================================
 set -u
 cd "$(dirname "$0")/../.." || exit 1
+# Los compiler-unit compilan módulos del compilador con NYX_INLINE_COMPILER=1,
+# así que pagan el mismo stack que seeds-check (ver scripts/lib_stack.sh).
+. "$(dirname "$0")/../lib_stack.sh"; nyx_raise_stack
 
 # Serializa contra otros runners: todos comparten script.nx/script.ll/
 # script_bin en la raíz del repo (ver lib_testroot_lock.sh).

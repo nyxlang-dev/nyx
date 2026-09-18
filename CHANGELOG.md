@@ -9,7 +9,59 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
-> Vacío por ahora: lo que había se publicó en 0.32.0.
+> Vacío por ahora: lo que había se publicó en 0.32.1.
+
+---
+
+## [0.32.1] — 2026-09-18
+
+> **PATCH de corrección de 0.32.0, publicado el mismo día.** Tres de los cuatro arreglos los
+> encontraron consumidores del lenguaje, no este repo: nyxerp midió que el chequeo de visibilidad
+> nuevo era cuadrático, y la segunda máquina del reparto de carga encontró el rojo de
+> `make test-errors` y el desborde de stack en x86_64. Sube número propio en vez de re-publicar
+> `0.32.0` con otro compilador adentro, que es exactamente lo que el reporte
+> `20260918-000022-team-1` de nyxerp pedía dejar de hacer.
+
+### Fixed
+- **El chequeo de visibilidad (NYX1036) era CUADRÁTICO** (fricción de nyxerp,
+  medida sobre 126 módulos). Llamaba a `fn_module_resolve` —que escanea la tabla entera de
+  símbolos— en CADA validación de llamada, sin el guard `contains` O(1) que la resolución de
+  aridad ya usaba para lo mismo. Medido por ellos en una prueba real: el front-end pasó del orden
+  de 100 s a **466 s**, con 6m19s de *user time* (CPU real, no contención). Ahora un set con los
+  nombres de las privadas filtra antes de resolver: una llamada a un builtin, a una `pub` o a una
+  local paga un `contains` y nada más.
+- **`make test-errors` quedó en rojo en `main` con 0.32.0** (lo encontró la máquina B del reparto).
+  El fixture `vendored-pkg` no declaraba `pub` en sus dos funciones y NYX1036 lo rechaza —
+  correctamente: es justo lo que el cambio atrapa. El fixture quedó atrás, como la stdlib que sí se
+  migró.
+- **Los tests `compiler-unit` quedan fuera del chequeo de visibilidad.** Prueban internals de
+  `codegen.nx` a propósito, y `NYX_INLINE_COMPILER=1` existe con ese propósito declarado
+  (`resolve.nx:54-63`): que los tests «linkeen el símbolo real». En el régimen normal esos módulos
+  no se inlinean, se compilan por separado y se linkean. La alternativa era hacer `pub` funciones
+  como `make_context`, que no son API de nada.
+- **En x86_64, compilar `compiler/lexer.nx` desbordaba el stack default de 8 MB** (medido por la
+  máquina B: SIGSEGV determinista, umbral entre 8704 y 9216 KB). No es memoria sino el ABI —
+  x86-64 SysV spillea más que AArch64, y `codegen_call_expr`/`codegen_method_call` reservan ~512 KB
+  de frame cada una siendo mutuamente recursivas —, y `lexer.nx` lo dispara por PROFUNDIDAD, no por
+  tamaño. `scripts/lib_stack.sh` sube `ulimit -s` donde se compilan módulos del compilador. **No es
+  el arreglo de fondo**: achicar esos frames, o correr el `main` en un hilo propio, toca el codegen
+  —rompe el punto fijo y cambia dónde corre el `main` de todo programa Nyx— y va como arco aparte.
+  El usuario externo no está afectado: el repo público no lleva `lexer.nx` y `install.sh` no lo
+  recompila.
+
+### Changed
+- **`make test-errors` construye `nyx_check` y `nyx_build` antes de correr.** Cinco de sus checks
+  las invocan y sin ellas se SALTABAN en silencio — verde sobre lo que nadie midió. Por eso la
+  suite pasa de **282 a 290** checks: los ocho de diferencia estaban ahí, sin mirarse. Cuesta ~6 s
+  y ~200 MB la primera vez y 0 s después (son targets de archivo con dependencias declaradas).
+- **`run_seeds_check.sh` distingue por qué no pudo medir.** Mira el rc del bootstrap (139 =
+  SIGSEGV = desborde de stack; 137 = OOM) y da el `ulimit` exacto en vez de mandar a liberar
+  memoria a quien tiene un problema de stack. Complementa el arreglo de 0.32.0, que hizo que «sin
+  medir» dejara de salir en verde.
+- Cuatro arreglos de entorno en los gates, todos medidos con antes/después por la máquina B:
+  `#include <sys/time.h>` en `test_terminal.c` (implícito es error desde clang 16), `LC_ALL=C sort`
+  en `run_coverage_tests.sh` (el fixture está en orden de bytes), SKIP limpio sin toolchain wasi en
+  `run_build_manifest.sh`, y desacoplar los dos tests de `test_os_fault_guard` (de 2 asserts a 5).
 
 ---
 
@@ -1665,11 +1717,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `nyx build` (que solo optimiza con `--release`); la opción nueva `nyx test --release` recupera
   `-O2` para quien mida rendimiento real dentro de una prueba. Un `-O2` fijo era el único camino
   de la toolchain que forzaba la optimización máxima, y lo hacía sobre binarios que viven segundos
-  y se borran al terminar. Lo que se gana no es velocidad sino MEMORIA: el equipo midió 1.357 MB
-  de pico por compilación sobre un `.ll` que trae inlineado todo el cierre de imports, y en una
-  máquina de 3,8 GB dos de esas no entran a la vez — corrían su suite de a una con un núcleo
-  ocioso el 42% del tiempo. Quien tenga una prueba que mida rendimiento tiene que pasar
-  `--release` para seguir viendo los números de antes.
+  y se borran al terminar. Quien tenga una prueba que mida rendimiento tiene que pasar `--release`
+  para seguir viendo los números de antes. **Cuánto ahorra, medido por nyxerp el 2026-09-18** sobre
+  una prueba real (cierre de 88 archivos → 184.080 líneas de IR): `-O2` → `-O0` son **9,3 s por
+  archivo**, que en su suite de 100 son ~15 minutos. **Corrección de una afirmación previa de este
+  changelog**: se dijo que lo que se ganaba era memoria y que era lo que les impedía usar el segundo
+  núcleo. Su desglose lo desmiente — el pico de una compilación lo hace el FRONT-END
+  (`nyx_bootstrap`, 1.754 MB), no clang (276 MB con `-O2`, 137 MB con `-O0`). Bajar la optimización
+  da tiempo y algo de memoria de clang; lo que bloquea el paralelismo en 3,8 GB es el front-end, que
+  es además el 96% del costo de compilar una prueba.
 - **`nyx test` honra `NYX_RT_ARCHIVE`: el runtime C se compila una vez, no una por archivo de
   prueba** (fricción de nyxerp, `20260917-234222-team-1`). Si la variable apunta a un archivo
   estático que existe, `nyx test` linkea contra él en vez de compilar las 24 unidades del runtime;

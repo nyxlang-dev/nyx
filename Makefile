@@ -237,7 +237,11 @@ install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $
 ## Uso: make recompile MODULE=lexer
 recompile:
 	@test -n "$(MODULE)" || (echo "Uso: make recompile MODULE=<nombre>"; exit 1)
-	$(TESTROOT_LOCK) bash -c 'cp compiler/$(MODULE).nx script.nx && ./nyx_bootstrap && cp script.ll compiler/$(MODULE).ll'
+#	`ulimit -s`: compilar lexer.nx necesita ~9 MB de stack en x86_64 y el default
+#	de Linux son 8 (scripts/lib_stack.sh tiene el porqué y la medición). En
+#	aarch64 es un no-op; en x86_64 es la diferencia entre compilar y un SIGSEGV
+#	sin explicación.
+	$(TESTROOT_LOCK) bash -c '. scripts/lib_stack.sh; nyx_raise_stack; cp compiler/$(MODULE).nx script.nx && ./nyx_bootstrap && cp script.ll compiler/$(MODULE).ll'
 	@echo "✓ compiler/$(MODULE).ll actualizado"
 
 ## Recompilar todos los módulos y reconstruir el bootstrap
@@ -296,7 +300,14 @@ test:
 	bash scripts/testing/run_bootstrap_tests.sh
 
 ## M-08 error tests (semantic checker runs without NYX_SKIP_SEMANTIC)
-test-errors:
+# Depende de las herramientas: cinco de sus checks las invocan (tres nyx_check,
+# dos nyx_build) y sin ellas se SALTAN — o sea verde sobre lo que no se miró, el
+# mismo pecado que el gate de semillas tenía hasta 2026-09-18. Medido por la
+# máquina B: construir las tres cuesta ~6 s y ~200 MB de pico la PRIMERA vez
+# (1/13 de una compilación de codegen.nx), y 0 s después, porque ya son targets
+# de archivo con sus dependencias declaradas: sólo se rearman si cambia la
+# fuente, el bootstrap o el runtime.
+test-errors: nyx_check nyx_build
 	bash tests/compiler/errors/run_error_tests.sh
 
 ## M-08 types happy-path tests (semantic activo — end-to-end)

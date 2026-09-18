@@ -254,12 +254,23 @@ else
     ( cd "$P" && git diff -- nyx.lock ) | sed 's/^/      /'
 fi
 
-nb "$P" build --target wasm32-wasi --main src/otro.nx
-if [ "$RC" -eq 0 ] && ( cd "$P" && git diff --quiet -- nyx.lock ); then
-    ok "lock-main-wasm — nyx build --target wasm32-wasi --main no reescribe nyx.lock"
+# SKIP limpio sin toolchain wasi (patrón run_wasm_tests.sh): sin wasi-libc el
+# build falla por el toolchain, no por el lock, y contarlo como fallo manda a
+# investigar al lugar equivocado. Y las dos condiciones se reportan POR SEPARADO:
+# antes un rc!=0 se anunciaba como «el lock quedó modificado», que era falso.
+WASI_LIBC="${WASI_SYSROOT:-/usr}/lib/wasm32-wasi/libc.a"
+if [ ! -f "$WASI_LIBC" ]; then
+    echo "  ⏭️  lock-main-wasm — SKIP: wasi-libc no encontrado en $WASI_LIBC"
 else
-    bad "lock-main-wasm — nyx.lock quedó modificado por --main (wasm)" "lock-main-wasm"
-    ( cd "$P" && git diff -- nyx.lock ) | sed 's/^/      /'
+    nb "$P" build --target wasm32-wasi --main src/otro.nx
+    if [ "$RC" -ne 0 ]; then
+        bad "lock-main-wasm — el build wasm falló (rc=$RC), no se pudo verificar el lock" "lock-main-wasm"
+    elif ( cd "$P" && git diff --quiet -- nyx.lock ); then
+        ok "lock-main-wasm — nyx build --target wasm32-wasi --main no reescribe nyx.lock"
+    else
+        bad "lock-main-wasm — nyx.lock quedó modificado por --main (wasm)" "lock-main-wasm"
+        ( cd "$P" && git diff -- nyx.lock ) | sed 's/^/      /'
+    fi
 fi
 
 # CONTROL POSITIVO: nyx.lock SÍ debe reflejar el main real del proyecto (el

@@ -43,7 +43,7 @@
 | Integration E2E | `make test-integration` | **10 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm 3 + HTTP/2 1 + body cap 6 + serve contrato 10 + serve bind 6-9 + smoke 103 + serve+kv 10) | detalle de las altas en `CHANGELOG.md` |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
 | WASM (wasm32-wasi) | `make test-wasm` | **37** | SKIP sin toolchain (salvo guards); +4 el 2026-09-17 sobre 33 (arco async-real-wasm: tests 31-33, binaryen real, 0 SKIP async); +5 el 09-14; +1 el 09-13 (SSE); +4 el 09-10. Detalle en `CHANGELOG.md` |
-| Verify + compiler-unit + fmt | `make test-unit` | **22** (13 verify + 4 compiler-unit + 5 fmt) | compiler-unit activos: test-lexer, test-parser-declline, test-types-unify, test-borrow-classify (4 de 7; resto SKIP, ver abajo); +1 el 2026-09-15 (`test-parser-declline`, arco nyx-test-cobertura) |
+| Verify + compiler-unit + fmt | `make test-unit` | **23** (13 verify + 5 compiler-unit + 5 fmt) | 5 de 7 compiler-unit activos (resto SKIP, ver abajo); la fila decía 4 hasta que la máquina B del reparto lo midió: `test-emit-bytes-global` ya corría en el runner |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +
 advanced + stdlib + errors + m08-types + runtime + unit + dispatch-matrix +

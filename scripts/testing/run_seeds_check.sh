@@ -29,6 +29,9 @@
 set -u
 cd "$(dirname "$0")/../.."
 
+# Stack: sin esto, lexer.nx muere con SIGSEGV en x86_64 y el módulo queda
+# «sin medir» — que desde 2026-09-18 es ROJO, no verde (ver lib_stack.sh).
+. "$(dirname "$0")/../lib_stack.sh"; nyx_raise_stack
 source scripts/testing/lib_testroot_lock.sh
 nyx_testroot_lock_acquire
 
@@ -40,18 +43,39 @@ fi
 MODULOS="lexer parser types semantic borrow licm resolve codegen nyx"
 FAIL=0
 STALE=()
+MEDIDOS=0
+SIN_MEDIR=()
+SIN_MEDIR_STACK=()
 
 trap 'rm -f script.nx script.ll' EXIT
 
 for m in $MODULOS; do
     printf "  %-10s " "$m"
     cp "compiler/$m.nx" script.nx
-    if ! ./nyx_bootstrap > /dev/null 2>&1; then
+    # El rc se captura ANTES de cualquier test: dentro de `if ! cmd; then`,
+    # $? es el estado de la NEGACIÓN, no el del comando, y siempre da 0.
+    ./nyx_bootstrap > /dev/null 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
         # Un OOM no es una semilla vieja: se dice distinto, en vez de acusar
-        # un problema que no se midió.
-        echo "⚠️  no compiló (¿memoria?) — sin medir"
+        # un problema que no se midió. Pero TAMPOCO es verde — ver el cierre.
+        #
+        # Y «no compiló» tiene DOS causas con remedios opuestos, así que no se
+        # pregunta «¿memoria?» a ciegas: se mira el rc. 139 = SIGSEGV = el
+        # codegen desbordó el stack (es recursivo y en x86_64 los 8 MB default
+        # no alcanzan para lexer.nx); un OOM llega como 137 (SIGKILL del OOM
+        # killer) o como rc de error común. Mandar a liberar memoria a quien
+        # tiene un desborde de stack lo hace correr en círculos.
+        if [ "$rc" -eq 139 ]; then
+            echo "⚠️  SIGSEGV (desborde de stack) — sin medir"
+            SIN_MEDIR_STACK+=("$m")
+        else
+            echo "⚠️  no compiló (rc=$rc, ¿memoria?) — sin medir"
+        fi
+        SIN_MEDIR+=("$m")
         continue
     fi
+    MEDIDOS=$((MEDIDOS + 1))
     if cmp -s script.ll "compiler/$m.ll"; then
         echo "✓ punto fijo"
     else
@@ -71,4 +95,28 @@ if [ "$FAIL" -gt 0 ]; then
     echo "    la primera vuelta usa el bootstrap viejo y hace falta una segunda."
     exit 1
 fi
-echo "  ✓ las 9 semillas están en punto fijo"
+# «Sin medir» NO es verde. Hasta 2026-09-18 un módulo que no compilaba hacía
+# `continue` sin tocar FAIL: el script imprimía «✓ las 9 semillas están en punto
+# fijo» y salía con rc=0 habiendo medido 8 — y el consumidor de ese rc es
+# release-check.sh, o sea la puerta de publicar. En una máquina donde el OOM es
+# rutina (2 cores, 3.8 GB, earlyoom, y una compilación de codegen que pica
+# ~1.5 GB) eso no es hipotético: el mismo día, el sistema mató un release-check
+# a mitad por memoria. Lo encontró la máquina B del reparto de carga, que lo
+# disparó de verdad en su primera corrida x86_64.
+TOTAL=$(printf '%s\n' $MODULOS | wc -l)
+if [ "${#SIN_MEDIR[@]}" -gt 0 ]; then
+    echo "  ✗ SIN MEDIR ${#SIN_MEDIR[@]} de $TOTAL: ${SIN_MEDIR[*]}"
+    echo "    No es «están en punto fijo»: es que no se sabe."
+    if [ "${#SIN_MEDIR_STACK[@]}" -gt 0 ]; then
+        echo "    ${SIN_MEDIR_STACK[*]}: SIGSEGV por DESBORDE DE STACK, no por memoria."
+        echo "      El codegen es recursivo y en x86_64 los 8 MB default no alcanzan."
+        echo "      Reintentar así:   bash -c 'ulimit -s 65536; make seeds-check'"
+    fi
+    if [ "${#SIN_MEDIR[@]}" -gt "${#SIN_MEDIR_STACK[@]}" ]; then
+        echo "    El resto suele ser memoria — liberar la máquina y volver a correr, o"
+        echo "    medir en otra (docs/CONTRIBUTING.md §Segunda máquina)."
+    fi
+    echo "    Publicar con esto en rojo entrega semillas sin verificar."
+    exit 1
+fi
+echo "  ✓ las $MEDIDOS semillas están en punto fijo"
