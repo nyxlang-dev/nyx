@@ -1,0 +1,24 @@
+// include_bytes: el archivo se lee AL COMPILAR y sus bytes quedan en el binario.
+// Arco include-bytes, Task 2 (fricción nyxerp 20260915-170001-team-1).
+//
+// El fixture son los 256 valores de byte repetidos cuatro veces — 1024 bytes con
+// NUL incluido. Eso es lo que hace al test valer: un recurso binario real (un
+// .woff2, un .wasm) tiene NULs, y el camino viejo de literales los truncaba en
+// silencio. Por eso el codegen usa nyx_intern_ptr, que es length-aware.
+//
+// Los valores esperados NO están escritos a mano: 1024 es el tamaño del archivo
+// y el sha256 se midió con sha256sum sobre el mismo fixture. sha256 es builtin,
+// no necesita import.
+fn main() {
+    let datos: String = include_bytes("tests/fixtures/include-bytes-256.bin")
+
+    // byte_length y NO length(): length() cuenta codepoints UTF-8 y estos bytes
+    // no son UTF-8 válido. Es el gotcha que el propio repo documenta.
+    assert(str_byte_length(datos) == 1024, "1024 bytes, incluidos los NUL")
+
+    // La identidad byte a byte: si algo truncara en el primer NUL, el sha no da.
+    let h: String = sha256(datos)
+    assert(h == "785b0751fc2c53dc14a4ce3d800e69ef9ce1009eb327ccf458afe09c242c26c9", "sha256 del fixture")
+
+    println("include-bytes ok")
+}

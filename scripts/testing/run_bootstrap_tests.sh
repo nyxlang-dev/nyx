@@ -139,8 +139,14 @@ run_test() {
     #   - S13b: tuple `(int,int)` y fixed-size array `[T:N]` types pasan
     #     como TyUnknown wildcard en validate_type_ann (no estan en Type
     #     AST aun, pero son sintaxis valida).
+    # NYX_PROJECT_DIR: `include_bytes` resuelve sus rutas desde la raíz del
+    # proyecto y sin ella da NYX1034 — es la decisión D-3 del arco include-bytes,
+    # y es intencional: sin raíz, el compilador podría leer cualquier archivo del
+    # disco de quien compila. Acá la raíz es el repo, que es desde donde corre
+    # este runner. Se pone SOLO en esta invocación (no exportada al resto del
+    # script) para no cambiar la resolución de imports de las otras 447 pruebas.
     _try_run_test() {
-        ./nyx_bootstrap > /dev/null 2>&1 && \
+        NYX_PROJECT_DIR="$PWD" ./nyx_bootstrap > /dev/null 2>&1 && \
         clang script.ll $RUNTIME_SRCS $LIBS -o script_bin 2>/dev/null && \
         output=$(timeout 30 ./script_bin 2>&1)
     }

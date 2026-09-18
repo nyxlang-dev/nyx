@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **448 archivos / 447 ARM64** | medido 2026-09-15 (+1 `test-429-sse-frame`, arco serve-sse). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
+| Regression | `make test` | **449 archivos / 448 ARM64** | medido 2026-09-18 (+1 `test-430-include-bytes`, arco include-bytes; antes +1 `test-429-sse-frame`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **290** | medido 2026-09-17: +2 NYX0105 (`#[suspends]` fuera de lugar / en extern no-js, arco async-real-wasm) sobre 288; +6 NYX2013 en el checker medido 2026-09-15 sobre 282 (+5 NYX2003/NYX2006 el mismo día) |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

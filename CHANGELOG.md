@@ -9,6 +9,33 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+> Vacío por ahora: lo que había se publicó en 0.32.3.
+
+---
+
+## [0.32.3] — 2026-09-18
+
+### Added
+- **`include_bytes("ruta") -> String`: un archivo binario embebido en el ejecutable al compilar.**
+  (fricción de nyxerp `20260915-170001-team-1`.) La ruta se resuelve desde la raíz del proyecto, el
+  archivo se lee al COMPILAR y sus bytes quedan en el binario. El valor sirve tal cual para el
+  cuerpo de una respuesta HTTP: los NUL no truncan, porque el internado es *length-aware*.
+  > **El caso que lo motivó**: un ERP que promete instalarse copiando un ejecutable servía sus
+  > fuentes `.woff2` desde disco; si alguien copiaba solo el binario, la interfaz se degradaba a
+  > otra tipografía **sin avisar**. Verificado con sus dos archivos reales (14.708 y 45.712 bytes):
+  > salen idénticos a disco.
+  > **Diagnósticos**: `NYX1033` (la ruta debe ser un literal — se resuelve al compilar), `NYX1034`
+  > (cuatro variantes: sin raíz de proyecto, ruta absoluta, escape con `..`, archivo inexistente;
+  > todas dicen la ruta resuelta **y** la base), `NYX1035` (más de 8 MiB, con el tamaño real en el
+  > mensaje). Las dos variantes del medio son de seguridad: sin ellas, un programa podría leer
+  > cualquier archivo del disco de quien compila.
+  > **Limitación declarada**: funciona compilando. El intérprete, el REPL y `wasm32-wasi` todavía
+  > no lo conocen — son las tasks 3 y 4 del arco, pendientes.
+
+### Fixed
+- El emisor de bytes evita `escape_string`, que es cuadrático: un recurso de 400 KB tardaba ~197 s
+  en el camino viejo.
+
 > Vacío por ahora: lo que había se publicó en 0.32.2.
 
 ---
