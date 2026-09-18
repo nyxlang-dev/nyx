@@ -1350,7 +1350,7 @@ fn toolchain_version() -> String {
     }
     // B3: fallback solo si no hay VERSION ni NYX_HOME (no debería pasar en un
     // toolchain instalado). Mantenerlo al día igual — un fallback stale confunde.
-    return "0.31.0"
+    return "0.32.0"
 }
 
 // ===== FRICTION REPORT (v0.17, AI-first) =====

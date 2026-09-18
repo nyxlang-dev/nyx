@@ -9,7 +9,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
-> Lo que está en `main` sin publicar. **La enorme mayoría es INTERNO**: el arco Windows
+> Vacío por ahora: lo que había se publicó en 0.32.0.
+
+---
+
+## [0.32.0] — 2026-09-18
+
+> **MINOR y no PATCH por un motivo concreto**: `pub` pasó a proteger también la llamada pelada
+> (NYX1036), y eso **rompe código que hoy compila**. Un programa que llame a una función sin `pub`
+> de otro módulo deja de compilar; el arreglo es marcar `pub` lo que de verdad era interfaz. La
+> migración ya está hecha en la stdlib (16 funciones) y en `nyx-db` (27). Se sube versión
+> justamente porque el reporte `20260918-000022-team-1` de nyxerp mostró el costo de no hacerlo:
+> dos máquinas con el mismo número y compiladores que aceptan código distinto.
+>
+> **Migrar un proyecto existente** es mecánico, no hay que adivinar: un solo
+> `nyx check 2>&1 | grep NYX1036 | sort -u` lista TODAS las funciones a marcar con su módulo
+> dueño (no se corta en el primer error). Referencia de magnitud: 16 funciones en la stdlib,
+> 27 en `nyx-db`. Lo que NO cambia: una privada sigue siendo llamable dentro de su propio
+> módulo, y un builtin homónimo no se ve afectado.
+
+> **La enorme mayoría es INTERNO**: el arco Windows
 > (capa de portabilidad `nyx_os_*`, `os_win32.c`, GC + Fibers) es refactor y CI — **no
 > anuncia soporte Windows** y no cambia el comportamiento observable de un programa Nyx,
 > salvo lo listado en Added/Fixed/Docs. Cada arco tiene su bitácora en `docs/SESSION_LOG.md`
@@ -1624,6 +1643,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   fuente de esa lista de rutas — la usa `install-local` Y la guardia, sin duplicar la lógica.
 
 ### Changed
+- **CAMBIO DE COMPORTAMIENTO — `pub` ahora protege también la llamada PELADA (NYX1036)**
+  (fricción de nyxerp, `20260918-000022-team-3`). Una `fn` sin `pub` es privada de su módulo: se
+  llama desde el archivo que la define y de ningún otro. Hasta ahora `pub` filtraba **solo** el
+  namespace de la llamada calificada (`alias.fn()`, `resolve.nx:295`); la llamada pelada resolvía
+  igual, porque el resolvedor inlinea el texto del módulo importado y la función quedaba como una
+  top-level más — `nyx check` daba rc 0, compilaba y corría. La consecuencia era que **ninguna
+  librería podía ofrecer una API estable**: todo lo que un módulo definía era de hecho su interfaz,
+  y cualquier renombre interno rompía a quien la importaba sin haber anunciado nunca esa función.
+  **Qué puede romperse**: un programa que hoy llame a una función no-`pub` de otro módulo deja de
+  compilar; el arreglo es agregarle `pub` a esa función (si era parte de la interfaz de verdad) o
+  dejar de llamarla. Lo que NO cambia: una privada sigue siendo llamable dentro de su propio
+  módulo, y el prelude —que se antepone crudo, no se importa— queda fuera de la regla. El chequeo
+  va antes que el de aridad, porque una privada ajena no es «la función correcta con los argumentos
+  equivocados». Se apoya en `g_sym_modules`/`g_cur_module`/`fn_module_resolve`, que ya existían
+  desde la fricción de funciones homónimas del 2026-09-14. Gates: `check-pub-privada` (NYX1036
+  nombra la fn y el módulo dueño) y `check-pub-exportada` (control positivo: una `pub` que por
+  dentro usa su privada sigue chequeando).
 - **CAMBIO DE COMPORTAMIENTO — `nyx test` ya no compila las pruebas con `-O2`** (fricción de
   nyxerp, `20260917-234222-team-2`). Por omisión las pruebas compilan SIN optimizar, igual que
   `nyx build` (que solo optimiza con `--release`); la opción nueva `nyx test --release` recupera

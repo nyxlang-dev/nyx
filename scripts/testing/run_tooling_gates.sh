@@ -645,6 +645,120 @@ else
     ok "test-orden — las 8 pruebas corren en orden alfabético y reproducible"
 fi
 
+# ── Check O: `pub` protege también la llamada PELADA (NYX1036) ─
+# Fricción nyxerp (20260918-000022-team-3). `pub` filtraba solo el namespace de
+# la llamada calificada (`alias.fn()`, resolve.nx:295); la pelada resolvía igual
+# porque el resolvedor inlinea el texto del módulo importado y la fn quedaba
+# como una top-level más. Con eso, todo lo que un módulo definía era de hecho su
+# interfaz: no se podía publicar una librería con una API estable.
+mk_visibilidad() {  # $1=dir, $2=1 → main llama a la PRIVADA (debe fallar)
+    local dir="$1" llama_privada="$2"
+    mkdir -p "$dir/src" "$dir/tests"
+    cat > "$dir/nyx.toml" <<'EOF'
+[package]
+name = "visibilidad"
+version = "0.1.0"
+EOF
+    cat > "$dir/src/biblioteca.nx" <<'EOF'
+fn secreto(nombre: String) -> String {
+    return nombre + " (interno)"
+}
+
+pub fn saludar(nombre: String) -> String {
+    return "hola, " + secreto(nombre)
+}
+EOF
+    if [ "$llama_privada" = "1" ]; then
+        cat > "$dir/src/main.nx" <<'EOF'
+import "src/biblioteca"
+
+fn main() -> int {
+    print(secreto("mundo"))
+    return 0
+}
+EOF
+    else
+        cat > "$dir/src/main.nx" <<'EOF'
+import "src/biblioteca"
+
+fn main() -> int {
+    print(saludar("mundo"))
+    return 0
+}
+EOF
+    fi
+}
+
+VDIR="$GATE_TMP/visib_roto"
+mk_visibilidad "$VDIR" 1
+NYX_LANG=en run_check "$VDIR"
+if [ "$CHECK_RC" -eq 0 ]; then
+    bad "check-pub-privada — rc 0: una fn sin pub se sigue llamando desde otro módulo" "check-pub-privada"
+elif grep -q "NYX1036" "$GATE_TMP/check.out" && grep -q "src/biblioteca" "$GATE_TMP/check.out"; then
+    ok "check-pub-privada — NYX1036 nombra la fn y el módulo dueño (rc $CHECK_RC)"
+else
+    bad "check-pub-privada — rc $CHECK_RC pero sin NYX1036 nombrando el módulo dueño" "check-pub-privada"
+    head -5 "$GATE_TMP/check.out" | sed 's/^/      /'
+fi
+
+# ── Check P (CONTROL POSITIVO): lo `pub` sigue llamándose, y la privada
+#    sigue siendo llamable DENTRO de su propio módulo ────────────
+# Sin este control, el check anterior pasaría en verde con una regla que
+# prohibiera toda llamada entre módulos — que es justo lo que NO se quiere.
+# `saludar` es pub y por dentro llama a `secreto`: si el fix hubiera roto eso,
+# acá se ve.
+VSDIR="$GATE_TMP/visib_sano"
+mk_visibilidad "$VSDIR" 0
+run_check "$VSDIR"
+if [ "$CHECK_RC" -eq 0 ]; then
+    ok "check-pub-exportada — una pub que por dentro usa su privada sigue chequeando (rc 0)"
+else
+    bad "check-pub-exportada — rc $CHECK_RC: el fix de visibilidad rompió una llamada legítima" "check-pub-exportada"
+    head -5 "$GATE_TMP/check.out" | sed 's/^/      /'
+fi
+
+# ── Check Q (CONTROL POSITIVO de NYX1036): un builtin homónimo no se rechaza ─
+# Lo destapó el canario de stacks, no esta suite: `std/toml` define una `fn
+# string_to_int` PRIVADA que shadowea al builtin del mismo nombre, y la primera
+# versión del chequeo de visibilidad rechazaba CUALQUIER llamada al builtin en
+# todo programa que importara toml — cuatro sitios de nyx-proxy que nada tenían
+# que ver con toml. La regla: la visibilidad solo puede negar lo que no tiene
+# otra forma de resolverse.
+BDIR="$GATE_TMP/builtin_shadow"
+mkdir -p "$BDIR/src" "$BDIR/tests"
+cat > "$BDIR/nyx.toml" <<'EOF'
+[package]
+name = "shadow"
+version = "0.1.0"
+EOF
+cat > "$BDIR/src/lib.nx" <<'EOF'
+fn string_to_int(s: String) -> int {
+    return 42
+}
+
+pub fn usar() -> int {
+    return string_to_int("7")
+}
+EOF
+cat > "$BDIR/src/main.nx" <<'EOF'
+import "src/lib"
+
+fn main() -> int {
+    // string_to_int es BUILTIN: que un módulo importado defina una privada con
+    // el mismo nombre no puede volver ilegal llamar al builtin.
+    let n: int = string_to_int("7")
+    print(int_to_string(n + usar()))
+    return 0
+}
+EOF
+run_check "$BDIR"
+if [ "$CHECK_RC" -eq 0 ]; then
+    ok "check-builtin-shadow — una privada homónima de un builtin no rompe la llamada al builtin"
+else
+    bad "check-builtin-shadow — rc $CHECK_RC: NYX1036 rechaza una llamada a un builtin" "check-builtin-shadow"
+    head -5 "$GATE_TMP/check.out" | sed 's/^/      /'
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  TOOLING GATES: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

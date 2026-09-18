@@ -109,13 +109,13 @@ pub fn resp_read_framed(handle: int, is_tls: bool) -> Array {
 }
 
 // Wrapper TCP (compat: firma pública sin cambios; el loop vive en resp_read_framed).
-fn resp_read_command(fd: int) -> Array {
+pub fn resp_read_command(fd: int) -> Array {
     return resp_read_framed(fd, false)
 }
 
 // === RESP Serializers ===
 
-fn resp_simple_string(s: String) -> String {
+pub fn resp_simple_string(s: String) -> String {
     var sb: StringBuilder = StringBuilder.new()
     sb.append("+")
     sb.append(s)
@@ -123,7 +123,7 @@ fn resp_simple_string(s: String) -> String {
     return sb.to_string()
 }
 
-fn resp_error(msg: String) -> String {
+pub fn resp_error(msg: String) -> String {
     var sb: StringBuilder = StringBuilder.new()
     sb.append("-ERR ")
     sb.append(msg)
@@ -131,7 +131,7 @@ fn resp_error(msg: String) -> String {
     return sb.to_string()
 }
 
-fn resp_integer(n: int) -> String {
+pub fn resp_integer(n: int) -> String {
     var sb: StringBuilder = StringBuilder.new()
     sb.append(":")
     sb.append(int_to_string(n))
@@ -139,7 +139,7 @@ fn resp_integer(n: int) -> String {
     return sb.to_string()
 }
 
-fn resp_bulk_string(s: String) -> String {
+pub fn resp_bulk_string(s: String) -> String {
     var sb: StringBuilder = StringBuilder.new()
     sb.append("$")
     sb.append(int_to_string(s.length()))
@@ -149,11 +149,11 @@ fn resp_bulk_string(s: String) -> String {
     return sb.to_string()
 }
 
-fn resp_null_bulk() -> String {
+pub fn resp_null_bulk() -> String {
     return "$-1\r\n"
 }
 
-fn resp_array_header(count: int) -> String {
+pub fn resp_array_header(count: int) -> String {
     var sb: StringBuilder = StringBuilder.new()
     sb.append("*")
     sb.append(int_to_string(count))
@@ -162,7 +162,7 @@ fn resp_array_header(count: int) -> String {
 }
 
 // Serialize an array of bulk strings
-fn resp_bulk_array(items: Array) -> String {
+pub fn resp_bulk_array(items: Array) -> String {
     var sb: StringBuilder = StringBuilder.new()
     sb.append("*")
     sb.append(int_to_string(items.length()))
@@ -179,7 +179,7 @@ fn resp_bulk_array(items: Array) -> String {
 
 // Serialize an array with mixed types (bulk strings and nulls)
 // Uses a parallel flags array: 1 = valid bulk string, 0 = null
-fn resp_mixed_array(items: Array, flags: Array) -> String {
+pub fn resp_mixed_array(items: Array, flags: Array) -> String {
     var sb: StringBuilder = StringBuilder.new()
     sb.append("*")
     sb.append(int_to_string(items.length()))

@@ -65,7 +65,7 @@ fn tls_read_line_local(h: int) -> String {
 // Binary/multi-line safe. Parseo sin crash (resp_parse_len), cota anti-DoS,
 // y validación anti-truncamiento: si la lectura queda corta (EOF/caída) NO
 // devuelve un parcial no vacío — devuelve "" (tratado como ausente).
-fn read_bulk(h: int, header: String) -> String {
+pub fn read_bulk(h: int, header: String) -> String {
     let len: int = resp_parse_len(header.substring(1, header.length()))
     if len < 0 { return "" }                    // -1 null o -2 malformado
     if len > RESP_MAX_BULK { return "" }         // cota defensiva

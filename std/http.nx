@@ -182,7 +182,7 @@ pub fn http_host_header(host: String, port: int, default_port: int) -> String {
 
 // host_header: valor YA armado para la cabecera Host (ver http_host_header)
 // — "host" o "host:puerto" según corresponda, no el hostname pelado.
-fn http_build_request(method: String, host_header: String, path: String, headers: Array, body: String) -> String {
+pub fn http_build_request(method: String, host_header: String, path: String, headers: Array, body: String) -> String {
     let crlf: String = "\r\n"
     var req: String = method + " " + path + " HTTP/1.1" + crlf
     req = req + "Host: " + host_header + crlf
@@ -365,7 +365,7 @@ pub fn http_tls_inseguro(si: bool) {
 // Abre una conexión TLS, envía el request y lee la respuesta completa (hasta
 // EOF — los requests usan Connection: close), luego la parsea. Es el camino
 // HTTPS de http_get/http_post/http_request.
-fn http_tls_request(host: String, port: int, req: String) -> Array {
+pub fn http_tls_request(host: String, port: int, req: String) -> Array {
     var h: int = 0
     if g_http_tls_verificar {
         // Contra el almacén de CAs del SISTEMA, sin tocar el de tls_set_ca_file.

@@ -1507,7 +1507,7 @@ fn __sse_init_registry() -> int {
 //
 // El corte es un recorrido por bytes con charAt (lineal), no split + substring
 // sucesivos del resto (cuadrático con datos grandes de muchas líneas).
-fn __sse_frame(evento: String, datos: String) -> String {
+pub fn sse_frame(evento: String, datos: String) -> String {
     if evento.contains("\n") or evento.contains("\r") {
         return ""
     }
@@ -1594,9 +1594,9 @@ fn __sse_write(room: String, todos: bool, frame: String) -> int {
 // Difunde un evento a todos los canales abiertos de un room. Se llama desde
 // cualquier handler o thread. Devuelve a cuántos clientes se les escribió el
 // frame completo; 0 también si `evento` trae \r o \n (rechazado, ver
-// __sse_frame). Un room por usuario ("usuario:42") cubre «mandarle algo a uno».
+// sse_frame). Un room por usuario ("usuario:42") cubre «mandarle algo a uno».
 pub fn sse_broadcast(room: String, evento: String, datos: String) -> int {
-    let frame: String = __sse_frame(evento, datos)
+    let frame: String = sse_frame(evento, datos)
     if frame.length() == 0 {
         return 0
     }

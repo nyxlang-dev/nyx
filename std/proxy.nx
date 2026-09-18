@@ -34,7 +34,7 @@ pub fn proxy_add_backend(config: ProxyConfig, host: String, port: int) {
 
 // === Load Balancing (round-robin) ===
 
-fn select_backend(config: ProxyConfig) -> Backend {
+pub fn select_backend(config: ProxyConfig) -> Backend {
     let n: int = config.backends.length()
     if n == 0 {
         return Backend { host: "", port: 0 }
@@ -183,7 +183,7 @@ fn forward_request(method: String, path: String, headers: Array, body: String, b
     return response
 }
 
-fn parse_content_length(s: String) -> int {
+pub fn parse_content_length(s: String) -> int {
     var result: int = 0
     var i: int = 0
     while i < s.length() {

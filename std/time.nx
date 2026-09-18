@@ -105,7 +105,7 @@ fn floor_mod(a: int, b: int) -> int {
 }
 
 // Días desde 1970-01-01 para una fecha civil. m en [1,12], d en [1,31].
-fn days_from_civil(y0: int, m: int, d: int) -> int {
+pub fn days_from_civil(y0: int, m: int, d: int) -> int {
     var y: int = y0
     if m <= 2 { y = y - 1 }
     let era: int = floor_div(y, 400)
@@ -259,7 +259,7 @@ pub fn time_end_of_month(epoch: int) -> int {
 
 // ── Formato ─────────────────────────────────────────────────────────────────
 
-fn pad2(n: int) -> String {
+pub fn pad2(n: int) -> String {
     if n < 10 and n >= 0 { return "0" + int_to_string(n) }
     return int_to_string(n)
 }

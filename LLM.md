@@ -338,6 +338,19 @@ Los ocho derives válidos son `Clone`, `PartialEq`, `Debug`, `Display`, `Default
 código). Cualquier otro nombre es **NYX1029** con did-you-mean, y un derive sobre un
 struct **genérico** es **NYX1030** (el codegen no emite derives para un template).
 
+**Visibilidad entre módulos (`pub`)**. Una `fn` sin `pub` es **privada de su
+módulo**: se llama desde el archivo que la define y de ningún otro. Llamarla
+desde afuera —calificada o pelada— es **NYX1036**, y la salida nombra el módulo
+dueño. Hasta 2026-09-18 solo la llamada calificada (`alias.fn()`) respetaba
+`pub`: la pelada resolvía igual, porque el resolvedor inlinea el texto del
+módulo importado y la función quedaba como una top-level más. Consecuencia
+práctica de ese agujero, y la razón de cerrarlo: **todo lo que un módulo definía
+era de hecho su interfaz**, así que ninguna librería podía ofrecer una API
+estable — cualquier renombre interno rompía a quien la importaba, sin haber
+anunciado nunca esa función. Lo que NO cambia: una privada sigue siendo llamable
+dentro de su propio módulo, y el prelude (que se antepone crudo, no se importa)
+no entra en la regla.
+
 **`#[derive(Fields)]`** (v0.31.0) hace que el struct se describa a sí mismo. Emite tres
 **funciones libres** —no métodos— resueltas en compilación, sin reflexión en runtime:
 

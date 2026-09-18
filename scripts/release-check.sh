@@ -3,10 +3,19 @@
 # hardcodeados del repo, para no depender de la memoria (docs/VERSIONING.md
 # tenía una checklist manual que se pudrió: nombraba compiler/nyx.nx ×2 y
 # README.md como sitios a bumpear, pero ambos ya leen VERSION dinámicamente
-# desde B3 2026-07-25 — SONDA 2026-09-02 lo confirmó). Los únicos fallbacks
-# hardcodeados REALES hoy son scripts/nyx (--version) y compiler/build.nx
-# (toolchain_version()); scripts/build-release.sh dejó de hardcodear con
-# este mismo cambio (ahora lee VERSION también).
+# desde B3 2026-07-25 — SONDA 2026-09-02 lo confirmó). El único fallback
+# hardcodeado REAL hoy es compiler/build.nx (toolchain_version());
+# scripts/build-release.sh dejó de hardcodear en su momento (lee VERSION).
+#
+# scripts/nyx SALIÓ de esta lista el 2026-09-18. Desde el arreglo de la fricción
+# de nyxerp del 2026-09-12, `nyx --version` lee $NYX_HOME/VERSION y cae a
+# "unknown" si no está: no hardcodea nada. La comprobación seguía en pie por
+# inercia y pasaba por CASUALIDAD — un comentario de ese mismo archivo CITA
+# textualmente el «0.31.0» del reporte, y el grep se conformaba con eso. Al
+# subir a 0.32.0 falló, y «arreglarlo» habría significado falsear una cita
+# histórica. Es el caso 24 de PROJECT_STATE.md §Errores recurrentes: una guarda
+# que degrada seguro es deuda con vencimiento — releer sus premisas antes de
+# aceptar su conclusión.
 #
 # Uso:
 #   bash scripts/release-check.sh            # modo release: exige "## [VERSION]" en CHANGELOG.md
@@ -29,9 +38,9 @@ if [ "$MODE" = "--selftest" ]; then
         echo "✗ selftest: el caso sano debería pasar" >&2
         exit 1
     fi
-    echo 'echo "nyx 1.1.1"' > "$TMP/scripts/nyx"
+    echo 'return "1.1.1"' > "$TMP/compiler/build.nx"
     if RELEASE_CHECK_ROOT="$TMP" bash "$0" --pre >/dev/null 2>&1; then
-        echo "✗ selftest: el drift en scripts/nyx no se detectó" >&2
+        echo "✗ selftest: el drift en compiler/build.nx no se detectó" >&2
         exit 1
     fi
     echo "✓ selftest: drift detectado correctamente"
@@ -44,7 +53,7 @@ FAIL=0
 # grep -F (cadena literal): $V es un valor de archivo, no un patrón — con -E
 # los puntos de "0.31.0" matchean CUALQUIER caracter (falso positivo posible
 # contra p.ej. "0X31X0"). Fix round 1 de Task 6 (review del coordinador).
-for f in scripts/nyx compiler/build.nx; do
+for f in compiler/build.nx; do
     if ! grep -qF -- "$V" "$ROOT/$f" 2>/dev/null; then
         echo "✗ $f: esperaba $V" >&2
         FAIL=1
