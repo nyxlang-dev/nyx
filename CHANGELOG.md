@@ -9,7 +9,67 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
-> Vacío por ahora: lo que había se publicó en 0.32.1.
+> Vacío por ahora: lo que había se publicó en 0.32.2.
+
+---
+
+## [0.32.2] — 2026-09-18
+
+> **El compilador era cuadrático en el tamaño del IR que emite.** Un proyecto real de 126 módulos
+> pasó de compilar su suite de pruebas en 2 h 14 min a hacerlo en **13 min**. Lo encontró el equipo
+> de nyxerp midiendo, tras tres hipótesis previas que sus propias mediciones fueron descartando.
+
+### Fixed
+- **El compilador era CUADRÁTICO en el tamaño del IR que emite.** `emit` hacía
+  `ctx.output[0] = ctx.output[0] + line + "\n"`: cada línea de IR copiaba todo el IR acumulado. En
+  un `.ll` de 184.080 líneas —un proyecto real de 126 módulos— eso es ~367 s solo en copiar. Mismo
+  patrón en `resolve.nx` (13 sitios), que armaba el texto inlineado línea por línea: era el segundo
+  contribuyente. Los dos pasan a `StringBuilder`.
+  > **Medido en un banco sintético del repo** (1, 8 y 30 módulos): el exponente del tiempo baja de
+  > **1,98 (cuadrático) a 1,03 (lineal)**, el punto grande de 3,70 s a 0,23 s (**16×**), y el `.ll`
+  > sale idéntico —9.437 líneas antes y después—, que es lo que prueba que el cambio no toca
+  > semántica. `seeds-check`: las 9 semillas en punto fijo.
+  > **Medido por el equipo de nyxerp sobre su proyecto real** (126 módulos, 31.853 líneas, 100
+  > archivos de prueba, 954 pruebas): **la suite completa pasó de 2 h 14 min a 13 min**, cero fallos.
+  > Un archivo con cierre de 30 módulos, de 71 s a 8,3 s. Sobre cuatro tamaños con mediana de tres
+  > corridas cada uno: 2.382 líneas de IR → 0,1 s / 1 MB · 11.408 → 0,3 s / 29 MB · 68.262 → 3,3 s /
+  > 112 MB · 184.236 → **32,5 s / 234 MB** (antes 402 s / 1.886 MB). Reproducibilidad de las tres
+  > corridas, excelente en los cuatro tamaños. **Los 13 minutos son el efecto conjunto de los tres arreglos de la jornada** (el `-O2`
+  > fuera de `nyx test`, `NYX_RT_ARCHIVE` y éste), no de éste solo — la comparación aislada es la del
+  > archivo: 71 s → 8,3 s.
+  > **Consecuencia que invalida una conclusión previa**: el pico de ~2 GB del front-end, que este
+  > CHANGELOG daba por estructural («lo que impide correr dos compilaciones a la vez en 3,8 GB»),
+  > era este bug. Con 224 MB entran de sobra.
+
+### Added
+- **`nyx update --version <rev>`**: instalar una revisión concreta en vez de la punta (fricción de
+  nyxerp, 2026-09-17). Acepta lo que git resuelva — un tag (`v0.32.0`), un sha o una rama —, y una
+  ref inexistente se rechaza **antes** de tocar la instalación, para que un error de tipeo no deje
+  fuentes de una versión con binarios de otra. Sin esto, una versión que rechaza código que antes
+  compilaba dejaba al equipo sin salida: es lo que pasó al publicar 0.32.0 con `pub`/NYX1036, y lo
+  que tuvo a una máquina bloqueada una mañana entera.
+
+### Interno — arco reparto-de-carga: el trabajo pesado sale del servidor de producción `[arco: reparto-de-carga]`
+
+Sin cambio observable para un programa Nyx. El repo del lenguaje pasa a vivir en dos máquinas: el
+servidor (aarch64, que además sirve producción) y una laptop (WSL2 x86_64). La exclusión mutua deja
+de ser «un repo, una sesión» y pasa a ser **un subárbol, un escritor**: el candado de `compiler/`,
+`runtime/`, `std/` y `compiler/*.ll` lo declara una línea de `PLAN.md`, los archivos raíz solo los
+escribe quien lo tiene, y `make install-local` es local a cada máquina. Bootstrap de la segunda
+máquina en `docs/CONTRIBUTING.md` §Segunda máquina; encargos por `scripts/sdd/brief --remote`, y
+`~/nyx/ops/handoff/` queda declarado canal muerto con una guarda nueva (`state-check` (j)) que
+rechaza cualquier encargo que cite la ruta absoluta de otra máquina.
+
+**Lo que la segunda máquina verificó, y no se verificaba en ningún lado**: las 9 semillas del
+bootstrap reproducen su `.ll` **byte a byte en x86_64** contra las generadas en aarch64 — el
+compilador es determinista e independiente de la arquitectura del host. Y `test-123-full-asm` corrió
+por primera vez desde que el CI se quedó sin presupuesto, sin ningún hallazgo de ABI.
+
+**Y lo que encontró de paso**: el desborde de stack del compilador en x86_64, el rojo de
+`make test-errors` que vivía en `main`, dos guardas que daban verde sobre lo que no habían medido
+(el gate de semillas y `test-errors`), dos bugs de locale, y `make test-ai-first` corriendo entera
+por primera vez en cualquiera de las dos máquinas. De los cuatro arreglos de compilador de la
+jornada, tres salieron de máquinas que no son ésta.
 
 ---
 

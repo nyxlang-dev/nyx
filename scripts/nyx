@@ -187,6 +187,7 @@ case "${1:-}" in
         echo "                  (an unknown -option is an error)"
         echo ""
         echo "  update        Update Nyx to the latest version (+ what's new)"
+        echo "  update --version <rev>   Instalar una revisión concreta (tag, sha o rama)"
         echo "  update --sync-docs   Refresh AI context (AGENTS.md + docs/nyx/) in this project"
         echo "  report [f.md] Send a friction/bug report to the Nyx team"
         echo "  uninstall     Remove Nyx from this system"
@@ -396,7 +397,42 @@ case "${1:-}" in
             exit 1
         fi
         OLD_VERSION=$(cat VERSION 2>/dev/null || echo "")
-        spin "Fetching latest version..." bash -c "git fetch origin && git reset --hard origin/main" \
+
+        # --version <rev>: instalar una revisión CONCRETA en vez de la punta.
+        #
+        # POR QUÉ (fricción de nyxerp, 2026-09-17): `nyx update` solo sabía ir a
+        # «latest», así que una máquina que se actualizaba no podía volver a la
+        # revisión de otra, y la única convergencia posible era que todas
+        # avanzaran a la vez. Peor con un cambio que rompe código: si la versión
+        # nueva rechaza algo que antes compilaba, el equipo queda sin salida —
+        # que es exactamente lo que pasó al publicar 0.32.0 (`pub`/NYX1036).
+        #
+        # Acepta cualquier cosa que git sepa resolver: un tag (`v0.32.0`), un sha
+        # o una rama. Se resuelve ANTES de tocar nada, para que una ref inválida
+        # no deje la instalación a medio actualizar.
+        _NYX_REV="origin/main"
+        _NYX_REV_LABEL="latest"
+        if [ "${2:-}" = "--version" ]; then
+            if [ -z "${3:-}" ]; then
+                echo "error: --version necesita una revisión (tag, sha o rama)" >&2
+                echo "  ej: nyx update --version v0.32.0" >&2
+                exit 1
+            fi
+            _NYX_REV="$3"
+            _NYX_REV_LABEL="$3"
+        fi
+        spin "Fetching..." bash -c "git fetch origin --tags" \
+            || { echo "error: git fetch failed" >&2; exit 1; }
+        if [ "$_NYX_REV" != "origin/main" ]; then
+            # Verificar que la ref EXISTE antes de resetear: si no, se avisa y se
+            # sale sin haber tocado la instalación.
+            if ! git rev-parse --verify --quiet "$_NYX_REV^{commit}" >/dev/null; then
+                echo "error: no existe la revisión '$_NYX_REV' en este repo" >&2
+                echo "  las publicadas se listan con: git -C \"$NYX_HOME\" tag" >&2
+                exit 1
+            fi
+        fi
+        spin "Checking out $_NYX_REV_LABEL..." bash -c "git reset --hard '$_NYX_REV'" \
             || { echo "error: git update failed" >&2; exit 1; }
         spin "Rebuilding compiler..." make bootstrap \
             || { echo "error: make bootstrap failed" >&2; exit 1; }

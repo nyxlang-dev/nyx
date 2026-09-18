@@ -110,6 +110,16 @@ nyx test               # run tests/*.nx
 With no argument they use `src/main.nx` (the project entry point). All four
 honour `NYX_SRC=path` too.
 
+**Pinning the toolchain.** `nyx update` goes to the latest published revision;
+`nyx update --version <rev>` installs a specific one, where `<rev>` is anything
+git resolves — a tag (`v0.32.0`), a sha, or a branch. The published tags are
+listed by `git -C "$NYX_HOME" tag`. An unknown revision is rejected **before**
+anything is touched, so a typo cannot leave the install half-updated (fuentes of
+one version, binaries of another). Use it to go back when a new version rejects
+code that used to compile: `nyx --version` prints the version plus a fingerprint
+of the compiler and the prelude, so two installs claiming the same version but
+behaving differently can be told apart.
+
 `nyx test` takes `--filter <string>` (only run files whose name matches),
 `--verbose`/`-v` (show output even on pass), `--timeout <seconds>` (per
 test, default 30), `--release`, `--coverage` and `--coverage=lcov`. Any other
