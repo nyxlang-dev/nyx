@@ -4493,9 +4493,10 @@ Conducta:
   se corta a los 2–4 s de ventana cero.
 - **Tope**: `NYX_SSE_MAX` (default 1024). El techo duro del servidor es de 4096 fds en total.
 - **Fase 1 sin** `id:`, `retry:` ni reenvío por `Last-Event-ID`; sin SSE sobre HTTP/2.
-- **Aviso**: detrás del gateway `nyx-proxy` SSE todavía no funciona y puede romper pedidos de otros
-  usuarios. Hasta que se entregue ese arreglo, exponer SSE solo en un servidor al que el cliente llega
-  directo.
+- **Aviso**: detrás del gateway `nyx-proxy` SSE todavía no funciona: el proxy acumula la respuesta
+  hasta que el upstream cierra, y el heartbeat evita que venza su plazo, así que el cliente no recibe
+  eventos. Desde `nyx-proxy` 0.4.3 ya no mezcla respuestas entre usuarios; las versiones anteriores
+  sí. Hasta que llegue el túnel, exponer SSE solo en un servidor al que el cliente llega directo.
 
 ---
 
