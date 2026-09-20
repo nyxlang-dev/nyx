@@ -9,6 +9,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+> Vacío por ahora: lo que había se publicó en 0.32.4.
+
+---
+
+## [0.32.4] — 2026-09-20
+
+> **La jornada la marcaron dos cosas que nadie había visto**: `make test-ai-first` llevaba dos días
+> en rojo en `main` —y su primera guarda rota escondía a todas las que venían después—, y dos
+> carreras distintas hacían fallar compilaciones concurrentes de formas que parecían bugs del
+> compilador. Lo primero lo destapó terminar `include_bytes`; lo segundo, un usuario bisectando
+> commit por commit un error que no era suyo.
+
 ### Added
 - **`include_bytes` completo: intérprete, wasm y los diagnósticos que faltaban** `[arco: include-bytes]`
   (la capacidad salió en 0.32.3 funcionando solo al compilar; el arco cierra acá).
