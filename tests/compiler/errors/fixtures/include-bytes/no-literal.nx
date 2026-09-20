@@ -1,0 +1,6 @@
+// NYX1033: la ruta tiene que ser un literal — se resuelve al COMPILAR.
+fn main() {
+    let ruta: String = "recurso.bin"
+    let datos: String = include_bytes(ruta)
+    println(datos)
+}

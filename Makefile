@@ -535,7 +535,17 @@ fmt:
 
 ## Build the REPL
 ## se compilan desde .nx con el bootstrap; no llevan seed .ll
-build-repl:
+## compiler/interpreter.ll — semilla del intérprete. Es DEPENDENCIA de build-repl
+## y no un paso suelto: hasta el 2026-09-20, `make build-repl` enlazaba este .ll
+## sin recompilarlo nunca, así que un cambio en interpreter.nx NO llegaba al REPL
+## y el smoke —que se construye siempre, justamente para no certificar el
+## pasado— igual medía el intérprete de ayer. Se destapó implementando NYX3007:
+## la rama estaba escrita y el REPL seguía diciendo «undefined variable».
+compiler/interpreter.ll: compiler/interpreter.nx nyx_bootstrap
+	$(TESTROOT_LOCK) bash -c '. scripts/lib_stack.sh; nyx_raise_stack; cp compiler/interpreter.nx script.nx && ./nyx_bootstrap && cp script.ll compiler/interpreter.ll'
+	@echo "✓ compiler/interpreter.ll actualizado"
+
+build-repl: compiler/interpreter.ll
 	$(TESTROOT_LOCK) bash -c 'cp compiler/repl.nx script.nx && ./nyx_bootstrap && $(CLANG) script.ll compiler/lexer.ll compiler/parser.ll compiler/interpreter.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_repl'
 	@echo "✓ nyx_repl listo"
 

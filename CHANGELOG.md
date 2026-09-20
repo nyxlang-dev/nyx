@@ -10,6 +10,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`include_bytes` completo: intérprete, wasm y los diagnósticos que faltaban** `[arco: include-bytes]`
+  (la capacidad salió en 0.32.3 funcionando solo al compilar; el arco cierra acá).
+  > **Intérprete y REPL**: responden **NYX3007** («solo existe al compilar»). Antes la llamada caía
+  > al catch-all y evaluaba a nil, o sea un recurso «incluido» que llegaba **vacío y sin una sola
+  > señal** — el mismo silently-wrong que el intérprete viene cerrando desde NYX3001.
+  > **wasm32-wasi**: paridad medida contra nativo con un recurso de 40.960 bytes que recorre los 256
+  > valores (NUL incluidos): mismo largo, misma suma de control, los 256 presentes. El recurso ocupa
+  > sus bytes **una sola vez** en el `.wasm` (medido: 1,01×).
+  > **Dos chequeos de SEGURIDAD que faltaban en el camino de codegen**: ruta absoluta y escape con
+  > `..`. `semantic` los tenía, pero con `NYX_SKIP_SEMANTIC=1` `include_bytes("/etc/...")` se leía y
+  > se embebía igual. Ahora las dos capas rechazan lo mismo, con el mismo código NYX1034, y ninguna
+  > deja un `.ll` escrito. También se sumó el tope de 8 MiB (NYX1035) a esa capa.
+  > **Tests**: 11 casos nuevos en `test-errors` —uno por diagnóstico y variante, en las dos capas,
+  > con control positivo—, el de wasm, el del REPL y la receta `112-include-bytes`, que muestra el
+  > caso real en chico: servir una tipografía empotrada como cuerpo de una respuesta HTTP.
 - **`nyx vet` avisa W004: un parámetro `Fn` sin firma cuyo resultado se usa.** Nace de una fricción
   de **nyxerp** (2026-09-19): un middleware con `siguiente: Fn` compilaba limpio, `nyx check` y
   `nyx vet` daban verde, y el binario moría con `exit 139` en el primer pedido. La causa es el

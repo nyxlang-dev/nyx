@@ -486,6 +486,26 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── Caso 20: include_bytes en el intérprete → NYX3007, no un valor falso ──
+# `include_bytes` se resuelve AL COMPILAR (lee el archivo y lo emite como un
+# global), así que el intérprete no puede darlo. Sin rama propia caía al
+# catch-all y devolvía nil, que en un `print` sale como cadena vacía: un
+# recurso "incluido" que llega VACÍO y sin una sola señal. Ahora dice por qué
+# y qué hacer, y la sesión sobrevive (arco include-bytes, Task 3).
+run_case 20 <<'EOF'
+print("antes")
+let r: String = include_bytes("assets/x.bin")
+print("VIVA-20")
+:quit
+EOF
+if grep -qa "NYX3007" "$TMP/out20.txt" && grep -qa "VIVA-20" "$TMP/out20.txt"; then
+    echo "  ✓ include_bytes en el intérprete emite NYX3007 y la sesión sobrevive"
+else
+    echo "  ✗ include_bytes en el intérprete: sin NYX3007 o la sesión murió"
+    sed 's/^/      /' "$TMP/out20.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 if [ "$FAIL" -gt 0 ]; then
     echo "  smoke del REPL: FALLÓ ($FAIL check(s))"

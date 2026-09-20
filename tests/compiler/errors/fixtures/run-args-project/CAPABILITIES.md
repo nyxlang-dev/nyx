@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.32.2 -->
+<!-- nyx-version: 0.32.3 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -96,7 +96,7 @@
 - `pub fn http_parse_request(client_fd: int) -> Array`
 - `pub fn http_cors_headers(origin: String) -> Array`
 - `pub fn http_cors_response(origin: String) -> String`
-- `pub fn http_serve(port: int, handler: Fn) -> int`
+- `pub fn http_serve(port: int, handler: Fn(Array) -> String) -> int`
 - `pub fn http_serve_mt(port: int, num_workers: int, handler: Fn) -> int`
 
 ## Bases de datos & KV
@@ -303,6 +303,7 @@
 - `file_write_bytes` (2 args)
 - `file_write_string` (2 args)
 - `fsync` (1 arg)
+- `include_bytes` (1 arg) — String — embeds a BINARY file **at compile time**: the bytes travel inside the executable, so the program keeps working if it is copied alone (a font, an icon, a seed database, a template).
 - `mkdir` (1 arg)
 - `print` (1 arg) — to stdout
 - `print_no_newline` (1 arg) — to stdout

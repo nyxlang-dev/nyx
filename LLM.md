@@ -861,6 +861,18 @@ single `Error` struct.
   error — prefer `try_write_file` (`import "std/fs"`) when the caller
   should react instead of dying
 - `file_exists(path)` → bool
+- `include_bytes("ruta")` → String — embeds a BINARY file **at compile time**:
+  the bytes travel inside the executable, so the program keeps working if it is
+  copied alone (a font, an icon, a seed database, a template). The path is a
+  literal and resolves from the project root (`NYX_PROJECT_DIR`, set by
+  `nyx build`), never absolute and never escaping with `..`; the cap is 8 MiB.
+  The value is binary-safe (NUL bytes do not truncate: the interning is
+  length-aware), so it can be served as an HTTP body as is. Diagnostics:
+  `NYX1033` (the path must be a literal), `NYX1034` (no project root, absolute
+  path, `..` escape, or file not found — each names the resolved path and the
+  root), `NYX1035` (over the cap, with the real size). It only exists when
+  COMPILING: the interpreter and the REPL answer `NYX3007`, and `read_file` is
+  what you want if the file must be read at run time.
 
 ### Conversion
 - `int_to_string(n)`, `char_to_string(c)` → String

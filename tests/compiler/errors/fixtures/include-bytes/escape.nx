@@ -1,0 +1,5 @@
+// NYX1034: escape con "..". Mismo motivo que la ruta absoluta.
+fn main() {
+    let datos: String = include_bytes("../../../etc/hostname")
+    println(datos)
+}

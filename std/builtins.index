@@ -70,6 +70,7 @@ builtin	hmac_sha256_raw	2	Cripto & seguridad	los **32 bytes** del digest, sin fo
 builtin	http_parse_request_fast	1	Red	
 builtin	https_get	1	Red	simple GET, NO custom headers, returns the body as a `String`.
 builtin	https_post	3	Red	
+builtin	include_bytes	1	Archivos & I/O	String — embeds a BINARY file **at compile time**: the bytes travel inside the executable, so the program keeps working if it is copied alone (a font, an icon, a seed database, a template).
 builtin	int_to_float	1	Strings & texto	
 builtin	int_to_string	1	Strings & texto	String
 builtin	isatty	1	Tooling & CLI	

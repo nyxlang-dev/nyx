@@ -131,6 +131,11 @@ correr_ejemplo_wasm() {
 correr_ejemplo() {
     local nx_file="$1" name="$2"
     cp "$nx_file" script.nx
+    # NYX_PROJECT_DIR: `include_bytes` resuelve su ruta desde la raíz del
+    # proyecto, y sin esto la receta 112 no compila (arco include-bytes). Es el
+    # directorio del repo, así que una receta nombra su recurso por su ruta
+    # real; para las demás es inocuo.
+    export NYX_PROJECT_DIR="$PWD"
     if grep -qE 'extern "js"|import "std/(browser|browser_await|dom)"' "$nx_file"; then
         correr_ejemplo_wasm "$name"
         return $?

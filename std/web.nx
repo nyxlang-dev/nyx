@@ -391,7 +391,9 @@ pub fn app_access_log(app: &mut App) {
 // Contrato wrap: Fn(Request, Fn) -> Response. El 2º argumento es
 // next: Fn(Request) -> Response — llamarlo ejecuta el resto de la cadena y
 // devuelve su Response (envolver antes/después, modificar la respuesta, no
-// llamarlo = short-circuit, o pasarle un Request distinto). Todo el registro
+// llamarlo = short-circuit, o pasarle un Request distinto). El parámetro se
+// declara con su firma completa: `next: Fn` a secas compila y revienta al
+// llamarlo (convenio de retorno; `nyx vet` lo avisa con W004). Todo el registro
 // de acá abajo hace push a Arrays (referencias) → va POR VALOR como app_get;
 // la lección &mut de app_not_found aplica solo a asignar campos escalares.
 

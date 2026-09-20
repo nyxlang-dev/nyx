@@ -1,0 +1,6 @@
+// NYX1034: ruta absoluta. Es un chequeo de SEGURIDAD: sin él, un programa lee
+// cualquier archivo de la máquina de quien compila.
+fn main() {
+    let datos: String = include_bytes("/etc/hostname")
+    println(datos)
+}

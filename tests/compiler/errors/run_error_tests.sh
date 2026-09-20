@@ -537,6 +537,79 @@ fi
 rm -f script.ll
 
 # ==============================================================
+# include_bytes: un test POR DIAGNÓSTICO y por variante, en las DOS capas.
+#
+# La capa de semantic es la que ve `nyx check`. La de codegen es el fallback
+# con NYX_SKIP_SEMANTIC=1, y no es redundante: dos de sus chequeos son de
+# SEGURIDAD (ruta absoluta y escape con "..") y hasta el 2026-09-20 no
+# existían ahí, así que con el checker apagado `include_bytes("/etc/...")` se
+# leía y se embebía. Cada caso exige el CÓDIGO, no solo que falle.
+# ==============================================================
+IB_FX="tests/compiler/errors/fixtures/include-bytes"
+IB_TMP="$(mktemp -d)"
+
+ib_case() {  # ib_case <nombre> <archivo.nx> <raiz|-> <fragmento> [skip-semantic]
+  local name="$1" file="$2" raiz="$3" expected="$4" skip="${5:-}"
+  cp "$file" script.nx
+  rm -f script.ll
+  local output
+  if [ "$raiz" = "-" ]; then
+    output=$(env -u NYX_PROJECT_DIR NYX_SKIP_SEMANTIC="$skip" timeout 15 ./nyx_bootstrap 2>&1)
+  else
+    output=$(NYX_PROJECT_DIR="$raiz" NYX_SKIP_SEMANTIC="$skip" timeout 15 ./nyx_bootstrap 2>&1)
+  fi
+  # Un diagnóstico de include_bytes NUNCA puede dejar un .ll: sería un binario
+  # con el recurso vacío o, peor, con un archivo que no debía leerse.
+  if echo "$output" | grep -qF "$expected" && [ ! -f script.ll ]; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"
+    printf "    esperaba: %s\n" "$expected"
+    printf "    .ll escrito: %s\n" "$([ -f script.ll ] && echo SÍ || echo no)"
+    echo "$output" | sed 's/^/      /' | head -6
+    FAIL=$((FAIL + 1))
+    FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+}
+
+# — capa semantic (lo que ve `nyx check`) —
+ib_case "include-bytes-nyx1033-no-literal"   "$IB_FX/no-literal.nx"  "$(pwd)/$IB_FX" "NYX1033"
+ib_case "include-bytes-nyx1034-sin-raiz"     "$IB_FX/inexistente.nx" "-"             "NYX1034"
+ib_case "include-bytes-nyx1034-absoluta"     "$IB_FX/absoluta.nx"    "$(pwd)/$IB_FX" "NYX1034"
+ib_case "include-bytes-nyx1034-escape"       "$IB_FX/escape.nx"      "$(pwd)/$IB_FX" "NYX1034"
+ib_case "include-bytes-nyx1034-inexistente"  "$IB_FX/inexistente.nx" "$(pwd)/$IB_FX" "NYX1034"
+
+# NYX1035 necesita un archivo sobre el tope: se genera al vuelo (9 MiB) en vez
+# de versionar un fixture enorme.
+cp "$IB_FX/grande.nx" "$IB_TMP/grande.nx"
+head -c 9437184 /dev/zero > "$IB_TMP/grande.bin"
+ib_case "include-bytes-nyx1035-tope"         "$IB_TMP/grande.nx"     "$IB_TMP"       "NYX1035"
+
+# — capa codegen (NYX_SKIP_SEMANTIC=1): las dos de seguridad y el tope —
+ib_case "include-bytes-codegen-absoluta"     "$IB_FX/absoluta.nx"    "$(pwd)/$IB_FX" "NYX1034" 1
+ib_case "include-bytes-codegen-escape"       "$IB_FX/escape.nx"      "$(pwd)/$IB_FX" "NYX1034" 1
+ib_case "include-bytes-codegen-inexistente"  "$IB_FX/inexistente.nx" "$(pwd)/$IB_FX" "NYX1034" 1
+ib_case "include-bytes-codegen-tope"         "$IB_TMP/grande.nx"     "$IB_TMP"       "NYX1035" 1
+
+# CONTROL POSITIVO: el mismo fixture con una ruta VÁLIDA compila y deja el .ll.
+cp "$IB_FX/valido.nx" script.nx
+rm -f script.ll
+ib_ok=$(NYX_PROJECT_DIR="$(pwd)/$IB_FX" timeout 15 ./nyx_bootstrap 2>&1)
+if [ -f script.ll ] && ! echo "$ib_ok" | grep -q "NYX103"; then
+  printf "  ✓ include-bytes-control-positivo\n"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ include-bytes-control-positivo — un include_bytes legítimo no compila\n"
+  echo "$ib_ok" | sed 's/^/      /' | head -6
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("include-bytes-control-positivo")
+fi
+rm -f script.ll
+rm -rf "$IB_TMP"
+
+# ==============================================================
 # Codegen target guard: un builtin no portable (net/tls/thread/...) bajo
 # NYX_TARGET=wasm32-wasi debe fallar con error bilingüe + exit != 0.
 # El mismo programa en target nativo compila (exit 0). Necesita el env var

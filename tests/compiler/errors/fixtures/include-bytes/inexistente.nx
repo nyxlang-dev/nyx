@@ -1,0 +1,5 @@
+// NYX1034: el archivo no está. El mensaje dice la ruta RESUELTA y la raíz.
+fn main() {
+    let datos: String = include_bytes("no-existe-este-recurso.bin")
+    println(datos)
+}

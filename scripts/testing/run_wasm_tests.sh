@@ -209,7 +209,11 @@ for t in tests/wasm/test-wasm-*.nx; do
     if [ -f "$imports_mjs" ] && grep -q "afterStart" "$imports_mjs"; then uses_js_ffi=1; fi
 
     cp "$t" script.nx
-    if ! NYX_TARGET=wasm32-wasi NYX_NO_GC=1 ./nyx_bootstrap > "$TMP_DIR/compile.log" 2>&1; then
+    # NYX_PROJECT_DIR: `include_bytes` resuelve su ruta desde la raíz del
+    # proyecto y sin esto no compila (arco include-bytes, Task 4). Es el ROOT
+    # del repo, así que un test puede nombrar su fixture por su ruta real.
+    # Para los demás tests es inocuo: nadie más lo lee.
+    if ! NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_PROJECT_DIR="$ROOT" ./nyx_bootstrap > "$TMP_DIR/compile.log" 2>&1; then
         echo -e "${RED}FAIL (nyx compile)${NC}"
         tail -3 "$TMP_DIR/compile.log" | sed 's/^/      /'
         FAILED=$((FAILED + 1))

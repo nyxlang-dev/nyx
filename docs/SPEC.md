@@ -919,6 +919,9 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1029 | unknown `#[derive(...)]` on a struct — an unrecognized derive used to be ignored silently, and the error only surfaced as NYX1002 at the call site of the function it would have generated; includes a did-you-mean over the eight valid derives (`Clone`, `PartialEq`, `Debug`, `Display`, `Default`, `Fields`, `Copy`, `Hash`) |
 | NYX1030 | `#[derive(...)]` on a **generic** struct — codegen does not emit derives for a template, but the symbol was declared anyway: `nyx check` passed and the program failed at LINK time with «undefined symbol» |
 | NYX1031 | a builtin is called with an argument whose type contradicts what it expects — the builtins had a table of RETURN types but only arity for their parameters, so their arguments were never checked at all; an out-of-place String reached codegen and became invalid IR, with clang reporting an error that did not name the user's line |
+| NYX1033 | `include_bytes` with a path that is not a String literal — the file is read when COMPILING, so a variable or an interpolation cannot be known |
+| NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
+| NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
 | NYX1032 | a struct literal omits fields — they used to be filled with the zero of their type (`0`, `""`, `false`) SILENTLY, so a literal that forgot 33 fields still compiled; one diagnostic lists every missing field, because the full list is what tells you what to do |
 | NYX1036 | a function without `pub` is called from a module other than its own — `pub` used to filter only the QUALIFIED call (`alias.fn()`); the bare call resolved anyway, because the resolver inlines each imported module's text and the function ended up as one more top-level. Everything a module defined was therefore part of its interface, so no library could offer a stable API: any internal rename broke its importers. Checked before arity, since a private function from elsewhere is not «the right function with the wrong arguments» |
 | NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
@@ -983,6 +986,7 @@ no longer prints `1` after the error) while the REPL session survives:
 | NYX3004 | calling a value that is not a function (v0.24.3) |
 | NYX3005 | program runtime error surfaced by the interpreter (v0.24.3) — division by zero, modulo by zero, index out of range, `index_assign` on a non-array. The compiled binary aborts on these; the REPL reports and survives |
 | NYX3006 | wrong number of arguments in a call (v0.24.3) — checked before binding; the out-of-range read used to kill the whole REPL session |
+| NYX3007 | `include_bytes` in the interpreter or the REPL (arco include-bytes, sin publicar) — it only exists when compiling, because the file is read and embedded into the binary. Without this branch the call fell through to the catch-all and evaluated to nil, i.e. an "embedded" resource that arrived EMPTY with no signal |
 
 **ES** — Con `NYX_DIAG=json`, los errores de parse y semánticos salen como un objeto
 JSON por línea (NDJSON) en lugar de texto humano, para que agentes AI y tooling los
@@ -1826,6 +1830,39 @@ fn main() -> int {
 Para parametros `String`, el compilador automaticamente convierte `%nyx_string*` a `i8*` via `nyx_string_to_cstr` antes de la llamada.
 
 El compilador emite `declare <ret> @<name>(<params>)` en el IR y registra la funcion para que pueda ser llamada normalmente.
+
+### `include_bytes("ruta") -> String`
+
+Empotra un archivo BINARIO en el ejecutable **al compilar**. Los bytes viajan dentro del binario, así
+que el programa sigue funcionando si alguien lo copia solo — una fuente, un icono, una base semilla,
+una plantilla. Nació de una fricción real: un ERP que promete instalarse copiando un ejecutable
+servía sus `.woff2` desde disco, y copiar solo el binario degradaba la tipografía **sin avisar**.
+
+```nyx
+fn fuente() -> String {
+    return include_bytes("assets/inter.woff2")   // literal, no una variable
+}
+```
+
+Reglas, todas verificadas al compilar:
+
+- **La ruta es un literal.** Se resuelve al compilar, así que no puede ser una variable ni una
+  interpolación (`NYX1033`).
+- **Se resuelve desde la raíz del proyecto** (`NYX_PROJECT_DIR`, que pone `nyx build`), nunca desde
+  el archivo que la escribe. Sin raíz, `NYX1034`.
+- **No acepta rutas absolutas ni escapes con `..`** (`NYX1034`). Los dos son de SEGURIDAD: sin ellos
+  un programa podría leer cualquier archivo de la máquina de quien compila. El chequeo está en las
+  dos capas —el checker y el codegen—, así que tampoco se esquiva con `NYX_SKIP_SEMANTIC=1`.
+- **Tope de 8 MiB** (`NYX1035`, con el tamaño real en el mensaje).
+- **Binario de verdad**: los NUL no truncan, porque el internado es *length-aware*. El valor sirve
+  tal cual como cuerpo de una respuesta HTTP. Para medirlo, `str_byte_length()` y no `length()`,
+  que cuenta codepoints UTF-8.
+- **Un archivo, un global**: dos `include_bytes` de la misma ruta comparten el mismo global, así que
+  el recurso ocupa sus bytes UNA vez (medido en wasm: +1,01 veces el tamaño del recurso).
+- **Solo existe al compilar.** El intérprete y el REPL responden `NYX3007`; si el archivo tiene que
+  leerse al ejecutar, eso es `read_file` / `try_read_file`.
+
+Funciona en nativo y en `wasm32-wasi`, con el mismo resultado byte a byte.
 
 ### `extern "js"` y `#[suspends]` (solo wasm32-wasi)
 

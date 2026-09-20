@@ -1,0 +1,5 @@
+// NYX1035: pasa el tope de 8 MiB. El runner genera el archivo al vuelo.
+fn main() {
+    let datos: String = include_bytes("grande.bin")
+    println(datos)
+}

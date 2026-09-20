@@ -491,6 +491,13 @@ fn __error_response(req: Request, err: String) -> ServeOutput {
 // es una fn anidada que captura (wraps, i, core) — patrón fijado por
 // test-339-wrap-next-closure de la suite del toolchain. Índice fuera de
 // rango → llama al core.
+//
+// OJO al escribir un wrap: el `next` hay que declararlo CON su firma
+// (`next: Fn(Request) -> Response`). Declararlo `Fn` a secas compila, pasa
+// `nyx check` y REVIENTA al llamarlo, porque un valor `Fn` sin firma no lleva
+// su convenio de retorno y la llamada indirecta asume `i64` — con un struct
+// como `Response` eso es un SIGSEGV. `nyx vet` lo avisa con W004; el fondo
+// está en docs/design/specs/2026-09-20-fn-sin-firma-design.md.
 fn __run_wraps(wraps: Array, i: int, req: Request, core: Fn) -> Response {
     if i >= wraps.length() {
         let c: Fn(Request) -> Response = core
@@ -500,7 +507,7 @@ fn __run_wraps(wraps: Array, i: int, req: Request, core: Fn) -> Response {
     fn next_fn(r: Request) -> Response {
         return __run_wraps(wraps, i + 1, r, core)
     }
-    let nx: Fn = next_fn
+    let nx: Fn(Request) -> Response = next_fn
     return w(req, nx)
 }
 

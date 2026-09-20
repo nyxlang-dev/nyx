@@ -1,0 +1,7 @@
+// Control positivo: la misma forma, con una ruta que SÍ existe dentro del
+// proyecto. Si este caso fallara, los de arriba estarían pasando por el motivo
+// equivocado (un include_bytes que nunca funciona también «da error»).
+fn main() {
+    let datos: String = include_bytes("recurso.bin")
+    println("bytes: " + int_to_string(str_byte_length(datos)))
+}

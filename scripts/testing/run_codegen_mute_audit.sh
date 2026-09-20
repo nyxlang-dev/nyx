@@ -20,6 +20,19 @@ FAIL=0
 
 # ------------------------------------------------------------------
 # count_mute_prints <archivo>
+#   ABORTAR no es solo exit(1): `note_codegen_error()` también lo hace —
+#   incrementa el contador que nyx.nx:218 mira ANTES de escribir el .ll, así que
+#   la compilación devuelve 1 y no deja artefacto (lo usa include_bytes). El
+#   tercero es `codegen_abort_where()`. Este ratchet NO los distingue porque
+#   cuenta por PREFIJO: los sitios canónicos («error [NYXNNNN]: ») no entran en
+#   la cuenta, sean del mecanismo que sean.
+#   Medido el 2026-09-20: 24 sitios con el prefijo canónico no tienen ninguno de
+#   los cuatro mecanismos a menos de 8 líneas, pero casi todos abortan MÁS ABAJO
+#   (los mensajes bilingües imprimen en las dos ramas y abortan después), así que
+#   extender el ratchet a ese prefijo pide análisis por función, no una ventana
+#   de líneas. Fichado en TASKS.md; por ahora el ratchet cubre el catch-all
+#   clásico, que es donde estuvieron los silently-wrong reales.
+#
 #   Cuenta apariciones de print("Error: o print("Warning: que NO están
 #   seguidas (a <=6 líneas) de un exit(1) — es decir: imprimen y el
 #   control de flujo SIGUE (catch-all mudo clásico: warn/print y retorna

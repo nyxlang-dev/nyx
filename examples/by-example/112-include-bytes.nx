@@ -1,0 +1,70 @@
+// Nyx by Example: un recurso binario que viaja DENTRO del ejecutable.
+//
+// El caso real, en chico: un ERP que promete instalarse copiando un solo
+// ejecutable servía sus tipografías desde disco. Si alguien copiaba únicamente
+// el binario, la interfaz se degradaba a otra tipografía SIN AVISAR — el
+// servidor respondía 200 con un cuerpo vacío. `include_bytes` lee el archivo AL
+// COMPILAR y mete sus bytes en el binario, así que el recurso no se puede
+// perder por el camino.
+//
+// Lo que esta receta muestra:
+//   1. que los bytes llegan intactos (NUL incluidos — un .woff2 está lleno);
+//   2. que el valor sirve TAL CUAL como cuerpo de una respuesta HTTP;
+//   3. que dos llamadas a la misma ruta comparten un solo global.
+//
+// No abre un puerto a propósito: arma la respuesta en memoria y la describe,
+// así la receta corre sola bajo `make test-examples`.
+
+import "std/web"
+
+// La ruta es un LITERAL y se resuelve desde la raíz del proyecto, nunca desde
+// este archivo. Con una variable el compilador la rechaza con NYX1033: la ruta
+// tiene que conocerse al compilar.
+fn tipografia() -> String {
+    return include_bytes("examples/by-example/assets/tipografia.woff2")
+}
+
+fn servir_tipografia() -> Response {
+    let cuerpo: String = tipografia()
+    var r: Response = response_new(200, cuerpo)
+    // headers_flat es intercalado [nombre, valor, nombre, valor, ...].
+    r.headers_flat.push("Content-Type")
+    r.headers_flat.push("font/woff2")
+    // Un recurso empotrado es inmutable por definición: cambia solo si se
+    // recompila, así que puede cachearse para siempre.
+    r.headers_flat.push("Cache-Control")
+    r.headers_flat.push("public, max-age=31536000, immutable")
+    return r
+}
+
+fn main() {
+    let datos: String = tipografia()
+
+    // str_byte_length y NO length(): length() cuenta codepoints UTF-8, y esto
+    // son bytes arbitrarios. Es el gotcha `strings-are-bytes` del repo.
+    println("bytes: " + int_to_string(str_byte_length(datos)))
+
+    // La firma del formato sobrevive, y el byte 8 es un NUL: si algo tratara
+    // el recurso como cadena de C, el cuerpo se cortaría justo acá.
+    println("firma: " + datos.substring(0, 4))
+    println("byte 8 (NUL): " + int_to_string(datos.charAt(8)))
+
+    // La identidad byte a byte, medida: este sha256 es el del archivo en disco
+    // (sha256sum examples/by-example/assets/tipografia.woff2).
+    println("sha256: " + sha256(datos))
+
+    // La respuesta HTTP lleva el recurso entero, sin leer nada del disco.
+    let resp: Response = servir_tipografia()
+    println("respuesta: " + int_to_string(resp.status) + " con " + int_to_string(str_byte_length(resp.body)) + " bytes")
+
+    // Dos llamadas a la MISMA ruta comparten un solo global: el recurso ocupa
+    // sus bytes una vez, no una por uso.
+    let otra: String = tipografia()
+    if str_byte_length(otra) == str_byte_length(datos) {
+        println("segunda llamada: el mismo recurso")
+    }
+
+    // Para leer un archivo AL EJECUTAR —algo que el usuario elige en tiempo de
+    // corrida— lo que corresponde es read_file/try_read_file. include_bytes no
+    // existe en el intérprete ni en el REPL: ahí responde NYX3007.
+}
