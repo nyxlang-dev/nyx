@@ -9,7 +9,39 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
-> Vacío por ahora: lo que había se publicó en 0.32.4.
+> Vacío por ahora: lo que había se publicó en 0.33.0.
+
+---
+
+## [0.33.0] — 2026-09-20
+
+> **Sube MINOR porque rechaza código que antes compilaba** — código que compilaba y reventaba al
+> correr, pero la regla del repo no distingue: lo que el compilador deja de aceptar cambia de minor.
+
+### Changed
+- **Llamar a un valor `Fn` SIN FIRMA ahora se rechaza al compilar cuando el contexto espera un
+  struct por valor o un `float`** (`NYX1037`) `[arco: fn-sin-firma]`. Es la tercera aparición de la
+  misma causa —un `Fn` sin firma no lleva su convenio de retorno y la llamada indirecta asume
+  `i64`—, y esta vez se cierra en vez de parchearse: con un struct eso era un **SIGSEGV** (el `i64`
+  que llega es el primer campo, y se desreferencia) y con `float`, **basura en silencio**
+  (`0.16` → `281472821301216.0`). Lo reportó **nyxerp** desde un middleware que compilaba limpio,
+  pasaba `nyx check` y `nyx vet`, y moría en el primer pedido.
+  > **Lo que NO cambia**: `int`, `String`, `bool`, `char`, `Result`, `Option`, cualquier puntero y
+  > el resultado descartado siguen funcionando a través de un `Fn` sin firma — para esos el convenio
+  > asumido coincide, medido con valores. Tampoco cambia `let f: Fn = una_fn` seguido de `f()`:
+  > codegen refina ese slot con la firma real desde el 2026-08-06.
+  > **Por qué no el convenio uniforme con thunks**, que era la recomendación de la spec: es cirugía
+  > en el codegen de cierres —lo que sostiene `dom_on_fn`, los `browser_*_fn` y `Result.map`—,
+  > cuesta una asignación por llamada, y ni siquiera cierra el caso residual, porque el problema de
+  > `let r = f()` sin anotar no es el ABI sino la ausencia de tipo. Lo que lo hizo innecesario es
+  > una medición: en los casos que fallan el compilador YA conoce el tipo esperado.
+  > **El reparto entre capas es lo que cada una puede ver**: `semantic` mira parámetros (`nyx check`
+  > los ve); `codegen` es el backstop y lee el tipo DESPUÉS del refinamiento, así que agarra el `Fn`
+  > que viene de un campo de struct —que reventaba y ni W004 cubría— y el camino
+  > `NYX_SKIP_SEMANTIC=1`.
+  > **Migración**: `nyx vet` avisa con W004 desde 0.32.4, así que la forma peligrosa se puede
+  > encontrar antes de que el compilador la rechace. El arreglo es declarar la firma:
+  > `f: Fn(T) -> R`.
 
 ---
 

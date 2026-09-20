@@ -1,0 +1,15 @@
+// Mismo caso, pero el tipo esperado sale del retorno DECLARADO de la función.
+struct Respuesta { estado: int, cuerpo: String }
+
+fn atender() -> Respuesta {
+    return Respuesta { estado: 200, cuerpo: "ok" }
+}
+
+fn envolver(siguiente: Fn) -> Respuesta {
+    return siguiente()
+}
+
+fn main() {
+    let r: Respuesta = envolver(atender)
+    println(int_to_string(r.estado))
+}

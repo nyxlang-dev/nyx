@@ -13,7 +13,7 @@
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
 | Regression | `make test` | **449 archivos / 448 ARM64** | medido 2026-09-18 (+1 `test-430-include-bytes`, arco include-bytes; antes +1 `test-429-sse-frame`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **301** | +11 el 2026-09-20 (include-bytes: un caso por diagnóstico y variante —NYX1033/1034/1035— en semantic Y en codegen con `NYX_SKIP_SEMANTIC=1`, + control positivo); 290 desde 2026-09-17 (+2 NYX0105 de `#[suspends]`) |
+| Error paths (parse+semantic) | `make test-errors` | **309** | +8 el 2026-09-20 (NYX1037: los tres contextos que revientan × 2 capas, el `Fn` que viene de un campo de struct, y el control positivo de los siete tipos que sí viajan); 301 tras include-bytes |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |

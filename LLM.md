@@ -1315,8 +1315,10 @@ returning a struct by value segfaults (the i64 read is the struct's first field,
 dereferenced), and one returning `float` returns garbage silently. With `int` or `String` the
 convention happens to match, which is why the shape survived for so long. Measured 2026-09-20; spec:
 `docs/design/specs/2026-09-20-fn-sin-firma-design.md`.
-`nyx vet` reports that dangerous subset as **W004**: a parameter declared bare `Fn` whose call result
-is used. It is a check on the shape of the function, not a grep-able pattern — the obvious pattern
+**Since 0.33.0 the compiler REJECTS it** (`NYX1037`) when the context expects a struct by value or a
+`float` — the two cases where the assumed convention does not match. `int`, `String`, `bool`, `char`,
+`Result`, `Option` and a discarded result keep working. `nyx vet` also reports the wider dangerous
+subset as **W004**: a parameter declared bare `Fn` whose call result is used. It is a check on the shape of the function, not a grep-able pattern — the obvious pattern
 (`: *Fn[ ,)]`) fires on all 44 bare `Fn` in the stdlib, of which only 4 call the parameter AND use
 what it returns (noise vs signal, audited 2026-09-04 and re-measured 2026-09-20). Storing the
 callback, passing it along, or calling it and discarding the result does NOT have the bug and does

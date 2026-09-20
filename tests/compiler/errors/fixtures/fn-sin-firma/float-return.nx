@@ -1,0 +1,11 @@
+// float no cabe en el convenio i64 tampoco, y este no reventaba: devolvía
+// basura EN SILENCIO (0.16 salía como 281472821301216.0).
+fn tasa() -> float { return 0.16 }
+
+fn usar(f: Fn) -> float {
+    return f()
+}
+
+fn main() {
+    println(float_to_string(usar(tasa)))
+}

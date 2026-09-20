@@ -537,6 +537,65 @@ fi
 rm -f script.ll
 
 # ==============================================================
+# `Fn` sin firma: se rechaza SOLO cuando el contexto espera lo que no cabe en
+# un i64 (struct por valor o float), en las DOS capas. Arco fn-sin-firma.
+#
+# El control positivo no es decorativo: `int`, `String`, `bool`, `char`,
+# `Result`, `Option` y el resultado descartado viajan bien por el convenio
+# asumido —medido con valores el 2026-09-20, no solo con exit code— y tienen
+# que SEGUIR compilando. Un diagnóstico que se pase de largo los rompe, y esta
+# mitad es lo único que lo caza.
+# ==============================================================
+FF_FX="tests/compiler/errors/fixtures/fn-sin-firma"
+
+ff_case() {  # ff_case <nombre> <archivo.nx> <fragmento> [skip-semantic]
+  local name="$1" file="$2" expected="$3" skip="${4:-}"
+  cp "$file" script.nx
+  rm -f script.ll
+  local output
+  output=$(NYX_SKIP_SEMANTIC="$skip" timeout 15 ./nyx_bootstrap 2>&1)
+  if echo "$output" | grep -qF "$expected" && [ ! -f script.ll ]; then
+    printf "  ✓ %s\n" "$name"
+    PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"
+    printf "    esperaba: %s\n" "$expected"
+    printf "    .ll escrito: %s\n" "$([ -f script.ll ] && echo SÍ || echo no)"
+    echo "$output" | sed 's/^/      /' | head -6
+    FAIL=$((FAIL + 1))
+    FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+}
+
+ff_case "fn-sin-firma-nyx1037-struct-let"     "$FF_FX/struct-let.nx"     "NYX1037"
+ff_case "fn-sin-firma-nyx1037-struct-return"  "$FF_FX/struct-return.nx"  "NYX1037"
+ff_case "fn-sin-firma-nyx1037-float-return"   "$FF_FX/float-return.nx"   "NYX1037"
+ff_case "fn-sin-firma-codegen-struct-let"     "$FF_FX/struct-let.nx"     "NYX1037" 1
+ff_case "fn-sin-firma-codegen-struct-return"  "$FF_FX/struct-return.nx"  "NYX1037" 1
+ff_case "fn-sin-firma-codegen-float-return"   "$FF_FX/float-return.nx"   "NYX1037" 1
+# El campo de struct: semantic NO lo ve (el identificador no es un parámetro,
+# y un local `Fn` puede estar refinado — test-337 depende de que lo esté), así
+# que este caso es del backstop de codegen, que lee el tipo ya refinado. Va sin
+# NYX_SKIP_SEMANTIC a propósito: prueba que el backstop corre en el build normal.
+ff_case "fn-sin-firma-campo-struct"          "$FF_FX/campo-struct.nx"   "NYX1037"
+
+# CONTROL POSITIVO: los seis tipos que sí viajan, y el descartado.
+cp "$FF_FX/valido.nx" script.nx
+rm -f script.ll
+ff_ok=$(timeout 15 ./nyx_bootstrap 2>&1)
+if [ -f script.ll ] && ! echo "$ff_ok" | grep -q "NYX1037"; then
+  printf "  ✓ fn-sin-firma-control-positivo\n"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ fn-sin-firma-control-positivo — el diagnóstico se pasó de largo\n"
+  echo "$ff_ok" | sed 's/^/      /' | head -8
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("fn-sin-firma-control-positivo")
+fi
+rm -f script.ll
+
+# ==============================================================
 # include_bytes: un test POR DIAGNÓSTICO y por variante, en las DOS capas.
 #
 # La capa de semantic es la que ve `nyx check`. La de codegen es el fallback

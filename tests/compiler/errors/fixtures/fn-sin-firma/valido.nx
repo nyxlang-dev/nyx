@@ -1,0 +1,33 @@
+// CONTROL POSITIVO: los seis tipos que SÍ viajan por el convenio i64 (medido
+// con valores el 2026-09-20), más el resultado descartado. Todo esto compila
+// hoy y tiene que seguir compilando: si el diagnóstico se pasa de largo, este
+// archivo lo caza.
+fn f_int() -> int { return 42 }
+fn f_str() -> String { return "hola" }
+fn f_bool() -> bool { return true }
+fn f_char() -> char { return 'Z' }
+fn f_res() -> Result<int, String> { return Result.Ok(7) }
+fn f_opt() -> Option<int> { return Option.Some(3) }
+fn f_void() { println("efecto") }
+
+fn usar_int(f: Fn) -> int { return f() }
+fn usar_str(f: Fn) -> String { return f() }
+fn usar_bool(f: Fn) -> bool { return f() }
+fn usar_char(f: Fn) -> char { return f() }
+fn usar_res(f: Fn) -> Result<int, String> { return f() }
+fn usar_opt(f: Fn) -> Option<int> { return f() }
+fn descarta(f: Fn) -> int { f() return 0 }
+
+fn main() {
+    println(int_to_string(usar_int(f_int)))
+    println(usar_str(f_str))
+    let b: bool = usar_bool(f_bool)
+    if b { println("bool ok") }
+    let c: char = usar_char(f_char)
+    println(char_to_string(c))
+    let r: Result<int, String> = usar_res(f_res)
+    match r { Result.Ok(v) => { println(int_to_string(v)) } Result.Err(e) => { println(e) } }
+    let o: Option<int> = usar_opt(f_opt)
+    match o { Option.Some(v) => { println(int_to_string(v)) } Option.None => { println("none") } }
+    println(int_to_string(descarta(f_void)))
+}

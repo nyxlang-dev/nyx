@@ -1,0 +1,18 @@
+// El `Fn` viene de un CAMPO de struct, así que el local no se puede refinar —
+// codegen solo refina cuando el valor es una fn conocida por nombre. Semantic
+// es ciego acá (el identificador no es un parámetro), y por eso lo agarra el
+// backstop de codegen, que lee el tipo DESPUÉS del refinamiento.
+// Este caso reventaba con SIGSEGV y W004 tampoco lo cubría.
+struct Resp { estado: int, cuerpo: String }
+struct Ruta { manejar: Fn }
+
+fn atender() -> Resp {
+    return Resp { estado: 204, cuerpo: "campo" }
+}
+
+fn main() {
+    let ru: Ruta = Ruta { manejar: atender }
+    let f: Fn = ru.manejar
+    let r: Resp = f()
+    println(int_to_string(r.estado))
+}

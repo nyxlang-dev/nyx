@@ -1,0 +1,16 @@
+// El contexto espera un struct por valor (anotación del let). El convenio
+// asumido es i64, así que esto compilaba y hacía SIGSEGV al correr.
+struct Respuesta { estado: int, cuerpo: String }
+
+fn atender() -> Respuesta {
+    return Respuesta { estado: 200, cuerpo: "ok" }
+}
+
+fn envolver(siguiente: Fn) -> int {
+    let r: Respuesta = siguiente()
+    return r.estado
+}
+
+fn main() {
+    println(int_to_string(envolver(atender)))
+}
