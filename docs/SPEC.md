@@ -4531,10 +4531,12 @@ Conducta:
   se corta a los 2–4 s de ventana cero.
 - **Tope**: `NYX_SSE_MAX` (default 1024). El techo duro del servidor es de 4096 fds en total.
 - **Fase 1 sin** `id:`, `retry:` ni reenvío por `Last-Event-ID`; sin SSE sobre HTTP/2.
-- **Aviso**: detrás del gateway `nyx-proxy` SSE todavía no funciona: el proxy acumula la respuesta
-  hasta que el upstream cierra, y el heartbeat evita que venza su plazo, así que el cliente no recibe
-  eventos. Desde `nyx-proxy` 0.4.3 ya no mezcla respuestas entre usuarios; las versiones anteriores
-  sí. Hasta que llegue el túnel, exponer SSE solo en un servidor al que el cliente llega directo.
+- **Detrás de un gateway**: `nyx-proxy` 0.4.4 tuneliza SSE de punta a punta —detecta
+  `Content-Type: text/event-stream` y deja de acumular—, así que un endpoint SSE funciona detrás
+  del gateway sin configuración especial. En 0.4.3 el proxy acumulaba la respuesta hasta que el
+  upstream cerraba (el cliente no recibía nada) y antes de 0.4.3 además podía mezclar el cuerpo con
+  pedidos de OTROS usuarios a través de su pool. Con un proxy más viejo, exponer SSE solo en un
+  servidor al que el cliente llega directo.
 
 ---
 

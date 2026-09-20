@@ -9,7 +9,39 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
-> Vacío por ahora: lo que había se publicó en 0.33.0.
+### Fixed
+- **Escribir por TLS a un peer que ya cerró MATABA EL PROCESO por SIGPIPE** `[arco: serve-sse]`.
+  OpenSSL escribe con `write()` crudo y este runtime no instala un `SIG_IGN` global de SIGPIPE a
+  propósito (`os_sock_send` se protege con `MSG_NOSIGNAL`, y su comentario aclara que eso es
+  «load-bearing»), así que la capa TLS quedaba sin esa protección: un `tls_write_conn` contra un
+  peer ido mataba el proceso entero. `runtime/tls.c` ahora usa un **BIO propio** que escribe por
+  `os_sock_send`, en vez de ignorar la señal en el arranque del runtime —que le habría cambiado la
+  semántica a todo programa que enlace Nyx, un `nyx prog | head` incluido—. Los 5 `SSL_set_fd` del
+  archivo pasan por `tls_attach_fd`, con el mismo contrato (`BIO_NOCLOSE`: el fd lo cierra el
+  llamador) y sin depender de los `BIO_meth_get_*`, deprecados desde OpenSSL 3.5.
+  > **Por qué recién ahora**: en una respuesta HTTP normal la ventana entre «el cliente cerró» y
+  > «el servidor escribe» es de milisegundos. En un TÚNEL dura lo que dure el stream, así que
+  > alcanzaba con cerrar una pestaña para tirar abajo un gateway que sirve todos los dominios.
+  > Lo encontró la sesión de `nyx-proxy` armando el túnel SSE (medido: rc=141 = 128+SIGPIPE).
+  > `ws_tunnel` tenía el mismo agujero desde 2026-07-01 y queda cubierto por el mismo fix.
+  Tests: `test_tls_write_to_gone_peer_no_sigpipe` en `tests/runtime-unit/test_tls.c` (+4 asserts,
+  264 → 268), que mide si la señal SE GENERA en vez de si el proceso sobrevive — la suite tenía
+  `signal(SIGPIPE, SIG_IGN)` en su `main` y por eso no podía ver este bug.
+- **`test-377-try-http` fallaba por puertos, no por código**: usaba 58744-58749, que caen dentro de
+  `/proc/sys/net/ipv4/ip_local_port_range` (32768-60999), así que el kernel se los daba como puerto
+  de ORIGEN a cualquier conexión saliente y el test moría con «cannot bind port NNNNN: Address
+  already in use». Cayó tres veces el 2026-09-15 y otra el 2026-09-20. Movidos a 187xx, por debajo
+  del rango efímero. **Un rojo que no es regresión tapa las reales.**
+- **El E2E `tests/integration/test_ws_proxy.py` SKIPeaba en silencio** desde la migración a `~/nyx/`
+  (2026-07-22): su `NYX_PROXY_SRC` por defecto apuntaba a `~/nyx-proxy-stack`, que ya no existe.
+  Default corregido a `~/nyx/products/proxy` y skip más explícito.
+
+### Changed
+- **SSE ya funciona detrás del gateway** `[arco: serve-sse]`: `nyx-proxy` 0.4.4 tuneliza el stream
+  (detecta `Content-Type: text/event-stream` y deja de acumular), desplegado en `:443` el
+  2026-09-20 con los 8 dominios verificados por SNI. Se retira el aviso «detrás del gateway SSE
+  todavía no funciona» de `LLM.md` §std/serve, `docs/SPEC.md` §SSE y `examples/by-example/110-serve-sse.nx`.
+  Del lado del proxy: 8 casos de túnel + 1 sobre TLS, con las 11 de `pool_framing` intactas.
 
 ---
 
@@ -309,9 +341,9 @@ jornada, tres salieron de máquinas que no son ésta.
   heartbeat por proceso (`NYX_SSE_HEARTBEAT_SECS`, default 15) detecta clientes caídos escribiendo;
   un cliente que no lee se corta con `tcp_set_timeout(fd, 2)`. Tope `NYX_SSE_MAX` (default 1024)
   con 503; `sse_drain_close()` en el drain de SIGTERM. Un evento con `\r`/`\n` se rechaza (0), no
-  se sanea. Cero builtins nuevos. Pareja del cliente `browser_sse_fn` del navegador. **Aviso**:
-  detrás del gateway `nyx-proxy` SSE todavía no funciona y puede romper pedidos de otros usuarios
-  (encargo en `docs/design/briefs/2026-09-14-serve-sse/task-6.md`). Receta:
+  se sanea. Cero builtins nuevos. Pareja del cliente `browser_sse_fn` del navegador. **Aviso** (al
+  publicarse): detrás del gateway `nyx-proxy` SSE todavía no funcionaba y podía romper pedidos de
+  otros usuarios — **resuelto el 2026-09-20 en `nyx-proxy` 0.4.4**, que tuneliza el stream. Receta:
   `examples/by-example/110-serve-sse.nx`; doc en `LLM.md` §std/serve. Tests: regression +1
   (`test-429-sse-frame`: formato del evento, rechazo de `\r`/`\n`, registro vacío) y smoke de
   std/serve 70 -> 103 (+33 checks de SSE: cabecera, pipeline y 401, rooms, multilínea, heartbeat,

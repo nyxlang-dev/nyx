@@ -118,6 +118,177 @@ static SSL_CTX* get_ssl_ctx(void) {
     return g_ssl_ctx;
 }
 
+// ===== BIO de socket que NO genera SIGPIPE =====
+//
+// POR QUÉ EXISTE (hallazgo del arco serve-sse, report de nyx-proxy del
+// 2026-09-20): OpenSSL escribe con `write()` crudo sobre el fd, y este runtime
+// NO instala un SIG_IGN global de SIGPIPE a propósito (ver el comentario
+// «load-bearing» de os_sock_send en runtime/os/os_posix.c). Entonces un
+// `tls_write_conn` contra un peer que ya cerró MATABA EL PROCESO ENTERO —
+// medido allá: rc=141 (128+SIGPIPE) sin alcanzar a imprimir una línea.
+//
+// Por qué no se había visto en cuatro años: en el camino normal la ventana es
+// de milisegundos, porque la respuesta se escribe apenas se leyó el pedido. En
+// un TÚNEL —SSE, WebSocket— dura lo que dure el stream, así que alcanzaba con
+// que alguien cerrara una pestaña para tirar abajo un gateway que sirve todos
+// los dominios. `ws_tunnel` tenía el mismo agujero desde 2026-07-01.
+//
+// Por qué un BIO y no un SIG_IGN global: la señal es un recurso del PROCESO,
+// no de la biblioteca. Ignorarla globalmente le cambia la semántica a todo
+// programa que enlace este runtime —un `nyx prog | head` dejaría de terminar
+// solo— y se la cambia también a quien nos enlace desde afuera. El BIO tapa el
+// agujero exactamente donde está (las escrituras TLS) y encima reusa
+// `os_sock_send`, que ya pasa MSG_NOSIGNAL y devuelve -EPIPE como cualquier
+// otro error: el mismo camino por el que `tcp_write` ya estaba cubierto.
+//
+// EN: OpenSSL writes with raw write(2) and this runtime installs no global
+// SIGPIPE SIG_IGN, so a TLS write to a peer that closed killed the process.
+// This BIO routes writes through os_sock_send (MSG_NOSIGNAL) instead of
+// ignoring the signal process-wide, which would change the semantics of every
+// program linking this runtime.
+//
+// DEPENDENCIA NUEVA PARA WINDOWS (leer antes de W4/W5): a partir de acá la capa
+// TLS pasa por os_sock_send / os_sock_recv / os_sock_close en vez de por el BIO
+// de socket de OpenSSL. En win32 esos tres son stubs `-ENOSYS` hasta que W4/W5
+// implementen la capa de sockets, así que ahí TLS no anda — pero tampoco andaba
+// antes, porque sin os_sock_* no hay forma de conectar el fd que se le pasaría a
+// SSL_set_fd. Cuando W4/W5 los implementen, este BIO queda cubierto SOLO: no hay
+// nada TLS-específico que portar. Si alguna vez hiciera falta TLS en win32 antes
+// de esa capa, la salida es un fallback a SSL_set_fd cuando os_sock_send devuelve
+// -ENOSYS, no duplicar la lógica del BIO.
+
+static BIO_METHOD* g_nosig_bio_method = NULL;
+static os_once_t   g_nosig_bio_once   = OS_ONCE_STATIC_INIT;
+
+// El fd viaja en el puntero de datos del BIO: cabe, y evita un malloc por
+// conexión con su propio ciclo de vida que sincronizar.
+static int nosig_bio_fd(BIO* b) { return (int)(intptr_t)BIO_get_data(b); }
+
+// Mismo criterio que BIO_sock_non_fatal_error de OpenSSL: el error no es fatal,
+// hay que reintentar la misma escritura más tarde.
+static int nosig_retriable(int e) {
+#ifdef EWOULDBLOCK
+    if (e == EWOULDBLOCK) return 1;
+#endif
+#ifdef EALREADY
+    if (e == EALREADY) return 1;
+#endif
+    return e == EAGAIN || e == EINTR || e == EINPROGRESS;
+}
+
+static int nosig_bio_create(BIO* b) {
+    BIO_set_init(b, 0);
+    BIO_set_data(b, (void*)(intptr_t)(-1));
+    BIO_set_shutdown(b, 0);
+    return 1;
+}
+
+static int nosig_bio_destroy(BIO* b) {
+    if (b == NULL) return 0;
+    // Solo cierra si el dueño lo pidió con BIO_CLOSE. tls_attach_fd usa
+    // BIO_NOCLOSE —igual que SSL_set_fd—, así que el fd lo sigue cerrando el
+    // llamador y el ciclo de vida de los sockets no cambia en ningún camino.
+    if (BIO_get_shutdown(b) && BIO_get_init(b)) {
+        int fd = nosig_bio_fd(b);
+        if (fd >= 0) os_sock_close(fd);
+    }
+    BIO_set_init(b, 0);
+    BIO_set_data(b, (void*)(intptr_t)(-1));
+    return 1;
+}
+
+static int nosig_bio_write(BIO* b, const char* buf, int len) {
+    BIO_clear_retry_flags(b);
+    if (buf == NULL || len <= 0) return 0;
+    int64_t n = os_sock_send(nosig_bio_fd(b), buf, (size_t)len);
+    if (n < 0) {
+        int e = (int)(-n);
+        if (nosig_retriable(e)) BIO_set_retry_write(b);
+        errno = e;   // OpenSSL lo lee para armar su propio error
+        return -1;
+    }
+    return (int)n;
+}
+
+static int nosig_bio_read(BIO* b, char* buf, int len) {
+    BIO_clear_retry_flags(b);
+    if (buf == NULL || len <= 0) return 0;
+    int64_t n = os_sock_recv(nosig_bio_fd(b), buf, (size_t)len);
+    if (n < 0) {
+        int e = (int)(-n);
+        if (nosig_retriable(e)) BIO_set_retry_read(b);
+        errno = e;
+        return -1;
+    }
+    return (int)n;   // 0 = EOF, que es exactamente lo que OpenSSL espera
+}
+
+static int nosig_bio_puts(BIO* b, const char* str) {
+    if (str == NULL) return 0;
+    return nosig_bio_write(b, str, (int)strlen(str));
+}
+
+static long nosig_bio_ctrl(BIO* b, int cmd, long num, void* ptr) {
+    switch (cmd) {
+    case BIO_C_SET_FD: {
+        if (ptr == NULL) return 0;
+        nosig_bio_destroy(b);          // suelta el fd anterior si era nuestro
+        BIO_set_data(b, (void*)(intptr_t)(*(int*)ptr));
+        BIO_set_shutdown(b, (int)num); // num = BIO_CLOSE / BIO_NOCLOSE
+        BIO_set_init(b, 1);
+        return 1;
+    }
+    case BIO_C_GET_FD: {
+        if (!BIO_get_init(b)) return -1;
+        int fd = nosig_bio_fd(b);
+        if (ptr != NULL) *(int*)ptr = fd;   // SSL_get_fd llega por acá
+        return fd;
+    }
+    case BIO_CTRL_GET_CLOSE:
+        return BIO_get_shutdown(b);
+    case BIO_CTRL_SET_CLOSE:
+        BIO_set_shutdown(b, (int)num);
+        return 1;
+    case BIO_CTRL_DUP:
+    case BIO_CTRL_FLUSH:
+        return 1;   // sin buffer propio: no hay nada que vaciar
+    default:
+        return 0;
+    }
+}
+
+static void nosig_bio_method_init(void) {
+    int idx = BIO_get_new_index();
+    if (idx == -1) return;
+    // BIO_TYPE_DESCRIPTOR es lo que hace que SSL_get_fd nos encuentre
+    // (BIO_find_type busca por ese bit, no por BIO_TYPE_SOCKET).
+    BIO_METHOD* m = BIO_meth_new(idx | BIO_TYPE_SOURCE_SINK | BIO_TYPE_DESCRIPTOR,
+                                 "nyx socket sin SIGPIPE");
+    if (m == NULL) return;
+    if (BIO_meth_set_write(m, nosig_bio_write)     != 1 ||
+        BIO_meth_set_read(m, nosig_bio_read)       != 1 ||
+        BIO_meth_set_puts(m, nosig_bio_puts)       != 1 ||
+        BIO_meth_set_ctrl(m, nosig_bio_ctrl)       != 1 ||
+        BIO_meth_set_create(m, nosig_bio_create)   != 1 ||
+        BIO_meth_set_destroy(m, nosig_bio_destroy) != 1) {
+        BIO_meth_free(m);
+        return;
+    }
+    g_nosig_bio_method = m;
+}
+
+// Reemplazo de SSL_set_fd con el MISMO contrato: el fd no se cierra al liberar
+// el SSL, lo cierra el llamador. Si el método no se pudo crear, cae al
+// SSL_set_fd de siempre — el programa conecta igual, con el riesgo viejo, en
+// vez de no conectar.
+static void tls_attach_fd(SSL* ssl, int fd) {
+    os_once(&g_nosig_bio_once, nosig_bio_method_init);
+    BIO* bio = (g_nosig_bio_method != NULL) ? BIO_new(g_nosig_bio_method) : NULL;
+    if (bio == NULL) { SSL_set_fd(ssl, fd); return; }
+    BIO_set_fd(bio, fd, BIO_NOCLOSE);
+    SSL_set_bio(ssl, bio, bio);   // rbio == wbio: consume UNA sola referencia
+}
+
 // ¿El usuario pidió explícitamente NO verificar? Solo para desarrollo contra un
 // servidor con certificado autofirmado. Se lee una vez y se cachea: esto está
 // en el camino de cada request.
@@ -404,7 +575,7 @@ nyx_string* nyx_https_get(nyx_string* url) {
     SSL* ssl = SSL_new(ctx);
     if (!ssl) { os_sock_close(fd); return nyx_string_from_cstr(""); }
 
-    SSL_set_fd(ssl, fd);
+    tls_attach_fd(ssl, fd);
 
     // Set SNI so servers that host multiple domains respond correctly.
     SSL_set_tlsext_host_name(ssl, host);
@@ -478,7 +649,7 @@ nyx_string* nyx_https_post(nyx_string* url, nyx_string* body, nyx_string* conten
     SSL* ssl = SSL_new(ctx);
     if (!ssl) { os_sock_close(fd); return nyx_string_from_cstr(""); }
 
-    SSL_set_fd(ssl, fd);
+    tls_attach_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host);
 
     // Verificación del certificado ANTES del handshake (ver nota de diseño
@@ -713,7 +884,7 @@ int64_t nyx_tls_accept(int64_t fd) {
     SSL* ssl = SSL_new(g_ssl_server_ctx);
     if (!ssl) return 0;
 
-    SSL_set_fd(ssl, (int)fd);
+    tls_attach_fd(ssl, (int)fd);
 
     if (SSL_accept(ssl) != 1) {
         SSL_free(ssl);
@@ -1045,7 +1216,7 @@ static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
         snprintf(detail, dlen, "no se pudo crear la sesión TLS");
         return 0;
     }
-    SSL_set_fd(ssl, fd);
+    tls_attach_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host);
 
     if (verify_mode >= 2) {
@@ -1215,7 +1386,7 @@ int64_t nyx_tls_client_upgrade(int64_t fd_in, nyx_string* host, int64_t verify_m
     SSL* ssl = SSL_new(ctx);
     if (!ssl) { os_sock_close(fd); return 0; }
 
-    SSL_set_fd(ssl, fd);
+    tls_attach_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host_cstr);
 
     if (verify_mode == 3) {

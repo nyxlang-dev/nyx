@@ -2237,13 +2237,13 @@ fn main() -> int {
     before shutdown hooks — clients see the stream end.
   - Not in phase 1: `id:`, `retry:`, replay from `Last-Event-ID` (the header
     is still visible in `req.headers_flat`), SSE over HTTP/2.
-  - **⚠ Behind the `nyx-proxy` gateway SSE does NOT work yet**: the proxy
-    buffers a response without a length until the upstream closes, and the
-    heartbeat keeps its idle timer from firing, so the client gets no events
-    (the streaming tunnel is Task 6 of the serve-sse arc). Since `nyx-proxy`
-    0.4.3 it no longer leaks the body into OTHER users' requests through its
-    pool; older versions do. Until the tunnel ships, expose SSE endpoints
-    only on a server clients reach directly.
+  - **Behind a gateway**: `nyx-proxy` 0.4.4 tunnels SSE end to end (it detects
+    `Content-Type: text/event-stream` and stops buffering), so an SSE endpoint
+    works behind the gateway with no special configuration. On 0.4.3 the proxy
+    buffered the stream until the upstream closed — the client saw nothing —
+    and before 0.4.3 it could also leak the body into OTHER users' requests
+    through its connection pool. With an older proxy, expose SSE only on a
+    server clients reach directly.
 - **Graceful shutdown**: `serve_on_shutdown(fn() -> int)` registers a hook
   that runs during the SIGTERM drain, after in-flight requests finish and
   before `serve_app` returns 0. `NYX_SERVE_DRAIN_SECS` overrides the

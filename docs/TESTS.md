@@ -17,7 +17,7 @@
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
-| Runtime C unit (B4) | `make test-runtime` | **35 suites / 1748 asserts** | verificado con corrida real 2026-09-15; +68 del arco `http-tls-cliente` (`test_tls` 13 casos, `test_net_result` 3) sobre los 1680 de `test_write_file_binary_safe`; detalle en `CHANGELOG.md` |
+| Runtime C unit (B4) | `make test-runtime` | **35 suites / 1756 asserts** | verificado con corrida real 2026-09-20; +8 del fix de SIGPIPE en TLS (`test_tls_write_to_gone_peer_no_sigpipe`, `test_tls` 261 → 268) sobre los 1748 del arco `http-tls-cliente`; detalle en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **30 programas + 6 casos stdin (x2 targets) + 67 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (67: templates 2, tooling 15, coverage 9, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
 | Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** + autotest | `voseo_filter` (`lib_voseo.sh`: lista + regla general en -á) sobre `compiler/`, `runtime/`, `std/`, `scripts/`, `templates/gitignore` y `tests/**/*.sh` |

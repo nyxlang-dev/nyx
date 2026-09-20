@@ -5,10 +5,10 @@
 // std/browser. This recipe plays the client with a raw TCP socket so it can
 // run (and finish) on its own.
 //
-// WARNING: behind the nyx-proxy gateway SSE does not work yet: the proxy
-// buffers the stream until the upstream closes, so the client gets no events
-// (before nyx-proxy 0.4.3 it could also leak into other users' requests).
-// Until the tunnel ships, expose SSE endpoints only on a server reached directly.
+// Behind a gateway: nyx-proxy 0.4.4 tunnels SSE end to end, so this works
+// unchanged behind it. Older proxies buffer the stream until the upstream
+// closes (the client sees nothing), so with one of those, expose SSE only on
+// a server the client reaches directly.
 
 import "std/http"
 import "std/web"

@@ -38,6 +38,14 @@ Bug fixes, correcciones de docs, mejoras de rendimiento **sin features nuevas**.
 4. **No acumular**: Si en una sesión se hacen muchas cosas, se release como un solo minor con changelog detallado.
 5. **No inflar**: Agregar un test no es un minor. Corregir un typo no es un patch release — se acumula.
 6. **NUNCA declarar v1.0.0 sin autorización explícita del autor.** v1.0.0 es un milestone que solo Ottavio puede aprobar.
+7. **Un cambio que va a RECHAZAR código sale primero como AVISO, un release antes.** Regla nacida
+   del arco `fn-sin-firma` (2026-09-20) y confirmada por el consumidor que la vivió: W004 en
+   `nyx vet` salió en 0.32.4 y el rechazo duro (NYX1037) en 0.33.0. Sus palabras: «que el aviso
+   llegara un MINOR antes que el rechazo hizo la migración un no-evento» — pudieron confirmar en
+   segundos que no tenían casos, en vez de descubrirlo cuando el compilador les dijo que no.
+   El aviso es barato (un lint textual o un check de forma, sin tocar semántica) y compra la
+   migración entera. Comparar con el contraejemplo del mismo mes: `pub`/NYX1036 en 0.32.0 llegó sin
+   aviso previo y costó una ronda de fricción con dos máquinas en desacuerdo.
 
 ### Checklist de release / Release checklist
 

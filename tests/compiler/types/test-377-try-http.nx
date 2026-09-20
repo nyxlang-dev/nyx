@@ -17,11 +17,19 @@
 import "std/http"
 import "std/error"
 
-const T377_PORT_OK: int = 58744
-const T377_PORT_REFUSED: int = 58745
-const T377_PORT_404: int = 58746
-const T377_PORT_POST: int = 58748
-const T377_PORT_REQ: int = 58749
+// PUERTOS FUERA DEL RANGO EFÍMERO DEL KERNEL (2026-09-20). Antes eran
+// 58744-58749, que caen dentro de /proc/sys/net/ipv4/ip_local_port_range
+// (32768-60999 en esta máquina): el kernel se los da como puerto de ORIGEN a
+// cualquier conexión saliente, así que un proceso de producción hablando con
+// 127.0.0.1:3001 se quedaba con uno y este test fallaba con «cannot bind port
+// NNNNN: Address already in use». Pasó tres veces el 2026-09-15 y otra vez el
+// 2026-09-20 (puerto 58746). Un rojo que no es regresión tapa las reales.
+// 187xx está por debajo de 32768, así que el kernel nunca los asigna solo.
+const T377_PORT_OK: int = 18744
+const T377_PORT_REFUSED: int = 18745
+const T377_PORT_404: int = 18746
+const T377_PORT_POST: int = 18748
+const T377_PORT_REQ: int = 18749
 
 fn run_server_ok() -> int {
     let l: int = tcp_listen("127.0.0.1", T377_PORT_OK)
