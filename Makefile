@@ -186,6 +186,32 @@ install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $
 	if [ ! -d "$$NYX_HOME_DIR/bin" ]; then \
 		echo "✗ $$NYX_HOME_DIR no existe — correr scripts/install.sh primero"; exit 1; \
 	fi; \
+	: "CANDADO DEL TOOLCHAIN (2026-09-20). ~/.nyx es compartido por TODO lo que"; \
+	: "compila en esta máquina, así que instalar a mitad de la suite de otro"; \
+	: "proyecto le cambia el compilador y la stdlib bajo los pies: su corrida"; \
+	: "mezcla dos versiones y el verde (o el rojo) no sirve para integrar. Pasó"; \
+	: "el 2026-09-20 con nyxerp — 13 min de máquina y 5 fallos falsos. La regla"; \
+	: "escrita («avisar antes») no alcanzó: el permiso se había dado para un"; \
+	: "alcance menor y el que instala no siempre mide bien lo que cambió."; \
+	: "Acá se toma EXCLUSIVO y ANTES de la primera copia; quien compila lo toma"; \
+	: "COMPARTIDO por archivo (nyx test, nyx build), así que la suite termina el"; \
+	: "archivo en curso, el install entra, y lo que sigue usa el toolchain nuevo"; \
+	: "de punta a punta. Contrato completo en CLAUDE.md §Sesiones paralelas."; \
+	NYX_LOCK="$$NYX_HOME_DIR/.toolchain.lock"; \
+	NYX_LOCK_WAIT="$${NYX_LOCK_WAIT:-600}"; \
+	if command -v flock >/dev/null 2>&1; then \
+		exec 9>"$$NYX_LOCK" || { echo "✗ no se pudo abrir el candado $$NYX_LOCK"; exit 1; }; \
+		if ! flock -x -w "$$NYX_LOCK_WAIT" 9; then \
+			echo "✗ el candado del toolchain sigue tomado tras $${NYX_LOCK_WAIT}s: $$NYX_LOCK"; \
+			echo "  Lo tiene otra compilación o instalación en esta máquina:"; \
+			(command -v fuser >/dev/null 2>&1 && fuser -v "$$NYX_LOCK" 2>&1 | sed "s/^/    /") || \
+				echo "    (instalá 'fuser' —psmisc— para ver qué proceso lo tiene)"; \
+			echo "  Esperá a que termine, o subí el plazo con NYX_LOCK_WAIT=<segundos>."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "⚠  sin 'flock': se instala SIN candado — si hay otra compilación en curso, su resultado mezcla dos versiones"; \
+	fi; \
 	: "Un binario se instala copiándolo al lado y RENOMBRÁNDOLO encima, nunca con"; \
 	: "cp directo: si alguien lo está ejecutando, cp falla con 'Text file busy'"; \
 	: "(ETXTBSY) y el viejo queda en su lugar. mv sobre un ejecutable en uso sí"; \

@@ -1157,6 +1157,11 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         "trap 'rm -f \"$LOG\" \"$SRC\" \"$SRCNX\" \"$" + "{SRC}.ll\"' EXIT\n" +
         "cp \"$ORIG_DIR/" + config.main_file + "\" \"$SRCNX\"\n" +
         "cd \"" + nyx_home + "\"\n" +
+        // Candado del toolchain, COMPARTIDO: un `make install-local` lo toma
+        // EXCLUSIVO, así que no puede cambiar el compilador ni la stdlib a
+        // mitad de esta compilación (contrato en CLAUDE.md §Sesiones paralelas,
+        // 2026-09-20). Sin flock en la máquina no se bloquea nada.
+        "if command -v flock >/dev/null 2>&1; then exec 9>\"" + nyx_home + "/.toolchain.lock\"; flock -s 9; fi\n" +
         gc_flag + "NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
         "|| { echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
         mkdir_native +

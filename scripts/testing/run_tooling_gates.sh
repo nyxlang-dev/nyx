@@ -537,7 +537,9 @@ run_test_spy() {  # \$1=dir, resto=args → línea(s) de clang en \$GATE_TMP/cla
 # registra nada: «no vi -O2» y «no vi el archivo» son afirmaciones vacías si
 # el log está vacío porque el wrapper nunca corrió.
 run_test_spy "$GATE_TMP/sano"
-if [ -s "$GATE_TMP/clang-calls.log" ] && grep -q "script.ll" "$GATE_TMP/clang-calls.log"; then
+# (desde 2026-09-20 el .ll es el scratch propio de la compilación, no el
+#  script.ll compartido: ver nyx-test-scratch-propio, más abajo.)
+if [ -s "$GATE_TMP/clang-calls.log" ] && grep -qE "/tmp/nyx_test_src_[A-Za-z0-9]+\.ll" "$GATE_TMP/clang-calls.log"; then
     ok "spy-clang — el instrumento registra la línea de clang que arma nyx test"
 else
     bad "spy-clang — el wrapper no registró ninguna llamada: los checks de abajo no prueban nada" "spy-clang"
@@ -757,6 +759,59 @@ if [ "$CHECK_RC" -eq 0 ]; then
 else
     bad "check-builtin-shadow — rc $CHECK_RC: NYX1036 rechaza una llamada a un builtin" "check-builtin-shadow"
     head -5 "$GATE_TMP/check.out" | sed 's/^/      /'
+fi
+
+# ── nyx-test-scratch-propio: `nyx test` no puede compilar con nombres COMPARTIDOS ──
+# Dos carreras reales, las dos del mismo supuesto («una sola compilación a la
+# vez»), reportadas por nyxerp el 2026-09-20 y reproducidas acá (3 fallos en 32
+# corridas concurrentes con el binario anterior, 0 en 32 con el arreglado):
+#   1. `script.nx`/`script.ll` en el NYX_HOME compartido → la segunda compilación
+#      le borra a la primera el .ll que clang tiene MAPEADO: SIGBUS, «Bus error».
+#   2. temporales nombrados con time_ms() → dos corridas del mismo milisegundo
+#      comparten el binario: «Text file busy» y un FAIL con 0 passed / 0 failed.
+# El check es ESTÁTICO a propósito: reproducir una carrera cuesta minutos y
+# falla ~1 de cada 10, así que un gate por estrés sería lento y tembloroso.
+# Acá se fija la FORMA del arreglo, que sí es determinista.
+if grep -qE '"/tmp/nyx_test_(out|bin|script)_" \+ int_to_string\(time_ms\(\)\)' compiler/test.nx; then
+    bad "nyx-test-scratch-propio — un temporal vuelve a nombrarse con time_ms()" "nyx-test-scratch"
+elif grep -qE '(cp .*" script\.nx|-Wno-deprecated-declarations script\.ll|rm -f script\.nx script\.ll)' compiler/test.nx; then
+    bad "nyx-test-scratch-propio — vuelve el script.nx/script.ll compartido de NYX_HOME" "nyx-test-scratch"
+elif ! grep -q 'mktemp -d /tmp/nyx_test_XXXXXX' compiler/test.nx; then
+    bad "nyx-test-scratch-propio — falta el work_dir por compilación (mktemp)" "nyx-test-scratch"
+else
+    ok "nyx-test-scratch-propio: cada compilación de \`nyx test\` usa su propio scratch"
+fi
+# CONTROL POSITIVO: sobre una copia con la forma VIEJA, el check tiene que gritar.
+NT_TMP="$GATE_TMP/test_nx_viejo"
+sed -E 's|let work_dir: String = exec\("mktemp -d /tmp/nyx_test_XXXXXX"\)\.trim\(\)|let out_file: String = "/tmp/nyx_test_out_" + int_to_string(time_ms()) + ".txt"|' \
+    compiler/test.nx > "$NT_TMP" 2>/dev/null
+if grep -qE '"/tmp/nyx_test_(out|bin|script)_" \+ int_to_string\(time_ms\(\)\)' "$NT_TMP"; then
+    ok "control positivo: la forma vieja (temporal por time_ms) se detecta"
+else
+    bad "control positivo ROTO: el check no ve la forma vieja" "nyx-test-scratch-control"
+fi
+
+# ── candado-toolchain: install-local exclusivo, compiladores compartido ──────
+# Contrato de CLAUDE.md §Sesiones paralelas (2026-09-20): ~/.nyx es de toda la
+# máquina, así que instalar a mitad de una suite ajena mezcla dos versiones del
+# toolchain y su resultado no sirve para integrar. Pasó dos veces. Las TRES
+# mitades tienen que estar: si el install toma el candado pero nadie lo toma
+# compartido, no protege nada — y al revés, lo mismo.
+LK_FAIL=""
+grep -q 'flock -x -w "$$NYX_LOCK_WAIT" 9' Makefile || LK_FAIL="install-local no toma el candado EXCLUSIVO"
+grep -q 'flock -s 9' compiler/test.nx || LK_FAIL="nyx test no toma el candado COMPARTIDO"
+grep -q 'flock -s 9' compiler/build.nx || LK_FAIL="nyx build no toma el candado COMPARTIDO"
+if [ -z "$LK_FAIL" ]; then
+    ok "candado-toolchain: install-local exclusivo + nyx test/build compartido"
+else
+    bad "candado-toolchain — $LK_FAIL (CLAUDE.md §Sesiones paralelas)" "candado-toolchain"
+fi
+# CONTROL POSITIVO: sobre una copia sin el flock compartido, el check grita.
+sed 's/flock -s 9//' compiler/test.nx > "$GATE_TMP/test_sin_lock.nx"
+if grep -q 'flock -s 9' "$GATE_TMP/test_sin_lock.nx"; then
+    bad "control positivo ROTO: la copia sin candado igual matchea" "candado-toolchain-control"
+else
+    ok "control positivo: una copia sin el candado compartido se detecta"
 fi
 
 echo "────────────────────────────────────────────────"

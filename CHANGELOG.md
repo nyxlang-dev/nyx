@@ -27,6 +27,39 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   > aparición de la misma causa; las dos anteriores se parchearon el 2026-09-13.
 
 ### Fixed
+- **Un candado impide que `make install-local` cambie el toolchain a mitad de una compilación
+  ajena.** `~/.nyx` es de toda la máquina, así que instalar mientras otro proyecto corre su suite le
+  cambia el compilador y la stdlib bajo los pies: esa corrida mezcla dos versiones y su resultado
+  —verde o rojo— no sirve para integrar. Pasó dos veces con **nyxerp**: el 2026-09-18 (13 minutos de
+  máquina) y el 2026-09-20 otra vez, con **5 fallos falsos** que al correrlos solos pasaban.
+  > Ahora `install-local` toma `~/.nyx/.toolchain.lock` **exclusivo antes de copiar el primer
+  > archivo**, y `nyx test` y `nyx build` lo toman **compartido por archivo**, solo mientras
+  > compilan y enlazan: la suite ajena termina el archivo en curso, el install entra, y lo que sigue
+  > usa el toolchain nuevo de punta a punta. Si no lo consigue en `NYX_LOCK_WAIT` segundos (600 por
+  > omisión), FALLA nombrando el proceso que lo tiene, en vez de colgarse mudo o pisar. Sin `flock`
+  > instalado avisa y sigue, sin bloquear nada.
+  > **La regla anterior era «mirar `ps` y avisar antes», y falló por los dos lados**: el permiso se
+  > había dado para un alcance menor («es solo documentación») y quien instala no siempre mide bien
+  > lo que cambió. La idea del candado la propuso la sesión de nyxerp, que ya usaba uno propio.
+- **`nyx test` compilaba con nombres COMPARTIDOS y dos corridas simultáneas se pisaban.** Reportado
+  por **nyxerp** (2026-09-20) como `clang: error: unable to execute command: Bus error` seguido de
+  `no such file or directory: 'script.ll'`, que estuvieron bisectando commit por commit como si
+  fuera un bug de generación de código. No lo era: cada archivo de prueba se compilaba dentro del
+  `~/.nyx` compartido escribiendo `script.nx` y `script.ll` con el nombre FIJO, y borrándolos al
+  terminar. La segunda compilación le borra a la primera el `.ll` que clang tiene mapeado en
+  memoria, y un archivo mapeado que desaparece bajo el proceso es SIGBUS.
+  > **Y había una segunda carrera encima**, encontrada al reproducir la primera: los temporales se
+  > nombraban con `time_ms()`, así que dos corridas del mismo milisegundo compartían el binario —
+  > `timeout: failed to run command: Text file busy`, reportado como un FAIL con 0 passed y 0
+  > failed. Ahora cada compilación usa un directorio propio (`mktemp`) para el fuente, el `.ll`, el
+  > binario, el script y la salida.
+  > **Medido**: 2 proyectos compilando en paralelo, 32 corridas. Antes: **3 fallos**. Después:
+  > **0**. La guarda es estática (`run_tooling_gates.sh`, con control positivo), porque reproducir
+  > la carrera falla ~1 de cada 10 veces y un gate por estrés sería lento y tembloroso.
+  > **De paso**: los diagnósticos de `nyx test` ya no dicen `script.nx` sino el nombre real del
+  > archivo de prueba, y la cobertura dejó de depender del literal `script.nx;` como prefijo de las
+  > funciones internas — con el scratch propio ese prefijo cambia, y hardcodeado habría dado
+  > cobertura 0 en silencio.
 - **`make test-ai-first` estaba en rojo en `main` desde el 2026-09-18**, y el rojo no era del
   código: `tests/ai-first/30-std-privada-homonima-de-builtin.nx` entró sin que ningún gotcha lo
   citara, y `run_gotcha_coverage.sh` exige que cada test de esa carpeta pertenezca a un ítem de
