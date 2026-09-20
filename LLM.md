@@ -1291,9 +1291,26 @@ These are the ones that can hurt you without saying so. Everything else in
 this section is either a language rule or an external limitation.
 
 <!-- gen:gotchas kinds=trap lang=en form=long -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica -->
 
-1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
+1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
+function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
+the argument/return types of the callback at the call site, not just that something callable was
+passed. This applies to comparator-style callbacks too: `sort_by(arr, cmp: Fn(int, int) -> int)`.
+**And when the callback's result is USED, it is not a preference — it is a crash.** A `Fn` value
+without a signature carries no return convention, so the indirect call assumes `i64`: a callback
+returning a struct by value segfaults (the i64 read is the struct's first field, and it gets
+dereferenced), and one returning `float` returns garbage silently. With `int` or `String` the
+convention happens to match, which is why the shape survived for so long. Measured 2026-09-20; spec:
+`docs/design/specs/2026-09-20-fn-sin-firma-design.md`.
+`nyx vet` reports that dangerous subset as **W004**: a parameter declared bare `Fn` whose call result
+is used. It is a check on the shape of the function, not a grep-able pattern — the obvious pattern
+(`: *Fn[ ,)]`) fires on all 44 bare `Fn` in the stdlib, of which only 4 call the parameter AND use
+what it returns (noise vs signal, audited 2026-09-04 and re-measured 2026-09-20). Storing the
+callback, passing it along, or calling it and discarding the result does NOT have the bug and does
+not warn. [test: 25-fn-callback-typed]
+
+2. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.** `outer.insert("i", inner)` where `inner`
 is `let inner: Map = {...}`, or `outer.insert("i", {"k": "v"})`
 inline, both work: `outer.get("i")` correctly reconstitutes the nested Map. But
@@ -1307,7 +1324,7 @@ LAST `insert()` wins, so `o.insert("i", inner); o.insert("s", "texto"); let g: M
 binding: `let g: Map = o.get("i"); print(g.get("k"))` prints a raw pointer as a number (e.g.
 `187651464825712`), not the value — only `let v: String = g.get("k")` returns the real content. [test: 13-map-literal-keys]
 
-2. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
+3. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
 draining a second bounded channel — size each channel to at least the total number of messages it will
 carry.** Not a compiler bug, a concurrency design trap worth knowing before reaching for
 `channel_new`. If the main goroutine sends M jobs on a bounded jobs channel and only starts
@@ -1318,7 +1335,7 @@ workers and M=200 jobs against a 64-slot channel. Fix: size each channel to at l
 of messages it will carry (`channel_new(m + n)` for the jobs channel, `channel_new(m)` for results), or
 interleave sends and receives instead of doing all sends before any receive. [test: 16-worker-channels]
 
-3. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
+4. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
 bits) — a negative C value crosses as a huge positive number, never as a negative one.** Found in
 `runtime/sqlite_adapter.c` (E5.5): `nyx_sqlite_step`/`nyx_sqlite_exec`/`nyx_sqlite_column_count`/
 `nyx_sqlite_bind_str/int/double` all declare a plain C `int` return against a Nyx
@@ -1334,7 +1351,7 @@ declare the C side `int64_t` when you control it (NOT `long` — Win64 is LLP64:
 there and re-truncates; measured in the W0 audit, spec Windows §9.3), or on the Nyx side never compare
 a raw FFI return against an exact negative sentinel. [test: 22-ffi-int-truncation]
 
-4. **`time_epoch()` (and its exact alias `time()`) is the wall clock (seconds since the Unix epoch);
+5. **`time_epoch()` (and its exact alias `time()`) is the wall clock (seconds since the Unix epoch);
 `time_ms()` and `time_us()` are the MONOTONIC clock (since the machine booted) — four names for two
 clocks, and the shared `time_` prefix hides which is which, so dividing any of them is almost always
 the bug.** `time_epoch()` is
@@ -1363,7 +1380,7 @@ One shape from the same sweep is NOT covered, on purpose: a client-supplied epoc
 against the monotonic clock has no textual shape — that one is a typing problem, and pretending a
 regex catches it would be worse than saying so. [test: compiler/systems/test-410-clock-domain]
 
-5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — use
+6. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — use
 `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it, and `mul_div_round(a, b, c,
 mode)` for the `a*b/c` shape, which computes the intermediate product in 128 bits.** Both are global
 via the prelude, so neither needs an `import`. (An out-of-range integer LITERAL is a different case
@@ -1395,7 +1412,7 @@ tasa) / 1_000_000` — still arithmetically correct, but `mul_div_round` superse
 exact 128-bit product, explicit rounding.) `float` is not a substitute for money either: it silently
 loses integer precision starting at 2^53. [test: compiler/language/test-385-int-wraparound]
 
-6. **`sslmode=require` encrypts the connection but does NOT verify the server's certificate — it will
+7. **`sslmode=require` encrypts the connection but does NOT verify the server's certificate — it will
 happily complete a TLS handshake with an impostor.** This is exactly libpq's behavior, kept on purpose
 so a `conninfo` string means the same thing in Nyx as everywhere else, but it is the guarantee most
 people believe they have and don't: `require` protects against a passive eavesdropper on the wire, not
@@ -1416,35 +1433,27 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
-1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
-function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
-the argument/return types of the callback at the call site, not just that something callable was
-passed. This applies to comparator-style callbacks too: `sort_by(arr, cmp: Fn(int, int) -> int)`.
-This one is a *preference*, not a defect, so it is NOT grep-able and has no `nyx vet` code: a bare
-`Fn` is legal and the stdlib itself writes it in ~49 places, so the obvious pattern (`: *Fn[ ,)]`)
-fired on every one of them — noise, not signal (audited 2026-09-04 by `run_vet_gotchas.sh`). [test: 25-fn-callback-typed]
-
-2. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
+1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
 
-3. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.** This is a
+2. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.** This is a
 deliberate design decision, not a bug — it fails loudly (compile error) if you get it wrong. [test: 14-language-rules]
 
-4. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.** This is
+3. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.** This is
 a deliberate design decision, not a bug — it fails loudly (compile error) if you get it wrong. [test: 14-language-rules]
 
-5. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.** This is a deliberate
+4. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.** This is a deliberate
 design decision, not a bug — it fails loudly (compile error) if you get it wrong, the same way Python
 enforces indentation. [test: 14-language-rules]
 
-6. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
+5. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
 literal and fails loudly with `NYX0106`.** The full message is `error [NYX0106]: map literal keys must
 be String — use {"key": value}` (a compile error, not a silent trap). `defer cleanup()` (bare) and
 `const` with String both work since v0.16. [test: 13-map-literal-keys]
 
-7. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
+6. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
 on BYTES — for *character* counts use `char_length()` (UTF-8 codepoints).** Because they all agree on
 bytes they compose safely: `s.substring(0, s.length())` is the identity. For *terminal columns*
 (TUI alignment — CJK/fullwidth/emoji
@@ -1453,23 +1462,23 @@ from `import "std/unicode"` (v0.22.x+, wcwidth(3)/Kuhn contract). HTTP `Content-
 directly. (Before v0.14, `length()` counted codepoints — the mismatch caused a production outage; the
 contract is now unified.) [test: 14-language-rules]
 
-8. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
+7. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
 `if http_serve(8080, handler) < 0 { return 1 }`.** It also prints to stderr since v0.24.4 (see
 `bind-failure-loud`), but without the check your program "runs" with no server. Discarding the
 return is what made a
 real production incident silent — the process "started" (exit 0) while some other process squatted the
 port, and the person debugging it had no signal that the bind never happened. [test: 21-bind-failure-loud]
 
-9. **`assert()` aborts the process (`exit(1)`) on the first failure** — this is true everywhere EXCEPT
+8. **`assert()` aborts the process (`exit(1)`) on the first failure** — this is true everywhere EXCEPT
 inside `nyx test`'s `test { }` blocks, where the runner catches each failure, reports it per-test, and
 only exits non-zero at the very end (so one failing test doesn't hide the rest). Outside `nyx test`,
 treat `assert()` as fatal, not recoverable. [test: 24-bare-return-assert]
 
-10. **A bare `return` (no value) works in a `void`-returning function** — the compiler synthesizes
+9. **A bare `return` (no value) works in a `void`-returning function** — the compiler synthesizes
 `return 0` under the hood, so `fn f() { return }` is valid and behaves like `fn f() { return 0 }`.
 Only meaningful in `void` functions; a non-void function still needs an explicit value. [test: 24-bare-return-assert]
 
-11. **`toUpper()`/`toLower()` cover ASCII + Latin-1 Supplement + Latin Extended-A — Greek and Cyrillic
+10. **`toUpper()`/`toLower()` cover ASCII + Latin-1 Supplement + Latin Extended-A — Greek and Cyrillic
 are left untouched.** That covers Spanish, Portuguese, French, Italian, German, Polish, Czech,
 Croatian, Romanian, Hungarian and the Baltic languages. Deliberately unchanged: `ß` (its uppercase
 is two letters, `SS`), `İ`/`ı` (the Turkish pair — the correct mapping depends on the language, and
@@ -1480,7 +1489,7 @@ HALF-CONVERTED without warning — `"FERRETERÍA".toLower()` gave `"ferreterÍa"
 original nor the converted string, and looks almost right. For language-aware collation (sorting,
 `ñ` after `n`) use the database: this is case mapping, not collation. [test: compiler/language/test-415-case-unicode]
 
-12. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
+11. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
 `t`/`f` and `1`/`0` — and ABORTS naming the value on anything else.** This matters because the rows it
 consumes come from two sources that disagree: `<Struct>_valores()` writes `"true"`/`"false"`, while
 PostgreSQL's text format for `boolean` is `t`/`f`. Until 0.31.1 the generated code compared the cell
@@ -1491,7 +1500,7 @@ unrecognized text aborts instead of assuming `false`: a boolean nobody can read 
 assuming it would write a wrong decision into a system that bills people. Verified end to end against
 a real PostgreSQL server in `tests/postgres/05-orm-fields.nx`, with rows in both states. [test: postgres/05-orm-fields] [test: compiler/ecosystem/test-405-derive-fields]
 
-13. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`** — pushing a bare
+12. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`** — pushing a bare
 struct into an untyped `Array` and then reading it back with `for x: dyn Trait in arr` crashes with a
 SIGSEGV. Converting to `dyn` changes the REPRESENTATION (a pointer to the struct becomes a fat pointer
 `{ data, vtable }`), so it has to happen when the value is WRITTEN: once it is in the array every
@@ -1502,14 +1511,14 @@ heterogeneous list — several impls in the same collection — work. Annotating
 than failing to compile, is pushing the concrete struct into an untyped `Array` and reading it as
 `dyn`. [test: compiler/language/test-391-dyn-trait-array]
 
-14. **A field can only be read from a name or a chain of fields: `f().x`, `a[0].x` and `T{...}.x` are an error (NYX2003; writing them is NYX2006).**
+13. **A field can only be read from a name or a chain of fields: `f().x`, `a[0].x` and `T{...}.x` are an error (NYX2003; writing them is NYX2006).**
 Bind first: `let p: Punto = f()` then `p.x`; with an index, `let e: Punto = a[0]` then `e.x`; to write,
 `var e: Punto = a[0]`, `e.x = 9`, `a[0] = e`. Chains (`a.b.c`, `self.i.v`), properties on a chain
 (`s.name.length`), tuple elements (`t.0`) and method calls (`f().length()`) are other forms and do work.
 Since 0.31.0 `nyx check` reports it with function and line; before, only the build failed, without a
 location. [test: compiler/errors/fixtures/codegen-field-access-complex-receiver] [test: compiler/errors/fixtures/positive-nyx2003-receptores-soportados]
 
-15. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
+14. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`** —
 `try_pg_query` returns every value as text, and SQL NULL comes back as a one-byte sentinel, not
 as `""`. Comparing with `== ""` treats a real NULL as an empty string and, worse, treats a
 genuinely empty column as if it were NULL: two different values collapse into one. Always use
@@ -1518,7 +1527,7 @@ changes in one place. The one edge: a `bytea` column holding exactly one zero by
 else reads as NULL; that is the price of keeping rows as `Array` of String instead of
 `Option<String>`. [test: postgres/02-query]
 
-16. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
+15. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
 line — never hardcoded in the compiler.** The compiler reads that line to know which `std/` modules
 to pre-register as "already imported"; a module in the prelude that is NOT pre-registered gets
 re-inlined by an explicit `import`, and the IR then defines its types twice (`redefinition of type`,
@@ -1528,7 +1537,7 @@ install separately, and a new prelude read by an older compiler breaks every pro
 the new module — with nothing changed on the user's side. Two guards refuse to let the copy come
 back (`gen_prelude.sh`, `run_prelude_divergence.sh`). [test: compiler/types/test-372-std-error]
 
-17. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
+16. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.** The
 prelude is concatenated into every program, so `Error`, `err_new`, `errno_to_kind`, `sort_int`,
 `checked_add`, `RoundMode` and the rest of `std/io`/`math`/`array`/`file`/`map`/`error` already
 occupy the namespace. `struct Error { codigo: int }` of your own does not shadow the prelude's — it
@@ -1537,7 +1546,7 @@ prelude's declaration won SILENTLY and the errors that followed described fields
 (`field 'codigo' does not exist in struct 'Error'`, pointing at YOUR line), which sent you to debug
 the wrong program. Pick a qualified name (`ErrorDeNegocio`, `AppError`) for anything domain-specific. [test: compiler/errors/test-nyx1013-colision-con-el-prelude]
 
-18. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+17. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.** `random_bytes` is backed
 by `nyx_random_bytes` (`runtime/random.c`), which draws from a single `xorshift64` generator seeded
 once from `/dev/urandom` (`rng_init`, `runtime/random.c`) — fine for simulation, sampling, jitter, or
@@ -1554,7 +1563,7 @@ Use `random_bytes`/`random_int`/`random_float` for anything where predictability
 use `csprng_bytes` for anything where predictability is a security breach (password salts, session
 tokens, API keys, encryption nonces/IVs, CSRF tokens). [test: compiler/ecosystem/test-170-random-uuid] [test: compiler/ecosystem/test-248-webpushcrypto]
 
-19. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
+18. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`** —
 `sqlite_query`/`sqlite_query_named` and their `Result`-returning twins return every value as
 text, and SQL NULL comes back as a one-byte sentinel, not as `""`. Comparing with `== ""` treats
 a real NULL as an empty string and, worse, treats a genuinely empty column as if it were NULL:
@@ -1563,16 +1572,16 @@ hand — the day the representation needs to change, it changes in one place. Th
 or TEXT column holding exactly one zero byte and nothing else reads as NULL; that is the price of
 keeping rows as `Array` of String instead of `Option<String>`. [test: compiler/stdlib-suite/test-406-sqlite-tipos-null]
 
-20. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
+19. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale** — the common prefix
 decides, and on an equal prefix the shorter string wins. That makes ASCII uppercase sort before
 lowercase (`"Z" < "a"`), and it means canonical `YYYY-MM-DD` dates sort chronologically as plain text,
 which is the idiomatic way to order them. It also means this is NOT human-language collation: `"á"`
 does not sort next to `"a"`. Same rule as everywhere else in Nyx — strings are bytes. [test: 26-string-order-dates] [test: compiler/language/test-389-string-order-compare]
 
-21. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
+20. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.** Use `panic`
 for the unrecoverable and `Result` for the expected; `throw` keeps compiling but `nyx vet` flags it. [test: compiler/language/test-382-throw-is-panic-alias]
 
-22. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+21. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.** The three old names still compile (removing them would be a MAJOR change) but `nyx
 vet` flags them with W110. The problem was never the behaviour, it was that four names described two
@@ -1587,7 +1596,7 @@ mechanical and safe, because the aliases are exact: `time()` → `time_epoch()`,
 clock it meant, which is the whole point — a duration measured as `monotonic_us() - inicio` is
 self-evidently right, whereas `time_us() - inicio` still needs the reader to know. [test: compiler/systems/test-410-clock-domain]
 
-23. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+22. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
 `let x: int = sleep(1)` used to pass `check OK` and die in clang with `void type only allowed for
 function results`, pointing at a temporary `.ll` you never see; since 0.31.0 the checker names your
 file, function and line. Call them as a statement. The full list (35):
@@ -1680,7 +1689,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -1882,6 +1891,17 @@ it. Now each early exit releases exactly the `try` blocks it leaves: `return` an
 of the function's, `break`/`continue` only those opened inside the loop, a `return` inside a
 `catch` releases nothing extra, and a lambda or nested function counts its own. If you moved a
 `return` out of a `try` (storing the result in a variable) to avoid the panic, you can put it back. [test: compiler/language/test-431-try-salida-temprana-pop]
+
+24. **A private function in a `std/` module with the same name as a builtin no longer hijacks your
+call.** In 0.32.0, when `pub` started protecting unqualified calls (NYX1036), importing two stdlib
+modules could stop compiling through no fault of your own: `std/toml` declares a private
+`fn string_to_int` (no `pub`), and the visibility check treated it as the owner of every
+unqualified `string_to_int(...)` — so `import "std/toml"` plus `import "std/postgres"` failed with
+five errors that named stdlib internals. Reported by a user on 2026-09-18 and fixed in 0.32.1:
+visibility can only deny a call that has no other legitimate target, and a builtin with that name is
+one. Resolution is unchanged — the call still reaches the BUILTIN, which matters because the two
+behave differently on bad input (`string_to_int("4x2")` aborts in the builtin, while the `std/toml`
+one would skip the `x` and return 42). [test: 30-std-privada-homonima-de-builtin]
 
 <!-- /gen:gotchas -->
 

@@ -121,7 +121,7 @@ pub fn h2_send_response(fd: int, stream_id: int, status: int, resp_headers: Arra
 
 // ── Frame Dispatch Loop ──────────────────────────────────────────────────────
 
-fn h2_connection_loop(fd: int, cb: Fn) -> int {
+fn h2_connection_loop(fd: int, cb: Fn(String, String, Array, String) -> Array) -> int {
     // Read client preface SETTINGS
     let first_frame: Array = nyx_h2_read_frame(fd)
     if first_frame.length() < 4 { tcp_close(fd); return -1 }

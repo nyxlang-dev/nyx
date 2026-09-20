@@ -959,7 +959,7 @@ pub fn http_cors_response(origin: String) -> String {
 // el runtime además lo grita por stderr desde v0.24.4). CHEQUEA el
 // retorno: descartarlo deja el programa "corriendo" sin servidor.
 //   if http_serve(8080, handler) < 0 { return 1 }
-pub fn http_serve(port: int, handler: Fn) -> int {
+pub fn http_serve(port: int, handler: Fn(Array) -> String) -> int {
     let server: int = tcp_listen("0.0.0.0", port)
     if server < 0 {
         return -1

@@ -16,7 +16,7 @@ fn make_adder(n: int) -> Fn {
     return add
 }
 
-fn apply(f: Fn, value: int) -> int {
+fn apply(f: Fn(int) -> int, value: int) -> int {
     return f(value)
 }
 

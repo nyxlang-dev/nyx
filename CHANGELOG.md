@@ -9,7 +9,37 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
-> Vacío por ahora: lo que había se publicó en 0.32.3.
+### Added
+- **`nyx vet` avisa W004: un parámetro `Fn` sin firma cuyo resultado se usa.** Nace de una fricción
+  de **nyxerp** (2026-09-19): un middleware con `siguiente: Fn` compilaba limpio, `nyx check` y
+  `nyx vet` daban verde, y el binario moría con `exit 139` en el primer pedido. La causa es el
+  convenio de retorno — un valor `Fn` sin firma no lo lleva, así que la llamada indirecta asume
+  `i64`: un callback que devuelve un struct por valor hace SIGSEGV (el `i64` que llega es el primer
+  campo, y se desreferencia) y uno que devuelve `float` devuelve **basura en silencio**
+  (`0.16` → `281472821301216.0`); con `int` o `String` el convenio coincide de casualidad y anda.
+  > **Por qué solo cuando el resultado se USA**: la idea obvia —un patrón textual sobre `: Fn`— ya
+  > se había evaluado y descartado el 2026-09-04 por ruido. Al medirlo de nuevo apareció el corte:
+  > de los **44** `Fn` pelados de la stdlib, solo **4** llaman al parámetro y usan lo que devuelve.
+  > Guardar el callback, pasarlo a otra función o llamarlo descartando el retorno no tiene el bug y
+  > no avisa. Auditoría de falsos positivos: **0 avisos en 173 archivos** de `by-example` + `std`.
+  > **El arreglo de fondo NO está hecho** y pide decisión: spec
+  > `docs/design/specs/2026-09-20-fn-sin-firma-design.md` (D-2 a D-4 abiertas). Es la tercera
+  > aparición de la misma causa; las dos anteriores se parchearon el 2026-09-13.
+
+### Fixed
+- **`make test-ai-first` estaba en rojo en `main` desde el 2026-09-18**, y el rojo no era del
+  código: `tests/ai-first/30-std-privada-homonima-de-builtin.nx` entró sin que ningún gotcha lo
+  citara, y `run_gotcha_coverage.sh` exige que cada test de esa carpeta pertenezca a un ítem de
+  `LLM.md`. El test cubría un arreglo real y no documentado, así que se escribió el gotcha que le
+  faltaba (`std-private-shadows-builtin`, `kind: fixed`): una privada de un módulo de `std/`
+  homónima de un builtin ya no se apropia de la llamada sin calificar. La guarda corta la batería
+  en ese punto, así que todo lo que corre después llevaba dos días sin ejecutarse.
+- **Tres callbacks de la stdlib declaraban `Fn` sin firma y usaban su resultado**: `http_serve`
+  (`handler: Fn(Array) -> String`), `h2_connection_loop` (`cb: Fn(String, String, Array, String) -> Array`)
+  y la receta `10-closures` (`f: Fn(int) -> int`). Eran los tres casos que W004 encontró en el
+  propio repositorio: un handler de usuario que devolviera un struct reventaba dentro de `std/http`.
+  Ahora la firma está declarada, así que la llamada usa el convenio real y el checker valida
+  aridad y tipos en el sitio de llamada.
 
 ---
 

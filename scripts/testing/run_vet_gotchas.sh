@@ -9,7 +9,7 @@
 #      la línea, no sólo «hubo un aviso» — y ningún W1xx de más.
 #   2. NEGATIVA — tests/vet/clean.nx (las versiones correctas) y la AUDITORÍA
 #      DE FALSOS POSITIVOS sobre examples/by-example/*.nx y std/*.nx: cero
-#      avisos W1xx. Un patrón que grite sobre la stdlib es ruido, no señal;
+#      avisos W004/W1xx. Un patrón que grite sobre la stdlib es ruido, no señal;
 #      cuando eso pasa se ajusta el `pattern:` en docs/gotchas/<id>.md (y se
 #      regenera con `make gen-agent-docs`) o se lo quita — nunca se excluye un
 #      archivo acá.
@@ -36,7 +36,7 @@ if ! make -s build-vet > "$T/build.log" 2>&1; then
     exit 1
 fi
 
-# Corre `nyx vet` sobre $1 y deja sus avisos W1xx (uno por línea) en $2.
+# Corre `nyx vet` sobre $1 y deja sus avisos W004/W1xx (uno por línea) en $2.
 # Retorna el EXIT STATUS de nyx_vet: un vet que se cae imprime cero avisos, o
 # sea que tragarlo convertía "el binario reventó" en "no hay falsos positivos".
 vet_w1() {
@@ -44,7 +44,7 @@ vet_w1() {
     out="$T/vet.raw"
     NYX_SRC="$1" ./nyx_vet > "$out" 2>&1
     local rc=$?
-    grep '^warning\[W1' "$out" > "$2"
+    grep -E '^warning\[(W004|W1)' "$out" > "$2"
     return $rc
 }
 
@@ -70,13 +70,13 @@ check_fixture() {
             echo "      ✗ $fixture:$ln: se esperaba 1 aviso $code y hubo $hits"
             bad=1
         fi
-    done < <(grep -nE '// EXPECT W1[0-9]{2}' "$fixture" \
-             | sed -E 's|^([0-9]+):.*// EXPECT (W1[0-9]{2}).*|\1:\2|')
+    done < <(grep -nE '// EXPECT (W004|W1[0-9]{2})' "$fixture" \
+             | sed -E 's|^([0-9]+):.*// EXPECT (W004\|W1[0-9]{2}).*|\1:\2|')
 
     local total
-    total="$(grep -c '^warning\[W1' "$log")"
+    total="$(grep -cE '^warning\[(W004|W1)' "$log")"
     if [ "$total" != "$expected" ]; then
-        echo "      ✗ $fixture: $total avisos W1xx para $expected marcas EXPECT"
+        echo "      ✗ $fixture: $total avisos W004/W1xx para $expected marcas EXPECT"
         sed 's/^/        /' "$log"
         bad=1
     fi
@@ -100,7 +100,7 @@ fi
 
 # ── 1. Mitad positiva: el fixture real ──────────────────────────────────
 if check_fixture "$FIXTURE"; then
-    n="$(grep -cE '// EXPECT W1[0-9]{2}' "$FIXTURE")"
+    n="$(grep -cE '// EXPECT (W004|W1[0-9]{2})' "$FIXTURE")"
     echo "  ✓ fixture: $n casos, cada uno con su código y su línea exactos"
 else
     echo "  ✗ el fixture no da los avisos esperados"
@@ -113,9 +113,9 @@ if ! vet_w1 "$CLEAN" "$T/clean.w1"; then
     FAIL=1
 fi
 if [ ! -s "$T/clean.w1" ]; then
-    echo "  ✓ clean: cero avisos W1xx sobre las versiones correctas"
+    echo "  ✓ clean: cero avisos W004/W1xx sobre las versiones correctas"
 else
-    echo "  ✗ $CLEAN dispara avisos W1xx:"
+    echo "  ✗ $CLEAN dispara avisos W004/W1xx:"
     sed 's/^/      /' "$T/clean.w1"
     FAIL=1
 fi
@@ -134,13 +134,13 @@ for f in examples/by-example/*.nx std/*.nx; do
         echo "$f:?: nyx_vet salió con error" >> "$T/fp.log"
         continue
     fi
-    sed -E "s|^warning\[(W1[0-9]{2})\] [^:]*:([0-9?]+):.*|$f:\2: \1|" "$T/one.w1" >> "$T/fp.log"
+    sed -E "s|^warning\[(W004\|W1[0-9]{2})\] [^:]*:([0-9?]+):.*|$f:\2: \1|" "$T/one.w1" >> "$T/fp.log"
 done
 if [ "$scanned" -lt "$FLOOR" ]; then
     echo "  ✗ la auditoría escaneó $scanned archivos, menos que el piso $FLOOR — ¿se rompió el glob?"
     FAIL=1
 elif [ ! -s "$T/fp.log" ]; then
-    echo "  ✓ auditoría de falsos positivos: 0 avisos W1xx en $scanned archivos (by-example + std)"
+    echo "  ✓ auditoría de falsos positivos: 0 avisos W004/W1xx en $scanned archivos (by-example + std)"
 else
     echo "  ✗ falsos positivos en $scanned archivos de by-example + std:"
     sed 's/^/      /' "$T/fp.log"

@@ -69,25 +69,25 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
-1. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
+1. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
+2. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
 función — ante la duda usa claves planas: `map.insert("user::name", "alice")`.**
-2. **Un `channel_new(N)` chico puede deadlockear un productor/consumidor si envías todo antes de empezar
+3. **Un `channel_new(N)` chico puede deadlockear un productor/consumidor si envías todo antes de empezar
 a drenar un segundo canal acotado — dimensiona cada canal para al menos el total de mensajes que va a
 transportar.**
-3. **Un `int` de C (32 bits) retornado por una función `extern "C"` NO hace sign-extend a un `int` de Nyx
+4. **Un `int` de C (32 bits) retornado por una función `extern "C"` NO hace sign-extend a un `int` de Nyx
 (64 bits) — un valor negativo de C cruza como un número positivo enorme, nunca como negativo.**
-4. **`time_epoch()` (y su alias exacto `time()`) es el reloj de pared (segundos desde el epoch Unix);
+5. **`time_epoch()` (y su alias exacto `time()`) es el reloj de pared (segundos desde el epoch Unix);
 `time_ms()` y `time_us()` son el reloj MONOTÓNICO (desde que arrancó la máquina) — cuatro nombres
 para dos relojes, y el prefijo `time_` compartido esconde cuál es cuál, así que dividir cualquiera de
 ellos es casi siempre el bug.**
-5. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — usa
+6. **La aritmética de `int` (`+`/`-`/`*`) desborda en wraparound silencioso (complemento a dos) — usa
 `checked_add`/`checked_sub`/`checked_mul`/`checked_div` para DETECTARLO, y `mul_div_round(a, b, c,
 modo)` para la forma `a*b/c`, que calcula el producto intermedio en 128 bits.**
-6. **`sslmode=require` cifra la conexión pero NO verifica el certificado del servidor: completa el
+7. **`sslmode=require` cifra la conexión pero NO verifica el certificado del servidor: completa el
 handshake TLS con un impostor sin chistar.**
-7. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
 8. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
 9. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**
 10. **`charAt()` retorna int (ASCII/codepoint), NO String — hay que comparar contra números:

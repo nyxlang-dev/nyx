@@ -64,25 +64,25 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,fn-callback-typed,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
 
-1. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
+1. **Callbacks: prefer `Fn(Type) -> Ret`**
+2. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
 doubt use flat keys: `map.insert("user::name", "alice")`.**
-2. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
+3. **A small `channel_new(N)` can deadlock a producer/consumer if you send everything before you start
 draining a second bounded channel — size each channel to at least the total number of messages it will
 carry.**
-3. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
+4. **A C `int` (32 bits) returned by an `extern "C"` function does NOT sign-extend into a Nyx `int` (64
 bits) — a negative C value crosses as a huge positive number, never as a negative one.**
-4. **`time_epoch()` (and its exact alias `time()`) is the wall clock (seconds since the Unix epoch);
+5. **`time_epoch()` (and its exact alias `time()`) is the wall clock (seconds since the Unix epoch);
 `time_ms()` and `time_us()` are the MONOTONIC clock (since the machine booted) — four names for two
 clocks, and the shared `time_` prefix hides which is which, so dividing any of them is almost always
 the bug.**
-5. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — use
+6. **`int` arithmetic (`+`/`-`/`*`) overflows into silent wraparound (two's complement) — use
 `checked_add`/`checked_sub`/`checked_mul`/`checked_div` to DETECT it, and `mul_div_round(a, b, c,
 mode)` for the `a*b/c` shape, which computes the intermediate product in 128 bits.**
-6. **`sslmode=require` encrypts the connection but does NOT verify the server's certificate — it will
+7. **`sslmode=require` encrypts the connection but does NOT verify the server's certificate — it will
 happily complete a TLS handshake with an impostor.**
-7. **Callbacks: prefer `Fn(Type) -> Ret`**
 8. **`await` of a `float`-returning function is gated (NYX1021)**
 9. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**
 10. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.**

@@ -9,13 +9,13 @@
 #   PATTERN_CODES  "W1NN|id" de cada gotcha con pattern grep-able
 
 GOTCHA_IDS=(
+  "fn-callback-typed"
   "nested-map-from-call"
   "small-channel-deadlock"
   "ffi-c-int-no-sign-extend"
   "clock-domain-time-builtins"
   "int-wraps-silently"
   "pg-require-no-verifica"
-  "fn-callback-typed"
   "await-float-gated"
   "channel-is-map"
   "charat-returns-int"
@@ -68,16 +68,17 @@ GOTCHA_IDS=(
   "json-truncated-rejected"
   "nested-fn-sees-module"
   "try-early-exit-pop"
+  "std-private-shadows-builtin"
 )
 
 ANCLAS=(
+  "Fn(Type)|fn-callback-typed"
   "user::name|nested-map-from-call"
   "deadlock|small-channel-deadlock"
   "sign-extend|ffi-c-int-no-sign-extend"
   "time_epoch|clock-domain-time-builtins"
   "wraparound|int-wraps-silently"
   "sslmode|pg-require-no-verifica"
-  "Fn(Type)|fn-callback-typed"
   "NYX1021|await-float-gated"
   "channel_new|channel-is-map"
   "charAt|charat-returns-int"
