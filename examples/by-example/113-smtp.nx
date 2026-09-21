@@ -1,0 +1,119 @@
+// Nyx by Example: mandar un correo con una factura adjunta.
+//
+// El caso real: un ERP perdió la contraseña de su instalación de demostración
+// y la única salida que el sistema pudo ofrecer fue crear un usuario nuevo,
+// porque no había forma de mandar un correo de recuperación. El campo `correo`
+// estaba guardado en el usuario y no se usaba para nada.
+//
+// Lo que esta receta muestra:
+//   1. el mensaje armado tal como viaja — headers, MIME y adjunto en base64;
+//   2. el DOT-STUFFING, que es lo que evita que el mensaje llegue cortado;
+//   3. cómo se distingue un rechazo de auth de uno de destinatario;
+//   4. la forma de las dos conexiones reales (587 con STARTTLS y 465).
+//
+// NO abre una conexión a propósito: un servidor SMTP de verdad necesita
+// credenciales, y esta receta corre sola bajo `make test-examples`. Las dos
+// llamadas que conectan quedan como comentario, listas para copiar.
+
+import "std/smtp"
+import "std/error"
+
+fn main() -> int {
+    // ── 1. El mensaje ────────────────────────────────────────────────────
+    // El cuerpo se escribe con \n normal: std/smtp lo normaliza a CRLF, que es
+    // lo único que el protocolo admite.
+    let cuerpo: String = "Estimado cliente,\n\nAdjuntamos la factura del mes.\n\nSaludos"
+
+    var msg: Array = smtp_message(
+        "facturacion@miempresa.com",          // de
+        ["cliente@ejemplo.com"],              // para (varios: agregar a la lista)
+        "Factura de septiembre",              // asunto
+        cuerpo)
+
+    // El adjunto son los BYTES del archivo. read_file es binary-safe, así que
+    // un PDF viaja entero; la codificación base64 la hace smtp_attach.
+    //   let pdf: String = read_file("factura.pdf")
+    let pdf: String = "%PDF-1.4 (contenido de ejemplo)"
+    msg = smtp_attach(msg, "factura.pdf", "application/pdf", pdf)
+
+    // ── 2. Lo que se manda de verdad ─────────────────────────────────────
+    // smtp_render es una función PURA: se puede inspeccionar el mensaje sin
+    // abrir un socket. Útil para depurar y para testear.
+    let crudo: String = smtp_render(msg)
+    print("— headers del mensaje —")
+    let corte: int = crudo.indexOf("\r\n\r\n")
+    print(crudo.substring(0, corte))
+
+    print("")
+    print("¿lleva el adjunto en base64? " + __si_no(crudo.indexOf("Content-Transfer-Encoding: base64") >= 0))
+    print("¿lleva Content-Disposition?  " + __si_no(crudo.indexOf("Content-Disposition: attachment") >= 0))
+
+    // ── 3. DOT-STUFFING: por qué la factura no llega cortada ─────────────
+    // El cuerpo de un mensaje termina con una línea que dice solo ".". Si una
+    // línea del CONTENIDO empieza con punto y no se duplica, el servidor da el
+    // mensaje por terminado ahí y entrega la mitad — sin error de ningún lado.
+    // std/smtp lo hace solo.
+    let con_punto: Array = smtp_message("a@x.com", ["b@x.com"], "Importe",
+                                        "Total:\n.50 de descuento\nGracias")
+    let r: String = smtp_render(con_punto)
+    print("")
+    print("línea que empieza con punto, ya protegida: " + __si_no(r.indexOf("..50 de descuento") >= 0))
+
+    // ── 4. Cómo se conecta de verdad ─────────────────────────────────────
+    // 587 con STARTTLS (lo habitual):
+    //
+    //   match smtp_connect_plain("smtp.proveedor.com", 587, "miempresa.com") {
+    //       Result.Ok(c0) => {
+    //           match smtp_starttls(c0, "miempresa.com") {
+    //               Result.Ok(c) => {
+    //                   match smtp_auth_plain(c, "usuario", "clave") {
+    //                       Result.Ok(_x) => {
+    //                           match smtp_send(c, msg) {
+    //                               Result.Ok(_y) => { print("enviado") }
+    //                               Result.Err(e) => { print(explicar(e)) }
+    //                           }
+    //                           let _q: int = smtp_quit(c)
+    //                       }
+    //                       Result.Err(e) => { print(explicar(e)) }
+    //                   }
+    //               }
+    //               Result.Err(e) => { print(explicar(e)) }
+    //           }
+    //       }
+    //       Result.Err(e) => { print(explicar(e)) }
+    //   }
+    //
+    // 465 con TLS desde el saludo: smtp_connect_tls(host, 465, "miempresa.com")
+    // y después igual, sin el paso de smtp_starttls.
+    //
+    // Las dos VERIFICAN el certificado. Para un servidor de desarrollo con
+    // certificado autofirmado existen smtp_starttls_insecure y
+    // smtp_connect_tls_insecure, que dicen en el nombre lo que hacen.
+    //
+    // Y AUTH nunca viaja en claro: si el canal no está cifrado, smtp_auth_*
+    // falla ANTES de mandar las credenciales. No hay flag para saltearlo.
+
+    print("")
+    print("— qué hacer con cada error —")
+    print(explicar(err_new(535, "auth", "autenticación rechazada")))
+    print(explicar(err_new(550, "recipient", "destinatario rechazado")))
+    print(explicar(err_new(0, "connection", "no se pudo conectar")))
+    print(explicar(err_new(451, "protocol", "fallo transitorio")))
+    return 0
+}
+
+// Cada `kind` pide una acción distinta. Eso es lo que hace que valga la pena
+// que el error sea tipado: un Err genérico no dice qué arreglar.
+fn explicar(e: Error) -> String {
+    if e.kind == "auth" { return "auth       → revisar usuario y clave del proveedor" }
+    if e.kind == "recipient" { return "recipient  → la dirección del destinatario está mal" }
+    if e.kind == "sender" { return "sender     → el proveedor no te deja mandar desde ese remitente" }
+    if e.kind == "connection" { return "connection → red, host o puerto; o el certificado no validó" }
+    if e.kind == "protocol" { return "protocol   → el servidor cortó o contestó algo inesperado" }
+    return "desconocido"
+}
+
+fn __si_no(b: bool) -> String {
+    if b { return "sí" }
+    return "no"
+}

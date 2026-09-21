@@ -1,0 +1,12 @@
+// aux del test-432: módulo B con una `calcular` de ARIDAD 2 y otra cuenta,
+// homónima de la de aux_homo_caller_a. Las aridades son distintas a propósito:
+// si la resolución se fuera al módulo equivocado, el chequeo de aridad
+// (scope_get_arity, que consulta fn_module_resolve) acusaría un error que no
+// existe, o —peor— dejaría pasar una llamada mal tipada.
+pub fn calcular(x: int, y: int) -> int {
+    return x * y
+}
+
+pub fn desde_b() -> int {
+    return calcular(3, 4)
+}

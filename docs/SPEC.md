@@ -4540,6 +4540,104 @@ Conducta:
 
 ---
 
+## Correo saliente (`std/smtp`)
+
+Cliente SMTP (RFC 5321) para **mandar**. No recibe: IMAP y POP3 quedan fuera a propósito, porque
+el parseo de MIME de ENTRADA es un problema distinto y más grande. Tampoco encola ni reintenta —
+mandar un correo es una operación, encolarlo es un producto.
+
+### Conectar
+
+| Función | Puerto | Qué hace |
+|---|---|---|
+| `smtp_connect_plain(host, port, quien) -> Result<Array, Error>` | 25 | En claro. Saluda y manda el `EHLO`. |
+| `smtp_connect_tls(host, port, quien)` | 465 | TLS desde el saludo, **verificando** el certificado. |
+| `smtp_connect_tls_insecure(host, port, quien)` | 465 | Igual, **sin verificar**. Para desarrollo. |
+| `smtp_starttls(c, quien) -> Result<Array, Error>` | 587 | Sube a TLS una conexión en claro, **verificando**. |
+| `smtp_starttls_insecure(c, quien)` | 587 | Igual, **sin verificar**. |
+| `smtp_quit(c) -> int` | | Cierra ordenadamente. |
+
+`quien` es el nombre que va en el `EHLO`, no el host del certificado — ese sale del `host` con el
+que se abrió la conexión.
+
+**Se verifica por omisión.** Las variantes que no verifican lo dicen en el nombre. El motivo es un
+precedente propio: hasta el 2026-09-11 `https_get` cifraba sin autenticar, y contra badssl.com un
+certificado vencido, uno autofirmado y uno emitido para otro nombre devolvían los tres 200 OK.
+Cifrar contra un impostor no protege nada.
+
+**El segundo `EHLO` no es opcional.** `smtp_starttls` lo repite solo, porque las capacidades
+cambian al cifrar: un servidor que no anuncia `AUTH` en claro sí lo anuncia sobre TLS.
+
+### Autenticar
+
+```nyx
+smtp_auth_plain(c, usuario, clave) -> Result<int, Error>   // un paso
+smtp_auth_login(c, usuario, clave) -> Result<int, Error>   // tres vueltas, servidores viejos
+```
+
+**Nunca sobre un canal en claro, y no hay flag para forzarlo.** La comprobación mira el estado real
+del canal, no lo que el servidor anuncia: un servidor mal configurado —o alguien en el medio—
+puede anunciar `AUTH` sin ofrecer `STARTTLS`, y si el cliente le cree, la clave viaja legible.
+
+### El mensaje
+
+```nyx
+smtp_message(de, para: Array, asunto, cuerpo) -> Array        // text/plain
+smtp_message_html(de, para: Array, asunto, html) -> Array     // text/html
+smtp_attach(m, nombre, content_type, datos) -> Array          // datos = BYTES, el base64 lo hace la función
+smtp_render(m) -> String                                       // el mensaje tal como viaja (función pura)
+smtp_boundary(m) -> String
+smtp_send(c, m) -> Result<int, Error>
+```
+
+`smtp_render` es pura a propósito: el bytestream se puede inspeccionar y testear sin abrir un
+socket.
+
+Lo que el módulo resuelve solo, y que es donde se rompen las implementaciones a mano:
+
+- **Dot-stuffing.** El cuerpo termina con una línea que dice solo `.`, así que una línea del
+  contenido que empiece con punto sale duplicada. Sin eso el servidor da el mensaje por terminado
+  ahí y entrega la mitad, **sin error de ningún lado**.
+- **Normalización a CRLF**: el llamador escribe `\n` y el módulo emite `\r\n`.
+- **base64 cortado a 76 columnas**: el RFC 5322 pone el techo en 998 octetos por línea.
+- **RFC 2047 en el asunto**, y solo si tiene bytes no-ASCII. Un asunto ASCII no se codifica.
+- **`Message-ID` con el dominio del remitente**: uno con otro dominio es señal de spam.
+
+Fuera de alcance (decisión del arco): multipart anidado, `quoted-printable`, nombres de archivo
+RFC 2047, DKIM/SPF/DMARC.
+
+### Respuestas y errores
+
+```nyx
+smtp_parse_line(linea) -> Array    // [code, last, text]; code -1 = no es una respuesta válida
+smtp_line_code(l) -> int
+smtp_line_last(l) -> bool          // false = viene otra línea
+smtp_line_text(l) -> String
+smtp_is_ok(code) / smtp_is_intermediate(code) / smtp_is_transient(code) / smtp_is_permanent(code)
+smtp_cmd(c, linea) -> Array        // [code, texto]; manda y lee la respuesta completa
+smtp_ehlo(c, quien) / smtp_has_cap(c, cap) -> bool
+```
+
+El separador de la cuarta posición es todo el contrato: `250-PIPELINING` (guión) significa «viene
+otra línea» y `250 SIZE 35882577` (espacio) «esta era la última». Cualquier otro carácter ahí no es
+una respuesta válida.
+
+`3xx` es una familia propia: el `354` del `DATA` no es un éxito, es «mandá el cuerpo».
+
+Los `kind` del `Error` distinguen qué hay que arreglar:
+
+| `kind` | Qué pasó |
+|---|---|
+| `connection` | Red, host, puerto — o el certificado no validó. |
+| `protocol` | El servidor cortó o contestó algo inesperado (`code -1` = no hubo respuesta que leer). |
+| `auth` | Credenciales rechazadas, o se pidió `AUTH` sobre un canal en claro. |
+| `sender` | El servidor rechazó el remitente. |
+| `recipient` | El servidor rechazó un destinatario — el mensaje del error lo nombra. |
+
+Receta completa: `examples/by-example/113-smtp.nx`.
+
+---
+
 ## Middleware and Sessions
 
 ### Middleware (`std/web.nx`)

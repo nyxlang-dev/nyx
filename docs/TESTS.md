@@ -12,11 +12,11 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **449 archivos / 448 ARM64** | medido 2026-09-18 (+1 `test-430-include-bytes`, arco include-bytes; antes +1 `test-429-sse-frame`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
+| Regression | `make test` | **450 archivos / 449 ARM64** | medido 2026-09-21 (+1 `test-432-module-fn-homonyms-caller`, arco semantic-indice-simbolos; antes +1 `test-430-include-bytes`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **309** | +8 el 2026-09-20 (NYX1037: los tres contextos que revientan × 2 capas, el `Fn` que viene de un campo de struct, y el control positivo de los siete tipos que sí viajan); 301 tras include-bytes |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
-| Stdlib | `make test-stdlib` | **5** | std/math + std/array + integración + std/template + std/multipart (absorción de serve al core, 2026-08-31) |
+| Stdlib | `make test-stdlib` | **9** | math + array + integración + template + multipart (serve al core, 2026-08-31) + smtp ×4 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
 | Runtime C unit (B4) | `make test-runtime` | **35 suites / 1756 asserts** | verificado con corrida real 2026-09-20; +8 del fix de SIGPIPE en TLS (`test_tls_write_to_gone_peer_no_sigpipe`, `test_tls` 261 → 268) sobre los 1748 del arco `http-tls-cliente`; detalle en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **30 programas + 6 casos stdin (x2 targets) + 67 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (67: templates 2, tooling 15, coverage 9, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
@@ -35,7 +35,7 @@
 | Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **20 checks** (9 negativos + 11 positivos) | `[build]`/`--main` (errores previos; no pisa el principal); +6 (2026-09-15): `--main` no reescribe `nyx.lock` (nativo/wasm) ni contradice el manifiesto |
 | Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
-| Recetas by-example | `make test-examples` | **119** (106 ejecutan, 13 solo compilan+enlazan) | +1 `112-include-bytes`; compila, ENLAZA y CORRE cada receta con exit 0; motivo listado en el script. +1 `109-await-fetch-wasm`; +1 `111-nyx-test-coverage` |
+| Recetas by-example | `make test-examples` | **120** (107 ejecutan, 13 solo compilan+enlazan) | +1 `113-smtp` (arco `std-smtp`); compila, ENLAZA y CORRE cada receta con exit 0; motivo listado en el script |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **26 checks** | +1 el 2026-09-20 (NYX3007: `include_bytes` no existe al interpretar); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |

@@ -1,0 +1,753 @@
+// std/smtp — cliente SMTP (RFC 5321).
+//
+// De dónde sale: nyxerp perdió la contraseña de su instalación de demostración
+// y la única salida que el sistema pudo ofrecer fue crear un usuario nuevo,
+// porque no hay forma de mandar un correo de recuperación. El otro caso es la
+// factura en PDF al cliente.
+//
+// Alcance (spec 2026-09-19, D-1 a D-5): ENVIAR. No recibir — IMAP y POP3 son
+// otro arco, porque el MIME de ENTRADA lo escribe cualquiera y es un problema
+// más grande que el de salida. Sin colas ni reintentos: mandar un correo es una
+// operación, encolarlo es un producto y `nyx-queue` existe.
+//
+// ── Las respuestas del servidor ───────────────────────────────────────────
+// Toda respuesta SMTP es un código de tres dígitos seguido de un separador y
+// un texto. El separador es lo ÚNICO que distingue «sigo» de «terminé»:
+//
+//     250-PIPELINING        <- guión: viene otra línea
+//     250-STARTTLS          <- guión: viene otra línea
+//     250 SIZE 35882577     <- espacio: esta era la última
+//
+// Confundirlos deja al cliente esperando una línea que nunca llega, o mandando
+// el comando siguiente antes de que el servidor termine de hablar. Por eso el
+// parseo es una función pura y testeada aparte del socket.
+//
+// La familia del código dice qué pasó, y hay que distinguir tres cosas que la
+// gente mezcla: 2xx es «listo», 3xx es «sigue, te escucho» (el 354 del DATA no
+// es un éxito: es una invitación a mandar el cuerpo), 4xx es transitorio
+// —reintentar más tarde puede funcionar— y 5xx es permanente.
+
+import "std/error"
+import "std/net"
+// std/tls: las variantes que VERIFICAN (tls_connect_verified,
+// tls_upgrade_fd_verified) son funciones de ese módulo, no builtins — sin este
+// import, cualquier programa que importe std/smtp sin importar std/tls falla
+// con NYX1002 «not declared», y el error apunta a ESTE archivo, no al suyo.
+import "std/tls"
+// std/time (time_breakdown, DateTime) para el header Date, y std/random
+// (random_int) para el Message-ID y el boundary. Van acá por la misma razón
+// que std/tls: si el módulo usa algo de otro módulo, lo importa ÉL — si no, el
+// error NYX1002 le aparece a su consumidor apuntando a este archivo.
+import "std/time"
+import "std/random"
+
+// ── Representación de una línea parseada ──────────────────────────────────
+// Array de 3 slots [code, last, text] en vez de struct: es la convención del
+// repo para tuplas livianas (json, http, tls_peer_cert) y evita el gotcha de
+// indexar y llamar un método en la misma expresión.
+const SMTP_LINE_CODE: int = 0
+const SMTP_LINE_LAST: int = 1
+const SMTP_LINE_TEXT: int = 2
+const SMTP_LINE_SLOTS: int = 3
+
+// Parsea UNA línea de respuesta. Devuelve code == -1 si la línea no es una
+// respuesta SMTP válida — y en ese caso NO inventa un texto: una línea que no
+// se entiende no tiene contenido que reportar, tiene un error de protocolo.
+pub fn smtp_parse_line(line: String) -> Array {
+    let s: String = __smtp_strip_eol(line)
+    if s.length() < 3 { return [-1, 1, ""] }
+
+    var code: int = 0
+    var i: int = 0
+    while i < 3 {
+        let d: int = s.charAt(i)
+        if d < 48 { return [-1, 1, ""] }      // '0'
+        if d > 57 { return [-1, 1, ""] }      // '9'
+        code = code * 10 + (d - 48)
+        i = i + 1
+    }
+
+    // Un código pelado ("250") es una respuesta final sin texto: válida.
+    if s.length() == 3 { return [code, 1, ""] }
+
+    // El RFC admite SOLO espacio o guión en la cuarta posición. Aceptar
+    // cualquier otra cosa haría pasar por buena una línea corrupta.
+    let sep: int = s.charAt(3)
+    let text: String = s.substring(4, s.length())
+    if sep == 32 { return [code, 1, text] }   // ' ' -> última
+    if sep == 45 { return [code, 0, text] }   // '-' -> sigue
+    return [-1, 1, ""]
+}
+
+pub fn smtp_line_code(l: Array) -> int {
+    if l.length() < SMTP_LINE_SLOTS { return -1 }
+    let n: int = l[SMTP_LINE_CODE]
+    return n
+}
+
+pub fn smtp_line_last(l: Array) -> bool {
+    if l.length() < SMTP_LINE_SLOTS { return true }
+    let n: int = l[SMTP_LINE_LAST]
+    return n == 1
+}
+
+pub fn smtp_line_text(l: Array) -> String {
+    if l.length() < SMTP_LINE_SLOTS { return "" }
+    let s: String = l[SMTP_LINE_TEXT]
+    return s
+}
+
+// ── Familias de códigos ───────────────────────────────────────────────────
+
+// 2xx: el comando se completó.
+pub fn smtp_is_ok(code: int) -> bool {
+    return code >= 200 && code < 300
+}
+
+// 3xx: el servidor espera más (354 = «manda el cuerpo y termina con un punto»).
+// NO es un éxito, y tratarlo como tal es cortar el diálogo a la mitad.
+pub fn smtp_is_intermediate(code: int) -> bool {
+    return code >= 300 && code < 400
+}
+
+// 4xx: falló AHORA, puede andar después (buzón lleno, servidor ocupado).
+pub fn smtp_is_transient(code: int) -> bool {
+    return code >= 400 && code < 500
+}
+
+// 5xx: no va a andar reintentando (usuario inexistente, sintaxis, auth mala).
+pub fn smtp_is_permanent(code: int) -> bool {
+    return code >= 500 && code < 600
+}
+
+// ── Internos ──────────────────────────────────────────────────────────────
+
+// Saca CR y LF del final. No usa trim(): un texto de respuesta puede terminar
+// en espacio significativo, y comerlo cambiaría lo que el servidor dijo.
+fn __smtp_strip_eol(s: String) -> String {
+    var out: String = s
+    var seguir: bool = true
+    while seguir {
+        if out.length() == 0 { seguir = false }
+        else {
+            let c: int = out.charAt(out.length() - 1)
+            if c == 13 || c == 10 { out = out.substring(0, out.length() - 1) }
+            else { seguir = false }
+        }
+    }
+    return out
+}
+
+// ── La conexión ───────────────────────────────────────────────────────────
+// Array de 4 slots. El slot TLS vale 0 mientras el canal está en claro y pasa
+// a ser el handle después de STARTTLS (Task 3): todo lo que lee o escribe mira
+// ESE slot para decidir por dónde hablar, así que el resto del diálogo no se
+// entera de si está cifrado o no.
+const SMTP_CONN_FD: int = 0
+const SMTP_CONN_TLS: int = 1
+const SMTP_CONN_HOST: int = 2
+const SMTP_CONN_CAPS: int = 3
+const SMTP_CONN_SLOTS: int = 4
+
+pub fn smtp_conn_caps(c: Array) -> String {
+    if c.length() < SMTP_CONN_SLOTS { return "" }
+    let s: String = c[SMTP_CONN_CAPS]
+    return s
+}
+
+// ¿El servidor anunció esta capacidad en el último EHLO? El nombre se compara
+// en MAYÚSCULAS y como palabra completa de la línea o como su primer token
+// ("SIZE 35882577" anuncia SIZE), porque un `indexOf` pelado diría que un
+// servidor con "STARTTLS" soporta "TLS", que no es lo mismo.
+pub fn smtp_has_cap(c: Array, cap: String) -> bool {
+    let caps: String = smtp_conn_caps(c)
+    if caps.length() == 0 { return false }
+    let quiero: String = cap.to_upper()
+    let lineas: Array = caps.split("\n")
+    var i: int = 0
+    while i < lineas.length() {
+        let linea: String = lineas[i]
+        let l: String = linea.to_upper()
+        if l == quiero { return true }
+        if l.length() > quiero.length() {
+            let prefijo: String = l.substring(0, quiero.length())
+            let sig: int = l.charAt(quiero.length())
+            if prefijo == quiero && sig == 32 { return true }
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// ── Lectura y escritura, ciegas al cifrado ────────────────────────────────
+
+fn __smtp_read_line(c: Array) -> String {
+    let h: int = c[SMTP_CONN_TLS]
+    if h != 0 { return tls_read_line(h) }
+    let fd: int = c[SMTP_CONN_FD]
+    return tcp_read_line(fd)
+}
+
+fn __smtp_write(c: Array, data: String) -> int {
+    let h: int = c[SMTP_CONN_TLS]
+    if h != 0 { return tls_write_conn(h, data) }
+    let fd: int = c[SMTP_CONN_FD]
+    return tcp_write(fd, data)
+}
+
+// Lee una respuesta COMPLETA: sigue leyendo mientras las líneas terminen en
+// «sigo» (guión), y devuelve [code, texto_de_todas_las_líneas_con_\n].
+//
+// Tope de 64 líneas a propósito: un servidor que manda continuaciones para
+// siempre colgaría al cliente en este loop, y un EHLO real no pasa de veinte.
+// Sin tope, un servidor hostil (o roto) es un cuelgue indefinido.
+fn __smtp_read_reply(c: Array) -> Array {
+    var code: int = -1
+    var texto: String = ""
+    var seguir: bool = true
+    var n: int = 0
+    while seguir {
+        if n >= 64 { return [-1, texto] }
+        let cruda: String = __smtp_read_line(c)
+        // Línea vacía = el peer cerró. No es una respuesta: es el fin.
+        if cruda.length() == 0 { return [-1, texto] }
+        let l: Array = smtp_parse_line(cruda)
+        let lc: int = smtp_line_code(l)
+        if lc == -1 { return [-1, texto] }
+        // Todas las líneas de una respuesta llevan el MISMO código; si cambia
+        // a mitad, el servidor está mezclando respuestas y no se sigue.
+        if code != -1 && lc != code { return [-1, texto] }
+        code = lc
+        if texto.length() > 0 { texto = texto + "\n" }
+        texto = texto + smtp_line_text(l)
+        if smtp_line_last(l) { seguir = false }
+        n = n + 1
+    }
+    return [code, texto]
+}
+
+// ── Diálogo ───────────────────────────────────────────────────────────────
+
+// Manda un comando y devuelve la respuesta completa como [code, texto].
+// El CRLF lo pone esta función: olvidarlo es un cuelgue, no un error visible.
+pub fn smtp_cmd(c: Array, linea: String) -> Array {
+    __smtp_write(c, linea + "\r\n")
+    return __smtp_read_reply(c)
+}
+
+// EHLO y guardado de capacidades. Se llama al conectar y OTRA VEZ después de
+// STARTTLS, porque las capacidades cambian al cifrar: un servidor que no
+// anuncia AUTH en claro sí lo anuncia sobre TLS. Olvidar el segundo EHLO es el
+// error clásico del protocolo (medido en la sonda de la Task 1: AUTH PLAIN
+// LOGIN aparece recién después del STARTTLS).
+pub fn smtp_ehlo(c: Array, quien: String) -> Result<Array, Error> {
+    let r: Array = smtp_cmd(c, "EHLO " + quien)
+    let code: int = r[0]
+    let texto: String = r[1]
+    if smtp_is_ok(code) == false {
+        return Result.Err(err_new(code, "protocol", "el servidor rechazó el EHLO: " + __smtp_diag(code, texto)))
+    }
+    var out: Array = c
+    out[SMTP_CONN_CAPS] = texto
+    return Result.Ok(out)
+}
+
+// Conecta en claro y deja la sesión lista (saludo 220 + EHLO). El puerto 25 es
+// el de servidor a servidor; para mandar desde un programa, lo normal es 587
+// con STARTTLS (Task 3) o 465 con TLS desde el saludo.
+pub fn smtp_connect_plain(host: String, port: int, quien: String) -> Result<Array, Error> {
+    let fd: int = tcp_connect(host, port)
+    if fd <= 0 {
+        return Result.Err(err_new(0, "connection", "no se pudo conectar a " + host + ":" + int_to_string(port)))
+    }
+    var c: Array = [fd, 0, host, ""]
+    let saludo: Array = __smtp_read_reply(c)
+    let code: int = saludo[0]
+    if code != 220 {
+        tcp_close(fd)
+        let texto: String = saludo[1]
+        return Result.Err(err_new(code, "protocol", "el servidor no saludó con 220: " + __smtp_diag(code, texto)))
+    }
+    return smtp_ehlo(c, quien)
+}
+
+// Cierra ordenadamente. Un QUIT sin respuesta no es un error que valga
+// reportar: el mensaje ya se entregó y el servidor puede cortar sin contestar.
+pub fn smtp_quit(c: Array) -> int {
+    let _r: Array = smtp_cmd(c, "QUIT")
+    let h: int = c[SMTP_CONN_TLS]
+    if h != 0 { tls_close_conn(h) }
+    else {
+        let fd: int = c[SMTP_CONN_FD]
+        tcp_close(fd)
+    }
+    return 0
+}
+
+// Un mensaje de error que dice qué clase de problema es, no solo el número.
+fn __smtp_diag(code: int, texto: String) -> String {
+    if code == -1 { return "respuesta ilegible o conexión cerrada por el servidor" }
+    var clase: String = "respuesta inesperada"
+    if smtp_is_transient(code) { clase = "fallo transitorio (reintentar más tarde puede funcionar)" }
+    if smtp_is_permanent(code) { clase = "fallo permanente (reintentar no va a cambiar nada)" }
+    return int_to_string(code) + " — " + clase + ": " + texto
+}
+
+// ── TLS ───────────────────────────────────────────────────────────────────
+//
+// Dos caminos, como en cualquier cliente de correo:
+//   465  TLS IMPLÍCITO — se cifra antes de que el servidor salude.
+//   587  STARTTLS      — se saluda en claro, se pide STARTTLS y recién ahí se
+//                        cifra. Es la forma que soporta `tls_upgrade_fd`.
+//
+// VERIFICACIÓN POR OMISIÓN, y el motivo está a la vista en `runtime/tls.c`:
+// hasta el 2026-09-11 `https_get` cifraba pero NO autenticaba, y contra
+// badssl.com un certificado vencido, uno autofirmado y uno emitido para otro
+// nombre devolvían los tres 200 OK. «Un API llamado https_get que no autentica
+// es una trampa, no una simplificación.» Lo mismo vale acá: mandar una clave
+// por un canal cifrado contra un impostor no protege nada.
+//
+// Las variantes `_insecure` existen para un servidor de desarrollo con
+// certificado autofirmado, y dicen en el nombre lo que hacen.
+
+extern "C" fn nyx_base64_encode(src: String) -> String
+
+// TLS implícito (465), VERIFICANDO cadena y nombre.
+pub fn smtp_connect_tls(host: String, port: int, quien: String) -> Result<Array, Error> {
+    return __smtp_connect_tls(host, port, quien, true)
+}
+
+// TLS implícito SIN verificar el certificado. Para desarrollo.
+pub fn smtp_connect_tls_insecure(host: String, port: int, quien: String) -> Result<Array, Error> {
+    return __smtp_connect_tls(host, port, quien, false)
+}
+
+fn __smtp_connect_tls(host: String, port: int, quien: String, verificar: bool) -> Result<Array, Error> {
+    var h: int = 0
+    if verificar { h = tls_connect_verified(host, port) }
+    else { h = tls_connect(host, port) }
+    if h == 0 {
+        var detalle: String = "no se pudo abrir el canal TLS contra " + host + ":" + int_to_string(port)
+        if verificar { detalle = detalle + " (con verificación: revisa la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)" }
+        return Result.Err(err_new(0, "connection", detalle))
+    }
+    var c: Array = [0, h, host, ""]
+    let saludo: Array = __smtp_read_reply(c)
+    let code: int = saludo[0]
+    if code != 220 {
+        tls_close_conn(h)
+        let texto: String = saludo[1]
+        return Result.Err(err_new(code, "protocol", "el servidor no saludó con 220: " + __smtp_diag(code, texto)))
+    }
+    return smtp_ehlo(c, quien)
+}
+
+// STARTTLS (587) sobre una conexión ya abierta en claro, VERIFICANDO.
+pub fn smtp_starttls(c: Array, quien: String) -> Result<Array, Error> {
+    return __smtp_starttls(c, quien, true)
+}
+
+// STARTTLS sin verificar el certificado. Para desarrollo.
+pub fn smtp_starttls_insecure(c: Array, quien: String) -> Result<Array, Error> {
+    return __smtp_starttls(c, quien, false)
+}
+
+fn __smtp_starttls(c: Array, quien: String, verificar: bool) -> Result<Array, Error> {
+    let ya: int = c[SMTP_CONN_TLS]
+    if ya != 0 {
+        return Result.Err(err_new(0, "protocol", "el canal ya está cifrado: STARTTLS se pide una sola vez"))
+    }
+    if smtp_has_cap(c, "STARTTLS") == false {
+        return Result.Err(err_new(0, "protocol", "el servidor no anuncia STARTTLS — con este servidor no hay forma de cifrar en este puerto; prueba el 465 con smtp_connect_tls"))
+    }
+    let r: Array = smtp_cmd(c, "STARTTLS")
+    let code: int = r[0]
+    if code != 220 {
+        let texto: String = r[1]
+        return Result.Err(err_new(code, "protocol", "el servidor rechazó STARTTLS: " + __smtp_diag(code, texto)))
+    }
+
+    // El handle TOMA LA PROPIEDAD del fd, con éxito y con fracaso (contrato de
+    // std/tls): después de esto el fd no se toca más. Si el handshake falla, el
+    // socket ya quedó cerrado — devolverlo invitaría a mandar texto plano por
+    // un canal que el servidor cree cifrado.
+    let fd: int = c[SMTP_CONN_FD]
+    let host: String = c[SMTP_CONN_HOST]
+    var h: int = 0
+    if verificar { h = tls_upgrade_fd_verified(fd, host) }
+    else { h = tls_upgrade_fd(fd, host) }
+    if h == 0 {
+        var detalle: String = "el handshake TLS falló después del STARTTLS contra " + host
+        if verificar { detalle = detalle + " (con verificación: revisa la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)" }
+        return Result.Err(err_new(0, "connection", detalle))
+    }
+    var out: Array = c
+    out[SMTP_CONN_TLS] = h
+
+    // El segundo EHLO NO es opcional: las capacidades cambian al cifrar. Un
+    // servidor que no anuncia AUTH en claro sí lo anuncia sobre TLS (medido en
+    // la sonda de la Task 1). Olvidarlo es el error clásico del protocolo.
+    return smtp_ehlo(out, quien)
+}
+
+// ── Autenticación ─────────────────────────────────────────────────────────
+//
+// NUNCA sobre un canal en claro, y no hay flag para desactivarlo. Un servidor
+// mal configurado —o un atacante en el medio— puede anunciar AUTH sin STARTTLS;
+// si el cliente le cree, la clave viaja legible. La comprobación mira el estado
+// REAL del canal, no lo que el servidor dice soportar.
+
+// AUTH PLAIN: manda authzid \0 authcid \0 passwd en base64, en un solo paso.
+pub fn smtp_auth_plain(c: Array, usuario: String, clave: String) -> Result<int, Error> {
+    let g: Result<int, Error> = __smtp_exigir_cifrado(c, "PLAIN")
+    if g.is_err() { return g }
+    let nul: String = "\0"
+    let payload: String = nyx_base64_encode(nul + usuario + nul + clave)
+    let r: Array = smtp_cmd(c, "AUTH PLAIN " + payload)
+    return __smtp_veredicto_auth(r)
+}
+
+// AUTH LOGIN: tres vueltas — el servidor pide usuario (334), después clave
+// (334), y recién ahí dicta el veredicto. Es más viejo y más charlatán que
+// PLAIN, pero hay servidores que solo soportan este.
+pub fn smtp_auth_login(c: Array, usuario: String, clave: String) -> Result<int, Error> {
+    let g: Result<int, Error> = __smtp_exigir_cifrado(c, "LOGIN")
+    if g.is_err() { return g }
+
+    let r1: Array = smtp_cmd(c, "AUTH LOGIN")
+    let c1: int = r1[0]
+    if smtp_is_intermediate(c1) == false {
+        let t1: String = r1[1]
+        return Result.Err(err_new(c1, "auth", "el servidor no aceptó AUTH LOGIN: " + __smtp_diag(c1, t1)))
+    }
+    let r2: Array = smtp_cmd(c, nyx_base64_encode(usuario))
+    let c2: int = r2[0]
+    if smtp_is_intermediate(c2) == false {
+        // Acá ya puede venir el rechazo definitivo (usuario inexistente).
+        return __smtp_veredicto_auth(r2)
+    }
+    let r3: Array = smtp_cmd(c, nyx_base64_encode(clave))
+    return __smtp_veredicto_auth(r3)
+}
+
+// La comprobación que hace que la promesa sea real.
+fn __smtp_exigir_cifrado(c: Array, mecanismo: String) -> Result<int, Error> {
+    let h: int = c[SMTP_CONN_TLS]
+    if h == 0 {
+        return Result.Err(err_new(0, "auth", "AUTH " + mecanismo + " sobre un canal EN CLARO: las credenciales viajarían legibles. Pide STARTTLS primero (smtp_starttls) o conecta al 465 con smtp_connect_tls. No hay forma de saltear esto a propósito."))
+    }
+    return Result.Ok(0)
+}
+
+// 235 es el éxito. Un 535 es «credenciales inválidas» y un 534/538 piden otro
+// mecanismo: los tres son "auth", y se distinguen por el code, que va en el
+// Error para que el llamador pueda decidir.
+fn __smtp_veredicto_auth(r: Array) -> Result<int, Error> {
+    let code: int = r[0]
+    let texto: String = r[1]
+    if smtp_is_ok(code) { return Result.Ok(code) }
+    return Result.Err(err_new(code, "auth", "autenticación rechazada: " + __smtp_diag(code, texto)))
+}
+
+// ── El mensaje ────────────────────────────────────────────────────────────
+//
+// Alcance MIME (D-2): texto o HTML, y adjuntos binarios con base64 +
+// Content-Type + Content-Disposition. Sin multipart anidado, sin
+// quoted-printable y sin nombres de archivo RFC 2047. El asunto no-ASCII SÍ se
+// codifica: es una línea, y en castellano pasa siempre.
+//
+// ── DOT-STUFFING, el bug clásico del protocolo ────────────────────────────
+// El cuerpo termina con una línea que dice solo ".". Entonces una línea del
+// CONTENIDO que empiece con punto tiene que salir duplicada: ".." — el servidor
+// saca uno y entrega lo que el usuario escribió. Si no se hace, el servidor da
+// el mensaje por terminado en esa línea y entrega la mitad, SIN ERROR de
+// ningún lado: el remitente se entera cuando el destinatario le dice que la
+// factura llegó cortada. Por eso se hace acá, en el armado, y no se confía en
+// que el llamador se acuerde.
+
+const SMTP_MSG_FROM: int = 0
+const SMTP_MSG_TO: int = 1
+const SMTP_MSG_SUBJECT: int = 2
+const SMTP_MSG_BODY: int = 3
+const SMTP_MSG_HTML: int = 4
+const SMTP_MSG_ATTACH: int = 5
+const SMTP_MSG_BOUNDARY: int = 6
+const SMTP_MSG_SLOTS: int = 7
+
+// Mensaje de texto plano.
+pub fn smtp_message(de: String, para: Array, asunto: String, cuerpo: String) -> Array {
+    return [de, para, asunto, cuerpo, 0, [], ""]
+}
+
+// Mensaje con cuerpo HTML. El resto es igual: lo único que cambia es el
+// Content-Type de la parte del cuerpo.
+pub fn smtp_message_html(de: String, para: Array, asunto: String, html: String) -> Array {
+    return [de, para, asunto, html, 1, [], ""]
+}
+
+// Agrega un adjunto. `datos` son los BYTES del archivo tal como salen de
+// read_file (que es binary-safe): la codificación base64 la hace esta función,
+// no el llamador.
+pub fn smtp_attach(m: Array, nombre: String, ctype: String, datos: String) -> Array {
+    var out: Array = m
+    let adjuntos: Array = out[SMTP_MSG_ATTACH]
+    var nuevos: Array = adjuntos
+    nuevos.push([nombre, ctype, datos])
+    out[SMTP_MSG_ATTACH] = nuevos
+    // El boundary se fija al PRIMER adjunto y no cambia después: tiene que ser
+    // el mismo en las tres apariciones (apertura, separador y cierre).
+    let b: String = out[SMTP_MSG_BOUNDARY]
+    if b.length() == 0 { out[SMTP_MSG_BOUNDARY] = __smtp_boundary_nuevo() }
+    return out
+}
+
+// El boundary que separa las partes, para quien quiera inspeccionarlo.
+pub fn smtp_boundary(m: Array) -> String {
+    if m.length() < SMTP_MSG_SLOTS { return "" }
+    let b: String = m[SMTP_MSG_BOUNDARY]
+    return b
+}
+
+// Arma el mensaje completo — headers y cuerpo — tal como va a viajar. Es una
+// función PURA a propósito: el bytestream se puede verificar sin abrir un
+// socket, que es lo que hace testeable el dot-stuffing y la estructura MIME.
+pub fn smtp_render(m: Array) -> String {
+    let de: String = m[SMTP_MSG_FROM]
+    let para: Array = m[SMTP_MSG_TO]
+    let asunto: String = m[SMTP_MSG_SUBJECT]
+    let cuerpo: String = m[SMTP_MSG_BODY]
+    let es_html: int = m[SMTP_MSG_HTML]
+    let adjuntos: Array = m[SMTP_MSG_ATTACH]
+    let boundary: String = m[SMTP_MSG_BOUNDARY]
+
+    var ctype_cuerpo: String = "text/plain; charset=utf-8"
+    if es_html == 1 { ctype_cuerpo = "text/html; charset=utf-8" }
+
+    var out: String = "From: " + de + "\r\n"
+    out = out + "To: " + __smtp_join(para, ", ") + "\r\n"
+    out = out + "Subject: " + __smtp_header_encode(asunto) + "\r\n"
+    out = out + "Date: " + __smtp_date(time_epoch()) + "\r\n"
+    out = out + "Message-ID: " + __smtp_message_id(de) + "\r\n"
+    out = out + "MIME-Version: 1.0\r\n"
+
+    if adjuntos.length() == 0 {
+        out = out + "Content-Type: " + ctype_cuerpo + "\r\n"
+        out = out + "\r\n"
+        out = out + __smtp_dot_stuff(__smtp_crlf(cuerpo))
+        return out
+    }
+
+    out = out + "Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n"
+    out = out + "\r\n"
+    // Preámbulo para clientes que no entienden MIME. No se ve en los que sí.
+    out = out + "Este mensaje tiene varias partes en formato MIME.\r\n"
+    out = out + "\r\n--" + boundary + "\r\n"
+    out = out + "Content-Type: " + ctype_cuerpo + "\r\n"
+    out = out + "\r\n"
+    out = out + __smtp_dot_stuff(__smtp_crlf(cuerpo)) + "\r\n"
+
+    var i: int = 0
+    while i < adjuntos.length() {
+        let a: Array = adjuntos[i]
+        let nombre: String = a[0]
+        let ctype: String = a[1]
+        let datos: String = a[2]
+        out = out + "\r\n--" + boundary + "\r\n"
+        out = out + "Content-Type: " + ctype + "\r\n"
+        out = out + "Content-Transfer-Encoding: base64\r\n"
+        out = out + "Content-Disposition: attachment; filename=\"" + nombre + "\"\r\n"
+        out = out + "\r\n"
+        // base64 no puede contener un punto, así que el dot-stuffing no aplica
+        // acá — pero sí el corte de líneas: un base64 de un PDF en una sola
+        // línea de megabytes viola el límite de 998 octetos del RFC 5322 y hay
+        // servidores que lo rechazan.
+        out = out + __smtp_wrap76(nyx_base64_encode(datos)) + "\r\n"
+        i = i + 1
+    }
+    out = out + "\r\n--" + boundary + "--\r\n"
+    return out
+}
+
+// ── Envío ─────────────────────────────────────────────────────────────────
+
+// Manda el mensaje por una conexión ya lista (y autenticada, si hacía falta).
+pub fn smtp_send(c: Array, m: Array) -> Result<int, Error> {
+    let de: String = m[SMTP_MSG_FROM]
+    let para: Array = m[SMTP_MSG_TO]
+    if para.length() == 0 {
+        return Result.Err(err_new(0, "recipient", "el mensaje no tiene destinatarios"))
+    }
+
+    let r1: Array = smtp_cmd(c, "MAIL FROM:<" + de + ">")
+    let c1: int = r1[0]
+    if smtp_is_ok(c1) == false {
+        let t1: String = r1[1]
+        return Result.Err(err_new(c1, "sender", "el servidor rechazó el remitente " + de + ": " + __smtp_diag(c1, t1)))
+    }
+
+    var i: int = 0
+    while i < para.length() {
+        let destino: String = para[i]
+        let r2: Array = smtp_cmd(c, "RCPT TO:<" + destino + ">")
+        let c2: int = r2[0]
+        // 251 («no es local, lo reenvío») también es aceptación.
+        if smtp_is_ok(c2) == false {
+            let t2: String = r2[1]
+            return Result.Err(err_new(c2, "recipient", "el servidor rechazó al destinatario " + destino + ": " + __smtp_diag(c2, t2)))
+        }
+        i = i + 1
+    }
+
+    let r3: Array = smtp_cmd(c, "DATA")
+    let c3: int = r3[0]
+    // El 354 NO es un éxito: es «manda el cuerpo». Tratarlo como 2xx sería
+    // cortar el diálogo justo antes de mandar el mensaje.
+    if smtp_is_intermediate(c3) == false {
+        let t3: String = r3[1]
+        return Result.Err(err_new(c3, "protocol", "el servidor no aceptó DATA: " + __smtp_diag(c3, t3)))
+    }
+
+    let texto: String = smtp_render(m)
+    __smtp_write(c, texto)
+    // El terminador del RFC es CRLF "." CRLF: el punto tiene que quedar SOLO
+    // en su línea. Si el mensaje ya termina en CRLF —lo normal cuando lleva
+    // adjuntos, porque cierra con el boundary— agregar otro CRLF metería una
+    // línea VACÍA de más en el mensaje entregado. Y si NO termina en CRLF
+    // —un cuerpo de texto que no termina con salto de línea— hay que ponerlo,
+    // o el punto queda pegado a la última línea del cuerpo y el servidor
+    // nunca ve el fin del mensaje.
+    var terminador: String = ".\r\n"
+    if __smtp_termina_en_crlf(texto) == false { terminador = "\r\n.\r\n" }
+    __smtp_write(c, terminador)
+    let r4: Array = __smtp_read_reply(c)
+    let c4: int = r4[0]
+    if smtp_is_ok(c4) == false {
+        let t4: String = r4[1]
+        return Result.Err(err_new(c4, "protocol", "el servidor no aceptó el mensaje: " + __smtp_diag(c4, t4)))
+    }
+    return Result.Ok(c4)
+}
+
+// ── Armado: los detalles que hacen que el mensaje llegue entero ───────────
+
+// Normaliza a CRLF: acepta \n y \r\n del llamador y emite siempre \r\n, que es
+// lo único que el protocolo admite.
+fn __smtp_crlf(s: String) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c == 13 {
+            // \r\n ya normalizado: se copia y se saltea el \n.
+            out = out + "\r\n"
+            if i + 1 < s.length() && s.charAt(i + 1) == 10 { i = i + 1 }
+        } else {
+            if c == 10 { out = out + "\r\n" }
+            else { out = out + s.substring(i, i + 1) }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Duplica el punto inicial de cada línea. Ver el comentario de arriba: sin
+// esto, un cuerpo con una línea que empieza con punto llega cortado y nadie se
+// entera hasta que el destinatario lo dice.
+fn __smtp_dot_stuff(s: String) -> String {
+    if s.length() == 0 { return s }
+    var out: String = ""
+    var inicio_de_linea: bool = true
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if inicio_de_linea && c == 46 { out = out + "." }   // '.'
+        out = out + s.substring(i, i + 1)
+        if c == 10 { inicio_de_linea = true } else { inicio_de_linea = false }
+        i = i + 1
+    }
+    return out
+}
+
+// Corta en líneas de 76 caracteres. El RFC 5322 pone el techo duro en 998
+// octetos por línea y recomienda 78; 76 es lo que usa todo el mundo para
+// base64 porque es múltiplo de 4.
+fn __smtp_wrap76(s: String) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < s.length() {
+        var fin: int = i + 76
+        if fin > s.length() { fin = s.length() }
+        if out.length() > 0 { out = out + "\r\n" }
+        out = out + s.substring(i, fin)
+        i = fin
+    }
+    return out
+}
+
+fn __smtp_join(xs: Array, sep: String) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < xs.length() {
+        let x: String = xs[i]
+        if i > 0 { out = out + sep }
+        out = out + x
+        i = i + 1
+    }
+    return out
+}
+
+// RFC 2047, SOLO para el asunto (D-2). Un header con un byte alto suelto es
+// inválido, y un cliente puede mostrarlo como basura o rechazarlo. Si el texto
+// es ASCII puro NO se codifica: codificar de más deja un header ilegible para
+// un humano que mira el mensaje crudo.
+fn __smtp_header_encode(s: String) -> String {
+    var alto: bool = false
+    var i: int = 0
+    while i < s.length() {
+        if s.charAt(i) > 126 { alto = true }
+        i = i + 1
+    }
+    if alto == false { return s }
+    return "=?UTF-8?B?" + nyx_base64_encode(s) + "?="
+}
+
+// Fecha RFC 5322: `Sat, 20 Sep 2026 18:30:00 +0000`. Es la misma forma que
+// time_to_http_date pero con el offset numérico en vez de «GMT», que el RFC
+// 5322 marca como obsoleto aunque lo acepte.
+fn __smtp_date(epoch: int) -> String {
+    let dt: DateTime = time_breakdown(epoch)
+    let dias: Array = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    let meses: Array = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    let dn: String = dias[dt.weekday]
+    let mn: String = meses[dt.month - 1]
+    return dn + ", " + __smtp_pad2(dt.day) + " " + mn + " " + int_to_string(dt.year) +
+           " " + __smtp_pad2(dt.hour) + ":" + __smtp_pad2(dt.minute) + ":" +
+           __smtp_pad2(dt.second) + " +0000"
+}
+
+fn __smtp_termina_en_crlf(s: String) -> bool {
+    if s.length() < 2 { return false }
+    return s.charAt(s.length() - 2) == 13 && s.charAt(s.length() - 1) == 10
+}
+
+fn __smtp_pad2(n: int) -> String {
+    if n < 10 { return "0" + int_to_string(n) }
+    return int_to_string(n)
+}
+
+// Message-ID único. El dominio sale del remitente: un Message-ID con un dominio
+// que no es del remitente es una señal de spam para varios filtros.
+fn __smtp_message_id(de: String) -> String {
+    var dominio: String = "localhost"
+    let at: int = de.indexOf("@")
+    if at >= 0 && at + 1 < de.length() { dominio = de.substring(at + 1, de.length()) }
+    return "<" + int_to_string(time_epoch()) + "." + int_to_string(random_int()) + "@" + dominio + ">"
+}
+
+// Boundary que no puede aparecer en el contenido por construcción: el prefijo
+// fijo más aleatoriedad. Si apareciera, el mensaje se partiría en el lugar
+// equivocado.
+fn __smtp_boundary_nuevo() -> String {
+    return "=_nyx_" + int_to_string(time_epoch()) + "_" + int_to_string(random_int())
+}

@@ -2265,6 +2265,68 @@ fn main() -> int {
   importing `std/serve` on Windows fails loud at the existing builtin
   guard, not silently.
 
+### std/smtp — sending mail
+
+Outgoing SMTP (RFC 5321). **Sends only**: IMAP/POP3 are deliberately out of
+scope — parsing INBOUND MIME is a different, larger problem. No queues and no
+retries either: sending is one operation, queueing is a product (`nyx-queue`).
+
+```nyx
+import "std/smtp"
+
+var msg: Array = smtp_message("me@mine.com", ["client@theirs.com"],
+                              "Invoice", "Body with \n newlines")
+msg = smtp_attach(msg, "invoice.pdf", "application/pdf", read_file("invoice.pdf"))
+
+match smtp_connect_plain("smtp.provider.com", 587, "mine.com") {
+    Result.Ok(c0) => {
+        match smtp_starttls(c0, "mine.com") {          // 587; for 465 use smtp_connect_tls
+            Result.Ok(c) => {
+                match smtp_auth_plain(c, "user", "pass") {
+                    Result.Ok(_x) => {
+                        match smtp_send(c, msg) { ... }
+                        let _q: int = smtp_quit(c)
+                    }
+                    Result.Err(e) => { ... }
+                }
+            }
+            Result.Err(e) => { ... }
+        }
+    }
+    Result.Err(e) => { ... }
+}
+```
+
+**Limits and things that will bite you:**
+
+- **AUTH over a cleartext channel is refused, and there is no override flag.**
+  The check looks at the REAL state of the channel, not at what the server
+  advertises: a misconfigured server (or a man in the middle) can advertise
+  `AUTH` without offering `STARTTLS`, and believing it puts the password on the
+  wire in the clear.
+- **Certificates are verified by default.** `smtp_connect_tls` and
+  `smtp_starttls` verify chain and hostname; the `_insecure` variants say so in
+  the name. Same rationale as `https_get`, which until 2026-09-11 encrypted
+  without authenticating.
+- **The second `EHLO` after `STARTTLS` is mandatory** and `smtp_starttls` does
+  it for you: capabilities change once the channel is encrypted (a server that
+  does not advertise `AUTH` in the clear does advertise it over TLS).
+- **Dot-stuffing is handled for you.** A body line starting with `.` is sent
+  doubled; without that the server ends the message there and delivers half of
+  it, with no error anywhere.
+- **MIME scope**: text or HTML body plus base64 attachments. NO nested
+  multipart, NO quoted-printable, NO RFC 2047 filenames. A non-ASCII SUBJECT is
+  encoded (RFC 2047); an ASCII one is left alone.
+- **`smtp_render(msg)` is pure**: inspect or test the exact bytestream without
+  opening a socket.
+- Error `kind`s are `connection`, `protocol`, `auth`, `sender`, `recipient` —
+  `code -1` on a `protocol` error means "no readable reply" (the peer went
+  away), as opposed to a real SMTP code.
+- **Windows**: same caveat as `std/serve` — the network builtins it needs are
+  not there yet (arc W in progress).
+
+Recipe: `examples/by-example/113-smtp.nx`.
+
 ### RESP protocol (used by nyx-kv and RESP-speaking servers)
 
 `std/resp` is the shared, binary-safe RESP2 frame reader used to BUILD a

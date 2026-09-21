@@ -1,0 +1,39 @@
+// test-432 — la llamada NO CALIFICADA desde DENTRO de un módulo resuelve a la
+// fn de SU PROPIO módulo, aunque otro módulo importado declare una homónima con
+// otra aridad.
+//
+// test-353 cubre el lado CALIFICADO (`moda.set(2,99)` llega a moda) y el
+// shadowing del archivo principal. Esto cubre la otra mitad, que no tenía
+// prueba: la regla #1 de `fn_module_resolve` (semantic.nx) — «la fn del PROPIO
+// módulo del caller» — de la que dependen `scope_get_arity` y `fn_sig_index`
+// para elegir contra qué firma chequear.
+//
+// POR QUÉ EXISTE: el arco `semantic-indice-simbolos` reemplaza el escaneo
+// lineal de las tablas de símbolos y de firmas por un índice por nombre. El
+// orden en que ese índice devuelve los homónimos ES esta semántica. Sin esta
+// prueba, cambiar el orden pasaría la suite en verde y rompería la resolución
+// por módulo en silencio, que es exactamente el bug que la fricción de nyxerp
+// del 2026-09-14 vino a cerrar.
+import "tests/support/aux_homo_caller_a"
+import "tests/support/aux_homo_caller_b"
+
+fn main() -> int {
+    // A llama a SU `calcular` (aridad 1): 10 + 1
+    let a: int = desde_a()
+    print(a)
+    assert(a == 11)
+
+    // B llama a SU `calcular` (aridad 2): 3 * 4. Si resolviera a la de A, esto
+    // sería un error de aridad; si resolviera a la de A ignorando la aridad,
+    // daría 4 (3+1) y sería silently-wrong.
+    let b: int = desde_b()
+    print(b)
+    assert(b == 12)
+
+    // Y las dos calificadas siguen llegando a su módulo.
+    assert(aux_homo_caller_a.calcular(10) == 11)
+    assert(aux_homo_caller_b.calcular(3, 4) == 12)
+
+    print("module-fn-homonyms-caller OK")
+    return 0
+}

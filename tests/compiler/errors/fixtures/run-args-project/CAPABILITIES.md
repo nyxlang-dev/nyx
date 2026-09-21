@@ -1,6 +1,6 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.32.4 -->
+<!-- nyx-version: 0.33.0 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -316,6 +316,37 @@
 - `write_file` (2 args) — bool — binary-safe on write, NUL bytes included (fixed at the root 2026-09-15, see `chr-zero-nul-byte` gotcha);
 
 ## Red
+
+### `std/smtp`
+
+`import "std/smtp"` — 26 funciones:
+
+- `pub fn smtp_parse_line(line: String) -> Array`
+- `pub fn smtp_line_code(l: Array) -> int`
+- `pub fn smtp_line_last(l: Array) -> bool`
+- `pub fn smtp_line_text(l: Array) -> String`
+- `pub fn smtp_is_ok(code: int) -> bool`
+- `pub fn smtp_is_intermediate(code: int) -> bool`
+- `pub fn smtp_is_transient(code: int) -> bool`
+- `pub fn smtp_is_permanent(code: int) -> bool`
+- `pub fn smtp_conn_caps(c: Array) -> String`
+- `pub fn smtp_has_cap(c: Array, cap: String) -> bool`
+- `pub fn smtp_cmd(c: Array, linea: String) -> Array`
+- `pub fn smtp_ehlo(c: Array, quien: String) -> Result<Array, Error>`
+- `pub fn smtp_connect_plain(host: String, port: int, quien: String) -> Result<Array, Error>`
+- `pub fn smtp_quit(c: Array) -> int`
+- `pub fn smtp_connect_tls(host: String, port: int, quien: String) -> Result<Array, Error>`
+- `pub fn smtp_connect_tls_insecure(host: String, port: int, quien: String) -> Result<Array, Error>`
+- `pub fn smtp_starttls(c: Array, quien: String) -> Result<Array, Error>`
+- `pub fn smtp_starttls_insecure(c: Array, quien: String) -> Result<Array, Error>`
+- `pub fn smtp_auth_plain(c: Array, usuario: String, clave: String) -> Result<int, Error>`
+- `pub fn smtp_auth_login(c: Array, usuario: String, clave: String) -> Result<int, Error>`
+- `pub fn smtp_message(de: String, para: Array, asunto: String, cuerpo: String) -> Array`
+- `pub fn smtp_message_html(de: String, para: Array, asunto: String, html: String) -> Array`
+- `pub fn smtp_attach(m: Array, nombre: String, ctype: String, datos: String) -> Array`
+- `pub fn smtp_boundary(m: Array) -> String`
+- `pub fn smtp_render(m: Array) -> String`
+- `pub fn smtp_send(c: Array, m: Array) -> Result<int, Error>`
 
 ### `std/http2`
 

@@ -1,0 +1,12 @@
+// aux del test-432: módulo A con una `calcular` de ARIDAD 1, homónima de la de
+// aux_homo_caller_b (aridad 2). `desde_a` la llama SIN calificar desde DENTRO
+// de su propio módulo: la regla #1 de fn_module_resolve (semantic.nx) dice que
+// gana la fn del módulo del caller, no la última registrada.
+pub fn calcular(x: int) -> int {
+    return x + 1
+}
+
+pub fn desde_a() -> int {
+    // Sin prefijo y a propósito: es el caso que el test fija.
+    return calcular(10)
+}

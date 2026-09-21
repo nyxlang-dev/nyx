@@ -27,6 +27,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Tests: `test_tls_write_to_gone_peer_no_sigpipe` en `tests/runtime-unit/test_tls.c` (+4 asserts,
   264 → 268), que mide si la señal SE GENERA en vez de si el proceso sobrevive — la suite tenía
   `signal(SIGPIPE, SIG_IGN)` en su `main` y por eso no podía ver este bug.
+  > **Confirmado desde afuera del core** (nyx-proxy, 2026-09-20): con el gateway recompilado contra
+  > este runtime y **sin mitigación en ningún lado**, un cliente SSE sobre TLS que corta en seco con
+  > RST a mitad del stream deja el proceso vivo; el mismo caso moría con `rc=141` contra el runtime
+  > anterior. El relay no cambió (primer evento a 0.01 s, el segundo a 0.31 s contra una pausa de
+  > 0.3 s del backend): rutear por `os_sock_send` no metió latencia ni buffering. Quedó como control
+  > positivo permanente de ese lado — si vuelve a morir con 141, la regresión es del runtime.
 - **`test-377-try-http` fallaba por puertos, no por código**: usaba 58744-58749, que caen dentro de
   `/proc/sys/net/ipv4/ip_local_port_range` (32768-60999), así que el kernel se los daba como puerto
   de ORIGEN a cualquier conexión saliente y el test moría con «cannot bind port NNNNN: Address
@@ -35,6 +41,34 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **El E2E `tests/integration/test_ws_proxy.py` SKIPeaba en silencio** desde la migración a `~/nyx/`
   (2026-07-22): su `NYX_PROXY_SRC` por defecto apuntaba a `~/nyx-proxy-stack`, que ya no existe.
   Default corregido a `~/nyx/products/proxy` y skip más explícito.
+
+### Added
+- **`std/smtp` — mandar correo desde Nyx** `[arco: std-smtp]` (pedido de nyxerp, que se quedó sin
+  forma de mandar un enlace de recuperación de contraseña: la única salida que su sistema pudo
+  ofrecer fue crear un usuario nuevo). Conexión por los dos caminos reales —587 con `STARTTLS` y
+  465 con TLS desde el saludo—, `AUTH PLAIN`/`LOGIN`, y el mensaje con headers, cuerpo de texto o
+  HTML y adjuntos binarios en base64. **Cero builtins nuevos**: la pieza de bajo nivel ya existía
+  (`tls_upgrade_fd`, que es la forma exacta de STARTTLS y que `std/postgres` ya usaba así).
+  > **Lo que el módulo resuelve solo, que es donde se rompen las implementaciones a mano**: el
+  > **dot-stuffing** (una línea del cuerpo que empieza con `.` sale duplicada; sin eso el servidor
+  > da el mensaje por terminado ahí y entrega la mitad, SIN ERROR de ningún lado), la
+  > normalización a CRLF, el base64 cortado a 76 columnas, el `Message-ID` con el dominio del
+  > remitente, y el segundo `EHLO` después de cifrar —obligatorio, porque las capacidades cambian—.
+  > **`AUTH` sobre un canal en claro se rechaza y no hay flag para forzarlo**: la comprobación mira
+  > el estado real del canal, no lo que el servidor anuncia. Y se **verifica el certificado por
+  > omisión**, con variantes `_insecure` que lo dicen en el nombre — mismo criterio que se le
+  > aplicó a `https_get` el 2026-09-11.
+  >
+  > Fuera de alcance por decisión del arco: recibir (IMAP/POP3), colas y reintentos, multipart
+  > anidado, `quoted-printable`, nombres de archivo RFC 2047 y DKIM/SPF/DMARC.
+  Doc: `docs/SPEC.md` §Correo saliente, `LLM.md` §std/smtp. Receta:
+  `examples/by-example/113-smtp.nx`. Tests: stdlib 5 → 9 (parseo y diálogo, STARTTLS/TLS/AUTH,
+  armado del mensaje y envío E2E, y errores distinguibles por valor).
+- **`scripts/run_stdlib_tests.sh` enlaza el runtime COMPLETO**: tenía una lista recortada (sin
+  `compress.c`, `scheduler.c`, `event_loop.c` y ocho más), así que un módulo de std que usara un
+  builtin de cualquiera de esos no se podía testear ahí — fallaba en el linker con «undefined
+  reference», no en el test. Un runner que enlaza un runtime distinto del que enlaza el toolchain
+  no prueba lo que la gente corre.
 
 ### Changed
 - **SSE ya funciona detrás del gateway** `[arco: serve-sse]`: `nyx-proxy` 0.4.4 tuneliza el stream

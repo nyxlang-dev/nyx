@@ -1476,7 +1476,7 @@ fn module_category(name: String) -> String {
     if name == "sqlite" or name == "db" or name == "kvclient" { return "Bases de datos & KV" }
     if name == "json" or name == "msgpack" or name == "toml" or name == "csv" or name == "base64" or name == "compress" { return "Serialización & datos" }
     if name == "fs" or name == "file" or name == "io" or name == "path" { return "Archivos & I/O" }
-    if name == "tcp" or name == "udp" or name == "net" or name == "http2" or name == "dns" or name == "url" { return "Red" }
+    if name == "tcp" or name == "udp" or name == "net" or name == "http2" or name == "dns" or name == "url" or name == "smtp" { return "Red" }
     if name == "thread" or name == "channel" or name == "scheduler" or name == "sync" or name == "async" { return "Concurrencia" }
     if name == "crypto" or name == "tls" or name == "hash" or name == "random" or name == "uuid" { return "Cripto & seguridad" }
     if name == "time" or name == "datetime" { return "Tiempo" }

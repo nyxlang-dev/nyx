@@ -49,6 +49,7 @@ DEFAULT_9=on    # ratchet SPEC: cero refs a numeración muerta v1-v6 — T8b pur
 DEFAULT_10=on   # frescura DURA de PROJECT_STATE.md, relativa al último commit — ON desde la
                 #   Task 5 del arco SDD-nyx (era WARN y estaba dormida)
 DEFAULT_11=on   # state-check del método SDD-nyx (scripts/sdd/state-check) — ON desde la Task 5
+DEFAULT_12=on   # nombres RESERVADOS de Windows en el árbol — ON desde 2026-09-20 (ver check_12)
                 #   del arco SDD-nyx, que cosechó los 15 ledgers históricos y limpió las citas
 
 PUBLIC_DOCS="README.md LLM.md CHANGELOG.md docs/GETTING_STARTED.md docs/CONTRIBUTING.md docs/COMPARISON.md docs/COMPARISON.es.md docs/DEPLOYMENT.md docs/SPEC.md docs/SPEC.es.md docs/VERSIONING.md docs/ROADMAP.md docs/TESTS.md docs/README.es.md"
@@ -246,12 +247,43 @@ check_11() {
     return 0
 }
 
+check_12() {
+    # Ningún componente de ninguna ruta puede llamarse como un DISPOSITIVO
+    # RESERVADO de Windows (CON, PRN, AUX, NUL, COM1-9, LPT1-9), con extensión o
+    # sin ella: `aux.nx`, `aux.txt` y `aux` son todos el mismo dispositivo y no
+    # se pueden crear con la API Win32.
+    #
+    # POR QUÉ EXISTE: `tests/tooling/coverage/src/aux.nx` (2026-09-15) hizo que
+    # `git clone` y `git pull` del repo ABORTARAN EN WINDOWS durante cinco días
+    # — git valida el nombre y corta el checkout ENTERO antes de intentar
+    # escribirlo, así que el árbol queda a medias y HEAD sin mover. No era una
+    # molestia de un fixture: era que el repo no se podía clonar. Lo encontró la
+    # máquina Windows al intentar ponerse al día, y no lo cazó nadie antes
+    # porque el único gate que lo vería es el CI de Windows, apagado por
+    # billing — el mismo agujero que dejó pasar el `__divti3`.
+    #
+    # Esta guarda NO necesita Windows: corre sobre `git ls-files` en cualquier
+    # plataforma, que es justamente lo que la hace útil mientras el CI no esté.
+    # El patrón cubre el componente solo (`aux`), con extensión (`aux.nx`) y como
+    # directorio (`aux/algo.nx`). Case-insensitive porque la reserva de Windows
+    # también lo es.
+    local malos
+    malos=$(git -C "$ROOT" ls-files | grep -Ei '(^|/)(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|/|$)')
+    if [ -n "$malos" ]; then
+        echo "  ✗ [12] rutas con nombres RESERVADOS de Windows (el repo no se podrá clonar ahí):"
+        printf '        %s\n' $malos
+        FAIL=$((FAIL+1))
+    fi
+    return 0
+}
+
 DESCS=("" "no-version-pin cuarteto" "paths muertos" "refs a archivos inexistentes" \
     "links relativos rotos (públicos)" "un solo [Unreleased]" "presupuestos" \
     "paridad scores COMPARISON" "INDEX design completo" "ratchet SPEC v1-6" \
-    "frescura dura PROJECT_STATE vs último commit" "state-check SDD-nyx")
+    "frescura dura PROJECT_STATE vs último commit" "state-check SDD-nyx" \
+    "nombres reservados de Windows")
 
-for n in 1 2 3 4 5 6 7 8 9 10 11; do
+for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if is_on "$n"; then "check_$n"; else SLEEPING+=("[$n] ${DESCS[$n]}"); fi
 done
 

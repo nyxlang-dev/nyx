@@ -741,8 +741,15 @@ docs-health:
 sdd-check:
 	bash scripts/sdd/selftest
 
+## Banco de re-medición de la caché de pruebas por hash del cierre.
+## NO es un test (no entra en `make test-all`): es una MEDICIÓN, y su resultado
+## es un número que envejece — hay que re-correrlo antes de decidir sobre la
+## ficha, no citar la corrida anterior. Tarda ~2 min en 2 núcleos.
+bench-test-cache:
+	bash scripts/testing/bench_test_cache.sh
+
 ## Verifica que VERSION coincide en los fallbacks (scripts/release-check.sh --pre)
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check
+.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check bench-test-cache

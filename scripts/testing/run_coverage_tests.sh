@@ -13,7 +13,7 @@
 #   - `no_llamada` y `calc.valor` no se llaman → se listan con su línea;
 #   - `sumar` (llamada desde dos archivos de prueba) no se lista;
 #   - `en_fibra` corre SOLO dentro de un `spawn` → cuenta como llamada;
-#   - `aux.valor` es homónima de `calc.valor` y SÍ se llama → los perfiles no
+#   - `ayuda.valor` es homónima de `calc.valor` y SÍ se llama → los perfiles no
 #     las mezclan;
 #   - `otro.nx` no lo importa ninguna prueba → aparece entero;
 #   - `main` de src/main.nx y las funciones sintéticas (`__test_N`,
