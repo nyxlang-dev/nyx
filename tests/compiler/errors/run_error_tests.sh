@@ -2226,6 +2226,30 @@ else
   echo "$gso_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="main-stack-overflow-diagnosed"
+# D-3 del arco pila-del-compilador (2026-09-23): el hermano del caso de arriba
+# en el HILO PRINCIPAL. Una recursión infinita en main moría con «Segmentation
+# fault» mudo del shell; ahora el fault guard reconoce la dirección (el fondo de
+# RLIMIT_STACK) y lo nombra. El proceso SIGUE muriendo por la señal (rc >= 128):
+# los lanzadores de nyx deciden por ese rc, así que el aserto lo exige.
+# CONTROL en el mismo caso: la misma forma de recursión con profundidad 1000
+# corre bien y NO imprime el diagnóstico (la ventana no atrapa pila sana).
+mso_dir=$(mktemp -d /tmp/mso-XXXX)
+printf 'fn f(n: int) -> int {\n    return f(n + 1) + 1\n}\nfn main() -> int {\n    print(f(0))\n    return 0\n}\n' > "$mso_dir/inf.nx"
+printf 'fn g(n: int) -> int {\n    if n == 0 { return 0 }\n    return g(n - 1) + 1\n}\nfn main() -> int {\n    print(g(1000))\n    return 0\n}\n' > "$mso_dir/ok.nx"
+mso_out=$(bash "$(pwd)/scripts/nyx" run "$mso_dir/inf.nx" 2>&1); mso_rc=$?
+msok_out=$(bash "$(pwd)/scripts/nyx" run "$mso_dir/ok.nx" 2>&1); msok_rc=$?
+rm -rf "$mso_dir"
+if [ "$mso_rc" -ge 128 ] && echo "$mso_out" | grep -qF "desborde de pila del hilo principal" \
+   && [ "$msok_rc" -eq 0 ] && echo "$msok_out" | grep -qx "1000" \
+   && ! echo "$msok_out" | grep -qF "desborde de pila"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (esperado rc>=128 con el diagnóstico, y el control en rc 0; rc=%d control=%d)\n" "$name" "$mso_rc" "$msok_rc"
+  echo "$mso_out" | tail -3 | sed 's/^/      /'; echo "$msok_out" | tail -2 | sed 's/^/      /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="strict-warn-blind-counter"
 # "Modo ceguera visible" (arco gradual 2026-08-04): NYX_STRICT=warn reporta las
 # validaciones salteadas por TyUnknown — SOLO del código del usuario (el

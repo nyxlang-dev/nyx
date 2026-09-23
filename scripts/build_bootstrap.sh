@@ -84,18 +84,67 @@ for src in $RUNTIME_SRCS; do
     fi
 done
 
+# SROA sobre las semillas antes de enlazar (arco pila-del-compilador, Task 4;
+# spec docs/design/specs/2026-09-23-pila-del-compilador-design.md, D-1(b)).
+#
+# POR QUÉ: el compilador se enlaza en -O0, y ahí cada valor tiene su ranura de
+# pila. codegen pasa CodegenContext (113 campos) POR VALOR en cada llamada, así
+# que los eslabones recursivos de una expresión apilaban ~23 KB por nivel (151 KB
+# antes de la Task 2). SROA promueve esas copias a registros: por nivel baja a
+# ~2 KB (codegen_expr 14.496 → 800 B, codegen_binop 8.544 → 1.168 B), y el IR
+# que el compilador EMITE no cambia —SROA optimiza al compilador, no a lo que
+# genera—. Cuesta ~4 s de opt sobre codegen.ll; clang ya no tiene que bajar
+# tantas ranuras, así que el build total apenas sube. -O1/-O2 hacían lo mismo
+# pero costaban ~5 min por bootstrap.
+#
+# Solo con un `opt` de la MISMA versión mayor que clang: el bitcode de otra
+# versión puede no leerse. Sin él (Apple clang no trae `opt`; en Debian es el
+# paquete `llvm`), se enlaza como siempre y se avisa: el compilador funciona
+# igual, con menos techo de pila (los lanzadores igual la suben a 64 MB).
+# NYX_NO_SROA=1 lo apaga, para comparar o si una versión de opt se porta mal.
+# Una semilla por línea A PROPÓSITO: scripts/testing/run_toolchain_recipe_audit.sh
+# lee de acá la lista que se enlaza DE VERDAD, renglón por renglón.
+SEEDS="
+    compiler/lexer.ll
+    compiler/parser.ll
+    compiler/types.ll
+    compiler/semantic.ll
+    compiler/borrow.ll
+    compiler/licm.ll
+    compiler/resolve.ll
+    compiler/codegen.ll
+    compiler/nyx.ll
+"
+LINK_SEEDS="$SEEDS"
+SROA_TMP=""
+if [ "${NYX_NO_SROA:-}" != "1" ]; then
+    clang_major="$(clang --version 2>/dev/null | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -1)"
+    OPT_BIN=""
+    for cand in "opt-$clang_major" opt; do
+        if command -v "$cand" > /dev/null 2>&1; then
+            opt_major="$("$cand" --version 2>/dev/null | sed -n 's/.*LLVM version \([0-9][0-9]*\).*/\1/p' | head -1)"
+            if [ -n "$clang_major" ] && [ "$opt_major" = "$clang_major" ]; then OPT_BIN="$cand"; break; fi
+        fi
+    done
+    if [ -n "$OPT_BIN" ]; then
+        SROA_TMP="$(mktemp -d)"
+        trap 'rm -rf "$SROA_TMP"' EXIT
+        LINK_SEEDS=""
+        for ll in $SEEDS; do
+            bc="$SROA_TMP/$(basename "$ll" .ll).bc"
+            "$OPT_BIN" -passes=sroa "$ll" -o "$bc"
+            LINK_SEEDS="$LINK_SEEDS $bc"
+        done
+        echo "  [SROA] $OPT_BIN sobre las semillas (más techo de pila para el compilador)"
+    else
+        echo "  [SROA] sin opt de LLVM $clang_major: se enlaza sin SROA (el compilador aguanta expresiones menos profundas; instalar el paquete llvm lo resuelve)"
+    fi
+fi
+
 # Linkear todos los .ll con el runtime C
 echo "  [LINK] Enlazando nyx_bootstrap..."
 clang $EXTRA_CFLAGS $EXTRA_LDFLAGS \
-    compiler/lexer.ll \
-    compiler/parser.ll \
-    compiler/types.ll \
-    compiler/semantic.ll \
-    compiler/borrow.ll \
-    compiler/licm.ll \
-    compiler/resolve.ll \
-    compiler/codegen.ll \
-    compiler/nyx.ll \
+    $LINK_SEEDS \
     $RUNTIME_SRCS \
     -o nyx_bootstrap \
     $LIBS

@@ -728,6 +728,26 @@ static char** nyx_argv = NULL;
 void nyx_set_args(int argc, char** argv) {
     nyx_argc = argc;
     nyx_argv = argv;
+    // D-3 (arco pila-del-compilador): que una recursión infinita en el hilo
+    // principal muera con nombre y no con un «Segmentation fault» mudo.
+    // Va ACÁ y no en el constructor nyx_gc_install_oom_handler (lo primero que
+    // se probó, medido): el constructor corre en TODO binario que enlace
+    // runtime.c, incluidos los tests C de la capa, y el fault guard es once-only
+    // —el primer install fija quién es el dueño previo de SIGSEGV—. Instalado
+    // ahí, un GC_enable_incremental() posterior deja a Boehm como dueño vigente
+    // SIN SA_ONSTACK (y encadenando a nosotros), con lo que ni el desborde de
+    // goroutinas ni este se diagnosticarían: test_os_fault_guard lo caza
+    // («el handler instalado usa SA_ONSTACK») y test_os_fault_guard_chain pierde
+    // su «el guard mira primero». nyx_set_args es la primera instrucción de todo
+    // main que genera codegen (programa, `nyx test`, bench), en el hilo principal
+    // y antes de cualquier código de usuario: el mismo alcance, solo en
+    // programas Nyx. El rc se ignora: sin guard, el SIGSEGV de siempre.
+    // EN: D-3: name main-thread stack overflows. Here rather than in the GC
+    // constructor (tried and measured): the constructor runs in every binary
+    // linking runtime.c, and a later GC_enable_incremental() would leave Boehm
+    // owning SIGSEGV without SA_ONSTACK. nyx_set_args is the first call of every
+    // codegen-generated main, on the main thread, before any user code.
+    (void)os_main_stack_guard_install();
 }
 
 nyx_array_t* nyx_get_args(void) {

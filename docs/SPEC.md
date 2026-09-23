@@ -1898,6 +1898,20 @@ extern "js" fn js_browser_fetch_await(url: String, method: String, body: String,
   `.wasm` que antes.
 - `#[suspends]` fuera de un `extern "js" fn`, u otro atributo sobre un `extern`, es **NYX0105**.
 
+`std/browser_idb` (arco browser-indexeddb, 2026-09-23) usa el mismo mecanismo para IndexedDB: un
+almacén asíncrono por claves, texto, para PWAs sin conexión (un `localStorage` sin el límite de
+~5 MB y sin escritura síncrona). `idb_get(store, key) -> Result<String, Error>`,
+`idb_put(store, key, value) -> Result<int, Error>`, `idb_delete(store, key) -> Result<int, Error>`
+(`Ok(0)`, idempotente), `idb_keys(store) -> Result<Array, Error>`, las cuatro `async fn`. Una clave
+ausente en `idb_get` es `Err(kind: "not_found")`, nunca una centinela muda; otros kinds posibles:
+`"in_use"` (apertura bloqueada por otra pestaña), `"oom"` (cuota agotada), `"io"` (el resto). `store`
+es un namespace lógico: todas las llamadas comparten UNA sola base física y UN solo `objectStore`
+con clave compuesta `[store, key]` — evita el `onupgradeneeded`/`blocked` que dispararía un
+`objectStore` real por cada nombre de store nuevo en tiempo de ejecución; `idb_keys` recorre ese
+prefijo con un `IDBKeyRange` acotado, con el mismo resultado observable que si cada store fuera su
+propio objectStore. Fuera de alcance v1: transacciones explícitas, cursores, índices, valores
+binarios, más de una base.
+
 ---
 
 ## Const Declarations

@@ -198,6 +198,10 @@ int os_sig_ignore(int signum) { (void)signum; return -ENOSYS; }
 int os_sig_is_default(int signum) { (void)signum; return -ENOSYS; }
 int os_fault_guard_install(int (*on_fault)(void* addr)) { (void)on_fault; return -ENOSYS; }
 int os_fault_guard_thread_init(void) { return -ENOSYS; }
+// D-3: 0 y no -ENOSYS: lo llama nyx_set_args en TODO programa y "no hay nada que
+// instalar" no es un error. wasm no tiene señales: un desborde es un trap de wasmtime.
+// EN: 0, not -ENOSYS: every program calls it; wasm has no signals (a trap instead).
+int os_main_stack_guard_install(void) { return 0; }
 
 // --- os_ev: eventos de E/S completion-style (W1 inc 4) -- epoll no existe en
 // wasi (single-thread, sin sockets -- ver el bloque de arriba). loop_new

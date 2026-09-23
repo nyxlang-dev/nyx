@@ -635,6 +635,23 @@ int64_t os_fs_listdir(const char* path,
 int  os_fault_guard_install(int (*on_fault)(void* addr));
 // Pila alterna del thread llamante (idempotente por thread). 0 / -errno.
 int  os_fault_guard_thread_init(void);
+// D-3 (arco pila-del-compilador): le da nombre al desborde de la pila del HILO
+// PRINCIPAL. Se llama UNA vez, desde el hilo principal, antes de que corra
+// código de usuario (hoy: nyx_set_args, lo primero del main generado). Calcula
+// la ventana de direcciones donde faultea ese desborde (RLIMIT_STACK blando;
+// nada si es infinito), le da pila alterna al hilo principal e instala el
+// fault guard con on_fault NULL, que conserva el callback de goroutinas si ya
+// había uno. Un fault en esa ventana imprime «[nyx] desborde de pila del hilo
+// principal…» por stderr y el proceso muere IGUAL por la señal (rc 139): no se
+// encadena al dueño previo. 0 / -errno. Windows y wasm: 0 sin hacer nada
+// (Windows queda para el arco w4-windows: vectored exception handler).
+// EN: D-3: names a MAIN-THREAD stack overflow. Called once from the main thread
+// before user code runs. Computes the fault window from soft RLIMIT_STACK (none
+// if unlimited), gives the main thread an alternate stack and installs the
+// fault guard with a NULL on_fault (keeps any goroutine callback). A fault in
+// the window prints a named diagnostic and the process still dies by the
+// signal (rc 139). Windows/wasm: 0, no-op.
+int  os_main_stack_guard_install(void);
 
 // --- Terminal + fd crudos / Raw terminal + raw fds (dominio term+fd, W2 fase A).
 // ES: SOLO lo que runtime.c consume medido (Paso Cero): el bloque de raw mode

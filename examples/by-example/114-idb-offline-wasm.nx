@@ -1,0 +1,83 @@
+// 114 — IndexedDB con await: un catálogo que sobrevive a un F5, sin callbacks
+//
+// Target wasm32-wasi (corre en el navegador, o bajo node con
+// examples/browser/run-node.mjs). Pensado para una PWA sin conexión: un
+// catálogo de miles de registros y una cola de operaciones pendientes, algo
+// que se sale del límite de ~5 MB y la escritura síncrona de localStorage
+// (ls_get/ls_set, std/browser).
+//
+// Construir:  nyx build --target wasm32-wasi
+//   (necesita binaryen: `sudo apt install binaryen`, o NYX_WASM_OPT=/ruta/a/wasm-opt;
+//    nyx build lo usa SOLO porque el programa espera al anfitrión)
+//
+// Lo que conviene saber:
+//   - idb_get de una clave ausente es Err(kind: "not_found"), no "" — el
+//     mismo vocabulario cerrado de Error que el resto de la stdlib.
+//   - `store` ("catalogo", "cola-ventas" acá abajo) es un namespace lógico:
+//     dos stores nunca se mezclan aunque compartan una sola base física —
+//     ver std/browser_idb.nx para el porqué (clave compuesta [store, key]).
+//   - idb_put/idb_delete son Result<int, Error>: Ok(0) en éxito, y delete es
+//     idempotente (Ok aunque la clave ya no exista).
+//   - Mismo contrato de "una sola pila suspendida" que browser_await: si otra
+//     parte de la pantalla dispara un idb_* mientras este espera, se encola.
+
+import "std/browser_idb"
+import "std/error"
+
+// Guarda el catálogo completo como JSON. Devuelve true si quedó persistido.
+async fn guardar_catalogo(json: String) -> bool {
+    let r = await idb_put("catalogo", "items", json)
+    match r {
+        Result.Ok(_) => { return true }
+        Result.Err(e) => { println("no se pudo guardar el catálogo: " + e.kind); return false }
+    }
+}
+
+// Lee el catálogo guardado, o "" si todavía no hay uno (primera visita).
+async fn cargar_catalogo() -> String {
+    let r = await idb_get("catalogo", "items")
+    match r {
+        Result.Ok(json) => { return json }
+        Result.Err(e) => {
+            if e.kind == "not_found" { return "" }
+            println("no se pudo leer el catálogo: " + e.kind)
+            return ""
+        }
+    }
+}
+
+// Encola una venta hecha sin conexión, bajo su propio ID, en un store
+// APARTE del catálogo — nunca se van a mezclar en idb_keys().
+async fn encolar_venta(id: String, venta_json: String) -> bool {
+    let r = await idb_put("cola-ventas", id, venta_json)
+    match r {
+        Result.Ok(_) => { return true }
+        Result.Err(e) => { println("no se pudo encolar la venta " + id + ": " + e.kind); return false }
+    }
+}
+
+// Cuando vuelve la conexión: procesa y borra cada venta encolada.
+async fn drenar_cola() -> int {
+    let claves = await idb_keys("cola-ventas")
+    match claves {
+        Result.Ok(ids) => {
+            let ventas: Array<String> = ids
+            var i: int = 0
+            while i < ventas.length() {
+                let id: String = ventas[i]
+                // acá iría el POST real al servidor con el JSON de la venta
+                let _b = await idb_delete("cola-ventas", id)
+                i = i + 1
+            }
+            return ventas.length()
+        }
+        Result.Err(e) => { println("no se pudo leer la cola: " + e.kind); return 0 }
+    }
+}
+
+fn main() {
+    let _g: bool = await guardar_catalogo("{\"items\":[{\"id\":1,\"nombre\":\"tornillo\"}]}")
+    let _v: bool = await encolar_venta("venta-0042", "{\"total\":120}")
+    let procesadas: int = await drenar_cola()
+    println("ventas drenadas: " + int_to_string(procesadas))
+}

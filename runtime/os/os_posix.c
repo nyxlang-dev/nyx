@@ -34,6 +34,7 @@
 #include <dirent.h>           // opendir/readdir/closedir (os_fs_listdir, W2 fase A)
 #include <termios.h>          // tcgetattr/tcsetattr/cfmakeraw (os_term_raw_*, W2 fase A term+fd)
 #include <sys/ioctl.h>        // ioctl TIOCGWINSZ (os_term_winsize, W2 fase A term+fd)
+#include <sys/resource.h>     // getrlimit RLIMIT_STACK (os_main_stack_guard_install, D-3)
 #define GC_THREADS            // redirect pthread_create→GC_pthread_create: registra el thread en Boehm.
                               // Los callers lo dejan de definir a medida que migran a esta capa
                               // (Tasks 3-5 de W1 inc 1) — hoy conviven ambos hasta que terminen.
@@ -1349,11 +1350,70 @@ static void os_fault_chain_to_prev(int sig, siginfo_t* info, void* uctx) {
     raise(sig);
 }
 
+// D-3 (arco pila-del-compilador): ventana de direcciones donde cae el fault de
+// un desborde de la pila del HILO PRINCIPAL. La publica una sola vez
+// os_main_stack_guard_install (antes de cualquier fault posible del programa) y
+// el handler solo la LEE. lo == hi == 0 = sin ventana (RLIMIT_STACK infinito,
+// o la instalación nunca corrió).
+// EN: D-3: address window where a MAIN-THREAD stack overflow faults. Published
+// once by os_main_stack_guard_install; the handler only reads it.
+static volatile uintptr_t g_main_stack_lo = 0;
+static volatile uintptr_t g_main_stack_hi = 0;
+static volatile uint64_t  g_main_stack_limit_kb = 0;
+
+// Entero sin signo a decimal, a mano: snprintf no es async-signal-safe. Mismo
+// formateo que el mensaje de goroutina de scheduler.c. `buf` necesita >= 21.
+// EN: unsigned to decimal by hand (snprintf is not async-signal-safe).
+static int os_fault_fmt_u64(char* buf, uint64_t v) {
+    char tmp[24];
+    int t = 0, p = 0;
+    if (v == 0) { buf[p++] = '0'; return p; }
+    while (v > 0 && t < 20) { tmp[t++] = (char)('0' + (v % 10)); v /= 10; }
+    while (t > 0) buf[p++] = tmp[--t];
+    return p;
+}
+
+// El mensaje del desborde del hilo principal. Corre EN CONTEXTO DE SEÑAL sobre
+// la pila alterna del hilo principal: solo write() crudo.
+// EN: the main-thread overflow message. Runs IN SIGNAL CONTEXT on the main
+// thread's alternate stack: raw write() only.
+static void os_main_stack_overflow_report(void) {
+    static const char m1[] = "[nyx] desborde de pila del hilo principal: recursión demasiado profunda o infinita (límite de pila: ";
+    static const char m2[] = " KB). Si es una expresión enorme, conviene partirla; si es recursión, revisarla o subir `ulimit -s`.\n";
+    char num[24];
+    int n = os_fault_fmt_u64(num, g_main_stack_limit_kb);
+    ssize_t w = write(2, m1, sizeof(m1) - 1);
+    w = write(2, num, (size_t)n);
+    w = write(2, m2, sizeof(m2) - 1);
+    (void)w;
+}
+
 static void os_fault_guard_handler(int sig, siginfo_t* info, void* uctx) {
     void* addr = info ? info->si_addr : NULL;
     if (g_fault_on_fault && g_fault_on_fault(addr)) {
         // Manejado: el callback ya hizo _exit (contrato de nyx_os.h) -- este
         // return es solo defensivo, nunca debería alcanzarse en la práctica.
+        return;
+    }
+    // D-3: ¿desborde de la pila del hilo principal? Se mira DESPUÉS del callback
+    // (las guard pages de goroutina son más específicas) y ANTES de encadenar:
+    // el dueño previo no tiene nada que decir de este fault (Boehm abortaría con
+    // su propio "Unexpected bus error or segmentation fault", que no nombra el
+    // problema). Después del mensaje el proceso SIGUE MURIENDO por SIGSEGV/SIGBUS
+    // (rc 139/138 en el shell): los lanzadores de nyx deciden por rc >= 128, y un
+    // _exit(1) acá los confundiría con un error ordinario del programa. La señal
+    // queda pendiente (está bloqueada mientras corre el handler) y se entrega con
+    // SIG_DFL apenas este handler retorna.
+    // EN: D-3: main-thread stack overflow? Checked AFTER the callback (goroutine
+    // guard pages are more specific) and BEFORE chaining: the previous owner has
+    // nothing useful to say about this fault. After the message the process KEEPS
+    // DYING by SIGSEGV/SIGBUS (rc 139/138): nyx launchers decide on rc >= 128.
+    uintptr_t a = (uintptr_t)addr;
+    uintptr_t lo = g_main_stack_lo, hi = g_main_stack_hi;
+    if (a != 0 && lo < hi && a >= lo && a < hi) {
+        os_main_stack_overflow_report();
+        signal(sig, SIG_DFL);
+        raise(sig);
         return;
     }
     os_fault_chain_to_prev(sig, info, uctx);
@@ -1420,7 +1480,15 @@ int os_fault_guard_install(int (*on_fault)(void* addr)) {
     // EN: the callback is published BEFORE the once-only guard: a second install
     // with a different callback still updates it (same observable behaviour as
     // before); what is not repeated is the snapshot + sigaction.
-    g_fault_on_fault = on_fault;
+    //
+    // D-3: un on_fault NULL NO se publica. os_main_stack_guard_install instala
+    // con NULL (solo quiere el handler y la pila alterna del hilo principal) y
+    // puede correr antes O después de que el scheduler registre el suyo: en el
+    // segundo orden, publicar el NULL borraría el diagnóstico de goroutinas.
+    // EN: D-3: a NULL on_fault is NOT published. The main-thread install passes
+    // NULL and may run before OR after the scheduler registers its callback;
+    // publishing NULL in the latter order would erase goroutine diagnosis.
+    if (on_fault) g_fault_on_fault = on_fault;
     if (__atomic_exchange_n(&g_fault_installed, 1, __ATOMIC_ACQ_REL)) return 0;
 
     // Snapshot + publicación ANTES de instalar: si se publicara después, un
@@ -1555,6 +1623,75 @@ int os_fault_guard_thread_init(void) {
         return -e;
     }
     return 0;
+}
+
+// D-3 (arco pila-del-compilador): ver el contrato en nyx_os.h.
+//
+// Cómo se ubica la pila del hilo principal sin /proc (tiene que andar igual en
+// macOS): el tope se estima con la dirección más alta conocida de la pila de
+// arranque —una variable local de este marco y, por encima, las cadenas de
+// `environ`, que el kernel copia en lo más alto de la pila junto con argv— y el
+// fondo es tope − RLIMIT_STACK blando, porque hasta ahí puede crecer la pila
+// antes de que el kernel responda con SIGSEGV. La ventana [fondo − 2 MB,
+// fondo + 1 MB) absorbe los dos errores de la estimación: por abajo, un marco
+// grande (los de codegen en -O0 llegan a cientos de KB) salta por encima de la
+// última página y faultea más abajo, dentro del gap de guarda de ~1 MB que Linux
+// deja bajo la pila; por arriba, el tope real queda algo más alto que la cadena
+// de entorno más alta (auxv, el nombre del ejecutable, el redondeo a página).
+// Un fault dentro de esa ventana que NO sea desborde no ocurre en la práctica:
+// es memoria que solo existe como pila del hilo principal casi agotada.
+// EN: D-3: locate the main stack without /proc (must work on macOS too): the
+// top is the highest known address of the startup stack (a local here and the
+// `environ` strings, which the kernel copies to the very top of the stack next
+// to argv); the bottom is top − soft RLIMIT_STACK. The window [bottom − 2 MB,
+// bottom + 1 MB) absorbs both estimation errors: large -O0 frames that fault
+// below the last page, inside the ~1 MB guard gap; and the real top sitting a
+// bit above the highest env string.
+extern char** environ;
+
+int os_main_stack_guard_install(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) != 0) return -errno;
+    // Sin límite no hay fondo que calcular: la pila crece hasta chocar con otra
+    // región y el fault no tiene dirección reconocible. Nada que instalar.
+    // EN: unlimited: no bottom to compute, nothing to install.
+    if (rl.rlim_cur == RLIM_INFINITY) return 0;
+
+    volatile char probe = 0;
+    uintptr_t here = (uintptr_t)&probe;
+    uintptr_t lim = (uintptr_t)rl.rlim_cur;
+    uintptr_t top = here;
+    if (environ) {
+        for (char** e = environ; *e; e++) {
+            uintptr_t s = (uintptr_t)*e;
+            // Solo cadenas que viven en la pila de arranque: un setenv previo
+            // puede dejar punteros al heap, que no dicen nada del tope.
+            // EN: only strings living on the startup stack (a prior setenv may
+            // leave heap pointers).
+            if (s > here && s - here < lim) {
+                uintptr_t end = s + strlen(*e) + 1;
+                if (end > top) top = end;
+            }
+        }
+    }
+    if (lim >= top) return 0;   // límite absurdo para este espacio de direcciones
+
+    const uintptr_t below = (uintptr_t)2 << 20;   // 2 MB bajo el fondo estimado
+    const uintptr_t above = (uintptr_t)1 << 20;   // 1 MB sobre el fondo estimado
+    uintptr_t bottom = top - lim;
+    g_main_stack_limit_kb = (uint64_t)(lim / 1024);
+    g_main_stack_lo = bottom > below ? bottom - below : 0;
+    g_main_stack_hi = bottom + above;
+
+    // Pila alterna del hilo principal: sin ella el handler correría sobre la
+    // pila agotada y faultearía él mismo (el SIGSEGV mudo de siempre).
+    // EN: main-thread alternate stack, or the handler faults on the exhausted stack.
+    int rc = os_fault_guard_thread_init();
+    if (rc != 0) return rc;
+    // NULL: conserva el callback de goroutinas si ya está (ver el comentario D-3
+    // en os_fault_guard_install); si no, el handler tolera g_fault_on_fault NULL.
+    // EN: NULL keeps the goroutine callback if already set.
+    return os_fault_guard_install(NULL);
 }
 
 // --- Filesystem / Sistema de archivos (dominio fs, W2 fase A) -- mecánica

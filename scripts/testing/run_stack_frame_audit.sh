@@ -45,8 +45,15 @@ declare -A TECHO=(
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
 TECHO_NIVEL=23040
 # Operandos que tienen que compilar con 8 MB, sin la subida de los lanzadores.
-# Techo real medido por bisección: 322; se deja margen.
+# Techo real medido por bisección: 322 sin SROA, ~2.400 con SROA (Task 4). Se
+# pide lo que aguanta el compilador construido SIN opt, porque es el peor caso
+# que puede tener un usuario (Apple clang no trae opt).
 OPERANDOS=250
+# Con SROA (build_bootstrap.sh lo aplica si hay un opt de la misma versión que
+# clang): costo por nivel después del pase. Ratchet aparte, porque son dos
+# compiladores distintos que se pueden construir.
+#   2026-09-23 Task 4: expr 800 + binop 1168.
+TECHO_NIVEL_SROA=1968
 
 fallos=0
 
@@ -97,6 +104,31 @@ else
         exit 1
     fi
     auditar_su "$tmp/codegen.su"
+    clang_major="$(clang --version 2>/dev/null | sed -n 's/.*clang version \([0-9][0-9]*\).*/\1/p' | head -1)"
+    opt_bin=""
+    for cand in "opt-$clang_major" opt; do
+        if command -v "$cand" > /dev/null 2>&1 \
+           && [ "$("$cand" --version 2>/dev/null | sed -n 's/.*LLVM version \([0-9][0-9]*\).*/\1/p' | head -1)" = "$clang_major" ]; then
+            opt_bin="$cand"; break
+        fi
+    done
+    if [ -n "$opt_bin" ]; then
+        "$opt_bin" -passes=sroa compiler/codegen.ll -o "$tmp/sroa.bc"
+        clang -O0 -c -fstack-usage -Wno-override-module "$tmp/sroa.bc" -o "$tmp/sroa.o" 2> /dev/null
+        nivel_sroa=0
+        for f in codegen_expr codegen_binop; do
+            v=$(awk -F'\t' -v fn="$f" '{ n=split($1, a, ":"); if (a[n] == fn) { print $2; exit } }' "$tmp/sroa.su")
+            nivel_sroa=$((nivel_sroa + ${v:-0}))
+        done
+        if [ "$nivel_sroa" -gt "$TECHO_NIVEL_SROA" ]; then
+            echo "  ✗ costo por nivel con SROA: $nivel_sroa B > techo $TECHO_NIVEL_SROA B"
+            fallos=$((fallos + 1))
+        else
+            echo "  ✓ costo por nivel con SROA ($opt_bin): $nivel_sroa B (techo $TECHO_NIVEL_SROA)"
+        fi
+    else
+        echo "  · sin opt de LLVM $clang_major: la mitad con SROA no se audita en esta máquina"
+    fi
 fi
 
 if [ "${1:-}" != "--solo-marcos" ] && [ -z "${NYX_FRAME_AUDIT_SU:-}" ]; then

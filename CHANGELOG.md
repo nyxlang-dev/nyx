@@ -10,6 +10,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **El compilador ya no se queda sin pila con expresiones largas: de 52 a ~2.400 operandos con la
+  pila por omisión** `[arco: pila-del-compilador]`. La causa, medida con `clang -fstack-usage`: el
+  toolchain se enlaza en `-O0` y cada nivel de una expresión apilaba ~151 KB de marcos de codegen.
+  Tres piezas: (1) `codegen_binop` y `codegen_expr` partidos para que la recursión pase por marcos
+  chicos —refactor puro, IR idéntico en 524 archivos— (151 → 23 KB por nivel, techo 322); (2) SROA
+  sobre las semillas cuando hay un `opt` de la misma versión que clang, +2 s por bootstrap (23 KB →
+  2 KB por nivel, techo ~2.400; sin `opt`, 322); (3) **el desborde de pila del hilo principal tiene
+  nombre**: una recursión infinita en `main` imprime «desborde de pila del hilo principal» con el
+  límite, en vez de un «Segmentation fault» mudo (POSIX; Windows queda para W4). Guarda nueva
+  `run_stack_frame_audit.sh` en `make test-ai-first`, un ratchet de los marcos del camino recursivo.
+  El piso que queda es `CodegenContext` por valor: su raíz es el arco en borrador `structs-byval`.
 - **Una expresión de 53 operandos hacía caer al compilador con SIGSEGV y sin mensaje** (fricción nyxerp
   `20260920-200024`: una hoja de estilos de 75 concatenaciones, una hora de bisección a mano; `nyx check` y `nyx vet`
   daban verde). Causa medida: el toolchain se enlaza sin `-O` y cada nivel de una expresión binaria apila ~151 KB de
@@ -106,6 +117,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Default corregido a `~/nyx/products/proxy` y skip más explícito.
 
 ### Added
+- **`std/browser_idb`: IndexedDB para PWAs sin conexión** `[arco: browser-indexeddb]` (pedido de
+  nyxerp). `idb_get`/`idb_put`/`idb_delete`/`idb_keys` asíncronos (`await`, Asyncify) con
+  `Result<_, Error>` y los kinds de siempre (`not_found`, `in_use`, `oom`, `io`); una sola base con
+  clave compuesta `[store, key]`, para que un store nuevo no dispare una subida de versión que
+  bloquee entre pestañas. Módulo aparte: solo paga Asyncify quien lo importa. `opts.idb` inyectable
+  en el shim para testear sin navegador (`test-wasm-35-idb`), receta `114-idb-offline-wasm`.
 - **`make bench-test-cache`** — banco de medición del costo de compilar un archivo de prueba, por
   fases (`front` / `clang_ll` / `link` / `run` / `hash`), sobre proyectos sintéticos en tres capas
   con reuso, de 8 a 250 módulos `[arco: semantic-indice-simbolos]`. Nació para re-medir la ficha de

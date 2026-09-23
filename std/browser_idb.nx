@@ -1,0 +1,120 @@
+// std/browser_idb.nx — IndexedDB con await (arco browser-indexeddb, pedido de
+// nyxerp, 2026-09-23: un catálogo de miles de registros + una cola de
+// operaciones, en el navegador, sin bloquear la página mientras escribe).
+// SOLO compila bajo NYX_TARGET=wasm32-wasi (extern "js" aborta en nativo a
+// propósito, igual que std/browser_await.nx).
+//
+// POR QUÉ ES UN MÓDULO APARTE Y NO PARTE DE std/browser NI DE
+// std/browser_await. Un import `#[suspends]` hace que el build pase el
+// .wasm por `wasm-opt --asyncify` (binaryen): resolve compila los módulos
+// importados ENTEROS, así que si esto viviera en std/browser TODO programa
+// que solo usa DOM/router/fetch-por-cierre pagaría ese costo sin usarlo.
+// Separarlo de std/browser_await evita además que un proyecto que solo
+// necesita `idb_*` cargue los símbolos de fetch/sleep en su lista de
+// Asyncify — importar este módulo ES la señal «este programa persiste en
+// el navegador» (D-2 del spec).
+//
+// Uso / usage:
+//   import "std/browser_idb"
+//
+//   async fn guardar(json: String) -> bool {
+//       let r = await idb_put("tienda", "catalogo", json)
+//       match r {
+//           Result.Ok(_) => { return true }
+//           Result.Err(e) => { println("idb_put: " + e.kind); return false }
+//       }
+//   }
+//
+// CONTRATO
+//   - `idb_get` de una clave ausente es Err(kind: "not_found") — NO ""
+//     silencioso (std/error.nx:11 ya nombra "clave ausente" como ejemplo
+//     de este kind; ver la política E6/E7).
+//   - `idb_put`/`idb_delete` devuelven Result<int, Error>, Ok(0) en éxito
+//     (mismo patrón que try_tcp_set_timeout/try_tcp_shutdown, std/net.nx).
+//   - `idb_keys(store)` devuelve Result<Array, Error> (Array de String) con
+//     TODAS las claves puestas bajo ese `store`.
+//   - Kinds posibles (vocabulario cerrado de std/error, sin agregar
+//     ninguno): "not_found" (clave ausente en idb_get), "in_use" (la
+//     apertura de la base quedó bloqueada por otra pestaña), "oom" (cuota
+//     de almacenamiento agotada, QuotaExceededError), "io" (el resto:
+//     IndexedDB deshabilitado, modo privado que lo bloquea, fallo genérico
+//     del navegador).
+//   - `store` es un NAMESPACE LÓGICO (prefijo de clave), no un objectStore
+//     real de IndexedDB: todos los `store` comparten una sola base física y
+//     un solo objectStore, con clave compuesta [store, key] — así ningún
+//     nombre de store nuevo dispara una subida de versión ni el `blocked`
+//     que eso puede causar entre pestañas (D-4 del spec). Efecto observable
+//     para quien llama: ninguno — `idb_keys("a")` nunca ve claves de "b".
+//   - UNA SOLA PILA SUSPENDIDA (D-3 heredado de async-real-wasm): mientras
+//     una función espera, los eventos se encolan y se entregan en orden al
+//     terminar.
+//   - El valor que devuelve `idb_get`/`idb_keys` es memoria del turno en
+//     que se reanuda el `await` — si el llamador lo guarda para leerlo en
+//     un evento POSTERIOR (no en el que lo recibió), aplica el mismo
+//     contrato que docs/gotchas/wasm-arena-closure-env.md documenta para
+//     cierres.
+//   - Requiere binaryen (wasm-opt) al construir, igual que
+//     std/browser_await.nx. El shim provee los imports en
+//     browserBindings() (examples/browser/nyx-wasi-shim.js), con `opts.idb`
+//     inyectable para testear sin navegador.
+//
+// EN: IndexedDB with await — a single-database, single-objectStore,
+// composite-key [store, key] async key-value store for offline PWAs. A
+// separate module so only programs that import it pay for Asyncify. Errors
+// use std/error's closed kind vocabulary: not_found/in_use/oom/io.
+
+import "std/error"
+
+#[suspends]
+extern "js" fn js_idb_get(store: String, key: String) -> String
+#[suspends]
+extern "js" fn js_idb_put(store: String, key: String, value: String) -> int
+#[suspends]
+extern "js" fn js_idb_delete(store: String, key: String) -> int
+#[suspends]
+extern "js" fn js_idb_keys(store: String) -> Array
+extern "js" fn js_idb_error_kind() -> String
+extern "js" fn js_idb_error_msg() -> String
+
+// Lee `key` bajo el namespace `store`. Err(kind: "not_found") si la clave
+// no existe — no hay valor "ausente" silencioso.
+export async fn idb_get(store: String, key: String) -> Result<String, Error> {
+    let valor: String = js_idb_get(store, key)
+    let kind: String = js_idb_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_idb_error_msg()))
+    }
+    return Result.Ok(valor)
+}
+
+// Escribe `value` bajo `store`/`key` (crea o reemplaza). Ok(0) en éxito.
+export async fn idb_put(store: String, key: String, value: String) -> Result<int, Error> {
+    let _r: int = js_idb_put(store, key, value)
+    let kind: String = js_idb_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_idb_error_msg()))
+    }
+    return Result.Ok(0)
+}
+
+// Borra `key` bajo `store`. Ok(0) tanto si existía como si no (idempotente,
+// mismo contrato que un DELETE por clave habitual).
+export async fn idb_delete(store: String, key: String) -> Result<int, Error> {
+    let _r: int = js_idb_delete(store, key)
+    let kind: String = js_idb_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_idb_error_msg()))
+    }
+    return Result.Ok(0)
+}
+
+// Todas las claves puestas bajo `store` (Array de String, sin orden
+// garantizado más allá del que da IndexedDB internamente).
+export async fn idb_keys(store: String) -> Result<Array, Error> {
+    let claves: Array = js_idb_keys(store)
+    let kind: String = js_idb_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_idb_error_msg()))
+    }
+    return Result.Ok(claves)
+}

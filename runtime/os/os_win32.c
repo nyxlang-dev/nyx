@@ -1411,6 +1411,14 @@ int os_fault_guard_install(int (*on_fault)(void* addr)) {
 // dispatching off the faulting stack. Do NOT assume the kernel covers it.
 int os_fault_guard_thread_init(void) { return 0; }
 
+// D-3 (arco pila-del-compilador): en Windows el desborde del hilo principal es
+// EXCEPTION_STACK_OVERFLOW, que se atiende con un vectored exception handler y
+// con una reserva previa (SetThreadStackGuarantee) para que el despacho tenga
+// dónde correr. Queda fichado para el arco w4-windows; hoy no hace nada.
+// EN: D-3: on Windows this is EXCEPTION_STACK_OVERFLOW (VEH + a
+// SetThreadStackGuarantee reserve). Deferred to the w4-windows arc; no-op today.
+int os_main_stack_guard_install(void) { return 0; }
+
 // ===========================================================================
 // Filesystem — los 3 callers medidos de file-io.c.
 // ===========================================================================

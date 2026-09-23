@@ -2521,6 +2521,51 @@ The closure-callback API of `std/browser` (below) is still there and still the c
 multi-shot events: `browser_timeout_fn`/`browser_interval_fn` to schedule, `browser_sse_fn` for
 server push, `dom_on_fn` for listeners.
 
+**`std/browser_idb`: IndexedDB with await** (arco browser-indexeddb, 2026-09-23). Same shape as
+`browser_await` — a separate module so only programs that import it pay for Asyncify — for a
+key-value store that survives a reload, for offline PWAs with more data than `localStorage`'s
+~5 MB:
+
+```nyx
+import "std/browser_idb"
+import "std/error"
+
+async fn save_catalog(json: String) -> bool {
+    let r = await idb_put("catalog", "items", json)
+    match r {
+        Result.Ok(_) => { return true }
+        Result.Err(e) => { println("idb_put: " + e.kind); return false }
+    }
+}
+```
+
+- API: `idb_get(store, key) -> Result<String, Error>`, `idb_put(store, key, value) ->
+  Result<int, Error>` (`Ok(0)` on success), `idb_delete(store, key) -> Result<int, Error>`
+  (idempotent: `Ok(0)` whether the key existed or not), `idb_keys(store) -> Result<Array, Error>`
+  (`Array` of `String`).
+- **A missing key is `Err(kind: "not_found")`**, never a silent `""` — the same closed kind
+  vocabulary as the rest of the stdlib (`std/error.nx`). Other kinds: `"in_use"` (the database open
+  request was blocked by another tab), `"oom"` (`QuotaExceededError`), `"io"` (everything else —
+  IndexedDB disabled, private-mode restrictions, a generic browser failure).
+- **`store` is a logical namespace, not a real IndexedDB objectStore.** All calls share ONE
+  physical database and ONE objectStore with a composite key `[store, key]`. This is what lets a
+  brand-new store name show up at runtime (`idb_put("new-store", ...)`) without ever triggering
+  `onupgradeneeded`/a version bump — which is what could `block` on another tab that has the
+  database open. `idb_keys(store)` is implemented as a bounded `IDBKeyRange` over that prefix;
+  the observable result is the same as if each store were its own objectStore: `idb_keys("a")`
+  never sees a key written under `"b"`.
+- Same **one suspended stack at a time** contract as `browser_await` (D-3): events arriving while
+  an `idb_*` call is pending are queued and delivered in order when it settles.
+- Same arena caveat as any `await`ed value: the `String`/`Array` `idb_get`/`idb_keys` return is
+  memory of the turn that resumes the `await` — if the caller stashes it to read from a LATER event
+  instead of consuming it right away, the same contract as `docs/gotchas/wasm-arena-closure-env.md`
+  applies.
+- Testing without a browser: `browserBindings({ idb: {...} })` takes an injectable mock (same shape
+  as `opts.storage`) with `get(store,key)`/`put(store,key,val)`/`delete(store,key)`/`keys(store)`,
+  each returning a Promise — see `tests/wasm/test-wasm-35-idb.imports.mjs`. Out of scope (v1):
+  explicit multi-op transactions, cursors, secondary indexes, binary values (`Blob`/`ArrayBuffer` —
+  text only, same as `ls_get`/`ls_set`), more than one physical database, configurable quota.
+
 **Toolchain** (no wasi-sdk, ~700MB): system clang + Debian `wasi-libc` +
 `libclang-rt-19-dev-wasm32` + `lld-19` (`--sysroot=/usr`) + `wasmtime` (release
 binary, not in apt). Tests: `make test-wasm` — SKIPs clean (exit 0) if that
