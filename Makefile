@@ -372,6 +372,8 @@ test-ai-first:
 	bash scripts/testing/run_self_check.sh
 	bash scripts/testing/run_shutdown_test.sh
 	bash scripts/testing/run_codegen_mute_audit.sh
+	bash scripts/testing/run_stack_frame_audit.sh --self-test
+	bash scripts/testing/run_stack_frame_audit.sh
 	bash scripts/testing/run_capabilities_test.sh
 	bash scripts/testing/run_toolchain_recipe_audit.sh
 	bash scripts/testing/run_prelude_divergence.sh
