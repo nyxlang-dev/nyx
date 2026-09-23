@@ -43,7 +43,8 @@ struct ProjectConfig {
     dep_names: Array,   // dependency names
     dep_versions: Array, // dependency versions (parallel to dep_names)
     toml_error: String, // "" si el manifiesto es válido; si no, el mensaje a mostrar
-    bin_name: String    // nombre del artefacto; "" = el de [package] name (lo cambia --main)
+    bin_name: String,   // nombre del artefacto; "" = el de [package] name (lo cambia --main)
+    lib_modules: Array  // [lib] modules: módulos que se compilan aparte y se reutilizan (compilacion-separada)
 }
 
 // Parse a simple key = "value" line, return value or ""
@@ -93,6 +94,38 @@ fn parse_toml_key(line: String) -> String {
     return trimmed.substring(0, eq_pos).trim()
 }
 
+// `["src/a", "src/b"]` → agrega "src/a" y "src/b" a `out`. Devuelve "" o el
+// error a mostrar. El path se escribe COMO EN EL IMPORT (sin .nx): es la clave
+// con la que el compilador reconoce el import (NYX_LIB_MODULES, resolve.nx).
+fn parse_lib_modules(val: String, out: Array) -> String {
+    let v: String = val.trim()
+    if not v.startsWith("[") or not v.endsWith("]") {
+        return "[lib] modules en nyx.toml tiene que ser una lista en UNA línea: modules = [\"src/a\", \"src/b\"]"
+    }
+    let cuerpo: String = v.substring(1, v.length() - 1).trim()
+    if cuerpo == "" { return "" }
+    let partes: Array = cuerpo.split(",")
+    var i: int = 0
+    while i < partes.length() {
+        let pp: String = partes[i]
+        var m: String = pp.trim()
+        if m.startsWith("\"") and m.endsWith("\"") and m.length() >= 2 {
+            m = m.substring(1, m.length() - 1)
+        } else {
+            return "[lib] modules en nyx.toml: cada módulo va entre comillas (" + m + ")"
+        }
+        if m.endsWith(".nx") {
+            return "[lib] modules en nyx.toml: el módulo se escribe como en el import, sin .nx (" + m + ")"
+        }
+        if m.startsWith("std/") {
+            return "[lib] modules en nyx.toml: la stdlib no se compila aparte (" + m + ")"
+        }
+        out.push(m)
+        i = i + 1
+    }
+    return ""
+}
+
 // Parse nyx.toml content into ProjectConfig
 fn parse_toml(content: String) -> ProjectConfig {
     var dep_names_arr: Array = []
@@ -108,7 +141,8 @@ fn parse_toml(content: String) -> ProjectConfig {
         dep_names: dep_names_arr,
         dep_versions: dep_versions_arr,
         toml_error: "",
-        bin_name: ""
+        bin_name: "",
+        lib_modules: []
     }
 
     // `main` y `target` se aceptan en [package] y en [build]. [build] es lo que
@@ -159,6 +193,19 @@ fn parse_toml(content: String) -> ProjectConfig {
                     else if key == "target" { build_target = val }
                     else if config.toml_error == "" {
                         config.toml_error = "clave desconocida en [build] de nyx.toml: '" + key + "' (claves válidas: main, target)"
+                    }
+                }
+                if current_section == "lib" {
+                    // [lib] modules = ["src/a", "src/b"]: los módulos que `nyx build`
+                    // compila una vez y reutiliza (arco compilacion-separada, Task 6;
+                    // decisión D-3 de la spec: se declara en el manifiesto, no se le
+                    // cambia el significado a `import {}`). Una sola línea: el parser
+                    // de este manifiesto es de línea a línea.
+                    if key == "modules" {
+                        let err_lib: String = parse_lib_modules(val, config.lib_modules)
+                        if err_lib != "" and config.toml_error == "" { config.toml_error = err_lib }
+                    } else if config.toml_error == "" {
+                        config.toml_error = "clave desconocida en [lib] de nyx.toml: '" + key + "' (clave válida: modules)"
                     }
                 }
                 if current_section == "dependencies" {
@@ -1087,6 +1134,148 @@ fn pila_compilador_pista_sh() -> String {
     return "nyx_pista() { [ \"$1\" -ge 128 ] 2>/dev/null && echo \"nota: el compilador murio por una senal (rc=$1). La causa conocida es quedarse sin pila con una expresion muy larga o muy anidada (cientos de operandos en una sola expresion): conviene partirla en varias. Si no es eso, se puede reportar con 'nyx report'.\" >&2; return 0; }\n"
 }
 
+// ===== COMPILACIÓN SEPARADA: [lib] modules (arco compilacion-separada, Task 6) =====
+//
+// Cada módulo de `[lib] modules` se compila como UNA unidad de biblioteca
+// (NYX_LIB_UNIT=1: lo ajeno sale linkonce_odr, ver g_lib_unit en codegen.nx), a
+// un .o que vive en target/nyx-lib/ y se REUTILIZA mientras su huella no cambie.
+// El programa se compila con NYX_LIB_MODULES: esos imports no se inlinean, se
+// declaran (la interfaz de las tasks 3-4) y el enlace trae el .o.
+//
+// LA HUELLA es lo que decide reutilizar, y tiene que cubrir TODO lo que entra
+// en el .o, porque reutilizar un objeto viejo es un fallo silencioso (un struct
+// con otro layout se lee con offsets equivocados — medido en la Task 4):
+//   - el binario del compilador (otro compilador, otro IR),
+//   - las flags que cambian el objeto (-O2, NO_GC) y la lista de [lib] (lo que
+//     esta unidad inlinea o declara depende de ella),
+//   - el fuente del módulo y de TODO su cierre de imports, incluidos el prelude
+//     y los std/ que use (se inlinean dentro de la unidad).
+// El programa principal nunca se cachea: se recompila siempre contra las
+// interfaces vigentes.
+
+// Cierre de imports de `path` (sin .nx), en orden de visita: cada entrada es el
+// archivo real leído. std/ se busca en `std_dir`; lo demás, relativo al proyecto.
+// `imports_de` (archivo → sus paths importados) y `vistos` son Maps: con 250
+// módulos, releer y partir el cierre de cada uno y buscar linealmente costaba
+// ~9 s por build SIN cambios (medido 2026-09-23); cada archivo se lee una vez.
+fn lib_cierre(path: String, std_dir: String, visitados: Array, vistos: Map, imports_de: Map) {
+    var archivo: String = path + ".nx"
+    if path.startsWith("std/") { archivo = std_dir + "/" + path.substring(4, path.length()) + ".nx" }
+    if vistos.contains(archivo) { return 0 }
+    vistos.insert(archivo, 1)
+    if not imports_de.contains(archivo) {
+        var imps: Array = []
+        if file_exists(archivo) {
+            let lineas: Array = read_file(archivo).split("\n")
+            var i: int = 0
+            while i < lineas.length() {
+                let l: String = lineas[i]
+                let t: String = l.trim()
+                if t.startsWith("import ") {
+                    let a: int = t.indexOf("\"")
+                    if a >= 0 {
+                        let resto: String = t.substring(a + 1, t.length())
+                        let b: int = resto.indexOf("\"")
+                        if b > 0 { imps.push(resto.substring(0, b)) }
+                    }
+                }
+                i = i + 1
+            }
+        } else {
+            imps.push("")
+        }
+        imports_de.insert(archivo, imps)
+    }
+    let mis: Array = imports_de.get(archivo)
+    if mis.length() == 1 {
+        let unico: String = mis[0]
+        if unico == "" { return 0 }
+    }
+    visitados.push(archivo)
+    var j: int = 0
+    while j < mis.length() {
+        let ip: String = mis[j]
+        lib_cierre(ip, std_dir, visitados, vistos, imports_de)
+        j = j + 1
+    }
+    return 0
+}
+
+// sha256 del contenido de `f`, memoizado: el prelude y los módulos compartidos se
+// hashean UNA vez por build y no una por cada módulo que los importa.
+fn hash_archivo(f: String, hashes: Map) -> String {
+    if hashes.contains(f) {
+        let h: String = hashes.get(f)
+        return h
+    }
+    let h2: String = sha256(read_file(f))
+    hashes.insert(f, h2)
+    return h2
+}
+
+fn lib_huella(modulo: String, base: String, std_dir: String, hashes: Map, imports_de: Map) -> String {
+    var visitados: Array = []
+    var vistos: Map = Map.new()
+    lib_cierre(modulo, std_dir, visitados, vistos, imports_de)
+    var todo: String = base + "|" + hash_archivo(std_dir + "/prelude.nx", hashes)
+    var i: int = 0
+    while i < visitados.length() {
+        let f: String = visitados[i]
+        todo = todo + "|" + f + "=" + hash_archivo(f, hashes)
+        i = i + 1
+    }
+    return sha256(todo)
+}
+
+// Bash que deja en $LIB_OBJS los .o de las bibliotecas: reutiliza el de huella
+// vigente, o compila la unidad y la guarda. Corre DESPUÉS del `cd` a nyx_home y
+// con $ORIG_DIR y $LOG definidos.
+fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_flags: String, gc_flag: String) -> String {
+    if config.lib_modules.length() == 0 { return "" }
+    let lista: String = config.lib_modules.join(",")
+    // Identidad del compilador: ruta + tamaño + mtime del binario, el criterio
+    // de make/ninja. Hashear los 8 MB del binario costaba ~430 ms por build.
+    let st: Array = stat(nyx_bin)
+    var ident: String = nyx_bin
+    if st.length() >= 3 {
+        let tam: int = st[0]
+        let mt: int = st[2]
+        ident = ident + ":" + int_to_string(tam) + ":" + int_to_string(mt)
+    }
+    let base: String = ident + "|" + opt_flags + "|" + gc_flag + "|" + lista
+    var hashes: Map = Map.new()
+    var imports_de: Map = Map.new()
+    // StringBuilder y no `sh = sh + …`: el script crece con cada módulo y la
+    // concatenación recopia el acumulado entero (cuadrático). Con 250 módulos
+    // eran ~10 s de nyx_build por build SIN cambios, medido 2026-09-23 — la
+    // misma lección que `emit` (codegen) y el body del resolvedor.
+    var sh: StringBuilder = StringBuilder.new()
+    sh.append("LIB_OBJS=\"\"\nmkdir -p \"$ORIG_DIR/target/nyx-lib\"\n")
+    var i: int = 0
+    while i < config.lib_modules.length() {
+        let m: String = config.lib_modules[i]
+        let seguro: String = m.replace("/", "_")
+        let h: String = lib_huella(m, base, nyx_home + "/std", hashes, imports_de).substring(0, 16)
+        let obj: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".o"
+        let inl: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".inline"
+        let env_unidad: String = "( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"" + m + ".nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" )"
+        sh.append("if [ -f \"" + obj + "\" ]; then echo '   reusing " + m + " (lib, sin cambios)'; LIB_OBJS=\"$LIB_OBJS " + obj + "\"\n")
+        sh.append("elif [ -f \"" + inl + "\" ]; then :\n")
+        sh.append("else\n  echo '   compiling " + m + " (lib)'\n")
+        sh.append("  rm -f \"$ORIG_DIR/target/nyx-lib/" + seguro + "-\"*\n")
+        sh.append("  LSRC=\"$(mktemp /tmp/nyx_lib_XXXXXX)\"; cp \"$ORIG_DIR/" + m + ".nx\" \"$LSRC.nx\"\n")
+        sh.append("  lrc=0; " + env_unidad + " > \"$LOG\" 2>&1 || lrc=$?\n")
+        sh.append("  if [ $lrc -eq 3 ]; then grep -F '⚠' \"$LOG\" >&2 || true; : > \"" + inl + "\"\n")
+        sh.append("  elif [ $lrc -ne 0 ]; then echo \"error: nyx compile failed (" + m + "):\" >&2; cat \"$LOG\" >&2; nyx_pista $lrc; rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"; exit 1\n")
+        sh.append("  else\n    grep -F '⚠' \"$LOG\" >&2 || true\n")
+        sh.append("    clang -c " + opt_flags + " -Wno-override-module \"$LSRC.ll\" -o \"" + obj + "\" 2> \"$LOG\" || { echo \"error: clang failed (" + m + "):\" >&2; cat \"$LOG\" >&2; exit 1; }\n")
+        sh.append("    LIB_OBJS=\"$LIB_OBJS " + obj + "\"\n  fi\n")
+        sh.append("  rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"\nfi\n")
+        i = i + 1
+    }
+    return sh.to_string()
+}
+
 fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool {
     // target efectivo: flag CLI > [build] target del nyx.toml
     var eff_target: String = config.target
@@ -1168,8 +1357,36 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // Fuera de la cadena de abajo A PROPÓSITO: esa concatenación ya está al
     // borde del techo de pila que este mismo cambio mitiga (spec
     // pila-del-compilador), y cada operando más la acerca.
+    // El runtime: sus 24 fuentes, o un archivo precompilado si NYX_RT_ARCHIVE
+    // apunta a uno que EXISTE — el mismo contrato que `nyx test` (test.nx) y los
+    // scripts internos. Pedido de nyxerp (fricción 20260917-234222-team-1: «que
+    // `nyx test` y `nyx build` honren NYX_RT_ARCHIVE»); build faltaba. Compilar
+    // el runtime domina el costo de un build chico: sin esto, la compilación
+    // separada ([lib] modules) no se podía medir.
+    var rt_fuentes: String = "$RT/runtime.c $RT/strings.c $RT/runtime-arrays.c " +
+        "$RT/maps.c $RT/file-io.c $RT/iterators.c $RT/net.c $RT/thread.c $RT/regex.c " +
+        "$RT/time.c $RT/crypto.c $RT/tls.c $RT/scheduler.c $RT/event_loop.c $RT/sqlite_adapter.c " +
+        "$RT/compress.c $RT/random.c $RT/url.c $RT/msgpack.c $RT/websocket.c $RT/persist.c " +
+        // llama_adapter va SIEMPRE: es dlopen-lazy (cero dependencia dura de
+        // libllama) y sin él todo import de std/llm muere en el LINK con
+        // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31).
+        "$RT/http2.c $RT/process.c $RT/llama_adapter.c $RT/os/os_posix.c "
+    var rt_archive: String = getenv("NYX_RT_ARCHIVE")
+    if rt_archive != "" and file_exists(rt_archive) {
+        // Absoluta: el script hace `cd` a NYX_HOME antes de enlazar.
+        if not rt_archive.startsWith("/") { rt_archive = getcwd() + "/" + rt_archive }
+        rt_fuentes = "\"" + rt_archive + "\" "
+    }
     let pila_sh: String = "#!/bin/bash\nset -e\n" + pila_compilador_sh() + pila_compilador_pista_sh()
-    let compilador_env: String = "( nyx_pila; " + gc_flag
+    // [lib] modules: bibliotecas compiladas aparte y reutilizadas (Task 6 de
+    // compilacion-separada). Solo nativo: en wasm se inlinean como siempre.
+    var lib_sh: String = ""
+    var lib_env: String = ""
+    if config.lib_modules.length() > 0 and eff_target != "wasm32-wasi" {
+        lib_sh = lib_objetos_sh(config, nyx_home, nyx_bin, opt_flags, gc_flag)
+        lib_env = "NYX_LIB_MODULES=\"" + config.lib_modules.join(",") + "\" "
+    }
+    let compilador_env: String = "( nyx_pila; " + gc_flag + lib_env
     let build_script = pila_sh +
         "ORIG_DIR=\"$(pwd)\"\n" +
         "RT=\"" + rt + "\"\n" +
@@ -1184,24 +1401,15 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // mitad de esta compilación (contrato en CLAUDE.md §Sesiones paralelas,
         // 2026-09-20). Sin flock en la máquina no se bloquea nada.
         "if command -v flock >/dev/null 2>&1; then exec 9>\"" + nyx_home + "/.toolchain.lock\"; flock -s 9; fi\n" +
+        lib_sh +
         compilador_env + "NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" ) > \"$LOG\" 2>&1 " +
         "|| { rc=$?; echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; nyx_pista $rc; exit 1; }\n" +
+        // Los avisos (⚠, NYX0302, W1xx) se mostraban SOLO si la compilación
+        // fallaba: con éxito el log se tiraba entero. Requisito del
+        // task-5-report de compilacion-separada: «el compilador lo DICE».
+        "grep -F '⚠' \"$LOG\" >&2 || true\n" +
         mkdir_native +
-        "clang " + opt_flags + " \"$SRC.ll\" " +
-        "$RT/runtime.c $RT/strings.c $RT/runtime-arrays.c " +
-        "$RT/maps.c $RT/file-io.c $RT/iterators.c " +
-        "$RT/net.c $RT/thread.c $RT/regex.c " +
-        "$RT/time.c $RT/crypto.c $RT/tls.c " +
-        "$RT/scheduler.c $RT/event_loop.c $RT/sqlite_adapter.c " +
-        "$RT/compress.c $RT/random.c $RT/url.c " +
-        // llama_adapter va SIEMPRE: es dlopen-lazy (cero dependencia dura de
-        // libllama) y sin él todo import de std/llm muere en el LINK con
-        // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31 —
-        // la feature estuvo publicada e inusable para usuarios del
-        // toolchain instalado desde v0.20.x).
-        "$RT/msgpack.c $RT/websocket.c $RT/persist.c $RT/http2.c $RT/process.c " +
-        "$RT/llama_adapter.c " +
-        "$RT/os/os_posix.c " +
+        "clang " + opt_flags + " \"$SRC.ll\" $LIB_OBJS " + rt_fuentes +
         "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz " +
         "-o \"$ORIG_DIR/" + native_out + "\" 2> \"$LOG\" " +
         "|| { echo \"error: clang link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
@@ -1947,7 +2155,8 @@ fn shell_quote_arg(s: String) -> String {
             name: "project", version: "0.1.0", main_file: "",
             manifest_main_file: "",
             description: "", no_gc: false, target: "",
-            dep_names: dummy_names, dep_versions: dummy_versions, toml_error: "", bin_name: ""
+            dep_names: dummy_names, dep_versions: dummy_versions, toml_error: "", bin_name: "",
+            lib_modules: []
         }
         let ok: bool = run_add(pkg_name, pkg_url, dummy)
         if ok { return 0 }

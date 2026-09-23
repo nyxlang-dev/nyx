@@ -42,7 +42,7 @@
 | PostgreSQL E2E | (dentro de `make test-integration`, enganchado el 2026-09-14) `run_postgres_tests.sh` | **7 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **10 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm 3 + HTTP/2 1 + body cap 6 + serve contrato 10 + serve bind 6-9 + smoke 103 + serve+kv 10) | detalle de las altas en `CHANGELOG.md` |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
-| WASM (wasm32-wasi) | `make test-wasm` | **40** | SKIP sin toolchain (salvo guards); +1 el 2026-09-23 (`test-wasm-35-idb`, arco `browser-indexeddb`); +2 el 09-20 (`include_bytes`); +4 el 09-17 (async-real-wasm). Detalle en `CHANGELOG.md` |
+| WASM (wasm32-wasi) | `make test-wasm` | **43** | SKIP sin toolchain (salvo guards); +4 el 2026-09-23 (35-idb, 36/37 arena_persist/stats, 38 global que crece en un evento); +2 el 09-20 (`include_bytes`); +4 el 09-17 (async-real-wasm). Detalle en `CHANGELOG.md` |
 | Verify + compiler-unit + fmt | `make test-unit` | **23** (13 verify + 5 compiler-unit + 5 fmt) | 5 de 7 compiler-unit activos (resto SKIP, ver abajo); la fila decía 4 hasta que la máquina B del reparto lo midió: `test-emit-bytes-global` ya corría en el runner |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +

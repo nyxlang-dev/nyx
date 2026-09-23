@@ -34,12 +34,17 @@ cd "$ROOT" || exit 1
 #   2026-09-23 Task 1 (9791b284): expr 18112, binop 132880, por nivel 150992; 40 operandos (techo real 52).
 #   2026-09-23 Task 2: binop partido (emitir + logico) y ramas de expr afuera →
 #     expr 14496, binop 8544, por nivel 23040; 250 operandos (techo real 322).
+#   2026-09-23 wasm-arena-persistir: codegen_call_expr 471120 → 472064 (+944, SUBE): el
+#     builtin arena_persist agrega dos sitios de llamada con CodegenContext por valor, ~900 B
+#     cada copia en -O0. No es el camino de `a + b + …` (su techo no se movió) sino el de
+#     llamadas anidadas, y con SROA desaparece. La raíz es el arco `structs-byval`; mientras
+#     tanto, sumar un builtin en esta función cuesta eso por sitio de llamada.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14496
     [codegen_binop]=8544
     [codegen_binop_logico]=21680
-    [codegen_call_expr]=471120
+    [codegen_call_expr]=472064
     [codegen_method_call]=474912
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.

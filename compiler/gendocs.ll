@@ -1366,7 +1366,7 @@ else33:
 merge34:
   %173 = load { i64, i8* }*, { i64, i8* }** %156
   %174 = load i64, i64* %161
-  call void @nyx_array_push({ i64, i8* }* %173, i64 %174)
+  call void @nyx_array_push_tagged({ i64, i8* }* %173, i64 %174, i64 1)
   %175 = load i64, i64* %157
   %176 = add i64 %175, 1
   store i64 %176, i64* %157
@@ -3182,7 +3182,7 @@ while_body266:
   call void @llvm.stackrestore(i8* %1200)
   %1205 = load { i64, i8* }*, { i64, i8* }** %1198
   %1206 = load i64, i64* %1199
-  call void @nyx_array_push({ i64, i8* }* %1205, i64 %1206)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1205, i64 %1206, i64 1)
   %1207 = load i64, i64* %1199
   %1208 = add i64 %1207, 1
   store i64 %1208, i64* %1199

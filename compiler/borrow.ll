@@ -1347,7 +1347,7 @@ then63:
   call void @nyx_array_push_tagged({ i64, i8* }* %211, i64 %213, i64 2)
   %214 = load { i64, i8* }*, { i64, i8* }** %188
   %215 = load i64, i64* %kind.ptr
-  call void @nyx_array_push({ i64, i8* }* %214, i64 %215)
+  call void @nyx_array_push_tagged({ i64, i8* }* %214, i64 %215, i64 1)
   br label %merge65
 else64:
   br label %merge65
@@ -6615,7 +6615,7 @@ while_end804:
 then817:
   %3268 = call { i64, i8* }* @nyx_array_new_ptr()
   %3269 = load i64, i64* %3227
-  call void @nyx_array_push({ i64, i8* }* %3268, i64 %3269)
+  call void @nyx_array_push_tagged({ i64, i8* }* %3268, i64 %3269, i64 1)
   store { i64, i8* }* %3268, { i64, i8* }** %3216
   br label %merge819
 else818:
@@ -6786,7 +6786,7 @@ then847:
 then850:
   %3357 = load { i64, i8* }*, { i64, i8* }** %3339
   %3358 = load i64, i64* %3340
-  call void @nyx_array_push({ i64, i8* }* %3357, i64 %3358)
+  call void @nyx_array_push_tagged({ i64, i8* }* %3357, i64 %3358, i64 1)
   br label %merge852
 else851:
   br label %merge852
@@ -6823,7 +6823,7 @@ merge843:
   %3369 = bitcast { i64, i8* }* %3368 to i8*
   call void @nyx_array_push_ptr({ i64, i8* }* %3367, i8* %3369)
   %3370 = load i64, i64* %3217
-  call void @nyx_array_push({ i64, i8* }* %3367, i64 %3370)
+  call void @nyx_array_push_tagged({ i64, i8* }* %3367, i64 %3370, i64 1)
   %3371 = call i8* @nyx_string_to_cstr(%nyx_string* %3366)
   %3372 = ptrtoint { i64, i8* }* %3367 to i64
   call void @nyx_map_insert_int(i8* %3365, i8* %3371, i64 %3372)
@@ -7918,10 +7918,10 @@ while_body995:
   call void @nyx_array_push_tagged({ i64, i8* }* %3897, i64 %3899, i64 2)
   %3900 = load { i64, i8* }*, { i64, i8* }** %3868
   %3901 = load i64, i64* %3887
-  call void @nyx_array_push({ i64, i8* }* %3900, i64 %3901)
+  call void @nyx_array_push_tagged({ i64, i8* }* %3900, i64 %3901, i64 1)
   %3902 = load { i64, i8* }*, { i64, i8* }** %3870
   %3903 = load i64, i64* %3891
-  call void @nyx_array_push({ i64, i8* }* %3902, i64 %3903)
+  call void @nyx_array_push_tagged({ i64, i8* }* %3902, i64 %3903, i64 1)
   %3904 = load { i64, i8* }*, { i64, i8* }** %3872
   %3905 = load %nyx_string*, %nyx_string** %3896
   %3906 = ptrtoint %nyx_string* %3905 to i64

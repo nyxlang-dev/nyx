@@ -5,6 +5,7 @@
 # Formato: builtin<TAB>nombre<TAB>aridad<TAB>categoría<TAB>descripción
 builtin	__go_spawn	1	Concurrencia	
 builtin	alloc	1	Memoria	
+builtin	arena_persist	1	Otros	
 builtin	atomic_add	2	Concurrencia	
 builtin	atomic_cas	3	Concurrencia	
 builtin	atomic_sub	2	Concurrencia	

@@ -1,0 +1,71 @@
+// std/wasm_mem.nx — memoria del target wasm32-wasi con la arena por evento
+// (arco wasm-arena-persistir, pedido de nyxerp 2026-09-23: una PWA de punto
+// de venta que corre todo el día sin recargar la página).
+// SOLO wasm32-wasi: las funciones de abajo viven en runtime/wasi/nyx_arena.c,
+// que no existe en nativo.
+//
+// POR QUÉ `extern "C"` Y NO `extern "js"`. Los contadores están en el MISMO
+// módulo wasm que el programa: leerlos es una llamada directa, sin ida y
+// vuelta por el shim JS, y el módulo corre igual bajo wasmtime que en el
+// navegador.
+//
+// Uso / usage:
+//   import "std/wasm_mem"
+//
+//   #[export_name = "al_escanear"]
+//   fn al_escanear() {
+//       let codigo: String = dom_get_value("#codigo")
+//       g_pendiente = arena_persist("item:" + codigo)
+//   }
+//
+// arena_persist(x) es un BUILTIN del compilador (solo wasm32-wasi), no una
+// fn de este módulo: la función C que copia se elige por el tipo ESTÁTICO de
+// x (String o Array), porque en tiempo de ejecución un String y un Array no se
+// distinguen. Devuelve una copia profunda en la región persistente, que nunca
+// se libera. Límites de la fase 1 (runtime/wasi/nyx_arena.c, «arena_persist»):
+//   - struct/Map/Fn: no se aceptan (no llevan su layout en tiempo de ejecución).
+//   - Array: cada slot tiene que llevar tag de tipo. Hoy un int calculado o un
+//     Array anidado llegan sin tag, y arena_persist ABORTA en vez de copiar a
+//     ciegas.
+//   - `g.push(...)` sobre un Array global DURANTE un evento es seguro si `g`
+//     es persistente (armado en `_start` o salido de arena_persist): cuando el
+//     push lo hace crecer, el realloc conserva el origen del bloque y el buffer
+//     nuevo sigue en la región persistente (arreglado el 2026-09-23; antes caía
+//     en la arena y el global quedaba colgando — test-wasm-38). Lo que se
+//     empuja sigue la regla de siempre: un int/float/bool va por valor; un
+//     String nacido en el evento, envuelto: `g.push(arena_persist(s))`.
+//
+//   let st: ArenaStats = arena_stats()
+//   print("persistentes=" + int_to_string(st.persistent) + " turno=" + int_to_string(st.turn))
+//
+// QUÉ MIDE arena_stats()
+//   - persistent: bytes de la región persistente — todo lo alocado en `_start`
+//     (antes de que el shim encienda la arena) más lo copiado con
+//     arena_persist. NUNCA baja: esa región no se libera (leak-by-design).
+//   - turn: bytes de la arena del turno EN CURSO. Vuelve a 0 tras cada
+//     nyx_arena_event_reset(); si un evento lo deja creciendo, el otro lado
+//     (persistent) es el que acumula. No cuenta los turnos que retienen
+//     cierres anclados: esos los cuenta nyx_arena_pinned_turns() desde JS.
+//   Con la arena apagada (sin `{ arena: true }` en el shim) todo cae en
+//   `persistent` y `turn` es siempre 0.
+//   Son bytes Nyx vivos (con su header y alineación), no la memoria lineal
+//   total del wasm — para eso está nyx.memoryBytes() del lado JS.
+//
+// EN: wasm-only memory helpers for the per-event arena: arena_stats() reads
+// persistent/turn byte counters straight from runtime/wasi/nyx_arena.c.
+
+extern "C" fn nyx_arena_persistent_bytes() -> int
+extern "C" fn nyx_arena_turn_bytes() -> int
+
+pub struct ArenaStats {
+    persistent: int,
+    turn: int
+}
+
+// Los dos contadores se leen ANTES de armar el struct: el struct mismo se
+// aloca (en la arena, si está encendida) y no debe contarse a sí mismo.
+pub fn arena_stats() -> ArenaStats {
+    let p: int = nyx_arena_persistent_bytes()
+    let t: int = nyx_arena_turn_bytes()
+    return ArenaStats { persistent: p, turn: t }
+}

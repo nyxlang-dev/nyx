@@ -949,7 +949,7 @@ the JSON line, the human-readable path prints bilingual text instead):
 | Code | Meaning |
 |------|---------|
 | NYX0301 | import path does not resolve (not found in std/, local, or packages/) — `suggestion` carries the did-you-mean candidate (Levenshtein against std/ module names + project src/ basenames) when one clears the threshold, else the `src/<path>` fallback hint |
-| NYX0302 | WARNING (resolve), experimental separate-compilation path only: a module requested to compile separately has a generic `fn`, methods (`impl`, with or without a trait) or a `trait` — their BODIES are needed by the caller (monomorphization, method dispatch) and bodies do not cross the module boundary. The module is inlined as usual (same program, no object reuse) instead of failing at link time with «undefined reference» or with NYX1016. Arc `compilacion-separada` |
+| NYX0302 | WARNING (resolve), `[lib] modules` only: a module declared in `nyx.toml`'s `[lib] modules` has a generic `fn`, methods (`impl`, with or without a trait) or a `trait` — their BODIES are needed by the caller (monomorphization, method dispatch) and bodies do not cross the module boundary. The module is inlined as usual (same program, no object reuse) instead of failing at link time with «undefined reference» or with NYX1016. See §Compilación separada. Arc `compilacion-separada` |
 
 Codegen-phase codes (`phase:"codegen"` — reached only when semantic already
 said `check OK`; these are gaps in code *generation*, not in the program's
@@ -2086,6 +2086,45 @@ fn main() {
     db_query("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)")
 }
 ```
+
+#### Compilación separada: `[lib] modules`
+
+Un proyecto puede declarar qué módulos de `src/` se compilan **como bibliotecas**, una vez, y se
+reutilizan mientras no cambien — en vez de inlinearse de nuevo en cada `nyx build`:
+
+```toml
+[lib]
+modules = ["src/util", "src/geo"]
+```
+
+- Una sola línea, lista entre corchetes. Cada entrada se escribe **como en el import** (sin
+  `.nx`), nunca un módulo de `std/`. El manifiesto rechaza con error: una clave que no sea
+  `modules` dentro de `[lib]`, un módulo terminado en `.nx`, y un módulo bajo `std/`.
+- `nyx build` compila cada módulo declarado como una unidad aparte a `target/nyx-lib/` y
+  **reutiliza el objeto** mientras ni el módulo ni nada de su cierre de imports (incluidos el
+  prelude y los `std/` que use) haya cambiado, y tampoco el compilador ni las flags de build.
+  Tocar un módulo lo recompila y, en cascada, recompila a los módulos de `[lib]` que lo importan.
+  El programa principal (`main.nx`) **siempre** se compila, contra las interfaces vigentes.
+  Solo aplica a targets nativos: con `--target wasm32-wasi` los módulos de `[lib]` se inlinean
+  como cualquier import normal.
+- **Qué cruza la frontera** (la interfaz es la de un header de C: firmas y tipos, no cuerpos):
+  funciones exportadas (`export fn`/`pub fn`, con sus tipos de parámetros y de retorno), y
+  `struct`/`enum` exportados. Las dos formas de import funcionan igual que con un módulo
+  inlineado: `import { f } from "src/a"` y `import "src/a" as a` seguido de `a.f()`.
+- **Qué NO cruza la frontera** (la fase 1 no lo resuelve: la monomorfización y el despacho de
+  métodos necesitan el CUERPO en quien llama, y los cuerpos no cruzan): una `fn` genérica
+  exportada, los métodos de un `impl` (con o sin trait) y los `trait`. Un módulo de `[lib]` que
+  declare cualquiera de estos **no** se compila aparte: se inlinea como siempre —el programa
+  es el mismo— con el aviso `NYX0302`, visible aunque el build salga bien.
+- **Límite conocido**: el chequeo de tipos de los ARGUMENTOS en la frontera todavía no existe —
+  llamar a una función de otra unidad con un tipo de argumento equivocado no lo detecta hoy el
+  compilador (riesgo de comportamiento indefinido en runtime, no un error de compilación).
+  `nyx test` todavía no usa `[lib]`: siempre inlinea, igual que sin la sección en `nyx.toml`.
+- Medido sobre el proyecto sintético del banco (`scripts/testing/bench_test_cache.sh`): tocar un
+  módulo hoja y recompilar cuesta, con `[lib]`, el 41% de lo que cuesta sin ella con 88 módulos y
+  el 23% con 250 (mejora con el tamaño del proyecto).
+- `NYX_RT_ARCHIVE` (runtime C precompilado, para medir sin pagar su compilación en cada build)
+  lo honra `nyx build` además de `nyx test`.
 
 ---
 

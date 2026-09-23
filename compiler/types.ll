@@ -5634,7 +5634,7 @@ i64 %id.param) {
   %2400 = ptrtoint %nyx_string* %2399 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2397, i64 %2400, i64 2)
   %2401 = load i64, i64* %id.ptr
-  call void @nyx_array_push({ i64, i8* }* %2397, i64 %2401)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2397, i64 %2401, i64 1)
   ret { i64, i8* }* %2397
 }
 
@@ -5738,7 +5738,7 @@ define internal i64 @subst_bind(
   store { i64, i8* }* %2449, { i64, i8* }** %2450
   %2451 = load { i64, i8* }*, { i64, i8* }** %2446
   %2452 = load i64, i64* %id.ptr
-  call void @nyx_array_push({ i64, i8* }* %2451, i64 %2452)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2451, i64 %2452, i64 1)
   %2453 = load { i64, i8* }*, { i64, i8* }** %2450
   %2454 = load { i64, i8* }*, { i64, i8* }** %ty.ptr
   %2455 = ptrtoint { i64, i8* }* %2454 to i64

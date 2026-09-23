@@ -149,6 +149,8 @@ blame the wrong part of your build:
   objects, `ar rcs` them together) and each file only links: measured 8.9s → 1.1s
   on a three-file suite. A relative path is resolved against your project; a path
   that does not exist falls back to the sources instead of failing the link.
+  `nyx build` honors it too (added alongside `[lib] modules`, previously `nyx
+  test`-only).
 
 `nyx test --coverage` adds, after the summary, the **functions of `src/` that no
 test called**, per file, as `src/file.nx:line name` (the line of the `fn`), and
@@ -2563,7 +2565,7 @@ async fn save_catalog(json: String) -> bool {
 - Testing without a browser: `browserBindings({ idb: {...} })` takes an injectable mock (same shape
   as `opts.storage`) with `get(store,key)`/`put(store,key,val)`/`delete(store,key)`/`keys(store)`,
   each returning a Promise — see `tests/wasm/test-wasm-35-idb.imports.mjs`. Out of scope (v1):
-  explicit multi-op transactions, cursors, secondary indexes, binary values (`Blob`/`ArrayBuffer` —
+  explicit multi-op transactions, incremental range scans, secondary indexes, binary values (`Blob`/`ArrayBuffer` —
   text only, same as `ls_get`/`ls_set`), more than one physical database, configurable quota.
 
 **Toolchain** (no wasi-sdk, ~700MB): system clang + Debian `wasi-libc` +
@@ -2633,6 +2635,13 @@ persistent; per-event allocations are discarded by `nyx_arena_event_reset()`
 (the shim's dom/browser bindings call it automatically via `ref.afterEvent`).
 DISCIPLINE: handlers must NOT store pointers to event-time Strings/Arrays in
 globals (store ints/floats by value, or build persistent state in `_start`).
+Growing a persistent global during an event is safe: `g.push(n)` on an Array
+built in `_start` (or returned by `arena_persist`), or appending to a
+`StringBuilder` from `_start`, keeps the grown buffer persistent — realloc
+preserves the block's origin (fixed 2026-09-23; before, the grown buffer landed
+in the turn arena and the global dangled). The pushed VALUE still follows the
+rule: ints/floats by value, an event-time String via `arena_persist(s)`.
+[test: wasm/test-wasm-38-arena-global-push]
 
 **Handler state**: closure capture of locals WORKS on both targets. On wasm it is verified end to
 end under the shim, with the arena ON and OFF, for every closure binding: `dom_on_fn`,
@@ -2695,6 +2704,42 @@ Imports from dependencies: `import { something } from "nyx-kv/src/commands"`.
 project before reading `std/` source): `AGENTS.md` (playbook — what/how/with-
 what + guardrails + gotchas) and `CAPABILITIES.md` (generated index of what
 the stdlib offers, auto-regenerated on `nyx build`).
+
+### 10.1 Separate compilation: `[lib] modules`
+
+```toml
+[lib]
+modules = ["src/util", "src/geo"]   # one line; path as written in the import, no ".nx", no "std/"
+```
+
+`nyx build` compiles each declared module once, as a library unit, to
+`target/nyx-lib/<mod>-<hash>.o`, and reuses the object while neither the
+module nor anything in its import closure (prelude + `std/` it uses) changed,
+and neither did the compiler binary or the build flags. Touching a module
+recompiles it and cascades to the `[lib]` modules that import it; `main.nx`
+always recompiles, against the current interfaces. Native targets only — with
+`--target wasm32-wasi` a `[lib]` module inlines like any other import.
+
+**Crosses the boundary** (a C-header-style interface: signatures and types,
+no bodies): exported functions (`export fn`/`pub fn`, typed params + return)
+and exported `struct`/`enum`. Both import forms work: `import { f } from
+"src/a"` and `import "src/a" as a` + `a.f()`.
+
+**Does NOT cross the boundary** — monomorphization and method dispatch need
+the BODY at the call site, and bodies never cross: a generic exported `fn`,
+`impl` methods (with or without a trait), and `trait`s. A `[lib]` module that
+declares any of these is not compiled separately — it inlines as usual (same
+program) with warning `NYX0302`, shown even on a successful build.
+
+**Known gap**: argument-type checking across the boundary does not exist yet
+— calling a cross-unit function with the wrong argument type is NOT caught at
+compile time. `nyx test` does not use `[lib]` yet — it always inlines, same
+as a project without the `[lib]` section.
+
+Measured on the synthetic bench project (`scripts/testing/bench_test_cache.sh`):
+touching a leaf module and rebuilding costs 41% of the no-`[lib]` cost at 88
+modules, 23% at 250 (improves with project size). `NYX_RT_ARCHIVE` (§1) is
+now honored by `nyx build` too, not just `nyx test`.
 
 ---
 

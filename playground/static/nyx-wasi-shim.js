@@ -736,6 +736,111 @@ export function browserBindings(opts = {}) {
     const tzOffsetImpl = (opts.tzOffset !== undefined)
         ? () => opts.tzOffset
         : () => -(new Date().getTimezoneOffset());
+    // ── IndexedDB (arco browser-indexeddb, D-4/D-9) ───────────────────────
+    // Una sola base física ("nyx_idb"), un solo objectStore ("kv"), clave
+    // COMPUESTA [store, key]: el string `store` que ve Nyx es un namespace
+    // lógico (prefijo de clave), NO un objectStore real de IndexedDB — evita
+    // el `onupgradeneeded`/`blocked` que dispararía crear un objectStore
+    // nuevo la primera vez que aparece un nombre de store en tiempo de
+    // ejecución (D-4 del spec). `idb_keys` recorre ese prefijo con un
+    // IDBKeyRange acotado: `[store]` .. `[store, []]` — un Array SIEMPRE
+    // ordena después de cualquier String al comparar claves de IndexedDB,
+    // así que `[]` como segundo componente es el techo del rango (mismo
+    // truco que usan otras libs para "prefijo" sobre claves array).
+    //
+    // opts.idb inyectable para tests (misma forma que opts.storage): objeto
+    // { get(store,key), put(store,key,val), delete(store,key), keys(store) }
+    // que devuelve Promise. Errores: reject con un Error cuyo `.nyxKind` ya
+    // trae el kind mapeado (D-6) — así un mock de test inyecta cualquier
+    // kind sin duplicar la lógica de mapeo real.
+    const idbTaggedError = (msg, kind) => Object.assign(new Error(msg), { nyxKind: kind });
+    const idbDomKind = (err) => {
+        const name = err && err.name;
+        if (name === "QuotaExceededError") return "oom";
+        if (name === "VersionError" || name === "InvalidStateError") return "in_use";
+        return "io";
+    };
+    // Fallback sin navegador (Node, y por lo tanto make test-wasm sin mock
+    // explícito): un Map en memoria con la misma clave compuesta, resuelto
+    // en un microtask — mismo patrón que el Map fallback de `storage`.
+    const idbMapFallback = () => {
+        const m = new Map();
+        const ck = (store, key) => store + "\u0000" + key;
+        return {
+            get: async (store, key) => (m.has(ck(store, key)) ? m.get(ck(store, key)) : null),
+            put: async (store, key, val) => { m.set(ck(store, key), val); },
+            delete: async (store, key) => { m.delete(ck(store, key)); },
+            keys: async (store) => {
+                const pre = store + "\u0000";
+                const out = [];
+                for (const k of m.keys()) if (k.startsWith(pre)) out.push(k.slice(pre.length));
+                return out;
+            },
+        };
+    };
+    // Implementación real sobre window.indexedDB: base "nyx_idb" v1, un solo
+    // objectStore "kv", conexión CACHEADA (una sola apertura por página).
+    const idbReal = () => {
+        const DB_NAME = "nyx_idb", STORE = "kv";
+        let dbPromise = null;
+        const open = () => {
+            if (dbPromise) return dbPromise;
+            dbPromise = new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, 1);
+                req.onupgradeneeded = () => { req.result.createObjectStore(STORE); };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(idbTaggedError(String(req.error), idbDomKind(req.error)));
+                // otra pestaña con la base abierta a una versión vieja: no
+                // cuelga el await, se mapea a "in_use" (D-6 / riesgo del spec).
+                req.onblocked = () => reject(idbTaggedError("open bloqueado por otra pestaña", "in_use"));
+            });
+            return dbPromise;
+        };
+        return {
+            get: async (store, key) => {
+                const db = await open();
+                return new Promise((resolve, reject) => {
+                    const req = db.transaction(STORE, "readonly").objectStore(STORE).get([store, key]);
+                    req.onsuccess = () => resolve(req.result === undefined ? null : req.result);
+                    req.onerror = () => reject(idbTaggedError(String(req.error), idbDomKind(req.error)));
+                });
+            },
+            put: async (store, key, val) => {
+                const db = await open();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE, "readwrite");
+                    tx.objectStore(STORE).put(val, [store, key]);
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(idbTaggedError(String(tx.error), idbDomKind(tx.error)));
+                    tx.onabort = () => reject(idbTaggedError(String(tx.error), idbDomKind(tx.error)));
+                });
+            },
+            delete: async (store, key) => {
+                const db = await open();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(STORE, "readwrite");
+                    tx.objectStore(STORE).delete([store, key]);
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject(idbTaggedError(String(tx.error), idbDomKind(tx.error)));
+                    tx.onabort = () => reject(idbTaggedError(String(tx.error), idbDomKind(tx.error)));
+                });
+            },
+            keys: async (store) => {
+                const db = await open();
+                return new Promise((resolve, reject) => {
+                    const range = IDBKeyRange.bound([store], [store, []]);
+                    const req = db.transaction(STORE, "readonly").objectStore(STORE).getAllKeys(range);
+                    req.onsuccess = () => resolve(req.result.map((k) => k[1]));
+                    req.onerror = () => reject(idbTaggedError(String(req.error), idbDomKind(req.error)));
+                });
+            },
+        };
+    };
+    const idbImpl = opts.idb ||
+        (typeof indexedDB !== "undefined" ? idbReal() : idbMapFallback());
+    // Resultado de la última operación idb_* que suspendió — mismo patrón
+    // que `ultimoAwait` (D-3: una sola pila suspendida a la vez alcanza).
+    const ultimoIdb = { kind: "", msg: "" };
     // Los handles de timer JS no caben en un i64 portable → tabla propia
     const timers = new Map();
     // anclajes de los timers con CLOSURE, por id: browser_clear_timer es la
@@ -1023,6 +1128,79 @@ export function browserBindings(opts = {}) {
         },
         js_browser_await_error_msg() {
             return nyx.makeString(ultimoAwait.msg);
+        },
+        // ── IndexedDB (imports #[suspends], arco browser-indexeddb) ──────────
+        //
+        // Misma forma que js_browser_fetch_await: el import devuelve SOLO el
+        // valor útil; kind/msg quedan en `ultimoIdb` y std/browser_idb los lee
+        // con los imports síncronos de abajo justo después de reanudar (D-3:
+        // una sola pila suspendida, nada corre entre la reanudación y esas
+        // lecturas).
+        //
+        // idb_get de una clave ausente: value=null del binding → kind
+        // "not_found" (D-5/D-6), NO una excepción — distingue "no existe" de
+        // un fallo real de IndexedDB.
+        js_idb_get(storePtr, keyPtr) {
+            const store = nyx.readString(storePtr);
+            const key = nyx.readString(keyPtr);
+            return nyx.suspend(() => idbImpl.get(store, key)
+                .then((v) => ({
+                    value: v,
+                    kind: v == null ? "not_found" : "",
+                    msg: v == null ? "clave ausente: " + store + "/" + key : "",
+                }))
+                .catch((e) => ({
+                    value: null,
+                    kind: (e && e.nyxKind) || "io",
+                    msg: String(e && e.message ? e.message : e),
+                })),
+            (res) => {
+                ultimoIdb.kind = res.kind;
+                ultimoIdb.msg = res.msg;
+                return nyx.makeString(res.value == null ? "" : res.value);
+            }, 0);
+        },
+        js_idb_put(storePtr, keyPtr, valPtr) {
+            const store = nyx.readString(storePtr);
+            const key = nyx.readString(keyPtr);
+            const val = nyx.readString(valPtr);
+            return nyx.suspend(() => idbImpl.put(store, key, val)
+                .then(() => ({ kind: "", msg: "" }))
+                .catch((e) => ({ kind: (e && e.nyxKind) || "io", msg: String(e && e.message ? e.message : e) })),
+            (res) => {
+                ultimoIdb.kind = res.kind;
+                ultimoIdb.msg = res.msg;
+                return 0n; // int Nyx = i64, zero mientras desenrolla
+            }, 0n);
+        },
+        js_idb_delete(storePtr, keyPtr) {
+            const store = nyx.readString(storePtr);
+            const key = nyx.readString(keyPtr);
+            return nyx.suspend(() => idbImpl.delete(store, key)
+                .then(() => ({ kind: "", msg: "" }))
+                .catch((e) => ({ kind: (e && e.nyxKind) || "io", msg: String(e && e.message ? e.message : e) })),
+            (res) => {
+                ultimoIdb.kind = res.kind;
+                ultimoIdb.msg = res.msg;
+                return 0n;
+            }, 0n);
+        },
+        js_idb_keys(storePtr) {
+            const store = nyx.readString(storePtr);
+            return nyx.suspend(() => idbImpl.keys(store)
+                .then((ks) => ({ keys: ks, kind: "", msg: "" }))
+                .catch((e) => ({ keys: [], kind: (e && e.nyxKind) || "io", msg: String(e && e.message ? e.message : e) })),
+            (res) => {
+                ultimoIdb.kind = res.kind;
+                ultimoIdb.msg = res.msg;
+                return nyx.makeArray(res.keys, "string");
+            }, 0);
+        },
+        js_idb_error_kind() {
+            return nyx.makeString(ultimoIdb.kind);
+        },
+        js_idb_error_msg() {
+            return nyx.makeString(ultimoIdb.msg);
         },
         js_ls_get(keyPtr) {
             const v = storage.getItem(nyx.readString(keyPtr));

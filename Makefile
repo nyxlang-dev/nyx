@@ -369,6 +369,7 @@ test-ai-first:
 	bash scripts/testing/run_tooling_gates.sh
 	bash scripts/testing/run_coverage_tests.sh
 	bash scripts/testing/run_build_manifest.sh
+	bash scripts/testing/run_lib_modules.sh
 	bash scripts/testing/run_self_check.sh
 	bash scripts/testing/run_shutdown_test.sh
 	bash scripts/testing/run_codegen_mute_audit.sh

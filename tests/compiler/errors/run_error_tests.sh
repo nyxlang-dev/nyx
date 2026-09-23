@@ -611,8 +611,8 @@ rm -f script.ll
 # que escribir, y el cuerpo del módulo tiene que estar DEFINIDO en él (inlineado).
 # El control positivo es la mitad que importa: un módulo con solo funciones
 # escalares sigue yendo aparte (declare, sin define) y sin aviso.
-# NYX_SEPARATE_PREFIX es el andamiaje de las tasks 3-5; la Task 6 lo reemplaza
-# por la declaración en nyx.toml, y estos casos migran con él.
+# NYX_LIB_MODULES es lo que `nyx build` le pasa al compilador desde `[lib] modules`
+# del nyx.toml (Task 6); acá se pasa a mano para probar el compilador solo.
 # ==============================================================
 SEP_FX="tests/compiler/errors/fixtures/sep-nyx0302"
 sep_case() {  # sep_case <nombre> <caso> <regex que tiene que estar DEFINIDO en el .ll>
@@ -620,7 +620,7 @@ sep_case() {  # sep_case <nombre> <caso> <regex que tiene que estar DEFINIDO en 
   cp "$SEP_FX/$caso/src/main.nx" script.nx
   rm -f script.ll
   local output
-  output=$(NYX_PROJECT_DIR="$(pwd)/$SEP_FX/$caso" NYX_SEPARATE_PREFIX=src/sep timeout 30 ./nyx_bootstrap 2>&1)
+  output=$(NYX_PROJECT_DIR="$(pwd)/$SEP_FX/$caso" NYX_LIB_MODULES=src/sep timeout 30 ./nyx_bootstrap 2>&1)
   if echo "$output" | grep -qF "NYX0302" && [ -f script.ll ] && grep -qE "define .*@$def_re\(" script.ll; then
     printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
   else
@@ -638,7 +638,7 @@ sep_case "sep-nyx0302-trait"    trait "src_sep__nueva"
 # NDJSON: mismo aviso con severity warning (no error) bajo NYX_DIAG=json.
 cp "$SEP_FX/gen/src/main.nx" script.nx
 rm -f script.ll
-sep_json=$(NYX_DIAG=json NYX_PROJECT_DIR="$(pwd)/$SEP_FX/gen" NYX_SEPARATE_PREFIX=src/sep timeout 30 ./nyx_bootstrap 2>&1)
+sep_json=$(NYX_DIAG=json NYX_PROJECT_DIR="$(pwd)/$SEP_FX/gen" NYX_LIB_MODULES=src/sep timeout 30 ./nyx_bootstrap 2>&1)
 if echo "$sep_json" | grep -qF '"code":"NYX0302","severity":"warning","phase":"resolve"'; then
   printf "  ✓ sep-nyx0302-json\n"; PASS=$((PASS + 1))
 else
@@ -650,7 +650,7 @@ rm -f script.ll
 # CONTROL POSITIVO: solo funciones escalares → sigue yendo aparte, sin aviso.
 cp "$SEP_FX/int/src/main.nx" script.nx
 rm -f script.ll
-sep_ok=$(NYX_PROJECT_DIR="$(pwd)/$SEP_FX/int" NYX_SEPARATE_PREFIX=src/sep timeout 30 ./nyx_bootstrap 2>&1)
+sep_ok=$(NYX_PROJECT_DIR="$(pwd)/$SEP_FX/int" NYX_LIB_MODULES=src/sep timeout 30 ./nyx_bootstrap 2>&1)
 if [ -f script.ll ] && ! echo "$sep_ok" | grep -qF "NYX0302" \
    && grep -qE "declare i64 @duplicar\(" script.ll && ! grep -qE "define .*duplicar" script.ll; then
   printf "  ✓ sep-nyx0302-control-positivo\n"; PASS=$((PASS + 1))

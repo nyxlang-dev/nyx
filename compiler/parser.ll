@@ -12744,7 +12744,7 @@ merge14:
   %105 = ptrtoint %nyx_string* %104 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %102, i64 %105, i64 2)
   %106 = load i64, i64* %29
-  call void @nyx_array_push({ i64, i8* }* %102, i64 %106)
+  call void @nyx_array_push_tagged({ i64, i8* }* %102, i64 %106, i64 1)
   %107 = bitcast { i64, i8* }* %102 to i8*
   call void @nyx_array_push_ptr({ i64, i8* }* %88, i8* %107)
   %108 = call { i64, i8* }* @make_astnode(%nyx_string* %87, { i64, i8* }* %88)
@@ -13676,7 +13676,7 @@ while_end115:
   %563 = ptrtoint %nyx_string* %562 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %560, i64 %563, i64 2)
   %564 = load i64, i64* %29
-  call void @nyx_array_push({ i64, i8* }* %560, i64 %564)
+  call void @nyx_array_push_tagged({ i64, i8* }* %560, i64 %564, i64 1)
   %565 = bitcast { i64, i8* }* %560 to i8*
   call void @nyx_array_push_ptr({ i64, i8* }* %526, i8* %565)
   %566 = call { i64, i8* }* @make_astnode(%nyx_string* %525, { i64, i8* }* %526)
@@ -13733,7 +13733,7 @@ merge103:
   %601 = ptrtoint %nyx_string* %600 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %598, i64 %601, i64 2)
   %602 = load i64, i64* %29
-  call void @nyx_array_push({ i64, i8* }* %598, i64 %602)
+  call void @nyx_array_push_tagged({ i64, i8* }* %598, i64 %602, i64 1)
   %603 = bitcast { i64, i8* }* %598 to i8*
   call void @nyx_array_push_ptr({ i64, i8* }* %569, i8* %603)
   %604 = call { i64, i8* }* @make_astnode(%nyx_string* %568, { i64, i8* }* %569)

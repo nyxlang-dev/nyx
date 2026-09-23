@@ -10,6 +10,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **wasm: un Array o StringBuilder global que crecía durante un evento quedaba apuntando a memoria
+  del turno** `[arco: wasm-arena-persistir]`. Con la arena encendida, el `realloc` del crecimiento
+  alocaba el bloque nuevo en la arena, que se recicla al terminar el evento: 1.000 `push` de enteros
+  a un global daban una suma basura. Ahora cada bloque persistente lleva una marca en su cabecera y
+  `realloc` conserva la región de origen (O(1), sin tocar alloc/reset/pin). `test-wasm-38`.
+- **Los enteros calculados llevan tag en el Array** `[arco: wasm-arena-persistir]`: antes solo los
+  literales. La evidencia es la forma del AST (aritmética, `length()`, `: int` explícito), nunca el
+  tipo inferido. Efecto visible: `a.push(n * 3)` leído como String pasa de SIGSEGV a un abort ordenado.
 - **El compilador ya no se queda sin pila con expresiones largas: de 52 a ~2.400 operandos con la
   pila por omisión** `[arco: pila-del-compilador]`. La causa, medida con `clang -fstack-usage`: el
   toolchain se enlaza en `-O0` y cada nivel de una expresión apilaba ~151 KB de marcos de codegen.
@@ -117,6 +125,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Default corregido a `~/nyx/products/proxy` y skip más explícito.
 
 ### Added
+- **`[lib] modules` en nyx.toml: compilación separada con reutilización de objetos**
+  `[arco: compilacion-separada]`. `nyx build` compila cada módulo declarado una vez a
+  `target/nyx-lib/` y lo reutiliza mientras no cambien él ni su cierre de imports; tocar un módulo
+  hoja y recompilar cuesta el 41% (88 módulos) y el 23% (250) de hacerlo sin `[lib]`. Cruzan
+  funciones, structs y enums, por `import { f } from` y por `import "m" as a`; los genéricos, `impl`
+  y traits caen al inlining con el aviso NYX0302, que ahora se ve aunque el build salga bien.
+  `nyx build` además honra `NYX_RT_ARCHIVE`. Límites: sin chequeo de tipos de los argumentos en la
+  frontera, y `nyx test` todavía no usa `[lib]`.
+- **`arena_persist(x)` y `arena_stats()` en wasm** `[arco: wasm-arena-persistir]`, fase 1 PARCIAL:
+  copia un String o un Array (de String/int/float/bool) de la arena del evento a la región
+  persistente, para guardarlo entre eventos; `arena_stats()` mide bytes persistentes y del turno
+  desde adentro. Un struct/Map/Fn es NYX1039 (hoy en codegen; el chequeo en semantic y la
+  documentación siguen pendientes).
 - **`std/browser_idb`: IndexedDB para PWAs sin conexión** `[arco: browser-indexeddb]` (pedido de
   nyxerp). `idb_get`/`idb_put`/`idb_delete`/`idb_keys` asíncronos (`await`, Asyncify) con
   `Result<_, Error>` y los kinds de siempre (`not_found`, `in_use`, `oom`, `io`); una sola base con
