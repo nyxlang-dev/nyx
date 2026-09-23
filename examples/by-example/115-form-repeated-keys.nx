@@ -1,0 +1,66 @@
+// Formularios con claves repetidas — checkboxes y <select multiple>
+// Repeated form/query keys — checkboxes and <select multiple>
+//
+// El HTML normal de "elegí varias opciones" es un grupo de checkboxes o un
+// <select multiple> con el MISMO name en cada <input>:
+//
+//   <input type="checkbox" name="ver" value="a"> a
+//   <input type="checkbox" name="ver" value="b"> b
+//   <input type="checkbox" name="ver" value="c"> c
+//
+// El navegador manda "ver=a&ver=b&ver=c" — pero req.form es un Map, y un Map
+// no guarda claves duplicadas: parse_form_data/parse_query_string se quedan
+// con la ÚLTIMA, en silencio (fricción nyxerp 20260923-160005). Esta receta
+// no levanta servidor (import "std/serve" haría falta uno): parsea el body
+// crudo directo, como se ve en un test de handler con request_with().
+import "std/web"
+
+fn main() -> int {
+    let body: String = "ver=a&ver=b&ver=c&otro=1"
+    let content_type: String = "application/x-www-form-urlencoded"
+
+    // El Map de siempre: cómodo para el caso de "una clave, un valor" — pero
+    // con una clave repetida solo sobrevive la última.
+    let form: Map = parse_form_data(body, content_type)
+    print("req.form.get(\"ver\") = " + form.get("ver"))   // "c" -- las otras dos, perdidas
+
+    // parse_form_data_all: TODOS los pares [clave, valor], en el orden en que
+    // llegaron -- nada colapsado.
+    let pairs: Array = parse_form_data_all(body, content_type)
+    print("pares totales = " + int_to_string(pairs.length()))   // 4 (3 "ver" + 1 "otro")
+
+    // El caso normal, sobre un Request -- como lo vería un handler real.
+    // form_values(req, key) reparsea req.body + el Content-Type de
+    // req.headers_flat (no agrega un campo nuevo al Request ni cambia
+    // req.form, que sigue siendo el Map de siempre).
+    var req: Request = request_with("POST", "/encuesta")
+    req.body = body
+    req.headers_flat = ["Content-Type", content_type]
+
+    let seleccionadas: Array = form_values(req, "ver")
+    print("form_values(req, \"ver\") = " + int_to_string(seleccionadas.length()) + " valores")
+    var i: int = 0
+    while i < seleccionadas.length() {
+        let v: String = seleccionadas[i]
+        print("  - " + v)
+        i = i + 1
+    }
+    assert(seleccionadas.length() == 3, "las 3 casillas, no solo la última")
+    let s0: String = seleccionadas[0]
+    let s1: String = seleccionadas[1]
+    let s2: String = seleccionadas[2]
+    assert(s0 == "a" and s1 == "b" and s2 == "c", "en el orden en que el navegador las mandó")
+
+    // Clave ausente -> Array vacío, no error.
+    let ninguna: Array = form_values(req, "no_existe")
+    assert(ninguna.length() == 0, "clave ausente -> []")
+
+    // El mismo problema existe en la query string -- misma forma:
+    // query_values(req, key) / parse_query_string_all(path).
+    var req_q: Request = request_with("GET", "/buscar?tag=urgente&tag=bug&q=nyx")
+    let tags: Array = query_values(req_q, "tag")
+    assert(tags.length() == 2, "query_values agrupa igual que form_values")
+
+    print("OK: form_values/query_values recuperan TODOS los valores de una clave repetida")
+    return 0
+}

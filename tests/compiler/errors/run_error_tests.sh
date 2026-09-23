@@ -662,6 +662,66 @@ fi
 rm -f script.ll
 
 # ==============================================================
+# NYX1040: el mismo nombre de struct/enum declarado en DOS módulos del programa
+# (fricción nyxerp 20260923-160005-team-2). Antes: `nyx check` salía 0 y el
+# build moría en clang con «redefinition of type» sobre un .ll temporal; con un
+# literal, el checker acusaba campos del OTRO struct. Cada caso exige el código,
+# los DOS archivos con su línea, y que no quede .ll. En las dos capas: semantic
+# (lo que ve `nyx check`) y el backstop de codegen (NYX_SKIP_SEMANTIC=1).
+# Los controles positivos son la mitad que importa: nombres distintos, el mismo
+# módulo por tres caminos (diamante) y un enum copiado idéntico (que compila y
+# corre hoy) tienen que seguir compilando.
+# ==============================================================
+TD_FX="tests/compiler/errors/fixtures/tipo-duplicado"
+td_case() {  # td_case <nombre> <caso> <fragmento> [skip-semantic]
+  local name="$1" caso="$2" expected="$3" skip="${4:-}"
+  cp "$TD_FX/$caso/src/main.nx" script.nx
+  rm -f script.ll
+  local output
+  output=$(NYX_PROJECT_DIR="$(pwd)/$TD_FX/$caso" NYX_SKIP_SEMANTIC="$skip" timeout 30 ./nyx_bootstrap 2>&1)
+  if echo "$output" | grep -qF "$expected" && [ ! -f script.ll ]; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"
+    printf "    esperaba: %s\n" "$expected"
+    printf "    .ll escrito: %s\n" "$([ -f script.ll ] && echo SÍ || echo no)"
+    echo "$output" | grep -v "^ *$" | head -6 | sed 's/^/      /'
+    FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+}
+td_ok() {  # td_ok <nombre> <caso> [skip-semantic]
+  local name="$1" caso="$2" skip="${3:-}"
+  cp "$TD_FX/$caso/src/main.nx" script.nx
+  rm -f script.ll
+  local output
+  output=$(NYX_PROJECT_DIR="$(pwd)/$TD_FX/$caso" NYX_SKIP_SEMANTIC="$skip" timeout 30 ./nyx_bootstrap 2>&1)
+  if [ -f script.ll ] && ! echo "$output" | grep -qF "NYX1040"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s — NYX1040 se pasó de largo\n" "$name"
+    echo "$output" | grep -v "^ *$" | head -6 | sed 's/^/      /'
+    FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+}
+# — capa semantic —
+td_case "nyx1040-struct-del-reporte"  reporte "[NYX1040]"
+td_case "nyx1040-nombra-los-dos"      reporte "struct 'Fila' is declared in two modules: struct at src/a/uno.nx:1 and struct at src/b/dos.nx:2"
+td_case "nyx1040-struct-con-literal"  literal "struct at src/a/uno.nx:1 and struct at src/b/dos.nx:3"
+td_case "nyx1040-enum"                enum    "enum 'Estado' is declared in two modules: enum at src/a/uno.nx:1 and enum at src/b/dos.nx:1"
+# — capa codegen (NYX_SKIP_SEMANTIC=1): antes, «redefinition of type» en clang —
+td_case "nyx1040-codegen-struct"      reporte "error [NYX1040]: struct 'Fila' está declarado en dos módulos: struct en src/a/uno.nx:1 y struct en src/b/dos.nx:2" 1
+td_case "nyx1040-codegen-literal"     literal "error [NYX1040]" 1
+td_case "nyx1040-codegen-enum"        enum    "error [NYX1040]: enum 'Estado'" 1
+# — controles positivos, en las dos capas —
+td_ok "nyx1040-control-nombres-distintos" distintos
+td_ok "nyx1040-control-diamante"          diamante
+td_ok "nyx1040-control-enum-identico"     enum-identico
+td_ok "nyx1040-codegen-control-diamante"      diamante 1
+td_ok "nyx1040-codegen-control-enum-identico" enum-identico 1
+
+# ==============================================================
 # include_bytes: un test POR DIAGNÓSTICO y por variante, en las DOS capas.
 #
 # La capa de semantic es la que ve `nyx check`. La de codegen es el fallback
@@ -1814,14 +1874,16 @@ fi
 # «check OK». Desde entonces lo detecta el checker (check_derive_fields_campos,
 # semantic.nx) y el abort de codegen queda como red para NYX_SKIP_SEMANTIC.
 # (a) Camino normal: lo corta el CHECKER («check FAILED»), nombrando el campo y
-# la línea del nodo struct (12 en el fixture: la del cierre de la declaración).
+# la línea del nodo struct: 9 en el fixture, la de `struct Modelo {`. Hasta el
+# arco de NYX1040 (2026-09-23) era 12, la de la `}` de cierre, porque el parser
+# fechaba el nodo con el último token consumido; ahora lo fecha con el nombre.
 name="nyx2013-semantic-derive-fields-no-primitivo"
 n13_out=$(NYX_LANG=en NYX_SRC=tests/compiler/errors/test-derive-fields-campo-no-primitivo.nx ./nyx_bootstrap 2>&1); n13_rc=$?
 if [ "$n13_rc" -ne 0 ] && echo "$n13_out" | grep -q "check   FAILED" \
-   && echo "$n13_out" | grep -qF "error [NYX2013] (line 12): #[derive(Fields)] does not support field 'etiquetas' of 'Modelo' (type 'Array')"; then
+   && echo "$n13_out" | grep -qF "error [NYX2013] (line 9): #[derive(Fields)] does not support field 'etiquetas' of 'Modelo' (type 'Array')"; then
   printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
 else
-  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0, check FAILED y NYX2013 del checker nombrando 'etiquetas' en la línea 12)\n" "$n13_rc"
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0, check FAILED y NYX2013 del checker nombrando 'etiquetas' en la línea 9)\n" "$n13_rc"
   echo "$n13_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 # (b) La red de codegen sigue viva sin el checker.
@@ -1840,7 +1902,7 @@ if [ ! -x ./nyx_check ]; then
 else
   name="nyx2013-nyx-check-campo"
   n13k_out=$(NYX_LANG=en NYX_SRC=tests/compiler/errors/test-derive-fields-campo-no-primitivo.nx ./nyx_check 2>&1); n13k_rc=$?
-  if [ "$n13k_rc" -ne 0 ] && echo "$n13k_out" | grep -qF "[NYX2013] (line 12): #[derive(Fields)] does not support field 'etiquetas' of 'Modelo'"; then
+  if [ "$n13k_rc" -ne 0 ] && echo "$n13k_out" | grep -qF "[NYX2013] (line 9): #[derive(Fields)] does not support field 'etiquetas' of 'Modelo'"; then
     printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
   else
     printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2013 nombrando 'etiquetas')\n" "$n13k_rc"

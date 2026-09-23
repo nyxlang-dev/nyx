@@ -17,17 +17,29 @@
 
 // ===== EMPTY STRING SINGLETON =====
 
-static nyx_string* empty_string_singleton = NULL;
+// ESTÁTICO, no alocado (fix 2026-09-23, fricción de nyxerp, test-wasm-39).
+// Antes se construía perezosamente con GC_malloc la primera vez que alguien
+// pedía un vacío. Bajo la arena two-region de wasm (runtime/wasi/nyx_arena.c)
+// esa primera vez podía caer DENTRO de un evento: el singleton nacía en
+// memoria de turno, el reset la reciclaba y el evento siguiente la pisaba.
+// Desde ahí todo vacío del runtime —`"".trim()`, `repeat(0)` y los ~200
+// `nyx_string_from_cstr("")` de runtime/*.c— leía largo y datos de basura
+// (medido: trim de un vacío con largo 1, "pre"+vacío+"post" con 7 bytes de
+// más, y en la app real «memory access out of bounds»).
+// Un objeto estático no pertenece a ninguna región: no depende de CUÁNDO se
+// pide por primera vez, no se recicla nunca y tampoco tiene la carrera de la
+// inicialización perezosa entre hilos. Boehm lo trata como raíz (datos del
+// programa) y no apunta a memoria GC. Nadie lo muta: capacity = 1 obliga a
+// cualquier escritura de 1 byte o más a alocar un buffer propio, y ningún
+// GC_realloc recibe `data` de un String (solo StringBuilder/format, que
+// alocan el suyo).
+// EN: static empty singleton — a lazy GC_malloc could land in a wasm arena
+// turn and be recycled by the reset, corrupting every runtime "".
+static char empty_string_data[1] = { '\0' };
+static nyx_string empty_string_singleton = { 0, 1, empty_string_data };
 
 static nyx_string* get_empty_string(void) {
-    if (!empty_string_singleton) {
-        empty_string_singleton = (nyx_string*)GC_malloc(sizeof(nyx_string));
-        empty_string_singleton->length = 0;
-        empty_string_singleton->capacity = 1;
-        empty_string_singleton->data = (char*)GC_malloc_atomic(1);
-        empty_string_singleton->data[0] = '\0';
-    }
-    return empty_string_singleton;
+    return &empty_string_singleton;
 }
 
 // ===== CONSTRUCTORES =====

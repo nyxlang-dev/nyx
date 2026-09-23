@@ -1,0 +1,8 @@
+import "src/a/uno"
+import "src/b/dos"
+import "src/c/comun"
+
+fn main() {
+    let p: Punto = punto(100, 200)
+    println(int_to_string(suma_uno() + suma_dos() + p.x + p.y))
+}

@@ -1,0 +1,13 @@
+enum Estado {
+    Abierto,
+    Cerrado,
+}
+
+pub fn estado_uno() -> int {
+    let e: Estado = Estado.Abierto
+    match e {
+        Estado.Abierto => { return 1 }
+        Estado.Cerrado => { return 0 }
+    }
+    return 0
+}

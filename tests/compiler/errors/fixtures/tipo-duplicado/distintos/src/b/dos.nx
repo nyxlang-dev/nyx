@@ -1,0 +1,10 @@
+#[derive(Fields)]
+struct FilaDos {
+    nombre: String,
+    y: int,
+}
+
+pub fn fila_dos() -> int {
+    let f: FilaDos = FilaDos { nombre: "b", y: 2 }
+    return f.y + FilaDos_campos().length()
+}

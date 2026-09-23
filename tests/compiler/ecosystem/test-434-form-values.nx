@@ -1,0 +1,104 @@
+// test-434-form-values — fricción nyxerp (20260923-160005-team-1): claves
+// repetidas de form/query ("ver=a&ver=b&ver=c", checkboxes/<select multiple>)
+// pisaban todas menos la última en parse_form_data/parse_query_string (Map no
+// guarda duplicados) — comportamiento correcto y ahora documentado, pero sin
+// forma de recuperar las demás. Se agregan parse_form_data_all/
+// parse_query_string_all (Array de pares [clave, valor] en orden) y
+// form_values(req, key)/query_values(req, key) (todos los valores de una
+// clave, en orden) SIN cambiar la forma de req.form/req.query.
+// Self-checking con assert().
+
+import "std/web"
+
+fn main() -> int {
+    // ── parse_form_data: gana la última, sigue igual (no se cambia el shape) ──
+    let m: Map = parse_form_data("ver=a&ver=b&ver=c&otro=1", "application/x-www-form-urlencoded")
+    assert(m.get("ver") == "c", "parse_form_data: última clave repetida gana (comportamiento preservado)")
+    assert(m.get("otro") == "1", "parse_form_data: clave única normal")
+    assert(m.keys().length() == 2, "parse_form_data: 2 claves (ver colapsada + otro)")
+
+    // ── parse_form_data_all: las tres, en orden, sin colapsar ──
+    let all: Array = parse_form_data_all("ver=a&ver=b&ver=c&otro=1", "application/x-www-form-urlencoded")
+    assert(all.length() == 4, "parse_form_data_all: 4 pares (3 ver + 1 otro), nada colapsado")
+    let p0: Array = all[0]
+    let p0k: String = p0[0]
+    let p0v: String = p0[1]
+    assert(p0k == "ver" and p0v == "a", "parse_form_data_all: primer par en orden de llegada")
+    let p1: Array = all[1]
+    let p1v: String = p1[1]
+    assert(p1v == "b", "parse_form_data_all: segundo par (b)")
+    let p2: Array = all[2]
+    let p2v: String = p2[1]
+    assert(p2v == "c", "parse_form_data_all: tercer par (c)")
+    let p3: Array = all[3]
+    let p3k: String = p3[0]
+    let p3v: String = p3[1]
+    assert(p3k == "otro" and p3v == "1", "parse_form_data_all: la clave sin repetir también aparece")
+
+    // content-type que no es form-urlencoded: vacío, igual que parse_form_data
+    let none_ct: Array = parse_form_data_all("ver=a&ver=b", "application/json")
+    assert(none_ct.length() == 0, "parse_form_data_all: content-type ajeno -> []")
+
+    // ── form_values(req, key): el caso real del reporte ──
+    var req: Request = request_with("POST", "/encuesta")
+    req.body = "ver=a&ver=b&ver=c&otro=1"
+    req.headers_flat = ["Content-Type", "application/x-www-form-urlencoded"]
+
+    let vs: Array = form_values(req, "ver")
+    assert(vs.length() == 3, "form_values: las 3 casillas 'ver', no solo la última")
+    let v0: String = vs[0]
+    let v1: String = vs[1]
+    let v2: String = vs[2]
+    assert(v0 == "a" and v1 == "b" and v2 == "c", "form_values: en el orden en que llegaron")
+
+    let vs_single: Array = form_values(req, "otro")
+    assert(vs_single.length() == 1, "form_values: clave sin repetir -> un solo valor")
+    let vs0: String = vs_single[0]
+    assert(vs0 == "1", "form_values: valor correcto para clave única")
+
+    let vs_missing: Array = form_values(req, "no_existe")
+    assert(vs_missing.length() == 0, "form_values: clave ausente -> Array vacío, no error")
+
+    // req.form (el Map de siempre) queda intacto -- SIGUE siendo la última
+    assert(req.form.get_or("ver", "(nada)") == "(nada)", "form_values no toca/pre-llena req.form: sigue vacío hasta que el dispatcher lo arme")
+
+    // ── decodificado: %20 y '+' -> espacio, igual que parse_form_data ──
+    var req_enc: Request = request_with("POST", "/x")
+    req_enc.body = "nombre=Juan%20Perez&nombre=Ana+Garcia"
+    req_enc.headers_flat = ["Content-Type", "application/x-www-form-urlencoded"]
+    let names: Array = form_values(req_enc, "nombre")
+    assert(names.length() == 2, "form_values: decodifica antes de agrupar")
+    let n0: String = names[0]
+    let n1: String = names[1]
+    assert(n0 == "Juan Perez", "form_values: %20 -> espacio")
+    assert(n1 == "Ana Garcia", "form_values: '+' -> espacio")
+
+    // ── el mismo problema existía en query strings -- misma forma ──
+    let qall: Array = parse_query_string_all("/buscar?tag=x&tag=y&tag=z&q=hola")
+    assert(qall.length() == 4, "parse_query_string_all: 4 pares, nada colapsado")
+    let q0: Array = qall[0]
+    let q0v: String = q0[1]
+    assert(q0v == "x", "parse_query_string_all: primer valor en orden")
+
+    var req_q: Request = request_with("GET", "/buscar?tag=x&tag=y&tag=z&q=hola")
+    let tags: Array = query_values(req_q, "tag")
+    assert(tags.length() == 3, "query_values: las 3 repeticiones de 'tag'")
+    let t0: String = tags[0]
+    let t1: String = tags[1]
+    let t2: String = tags[2]
+    assert(t0 == "x" and t1 == "y" and t2 == "z", "query_values: en orden")
+
+    let tags_missing: Array = query_values(req_q, "no_existe")
+    assert(tags_missing.length() == 0, "query_values: clave ausente -> Array vacío")
+
+    // parse_query_string sigue devolviendo Map con la última (comportamiento preservado)
+    let qm: Map = parse_query_string("/buscar?tag=x&tag=y&tag=z&q=hola")
+    assert(qm.get("tag") == "z", "parse_query_string: última clave repetida gana (sin cambios)")
+
+    // NOTA multipart: parse_form_data/parse_form_data_all solo entienden
+    // application/x-www-form-urlencoded (multipart/form-data es std/multipart,
+    // un parser distinto -- ver LLM.md "Multipart uploads"). No aplica acá.
+
+    print("form_values/query_values OK")
+    return 0
+}

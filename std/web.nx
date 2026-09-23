@@ -2,6 +2,10 @@
 // Map API: parse functions return Map<String> for real key-value access
 
 import "std/json"
+// Solo para http_find_header, que usan form_values/query_values para leer
+// Content-Type de req.headers_flat sin reimplementar el escaneo de headers
+// (std/http no importa std/web — sin ciclo).
+import "std/http"
 
 // Decoder de percent-encoding del runtime (runtime/url.c), byte-safe: maneja
 // `%XX` Y `+`→espacio. Se declara como extern (en vez de `import "std/url"`)
@@ -11,9 +15,16 @@ extern "C" fn nyx_url_decode(s: String) -> String
 struct Request {
     method: String,
     path: String,
+    // query string decodificada. Con una clave repetida (`?a=1&a=2`) GANA LA
+    // ÚLTIMA (silencioso — Map no guarda duplicados). Para las tres en orden:
+    // query_values(req, "a").
     query: Map,
     headers_flat: Array,
     body: String,
+    // application/x-www-form-urlencoded decodificado. Con una clave repetida
+    // (checkboxes, <select multiple>: `ver=a&ver=b&ver=c`) GANA LA ÚLTIMA,
+    // en silencio — igual que query. Para las tres en orden: form_values(req,
+    // "ver") (fricción nyxerp 20260923-160005).
     form: Map,
     cookies: Map,
     params: Map,
@@ -81,13 +92,17 @@ pub fn url_decode(s: String) -> String {
     return nyx_url_decode(s)
 }
 
-// Returns Map<String> with extracted query params.
-// Keys are the param names, values are the param values.
-pub fn parse_query_string(path: String) -> Map {
-    var result: Map = map_new()
-    let qpos: int = path.indexOf("?")
-    if qpos < 0 { return result }
-    let qs: String = path.substring(qpos + 1, path.length())
+// Decodifica una cadena `clave=valor&clave2=valor2` (query string YA sin el
+// "?", o body de un form urlencoded) a un Array de pares [clave, valor]
+// decodificados, EN ORDEN de llegada — sin colapsar claves repetidas. Única
+// fuente de verdad del parseo: parse_query_string/parse_form_data arman su
+// Map recorriendo esto (la última clave pisa, por diseño del Map), y
+// parse_query_string_all/parse_form_data_all devuelven esto tal cual, para
+// quien necesita las TRES casillas de un mismo `name` en vez de solo la
+// última (fricción nyxerp 20260923-160005: checkboxes/`<select multiple>`
+// con el mismo `name` perdían todo menos el último valor, en silencio).
+fn __parse_urlencoded_pairs(qs: String) -> Array {
+    var result: Array = []
     let pairs: Array = qs.split("&")
     var i: int = 0
     while i < pairs.length() {
@@ -96,27 +111,124 @@ pub fn parse_query_string(path: String) -> Map {
         if eq > 0 {
             let key: String = url_decode(pair.substring(0, eq))
             let val: String = url_decode(pair.substring(eq + 1, pair.length()))
-            result.insert(key, val)
+            let kv: Array = [key, val]
+            result.push(kv)
         }
         i = i + 1
     }
     return result
 }
 
+// Returns Map<String> with extracted query params.
+// Keys are the param names, values are the param values.
+// Clave repetida (`?a=1&a=2`) → GANA LA ÚLTIMA, en silencio (Map no guarda
+// duplicados). Para las tres en orden: parse_query_string_all(path) o, sobre
+// un Request ya armado, query_values(req, "a").
+pub fn parse_query_string(path: String) -> Map {
+    var result: Map = map_new()
+    let qpos: int = path.indexOf("?")
+    if qpos < 0 { return result }
+    let qs: String = path.substring(qpos + 1, path.length())
+    let pairs: Array = __parse_urlencoded_pairs(qs)
+    var i: int = 0
+    while i < pairs.length() {
+        let pair: Array = pairs[i]
+        // let tipado antes de usar pair[0]/pair[1]: indexar una Array<Array>
+        // y pasar el resultado directo a una llamada pierde el tag de tipo
+        // (mismo gotcha que Map.get inline — ver test-223-web-url-decode.nx).
+        let pk: String = pair[0]
+        let pv: String = pair[1]
+        result.insert(pk, pv)
+        i = i + 1
+    }
+    return result
+}
+
+// Igual que parse_query_string, pero sin colapsar claves repetidas: Array de
+// pares [clave, valor] (cada uno Array de 2 Strings), EN ORDEN de llegada.
+// `[]` si no hay query string. Ver query_values(req, key) para leer una sola
+// clave desde un Request ya armado.
+pub fn parse_query_string_all(path: String) -> Array {
+    let qpos: int = path.indexOf("?")
+    if qpos < 0 { return [] }
+    let qs: String = path.substring(qpos + 1, path.length())
+    return __parse_urlencoded_pairs(qs)
+}
+
 // Returns Map<String> with form field key-value pairs.
 // Supports application/x-www-form-urlencoded content type.
+// Clave repetida (checkboxes, <select multiple>: `ver=a&ver=b&ver=c`) → GANA
+// LA ÚLTIMA, en silencio (Map no guarda duplicados). Para las tres en orden:
+// parse_form_data_all(body, content_type) o, sobre un Request ya armado,
+// form_values(req, "ver") (fricción nyxerp 20260923-160005).
 pub fn parse_form_data(body: String, content_type: String) -> Map {
     var result: Map = map_new()
     if content_type.indexOf("application/x-www-form-urlencoded") < 0 { return result }
-    let pairs: Array = body.split("&")
+    let pairs: Array = __parse_urlencoded_pairs(body)
     var i: int = 0
     while i < pairs.length() {
-        let pair: String = pairs[i]
-        let eq: int = pair.indexOf("=")
-        if eq > 0 {
-            let key: String = url_decode(pair.substring(0, eq))
-            let val: String = url_decode(pair.substring(eq + 1, pair.length()))
-            result.insert(key, val)
+        let pair: Array = pairs[i]
+        let pk: String = pair[0]
+        let pv: String = pair[1]
+        result.insert(pk, pv)
+        i = i + 1
+    }
+    return result
+}
+
+// Igual que parse_form_data, pero sin colapsar claves repetidas: Array de
+// pares [clave, valor] (cada uno Array de 2 Strings), EN ORDEN de llegada.
+// `[]` si content_type no es application/x-www-form-urlencoded (mismo
+// criterio que parse_form_data — multipart es std/multipart, no esto). Ver
+// form_values(req, key) para leer una sola clave desde un Request ya armado.
+pub fn parse_form_data_all(body: String, content_type: String) -> Array {
+    if content_type.indexOf("application/x-www-form-urlencoded") < 0 { return [] }
+    return __parse_urlencoded_pairs(body)
+}
+
+// Todos los valores de `key` en el query string de req.path, en orden;
+// Array vacío si `key` no aparece. Reparsea req.path con
+// parse_query_string_all en vez de guardar los pares en el Request (mismo
+// argumento que form_values: no agrega un campo nuevo al struct ni cambia
+// req.query, y funciona igual sobre un Request sintético de test).
+pub fn query_values(req: Request, key: String) -> Array {
+    let pairs: Array = parse_query_string_all(req.path)
+    var result: Array = []
+    var i: int = 0
+    while i < pairs.length() {
+        let pair: Array = pairs[i]
+        let pk: String = pair[0]
+        let pv: String = pair[1]
+        if pk == key {
+            result.push(pv)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Todos los valores de `key` en el form del request, en orden; Array vacío
+// si `key` no aparece o el content-type no es form-urlencoded.
+//
+// Lee de req.body + el Content-Type de req.headers_flat con
+// parse_form_data_all, en vez de guardar los pares al parsear (alternativa
+// descartada: agregar un campo al Request duplicaría el estado que ya vive
+// en body/headers_flat y rompería request_with() para tests, que no pasa
+// por el dispatcher de std/serve). Recalcula el parseo en cada llamada —
+// aceptable: un form típico son unas pocas decenas de pares, y evita
+// cambiarle la forma a req.form, que el pedido (fricción nyxerp
+// 20260923-160005) pide explícitamente no tocar.
+pub fn form_values(req: Request, key: String) -> Array {
+    let ctype: String = http_find_header(req.headers_flat, "Content-Type")
+    let pairs: Array = parse_form_data_all(req.body, ctype)
+    var result: Array = []
+    var i: int = 0
+    while i < pairs.length() {
+        let pair: Array = pairs[i]
+        let pk: String = pair[0]
+        let pv: String = pair[1]
+        if pk == key {
+            result.push(pv)
         }
         i = i + 1
     }

@@ -1,0 +1,6 @@
+import "src/a/uno"
+import "src/b/dos"
+
+fn main() {
+    println(int_to_string(estado_uno() + estado_dos()))
+}

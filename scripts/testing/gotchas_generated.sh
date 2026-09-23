@@ -38,6 +38,7 @@ GOTCHA_IDS=(
   "throw-deprecated"
   "time-clock-names-deprecated"
   "void-builtin-no-bind"
+  "type-names-are-global"
   "for-in-string-rejected"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
@@ -102,6 +103,7 @@ ANCLAS=(
   "panic(|throw-deprecated"
   "monotonic_ms|time-clock-names-deprecated"
   "got ()|void-builtin-no-bind"
+  "NYX1040|type-names-are-global"
   "NYX1038|for-in-string-rejected"
 )
 

@@ -1,0 +1,16 @@
+// Control positivo: la MISMA copia del enum de src/a/uno.nx. Un enum no sale
+// al IR como tipo con nombre (las variantes son tags enteros), así que la
+// copia exacta compila y corre: NYX1040 no la rechaza.
+enum Estado {
+    Abierto,
+    Cerrado,
+}
+
+pub fn estado_dos() -> int {
+    let e: Estado = Estado.Cerrado
+    match e {
+        Estado.Abierto => { return 10 }
+        Estado.Cerrado => { return 20 }
+    }
+    return 0
+}

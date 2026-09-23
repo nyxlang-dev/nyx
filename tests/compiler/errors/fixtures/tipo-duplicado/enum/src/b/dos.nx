@@ -1,0 +1,15 @@
+enum Estado {
+    Pendiente,
+    Pagado,
+    Anulado,
+}
+
+pub fn estado_dos() -> int {
+    let e: Estado = Estado.Anulado
+    match e {
+        Estado.Pendiente => { return 0 }
+        Estado.Pagado => { return 1 }
+        Estado.Anulado => { return 2 }
+    }
+    return 0
+}

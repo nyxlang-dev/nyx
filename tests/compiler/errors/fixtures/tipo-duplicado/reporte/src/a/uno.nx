@@ -1,0 +1,8 @@
+struct Fila {
+    x: int,
+}
+
+pub fn fila_uno() -> int {
+    let f: Fila = Fila { x: 1 }
+    return f.x
+}

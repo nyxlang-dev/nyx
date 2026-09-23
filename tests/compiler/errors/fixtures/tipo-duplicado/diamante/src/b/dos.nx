@@ -1,0 +1,6 @@
+import "src/c/comun"
+
+pub fn suma_dos() -> int {
+    let p: Punto = Punto { x: 10, y: 20 }
+    return p.x + p.y
+}

@@ -1,0 +1,11 @@
+// Diamante: este módulo llega por TRES caminos (src/a/uno, src/b/dos y el
+// main lo importan). Se inlinea una sola vez, así que `Punto` se declara una
+// sola vez y NYX1040 no tiene que disparar.
+pub struct Punto {
+    x: int,
+    y: int,
+}
+
+pub fn punto(x: int, y: int) -> Punto {
+    return Punto { x: x, y: y }
+}

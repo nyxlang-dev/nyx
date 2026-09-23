@@ -12,7 +12,9 @@
 #      ella y, en cascada, a las que la importan;
 #   5. un cambio de LAYOUT (un campo nuevo delante) se propaga: el objeto viejo no
 #      se reutiliza —eso sería leer offsets equivocados en silencio (Task 4)—;
-#   6. errores del manifiesto: una clave desconocida en [lib] y un módulo con .nx.
+#   6. `nyx test` enlaza los mismos objetos (no inlinea el cierre en cada archivo de
+#      prueba), los reutiliza, y probar un módulo de biblioteca no choca con su objeto;
+#   7. errores del manifiesto: una clave desconocida en [lib] y un módulo con .nx.
 # Usa el nyx_build del repo con NYX_HOME apuntando al repo.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -85,6 +87,36 @@ sed -i 's/export struct Punto { x: int, y: int }/export struct Punto { z: int, x
 out=$("$NB" build 2>&1); run=$(./libp 2>&1)
 if [ "$run" = "hola mundo 63 31 30 7" ] && echo "$out" | grep -q "compiling src/geo (lib)"; then ok "cambio de layout: geo se recompila y main lee el campo correcto"
 else mal "layout: '$run' ($(echo "$out" | grep -E 'compiling' | tr '\n' ' '))"; fi
+
+echo "── [lib] modules: nyx test ──"
+NT="$ROOT/nyx_test"
+if [ -x "$NT" ]; then
+    mkdir -p tests
+    cat > tests/geo_test.nx <<'EOF2'
+import { nuevo, suma, Punto } from "src/geo"
+import "src/util" as u
+
+test "geo por la interfaz" {
+    let p: Punto = nuevo(10, 1)
+    assert(suma(p) == 31)
+    assert(u.duplicar(2) == 6)
+}
+EOF2
+    out=$("$NT" 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] && echo "$out" | grep -q "\[lib\] modules:" && echo "$out" | grep -q "ALL TESTS PASSED"; then
+        ok "nyx test enlaza las bibliotecas en vez de inlinearlas"
+    else mal "nyx test con [lib] (rc=$rc): $(echo "$out" | tail -4 | tr '\n' ' ')"; fi
+    if echo "$out" | grep -q "0 compilada(s)"; then ok "nyx test reutiliza los objetos que dejó nyx build"
+    else mal "nyx test recompiló bibliotecas sin cambios: $(echo "$out" | grep 'lib\]')"; fi
+    # El archivo probado ES una biblioteca con bloques test: se compila entero
+    # y su objeto no se enlaza (si no, sus fns estarían definidas dos veces).
+    printf '\ntest "util interno" {\n    assert(duplicar(2) == 6)\n}\n' >> src/util.nx
+    out=$("$NT" src/util.nx 2>&1); rc=$?
+    if [ "$rc" -eq 0 ] && echo "$out" | grep -q "1 passed"; then ok "probar el propio módulo de biblioteca no choca con su objeto"
+    else mal "probar src/util.nx (rc=$rc): $(echo "$out" | tail -3 | tr '\n' ' ')"; fi
+else
+    mal "falta $NT — make build-test"
+fi
 
 echo "── [lib] modules: errores del manifiesto ──"
 cp nyx.toml nyx.toml.bien

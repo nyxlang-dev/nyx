@@ -926,6 +926,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
 | NYX1032 | a struct literal omits fields — they used to be filled with the zero of their type (`0`, `""`, `false`) SILENTLY, so a literal that forgot 33 fields still compiled; one diagnostic lists every missing field, because the full list is what tells you what to do |
 | NYX1036 | a function without `pub` is called from a module other than its own — `pub` used to filter only the QUALIFIED call (`alias.fn()`); the bare call resolved anyway, because the resolver inlines each imported module's text and the function ended up as one more top-level. Everything a module defined was therefore part of its interface, so no library could offer a stable API: any internal rename broke its importers. Checked before arity, since a private function from elsewhere is not «the right function with the wrong arguments» |
+| NYX1040 | the same `struct` or `enum` name declared in TWO modules of the program — types are not private to their file (even without `pub`) and are not mangled per module, because the resolver inlines every import into one unit. It used to pass `nyx check` and fail at link time with clang's «redefinition of type» over a temporary `.ll`; with a struct literal, the checker reported fields of the OTHER struct. The error names both files and lines; rename one. The same module reached by several import paths (diamond) is inlined once and does not fire it, and an `enum` copied identically (same variants and payloads) is accepted, since enums are integer tags in the IR. Reported by `nyx check` and, with semantic off, by codegen |
 | NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
 | NYX1210 | borrow: `&mut` exclusivity violation (statement-scoped lint) |
 | NYX1211 | borrow: `&mut` aliasing with an active `&` borrow (lint, sibling of NYX1210) |
@@ -2119,7 +2120,11 @@ modules = ["src/util", "src/geo"]
 - **Límite conocido**: el chequeo de tipos de los ARGUMENTOS en la frontera todavía no existe —
   llamar a una función de otra unidad con un tipo de argumento equivocado no lo detecta hoy el
   compilador (riesgo de comportamiento indefinido en runtime, no un error de compilación).
-  `nyx test` todavía no usa `[lib]`: siempre inlinea, igual que sin la sección en `nyx.toml`.
+- **`nyx test` también usa `[lib]`**: compila (o reutiliza) los objetos de las bibliotecas UNA vez
+  por suite y enlaza cada archivo de prueba contra ellos, en vez de inlinear el cierre entero en
+  cada uno (medido: 6,4 s → 1,4 s por archivo de prueba en el banco de 250 módulos). Un archivo de
+  prueba que ES un módulo de `[lib]` se compila entero, con sus bloques `test`. Con `--coverage`
+  se inlinea todo, como antes.
 - Medido sobre el proyecto sintético del banco (`scripts/testing/bench_test_cache.sh`): tocar un
   módulo hoja y recompilar cuesta, con `[lib]`, el 41% de lo que cuesta sin ella con 88 módulos y
   el 23% con 250 (mejora con el tamaño del proyecto).
@@ -4723,6 +4728,12 @@ fn auth_check(req: Request) -> Response {
 }
 app_use(app, auth_check)
 ```
+
+`req.form`/`req.query` are `Map`s: a repeated key (checkboxes, `<select multiple>`,
+`?a=1&a=2`) silently keeps only the LAST value. For all of them in order, use
+`form_values(req, key)` / `query_values(req, key)` — Array of Strings, `[]` if the key
+is absent — or `parse_form_data_all`/`parse_query_string_all` for the raw
+`[key, value]` pairs. None of them change `req.form`/`req.query`'s shape.
 
 ### Sessions (`std/session.nx`)
 

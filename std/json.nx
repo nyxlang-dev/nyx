@@ -477,17 +477,41 @@ fn parse_hex4(hx: String) -> int {
     return val
 }
 
+// Los bytes comunes se copian por TRAMOS: `tramo` marca dónde empieza la
+// corrida sin escapes en curso, y se vuelca con UN substring al llegar a una
+// barra o a la comilla de cierre. Una cadena sin escapes (el caso de casi
+// todo JSON real) cuesta un solo substring.
+//
+// POR QUÉ (fricción de nyxerp, 2026-09-23): antes cada byte hacía
+// `result = result + char_to_string(c)`, es decir un String de 1 byte más un
+// String nuevo con TODO lo acumulado, por carácter: cuadrático en el largo de
+// cada cadena y ~170 bytes reservados por byte de entrada. En wasm, donde nada
+// se libera, un catálogo de 1 MB reservaba 180 MB solo en el parseo.
 fn parse_string(input: String, pos: Array) -> Array {
+    return json_string(parse_string_text(input, pos))
+}
+
+// El texto de la cadena, sin envolver: una clave de objeto no necesita el
+// ["string", k] que después se desarma (un Array menos por clave).
+fn parse_string_text(input: String, pos: Array) -> String {
     var p: int = pos[0] + 1  // skip opening quote
     let len: int = input.length()
     var result: String = ""
+    var tramo: int = p
+    var hubo_escape: bool = false
     while p < len {
         let c: char = input.charAt(p)
         if c == '"' {
             pos[0] = p + 1
-            return json_string(result)
+            let resto: String = input.substring(tramo, p)
+            if hubo_escape {
+                return result + resto
+            }
+            return resto
         }
         if c == '\\' {
+            result = result + input.substring(tramo, p)
+            hubo_escape = true
             p = p + 1
             if p < len {
                 let esc: char = input.charAt(p)
@@ -531,8 +555,8 @@ fn parse_string(input: String, pos: Array) -> Array {
                     result = result + char_to_string(esc)
                 }
             }
-        } else {
-            result = result + char_to_string(c)
+            // El próximo tramo arranca después del escape entero.
+            tramo = p + 1
         }
         p = p + 1
     }
@@ -543,9 +567,12 @@ fn parse_string(input: String, pos: Array) -> Array {
     if p > len {
         p = len
     }
+    // El contenido parcial conserva el tramo pendiente, como antes byte a byte
+    // (substring acota si tramo quedó más allá de p por una barra colgante).
+    result = result + input.substring(tramo, p)
     pos[0] = p
     record_error(pos, "cadena sin cerrar: se esperaba '\"' antes del fin de la entrada, posicion " + int_to_string(p))
-    return json_string(result)
+    return result
 }
 
 fn parse_number(input: String, pos: Array) -> Array {
@@ -664,8 +691,7 @@ fn parse_object_member(input: String, pos: Array, keys: Array, vals: Array) {
         record_error(pos, "se esperaba '\"' (clave string) en la posicion " + int_to_string(pos[0]))
         return 0
     }
-    let k: Array = parse_string(input, pos)
-    let kv: String = k[1]
+    let kv: String = parse_string_text(input, pos)
     keys.push(kv)
     skip_whitespace(input, pos)
     if pos[0] < input.length() and input.charAt(pos[0]) == ':' {

@@ -1,0 +1,11 @@
+// Control positivo: cada módulo con su propio nombre de struct (NO pub), y el
+// importador usa el del primero por nombre — los tipos no son privados del
+// archivo, y eso tiene que seguir andando.
+struct FilaUno {
+    x: int,
+}
+
+pub fn fila_uno() -> int {
+    let f: FilaUno = FilaUno { x: 1 }
+    return f.x
+}

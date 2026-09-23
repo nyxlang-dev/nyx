@@ -1,0 +1,11 @@
+// El segundo Fila SÍ se construye con un literal: antes, `nyx check` acusaba
+// «field 'nombre' does not exist in struct 'Fila'» sobre ESTE archivo.
+struct Fila {
+    nombre: String,
+    y: int,
+}
+
+pub fn fila_dos() -> int {
+    let f: Fila = Fila { nombre: "a", y: 2 }
+    return f.y
+}

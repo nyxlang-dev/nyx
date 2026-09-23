@@ -1,0 +1,7 @@
+import "src/a/uno"
+import "src/b/dos"
+
+fn main() {
+    let g: FilaUno = FilaUno { x: 40 }
+    println(int_to_string(g.x + fila_uno() + fila_dos()))
+}

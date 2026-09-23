@@ -1250,7 +1250,7 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
     // eran ~10 s de nyx_build por build SIN cambios, medido 2026-09-23 — la
     // misma lección que `emit` (codegen) y el body del resolvedor.
     var sh: StringBuilder = StringBuilder.new()
-    sh.append("LIB_OBJS=\"\"\nmkdir -p \"$ORIG_DIR/target/nyx-lib\"\n")
+    sh.append("LIB_OBJS=\"\"\nLIB_MAP=\"\"\nmkdir -p \"$ORIG_DIR/target/nyx-lib\"\n")
     var i: int = 0
     while i < config.lib_modules.length() {
         let m: String = config.lib_modules[i]
@@ -1259,7 +1259,7 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
         let obj: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".o"
         let inl: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".inline"
         let env_unidad: String = "( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"" + m + ".nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" )"
-        sh.append("if [ -f \"" + obj + "\" ]; then echo '   reusing " + m + " (lib, sin cambios)'; LIB_OBJS=\"$LIB_OBJS " + obj + "\"\n")
+        sh.append("if [ -f \"" + obj + "\" ]; then echo '   reusing " + m + " (lib, sin cambios)'; LIB_OBJS=\"$LIB_OBJS " + obj + "\"; LIB_MAP=\"$LIB_MAP " + m + "=" + obj + "\"\n")
         sh.append("elif [ -f \"" + inl + "\" ]; then :\n")
         sh.append("else\n  echo '   compiling " + m + " (lib)'\n")
         sh.append("  rm -f \"$ORIG_DIR/target/nyx-lib/" + seguro + "-\"*\n")
@@ -1269,11 +1269,47 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
         sh.append("  elif [ $lrc -ne 0 ]; then echo \"error: nyx compile failed (" + m + "):\" >&2; cat \"$LOG\" >&2; nyx_pista $lrc; rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"; exit 1\n")
         sh.append("  else\n    grep -F '⚠' \"$LOG\" >&2 || true\n")
         sh.append("    clang -c " + opt_flags + " -Wno-override-module \"$LSRC.ll\" -o \"" + obj + "\" 2> \"$LOG\" || { echo \"error: clang failed (" + m + "):\" >&2; cat \"$LOG\" >&2; exit 1; }\n")
-        sh.append("    LIB_OBJS=\"$LIB_OBJS " + obj + "\"\n  fi\n")
+        sh.append("    LIB_OBJS=\"$LIB_OBJS " + obj + "\"; LIB_MAP=\"$LIB_MAP " + m + "=" + obj + "\"\n  fi\n")
         sh.append("  rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"\nfi\n")
         i = i + 1
     }
     return sh.to_string()
+}
+
+// `nyx_build libs [--release]` — interno, lo llama `nyx test`. Construye (o
+// reutiliza) los objetos de `[lib] modules` con la MISMA huella y el mismo
+// caché que `nyx build`, y deja en stdout una línea
+//   NYX_LIB_MAP: src/a=/ruta/a.o src/b=/ruta/b.o
+// con los que se pueden enlazar (un módulo que cae al inlining, NYX0302, no
+// aparece). Así una suite de pruebas compila cada biblioteca UNA vez y cada
+// archivo de prueba solo la enlaza — donde nyxerp paga el costo de hoy.
+fn run_libs(config: ProjectConfig, release: bool) -> bool {
+    var nyx_home: String = getenv("NYX_HOME")
+    if nyx_home == "" {
+        let home_dir: String = getenv("HOME")
+        if home_dir != "" and file_exists(home_dir + "/.nyx/runtime/runtime.c") { nyx_home = home_dir + "/.nyx" }
+    }
+    if nyx_home == "" and file_exists("nyx_bootstrap") { nyx_home = "." }
+    if nyx_home == "" {
+        print("error: NYX_HOME not set and nyx not installed (~/.nyx/)")
+        return false
+    }
+    var nyx_bin: String = nyx_home + "/nyx_bootstrap"
+    if not file_exists(nyx_bin) { nyx_bin = nyx_home + "/bin/nyx" }
+    var opt_flags: String = ""
+    if release { opt_flags = "-O2" }
+    var gc_flag: String = ""
+    if config.no_gc { gc_flag = "NYX_NO_GC=1 " }
+    var sh: String = "#!/bin/bash\nset -e\n" + pila_compilador_sh() + pila_compilador_pista_sh()
+    sh = sh + "ORIG_DIR=\"$(pwd)\"\nLOG=\"$(mktemp /tmp/nyx_build_log.XXXXXX)\"\ntrap 'rm -f \"$LOG\"' EXIT\n"
+    sh = sh + "cd \"" + nyx_home + "\"\n"
+    sh = sh + "if command -v flock >/dev/null 2>&1; then exec 9>\"" + nyx_home + "/.toolchain.lock\"; flock -s 9; fi\n"
+    sh = sh + lib_objetos_sh(config, nyx_home, nyx_bin, opt_flags, gc_flag)
+    sh = sh + "echo \"NYX_LIB_MAP:$LIB_MAP\"\n"
+    let tmp_script: String = "/tmp/nyx_libs_" + int_to_string(getpid()) + ".sh"
+    write_file(tmp_script, sh)
+    let result: int = exec_code("bash \"" + tmp_script + "\"; NYX_RC=$?; rm -f \"" + tmp_script + "\"; exit $NYX_RC")
+    return result == 0
 }
 
 fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool {
@@ -1941,7 +1977,7 @@ fn shell_quote_arg(s: String) -> String {
     var fi = 2
     var flag_desconocida = ""
     var pide_ayuda = false
-    let valida_flags: bool = command == "build" or command == "run" or command == "test"
+    let valida_flags: bool = command == "build" or command == "run" or command == "test" or command == "libs"
     while fi < args.length() {
         let flag: String = args[fi]
         if flag == "--" {
@@ -2240,6 +2276,11 @@ fn shell_quote_arg(s: String) -> String {
     if command == "info" {
         print_info(config)
         return 0
+    }
+
+    if command == "libs" {
+        if run_libs(config, release) { return 0 }
+        return 1
     }
 
     if command == "build" {

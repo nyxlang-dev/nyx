@@ -10,6 +10,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **`"".trim()` bajo la arena de wasm devolvía largo 1 o 2** (fricción nyxerp `20260923-100024`,
+  terminaba en «memory access out of bounds»). La causa no era `trim`: el String vacío que comparte
+  todo el runtime nacía en memoria del turno si se pedía por primera vez durante un evento, y la
+  arena lo reciclaba. Afectaba a `trim`, `repeat(0)` y a los ~200 `nyx_string_from_cstr("")` del
+  runtime. Ahora es un objeto estático. `test-wasm-39`.
+- **`json_parse` en wasm: 5.000 registros de 6,3 s a ~0,15 s en node y de 235 a 35 MB** (fricción
+  nyxerp `20260923-100024`). La región persistente pide memoria en bloques geométricos (64 KB → 8
+  MB) en vez de hacer crecer el wasm de a una página, y `parse_string` copia por tramos en vez de
+  concatenar byte a byte (cuadrático). Lo que queda (~18 B por byte de JSON) es el tamaño del árbol.
+- **Dos `struct` o `enum` con el mismo nombre en módulos distintos: NYX1040** en vez de «redefinition
+  of type» sobre un archivo temporal (fricción nyxerp `20260923-160005`). Sale en `nyx check` y en el
+  build, nombrando los dos archivos y líneas. Dos `enum` idénticos se aceptan (hoy compilaban). El
+  nodo `struct`/`enum` ahora lleva la línea del NOMBRE, no la de la `}` de cierre.
 - **wasm: un Array o StringBuilder global que crecía durante un evento quedaba apuntando a memoria
   del turno** `[arco: wasm-arena-persistir]`. Con la arena encendida, el `realloc` del crecimiento
   alocaba el bloque nuevo en la arena, que se recicla al terminar el evento: 1.000 `push` de enteros
@@ -125,6 +138,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Default corregido a `~/nyx/products/proxy` y skip más explícito.
 
 ### Added
+- **`nyx test` con `[lib] modules`** `[arco: compilacion-separada]`: las bibliotecas se compilan una
+  vez por suite y cada archivo de prueba solo las enlaza (6,4 s → 1,4 s por archivo en el banco de
+  250 módulos).
+- **`form_values`/`query_values` en `std/web`** (fricción nyxerp `20260923-160005`): todos los valores
+  de una clave repetida (casillas, `<select multiple>`), en orden; `parse_form_data_all` y
+  `parse_query_string_all` devuelven los pares sin colapsar. `req.form` no cambia: con claves
+  repetidas sigue ganando la última, y ahora la doc lo dice. Receta 115.
 - **`[lib] modules` en nyx.toml: compilación separada con reutilización de objetos**
   `[arco: compilacion-separada]`. `nyx build` compila cada módulo declarado una vez a
   `target/nyx-lib/` y lo reutiliza mientras no cambien él ni su cierre de imports; tocar un módulo

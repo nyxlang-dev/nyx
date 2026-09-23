@@ -1449,7 +1449,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,for-in-string-rejected -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1620,7 +1620,18 @@ file, function and line. Call them as a statement. The full list (35):
 Note this cuts against the habit of always binding a call's result (the rule that exists because a
 `?` call in statement position does not run): that rule is for calls that RETURN something. [test: compiler/errors/test-nyx1003-builtin-void-ligado]
 
-23. **`for c in s` over a `String` is an error (NYX1038): iterate by index — bytes with `for i in 0..s.length() { s.substring(i, i + 1) }`, UTF-8 characters with `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
+23. **`struct` and `enum` names are GLOBAL to the program, even without `pub`: the same name declared in two modules is NYX1040.**
+Every `import` is inlined into one compilation unit, and types — unlike functions — are not mangled
+per module, so two `struct Fila` from different files (neither `pub`, neither importing the other,
+joined by a third file that imports both) are the same name. The error names BOTH files with their
+lines and tells you to rename one. Until 2026-09-23 `nyx check` passed and the build died in clang
+with `redefinition of type` over a temporary `.ll`, or — if one of them was built with a literal —
+the checker reported fields of the OTHER struct (`field 'nombre' does not exist in struct 'Fila'`).
+The same module reached by several import paths (a diamond) is inlined once and does not collide,
+and an `enum` copied IDENTICALLY into two modules is accepted. In a large project, qualify
+domain names (`RenglonNota`, not `Renglon`). [test: compiler/errors/fixtures/tipo-duplicado/reporte/src/main] [test: compiler/errors/fixtures/tipo-duplicado/literal/src/main]
+
+24. **`for c in s` over a `String` is an error (NYX1038): iterate by index — bytes with `for i in 0..s.length() { s.substring(i, i + 1) }`, UTF-8 characters with `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
 `for … in` walks `Array`, `Map`, ranges and iterators only. Until 0.33.1 a `String` there compiled —
 `nyx check`, `nyx vet` and `nyx build` all green— and the binary died with SIGSEGV and no location,
 because the string was read as an array. It is an error rather than a feature because walking a
@@ -2123,7 +2134,10 @@ fn main() -> int {
   - `path: String` — the path WITHOUT the query string (`/users?id=3` →
     `"/users"`; the `?…` part lands in `query`).
   - `query: Map` — the parsed query string, percent-decoded (`?a=1&b=x` →
-    `{"a": "1", "b": "x"}`); empty `Map` when there is none.
+    `{"a": "1", "b": "x"}`); empty `Map` when there is none. A repeated key
+    (`?a=1&a=2`) silently loses everything but the LAST value (`Map` has no
+    duplicates) — for all of them, in order, use `query_values(req, "a")` or
+    `parse_query_string_all(path)` (both `std/web`).
   - `headers_flat: Array` — flat `[name, value, name, value, …]`. Read it with
     `http_find_header(req.headers_flat, "Content-Type")` (`""` if absent;
     the match is EXACT-case — use `http_find_headers` for case-insensitive /
@@ -2133,7 +2147,12 @@ fn main() -> int {
     413 from the server before any handler runs.
   - `form: Map` — the `application/x-www-form-urlencoded` fields, decoded;
     stays empty for any other content type (multipart → `std/multipart`,
-    JSON → `body`).
+    JSON → `body`). A repeated key — checkboxes, `<select multiple>`, same
+    `name` on several fields (`ver=a&ver=b&ver=c`) — silently loses everything
+    but the LAST value, same as `query` above (fricción nyxerp 20260923-160005:
+    a Map can't hold duplicates). For all of them, in order: `form_values(req,
+    "ver")`, or `parse_form_data_all(body, content_type)` for the Array of
+    `[key, value]` pairs directly (neither changes `req.form`'s shape).
   - `cookies: Map` — the parsed `Cookie:` header, name → value.
   - `params: Map` — the `{name}` captures of the matched route
     (`/hi/{name}` → `{"name": "…"}`).
@@ -2733,8 +2752,13 @@ program) with warning `NYX0302`, shown even on a successful build.
 
 **Known gap**: argument-type checking across the boundary does not exist yet
 — calling a cross-unit function with the wrong argument type is NOT caught at
-compile time. `nyx test` does not use `[lib]` yet — it always inlines, same
-as a project without the `[lib]` section.
+compile time.
+
+`nyx test` uses `[lib]` too: it builds (or reuses) the library objects ONCE per
+suite and links every test file against them instead of inlining the whole
+import closure into each one (measured: 6.4 s → 1.4 s per test file on the
+250-module bench). A test file that IS a `[lib]` module is compiled whole, with
+its `test` blocks. `--coverage` still inlines everything.
 
 Measured on the synthetic bench project (`scripts/testing/bench_test_cache.sh`):
 touching a leaf module and rebuilding costs 41% of the no-`[lib]` cost at 88
