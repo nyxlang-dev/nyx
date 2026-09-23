@@ -1,0 +1,5 @@
+import { duplicar } from "src/sep"
+fn main() -> int {
+    println(int_to_string(duplicar(21)))
+    return 0
+}

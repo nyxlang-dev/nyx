@@ -1,0 +1,9 @@
+export trait Doble {
+    fn doble(self) -> int
+}
+export struct Caja { v: int }
+impl Doble for Caja {
+    fn doble(self) -> int { return self.v * 2 }
+}
+export fn nueva(v: int) -> Caja { return Caja { v: v } }
+fn main() -> int { return 0 }

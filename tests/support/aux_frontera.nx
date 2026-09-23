@@ -1,0 +1,48 @@
+// aux del test-433: los cinco escalones que cruzan una frontera de módulo.
+// Hoy todos viajan INLINEADOS; el arco compilacion-separada los va a hacer
+// viajar por una interfaz. La salida del programa no puede cambiar.
+pub struct Punto {
+    x: int,
+    y: int,
+}
+
+pub enum Color {
+    Rojo,
+    Verde,
+}
+
+pub trait Ver {
+    fn ver(self) -> String
+}
+
+impl Ver for Punto {
+    fn ver(self) -> String {
+        return "(" + self.x.to_string() + "," + self.y.to_string() + ")"
+    }
+}
+
+// a. escalar
+pub fn duplicar(x: int) -> int {
+    return x * 2
+}
+
+// b. String — el escalón que en el spike devolvía un puntero como número
+pub fn saluda(n: String) -> String {
+    return "hola " + n
+}
+
+// c. struct
+pub fn crear(a: int, b: int) -> Punto {
+    return Punto { x: a, y: b }
+}
+
+// d. enum
+pub fn elegir(v: int) -> Color {
+    if v > 0 { return Color.Rojo }
+    return Color.Verde
+}
+
+// e. genérica
+pub fn identidad<T>(x: T) -> T {
+    return x
+}

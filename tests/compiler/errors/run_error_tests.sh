@@ -116,6 +116,10 @@ TESTS=(
   # lo tiraba clang sobre script.ll ("value doesn't match function result
   # type 'i64'"), sin la línea del usuario ni explicación.
   "tests/compiler/errors/test-tryop-outside-result-fn.nx|NYX1023"
+  # Fricción nyxerp 20260921-100001: for-in sobre un String era SIGSEGV mudo al
+  # correr (el iterable caía al camino de arrays). NYX1038 en semantic; el
+  # backstop de codegen lo cubre el ff_case con skip-semantic de más abajo.
+  "tests/compiler/errors/test-nyx1038-for-string.nx|NYX1038"
   # E6 Task 1 (D2 del review 2026-08-13, repro R4): el `?` exige que el E del
   # callee sea el del caller. Antes compilaba limpio y reenviaba el enum Err
   # entero — un %nyx_string* leído como %MiError*: SEGV o basura, sin aviso.
@@ -579,6 +583,9 @@ ff_case "fn-sin-firma-codegen-float-return"   "$FF_FX/float-return.nx"   "NYX103
 # que este caso es del backstop de codegen, que lee el tipo ya refinado. Va sin
 # NYX_SKIP_SEMANTIC a propósito: prueba que el backstop corre en el build normal.
 ff_case "fn-sin-firma-campo-struct"          "$FF_FX/campo-struct.nx"   "NYX1037"
+# NYX1038, capa codegen: con semantic apagado el backstop de codegen_for tiene
+# que rechazar el for-in sobre String y no escribir el .ll.
+ff_case "for-string-nyx1038-codegen" "tests/compiler/errors/test-nyx1038-for-string.nx" "NYX1038" 1
 
 # CONTROL POSITIVO: los seis tipos que sí viajan, y el descartado.
 cp "$FF_FX/valido.nx" script.nx
@@ -592,6 +599,65 @@ else
   echo "$ff_ok" | sed 's/^/      /' | head -8
   FAIL=$((FAIL + 1))
   FAILED_TESTS+=("fn-sin-firma-control-positivo")
+fi
+rm -f script.ll
+
+# ==============================================================
+# NYX0302 (arco compilacion-separada, Task 5): un módulo pedido por el camino
+# separado que tiene una fn genérica, métodos (`impl`, con trait o sin él) o un
+# trait NO se compila aparte: se inlinea como siempre y el compilador lo AVISA.
+# Sin esto la genérica fallaba en el ENLACE («undefined reference») y el `impl`
+# con NYX1016, dos mensajes que no dicen qué pasó. Es un AVISO: el .ll se tiene
+# que escribir, y el cuerpo del módulo tiene que estar DEFINIDO en él (inlineado).
+# El control positivo es la mitad que importa: un módulo con solo funciones
+# escalares sigue yendo aparte (declare, sin define) y sin aviso.
+# NYX_SEPARATE_PREFIX es el andamiaje de las tasks 3-5; la Task 6 lo reemplaza
+# por la declaración en nyx.toml, y estos casos migran con él.
+# ==============================================================
+SEP_FX="tests/compiler/errors/fixtures/sep-nyx0302"
+sep_case() {  # sep_case <nombre> <caso> <regex que tiene que estar DEFINIDO en el .ll>
+  local name="$1" caso="$2" def_re="$3"
+  cp "$SEP_FX/$caso/src/main.nx" script.nx
+  rm -f script.ll
+  local output
+  output=$(NYX_PROJECT_DIR="$(pwd)/$SEP_FX/$caso" NYX_SEPARATE_PREFIX=src/sep timeout 30 ./nyx_bootstrap 2>&1)
+  if echo "$output" | grep -qF "NYX0302" && [ -f script.ll ] && grep -qE "define .*@$def_re\(" script.ll; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s (aviso: %s, .ll: %s)\n" "$name" \
+      "$(echo "$output" | grep -qF NYX0302 && echo sí || echo no)" "$([ -f script.ll ] && echo sí || echo no)"
+    echo "$output" | grep -v "^ *$" | tail -4 | sed 's/^/      /'
+    FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+}
+sep_case "sep-nyx0302-generica" gen   "src_sep__identidad_int"
+sep_case "sep-nyx0302-impl"     impl  "src_sep__nueva"
+sep_case "sep-nyx0302-trait"    trait "src_sep__nueva"
+
+# NDJSON: mismo aviso con severity warning (no error) bajo NYX_DIAG=json.
+cp "$SEP_FX/gen/src/main.nx" script.nx
+rm -f script.ll
+sep_json=$(NYX_DIAG=json NYX_PROJECT_DIR="$(pwd)/$SEP_FX/gen" NYX_SEPARATE_PREFIX=src/sep timeout 30 ./nyx_bootstrap 2>&1)
+if echo "$sep_json" | grep -qF '"code":"NYX0302","severity":"warning","phase":"resolve"'; then
+  printf "  ✓ sep-nyx0302-json\n"; PASS=$((PASS + 1))
+else
+  printf "  ✗ sep-nyx0302-json\n"; echo "$sep_json" | grep NYX0302 | head -2 | sed 's/^/      /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("sep-nyx0302-json")
+fi
+rm -f script.ll
+
+# CONTROL POSITIVO: solo funciones escalares → sigue yendo aparte, sin aviso.
+cp "$SEP_FX/int/src/main.nx" script.nx
+rm -f script.ll
+sep_ok=$(NYX_PROJECT_DIR="$(pwd)/$SEP_FX/int" NYX_SEPARATE_PREFIX=src/sep timeout 30 ./nyx_bootstrap 2>&1)
+if [ -f script.ll ] && ! echo "$sep_ok" | grep -qF "NYX0302" \
+   && grep -qE "declare i64 @duplicar\(" script.ll && ! grep -qE "define .*duplicar" script.ll; then
+  printf "  ✓ sep-nyx0302-control-positivo\n"; PASS=$((PASS + 1))
+else
+  printf "  ✗ sep-nyx0302-control-positivo — el fallback se tragó un módulo separable\n"
+  echo "$sep_ok" | grep -v "^ *$" | tail -4 | sed 's/^/      /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("sep-nyx0302-control-positivo")
 fi
 rm -f script.ll
 
@@ -2062,6 +2128,51 @@ else
   echo "$saib_out" | tail -2 | sed 's/^/      bool:   /'
   echo "$saii_out" | tail -2 | sed 's/^/      int:    /'
   FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+name="for-in-slot-string-leido-como-array-abort"
+# Fricción nyxerp 20260921-100001, variante dinámica: un String dentro de un
+# Array pelado, recorrido con `for g: Array in xs`, reventaba con SIGSEGV en el
+# bucle INTERIOR, lejos del culpable. Ahora el for-in lee el slot con
+# nyx_slot_as_array_checked y aborta NYX2018 en el exterior, nombrando el tipo.
+# Controles: un Array de Arrays y un Array de Strings recorridos con su
+# anotación correcta siguen corriendo (el riesgo es el falso positivo).
+fsa_bad=$(mktemp /tmp/fsa-XXXX.nx)
+printf 'fn main() -> int {\n    var xs: Array = []\n    xs.push("empresa_id")\n    var n: int = 0\n    for g: Array in xs {\n        n = n + g.length()\n    }\n    print(n)\n    return 0\n}\n' > "$fsa_bad"
+fsa_out=$(bash "$(pwd)/scripts/nyx" run "$fsa_bad" 2>&1); fsa_rc=$?
+fsa_ok=$(mktemp /tmp/fsao-XXXX.nx)
+printf 'fn main() -> int {\n    var xs: Array = []\n    var a: Array = []\n    a.push("x")\n    a.push("yz")\n    xs.push(a)\n    var n: int = 0\n    for g: Array in xs {\n        for s: String in g {\n            n = n + s.length()\n        }\n    }\n    print(n)\n    return 0\n}\n' > "$fsa_ok"
+fsao_out=$(bash "$(pwd)/scripts/nyx" run "$fsa_ok" 2>&1); fsao_rc=$?
+rm -f "$fsa_bad" "$fsa_ok"
+if [ "$fsa_rc" -ne 0 ] && [ "$fsa_rc" -ne 139 ] && echo "$fsa_out" | grep -qF "NYX2018" \
+   && echo "$fsa_out" | grep -qF "contiene String" \
+   && [ "$fsao_rc" -eq 0 ] && echo "$fsao_out" | grep -qx "3"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (String-como-Array rc=%d, control rc=%d)\n" "$name" "$fsa_rc" "$fsao_rc"
+  echo "$fsa_out"  | tail -2 | sed 's/^/      malo:    /'
+  echo "$fsao_out" | tail -2 | sed 's/^/      control: /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+name="pila-compilador-200-operandos"
+# Fricción nyxerp 20260920-200024: 53 operandos `+` en una sola expresión
+# mataban a nyx_bootstrap con SIGSEGV mudo (codegen en -O0 apila ~151 KB por
+# nivel; spec docs/design/specs/2026-09-23-pila-del-compilador-design.md). El
+# wrapper ahora sube la pila SOLO del compilador. Se fuerza `ulimit -s 8192`
+# para que el caso no pase por un ambiente que ya venga con pila grande, y se
+# pide 200 (no 53) para tener margen contra un marco que crezca un poco.
+pc_src=$(mktemp /tmp/pc-XXXX.nx)
+{ printf 'fn hoja() -> String {\n    return "l1"'
+  for i in $(seq 2 200); do printf ' + "l%d"' "$i"; done
+  printf '\n}\nfn main() -> int {\n    println(int_to_string(hoja().length()))\n    return 0\n}\n'; } > "$pc_src"
+pc_out=$(bash -c 'ulimit -S -s 8192; bash "$1" run "$2"' _ "$(pwd)/scripts/nyx" "$pc_src" 2>&1); pc_rc=$?
+rm -f "$pc_src"
+if [ "$pc_rc" -eq 0 ] && echo "$pc_out" | grep -qx "692"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (rc=%d)\n" "$name" "$pc_rc"
+  echo "$pc_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
 name="assert-eq-expected-got"

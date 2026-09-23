@@ -1,0 +1,2 @@
+export fn identidad<T>(x: T) -> T { return x }
+fn main() -> int { return 0 }

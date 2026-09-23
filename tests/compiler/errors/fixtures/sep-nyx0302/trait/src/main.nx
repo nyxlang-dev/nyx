@@ -1,0 +1,6 @@
+import { nueva, Caja } from "src/sep"
+fn main() -> int {
+    let c: Caja = nueva(21)
+    println(int_to_string(c.doble()))
+    return 0
+}

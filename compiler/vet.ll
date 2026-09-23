@@ -359,6 +359,7 @@ declare void @nyx_array_set_tagged({ i64, i8* }*, i64, i64, i64)
 declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_array_checked({ i64, i8* }*, i64)
 declare i64 @nyx_row_cell({ i64, i8* }*, i64, i64, i8*, i8*, i64)
 declare %nyx_string* @nyx_row_problema({ i64, i8* }*, i64, i8*, i8*, i64)
 declare i64 @nyx_bool_text_ok(%nyx_string*)
@@ -466,9 +467,9 @@ declare i64 @nyx_iter_all(i8*, i8*)
 
 declare { i64, i8* }* @tokenize(%nyx_string*)
 declare { i64, i8* }* @parse({ i64, i8* }*, %nyx_string*)
-declare { i64, i8* }* @gotchas_table(...)
-declare %nyx_string* @gotcha_field(...)
-declare %nyx_string* @gotcha_scan_line(...)
+declare { i64, i8* }* @gotchas_table()
+declare %nyx_string* @gotcha_field({ i64, i8* }*, %nyx_string*)
+declare %nyx_string* @gotcha_scan_line(%nyx_string*)
 
 define internal %VetIssue @make_issue(
 %nyx_string* %sev.param, %nyx_string* %code.param, %nyx_string* %msg.param, i64 %line.param) {

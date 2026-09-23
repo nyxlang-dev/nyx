@@ -764,6 +764,29 @@ int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
     return arr->data[index];
 }
 
+// Lectura como Array chequeada — ver runtime-arrays.h. Espejo de la de int:
+// solo denuncia los tags cuyo i64 seguro NO es un array (los cuatro de valor);
+// un slot opaco o sin tag sigue pasando crudo, así que nada que hoy funcione
+// cambia de conducta.
+int64_t nyx_slot_as_array_checked(nyx_array_t* arr, int64_t index) {
+    if (!arr) {
+        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
+        exit(1);
+    }
+    nyx_array_bounds_check(arr, index);
+    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+    if ((t == NYX_TAG_INT || t == NYX_TAG_STRING || t == NYX_TAG_FLOAT || t == NYX_TAG_BOOL)
+        && !nyx_slot_check_off()) {
+        fprintf(stderr,
+            "💥 Runtime Error [NYX2018]: el slot %" PRId64 " del Array contiene %s"
+            " pero se leyó como Array — anota el tipo real del elemento;"
+            " NYX_SLOT_CHECK=off lo desactiva\n",
+            index, nyx_tag_name(t));
+        exit(1);
+    }
+    return arr->data[index];
+}
+
 void nyx_array_retag_unknown(nyx_array_t* arr, int64_t tag) {
     if (!arr || !arr->tags) return;
     if (tag <= NYX_TAG_UNKNOWN || tag > NYX_TAG_PTR) return;

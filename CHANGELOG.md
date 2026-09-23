@@ -10,6 +10,69 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Una expresión de 53 operandos hacía caer al compilador con SIGSEGV y sin mensaje** (fricción nyxerp
+  `20260920-200024`: una hoja de estilos de 75 concatenaciones, una hora de bisección a mano; `nyx check` y `nyx vet`
+  daban verde). Causa medida: el toolchain se enlaza sin `-O` y cada nivel de una expresión binaria apila ~151 KB de
+  marcos de codegen (`codegen_binop` solo, 132.880 B en `-O0` contra 1.488 B en `-O2`), así que 53 niveles agotaban
+  los 8 MB por omisión. **Mitigado**: `nyx`, `nyx build` y `nyx test` suben a 64 MB la pila DEL COMPILADOR —el
+  programa del usuario conserva la suya— (techo de ~52 a ~430 operandos), y si igual muere, el mensaje nombra la
+  causa en vez de dejar solo «Segmentation fault». Las recetas del Makefile también la suben (desde
+  `scripts/with_testroot_lock.sh`): `make recompile-all` ya no podía compilar `lexer.nx` en 8 MB. La causa de raíz
+  queda en el spec `pila-del-compilador` (BORRADOR, GO pendiente).
+- **Recorrer un `String` con `for … in` mataba el programa con SIGSEGV y sin ubicación** (fricción nyxerp
+  `20260921-100001`). `nyx check`, `nyx vet` y `nyx build` daban verde: codegen no tiene camino de String, así que
+  el iterable caía al de arrays y el `%nyx_string*` se leía como `{ i64, i8* }*`. Ahora es **NYX1038** con archivo
+  y línea, y la pista del recorrido por índice (bytes con `substring`, caracteres UTF-8 con `char_substring`); la
+  misma regla vive en codegen para cuando semantic está apagado. Es error y no una capacidad nueva a propósito:
+  recorrer un string obliga a decidir entre bytes y codepoints, y eso queda abierto. **La variante dinámica** —un
+  String dentro de un `Array` pelado, recorrido con `for g: Array in xs`— reventaba en el bucle INTERIOR, lejos del
+  culpable: ahora el `for` lee el slot chequeando su tag y aborta en el exterior con **NYX2018** nombrando el slot y
+  su tipo real (y `for s: String in xs` sobre un slot `int` usa la lectura chequeada que ya existía). Gotcha
+  `for-in-string-rejected`.
+- **`semantic` era CUADRÁTICO en el tamaño del cierre: las tablas de símbolos y de firmas se
+  recorrían enteras, comparando strings** `[arco: semantic-indice-simbolos]`. `scope_lookup` y
+  `fn_sig_index` escaneaban `g_sym_names` y `g_fn_sig_names` completos en cada consulta. Como el
+  resolvedor inlinea el cierre de imports en una sola unidad de traducción, esas tablas crecen con
+  el número de módulos mientras el número de búsquedas crece con el volumen de código: el producto
+  es el cuadrático. Ahora hay un **índice por nombre** (`Map<String,int>` + un array paralelo que
+  encadena los homónimos en orden de declaración) sobre las dos tablas, y los otros seis
+  consumidores —`scope_get_arity`, `lookup_var_type`, `name_is_builtin`, `fn_es_privada_de`,
+  `fn_module_resolve`, `scope_has_in_current`— recorren la cadena del nombre en vez de la tabla.
+  > **Medido** (aarch64, mediana de 3, con la máquina quieta verificada), sobre un proyecto
+  > sintético de 175.375 líneas de IR —la escala del cierre de nyxerp, que medía 184.080—:
+  > **front-end 4.680 → 2.700 ms (−42,3%)**, exponente sobre cuatro tamaños **1,20 → 1,04**, y el
+  > costo por línea de IR de **26,7 → 15,4 µs** (antes se duplicaba entre 7,5k y 175k líneas; ahora
+  > es plano). Pico de RSS sin cambios: 288 → 286 MB. `make bench-test-cache` lo reproduce.
+  > **El perfil cambió de forma**: semantic pasa de 54,9% a 16,8% del front-end, y
+  > `nyx_string_equals` de primera hoja con 24,4% a sexta con 4,9%. El próximo cuello es la
+  > alocación (`GC_generic_malloc*`, 40%), fichado en `TASKS.md`.
+  > **Confirmado desde afuera del core** (nyxerp, 2026-09-21): su suite completa —112 archivos,
+  > 1.200 pruebas, contra PostgreSQL— pasó de **23 min 07 s a 20 min 43 s (−9,2%)**, medido contra
+  > MÁS trabajo (1.191 → 1.200 pruebas) y sin ventana tranquila, así que no es comparable con el
+  > 42% del front-end aislado: ahí el front-end es una fracción del reloj total. **Y el efecto en
+  > MEMORIA resultó ser el que más les sirve**: el pico de compilar y correr su archivo más pesado
+  > (39 pruebas) pasó de **1.357 MB a 198 MB** — eso es el efecto conjunto de este arco y del fix
+  > del `emit` cuadrático (v0.32.2), porque su medición previa es del 2026-09-17. Con 2 núcleos y
+  > 3,8 GB, dos compilaciones a la vez **ahora entran y antes no**: el arco les destrabó un factor
+  > 2 que van a buscar por su cuenta.
+  > **Cómo se verificó que no cambia comportamiento**: cada función migrada corrió EN PARALELO con
+  > su escaneo original y un gate que abortaba la compilación si los dos caminos diferían, sobre
+  > `make test` (449), `test-errors` (309), `test-m08-types` (18) y la matriz de dispatch — **~776
+  > pruebas, cero discrepancias**, en las tres tandas. Recién con eso en verde se retiró cada
+  > escaneo. Los gates se verificaron saboteando el índice y el `scope_pop`, porque un gate que no
+  > se puede probar que falla no prueba nada.
+  > **Un hallazgo que el sabotaje destapó**: con el `scope_pop` sin deshacer su tramo del índice,
+  > `make test-errors` da **309/309** — el corpus entero del repo NO caza ese bug, y el compilador
+  > resuelve símbolos con el `kind` equivocado sin decir una palabra. Por eso todas las consultas
+  > pasan ahora por `indice_cabeza()`, que valida que la cabeza de la cadena esté viva **siempre**,
+  > sin variable de entorno: cuesta una comparación de enteros y convierte ese silently-wrong en un
+  > error ruidoso.
+  Tests: `test-432-module-fn-homonyms-caller` (450 archivos / 449 ARM64) fija la resolución NO
+  calificada desde dentro de un módulo —la regla de la que dependen `scope_get_arity` y
+  `fn_sig_index`—, que `test-353` no cubría. Diseño: `docs/design/specs/2026-09-21-semantic-indice-simbolos-design.md`.
+- **Voseo en cinco líneas de `std/smtp.nx`**, dos de ellas mensajes que ve el usuario («probá el
+  465», «Pedí STARTTLS primero … o conectá al 465») `[arco: std-smtp]`. La guarda
+  `run_voseo_messages.sh` estaba en rojo desde el 2026-09-20, así que `make test-all` no pasaba.
 - **Escribir por TLS a un peer que ya cerró MATABA EL PROCESO por SIGPIPE** `[arco: serve-sse]`.
   OpenSSL escribe con `write()` crudo y este runtime no instala un `SIG_IGN` global de SIGPIPE a
   propósito (`os_sock_send` se protege con `MSG_NOSIGNAL`, y su comentario aclara que eso es
@@ -43,6 +106,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Default corregido a `~/nyx/products/proxy` y skip más explícito.
 
 ### Added
+- **`make bench-test-cache`** — banco de medición del costo de compilar un archivo de prueba, por
+  fases (`front` / `clang_ll` / `link` / `run` / `hash`), sobre proyectos sintéticos en tres capas
+  con reuso, de 8 a 250 módulos `[arco: semantic-indice-simbolos]`. Nació para re-medir la ficha de
+  la caché de binarios por hash del cierre y terminó siendo el instrumento del arco.
+  > **Exige una ventana tranquila antes de medir**: espera a que no haya compiladores ajenos, y si
+  > alguno entra a mitad de una repetición la descarta y la repite. Si la espera vence, ABORTA
+  > nombrando el proceso que ocupa la máquina en vez de reportar ruido. No es paranoia: la primera
+  > línea de base del arco salió **9% alta** porque otra sesión corría su suite en la misma máquina
+  > de dos núcleos, y con la guarda puesta el banco repite al **0,1%**.
 - **`std/smtp` — mandar correo desde Nyx** `[arco: std-smtp]` (pedido de nyxerp, que se quedó sin
   forma de mandar un enlace de recuperación de contraseña: la única salida que su sistema pudo
   ofrecer fue crear un usuario nuevo). Conexión por los dos caminos reales —587 con `STARTTLS` y

@@ -64,4 +64,15 @@ fi
 
 nyx_testroot_lock_acquire
 
+# Pila del compilador: TODA receta que corre nyx_bootstrap pasa por acá, así que
+# es el único lugar donde subirla las cubre a todas. nyx_bootstrap se enlaza en
+# -O0 y codegen apila ~151 KB por nivel de expresión (spec
+# docs/design/specs/2026-09-23-pila-del-compilador-design.md): `recompile-all`
+# ya no podía compilar lexer.nx en 8 MB, y `build-nyx-build` murió con SIGSEGV
+# al crecer una concatenación de compiler/build.nx. `recompile` y
+# `build-interpreter` lo hacían cada uno por su cuenta; las demás, no.
+# shellcheck source=scripts/lib_stack.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib_stack.sh"
+nyx_raise_stack
+
 "$@"

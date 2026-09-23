@@ -92,6 +92,13 @@ double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index);
 // definido/definido abortaría sobre BOOL.
 int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index);
 
+// Lectura como Array chequeada: denuncia los cuatro tags de VALOR
+// (INT/STRING/FLOAT/BOOL) — ninguno es un { i64, i8* }*, y tratarlo como tal es
+// SIGSEGV más adelante, lejos del culpable. ARRAY/MAP/PTR/UNKNOWN devuelven el
+// valor crudo, como siempre. La usa el `for x: Array in xs` (fricción nyxerp
+// 20260921-100001: un String dentro de un Array pelado mataba el bucle interior).
+int64_t nyx_slot_as_array_checked(nyx_array_t* arr, int64_t index);
+
 // ===== TAG ESTÁTICO DE FALLBACK (spec 2026-08-03, "la anotación manda") =====
 // El tipo DECLARADO del receptor viaja como static_tag y SOLO gana cuando el
 // tag runtime es UNKNOWN — nunca pisa un tag conocido. Cierra la familia

@@ -1,0 +1,11 @@
+// Fricción nyxerp 20260921-100001: recorrer un String con for-in caía al camino
+// de arrays de codegen y el %nyx_string* se leía como { i64, i8* }*: SIGSEGV al
+// correr, sin archivo ni línea, con check/vet/build en verde. Ahora NYX1038.
+// Expected stderr (contains): "NYX1038"
+fn main() -> int {
+    let s: String = "ab"
+    for c: String in s {
+        print(c)
+    }
+    return 0
+}

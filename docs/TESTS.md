@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **450 archivos / 449 ARM64** | medido 2026-09-21 (+1 `test-432-module-fn-homonyms-caller`, arco semantic-indice-simbolos; antes +1 `test-430-include-bytes`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
+| Regression | `make test` | **451 archivos / 450 ARM64** | medido 2026-09-21 (+1 `test-433-frontera-de-modulo`, arco compilacion-separada; antes +1 `test-432-module-fn-homonyms-caller`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas del 2026-09-08 al 15 en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **309** | +8 el 2026-09-20 (NYX1037: los tres contextos que revientan × 2 capas, el `Fn` que viene de un campo de struct, y el control positivo de los siete tipos que sí viajan); 301 tras include-bytes |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

@@ -1,0 +1,37 @@
+// test-433 — los cinco escalones que cruzan una frontera de módulo, fijados.
+//
+// POR QUÉ EXISTE: el arco `compilacion-separada` va a cambiar CÓMO viajan estas
+// cosas entre módulos —hoy el resolvedor inlinea el texto; mañana habrá una
+// interfaz tipada— y la salida del programa no puede cambiar. El spike de la
+// Task 1 midió que por el camino separado, hoy, `saluda` devuelve un puntero
+// impreso como número (281472812650464) en vez del texto: ésta es la prueba que
+// lo convierte en un fallo visible cuando ese camino se active.
+import "tests/support/aux_frontera"
+
+fn main() -> int {
+    // a. escalar
+    print(duplicar(21).to_string())
+
+    // b. String — el que falla en silencio por el camino separado
+    print(saluda("mundo"))
+
+    // c. struct: construido en el módulo, leído acá
+    let p: Punto = crear(20, 22)
+    print((p.x + p.y).to_string())
+
+    // d. enum: construido allá, discriminado acá
+    match elegir(1) {
+        Color.Rojo  => { print("rojo") }
+        Color.Verde => { print("verde") }
+    }
+
+    // e. genérica: se monomorfiza en el consumidor (por eso no cruza una
+    //    frontera de enlace: necesita el cuerpo, no la firma)
+    print(identidad(7).to_string())
+
+    // f. trait + impl declarados allá, usados acá
+    print(p.ver())
+
+    print("frontera OK")
+    return 0
+}

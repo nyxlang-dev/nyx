@@ -1070,6 +1070,23 @@ fn clang_failure_attribution_bash(main_file: String) -> String {
         "fi\n"
 }
 
+// Pila del compilador (fricción nyxerp 20260920-200024, spec
+// docs/design/specs/2026-09-23-pila-del-compilador-design.md): nyx_bootstrap se
+// enlaza en -O0 y cada nivel de una expresión binaria apila ~151 KB de marcos de
+// codegen, así que 53 operandos `+` agotaban los 8 MB por omisión y el
+// compilador moría con SIGSEGV mudo. Se sube a 64 MB SOLO en el subshell del
+// compilador —el binario del usuario conserva su pila de siempre— y nunca se
+// BAJA una pila más grande. Mismo criterio que scripts/lib_stack.sh.
+fn pila_compilador_sh() -> String {
+    return "nyx_pila() { local c; c=$(ulimit -s 2>/dev/null) || return 0; [ \"$c\" = unlimited ] && return 0; [ \"$c\" -ge 65536 ] 2>/dev/null && return 0; ulimit -s 65536 2>/dev/null || true; }\n"
+}
+
+// Si el compilador murió por señal (rc >= 128), decir la causa conocida en vez
+// de dejar solo el «Segmentation fault» del shell. `$1` = rc del subshell.
+fn pila_compilador_pista_sh() -> String {
+    return "nyx_pista() { [ \"$1\" -ge 128 ] 2>/dev/null && echo \"nota: el compilador murio por una senal (rc=$1). La causa conocida es quedarse sin pila con una expresion muy larga o muy anidada (cientos de operandos en una sola expresion): conviene partirla en varias. Si no es eso, se puede reportar con 'nyx report'.\" >&2; return 0; }\n"
+}
+
 fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool {
     // target efectivo: flag CLI > [build] target del nyx.toml
     var eff_target: String = config.target
@@ -1148,7 +1165,12 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // script.ll compartido de NYX_HOME — dos `nyx build` concurrentes
     // pisaban el .nx/.ll ajeno (carrera real, ver TASKS.md). El driver
     // deriva el .ll a partir de NYX_SRC.
-    let build_script = "#!/bin/bash\nset -e\n" +
+    // Fuera de la cadena de abajo A PROPÓSITO: esa concatenación ya está al
+    // borde del techo de pila que este mismo cambio mitiga (spec
+    // pila-del-compilador), y cada operando más la acerca.
+    let pila_sh: String = "#!/bin/bash\nset -e\n" + pila_compilador_sh() + pila_compilador_pista_sh()
+    let compilador_env: String = "( nyx_pila; " + gc_flag
+    let build_script = pila_sh +
         "ORIG_DIR=\"$(pwd)\"\n" +
         "RT=\"" + rt + "\"\n" +
         "LOG=\"$(mktemp /tmp/nyx_build_log.XXXXXX)\"\n" +
@@ -1162,8 +1184,8 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // mitad de esta compilación (contrato en CLAUDE.md §Sesiones paralelas,
         // 2026-09-20). Sin flock en la máquina no se bloquea nada.
         "if command -v flock >/dev/null 2>&1; then exec 9>\"" + nyx_home + "/.toolchain.lock\"; flock -s 9; fi\n" +
-        gc_flag + "NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
-        "|| { echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
+        compilador_env + "NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" ) > \"$LOG\" 2>&1 " +
+        "|| { rc=$?; echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; nyx_pista $rc; exit 1; }\n" +
         mkdir_native +
         "clang " + opt_flags + " \"$SRC.ll\" " +
         "$RT/runtime.c $RT/strings.c $RT/runtime-arrays.c " +

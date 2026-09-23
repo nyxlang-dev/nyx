@@ -1,0 +1,5 @@
+import { identidad } from "src/sep"
+fn main() -> int {
+    println(int_to_string(identidad(42)))
+    return 0
+}

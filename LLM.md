@@ -1447,7 +1447,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,for-in-string-rejected -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1617,6 +1617,15 @@ file, function and line. Call them as a statement. The full list (35):
 `channel_destroy channel_send condvar_broadcast condvar_signal condvar_wait exit file_close file_flush free go_sleep mutex_destroy mutex_lock mutex_unlock panic print print_no_newline raw_mode_enter raw_mode_exit rwlock_destroy rwlock_rdlock rwlock_unlock rwlock_wrlock setenv signal_handle signal_ignore signal_reset sleep task_cancel tcp_close term_flush term_write throw tls_close tls_close_conn volatile_store`.
 Note this cuts against the habit of always binding a call's result (the rule that exists because a
 `?` call in statement position does not run): that rule is for calls that RETURN something. [test: compiler/errors/test-nyx1003-builtin-void-ligado]
+
+23. **`for c in s` over a `String` is an error (NYX1038): iterate by index — bytes with `for i in 0..s.length() { s.substring(i, i + 1) }`, UTF-8 characters with `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
+`for … in` walks `Array`, `Map`, ranges and iterators only. Until 0.33.1 a `String` there compiled —
+`nyx check`, `nyx vet` and `nyx build` all green— and the binary died with SIGSEGV and no location,
+because the string was read as an array. It is an error rather than a feature because walking a
+string forces a choice between bytes and codepoints, and the `String` API is byte-based with
+`char_length()` apart. The dynamic variant has its own guard: a `String` stored in a bare `Array` and
+walked with `for g: Array in xs` now aborts in the OUTER loop with NYX2018 naming the slot and its
+real type, instead of crashing later in the inner one. [test: compiler/errors/test-nyx1038-for-string] [test: 31-recorrer-string-por-indice]
 
 <!-- /gen:gotchas -->
 
