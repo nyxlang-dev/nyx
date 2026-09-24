@@ -483,6 +483,7 @@ port)` / `try_tcp_listen(host, port)` / `try_udp_bind(host, port)` /
 `try_tcp_write(fd, data)` / `try_udp_sendto(fd, data, host, port)` /
 `try_udp_recvfrom(fd, max)` / `try_resolve(host)` / `try_tcp_read_line(fd)`
 / `try_tcp_read_partial(fd, max)` / `try_tcp_read_exact(fd, n)` /
+`try_tcp_read_timed(fd, max, timeout_ms)` /
 `try_tcp_shutdown(fd, mode)` / `try_tcp_set_timeout(fd, secs)` /
 `try_getpeername(fd)` / `try_local_port(fd)` / `try_resolve_ptr(ip)` are the full
 Result-returning family over the old `tcp_connect`/`tcp_listen`/
@@ -491,7 +492,7 @@ Result-returning family over the old `tcp_connect`/`tcp_listen`/
 `tcp_read_exact`/`tcp_shutdown`/`tcp_set_timeout`/`getpeername`/
 `resolve_ptr` builtins, which abort or print to stderr on failure instead
 of returning a typed error (e.g. `EADDRINUSE` surfaces as `kind ==
-"in_use"`, `code == 98`). Three measured gotchas from the I/O half
+"in_use"`, `code == 98`). Four measured gotchas from the I/O half
 (E5.2+E5.2b):
 1. **EOF vs. blocking is asymmetric between TCP and UDP.**
    `try_tcp_read(fd, max)` returns `Ok("")` when the peer closed cleanly
@@ -541,6 +542,17 @@ of returning a typed error (e.g. `EADDRINUSE` surfaces as `kind ==
    mid-read discards the partial bytes already received (documented,
    can't do anything useful with a short prefix when the contract is
    "exactly n") and returns `Err{0, "eof"}`, never a truncated `Ok`.
+4. **`try_tcp_read_timed(fd, max, timeout_ms)` is the only read with a
+   millisecond deadline that does not touch the socket's options** (unlike
+   `try_tcp_set_timeout`, which is in whole seconds and sticks to every later
+   read): `Ok(1..max bytes)` as soon as something arrives, `Err{110, "timeout"}`
+   when the deadline passes WITHOUT consuming anything (the fd is intact, wait
+   again), `Err{0, "eof"}` when the peer closed; `0` = just look, `< 0` = no
+   limit. ⚠️ It does NOT see the runtime's transparent per-fd buffer that
+   `try_tcp_read_line`/`try_tcp_read_exact` fill (8 KB per `recv`): after those,
+   the bytes left in that buffer don't count as "something arrived" and the
+   next bytes come out of order. On a fd you wait on, read only with
+   `try_tcp_read`/`try_tcp_read_partial` (they leave nothing behind) or with it.
 
 For HTTP clients (E5.3, `import "std/http"`), `try_http_get(url)` /
 `try_http_post(url, body)` / `try_http_request(method, url, headers,
@@ -1284,6 +1296,51 @@ match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
 - **`bool` en filas leídas del servidor**: PostgreSQL manda `t`/`f` en formato
   text, no `true`/`false`. Importa al combinar con `#[derive(Fields)]` — gotcha
   `derive-fields-pg-bool-text` en §5.1.
+- **Mensajes asíncronos del servidor** (`NotificationResponse`, `NoticeResponse`,
+  `ParameterStatus`): llegan sin pedirlos, también EN MEDIO de la respuesta a otra
+  consulta. Los avisos y los parámetros se consumen y se ignoran; ninguno de los
+  tres desincroniza la conexión ni se mezcla con las filas. Una notificación se
+  GUARDA (ver LISTEN/NOTIFY). Hasta el 2026-09-24 se consumía y se TIRABA: quien
+  hacía `LISTEN` por `try_pg_exec` perdía en silencio lo que llegara durante sus
+  consultas.
+- **LISTEN/NOTIFY** (bus en vivo entre procesos, sin Redis) — receta
+  `examples/by-example/119-postgres-listen-notify.nx`:
+  ```nyx
+  // Quien escribe: DENTRO de su transacción. Se entrega SOLO con COMMIT, nunca con ROLLBACK.
+  let _n: int = try_pg_notify(conn, "avisos", "pedido 7 listo")?   // = select pg_notify($1, $2)
+  // Cada proceso: UNA conexión dedicada (no del pool) que escucha.
+  let _l: int = try_pg_listen(escucha, "avisos")?
+  let llegadas: Array = try_pg_wait_notifications(escucha, 5000)?   // Ok([]) si no llegó nada
+  for n: Array in llegadas {
+      let canal: String = n[0]      // [canal, payload, pid del backend que notificó]
+      let payload: String = n[1]
+      let _k: int = sse_broadcast(canal, "aviso", payload)
+  }
+  let _u: int = try_pg_unlisten(escucha, "avisos")?                 // "*" = todos
+  ```
+  - `try_pg_wait_notifications(conn, timeout_ms) -> Result<Array, Error>`:
+    `timeout_ms > 0` espera hasta eso, `0` no espera (solo lo que ya está), `< 0`
+    espera sin límite. Cada elemento es `[canal: String, payload: String, pid: int]`,
+    en orden de llegada. Si ya hay algo guardado vuelve enseguida con eso más lo que
+    esté disponible en ese instante.
+  - **GARANTÍA**: una notificación que llega mientras la conexión que escucha está
+    en OTRA consulta (o entre dos esperas) **se guarda en la conexión y la entrega la
+    próxima `try_pg_wait_notifications`** — no se pierde ni desincroniza. Vale en
+    claro y en TLS. `try_pg_unlisten` descarta lo guardado de ese canal: después de
+    él la espera no lo devuelve más.
+  - El canal es un **identificador citado**: `try_pg_listen(c, "Avisos")` escucha
+    exactamente `"Avisos"` (mayúsculas, tildes y comillas incluidas), el mismo canal
+    que `pg_notify('Avisos', ...)`. Un `LISTEN Avisos` escrito a mano, sin comillas,
+    escucha `avisos` y no recibe nada. Canal vacío, con byte NUL o de más de 63
+    bytes → `Err` kind `"invalid"` antes de tocar la red (el servidor truncaría el
+    nombre en silencio). Payload de más de 8000 bytes → `Err` kind `"db"` del servidor.
+  - La conexión que escucha la usa **un thread a la vez** (un `thread_spawn` con el
+    lazo). Si la espera da `Err` kind `"connection"` (el servidor se reinició:
+    `pg_sqlstate(e) == "57P01"`, o el socket se cerró), las suscripciones murieron con
+    la sesión: reconectar y volver a hacer `try_pg_listen`. Lo que se notificó
+    mientras no había conexión se perdió (LISTEN/NOTIFY no es una cola persistente:
+    si hace falta no perder nada, la tabla es la fuente y la notificación el aviso).
+  - Un NOTIFY hecho por la misma conexión que escucha también le llega (con su pid).
 - Lo que NO hay todavía: **decodificación por OID** (toda celda vuelve como
   `String` en formato text — los `pg_row_*` convierten, no decodifican el formato
   binario) y **`COPY`/streaming**. TLS SÍ existe, ver abajo.
@@ -2299,6 +2356,12 @@ fn main() -> int {
     and before 0.4.3 it could also leak the body into OTHER users' requests
     through its connection pool. With an older proxy, expose SSE only on a
     server clients reach directly.
+  - **Several processes**: rooms live in each process's memory, so a
+    `sse_broadcast` in process A never reaches a browser connected to process B.
+    With PostgreSQL, bridge them with LISTEN/NOTIFY: the writer calls
+    `try_pg_notify` inside its transaction and every process runs one listener
+    thread (`try_pg_wait_notifications` → `sse_broadcast`) — see § `std/postgres`
+    and `examples/by-example/119-postgres-listen-notify.nx`.
 - **Graceful shutdown**: `serve_on_shutdown(fn() -> int)` registers a hook
   that runs during the SIGTERM drain, after in-flight requests finish and
   before `serve_app` returns 0. `NYX_SERVE_DRAIN_SECS` overrides the
@@ -2918,16 +2981,18 @@ recompiles it and cascades to the `[lib]` modules that import it; `main.nx`
 always recompiles, against the current interfaces. Native targets only — with
 `--target wasm32-wasi` a `[lib]` module inlines like any other import.
 
-**Crosses the boundary** (a C-header-style interface: signatures and types,
-no bodies): exported functions (`export fn`/`pub fn`, typed params + return)
-and every `struct`/`enum` (type names are program-global, `pub` or not).
-**Declaring a module in `[lib]` changes HOW it compiles, never WHICH names its
-importers see** (since 2026-09-24): every import form behaves as if inlined —
-`import "src/a"` (no braces, the `nyx init` form), `import "src/a" as a` +
-`a.f()` or bare `f()`, and `import { f } from "src/a"` (the other exported
-names are visible too, as inlined) — including transitivity (names from what
-`src/a` imports). Library functions are emitted as `<module>__<fn>`, exactly
-as when inlined, so two libraries may have functions with the same name.
+**How it works** (since 2026-09-24): the importer still reads each `[lib]`
+module's full source, so the type checker sees exactly what it sees without
+`[lib]` — every call is checked against the real signature (a `String` where an
+`int` goes is NYX1005 at build time, as inlined). Only code generation differs:
+the library's functions are emitted as `declare` (their bodies live in its `.o`)
+and its globals as `external` (the program still runs their initialization, in
+order). So **declaring a module in `[lib]` changes HOW it compiles, never WHICH
+names its importers see**: every import form behaves as if inlined — `import
+"src/a"` (no braces, the `nyx init` form), `import "src/a" as a` + `a.f()` or
+bare `f()`, and `import { f } from "src/a"` — including transitivity. Library
+functions are emitted as `<module>__<fn>`, exactly as when inlined, so two
+libraries may have functions with the same name.
 **One real difference**: a library compiles alone, so it only sees what IT
 imports (directly or transitively). A module that calls a function from
 another module it never imports worked inlined only because the whole program
@@ -2940,10 +3005,6 @@ the BODY at the call site, and bodies never cross: a generic exported `fn`,
 `impl` methods (with or without a trait), and `trait`s. A `[lib]` module that
 declares any of these is not compiled separately — it inlines as usual (same
 program) with warning `NYX0302`, shown even on a successful build.
-
-**Known gap**: argument-type checking across the boundary does not exist yet
-— calling a cross-unit function with the wrong argument type is NOT caught at
-compile time.
 
 `nyx test` uses `[lib]` too: it builds (or reuses) the library objects ONCE per
 suite and links every test file against them instead of inlining the whole

@@ -1,0 +1,198 @@
+// test-446-pg-mensajes-asincronos — std/postgres ante los mensajes que el
+// servidor manda SIN que nadie los pida: NotificationResponse ('A'),
+// NoticeResponse ('N') y ParameterStatus ('S'). Fricción de nyxerp
+// 20260924-180024 (LISTEN/NOTIFY).
+//
+// QUÉ FIJA
+//   1. Una 'A' que llega EN MEDIO de la respuesta a otra consulta (entre el
+//      RowDescription y el DataRow, otra entre el CommandComplete y el
+//      ReadyForQuery, y otra DETRÁS del ReadyForQuery en el mismo envío) no
+//      desincroniza la conexión —la consulta devuelve sus filas intactas— y NO
+//      SE PIERDE: la entrega la próxima try_pg_wait_notifications, en orden de
+//      llegada. Hasta el 2026-09-24 pg_read_result la consumía y la tiraba en
+//      silencio.
+//   2. 'N' y 'S' en medio de una consulta o de una espera se consumen sin romper
+//      nada.
+//   3. La espera: Ok([]) sin nada (con plazo 0 y con plazo > 0, que respeta),
+//      entrega lo que llega MIENTRAS espera, y un FATAL del servidor con la
+//      conexión ociosa es Err kind "connection" con su SQLSTATE legible.
+//   4. Los nombres de canal inválidos se rechazan antes de tocar el socket.
+//
+// El servidor es FALSO y local (un thread que habla lo justo del protocolo v3)
+// a propósito: es la única forma de poner una 'A' en un punto EXACTO de una
+// respuesta, y hace que el caso corra en `make test` sin PostgreSQL. Contra un
+// servidor real lo mismo lo prueba tests/postgres/08-listen-notify.nx.
+//
+// Expected exit: 0
+
+import "std/postgres"
+import "std/net"
+
+var g_ready: Map = Map.new()
+var g_sigue: Map = Map.new()
+
+fn msg_a(pid: int, canal: String, datos: String) -> String {
+    return pg_msg("A", pg_be32(pid) + pg_cstr(canal) + pg_cstr(datos))
+}
+
+fn msg_z() -> String { return pg_msg("Z", "I") }
+
+fn leer_mensaje_cliente(fd: int) -> String {
+    let tipo: String = tcp_read_exact(fd, 1)
+    let largo: String = tcp_read_exact(fd, 4)
+    let n: int = pg_read_be32(largo, 0)
+    if n > 4 {
+        let _cuerpo: String = tcp_read_exact(fd, n - 4)
+    }
+    return tipo
+}
+
+fn servidor() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let pr: Result<int, Error> = try_local_port(srv)
+    channel_send(g_ready, pr.unwrap())
+    let fd: int = tcp_accept(srv)
+    tcp_close(srv)
+
+    // StartupMessage: sin byte de tipo, int32 de longitud + cuerpo.
+    let largo: String = tcp_read_exact(fd, 4)
+    let _startup: String = tcp_read_exact(fd, pg_read_be32(largo, 0) - 4)
+    var hola: String = pg_msg("R", pg_be32(0))
+    hola = hola + pg_msg("S", pg_cstr("server_version") + pg_cstr("17.0"))
+    hola = hola + pg_msg("K", pg_be32(4242) + pg_be32(99))
+    hola = hola + msg_z()
+    tcp_write(fd, hola)
+
+    // La consulta: la respuesta trae dos 'A', una 'N' y una 'S' intercaladas.
+    let q: String = leer_mensaje_cliente(fd)
+    var r: String = pg_msg("T", pg_be16(1) + pg_cstr("n") + pg_be32(0) + pg_be16(0) + pg_be32(23) + pg_be16(4) + pg_be32(0 - 1) + pg_be16(0))
+    r = r + msg_a(4242, "avisos", "ñandú en el medio")
+    r = r + pg_msg("D", pg_be16(1) + pg_be32(1) + "7")
+    r = r + pg_msg("N", "SWARNING" + chr(0) + "Maviso de prueba" + chr(0) + chr(0))
+    r = r + pg_msg("S", pg_cstr("TimeZone") + pg_cstr("UTC"))
+    r = r + pg_msg("C", pg_cstr("SELECT 1"))
+    r = r + msg_a(4242, "Avisos Mayúsculas", "")
+    r = r + msg_z()
+    // Y en el MISMO envío, detrás del ReadyForQuery: el cliente lo recibe en el
+    // mismo recv que la respuesta, así que tiene que procesarlo antes de volver
+    // (si lo dejara en un buffer, la espera no lo vería).
+    r = r + msg_a(4242, "avisos", "detrás del Z")
+    r = r + pg_msg("N", "SNOTICE" + chr(0) + "Mcola" + chr(0) + chr(0))
+    tcp_write(fd, r)
+
+    // Con la conexión ociosa: el cliente espera y esto llega DURANTE la espera,
+    // precedido de un aviso y un parámetro que la espera tiene que saltar.
+    let _s1: int = channel_recv(g_sigue)
+    sleep(150)
+    tcp_write(fd, pg_msg("N", "SNOTICE" + chr(0) + "Motro aviso" + chr(0) + chr(0)) + pg_msg("S", pg_cstr("DateStyle") + pg_cstr("ISO")) + msg_a(5151, "otro", "tardía"))
+
+    // El servidor termina la sesión (como un reinicio): FATAL y cierre.
+    let _s2: int = channel_recv(g_sigue)
+    tcp_write(fd, pg_msg("E", "SFATAL" + chr(0) + "C57P01" + chr(0) + "Mterminating connection due to administrator command" + chr(0) + chr(0)))
+    sleep(100)
+    tcp_close(fd)
+    return 0
+}
+
+fn esperar(conn: PgConn, ms: int) -> Array {
+    let r: Result<Array, Error> = try_pg_wait_notifications(conn, ms)
+    if r.is_err() {
+        let e: Error = r.unwrap_err()
+        assert(false, "try_pg_wait_notifications: " + e.msg)
+    }
+    let llegadas: Array = r.unwrap()
+    return llegadas
+}
+
+fn notif(llegadas: Array, i: int) -> Array {
+    let n: Array = llegadas[i]
+    return n
+}
+
+fn main() -> int {
+    // ── 4. nombres de canal inválidos: Err "invalid" sin tocar el socket ──
+    let muerta: PgConn = PgConn { fd: 0, abierta: false, tls: 0 }
+    let vacio: Result<int, Error> = try_pg_listen(muerta, "")
+    assert(vacio.is_err(), "canal vacio rechazado")
+    let e_vacio: Error = vacio.unwrap_err()
+    assert(e_vacio.kind == "invalid", "canal vacio: kind invalid")
+    let largo: Result<int, Error> = try_pg_listen(muerta, "c123456789012345678901234567890123456789012345678901234567890123")
+    let e_largo: Error = largo.unwrap_err()
+    assert(e_largo.kind == "invalid", "canal de 64 bytes: kind invalid")
+    let nul: Result<int, Error> = try_pg_unlisten(muerta, "a" + chr(0) + "b")
+    let e_nul: Error = nul.unwrap_err()
+    assert(e_nul.kind == "invalid", "canal con NUL: kind invalid")
+    let cerrada: Result<Array, Error> = try_pg_wait_notifications(muerta, 0)
+    let e_cerrada: Error = cerrada.unwrap_err()
+    assert(e_cerrada.kind == "connection", "esperar en una conexion cerrada: connection")
+
+    // El parser del mensaje, suelto.
+    let p: Array = pg_parse_notification(pg_be32(77) + pg_cstr("canal") + pg_cstr("carga útil"))
+    let p0: String = p[0]
+    let p1: String = p[1]
+    let p2: int = p[2]
+    assert(p0 == "canal" and p1 == "carga útil" and p2 == 77, "pg_parse_notification")
+
+    g_ready = channel_new(1)
+    g_sigue = channel_new(2)
+    thread_spawn(servidor)
+    let port: int = channel_recv(g_ready)
+    let rc: Result<PgConn, Error> = try_pg_connect("host=127.0.0.1 port=" + int_to_string(port) + " user=u dbname=d")
+    let conn: PgConn = rc.unwrap()
+
+    // ── 1 y 2. la consulta devuelve SUS filas pese a lo intercalado ──
+    let rq: Result<Array, Error> = try_pg_query(conn, "select 7 as n")
+    let filas: Array = rq.unwrap()
+    assert(filas.length() == 1, "una fila")
+    let f0: Array = filas[0]
+    let v: String = f0[0]
+    assert(v == "7", "la fila es la de la consulta, no la notificacion")
+    print("consulta con A/N/S intercalados: ok")
+
+    // ... y las dos 'A' quedaron guardadas, en orden.
+    let guardadas: Array = esperar(conn, 0)
+    assert(guardadas.length() == 3, "las 3 notificaciones de la respuesta se guardaron (llegaron " + int_to_string(guardadas.length()) + ")")
+    let a: Array = notif(guardadas, 0)
+    let a0: String = a[0]
+    let a1: String = a[1]
+    let a2: int = a[2]
+    assert(a0 == "avisos" and a1 == "ñandú en el medio" and a2 == 4242, "primera notificacion guardada")
+    let b: Array = notif(guardadas, 1)
+    let b0: String = b[0]
+    let b1: String = b[1]
+    assert(b0 == "Avisos Mayúsculas" and b1 == "", "segunda notificacion (payload vacio)")
+    let d: Array = notif(guardadas, 2)
+    let d1: String = d[1]
+    assert(d1 == "detrás del Z", "tercera notificacion, la de detras del ReadyForQuery")
+    print("notificaciones de la respuesta entregadas: 3")
+
+    // ── 3. la espera ──
+    let nada: Array = esperar(conn, 0)
+    assert(nada.length() == 0, "plazo 0 sin nada: Ok([])")
+    let t0: int = monotonic_ms()
+    let nada2: Array = esperar(conn, 250)
+    let dt: int = monotonic_ms() - t0
+    assert(nada2.length() == 0, "plazo 250 sin nada: Ok([])")
+    assert(dt >= 200 and dt < 1500, "respeta el plazo (" + int_to_string(dt) + " ms)")
+    print("espera sin nada: Ok([])")
+
+    channel_send(g_sigue, 1)
+    let tarde: Array = esperar(conn, 5000)
+    assert(tarde.length() == 1, "llega la notificacion durante la espera, saltando N y S (llegaron " + int_to_string(tarde.length()) + ")")
+    let c: Array = notif(tarde, 0)
+    let c0: String = c[0]
+    let c1: String = c[1]
+    let c2: int = c[2]
+    assert(c0 == "otro" and c1 == "tardía" and c2 == 5151, "notificacion llegada durante la espera")
+    print("notificacion durante la espera: ok")
+
+    channel_send(g_sigue, 2)
+    let fin: Result<Array, Error> = try_pg_wait_notifications(conn, 5000)
+    assert(fin.is_err(), "FATAL del servidor: Err")
+    let e: Error = fin.unwrap_err()
+    assert(e.kind == "connection", "FATAL con la conexion ociosa: kind connection")
+    assert(pg_sqlstate(e) == "57P01", "el SQLSTATE del FATAL se lee")
+    print("fatal del servidor: connection 57P01")
+    let _c = try_pg_close(conn)
+    return 0
+}

@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.33.0 -->
-<!-- nyx-stdlib: 1999643628-819050 -->
+<!-- nyx-stdlib: 2587670598-842607 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -482,7 +482,7 @@
 
 ### `std/net`
 
-`import "std/net"` — 17 funciones:
+`import "std/net"` — 18 funciones:
 
 - `pub fn try_tcp_connect(host: String, port: int) -> Result<int, Error>`
 - `pub fn try_tcp_listen(host: String, port: int) -> Result<int, Error>`
@@ -496,6 +496,7 @@
 - `pub fn try_tcp_read_line(fd: int) -> Result<String, Error>`
 - `pub fn try_tcp_read_partial(fd: int, max: int) -> Result<String, Error>`
 - `pub fn try_tcp_read_exact(fd: int, n: int) -> Result<String, Error>`
+- `pub fn try_tcp_read_timed(fd: int, max_bytes: int, timeout_ms: int) -> Result<String, Error>`
 - `pub fn try_tcp_shutdown(fd: int, mode: int) -> Result<int, Error>` — La forma correcta de despertar un recv() bloqueado en OTRO thread — tcp_close NO lo despierta y el fd reciclado puede robarle bytes a una conexión nueva; patrón: el no-dueño hace shutdown, solo el reader dueño hace close.
 - `pub fn try_tcp_set_timeout(fd: int, secs: int) -> Result<int, Error>`
 - `pub fn try_getpeername(fd: int) -> Result<String, Error>`
@@ -1038,7 +1039,7 @@
 
 ### `std/postgres`
 
-`import "std/postgres"` — 40 funciones:
+`import "std/postgres"` — 45 funciones:
 
 - `pub fn pg_be32(n: int) -> String`
 - `pub fn pg_be16(n: int) -> String`
@@ -1054,6 +1055,7 @@
 - `pub fn pg_sqlstate(e: Error) -> String`
 - `pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error>`
 - `pub fn try_pg_close(conn: PgConn) -> Result<int, Error>`
+- `pub fn pg_parse_notification(payload: String) -> Array`
 - `pub fn pg_null() -> String`
 - `pub fn pg_is_null(valor: String) -> bool`
 - `pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error>`
@@ -1073,6 +1075,10 @@
 - `pub fn try_pg_begin(conn: PgConn) -> Result<int, Error>`
 - `pub fn try_pg_commit(conn: PgConn) -> Result<int, Error>`
 - `pub fn try_pg_rollback(conn: PgConn) -> Result<int, Error>`
+- `pub fn try_pg_listen(conn: PgConn, canal: String) -> Result<int, Error>`
+- `pub fn try_pg_unlisten(conn: PgConn, canal: String) -> Result<int, Error>`
+- `pub fn try_pg_notify(conn: PgConn, canal: String, payload: String) -> Result<int, Error>`
+- `pub fn try_pg_wait_notifications(conn: PgConn, timeout_ms: int) -> Result<Array, Error>`
 - `pub fn pg_migrate_init(conn: PgConn) -> bool`
 - `pub fn pg_migrate_version(conn: PgConn) -> int`
 - `pub fn pg_migrate(conn: PgConn, version: int, name: String, sql: String) -> bool`

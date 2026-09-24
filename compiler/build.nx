@@ -1233,15 +1233,261 @@ fn hash_archivo(f: String, hashes: Map) -> String {
     return h2
 }
 
-fn lib_huella(modulo: String, base: String, std_dir: String, hashes: Map, imports_de: Map) -> String {
+// ===== HUELLA POR INTERFAZ (fricción nyxerp 20260924-150024, 2026-09-24) =====
+// Una unidad [lib] que importa la biblioteca B inlinea el TEXTO de B para
+// semantic, pero de B solo genera `declare` (codegen, es_lib_declarado). Su .o
+// depende entonces de la INTERFAZ de B —firmas, tipos, constantes, globales—, no
+// de los cuerpos de sus fns ni de sus comentarios. Antes la huella hasheaba B
+// entero: una línea de comentario en un módulo central recompilaba 105 de 171
+// módulos de nyxerp (y nyx build volvía a 216 s). Ahora, para cada biblioteca
+// separable del cierre que NO es el propio módulo, se hashea su interfaz.
+// Lo que se inlinea de verdad (módulos que no son [lib], los que caen en
+// NYX0302, el prelude y el módulo propio) sigue hasheándose entero.
+
+// Caracteres como ENTEROS (códigos ASCII), como el resto del compilador:
+// asignar charAt() a un `var c: char` ya declarado emite IR inválido (ficha en
+// TASKS). 34 " · 39 ' · 92 \ · 47 / · 42 * · 123 { · 125 } · 40 ( · 41 ).
+fn es_ident_c(c: int) -> bool {
+    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 95
+}
+
+// Fin (exclusivo) del literal que empieza en `i`, o -1 si ahí no empieza uno:
+// "..." con escapes, """...""" y r"..." (sin escapes), y '.' con escapes.
+fn fin_de_literal(src: String, i: int) -> int {
+    let n: int = src.length()
+    let c: int = src.charAt(i)
+    if c == 114 and i + 1 < n {
+        let d: int = src.charAt(i + 1)
+        if d == 34 {
+            if i > 0 {
+                let a: int = src.charAt(i - 1)
+                if es_ident_c(a) { return -1 }
+            }
+            var j: int = i + 2
+            while j < n {
+                let cj: int = src.charAt(j)
+                if cj == 34 { return j + 1 }
+                j = j + 1
+            }
+            return n
+        }
+    }
+    if c == 34 {
+        if i + 2 < n {
+            let d1: int = src.charAt(i + 1)
+            let d2: int = src.charAt(i + 2)
+            if d1 == 34 and d2 == 34 {
+                var k: int = i + 3
+                while k + 2 < n {
+                    let k0: int = src.charAt(k)
+                    let k1: int = src.charAt(k + 1)
+                    let k2: int = src.charAt(k + 2)
+                    if k0 == 34 and k1 == 34 and k2 == 34 { return k + 3 }
+                    k = k + 1
+                }
+                return n
+            }
+        }
+        var j2: int = i + 1
+        while j2 < n {
+            let cj2: int = src.charAt(j2)
+            if cj2 == 92 {
+                j2 = j2 + 2
+            } else if cj2 == 34 {
+                return j2 + 1
+            } else {
+                j2 = j2 + 1
+            }
+        }
+        return n
+    }
+    if c == 39 {
+        var j3: int = i + 1
+        while j3 < n and j3 < i + 12 {
+            let cj3: int = src.charAt(j3)
+            if cj3 == 92 {
+                j3 = j3 + 2
+            } else if cj3 == 39 {
+                return j3 + 1
+            } else {
+                j3 = j3 + 1
+            }
+        }
+        return j3
+    }
+    return -1
+}
+
+// Interfaz de un módulo: su texto SIN comentarios (// y /* */ anidados), SIN los
+// cuerpos de sus fns de nivel superior y con los espacios normalizados. Todo lo
+// demás queda, literal por literal: firmas, struct/enum, constantes, globales,
+// atributos. Un `fn` de nivel superior sin cuerpo (extern) no se lleva la llave
+// del siguiente tipo: la espera se corta al terminar la línea fuera de paréntesis.
+fn interfaz_de(src: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    let n: int = src.length()
+    var i: int = 0
+    var llaves: int = 0
+    var parens: int = 0
+    var fn_pend: bool = false
+    var saltando: bool = false
+    var cuerpo: int = 0
+    var espacio: bool = false
+    var escrito: bool = false
+    while i < n {
+        let c: int = src.charAt(i)
+        var c2: int = 0
+        if i + 1 < n {
+            let sig: int = src.charAt(i + 1)
+            c2 = sig
+        }
+        if c == 47 and c2 == 47 {
+            var fin_l: bool = false
+            while i < n and not fin_l {
+                let cl: int = src.charAt(i)
+                if cl == 10 { fin_l = true } else { i = i + 1 }
+            }
+            espacio = true
+        } else if c == 47 and c2 == 42 {
+            var prof: int = 1
+            i = i + 2
+            while i < n and prof > 0 {
+                let b0: int = src.charAt(i)
+                var b1: int = 0
+                if i + 1 < n {
+                    let bb: int = src.charAt(i + 1)
+                    b1 = bb
+                }
+                if b0 == 47 and b1 == 42 {
+                    prof = prof + 1
+                    i = i + 2
+                } else if b0 == 42 and b1 == 47 {
+                    prof = prof - 1
+                    i = i + 2
+                } else {
+                    i = i + 1
+                }
+            }
+            espacio = true
+        } else {
+            let fin: int = fin_de_literal(src, i)
+            if fin > 0 {
+                if not saltando {
+                    if espacio and escrito { sb.append(" ") }
+                    espacio = false
+                    sb.append(src.substring(i, fin))
+                    escrito = true
+                }
+                i = fin
+            } else if saltando {
+                if c == 123 { cuerpo = cuerpo + 1 }
+                if c == 125 {
+                    cuerpo = cuerpo - 1
+                    if cuerpo == 0 {
+                        saltando = false
+                        sb.append("{}")
+                    }
+                }
+                i = i + 1
+            } else if c == 32 or c == 9 or c == 13 or c == 10 {
+                if c == 10 and parens == 0 { fn_pend = false }
+                espacio = true
+                i = i + 1
+            } else {
+                if llaves == 0 and c == 102 and c2 == 110 {
+                    var antes_ok: bool = true
+                    if i > 0 {
+                        let pa: int = src.charAt(i - 1)
+                        if es_ident_c(pa) { antes_ok = false }
+                    }
+                    var despues_ok: bool = true
+                    if i + 2 < n {
+                        let pd: int = src.charAt(i + 2)
+                        if es_ident_c(pd) { despues_ok = false }
+                    }
+                    if antes_ok and despues_ok { fn_pend = true }
+                }
+                if c == 40 { parens = parens + 1 }
+                if c == 41 { parens = parens - 1 }
+                if espacio and escrito { sb.append(" ") }
+                espacio = false
+                if c == 123 and llaves == 0 and fn_pend {
+                    fn_pend = false
+                    saltando = true
+                    cuerpo = 1
+                } else {
+                    if c == 123 { llaves = llaves + 1 }
+                    if c == 125 { llaves = llaves - 1 }
+                    sb.append(src.substring(i, i + 1))
+                    escrito = true
+                }
+                i = i + 1
+            }
+        }
+    }
+    return sb.to_string()
+}
+
+// ¿El módulo cuyo fuente es `src` se compila aparte? Mismo criterio que
+// razon_no_separable (resolve.nx): sin fn genérica exportada, sin impl, sin
+// trait. (build.nx no enlaza resolve: se repite el chequeo, que es de líneas.)
+fn separable_texto(src: String) -> bool {
+    let lineas: Array = src.split("\n")
+    var i: int = 0
+    while i < lineas.length() {
+        let l: String = lineas[i]
+        let t: String = l.trim()
+        if t.startsWith("impl ") or t.startsWith("impl<") { return false }
+        if t.startsWith("trait ") or t.startsWith("pub trait ") or t.startsWith("export trait ") { return false }
+        var pref: String = ""
+        if t.startsWith("pub fn ") { pref = "pub fn " }
+        if t.startsWith("export fn ") { pref = "export fn " }
+        if pref != "" {
+            let resto: String = t.substring(pref.length(), t.length())
+            var k: int = 0
+            var sigue: bool = true
+            while k < resto.length() and sigue {
+                let rk: int = resto.charAt(k)
+                if es_ident_c(rk) { k = k + 1 } else { sigue = false }
+            }
+            if k < resto.length() {
+                let rk2: int = resto.charAt(k)
+                if rk2 == 60 { return false }
+            }
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// sha256 de la INTERFAZ de `f` si es una biblioteca separable del proyecto (y
+// no el módulo propio); del contenido entero en otro caso. Memoizado.
+fn hash_para_huella(f: String, propio: String, libs: Map, hashes: Map) -> String {
+    if f == propio or not f.endsWith(".nx") { return hash_archivo(f, hashes) }
+    let modulo: String = f.substring(0, f.length() - 3)
+    if not libs.contains(modulo) { return hash_archivo(f, hashes) }
+    let clave: String = "interfaz:" + f
+    if hashes.contains(clave) {
+        let h: String = hashes.get(clave)
+        return h
+    }
+    let src: String = read_file(f)
+    var h2: String = ""
+    if separable_texto(src) { h2 = "i:" + sha256(interfaz_de(src)) } else { h2 = sha256(src) }
+    hashes.insert(clave, h2)
+    return h2
+}
+
+fn lib_huella(modulo: String, base: String, std_dir: String, hashes: Map, imports_de: Map, libs: Map) -> String {
     var visitados: Array = []
     var vistos: Map = Map.new()
     lib_cierre(modulo, std_dir, visitados, vistos, imports_de)
     var todo: String = base + "|" + hash_archivo(std_dir + "/prelude.nx", hashes)
+    let propio: String = modulo + ".nx"
     var i: int = 0
     while i < visitados.length() {
         let f: String = visitados[i]
-        todo = todo + "|" + f + "=" + hash_archivo(f, hashes)
+        todo = todo + "|" + f + "=" + hash_para_huella(f, propio, libs, hashes)
         i = i + 1
     }
     return sha256(todo)
@@ -1265,6 +1511,14 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
     let base: String = ident + "|" + opt_flags + "|" + gc_flag + "|" + lista
     var hashes: Map = Map.new()
     var imports_de: Map = Map.new()
+    // Las bibliotecas del proyecto: de ellas la huella mira solo la interfaz.
+    var libs_set: Map = Map.new()
+    var lsi: int = 0
+    while lsi < config.lib_modules.length() {
+        let lsm: String = config.lib_modules[lsi]
+        libs_set.insert(lsm, 1)
+        lsi = lsi + 1
+    }
     // StringBuilder y no `sh = sh + …`: el script crece con cada módulo y la
     // concatenación recopia el acumulado entero (cuadrático). Con 250 módulos
     // eran ~10 s de nyx_build por build SIN cambios, medido 2026-09-23 — la
@@ -1276,7 +1530,7 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
     while i < config.lib_modules.length() {
         let m: String = config.lib_modules[i]
         let seguro: String = m.replace("/", "_")
-        let h: String = lib_huella(m, base, nyx_home + "/std", hashes, imports_de).substring(0, 16)
+        let h: String = lib_huella(m, base, nyx_home + "/std", hashes, imports_de, libs_set).substring(0, 16)
         let obj: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".o"
         let inl: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".inline"
         let env_unidad: String = "( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_SELF=\"" + m + "\" NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"" + m + ".nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" )"

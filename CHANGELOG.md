@@ -36,6 +36,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   casos que aparecen solo por la atribución corregida salen como **aviso** (compilan, rc 0) hasta la
   próxima versión menor. `std/url` y `std/web` comparten el `url_decode` de `std/percent`, nuevo.
   `test-439`, `test-440`, +4 casos en `test-errors`.
+- **`std/postgres`: las notificaciones que llegaban durante una consulta se tiraban** (fricción nyxerp
+  `20260924-180024-team-1`). Ahora se guardan en la conexión y las entrega la próxima espera. Nuevo
+  LISTEN/NOTIFY: `try_pg_listen`, `try_pg_unlisten`, `try_pg_notify` y `try_pg_wait_notifications`
+  (con tiempo límite), en claro y con TLS. El bus de tiempo real entre varios procesos sobre
+  PostgreSQL, sin Redis; con el SSE de `std/serve` cierra el caso. `std/net`: `try_tcp_read_timed`.
+  `test-446` (servidor falso), `tests/postgres/08` (PostgreSQL real), receta 119.
+- **`[lib]` recompila por interfaz, no por contenido** (fricción nyxerp `20260924-150024-team-1`): un
+  comentario en un módulo central recompilaba 105 de 171 módulos de nyxerp (216 s); ahora 1 (22 s).
+  La huella mira de cada biblioteca importada sus firmas, tipos, constantes y globales, no los cuerpos
+  ni los comentarios.
+- **`[lib]` ya no tiene hueco de tipos en la frontera** (fricción nyxerp `20260924-150024-team-1`):
+  un `String` donde iba un `int`, llamando a una fn de otra biblioteca, pasaba `nyx build` en verde y
+  llegaba como el puntero del texto impreso como número. Quien importa lee ahora el fuente completo de
+  cada módulo de `[lib]` (el chequeo de tipos es idéntico a sin `[lib]`, por construcción) y codegen
+  emite sus fns como `declare` desde el AST, con la firma exacta. Se retiró la interfaz armada a mano
+  (imports sintéticos, tipos inyectados, firmas leídas del texto). Los globales de una biblioteca los
+  sigue inicializando el programa, en orden, como inlineados (guarda en `run_lib_modules.sh`).
 - **Toolchain con versiones lado a lado** (fricción nyxerp `20260924-020001-team-4`)
   `[arco: toolchain-atomico]`: `~/.nyx` guarda cada versión completa en `versions/<id>/`, y
   `current`/`active` dicen cuál está activa; las entradas de la raíz son enlaces, así que las rutas

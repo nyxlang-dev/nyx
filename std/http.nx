@@ -527,7 +527,8 @@ pub fn http_request(method: String, url: String, headers: Array, body: String) -
 // contra su `Content-Length` o su terminador chunked antes de devolver `Ok`.
 
 extern "C" fn nyx_tcp_connect_ms_result(host: String, port: int, timeout_ms: int) -> int
-extern "C" fn nyx_tcp_read_timed_result(fd: int, max_bytes: int, timeout_ms: int) -> Array
+// nyx_tcp_read_timed_result se declara en std/net (importado arriba): declararla
+// también acá choca con «invalid redefinition» si el programa importa std/postgres.
 
 // Opciones de una petición tipada. Se arman con http_opts() y se ajusta lo que
 // haga falta: `var o: HttpOpts = http_opts()` + `o.respuesta_ms = 1500`.

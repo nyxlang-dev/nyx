@@ -193,9 +193,22 @@ fn pg_rx(fd: int, tls: int, n: int) -> Result<String, Error> {
         }
         return Result.Ok(datos)
     }
-    match try_tcp_read_exact(fd, n) {
+    // try_tcp_read y NO try_tcp_read_exact: las dos juntan exactamente n bytes,
+    // pero read_exact llena el buffer transparente del runtime (8 KB por recv)
+    // y deja ahí lo que sobra. Esos bytes no los ve el poll de la espera de
+    // notificaciones (try_tcp_read_timed mira el socket), así que una 'A' que
+    // quedara en ese buffer no se entregaría hasta que llegara OTRA. Este
+    // módulo nunca deja bytes en ese buffer: las lecturas frías (handshake,
+    // espera) piden exactamente lo que necesitan, y la caliente
+    // (pg_read_result) lleva su propio buffer y lo vacía antes de volver.
+    match try_tcp_read(fd, n) {
         Result.Err(e) => { return Result.Err(err_new(0, "connection", e.msg)) }
-        Result.Ok(datos) => { return Result.Ok(datos) }
+        Result.Ok(datos) => {
+            if datos.byte_length() != n {
+                return Result.Err(err_new(0, "connection", "lectura incompleta: se esperaban " + int_to_string(n) + " bytes, llegaron " + int_to_string(datos.byte_length()) + " (el servidor cerro la conexion)"))
+            }
+            return Result.Ok(datos)
+        }
     }
 }
 
@@ -353,7 +366,13 @@ pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error> {
 
             match pg_auth_loop(fd, tls, user, password) {
                 Result.Err(e) => { return Result.Err(e) }
-                Result.Ok(_) => { return Result.Ok(PgConn { fd: fd, abierta: true, tls: tls }) }
+                Result.Ok(_) => {
+                    // El número de fd se RECICLA: si una conexión anterior con
+                    // este mismo fd murió sin try_pg_close, sus notificaciones
+                    // pendientes no pueden aparecerle a esta.
+                    pg_buzon_limpiar(fd)
+                    return Result.Ok(PgConn { fd: fd, abierta: true, tls: tls })
+                }
             }
         }
     }
@@ -583,6 +602,10 @@ fn pg_nonce() -> String {
 
 pub fn try_pg_close(conn: PgConn) -> Result<int, Error> {
     if not conn.abierta { return Result.Ok(0) }
+    // El buzón se vacía ANTES de cerrar el socket: después del close, otro
+    // thread puede recibir este mismo número de fd en un connect y una
+    // limpieza tardía le borraría a ÉL lo que ya le llegó.
+    pg_buzon_limpiar(conn.fd)
     // Terminate ('X'): el cierre ordenado. Sin esto el servidor loguea
     // «unexpected EOF on client connection» en cada desconexión.
     match pg_w(conn.fd, conn.tls, pg_msg("X", "")) {
@@ -598,6 +621,107 @@ pub fn try_pg_close(conn: PgConn) -> Result<int, Error> {
         tcp_close(conn.fd)
     }
     return Result.Ok(0)
+}
+
+// ── Buzón de notificaciones (LISTEN/NOTIFY) ─────────────────────────
+//
+// El servidor puede mandar tres mensajes ASÍNCRONOS en cualquier momento, sin
+// que nadie los pida: NotificationResponse ('A', un NOTIFY a un canal que esta
+// conexión escucha), NoticeResponse ('N', un aviso) y ParameterStatus ('S', un
+// parámetro que cambió). Cualquier lector de este módulo puede toparse con
+// ellos, también en medio de la respuesta a OTRA consulta.
+//
+// 'N' y 'S' se consumen y se ignoran: no aportan al resultado y consumirlos es
+// lo que mantiene la conexión sincronizada. Una 'A', en cambio, es un dato del
+// usuario: se GUARDA en este buzón y la entrega la próxima
+// try_pg_wait_notifications. Hasta el 2026-09-24 pg_read_result la consumía y
+// la tiraba —sin desincronizar nada, pero perdiendo en silencio toda
+// notificación que llegara durante una consulta de la conexión que escucha—.
+//
+// POR QUÉ UN BUZÓN POR fd Y NO UN CAMPO DE PgConn: PgConn se construye por
+// literal fuera de este módulo (proyectos que arman una conexión vacía de
+// prueba) y un campo nuevo rompe esos literales con NYX1032. Además el pool
+// rearma el PgConn desde el fd en cada try_pg_pool_get: un Array dentro del
+// struct se perdería entre un pg_pool_put y el siguiente get. El fd ES la
+// identidad de la conexión con el servidor —el pool ya la trata así—, y
+// guardar por fd hace que el buzón viva exactamente lo que vive el socket.
+// Por eso se vacía en try_pg_connect (el número de fd se recicla) y en
+// try_pg_close.
+//
+// El Map es compartido entre threads (cada handler de un servidor usa su
+// conexión, pero el Map es uno) y Map no es thread-safe: todo acceso va bajo
+// el mutex. Nunca se hace E/S con el mutex tomado.
+var __pg_buzon: Map = Map.new()
+var __pg_buzon_mu: Map = mutex_new()
+
+fn pg_buzon_guardar(fd: int, notif: Array) {
+    let clave: String = int_to_string(fd)
+    mutex_lock(__pg_buzon_mu)
+    if __pg_buzon.contains(clave) {
+        let pendientes: Array = __pg_buzon.get(clave)
+        pendientes.push(notif)
+    } else {
+        var nuevo: Array = []
+        nuevo.push(notif)
+        __pg_buzon.insert(clave, nuevo)
+    }
+    mutex_unlock(__pg_buzon_mu)
+}
+
+// Saca y devuelve todo lo pendiente del fd, en orden de llegada.
+fn pg_buzon_tomar(fd: int) -> Array {
+    let clave: String = int_to_string(fd)
+    var salida: Array = []
+    mutex_lock(__pg_buzon_mu)
+    if __pg_buzon.contains(clave) {
+        salida = __pg_buzon.get(clave)
+        __pg_buzon.remove(clave)
+    }
+    mutex_unlock(__pg_buzon_mu)
+    return salida
+}
+
+fn pg_buzon_limpiar(fd: int) {
+    let clave: String = int_to_string(fd)
+    mutex_lock(__pg_buzon_mu)
+    if __pg_buzon.contains(clave) { __pg_buzon.remove(clave) }
+    mutex_unlock(__pg_buzon_mu)
+}
+
+// Descarta del buzón lo pendiente de UN canal (o de todos con "*"): después de
+// try_pg_unlisten, la espera no devuelve más ese canal.
+fn pg_buzon_descartar_canal(fd: int, canal: String) {
+    let clave: String = int_to_string(fd)
+    mutex_lock(__pg_buzon_mu)
+    if __pg_buzon.contains(clave) {
+        let pendientes: Array = __pg_buzon.get(clave)
+        var quedan: Array = []
+        var i: int = 0
+        while i < pendientes.length() {
+            let n: Array = pendientes[i]
+            let c: String = n[0]
+            if canal != "*" and c != canal { quedan.push(n) }
+            i = i + 1
+        }
+        __pg_buzon.insert(clave, quedan)
+    }
+    mutex_unlock(__pg_buzon_mu)
+}
+
+// NotificationResponse: int32 pid del proceso que notificó, canal
+// NUL-terminado, payload NUL-terminado. Devuelve [canal, payload, pid].
+pub fn pg_parse_notification(payload: String) -> Array {
+    let pid: int = pg_read_be32(payload, 0)
+    let largo: int = payload.byte_length()
+    var fin_canal: int = 4
+    while fin_canal < largo and payload.charAt(fin_canal) != 0 { fin_canal = fin_canal + 1 }
+    let canal: String = payload.substring(4, fin_canal)
+    var ini: int = fin_canal + 1
+    if ini > largo { ini = largo }
+    var fin: int = ini
+    while fin < largo and payload.charAt(fin) != 0 { fin = fin + 1 }
+    let datos: String = payload.substring(ini, fin)
+    return [canal, datos, pid]
 }
 
 // ── Consultas ───────────────────────────────────────────────────────
@@ -620,7 +744,19 @@ pub fn pg_is_null(valor: String) -> bool {
 // Lee la respuesta a una consulta hasta ReadyForQuery ('Z').
 // Devuelve [filas, afectadas]: `filas` es un Array de filas (cada una un Array
 // de String) y `afectadas` el número que informa CommandComplete.
+//
+// En claro, la lectura va por un buffer PROPIO (`buf` desde `pos`): un recv de
+// hasta 64 KB trae muchos DataRow de una vez, y leer mensaje por mensaje con
+// lecturas exactas cuesta dos recv por fila (medido 2026-09-24 contra
+// PostgreSQL 17 local, 200 000 filas: 260 ms con buffer, 555 ms sin él). Lo
+// que ese buffer traiga DESPUÉS del ReadyForQuery solo pueden ser mensajes
+// asíncronos (A/N/S): se procesan antes de volver, para que ningún byte quede
+// retenido fuera del socket —si quedara, la espera de notificaciones no lo
+// vería—. En TLS la lectura es por mensaje: los bytes que OpenSSL retiene sí
+// los ve tls_wait_readable.
 fn pg_read_result(fd: int, tls: int) -> Result<Array, Error> {
+    var buf: String = ""
+    var pos: int = 0
     var filas: Array = []
     var columnas: Array = []
     var afectadas: int = 0
@@ -633,11 +769,13 @@ fn pg_read_result(fd: int, tls: int) -> Result<Array, Error> {
     var el_error: Error = err_new(0, "db", "")
 
     while not listo {
-        match pg_read_message(fd, tls) {
+        match pg_siguiente(fd, tls, buf, pos) {
             Result.Err(e) => { return Result.Err(e) }
             Result.Ok(m) => {
                 let tipo: String = m[0]
                 let payload: String = m[1]
+                buf = m[2]
+                pos = m[3]
                 if tipo == "D" {
                     // DataRow: int16 con la cantidad de columnas y, por cada
                     // una, int32 de longitud (-1 = NULL) seguido de los bytes.
@@ -671,15 +809,103 @@ fn pg_read_result(fd: int, tls: int) -> Result<Array, Error> {
                     el_error = pg_parse_error(payload)
                 } else if tipo == "Z" {
                     listo = true
+                } else if tipo == "A" {
+                    // NotificationResponse en medio de la respuesta: es de la
+                    // conexión, no de esta consulta. Se guarda para la próxima
+                    // try_pg_wait_notifications (ver «Buzón de notificaciones»).
+                    pg_buzon_guardar(fd, pg_parse_notification(payload))
                 }
-                // T (RowDescription), I (EmptyQuery), N (Notice), S, 1, 2, n:
-                // se ignoran a propósito — no aportan al resultado.
+                // I (EmptyQuery), N (Notice), S (ParameterStatus), 1, 2, n: se
+                // consumen y se ignoran a propósito — no aportan al resultado,
+                // y consumirlos es lo que deja la conexión sincronizada.
+            }
+        }
+    }
+
+    // Lo que el buffer propio trajo detrás del ReadyForQuery.
+    while pos < buf.byte_length() {
+        match pg_siguiente(fd, tls, buf, pos) {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(m) => {
+                let tipo: String = m[0]
+                let payload: String = m[1]
+                buf = m[2]
+                pos = m[3]
+                if tipo == "A" {
+                    pg_buzon_guardar(fd, pg_parse_notification(payload))
+                } else if tipo != "N" and tipo != "S" {
+                    return Result.Err(err_new(0, "connection", "mensaje inesperado '" + tipo + "' despues de ReadyForQuery: la conexion se desincronizo"))
+                }
             }
         }
     }
 
     if hubo_error { return Result.Err(el_error) }
     return Result.Ok([filas, afectadas, columnas])
+}
+
+// El próximo mensaje: [tipo, payload, buf, pos] con el buffer y la posición
+// actualizados. En TLS el buffer no se usa (pasa igual) y se lee por mensaje.
+fn pg_siguiente(fd: int, tls: int, buf: String, pos: int) -> Result<Array, Error> {
+    if tls != 0 {
+        match pg_read_message(fd, tls) {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(m) => {
+                let tipo_tls: String = m[0]
+                let payload_tls: String = m[1]
+                return Result.Ok([tipo_tls, payload_tls, buf, pos])
+            }
+        }
+    }
+    var b: String = buf
+    var p: int = pos
+    if b.byte_length() - p < 5 {
+        match pg_llenar(fd, b, p, 5) {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(nuevo) => { b = nuevo; p = 0 }
+        }
+    }
+    let tipo: String = b.substring(p, p + 1)
+    let largo: int = pg_read_be32(b, p + 1)
+    if largo < 4 {
+        return Result.Err(err_new(0, "connection", "mensaje con longitud invalida: " + int_to_string(largo)))
+    }
+    if b.byte_length() - p < 1 + largo {
+        match pg_llenar(fd, b, p, 1 + largo) {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(nuevo) => { b = nuevo; p = 0 }
+        }
+    }
+    let payload: String = b.substring(p + 5, p + 1 + largo)
+    return Result.Ok([tipo, payload, b, p + 1 + largo])
+}
+
+// Devuelve lo pendiente de `buf` (desde `pos`) completado hasta tener al menos
+// `n` bytes. Un recv de hasta 64 KB por vuelta; lo que falte de un mensaje más
+// grande que eso se pide EXACTO de una vez, para no concatenar un DataRow de
+// varios MB de a 64 KB (eso es cuadrático).
+fn pg_llenar(fd: int, buf: String, pos: int, n: int) -> Result<String, Error> {
+    var b: String = buf.substring(pos, buf.byte_length())
+    while b.byte_length() < n {
+        let falta: int = n - b.byte_length()
+        if falta > 65536 {
+            match pg_rx(fd, 0, falta) {
+                Result.Err(e) => { return Result.Err(e) }
+                Result.Ok(resto) => { b = b + resto }
+            }
+        } else {
+            match try_tcp_read_partial(fd, 65536) {
+                Result.Err(e) => { return Result.Err(err_new(0, "connection", e.msg)) }
+                Result.Ok(trozo) => {
+                    if trozo.byte_length() == 0 {
+                        return Result.Err(err_new(0, "connection", "el servidor cerro la conexion a mitad de una respuesta"))
+                    }
+                    b = b + trozo
+                }
+            }
+        }
+    }
+    return Result.Ok(b)
 }
 
 // RowDescription → Array de nombres. Por cada campo: el nombre NUL-terminado
@@ -1004,6 +1230,224 @@ pub fn try_pg_commit(conn: PgConn) -> Result<int, Error> {
 
 pub fn try_pg_rollback(conn: PgConn) -> Result<int, Error> {
     return try_pg_exec(conn, "ROLLBACK")
+}
+
+// ── LISTEN / NOTIFY ─────────────────────────────────────────────────
+//
+// El bus de tiempo real de PostgreSQL: quien escribe hace try_pg_notify (o
+// `select pg_notify(...)`) dentro de su transacción —se entrega SOLO si hace
+// COMMIT, nunca con ROLLBACK—, y cada proceso interesado tiene una conexión
+// DEDICADA que escucha y espera:
+//
+//     let _l: int = try_pg_listen(escucha, "avisos")?
+//     while true {
+//         let llegadas: Array = try_pg_wait_notifications(escucha, 5000)?
+//         for n: Array in llegadas { /* n[0] canal, n[1] payload, n[2] pid */ }
+//     }
+//
+// GARANTÍA: una notificación que llega mientras la conexión que escucha está
+// en medio de otra consulta NO se pierde ni desincroniza la conexión: queda
+// guardada y la entrega la próxima try_pg_wait_notifications, en orden de
+// llegada (ver «Buzón de notificaciones»). Lo mismo si llega entre dos esperas.
+
+// Un canal es un IDENTIFICADOR de PostgreSQL. Se cita siempre entre comillas
+// dobles, y eso es lo que hace que `try_pg_listen(c, "Avisos")` y
+// `pg_notify('Avisos', ...)` hablen del MISMO canal: sin comillas, LISTEN
+// pasaría el nombre a minúsculas y el NOTIFY no le llegaría nunca.
+// Más de 63 bytes se rechaza en vez de dejar que el servidor lo trunque: LISTEN
+// truncaría en silencio y pg_notify con el nombre largo fallaría — escucharía
+// un canal al que nadie puede notificar.
+fn pg_canal_valido(canal: String) -> Result<String, Error> {
+    if canal.byte_length() == 0 {
+        return Result.Err(err_new(22, "invalid", "el nombre del canal esta vacio"))
+    }
+    if canal.byte_length() > 63 {
+        return Result.Err(err_new(22, "invalid", "el nombre del canal tiene " + int_to_string(canal.byte_length()) + " bytes; PostgreSQL admite hasta 63"))
+    }
+    var i: int = 0
+    while i < canal.byte_length() {
+        if canal.charAt(i) == 0 {
+            return Result.Err(err_new(22, "invalid", "el nombre del canal contiene un byte NUL"))
+        }
+        i = i + 1
+    }
+    return Result.Ok("\"" + canal.replace("\"", "\"\"") + "\"")
+}
+
+// Suscribe la conexión al canal. Idempotente (escuchar dos veces es uno).
+// Dentro de una transacción, empieza a valer recién con su COMMIT.
+pub fn try_pg_listen(conn: PgConn, canal: String) -> Result<int, Error> {
+    match pg_canal_valido(canal) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(ident) => { return try_pg_exec(conn, "LISTEN " + ident) }
+    }
+}
+
+// Deja de escuchar el canal; "*" deja de escuchar todos. Lo que de ese canal
+// ya estuviera guardado sin entregar se DESCARTA: después de try_pg_unlisten,
+// try_pg_wait_notifications no devuelve más ese canal.
+pub fn try_pg_unlisten(conn: PgConn, canal: String) -> Result<int, Error> {
+    var sql: String = "UNLISTEN *"
+    if canal != "*" {
+        match pg_canal_valido(canal) {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(ident) => { sql = "UNLISTEN " + ident }
+        }
+    }
+    match try_pg_exec(conn, sql) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(n) => {
+            // Tras el ReadyForQuery del UNLISTEN el servidor ya no manda nada
+            // de ese canal: lo que haya llegado, ya está en el buzón.
+            pg_buzon_descartar_canal(conn.fd, canal)
+            return Result.Ok(n)
+        }
+    }
+}
+
+// Notifica al canal. Va POR PARÁMETROS (pg_notify($1, $2)): el payload es solo
+// texto, nunca SQL. Dentro de una transacción se entrega al hacer COMMIT, y con
+// ROLLBACK no se entrega. El servidor limita el payload a 8000 bytes (más es un
+// Err kind "db").
+pub fn try_pg_notify(conn: PgConn, canal: String, payload: String) -> Result<int, Error> {
+    match pg_canal_valido(canal) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(_) => {}
+    }
+    match try_pg_query_params(conn, "select pg_notify($1, $2)", [canal, payload]) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(_) => { return Result.Ok(0) }
+    }
+}
+
+// Espera, como mucho `plazo_ms`, el byte de TIPO del próximo mensaje, sin
+// consumir nada si no llega: Ok("") = venció el plazo (la conexión queda
+// intacta), Ok(tipo) = llegó un mensaje y su tipo ya se leyó.
+//
+// En claro es un recv de 1 byte con plazo. En TLS no sirve try_tls_read con
+// plazo: al vencer deja el handle MUERTO (quedaría un registro a medio leer), y
+// acá vencer sin nada es el caso normal. Se usa el par tls_wait_readable +
+// tls_read_nonblock, que no bloquea nunca: si lo que despertó fue un registro
+// de control de TLS 1.3 sin datos detrás, read_nonblock devuelve "" y se
+// vuelve a esperar con lo que queda del plazo.
+fn pg_esperar_tipo(fd: int, tls: int, plazo_ms: int) -> Result<String, Error> {
+    if tls == 0 {
+        match try_tcp_read_timed(fd, 1, plazo_ms) {
+            Result.Ok(b) => { return Result.Ok(b) }
+            Result.Err(e) => {
+                if e.kind == "timeout" { return Result.Ok("") }
+                if e.kind == "eof" {
+                    return Result.Err(err_new(0, "connection", "el servidor cerro la conexion"))
+                }
+                return Result.Err(err_new(0, "connection", "esperando notificaciones: " + e.msg))
+            }
+        }
+    }
+    var limite: int = 0
+    if plazo_ms > 0 { limite = monotonic_ms() + plazo_ms }
+    var resto: int = plazo_ms
+    while true {
+        let w: int = tls_wait_readable(tls, resto)
+        if w == 0 { return Result.Ok("") }
+        if w < 0 {
+            return Result.Err(err_new(0, "connection", "el servidor cerro la conexion TLS"))
+        }
+        let b: String = tls_read_nonblock(tls, 1)
+        if b.byte_length() == 1 { return Result.Ok(b) }
+        // Sin datos de aplicación (un registro de control, o el cierre, que la
+        // próxima tls_wait_readable informa con -1): se sigue esperando.
+        if plazo_ms == 0 { return Result.Ok("") }
+        if plazo_ms > 0 {
+            resto = limite - monotonic_ms()
+            if resto <= 0 { return Result.Ok("") }
+        }
+    }
+    return Result.Ok("")
+}
+
+// El resto de un mensaje cuyo byte de tipo ya se leyó: longitud + payload.
+// Mismo contrato que pg_read_message.
+fn pg_read_rest(fd: int, tls: int, tipo: String) -> Result<Array, Error> {
+    match pg_rx(fd, tls, 4) {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(cab) => {
+            let largo: int = pg_read_be32(cab, 0)
+            if largo < 4 {
+                return Result.Err(err_new(0, "connection", "mensaje con longitud invalida: " + int_to_string(largo)))
+            }
+            if largo == 4 { return Result.Ok([tipo, ""]) }
+            match pg_rx(fd, tls, largo - 4) {
+                Result.Err(e2) => { return Result.Err(e2) }
+                Result.Ok(payload) => { return Result.Ok([tipo, payload]) }
+            }
+        }
+    }
+}
+
+// Devuelve las notificaciones que llegaron a esta conexión, esperando como
+// mucho `timeout_ms` a que llegue la primera:
+//   timeout_ms > 0   espera hasta eso; Ok([]) si no llegó nada
+//   timeout_ms == 0  no espera: entrega solo lo que ya está
+//   timeout_ms < 0   espera sin límite hasta que llegue algo
+// Cada elemento es [canal: String, payload: String, pid: int] (pid = proceso
+// del servidor que hizo el NOTIFY), en orden de llegada. Primero entrega lo
+// guardado por consultas anteriores; si ya hay algo, NO espera: junta lo que
+// esté disponible en ese instante y vuelve.
+//
+// La conexión tiene que estar OCIOSA (sin una consulta a medio leer): es la
+// conexión dedicada que escucha, usada por UN thread a la vez. Un NOTIFY hecho
+// por esta MISMA conexión también le llega (con su propio pid).
+//
+// Err kind "connection": la conexión se cerró o el servidor terminó la sesión
+// (su mensaje viaja en el Err; pg_sqlstate lo lee, p. ej. 57P01 al reiniciar el
+// servidor). Ante eso, reconectar y volver a hacer LISTEN: las suscripciones
+// son de la sesión y mueren con ella.
+pub fn try_pg_wait_notifications(conn: PgConn, timeout_ms: int) -> Result<Array, Error> {
+    if not conn.abierta { return Result.Err(err_new(0, "connection", "la conexion esta cerrada")) }
+    var salida: Array = pg_buzon_tomar(conn.fd)
+    var limite: int = 0
+    if timeout_ms > 0 { limite = monotonic_ms() + timeout_ms }
+    while true {
+        var plazo: int = 0
+        if salida.length() == 0 {
+            if timeout_ms < 0 { plazo = 0 - 1 }
+            if timeout_ms > 0 {
+                plazo = limite - monotonic_ms()
+                if plazo < 0 { plazo = 0 }
+            }
+        }
+        match pg_esperar_tipo(conn.fd, conn.tls, plazo) {
+            Result.Err(e) => {
+                // El fallo es ANTES del primer byte de un mensaje: nada quedó a
+                // medio leer. Lo ya juntado se entrega y el error se repite en
+                // la próxima llamada.
+                if salida.length() > 0 { return Result.Ok(salida) }
+                return Result.Err(e)
+            }
+            Result.Ok(tipo) => {
+                if tipo == "" { return Result.Ok(salida) }
+                match pg_read_rest(conn.fd, conn.tls, tipo) {
+                    Result.Err(e) => { return Result.Err(e) }
+                    Result.Ok(m) => {
+                        let payload: String = m[1]
+                        if tipo == "A" {
+                            salida.push(pg_parse_notification(payload))
+                        } else if tipo == "N" or tipo == "S" {
+                            // Aviso / parámetro cambiado: se consumen y se sigue.
+                        } else if tipo == "E" {
+                            // Fuera de una consulta, un ErrorResponse es el
+                            // servidor terminando la sesión (FATAL).
+                            let fatal: Error = pg_parse_error(payload)
+                            return Result.Err(err_new(0, "connection", "el servidor termino la sesion: " + fatal.msg))
+                        } else {
+                            return Result.Err(err_new(0, "connection", "mensaje inesperado '" + tipo + "' con la conexion ociosa: hay otra consulta a medio leer en esta conexion, o se desincronizo"))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return Result.Ok(salida)
 }
 
 // ── Migraciones ─────────────────────────────────────────────────────

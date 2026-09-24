@@ -1,0 +1,131 @@
+// PostgreSQL LISTEN/NOTIFY as the live-update bus between processes, fanned out to SSE
+// LISTEN/NOTIFY de PostgreSQL como bus en vivo entre procesos, repartido a SSE
+//
+// With ONE process, sse_broadcast reaches every browser. With SEVERAL processes
+// of the same program (to use more than one core, or to restart without
+// dropping connections), each process has its own SSE rooms in memory: what
+// process A writes never reaches a browser connected to process B. PostgreSQL
+// solves it out of the box:
+//
+//   - whoever writes calls try_pg_notify INSIDE its transaction: the
+//     notification is delivered only if it COMMITs (never on ROLLBACK), so a
+//     browser never hears about a row that does not exist;
+//   - every process keeps ONE dedicated connection that LISTENs and fans out
+//     what arrives to its own rooms.
+//
+// Guarantee of std/postgres: a notification that arrives while the listening
+// connection is busy with another query is KEPT and handed over by the next
+// try_pg_wait_notifications — never lost, never mixed into that query's rows.
+//
+// Needs the server and database of 104-postgres (NYX_PG_CONNINFO overrides it).
+// Run two copies on different ports and POST to one:
+//   PORT=8081 ./app   PORT=8082 ./app
+//   curl -N localhost:8082/eventos/avisos            # browser on process B
+//   curl -d 'pedido 7 listo' localhost:8081/avisos   # write through process A
+
+import "std/postgres"
+import "std/web"
+import "std/serve"
+
+fn conninfo() -> String {
+    let c: String = getenv("NYX_PG_CONNINFO")
+    if c != "" { return c }
+    return "host=127.0.0.1 port=5432 dbname=midb user=app password=secreto"
+}
+
+var POOL: PgPool = pg_pool_new(conninfo(), 4)
+
+// Write + notify in ONE transaction: the row and the notification commit
+// together, or neither exists.
+fn guardar_aviso(texto: String) -> Result<int, Error> {
+    let conn: PgConn = try_pg_pool_get(POOL)?
+    let _b: int = try_pg_begin(conn)?
+    let _i: int = try_pg_exec_params(conn, "INSERT INTO avisos (texto) VALUES ($1)", [texto])?
+    // The channel is a quoted identifier: "avisos" here and in try_pg_listen
+    // are the same channel (case and accents included). Payload <= 8000 bytes.
+    let _n: int = try_pg_notify(conn, "avisos", texto)?
+    let _c: int = try_pg_commit(conn)?
+    pg_pool_put(POOL, conn)
+    return Result.Ok(0)
+}
+
+fn post_aviso(req: Request) -> Response {
+    match guardar_aviso(req.body) {
+        Result.Ok(_) => { return response_text(201, "ok") }
+        Result.Err(e) => { return response_text(500, "no se guardo: " + e.msg) }
+    }
+}
+
+fn abrir_eventos(req: Request) -> Response {
+    return sse_open(req, "avisos")
+}
+
+// The listener: one dedicated connection per process, never taken from the
+// pool (a pooled connection goes back to other handlers, and its LISTEN would
+// travel with it). Each notification goes to the SSE room named like its
+// channel. If the connection dies (server restart: Err kind "connection"),
+// subscriptions die with the session: reconnect and LISTEN again.
+fn escuchar() -> int {
+    while true {
+        match try_pg_connect(conninfo()) {
+            Result.Err(e) => {
+                print("listener: " + e.msg + " — retrying in 2 s")
+                sleep(2000)
+            }
+            Result.Ok(conn) => {
+                match try_pg_listen(conn, "avisos") {
+                    Result.Err(e) => { print("listen: " + e.msg) }
+                    Result.Ok(_) => { repartir(conn) }
+                }
+                let _c = try_pg_close(conn)
+                sleep(500)
+            }
+        }
+    }
+    return 0
+}
+
+// Returns when the connection fails; the caller reconnects.
+fn repartir(conn: PgConn) {
+    var viva: bool = true
+    while viva {
+        // Blocks up to 5 s; Ok([]) when nothing arrived. Each element is
+        // [channel, payload, pid of the server process that notified].
+        match try_pg_wait_notifications(conn, 5000) {
+            Result.Err(e) => {
+                print("listener lost the connection: " + e.msg)
+                viva = false
+            }
+            Result.Ok(llegadas) => {
+                for n: Array in llegadas {
+                    let canal: String = n[0]
+                    let payload: String = n[1]
+                    let _k: int = sse_broadcast(canal, "aviso", payload)
+                }
+            }
+        }
+    }
+}
+
+fn main() -> int {
+    let port: int = string_to_int_or(getenv("PORT"), 8081)
+    match try_pg_pool_get(POOL) {
+        Result.Err(e) => {
+            print("no database: " + e.msg)
+            return 1
+        }
+        Result.Ok(conn) => {
+            let _t = try_pg_exec(conn, "CREATE TABLE IF NOT EXISTS avisos (id serial PRIMARY KEY, texto text NOT NULL)")
+            pg_pool_put(POOL, conn)
+        }
+    }
+
+    thread_spawn(escuchar)
+
+    let app: App = app_new()
+    app_post(app, "/avisos", post_aviso)
+    app_get(app, "/eventos/avisos", abrir_eventos)
+    print("listening on :" + int_to_string(port))
+    serve_app(app, port, 4)
+    return 0
+}

@@ -75,11 +75,41 @@ out=$("$NB" build 2>&1)
 if echo "$out" | grep -q "reusing src/util" && echo "$out" | grep -q "reusing src/geo" && ! echo "$out" | grep -q "(lib)$"; then ok "sin cambios: se reutilizan los objetos"
 else mal "sin cambios no reutilizó: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
 
+# Huella por INTERFAZ (2026-09-24, fricción nyxerp 150024): geo importa util,
+# pero de util solo genera `declare`; su .o depende de la interfaz de util, no de
+# los cuerpos ni de los comentarios.
+# (1) Un cambio de CUERPO en util: util se recompila, geo se REUTILIZA, y la
+#     salida igual cambia (geo llama a duplicar a través del .o de util).
 sed -i 's/return x \* 2/return x * 3/' src/util.nx
 out=$("$NB" build 2>&1); run=$(./libp 2>&1)
-if echo "$out" | grep -q "compiling src/util (lib)" && echo "$out" | grep -q "compiling src/geo (lib)" && [ "$run" = "hola mundo 63 31 30 7" ]; then
-    ok "tocar util recompila util y, en cascada, geo (63 31 30)"
-else mal "cascada: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ') → '$run'"; fi
+if echo "$out" | grep -q "compiling src/util (lib)" && echo "$out" | grep -q "reusing src/geo" && [ "$run" = "hola mundo 63 31 30 7" ]; then
+    ok "cuerpo de util: se recompila util, geo se reutiliza y la salida cambia (63 31 30)"
+else mal "cuerpo de util: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ') → '$run'"; fi
+# (2) Un comentario: no recompila a nadie que importe util.
+printf '// solo un comentario\n' >> src/util.nx
+out=$("$NB" build 2>&1)
+if echo "$out" | grep -q "reusing src/geo"; then ok "un comentario en util no recompila a geo"
+else mal "comentario en util recompiló geo: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
+# (3) La INTERFAZ cambia (una constante que geo usa en un cuerpo): geo se
+#     recompila y la salida refleja el valor nuevo.
+printf 'const SUMA_EXTRA: int = 0\n' >> src/util.nx
+sed -i 's/export fn suma(p: Punto) -> int { return p.x + p.y }/export fn suma(p: Punto) -> int { return p.x + p.y + SUMA_EXTRA }/' src/geo.nx
+# Sin llaves (la forma de nyx init): `import { duplicar, SUMA_EXTRA }` choca
+# con la propia declaración de la constante (NYX1013, también sin [lib]; ficha
+# en TASKS).
+sed -i 's/^import { duplicar } from "src\/util"/import "src\/util"/' src/geo.nx
+"$NB" build >/dev/null 2>&1
+sed -i 's/const SUMA_EXTRA: int = 0/const SUMA_EXTRA: int = 100/' src/util.nx
+out=$("$NB" build 2>&1); run=$(./libp 2>&1)
+if echo "$out" | grep -q "compiling src/geo (lib)" && [ "$run" = "hola mundo 63 131 30 7" ]; then
+    ok "cambia una constante de util: geo se recompila y ve el valor nuevo (131)"
+else mal "constante de util: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ') → '$run'"; fi
+# geo vuelve a como estaba: la prueba de nyx test de abajo importa util con
+# alias ANTES que geo, y eso deja a geo sin ver las constantes de util (bug del
+# resolvedor anterior a [lib], ficha en TASKS).
+sed -i 's/const SUMA_EXTRA: int = 100/const SUMA_EXTRA: int = 0/' src/util.nx
+sed -i 's/ + SUMA_EXTRA }/ }/; s/^import "src\/util"$/import { duplicar } from "src\/util"/' src/geo.nx
+"$NB" build >/dev/null 2>&1
 
 # Layout: un campo NUEVO delante. Con un objeto de geo viejo, main leería p.x
 # del offset equivocado; con la huella por cierre, geo se recompila.
@@ -186,6 +216,34 @@ if [ "$sin" = "$(printf '106 5 30 7 7 1 2\n2 5')" ] && [ "$rc" -eq 0 ] && [ "$co
 else mal "semántica [lib] vs inlining: sin='$sin' con='$con' (rc=$rc) $(echo "$out" | grep -E 'error' | head -2 | tr '\n' ' ')"; fi
 if [ "$(echo "$out" | grep -c '(lib)')" -eq 4 ]; then ok "los cuatro módulos se compilaron como bibliotecas (no cayó al inlining)"
 else mal "no se compilaron los cuatro como bibliotecas: $(echo "$out" | grep compiling | tr '\n' ' ')"; fi
+cd "$P" || exit 1
+
+echo "── [lib] modules: tipos en la frontera y globales (fricción nyxerp 150024) ──"
+# (a) Un String donde va un int, llamando a una fn de biblioteca: hasta
+# 2026-09-24 `nyx build` salía en VERDE y el int recibía el puntero del texto
+# (nyxerp: «expected 7, got 187650718645104»). Ahora el módulo llega entero a
+# semantic y es NYX1005, como sin [lib]. (b) Regresión: un global de biblioteca
+# con inicialización no constante (Map.new()) sigue funcionando —desde que el
+# texto llega entero, su declaración es `external` y lo inicializa el programa—.
+Z="$T/tipos"; mkdir -p "$Z/src"; cd "$Z" || exit 1
+printf '[package]\nname = "tz"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/calc"]\n' > nyx.toml
+cat > src/calc.nx <<'EOF2'
+var tabla: Map = Map.new()
+pub fn doble(n: int) -> int { return n * 2 }
+pub fn poner(k: String) -> int {
+    tabla.insert(k, 1)
+    return tabla.keys().length()
+}
+EOF2
+printf 'import "src/calc"\nfn main() -> int {\n    println(int_to_string(doble(21)) + " " + int_to_string(poner("a")) + " " + int_to_string(poner("b")))\n    return 0\n}\n' > src/main.nx
+out=$("$NB" build 2>&1); rc=$?; run=$(./tz 2>&1)
+if [ "$rc" -eq 0 ] && [ "$run" = "42 1 2" ]; then ok "global de biblioteca inicializado por el programa (42 1 2)"
+else mal "global de biblioteca (rc=$rc): '$run' $(echo "$out" | grep -E 'error' | head -2 | tr '\n' ' ')"; fi
+printf 'import "src/calc"\nfn main() -> int {\n    println(int_to_string(doble("7")))\n    return 0\n}\n' > src/main.nx
+rm -f tz
+out=$("$NB" build 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && echo "$out" | grep -q "NYX1005" && [ ! -x ./tz ]; then ok "String donde va int hacia una biblioteca: NYX1005 en el build, sin binario"
+else mal "hueco de tipos en la frontera: rc=$rc, sin NYX1005 o con binario ($(echo "$out" | grep -E 'NYX|error' | head -1))"; fi
 cd "$P" || exit 1
 
 echo "── [lib] modules: errores del manifiesto ──"

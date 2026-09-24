@@ -248,6 +248,12 @@ extern "C" fn nyx_tcp_set_timeout_result(fd: int, seconds: int) -> int
 extern "C" fn nyx_getpeername_result(fd: int) -> Array
 extern "C" fn nyx_local_port_result(fd: int) -> int
 extern "C" fn nyx_resolve_ptr_result(ip: String) -> Array
+// Lectura con plazo en milisegundos (poll + recv). Vivía declarada en
+// std/http.nx; se mudó acá cuando std/postgres también la necesitó (LISTEN/NOTIFY,
+// 2026-09-24): dos módulos declarando el mismo `extern "C"` chocan con «invalid
+// redefinition» en cualquier programa que importe ambos. std/http la sigue
+// llamando cruda (importa este módulo); el resto usa try_tcp_read_timed.
+extern "C" fn nyx_tcp_read_timed_result(fd: int, max_bytes: int, timeout_ms: int) -> Array
 
 // Sentinel de EOF limpio devuelto en el slot `code` de read_line/read_exact
 // — espeja NYX_NET_EOF (runtime/net.c / net.h): 1000 nunca colisiona con un
@@ -350,6 +356,48 @@ pub fn try_tcp_read_exact(fd: int, n: int) -> Result<String, Error> {
         return Result.Err(err_new(0, "eof", "tcp_read_exact: fin de stream"))
     }
     return Result.Err(err_new(code, errno_to_kind(code), "tcp_read_exact"))
+}
+
+// Lee lo que haya llegado —hasta `max_bytes`, sin esperar a juntarlos— dentro de
+// `timeout_ms` milisegundos. Es la ÚNICA lectura de este módulo con plazo en
+// milisegundos y sin tocar el socket: try_tcp_set_timeout va en segundos, es un
+// SO_RCVTIMEO que queda puesto para todas las lecturas siguientes y, vencido a
+// mitad de un read_exact/read_line, cuesta los bytes ya leídos.
+//   timeout_ms > 0   espera como mucho eso
+//   timeout_ms == 0  no espera: solo mira si ya hay algo
+//   timeout_ms < 0   espera sin límite
+//   Ok(datos)                    llegó al menos un byte (1..max_bytes)
+//   Err kind "timeout" code 110  venció el plazo SIN consumir nada: el socket
+//                                queda intacto y se puede volver a esperar
+//   Err kind "eof"     code 0    el peer cerró
+//   Err errno_to_kind            fallo del socket
+// Con `max_bytes = 1` sirve de «esperar a que llegue algo» para un protocolo
+// con framing propio: std/postgres lee así el byte de tipo del próximo mensaje.
+// ⚠️ NO VE el buffer transparente del runtime que llenan try_tcp_read_line y
+// try_tcp_read_exact (8 KB por recv): si antes se leyó con esas dos sobre el
+// mismo fd, los bytes que quedaron ahí no cuentan como «llegó algo» y esta
+// función devuelve lo que venga DESPUÉS por el socket, fuera de orden. En un
+// fd donde se usa, leer solo con try_tcp_read / try_tcp_read_partial (que no
+// dejan sobrante) o con esta misma. (Hallazgo del 2026-09-24. El arreglo de
+// raíz es del runtime: que nyx_tcp_read_timed_result drene ese buffer
+// primero, como ya hacen nyx_tcp_read_result y nyx_tcp_read_partial_result.)
+pub fn try_tcp_read_timed(fd: int, max_bytes: int, timeout_ms: int) -> Result<String, Error> {
+    let r: Array = nyx_tcp_read_timed_result(fd, max_bytes, timeout_ms)
+    let st: int = r[0]
+    if st == 0 {
+        let datos: String = r[1]
+        return Result.Ok(datos)
+    }
+    if st == NET_EOF {
+        return Result.Err(err_new(0, "eof", "tcp_read_timed: fin de stream"))
+    }
+    // El runtime devuelve -errno (a diferencia de read_line/read_exact, que
+    // devuelven el errno en positivo).
+    let code: int = 0 - st
+    if code == 110 {
+        return Result.Err(err_new(110, "timeout", "tcp_read_timed: no llegaron datos dentro del plazo"))
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_read_timed"))
 }
 
 // E5.2b: hermana Result de tcp_shutdown. Cierra la mitad (o las dos) del

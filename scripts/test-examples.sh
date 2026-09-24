@@ -70,6 +70,9 @@ SOLO_COMPILA=(
     # mismo servidor/base que 104-postgres (ver ese archivo para montarlo
     # local): sin él, #[derive(Fields)] compila igual pero la conexión falla
     "103-orm-sin-mapeo"
+    # servidor web + PostgreSQL (mismo servidor/base que 104-postgres); se
+    # levanta en dos procesos para ver el reparto entre ellos
+    "119-postgres-listen-notify"
 )
 
 en_lista_solo_compila() {

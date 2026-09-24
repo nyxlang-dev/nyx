@@ -2131,15 +2131,14 @@ modules = ["src/util", "src/geo"]
   El programa principal (`main.nx`) **siempre** se compila, contra las interfaces vigentes.
   Solo aplica a targets nativos: con `--target wasm32-wasi` los módulos de `[lib]` se inlinean
   como cualquier import normal.
-- **Qué cruza la frontera** (la interfaz es la de un header de C: firmas y tipos, no cuerpos):
-  funciones exportadas (`export fn`/`pub fn`, con sus tipos de parámetros y de retorno), y
-  todos los `struct`/`enum` (con o sin `pub`: los nombres de tipo son globales al programa).
-  **Declarar un módulo en `[lib]` cambia CÓMO se compila, no QUÉ nombres ve quien lo importa**
-  (desde 2026-09-24): toda forma de import se comporta como si el módulo estuviera inlineado —
-  `import "src/a"` sin llaves (la de `nyx init`), `import "src/a" as a` con `a.f()` o `f()`, e
-  `import { f } from "src/a"` (los demás exportados también se ven, como inlineado)—, con
-  transitividad incluida. Las fns de una biblioteca se emiten como `<módulo>__<fn>`, igual que
-  inlineadas, así que dos bibliotecas pueden tener fns del mismo nombre.
+- **Cómo funciona** (desde 2026-09-24): quien importa sigue leyendo el fuente COMPLETO de cada módulo
+  de `[lib]`, así que el chequeo de tipos ve exactamente lo mismo que sin `[lib]` —cada llamada
+  contra la firma real: un `String` donde va un `int` es NYX1005 en el build—. Solo cambia la
+  generación de código: las fns de la biblioteca se emiten como `declare` (el cuerpo vive en su `.o`)
+  y sus globales como `external` (el programa sigue corriendo su inicialización, en orden). Por eso
+  **declarar un módulo en `[lib]` cambia CÓMO se compila, no QUÉ nombres ve quien lo importa**: toda
+  forma de import se comporta como inlineada, con transitividad. Las fns de una biblioteca se emiten
+  como `<módulo>__<fn>`, igual que inlineadas, así que dos bibliotecas pueden tener homónimas.
 - **La única diferencia real**: una biblioteca se compila sola y ve solo lo que ELLA importa
   (directa o transitivamente). Un módulo que usa una fn de otro módulo que nunca importa
   compilaba inlineado solo porque el programa entero comparte un espacio de nombres; con `[lib]`
@@ -4322,6 +4321,15 @@ pg_migrate_init(conn), pg_migrate_version(conn), pg_migrate(conn, version, name,
 // Pool de conexiones
 pg_pool_new(conninfo, size), try_pg_pool_get(pool), pg_pool_put(pool, conn), pg_pool_close(pool)
 
+// LISTEN/NOTIFY: el canal es un identificador CITADO (mayusculas y tildes cuentan)
+try_pg_listen(conn, canal) -> Result<int, Error>
+try_pg_unlisten(conn, canal) -> Result<int, Error>       // "*" = todos
+try_pg_notify(conn, canal, payload) -> Result<int, Error> // = select pg_notify($1, $2)
+try_pg_wait_notifications(conn, timeout_ms) -> Result<Array, Error>
+//   timeout_ms > 0 espera hasta eso, 0 no espera, < 0 sin limite; Ok([]) si no llego nada
+//   cada elemento: [canal: String, payload: String, pid: int], en orden de llegada
+pg_parse_notification(payload) -> Array                  // el mensaje 'A' crudo -> [canal, payload, pid]
+
 // TLS: parte del conninfo, como en libpq (v0.31.1)
 //   sslmode=disable       (default) sin cifrar
 //   sslmode=require       cifra, NO verifica el certificado (igual que libpq)
@@ -4376,6 +4384,17 @@ Decisiones que importan y no se ven en las firmas:
   existe aca**: en este cliente la celda es un `String` y nadie la reinterpreta.
 - **Un error del servidor deja la conexion USABLE**: el lector consume hasta
   `ReadyForQuery` en vez de cortar y desincronizar el socket.
+- **Mensajes asincronos**: `NotificationResponse`, `NoticeResponse` y `ParameterStatus` pueden
+  llegar en cualquier momento, tambien en medio de la respuesta a otra consulta. Ninguno
+  desincroniza la conexion ni se mezcla con las filas: avisos y parametros se consumen y se
+  ignoran; una notificacion **se guarda en la conexion y la entrega la proxima
+  `try_pg_wait_notifications`**, en orden de llegada, en claro y en TLS. `try_pg_unlisten`
+  descarta lo guardado de ese canal. El NOTIFY dentro de una transaccion se entrega solo con
+  COMMIT. Si la espera da `Err` kind `"connection"` (el servidor termino la sesion, p. ej.
+  SQLSTATE `57P01`), las suscripciones murieron con ella: reconectar y volver a escuchar. Nombre
+  de canal vacio, con NUL o de mas de 63 bytes: `Err` kind `"invalid"`. Se prueba contra un
+  servidor real en `tests/postgres/08-listen-notify.nx` y, con un servidor falso que pone la
+  notificacion en un punto exacto de la respuesta, en `test-446-pg-mensajes-asincronos`.
 - La forma de los errores es la de `std/sqlite`: `Result<_, Error>` con `kind: "db"`,
   conservando el SQLSTATE en el mensaje.
 
