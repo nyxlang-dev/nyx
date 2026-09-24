@@ -148,6 +148,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Default corregido a `~/nyx/products/proxy` y skip más explícito.
 
 ### Added
+- **`nyx update --sync-docs` conserva el bloque propio del proyecto en `AGENTS.md`** (pedido de
+  nyxerp, 2026-09-24: les borró cuatro veces sus «Reglas de este proyecto»). Lo que esté entre
+  `<!-- proyecto:inicio -->` y `<!-- proyecto:fin -->` sobrevive al resembrado, y una corrida que
+  no cambia nada ya no deja un `.bak` nuevo (antes lo dejaba siempre). Documentado en la plantilla.
 - **`nyx test` con `[lib] modules`** `[arco: compilacion-separada]`: las bibliotecas se compilan una
   vez por suite y cada archivo de prueba solo las enlaza (6,4 s → 1,4 s por archivo en el banco de
   250 módulos).

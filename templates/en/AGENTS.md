@@ -126,7 +126,9 @@ If a gotcha bites you, that's expected — fix per the note, don't rewrite your 
 ## Where to find more (`docs/nyx/`)
 
 Everything below was seeded by `nyx init` and is refreshed by `nyx update --sync-docs`.
-It is written for an agent, not for a provider — any assistant reads the same files.
+It is written for an agent, not for a provider — any assistant reads the same files. Put the
+project's own rules in this file between `<!-- proyecto:inicio -->` and
+`<!-- proyecto:fin -->`: that block survives `--sync-docs`; the rest is re-seeded.
 
 | File | What it is | When to open it |
 |---|---|---|

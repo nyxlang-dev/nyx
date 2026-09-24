@@ -368,7 +368,42 @@ case "${1:-}" in
                 _stamp_seed "$2"
                 synced="$synced $2"
             }
-            _sync_one "$NYX_HOME/templates/$lang/AGENTS.md" AGENTS.md
+            # Bloque PROPIO del proyecto en AGENTS.md: lo que esté entre
+            # `<!-- proyecto:inicio -->` y `<!-- proyecto:fin -->` sobrevive al
+            # resembrado. Pedido de nyxerp (2026-09-24): --sync-docs les borró
+            # cuatro veces sus «Reglas de este proyecto» y las restauraban desde
+            # git. Si la plantilla trae los mismos marcadores, el bloque vuelve a
+            # ese lugar; si no, va al final, antes del sello. Se arma PRIMERO el
+            # resultado y se compara: si no cambió, no se toca ni se deja .bak
+            # (idempotente). Sin marcadores en el proyecto, igual que siempre.
+            _sync_agents() {
+                local tpl="$NYX_HOME/templates/$lang/AGENTS.md"
+                [ -f "$tpl" ] || return 0
+                local want blk
+                want="$(mktemp)"; blk="$(mktemp)"
+                if [ -f AGENTS.md ] && grep -q '<!-- proyecto:inicio -->' AGENTS.md && grep -q '<!-- proyecto:fin -->' AGENTS.md; then
+                    awk '/<!-- proyecto:inicio -->/{f=1} f{print} /<!-- proyecto:fin -->/{f=0}' AGENTS.md > "$blk"
+                fi
+                if [ -s "$blk" ] && grep -q '<!-- proyecto:inicio -->' "$tpl"; then
+                    awk -v blk="$blk" '
+                        /<!-- proyecto:inicio -->/ { while ((getline l < blk) > 0) print l; skip=1; next }
+                        skip && /<!-- proyecto:fin -->/ { skip=0; next }
+                        !skip { print }' "$tpl" > "$want"
+                else
+                    cp "$tpl" "$want"
+                    if [ -s "$blk" ]; then printf '\n' >> "$want"; cat "$blk" >> "$want"; fi
+                fi
+                _stamp_seed "$want"
+                if [ -f AGENTS.md ] && cmp -s "$want" AGENTS.md; then
+                    rm -f "$want" "$blk"; return 0
+                fi
+                [ -f AGENTS.md ] && _safe_backup AGENTS.md
+                cp "$want" AGENTS.md
+                synced="$synced AGENTS.md"
+                [ -s "$blk" ] && echo "  → AGENTS.md: se conservó el bloque propio del proyecto (<!-- proyecto:inicio --> … <!-- proyecto:fin -->)"
+                rm -f "$want" "$blk"
+            }
+            _sync_agents
             _sync_one "$NYX_HOME/templates/en/docs/nyx/LLM.md" docs/nyx/LLM.md
             for _g in "$NYX_HOME/templates/$lang/docs/nyx/guides/"*.md; do
                 [ -f "$_g" ] || continue

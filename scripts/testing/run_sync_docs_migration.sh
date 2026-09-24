@@ -361,6 +361,34 @@ else
     fi
 fi
 
+# ── Escenario (f): bloque propio del proyecto en AGENTS.md (pedido de nyxerp,
+# 2026-09-24: --sync-docs les borró cuatro veces sus «Reglas de este proyecto»).
+# Lo que esté entre <!-- proyecto:inicio --> y <!-- proyecto:fin --> sobrevive,
+# queda antes del sello, y una segunda corrida no toca nada (ni deja otro .bak).
+echo "== Escenario (f): bloque propio en AGENTS.md =="
+F_DIR="$(mktemp -d)"
+( cd "$F_DIR" && NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" init proy --lang es >/dev/null 2>&1 )
+if [ -f "$F_DIR/proy/AGENTS.md" ]; then
+    printf '\n<!-- proyecto:inicio -->\n## Reglas de este proyecto\n- regla que no se pierde\n<!-- proyecto:fin -->\n' >> "$F_DIR/proy/AGENTS.md"
+    ( cd "$F_DIR/proy" && NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" update --sync-docs >/dev/null 2>&1 )
+    f_ok=1
+    grep -q "regla que no se pierde" "$F_DIR/proy/AGENTS.md" || f_ok=0
+    tail -1 "$F_DIR/proy/AGENTS.md" | grep -q "nyx-version:" || f_ok=0
+    f_bak1=$(ls "$F_DIR/proy"/AGENTS.md.bak* 2>/dev/null | wc -l)
+    ( cd "$F_DIR/proy" && NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" update --sync-docs >/dev/null 2>&1 )
+    f_bak2=$(ls "$F_DIR/proy"/AGENTS.md.bak* 2>/dev/null | wc -l)
+    [ "$f_bak1" = "$f_bak2" ] || f_ok=0
+    if [ "$f_ok" = 1 ]; then
+        printf "  ✓ escenario (f): el bloque propio sobrevive, el sello queda al final y la segunda corrida no toca nada\n"
+    else
+        printf "  ✗ escenario (f): bloque propio perdido, sello fuera de lugar o .bak de más (%s → %s)\n" "$f_bak1" "$f_bak2"
+        FAIL=$((FAIL + 1))
+    fi
+else
+    printf "  ✗ escenario (f): nyx init no creó el proyecto\n"; FAIL=$((FAIL + 1))
+fi
+rm -rf "$F_DIR"
+
 # ── What's new: verificación estática de que scripts/nyx invoca nyx_gendocs
 # fixed-since en la rama `update` (el flujo real necesita git — fuera de
 # alcance de esta guardia, que nunca puede llegar a esa rama).

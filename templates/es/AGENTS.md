@@ -132,7 +132,9 @@ Que una trampa te muerda es normal — corrige según la nota, no reescribas tod
 ## Dónde está el resto (`docs/nyx/`)
 
 Todo lo de abajo lo sembró `nyx init` y lo refresca `nyx update --sync-docs`. Está escrito
-para un agente, no para un proveedor: cualquier asistente lee los mismos archivos.
+para un agente, no para un proveedor: cualquier asistente lee los mismos archivos. Las reglas
+propias del proyecto van en este archivo entre `<!-- proyecto:inicio -->` y
+`<!-- proyecto:fin -->`: ese bloque sobrevive a `--sync-docs`; el resto se resiembra.
 
 | Archivo | Qué es | Cuándo abrirlo |
 |---|---|---|
