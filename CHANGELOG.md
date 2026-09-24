@@ -10,6 +10,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **`json_stringify` lineal** (fricción nyxerp `20260923-210010-team-2`): escribir un texto de 32 KB
+  pasaba de 504 ms a 0,66 ms — antes crecía con el cuadrado del largo. Un solo `StringBuilder`
+  recorre el árbol y los tramos sin escapes se copian de una vez.
 - **`"".trim()` bajo la arena de wasm devolvía largo 1 o 2** (fricción nyxerp `20260923-100024`,
   terminaba en «memory access out of bounds»). La causa no era `trim`: el String vacío que comparte
   todo el runtime nacía en memoria del turno si se pedía por primera vez durante un evento, y la

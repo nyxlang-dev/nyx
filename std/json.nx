@@ -198,106 +198,117 @@ pub fn json_array_len(arr: Array) -> int {
 // Recorre BYTES (contrato strings=bytes de v0.14): los caracteres multibyte
 // UTF-8 pasan sin tocar, que es válido en JSON. Los controles por debajo de
 // 0x20 se emiten como \u00XX porque JSON los prohíbe literales.
-pub fn json_escape(s: String) -> String {
-    var out: String = ""
-    var i: int = 0
+// Escritura LINEAL (fricción nyxerp 20260923-210010-team-2, 2026-09-23): antes
+// json_escape concatenaba de a un carácter y json_stringify recopiaba todo lo
+// acumulado en cada elemento de un array u objeto (`result = result + …`), así
+// que escribir crecía con el CUADRADO del largo: un texto de 32 KB tardaba
+// 504 ms, y un catálogo de 1 MB, segundos. Ahora un solo StringBuilder recorre
+// el árbol entero y los tramos sin nada que escapar se copian de una vez con
+// substring — el mismo arreglo que ya tenía parse_string.
+
+// Escribe `s` escapado en `sb`, copiando por tramos lo que no hay que escapar.
+fn json_escape_en(s: String, sb: StringBuilder) {
+    let hex: String = "0123456789abcdef"
     let n: int = s.length()
+    var desde: int = 0
+    var i: int = 0
     while i < n {
         let c: char = s.charAt(i)
+        let b: int = c as int
+        var esc: String = ""
         if c == '"' {
-            out = out + "\\\""
+            esc = "\\\""
         } else if c == '\\' {
-            out = out + "\\\\"
+            esc = "\\\\"
         } else if c == '\n' {
-            out = out + "\\n"
+            esc = "\\n"
         } else if c == '\r' {
-            out = out + "\\r"
+            esc = "\\r"
         } else if c == '\t' {
-            out = out + "\\t"
-        } else {
-            let b: int = c as int
-            if b >= 0 and b < 32 {
-                // Control sin escape corto: \u00XX en hexadecimal minúscula
-                let hex: String = "0123456789abcdef"
-                let hi: int = b / 16
-                let lo: int = b % 16
-                out = out + "\\u00" + char_to_string(hex.charAt(hi)) + char_to_string(hex.charAt(lo))
-            } else {
-                out = out + char_to_string(c)
-            }
+            esc = "\\t"
+        } else if b >= 0 and b < 32 {
+            // Control sin escape corto: \u00XX en hexadecimal minúscula
+            esc = "\\u00" + char_to_string(hex.charAt(b / 16)) + char_to_string(hex.charAt(b % 16))
+        }
+        if esc != "" {
+            if i > desde { sb.append(s.substring(desde, i)) }
+            sb.append(esc)
+            desde = i + 1
         }
         i = i + 1
     }
-    return out
+    if desde == 0 {
+        sb.append(s)
+    } else if desde < n {
+        sb.append(s.substring(desde, n))
+    }
+    return 0
+}
+
+pub fn json_escape(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    json_escape_en(s, sb)
+    return sb.to_string()
+}
+
+// Escribe `val` en `sb` (recursivo, un solo StringBuilder para todo el árbol).
+fn json_escribir(val: Array, sb: StringBuilder) {
+    let tag: String = val[0]
+    if tag == "null" {
+        sb.append("null")
+    } else if tag == "bool" {
+        let bv: int = val[1]
+        if bv == 1 { sb.append("true") } else { sb.append("false") }
+    } else if tag == "number" {
+        let nv: int = val[1]
+        sb.append(int_to_string(nv))
+    } else if tag == "float" {
+        // El texto original se preservó al parsear → round-trip exacto.
+        let fv: String = val[1]
+        sb.append(fv)
+    } else if tag == "string" {
+        let sv: String = val[1]
+        sb.append("\"")
+        json_escape_en(sv, sb)
+        sb.append("\"")
+    } else if tag == "array" {
+        let items: Array = val[1]
+        sb.append("[")
+        var i: int = 0
+        while i < items.length() {
+            if i > 0 { sb.append(",") }
+            let item: Array = items[i]
+            json_escribir(item, sb)
+            i = i + 1
+        }
+        sb.append("]")
+    } else if tag == "object" {
+        let keys: Array = val[1]
+        let vals: Array = val[2]
+        sb.append("{")
+        var i: int = 0
+        while i < keys.length() {
+            if i > 0 { sb.append(",") }
+            let k: String = keys[i]
+            let v: Array = vals[i]
+            sb.append("\"")
+            json_escape_en(k, sb)
+            sb.append("\":")
+            json_escribir(v, sb)
+            i = i + 1
+        }
+        sb.append("}")
+    } else {
+        sb.append("null")
+    }
+    return 0
 }
 
 // Stringify a JSON value to a string
 pub fn json_stringify(val: Array) -> String {
-    let tag: String = val[0]
-
-    if tag == "null" {
-        return "null"
-    }
-
-    if tag == "bool" {
-        let bv: int = val[1]
-        if bv == 1 {
-            return "true"
-        }
-        return "false"
-    }
-
-    if tag == "number" {
-        let nv: int = val[1]
-        return int_to_string(nv)
-    }
-
-    if tag == "float" {
-        // El texto original se preservó al parsear → round-trip exacto.
-        let fv: String = val[1]
-        return fv
-    }
-
-    if tag == "string" {
-        let sv: String = val[1]
-        return "\"" + json_escape(sv) + "\""
-    }
-
-    if tag == "array" {
-        let items: Array = val[1]
-        var result: String = "["
-        var i: int = 0
-        let len: int = items.length()
-        while i < len {
-            if i > 0 {
-                result = result + ","
-            }
-            let item: Array = items[i]
-            result = result + json_stringify(item)
-            i = i + 1
-        }
-        return result + "]"
-    }
-
-    if tag == "object" {
-        let keys: Array = val[1]
-        let vals: Array = val[2]
-        var result: String = "{"
-        var i: int = 0
-        let len: int = keys.length()
-        while i < len {
-            if i > 0 {
-                result = result + ","
-            }
-            let k: String = keys[i]
-            let v: Array = vals[i]
-            result = result + "\"" + json_escape(k) + "\":" + json_stringify(v)
-            i = i + 1
-        }
-        return result + "}"
-    }
-
-    return "null"
+    var sb: StringBuilder = StringBuilder.new()
+    json_escribir(val, sb)
+    return sb.to_string()
 }
 
 // ===== JSON PARSER =====

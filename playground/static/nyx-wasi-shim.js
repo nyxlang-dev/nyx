@@ -436,7 +436,7 @@ export function makeNyxHelpers(state) {
 // Implementación estándar de los imports js_dom_* de std/dom.nx sobre un DOM
 // real (browser) o un mock (tests node: pasá un objeto con querySelector).
 // Los eventos llaman fns Nyx EXPORTADAS por nombre → hace falta cerrar el
-// círculo post-instanciación: usá el `ref` devuelto.
+// círculo post-instanciación: usa el `ref` devuelto.
 //   const dom = domBindings();
 //   const r = await runNyxWasm(bytes, { js: dom.imports });
 //   dom.ref.exports = r.exports;   // habilita los listeners

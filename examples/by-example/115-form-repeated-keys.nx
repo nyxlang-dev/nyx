@@ -1,7 +1,7 @@
 // Formularios con claves repetidas — checkboxes y <select multiple>
 // Repeated form/query keys — checkboxes and <select multiple>
 //
-// El HTML normal de "elegí varias opciones" es un grupo de checkboxes o un
+// El HTML normal para elegir varias opciones es un grupo de checkboxes o un
 // <select multiple> con el MISMO name en cada <input>:
 //
 //   <input type="checkbox" name="ver" value="a"> a
