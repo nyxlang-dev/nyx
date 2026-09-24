@@ -13,7 +13,7 @@
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
 | Regression | `make test` | **452 archivos / 451 ARM64** | 2026-09-23: +1 `test-434-form-values`; 09-21: +1 `test-433-frontera-de-modulo`. `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **331** | +22 el 2026-09-23 (NYX1040 ×12, NYX1038 ×2, NYX2018, 200 operandos, NYX0302 ×5, desborde del hilo principal); +8 el 2026-09-20 (NYX1037). Detalle en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **333** | +24 el 2026-09-23 (NYX2010 en check, arg i64→char, NYX1040 ×12, NYX1038 ×2, NYX2018, 200 operandos, NYX0302 ×5, desborde del hilo principal); +8 el 2026-09-20 (NYX1037). Detalle en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **9** | math + array + integración + template + multipart (serve al core, 2026-08-31) + smtp ×4 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
@@ -42,7 +42,7 @@
 | PostgreSQL E2E | (dentro de `make test-integration`, enganchado el 2026-09-14) `run_postgres_tests.sh` | **7 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **10 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm 3 + HTTP/2 1 + body cap 6 + serve contrato 10 + serve bind 6-9 + smoke 103 + serve+kv 10) | detalle de las altas en `CHANGELOG.md` |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
-| WASM (wasm32-wasi) | `make test-wasm` | **44** | SKIP sin toolchain (salvo guards); +5 el 2026-09-23 (35-idb, 36/37 arena, 38 global que crece, 39 trim vacío); +2 el 09-20 (`include_bytes`); +4 el 09-17 (async-real-wasm). Detalle en `CHANGELOG.md` |
+| WASM (wasm32-wasi) | `make test-wasm` | **46** | SKIP sin toolchain (salvo guards); +6 el 2026-09-23 (35-idb, 36/37 arena, 38 global que crece, 39 trim vacío, 40 \\u en json); +2 el 09-20 (`include_bytes`); +4 el 09-17 (async-real-wasm). Detalle en `CHANGELOG.md` |
 | Verify + compiler-unit + fmt | `make test-unit` | **23** (13 verify + 5 compiler-unit + 5 fmt) | 5 de 7 compiler-unit activos (resto SKIP, ver abajo); la fila decía 4 hasta que la máquina B del reparto lo midió: `test-emit-bytes-global` ya corría en el runner |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +

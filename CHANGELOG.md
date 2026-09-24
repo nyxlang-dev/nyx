@@ -10,6 +10,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **NYX2010 también en `nyx check`** (fricción nyxerp `20260923-210010-team-3`): una llamada sin
+  calificar a una fn que existe en dos módulos importados salía recién en `nyx build` (en nyxerp, 3,5
+  minutos después de un `check` en verde). El checker ya detectaba la ambigüedad pero solo apagaba el
+  chequeo de firma. Resolver por aridad cuando difiere queda como decisión de diseño abierta.
+- **`json_parse` de un escape `\uXXXX` trapeaba en wasm** («unreachable»). Causa en codegen: un
+  argumento i64 no se truncaba al ancho de un parámetro `char`/i8/i16/i32; en nativo pasaba
+  desapercibido. `test-wasm-40`.
 - **`json_stringify` lineal** (fricción nyxerp `20260923-210010-team-2`): escribir un texto de 32 KB
   pasaba de 504 ms a 0,66 ms — antes crecía con el cuadrado del largo. Un solo `StringBuilder`
   recorre el árbol y los tramos sin escapes se copian de una vez.

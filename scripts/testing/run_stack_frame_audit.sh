@@ -39,12 +39,15 @@ cd "$ROOT" || exit 1
 #     cada copia en -O0. No es el camino de `a + b + …` (su techo no se movió) sino el de
 #     llamadas anidadas, y con SROA desaparece. La raíz es el arco `structs-byval`; mientras
 #     tanto, sumar un builtin en esta función cuesta eso por sitio de llamada.
+#   2026-09-23 call-arg-angosto: codegen_call_expr 472064 → 470256 (-1808, BAJA): la coerción
+#     del argumento al tipo del parámetro pasó a coerce_call_arg_to_param — dos sitios de
+#     llamada con ctx (fresh_temp + emit ×2) quedaron en uno.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14496
     [codegen_binop]=8544
     [codegen_binop_logico]=21680
-    [codegen_call_expr]=472064
+    [codegen_call_expr]=470256
     [codegen_method_call]=474912
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.

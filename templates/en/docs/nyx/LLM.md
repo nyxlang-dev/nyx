@@ -665,7 +665,8 @@ error, wrong function, blank screen). Now:
   resolves there first (a module's own fns see each other without
   qualifying).
 - An unqualified call ambiguous between two imported modules is an error
-  (**NYX2010**) naming both modules — qualify it or rename.
+  (**NYX2010**) naming both modules — qualify it or rename. `nyx check` reports it too (since
+  2026-09-23), not only `nyx build`.
 - Module fns are emitted as `<module_path>__<fn>` in the IR; the main file
   and the prelude keep bare names (single-file programs: zero change).
 - `nyx check` (and the checker inside `nyx build`) resolves the same way

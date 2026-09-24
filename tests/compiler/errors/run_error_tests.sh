@@ -2262,14 +2262,109 @@ mfa_dir=$(mktemp -d /tmp/mfa-XXXX)
 printf 'var g: int = 0\npub fn set(v: int) { g = v }\n' > "$mfa_dir/m_uno.nx"
 printf 'var h: int = 0\npub fn set(v: int) { h = v }\n' > "$mfa_dir/m_dos.nx"
 printf 'import "%s/m_uno"\nimport "%s/m_dos"\nfn main() -> int {\n    set(7)\n    return 0\n}\n' "$mfa_dir" "$mfa_dir" > "$mfa_dir/main.nx"
+# Desde 2026-09-23 el checker lo acusa primero (caso siguiente); con
+# NYX_SKIP_SEMANTIC=1 se sigue probando la red del codegen (resolve_module_fn).
 mfa_out=$(bash "$(pwd)/scripts/nyx" run "$mfa_dir/main.nx" 2>&1); mfa_rc=$?
+mfa_cg_out=$(NYX_SKIP_SEMANTIC=1 bash "$(pwd)/scripts/nyx" run "$mfa_dir/main.nx" 2>&1); mfa_cg_rc=$?
 rm -rf "$mfa_dir"
-if [ "$mfa_rc" -ne 0 ] && echo "$mfa_out" | grep -qF "NYX2010" && echo "$mfa_out" | grep -qF "AMBIGUA"; then
+if [ "$mfa_rc" -ne 0 ] && echo "$mfa_out" | grep -qF "NYX2010" && echo "$mfa_out" | grep -qF "AMBIGU" \
+   && [ "$mfa_cg_rc" -ne 0 ] && echo "$mfa_cg_out" | grep -qF "NYX2010" && echo "$mfa_cg_out" | grep -qF "AMBIGUA"; then
   printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
 else
-  printf "  ✗ %s (esperado rc!=0 con NYX2010; rc=%d)\n" "$name" "$mfa_rc"
-  echo "$mfa_out" | tail -3 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  printf "  ✗ %s (esperado rc!=0 con NYX2010 en checker y codegen; rc=%d codegen=%d)\n" "$name" "$mfa_rc" "$mfa_cg_rc"
+  echo "$mfa_out" | tail -3 | sed 's/^/      /'; echo "$mfa_cg_out" | tail -3 | sed 's/^/      codegen: /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
+
+name="module-fn-ambiguous-en-nyx-check"
+# Fricción nyxerp 20260923-210010-team-3: dos módulos exportan `vacio` con
+# distinta aridad y main llama `vacio(3)`. `nyx check` salía 0 y el NYX2010
+# aparecía recién en `nyx build` (minutos después en un proyecto grande): el
+# checker apagaba el chequeo de firma ante la ambigüedad en vez de acusarla.
+# Ahora semantic emite NYX2010 con el mismo criterio que el codegen
+# (resolve_module_fn). Se prueba el caso del reporte por `nyx check` y por
+# `nyx build`, más la llamada ambigua desde un TERCER módulo, y los controles
+# que NO pueden dar el error: la llamada calificada `dos.vacio(3)`, la llamada
+# desde el propio módulo (usar_uno → vacio de uno), un builtin homónimo
+# (string_to_int en los dos módulos: gana el builtin, como en el codegen), una
+# fn del principal homónima (gana la del principal) y una closure local.
+amc_root=$(mktemp -d /tmp/amc-XXXX)
+amc_mk() { # $1=nombre $2=main.nx (tras los imports)
+  mkdir -p "$amc_root/$1/src/a" "$amc_root/$1/src/b" "$amc_root/$1/src/c"
+  printf '[package]\nname = "%s"\nversion = "0.1.0"\n' "$1" > "$amc_root/$1/nyx.toml"
+  printf 'pub fn vacio() -> int { return 1 }\npub fn usar_uno() -> int { return vacio() }\npub fn string_to_int(s: String) -> int { return 7 }\n' > "$amc_root/$1/src/a/uno.nx"
+  printf 'pub fn vacio(x: int) -> int { return x + 1 }\npub fn string_to_int(s: String) -> int { return 8 }\n' > "$amc_root/$1/src/b/dos.nx"
+  printf 'pub fn g() -> int {\n    return vacio(4)\n}\n' > "$amc_root/$1/src/c/tres.nx"
+  printf 'import "src/a/uno"\nimport "src/b/dos"\n%b' "$2" > "$amc_root/$1/src/main.nx"
+}
+amc_check() { (cd "$amc_root/$1" && NYX_HOME="$amc_home" bash "$amc_home/scripts/nyx" check 2>&1); }
+amc_home=$(pwd)
+amc_mk reporte 'fn main() -> int {\n    println(int_to_string(usar_uno() + vacio(3)))\n    return 0\n}\n'
+amc_mk tercero 'import "src/c/tres"\nfn main() -> int {\n    println(int_to_string(g()))\n    return 0\n}\n'
+amc_mk control 'fn vacio2(x: int) -> int { return x }\nfn main() -> int {\n    let f = fn(x: int) -> int { return x * 10 }\n    println(int_to_string(usar_uno() + dos.vacio(3) + string_to_int("41") + f(1)))\n    return 0\n}\n'
+amc_mk principal 'fn vacio(x: int) -> int { return x * 100 }\nfn main() -> int {\n    println(int_to_string(vacio(3)))\n    return 0\n}\n'
+amc_r_out=$(amc_check reporte); amc_r_rc=$?
+amc_b_out=$(cd "$amc_root/reporte" && NYX_HOME="$amc_home" bash "$amc_home/scripts/nyx" build 2>&1); amc_b_rc=$?
+amc_t_out=$(amc_check tercero); amc_t_rc=$?
+amc_c_out=$(amc_check control); amc_c_rc=$?
+amc_cr_out=$(cd "$amc_root/control" && NYX_HOME="$amc_home" bash "$amc_home/scripts/nyx" run 2>&1); amc_cr_rc=$?
+amc_p_out=$(cd "$amc_root/principal" && NYX_HOME="$amc_home" bash "$amc_home/scripts/nyx" run 2>&1); amc_p_rc=$?
+rm -rf "$amc_root"
+amc_ok=1
+{ [ "$amc_r_rc" -ne 0 ] && echo "$amc_r_out" | grep -qF "NYX2010" \
+  && echo "$amc_r_out" | grep -qF "src/a/uno, src/b/dos" \
+  && echo "$amc_r_out" | grep -q "line 4\|línea 4"; } || amc_ok=0
+{ [ "$amc_b_rc" -ne 0 ] && echo "$amc_b_out" | grep -qF "NYX2010"; } || amc_ok=0
+{ [ "$amc_t_rc" -ne 0 ] && echo "$amc_t_out" | grep -qF "NYX2010" && echo "$amc_t_out" | grep -qF "'g'"; } || amc_ok=0
+{ [ "$amc_c_rc" -eq 0 ] && ! echo "$amc_c_out" | grep -qF "NYX2010"; } || amc_ok=0
+# 1 (usar_uno) + 4 (dos.vacio) + 41 (builtin string_to_int) + 10 (closure) = 56
+{ [ "$amc_cr_rc" -eq 0 ] && echo "$amc_cr_out" | grep -qx "56"; } || amc_ok=0
+{ [ "$amc_p_rc" -eq 0 ] && echo "$amc_p_out" | grep -qx "300"; } || amc_ok=0
+if [ "$amc_ok" -eq 1 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (check=%d build=%d tercero=%d control=%d/%d principal=%d)\n" "$name" \
+    "$amc_r_rc" "$amc_b_rc" "$amc_t_rc" "$amc_c_rc" "$amc_cr_rc" "$amc_p_rc"
+  echo "$amc_r_out"  | grep -v "^SYM:\|^DEF:" | tail -3 | sed 's/^/      check:     /'
+  echo "$amc_b_out"  | tail -2 | sed 's/^/      build:     /'
+  echo "$amc_c_out"  | grep -v "^SYM:\|^DEF:" | tail -2 | sed 's/^/      control:   /'
+  echo "$amc_cr_out" | tail -2 | sed 's/^/      control-run: /'
+  echo "$amc_p_out"  | tail -2 | sed 's/^/      principal: /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+name="call-arg-i64-a-param-angosto"
+# Hallazgo 2026-09-23 (test-wasm-40): `hex_digit_value(hx.charAt(i))` con
+# `fn hex_digit_value(c: char)` emitía `call @hex_digit_value(i64 %x)` contra
+# `define @hex_digit_value(i8 %c.param)`. En nativo pasa desapercibido; en wasm
+# la firma no coincide y la llamada es un trap («unreachable» en json_parse de
+# un "A"). El codegen ahora trunca el i64 al ancho del parámetro
+# (coerce_call_arg_to_param): se mira el IR de la llamada para char, i16 e i32,
+# y que el programa siga dando lo mismo en nativo.
+can_dir=$(mktemp -d /tmp/can-XXXX)
+printf 'fn c8(c: char) -> int { return c as int }\nfn c16(x: i16) -> int { return x as int }\nfn c32(x: u32) -> int { return x as int }\nfn main() -> int {\n    let s: String = "Az"\n    let n: int = 300\n    println(int_to_string(c8(s.charAt(1)) + c16(n) + c32(n * 2)))\n    return 0\n}\n' > "$can_dir/principal.nx"
+can_out=$(NYX_SRC="$can_dir/principal.nx" ./nyx_bootstrap 2>&1); can_rc=$?
+can_ok=1
+if [ "$can_rc" -ne 0 ] || [ ! -f "$can_dir/principal.ll" ]; then
+  can_ok=0
+else
+  grep -qE "call i64 @c8\(i8 " "$can_dir/principal.ll" || can_ok=0
+  grep -qE "call i64 @c16\(i16 " "$can_dir/principal.ll" || can_ok=0
+  grep -qE "call i64 @c32\(i32 " "$can_dir/principal.ll" || can_ok=0
+  grep -qE "call i64 @c(8|16|32)\(i64 " "$can_dir/principal.ll" && can_ok=0
+fi
+# 'z' = 122; 122 + 300 + 600 = 1022
+can_run=$(bash "$(pwd)/scripts/nyx" run "$can_dir/principal.nx" 2>&1); can_run_rc=$?
+{ [ "$can_run_rc" -eq 0 ] && echo "$can_run" | grep -qx "1022"; } || can_ok=0
+if [ "$can_ok" -eq 1 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (compile rc=%d, run rc=%d)\n" "$name" "$can_rc" "$can_run_rc"
+  grep -E "call i64 @c(8|16|32)\(" "$can_dir/principal.ll" 2>/dev/null | sed 's/^/      ir: /'
+  echo "$can_out" | tail -2 | sed 's/^/      /'; echo "$can_run" | tail -2 | sed 's/^/      run: /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+rm -rf "$can_dir"
 
 name="goroutine-stack-overflow-diagnosed"
 # S4 Track 5c inc.1 (2026-08-12): una recursión desbocada en una GOROUTINE
