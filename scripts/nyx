@@ -99,6 +99,45 @@ check_for_updates() {
     fi
 }
 
+# Firma de la stdlib instalada: cksum de todo lo que lee `nyx capabilities`
+# (std/*.nx + std/builtins.index) más VERSION. CAPABILITIES.md la lleva en su
+# cabecera (`<!-- nyx-stdlib: N -->`, la escribe el generador desde
+# NYX_CAPS_STAMP). Antes el self-heal miraba SOLO el número de versión: una
+# stdlib que crecía sin subir la versión (install-local diario) dejaba el índice
+# viejo y un equipo reimplementó SMTP porque std/smtp no aparecía (2026-09-24).
+_caps_stamp() {
+    cat "$NYX_HOME"/std/*.nx "$NYX_HOME/std/builtins.index" "$NYX_HOME/VERSION" 2>/dev/null \
+        | cksum | tr -s ' ' '-'
+}
+
+# Candado del toolchain (~/.nyx/.toolchain.lock, contrato en CLAUDE.md
+# §Sesiones paralelas regla 3): `make install-local` y `nyx update` lo toman
+# EXCLUSIVO; lo que compila contra el toolchain, COMPARTIDO. nyx build/test lo
+# toman por archivo desde nyx_build/nyx_test; este helper cubre lo que despacha
+# el wrapper directo (nyx check/vet/fmt, `nyx archivo.nx`) y el update, que
+# hasta 2026-09-24 reescribía binarios sin mirarlo (fricción de nyxerp).
+# Queda tomado en el fd 9 del shell: lo hereda el `exec` del binario, o se
+# suelta con `exec 9>&-`. Sin flock, o con NYX_HOME de solo lectura (nadie
+# puede instalar ahí), no hay candado y se sigue.
+# Uso: _toolchain_lock s|x "qué se está haciendo"
+_toolchain_lock() {
+    command -v flock >/dev/null 2>&1 || return 0
+    local lock="$NYX_HOME/.toolchain.lock" wait="${NYX_LOCK_WAIT:-600}"
+    { exec 9>"$lock"; } 2>/dev/null || return 0
+    flock -n "-$1" 9 && return 0
+    if [ "$1" = x ]; then
+        echo "nyx: esperando el candado del toolchain para $2: hay una compilación o instalación en curso en esta máquina (hasta ${wait}s)..." >&2
+    else
+        echo "nyx: esperando el candado del toolchain para $2: hay una instalación en curso en esta máquina (hasta ${wait}s)..." >&2
+    fi
+    flock "-$1" -w "$wait" 9 && return 0
+    echo "error: el candado del toolchain sigue tomado tras ${wait}s: $lock" >&2
+    exec 9>&-   # que fuser no liste a este mismo proceso
+    (command -v fuser >/dev/null 2>&1 && fuser -v "$lock" 2>&1 | sed 's/^/    /' >&2) || true
+    echo "  Espera a que termine, o sube el plazo con NYX_LOCK_WAIT=<segundos>. No se cambió nada." >&2
+    exit 1
+}
+
 # Run update check (skips if checked in last 24h)
 check_for_updates
 
@@ -188,6 +227,7 @@ case "${1:-}" in
         echo ""
         echo "  update        Update Nyx to the latest version (+ what's new)"
         echo "  update --version <rev>   Instalar una revisión concreta (tag, sha o rama)"
+        echo "  update --check       Only report whether a newer version exists (changes nothing)"
         echo "  update --sync-docs   Refresh AI context (AGENTS.md + docs/nyx/) in this project"
         echo "  report [f.md] Send a friction/bug report to the Nyx team"
         echo "  uninstall     Remove Nyx from this system"
@@ -381,13 +421,19 @@ case "${1:-}" in
                 [ -f "$tpl" ] || return 0
                 local want blk
                 want="$(mktemp)"; blk="$(mktemp)"
-                if [ -f AGENTS.md ] && grep -q '<!-- proyecto:inicio -->' AGENTS.md && grep -q '<!-- proyecto:fin -->' AGENTS.md; then
-                    awk '/<!-- proyecto:inicio -->/{f=1} f{print} /<!-- proyecto:fin -->/{f=0}' AGENTS.md > "$blk"
+                # Los marcadores cuentan SOLO en una línea propia: la plantilla los
+                # CITA dentro de una oración para explicarlos, y con un match suelto
+                # esa prosa pasaba por «bloque del proyecto» — se agregaba al final y
+                # la segunda corrida volvía a reescribir AGENTS.md (no idempotente).
+                local ini='^[[:space:]]*<!-- proyecto:inicio -->[[:space:]]*$'
+                local fin='^[[:space:]]*<!-- proyecto:fin -->[[:space:]]*$'
+                if [ -f AGENTS.md ] && grep -qE "$ini" AGENTS.md && grep -qE "$fin" AGENTS.md; then
+                    awk -v ini="$ini" -v fin="$fin" '$0 ~ ini {f=1} f{print} $0 ~ fin {f=0}' AGENTS.md > "$blk"
                 fi
-                if [ -s "$blk" ] && grep -q '<!-- proyecto:inicio -->' "$tpl"; then
-                    awk -v blk="$blk" '
-                        /<!-- proyecto:inicio -->/ { while ((getline l < blk) > 0) print l; skip=1; next }
-                        skip && /<!-- proyecto:fin -->/ { skip=0; next }
+                if [ -s "$blk" ] && grep -qE "$ini" "$tpl"; then
+                    awk -v blk="$blk" -v ini="$ini" -v fin="$fin" '
+                        $0 ~ ini { while ((getline l < blk) > 0) print l; skip=1; next }
+                        skip && $0 ~ fin { skip=0; next }
                         !skip { print }' "$tpl" > "$want"
                 else
                     cp "$tpl" "$want"
@@ -412,7 +458,7 @@ case "${1:-}" in
             # CAPABILITIES.md: se GENERA de la stdlib instalada (no es template).
             _NB="$NYX_HOME/nyx_build"; [ -x "$_NB" ] || _NB="$NYX_HOME/bin/nyx_build"
             if [ -x "$_NB" ]; then
-                NYX_HOME="$NYX_HOME" "$_NB" capabilities CAPABILITIES.md >/dev/null 2>&1 \
+                NYX_CAPS_STAMP="$(_caps_stamp)" NYX_HOME="$NYX_HOME" "$_NB" capabilities CAPABILITIES.md >/dev/null 2>&1 \
                     && synced="$synced CAPABILITIES.md(generado)"
             fi
             ver=$(cat "$NYX_HOME/VERSION" 2>/dev/null || echo "?")
@@ -421,6 +467,59 @@ case "${1:-}" in
             exit 0
         fi
 
+        # ── Opciones que NUNCA actualizan (fricción de nyxerp, 2026-09-24):
+        # `nyx update --help` actualizaba DE VERDAD —cualquier argumento que no
+        # fuera --sync-docs/--version caía a la actualización— y le cambió el
+        # toolchain a una suite de otro equipo a mitad de corrida. Ahora solo
+        # actualizan `nyx update` a secas y `--version <rev>`; todo lo demás
+        # es ayuda, consulta o error, sin tocar la instalación.
+        case "${2:-}" in
+            ""|--version) ;;
+            -h|--help|help)
+                echo "Usage: nyx update [--version <rev> | --check | --sync-docs]"
+                echo ""
+                echo "  (no args)          Update Nyx to the latest version (+ what's new)"
+                echo "  --version <rev>    Install a specific revision (tag, sha or branch)"
+                echo "  --check            Only report whether a newer version exists (changes nothing)"
+                echo "  --sync-docs        Refresh AI context (AGENTS.md + docs/nyx/) in this project"
+                echo "  -h, --help         Show this help (changes nothing)"
+                exit 0
+                ;;
+            --check)
+                # Solo consulta: `git fetch` mueve refs remotas en el .git del
+                # toolchain, nunca el árbol instalado ni los binarios.
+                if [ ! -d "$NYX_HOME/.git" ]; then
+                    echo "error: $NYX_HOME is not a git repo — can't check for updates" >&2
+                    exit 1
+                fi
+                if ! git -C "$NYX_HOME" fetch --quiet origin 2>/dev/null; then
+                    echo "error: git fetch failed (no network?) — nothing was changed" >&2
+                    exit 1
+                fi
+                _cur_ver=$(cat "$NYX_HOME/VERSION" 2>/dev/null | tr -d '[:space:]')
+                _new_ver=$(git -C "$NYX_HOME" show origin/main:VERSION 2>/dev/null | tr -d '[:space:]')
+                _local=$(git -C "$NYX_HOME" rev-parse --short HEAD 2>/dev/null)
+                _remote=$(git -C "$NYX_HOME" rev-parse --short origin/main 2>/dev/null)
+                if [ "$_local" = "$_remote" ]; then
+                    echo "nyx is up to date: v${_cur_ver:-?} ($_local)"
+                else
+                    _behind=$(git -C "$NYX_HOME" rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+                    echo "update available: v${_cur_ver:-?} ($_local) -> v${_new_ver:-?} ($_remote), $_behind commit(s) behind"
+                    echo "  run 'nyx update' to install it"
+                fi
+                exit 0
+                ;;
+            *)
+                echo "error: unknown option for 'nyx update': ${2}" >&2
+                echo "  nothing was changed — see 'nyx update --help'" >&2
+                exit 2
+                ;;
+        esac
+
+        # EXCLUSIVO antes de tocar nada: el update reescribe el compilador y la
+        # stdlib en su lugar, y una suite ajena a mitad de corrida mezclaría
+        # dos versiones (lo mismo que ya protegía install-local).
+        _toolchain_lock x "actualizar"
         printf "\n  \033[1mUpdating Nyx\033[0m\n\n"
         # El proyecto desde el que se llamó: `cd "$NYX_HOME"` lo pierde, y al
         # final hay que volver para regenerar la evidencia del andamiaje SDD.
@@ -552,7 +651,7 @@ case "${1:-}" in
         [ -x "$_bin" ] || _bin="$NYX_HOME/bin/$_bin_name"
         if [ ! -x "$_bin" ]; then
             echo "error: $_bin_name no esta instalado en $NYX_HOME" >&2
-            echo "  Arreglalo con:  nyx update" >&2
+            echo "  Arréglalo con:  nyx update" >&2
             exit 1
         fi
         shift
@@ -586,6 +685,7 @@ case "${1:-}" in
                 _pd="$(dirname "$_pd")"
             done
         fi
+        _toolchain_lock s "nyx $_sub"
         NYX_SRC="$_target" NYX_HOME="$NYX_HOME" exec "$_bin"
         ;;
 esac
@@ -648,17 +748,18 @@ case "${1:-}" in
 esac
 
 # Auto self-heal de CAPABILITIES.md: en un proyecto (nyx.toml), si el índice
-# falta o quedó de una versión vieja del toolchain, regenerarlo (barato, sin red).
+# falta o su firma de stdlib (_caps_stamp) no es la del toolchain instalado,
+# regenerarlo (barato, sin red: ~30 ms la firma, ~0.2 s regenerar).
 # Así la LLM nunca lee un índice desactualizado y nadie corre comandos a mano.
 _selfheal_capabilities() {
     [ -f nyx.toml ] || return 0
     local nb="$NYX_HOME/nyx_build"
     [ -x "$nb" ] || nb="$NYX_HOME/bin/nyx_build"
     [ -x "$nb" ] || return 0
-    local curver
-    curver="$(cat "$NYX_HOME/VERSION" 2>/dev/null | tr -d '[:space:]')"
-    if [ ! -f CAPABILITIES.md ] || { [ -n "$curver" ] && ! grep -q "nyx-version: $curver" CAPABILITIES.md 2>/dev/null; }; then
-        NYX_HOME="$NYX_HOME" "$nb" capabilities CAPABILITIES.md >/dev/null 2>&1 || true
+    local stamp
+    stamp="$(_caps_stamp)"
+    if [ ! -f CAPABILITIES.md ] || ! grep -qF "<!-- nyx-stdlib: $stamp -->" CAPABILITIES.md 2>/dev/null; then
+        NYX_CAPS_STAMP="$stamp" NYX_HOME="$NYX_HOME" "$nb" capabilities CAPABILITIES.md >/dev/null 2>&1 || true
     fi
 }
 
@@ -690,6 +791,9 @@ case "${1:-}" in
         fi
         export NYX_HOME
         [ "$1" = "build" ] && { _selfheal_capabilities; _warn_seed_drift; }
+        # `nyx capabilities` a mano también sella la firma: si no, el próximo
+        # build lo regeneraría una vez de más.
+        [ "$1" = "capabilities" ] && export NYX_CAPS_STAMP="$(_caps_stamp)"
         exec "$NYX_BUILD" "$@"
         ;;
     run)
@@ -780,11 +884,15 @@ fi
 # causa conocida en vez de dejar solo el «Segmentation fault» del shell.
 BUILD_LOG="$TMPDIR_NYX/build.log"
 _nyx_rc=0
+# Candado compartido SOLO mientras se compila y enlaza: el programa del usuario
+# puede ser un servidor que no termina nunca, y no debe trabar las instalaciones.
+_toolchain_lock s "compilar $INPUT_FILE"
 (cd "$NYX_HOME" && \
   { _c=$(ulimit -s 2>/dev/null) || _c=unlimited; \
     if [ "$_c" != unlimited ] && [ "$_c" -lt 65536 ] 2>/dev/null; then ulimit -s 65536 2>/dev/null || true; fi; } && \
   NYX_SRC="$TMPDIR_NYX/script.nx" "$NYX_BOOTSTRAP" && \
   clang "$TMPDIR_NYX/script.ll" $RUNTIME_SRCS $LIBS -o "$TMPDIR_NYX/prog") > "$BUILD_LOG" 2>&1 || _nyx_rc=$?
+exec 9>&-
 if [ "$_nyx_rc" -ne 0 ]; then
     cat "$BUILD_LOG" >&2
     echo "error: compilation failed for $INPUT_FILE" >&2

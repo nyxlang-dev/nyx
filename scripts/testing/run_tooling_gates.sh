@@ -526,7 +526,9 @@ chmod +x "$FAKEBIN/clang"
 run_test_spy() {  # \$1=dir, resto=args → línea(s) de clang en \$GATE_TMP/clang-calls.log
     local dir="$1"; shift
     rm -f "$GATE_TMP/clang-calls.log"
-    ( cd "$dir" && PATH="$FAKEBIN:$PATH" NYX_HOME="$ROOT" timeout 120 "$ROOT/nyx_test" "$@" ) \
+    # XDG_CACHE_HOME propio: el caché automático del runtime (rt_cache_sh) vive
+    # ahí, y un gate no puede depender del ~/.cache de quien lo corre.
+    ( cd "$dir" && PATH="$FAKEBIN:$PATH" NYX_HOME="$ROOT" XDG_CACHE_HOME="$GATE_TMP/xdg" timeout 120 "$ROOT/nyx_test" "$@" ) \
         > "$GATE_TMP/spy.out" 2>&1
     SPY_RC=$?
     touch "$GATE_TMP/clang-calls.log"
@@ -603,12 +605,70 @@ fi
 # escrito dejaría fuera medio runtime y el link fallaría con símbolos faltantes
 # en vez de decir qué pasó. Con ella, se cae de vuelta a las fuentes en silencio,
 # que es el comportamiento de siempre.
-NYX_RT_ARCHIVE="$GATE_TMP/no-existe-jamas.a" run_test_spy "$GATE_TMP/sano"
+# Con el caché automático apagado (NYX_NO_RT_CACHE=1): encendido, la ruta
+# inválida cae al .a del caché, que también trae el runtime entero (Check O).
+NYX_NO_RT_CACHE=1 NYX_RT_ARCHIVE="$GATE_TMP/no-existe-jamas.a" run_test_spy "$GATE_TMP/sano"
 if grep -q '^CLANGCALL:.*runtime/runtime\.c' "$GATE_TMP/clang-calls.log"; then
     ok "test-rt-archive-inexistente — una ruta inválida cae a las fuentes, no a un link roto"
 else
     bad "test-rt-archive-inexistente — no volvió a compilar las fuentes del runtime" "test-rt-archive-inexistente"
     grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
+fi
+
+# ── Check O: runtime precompilado AUTOMÁTICO (rt_cache_sh) ───
+# Fricción nyxerp (2026-09-24): NYX_RT_ARCHIVE funcionaba pero había que
+# conocerlo y armar el .a a mano. Ahora nyx test/build lo arman solos en
+# $XDG_CACHE_HOME/nyx/rt/<clave>/. Tres afirmaciones:
+#   1. frío: compila las unidades del runtime (-c) y enlaza el .a del caché,
+#      y la prueba PASA (el .a es un runtime real, no uno vacío);
+#   2. caliente: ni una sola compilación de un .c del runtime, mismo .a, PASA;
+#   3. la clave depende del CONTENIDO: un runtime con un .c distinto (copia
+#      del toolchain con un comentario agregado) arma OTRO .a — sin esto, un
+#      install nuevo del runtime enlazaría el .a viejo en silencio.
+# Y nyx build usa el mismo caché (línea de enlace con el .a).
+rm -rf "$GATE_TMP/xdg"
+run_test_spy "$GATE_TMP/sano"
+if grep -q '^CLANGCALL:.* -c .*runtime/runtime\.c' "$GATE_TMP/clang-calls.log" \
+   && grep -q "^CLANGCALL:.*$GATE_TMP/xdg/nyx/rt/[0-9a-f]*/libnyxrt\.a" "$GATE_TMP/clang-calls.log" \
+   && [ "$SPY_RC" = "0" ]; then
+    ok "rt-cache-frio — sin NYX_RT_ARCHIVE, nyx test arma el .a del runtime una vez y la prueba pasa"
+else
+    bad "rt-cache-frio — no armó/enlazó el runtime del caché (rc=$SPY_RC)" "rt-cache-frio"
+    grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | tail -2 | sed 's/^/      /'
+fi
+run_test_spy "$GATE_TMP/sano"
+if ! grep -q '^CLANGCALL:.*runtime/.*\.c' "$GATE_TMP/clang-calls.log" \
+   && grep -q "^CLANGCALL:.*$GATE_TMP/xdg/nyx/rt/[0-9a-f]*/libnyxrt\.a" "$GATE_TMP/clang-calls.log" \
+   && [ "$SPY_RC" = "0" ]; then
+    ok "rt-cache-caliente — la segunda corrida no compila ningún .c del runtime"
+else
+    bad "rt-cache-caliente — recompiló el runtime o no usó el caché (rc=$SPY_RC)" "rt-cache-caliente"
+    grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
+fi
+RH="$GATE_TMP/rt_home"; mkdir -p "$RH"
+for f in "$ROOT"/*; do [ "$(basename "$f")" = runtime ] || ln -s "$f" "$RH/$(basename "$f")"; done
+cp -r "$ROOT/runtime" "$RH/runtime"
+echo "/* gate rt-cache-clave */" >> "$RH/runtime/strings.c"
+n_antes=$(ls "$GATE_TMP/xdg/nyx/rt" 2>/dev/null | wc -l)
+( cd "$GATE_TMP/sano" && NYX_HOME="$RH" XDG_CACHE_HOME="$GATE_TMP/xdg" timeout 120 "$ROOT/nyx_test" ) > "$GATE_TMP/spy.out" 2>&1
+rc_rh=$?
+n_despues=$(ls "$GATE_TMP/xdg/nyx/rt" 2>/dev/null | wc -l)
+if [ "$n_despues" -eq $((n_antes + 1)) ] && [ "$rc_rh" = "0" ]; then
+    ok "rt-cache-clave — un runtime con otro contenido arma otro .a (nunca enlaza uno viejo)"
+else
+    bad "rt-cache-clave — cambió un .c del runtime y el caché no cambió de clave ($n_antes -> $n_despues, rc=$rc_rh)" "rt-cache-clave"
+fi
+BP="$GATE_TMP/rt_build"; mkdir -p "$BP/src"
+printf '[package]\nname = "rtb"\nversion = "0.1.0"\n' > "$BP/nyx.toml"
+echo 'fn main() { print("rt ok") }' > "$BP/src/main.nx"
+rm -f "$GATE_TMP/clang-calls.log"
+( cd "$BP" && PATH="$FAKEBIN:$PATH" NYX_HOME="$ROOT" XDG_CACHE_HOME="$GATE_TMP/xdg" timeout 120 "$ROOT/nyx_build" build ) > "$GATE_TMP/spy.out" 2>&1
+if grep -q "^CLANGCALL:.*$GATE_TMP/xdg/nyx/rt/[0-9a-f]*/libnyxrt\.a" "$GATE_TMP/clang-calls.log" 2>/dev/null \
+   && [ "$("$BP/rtb" 2>/dev/null)" = "rt ok" ]; then
+    ok "rt-cache-build — nyx build enlaza el runtime del caché y el binario corre"
+else
+    bad "rt-cache-build — nyx build no usó el caché o el binario no corre" "rt-cache-build"
+    tail -3 "$GATE_TMP/spy.out" | sed 's/^/      /'
 fi
 
 # ── Check N: el orden de ejecución es determinista ───────────

@@ -145,14 +145,25 @@ blame the wrong part of your build:
   for memory, not speed: one optimized test compile peaked at ~1.35 GB on a
   project that inlines a large import closure, which is what stops a small
   machine from compiling two at once.
-- **`NYX_RT_ARCHIVE=/abs/path/libnyxrt.a` skips recompiling the C runtime.**
-  Without it, every single test file recompiles all 24 runtime units — identical
-  output, every time. Build the archive once (compile the runtime `.c` files to
-  objects, `ar rcs` them together) and each file only links: measured 8.9s → 1.1s
-  on a three-file suite. A relative path is resolved against your project; a path
-  that does not exist falls back to the sources instead of failing the link.
-  `nyx build` honors it too (added alongside `[lib] modules`, previously `nyx
-  test`-only).
+- **The C runtime is precompiled automatically.** `nyx test` and `nyx build`
+  build `libnyxrt.a` once into `$XDG_CACHE_HOME/nyx/rt/<key>/` (default
+  `~/.cache/nyx/rt/`) and then only link it: measured `nyx build` 9.9s → 1.0s and
+  one test file 9.7s → 1.2s. The key hashes the runtime sources' CONTENT, the
+  clang flags and `clang --version`, so a new toolchain never links a stale
+  archive. Any failure (no writable cache) silently falls back to compiling the
+  sources. `NYX_NO_RT_CACHE=1` turns it off; `--coverage` never uses it.
+  `NYX_RT_ARCHIVE=/abs/path/libnyxrt.a` still wins if set (a relative path is
+  resolved against your project; a path that does not exist falls back).
+- **`nyx test` prints the compiler it tested with** (`compiler: nyx vX
+  (nyx_bootstrap <sha256[:12]>)`) and warns at the end if the toolchain changed
+  during the run — an install can land between two test files, and such a run
+  mixed two compilers. The exit code does not change.
+- **Toolchain lock.** `nyx build`/`test`/`check`/`vet`/`fmt` and `nyx file.nx`
+  take `~/.nyx/.toolchain.lock` shared while they compile; `nyx update` and
+  `make install-local` take it exclusive. If it must wait it says so; after
+  `NYX_LOCK_WAIT` seconds (600) it fails naming the holder and changes nothing.
+  `nyx update --help`/`-h` and `--check` never update (an unknown option is an
+  error, rc 2).
 
 `nyx test --coverage` adds, after the summary, the **functions of `src/` that no
 test called**, per file, as `src/file.nx:line name` (the line of the `fn`), and
@@ -2360,6 +2371,54 @@ match smtp_connect_plain("smtp.provider.com", 587, "mine.com") {
 
 Recipe: `examples/by-example/113-smtp.nx`.
 
+### std/barcode — QR, Code 128 and EAN-13 (pure Nyx, native and wasm)
+
+Returns **data, not drawings**: the module matrix of a QR and the bar/space
+widths of a linear code. You draw it (SVG `<rect>`s, a printer raster). No C,
+no float, no I/O — the same bytes in native and `wasm32-wasi`.
+
+```nyx
+import "std/barcode"
+
+match qr_matrix("C1-000123", QrEcc.M) {          // QrEcc.L / M / Q / H
+    Result.Ok(m) => {
+        // m: Array of rows; each row an Array of int, 1 = dark, 0 = light.
+        // Side = 17 + 4*version (21 for version 1). NO quiet zone: leave 4
+        // light modules around it when drawing.
+        let row0: Array = m[0]
+        let first: int = row0[0]
+    }
+    Result.Err(e) => { ... }                      // e.kind == "invalid"
+}
+match code128_widths("C1-000123") {              // also: code128_symbols(data)
+    Result.Ok(w) => { ... }   // widths in MODULES, alternating, starting with a BAR
+    Result.Err(e) => { ... }
+}
+match ean13_widths("590123412345") { ... }       // 12 digits: computes the check digit; 13: validates it
+```
+
+**Limits and things that will bite you:**
+
+- **QR scope (phase 1)**: versions 1-10 only, one segment in the most compact
+  mode that accepts the WHOLE text (numeric → alphanumeric `0-9A-Z $%*+-./:` →
+  byte). No Kanji, no mixed segments. Too long for version 10 at the requested
+  level is `Err(invalid)` — at M that is 213 bytes / 311 alphanumeric / 513
+  digits; at L, 271 / 395 / 652. Version and mask are chosen for you.
+- **Byte mode counts BYTES**: `"café"` is 5 bytes of UTF-8 (strings are bytes).
+  That is what readers expect; do not pre-convert.
+- **Code 128 uses sets B and C only**, chosen automatically (C for runs of
+  digits where it saves space). A byte outside ASCII 32-127 (a control char, an
+  accented letter) and the empty string are `Err(invalid)` — set A is not
+  implemented.
+- **EAN-13 never "fixes" input**: 13 digits with a wrong check digit is
+  `Err(invalid)`, not silently corrected.
+- **Quiet zones are the caller's job**: ≥10 modules each side for Code 128,
+  11 left / 7 right for EAN-13, 4 around a QR. Without them readers fail.
+- The chosen QR mask may differ from another generator's (penalty-rule reading
+  details); any of the 8 is valid — the reader takes it from the format info.
+
+Recipe: `examples/by-example/116-barcode-qr.nx`.
+
 ### RESP protocol (used by nyx-kv and RESP-speaking servers)
 
 `std/resp` is the shared, binary-safe RESP2 frame reader used to BUILD a
@@ -2589,6 +2648,60 @@ async fn save_catalog(json: String) -> bool {
   each returning a Promise — see `tests/wasm/test-wasm-35-idb.imports.mjs`. Out of scope (v1):
   explicit multi-op transactions, incremental range scans, secondary indexes, binary values (`Blob`/`ArrayBuffer` —
   text only, same as `ls_get`/`ls_set`), more than one physical database, configurable quota.
+
+**`std/browser_serial`: Web Serial with await** (arco browser-serial, 2026-09-24, pedido de nyxerp,
+prioridad ALTA — a POS PWA printing ESC/POS tickets to a thermal printer, and talking to a fiscal
+printer over a serial protocol, without the system print dialog). Same separate-module shape as
+`browser_await`/`browser_idb`:
+
+```nyx
+import "std/browser_serial"
+import "std/error"
+
+async fn print_ticket(bytes: Array) -> Result<int, Error> {
+    let p = await serial_request_port()?             // browser permission dialog, once
+    let _o = await serial_open(p, 9600)?
+    let n = await serial_write(p, bytes)?             // ESC/POS: text, GS V (cut), ESC p (drawer)
+    let _c = await serial_close(p)?
+    return Result.Ok(n)
+}
+```
+
+- API: `serial_request_port() -> Result<SerialPort, Error>` (`navigator.serial.requestPort()` —
+  triggers the permission dialog the first time), `serial_authorized_ports() -> Result<Array,
+  Error>` (`navigator.serial.getPorts()` — already-authorized ports, no dialog, `Array` of `int`
+  ids), `serial_open(p, baud) -> Result<int, Error>` (8N1), `serial_open_with(p, baud, data_bits,
+  stop_bits, parity)` (`parity`: `"none"|"even"|"odd"`, passed straight through to
+  `SerialOptions.parity`), `serial_write(p, datos) -> Result<int, Error>` (`Ok` = bytes
+  written), `serial_read(p, max_bytes, timeout_ms) -> Result<Array, Error>`, `serial_close(p) ->
+  Result<int, Error>` (`Ok(0)`, idempotent).
+- **Bytes cross as `Array<int>` (0-255), never `String`.** A `String` round-trips the shim through
+  TextEncoder/TextDecoder (UTF-8): a raw byte that isn't valid UTF-8 gets silently replaced
+  (U+FFFD) or rewritten on re-encode — exactly the data ESC/POS commands and a fiscal printer's
+  protocol need to survive intact. `idb` uses `String` because its values are always text (JSON);
+  here the value is binary by contract.
+- **`serial_read` returns whatever arrived by the deadline, not just "all or nothing".** If at
+  least one byte arrived before `timeout_ms` elapses, `Ok` with what's there (may be shorter than
+  `max_bytes` — a short fiscal-printer reply is still a valid reply). Only a deadline with ZERO
+  bytes is `Err(kind: "timeout")`. `timeout_ms <= 0` waits without a deadline until `max_bytes` is
+  collected.
+- Kinds (closed vocabulary, `std/error.nx`): `"not_found"` (unknown port id, or the permission
+  dialog was cancelled), `"permission"` (`SecurityError` — no HTTPS/localhost, or an iframe without
+  permission), `"connection"` (`NetworkError` — device disconnected or a call failed mid-flight),
+  `"invalid"` (opening an already-open port, bad open options), `"timeout"` (see above), `"io"` —
+  **including "Web Serial not supported"** (Firefox, Safari, or a non-HTTPS page where
+  `navigator.serial` doesn't exist), same precedent as `browser_idb`'s `"io"` for "IndexedDB
+  disabled": an absent browser capability, not a single failed operation. A program that gets
+  `"io"` from `serial_request_port` knows to fall back to system printing, not retry.
+- Same **one suspended stack at a time** contract as `browser_await`/`browser_idb` (D-3).
+- Testing without hardware: `browserBindings({ serial: {...} })` takes an injectable mock with
+  `requestPort()`/`getPorts()` resolving to port objects that each expose
+  `open(opts)`/`write(bytes)`/`read(maxBytes, timeoutMs)`/`close()` (all returning Promises) — see
+  `tests/wasm/test-wasm-41-serial.imports.mjs`.
+- **WebUSB is out of scope for v1 (phase 2).** `navigator.usb` is a different API shape
+  (`transferOut`/`transferIn` over the endpoints of a claimed interface, not a byte stream) — it
+  doesn't fall out of this module as a natural extension; it would need its own low-level wrapper
+  and its own injectable mock.
 
 **Toolchain** (no wasi-sdk, ~700MB): system clang + Debian `wasi-libc` +
 `libclang-rt-19-dev-wasm32` + `lld-19` (`--sysroot=/usr`) + `wasmtime` (release

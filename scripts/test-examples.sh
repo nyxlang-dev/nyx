@@ -136,7 +136,7 @@ correr_ejemplo() {
     # directorio del repo, así que una receta nombra su recurso por su ruta
     # real; para las demás es inocuo.
     export NYX_PROJECT_DIR="$PWD"
-    if grep -qE 'extern "js"|import "std/(browser|browser_await|browser_idb|dom)"' "$nx_file"; then
+    if grep -qE 'extern "js"|import "std/(browser|browser_await|browser_idb|browser_serial|dom)"' "$nx_file"; then
         correr_ejemplo_wasm "$name"
         return $?
     fi

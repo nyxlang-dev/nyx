@@ -1,0 +1,31 @@
+ok Anexo I: 01234567 1-M, 26 palabras exactas
+ok HELLO WORLD 1-M y 1-Q: palabras exactas
+ok modos: numérico/alfanumérico/byte y los 4 niveles
+ok bordes de capacidad de 1-M
+ok versiones 5-10: bloques, entrelazado e información de versión
+ok barrido de largos en los 4 niveles
+ok errores: fuera de la versión 10 es invalid
+#######.##.#..#######
+#.....#...#...#.....#
+#.###.#..##.#.#.###.#
+#.###.#.##.##.#.###.#
+#.###.#.##..#.#.###.#
+#.....#.####..#.....#
+#######.#.#.#.#######
+........#####........
+#...#.######.#####..#
+.###.#.#.#.##....#..#
+#..#..#...##..#######
+........##...####..#.
+#.#.####..#.###....##
+........###.###.#..#.
+#######.##..##..###.#
+#.....#...###..###...
+#.###.#.#..#..#.#.#.#
+#.###.#..####..##.###
+#.###.#..###..#.##...
+#.....#..#...##.##..#
+#######.#...###...###
+huella 5-Q: 75090367
+huella 7-H: 443554700
+huella 10-L: 438321229

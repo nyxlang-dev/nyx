@@ -1,0 +1,137 @@
+// Nyx by Example: el QR y el código de barras del número de una venta.
+//
+// El caso real: un punto de venta imprime en el ticket el número de la venta
+// para leerlo con un lector al devolver o reimprimir. El mismo programa corre en
+// el servidor y compilado a wasm32-wasi en la caja, sin conexión — por eso
+// std/barcode es Nyx puro, sin C.
+//
+// std/barcode devuelve DATOS, no dibujos:
+//   - qr_matrix     → la matriz de módulos (Array de filas; 1 oscuro, 0 claro);
+//   - code128_widths → anchos alternados barra/espacio en módulos;
+//   - ean13_widths   → lo mismo para el código de un producto.
+// Cada programa lo pinta como necesite. Esta receta muestra tres formas: texto
+// en la terminal, un SVG para un ticket HTML, y la cuenta de una barra en puntos
+// de impresora.
+
+import "std/barcode"
+import "std/error"
+
+// El QR como texto: dos caracteres por módulo para que salga cuadrado, y la zona
+// de silencio de 4 módulos claros alrededor, que el lector NECESITA (la matriz
+// no la trae: el margen es cosa del que dibuja).
+fn qr_as_text(m: Array) -> String {
+    let quiet: int = 4
+    let side: int = m.length() + 2 * quiet
+    var sb: StringBuilder = StringBuilder.new()
+    var r: int = 0 - quiet
+    while r < m.length() + quiet {
+        var c: int = 0 - quiet
+        while c < m.length() + quiet {
+            var dark: bool = false
+            if r >= 0 and r < m.length() and c >= 0 and c < m.length() {
+                let row: Array = m[r]
+                let v: int = row[c]
+                dark = v == 1
+            }
+            if dark { sb.append("██") } else { sb.append("  ") }
+            c = c + 1
+        }
+        sb.append("\n")
+        r = r + 1
+    }
+    return sb.to_string()
+}
+
+// El Code 128 como SVG: un <rect> por barra, en unidades de módulo; el ancho real
+// lo pone la hoja de estilos. Los anchos empiezan siempre en barra, así que las
+// posiciones pares son barras y las impares espacios.
+fn code128_svg(widths: Array, alto: int) -> String {
+    let quiet: int = 10
+    var sb: StringBuilder = StringBuilder.new()
+    var x: int = quiet
+    var i: int = 0
+    while i < widths.length() {
+        let w: int = widths[i]
+        if i % 2 == 0 {
+            sb.append("<rect x=\"" + int_to_string(x) + "\" width=\"" + int_to_string(w) + "\" height=\"" + int_to_string(alto) + "\"/>")
+        }
+        x = x + w
+        i = i + 1
+    }
+    let total: int = x + quiet
+    return "<svg viewBox=\"0 0 " + int_to_string(total) + " " + int_to_string(alto) + "\">" + sb.to_string() + "</svg>"
+}
+
+fn join(widths: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < widths.length() {
+        let w: int = widths[i]
+        if i > 0 { sb.append(" ") }
+        sb.append(int_to_string(w))
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    let venta: String = "C1-000123"
+
+    // ── 1. QR ────────────────────────────────────────────────────────────
+    // QrEcc.M recupera ~15% de módulos dañados; H (~30%) para papel térmico que
+    // se borra. Versión y máscara las elige el módulo.
+    match qr_matrix(venta, QrEcc.M) {
+        Result.Ok(m) => {
+            print("QR de " + venta + ": " + int_to_string(m.length()) + "x" + int_to_string(m.length()) + " módulos (versión " + int_to_string((m.length() - 17) / 4) + ")")
+            print_no_newline(qr_as_text(m))
+        }
+        Result.Err(e) => {
+            print("no se pudo: " + e.msg)
+            return 1
+        }
+    }
+
+    // Lo que no entra en la versión 10 es un Err, no un QR ilegible.
+    match qr_matrix("x".repeat(400), QrEcc.M) {
+        Result.Ok(m) => { print("inesperado: entró") }
+        Result.Err(e) => { print("400 bytes: " + e.kind + " — " + e.msg) }
+    }
+
+    // ── 2. Code 128 ──────────────────────────────────────────────────────
+    // El juego (B para letras, C para pares de dígitos) se elige solo: «C1-» va
+    // en B y «000123» en C, que ocupa la mitad.
+    match code128_widths(venta) {
+        Result.Ok(w) => {
+            print("Code 128 de " + venta + ": " + int_to_string(w.length()) + " anchos")
+            print(join(w))
+            // En una impresora térmica de 203 ppp, un módulo de 2 puntos da una
+            // barra de ~0,25 mm: el ancho de cada barra es módulos * 2 puntos.
+            var modulos: int = 0
+            var i: int = 0
+            while i < w.length() {
+                let x: int = w[i]
+                modulos = modulos + x
+                i = i + 1
+            }
+            print("ancho total: " + int_to_string(modulos) + " módulos = " + int_to_string(modulos * 2) + " puntos a 2 puntos por módulo")
+            let svg: String = code128_svg(w, 40)
+            print("SVG: " + svg.substring(0, 60) + "...")
+        }
+        Result.Err(e) => {
+            print("no se pudo: " + e.msg)
+            return 1
+        }
+    }
+
+    // ── 3. EAN-13 ────────────────────────────────────────────────────────
+    // Con 12 dígitos calcula el de control; con 13 lo valida.
+    match ean13_widths("590123412345") {
+        Result.Ok(w) => { print("EAN-13 5901234123457: " + int_to_string(w.length()) + " anchos, 95 módulos") }
+        Result.Err(e) => { print("no se pudo: " + e.msg) }
+    }
+    match ean13_widths("5901234123458") {
+        Result.Ok(w) => { print("inesperado: aceptó un control equivocado") }
+        Result.Err(e) => { print("control equivocado: " + e.msg) }
+    }
+    return 0
+}

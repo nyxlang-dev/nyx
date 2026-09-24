@@ -1,0 +1,217 @@
+// test-437 — std/barcode, Task 2: Code 128 y EAN-13.
+//
+// Los controles son los vectores anclados en test-436. Los anchos se comprueban de
+// dos maneras independientes del módulo: el Code 128 de «PJJ123C» contra la
+// secuencia completa armada a mano desde la tabla de ISO/IEC 15417, y el EAN-13
+// DECODIFICÁNDOLO — anchos → módulos → dígitos por los patrones de 7 bits de GS1
+// (otra representación de la tabla, no los anchos que usa el módulo).
+import "std/barcode"
+import "std/error"
+
+fn join_ints(a: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < a.length() {
+        let v: int = a[i]
+        sb.append(int_to_string(v))
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn symbols_of(s: String) -> String {
+    match code128_symbols(s) {
+        Result.Ok(v) => {
+            var sb: StringBuilder = StringBuilder.new()
+            var i: int = 0
+            while i < v.length() {
+                let x: int = v[i]
+                if i > 0 { sb.append(" ") }
+                sb.append(int_to_string(x))
+                i = i + 1
+            }
+            return sb.to_string()
+        }
+        Result.Err(e) => { return "ERR " + e.kind }
+    }
+}
+
+fn widths_sum(a: Array) -> int {
+    var t: int = 0
+    var i: int = 0
+    while i < a.length() {
+        let v: int = a[i]
+        t = t + v
+        i = i + 1
+    }
+    return t
+}
+
+// Anchos → cadena de módulos ('1' barra, '0' espacio), empezando en barra.
+fn to_modules(a: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < a.length() {
+        let v: int = a[i]
+        var k: int = 0
+        while k < v {
+            if i % 2 == 0 { sb.append("1") } else { sb.append("0") }
+            k = k + 1
+        }
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Decodificador EAN-13 con los patrones de módulos de GS1.
+fn ean13_decode(mods: String) -> String {
+    let l: Array = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011", "0110111", "0001011"]
+    let g: Array = ["0100111", "0110011", "0011011", "0100001", "0011101", "0111001", "0000101", "0010001", "0001001", "0010111"]
+    let r: Array = ["1110010", "1100110", "1101100", "1000010", "1011100", "1001110", "1010000", "1000100", "1001000", "1110100"]
+    let firsts: Array = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"]
+    if mods.length() != 95 { return "largo" }
+    if mods.substring(0, 3) != "101" { return "guarda inicio" }
+    if mods.substring(45, 50) != "01010" { return "guarda centro" }
+    if mods.substring(92, 95) != "101" { return "guarda fin" }
+    var parity: String = ""
+    var left: String = ""
+    var i: int = 0
+    while i < 6 {
+        let chunk: String = mods.substring(3 + 7 * i, 10 + 7 * i)
+        var found: bool = false
+        var d: int = 0
+        while d < 10 {
+            let sl: String = l[d]
+            let sg: String = g[d]
+            if chunk == sl {
+                parity = parity + "L"
+                left = left + int_to_string(d)
+                found = true
+            }
+            if chunk == sg {
+                parity = parity + "G"
+                left = left + int_to_string(d)
+                found = true
+            }
+            d = d + 1
+        }
+        if !found { return "digito izq " + int_to_string(i) }
+        i = i + 1
+    }
+    var right: String = ""
+    i = 0
+    while i < 6 {
+        let chunk: String = mods.substring(50 + 7 * i, 57 + 7 * i)
+        var found: bool = false
+        var d: int = 0
+        while d < 10 {
+            let sr: String = r[d]
+            if chunk == sr {
+                right = right + int_to_string(d)
+                found = true
+            }
+            d = d + 1
+        }
+        if !found { return "digito der " + int_to_string(i) }
+        i = i + 1
+    }
+    var first: int = 0 - 1
+    var f: int = 0
+    while f < 10 {
+        let p: String = firsts[f]
+        if p == parity { first = f }
+        f = f + 1
+    }
+    if first < 0 { return "paridad" }
+    return int_to_string(first) + left + right
+}
+
+fn ean_roundtrip(s: String) -> String {
+    match ean13_widths(s) {
+        Result.Ok(w) => {
+            assert(w.length() == 59, "EAN-13: 59 anchos")
+            assert(widths_sum(w) == 95, "EAN-13: 95 módulos")
+            return ean13_decode(to_modules(w))
+        }
+        Result.Err(e) => { return "ERR " + e.kind + ": " + e.msg }
+    }
+}
+
+fn err_kind_c128(s: String) -> String {
+    match code128_widths(s) {
+        Result.Ok(w) => { return "ok" }
+        Result.Err(e) => { return e.kind }
+    }
+}
+
+fn err_kind_ean(s: String) -> String {
+    match ean13_widths(s) {
+        Result.Ok(w) => { return "ok" }
+        Result.Err(e) => { return e.kind }
+    }
+}
+
+fn main() -> int {
+    // ── Code 128 ─────────────────────────────────────────────────────────
+    // Solo juego B: el ejemplo publicado, control 55.
+    assert(symbols_of("PJJ123C") == "104 48 42 42 17 18 19 35 55 106", "PJJ123C símbolos")
+    match code128_widths("PJJ123C") {
+        Result.Ok(w) => {
+            // Start B, P, J, J, 1, 2, 3, C, control 55, parada — de la tabla ISO/IEC 15417.
+            let esperado: String = "211214" + "313121" + "112133" + "112133" + "123221" + "223211" + "221132" + "131321" + "311321" + "2331112"
+            assert(join_ints(w) == esperado, "PJJ123C anchos")
+            assert(widths_sum(w) == 11 * 10 + 2, "PJJ123C módulos")
+        }
+        Result.Err(e) => { assert(false, "PJJ123C no debía fallar") }
+    }
+    println("ok code128 B: PJJ123C")
+
+    // Cambio B → C: el número de venta de nyxerp. Seis dígitos al final pasan a C.
+    assert(symbols_of("C1-000123") == "104 35 17 13 99 0 1 23 54 106", "C1-000123")
+    // Todo C (cantidad par de dígitos).
+    assert(symbols_of("1234567890") == "105 12 34 56 78 90 85 106", "1234567890")
+    // Arranque en C y vuelta a B: 4 dígitos al principio y después letras.
+    // 105 + 12*1 + 34*2 + 100*3 + 33('A')*4 = 617; 617 mod 103 = 102.
+    assert(symbols_of("1234A") == "105 12 34 100 33 102 106", "1234A")
+    // Corrida impar al final: el primer dígito en B, el resto en pares de C.
+    // 104 + 33 + 17*2 + 99*3 + 23*4 + 45*5 = 785; 785 mod 103 = 64.
+    assert(symbols_of("A12345") == "104 33 17 99 23 45 64 106", "A12345")
+    // Cuatro dígitos en el medio: ir y volver cuesta lo mismo, se queda en B.
+    // 104+33+17*2+18*3+19*4+20*5+34*6 = 605; 605 mod 103 = 90.
+    assert(symbols_of("A1234B") == "104 33 17 18 19 20 34 90 106", "A1234B")
+    // Seis en el medio: sí conviene C, y hay que volver a B para la letra.
+    // 104+33+99*2+12*3+34*4+56*5+100*6+34*7 = 1625; 1625 mod 103 = 80.
+    assert(symbols_of("A123456B") == "104 33 99 12 34 56 100 34 80 106", "A123456B")
+    // Dos dígitos solos: C (un símbolo en vez de dos). Tres: B.
+    assert(symbols_of("42") == "105 42 44 106", "42")
+    assert(symbols_of("123") == "104 17 18 19 8 106", "123")
+    // DEL (127) es el valor 95 del juego B.
+    assert(err_kind_c128("a b~") == "ok", "ASCII imprimible")
+    assert(err_kind_c128("") == "invalid", "vacío")
+    assert(err_kind_c128("café") == "invalid", "byte no ASCII")
+    assert(err_kind_c128("a\tb") == "invalid", "control ASCII (juego A)")
+    println("ok code128 B/C: cambios de juego y errores")
+
+    // ── EAN-13 ───────────────────────────────────────────────────────────
+    assert(ean_roundtrip("4006381333931") == "4006381333931", "4006381333931")
+    assert(ean_roundtrip("5901234123457") == "5901234123457", "5901234123457")
+    assert(ean_roundtrip("9780306406157") == "9780306406157", "ISBN")
+    assert(ean_roundtrip("0012345678905") == "0012345678905", "UPC-A")
+    // 12 dígitos: calcula el control.
+    assert(ean_roundtrip("590123412345") == "5901234123457", "12 dígitos")
+    // Los diez dígitos iniciales ejercitan las diez paridades.
+    var f: int = 0
+    while f < 10 {
+        let base: String = int_to_string(f) + "12345678901"
+        let dec: String = ean_roundtrip(base)
+        assert(dec.length() == 13 and dec.substring(0, 12) == base, "paridad " + int_to_string(f))
+        f = f + 1
+    }
+    println("ok ean13: 4 reales, control calculado, 10 paridades")
+
+    assert(err_kind_ean("5901234123458") == "invalid", "control equivocado")
+    assert(err_kind_ean("59012341234") == "invalid", "11 dígitos")
+    assert(err_kind_ean("59012341234X") == "invalid", "no dígito")
+    println("ok ean13: errores")
+    return 0
+}

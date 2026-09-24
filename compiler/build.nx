@@ -1408,11 +1408,17 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31).
         "$RT/http2.c $RT/process.c $RT/llama_adapter.c $RT/os/os_posix.c "
     var rt_archive: String = getenv("NYX_RT_ARCHIVE")
+    // Sin archivo explícito: el caché automático (rt_cache_sh), que corre YA
+    // dentro del candado compartido, así que las fuentes no cambian mientras
+    // se calcula la clave. RT_IN es un array de bash: el .a vive bajo $HOME.
+    var rt_sh: String = rt_cache_sh() + "RT_IN=(" + rt_fuentes + ")\n"
+    rt_sh = rt_sh + "if nyx_rt_auto \"" + opt_flags + "\" " + rt_fuentes + "; then RT_IN=(\"$RT_AUTO\"); fi\n"
     if rt_archive != "" and file_exists(rt_archive) {
         // Absoluta: el script hace `cd` a NYX_HOME antes de enlazar.
         if not rt_archive.startsWith("/") { rt_archive = getcwd() + "/" + rt_archive }
-        rt_fuentes = "\"" + rt_archive + "\" "
+        rt_sh = "RT_IN=(\"" + rt_archive + "\")\n"
     }
+    rt_fuentes = "\"$" + "{RT_IN[@]}\" "
     let pila_sh: String = "#!/bin/bash\nset -e\n" + pila_compilador_sh() + pila_compilador_pista_sh()
     // [lib] modules: bibliotecas compiladas aparte y reutilizadas (Task 6 de
     // compilacion-separada). Solo nativo: en wasm se inlinean como siempre.
@@ -1422,6 +1428,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         lib_sh = lib_objetos_sh(config, nyx_home, nyx_bin, opt_flags, gc_flag)
         lib_env = "NYX_LIB_MODULES=\"" + config.lib_modules.join(",") + "\" "
     }
+    lib_sh = rt_sh + lib_sh
     let compilador_env: String = "( nyx_pila; " + gc_flag + lib_env
     let build_script = pila_sh +
         "ORIG_DIR=\"$(pwd)\"\n" +
@@ -1713,6 +1720,41 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
     return true
 }
 
+// Runtime precompilado AUTOMÁTICO (fricción de nyxerp, 2026-09-24): el
+// runtime (~24 .c) es idéntico en cada compilación y compilarlo domina el
+// costo de un build o de cada archivo de `nyx test`; NYX_RT_ARCHIVE lo
+// evitaba, pero había que saber que existía y armar el .a a mano. Ahora el
+// script generado lo arma solo, una vez, en ~/.cache/nyx/rt/<clave>/, con
+// clave = sha256 de las banderas + la lista de fuentes + `clang --version` +
+// el CONTENIDO de los .c/.h: un install nuevo del runtime es otra clave, así
+// que nunca se enlaza un .a viejo. Se arma en un temporal y se publica con
+// `mv` (atómico): dos compilaciones a la vez no se pisan. Cualquier falla
+// (sin HOME escribible, sin ar) devuelve 1 y se compilan las fuentes como
+// siempre. NYX_NO_RT_CACHE=1 lo apaga; un NYX_RT_ARCHIVE explícito manda.
+// Directorios sin usar en 14 días se podan. (La misma función vive en test.nx:
+// build.nx y test.nx son programas aparte, sin módulo común.)
+fn rt_cache_sh() -> String {
+    var s: String = "nyx_rt_auto() {\n"
+    s = s + "  [ -n \"$NYX_NO_RT_CACHE\" ] && return 1\n"
+    s = s + "  local fl=\"$1\"; shift\n"
+    s = s + "  local base=\"$XDG_CACHE_HOME\"; [ -n \"$base\" ] || base=\"$HOME/.cache\"; base=\"$base/nyx/rt\"\n"
+    s = s + "  local key; key=$( { printf '%s\\n' \"$fl\" \"$*\"; clang --version 2>/dev/null | head -1; cat \"$@\" runtime/*.h runtime/os/*.h 2>/dev/null; } | sha256sum | cut -c1-16) || return 1\n"
+    s = s + "  local a=\"$base/$key/libnyxrt.a\"\n"
+    s = s + "  if [ -f \"$a\" ]; then touch \"$base/$key\" 2>/dev/null; RT_AUTO=\"$a\"; return 0; fi\n"
+    s = s + "  mkdir -p \"$base/$key\" 2>/dev/null || return 1\n"
+    s = s + "  find \"$base\" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null\n"
+    s = s + "  local tmp; tmp=$(mktemp -d \"$base/$key/.tmp.XXXXXX\") || return 1\n"
+    s = s + "  local f n=0\n"
+    s = s + "  for f in \"$@\"; do n=$((n+1)); clang $fl -Wno-deprecated-declarations -c \"$f\" -o \"$tmp/$n.o\" 2>/dev/null & done\n"
+    s = s + "  wait\n"
+    s = s + "  if [ \"$(ls \"$tmp\" | grep -c '\\.o$')\" = \"$n\" ] && ar rcs \"$tmp/libnyxrt.a\" \"$tmp\"/*.o 2>/dev/null && mv -f \"$tmp/libnyxrt.a\" \"$a\"; then\n"
+    s = s + "    rm -rf \"$tmp\"; RT_AUTO=\"$a\"; return 0\n"
+    s = s + "  fi\n"
+    s = s + "  rm -rf \"$tmp\"; return 1\n"
+    s = s + "}\n"
+    return s
+}
+
 // ===== CAPABILITIES INDEX (Fase 1 AI-first) =====
 // Genera CAPABILITIES.md: índice por-tarea de la stdlib (qué existe) para que una
 // LLM no reinvente ni se meta a leer std/ fuente. Self-contained: NO importa
@@ -1739,8 +1781,10 @@ fn capabilities_std_dir() -> String {
 // Categoría por tarea de un módulo (tabla curada). "" = "Otros".
 fn module_category(name: String) -> String {
     if name == "http" or name == "web" or name == "websocket" or name == "cookie" { return "HTTP & Web" }
+    // Módulos del navegador (wasm32-wasi con el shim): van con la web, no a «Otros».
+    if name.startsWith("browser") or name == "dom" or name == "vdom" { return "HTTP & Web" }
     if name == "sqlite" or name == "db" or name == "kvclient" { return "Bases de datos & KV" }
-    if name == "json" or name == "msgpack" or name == "toml" or name == "csv" or name == "base64" or name == "compress" { return "Serialización & datos" }
+    if name == "json" or name == "msgpack" or name == "toml" or name == "csv" or name == "base64" or name == "compress" or name == "barcode" { return "Serialización & datos" }
     if name == "fs" or name == "file" or name == "io" or name == "path" { return "Archivos & I/O" }
     if name == "tcp" or name == "udp" or name == "net" or name == "http2" or name == "dns" or name == "url" or name == "smtp" { return "Red" }
     if name == "thread" or name == "channel" or name == "scheduler" or name == "sync" or name == "async" { return "Concurrencia" }
@@ -1787,7 +1831,9 @@ fn capabilities_module_section(std_dir: String, filename: String) -> String {
             let dtt: String = dt.trim()
             if pending_doc == "" { pending_doc = dtt } else { pending_doc = pending_doc + " " + dtt }
         } else {
-            let is_fn: bool = trimmed.startsWith("pub fn ") or trimmed.startsWith("export fn ")
+            // `async fn` también (std/browser_idb, std/browser_serial): sin esto los
+            // módulos de await en wasm no aparecían en el índice y nadie los encontraba.
+            let is_fn: bool = trimmed.startsWith("pub fn ") or trimmed.startsWith("export fn ") or trimmed.startsWith("pub async fn ") or trimmed.startsWith("export async fn ")
             if is_fn {
                 var sig: String = trimmed
                 // Firma multi-línea (params partidos entre líneas): mientras los
@@ -1892,6 +1938,11 @@ fn run_capabilities(out_arg: String) -> bool {
     let cats: Array<String> = ["HTTP & Web", "Bases de datos & KV", "Serialización & datos", "Archivos & I/O", "Red", "Concurrencia", "Cripto & seguridad", "Tiempo", "Strings & texto", "Matemática", "Colecciones & estructuras", "Memoria", "Tooling & CLI", "Otros"]
     var doc = "# CAPABILITIES — índice de la stdlib de Nyx\n\n"
     doc = doc + "<!-- nyx-version: " + toolchain_version() + " -->\n"
+    // Firma de la stdlib que calcula el wrapper (_caps_stamp en scripts/nyx):
+    // el self-heal de `nyx build` regenera si no coincide. Sin el wrapper no
+    // hay firma, y el próximo build lo regenera una vez.
+    let caps_stamp: String = getenv("NYX_CAPS_STAMP")
+    if caps_stamp != "" { doc = doc + "<!-- nyx-stdlib: " + caps_stamp + " -->\n" }
     doc = doc + "> Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.\n"
     // Español neutro (regla 9 del arco andamiaje-sdd): sin voseo. La cabecera
     // sigue siendo castellana aunque el proyecto sea `--lang en` — bilingüizarla

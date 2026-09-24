@@ -1913,6 +1913,29 @@ prefijo con un `IDBKeyRange` acotado, con el mismo resultado observable que si c
 propio objectStore. Fuera de alcance v1: transacciones explícitas, cursores, índices, valores
 binarios, más de una base.
 
+`std/browser_serial` (arco browser-serial, 2026-09-24, pedido de nyxerp: PWA de punto de venta
+imprimiendo un ticket ESC/POS en una impresora térmica y hablando con una impresora fiscal por
+puerto serie, sin el diálogo de impresión del sistema) usa el mismo mecanismo para Web Serial:
+`serial_request_port() -> Result<SerialPort, Error>` (`navigator.serial.requestPort()`, dispara el
+diálogo de permiso la primera vez), `serial_authorized_ports() -> Result<Array, Error>`
+(`navigator.serial.getPorts()`, puertos ya autorizados, sin diálogo, `Array` de `int`),
+`serial_open(p, baud) -> Result<int, Error>` (8N1), `serial_open_with(p, baud, data_bits,
+stop_bits, parity)` (`parity`: `"none"|"even"|"odd"`), `serial_write(p, datos) ->
+Result<int, Error>` (`Ok` = bytes escritos), `serial_read(p, max_bytes, timeout_ms) ->
+Result<Array, Error>`, `serial_close(p) -> Result<int, Error>` (`Ok(0)`, idempotente) — las seis
+`async fn`. Los bytes cruzan como `Array` de `int` (0-255), NO como `String`: un `String` cruza el
+shim por TextEncoder/TextDecoder (UTF-8) y un byte crudo que no forma una secuencia válida se
+reemplaza en silencio, exactamente el dato que un protocolo ESC/POS o de impresora fiscal necesita
+preservar intacto. `serial_read` vuelve `Ok` con lo leído hasta el plazo si llegó AL MENOS un byte
+(aunque sea menos que `max_bytes`); `Err(kind: "timeout")` solo si el plazo se cumple sin ningún
+byte. Kinds posibles: `"not_found"` (id de puerto desconocido, o diálogo cancelado),
+`"permission"` (SecurityError), `"connection"` (NetworkError), `"invalid"` (puerto ya abierto,
+opciones inválidas), `"timeout"`, `"io"` — el resto, Y en particular «Web Serial no soportado»
+(Firefox, Safari, página sin HTTPS/localhost), mismo criterio que `browser_idb` usa `"io"` para
+«IndexedDB deshabilitado». WebUSB queda fuera de alcance v1 (fase 2): `navigator.usb` es una API de
+otra forma (transferencias sobre los endpoints de una interfaz reclamada, no un stream de bytes) y
+no sale como extensión natural de este módulo.
+
 ---
 
 ## Const Declarations
@@ -2129,7 +2152,9 @@ modules = ["src/util", "src/geo"]
   módulo hoja y recompilar cuesta, con `[lib]`, el 41% de lo que cuesta sin ella con 88 módulos y
   el 23% con 250 (mejora con el tamaño del proyecto).
 - `NYX_RT_ARCHIVE` (runtime C precompilado, para medir sin pagar su compilación en cada build)
-  lo honra `nyx build` además de `nyx test`.
+  lo honra `nyx build` además de `nyx test`. Sin él, los dos arman y reutilizan solos un
+  `libnyxrt.a` en `$XDG_CACHE_HOME/nyx/rt/<clave>/` (clave = contenido del runtime + banderas +
+  versión de clang); `NYX_NO_RT_CACHE=1` lo apaga y `--coverage` no lo usa.
 
 ---
 
@@ -4696,6 +4721,56 @@ Los `kind` del `Error` distinguen qué hay que arreglar:
 | `recipient` | El servidor rechazó un destinatario — el mensaje del error lo nombra. |
 
 Receta completa: `examples/by-example/113-smtp.nx`.
+
+---
+
+## Códigos de barras y QR (`std/barcode`)
+
+Generación de QR (ISO/IEC 18004), Code 128 (ISO/IEC 15417) y EAN-13 (GS1) en Nyx puro: sin C, sin
+float, sin I/O, así que compila igual a nativo y a `wasm32-wasi` y da el mismo resultado módulo
+por módulo. Devuelve **datos, no dibujos**: cada programa lo pinta como necesite (un `<rect>` por
+barra en SVG, un raster para una impresora térmica). No decodifica.
+
+```nyx
+pub enum QrEcc { L, M, Q, H }        // recupera ~7% / ~15% / ~25% / ~30% de módulos dañados
+
+qr_matrix(data: String, ecc: QrEcc) -> Result<Array, Error>
+code128_widths(data: String) -> Result<Array, Error>
+code128_symbols(data: String) -> Result<Array, Error>    // valores 0-106: arranque, datos, control, parada
+ean13_widths(digits: String) -> Result<Array, Error>
+```
+
+| Función | Devuelve |
+|---|---|
+| `qr_matrix` | `Array` de filas; cada fila, `Array` de `int` (1 oscuro, 0 claro). Lado `17 + 4·versión`. |
+| `code128_widths` | Anchos alternados barra/espacio en **módulos**, empezando y terminando en barra. Suman `11·símbolos + 2`. |
+| `ean13_widths` | 59 anchos alternados que suman 95 módulos, empezando y terminando en barra (las guardas). |
+
+Ninguna incluye la **zona de silencio**, que es responsabilidad del que dibuja: 4 módulos claros
+alrededor del QR, al menos 10 a cada lado del Code 128, 11 a la izquierda y 7 a la derecha del
+EAN-13. Sin ella los lectores fallan.
+
+**QR, alcance de la fase 1.** Versiones 1 a 10 y los cuatro niveles. Un solo segmento, en el modo
+más compacto que acepta el texto ENTERO: numérico si son solo dígitos, alfanumérico si entra en
+`0-9 A-Z espacio $ % * + - . / :`, byte en otro caso. El modo byte cuenta **bytes** (el UTF-8 de
+`"café"` son 5). Versión (la mínima donde entra) y máscara (la de menor penalización según las
+cuatro reglas del estándar) son automáticas; la máscara elegida puede no coincidir con la de otro
+generador, y da igual: el lector la toma de la información de formato. Fuera de alcance: Kanji,
+segmentación mixta, versiones mayores que 10 (subir el techo es cambio de tablas, no de
+arquitectura).
+
+**Code 128** usa los juegos B (ASCII 32-127) y C (pares de dígitos), elegidos solos: arranca en C
+si el texto empieza con 4 o más dígitos, y pasa a C ante 4 o más dígitos al final o 6 o más en el
+medio. El juego A (caracteres de control) no está.
+
+**EAN-13** acepta 12 dígitos (calcula el de control) o 13 (lo valida; un control equivocado es un
+error, nunca se corrige en silencio).
+
+Todos los errores son `kind == "invalid"` (`code` 22, EINVAL): texto que no entra en la versión 10
+con el nivel pedido, byte fuera del juego B, texto vacío en Code 128, largo o dígito inválido en
+EAN-13.
+
+Receta completa: `examples/by-example/116-barcode-qr.nx`.
 
 ---
 

@@ -698,7 +698,8 @@ export function domBindings(doc) {
 // Implementación estándar de los imports js_browser_*/js_ls_*/js_tz_offset/
 // js_match_media de std/browser.nx (handoff #6). Igual que domBindings:
 // callback-por-nombre-de-export → setear ref.exports tras runNyxWasm.
-// opts permite inyectar mocks en tests: { fetch, storage, geo, matchMedia, now }.
+// opts permite inyectar mocks en tests: { fetch, storage, geo, matchMedia, now,
+// idb, serial }.
 //   const br = browserBindings();
 //   const r = await runNyxWasm(bytes, { js: (nyx) => ({ ...br.imports(nyx) }) });
 //   br.ref.exports = r.exports;
@@ -841,6 +842,152 @@ export function browserBindings(opts = {}) {
     // Resultado de la última operación idb_* que suspendió — mismo patrón
     // que `ultimoAwait` (D-3: una sola pila suspendida a la vez alcanza).
     const ultimoIdb = { kind: "", msg: "" };
+    // ── Web Serial (arco browser-serial, pedido de nyxerp 2026-09-24) ─────
+    //
+    // Un "puerto" cruza a Nyx como un `int` opaco (SerialPort.id de
+    // std/browser_serial.nx) — el objeto real (o el mock) vive del lado JS
+    // en `serialPorts`, mismo truco que `timers` para los handles de
+    // setTimeout/setInterval, que tampoco caben en un i64 portable.
+    //
+    // `serialTaggedError`/`serialDomKind`: mismo mecanismo que
+    // idbTaggedError/idbDomKind — un mock de test inyecta cualquier kind sin
+    // duplicar el mapeo real. DOMException reales que puede tirar Web
+    // Serial: NotFoundError (requestPort cancelado / sin dispositivo),
+    // SecurityError (página sin HTTPS/localhost, o iframe sin permiso),
+    // NetworkError (el dispositivo se desconectó o falló a mitad de
+    // camino), InvalidStateError/TypeError (abrir un puerto ya abierto, u
+    // opciones inválidas).
+    const serialTaggedError = (msg, kind) => Object.assign(new Error(msg), { nyxKind: kind });
+    const serialDomKind = (err) => {
+        const name = err && err.name;
+        if (name === "NotFoundError") return "not_found";
+        if (name === "SecurityError") return "permission";
+        if (name === "NetworkError") return "connection";
+        if (name === "InvalidStateError" || name === "TypeError") return "invalid";
+        return "io";
+    };
+    // Registro puerto→id: un WeakMap keyed por el objeto YA ENVUELTO (no el
+    // SerialPort crudo) — así requestPort() y getPorts() sobre el MISMO
+    // dispositivo dan el MISMO id, sin que dos wrappers independientes
+    // compitan por el reader/writer del mismo puerto real. `wrapRealPort`
+    // cachea su propio wrapper por SerialPort crudo (ver abajo) antes de
+    // llegar acá, así que esta dedupe alcanza con una sola tabla.
+    const serialPorts = new Map();      // id (Number) → wrapped { open, write, read, close }
+    const serialIdByWrapped = new WeakMap();
+    let serialSeq = 0;
+    const registerPort = (wrapped) => {
+        let id = serialIdByWrapped.get(wrapped);
+        if (id === undefined) {
+            id = ++serialSeq;
+            serialIdByWrapped.set(wrapped, id);
+            serialPorts.set(id, wrapped);
+        }
+        return id;
+    };
+    // Envuelve un SerialPort real (navigator.serial) en la interfaz simple
+    // open/write/read/close que usan los imports de abajo — misma idea que
+    // idbReal() adapta indexedDB crudo a {get,put,delete,keys}. El reader y
+    // el writer se piden UNA vez (getWriter/getReader bloquea el stream) y
+    // se retienen entre llamadas; se sueltan en `close`.
+    //
+    // Lectura con plazo: sin un AbortSignal nativo sobre
+    // ReadableStreamDefaultReader.read(), el plazo se arma con
+    // Promise.race contra un setTimeout (mismo patrón que
+    // js_browser_fetch_await). Si el plazo gana sin haber leído nada,
+    // `reader.cancel()` asienta la lectura pendiente y suelta el reader —
+    // la próxima `read()` pide uno nuevo con `port.readable.getReader()`;
+    // el puerto sigue abierto y disponible para seguir leyendo después.
+    const wrapRealPort = (rawPort) => {
+        let reader = null;
+        let writer = null;
+        return {
+            open: async (opts) => {
+                await rawPort.open({
+                    baudRate: opts.baudRate,
+                    dataBits: opts.dataBits || 8,
+                    stopBits: opts.stopBits || 1,
+                    parity: opts.parity || "none",
+                });
+            },
+            write: async (datosBytes) => {
+                if (!writer) writer = rawPort.writable.getWriter();
+                const data = Uint8Array.from(datosBytes);
+                await writer.write(data);
+                return data.length;
+            },
+            read: async (maxBytes, timeoutMs) => {
+                if (!reader) reader = rawPort.readable.getReader();
+                const out = [];
+                const plazo = timeoutMs > 0 ? Date.now() + timeoutMs : null;
+                while (out.length < maxBytes) {
+                    let restante = null;
+                    if (plazo !== null) {
+                        restante = plazo - Date.now();
+                        if (restante <= 0) break;
+                    }
+                    const paso = restante === null
+                        ? { tipo: "dato", r: await reader.read() }
+                        : await Promise.race([
+                            reader.read().then((r) => ({ tipo: "dato", r })),
+                            new Promise((res) => setTimeout(() => res({ tipo: "timeout" }), restante)),
+                        ]);
+                    if (paso.tipo === "timeout") break;
+                    const { value, done } = paso.r;
+                    if (done) break;
+                    if (value) for (const b of value) { out.push(b); if (out.length >= maxBytes) break; }
+                }
+                if (out.length === 0 && plazo !== null) {
+                    // se agotó el plazo sin ni un byte: la lectura racedeada
+                    // sigue pendiente del lado del navegador — cancelarla
+                    // asienta esa promesa y libera el reader; la siguiente
+                    // serial_read pide uno nuevo.
+                    try { await reader.cancel(); } catch (e) { /* ya cancelado/cerrado */ }
+                    reader = null;
+                    throw serialTaggedError(`sin datos en ${timeoutMs} ms`, "timeout");
+                }
+                return out;
+            },
+            close: async () => {
+                if (reader) {
+                    try { await reader.cancel(); } catch (e) { /* ya cancelado/cerrado */ }
+                    try { reader.releaseLock(); } catch (e) { /* ya liberado */ }
+                    reader = null;
+                }
+                if (writer) {
+                    try { writer.releaseLock(); } catch (e) { /* ya liberado */ }
+                    writer = null;
+                }
+                await rawPort.close();
+            },
+        };
+    };
+    const wrapperPorRawPort = new WeakMap();
+    const wrapRealPortCached = (rawPort) => {
+        if (!wrapperPorRawPort.has(rawPort)) wrapperPorRawPort.set(rawPort, wrapRealPort(rawPort));
+        return wrapperPorRawPort.get(rawPort);
+    };
+    const serialSupported = typeof navigator !== "undefined" && !!navigator.serial;
+    const serialReal = () => ({
+        requestPort: async () => wrapRealPortCached(await navigator.serial.requestPort()),
+        getPorts: async () => (await navigator.serial.getPorts()).map(wrapRealPortCached),
+    });
+    // Sin Web Serial (Firefox/Safari, o página sin HTTPS/localhost):
+    // requestPort() SIEMPRE falla con kind "io" — mismo criterio que
+    // std/browser_idb usa "io" para "IndexedDB deshabilitado" (D-6): una
+    // capacidad del navegador ausente, no el fallo de una operación
+    // puntual. getPorts() da lista vacía: sin la API no hay puertos
+    // autorizados que reportar, y eso no es un error en sí.
+    const serialUnsupported = () => ({
+        requestPort: async () => {
+            throw serialTaggedError(
+                "Web Serial no disponible (Firefox/Safari, o página sin HTTPS/localhost)", "io");
+        },
+        getPorts: async () => [],
+    });
+    const serialImpl = opts.serial || (serialSupported ? serialReal() : serialUnsupported());
+    // Resultado de la última operación serial_* que suspendió — mismo
+    // patrón que ultimoAwait/ultimoIdb (D-3).
+    const ultimoSerial = { kind: "", msg: "" };
     // Los handles de timer JS no caben en un i64 portable → tabla propia
     const timers = new Map();
     // anclajes de los timers con CLOSURE, por id: browser_clear_timer es la
@@ -1201,6 +1348,131 @@ export function browserBindings(opts = {}) {
         },
         js_idb_error_msg() {
             return nyx.makeString(ultimoIdb.msg);
+        },
+        // ── Web Serial (imports #[suspends], arco browser-serial) ────────────
+        //
+        // Misma forma que js_idb_*: el import devuelve SOLO el valor útil;
+        // kind/msg quedan en `ultimoSerial` y std/browser_serial los lee con
+        // los imports síncronos de abajo justo después de reanudar (D-3: una
+        // sola pila suspendida, nada corre entre la reanudación y esas
+        // lecturas).
+        js_serial_request_port() {
+            return nyx.suspend(() => serialImpl.requestPort()
+                .then((wrapped) => ({ id: registerPort(wrapped), kind: "", msg: "" }))
+                .catch((e) => ({
+                    id: 0,
+                    kind: (e && e.nyxKind) || serialDomKind(e),
+                    msg: String(e && e.message ? e.message : e),
+                })),
+            (res) => {
+                ultimoSerial.kind = res.kind;
+                ultimoSerial.msg = res.msg;
+                return BigInt(res.id);
+            }, 0n);
+        },
+        js_serial_authorized_ports() {
+            return nyx.suspend(() => serialImpl.getPorts()
+                .then((puertos) => ({ ids: puertos.map(registerPort), kind: "", msg: "" }))
+                .catch((e) => ({
+                    ids: [],
+                    kind: (e && e.nyxKind) || serialDomKind(e),
+                    msg: String(e && e.message ? e.message : e),
+                })),
+            (res) => {
+                ultimoSerial.kind = res.kind;
+                ultimoSerial.msg = res.msg;
+                return nyx.makeArray(res.ids, "int");
+            }, 0);
+        },
+        js_serial_open(id, baud, dataBits, stopBits, parityPtr) {
+            const puerto = serialPorts.get(Number(id));
+            const parity = nyx.readString(parityPtr);
+            return nyx.suspend(() => {
+                if (!puerto) {
+                    return Promise.resolve({ kind: "not_found", msg: "puerto desconocido: id " + id });
+                }
+                return puerto.open({
+                    baudRate: Number(baud),
+                    dataBits: Number(dataBits),
+                    stopBits: Number(stopBits),
+                    parity: parity || "none",
+                })
+                    .then(() => ({ kind: "", msg: "" }))
+                    .catch((e) => ({
+                        kind: (e && e.nyxKind) || serialDomKind(e),
+                        msg: String(e && e.message ? e.message : e),
+                    }));
+            }, (res) => {
+                ultimoSerial.kind = res.kind;
+                ultimoSerial.msg = res.msg;
+                return 0n;
+            }, 0n);
+        },
+        js_serial_write(id, datosPtr) {
+            const puerto = serialPorts.get(Number(id));
+            // leer el Array ACÁ, antes de suspender — el puntero es memoria
+            // del turno actual (mismo motivo que readString en js_idb_put).
+            const datos = nyx.readArray(datosPtr, "int").map((b) => Number(b) & 0xff);
+            return nyx.suspend(() => {
+                if (!puerto) {
+                    return Promise.resolve({ n: 0, kind: "not_found", msg: "puerto desconocido: id " + id });
+                }
+                return puerto.write(datos)
+                    .then((n) => ({ n, kind: "", msg: "" }))
+                    .catch((e) => ({
+                        n: 0,
+                        kind: (e && e.nyxKind) || serialDomKind(e),
+                        msg: String(e && e.message ? e.message : e),
+                    }));
+            }, (res) => {
+                ultimoSerial.kind = res.kind;
+                ultimoSerial.msg = res.msg;
+                return BigInt(res.n);
+            }, 0n);
+        },
+        js_serial_read(id, maxBytes, timeoutMs) {
+            const puerto = serialPorts.get(Number(id));
+            return nyx.suspend(() => {
+                if (!puerto) {
+                    return Promise.resolve({ bytes: [], kind: "not_found", msg: "puerto desconocido: id " + id });
+                }
+                return puerto.read(Number(maxBytes), Number(timeoutMs))
+                    .then((bytes) => ({ bytes, kind: "", msg: "" }))
+                    .catch((e) => ({
+                        bytes: [],
+                        kind: (e && e.nyxKind) || serialDomKind(e),
+                        msg: String(e && e.message ? e.message : e),
+                    }));
+            }, (res) => {
+                ultimoSerial.kind = res.kind;
+                ultimoSerial.msg = res.msg;
+                return nyx.makeArray(res.bytes, "int");
+            }, 0);
+        },
+        js_serial_close(id) {
+            const puerto = serialPorts.get(Number(id));
+            return nyx.suspend(() => {
+                // cerrar un id desconocido o ya cerrado: idempotente, no
+                // error (mismo criterio que idb_delete de una clave que ya
+                // no existe).
+                if (!puerto) return Promise.resolve({ kind: "", msg: "" });
+                return puerto.close()
+                    .then(() => { serialPorts.delete(Number(id)); return { kind: "", msg: "" }; })
+                    .catch((e) => ({
+                        kind: (e && e.nyxKind) || serialDomKind(e),
+                        msg: String(e && e.message ? e.message : e),
+                    }));
+            }, (res) => {
+                ultimoSerial.kind = res.kind;
+                ultimoSerial.msg = res.msg;
+                return 0n;
+            }, 0n);
+        },
+        js_serial_error_kind() {
+            return nyx.makeString(ultimoSerial.kind);
+        },
+        js_serial_error_msg() {
+            return nyx.makeString(ultimoSerial.msg);
         },
         js_ls_get(keyPtr) {
             const v = storage.getItem(nyx.readString(keyPtr));

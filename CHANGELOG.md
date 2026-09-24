@@ -10,6 +10,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Seguridad del toolchain compartido** (fricción nyxerp `20260924-020001-team-4`): `nyx update
+  --help` actualizaba de verdad (todo argumento desconocido caía a la actualización); ahora
+  `--help`/`-h` muestran ayuda, `--check` solo consulta y una opción desconocida es error (rc 2).
+  `nyx update` toma el candado del toolchain EXCLUSIVO y `nyx check/vet/fmt` y `nyx archivo.nx`
+  COMPARTIDO (con aviso y `NYX_LOCK_WAIT`). `nyx test` imprime la huella del compilador y avisa si
+  cambió durante la corrida.
+- **CAPABILITIES.md se regenera cuando cambia la stdlib**, no solo el número de versión: por eso
+  el índice de nyxerp no listaba `std/smtp` y lo reimplementaron a mano.
+- **Una mención de `compiler/` en un comentario o string quitaba el prelude**: `println` no
+  declarado. Ahora solo cuenta un `import "compiler/..."` o la marca `// nyx:sin-prelude`.
+  `test-435`.
+
+### Added
+- **Runtime C precompilado automático** en `~/.cache/nyx/rt/` para `nyx build` y `nyx test` (clave
+  por contenido; `NYX_NO_RT_CACHE=1` lo apaga): `nyx build` 9,9 s → 1,0 s, un archivo de
+  `nyx test` 9,7 s → 1,2 s, sin configurar nada.
+- **`std/barcode`** (fricción nyxerp `20260923-210010-team-1`) `[arco: std-barcode]`: Code 128 (juegos
+  B/C elegidos solos), EAN-13 (calcula o valida el control) y QR versiones 1-10 con niveles L/M/Q/H
+  (`qr_matrix`), en Nyx puro y con paridad en wasm. El QR se verifica con los vectores publicados
+  del estándar y con un decodificador independiente escrito en el test. `test-436..438`,
+  `test-wasm-42..44`, receta 116.
+- **`std/browser_serial`** (fricción nyxerp `20260924-020001-team-2`): Web Serial con `await` en wasm
+  para impresoras de punto de venta y fiscales (`serial_request_port`, `serial_open`, `serial_write`,
+  `serial_read` con tiempo límite, `serial_close`). Los bytes cruzan como `Array<int>`. Sin Web
+  Serial (Firefox, Safari, sin HTTPS) da `Err` de tipo `io`. WebUSB queda para una fase 2.
+  `test-wasm-41` (con un mock), receta 117.
+- **CAPABILITIES.md indexa las `async fn`**: `std/browser_idb` y `std/browser_serial` no aparecían.
+- **Specs en BORRADOR** para aprobar: `std/pdf` y toolchain atómico (versiones lado a lado).
+
+### Fixed (anteriores)
 - **NYX2010 también en `nyx check`** (fricción nyxerp `20260923-210010-team-3`): una llamada sin
   calificar a una fn que existe en dos módulos importados salía recién en `nyx build` (en nyxerp, 3,5
   minutos después de un `check` en verde). El checker ya detectaba la ambigüedad pero solo apagaba el

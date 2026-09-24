@@ -1,0 +1,211 @@
+// std/browser_serial.nx — Web Serial con await (arco browser-serial, pedido de
+// nyxerp, 2026-09-24, prioridad ALTA: la PWA de punto de venta necesita
+// imprimir un ticket ESC/POS en una impresora térmica y hablar con una
+// impresora fiscal por puerto serie, sin el diálogo de impresión del
+// sistema — el equipo abre caja el sábado 2026-09-26).
+// SOLO compila bajo NYX_TARGET=wasm32-wasi (extern "js" aborta en nativo a
+// propósito, igual que std/browser_await.nx y std/browser_idb.nx).
+//
+// POR QUÉ ES UN MÓDULO APARTE Y NO PARTE DE std/browser NI DE
+// std/browser_await/std/browser_idb. Mismo argumento que esos dos (D-2
+// heredado del arco async-real-wasm): un import `#[suspends]` activa
+// Asyncify para TODO el programa —resolve compila los módulos importados
+// ENTEROS—, así que si esto viviera en cualquiera de los otros, un programa
+// que solo usa DOM/fetch/IndexedDB pagaría el costo de Asyncify sin usarlo.
+// Importar `std/browser_serial` ES la señal «este programa habla con un
+// dispositivo serie», la misma convención que los dos módulos hermanos.
+//
+// NOMBRES: API pública en inglés snake_case — mismo criterio que
+// std/browser_idb (idb_get/idb_put) y std/barcode. Los comentarios y esta
+// doc siguen en castellano.
+//
+// Uso / usage:
+//   import "std/browser_serial"
+//
+//   async fn imprimir(ticket: Array) -> Result<int, Error> {
+//       let p = await serial_request_port()?               // permiso, una vez
+//       let _o = await serial_open(p, 9600)?
+//       let n = await serial_write(p, ticket)?              // ESC/POS: texto, GS V (corte), ESC p (gaveta)
+//       let _c = await serial_close(p)?
+//       return Result.Ok(n)
+//   }
+//
+// CONTRATO
+//   - Los BYTES cruzan como `Array` de `int` con cada elemento 0-255 — NO
+//     como `String`. Un `String` Nyx cruza el shim por TextEncoder/
+//     TextDecoder (UTF-8, ver std/browser_idb.nx y LLM.md §9): un byte
+//     crudo fuera de ASCII que no forma una secuencia UTF-8 válida se
+//     reemplaza EN SILENCIO por U+FFFD al decodificar, o se reescribe al
+//     recodificar — justo el dato binario que ESC/POS y el protocolo de una
+//     impresora fiscal necesitan preservar intacto, byte a byte.
+//     std/browser_idb usa `String` porque ahí el valor SIEMPRE es texto
+//     (JSON); acá el valor es binario por contrato, así que es `Array`, no
+//     `String` — decisión tomada y no la alternativa que sugería el reporte
+//     original, precisamente por esa pérdida silenciosa.
+//   - `serial_request_port()` dispara el diálogo de permiso del navegador la
+//     PRIMERA vez (`navigator.serial.requestPort()`); Err(kind: "not_found")
+//     si la persona cancela el diálogo o no hay dispositivo que ofrecer.
+//   - `serial_authorized_ports()` (`navigator.serial.getPorts()`) da los
+//     puertos YA autorizados en una visita anterior, SIN mostrar el diálogo
+//     — para reconectar solo en la carga siguiente. `Result<Array, Error>`
+//     de `int` (el mismo `id` opaco que devuelve `serial_request_port`).
+//   - `serial_open`/`serial_open_with` son `Result<int, Error>`, `Ok(0)` en
+//     éxito (mismo patrón que idb_put/idb_delete).
+//   - `serial_write` devuelve `Ok(bytes escritos)` — normalmente
+//     `datos.length()`.
+//   - `serial_read(p, max_bytes, timeout_ms)` lee HASTA max_bytes, pero
+//     vuelve antes si se cumple el plazo: si para entonces ya llegó AL MENOS
+//     un byte, `Ok` con lo que haya (puede ser menos que max_bytes — una
+//     respuesta corta de una impresora fiscal sigue siendo una respuesta
+//     válida, no un error); si el plazo se cumple sin ni un byte,
+//     `Err(kind: "timeout")`. `timeout_ms <= 0` espera sin plazo hasta
+//     juntar max_bytes.
+//   - `serial_close` es IDEMPOTENTE (mismo criterio que idb_delete): `Ok(0)`
+//     tanto si el puerto seguía abierto como si ya se había cerrado o el id
+//     no existe más.
+//   - Kinds posibles (vocabulario CERRADO de std/error, sin agregar
+//     ninguno):
+//       "not_found"  — el id de puerto no existe, o se canceló el diálogo
+//                      de permiso de serial_request_port.
+//       "permission" — SecurityError: página sin HTTPS/localhost, o el
+//                      contexto (iframe) no tiene permiso para pedirlo.
+//       "connection" — NetworkError: el dispositivo se desconectó o la
+//                      operación falló a mitad de camino.
+//       "invalid"    — abrir un puerto ya abierto, u opciones de apertura
+//                      inválidas (InvalidStateError/TypeError).
+//       "timeout"    — serial_read sin datos al vencer el plazo.
+//       "io"         — el resto, Y EN PARTICULAR «Web Serial no soportado»:
+//                      Firefox, Safari, o página sin HTTPS/localhost donde
+//                      `navigator.serial` no existe. Mismo criterio que
+//                      std/browser_idb usa "io" para "IndexedDB
+//                      deshabilitado" — capacidad del navegador AUSENTE, no
+//                      el fallo de una operación puntual. Un programa que
+//                      recibe "io" de serial_request_port sabe que tiene que
+//                      volver a la impresión del sistema, no reintentar.
+//   - UNA SOLA PILA SUSPENDIDA (D-3 heredado de async-real-wasm): mismo
+//     contrato que browser_await/browser_idb — mientras una función espera,
+//     los eventos se encolan y se entregan en orden al terminar.
+//   - El shim provee los imports en browserBindings() (examples/browser/
+//     nyx-wasi-shim.js), con `opts.serial` inyectable para testear sin
+//     navegador ni hardware real.
+//
+// WebUSB — FASE 2, NO implementado acá. `navigator.usb` es una API de otra
+// forma: transferOut/transferIn sobre los endpoints de una interfaz
+// reclamada (claimInterface), no un stream de bytes tipo puerto serie —
+// no sale "natural" como una extensión de este módulo con el mismo par de
+// imports open/write/read/close; necesitaría su propio wrapper de bajo
+// nivel y su propio `opts.usb` inyectable, diseño aparte. Queda fichado acá
+// mismo y no se improvisa bajo la prioridad de esta tarea: la impresora
+// fiscal es por puerto serie, y Web Serial la cubre entera.
+//
+// EN: Web Serial with await — request or reuse a port, open at a baud rate,
+// write and read raw bytes (with a read deadline), close. A separate module
+// so only programs that import it pay for Asyncify. Bytes cross as an
+// Array<int> (0-255), never a String — a String round-trips through
+// UTF-8 codecs in the shim and would silently corrupt arbitrary binary
+// data (ESC/POS commands, a fiscal printer's protocol). Errors use
+// std/error's closed kind vocabulary: not_found/permission/connection/
+// invalid/timeout/io ("io" also covers "Web Serial not supported",
+// same precedent as std/browser_idb's "io" for "IndexedDB disabled").
+// WebUSB is out of scope for v1 (phase 2): a different API shape
+// (claimed-interface transfers, not a byte stream) that doesn't fall out
+// of this module for free.
+
+import "std/error"
+
+pub struct SerialPort {
+    id: int,
+}
+
+#[suspends]
+extern "js" fn js_serial_request_port() -> int
+#[suspends]
+extern "js" fn js_serial_authorized_ports() -> Array
+#[suspends]
+extern "js" fn js_serial_open(id: int, baud: int, data_bits: int, stop_bits: int, parity: String) -> int
+#[suspends]
+extern "js" fn js_serial_write(id: int, datos: Array) -> int
+#[suspends]
+extern "js" fn js_serial_read(id: int, max_bytes: int, timeout_ms: int) -> Array
+#[suspends]
+extern "js" fn js_serial_close(id: int) -> int
+extern "js" fn js_serial_error_kind() -> String
+extern "js" fn js_serial_error_msg() -> String
+
+// Pide un puerto serie al navegador — la primera vez muestra el diálogo de
+// permiso; después de autorizado, `serial_authorized_ports` lo devuelve
+// sin diálogo. Err(kind: "not_found") si cancela; Err(kind: "io") si Web
+// Serial no está disponible en este navegador o contexto.
+export async fn serial_request_port() -> Result<SerialPort, Error> {
+    let id: int = js_serial_request_port()
+    let kind: String = js_serial_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_serial_error_msg()))
+    }
+    return Result.Ok(SerialPort { id: id })
+}
+
+// Puertos ya autorizados en una visita anterior — para reconectar sin
+// volver a mostrar el diálogo de permiso.
+export async fn serial_authorized_ports() -> Result<Array, Error> {
+    let ids: Array = js_serial_authorized_ports()
+    let kind: String = js_serial_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_serial_error_msg()))
+    }
+    return Result.Ok(ids)
+}
+
+// Abre `p` a `baud` baudios, 8N1 (8 bits de datos, sin paridad, 1 bit de
+// parada) — la configuración que usa la enorme mayoría de impresoras
+// térmicas y fiscales. Ok(0) en éxito.
+export async fn serial_open(p: SerialPort, baud: int) -> Result<int, Error> {
+    return await serial_open_with(p, baud, 8, 1, "none")
+}
+
+// Igual que `serial_open` con bits de datos / bits de parada / paridad
+// explícitos. `parity`: "none" | "even" | "odd" (mismos valores que acepta
+// SerialOptions.parity de Web Serial — se pasan directo, sin traducir).
+export async fn serial_open_with(p: SerialPort, baud: int, data_bits: int, stop_bits: int, parity: String) -> Result<int, Error> {
+    let _r: int = js_serial_open(p.id, baud, data_bits, stop_bits, parity)
+    let kind: String = js_serial_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_serial_error_msg()))
+    }
+    return Result.Ok(0)
+}
+
+// Escribe `datos` (Array de int, cada uno 0-255) sobre `p`. Ok(bytes
+// escritos) — normalmente `datos.length()`.
+export async fn serial_write(p: SerialPort, datos: Array) -> Result<int, Error> {
+    let n: int = js_serial_write(p.id, datos)
+    let kind: String = js_serial_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_serial_error_msg()))
+    }
+    return Result.Ok(n)
+}
+
+// Lee hasta `max_bytes` de `p`, con un plazo de `timeout_ms` milisegundos
+// (<= 0 = sin plazo). Si el plazo se cumple habiendo leído AL MENOS un
+// byte, Ok con lo leído hasta ahí (puede ser menos que max_bytes). Si se
+// cumple sin ningún byte, Err(kind: "timeout").
+export async fn serial_read(p: SerialPort, max_bytes: int, timeout_ms: int) -> Result<Array, Error> {
+    let datos: Array = js_serial_read(p.id, max_bytes, timeout_ms)
+    let kind: String = js_serial_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_serial_error_msg()))
+    }
+    return Result.Ok(datos)
+}
+
+// Cierra `p`. Idempotente: Ok(0) tanto si seguía abierto como si ya no
+// existía (mismo criterio que idb_delete).
+export async fn serial_close(p: SerialPort) -> Result<int, Error> {
+    let _r: int = js_serial_close(p.id)
+    let kind: String = js_serial_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_serial_error_msg()))
+    }
+    return Result.Ok(0)
+}

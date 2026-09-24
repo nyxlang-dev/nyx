@@ -767,6 +767,170 @@ else
 fi
 
 # ------------------------------------------------------------------
+# Check: caps-stdlib-stamp — fricción de nyxerp (2026-09-24): el self-heal de
+# CAPABILITIES.md miraba SOLO `nyx-version: X`, y la stdlib crece sin subir la
+# versión (install-local diario), así que el índice de ellos no listaba
+# std/smtp y reimplementaron SMTP a mano. Ahora el wrapper firma la stdlib
+# (_caps_stamp: cksum de std/*.nx + builtins.index + VERSION) y `nyx build`
+# regenera si la firma no coincide. Toolchain de prueba = el repo con un std/
+# de enlaces; se le suma un módulo SIN cambiar VERSION (control positivo: el
+# chequeo viejo no lo veía) y se verifica también que sin cambios NO regenera.
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_build ]; then
+    echo "  ⚠️  nyx_build no existe — ejecuta 'make build-nyx-build' primero (se salta caps-stdlib-stamp)"
+else
+    name="caps-stdlib-stamp"
+    REPO_ROOT="$(pwd)"
+    CH="$TMPDIR/caps_home"; CP="$TMPDIR/caps_proj"
+    mkdir -p "$CH/std" "$CP/src"
+    for f in "$REPO_ROOT"/*; do [ "$(basename "$f")" = std ] || ln -s "$f" "$CH/$(basename "$f")"; done
+    for f in "$REPO_ROOT"/std/*; do ln -s "$f" "$CH/std/$(basename "$f")"; done
+    printf '[package]\nname = "cp"\nversion = "0.1.0"\n' > "$CP/nyx.toml"
+    echo 'fn main() { print("ok") }' > "$CP/src/main.nx"
+    cs_ok=1; cs_why=""
+    (cd "$CP" && NYX_HOME="$CH" bash "$REPO_ROOT/scripts/nyx" build >/dev/null 2>&1)
+    grep -q '<!-- nyx-stdlib: ' "$CP/CAPABILITIES.md" 2>/dev/null || { cs_ok=0; cs_why="$cs_why [sin firma nyx-stdlib tras build]"; }
+    echo sentinela >> "$CP/CAPABILITIES.md"
+    (cd "$CP" && NYX_HOME="$CH" bash "$REPO_ROOT/scripts/nyx" build >/dev/null 2>&1)
+    grep -q '^sentinela$' "$CP/CAPABILITIES.md" || { cs_ok=0; cs_why="$cs_why [regeneró sin cambios en la stdlib]"; }
+    printf '// Módulo de prueba del self-heal.\npub fn caps_fresco_x() -> int { return 1 }\n' > "$CH/std/zz_caps_fresco.nx"
+    (cd "$CP" && NYX_HOME="$CH" bash "$REPO_ROOT/scripts/nyx" build >/dev/null 2>&1)
+    grep -q 'zz_caps_fresco' "$CP/CAPABILITIES.md" || { cs_ok=0; cs_why="$cs_why [módulo nuevo sin subir VERSION no regeneró el índice]"; }
+    if [ "$cs_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$cs_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Check: update-no-actualiza — fricción de nyxerp (2026-09-24): `nyx update
+# --help` actualizaba de verdad (todo argumento desconocido caía a la
+# actualización) y le cambió el toolchain a una suite ajena en plena corrida.
+# Toolchain de prueba = clon --shared del repo, retrasado 1 commit; cada
+# variante corre con timeout (si actualizara, el reset ya habría movido HEAD
+# antes del make bootstrap). Verifica: HEAD intacto, --help/-h rc 0 con
+# «Usage», --check anuncia la versión nueva, opción desconocida rc 2.
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_bootstrap ] || ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+    echo "  ⚠️  sin nyx_bootstrap o sin historia git (se salta update-no-actualiza)"
+else
+    name="update-no-actualiza"
+    REPO_ROOT="$(pwd)"
+    UH="$TMPDIR/update_home"
+    git clone -q --shared "$REPO_ROOT" "$UH" && git -C "$UH" reset -q --hard HEAD~1
+    ln -s "$REPO_ROOT/nyx_bootstrap" "$UH/nyx_bootstrap"
+    uh0=$(git -C "$UH" rev-parse HEAD)
+    un_ok=1; un_why=""
+    for a in --help -h; do
+        out=$(NYX_HOME="$UH" timeout 20 bash "$REPO_ROOT/scripts/nyx" update "$a" 2>&1); rc=$?
+        { [ "$rc" = "0" ] && printf '%s' "$out" | grep -q "Usage: nyx update"; } || { un_ok=0; un_why="$un_why [$a rc=$rc sin ayuda]"; }
+    done
+    out=$(NYX_HOME="$UH" timeout 20 bash "$REPO_ROOT/scripts/nyx" update --check 2>&1)
+    printf '%s' "$out" | grep -q "update available" || { un_ok=0; un_why="$un_why [--check no anunció la versión nueva]"; }
+    NYX_HOME="$UH" timeout 20 bash "$REPO_ROOT/scripts/nyx" update --bogus >/dev/null 2>&1; rc=$?
+    [ "$rc" = "2" ] || { un_ok=0; un_why="$un_why [opción desconocida rc=$rc, esperado 2]"; }
+    [ "$(git -C "$UH" rev-parse HEAD)" = "$uh0" ] || { un_ok=0; un_why="$un_why [ACTUALIZÓ: HEAD del toolchain cambió]"; }
+    if [ "$un_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$un_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Check: candado-check-update — fricción de nyxerp (2026-09-24): `nyx check`
+# compilaba contra el toolchain sin mirar ~/.nyx/.toolchain.lock, y `nyx
+# update` lo reescribía sin tomarlo. Ahora check (y `nyx archivo.nx`) lo toman
+# COMPARTIDO y update EXCLUSIVO, con plazo NYX_LOCK_WAIT. Con un exclusivo
+# ajeno tomado, check tiene que esperar y fallar al vencer el plazo; con un
+# compartido ajeno, check no espera y update falla sin mover el HEAD.
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_check ] || [ ! -x ./nyx_bootstrap ] || ! command -v flock >/dev/null 2>&1 \
+        || ! git rev-parse HEAD~1 >/dev/null 2>&1; then
+    echo "  ⚠️  sin nyx_check/nyx_bootstrap/flock/historia git (se salta candado-check-update)"
+else
+    name="candado-check-update"
+    REPO_ROOT="$(pwd)"
+    LH="$TMPDIR/lock_home"; mkdir -p "$LH"
+    for f in "$REPO_ROOT"/*; do ln -s "$f" "$LH/$(basename "$f")"; done
+    echo 'fn main() { print("ok") }' > "$TMPDIR/lock_ok.nx"
+    lk_ok=1; lk_why=""
+    ( flock -x 8; sleep 4 ) 8>"$LH/.toolchain.lock" & lk_pid=$!; sleep 0.5
+    out=$(NYX_HOME="$LH" NYX_LOCK_WAIT=1 bash "$REPO_ROOT/scripts/nyx" check "$TMPDIR/lock_ok.nx" 2>&1); rc=$?
+    { [ "$rc" = "1" ] && printf '%s' "$out" | grep -q "sigue tomado"; } || { lk_ok=0; lk_why="$lk_why [check no respetó un exclusivo ajeno: rc=$rc]"; }
+    wait "$lk_pid"
+    ( flock -s 8; sleep 4 ) 8>"$LH/.toolchain.lock" & lk_pid=$!; sleep 0.5
+    NYX_HOME="$LH" NYX_LOCK_WAIT=1 bash "$REPO_ROOT/scripts/nyx" check "$TMPDIR/lock_ok.nx" >/dev/null 2>&1 \
+        || { lk_ok=0; lk_why="$lk_why [check esperó/falló con solo un compartido ajeno]"; }
+    wait "$lk_pid"
+    LU="$TMPDIR/lock_update_home"
+    git clone -q --shared "$REPO_ROOT" "$LU" && git -C "$LU" reset -q --hard HEAD~1
+    ln -s "$REPO_ROOT/nyx_bootstrap" "$LU/nyx_bootstrap"
+    lu0=$(git -C "$LU" rev-parse HEAD)
+    ( flock -s 8; sleep 4 ) 8>"$LU/.toolchain.lock" & lk_pid=$!; sleep 0.5
+    NYX_HOME="$LU" NYX_LOCK_WAIT=1 timeout 20 bash "$REPO_ROOT/scripts/nyx" update >/dev/null 2>&1; rc=$?
+    [ "$rc" = "1" ] || { lk_ok=0; lk_why="$lk_why [update con compartido ajeno rc=$rc, esperado 1]"; }
+    [ "$(git -C "$LU" rev-parse HEAD)" = "$lu0" ] || { lk_ok=0; lk_why="$lk_why [update ACTUALIZÓ con el candado tomado]"; }
+    wait "$lk_pid"
+    if [ "$lk_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$lk_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Check: test-huella-toolchain — fricción de nyxerp (2026-09-24): una suite
+# larga puede cruzarse con un install (el candado lo deja entrar ENTRE
+# archivos) y el verde final mezclaba dos compiladores sin aviso. `nyx test`
+# imprime la huella de nyx_bootstrap al empezar y avisa si cambió al final.
+# Toolchain de prueba con nyx_bootstrap COPIADO; se le agrega un byte
+# mientras corre el primer archivo (control positivo) y, sin tocarlo, no hay
+# aviso (control negativo).
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_test ] || [ ! -x ./nyx_bootstrap ]; then
+    echo "  ⚠️  sin nyx_test/nyx_bootstrap (se salta test-huella-toolchain)"
+else
+    name="test-huella-toolchain"
+    REPO_ROOT="$(pwd)"
+    TH="$TMPDIR/huella_home"; TP="$TMPDIR/huella_proj"
+    mkdir -p "$TH" "$TP/tests"
+    for f in "$REPO_ROOT"/*; do [ "$(basename "$f")" = nyx_bootstrap ] || ln -s "$f" "$TH/$(basename "$f")"; done
+    cp "$REPO_ROOT/nyx_bootstrap" "$TH/nyx_bootstrap"
+    printf '[package]\nname = "hp"\nversion = "0.1.0"\n' > "$TP/nyx.toml"
+    printf 'test "a" {\n    assert(1 == 1)\n}\n' > "$TP/tests/a_test.nx"
+    printf 'test "b" {\n    assert(2 == 2)\n}\n' > "$TP/tests/b_test.nx"
+    th_ok=1; th_why=""
+    out=$(cd "$TP" && NYX_HOME="$TH" bash "$REPO_ROOT/scripts/nyx" test 2>&1)
+    printf '%s' "$out" | grep -q "compiler: nyx v.*(nyx_bootstrap [0-9a-f]\{12\})" || { th_ok=0; th_why="$th_why [sin la huella al empezar]"; }
+    printf '%s' "$out" | grep -q "TOOLCHAIN CAMBIÓ" && { th_ok=0; th_why="$th_why [aviso sin cambio]"; }
+    # Determinista (un sleep fallaba bajo carga: el byte caía ANTES de la huella
+    # inicial): la propia prueba A le agrega el byte al compilador mientras corre,
+    # o sea después de la huella inicial y antes de la final.
+    printf 'test "a" {\n    exec("printf x >> %s/nyx_bootstrap")\n    assert(1 == 1)\n}\n' "$TH" > "$TP/tests/a_test.nx"
+    out=$(cd "$TP" && NYX_HOME="$TH" bash "$REPO_ROOT/scripts/nyx" test 2>&1)
+    printf '%s' "$out" | grep -q "TOOLCHAIN CAMBIÓ" || { th_ok=0; th_why="$th_why [sin aviso con el compilador cambiado a mitad de corrida]"; }
+    if [ "$th_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$th_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
 # Check: seed-gitignore — F4 del informe de fricción del scaffold (hallazgo
 # A1, confirmado empíricamente 2026-09-03): `nyx init` no dejaba .gitignore
 # y el primer `git add .` se llevaba el binario, packages/ y los .ll.

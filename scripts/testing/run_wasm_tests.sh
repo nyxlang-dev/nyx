@@ -201,10 +201,10 @@ for t in tests/wasm/test-wasm-*.nx; do
     # EN: extern "js" tests only run under the node/browser shim.
     uses_js_ffi=0
     if grep -q 'extern "js"' "$t"; then uses_js_ffi=1; fi
-    # std/dom, std/browser, std/browser_await y std/browser_idb son SOLO-js
-    # (declaran extern "js" adentro): importar cualquiera implica FFI aunque
-    # el test no tenga el literal.
-    if grep -qE 'import .*"std/(dom|browser|browser_await|browser_idb)"' "$t"; then uses_js_ffi=1; fi
+    # std/dom, std/browser, std/browser_await, std/browser_idb y
+    # std/browser_serial son SOLO-js (declaran extern "js" adentro):
+    # importar cualquiera implica FFI aunque el test no tenga el literal.
+    if grep -qE 'import .*"std/(dom|browser|browser_await|browser_idb|browser_serial)"' "$t"; then uses_js_ffi=1; fi
     # Tests de RE-ENTRADA (afterStart en su .imports.mjs): el output esperado
     # incluye lo que pasa post-_start — wasmtime no tiene ese hook.
     if [ -f "$imports_mjs" ] && grep -q "afterStart" "$imports_mjs"; then uses_js_ffi=1; fi

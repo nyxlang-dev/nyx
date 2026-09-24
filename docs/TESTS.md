@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **452 archivos / 451 ARM64** | 2026-09-23: +1 `test-434-form-values`; 09-21: +1 `test-433-frontera-de-modulo`. `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **456 archivos / 455 ARM64** | 2026-09-24: +1 `test-435` (mención de compiler/), +3 `test-436..438` (barcode); 09-23: +1 `test-434`. `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **333** | +24 el 2026-09-23 (NYX2010 en check, arg i64→char, NYX1040 ×12, NYX1038 ×2, NYX2018, 200 operandos, NYX0302 ×5, desborde del hilo principal); +8 el 2026-09-20 (NYX1037). Detalle en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
@@ -30,19 +30,19 @@
 | Capabilities index | (dentro de `make test-ai-first`) `run_capabilities_test.sh` | **6 checks + frescura** | balance de paréntesis en firmas extraídas + mtime `build.nx` vs `nyx_build` + los 191 builtins globales (catálogo al día, secciones emitidas, y los del reporte por nombre) |
 | Generador gendocs | (dentro de `make test-ai-first`) `run_gendocs_test.sh` + `run_gendocs_noop.sh` | **23 asserts + 4 checks** | fixture de 2 gotchas de juguete (regiones, tabla, arrays, `--check`, `fixed-since`) + no-op de regenerar + smoke de `gotchas_table.nx` |
 | Lint de `nyx vet` (gotchas + W004) | (en `make test-ai-first`) `run_vet_gotchas.sh` | **9 casos + auditoría de 173 archivos** | código y línea exactos por `pattern:` vivo (W101–W104, W107–W110) y por W004 (`Fn` sin firma con resultado usado); 0 avisos en `clean.nx` y en by-example + std |
-| Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **15 checks** (7 negativos + 8 positivos) | check/test/build acusan el error de tipos; opción desconocida de `nyx test` (`--cover` sí, `--coverage` ya no); fns privadas homónimas por módulo |
+| Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **32 checks** | check/test/build acusan el error de tipos; opción desconocida de `nyx test` (`--cover` sí, `--coverage` ya no); fns privadas homónimas por módulo |
 | Cobertura de `nyx test` | (dentro de `make test-ai-first`) `run_coverage_tests.sh` | **9 checks** | fixture `tests/tooling/coverage/`: tabla + IR idéntico, informe, lcov, sin llvm-profdata, `--target` (2), prueba colgada, sin `--coverage`; SKIP sin llvm-profdata |
 | Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **20 checks** (9 negativos + 11 positivos) | `[build]`/`--main` (errores previos; no pisa el principal); +6 (2026-09-15): `--main` no reescribe `nyx.lock` (nativo/wasm) ni contradice el manifiesto |
 | Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
-| Recetas by-example | `make test-examples` | **122** (108 ejecutan, 14 solo compilan+enlazan) | +1 `115-form-repeated-keys`, +1 `114-idb-offline-wasm` (solo wasm), +1 `113-smtp`; compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
+| Recetas by-example | `make test-examples` | **124** (109 ejecutan, 15 solo compilan+enlazan) | +1 `117` (Web Serial, solo wasm), +1 `116` (barcode), +1 `115`, +1 `114` (solo wasm), +1 `113`; compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **26 checks** | +1 el 2026-09-20 (NYX3007: `include_bytes` no existe al interpretar); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
 | PostgreSQL E2E | (dentro de `make test-integration`, enganchado el 2026-09-14) `run_postgres_tests.sh` | **7 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **10 sub-suites** (WS proxy 6 + FFI 3 + slots 9 + llm 3 + HTTP/2 1 + body cap 6 + serve contrato 10 + serve bind 6-9 + smoke 103 + serve+kv 10) | detalle de las altas en `CHANGELOG.md` |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
-| WASM (wasm32-wasi) | `make test-wasm` | **46** | SKIP sin toolchain (salvo guards); +6 el 2026-09-23 (35-idb, 36/37 arena, 38 global que crece, 39 trim vacío, 40 \\u en json); +2 el 09-20 (`include_bytes`); +4 el 09-17 (async-real-wasm). Detalle en `CHANGELOG.md` |
+| WASM (wasm32-wasi) | `make test-wasm` | **53** | SKIP sin toolchain (salvo guards); +4 el 2026-09-24 (41 Web Serial, 42-44 barcode); +6 el 09-23 (35-40: idb, arena, trim, \\u en json); +2 el 09-20 (`include_bytes`); +4 el 09-17 (async-real-wasm). Detalle en `CHANGELOG.md` |
 | Verify + compiler-unit + fmt | `make test-unit` | **23** (13 verify + 5 compiler-unit + 5 fmt) | 5 de 7 compiler-unit activos (resto SKIP, ver abajo); la fila decía 4 hasta que la máquina B del reparto lo midió: `test-emit-bytes-global` ya corría en el runner |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +

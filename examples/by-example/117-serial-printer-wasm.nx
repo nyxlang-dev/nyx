@@ -1,0 +1,131 @@
+// 117 — Web Serial: un ticket ESC/POS directo a una impresora térmica, sin
+// el diálogo de impresión del sistema
+//
+// Target wasm32-wasi (corre en el navegador, o bajo node con
+// examples/browser/run-node.mjs). Pensado para un punto de venta: la caja
+// hoy imprime con el diálogo del sistema en cada venta (el paso más lento
+// del cobro, medido) y no puede cortar el papel ni abrir la gaveta — Web
+// Serial resuelve las dos cosas, y es el mismo camino que necesita la
+// integración con una impresora FISCAL (obligatoria para vender a
+// consumidor final en varios países), que habla por puerto serie con un
+// protocolo propio de comandos y respuestas.
+//
+// Construir:  nyx build --target wasm32-wasi
+//   (necesita binaryen: `sudo apt install binaryen`, o NYX_WASM_OPT=/ruta/a/wasm-opt;
+//    nyx build lo usa SOLO porque el programa espera al anfitrión)
+//
+// Lo que conviene saber:
+//   - Los bytes de ESC/POS cruzan como Array<int> (0-255), NO como String —
+//     un String cruza el shim por TextEncoder/TextDecoder (UTF-8) y
+//     corrompería en silencio los bytes de control que no son texto válido.
+//     Ver std/browser_serial.nx para el porqué completo.
+//   - serial_request_port() muestra el diálogo de permiso del navegador la
+//     PRIMERA vez; serial_authorized_ports() reconecta sin diálogo en
+//     visitas siguientes (llamar esa primero y, si viene vacío, recién ahí
+//     pedir uno nuevo — evita mostrar el diálogo en cada carga de página).
+//   - Sin Web Serial (Firefox, Safari, o la página sin HTTPS/localhost),
+//     serial_request_port() es Err(kind: "io") — la señal para volver al
+//     diálogo de impresión del sistema en vez de romper la venta.
+//   - serial_read(p, max, timeout_ms) puede volver con MENOS de `max` bytes
+//     si el plazo se cumple habiendo llegado al menos uno: una respuesta
+//     corta de la impresora fiscal sigue siendo válida, no es un error.
+
+import "std/browser_serial"
+import "std/error"
+
+const ESC: int = 27
+const GS: int = 29
+
+// Arma los bytes de un ticket mínimo: init, una línea de texto, corte de
+// papel y apertura de gaveta — los cuatro comandos que pidió el reporte de
+// nyxerp.
+fn armar_ticket(texto: String) -> Array<int> {
+    var bytes: Array<int> = []
+
+    // ESC @ — init: resetea la impresora al estado por defecto
+    bytes.push(ESC)
+    bytes.push(64)
+
+    // el texto del ticket, byte a byte (String = bytes en Nyx — ver
+    // CLAUDE.md — así que esto ya viaja como los bytes ASCII/Latin-1 que
+    // espera la impresora, sin decodificar)
+    var i: int = 0
+    while i < texto.length() {
+        bytes.push(texto.charAt(i))
+        i = i + 1
+    }
+    bytes.push(10) // salto de línea final
+
+    // GS V 66 0 — corte parcial de papel (modo B de la mayoría de
+    // impresoras EPSON-compatibles)
+    bytes.push(GS)
+    bytes.push(86)
+    bytes.push(66)
+    bytes.push(0)
+
+    // ESC p 0 25 250 — abre la gaveta de dinero conectada a la impresora
+    // (pin 2, pulso de 25×2ms encendido / 250×2ms apagado — valores típicos)
+    bytes.push(ESC)
+    bytes.push(112)
+    bytes.push(0)
+    bytes.push(25)
+    bytes.push(250)
+
+    return bytes
+}
+
+// Conecta (reusando un puerto ya autorizado si lo hay), imprime el ticket y
+// cierra. Devuelve cuántos bytes se escribieron, o el kind de Error si algo
+// falló — el llamador decide con eso si reintenta o cae a la impresión del
+// sistema.
+async fn imprimir_ticket(texto: String) -> Result<int, Error> {
+    // primero los ya autorizados (sin diálogo); si no hay ninguno, recién
+    // ahí se pide uno nuevo (con diálogo)
+    var puerto_id: int = -1
+    let autorizados = await serial_authorized_ports()
+    match autorizados {
+        Result.Ok(ids) => {
+            let lista: Array<int> = ids
+            if lista.length() > 0 {
+                puerto_id = lista[0]
+            }
+        }
+        Result.Err(_e) => { }
+    }
+
+    var p: SerialPort = SerialPort { id: 0 }
+    if puerto_id >= 0 {
+        p = SerialPort { id: puerto_id }
+    } else {
+        let pedido = await serial_request_port()
+        match pedido {
+            Result.Ok(puerto) => { p = puerto }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+    }
+
+    let abierto = await serial_open(p, 9600)
+    match abierto {
+        Result.Ok(_) => { }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+
+    let ticket: Array<int> = armar_ticket(texto)
+    let escrito = await serial_write(p, ticket)
+
+    let _c = await serial_close(p)
+
+    return escrito
+}
+
+fn main() {
+    let r = await imprimir_ticket("Gracias por su compra")
+    match r {
+        Result.Ok(n) => { println("ticket impreso: " + int_to_string(n) + " bytes") }
+        Result.Err(e) => {
+            // "io" = Web Serial no disponible: acá es donde un POS real
+            // caería a window.print() con el ticket como HTML de 80mm.
+            println("no se pudo imprimir por serial (" + e.kind + "): volver a impresión del sistema")
+        }
+    }
+}

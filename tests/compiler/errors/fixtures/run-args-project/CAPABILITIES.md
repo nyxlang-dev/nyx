@@ -1,11 +1,46 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.33.0 -->
+<!-- nyx-stdlib: 3501351980-738467 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
 
 ## HTTP & Web
+
+### `std/vdom`
+
+`import "std/vdom"` — 7 funciones:
+
+- `pub fn text(s: String) -> VNode`
+- `pub fn h(tag: String, attrs: Array, children: Array) -> VNode`
+- `pub fn h_keyed(tag: String, key: String, attrs: Array, children: Array) -> VNode`
+- `pub fn on(vnode: VNode, evento: String, handler: Fn) -> VNode`
+- `pub fn patch_kind(p: Patch) -> String`
+- `pub fn patch_path(p: Patch) -> Array`
+- `pub fn vdiff(old: VNode, new: VNode) -> Array`
+
+### `std/browser`
+
+`import "std/browser"` — 17 funciones:
+
+- `export fn browser_fetch(url: String, method: String, body: String, handler: String)`
+- `export fn browser_interval(ms: int, handler: String) -> int`
+- `export fn browser_timeout(ms: int, handler: String) -> int`
+- `export fn browser_clear_timer(id: int)`
+- `export fn browser_fetch_fn(url: String, method: String, body: String, handler: Fn)`
+- `export fn browser_timeout_fn(ms: int, handler: Fn) -> int`
+- `export fn browser_interval_fn(ms: int, handler: Fn) -> int`
+- `export fn browser_geo(handler: String)`
+- `export fn browser_geo_fn(handler: Fn)`
+- `export fn browser_sse_fn(url: String, handler: Fn) -> int`
+- `export fn browser_sse_close(id: int)`
+- `export fn ls_get(key: String) -> String`
+- `export fn ls_set(key: String, value: String)`
+- `export fn tz_offset() -> int`
+- `export fn match_media(query: String) -> int`
+- `export fn browser_get_hash() -> String`
+- `export fn browser_on_hashchange(f: Fn)`
 
 ### `std/websocket`
 
@@ -23,13 +58,17 @@
 
 ### `std/web`
 
-`import "std/web"` — 41 funciones:
+`import "std/web"` — 45 funciones:
 
 - `pub fn request_new() -> Request`
 - `pub fn request_with(method: String, path: String) -> Request` — Request sintético con method y path — para tests de handlers y helpers. Los demás campos vienen frescos y utilizables (mismo contrato que request_new).
 - `pub fn url_decode(s: String) -> String`
 - `pub fn parse_query_string(path: String) -> Map`
+- `pub fn parse_query_string_all(path: String) -> Array`
 - `pub fn parse_form_data(body: String, content_type: String) -> Map`
+- `pub fn parse_form_data_all(body: String, content_type: String) -> Array`
+- `pub fn query_values(req: Request, key: String) -> Array`
+- `pub fn form_values(req: Request, key: String) -> Array`
 - `pub fn parse_cookies(headers_flat: Array) -> Map`
 - `pub fn route_match(pattern: String, path: String) -> Map`
 - `pub fn response_new(status: int, body: String) -> Response`
@@ -98,6 +137,75 @@
 - `pub fn http_cors_response(origin: String) -> String`
 - `pub fn http_serve(port: int, handler: Fn(Array) -> String) -> int`
 - `pub fn http_serve_mt(port: int, num_workers: int, handler: Fn) -> int`
+
+### `std/browser_serial`
+
+`import "std/browser_serial"` — 7 funciones:
+
+- `export async fn serial_request_port() -> Result<SerialPort, Error>`
+- `export async fn serial_authorized_ports() -> Result<Array, Error>`
+- `export async fn serial_open(p: SerialPort, baud: int) -> Result<int, Error>`
+- `export async fn serial_open_with(p: SerialPort, baud: int, data_bits: int, stop_bits: int, parity: String) -> Result<int, Error>`
+- `export async fn serial_write(p: SerialPort, datos: Array) -> Result<int, Error>`
+- `export async fn serial_read(p: SerialPort, max_bytes: int, timeout_ms: int) -> Result<Array, Error>`
+- `export async fn serial_close(p: SerialPort) -> Result<int, Error>`
+
+### `std/browser_idb`
+
+`import "std/browser_idb"` — 4 funciones:
+
+- `export async fn idb_get(store: String, key: String) -> Result<String, Error>`
+- `export async fn idb_put(store: String, key: String, value: String) -> Result<int, Error>`
+- `export async fn idb_delete(store: String, key: String) -> Result<int, Error>`
+- `export async fn idb_keys(store: String) -> Result<Array, Error>`
+
+### `std/dom`
+
+`import "std/dom"` — 35 funciones:
+
+- `export fn dom_set_text(sel: String, text: String)`
+- `export fn dom_set_html(sel: String, html: String)`
+- `export fn dom_get_value(sel: String) -> String`
+- `export fn dom_on(sel: String, event: String, handler: String)`
+- `export fn console_log(msg: String)`
+- `export fn dom_get_attr(sel: String, name: String) -> String`
+- `export fn dom_set_attr(sel: String, name: String, value: String)`
+- `export fn dom_remove_attr(sel: String, name: String)`
+- `export fn dom_class_add(sel: String, cls: String)`
+- `export fn dom_class_remove(sel: String, cls: String)`
+- `export fn dom_class_toggle(sel: String, cls: String)`
+- `export fn dom_set_value(sel: String, value: String)`
+- `export fn dom_count(sel: String) -> int`
+- `export fn dom_get_attr_all(sel: String, name: String) -> Array`
+- `export fn ev_type() -> String`
+- `export fn ev_key() -> String`
+- `export fn ev_target_attr(name: String) -> String`
+- `export fn ev_target_value() -> String`
+- `export fn ev_client_x() -> int`
+- `export fn ev_client_y() -> int`
+- `export fn ev_prevent_default()`
+- `export fn dom_on_fn(sel: String, event: String, handler: Fn)`
+- `export fn dom_create(tag: String) -> int`
+- `export fn dom_create_text(s: String) -> int`
+- `export fn dom_append(parent: int, child: int)`
+- `export fn dom_remove_at(parent: int, idx: int)`
+- `export fn dom_replace(parent: int, new_h: int, old_h: int)`
+- `export fn dom_insert_before(parent: int, new_h: int, ref_h: int)`
+- `export fn dom_child_at(parent: int, idx: int) -> int`
+- `export fn dom_set_text_h(h: int, s: String)`
+- `export fn dom_set_attr_h(h: int, k: String, v: String)`
+- `export fn dom_remove_attr_h(h: int, k: String)`
+- `export fn dom_query_handle(sel: String) -> int`
+- `export fn dom_on_h(h: int, evento: String, handler: Fn)`
+- `export fn dom_child_count(h: int) -> int`
+
+### `std/browser_await`
+
+`import "std/browser_await"` — 3 funciones:
+
+- `export async fn browser_fetch_await_opts(url: String, method: String, body: String, timeout_ms: int) -> Result<HttpResp, Error>`
+- `export async fn browser_fetch_await(url: String, method: String, body: String) -> Result<HttpResp, Error>`
+- `export async fn browser_sleep_await(ms: int)`
 
 ## Bases de datos & KV
 
@@ -226,6 +334,15 @@
 - `pub fn base64_decode(input: String) -> String`
 - `pub fn base64url_encode(input: String) -> String`
 - `pub fn base64url_decode(input: String) -> String`
+
+### `std/barcode`
+
+`import "std/barcode"` — 4 funciones:
+
+- `pub fn code128_symbols(data: String) -> Result<Array, Error>` — Code 128: valores de símbolo 0-106 (arranque, datos en juegos B/C elegidos solos, control mod 103, parada). Err(invalid) si vacío o byte fuera de ASCII 32-127.
+- `pub fn code128_widths(data: String) -> Result<Array, Error>` — Code 128: anchos alternados barra/espacio en módulos, empezando en barra, sin zona de silencio. Err(invalid) si vacío o byte fuera de ASCII 32-127.
+- `pub fn ean13_widths(digits: String) -> Result<Array, Error>` — EAN-13: 59 anchos (95 módulos) empezando en barra; 12 dígitos calcula el control, 13 lo valida. Err(invalid) si no.
+- `pub fn qr_matrix(data: String, ecc: QrEcc) -> Result<Array, Error>` — QR (versiones 1-10, modo y máscara automáticos): Array de filas de int 1 oscuro / 0 claro, lado 17+4V, sin zona de silencio. Err(invalid) si no entra.
 
 ### `std/msgpack`
 
@@ -898,40 +1015,6 @@
 - `pub fn stream_pending(s: Array) -> int`
 - `pub fn stream_collect(s: Array) -> Array`
 
-### `std/vdom`
-
-`import "std/vdom"` — 7 funciones:
-
-- `pub fn text(s: String) -> VNode`
-- `pub fn h(tag: String, attrs: Array, children: Array) -> VNode`
-- `pub fn h_keyed(tag: String, key: String, attrs: Array, children: Array) -> VNode`
-- `pub fn on(vnode: VNode, evento: String, handler: Fn) -> VNode`
-- `pub fn patch_kind(p: Patch) -> String`
-- `pub fn patch_path(p: Patch) -> Array`
-- `pub fn vdiff(old: VNode, new: VNode) -> Array`
-
-### `std/browser`
-
-`import "std/browser"` — 17 funciones:
-
-- `export fn browser_fetch(url: String, method: String, body: String, handler: String)`
-- `export fn browser_interval(ms: int, handler: String) -> int`
-- `export fn browser_timeout(ms: int, handler: String) -> int`
-- `export fn browser_clear_timer(id: int)`
-- `export fn browser_fetch_fn(url: String, method: String, body: String, handler: Fn)`
-- `export fn browser_timeout_fn(ms: int, handler: Fn) -> int`
-- `export fn browser_interval_fn(ms: int, handler: Fn) -> int`
-- `export fn browser_geo(handler: String)`
-- `export fn browser_geo_fn(handler: Fn)`
-- `export fn browser_sse_fn(url: String, handler: Fn) -> int`
-- `export fn browser_sse_close(id: int)`
-- `export fn ls_get(key: String) -> String`
-- `export fn ls_set(key: String, value: String)`
-- `export fn tz_offset() -> int`
-- `export fn match_media(query: String) -> int`
-- `export fn browser_get_hash() -> String`
-- `export fn browser_on_hashchange(f: Fn)`
-
 ### `std/array`
 
 `import "std/array"` — 10 funciones:
@@ -1182,6 +1265,12 @@
 - `pub fn float_to_fixed(x: float, decimals: int) -> String`
 - `pub fn try_mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> Result<int, Error>`
 
+### `std/wasm_mem`
+
+`import "std/wasm_mem"` — 1 funciones:
+
+- `pub fn arena_stats() -> ArenaStats`
+
 ### `std/component`
 
 `import "std/component"` — 3 funciones:
@@ -1281,46 +1370,6 @@
 - `pub fn error_to_string(e: Error) -> String`
 - `pub fn is_eof(e: Error) -> bool`
 
-### `std/dom`
-
-`import "std/dom"` — 35 funciones:
-
-- `export fn dom_set_text(sel: String, text: String)`
-- `export fn dom_set_html(sel: String, html: String)`
-- `export fn dom_get_value(sel: String) -> String`
-- `export fn dom_on(sel: String, event: String, handler: String)`
-- `export fn console_log(msg: String)`
-- `export fn dom_get_attr(sel: String, name: String) -> String`
-- `export fn dom_set_attr(sel: String, name: String, value: String)`
-- `export fn dom_remove_attr(sel: String, name: String)`
-- `export fn dom_class_add(sel: String, cls: String)`
-- `export fn dom_class_remove(sel: String, cls: String)`
-- `export fn dom_class_toggle(sel: String, cls: String)`
-- `export fn dom_set_value(sel: String, value: String)`
-- `export fn dom_count(sel: String) -> int`
-- `export fn dom_get_attr_all(sel: String, name: String) -> Array`
-- `export fn ev_type() -> String`
-- `export fn ev_key() -> String`
-- `export fn ev_target_attr(name: String) -> String`
-- `export fn ev_target_value() -> String`
-- `export fn ev_client_x() -> int`
-- `export fn ev_client_y() -> int`
-- `export fn ev_prevent_default()`
-- `export fn dom_on_fn(sel: String, event: String, handler: Fn)`
-- `export fn dom_create(tag: String) -> int`
-- `export fn dom_create_text(s: String) -> int`
-- `export fn dom_append(parent: int, child: int)`
-- `export fn dom_remove_at(parent: int, idx: int)`
-- `export fn dom_replace(parent: int, new_h: int, old_h: int)`
-- `export fn dom_insert_before(parent: int, new_h: int, ref_h: int)`
-- `export fn dom_child_at(parent: int, idx: int) -> int`
-- `export fn dom_set_text_h(h: int, s: String)`
-- `export fn dom_set_attr_h(h: int, k: String, v: String)`
-- `export fn dom_remove_attr_h(h: int, k: String)`
-- `export fn dom_query_handle(sel: String) -> int`
-- `export fn dom_on_h(h: int, evento: String, handler: Fn)`
-- `export fn dom_child_count(h: int) -> int`
-
 ### `std/serve`
 
 `import "std/serve"` — 27 funciones:
@@ -1362,6 +1411,7 @@
 
 ### Builtins globales (sin `import`)
 
+- `arena_persist` (1 arg)
 - `c_fn_ptr` (1 arg)
 - `format` (-1 args)
 - `map_scan` (2 args)

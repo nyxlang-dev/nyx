@@ -1,0 +1,739 @@
+// test-438 — std/barcode, Task 3: qr_matrix verificado por un DECODIFICADOR.
+//
+// No hay en la máquina un lector de QR establecido (ver test-436), así que este
+// test trae uno propio, escrito del lado del LECTOR y sin compartir código con
+// el módulo: lee la matriz que devuelve qr_matrix como lo haría un escáner y
+// tiene que recuperar
+//   1. las palabras de código PUBLICADAS — el Anexo I de ISO/IEC 18004
+//      («01234567», 1-M: datos 10 20 0C 56 61 80 EC 11 …, corrección A5 24 D4 C1
+//      ED 36 C7 87 2C 55) y HELLO WORLD 1-M y 1-Q —, lo que ancla Reed–Solomon,
+//      el entrelazado, el zigzag y la máscara contra valores externos;
+//   2. y, para el resto de los casos (los tres modos, versiones 1-10, los
+//      cuatro niveles, varios bloques), el TEXTO original, con cada bloque
+//      validado por el Reed–Solomon ingenuo de test-436.
+// Además revisa los invariantes estructurales: patrones de búsqueda con su
+// separador, temporización, alineación, módulo oscuro, las dos copias del
+// formato (tienen que ser UNA de las 32 cadenas de la tabla, y la misma) y las
+// dos de la versión (v7+, contra las cadenas publicadas).
+//
+// Las tablas del lector salen de la columna «datos» de la tabla 7 del estándar
+// (capacidad por versión y nivel), no de la tabla de bloques que usa el módulo:
+// si una de las dos está mal transcrita, no coinciden.
+import "std/barcode"
+import "std/error"
+
+// ── Referencia ingenua (la de test-436) ───────────────────────────────────
+fn gf_mul(a: int, b: int) -> int {
+    var x: int = a
+    var y: int = b
+    var r: int = 0
+    while y > 0 {
+        if (y & 1) == 1 { r = r ^ x }
+        x = x << 1
+        if (x & 256) != 0 { x = x ^ 285 }
+        y = y >> 1
+    }
+    return r
+}
+
+fn rs_generator(n: int) -> Array {
+    var g: Array = [1]
+    var a: int = 1
+    var i: int = 0
+    while i < n {
+        var ng: Array = []
+        var j: int = 0
+        while j <= g.length() {
+            var v: int = 0
+            if j < g.length() {
+                let gj: int = g[j]
+                v = gj
+            }
+            if j >= 1 {
+                let gp: int = g[j - 1]
+                v = v ^ gf_mul(gp, a)
+            }
+            ng.push(v)
+            j = j + 1
+        }
+        g = ng
+        a = gf_mul(a, 2)
+        i = i + 1
+    }
+    return g
+}
+
+fn rs_remainder(data: Array, n: int) -> Array {
+    let g: Array = rs_generator(n)
+    var msg: Array = []
+    var i: int = 0
+    while i < data.length() {
+        let d: int = data[i]
+        msg.push(d)
+        i = i + 1
+    }
+    i = 0
+    while i < n {
+        msg.push(0)
+        i = i + 1
+    }
+    i = 0
+    while i < data.length() {
+        let coef: int = msg[i]
+        if coef != 0 {
+            var j: int = 1
+            while j <= n {
+                let gj: int = g[j]
+                let m: int = msg[i + j]
+                msg[i + j] = m ^ gf_mul(gj, coef)
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+    return msg.slice(data.length(), data.length() + n)
+}
+
+fn same(a: Array, b: Array) -> bool {
+    if a.length() != b.length() { return false }
+    var i: int = 0
+    while i < a.length() {
+        let x: int = a[i]
+        let y: int = b[i]
+        if x != y { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// ── Tablas del lector ─────────────────────────────────────────────────────
+// Palabras de código totales por versión (tabla 1) y de datos por versión y
+// nivel en orden L, M, Q, H (tabla 7).
+fn total_codewords(v: int) -> int {
+    let t: Array = [26, 44, 70, 100, 134, 172, 196, 242, 292, 346]
+    let x: int = t[v - 1]
+    return x
+}
+
+fn data_codewords(v: int, lvl: int) -> int {
+    let t: Array = [19, 16, 13, 9,
+                    34, 28, 22, 16,
+                    55, 44, 34, 26,
+                    80, 64, 48, 36,
+                    108, 86, 62, 46,
+                    136, 108, 76, 60,
+                    156, 124, 88, 66,
+                    194, 154, 110, 86,
+                    232, 182, 132, 100,
+                    274, 216, 154, 122]
+    let x: int = t[(v - 1) * 4 + lvl]
+    return x
+}
+
+// Bloques por versión y nivel (tabla 9), mismo orden.
+fn num_blocks(v: int, lvl: int) -> int {
+    let t: Array = [1, 1, 1, 1,
+                    1, 1, 1, 1,
+                    1, 1, 2, 2,
+                    1, 2, 2, 4,
+                    1, 2, 4, 4,
+                    2, 4, 4, 4,
+                    2, 4, 6, 5,
+                    2, 4, 6, 6,
+                    2, 5, 8, 8,
+                    4, 5, 8, 8]
+    let x: int = t[(v - 1) * 4 + lvl]
+    return x
+}
+
+fn align_centers(v: int) -> Array {
+    if v == 1 { return [] }
+    if v == 7 { return [6, 22, 38] }
+    if v == 8 { return [6, 24, 42] }
+    if v == 9 { return [6, 26, 46] }
+    if v == 10 { return [6, 28, 50] }
+    return [6, 10 + 4 * v]
+}
+
+// Las 32 cadenas de formato publicadas; el índice es nivel * 8 + máscara con el
+// nivel en orden L, M, Q, H.
+fn format_table() -> Array {
+    return ["111011111000100", "111001011110011", "111110110101010", "111100010011101",
+            "110011000101111", "110001100011000", "110110001000001", "110100101110110",
+            "101010000010010", "101000100100101", "101111001111100", "101101101001011",
+            "100010111111001", "100000011001110", "100111110010111", "100101010100000",
+            "011010101011111", "011000001101000", "011111100110001", "011101000000110",
+            "010010010110100", "010000110000011", "010111011011010", "010101111101101",
+            "001011010001001", "001001110111110", "001110011100111", "001100111010000",
+            "000011101100010", "000001001010101", "000110100001100", "000100000111011"]
+}
+
+fn version_string(v: int) -> String {
+    if v == 7 { return "000111110010010100" }
+    if v == 8 { return "001000010110111100" }
+    if v == 9 { return "001001101010011001" }
+    return "001010010011010011"
+}
+
+// ── Lector ────────────────────────────────────────────────────────────────
+fn flatten(m: Array) -> Array {
+    var out: Array = []
+    var r: int = 0
+    while r < m.length() {
+        let row: Array = m[r]
+        assert(row.length() == m.length(), "la matriz es cuadrada")
+        var c: int = 0
+        while c < row.length() {
+            let x: int = row[c]
+            assert(x == 0 or x == 1, "módulos 0/1")
+            out.push(x)
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return out
+}
+
+fn at(g: Array, size: int, r: int, c: int) -> int {
+    let x: int = g[r * size + c]
+    return x
+}
+
+// ¿Es (r, c) parte de un patrón fijo o de las zonas de formato/versión?
+fn is_function(size: int, v: int, r: int, c: int) -> bool {
+    if r <= 8 and c <= 8 { return true }
+    if r <= 8 and c >= size - 8 { return true }
+    if r >= size - 8 and c <= 8 { return true }
+    if r == 6 or c == 6 { return true }
+    if v >= 7 {
+        if r <= 5 and c >= size - 11 and c <= size - 9 { return true }
+        if c <= 5 and r >= size - 11 and r <= size - 9 { return true }
+    }
+    let ac: Array = align_centers(v)
+    var i: int = 0
+    while i < ac.length() {
+        var j: int = 0
+        while j < ac.length() {
+            let ar: int = ac[i]
+            let acc: int = ac[j]
+            let on_finder: bool = (ar == 6 and acc == 6) or (ar == 6 and acc == size - 7) or (ar == size - 7 and acc == 6)
+            if !on_finder and r >= ar - 2 and r <= ar + 2 and c >= acc - 2 and c <= acc + 2 { return true }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn check_finder(g: Array, size: int, top: int, left: int) {
+    var dr: int = 0 - 1
+    while dr <= 7 {
+        var dc: int = 0 - 1
+        while dc <= 7 {
+            let r: int = top + dr
+            let c: int = left + dc
+            if r >= 0 and r < size and c >= 0 and c < size {
+                var want: int = 0
+                // Anillo exterior 7x7 oscuro, anillo 5x5 claro, centro 3x3 oscuro;
+                // el separador (fuera del 7x7) claro.
+                if dr >= 0 and dr <= 6 and dc >= 0 and dc <= 6 {
+                    let ring_out: bool = dr == 0 or dr == 6 or dc == 0 or dc == 6
+                    let core: bool = dr >= 2 and dr <= 4 and dc >= 2 and dc <= 4
+                    if ring_out or core { want = 1 }
+                }
+                assert(at(g, size, r, c) == want, "patrón de búsqueda")
+            }
+            dc = dc + 1
+        }
+        dr = dr + 1
+    }
+}
+
+fn read_bits(g: Array, size: int, pos: Array) -> String {
+    // pos: pares fila, columna — el primero es el bit MÁS significativo.
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < pos.length() {
+        let r: int = pos[i]
+        let c: int = pos[i + 1]
+        sb.append(int_to_string(at(g, size, r, c)))
+        i = i + 2
+    }
+    return sb.to_string()
+}
+
+fn mask_ok(mask: int, i: int, j: int) -> bool {
+    // Tabla 10 de ISO/IEC 18004, i = fila, j = columna.
+    if mask == 0 { return (i + j) % 2 == 0 }
+    if mask == 1 { return i % 2 == 0 }
+    if mask == 2 { return j % 3 == 0 }
+    if mask == 3 { return (i + j) % 3 == 0 }
+    if mask == 4 { return ((i / 2) + (j / 3)) % 2 == 0 }
+    if mask == 5 { return ((i * j) % 2) + ((i * j) % 3) == 0 }
+    if mask == 6 { return (((i * j) % 2) + ((i * j) % 3)) % 2 == 0 }
+    return (((i + j) % 2) + ((i * j) % 3)) % 2 == 0
+}
+
+// Resultado del lector: [nivel, máscara, versión, palabras de código crudas
+// (en el orden del símbolo), palabras de datos desentrelazadas, bytes del
+// texto, modo].
+fn decode(m: Array) -> Array {
+    let size: int = m.length()
+    assert((size - 17) % 4 == 0, "lado 17 + 4V")
+    let v: int = (size - 17) / 4
+    assert(v >= 1 and v <= 10, "versión 1-10")
+    let g: Array = flatten(m)
+
+    // Patrones fijos.
+    check_finder(g, size, 0, 0)
+    check_finder(g, size, 0, size - 7)
+    check_finder(g, size, size - 7, 0)
+    var k: int = 8
+    while k < size - 8 {
+        var want: int = 0
+        if k % 2 == 0 { want = 1 }
+        assert(at(g, size, 6, k) == want, "temporización horizontal")
+        assert(at(g, size, k, 6) == want, "temporización vertical")
+        k = k + 1
+    }
+    assert(at(g, size, size - 8, 8) == 1, "módulo oscuro")
+    let ac: Array = align_centers(v)
+    var ai: int = 0
+    while ai < ac.length() {
+        var aj: int = 0
+        while aj < ac.length() {
+            let ar: int = ac[ai]
+            let acc: int = ac[aj]
+            let on_finder: bool = (ar == 6 and acc == 6) or (ar == 6 and acc == size - 7) or (ar == size - 7 and acc == 6)
+            if !on_finder {
+                var dr: int = 0 - 2
+                while dr <= 2 {
+                    var dc: int = 0 - 2
+                    while dc <= 2 {
+                        var want: int = 1
+                        let ring: bool = (dr == 0 - 1 or dr == 1 or dr == 0) and (dc == 0 - 1 or dc == 1 or dc == 0) and !(dr == 0 and dc == 0)
+                        if ring { want = 0 }
+                        assert(at(g, size, ar + dr, acc + dc) == want, "patrón de alineación")
+                        dc = dc + 1
+                    }
+                    dr = dr + 1
+                }
+            }
+            aj = aj + 1
+        }
+        ai = ai + 1
+    }
+
+    // Formato: bit 14 primero. Copia 1 alrededor del patrón de arriba a la
+    // izquierda; copia 2 repartida entre abajo a la izquierda (bits 14-8) y
+    // arriba a la derecha (bits 7-0).
+    let f1: String = read_bits(g, size, [8, 0, 8, 1, 8, 2, 8, 3, 8, 4, 8, 5, 8, 7, 8, 8, 7, 8, 5, 8, 4, 8, 3, 8, 2, 8, 1, 8, 0, 8])
+    var p2: Array = []
+    var q: int = 1
+    while q <= 7 {
+        p2.push(size - q)
+        p2.push(8)
+        q = q + 1
+    }
+    q = 8
+    while q >= 1 {
+        p2.push(8)
+        p2.push(size - q)
+        q = q - 1
+    }
+    let f2: String = read_bits(g, size, p2)
+    assert(f1 == f2, "las dos copias del formato coinciden")
+    let ft: Array = format_table()
+    var fidx: int = 0 - 1
+    var t: int = 0
+    while t < 32 {
+        let s: String = ft[t]
+        if s == f1 { fidx = t }
+        t = t + 1
+    }
+    assert(fidx >= 0, "el formato es una de las 32 cadenas publicadas")
+    let lvl: int = fidx / 8
+    let mask: int = fidx % 8
+
+    // Versión (v7+): bloque de arriba a la derecha, bit 17 primero, leído por
+    // filas de abajo hacia arriba… el estándar lo define bit a bit: el bit i va
+    // en (fila i/3, columna size-11 + i%3) y su transpuesto.
+    if v >= 7 {
+        let want: String = version_string(v)
+        var i: int = 0
+        while i < 18 {
+            let bit: int = want.charAt(17 - i) - 48
+            assert(at(g, size, i / 3, size - 11 + i % 3) == bit, "versión arriba a la derecha")
+            assert(at(g, size, size - 11 + i % 3, i / 3) == bit, "versión abajo a la izquierda")
+            i = i + 1
+        }
+    }
+
+    // Zigzag, desenmascarando.
+    var bits: Array = []
+    var col: int = size - 1
+    var up: bool = true
+    while col > 0 {
+        if col == 6 { col = 5 }
+        var step: int = 0
+        while step < size {
+            var r: int = step
+            if up { r = size - 1 - step }
+            var d: int = 0
+            while d < 2 {
+                let c: int = col - d
+                if !is_function(size, v, r, c) {
+                    var b: int = at(g, size, r, c)
+                    if mask_ok(mask, r, c) { b = 1 - b }
+                    bits.push(b)
+                }
+                d = d + 1
+            }
+            step = step + 1
+        }
+        up = !up
+        col = col - 2
+    }
+    let total: int = total_codewords(v)
+    assert(bits.length() >= total * 8 and bits.length() - total * 8 < 8, "módulos de datos de la versión")
+    var raw: Array = []
+    var i: int = 0
+    while i < total {
+        var byte: int = 0
+        var b8: int = 0
+        while b8 < 8 {
+            let bit: int = bits[i * 8 + b8]
+            byte = byte * 2 + bit
+            b8 = b8 + 1
+        }
+        raw.push(byte)
+        i = i + 1
+    }
+
+    // Desentrelazado y verificación de cada bloque.
+    let ndata: int = data_codewords(v, lvl)
+    let nb: int = num_blocks(v, lvl)
+    let ecl: int = (total - ndata) / nb
+    assert((total - ndata) % nb == 0, "corrección pareja por bloque")
+    let nlong: int = ndata % nb
+    let short_d: int = ndata / nb
+    var data: Array = []
+    var ecc_all: Array = []
+    var b: int = 0
+    while b < nb {
+        var dlen: int = short_d
+        if b >= nb - nlong { dlen = short_d + 1 }
+        var blk: Array = []
+        var j: int = 0
+        while j < dlen {
+            // palabra j del bloque b: las j primeras vueltas pasan por los nb
+            // bloques; en la última (j == short_d) solo por los largos.
+            var idx: int = j * nb + b
+            if j == short_d { idx = short_d * nb + (b - (nb - nlong)) }
+            let x: int = raw[idx]
+            blk.push(x)
+            j = j + 1
+        }
+        var eblk: Array = []
+        j = 0
+        while j < ecl {
+            let x: int = raw[ndata + j * nb + b]
+            eblk.push(x)
+            j = j + 1
+        }
+        assert(same(rs_remainder(blk, ecl), eblk), "Reed–Solomon del bloque")
+        j = 0
+        while j < blk.length() {
+            let x: int = blk[j]
+            data.push(x)
+            j = j + 1
+        }
+        b = b + 1
+    }
+
+    // Flujo de bits de datos → texto.
+    var dbits: Array = []
+    i = 0
+    while i < data.length() {
+        let byte: int = data[i]
+        var s: int = 7
+        while s >= 0 {
+            dbits.push((byte >> s) & 1)
+            s = s - 1
+        }
+        i = i + 1
+    }
+    var p: int = 0
+    let mode: int = take(dbits, p, 4)
+    p = p + 4
+    var cc: int = 8
+    if mode == 1 { cc = 10 }
+    if mode == 2 { cc = 9 }
+    if v >= 10 {
+        if mode == 1 { cc = 12 }
+        if mode == 2 { cc = 11 }
+        if mode == 4 { cc = 16 }
+    }
+    let count: int = take(dbits, p, cc)
+    p = p + cc
+    let alnum: String = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+    var bytes: Array = []
+    var left: int = count
+    while left > 0 {
+        if mode == 1 {
+            var nd: int = 3
+            if left < 3 { nd = left }
+            let val: int = take(dbits, p, nd * 3 + 1)
+            p = p + nd * 3 + 1
+            var dv: Array = []
+            var x: int = val
+            var z: int = 0
+            while z < nd {
+                dv.insert(0, 48 + x % 10)
+                x = x / 10
+                z = z + 1
+            }
+            z = 0
+            while z < nd {
+                let ch: int = dv[z]
+                bytes.push(ch)
+                z = z + 1
+            }
+            left = left - nd
+        } else if mode == 2 {
+            if left >= 2 {
+                let val: int = take(dbits, p, 11)
+                p = p + 11
+                bytes.push(alnum.charAt(val / 45))
+                bytes.push(alnum.charAt(val % 45))
+                left = left - 2
+            } else {
+                let val: int = take(dbits, p, 6)
+                p = p + 6
+                bytes.push(alnum.charAt(val))
+                left = left - 1
+            }
+        } else {
+            assert(mode == 4, "modo conocido")
+            bytes.push(take(dbits, p, 8))
+            p = p + 8
+            left = left - 1
+        }
+    }
+    // Terminador (hasta 4 ceros), relleno a byte y 0xEC 0x11 alternados.
+    var zeros: int = 0
+    while zeros < 4 and p < dbits.length() {
+        let zb: int = dbits[p]
+        assert(zb == 0, "terminador")
+        p = p + 1
+        zeros = zeros + 1
+    }
+    while p % 8 != 0 {
+        let zb: int = dbits[p]
+        assert(zb == 0, "relleno a byte")
+        p = p + 1
+    }
+    var pad: int = 236
+    while p < dbits.length() {
+        assert(take(dbits, p, 8) == pad, "bytes de relleno EC 11")
+        if pad == 236 { pad = 17 } else { pad = 236 }
+        p = p + 8
+    }
+    // Los bytes y no un String: string_from_bytes vive en runtime/persist.c, que
+    // no se enlaza en wasm32-wasi, y este test corre en los dos targets.
+    return [lvl, mask, v, raw, data, bytes, mode]
+}
+
+fn take(bits: Array, p: int, n: int) -> int {
+    var v: int = 0
+    var i: int = 0
+    while i < n {
+        let b: int = bits[p + i]
+        v = v * 2 + b
+        i = i + 1
+    }
+    return v
+}
+
+fn qr_or_die(s: String, ecc: QrEcc) -> Array {
+    match qr_matrix(s, ecc) {
+        Result.Ok(m) => { return m }
+        Result.Err(e) => {
+            assert(false, "qr_matrix falló: " + e.msg)
+            return []
+        }
+    }
+}
+
+// Codifica, lee y compara. Devuelve la versión.
+fn roundtrip(s: String, ecc: QrEcc, lvl: int, want_mode: int) -> int {
+    let d: Array = decode(qr_or_die(s, ecc))
+    let got_lvl: int = d[0]
+    let got_v: int = d[2]
+    let got_bytes: Array = d[5]
+    let got_mode: int = d[6]
+    assert(got_lvl == lvl, "nivel leído del formato")
+    assert(got_bytes.length() == s.length(), "largo recuperado: " + s)
+    var i: int = 0
+    while i < s.length() {
+        let b: int = got_bytes[i]
+        assert(b == s.charAt(i), "texto recuperado: " + s)
+        i = i + 1
+    }
+    assert(got_mode == want_mode, "modo elegido")
+    return got_v
+}
+
+fn digits(n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < n {
+        sb.append(int_to_string(i % 10))
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn repeat_str(s: String, n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < n {
+        sb.append(s)
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn err_kind(s: String, ecc: QrEcc) -> String {
+    match qr_matrix(s, ecc) {
+        Result.Ok(m) => { return "ok" }
+        Result.Err(e) => { return e.kind }
+    }
+}
+
+fn main() -> int {
+    // ── 1. Vectores publicados: palabras de código exactas ───────────────
+    let annex: Array = decode(qr_or_die("01234567", QrEcc.M))
+    let a_lvl: int = annex[0]
+    let a_v: int = annex[2]
+    let a_raw: Array = annex[3]
+    assert(a_v == 1 and a_lvl == 1, "Anexo I: versión 1, nivel M")
+    let annex_cw: Array = [16, 32, 12, 86, 97, 128, 236, 17, 236, 17, 236, 17, 236, 17, 236, 17,
+                           165, 36, 212, 193, 237, 54, 199, 135, 44, 85]
+    assert(same(a_raw, annex_cw), "Anexo I: las 26 palabras de código")
+    // Fija la máscara que elige la penalización (010 → formato 101111001111100).
+    // Es un pin de regresión: cualquier máscara es legible, pero un cambio acá
+    // quiere decir que cambió la cuenta de las reglas N1-N4.
+    let a_mask: int = annex[1]
+    assert(a_mask == 2, "Anexo I: máscara 010")
+    println("ok Anexo I: 01234567 1-M, 26 palabras exactas")
+
+    let hm: Array = decode(qr_or_die("HELLO WORLD", QrEcc.M))
+    let hm_raw: Array = hm[3]
+    assert(same(hm_raw, [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17,
+                         196, 35, 39, 119, 235, 215, 231, 226, 93, 23]), "HELLO WORLD 1-M")
+    let hq: Array = decode(qr_or_die("HELLO WORLD", QrEcc.Q))
+    let hq_raw: Array = hq[3]
+    assert(same(hq_raw, [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236,
+                         168, 72, 22, 82, 217, 54, 156, 0, 46, 15, 180, 122, 16]), "HELLO WORLD 1-Q")
+    println("ok HELLO WORLD 1-M y 1-Q: palabras exactas")
+
+    // ── 2. Ida y vuelta: modos, niveles, versiones, bloques ──────────────
+    // El número de venta de nyxerp: alfanumérico, versión 1 (21 módulos).
+    assert(roundtrip("C1-000123", QrEcc.M, 1, 2) == 1, "C1-000123 en versión 1")
+    assert(roundtrip("C1-000123", QrEcc.L, 0, 2) == 1, "nivel L")
+    assert(roundtrip("C1-000123", QrEcc.Q, 2, 2) == 1, "nivel Q")
+    assert(roundtrip("C1-000123", QrEcc.H, 3, 2) == 1, "nivel H")
+    // Byte con UTF-8: se cuentan bytes (café = 5 bytes).
+    assert(roundtrip("café", QrEcc.M, 1, 4) == 1, "café en modo byte")
+    assert(roundtrip("señal ñandú", QrEcc.H, 3, 4) == 2, "UTF-8 en H")
+    assert(roundtrip("https://nyxlang.com/f/C1-000123", QrEcc.M, 1, 4) == 3, "URL de factura")
+    println("ok modos: numérico/alfanumérico/byte y los 4 niveles")
+
+    // Bordes de capacidad de la versión 1-M (tabla 7): 34 dígitos, 20 alfanuméricos, 14 bytes.
+    assert(roundtrip(digits(34), QrEcc.M, 1, 1) == 1, "34 dígitos caben en 1-M")
+    assert(roundtrip(digits(35), QrEcc.M, 1, 1) == 2, "35 dígitos pasan a 2-M")
+    assert(roundtrip(repeat_str("AB", 10), QrEcc.M, 1, 2) == 1, "20 alfanuméricos en 1-M")
+    assert(roundtrip(repeat_str("AB", 10) + "C", QrEcc.M, 1, 2) == 2, "21 pasan a 2-M")
+    assert(roundtrip(repeat_str("a", 14), QrEcc.M, 1, 4) == 1, "14 bytes en 1-M")
+    assert(roundtrip(repeat_str("a", 15), QrEcc.M, 1, 4) == 2, "15 bytes pasan a 2-M")
+    println("ok bordes de capacidad de 1-M")
+
+    // Varios bloques, bloques de dos largos, información de versión.
+    assert(roundtrip(repeat_str("x", 60), QrEcc.Q, 2, 4) == 5, "5-Q: 2 bloques de 15 y 2 de 16")
+    assert(roundtrip(repeat_str("0123456789", 15), QrEcc.H, 3, 1) == 7, "7-H numérico: 150 dígitos")
+    assert(roundtrip(repeat_str("NYX ", 50), QrEcc.M, 1, 2) == 8, "8-M alfanumérico: 200")
+    assert(roundtrip(repeat_str("z", 200), QrEcc.L, 0, 4) == 9, "9-L byte")
+    // Versión 10: contadores de 12/11/16 bits. 271 bytes es el tope de 10-L.
+    assert(roundtrip(repeat_str("q", 271), QrEcc.L, 0, 4) == 10, "10-L lleno: 271 bytes")
+    assert(roundtrip(digits(652), QrEcc.L, 0, 1) == 10, "10-L lleno: 652 dígitos")
+    assert(roundtrip(repeat_str("k", 119), QrEcc.H, 3, 4) == 10, "10-H byte")
+    println("ok versiones 5-10: bloques, entrelazado e información de versión")
+
+    // Barrido de 1 a 113 bytes en los cuatro niveles (en H recorre las versiones 1-10).
+    var lvl: int = 0
+    while lvl < 4 {
+        var n: int = 1
+        var last_v: int = 0
+        while n <= 119 {
+            let s: String = repeat_str("y", n)
+            var got: int = 0
+            if lvl == 0 { got = roundtrip(s, QrEcc.L, 0, 4) }
+            if lvl == 1 { got = roundtrip(s, QrEcc.M, 1, 4) }
+            if lvl == 2 { got = roundtrip(s, QrEcc.Q, 2, 4) }
+            if lvl == 3 { got = roundtrip(s, QrEcc.H, 3, 4) }
+            assert(got >= last_v, "la versión no baja al crecer el texto")
+            last_v = got
+            n = n + 7
+        }
+        lvl = lvl + 1
+    }
+    println("ok barrido de largos en los 4 niveles")
+
+    // ── 3. Errores ───────────────────────────────────────────────────────
+    assert(err_kind(repeat_str("q", 272), QrEcc.L) == "invalid", "272 bytes no entran en 10-L")
+    assert(err_kind(digits(653), QrEcc.L) == "invalid", "653 dígitos no entran")
+    assert(err_kind(repeat_str("q", 120), QrEcc.H) == "invalid", "120 bytes no entran en 10-H")
+    println("ok errores: fuera de la versión 10 es invalid")
+
+    // ── 4. Huella de la matriz ───────────────────────────────────────────
+    // La matriz COMPLETA del número de venta y una suma de control de otras
+    // tres. Este mismo .expected lo comparte tests/wasm/test-wasm-44: nativo y
+    // wasm tienen que dar el mismo símbolo, módulo por módulo, incluida la
+    // máscara que elige la penalización.
+    let venta: Array = qr_or_die("C1-000123", QrEcc.M)
+    var r: int = 0
+    while r < venta.length() {
+        let row: Array = venta[r]
+        var sb: StringBuilder = StringBuilder.new()
+        var c: int = 0
+        while c < row.length() {
+            let x: int = row[c]
+            if x == 1 { sb.append("#") } else { sb.append(".") }
+            c = c + 1
+        }
+        println(sb.to_string())
+        r = r + 1
+    }
+    println("huella 5-Q: " + int_to_string(fingerprint(qr_or_die(repeat_str("x", 60), QrEcc.Q))))
+    println("huella 7-H: " + int_to_string(fingerprint(qr_or_die(repeat_str("0123456789", 15), QrEcc.H))))
+    println("huella 10-L: " + int_to_string(fingerprint(qr_or_die(repeat_str("q", 271), QrEcc.L))))
+    return 0
+}
+
+// Suma de control posicional de la matriz: un módulo cambiado la mueve.
+fn fingerprint(m: Array) -> int {
+    var h: int = 0
+    var r: int = 0
+    while r < m.length() {
+        let row: Array = m[r]
+        var c: int = 0
+        while c < row.length() {
+            let x: int = row[c]
+            h = (h * 31 + x + 1) % 1000000007
+            c = c + 1
+        }
+        r = r + 1
+    }
+    return h
+}

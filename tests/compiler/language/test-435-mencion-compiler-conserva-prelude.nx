@@ -1,0 +1,19 @@
+// test-435-mencion-compiler-conserva-prelude — resolve_source decidía que un
+// archivo era «módulo del compilador» (y NO le inyectaba el prelude) si su
+// texto contenía la subcadena de la carpeta del compilador en CUALQUIER lado:
+// un comentario como «ver compiler/README» o un string como el de abajo
+// bastaban para que `println` diera NYX1002 («not declared») y, sin semantic,
+// para un link roto por `@sort_str` indefinido. Ahora solo cuenta un `import`
+// de un módulo "compiler/..." o la marca explícita nyx:sin-prelude en una
+// línea propia (compiler/resolve.nx, es_modulo_del_compilador).
+// Self-checking con assert().
+
+fn main() -> int {
+    let ruta: String = "compiler/README.md"
+    let xs: Array<String> = ["b", "c", "a"]
+    let ordenado: Array<String> = sort_str(xs)
+    assert(ordenado.join(",") == "a,b,c", "sort_str del prelude disponible pese a la mención")
+    assert(ruta.startsWith("compiler/"), "el string con la ruta se conserva tal cual")
+    println("ok: prelude presente con la mención de compiler/ en comentario y string")
+    return 0
+}

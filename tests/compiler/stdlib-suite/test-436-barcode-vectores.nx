@@ -1,0 +1,276 @@
+// test-436 — std/barcode, Task 1: los VECTORES PUBLICADOS, antes que el encoder.
+//
+// Origen: fricción de nyxerp (20260923-210010-team-1) — «un error da un código
+// ilegible sin que nada falle». La única defensa contra esa clase de bug es
+// comparar contra valores que no salieron de nuestro propio código.
+//
+// Este test NO importa std/barcode. Fija cada vector publicado y lo verifica con
+// una referencia INGENUA escrita acá, a propósito distinta de la del módulo:
+//   - GF(256) por desplazamiento y XOR (sin tablas log/antilog, que es lo que usa
+//     el módulo), Reed–Solomon por división larga del polinomio (el módulo usa el
+//     registro de desplazamiento), BCH bit por bit.
+// Si el vector publicado y la referencia ingenua coinciden, el vector queda
+// anclado; los tests 436-438 comparan el módulo contra los MISMOS literales.
+//
+// Fuentes de los vectores:
+//   - QR «01234567», versión 1-M: ejemplo trabajado de ISO/IEC 18004 Anexo I
+//     (palabras de datos 10 20 0C 56 61 80 EC 11 …, corrección A5 24 D4 C1 ED 36
+//     C7 87 2C 55).
+//   - QR «HELLO WORLD», 1-M y 1-Q: el ejemplo trabajado que reproducen las guías
+//     públicas del estándar (thonky.com «QR Code Tutorial»).
+//   - Polinomios generadores de 7 y 10 palabras: ISO/IEC 18004 Anexo A (exponentes
+//     de alfa).
+//   - Información de formato (15 bits, las 32 combinaciones) e información de
+//     versión 7-10 (18 bits): tablas de ISO/IEC 18004 Anexo C y D.
+//   - EAN-13: códigos reales (4006381333931, 5901234123457 de GS1, ISBN
+//     9780306406157, UPC-A 012345678905 como EAN 0012345678905).
+//   - Code 128: «PJJ123C» (ejemplo de dígito de control del juego B, ISO/IEC 15417
+//     §6.2 / Wikipedia), y la tabla de 107 símbolos cruzada con la implementación
+//     independiente de nyxerp (src/web/caja/impresion.nx), idéntica símbolo por
+//     símbolo.
+//
+// No hay en la máquina un generador ni un lector de QR establecido (sin qrencode,
+// zbarimg ni python-qrcode, relevado 2026-09-24): por eso no hay una matriz final
+// pegada acá — inventarla sería peor que no tenerla. La matriz se verifica en
+// test-438 con un DECODIFICADOR independiente que tiene que recuperar estas mismas
+// palabras de código.
+
+// ── GF(256) con el polinomio primitivo x^8+x^4+x^3+x^2+1 (0x11D) ────────────
+fn gf_mul(a: int, b: int) -> int {
+    var x: int = a
+    var y: int = b
+    var r: int = 0
+    while y > 0 {
+        if (y & 1) == 1 { r = r ^ x }
+        x = x << 1
+        if (x & 256) != 0 { x = x ^ 285 }
+        y = y >> 1
+    }
+    return r
+}
+
+fn gf_alpha(e: int) -> int {
+    var r: int = 1
+    var i: int = 0
+    while i < e {
+        r = gf_mul(r, 2)
+        i = i + 1
+    }
+    return r
+}
+
+fn gf_log(v: int) -> int {
+    var e: int = 0
+    while e < 255 {
+        if gf_alpha(e) == v { return e }
+        e = e + 1
+    }
+    return 0 - 1
+}
+
+// g(x) = (x - a^0)(x - a^1)...(x - a^(n-1)), coeficientes de mayor a menor grado.
+fn rs_generator(n: int) -> Array {
+    var g: Array = [1]
+    var i: int = 0
+    while i < n {
+        let a: int = gf_alpha(i)
+        var ng: Array = []
+        var j: int = 0
+        while j <= g.length() {
+            var v: int = 0
+            if j < g.length() {
+                let gj: int = g[j]
+                v = gj
+            }
+            if j >= 1 {
+                let gp: int = g[j - 1]
+                v = v ^ gf_mul(gp, a)
+            }
+            ng.push(v)
+            j = j + 1
+        }
+        g = ng
+        i = i + 1
+    }
+    return g
+}
+
+// Resto de data(x)·x^n / g(x) por división larga.
+fn rs_remainder(data: Array, n: int) -> Array {
+    let g: Array = rs_generator(n)
+    var msg: Array = []
+    var i: int = 0
+    while i < data.length() {
+        let d: int = data[i]
+        msg.push(d)
+        i = i + 1
+    }
+    i = 0
+    while i < n {
+        msg.push(0)
+        i = i + 1
+    }
+    i = 0
+    while i < data.length() {
+        let coef: int = msg[i]
+        if coef != 0 {
+            var j: int = 1
+            while j <= n {
+                let gj: int = g[j]
+                let m: int = msg[i + j]
+                msg[i + j] = m ^ gf_mul(gj, coef)
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+    return msg.slice(data.length(), data.length() + n)
+}
+
+fn bits(v: int, n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = n - 1
+    while i >= 0 {
+        if ((v >> i) & 1) == 1 { sb.append("1") } else { sb.append("0") }
+        i = i - 1
+    }
+    return sb.to_string()
+}
+
+// Resto BCH bit a bit: v·x^deg mod gen.
+fn bch_rem(v: int, gen: int, deg: int, top: int) -> int {
+    var r: int = v << deg
+    var b: int = top
+    while b >= deg {
+        if ((r >> b) & 1) == 1 { r = r ^ (gen << (b - deg)) }
+        b = b - 1
+    }
+    return r
+}
+
+// ecl_bits: L=01, M=00, Q=11, H=10 (ISO/IEC 18004 tabla 12).
+fn format_bits(ecl_bits: int, mask: int) -> String {
+    let data: int = (ecl_bits << 3) | mask
+    let rem: int = bch_rem(data, 1335, 10, 14)
+    return bits(((data << 10) | rem) ^ 21522, 15)
+}
+
+fn version_bits(v: int) -> String {
+    return bits((v << 12) | bch_rem(v, 7973, 12, 17), 18)
+}
+
+fn same(a: Array, b: Array) -> bool {
+    if a.length() != b.length() { return false }
+    var i: int = 0
+    while i < a.length() {
+        let x: int = a[i]
+        let y: int = b[i]
+        if x != y { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn exps(p: Array) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i < p.length() {
+        let c: int = p[i]
+        out.push(gf_log(c))
+        i = i + 1
+    }
+    return out
+}
+
+fn ean13_check(s: String) -> int {
+    var t: int = 0
+    var i: int = 0
+    while i < 12 {
+        let d: int = s.charAt(i) - 48
+        if i % 2 == 1 { t = t + 3 * d } else { t = t + d }
+        i = i + 1
+    }
+    return (10 - t % 10) % 10
+}
+
+fn code128_check(symbols: Array) -> int {
+    let start: int = symbols[0]
+    var t: int = start
+    var i: int = 1
+    while i < symbols.length() {
+        let s: int = symbols[i]
+        t = t + s * i
+        i = i + 1
+    }
+    return t % 103
+}
+
+fn main() -> int {
+    // ── Reed–Solomon ─────────────────────────────────────────────────────
+    // Anexo A: generadores en exponentes de alfa.
+    assert(same(exps(rs_generator(7)), [0, 87, 229, 146, 149, 238, 102, 21]), "generador de 7")
+    assert(same(exps(rs_generator(10)), [0, 251, 67, 46, 61, 118, 70, 64, 94, 32, 45]), "generador de 10")
+    println("ok generadores RS (Anexo A)")
+
+    // Anexo I: «01234567», 1-M.
+    let annex_data: Array = [16, 32, 12, 86, 97, 128, 236, 17, 236, 17, 236, 17, 236, 17, 236, 17]
+    let annex_ec: Array = [165, 36, 212, 193, 237, 54, 199, 135, 44, 85]
+    assert(same(rs_remainder(annex_data, 10), annex_ec), "RS del Anexo I")
+    println("ok RS Anexo I 01234567 1-M")
+
+    let hw_m: Array = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17]
+    assert(same(rs_remainder(hw_m, 10), [196, 35, 39, 119, 235, 215, 231, 226, 93, 23]), "RS HELLO WORLD 1-M")
+    let hw_q: Array = [32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236]
+    assert(same(rs_remainder(hw_q, 13), [168, 72, 22, 82, 217, 54, 156, 0, 46, 15, 180, 122, 16]), "RS HELLO WORLD 1-Q")
+    println("ok RS HELLO WORLD 1-M y 1-Q")
+
+    // ── Información de formato: las 32 cadenas de la tabla ───────────────
+    let fl: Array = ["111011111000100", "111001011110011", "111110110101010", "111100010011101",
+                     "110011000101111", "110001100011000", "110110001000001", "110100101110110"]
+    let fm: Array = ["101010000010010", "101000100100101", "101111001111100", "101101101001011",
+                     "100010111111001", "100000011001110", "100111110010111", "100101010100000"]
+    let fq: Array = ["011010101011111", "011000001101000", "011111100110001", "011101000000110",
+                     "010010010110100", "010000110000011", "010111011011010", "010101111101101"]
+    let fh: Array = ["001011010001001", "001001110111110", "001110011100111", "001100111010000",
+                     "000011101100010", "000001001010101", "000110100001100", "000100000111011"]
+    var m: int = 0
+    while m < 8 {
+        let sl: String = fl[m]
+        let sm: String = fm[m]
+        let sq: String = fq[m]
+        let sh: String = fh[m]
+        assert(format_bits(1, m) == sl, "formato L")
+        assert(format_bits(0, m) == sm, "formato M")
+        assert(format_bits(3, m) == sq, "formato Q")
+        assert(format_bits(2, m) == sh, "formato H")
+        m = m + 1
+    }
+    println("ok formato: 32 cadenas")
+
+    assert(version_bits(7) == "000111110010010100", "version 7")
+    assert(version_bits(8) == "001000010110111100", "version 8")
+    assert(version_bits(9) == "001001101010011001", "version 9")
+    assert(version_bits(10) == "001010010011010011", "version 10")
+    println("ok version 7-10")
+
+    // ── EAN-13 ───────────────────────────────────────────────────────────
+    let eans: Array = ["4006381333931", "5901234123457", "9780306406157", "0012345678905"]
+    var k: int = 0
+    while k < eans.length() {
+        let e: String = eans[k]
+        assert(ean13_check(e) == e.charAt(12) - 48, "control EAN-13")
+        k = k + 1
+    }
+    println("ok EAN-13: 4 controles reales")
+
+    // ── Code 128 ─────────────────────────────────────────────────────────
+    // «PJJ123C» en juego B: Start B (104), P=48, J=42, J=42, 1=17, 2=18, 3=19, C=35.
+    assert(code128_check([104, 48, 42, 42, 17, 18, 19, 35]) == 55, "PJJ123C")
+    // «C1-000123» (el número de venta de nyxerp): B para «C1-», Code C (99) y
+    // pares 00 01 23. Control: 104+35+34+39+396+0+6+161 = 775; 775 mod 103 = 54.
+    assert(code128_check([104, 35, 17, 13, 99, 0, 1, 23]) == 54, "C1-000123")
+    // «1234567890» todo en C: Start C (105), 12 34 56 78 90.
+    assert(code128_check([105, 12, 34, 56, 78, 90]) == 85, "1234567890")
+    println("ok Code 128: 3 controles")
+    return 0
+}

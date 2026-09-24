@@ -42,8 +42,10 @@ trap 'rm -f "$OUT" /tmp/caps_real.$$ /tmp/caps_idx.$$' EXIT
 NYX_HOME="$(pwd)" "$NYX_BUILD" capabilities "$OUT" >/dev/null 2>&1 || { echo "❌ nyx capabilities falló"; exit 1; }
 
 # --- (a) Nombres de pub/export fn reales vs los del índice ---
-grep -hoE "^[[:space:]]*(pub|export) fn [a-zA-Z_][a-zA-Z0-9_]*" std/*.nx | sed -E 's/.*fn //' | sort -u > "/tmp/caps_real.$$"
-grep -oE '`(pub|export) fn [a-zA-Z_][a-zA-Z0-9_]*' "$OUT" | sed -E 's/.*fn //' | sort -u > "/tmp/caps_idx.$$"
+# `async fn` incluidas: los módulos de await en wasm (browser_idb, browser_serial)
+# faltaban del índice sin que esta guarda lo notara.
+grep -hoE "^[[:space:]]*(pub|export) (async )?fn [a-zA-Z_][a-zA-Z0-9_]*" std/*.nx | sed -E 's/.*fn //' | sort -u > "/tmp/caps_real.$$"
+grep -oE '`(pub|export) (async )?fn [a-zA-Z_][a-zA-Z0-9_]*' "$OUT" | sed -E 's/.*fn //' | sort -u > "/tmp/caps_idx.$$"
 
 MISSING="$(comm -23 "/tmp/caps_real.$$" "/tmp/caps_idx.$$")"
 REAL_N=$(wc -l < "/tmp/caps_real.$$")
