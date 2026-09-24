@@ -931,6 +931,43 @@ else
 fi
 
 # ------------------------------------------------------------------
+# Check: check-limpio — 2026-09-24. (a) `nyx check` volcaba el protocolo del LSP
+# de nyx_check (cientos de SYM:/DEF:/END con el archivo sano): el wrapper lo
+# filtra y `--lsp` lo conserva. (b) Tras un NYX1040 (struct homónimo en dos
+# módulos) salía una cascada de NYX1017/NYX1032 contra la PRIMERA definición
+# que mandaba a buscar el error donde no está: ahora solo el NYX1040.
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_check ]; then
+    echo "  ⚠️  nyx_check no existe (se salta check-limpio)"
+else
+    name="check-limpio"
+    REPO_ROOT="$(pwd)"
+    CL="$TMPDIR/check_limpio"; mkdir -p "$CL/src"
+    printf 'fn main() -> int {\n    println("ok")\n    return 0\n}\n' > "$CL/bien.nx"
+    cl_ok=1; cl_why=""
+    out=$(NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" check "$CL/bien.nx" 2>&1); rc=$?
+    [ "$rc" = "0" ] || { cl_ok=0; cl_why="$cl_why [archivo sano rc=$rc]"; }
+    printf '%s' "$out" | grep -qE '^(SYM|DEF):|^END$' && { cl_ok=0; cl_why="$cl_why [salió el protocolo LSP]"; }
+    NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" check --lsp "$CL/bien.nx" 2>&1 | grep -q '^SYM:' \
+        || { cl_ok=0; cl_why="$cl_why [--lsp no conservó el protocolo]"; }
+    printf '[package]\nname = "cl"\nversion = "0.1.0"\nmain = "src/main.nx"\n' > "$CL/nyx.toml"
+    printf 'pub struct Item { a: int }\npub fn ia() -> int {\n    let x: Item = Item { a: 1 }\n    return x.a\n}\n' > "$CL/src/a.nx"
+    printf 'pub struct Item { b: String, c: int }\npub fn ib() -> int {\n    let y: Item = Item { b: "x", c: 2 }\n    return y.c\n}\n' > "$CL/src/b.nx"
+    printf 'import "src/a"\nimport "src/b"\nfn main() -> int {\n    println(int_to_string(ia() + ib()))\n    return 0\n}\n' > "$CL/src/main.nx"
+    out=$(cd "$CL" && NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" check src/main.nx 2>&1); rc=$?
+    { [ "$rc" = "1" ] && printf '%s' "$out" | grep -q 'NYX1040'; } || { cl_ok=0; cl_why="$cl_why [sin NYX1040 (rc=$rc)]"; }
+    printf '%s' "$out" | grep -qE 'NYX1017|NYX1032' && { cl_ok=0; cl_why="$cl_why [cascada NYX1017/NYX1032 tras el NYX1040]"; }
+    if [ "$cl_ok" = "1" ]; then
+        echo "  ✓ $name"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name:$cl_why"
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
+# ------------------------------------------------------------------
 # Check: seed-gitignore — F4 del informe de fricción del scaffold (hallazgo
 # A1, confirmado empíricamente 2026-09-03): `nyx init` no dejaba .gitignore
 # y el primer `git add .` se llevaba el binario, packages/ y los .ll.

@@ -36,6 +36,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   casos que aparecen solo por la atribución corregida salen como **aviso** (compilan, rc 0) hasta la
   próxima versión menor. `std/url` y `std/web` comparten el `url_decode` de `std/percent`, nuevo.
   `test-439`, `test-440`, +4 casos en `test-errors`.
+- **`nyx check` muestra solo los diagnósticos**: volcaba cientos de líneas `SYM:`/`DEF:`/`END` del
+  protocolo del LSP aunque el archivo estuviera sano. El protocolo sigue disponible con `--lsp`. Y
+  después de un NYX1040 (el mismo `struct` en dos módulos) ya no sale la cascada de NYX1017/NYX1032
+  contra la primera definición, que mandaba a buscar el error donde no está.
 - **Ningún builtin muere en wasm-ld con «undefined symbol»**: `string_from_bytes` (y con él
   `base64_decode`) no enlazaba en wasm32-wasi porque su runtime vivía fuera de `wasm.srcs`. Una guarda
   nueva (`run_wasm_builtin_symbols.sh`, en `make test-wasm`) contrasta todos los builtins con el

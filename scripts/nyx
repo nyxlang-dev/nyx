@@ -213,6 +213,7 @@ case "${1:-}" in
         echo ""
         echo "Self-check (no linking, no execution — chainable with &&):"
         echo "  check [f.nx]  Parse + type-check only. Exit 1 on error. FASTEST feedback."
+        echo "                  --lsp              raw LSP protocol (SYM:/DEF:/DIAG:/END) for editors"
         echo "  fmt   [f.nx]  Canonical formatting (to stdout)"
         echo "  vet   [f.nx]  Unused vars, dead code, unused imports"
         echo "  test [f.nx]   Run tests/*.nx  (tests use: test \"name\" { ... })"
@@ -655,6 +656,13 @@ case "${1:-}" in
             exit 1
         fi
         shift
+        # `nyx check` es para personas y agentes: nyx_check habla además el
+        # protocolo del LSP (SYM:/DEF:/DIAG:/END, compiler/nyx_check.nx), cientos
+        # de líneas que tapaban el diagnóstico. El wrapper lo filtra; --lsp (o
+        # NYX_CHECK_PROTOCOL=1) lo deja pasar crudo para un editor.
+        _proto=0
+        if [ "$_sub" = check ] && [ "${1:-}" = "--lsp" ]; then _proto=1; shift; fi
+        [ "${NYX_CHECK_PROTOCOL:-}" = 1 ] && _proto=1
         _target="${1:-}"
         if [ -z "$_target" ]; then
             # Sin argumento: el punto de entrada del proyecto, o script.nx
@@ -686,6 +694,14 @@ case "${1:-}" in
             done
         fi
         _toolchain_lock s "nyx $_sub"
+        if [ "$_sub" = check ] && [ "$_proto" = 0 ]; then
+            # set +e: con set -e el pipeline sale con el rc de grep (1 si no
+            # quedó nada que mostrar) antes de leer el de nyx_check.
+            set +e
+            NYX_SRC="$_target" NYX_HOME="$NYX_HOME" "$_bin" 2>&1 | grep -vE '^(SYM|DEF|DIAG):|^END$'
+            _rc=${PIPESTATUS[0]}
+            exit "$_rc"
+        fi
         NYX_SRC="$_target" NYX_HOME="$NYX_HOME" exec "$_bin"
         ;;
 esac
