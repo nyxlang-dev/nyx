@@ -1,0 +1,21 @@
+// std/percent.nx — decodificación de percent-encoding (`%XX` y `+`→espacio).
+//
+// Un solo `url_decode` para toda la stdlib. std/url y std/web lo importan de
+// acá en vez de declarar cada uno el suyo: antes eran dos copias idénticas, y
+// el choque de nombres entre ellas quedaba tapado por un bug del resolvedor
+// (lo que un módulo declaraba después de sus imports se atribuía al archivo
+// principal). Con los módulos bien atribuidos, un programa que importa los dos
+// daba NYX2010 —llamada ambigua— sobre dos funciones iguales (test-251;
+// fricción nyxerp 20260924-010014-team-1). Módulo aparte, y no `import
+// "std/url"` desde std/web, para que std/web no arrastre a sus usuarios los
+// demás nombres de std/url (`html_escape`, ...), que pueden chocar con los del
+// programa.
+
+// Decoder de percent-encoding del runtime (runtime/url.c), byte-safe.
+extern "C" fn nyx_url_decode(s: String) -> String
+
+// Decodifica percent-encoding de URLs, forms y query strings: `%XX` (espacios
+// %20, acentos UTF-8, %26, %3D...) Y `+`→espacio.
+pub fn url_decode(s: String) -> String {
+    return nyx_url_decode(s)
+}

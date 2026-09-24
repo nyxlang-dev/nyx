@@ -18,6 +18,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   cambió durante la corrida.
 - **CAPABILITIES.md se regenera cuando cambia la stdlib**, no solo el número de versión: por eso
   el índice de nyxerp no listaba `std/smtp` y lo reimplementaron a mano.
+- **`[lib] modules` con la forma de import de los proyectos reales** (fricción nyxerp
+  `20260924-040001-team-1`): `import "src/x"` sin llaves —la de `nyx init` y la de 3.372 de los 3.373
+  imports de nyxerp— no cruzaba la frontera (NYX1002 en cada llamada). Ahora declarar un módulo en
+  `[lib]` no cambia qué nombres se ven: toda forma de import se comporta como inlineada, transitividad
+  incluida, y viajan también los `struct`/`enum` sin `pub`. Las fns de biblioteca se emiten como
+  `<módulo>__<fn>` igual que inlineadas (dos bibliotecas pueden tener homónimas). Arreglados de paso
+  en el lector de firmas de las declaraciones: la flecha de un parámetro `Fn(...) -> T` se tomaba por
+  la del retorno, una firma en varias líneas perdía el retorno en silencio (`void`), y el tipo
+  genérico del retorno (`Result<T, E>`) se recortaba. Si un módulo usa una fn que no importa,
+  `nyx build` lo dice con una nota y el import que falta. Verificado sobre nyxerp real: 150 módulos
+  en `[lib]` compilan y enlazan; `make test-lib-real` lo vigila.
+- **Privadas homónimas en dos módulos se pisaban según el orden de los imports** (fricción nyxerp
+  `20260924-010014-team-1`): el resolvedor cerraba un import transitivo inlineado volviendo al archivo
+  principal, así que todo lo que el módulo padre declaraba después quedaba atribuido al programa.
+  Ahora el cierre reabre al módulo padre. El mismo bug apagaba NYX1036/NYX2010 en esos tramos: los
+  casos que aparecen solo por la atribución corregida salen como **aviso** (compilan, rc 0) hasta la
+  próxima versión menor. `std/url` y `std/web` comparten el `url_decode` de `std/percent`, nuevo.
+  `test-439`, `test-440`, +4 casos en `test-errors`.
+- **Ningún builtin muere en wasm-ld con «undefined symbol»**: `string_from_bytes` (y con él
+  `base64_decode`) no enlazaba en wasm32-wasi porque su runtime vivía fuera de `wasm.srcs`. Una guarda
+  nueva (`run_wasm_builtin_symbols.sh`, en `make test-wasm`) contrasta todos los builtins con el
+  runtime de wasm y encontró 25 casos. Las funciones de C puro se mudaron a unidades portables; las que
+  dependen de procesos, red, señales u OpenSSL dan un error claro con archivo y línea. `test-wasm-50`.
 - **Una mención de `compiler/` en un comentario o string quitaba el prelude**: `println` no
   declarado. Ahora solo cuenta un `import "compiler/..."` o la marca `// nyx:sin-prelude`.
   `test-435`.
@@ -36,6 +59,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `serial_read` con tiempo límite, `serial_close`). Los bytes cruzan como `Array<int>`. Sin Web
   Serial (Firefox, Safari, sin HTTPS) da `Err` de tipo `io`. WebUSB queda para una fase 2.
   `test-wasm-41` (con un mock), receta 117.
+- **`std/pdf`** (fricción nyxerp `20260924-020001-team-1`) `[arco: std-pdf]`: PDF en Nyx puro, también
+  en wasm. Tamaños carta, A4, media carta y ancho libre; posiciones en mm desde arriba a la izquierda.
+  Texto con las fuentes estándar y WinAnsi (tildes, ñ, ¿¡, €), con `/Widths` y `pdf_text_width` para
+  alinear montos. Líneas, rectángulos, JPEG (también progresivo, con orientación EXIF) y PNG (alfa en
+  SMask). Verificado con pypdf estricto, pdfminer y el motor de PDF de Chrome (pdfium), renders
+  mirados. `run_pdf_verify.sh` (opcional). `test-441..445`, `test-wasm-45..49`, receta 118 (una factura).
 - **CAPABILITIES.md indexa las `async fn`**: `std/browser_idb` y `std/browser_serial` no aparecían.
 - **Specs en BORRADOR** para aprobar: `std/pdf` y toolchain atómico (versiones lado a lado).
 

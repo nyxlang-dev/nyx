@@ -1,0 +1,5 @@
+// aux del aviso de transición NYX2010: módulo que solo importa aux_ambig_x (y nadie más),
+// para que su import parta el cuerpo de x (tramo reabierto).
+pub fn ambig_w() -> int {
+    return 0
+}

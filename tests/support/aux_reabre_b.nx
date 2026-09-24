@@ -1,0 +1,18 @@
+// aux de test-439/440: módulo B con una `columna` PRIVADA homónima de la de
+// aux_reabre_a pero de firma (String, String, String), y el mismo detonante:
+// un import que nadie más trae, antes de la declaración.
+import "tests/support/aux_reabre_v"
+
+fn columna(nombre: String, etiqueta: String, permiso: String) -> int {
+    return nombre.length() * 100 + etiqueta.length() * 10 + permiso.length() + reabre_v()
+}
+
+pub fn reabre_desde_b() -> int {
+    return columna("abc", "de", "f")
+}
+
+// Privada DESPUÉS del import transitivo: tiene que seguir siendo privada de B
+// (la llaman aux_reabre_c y los avisos de transición de run_error_tests.sh).
+fn reabre_interna_b() -> int {
+    return 7
+}

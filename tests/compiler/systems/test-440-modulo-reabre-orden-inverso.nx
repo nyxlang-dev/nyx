@@ -1,0 +1,17 @@
+// test-440 — test-439 en el orden inverso de imports (b → a). Ver el
+// comentario de test-439. Sin el arreglo, `nyx check` da NYX1005 en
+// reabre_desde_a («argument 2 of 'columna': expected String, got int»): las
+// llamadas de a se validan contra la `columna` de b, que se registró primero.
+import "tests/support/aux_reabre_b"
+import "tests/support/aux_reabre_a"
+
+fn main() -> int {
+    let b: int = reabre_desde_b()
+    print(b)
+    assert(b == 323)
+    let a: int = reabre_desde_a()
+    print(a)
+    assert(a == 14)
+    print("modulo-reabre b-a OK")
+    return 0
+}

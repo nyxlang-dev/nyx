@@ -1,0 +1,5 @@
+// aux del aviso de transición NYX2010: la `etiqueta` homónima, en un módulo
+// sin imports (siempre fue de su módulo).
+pub fn etiqueta() -> String {
+    return "y"
+}

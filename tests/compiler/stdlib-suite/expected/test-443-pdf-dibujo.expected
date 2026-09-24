@@ -1,0 +1,4 @@
+ok línea y rectángulo: mm -> pt y volteo en carta
+ok cada página voltea con su propio alto
+ok rectángulos contiguos comparten el borde exacto
+ok errores: negativos e infinitos

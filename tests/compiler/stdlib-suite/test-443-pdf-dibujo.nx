@@ -1,0 +1,102 @@
+// test-443 — std/pdf, Task 3: líneas, rectángulos y el volteo de coordenadas
+// (spec std-pdf, D-4).
+//
+// La API usa mm con el origen ARRIBA a la izquierda; PDF usa puntos con el
+// origen ABAJO. El bug clásico de un generador que no lo abstrae es «todo sale
+// invertido»; el de uno que lo abstrae mal es voltear con el alto de OTRA
+// página. Los operadores de abajo están calculados a mano:
+//   mm -> pt: mm * 72 / 25.4, redondeado a la milésima.
+//   10 mm = 28.346  20 mm = 56.693  35 mm = 99.213  40 mm = 113.386
+//   200 mm = 566.929  carta: 792 de alto.
+
+import "std/pdf"
+import "std/error"
+import "tests/test-modules/pdf_check"
+
+fn bytes_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            assert(false, "bytes() no debía fallar: " + error_to_string(e))
+            return ""
+        }
+    }
+}
+
+fn err_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return "OK" }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+// Contenido de la página n (desde 1): el n-ésimo stream sin diccionario propio.
+fn content_of(b: String, n: int) -> String {
+    var at: int = 0
+    var k: int = 0
+    var from_at: int = 0
+    while k < n {
+        at = b.indexOf("<< /Length ", from_at)
+        from_at = at + 1
+        k = k + 1
+    }
+    let s: int = b.indexOf("stream\n", at) + 7
+    let e: int = b.indexOf("\nendstream", s)
+    return b.substring(s, e)
+}
+
+fn main() {
+    // 1. Línea horizontal a 20 mm del borde de arriba de una carta.
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    d.line(10.0, 20.0, 200.0, 20.0)
+    // 2. Rectángulo de 30 x 15 mm con la esquina de arriba en (10, 20): en PDF
+    //    la esquina de ABAJO, a 792 - 99.213 = 692.787.
+    d.rect(10.0, 20.0, 30.0, 15.0, false)
+    d.rect(10.0, 20.0, 30.0, 15.0, true)
+    let c: String = content_of(bytes_of(d), 1)
+    assert(c == "28.346 735.307 m 566.929 735.307 l S\n" +
+                "28.346 692.787 85.04 42.52 re S\n" +
+                "28.346 692.787 85.04 42.52 re f\n", "línea y rectángulos: " + c)
+    println("ok línea y rectángulo: mm -> pt y volteo en carta")
+
+    // 3. Cada página voltea con SU alto: la segunda es un ticket de 80 x 200 mm.
+    var t: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    t.line(0.0, 0.0, 10.0, 0.0)
+    t.add_page(PdfPageSize.Custom, 80.0, 200.0)
+    t.line(0.0, 0.0, 10.0, 0.0)
+    t.line(0.0, 200.0, 80.0, 200.0)
+    let tb: String = bytes_of(t)
+    assert(content_of(tb, 1) == "0 792 m 28.346 792 l S\n", "carta: y=0 es el borde de arriba")
+    assert(content_of(tb, 2) == "0 566.929 m 28.346 566.929 l S\n0 0 m 226.772 0 l S\n", "ticket: y=0 arriba, y=200 abajo: " + content_of(tb, 2))
+    assert(pdf_check_structure(tb) == "", "ticket: estructura")
+    println("ok cada página voltea con su propio alto")
+
+    // 4. Rectángulos que se tocan en mm se tocan exacto en el archivo (módulos
+    //    de un QR de 0.7 mm: sin rendijas por redondeo).
+    var q: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    q.rect(10.0, 10.0, 0.7, 0.7, true)
+    q.rect(10.7, 10.0, 0.7, 0.7, true)
+    q.rect(10.0, 10.7, 0.7, 0.7, true)
+    let qc: String = content_of(bytes_of(q), 1)
+    // 10 mm = 28.346, 10.7 mm = 30.331, 11.4 mm = 32.315
+    assert(qc == "28.346 761.669 1.985 1.985 re f\n" +
+                 "30.331 761.669 1.984 1.985 re f\n" +
+                 "28.346 759.685 1.985 1.984 re f\n", "módulos contiguos: " + qc)
+    println("ok rectángulos contiguos comparten el borde exacto")
+
+    // 5. Errores diferidos.
+    var n: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    n.rect(10.0, 10.0, 0.0 - 5.0, 5.0, false)
+    assert(err_of(n) == "invalid: pdf: rect: el ancho y el alto no pueden ser negativos (x, y es la esquina de arriba a la izquierda) (página 1)", "ancho negativo: " + err_of(n))
+    let inf: float = 1.0 / 0.0
+    var m: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    m.line(0.0, 0.0, inf, 1.0)
+    assert(err_of(m) == "invalid: pdf: line: una coordenada no es un número finito (o pasa de 1 km) (página 1)", "infinito: " + err_of(m))
+    // Un rectángulo de alto 0 es una línea: válido.
+    var z: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    z.rect(0.0, 0.0, 10.0, 0.0, false)
+    assert(err_of(z) == "OK", "alto 0 es válido")
+    println("ok errores: negativos e infinitos")
+}

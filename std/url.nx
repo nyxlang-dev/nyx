@@ -1,20 +1,16 @@
 // std/url.nx — URL encoding + HTML entities for Nyx (v4.6.0)
 
 import "std/unicode"
+// url_decode vive en std/percent (compartido con std/web; ver su cabecera).
+import "std/percent"
 
 extern "C" fn nyx_url_encode(s: String) -> String
-extern "C" fn nyx_url_decode(s: String) -> String
 
 // ── URL Encoding ──────────────────────────────────────────────────────────────
 
 // Percent-encode a string for use in URLs (RFC 3986 unreserved chars are left as-is)
 pub fn url_encode(s: String) -> String {
     return nyx_url_encode(s)
-}
-
-// Decode a percent-encoded URL string (also decodes + as space)
-pub fn url_decode(s: String) -> String {
-    return nyx_url_decode(s)
 }
 
 // Build a query string from key/value pairs

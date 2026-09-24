@@ -1,0 +1,9 @@
+// Aviso de transición NYX1036 (fricción nyxerp 20260924-010014-team-1): la
+// llamada de aux_reabre_c a la privada de aux_reabre_b solo es NYX1036 con la
+// atribución corregida del resolvedor, así que sale como AVISO, compila y corre.
+import "tests/support/aux_reabre_c"
+
+fn main() -> int {
+    print(reabre_desde_c())
+    return 0
+}

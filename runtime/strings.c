@@ -1229,3 +1229,69 @@ void nyx_sb_clear(nyx_string_builder* sb) {
     sb->length = 0;
     sb->data[0] = '\0';
 }
+
+// ===== Bytes ↔ String y comparación sin fugas de tiempo =====
+// Venían de persist.c y crypto.c, unidades que no entran en wasm (señales,
+// OpenSSL): son C puro, y sin ellas `string_from_bytes`, `crc32_bytes` y
+// `constant_time_eq` —y `base64_decode` de rebote— no enlazaban en wasm32-wasi
+// (2026-09-24, run_wasm_builtin_symbols.sh).
+
+// CRC32 lookup table (IEEE 802.3 polynomial 0xEDB88320)
+static uint32_t crc32_table[256];
+static int crc32_table_init = 0;
+
+static void crc32_build_table(void) {
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1)
+                crc = (crc >> 1) ^ 0xEDB88320;
+            else
+                crc >>= 1;
+        }
+        crc32_table[i] = crc;
+    }
+    crc32_table_init = 1;
+}
+
+int64_t nyx_crc32_bytes(nyx_array_t* arr) {
+    if (!crc32_table_init) crc32_build_table();
+    if (!arr || arr->length <= 0) return 0;
+
+    uint32_t crc = 0xFFFFFFFF;
+    for (int64_t i = 0; i < arr->length; i++) {
+        uint8_t byte = (uint8_t)(arr->data[i] & 0xFF);
+        crc = (crc >> 8) ^ crc32_table[(crc ^ byte) & 0xFF];
+    }
+    return (int64_t)(crc ^ 0xFFFFFFFF);
+}
+
+// Create a nyx_string from a slice of a byte array.
+// Useful for deserializing binary formats.
+nyx_string* nyx_string_from_bytes(nyx_array_t* arr, int64_t offset, int64_t len) {
+    if (!arr || offset < 0 || len <= 0 || offset + len > arr->length) {
+        return nyx_string_from_cstr("");
+    }
+    char* buf = (char*)GC_MALLOC(len + 1);
+    for (int64_t i = 0; i < len; i++) {
+        buf[i] = (char)(arr->data[offset + i] & 0xFF);
+    }
+    buf[len] = '\0';
+    return nyx_string_from_ptr(buf, len);
+}
+
+// ===== nyx_constant_time_eq =====
+// Compara SIEMPRE todos los bytes, sin cortar en la primera diferencia. Un `==`
+// normal filtra por timing cuánto prefijo coincide, que es justo lo que hace
+// falta para adivinar un hash o un token byte por byte. La diferencia de
+// LARGO sí se filtra (es inevitable sin padding) y no es el secreto.
+int64_t nyx_constant_time_eq(nyx_string* a, nyx_string* b) {
+    if (!a || !b) return 0;
+    if (a->length != b->length) return 0;
+
+    unsigned char diff = 0;
+    for (size_t i = 0; i < a->length; i++) {
+        diff |= (unsigned char)(a->data[i] ^ b->data[i]);
+    }
+    return diff == 0 ? 1 : 0;
+}

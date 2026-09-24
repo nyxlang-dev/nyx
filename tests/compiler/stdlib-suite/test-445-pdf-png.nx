@@ -1,0 +1,527 @@
+// test-445 — std/pdf, Task 5: imágenes PNG (spec std-pdf, D-2).
+//
+// Dos caminos, y cada uno se rompe distinto:
+//   - SIN transparencia el PNG no se decodifica: los IDAT van tal cual como
+//     /FlateDecode + /Predictor 15. Si /Colors, /BitsPerComponent o /Columns no
+//     coinciden con el IHDR, el visor des-filtra mal y sale RUIDO sin que nada
+//     falle. Se fijan los diccionarios y se comprueba que el stream es
+//     exactamente la concatenación de los IDAT (leídos acá, no por el módulo).
+//   - CON alfa el módulo infla, des-filtra, separa color y alfa y vuelve a
+//     comprimir. Para no confiar en el módulo, este test trae su propia
+//     REFERENCIA INGENUA, escrita a propósito distinta: inflate que busca cada
+//     código en un Map «largo:código» (el módulo cuenta códigos por largo, como
+//     puff.c), des-filtrado sobre un Array de filas y CRC-32 bit a bit (el
+//     módulo usa tabla). Con eso se infla lo que el módulo escribió y se compara
+//     píxel a píxel contra lo que dice el PNG original.
+// pdfium dibujó las mismas fixtures y el render coincidió con Pillow píxel a
+// píxel, sobre blanco y sobre negro (scripts/testing/run_pdf_verify.sh).
+
+import "std/pdf"
+import "std/error"
+import "tests/test-modules/pdf_check"
+
+fn bytes_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            assert(false, "bytes() no debía fallar: " + error_to_string(e))
+            return ""
+        }
+    }
+}
+
+fn img(r: Result<int, Error>) -> String {
+    match r {
+        Result.Ok(n) => { return "Im" + int_to_string(n) }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+fn be32(b: String, i: int) -> int {
+    return (b.charAt(i) << 24) | (b.charAt(i + 1) << 16) | (b.charAt(i + 2) << 8) | b.charAt(i + 3)
+}
+
+fn be32s(v: int) -> String {
+    return chr((v >> 24) & 255) + chr((v >> 16) & 255) + chr((v >> 8) & 255) + chr(v & 255)
+}
+
+// CRC-32 bit a bit (sin tabla).
+fn crc32(s: String) -> int {
+    var crc: int = 0xFFFFFFFF
+    var i: int = 0
+    while i < s.length() {
+        crc = crc ^ s.charAt(i)
+        var k: int = 0
+        while k < 8 {
+            let lsb: int = crc & 1
+            crc = crc >> 1
+            if lsb == 1 { crc = crc ^ 0xEDB88320 }
+            k = k + 1
+        }
+        i = i + 1
+    }
+    return crc ^ 0xFFFFFFFF
+}
+
+fn chunk(typ: String, data: String) -> String {
+    return be32s(data.length()) + typ + data + be32s(crc32(typ + data))
+}
+
+// Los datos de todos los chunks `typ` de un PNG, concatenados.
+fn chunks_of(png: String, typ: String) -> String {
+    var out: String = ""
+    var i: int = 8
+    while i + 12 <= png.length() {
+        let len: int = be32(png, i)
+        if png.substring(i + 4, i + 8) == typ {
+            out = out + png.substring(i + 8, i + 8 + len)
+        }
+        i = i + 12 + len
+    }
+    return out
+}
+
+fn hex(s: String) -> String {
+    let h: String = "0123456789ABCDEF"
+    var out: String = ""
+    var i: int = 0
+    while i < s.length() {
+        out = out + char_to_string(h.charAt(s.charAt(i) >> 4)) + char_to_string(h.charAt(s.charAt(i) & 15))
+        i = i + 1
+    }
+    return out
+}
+
+// ── Referencia ingenua: inflate con un Map «largo:código» -> símbolo ──────
+
+fn bit_at(z: String, pos: int) -> int {
+    return (z.charAt(pos / 8) >> (pos % 8)) & 1
+}
+
+fn bits_at(z: String, pos: int, n: int) -> int {
+    var v: int = 0
+    var k: int = 0
+    while k < n {
+        v = v | (bit_at(z, pos + k) << k)
+        k = k + 1
+    }
+    return v
+}
+
+// Códigos canónicos (RFC 1951 §3.2.2) a un Map «largo:código» -> símbolo.
+fn canon(lens: Array) -> Map {
+    var m: Map = Map.new()
+    var code: int = 0
+    var len: int = 1
+    while len <= 15 {
+        var s: int = 0
+        while s < lens.length() {
+            let l: int = lens[s]
+            if l == len {
+                m.insert(int_to_string(len) + ":" + int_to_string(code), s)
+                code = code + 1
+            }
+            s = s + 1
+        }
+        code = code << 1
+        len = len + 1
+    }
+    return m
+}
+
+// [símbolo, nueva posición]
+fn read_sym(z: String, pos: int, m: Map) -> Array {
+    var code: int = 0
+    var len: int = 0
+    var p: int = pos
+    while len < 15 {
+        code = (code << 1) | bit_at(z, p)
+        p = p + 1
+        len = len + 1
+        let key: String = int_to_string(len) + ":" + int_to_string(code)
+        if m.has(key) {
+            let s: int = m.get(key)
+            return [s, p]
+        }
+    }
+    assert(false, "referencia: código inválido")
+    return [0, p]
+}
+
+fn ref_inflate(zl: String) -> Array {
+    let lbase: Array = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+    let lext: Array = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+    let dbase: Array = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+    let dext: Array = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+    let order: Array = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+    var out: Array = []
+    var pos: int = 16
+    var fin: int = 0
+    while fin == 0 {
+        fin = bits_at(zl, pos, 1)
+        let t: int = bits_at(zl, pos + 1, 2)
+        pos = pos + 3
+        if t == 0 {
+            pos = ((pos + 7) / 8) * 8
+            let ln: int = bits_at(zl, pos, 16)
+            pos = pos + 32
+            var k: int = 0
+            while k < ln {
+                out.push(zl.charAt(pos / 8 + k))
+                k = k + 1
+            }
+            pos = pos + 8 * ln
+        } else {
+            var ll: Array = []
+            var dl: Array = []
+            if t == 1 {
+                var s: int = 0
+                while s < 288 {
+                    if s < 144 { ll.push(8) } else if s < 256 { ll.push(9) } else if s < 280 { ll.push(7) } else { ll.push(8) }
+                    s = s + 1
+                }
+                s = 0
+                while s < 30 {
+                    dl.push(5)
+                    s = s + 1
+                }
+            } else {
+                let hlit: int = bits_at(zl, pos, 5) + 257
+                let hdist: int = bits_at(zl, pos + 5, 5) + 1
+                let hclen: int = bits_at(zl, pos + 10, 4) + 4
+                pos = pos + 14
+                var cl: Array = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                var k2: int = 0
+                while k2 < hclen {
+                    let at: int = order[k2]
+                    cl[at] = bits_at(zl, pos, 3)
+                    pos = pos + 3
+                    k2 = k2 + 1
+                }
+                let cm: Map = canon(cl)
+                var lens: Array = []
+                while lens.length() < hlit + hdist {
+                    let r: Array = read_sym(zl, pos, cm)
+                    let sym: int = r[0]
+                    pos = r[1]
+                    if sym < 16 {
+                        lens.push(sym)
+                    } else if sym == 16 {
+                        let prevl: int = lens[lens.length() - 1]
+                        let rep: int = 3 + bits_at(zl, pos, 2)
+                        pos = pos + 2
+                        var q: int = 0
+                        while q < rep {
+                            lens.push(prevl)
+                            q = q + 1
+                        }
+                    } else if sym == 17 {
+                        let rep2: int = 3 + bits_at(zl, pos, 3)
+                        pos = pos + 3
+                        var q2: int = 0
+                        while q2 < rep2 {
+                            lens.push(0)
+                            q2 = q2 + 1
+                        }
+                    } else {
+                        let rep3: int = 11 + bits_at(zl, pos, 7)
+                        pos = pos + 7
+                        var q3: int = 0
+                        while q3 < rep3 {
+                            lens.push(0)
+                            q3 = q3 + 1
+                        }
+                    }
+                }
+                ll = lens.slice(0, hlit)
+                dl = lens.slice(hlit, hlit + hdist)
+            }
+            let lm: Map = canon(ll)
+            let dm: Map = canon(dl)
+            var done: bool = false
+            while not done {
+                let r2: Array = read_sym(zl, pos, lm)
+                let sym2: int = r2[0]
+                pos = r2[1]
+                if sym2 < 256 {
+                    out.push(sym2)
+                } else if sym2 == 256 {
+                    done = true
+                } else {
+                    let lb: int = lbase[sym2 - 257]
+                    let le: int = lext[sym2 - 257]
+                    let length: int = lb + bits_at(zl, pos, le)
+                    pos = pos + le
+                    let r3: Array = read_sym(zl, pos, dm)
+                    let ds: int = r3[0]
+                    pos = r3[1]
+                    let db: int = dbase[ds]
+                    let de: int = dext[ds]
+                    let dist: int = db + bits_at(zl, pos, de)
+                    pos = pos + de
+                    var c: int = 0
+                    while c < length {
+                        let v: int = out[out.length() - dist]
+                        out.push(v)
+                        c = c + 1
+                    }
+                }
+            }
+        }
+    }
+    return out
+}
+
+// Des-filtrado de referencia: filas como Array de Array.
+fn ref_unfilter(raw: Array, h: int, stride: int, bpp: int) -> Array {
+    var rows: Array = []
+    var zero: Array = []
+    var k: int = 0
+    while k < stride {
+        zero.push(0)
+        k = k + 1
+    }
+    var y: int = 0
+    while y < h {
+        let f: int = raw[y * (stride + 1)]
+        var prior: Array = zero
+        if y > 0 { prior = rows[y - 1] }
+        var row: Array = []
+        var x: int = 0
+        while x < stride {
+            let v: int = raw[y * (stride + 1) + 1 + x]
+            var a: int = 0
+            var c: int = 0
+            if x >= bpp {
+                a = row[x - bpp]
+                c = prior[x - bpp]
+            }
+            let b: int = prior[x]
+            var r: int = v
+            if f == 1 { r = v + a }
+            if f == 2 { r = v + b }
+            if f == 3 { r = v + (a + b) / 2 }
+            if f == 4 {
+                let p: int = a + b - c
+                let pa: int = abs_i(p - a)
+                let pb: int = abs_i(p - b)
+                let pc: int = abs_i(p - c)
+                if pa <= pb and pa <= pc { r = v + a } else if pb <= pc { r = v + b } else { r = v + c }
+            }
+            row.push(r % 256)
+            x = x + 1
+        }
+        rows.push(row)
+        y = y + 1
+    }
+    return rows
+}
+
+fn abs_i(v: int) -> int {
+    if v < 0 { return 0 - v }
+    return v
+}
+
+// El stream (datos) del objeto que sigue a `dict_start` en el PDF.
+fn stream_after(b: String, at: int) -> String {
+    let ls: int = b.indexOf("/Length ", at)
+    var le: int = ls + 8
+    while b.charAt(le) >= 48 and b.charAt(le) <= 57 {
+        le = le + 1
+    }
+    let len: int = string_to_int(b.substring(ls + 8, le))
+    let s: int = le + 11
+    return b.substring(s, s + len)
+}
+
+fn to_str(a: Array) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < a.length() {
+        let v: int = a[i]
+        sb.append(chr(v))
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Separa color y alfa de un PNG con alfa usando SOLO la referencia.
+// Devuelve [color, alfa] como Strings de bytes.
+fn ref_split(png: String) -> Array {
+    let ihdr: String = chunks_of(png, "IHDR")
+    let w: int = be32(ihdr, 0)
+    let h: int = be32(ihdr, 4)
+    let depth: int = ihdr.charAt(8)
+    let ctype: int = ihdr.charAt(9)
+    var ch: int = 4
+    if ctype == 4 { ch = 2 }
+    if ctype == 3 { ch = 1 }
+    let stride: int = (w * ch * depth + 7) / 8
+    var bpp: int = ch * depth / 8
+    if bpp < 1 { bpp = 1 }
+    let rows: Array = ref_unfilter(ref_inflate(chunks_of(png, "IDAT")), h, stride, bpp)
+    var color: Array = []
+    var alpha: Array = []
+    let trns: String = chunks_of(png, "tRNS")
+    var y: int = 0
+    while y < h {
+        let row: Array = rows[y]
+        if ctype == 3 {
+            var x: int = 0
+            while x < stride {
+                let v: int = row[x]
+                color.push(v)
+                x = x + 1
+            }
+            var px: int = 0
+            while px < w {
+                let bit: int = px * depth
+                let byte: int = row[bit / 8]
+                let idx: int = (byte >> (8 - depth - bit % 8)) & ((1 << depth) - 1)
+                if idx < trns.length() { alpha.push(trns.charAt(idx)) } else { alpha.push(255) }
+                px = px + 1
+            }
+        } else {
+            let bps: int = depth / 8
+            var i: int = 0
+            while i < stride {
+                let v2: int = row[i]
+                if (i / bps) % ch == ch - 1 { alpha.push(v2) } else { color.push(v2) }
+                i = i + 1
+            }
+        }
+        y = y + 1
+    }
+    return [to_str(color), to_str(alpha)]
+}
+
+// Carga un PNG con alfa en un documento y compara, con la referencia, lo que
+// el módulo escribió en el color y en la SMask contra el PNG original.
+fn check_alpha(name: String, png: String, want_bpc: String, want_abpc: String) {
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(d.image_png(10.0, 10.0, 30.0, 0.0, png)) == "Im1", name + ": aceptado")
+    let b: String = bytes_of(d)
+    assert(pdf_check_structure(b) == "", name + ": estructura")
+    let ia: int = b.indexOf("/Subtype /Image")
+    assert(b.indexOf("/SMask ", ia) > 0, name + ": lleva SMask")
+    assert(b.indexOf(want_bpc, ia) == b.indexOf("/BitsPerComponent", ia), name + ": BPC del color")
+    assert(not b.contains("/Predictor"), name + ": color y alfa sin predictor (filas crudas)")
+    let color_pdf: String = to_str(ref_inflate(stream_after(b, ia)))
+    let ma: int = b.indexOf("/Subtype /Image", ia + 1)
+    assert(b.indexOf("/ColorSpace /DeviceGray " + want_abpc + " /Filter /FlateDecode /Length", ma) > 0, name + ": máscara gris con su BPC")
+    let alpha_pdf: String = to_str(ref_inflate(stream_after(b, ma)))
+    let ref: Array = ref_split(png)
+    let rc: String = ref[0]
+    let ra: String = ref[1]
+    assert(color_pdf == rc, name + ": color píxel a píxel (" + int_to_string(color_pdf.length()) + " vs " + int_to_string(rc.length()) + " bytes)")
+    assert(alpha_pdf == ra, name + ": alfa píxel a píxel")
+}
+
+fn main() {
+    let rgb: String = include_bytes("tests/fixtures/pdf/rgb-2x2.png")
+    let quad: String = include_bytes("tests/fixtures/pdf/quad-16x8.png")
+    let multi: String = include_bytes("tests/fixtures/pdf/quad-16x8-multi-idat.png")
+    let pal: String = include_bytes("tests/fixtures/pdf/quad-16x8-pal.png")
+    let gray: String = include_bytes("tests/fixtures/pdf/gray-8x8.png")
+    let bw: String = include_bytes("tests/fixtures/pdf/bw-10x3.png")
+    let rgb16: String = include_bytes("tests/fixtures/pdf/rgb16-4x4.png")
+    let rgbt: String = include_bytes("tests/fixtures/pdf/quad-16x8-rgb-trns.png")
+    let palt: String = include_bytes("tests/fixtures/pdf/quad-16x8-pal-trns.png")
+    let pala: String = include_bytes("tests/fixtures/pdf/quad-16x8-pal-alpha.png")
+    let rgba: String = include_bytes("tests/fixtures/pdf/quad-16x8-rgba.png")
+    let ga: String = include_bytes("tests/fixtures/pdf/gray-alpha-4x4.png")
+    let rgba16: String = include_bytes("tests/fixtures/pdf/rgba16-4x4.png")
+    let logo: String = include_bytes("tests/fixtures/pdf/logo-300x120.png")
+    let adam7: String = include_bytes("tests/fixtures/pdf/quad-16x8-adam7.png")
+
+    // 1. RGB 2 x 2 (el vector de la spec): predictor declarado con los datos
+    //    del IHDR y el stream = los IDAT tal cual.
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(d.image_png(10.0, 10.0, 20.0, 20.0, rgb)) == "Im1", "rgb 2x2")
+    let b: String = bytes_of(d)
+    let idat: String = chunks_of(rgb, "IDAT")
+    let dict: String = "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 8 /Columns 2 >> /Length " + int_to_string(idat.length()) + " >>\nstream\n" + idat + "\nendstream"
+    assert(b.contains(dict), "rgb 2x2: diccionario y datos exactos")
+    assert(b.startsWith("%PDF-1.4\n"), "8 bits: PDF 1.4")
+    assert(pdf_check_structure(b) == "", "rgb 2x2: estructura")
+    println("ok PNG RGB 2x2: IDAT tal cual con /Predictor 15")
+
+    // 2. Paleta (2 bits por píxel), gris de 8 y de 1 bit, 16 bits.
+    var p: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(p.image_png(0.0, 0.0, 16.0, 8.0, pal)) == "Im1", "paleta")
+    assert(img(p.image_png(0.0, 10.0, 8.0, 8.0, gray)) == "Im2", "gris 8")
+    assert(img(p.image_png(0.0, 20.0, 10.0, 3.0, bw)) == "Im3", "gris 1 bit")
+    let pb: String = bytes_of(p)
+    let plte: String = chunks_of(pal, "PLTE")
+    assert(pb.contains("/Width 16 /Height 8 /ColorSpace [/Indexed /DeviceRGB " + int_to_string(plte.length() / 3 - 1) + " <" + hex(plte) + ">] /BitsPerComponent 2 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 2 /Columns 16 >>"), "paleta: Indexed con la PLTE en hexa")
+    assert(pb.contains("/Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns 8 >>"), "gris 8")
+    assert(pb.contains("/Width 10 /Height 3 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 1 /Columns 10 >>"), "gris 1 bit")
+    assert(pdf_check_structure(pb) == "", "paleta y grises: estructura")
+    var s16: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(s16.image_png(0.0, 0.0, 4.0, 4.0, rgb16)) == "Im1", "16 bits")
+    let b16: String = bytes_of(s16)
+    assert(b16.startsWith("%PDF-1.5\n"), "16 bits por componente: PDF 1.5")
+    assert(b16.contains("/BitsPerComponent 16 /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 /BitsPerComponent 16 /Columns 4 >>"), "16 bits: predictor")
+    println("ok paleta, gris de 8 y 1 bit, RGB de 16 bits (PDF 1.5)")
+
+    // 3. IDAT partido en varios chunks = la misma imagen (mismo XObject).
+    var m: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(m.image_png(0.0, 0.0, 16.0, 8.0, quad)) == "Im1", "quad")
+    assert(img(m.image_png(0.0, 10.0, 16.0, 8.0, multi)) == "Im1", "IDAT partido: misma imagen")
+    println("ok IDAT en varios chunks se concatena")
+
+    // 4. Transparencia de color clave: /Mask sobre los mismos datos, sin SMask.
+    var t: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(t.image_png(0.0, 0.0, 16.0, 8.0, rgbt)) == "Im1", "RGB con tRNS")
+    assert(img(t.image_png(0.0, 10.0, 16.0, 8.0, palt)) == "Im2", "paleta con índice transparente")
+    let tb: String = bytes_of(t)
+    assert(tb.contains("/Columns 16 >> /Mask [240 240 200 200 20 20] /Length"), "RGB: /Mask del color clave")
+    assert(tb.contains("/Columns 16 >> /Mask [1 1] /Length"), "paleta: /Mask del índice 1")
+    assert(not tb.contains("/SMask"), "color clave sin SMask")
+    println("ok tRNS de color clave: /Mask sin decodificar")
+
+    // 5. Alfa de verdad: el módulo separa y recomprime; la referencia infla lo
+    //    que escribió y lo compara con el PNG original, byte a byte.
+    check_alpha("RGBA 16x8", rgba, "/BitsPerComponent 8", "/BitsPerComponent 8")
+    check_alpha("gris+alfa 4x4", ga, "/BitsPerComponent 8", "/BitsPerComponent 8")
+    check_alpha("paleta con alfa parcial", pala, "/BitsPerComponent 2", "/BitsPerComponent 8")
+    check_alpha("RGBA de 16 bits", rgba16, "/BitsPerComponent 16", "/BitsPerComponent 16")
+    check_alpha("logo 300x120", logo, "/BitsPerComponent 8", "/BitsPerComponent 8")
+    println("ok alfa separado en SMask: RGBA, gris+alfa, paleta, 16 bits y un logo real")
+
+    // 6. Rechazos, todos en el momento y sin tocar el documento.
+    var z: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, "hola")) == "invalid: image_png: no es un PNG (falta la firma)", "no es PNG")
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, adam7)) == "invalid: image_png: PNG entrelazado (Adam7) no soportado: exportarlo sin entrelazar", "Adam7")
+    // Un byte cambiado en los datos: el CRC del chunk lo caza.
+    let at: int = quad.indexOf("IDAT") + 10
+    let roto: String = quad.substring(0, at) + chr(quad.charAt(at) ^ 1) + quad.substring(at + 1, quad.length())
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, roto)).startsWith("parse: image_png: el CRC del chunk IDAT"), "CRC")
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, quad.substring(0, 50))) == "parse: image_png: el chunk del byte 33 se sale del archivo", "cortado: " + img(z.image_png(0.0, 0.0, 10.0, 10.0, quad.substring(0, 50))))
+    // Chunk crítico desconocido (CRC válido): no se puede saltear.
+    let ihdr_end: int = 8 + 25
+    let raro: String = quad.substring(0, ihdr_end) + chunk("ZZZZ", "x") + quad.substring(ihdr_end, quad.length())
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, raro)) == "invalid: image_png: chunk crítico desconocido ZZZZ", "crítico desconocido")
+    // Uno auxiliar (minúscula) sí se saltea.
+    let aux: String = quad.substring(0, ihdr_end) + chunk("zzZz", "x") + quad.substring(ihdr_end, quad.length())
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, aux)) == "Im1", "auxiliar se saltea")
+    // Datos de alfa con el zlib roto pero CRC válido: lo caza el inflate.
+    let rgba_idat: String = chunks_of(rgba, "IDAT")
+    let head: String = rgba.substring(0, 8 + 25)
+    let zmal: String = rgba_idat.substring(0, rgba_idat.length() - 1) + chr(rgba_idat.charAt(rgba_idat.length() - 1) ^ 255)
+    let rgba_mal: String = head + chunk("IDAT", zmal) + chunk("IEND", "")
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, rgba_mal)) == "parse: image_png: zlib: el adler32 no coincide (datos dañados)", "adler32: " + img(z.image_png(0.0, 0.0, 10.0, 10.0, rgba_mal)))
+    // Un IHDR que promete 100000 x 100000 RGBA: no se infla (64 MB).
+    let enorme: String = chr(137) + "PNG" + chr(13) + chr(10) + chr(26) + chr(10) + chunk("IHDR", be32s(100000) + be32s(100000) + chr(8) + chr(6) + chr(0) + chr(0) + chr(0)) + chunk("IDAT", rgba_idat) + chunk("IEND", "")
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, enorme)).contains("el límite es 64 MB sin comprimir"), "bomba de descompresión")
+    // Paleta sin PLTE, y tRNS más largo que la paleta.
+    let sin_plte: String = pal.substring(0, 8 + 25) + chunk("IDAT", chunks_of(pal, "IDAT")) + chunk("IEND", "")
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, sin_plte)) == "parse: image_png: PNG con paleta sin chunk PLTE", "sin PLTE")
+    let trns_largo: String = pal.substring(0, 8 + 25) + chunk("PLTE", chunks_of(pal, "PLTE")) + chunk("tRNS", "abcdefgh") + chunk("IDAT", chunks_of(pal, "IDAT")) + chunk("IEND", "")
+    assert(img(z.image_png(0.0, 0.0, 10.0, 10.0, trns_largo)) == "parse: image_png: tRNS con más entradas que la paleta", "tRNS largo")
+    let zb: String = bytes_of(z)
+    let primera: int = zb.indexOf("/Subtype /Image")
+    assert(primera > 0 and zb.indexOf("/Subtype /Image", primera + 1) < 0, "solo quedó la imagen válida (la del chunk auxiliar)")
+    println("ok rechazos: firma, Adam7, CRC, cortado, crítico, adler32, 64 MB, PLTE, tRNS")
+}

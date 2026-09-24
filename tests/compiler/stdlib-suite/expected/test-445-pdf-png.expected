@@ -1,0 +1,6 @@
+ok PNG RGB 2x2: IDAT tal cual con /Predictor 15
+ok paleta, gris de 8 y 1 bit, RGB de 16 bits (PDF 1.5)
+ok IDAT en varios chunks se concatena
+ok tRNS de color clave: /Mask sin decodificar
+ok alfa separado en SMask: RGBA, gris+alfa, paleta, 16 bits y un logo real
+ok rechazos: firma, Adam7, CRC, cortado, crítico, adler32, 64 MB, PLTE, tRNS

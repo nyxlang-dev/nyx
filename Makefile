@@ -347,6 +347,7 @@ test-runtime:
 ## Tests del target WASM (wasm32-wasi) — SKIP limpio si falta el toolchain
 test-wasm:
 	bash scripts/testing/run_wasm_tests.sh
+	bash scripts/testing/run_wasm_builtin_symbols.sh
 
 ## Gate de carga permanente [arco:W3-paso0b]: 300 goroutines × Array<int> de
 ## 20k, N corridas normales + M con GC_ENABLE_INCREMENTAL=1 (override
@@ -432,6 +433,8 @@ test-all:
 	@echo ""
 	$(MAKE) test-stacks
 	@echo ""
+	$(MAKE) test-lib-real
+	@echo ""
 	@echo "=== All automated suites passed ==="
 
 ## Suites de los stacks extraídos locales (db, queue, edit, shell, serve,
@@ -442,6 +445,12 @@ test-all:
 ##  stack desde el split #7, 2026-07-06 — make test-proxy allí.)
 test-stacks:
 	bash scripts/testing/run_stack_tests.sh
+
+## [lib] modules sobre una copia de nyxerp con todos sus módulos en [lib]
+## (build + las pruebas más pesadas). SKIP limpio sin nyxerp en la máquina.
+## Tarda minutos: fuera de `make test`, dentro de test-all.
+test-lib-real:
+	bash scripts/testing/run_lib_real.sh
 
 ## Tests de integración end-to-end (serve + kv)
 test-integration:
@@ -755,4 +764,4 @@ bench-test-cache:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check bench-test-cache
+.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check bench-test-cache

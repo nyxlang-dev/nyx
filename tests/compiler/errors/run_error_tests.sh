@@ -164,6 +164,9 @@ TESTS=(
   # segfaulteaba. Las dos formas (`panic` y `throw`) tienen que dar NYX1026.
   "tests/compiler/errors/test-panic-payload-enum-unit.nx|NYX1026"
   "tests/compiler/errors/test-throw-payload-enum-unit.nx|NYX1026"
+  # NYX1036 CLÁSICO (sin import transitivo): la transición del resolvedor
+  # (fricción nyxerp 20260924-010014-team-1) lo deja como ERROR, no aviso.
+  "tests/compiler/errors/test-module-private-classic.nx|error [NYX1036]"
 )
 
 for entry in "${TESTS[@]}"; do
@@ -650,9 +653,11 @@ rm -f script.ll
 # CONTROL POSITIVO: solo funciones escalares → sigue yendo aparte, sin aviso.
 cp "$SEP_FX/int/src/main.nx" script.nx
 rm -f script.ll
+# Desde 2026-09-24 la fn de biblioteca se declara con su nombre de módulo
+# (<módulo>__<fn>), el mismo que tendría inlineada — ver auto_import_declare.
 sep_ok=$(NYX_PROJECT_DIR="$(pwd)/$SEP_FX/int" NYX_LIB_MODULES=src/sep timeout 30 ./nyx_bootstrap 2>&1)
 if [ -f script.ll ] && ! echo "$sep_ok" | grep -qF "NYX0302" \
-   && grep -qE "declare i64 @duplicar\(" script.ll && ! grep -qE "define .*duplicar" script.ll; then
+   && grep -qE "declare i64 @src_sep__duplicar\(" script.ll && ! grep -qE "define .*duplicar" script.ll; then
   printf "  ✓ sep-nyx0302-control-positivo\n"; PASS=$((PASS + 1))
 else
   printf "  ✗ sep-nyx0302-control-positivo — el fallback se tragó un módulo separable\n"
@@ -2554,6 +2559,48 @@ else
   echo "$mlk_output" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 rm -f script.ll
+
+# ==============================================================
+# TRANSICIÓN 0.33 → 0.34 (fricción nyxerp 20260924-010014-team-1; decisión de
+# Ottavio 2026-09-24). El resolvedor ya no atribuye al archivo principal lo que
+# un módulo declara después de un import transitivo nuevo. Un NYX1036/NYX2010
+# que aparece SOLO por esa corrección sale como AVISO («⚠ aviso [NYXnnnn]»,
+# «hasta 0.33.x …») y la compilación sigue: rc 0 en nyx_bootstrap y en
+# nyx_check. El NYX1036 que ya existía en 0.33.x sigue siendo error
+# (test-module-private-classic, en el recorrido general). Sabotaje: con
+# vis_disparaba_antes devolviendo siempre true, el caso 1036 cae.
+# ==============================================================
+for tr_code in NYX1036 NYX2010; do
+  case "$tr_code" in
+    NYX1036) tr_fx="tests/compiler/errors/fixtures/transicion-nyx1036-aviso.nx"; tr_llamada="@tests_support_aux_reabre_b__reabre_interna_b(" ;;
+    NYX2010) tr_fx="tests/compiler/errors/fixtures/transicion-nyx2010-aviso.nx"; tr_llamada="@tests_support_aux_ambig_x__etiqueta(" ;;
+  esac
+  name="transicion-$tr_code-aviso"
+  cp "$tr_fx" script.nx
+  tr_out=$(NYX_LANG=es timeout 30 ./nyx_bootstrap 2>&1); tr_rc=$?
+  # NYX2010: el codegen resuelve como en 0.33.x (la de aux_ambig_x, que entonces
+  # era del principal) en vez de abortar; NYX1036: la llamada llega a la privada.
+  if [ "$tr_rc" -eq 0 ] && echo "$tr_out" | grep -qF "⚠ aviso [$tr_code]" \
+     && echo "$tr_out" | grep -qF "hasta 0.33.x quedaba oculto por un bug del resolvedor" \
+     && ! echo "$tr_out" | grep -qF "✗ error" && [ -f script.ll ] && grep -qF "$tr_llamada" script.ll; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"
+    printf "    exit: %d (esperado 0, con «⚠ aviso [%s]» y la llamada %s en el IR)\n" "$tr_rc" "$tr_code" "$tr_llamada"
+    echo "$tr_out" | grep -a "⚠\|✗" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+  if [ -x ./nyx_check ]; then
+    name="transicion-$tr_code-aviso-nyx-check"
+    trc_out=$(NYX_LANG=es NYX_SRC="$tr_fx" ./nyx_check 2>&1); trc_rc=$?
+    if [ "$trc_rc" -eq 0 ] && echo "$trc_out" | grep -qF "⚠ aviso [$tr_code]"; then
+      printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+    else
+      printf "  ✗ %s\n" "$name"; printf "    exit: %d (esperado 0 con «⚠ aviso [%s]»)\n" "$trc_rc" "$tr_code"
+      echo "$trc_out" | grep -a "⚠\|✗" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+    fi
+  fi
+done
 
 # ==============================================================
 # SP4 Task 3b — POSITIVOS: un `pub struct` / `pub type` SÍ se registra como

@@ -1,0 +1,6 @@
+// aux de test-439/440: un módulo que NADIE más importa, para que el import de
+// aux_reabre_a sea NUEVO cuando el fixpoint de resolve_source lo encuentra y
+// lo inlinee DENTRO del cuerpo de a.
+pub fn reabre_u() -> int {
+    return 1
+}

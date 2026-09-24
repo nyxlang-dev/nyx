@@ -1134,6 +1134,26 @@ fn pila_compilador_pista_sh() -> String {
     return "nyx_pista() { [ \"$1\" -ge 128 ] 2>/dev/null && echo \"nota: el compilador murio por una senal (rc=$1). La causa conocida es quedarse sin pila con una expresion muy larga o muy anidada (cientos de operandos en una sola expresion): conviene partirla en varias. Si no es eso, se puede reportar con 'nyx report'.\" >&2; return 0; }\n"
 }
 
+// Pista para un NYX1002 de una unidad [lib] (2026-09-24, nyxerp con [lib]): un
+// módulo que usa una fn de otro SIN importarlo compilaba inlineado —el programa
+// entero comparte un espacio de nombres— y como biblioteca, que se compila sola,
+// da «'x' not declared» sin decir por qué. Se busca la fn en src/ y se dice
+// dónde está, si es privada, y qué import falta. Sin `$` + `{` seguidos: en un
+// string de Nyx eso es interpolación.
+fn lib_pista_import_sh() -> String {
+    var s: String = "nyx_pista_import() {\n"
+    s = s + "  for n in $(grep -oE \"'[A-Za-z_][A-Za-z0-9_]*' not declared\" \"$1\" | cut -d\"'\" -f2 | sort -u); do\n"
+    s = s + "    def=$(grep -rlE \"^(pub |export )?(async )?fn $n\\(\" \"$ORIG_DIR/src\" 2>/dev/null | head -1)\n"
+    s = s + "    [ -n \"$def\" ] || continue\n"
+    s = s + "    rel=$(echo \"$def\" | sed \"s|^$ORIG_DIR/||; s|\\.nx$||\")\n"
+    s = s + "    priv=''; grep -qE \"^fn $n\\(\" \"$def\" && priv=' (y es privada: le falta pub)'\n"
+    s = s + "    echo \"nota: '$n' está en $rel$priv y este módulo no lo importa. Sin [lib] compilaba porque el programa inlineado comparte un solo espacio de nombres; una biblioteca se compila sola y ve solo lo que importa: agrega  import \\\"$rel\\\"\" >&2\n"
+    s = s + "  done\n"
+    s = s + "  return 0\n"
+    s = s + "}\n"
+    return s
+}
+
 // ===== COMPILACIÓN SEPARADA: [lib] modules (arco compilacion-separada, Task 6) =====
 //
 // Cada módulo de `[lib] modules` se compila como UNA unidad de biblioteca
@@ -1250,6 +1270,7 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
     // eran ~10 s de nyx_build por build SIN cambios, medido 2026-09-23 — la
     // misma lección que `emit` (codegen) y el body del resolvedor.
     var sh: StringBuilder = StringBuilder.new()
+    sh.append(lib_pista_import_sh())
     sh.append("LIB_OBJS=\"\"\nLIB_MAP=\"\"\nmkdir -p \"$ORIG_DIR/target/nyx-lib\"\n")
     var i: int = 0
     while i < config.lib_modules.length() {
@@ -1258,7 +1279,7 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
         let h: String = lib_huella(m, base, nyx_home + "/std", hashes, imports_de).substring(0, 16)
         let obj: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".o"
         let inl: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".inline"
-        let env_unidad: String = "( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"" + m + ".nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" )"
+        let env_unidad: String = "( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_SELF=\"" + m + "\" NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"" + m + ".nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" )"
         sh.append("if [ -f \"" + obj + "\" ]; then echo '   reusing " + m + " (lib, sin cambios)'; LIB_OBJS=\"$LIB_OBJS " + obj + "\"; LIB_MAP=\"$LIB_MAP " + m + "=" + obj + "\"\n")
         sh.append("elif [ -f \"" + inl + "\" ]; then :\n")
         sh.append("else\n  echo '   compiling " + m + " (lib)'\n")
@@ -1266,7 +1287,7 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
         sh.append("  LSRC=\"$(mktemp /tmp/nyx_lib_XXXXXX)\"; cp \"$ORIG_DIR/" + m + ".nx\" \"$LSRC.nx\"\n")
         sh.append("  lrc=0; " + env_unidad + " > \"$LOG\" 2>&1 || lrc=$?\n")
         sh.append("  if [ $lrc -eq 3 ]; then grep -F '⚠' \"$LOG\" >&2 || true; : > \"" + inl + "\"\n")
-        sh.append("  elif [ $lrc -ne 0 ]; then echo \"error: nyx compile failed (" + m + "):\" >&2; cat \"$LOG\" >&2; nyx_pista $lrc; rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"; exit 1\n")
+        sh.append("  elif [ $lrc -ne 0 ]; then echo \"error: nyx compile failed (" + m + "):\" >&2; cat \"$LOG\" >&2; nyx_pista $lrc; nyx_pista_import \"$LOG\"; rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"; exit 1\n")
         sh.append("  else\n    grep -F '⚠' \"$LOG\" >&2 || true\n")
         sh.append("    clang -c " + opt_flags + " -Wno-override-module \"$LSRC.ll\" -o \"" + obj + "\" 2> \"$LOG\" || { echo \"error: clang failed (" + m + "):\" >&2; cat \"$LOG\" >&2; exit 1; }\n")
         sh.append("    LIB_OBJS=\"$LIB_OBJS " + obj + "\"; LIB_MAP=\"$LIB_MAP " + m + "=" + obj + "\"\n  fi\n")
@@ -1784,7 +1805,7 @@ fn module_category(name: String) -> String {
     // Módulos del navegador (wasm32-wasi con el shim): van con la web, no a «Otros».
     if name.startsWith("browser") or name == "dom" or name == "vdom" { return "HTTP & Web" }
     if name == "sqlite" or name == "db" or name == "kvclient" { return "Bases de datos & KV" }
-    if name == "json" or name == "msgpack" or name == "toml" or name == "csv" or name == "base64" or name == "compress" or name == "barcode" { return "Serialización & datos" }
+    if name == "json" or name == "msgpack" or name == "toml" or name == "csv" or name == "base64" or name == "compress" or name == "barcode" or name == "pdf" { return "Serialización & datos" }
     if name == "fs" or name == "file" or name == "io" or name == "path" { return "Archivos & I/O" }
     if name == "tcp" or name == "udp" or name == "net" or name == "http2" or name == "dns" or name == "url" or name == "smtp" { return "Red" }
     if name == "thread" or name == "channel" or name == "scheduler" or name == "sync" or name == "async" { return "Concurrencia" }

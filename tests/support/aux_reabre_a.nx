@@ -1,0 +1,15 @@
+// aux de test-439/440: módulo A con una `columna` PRIVADA de firma
+// (String, int, String). Lo que dispara el bug es el import de abajo:
+// aux_reabre_u no lo importa nadie más, así que resolve_source lo inlinea en
+// el lugar de este import —dentro de A—. Antes el cierre de ese módulo anidado
+// volvía al archivo PRINCIPAL, y todo lo que A declara después quedaba
+// atribuido al módulo "" (fricción nyxerp 20260924-010014-team-1).
+import "tests/support/aux_reabre_u"
+
+fn columna(nombre: String, peso: int, etiqueta: String) -> int {
+    return nombre.length() + peso + etiqueta.length() + reabre_u()
+}
+
+pub fn reabre_desde_a() -> int {
+    return columna("ab", 10, "c")
+}

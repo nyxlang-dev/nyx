@@ -1,0 +1,131 @@
+// test-441 — std/pdf, Task 1: el esqueleto del archivo (spec std-pdf, D-6).
+//
+// Origen: fricción de nyxerp (20260924-020001-team-1) — facturas en PDF real.
+// El bug más grave de un generador de PDF escrito a mano es una xref corrida:
+// los navegadores la recalculan y lo esconden, otros visores rechazan el archivo.
+// Por eso este test verifica en dos capas que no salen del módulo:
+//   1. el verificador estructural de tests/test-modules/pdf_check, que relee el
+//      archivo byte a byte (offsets, /Length, trailer);
+//   2. los BYTES EXACTOS del documento más chico (una carta vacía), contados a
+//      mano y confirmados por pypdf en modo estricto, pdfminer y pdfium
+//      (scripts/testing/run_pdf_verify.sh — fuera de make test).
+// Y el verificador se prueba a sí mismo: un offset corrido un byte TIENE que
+// cazarlo, o las pasadas de arriba no valen nada.
+
+import "std/pdf"
+import "std/error"
+import "tests/test-modules/pdf_check"
+
+fn bytes_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            assert(false, "bytes() no debía fallar: " + error_to_string(e))
+            return ""
+        }
+    }
+}
+
+fn err_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return "OK" }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+// Una carta vacía, byte a byte. Offsets: la cabecera mide 15 bytes (9 de
+// «%PDF-1.4\n» + «%», 4 bytes altos y «\n»); cada objeto mide 8 («N 0 obj\n») +
+// su cuerpo + 8 («\nendobj\n»): 15, 15+49=64, 64+57=121, 121+21=142,
+// 142+104=246; el stream vacío mide 49 y la xref empieza en 295.
+fn vector_carta_vacia() -> String {
+    return "%PDF-1.4\n%" + chr(226) + chr(227) + chr(207) + chr(211) + "\n" +
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" +
+        "2 0 obj\n<< /Type /Pages /Kids [4 0 R] /Count 1 >>\nendobj\n" +
+        "3 0 obj\n<< >>\nendobj\n" +
+        "4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources 3 0 R /Contents 5 0 R >>\nendobj\n" +
+        "5 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n" +
+        "xref\n0 6\n" +
+        "0000000000 65535 f \n" +
+        "0000000015 00000 n \n" +
+        "0000000064 00000 n \n" +
+        "0000000121 00000 n \n" +
+        "0000000142 00000 n \n" +
+        "0000000246 00000 n \n" +
+        "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n295\n%%EOF\n"
+}
+
+fn main() {
+    // 1. Bytes exactos de la carta vacía.
+    let vacia: String = bytes_of(pdf_new(PdfPageSize.Letter, 0.0, 0.0))
+    assert(vacia == vector_carta_vacia(), "carta vacía: bytes exactos")
+    assert(pdf_check_structure(vacia) == "", "carta vacía: estructura")
+    println("ok carta vacía: " + int_to_string(vacia.length()) + " bytes exactos")
+
+    // 2. Varias páginas de tamaños distintos: MediaBox de cada una y xref.
+    var d: Pdf = pdf_new(PdfPageSize.A4, 0.0, 0.0)
+    d.add_page(PdfPageSize.HalfLetter, 0.0, 0.0)
+    d.add_page(PdfPageSize.Custom, 80.0, 200.0)
+    d.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    let b: String = bytes_of(d)
+    assert(pdf_check_structure(b) == "", "4 páginas: estructura")
+    assert(b.contains("/Kids [4 0 R 6 0 R 8 0 R 10 0 R] /Count 4"), "4 páginas: árbol")
+    assert(b.contains("/MediaBox [0 0 595.276 841.89]"), "A4 = 210 x 297 mm")
+    assert(b.contains("/MediaBox [0 0 396 612]"), "media carta = 5.5 x 8.5 pulgadas")
+    assert(b.contains("/MediaBox [0 0 226.772 566.929]"), "ticket 80 x 200 mm")
+    assert(b.contains("/MediaBox [0 0 612 792]"), "carta = 8.5 x 11 pulgadas")
+    println("ok 4 páginas: A4, media carta, ticket de 80 mm y carta")
+
+    // 3. Mismo documento, mismos bytes (sin fecha de creación).
+    var d2: Pdf = pdf_new(PdfPageSize.A4, 0.0, 0.0)
+    d2.add_page(PdfPageSize.HalfLetter, 0.0, 0.0)
+    d2.add_page(PdfPageSize.Custom, 80.0, 200.0)
+    d2.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    assert(bytes_of(d2) == b, "determinista")
+    println("ok determinista")
+
+    // 4. Tamaños inválidos: Err(invalid) en bytes(), nombrando la llamada.
+    let e1: String = err_of(pdf_new(PdfPageSize.Custom, 0.5, 100.0))
+    assert(e1 == "invalid: pdf: pdf_new: tamaño Custom fuera de rango: cada lado va de 1.06 mm a 5080 mm (llegó 0.5 x 100 mm)", "Custom 0.5 mm: " + e1)
+    let nan: float = 0.0 / 0.0
+    var d3: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    d3.add_page(PdfPageSize.Custom, nan, 100.0)
+    d3.add_page(PdfPageSize.Custom, 6000.0, 100.0)
+    let e2: String = err_of(d3)
+    assert(e2 == "invalid: pdf: add_page: tamaño Custom con una medida que no es un número finito (página 2)", "NaN: " + e2)
+    let e3: String = err_of(pdf_new(PdfPageSize.Custom, 5081.0, 100.0))
+    assert(e3.contains("fuera de rango"), "5081 mm: " + e3)
+    // Letter/A4/HalfLetter ignoran las medidas, aunque sean basura.
+    assert(err_of(pdf_new(PdfPageSize.Letter, nan, 0.0 - 5.0)) == "OK", "Letter ignora width/height")
+    println("ok tamaños inválidos: Err(invalid) con la causa y la página")
+
+    // 5. El verificador caza un offset corrido un byte (si no, no prueba nada).
+    let at: int = vacia.indexOf("0000000064 00000 n")
+    let corrida: String = vacia.substring(0, at) + "0000000065" + vacia.substring(at + 10, vacia.length())
+    let msg: String = pdf_check_structure(corrida)
+    assert(msg == "objeto 2: la xref dice 65 y ahí no empieza «2 0 obj»", "sabotaje de offset: " + msg)
+    let at2: int = vacia.indexOf("/Length 0")
+    let larga: String = vacia.substring(0, at2) + "/Length 1" + vacia.substring(at2 + 9, vacia.length())
+    assert(pdf_check_structure(larga).contains("no llega a endstream"), "sabotaje de /Length")
+    println("ok el verificador caza un offset y un /Length corridos")
+
+    // 6. Pdf es un MANEJADOR: una función auxiliar lo recibe por valor (los
+    //    métodos &mut self no se llaman sobre un *Pdf) y dibuja en el MISMO
+    //    documento — la página que abre y el error que anota se ven afuera.
+    var h: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    abrir_ticket(h)
+    let hb: String = bytes_of(h)
+    assert(hb.contains("/Count 2") and hb.contains("/MediaBox [0 0 226.772 283.465]"), "la página abierta en la auxiliar")
+    abrir_ticket_mal(h)
+    assert(err_of(h) == "invalid: pdf: add_page: tamaño Custom fuera de rango: cada lado va de 1.06 mm a 5080 mm (llegó 0 x 100 mm) (página 3)", "el error anotado en la auxiliar: " + err_of(h))
+    println("ok Pdf es un manejador: las auxiliares por valor dibujan en el mismo documento")
+}
+
+fn abrir_ticket(d: Pdf) {
+    d.add_page(PdfPageSize.Custom, 80.0, 100.0)
+}
+
+fn abrir_ticket_mal(d: Pdf) {
+    d.add_page(PdfPageSize.Custom, 0.0, 100.0)
+}

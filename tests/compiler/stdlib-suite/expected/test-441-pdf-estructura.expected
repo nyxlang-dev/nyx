@@ -1,0 +1,6 @@
+ok carta vacía: 478 bytes exactos
+ok 4 páginas: A4, media carta, ticket de 80 mm y carta
+ok determinista
+ok tamaños inválidos: Err(invalid) con la causa y la página
+ok el verificador caza un offset y un /Length corridos
+ok Pdf es un manejador: las auxiliares por valor dibujan en el mismo documento

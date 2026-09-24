@@ -409,3 +409,10 @@ int64_t nyx_file_write_result(nyx_string* path, nyx_string* content) {
     if (fclose(file) != 0 && werr == 0) werr = errno ? errno : 5 /* EIO */;
     return werr;
 }
+
+// Renombre atómico. Venía de persist.c (fuera de wasm); rename() existe en
+// wasi-libc, así que en wasm32-wasi también anda.
+int64_t nyx_rename_file(const char* old_path, const char* new_path) {
+    if (!old_path || !new_path) return -1;
+    return (int64_t)rename(old_path, new_path);
+}

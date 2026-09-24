@@ -1,0 +1,174 @@
+// test-442 — std/pdf, Task 2: texto con las fuentes estándar (spec std-pdf, D-1).
+//
+// Tres cosas que se pueden romper sin que nada falle a la vista:
+//   - los ANCHOS: una tabla AFM mal transcrita desalinea los montos a la
+//     derecha por décimas de milímetro (se ve «casi bien»). Los vectores de
+//     abajo salen de los AFM de Adobe sumados A MANO, no del módulo;
+//   - el ENCODING: una tilde mal mapeada sale como otro carácter en papel y en
+//     la extracción de texto. Se fija byte por byte cada letra del español;
+//   - el ERROR: un carácter que las fuentes estándar no tienen tiene que hacer
+//     fallar bytes(), no desaparecer del papel.
+// pdfminer y pdfium confirmaron fuera de make test que el texto extraído es
+// idéntico y que los bordes derechos caen donde pdf_text_width dice
+// (scripts/testing/run_pdf_verify.sh).
+
+import "std/pdf"
+import "std/error"
+import "tests/test-modules/pdf_check"
+
+fn bytes_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            assert(false, "bytes() no debía fallar: " + error_to_string(e))
+            return ""
+        }
+    }
+}
+
+fn err_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return "OK" }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+// El content stream de la única página (lo que hay entre stream y endstream).
+fn content_of(b: String) -> String {
+    let at: int = b.indexOf(">>\nstream\n")
+    let fin: int = b.indexOf("\nendstream")
+    return b.substring(at + 10, fin)
+}
+
+// Ancho esperado en mm a partir de unidades AFM (milésimas de em).
+fn mm_of(units: int, size_pt: float) -> float {
+    return int_to_float(units) * size_pt * 25.4 / 72000.0
+}
+
+// Times-Roman, bytes WinAnsi 32..255 (0 = byte sin glifo), según pypdf.
+fn anchos_times() -> String {
+    return "250 333 408 500 500 833 778 180 333 333 500 564 250 333 250 278 500 500 500 500 500 500 500 500 500 500 278 278 564 564 564 444 921 722 667 667 722 611 556 722 722 333 389 722 611 889 722 722 556 722 667 556 611 722 722 944 722 722 611 333 278 333 469 500 333 444 500 444 500 444 333 500 500 278 278 500 278 778 500 500 500 500 333 389 278 500 500 722 500 500 444 480 200 480 541 0 500 0 333 500 444 1000 500 500 333 1000 556 333 889 0 611 0 0 333 333 444 444 350 500 1000 333 980 389 333 722 0 444 722 250 333 500 500 500 500 200 500 333 760 276 500 564 333 760 333 400 564 300 300 333 500 453 250 333 300 310 500 750 750 750 444 722 722 722 722 722 722 889 667 611 611 611 611 333 333 333 333 722 722 722 722 722 722 722 564 722 722 722 722 722 722 556 500 444 444 444 444 444 444 667 444 444 444 444 444 278 278 278 278 500 500 500 500 500 500 500 564 500 500 500 500 500 500 500 500"
+}
+
+fn close(a: float, b: float) -> bool {
+    let d: float = a - b
+    return d < 0.000000001 and d > 0.0 - 0.000000001
+}
+
+fn main() {
+    // 1. Anchos: sumas a mano de los AFM Core14 (Adobe).
+    //    Helvetica:      c 500  a 556  f 278  é 556             = 1890
+    //                    s 500  e 556  ñ 556  a 556  l 222      = 2390
+    //    Helvetica-Bold: c 556  a 556  f 333  é 556             = 2001
+    //                    s 556  e 556  ñ 611  a 556  l 278      = 2557
+    //    Times-Roman:    c 444  a 444  f 333  é 444             = 1665
+    //                    s 389  e 444  ñ 500  a 444  l 278      = 2055
+    assert(close(pdf_text_width("café", PdfFont.Helvetica, 10.0), mm_of(1890, 10.0)), "café Helvetica")
+    assert(close(pdf_text_width("señal", PdfFont.Helvetica, 10.0), mm_of(2390, 10.0)), "señal Helvetica")
+    assert(close(pdf_text_width("café", PdfFont.HelveticaBold, 12.0), mm_of(2001, 12.0)), "café Helvetica-Bold")
+    assert(close(pdf_text_width("señal", PdfFont.HelveticaBold, 12.0), mm_of(2557, 12.0)), "señal Helvetica-Bold")
+    assert(close(pdf_text_width("café", PdfFont.TimesRoman, 9.0), mm_of(1665, 9.0)), "café Times-Roman")
+    assert(close(pdf_text_width("señal", PdfFont.TimesRoman, 9.0), mm_of(2055, 9.0)), "señal Times-Roman")
+    // Cifras: todas miden lo mismo (556 / 556 / 500), por eso las columnas de
+    // montos se alinean. Y el € mide como una cifra en las tres.
+    assert(close(pdf_text_width("0123456789", PdfFont.Helvetica, 10.0), mm_of(5560, 10.0)), "cifras Helvetica")
+    assert(close(pdf_text_width("€", PdfFont.HelveticaBold, 10.0), mm_of(556, 10.0)), "€ Helvetica-Bold")
+    assert(close(pdf_text_width("€", PdfFont.TimesRoman, 10.0), mm_of(500, 10.0)), "€ Times")
+    assert(close(pdf_text_width("", PdfFont.Helvetica, 10.0), 0.0), "vacío mide 0")
+    // Lo que no se puede dibujar mide 0 (y text() lo rechaza, abajo).
+    assert(close(pdf_text_width("a中b", PdfFont.Helvetica, 10.0), mm_of(556 + 556, 10.0)), "中 mide 0")
+    println("ok anchos AFM: café, señal, cifras y € en las 3 fuentes")
+
+    // 2. Documento entero con un texto, byte a byte. 20 mm = 56.693 pt; la
+    //    línea base a 30 mm del borde de arriba es 792 - 85.039 = 706.961 pt.
+    //    La fuente lleva /Widths: los 224 anchos AFM de Times-Roman para los
+    //    bytes 32..255 (sin ellos cada visor avanza con las métricas de SU
+    //    sustituto). La lista de abajo NO sale del módulo: es la de pypdf
+    //    (core_font_metrics.py) pasada por el codec cp1252 de Python.
+    //    El objeto de la fuente mide 1008 bytes y el contenido 47; los
+    //    offsets: 15, 64, 121, 164 (+43), 1188 (+1024), 1292 (+104) y la xref
+    //    en 1389 (+97).
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    d.text(20.0, 30.0, "café", PdfFont.TimesRoman, 10.0)
+    let b: String = bytes_of(d)
+    let esperado: String = "%PDF-1.4\n%" + chr(226) + chr(227) + chr(207) + chr(211) + "\n" +
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n" +
+        "2 0 obj\n<< /Type /Pages /Kids [5 0 R] /Count 1 >>\nendobj\n" +
+        "3 0 obj\n<< /Font << /F3 4 0 R >> >>\nendobj\n" +
+        "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman /Encoding /WinAnsiEncoding /FirstChar 32 /LastChar 255 /Widths [" + anchos_times() + "] >>\nendobj\n" +
+        "5 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources 3 0 R /Contents 6 0 R >>\nendobj\n" +
+        "6 0 obj\n<< /Length 47 >>\nstream\nBT /F3 10 Tf 56.693 706.961 Td (caf\\351) Tj ET\n\nendstream\nendobj\n" +
+        "xref\n0 7\n" +
+        "0000000000 65535 f \n" +
+        "0000000015 00000 n \n" +
+        "0000000064 00000 n \n" +
+        "0000000121 00000 n \n" +
+        "0000000164 00000 n \n" +
+        "0000001188 00000 n \n" +
+        "0000001292 00000 n \n" +
+        "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n1389\n%%EOF\n"
+    assert(b == esperado, "café en Times: bytes exactos")
+    assert(pdf_check_structure(b) == "", "café: estructura")
+    println("ok «café» en Times-Roman: bytes exactos")
+
+    // 3. Encoding: cada letra del español a su byte WinAnsi (en octal en el
+    //    contenido), y ( ) \ escapados.
+    var e: Pdf = pdf_new(PdfPageSize.A4, 0.0, 0.0)
+    e.text(10.0, 10.0, "áéíóúüñ ÁÉÍÓÚÜÑ ¿¡ € ° « » – — “ ” (x) a\\b", PdfFont.Helvetica, 8.0)
+    let c: String = content_of(bytes_of(e))
+    let linea: String = "BT /F1 8 Tf 28.346 813.544 Td (\\341\\351\\355\\363\\372\\374\\361 \\301\\311\\315\\323\\332\\334\\321 \\277\\241 \\200 \\260 \\253 \\273 \\226 \\227 \\223 \\224 \\(x\\) a\\\\b) Tj ET\n"
+    assert(c == linea, "encoding del español: " + c)
+    println("ok encoding WinAnsi: tildes, eñe, ¿¡, €, comillas y rayas")
+
+    // 4. Solo las fuentes usadas van a los recursos, y /F1 /F2 /F3 no cambian
+    //    de nombre según cuáles se usen.
+    var f: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    f.text(10.0, 10.0, "b", PdfFont.HelveticaBold, 10.0)
+    f.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    f.text(10.0, 10.0, "h", PdfFont.Helvetica, 10.0)
+    let fb: String = bytes_of(f)
+    assert(fb.contains("<< /Font << /F1 4 0 R /F2 5 0 R >> >>"), "recursos con F1 y F2")
+    assert(not fb.contains("Times-Roman"), "Times no usada, no declarada")
+    assert(fb.contains("BT /F2 10 Tf"), "negrita es /F2")
+    assert(pdf_check_structure(fb) == "", "dos páginas con texto: estructura")
+    println("ok recursos: solo las fuentes usadas, nombres estables")
+
+    // 5. Errores diferidos: bytes() devuelve el PRIMERO con la página.
+    var g: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    g.text(10.0, 10.0, "bien", PdfFont.Helvetica, 10.0)
+    g.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    g.text(10.0, 10.0, "Precio 中文", PdfFont.Helvetica, 10.0)
+    g.text(10.0, 10.0, "tab\taquí", PdfFont.Helvetica, 10.0)
+    assert(err_of(g) == "invalid: pdf: text: «Precio 中文» tiene 中 (U+4E2D) en el byte 7, que las fuentes estándar de PDF no tienen (WinAnsiEncoding: latín occidental; pdf_text_supported lo pregunta antes) (página 2)", "CJK: " + err_of(g))
+    var h: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    h.text(10.0, 10.0, "uno\ndos", PdfFont.Helvetica, 10.0)
+    assert(err_of(h) == "invalid: pdf: text: el texto tiene el carácter de control U+000A en el byte 3: text() dibuja una sola línea, sin saltos ni tabulaciones (una llamada por renglón) (página 1)", "salto: " + err_of(h))
+    var u: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    u.text(10.0, 10.0, "ab" + chr(233) + "c", PdfFont.Helvetica, 10.0)
+    assert(err_of(u) == "invalid: pdf: text: el texto no es UTF-8 válido (byte 2) (página 1)", "latin-1 crudo: " + err_of(u))
+    var s0: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    s0.text(10.0, 10.0, "x", PdfFont.Helvetica, 0.0)
+    assert(err_of(s0).contains("tamaño de letra"), "tamaño 0: " + err_of(s0))
+    let nan: float = 0.0 / 0.0
+    var xn: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    xn.text(nan, 10.0, "x", PdfFont.Helvetica, 10.0)
+    assert(err_of(xn).contains("no es un número finito"), "x NaN: " + err_of(xn))
+    // Emoji (4 bytes) y un UTF-8 sobrelargo (C0 AF = «/» mal codificada).
+    var em: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    em.text(10.0, 10.0, "ok 😀", PdfFont.Helvetica, 10.0)
+    assert(err_of(em).contains("(U+1F600) en el byte 3"), "emoji: " + err_of(em))
+    var ov: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    ov.text(10.0, 10.0, "a" + chr(192) + chr(175), PdfFont.Helvetica, 10.0)
+    assert(err_of(ov) == "invalid: pdf: text: el texto no es UTF-8 válido (byte 1) (página 1)", "sobrelargo: " + err_of(ov))
+    println("ok errores: CJK, control, UTF-8 inválido, emoji, tamaño y NaN")
+
+    // 6. pdf_text_supported: la pregunta previa para limpiar datos de usuario.
+    assert(pdf_text_supported("Ferretería «El Tornillo», C.A. — N° 12 ¿ok? ¡sí! 5 €"), "español soportado")
+    assert(pdf_text_supported(""), "vacío soportado")
+    assert(not pdf_text_supported("Łódź"), "Ł no está en WinAnsi")
+    assert(not pdf_text_supported("a\tb"), "tabulación no")
+    assert(not pdf_text_supported("x" + chr(255)), "UTF-8 inválido no")
+    println("ok pdf_text_supported")
+}

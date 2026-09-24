@@ -1,0 +1,6 @@
+ok JPEG baseline: diccionario, bytes y matriz exactos
+ok JPEG progresivo y en gris
+ok la misma imagen en dos páginas va una vez al archivo
+ok un lado en 0 sale de la proporción
+ok las 8 orientaciones EXIF (II y MM) y el EXIF roto
+ok rechazos: CMYK, no-JPEG, SOF3/SOF9, 12 bits, cortado, medidas

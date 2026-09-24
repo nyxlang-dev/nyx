@@ -528,21 +528,7 @@ nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
     return nyx_string_from_ptr((const char*)out, (size_t)dklen);
 }
 
-// ===== nyx_constant_time_eq =====
-// Compara SIEMPRE todos los bytes, sin cortar en la primera diferencia. Un `==`
-// normal filtra por timing cuánto prefijo coincide, que es justo lo que hace
-// falta para adivinar un hash o un token byte por byte. La diferencia de
-// LARGO sí se filtra (es inevitable sin padding) y no es el secreto.
-int64_t nyx_constant_time_eq(nyx_string* a, nyx_string* b) {
-    if (!a || !b) return 0;
-    if (a->length != b->length) return 0;
-
-    unsigned char diff = 0;
-    for (size_t i = 0; i < a->length; i++) {
-        diff |= (unsigned char)(a->data[i] ^ b->data[i]);
-    }
-    return diff == 0 ? 1 : 0;
-}
+// nyx_constant_time_eq vive en strings.c (portable: también en wasm).
 
 // ===== nyx_md5 =====
 

@@ -1,0 +1,32 @@
+// test-439 — dos módulos con una fn PRIVADA homónima de firmas distintas, y
+// cada uno con un import que nadie más trae ANTES de su declaración. Orden
+// a → b; test-440 es el mismo programa en el orden inverso.
+//
+// Fricción nyxerp 20260924-010014-team-1. resolve_source inlinea en su primer
+// pase los imports del archivo principal, y en el fixpoint los transitivos,
+// EN EL LUGAR del import: dentro del cuerpo del módulo que los importa. El
+// cierre de ese módulo anidado era `//#module` pelado —«de vuelta al
+// principal»—, y los marcadores no son una pila, así que las dos `columna`
+// quedaban registradas en el módulo "". fn_module_resolve devolvía "" para las
+// llamadas de ambos y fn_sig_index daba la PRIMERA registrada: la de a en
+// este orden, la de b en el otro. Por eso el orden de los imports prendía y
+// apagaba el error, y por eso los cinco casos mínimos del equipo compilaban:
+// ninguno tenía un import transitivo nuevo dentro de los dos módulos.
+//
+// Sin el arreglo, `nyx check` da NYX1005 en reabre_desde_b («argument 2 of
+// 'columna': expected int, got String»).
+import "tests/support/aux_reabre_a"
+import "tests/support/aux_reabre_b"
+
+fn main() -> int {
+    // A: 2 + 10 + 1 + 1
+    let a: int = reabre_desde_a()
+    print(a)
+    assert(a == 14)
+    // B: 3*100 + 2*10 + 1 + 2
+    let b: int = reabre_desde_b()
+    print(b)
+    assert(b == 323)
+    print("modulo-reabre a-b OK")
+    return 0
+}

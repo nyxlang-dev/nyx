@@ -7,10 +7,12 @@ import "std/json"
 // (std/http no importa std/web — sin ciclo).
 import "std/http"
 
-// Decoder de percent-encoding del runtime (runtime/url.c), byte-safe: maneja
-// `%XX` Y `+`→espacio. Se declara como extern (en vez de `import "std/url"`)
-// para evitar el choque de nombres: std/url también exporta url_decode/html_escape.
-extern "C" fn nyx_url_decode(s: String) -> String
+// `url_decode` (percent-encoding de forms/query: `%XX` Y `+`→espacio) viene de
+// std/percent, el mismo que usa std/url: una sola definición en la stdlib, así
+// importar std/web y std/url juntos no es una llamada ambigua (NYX2010). No se
+// importa std/url entero para no traer sus demás nombres (html_escape, ...),
+// que pueden chocar con los del programa.
+import "std/percent"
 
 struct Request {
     method: String,
@@ -83,13 +85,6 @@ pub fn request_with(method: String, path: String) -> Request {
     r.method = method
     r.path = path
     return r
-}
-
-// Decodifica percent-encoding de forms/query. Delega en el runtime C
-// (nyx_url_decode): `%XX` (espacios %20, acentos UTF-8, %26, %3D...) Y `+`→espacio.
-// Antes solo hacía `+`→espacio → corrompía silenciosamente toda la ingesta de forms.
-pub fn url_decode(s: String) -> String {
-    return nyx_url_decode(s)
 }
 
 // Decodifica una cadena `clave=valor&clave2=valor2` (query string YA sin el

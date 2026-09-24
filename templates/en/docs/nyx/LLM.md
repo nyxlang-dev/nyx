@@ -680,6 +680,13 @@ error, wrong function, blank screen). Now:
 - An unqualified call ambiguous between two imported modules is an error
   (**NYX2010**) naming both modules — qualify it or rename. `nyx check` reports it too (since
   2026-09-23), not only `nyx build`.
+- **Transition (2026-09-24, until the next minor version):** up to 0.33.x a resolver bug
+  attributed everything a module declared AFTER a newly inlined transitive import to the main
+  file, which hid NYX1036/NYX2010 there (and made two private homonyms in different modules
+  collide by import order). With it fixed, the cases that only appear because of the corrected
+  attribution come out as `⚠ aviso [NYX1036]`/`⚠ aviso [NYX2010]` and still compile (rc 0);
+  they become errors in the next minor version. Add `pub` / qualify the call now.
+- `std/percent` holds the single `url_decode` that `std/url` and `std/web` both import.
 - Module fns are emitted as `<module_path>__<fn>` in the IR; the main file
   and the prelude keep bare names (single-file programs: zero change).
 - `nyx check` (and the checker inside `nyx build`) resolves the same way
@@ -2419,6 +2426,58 @@ match ean13_widths("590123412345") { ... }       // 12 digits: computes the chec
 
 Recipe: `examples/by-example/116-barcode-qr.nx`.
 
+### std/pdf — PDF documents: invoices, receipts, reports (pure Nyx, native and wasm)
+
+Builds a real PDF file. Positions in **millimetres from the TOP-LEFT corner**, Y
+growing downwards (the module converts to points and flips to PDF's bottom-left
+system). `bytes()` returns the whole file: `write_file` it or `smtp_attach` it.
+
+```nyx
+import "std/pdf"
+import "std/error"
+
+fn invoice() -> Result<String, Error> {
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)     // A4, HalfLetter, Custom (w_mm, h_mm)
+    let logo: int = d.image_png(15.0, 12.0, 22.0, 0.0, read_file("logo.png"))?   // h 0 = keep aspect
+    d.text(40.0, 20.0, "Ferretería El Tornillo, C.A.", PdfFont.HelveticaBold, 14.0) // y = BASELINE
+    let amount: String = "1.234,56"
+    let w: float = pdf_text_width(amount, PdfFont.Helvetica, 10.0)                // mm
+    d.text(200.9 - w, 60.0, amount, PdfFont.Helvetica, 10.0)                      // right-aligned
+    d.line(15.0, 62.0, 200.9, 62.0)
+    d.rect(15.0, 70.0, 0.8, 0.8, true)                    // (x, y) = top-left; filled = black
+    d.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    return d.bytes()
+}
+```
+
+**Limits and things that will bite you:**
+
+- **Fonts = the 3 standard PDF fonts, WinAnsiEncoding** (Helvetica,
+  Helvetica-Bold, Times-Roman, not embedded). Covers all of Spanish/Western
+  Latin (á ñ ¿ ¡ € “ ” – —). A character outside it (CJK, emoji, `Ł`), a control
+  char (`\n`, `\t` — one call per line) or invalid UTF-8 makes **`bytes()`
+  return `Err(invalid)`** naming the character — never a silently missing glyph.
+  Check user data first with `pdf_text_supported(s)`. `pdf_text_width` measures
+  unsupported chars as 0.
+- **Errors are deferred**: `text`/`line`/`rect`/`add_page` return nothing; the
+  FIRST problem (with the call and page) comes out of `bytes()`. Only
+  `image_jpeg`/`image_png` return `Result` immediately.
+- **`Pdf` is a handle** (like `StringBuilder`): passing it to a helper by value
+  shares the same document — that is the way to write helpers (`fn row(d: Pdf,
+  ...) { d.text(...) }`). Methods cannot be called through a `*Pdf`.
+- **Images**: JPEG baseline/progressive, gray/colour, EXIF orientation honoured;
+  CMYK, 12-bit and lossless JPEG are `Err`. PNG gray/RGB/palette 1-16 bit go in
+  undecoded; transparency works (tRNS colour key → `/Mask`, alpha channel →
+  `/SMask`). Interlaced (Adam7) PNG is `Err` — re-export without interlacing.
+  Alpha PNGs are decoded in memory: over 64 MB uncompressed is `Err`. The same
+  bytes added twice (logo on every page) are stored once.
+- **No colours, no line width, no text wrapping, no automatic page numbers** in
+  phase 1: everything is black, strokes are 1 pt, and you position every line
+  yourself. A table is a recipe on `pdf_text_width` + `line`, not a function.
+- Output is deterministic (no creation date): same document, same bytes.
+
+Recipe: `examples/by-example/118-pdf-invoice.nx`.
+
 ### RESP protocol (used by nyx-kv and RESP-speaking servers)
 
 `std/resp` is the shared, binary-safe RESP2 frame reader used to BUILD a
@@ -2857,8 +2916,20 @@ always recompiles, against the current interfaces. Native targets only — with
 
 **Crosses the boundary** (a C-header-style interface: signatures and types,
 no bodies): exported functions (`export fn`/`pub fn`, typed params + return)
-and exported `struct`/`enum`. Both import forms work: `import { f } from
-"src/a"` and `import "src/a" as a` + `a.f()`.
+and every `struct`/`enum` (type names are program-global, `pub` or not).
+**Declaring a module in `[lib]` changes HOW it compiles, never WHICH names its
+importers see** (since 2026-09-24): every import form behaves as if inlined —
+`import "src/a"` (no braces, the `nyx init` form), `import "src/a" as a` +
+`a.f()` or bare `f()`, and `import { f } from "src/a"` (the other exported
+names are visible too, as inlined) — including transitivity (names from what
+`src/a` imports). Library functions are emitted as `<module>__<fn>`, exactly
+as when inlined, so two libraries may have functions with the same name.
+**One real difference**: a library compiles alone, so it only sees what IT
+imports (directly or transitively). A module that calls a function from
+another module it never imports worked inlined only because the whole program
+shares one namespace; under `[lib]` that is NYX1002, and `nyx build` adds a
+`nota:` naming the module that defines it and the `import` to add (and whether
+the function lacks `pub`). Add the import — the code is then correct either way.
 
 **Does NOT cross the boundary** — monomorphization and method dispatch need
 the BODY at the call site, and bodies never cross: a generic exported `fn`,

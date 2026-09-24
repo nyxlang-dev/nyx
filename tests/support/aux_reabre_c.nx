@@ -1,0 +1,12 @@
+// aux del aviso de transición NYX1036 (run_error_tests.sh, «transicion-nyx1036»):
+// la forma del caso de nyxerp (acceso_operaciones.nx → usuarios.nx). Este
+// módulo importa aux_reabre_b —nuevo cuando lo encuentra el fixpoint, así que
+// su resto es un tramo reabierto— y llama a una privada que B declara DESPUÉS
+// de su propio import transitivo. Hasta 0.33.x los dos tramos eran del archivo
+// principal y la llamada pasaba; con la atribución corregida es NYX1036, que
+// en la transición sale como aviso.
+import "tests/support/aux_reabre_b"
+
+pub fn reabre_desde_c() -> int {
+    return reabre_interna_b()
+}

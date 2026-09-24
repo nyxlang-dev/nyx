@@ -1,0 +1,8 @@
+// aux del aviso de transición NYX2010: `etiqueta` declarada DESPUÉS de un
+// import transitivo nuevo. Hasta 0.33.x era del archivo principal, así que
+// una llamada del principal la elegía sin ambigüedad frente a aux_ambig_y.
+import "tests/support/aux_ambig_w"
+
+pub fn etiqueta() -> String {
+    return "x"
+}

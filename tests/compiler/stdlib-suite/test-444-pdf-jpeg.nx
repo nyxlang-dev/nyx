@@ -1,0 +1,187 @@
+// test-444 — std/pdf, Task 4: imágenes JPEG (spec std-pdf, D-2).
+//
+// El JPEG ya ES el stream que PDF quiere (DCTDecode): el módulo no decodifica
+// un píxel, solo lee del encabezado de cuadro el ancho, el alto y los
+// componentes. Lo que se puede romper sin que nada falle:
+//   - el diccionario: un /Width o /ColorSpace que no coincide con el JPEG se
+//     dibuja deformado o con colores cambiados;
+//   - la ORIENTACIÓN EXIF: una foto de teléfono guarda los píxeles de costado y
+//     una etiqueta que dice cómo girarla; PDF ignora EXIF, así que el giro lo
+//     hace la matriz. Se prueban las 8 orientaciones en los dos órdenes de
+//     bytes de TIFF (II y MM) con segmentos EXIF armados acá;
+//   - lo que PDF no lee (CMYK invertido, 12 bits, sin pérdida): Err, nunca un
+//     XObject que el visor dibuje roto.
+// pdfium dibujó las fixtures (baseline, progresivo, gris, EXIF 6) y el render
+// se comparó contra Pillow con exif_transpose (scripts/testing/run_pdf_verify.sh).
+//
+// JPEG progresivo (SOF2): la spec pedía rechazarlo, pero DCTDecode lo lee desde
+// PDF 1.3 (ISO 32000-1 §7.4.8) y pdfium lo dibuja idéntico al baseline — se
+// acepta. Rechazarlo solo obligaba a reconvertir fotos que ya sirven.
+
+import "std/pdf"
+import "std/error"
+import "tests/test-modules/pdf_check"
+
+fn bytes_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            assert(false, "bytes() no debía fallar: " + error_to_string(e))
+            return ""
+        }
+    }
+}
+
+fn img(r: Result<int, Error>) -> String {
+    match r {
+        Result.Ok(n) => { return "Im" + int_to_string(n) }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+fn last_index(s: String, needle: String) -> int {
+    var last: int = 0 - 1
+    var at: int = s.indexOf(needle)
+    while at >= 0 {
+        last = at
+        at = s.indexOf(needle, at + 1)
+    }
+    return last
+}
+
+fn content_of(b: String) -> String {
+    let at: int = last_index(b, "<< /Length ")
+    let s: int = b.indexOf("stream\n", at) + 7
+    let e: int = b.indexOf("\nendstream", s)
+    return b.substring(s, e)
+}
+
+fn be16(v: int) -> String { return chr((v >> 8) & 255) + chr(v & 255) }
+fn le16(v: int) -> String { return chr(v & 255) + chr((v >> 8) & 255) }
+
+// Segmento APP1 con un IFD de una sola entrada: Orientation (0x0112), SHORT.
+fn exif_app1(orient: int, little: bool) -> String {
+    var tiff: String = ""
+    if little {
+        tiff = "II" + le16(42) + chr(8) + chr(0) + chr(0) + chr(0) + le16(1) +
+               le16(0x0112) + le16(3) + chr(1) + chr(0) + chr(0) + chr(0) + le16(orient) + chr(0) + chr(0) +
+               chr(0) + chr(0) + chr(0) + chr(0)
+    } else {
+        tiff = "MM" + be16(42) + chr(0) + chr(0) + chr(0) + chr(8) + be16(1) +
+               be16(0x0112) + be16(3) + chr(0) + chr(0) + chr(0) + chr(1) + be16(orient) + chr(0) + chr(0) +
+               chr(0) + chr(0) + chr(0) + chr(0)
+    }
+    let body: String = "Exif" + chr(0) + chr(0) + tiff
+    return chr(0xFF) + chr(0xE1) + be16(body.length() + 2) + body
+}
+
+fn with_exif(jpeg: String, orient: int, little: bool) -> String {
+    return jpeg.substring(0, 2) + exif_app1(orient, little) + jpeg.substring(2, jpeg.length())
+}
+
+fn set_byte(s: String, i: int, v: int) -> String {
+    return s.substring(0, i) + chr(v) + s.substring(i + 1, s.length())
+}
+
+fn main() {
+    let quad: String = include_bytes("tests/fixtures/pdf/quad-16x8.jpg")
+    let prog: String = include_bytes("tests/fixtures/pdf/quad-16x8-prog.jpg")
+    let gray: String = include_bytes("tests/fixtures/pdf/gray-8x8.jpg")
+    let cmyk: String = include_bytes("tests/fixtures/pdf/cmyk-4x4.jpg")
+
+    // 1. JPEG RGB baseline de 16 x 8: diccionario exacto y los bytes del
+    //    archivo tal cual dentro del stream. En (20, 20) mm con 40 x 20 mm:
+    //    x = 56.693, abajo = 792 - 113.386 = 678.614, 113.386 - 56.693 = 56.693
+    //    de ancho y 56.693 de alto.
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(d.image_jpeg(20.0, 20.0, 40.0, 20.0, quad)) == "Im1", "quad baseline")
+    let b: String = bytes_of(d)
+    let dict: String = "<< /Type /XObject /Subtype /Image /Width 16 /Height 8 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + int_to_string(quad.length()) + " >>\nstream\n"
+    let at: int = b.indexOf(dict)
+    assert(at > 0, "diccionario del JPEG")
+    assert(b.substring(at + dict.length(), at + dict.length() + quad.length()) == quad, "los bytes del JPEG, tal cual")
+    assert(b.contains("<< /XObject << /Im1 4 0 R >> >>"), "recursos con la imagen")
+    assert(content_of(b) == "q 113.386 0 0 56.693 56.693 678.614 cm /Im1 Do Q\n", "matriz: " + content_of(b))
+    assert(pdf_check_structure(b) == "", "estructura con JPEG")
+    println("ok JPEG baseline: diccionario, bytes y matriz exactos")
+
+    // 2. Progresivo y gris.
+    var p: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(p.image_jpeg(0.0, 0.0, 16.0, 8.0, prog)) == "Im1", "progresivo aceptado")
+    assert(img(p.image_jpeg(0.0, 10.0, 8.0, 8.0, gray)) == "Im2", "gris")
+    let pb: String = bytes_of(p)
+    assert(pb.contains("/Width 8 /Height 8 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /DCTDecode"), "gris es DeviceGray")
+    assert(pdf_check_structure(pb) == "", "estructura progresivo + gris")
+    println("ok JPEG progresivo y en gris")
+
+    // 3. La misma imagen dos veces (el logo en cada página): un solo XObject.
+    var r: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(r.image_jpeg(0.0, 0.0, 10.0, 5.0, quad)) == "Im1", "primera vez")
+    r.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(r.image_jpeg(5.0, 5.0, 20.0, 10.0, quad)) == "Im1", "segunda vez, misma imagen")
+    let rb: String = bytes_of(r)
+    assert(rb.indexOf("/DCTDecode") == last_index(rb, "/DCTDecode"), "un solo XObject")
+    println("ok la misma imagen en dos páginas va una vez al archivo")
+
+    // 4. Proporcional: con un lado en 0, el otro sale de 16 x 8.
+    var q: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(q.image_jpeg(0.0, 0.0, 60.0, 0.0, quad)) == "Im1", "alto proporcional")
+    assert(content_of(bytes_of(q)) == "q 170.079 0 0 85.039 0 706.961 cm /Im1 Do Q\n", "60 x 30 mm: " + content_of(bytes_of(q)))
+    println("ok un lado en 0 sale de la proporción")
+
+    // 5. Las 8 orientaciones EXIF, en TIFF little y big endian. Rectángulo:
+    //    (20, 50) mm, 20 x 40 mm: x = 56.693, abajo = 792 - 255.118 = 536.882,
+    //    ancho 56.693, alto 113.386. La fila 0 de la imagen guardada va a donde
+    //    dice la etiqueta (TIFF 6.0, tag 274).
+    let esperadas: Array = [
+        "56.693 0 0 113.386 56.693 536.882",
+        "-56.693 0 0 113.386 113.386 536.882",
+        "-56.693 0 0 -113.386 113.386 650.268",
+        "56.693 0 0 -113.386 56.693 650.268",
+        "0 -113.386 -56.693 0 113.386 650.268",
+        "0 -113.386 56.693 0 56.693 650.268",
+        "0 113.386 56.693 0 56.693 536.882",
+        "0 113.386 -56.693 0 113.386 536.882"]
+    var o: int = 1
+    while o <= 8 {
+        var li: int = 0
+        while li < 2 {
+            let little: bool = li == 0
+            var e: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+            assert(img(e.image_jpeg(20.0, 50.0, 20.0, 40.0, with_exif(quad, o, little))) == "Im1", "EXIF " + int_to_string(o))
+            let want: String = esperadas[o - 1]
+            let got: String = content_of(bytes_of(e))
+            assert(got == "q " + want + " cm /Im1 Do Q\n", "orientación " + int_to_string(o) + ": " + got)
+            li = li + 1
+        }
+        o = o + 1
+    }
+    // Con orientación 6 la foto se ve de 8 x 16: el lado proporcional usa eso.
+    var s6: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(s6.image_jpeg(20.0, 50.0, 0.0, 40.0, with_exif(quad, 6, false))) == "Im1", "EXIF 6 proporcional")
+    assert(content_of(bytes_of(s6)) == "q 0 -113.386 56.693 0 56.693 650.268 cm /Im1 Do Q\n", "EXIF 6: 20 x 40 mm")
+    // Un EXIF roto se ignora (orientación 1), como en cualquier visor.
+    let roto: String = quad.substring(0, 2) + chr(0xFF) + chr(0xE1) + be16(8) + "Exif" + chr(0) + chr(0) + quad.substring(2, quad.length())
+    var x1: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(x1.image_jpeg(20.0, 50.0, 20.0, 40.0, roto)) == "Im1", "EXIF corto")
+    let sin_rotar: String = esperadas[0]
+    assert(content_of(bytes_of(x1)) == "q " + sin_rotar + " cm /Im1 Do Q\n", "EXIF roto = sin rotar")
+    println("ok las 8 orientaciones EXIF (II y MM) y el EXIF roto")
+
+    // 6. Lo que PDF no lee: Err en el momento, nada agregado al documento.
+    var z: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    assert(img(z.image_jpeg(0.0, 0.0, 10.0, 10.0, cmyk)).startsWith("invalid: image_jpeg: JPEG CMYK no soportado"), "CMYK")
+    assert(img(z.image_jpeg(0.0, 0.0, 10.0, 10.0, "GIF89a")) == "invalid: image_jpeg: no es un JPEG (no empieza con FF D8)", "no es JPEG")
+    // SOF0 está en el byte 158 de la fixture: FF C0, largo, precisión (162).
+    assert(quad.charAt(158) == 0xFF and quad.charAt(159) == 0xC0, "fixture: SOF0 en 158")
+    assert(img(z.image_jpeg(0.0, 0.0, 10.0, 10.0, set_byte(quad, 159, 0xC3))) == "invalid: image_jpeg: JPEG con codificación SOF3 (sin pérdida, aritmética o jerárquica), que PDF no lee: guardarlo como JPEG normal", "SOF3")
+    assert(img(z.image_jpeg(0.0, 0.0, 10.0, 10.0, set_byte(quad, 159, 0xC9))).contains("SOF9"), "SOF9 aritmético")
+    assert(img(z.image_jpeg(0.0, 0.0, 10.0, 10.0, set_byte(quad, 162, 12))) == "invalid: image_jpeg: JPEG de 12 bits por muestra; PDF solo lee 8", "12 bits")
+    assert(img(z.image_jpeg(0.0, 0.0, 10.0, 10.0, quad.substring(0, 100))).startsWith("parse: image_jpeg: el segmento del byte 89 se sale del archivo"), "cortado: " + img(z.image_jpeg(0.0, 0.0, 10.0, 10.0, quad.substring(0, 100))))
+    assert(img(z.image_jpeg(0.0, 0.0, 0.0, 0.0, quad)).contains("a lo sumo uno puede ser 0"), "0 x 0")
+    assert(img(z.image_jpeg(0.0, 0.0, 0.0 - 1.0, 5.0, quad)).contains("no pueden ser negativos"), "negativo")
+    let zb: String = bytes_of(z)
+    assert(not zb.contains("/XObject"), "los rechazados no quedaron en el documento")
+    println("ok rechazos: CMYK, no-JPEG, SOF3/SOF9, 12 bits, cortado, medidas")
+}

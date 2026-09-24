@@ -1,0 +1,12 @@
+// NYX1036 CLÁSICO: el principal llama a una privada de un módulo sin imports
+// transitivos. Ya era error en 0.33.x, así que la transición del resolvedor
+// (fricción nyxerp 20260924-010014-team-1) no lo degrada a aviso: sigue
+// cortando la compilación.
+// Expected stderr (contains): "error [NYX1036]"
+// Expected exit: non-zero (semantic check fails)
+
+import "tests/support/aux_privada_clasica"
+
+fn main() -> int {
+    return privada_clasica()
+}

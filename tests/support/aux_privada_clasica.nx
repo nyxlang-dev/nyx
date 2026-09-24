@@ -1,0 +1,11 @@
+// aux de test-module-private-classic: una privada en un módulo SIN imports,
+// o sea sin tramos reabiertos. Ya era NYX1036 en 0.33.x y sigue siendo ERROR
+// durante la transición (el aviso es solo para lo que destapó la atribución
+// corregida del resolvedor).
+fn privada_clasica() -> int {
+    return 3
+}
+
+pub fn publica_clasica() -> int {
+    return privada_clasica()
+}

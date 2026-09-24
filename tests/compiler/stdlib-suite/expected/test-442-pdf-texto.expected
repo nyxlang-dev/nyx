@@ -1,0 +1,6 @@
+ok anchos AFM: café, señal, cifras y € en las 3 fuentes
+ok «café» en Times-Roman: bytes exactos
+ok encoding WinAnsi: tildes, eñe, ¿¡, €, comillas y rayas
+ok recursos: solo las fuentes usadas, nombres estables
+ok errores: CJK, control, UTF-8 inválido, emoji, tamaño y NaN
+ok pdf_text_supported

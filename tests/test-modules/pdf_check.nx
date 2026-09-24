@@ -1,0 +1,95 @@
+// tests/test-modules/pdf_check — verificador ESTRUCTURAL de un PDF, escrito
+// aparte de std/pdf para los tests 441-445 y sus espejos wasm (spec std-pdf,
+// D-6 primario).
+//
+// No confía en nada de lo que el módulo calculó: vuelve a leer el archivo byte
+// a byte y confirma que
+//   - empieza con %PDF-1.x y termina en «startxref\nN\n%%EOF\n»;
+//   - N apunta exactamente a la palabra «xref»;
+//   - la xref tiene /Size entradas de 20 bytes, la 0 libre, y el offset de cada
+//     una cae EXACTAMENTE sobre «k 0 obj\n» (el bug que los visores tolerantes
+//     esconden recalculando);
+//   - cada stream tiene un /Length que llega justo a «\nendstream»;
+//   - el trailer nombra /Size y /Root 1 0 R.
+// Devuelve "" si todo cierra, o la primera discrepancia.
+
+fn __pc_digits(b: String, desde: int) -> int {
+    var i: int = desde
+    while i < b.length() and b.charAt(i) >= 48 and b.charAt(i) <= 57 {
+        i = i + 1
+    }
+    return i
+}
+
+fn __pc_int(b: String, desde: int, to: int) -> int {
+    var v: int = 0
+    var i: int = desde
+    while i < to {
+        v = v * 10 + (b.charAt(i) - 48)
+        i = i + 1
+    }
+    return v
+}
+
+pub fn pdf_check_structure(b: String) -> String {
+    let n: int = b.length()
+    if not b.startsWith("%PDF-1.") { return "no empieza con %PDF-1." }
+    if not b.endsWith("\n%%EOF\n") { return "no termina en %%EOF" }
+    // startxref: el número está entre la última «startxref\n» y «\n%%EOF\n».
+    var sx_kw: int = 0 - 1
+    var at: int = b.indexOf("startxref\n")
+    while at >= 0 {
+        sx_kw = at
+        at = b.indexOf("startxref\n", at + 1)
+    }
+    if sx_kw < 0 { return "falta startxref" }
+    let num_from: int = sx_kw + 10
+    let num_to: int = __pc_digits(b, num_from)
+    if num_to == num_from or num_to != n - 7 { return "startxref mal formado" }
+    let sx: int = __pc_int(b, num_from, num_to)
+    if b.substring(sx, sx + 7) != "xref\n0 " { return "startxref " + int_to_string(sx) + " no apunta a 'xref\\n0 '" }
+    let cnt_from: int = sx + 7
+    let cnt_to: int = __pc_digits(b, cnt_from)
+    let size: int = __pc_int(b, cnt_from, cnt_to)
+    if b.charAt(cnt_to) != 10 { return "subsección de la xref mal formada" }
+    let first: int = cnt_to + 1
+    if b.substring(first, first + 20) != "0000000000 65535 f \n" { return "entrada 0 de la xref inválida" }
+    var k: int = 1
+    while k < size {
+        let e: int = first + 20 * k
+        let ent: String = b.substring(e, e + 20)
+        if ent.length() != 20 or ent.substring(10, 20) != " 00000 n \n" {
+            return "entrada " + int_to_string(k) + " de la xref no mide 20 bytes o no es «n»"
+        }
+        let off: int = __pc_int(ent, 0, 10)
+        let head: String = int_to_string(k) + " 0 obj\n"
+        if b.substring(off, off + head.length()) != head {
+            return "objeto " + int_to_string(k) + ": la xref dice " + int_to_string(off) + " y ahí no empieza «" + int_to_string(k) + " 0 obj»"
+        }
+        k = k + 1
+    }
+    let tr: int = first + 20 * size
+    let trailer: String = "trailer\n<< /Size " + int_to_string(size) + " /Root 1 0 R >>\nstartxref\n"
+    if b.substring(tr, tr + trailer.length()) != trailer { return "trailer inesperado" }
+    if tr + trailer.length() != sx_kw + 10 { return "hay bytes entre la xref y el trailer" }
+    // Streams: /Length N >>\nstream\n + N bytes + \nendstream
+    var s: int = b.indexOf("/Length ")
+    var streams: int = 0
+    while s >= 0 {
+        let lf: int = s + 8
+        let lt: int = __pc_digits(b, lf)
+        if b.substring(lt, lt + 11) == " >>\nstream\n" {
+            let len: int = __pc_int(b, lf, lt)
+            let data_from: int = lt + 11
+            if b.substring(data_from + len, data_from + len + 10) != "\nendstream" {
+                return "stream en " + int_to_string(s) + ": /Length " + int_to_string(len) + " no llega a endstream"
+            }
+            streams = streams + 1
+            s = b.indexOf("/Length ", data_from + len)
+        } else {
+            s = b.indexOf("/Length ", s + 1)
+        }
+    }
+    if streams == 0 { return "no hay ningún stream (toda página tiene contenido)" }
+    return ""
+}

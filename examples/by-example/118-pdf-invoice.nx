@@ -1,0 +1,186 @@
+// Nyx by Example: una factura en PDF, tamaño carta.
+//
+// El caso real: un ERP emite la factura de una venta como PDF de verdad, para
+// imprimirla en carta (Providencia 00071 en Venezuela) o adjuntarla a un correo
+// con std/smtp. std/pdf es Nyx puro: el mismo programa corre en el servidor y
+// compilado a wasm32-wasi.
+//
+// Lo que muestra:
+//   - posiciones en MILÍMETROS desde la esquina de ARRIBA a la izquierda (el
+//     módulo hace la cuenta a puntos y el volteo de PDF);
+//   - montos alineados a la derecha con pdf_text_width (x = borde - ancho);
+//   - una tabla hecha con text + line (spec std-pdf D-5: la tabla es una
+//     receta, no una función del módulo, porque sus decisiones son del programa);
+//   - un logo PNG con transparencia (include_bytes: viaja dentro del binario);
+//   - el QR de la factura, de std/barcode, dibujado módulo a módulo con rect;
+//   - los errores: bytes() devuelve Err si algo no se pudo dibujar tal cual.
+//
+// Correr: nyx run -- factura.pdf   (sin argumento solo informa el tamaño)
+
+import "std/pdf"
+import "std/barcode"
+import "std/error"
+
+// Monto en céntimos -> "1.234,56" (separadores venezolanos). Se trabaja en
+// enteros: los montos nunca pasan por float.
+fn monto(centimos: int) -> String {
+    let ent: int = centimos / 100
+    let cts: int = centimos % 100
+    var s: String = int_to_string(ent)
+    var out: String = ""
+    while s.length() > 3 {
+        out = "." + s.substring(s.length() - 3, s.length()) + out
+        s = s.substring(0, s.length() - 3)
+    }
+    out = s + out
+    var c: String = int_to_string(cts)
+    if cts < 10 { c = "0" + c }
+    return out + "," + c
+}
+
+// Texto alineado a la derecha: termina exactamente en `derecha` mm.
+fn texto_der(d: Pdf, derecha: float, y: float, s: String, f: PdfFont, pt: float) {
+    d.text(derecha - pdf_text_width(s, f, pt), y, s, f, pt)
+}
+
+// El QR, uno oscuro = un rectángulo. Los módulos oscuros seguidos de una fila
+// van en UN rectángulo: menos operadores, y ninguna rendija entre ellos.
+fn dibujar_qr(d: Pdf, m: Array, x: float, y: float, modulo: float) {
+    var r: int = 0
+    while r < m.length() {
+        let fila: Array = m[r]
+        var c: int = 0
+        while c < fila.length() {
+            let v: int = fila[c]
+            if v == 1 {
+                var fin: int = c
+                while fin + 1 < fila.length() {
+                    let sig: int = fila[fin + 1]
+                    if sig != 1 { break }
+                    fin = fin + 1
+                }
+                let ancho: float = int_to_float(fin - c + 1) * modulo
+                d.rect(x + int_to_float(c) * modulo, y + int_to_float(r) * modulo, ancho, modulo, true)
+                c = fin + 1
+            } else {
+                c = c + 1
+            }
+        }
+        r = r + 1
+    }
+}
+
+fn factura() -> Result<String, Error> {
+    let izq: float = 15.0
+    let der: float = 200.9          // 215.9 mm de carta menos 15 de margen
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+
+    // ── Encabezado del emisor ──────────────────────────────────────────────
+    // Alto 0: se calcula con la proporción del PNG (cuadrado, 22 x 22 mm).
+    // `let` y no la llamada suelta: el `?` de una llamada que devuelve algo se
+    // liga siempre (LLM.md §5.2).
+    let logo: int = d.image_png(izq, 12.0, 22.0, 0.0, include_bytes("examples/by-example/assets/logo-tornillo.png"))?
+    d.text(41.0, 18.0, "Ferretería El Tornillo, C.A.", PdfFont.HelveticaBold, 14.0)
+    d.text(41.0, 24.0, "RIF J-29643190-6", PdfFont.Helvetica, 9.0)
+    d.text(41.0, 28.5, "Av. Bolívar, Local 12, Maracay, estado Aragua", PdfFont.Helvetica, 9.0)
+    d.text(41.0, 33.0, "Teléfono (0243) 555-0123 · ventas@eltornillo.com.ve", PdfFont.Helvetica, 9.0)
+    texto_der(d, der, 18.0, "FACTURA", PdfFont.HelveticaBold, 16.0)
+    texto_der(d, der, 24.0, "N° de factura: 00000123", PdfFont.Helvetica, 9.0)
+    texto_der(d, der, 28.5, "N° de control: 00-00000123", PdfFont.Helvetica, 9.0)
+    texto_der(d, der, 33.0, "Fecha de emisión: 24/09/2026", PdfFont.Helvetica, 9.0)
+    d.line(izq, 38.0, der, 38.0)
+
+    // ── Comprador ──────────────────────────────────────────────────────────
+    // Un nombre que llega de la base de datos puede traer un carácter que las
+    // fuentes estándar no tienen (un emoji, otro alfabeto): text() lo haría
+    // fallar en bytes(). pdf_text_supported lo pregunta antes.
+    var cliente: String = "Construcciones Señor de la Montaña, C.A."
+    if not pdf_text_supported(cliente) { cliente = "(razón social con caracteres no imprimibles)" }
+    d.text(izq, 45.0, "Razón social:", PdfFont.HelveticaBold, 9.0)
+    d.text(45.0, 45.0, cliente, PdfFont.Helvetica, 9.0)
+    d.text(izq, 50.0, "RIF:", PdfFont.HelveticaBold, 9.0)
+    d.text(45.0, 50.0, "J-40123456-7", PdfFont.Helvetica, 9.0)
+    d.text(izq, 55.0, "Domicilio fiscal:", PdfFont.HelveticaBold, 9.0)
+    d.text(45.0, 55.0, "Calle Páez, Edif. Aurora, piso 3, Valencia", PdfFont.Helvetica, 9.0)
+
+    // ── Renglones ──────────────────────────────────────────────────────────
+    // Columnas: código y descripción a la izquierda; cantidad, precio y total
+    // alineados a la derecha en su borde.
+    let codigos: Array = ["T-0012", "C-2210", "P-0450", "H-1001"]
+    let descripciones: Array = ["Tornillo autorroscante 8 x 1\" (caja de 100)", "Cemento gris tipo I, saco de 42,5 kg",
+                                "Pintura de caucho blanca, galón", "Martillo de uña, mango de fibra"]
+    let cantidades: Array = [3, 10, 2, 1]
+    let precios: Array = [1250, 8990, 15475, 12000]    // céntimos
+    let col_cant: float = 128.0
+    let col_precio: float = 160.0
+    var y: float = 66.0
+    d.rect(izq, y - 5.0, der - izq, 7.0, false)
+    d.text(izq + 2.0, y, "Código", PdfFont.HelveticaBold, 9.0)
+    d.text(38.0, y, "Descripción", PdfFont.HelveticaBold, 9.0)
+    texto_der(d, col_cant, y, "Cant.", PdfFont.HelveticaBold, 9.0)
+    texto_der(d, col_precio, y, "Precio unit.", PdfFont.HelveticaBold, 9.0)
+    texto_der(d, der - 2.0, y, "Total Bs.", PdfFont.HelveticaBold, 9.0)
+    var base: int = 0
+    var i: int = 0
+    while i < codigos.length() {
+        y = y + 7.0
+        let cod: String = codigos[i]
+        let desc: String = descripciones[i]
+        let cant: int = cantidades[i]
+        let precio: int = precios[i]
+        let total: int = cant * precio
+        base = base + total
+        d.text(izq + 2.0, y, cod, PdfFont.Helvetica, 9.0)
+        d.text(38.0, y, desc, PdfFont.Helvetica, 9.0)
+        texto_der(d, col_cant, y, int_to_string(cant), PdfFont.Helvetica, 9.0)
+        texto_der(d, col_precio, y, monto(precio), PdfFont.Helvetica, 9.0)
+        texto_der(d, der - 2.0, y, monto(total), PdfFont.Helvetica, 9.0)
+        d.line(izq, y + 2.0, der, y + 2.0)
+        i = i + 1
+    }
+
+    // ── Totales ────────────────────────────────────────────────────────────
+    // IVA al 16 %, redondeado al céntimo (mitad hacia arriba) en enteros.
+    let iva: int = mul_div_round(base, 16, 100, RoundMode.HalfUp)
+    y = y + 9.0
+    texto_der(d, col_precio, y, "Base imponible (16 %):", PdfFont.Helvetica, 9.0)
+    texto_der(d, der - 2.0, y, monto(base), PdfFont.Helvetica, 9.0)
+    y = y + 5.0
+    texto_der(d, col_precio, y, "IVA 16 %:", PdfFont.Helvetica, 9.0)
+    texto_der(d, der - 2.0, y, monto(iva), PdfFont.Helvetica, 9.0)
+    y = y + 7.0
+    d.line(130.0, y - 4.5, der, y - 4.5)
+    texto_der(d, col_precio, y, "TOTAL A PAGAR Bs.:", PdfFont.HelveticaBold, 11.0)
+    texto_der(d, der - 2.0, y, monto(base + iva), PdfFont.HelveticaBold, 11.0)
+
+    // ── QR con los datos de la factura ─────────────────────────────────────
+    // 0,8 mm por módulo; la zona de silencio (4 módulos) queda en blanco.
+    let datos: String = "FAC 00000123|CTRL 00-00000123|J-29643190-6|24/09/2026|" + monto(base + iva)
+    let m: Array = qr_matrix(datos, QrEcc.M)?
+    dibujar_qr(d, m, izq + 3.2, y + 12.0, 0.8)
+    d.text(izq + 35.0, y + 20.0, "Escanee para verificar los datos de esta factura.", PdfFont.Helvetica, 8.0)
+    d.text(izq + 35.0, y + 25.0, "Documento emitido por medios digitales. Sin tachaduras ni enmiendas.", PdfFont.TimesRoman, 8.0)
+
+    return d.bytes()
+}
+
+fn main() -> int {
+    match factura() {
+        Result.Ok(pdf) => {
+            let args: Array = get_args()
+            if args.length() > 1 {
+                let ruta: String = args[1]
+                write_file(ruta, pdf)
+                print("factura escrita en " + ruta + " (" + int_to_string(pdf.length()) + " bytes)")
+            } else {
+                print("factura: " + int_to_string(pdf.length()) + " bytes, empieza con " + pdf.substring(0, 8))
+                print("para escribirla: nyx run -- factura.pdf")
+            }
+            return 0
+        }
+        Result.Err(e) => {
+            print("no se pudo armar la factura: " + error_to_string(e))
+            return 1
+        }
+    }
+}

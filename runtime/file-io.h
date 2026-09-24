@@ -53,4 +53,6 @@ int64_t nyx_fdatasync(int64_t fd);
  */
 void nyx_fileio_test(void);
 
+int64_t nyx_rename_file(const char* old_path, const char* new_path);
+
 #endif // NYX_FILE_IO_H

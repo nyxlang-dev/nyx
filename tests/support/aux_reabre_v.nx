@@ -1,0 +1,4 @@
+// aux de test-439/440: lo mismo que aux_reabre_u, para aux_reabre_b.
+pub fn reabre_v() -> int {
+    return 2
+}

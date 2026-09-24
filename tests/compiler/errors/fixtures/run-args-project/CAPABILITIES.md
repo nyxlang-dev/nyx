@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.33.0 -->
-<!-- nyx-stdlib: 3501351980-738467 -->
+<!-- nyx-stdlib: 1999643628-819050 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -58,11 +58,10 @@
 
 ### `std/web`
 
-`import "std/web"` — 45 funciones:
+`import "std/web"` — 44 funciones:
 
 - `pub fn request_new() -> Request`
 - `pub fn request_with(method: String, path: String) -> Request` — Request sintético con method y path — para tests de handlers y helpers. Los demás campos vienen frescos y utilizables (mismo contrato que request_new).
-- `pub fn url_decode(s: String) -> String`
 - `pub fn parse_query_string(path: String) -> Map`
 - `pub fn parse_query_string_all(path: String) -> Array`
 - `pub fn parse_form_data(body: String, content_type: String) -> Map`
@@ -363,6 +362,14 @@
 - `pub fn msgpack_size(data: String) -> int`
 - `pub fn msgpack_is_nil(data: String) -> bool`
 
+### `std/pdf`
+
+`import "std/pdf"` — 3 funciones:
+
+- `pub fn pdf_new(size: PdfPageSize, width_mm: float, height_mm: float) -> Pdf` — Documento nuevo con una primera página del tamaño dado (width_mm/height_mm solo cuentan con PdfPageSize.Custom).
+- `pub fn pdf_text_width(s: String, font: PdfFont, size_pt: float) -> float` — Ancho en mm de `s` (UTF-8) con esa fuente y tamaño, sin kerning (igual que lo dibuja text): x = derecha - ancho alinea a la derecha. Lo que las fuentes estándar no tienen mide 0.
+- `pub fn pdf_text_supported(s: String) -> bool` — true si text() puede dibujar `s` tal cual: UTF-8 válido, sin controles, y todo dentro de WinAnsiEncoding (latín occidental). Para limpiar datos de usuario antes de armar el PDF.
+
 ### `std/compress`
 
 `import "std/compress"` — 10 funciones:
@@ -497,10 +504,9 @@
 
 ### `std/url`
 
-`import "std/url"` — 6 funciones:
+`import "std/url"` — 5 funciones:
 
 - `pub fn url_encode(s: String) -> String`
-- `pub fn url_decode(s: String) -> String`
 - `pub fn build_query_string(keys: Array, values: Array) -> String`
 - `pub fn html_escape(s: String) -> String`
 - `pub fn html_unescape(s: String) -> String`
@@ -1264,6 +1270,12 @@
 - `pub fn lerp(a: float, b: float, t: float) -> float`
 - `pub fn float_to_fixed(x: float, decimals: int) -> String`
 - `pub fn try_mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> Result<int, Error>`
+
+### `std/percent`
+
+`import "std/percent"` — 1 funciones:
+
+- `pub fn url_decode(s: String) -> String`
 
 ### `std/wasm_mem`
 

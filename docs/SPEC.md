@@ -925,7 +925,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
 | NYX1032 | a struct literal omits fields — they used to be filled with the zero of their type (`0`, `""`, `false`) SILENTLY, so a literal that forgot 33 fields still compiled; one diagnostic lists every missing field, because the full list is what tells you what to do |
-| NYX1036 | a function without `pub` is called from a module other than its own — `pub` used to filter only the QUALIFIED call (`alias.fn()`); the bare call resolved anyway, because the resolver inlines each imported module's text and the function ended up as one more top-level. Everything a module defined was therefore part of its interface, so no library could offer a stable API: any internal rename broke its importers. Checked before arity, since a private function from elsewhere is not «the right function with the wrong arguments» |
+| NYX1036 | a function without `pub` is called from a module other than its own — `pub` used to filter only the QUALIFIED call (`alias.fn()`); the bare call resolved anyway, because the resolver inlines each imported module's text and the function ended up as one more top-level. Everything a module defined was therefore part of its interface, so no library could offer a stable API: any internal rename broke its importers. Checked before arity, since a private function from elsewhere is not «the right function with the wrong arguments». Transition (2026-09-24 until the next minor): a case that only fires because the resolver now attributes code after a transitive import to its own module (hidden up to 0.33.x) is a `⚠ aviso`, rc 0 |
 | NYX1040 | the same `struct` or `enum` name declared in TWO modules of the program — types are not private to their file (even without `pub`) and are not mangled per module, because the resolver inlines every import into one unit. It used to pass `nyx check` and fail at link time with clang's «redefinition of type» over a temporary `.ll`; with a struct literal, the checker reported fields of the OTHER struct. The error names both files and lines; rename one. The same module reached by several import paths (diamond) is inlined once and does not fire it, and an `enum` copied identically (same variants and payloads) is accepted, since enums are integer tags in the IR. Reported by `nyx check` and, with semantic off, by codegen |
 | NYX1201 | borrow: use-after-move of a moved value (move-tracking, `NYX_BORROW`) |
 | NYX1210 | borrow: `&mut` exclusivity violation (statement-scoped lint) |
@@ -968,7 +968,7 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2007 | receiver-type backstop in method dispatch (v0.24.0): a recognized method dispatched to a receiver whose type doesn't have it (`m.length()`/`m.length` on a `Map`, methods on `&String`/`&Array`/`&Map` receivers). The codegen twin of semantic's NYX1022 — the only layer that covers unannotated code and `NYX_SKIP_SEMANTIC=1` |
 | NYX2008 | RUNTIME slot-type mismatch (static-tag spec 2026-08-03): an Array slot whose runtime tag names a pointer type (String/Array/Map/pointer) read as float — pointer bits as double are guaranteed garbage. Orderly abort instead of silently-wrong; `NYX_SLOT_CHECK=off` disables it |
 | NYX2009 | a file-scope `global`/`const` whose initializer cannot be evaluated at startup — the constant-folding path of globals accepts literals and a closed set of expressions; anything else (the offending `node_type` is named in the message) used to be dropped silently |
-| NYX2010 | AMBIGUOUS unqualified call: the same function name is exported by several imported modules and none of them is the current one. The message lists the modules that define it — qualify the call instead of letting the resolver pick one (it used to pick silently). Since 2026-09-23 semantic reports it too, with the same criterion, so `nyx check` catches it instead of only `nyx build` (as a regular semantic diagnostic, with line and enclosing function). A builtin with the same name disarms it in both layers: the call goes to the builtin |
+| NYX2010 | AMBIGUOUS unqualified call: the same function name is exported by several imported modules and none of them is the current one. The message lists the modules that define it — qualify the call instead of letting the resolver pick one (it used to pick silently). Since 2026-09-23 semantic reports it too, with the same criterion, so `nyx check` catches it instead of only `nyx build` (as a regular semantic diagnostic, with line and enclosing function). A builtin with the same name disarms it in both layers: the call goes to the builtin. Same transition as NYX1036 (2026-09-24): an ambiguity hidden up to 0.33.x by the resolver bug is a `⚠ aviso` and resolves as 0.33.x did |
 | NYX2011 | `generic_call` with no registered generic template for the base name (turbofish over a name that is not a generic function in scope) |
 | NYX2012 | unknown enum variant in a **pattern** — the variant named in a `match` arm is not registered for that enum (enum not defined/imported, or the variant misspelled) |
 | NYX2013 | `#[derive(Fields)]` on a struct with a field the derive cannot convert. Only `int`, `bool`, `float` and `String` are supported; an `Array`/`Map`/nested-struct field aborts compilation on purpose, because inheriting `Display`'s `"ptr"` fallback would write false data into a database column (see the `Fields` row in [Derive Macros](#derive-macros)) |
@@ -2133,8 +2133,18 @@ modules = ["src/util", "src/geo"]
   como cualquier import normal.
 - **Qué cruza la frontera** (la interfaz es la de un header de C: firmas y tipos, no cuerpos):
   funciones exportadas (`export fn`/`pub fn`, con sus tipos de parámetros y de retorno), y
-  `struct`/`enum` exportados. Las dos formas de import funcionan igual que con un módulo
-  inlineado: `import { f } from "src/a"` y `import "src/a" as a` seguido de `a.f()`.
+  todos los `struct`/`enum` (con o sin `pub`: los nombres de tipo son globales al programa).
+  **Declarar un módulo en `[lib]` cambia CÓMO se compila, no QUÉ nombres ve quien lo importa**
+  (desde 2026-09-24): toda forma de import se comporta como si el módulo estuviera inlineado —
+  `import "src/a"` sin llaves (la de `nyx init`), `import "src/a" as a` con `a.f()` o `f()`, e
+  `import { f } from "src/a"` (los demás exportados también se ven, como inlineado)—, con
+  transitividad incluida. Las fns de una biblioteca se emiten como `<módulo>__<fn>`, igual que
+  inlineadas, así que dos bibliotecas pueden tener fns del mismo nombre.
+- **La única diferencia real**: una biblioteca se compila sola y ve solo lo que ELLA importa
+  (directa o transitivamente). Un módulo que usa una fn de otro módulo que nunca importa
+  compilaba inlineado solo porque el programa entero comparte un espacio de nombres; con `[lib]`
+  es NYX1002 y `nyx build` agrega una `nota:` con el módulo que la define, el `import` que falta
+  y si le falta `pub`.
 - **Qué NO cruza la frontera** (la fase 1 no lo resuelve: la monomorfización y el despacho de
   métodos necesitan el CUERPO en quien llama, y los cuerpos no cruzan): una `fn` genérica
   exportada, los métodos de un `impl` (con o sin trait) y los `trait`. Un módulo de `[lib]` que
@@ -4771,6 +4781,82 @@ con el nivel pedido, byte fuera del juego B, texto vacío en Code 128, largo o d
 EAN-13.
 
 Receta completa: `examples/by-example/116-barcode-qr.nx`.
+
+---
+
+## Documentos PDF (`std/pdf`)
+
+Genera PDF de verdad (facturas, recibos, reportes) en Nyx puro: sin C, así que compila igual a
+nativo y a `wasm32-wasi` y da el mismo archivo byte a byte. Posiciones en **milímetros** desde la
+esquina de **arriba a la izquierda**, con Y creciendo hacia abajo; el módulo hace la cuenta a
+puntos y el volteo del sistema de PDF. El resultado son los bytes del archivo: se guardan con
+`write_file` o se adjuntan con `smtp_attach`.
+
+```nyx
+pub enum PdfPageSize { Letter, A4, HalfLetter, Custom }   // carta, A4, media carta, a medida
+pub enum PdfFont { Helvetica, HelveticaBold, TimesRoman }
+
+pdf_new(size: PdfPageSize, width_mm: float, height_mm: float) -> Pdf   // medidas solo con Custom
+pdf_text_width(s: String, font: PdfFont, size_pt: float) -> float      // ancho en mm
+pdf_text_supported(s: String) -> bool                                  // ¿text() lo puede dibujar?
+
+impl Pdf {
+    fn add_page(&mut self, size: PdfPageSize, width_mm: float, height_mm: float)
+    fn text(&mut self, x: float, y: float, s: String, font: PdfFont, size_pt: float)   // y = línea base
+    fn line(&mut self, x1: float, y1: float, x2: float, y2: float)
+    fn rect(&mut self, x: float, y: float, w: float, h: float, filled: bool)          // (x, y) = arriba a la izq.
+    fn image_jpeg(&mut self, x: float, y: float, w_mm: float, h_mm: float, bytes: String) -> Result<int, Error>
+    fn image_png(&mut self, x: float, y: float, w_mm: float, h_mm: float, bytes: String) -> Result<int, Error>
+    fn bytes(self) -> Result<String, Error>
+}
+```
+
+| Tamaño | Medida |
+|---|---|
+| `Letter` | 215,9 x 279,4 mm (612 x 792 pt) |
+| `A4` | 210 x 297 mm |
+| `HalfLetter` | 139,7 x 215,9 mm |
+| `Custom` | `width_mm` x `height_mm`, de 1,06 mm a 5080 mm por lado (el ticket de 80 mm) |
+
+**Texto.** Las tres fuentes estándar de PDF, sin incrustar (todo visor las trae), con
+`WinAnsiEncoding`: el español entero (á é í ó ú ü ñ Ñ ¿ ¡ €, comillas tipográficas, rayas) en un byte
+por carácter. `y` es la **línea base** del texto. Una llamada dibuja una línea: sin saltos ni
+tabulaciones. Los anchos de las fuentes van dentro del archivo (`/Widths`), así que todo visor
+avanza exactamente lo que mide `pdf_text_width`: para alinear un monto a la derecha,
+`x = borde - pdf_text_width(monto, fuente, tamaño)`. Sin kerning.
+
+**Líneas y rectángulos** en negro, con el trazo de 1 pt por omisión de PDF. `rect` con
+`filled = true` rellena; dos rectángulos que se tocan en mm se tocan exactos en el archivo (los
+módulos de un QR se dibujan sin rendijas).
+
+**Imágenes.** `image_jpeg` incrusta el JPEG tal cual (baseline o progresivo, gris o color) y
+respeta la **orientación EXIF** de las fotos de teléfono. `image_png` acepta gris, RGB y paleta de
+1 a 16 bits sin decodificarlos, y **transparencia**: color clave (`tRNS`) como `/Mask`, y canal
+alfa (gris+alfa, RGBA, paleta semitransparente) separado en una `/SMask` — un logo con fondo
+transparente sale transparente. Un lado en `0` se calcula con la proporción de la imagen. La misma
+imagen agregada varias veces (el logo en cada página) va una sola vez al archivo. El número que
+devuelven identifica la imagen en el documento.
+
+**`Pdf` es un manejador**, como `StringBuilder`: copiarlo o pasarlo a una función comparte el mismo
+documento. Una función auxiliar (el encabezado, una fila de una tabla) recibe `d: Pdf` y dibuja en
+él. `bytes()` devuelve el documento hasta ese momento.
+
+**Errores.** Las imágenes devuelven `Err` en el momento (el que las agrega puede seguir sin ellas).
+Lo demás queda anotado y lo devuelve `bytes()`: nunca sale un PDF con algo de menos o cambiado. Se
+informa el **primer** problema, con la llamada y la página.
+
+| `kind` | Cuándo |
+|---|---|
+| `invalid` | `bytes()`: un carácter que las fuentes estándar no tienen (lo nombra con su codepoint; `pdf_text_supported` lo pregunta antes), un control, UTF-8 inválido, un tamaño de página o de letra fuera de rango, una medida no finita, un ancho negativo. Imágenes: no es JPEG/PNG, JPEG CMYK, de 12 bits o sin pérdida/aritmético, PNG entrelazado (Adam7), un chunk crítico desconocido, un PNG con alfa de más de 64 MB sin comprimir, medidas inválidas. |
+| `parse` | Imágenes dañadas: CRC de un chunk PNG, zlib roto (adler32), un JPEG cortado. |
+
+**Fuera de alcance (fase 1):** fuentes TrueType incrustadas y otros alfabetos, colores (todo es
+negro), grosor de línea, formularios, firmas digitales, PDF/A, ajuste de texto en varias líneas y
+numeración automática de páginas (el llamador posiciona cada cosa), y la compresión del contenido
+de las páginas (va sin comprimir: una factura mide pocos KB). La tabla es una receta, no una
+función del módulo.
+
+Receta completa: `examples/by-example/118-pdf-invoice.nx`.
 
 ---
 

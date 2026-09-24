@@ -118,6 +118,76 @@ else
     mal "falta $NT — make build-test"
 fi
 
+echo "── [lib] modules: misma semántica que el inlining (fricción nyxerp 040001-team-1) ──"
+# Regla: declarar un módulo en [lib] cambia CÓMO se compila, no QUÉ nombres ve
+# quien lo importa. Hasta 2026-09-24 la forma sin llaves (`import "src/x"`, la de
+# `nyx init` y la de 3.372 de los 3.373 imports de nyxerp) daba NYX1002 en cada
+# llamada. El mismo proyecto se construye SIN y CON [lib] (todos sus módulos) y
+# la salida tiene que ser idéntica: forma sin llaves, con alias, con llaves y un
+# nombre NO listado, transitividad (main llama a hoja() sin importarla) y un
+# struct SIN pub que devuelve una pub fn.
+Q="$T/sem"; mkdir -p "$Q/src"; cd "$Q" || exit 1
+cat > src/hoja.nx <<'EOF2'
+import "std/error"
+struct Caja { v: int }
+#[derive(Fields)]
+pub struct Fila { a: int, b: String }
+pub fn hoja() -> int { return 5 }
+pub fn caja(v: int) -> Caja { return Caja { v: v * 10 } }
+pub fn etiqueta() -> int { return 200 }
+pub fn aplicar(
+    f: Fn(int) -> int,
+    x: int
+) -> Result<Caja, Error> {
+    return Result.Ok(Caja { v: f(x) })
+}
+EOF2
+cat > src/medio.nx <<'EOF2'
+import "src/hoja"
+fn etiqueta() -> int { return 100 }
+pub fn medio() -> int { return hoja() + 1 + etiqueta() }
+EOF2
+cat > src/alias.nx <<'EOF2'
+pub fn con_alias() -> int { return 7 }
+EOF2
+cat > src/llaves.nx <<'EOF2'
+pub fn listada() -> int { return 1 }
+pub fn no_listada() -> int { return 2 }
+EOF2
+cat > src/main.nx <<'EOF2'
+import "src/medio"
+import "src/alias" as al
+import { listada } from "src/llaves"
+fn main() -> int {
+    let c: Caja = caja(3)
+    println(int_to_string(medio()) + " " + int_to_string(hoja()) + " " + int_to_string(c.v) + " " + int_to_string(con_alias()) + " " + int_to_string(al.con_alias()) + " " + int_to_string(listada()) + " " + int_to_string(no_listada()))
+    let campos: Array = Fila_campos()
+    var ap: int = -1
+    match aplicar(mas_uno, 4) {
+        Result.Ok(k) => { ap = k.v }
+        Result.Err(e) => { ap = -2 }
+    }
+    println(int_to_string(campos.length()) + " " + int_to_string(ap))
+    return 0
+}
+
+fn mas_uno(n: int) -> int { return n + 1 }
+EOF2
+printf '[package]\nname = "sem"\nversion = "0.1.0"\n' > nyx.toml
+"$NB" build >/dev/null 2>&1; sin=$(./sem 2>&1)
+printf '[package]\nname = "sem"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/hoja", "src/medio", "src/alias", "src/llaves"]\n' > nyx.toml
+rm -f sem   # que un build fallido no deje comparar contra el binario anterior
+out=$("$NB" build 2>&1); rc=$?; con=$(./sem 2>&1)
+# 106 = hoja()+1+etiqueta() PROPIA de medio (100), no la pública de hoja (200);
+# 2 = campos de Fila por #[derive(Fields)] cruzando; 5 = aplicar(mas_uno, 4) con
+# firma en varias líneas, parámetro Fn(int) -> int y retorno Result<Caja, Error>.
+if [ "$sin" = "$(printf '106 5 30 7 7 1 2\n2 5')" ] && [ "$rc" -eq 0 ] && [ "$con" = "$sin" ]; then
+    ok "con y sin [lib], la misma salida: formas de import, transitiva, struct privado, derive, Fn + Result en firma multilínea, propia gana"
+else mal "semántica [lib] vs inlining: sin='$sin' con='$con' (rc=$rc) $(echo "$out" | grep -E 'error' | head -2 | tr '\n' ' ')"; fi
+if [ "$(echo "$out" | grep -c '(lib)')" -eq 4 ]; then ok "los cuatro módulos se compilaron como bibliotecas (no cayó al inlining)"
+else mal "no se compilaron los cuatro como bibliotecas: $(echo "$out" | grep compiling | tr '\n' ' ')"; fi
+cd "$P" || exit 1
+
 echo "── [lib] modules: errores del manifiesto ──"
 cp nyx.toml nyx.toml.bien
 printf '[package]\nname = "libp"\nversion = "0.1.0"\n\n[lib]\nmodulos = ["src/util"]\n' > nyx.toml
