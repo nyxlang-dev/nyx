@@ -846,11 +846,10 @@ fi
 
 # ------------------------------------------------------------------
 # Check: candado-check-update — fricción de nyxerp (2026-09-24): `nyx check`
-# compilaba contra el toolchain sin mirar ~/.nyx/.toolchain.lock, y `nyx
-# update` lo reescribía sin tomarlo. Ahora check (y `nyx archivo.nx`) lo toman
-# COMPARTIDO y update EXCLUSIVO, con plazo NYX_LOCK_WAIT. Con un exclusivo
-# ajeno tomado, check tiene que esperar y fallar al vencer el plazo; con un
-# compartido ajeno, check no espera y update falla sin mover el HEAD.
+# compilaba contra el toolchain sin mirar ~/.nyx/.toolchain.lock. Ahora check (y
+# `nyx archivo.nx`) lo toman COMPARTIDO, con plazo NYX_LOCK_WAIT. Con un
+# exclusivo ajeno tomado, check tiene que esperar y fallar al vencer el plazo;
+# con un compartido ajeno, no espera.
 # ------------------------------------------------------------------
 if [ ! -x ./nyx_check ] || [ ! -x ./nyx_bootstrap ] || ! command -v flock >/dev/null 2>&1 \
         || ! git rev-parse HEAD~1 >/dev/null 2>&1; then
@@ -870,15 +869,9 @@ else
     NYX_HOME="$LH" NYX_LOCK_WAIT=1 bash "$REPO_ROOT/scripts/nyx" check "$TMPDIR/lock_ok.nx" >/dev/null 2>&1 \
         || { lk_ok=0; lk_why="$lk_why [check esperó/falló con solo un compartido ajeno]"; }
     wait "$lk_pid"
-    LU="$TMPDIR/lock_update_home"
-    git clone -q --shared "$REPO_ROOT" "$LU" && git -C "$LU" reset -q --hard HEAD~1
-    ln -s "$REPO_ROOT/nyx_bootstrap" "$LU/nyx_bootstrap"
-    lu0=$(git -C "$LU" rev-parse HEAD)
-    ( flock -s 8; sleep 4 ) 8>"$LU/.toolchain.lock" & lk_pid=$!; sleep 0.5
-    NYX_HOME="$LU" NYX_LOCK_WAIT=1 timeout 20 bash "$REPO_ROOT/scripts/nyx" update >/dev/null 2>&1; rc=$?
-    [ "$rc" = "1" ] || { lk_ok=0; lk_why="$lk_why [update con compartido ajeno rc=$rc, esperado 1]"; }
-    [ "$(git -C "$LU" rev-parse HEAD)" = "$lu0" ] || { lk_ok=0; lk_why="$lk_why [update ACTUALIZÓ con el candado tomado]"; }
-    wait "$lk_pid"
+    # `nyx update` ya NO toma el candado exclusivo (2026-09-24, arco
+    # toolchain-atomico): arma la versión nueva aparte y la activa con un rename,
+    # así que no tiene por qué esperar a nadie. Lo prueba run_toolchain_versions.sh.
     if [ "$lk_ok" = "1" ]; then
         echo "  ✓ $name"
         PASS=$((PASS+1))

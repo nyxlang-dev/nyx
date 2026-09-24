@@ -6,7 +6,7 @@
 # (scripts/nyx vs install.sh) — fuente clásica de bugs de update.
 #
 # CONSERVA: bin/ runtime/ (incluido runtime/wasi/) std/ templates/
-# scripts/nyx scripts/dist-clean.sh LLM.md CHANGELOG.md VERSION .git
+# scripts/nyx scripts/dist-clean.sh scripts/nyx_toolchain.sh LLM.md CHANGELOG.md VERSION .git
 # nyx_bootstrap nyx_build (copias raíz — el wrapper y build.nx las buscan)
 # nyx_test y nyx_check (copias raíz — el wrapper los busca ahí; NO agregarlos a ningún rm:
 #   este script borra compiler/ Y el Makefile, así que si se borra el binario

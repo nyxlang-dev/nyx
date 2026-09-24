@@ -364,6 +364,17 @@ organize() {
         cp "$NYX_DIR/LLM.md" "$NYX_DIR/templates/en/docs/nyx/LLM.md" 2>/dev/null || true
     fi
     ok "Organized: bin/ + runtime/ + std/ + templates/ (v$(cat VERSION 2>/dev/null || echo '?'))"
+    # Toolchain con versiones lado a lado (scripts/nyx_toolchain.sh): lo recién
+    # construido pasa a versions/<VERSION>+<hash>/ y la raíz queda con symlinks.
+    # Desde acá, `nyx update` arma cada versión nueva aparte y la activa con un
+    # rename, sin tocar la que otros procesos están usando.
+    if [ -f "$NYX_DIR/scripts/nyx_toolchain.sh" ]; then
+        local id
+        id="$(tr -d '[:space:]' < "$NYX_DIR/VERSION" 2>/dev/null)+$(git -C "$NYX_DIR" rev-parse --short=8 HEAD 2>/dev/null)"
+        . "$NYX_DIR/scripts/nyx_toolchain.sh"
+        nyx_tc_migrar "$NYX_DIR" "$id" || err "no se pudo pasar al layout versionado"
+        ok "Toolchain versionado: $NYX_DIR/versions/$id (activo)"
+    fi
 }
 
 # ── Symlink ──────────────────────────────────────────────
@@ -456,9 +467,16 @@ main() {
 
     check_deps
 
-    install_nyx
-    build_nyx
-    organize
+    # Ya instalado con versiones (~/.nyx/current): NO se reclona ni se borra
+    # nada —ahí viven versiones que otros procesos pueden estar usando—; se
+    # actualiza con `nyx update`, que arma la nueva aparte.
+    if [ -f "$NYX_DIR/current" ] && [ -d "$NYX_DIR/versions" ]; then
+        bash "$NYX_DIR/scripts/nyx" update || err "nyx update failed"
+    else
+        install_nyx
+        build_nyx
+        organize
+    fi
 
     setup_path
     verify

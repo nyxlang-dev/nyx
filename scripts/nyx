@@ -55,6 +55,28 @@ elif [ -d "$HOME/.nyx/runtime" ]; then
 else
     NYX_HOME="$SCRIPT_DIR/.."
 fi
+# Toolchain con versiones lado a lado (scripts/nyx_toolchain.sh): si NYX_HOME
+# es la RAÍZ (~/.nyx), se resuelve UNA vez a la versión activa y se exporta su
+# ruta REAL. Así un `make install-local` o un `nyx update` que activa otra
+# versión a mitad de una suite no le cambia nada a este proceso ni a sus hijos:
+# siguen con la que resolvieron, que no se borra mientras la usan (candado de
+# abajo). Sin `current`, el layout plano de siempre.
+if [ -f "$NYX_HOME/current" ] && [ -d "$NYX_HOME/versions" ]; then
+    _nyx_vid="$(tr -d '[:space:]' < "$NYX_HOME/current")"
+    [ -n "$_nyx_vid" ] && [ -d "$NYX_HOME/versions/$_nyx_vid" ] && NYX_HOME="$NYX_HOME/versions/$_nyx_vid"
+fi
+NYX_HOME="$(cd -P "$NYX_HOME" 2>/dev/null && pwd || echo "$NYX_HOME")"
+case "$NYX_HOME" in
+    */versions/*) NYX_ROOT="${NYX_HOME%/versions/*}" ;;
+    *) NYX_ROOT="$NYX_HOME" ;;
+esac
+export NYX_HOME NYX_ROOT
+# Candado de la VERSIÓN en uso, compartido y por toda la vida del proceso (fd 8,
+# lo heredan los binarios que se lanzan): la poda de versiones viejas
+# (nyx_tc_podar) lo intenta exclusivo y, si alguien lo tiene, no la borra.
+if [ -f "$NYX_HOME/.lock" ] && command -v flock >/dev/null 2>&1; then
+    { exec 8<"$NYX_HOME/.lock"; } 2>/dev/null && flock -s -n 8 2>/dev/null || true
+fi
 
 # Find nyx compiler binary (nyx_bootstrap or installed bin/nyx)
 if [ -x "$NYX_HOME/nyx_bootstrap" ]; then
@@ -68,6 +90,27 @@ else
     echo "  Install: curl -sSf https://nyxlang.com/install.sh | sh" >&2
     exit 1
 fi
+
+# El repo git de la instalación: ~/.nyx/src.git con el toolchain versionado
+# (nyx_toolchain.sh), o el .git de la raíz en el layout plano de siempre. ""
+# si no es una instalación git (make install-local de un checkout de desarrollo).
+_nyx_git_dir() {
+    if [ -d "$NYX_ROOT/src.git" ]; then echo "$NYX_ROOT/src.git"
+    elif [ -d "$NYX_HOME/.git" ]; then echo "$NYX_HOME/.git"
+    fi
+}
+
+# Revisión (hash corto, 8) del toolchain EN USO: la del id de su versión
+# (<VERSION>+<hash>[-fecha]) o, en el layout plano, el HEAD del repo.
+# Una versión de `make install-local` (id con sufijo de fecha) viene de un
+# checkout de desarrollo, no del repo público: no hay con qué compararla ("").
+_nyx_rev_instalada() {
+    case "$NYX_HOME" in
+        */versions/*+*-*) echo "" ;;
+        */versions/*+*) local id="${NYX_HOME##*/}"; echo "${id#*+}" ;;
+        *) git --git-dir="$1" rev-parse --short=8 HEAD 2>/dev/null ;;
+    esac
+}
 
 # ── Update check (once per day, in background) ──────────
 check_for_updates() {
@@ -88,11 +131,12 @@ check_for_updates() {
     # Save timestamp now (even if check fails)
     echo "$now" > "$check_file" 2>/dev/null
 
-    # Compare local vs remote hash (needs .git)
-    if [ -d "$NYX_HOME/.git" ]; then
+    # Compare local vs remote hash (needs the install's git repo)
+    local gd; gd="$(_nyx_git_dir)"
+    if [ -n "$gd" ]; then
         local local_hash remote_hash
-        local_hash=$(cd "$NYX_HOME" && git rev-parse HEAD 2>/dev/null)
-        remote_hash=$(cd "$NYX_HOME" && git ls-remote origin HEAD 2>/dev/null | cut -f1)
+        local_hash=$(_nyx_rev_instalada "$gd")
+        remote_hash=$(git --git-dir="$gd" ls-remote origin HEAD 2>/dev/null | cut -c1-8)
         if [ -n "$remote_hash" ] && [ -n "$local_hash" ] && [ "$local_hash" != "$remote_hash" ]; then
             printf "\033[1;33m  A new version of Nyx is available. Run 'nyx update' to upgrade.\033[0m\n" >&2
         fi
@@ -487,24 +531,28 @@ case "${1:-}" in
                 exit 0
                 ;;
             --check)
-                # Solo consulta: `git fetch` mueve refs remotas en el .git del
-                # toolchain, nunca el árbol instalado ni los binarios.
-                if [ ! -d "$NYX_HOME/.git" ]; then
-                    echo "error: $NYX_HOME is not a git repo — can't check for updates" >&2
+                # Solo consulta: `git fetch` mueve refs remotas en el repo git de
+                # la instalación, nunca el árbol instalado ni los binarios.
+                _gd="$(_nyx_git_dir)"
+                if [ -z "$_gd" ]; then
+                    echo "error: $NYX_ROOT is not a git install — can't check for updates" >&2
                     exit 1
                 fi
-                if ! git -C "$NYX_HOME" fetch --quiet origin 2>/dev/null; then
+                if ! git --git-dir="$_gd" fetch --quiet origin 2>/dev/null; then
                     echo "error: git fetch failed (no network?) — nothing was changed" >&2
                     exit 1
                 fi
                 _cur_ver=$(cat "$NYX_HOME/VERSION" 2>/dev/null | tr -d '[:space:]')
-                _new_ver=$(git -C "$NYX_HOME" show origin/main:VERSION 2>/dev/null | tr -d '[:space:]')
-                _local=$(git -C "$NYX_HOME" rev-parse --short HEAD 2>/dev/null)
-                _remote=$(git -C "$NYX_HOME" rev-parse --short origin/main 2>/dev/null)
-                if [ "$_local" = "$_remote" ]; then
+                _new_ver=$(git --git-dir="$_gd" show origin/main:VERSION 2>/dev/null | tr -d '[:space:]')
+                _local="$(_nyx_rev_instalada "$_gd")"
+                _remote=$(git --git-dir="$_gd" rev-parse --short=8 origin/main 2>/dev/null)
+                if [ -z "$_local" ]; then
+                    echo "nyx v${_cur_ver:-?} was installed from a local checkout (make install-local): nothing to compare"
+                    echo "  latest published: v${_new_ver:-?} ($_remote) — 'nyx update' installs it alongside"
+                elif [ "$_local" = "$_remote" ]; then
                     echo "nyx is up to date: v${_cur_ver:-?} ($_local)"
                 else
-                    _behind=$(git -C "$NYX_HOME" rev-list --count HEAD..origin/main 2>/dev/null || echo "?")
+                    _behind=$(git --git-dir="$_gd" rev-list --count "$_local..origin/main" 2>/dev/null || echo "?")
                     echo "update available: v${_cur_ver:-?} ($_local) -> v${_new_ver:-?} ($_remote), $_behind commit(s) behind"
                     echo "  run 'nyx update' to install it"
                 fi
@@ -517,21 +565,34 @@ case "${1:-}" in
                 ;;
         esac
 
-        # EXCLUSIVO antes de tocar nada: el update reescribe el compilador y la
-        # stdlib en su lugar, y una suite ajena a mitad de corrida mezclaría
-        # dos versiones (lo mismo que ya protegía install-local).
-        _toolchain_lock x "actualizar"
         printf "\n  \033[1mUpdating Nyx\033[0m\n\n"
-        # El proyecto desde el que se llamó: `cd "$NYX_HOME"` lo pierde, y al
-        # final hay que volver para regenerar la evidencia del andamiaje SDD.
+        # El proyecto desde el que se llamó, para regenerar al final la
+        # evidencia del andamiaje SDD.
         _PROJECT_DIR="$PWD"
-        cd "$NYX_HOME"
-        if [ ! -d .git ]; then
-            echo "error: $NYX_HOME is not a git repo. Reinstall with:" >&2
+        # TOOLCHAIN VERSIONADO (arco toolchain-atomico, scripts/nyx_toolchain.sh):
+        # la revisión se exporta del repo git a versions/.staging.<pid>, se
+        # construye AHÍ —nadie la lee todavía— y recién al final se activa con un
+        # rename. Antes el update hacía `git reset --hard` y `make` sobre el árbol
+        # ACTIVO, bajo un candado exclusivo que hacía esperar a las suites ajenas
+        # (y si fallaba a mitad, dejaba la instalación rota). Una revisión que ya
+        # está en versions/ se activa sin reconstruir.
+        _TC="$NYX_HOME/scripts/nyx_toolchain.sh"
+        if [ ! -f "$_TC" ]; then
+            echo "error: falta $_TC — reinstala con: curl -sSf https://nyxlang.com/install.sh | sh" >&2
+            exit 1
+        fi
+        . "$_TC"
+        if ! nyx_tc_versionado "$NYX_ROOT"; then
+            nyx_tc_migrar "$NYX_ROOT"
+            NYX_HOME="$(nyx_tc_actual "$NYX_ROOT")"; export NYX_HOME
+        fi
+        _GD="$(_nyx_git_dir)"
+        if [ -z "$_GD" ]; then
+            echo "error: $NYX_ROOT is not a git install. Reinstall with:" >&2
             echo "  curl -sSf https://nyxlang.com/install.sh | sh" >&2
             exit 1
         fi
-        OLD_VERSION=$(cat VERSION 2>/dev/null || echo "")
+        OLD_VERSION=$(cat "$NYX_HOME/VERSION" 2>/dev/null || echo "")
 
         # --version <rev>: instalar una revisión CONCRETA en vez de la punta.
         #
@@ -556,48 +617,53 @@ case "${1:-}" in
             _NYX_REV="$3"
             _NYX_REV_LABEL="$3"
         fi
-        spin "Fetching..." bash -c "git fetch origin --tags" \
+        spin "Fetching..." git --git-dir="$_GD" fetch origin --tags \
             || { echo "error: git fetch failed" >&2; exit 1; }
-        if [ "$_NYX_REV" != "origin/main" ]; then
-            # Verificar que la ref EXISTE antes de resetear: si no, se avisa y se
-            # sale sin haber tocado la instalación.
-            if ! git rev-parse --verify --quiet "$_NYX_REV^{commit}" >/dev/null; then
-                echo "error: no existe la revisión '$_NYX_REV' en este repo" >&2
-                echo "  las publicadas se listan con: git -C \"$NYX_HOME\" tag" >&2
-                exit 1
-            fi
+        # La ref tiene que EXISTIR antes de construir nada: una inválida sale sin
+        # haber tocado la instalación.
+        if ! git --git-dir="$_GD" rev-parse --verify --quiet "$_NYX_REV^{commit}" >/dev/null; then
+            echo "error: no existe la revisión '$_NYX_REV' en este repo" >&2
+            echo "  las publicadas se listan con: git --git-dir=\"$_GD\" tag" >&2
+            exit 1
         fi
-        spin "Checking out $_NYX_REV_LABEL..." bash -c "git reset --hard '$_NYX_REV'" \
-            || { echo "error: git update failed" >&2; exit 1; }
-        spin "Rebuilding compiler..." make bootstrap \
-            || { echo "error: make bootstrap failed" >&2; exit 1; }
-        spin "Rebuilding package manager..." make build-nyx-build \
-            || { echo "error: make build-nyx-build failed" >&2; exit 1; }
-        # nyx_test tambien: sin esto un update REVERTIRIA el fix de install.sh
-        # (dist-clean borra compiler/, asi que despues ya no se puede rebuildear)
-        spin "Rebuilding test runner..." make build-test \
-            || { echo "error: make build-test failed" >&2; exit 1; }
-        # nyx_check idem (C4 2026-08-11): el wrapper lo rutea, AGENTS.md lo
-        # promociona, y sin este build el comando moria en toda instalacion.
-        spin "Rebuilding checker..." make build-check \
-            || { echo "error: make build-check failed" >&2; exit 1; }
-        spin "Rebuilding vet..." make build-vet \
-            || { echo "error: make build-vet failed" >&2; exit 1; }
-        spin "Rebuilding formatter..." make build-fmt \
-            || { echo "error: make build-fmt failed" >&2; exit 1; }
-        # refrescar binarios de bin/ y limpiar dev files (lista CANONICA
-        # compartida con install.sh - antes habia dos listas desincronizadas)
-        mkdir -p bin
-        # Copiar AL LADO y renombrar encima, nunca cp directo: si un programa está
-        # corriendo con bin/nyx, cp falla con 'Text file busy' y el binario viejo
-        # queda instalado. Antes el error se tiraba (2>/dev/null || true) y el
-        # update terminaba anunciando la versión nueva con el compilador anterior.
-        for par in "nyx_bootstrap:bin/nyx" "nyx_build:bin/nyx_build"; do
-            src="${par%%:*}"; dst="${par#*:}"
-            { cp "$src" "$dst.nuevo.$$" && mv -f "$dst.nuevo.$$" "$dst"; } \
-                || { rm -f "$dst.nuevo.$$"; echo "error: no se pudo instalar $dst" >&2; exit 1; }
-        done
-        bash scripts/dist-clean.sh "$NYX_HOME"
+        _hash=$(git --git-dir="$_GD" rev-parse --short=8 "$_NYX_REV^{commit}")
+        _ver=$(git --git-dir="$_GD" show "$_NYX_REV:VERSION" 2>/dev/null | tr -d '[:space:]')
+        _ID="$(nyx_tc_id "${_ver:-0}" "$_hash")"
+        if [ -d "$NYX_ROOT/versions/$_ID" ]; then
+            nyx_tc_publicar "$NYX_ROOT" "$NYX_ROOT/versions/.nada.$$" "$_ID"
+            echo "  $_ID ya estaba instalada: activada sin reconstruir"
+        else
+            _STG="$NYX_ROOT/versions/.staging.$$"
+            rm -rf "$_STG"; mkdir -p "$_STG"
+            trap 'rm -rf "$_STG"' EXIT
+            spin "Exporting $_NYX_REV_LABEL..." bash -c "git --git-dir='$_GD' archive '$_NYX_REV' | tar -x -C '$_STG'" \
+                || { echo "error: git archive failed" >&2; exit 1; }
+            cd "$_STG"
+            spin "Rebuilding compiler..." make bootstrap \
+                || { echo "error: make bootstrap failed (la versión activa no se tocó)" >&2; exit 1; }
+            spin "Rebuilding package manager..." make build-nyx-build \
+                || { echo "error: make build-nyx-build failed (la versión activa no se tocó)" >&2; exit 1; }
+            # nyx_test, nyx_check, nyx_vet y nyx_fmt también: dist-clean borra
+            # compiler/, así que después ya no se pueden reconstruir.
+            spin "Rebuilding test runner..." make build-test \
+                || { echo "error: make build-test failed (la versión activa no se tocó)" >&2; exit 1; }
+            spin "Rebuilding checker..." make build-check \
+                || { echo "error: make build-check failed (la versión activa no se tocó)" >&2; exit 1; }
+            spin "Rebuilding vet..." make build-vet \
+                || { echo "error: make build-vet failed (la versión activa no se tocó)" >&2; exit 1; }
+            spin "Rebuilding formatter..." make build-fmt \
+                || { echo "error: make build-fmt failed (la versión activa no se tocó)" >&2; exit 1; }
+            mkdir -p bin
+            cp nyx_bootstrap bin/nyx && cp nyx_build bin/nyx_build \
+                || { echo "error: no se pudieron copiar los binarios a bin/" >&2; exit 1; }
+            bash scripts/dist-clean.sh "$_STG"
+            cd "$NYX_ROOT"
+            trap - EXIT
+            nyx_tc_publicar "$NYX_ROOT" "$_STG" "$_ID"
+        fi
+        nyx_tc_podar "$NYX_ROOT" "${NYX_KEEP_VERSIONS:-3}"
+        NYX_HOME="$NYX_ROOT/versions/$_ID"; export NYX_HOME
+        cd "$NYX_HOME"
         NEW_VERSION=$(cat VERSION 2>/dev/null || echo "?")
         printf "\n  \033[1;32mNyx updated: %s -> %s\033[0m\n" "${OLD_VERSION:-?}" "$NEW_VERSION"
         # ── What's new: bloque del CHANGELOG entre la version vieja y la nueva ──

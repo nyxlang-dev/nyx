@@ -36,6 +36,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   casos que aparecen solo por la atribución corregida salen como **aviso** (compilan, rc 0) hasta la
   próxima versión menor. `std/url` y `std/web` comparten el `url_decode` de `std/percent`, nuevo.
   `test-439`, `test-440`, +4 casos en `test-errors`.
+- **Toolchain con versiones lado a lado** (fricción nyxerp `20260924-020001-team-4`)
+  `[arco: toolchain-atomico]`: `~/.nyx` guarda cada versión completa en `versions/<id>/`, y
+  `current`/`active` dicen cuál está activa; las entradas de la raíz son enlaces, así que las rutas
+  de siempre (`~/.nyx/bin`, `~/.nyx/VERSION`) siguen andando. `make install-local` y `nyx update`
+  arman la versión nueva aparte y la activan con un `rename`: una suite a mitad de corrida sigue
+  entera con la versión con que arrancó, instalar ya no espera a nadie, y un update que falla no
+  deja la instalación rota. `nyx update --version <rev>` vuelve a una revisión ya instalada al
+  instante (415 ms). La poda (`NYX_KEEP_VERSIONS`, 3) nunca borra una versión en uso. La primera
+  instalación con el toolchain nuevo migra el layout plano sola. `make test-toolchain`.
 - **`nyx check` muestra solo los diagnósticos**: volcaba cientos de líneas `SYM:`/`DEF:`/`END` del
   protocolo del LSP aunque el archivo estuviera sano. El protocolo sigue disponible con `--lsp`. Y
   después de un NYX1040 (el mismo `struct` en dos módulos) ya no sale la cascada de NYX1017/NYX1032

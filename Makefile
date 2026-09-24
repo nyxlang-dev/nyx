@@ -186,6 +186,20 @@ install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $
 	if [ ! -d "$$NYX_HOME_DIR/bin" ]; then \
 		echo "✗ $$NYX_HOME_DIR no existe — correr scripts/install.sh primero"; exit 1; \
 	fi; \
+	: "TOOLCHAIN VERSIONADO (arco toolchain-atomico, scripts/nyx_toolchain.sh)."; \
+	: "La versión nueva se arma en versions/.staging.<pid>, partiendo de una copia"; \
+	: "de la activa (así conserva lo que esta receta no maneja), y se ACTIVA al"; \
+	: "final con un rename. Nadie lee lo que se está escribiendo: el candado de"; \
+	: "abajo cae sobre el .toolchain.lock propio del armado y no espera a las"; \
+	: "suites ajenas, que siguen con la versión que resolvieron al arrancar."; \
+	. scripts/nyx_toolchain.sh; \
+	NYX_ROOT_DIR="$$NYX_HOME_DIR"; \
+	nyx_tc_migrar "$$NYX_ROOT_DIR"; \
+	NYX_ACTUAL="$$(nyx_tc_actual "$$NYX_ROOT_DIR")"; \
+	NYX_STG="$$NYX_ROOT_DIR/versions/.staging.$$$$"; \
+	rm -rf "$$NYX_STG"; cp -a "$$NYX_ACTUAL" "$$NYX_STG"; rm -f "$$NYX_STG/.lock" "$$NYX_STG/.toolchain.lock"; \
+	trap 'rm -rf "$$NYX_STG"' EXIT; \
+	NYX_HOME_DIR="$$NYX_STG"; \
 	: "CANDADO DEL TOOLCHAIN (2026-09-20). ~/.nyx es compartido por TODO lo que"; \
 	: "compila en esta máquina, así que instalar a mitad de la suite de otro"; \
 	: "proyecto le cambia el compilador y la stdlib bajo los pies: su corrida"; \
@@ -193,10 +207,10 @@ install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $
 	: "el 2026-09-20 con nyxerp — 13 min de máquina y 5 fallos falsos. La regla"; \
 	: "escrita («avisar antes») no alcanzó: el permiso se había dado para un"; \
 	: "alcance menor y el que instala no siempre mide bien lo que cambió."; \
-	: "Acá se toma EXCLUSIVO y ANTES de la primera copia; quien compila lo toma"; \
-	: "COMPARTIDO por archivo (nyx test, nyx build), así que la suite termina el"; \
-	: "archivo en curso, el install entra, y lo que sigue usa el toolchain nuevo"; \
-	: "de punta a punta. Contrato completo en CLAUDE.md §Sesiones paralelas."; \
+	: "Desde 2026-09-24 (toolchain versionado) este candado cae sobre el"; \
+	: "armado nuevo, que nadie lee: no espera a nadie. Las suites ajenas siguen"; \
+	: "con la versión que resolvieron al arrancar y la activación es un rename."; \
+	: "Contrato completo en CLAUDE.md §Sesiones paralelas."; \
 	NYX_LOCK="$$NYX_HOME_DIR/.toolchain.lock"; \
 	NYX_LOCK_WAIT="$${NYX_LOCK_WAIT:-600}"; \
 	if command -v flock >/dev/null 2>&1; then \
@@ -237,6 +251,7 @@ install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $
 	cp std/*.nx "$$NYX_HOME_DIR/std/"; \
 	cp std/builtins.index "$$NYX_HOME_DIR/std/"; \
 	if [ -f "$$NYX_HOME_DIR/scripts/nyx" ]; then cp scripts/nyx "$$NYX_HOME_DIR/scripts/nyx"; fi; \
+	cp scripts/nyx_toolchain.sh "$$NYX_HOME_DIR/scripts/nyx_toolchain.sh"; \
 	cp LLM.md "$$NYX_HOME_DIR/LLM.md" 2>/dev/null || true; \
 	mkdir -p "$$NYX_HOME_DIR/templates"; \
 	cp -r templates/. "$$NYX_HOME_DIR/templates/"; \
@@ -257,7 +272,11 @@ install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $
 			echo "   Reconstruir con: make build-$${t#nyx_}"; \
 		fi; \
 	done; \
-	echo "✓ Toolchain sincronizado en $$NYX_HOME_DIR (bin + runtime + std + wrapper + LLM.md + templates, sin restos pre-ADR-1)"
+	NYX_ID="$$(nyx_tc_id "$$(tr -d '[:space:]' < VERSION)" "$$(git rev-parse --short=8 HEAD 2>/dev/null || echo local)" "$$(date +%Y%m%d%H%M%S)p$$$$")"; \
+	trap - EXIT; \
+	nyx_tc_publicar "$$NYX_ROOT_DIR" "$$NYX_STG" "$$NYX_ID"; \
+	nyx_tc_podar "$$NYX_ROOT_DIR" "$${NYX_KEEP_VERSIONS:-3}"; \
+	echo "✓ Toolchain sincronizado en $$NYX_ROOT_DIR/versions/$$NYX_ID y activado (bin + runtime + std + wrapper + LLM.md + templates, sin restos pre-ADR-1)"
 
 ## Recompilar un módulo específico con el bootstrap actual
 ## Uso: make recompile MODULE=lexer
@@ -435,6 +454,8 @@ test-all:
 	@echo ""
 	$(MAKE) test-lib-real
 	@echo ""
+	$(MAKE) test-toolchain
+	@echo ""
 	@echo "=== All automated suites passed ==="
 
 ## Suites de los stacks extraídos locales (db, queue, edit, shell, serve,
@@ -445,6 +466,11 @@ test-all:
 ##  stack desde el split #7, 2026-07-06 — make test-proxy allí.)
 test-stacks:
 	bash scripts/testing/run_stack_tests.sh
+
+## Toolchain con versiones lado a lado: migración, activación con otra
+## versión en uso, poda (HOME falso en /var/tmp; ~20 s). Dentro de test-all.
+test-toolchain:
+	bash scripts/testing/run_toolchain_versions.sh
 
 ## [lib] modules sobre una copia de nyxerp con todos sus módulos en [lib]
 ## (build + las pruebas más pesadas). SKIP limpio sin nyxerp en la máquina.
@@ -764,4 +790,4 @@ bench-test-cache:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check bench-test-cache
+.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check bench-test-cache

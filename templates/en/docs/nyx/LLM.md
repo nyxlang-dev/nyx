@@ -158,10 +158,14 @@ blame the wrong part of your build:
   (nyx_bootstrap <sha256[:12]>)`) and warns at the end if the toolchain changed
   during the run — an install can land between two test files, and such a run
   mixed two compilers. The exit code does not change.
-- **Toolchain lock.** `nyx build`/`test`/`check`/`vet`/`fmt` and `nyx file.nx`
-  take `~/.nyx/.toolchain.lock` shared while they compile; `nyx update` and
-  `make install-local` take it exclusive. If it must wait it says so; after
-  `NYX_LOCK_WAIT` seconds (600) it fails naming the holder and changes nothing.
+- **Versioned toolchain.** `~/.nyx` keeps each version whole in
+  `versions/<id>/` (`current` names the active one; the usual paths like
+  `~/.nyx/bin` are symlinks). `nyx update` and `make install-local` build the
+  new version aside and activate it with a rename: a run already in progress
+  finishes entirely on the version it started with, installing never waits,
+  and a failed update leaves the active version untouched. `nyx update
+  --version <rev>` switches back to an installed revision instantly. Old
+  versions are pruned (`NYX_KEEP_VERSIONS`, 3) but never one in use.
   `nyx update --help`/`-h` and `--check` never update (an unknown option is an
   error, rc 2).
 
