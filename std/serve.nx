@@ -100,6 +100,15 @@ fn __detect_content_type(body: String) -> String {
 
 // Format a Response struct into an HTTP response string
 fn __format_http_response(resp: Response) -> String {
+    return __format_http_response_de(resp, true)
+}
+
+// con_cuerpo = false para la respuesta a un HEAD: misma cabecera que el GET
+// (Content-Length incluido, RFC 9110 §9.3.2) y NINGÚN byte de cuerpo. Con el
+// cuerpo, la conexión keep-alive quedaba con bytes que nadie iba a leer: un
+// proxy que la reutilizaba (nyx-gateway, 2026-09-25) los tomaba como el
+// comienzo de la respuesta siguiente y devolvía 502 a otro usuario.
+fn __format_http_response_de(resp: Response, con_cuerpo: bool) -> String {
     let status: int = resp.status
     let body: String = resp.body
 
@@ -227,7 +236,9 @@ fn __format_http_response(resp: Response) -> String {
 
     sb.append("Connection: keep-alive\r\n")
     sb.append("\r\n")
-    sb.append(body)
+    if con_cuerpo {
+        sb.append(body)
+    }
     return sb.to_string()
 }
 
@@ -284,16 +295,19 @@ fn __finalize(req: Request, resp: Response, extra_headers: Array) -> ServeOutput
         __emit_access_log(req, r)
     }
 
+    // Un HEAD nunca abre el canal SSE (no hay cuerpo que transmitir): recibe
+    // la cabecera de la respuesta normal y la conexión sigue keep-alive.
+    let es_head: bool = req.method == "HEAD"
     let marca: int = __sse_marca_idx(r.headers_flat)
     if marca >= 0 {
         let hdrs: Array = r.headers_flat
         let room: String = hdrs[marca + 1]
-        if r.status == 200 {
+        if r.status == 200 and !es_head {
             return ServeOutput { wire: __format_sse_head(r), sse: true, room: room }
         }
         r.headers_flat = __sse_sin_marca(hdrs)
     }
-    return ServeOutput { wire: __format_http_response(r), sse: false, room: "" }
+    return ServeOutput { wire: __format_http_response_de(r, !es_head), sse: false, room: "" }
 }
 
 // Nombre de la cabecera interna con la que sse_open marca su Response. Lleva
@@ -480,7 +494,8 @@ fn __error_response(req: Request, err: String) -> ServeOutput {
         // __format_http_response only format constant strings from std/web,
         // never user/handler code, so there's nothing left here that can
         // panic — this is the reliable bottom of the fallback chain.
-        return ServeOutput { wire: __format_http_response(default_error(req, e2)), sse: false, room: "" }
+        let con_cuerpo: bool = req.method != "HEAD"
+        return ServeOutput { wire: __format_http_response_de(default_error(req, e2), con_cuerpo), sse: false, room: "" }
     }
     // Unreachable: both try/catch branches return above — same checker gap.
     return ServeOutput { wire: "", sse: false, room: "" }
@@ -512,6 +527,36 @@ fn __run_wraps(wraps: Array, i: int, req: Request, core: Fn) -> Response {
 }
 
 // Cadena de un router montado: sus wraps envuelven (mws status-0 → rutas).
+// Índice de la primera ruta que atiende (method, path), o -1. Un HEAD sin ruta
+// HEAD propia usa la ruta GET del mismo path (RFC 9110 §9.3.2: el servidor
+// debe responder a HEAD lo mismo que a GET, sin cuerpo — lo quita
+// __finalize). Dos pasadas, no una con la condición combinada: así una ruta
+// HEAD explícita gana aunque su GET se haya registrado antes.
+fn __ruta_idx(routes: Array, method: String, path: String) -> int {
+    var pasada: int = 0
+    while pasada < 2 {
+        var buscado: String = method
+        if pasada == 1 {
+            if method != "HEAD" { return -1 }
+            buscado = "GET"
+        }
+        var i: int = 0
+        while i < routes.length() {
+            let route: Route = routes[i]
+            let rm: String = route.method
+            if rm == buscado {
+                let match_params: Map = route_match(route.pattern, path)
+                if match_params.contains("_matched") {
+                    return i
+                }
+            }
+            i = i + 1
+        }
+        pasada = pasada + 1
+    }
+    return -1
+}
+
 // Devuelve status 0 (sentinel) si el router no manejó el request →
 // fall-through. Un router-wrap que recibe un status 0 de su next debe
 // devolverlo sin tocar (documentado en API.md).
@@ -529,20 +574,12 @@ fn __router_core(router: Router, req: Request, extra: Array) -> Response {
     }
 
     let routes: Array = router.routes
-    var i: int = 0
-    while i < routes.length() {
-        let route: Route = routes[i]
-        let rm: String = route.method
-        if rm == req.method {
-            let rp: String = route.pattern
-            let match_params: Map = route_match(rp, req.path)
-            if match_params.contains("_matched") {
-                req.params = match_params
-                let cb: Fn(Request) -> Response = route.handler
-                return cb(req)
-            }
-        }
-        i = i + 1
+    let ri: int = __ruta_idx(routes, req.method, req.path)
+    if ri >= 0 {
+        let route: Route = routes[ri]
+        req.params = route_match(route.pattern, req.path)
+        let cb: Fn(Request) -> Response = route.handler
+        return cb(req)
     }
 
     // Sin match interno: sentinel de fall-through.
@@ -621,20 +658,12 @@ fn __core_response(req: Request, extra: Array) -> Response {
     }
 
     let routes: Array = __serve_app.routes
-    var i: int = 0
-    while i < routes.length() {
-        let route: Route = routes[i]
-        let rm: String = route.method
-        if rm == req.method {
-            let rp: String = route.pattern
-            let match_params: Map = route_match(rp, req.path)
-            if match_params.contains("_matched") {
-                req.params = match_params
-                let cb: Fn(Request) -> Response = route.handler
-                return cb(req)
-            }
-        }
-        i = i + 1
+    let ri: int = __ruta_idx(routes, req.method, req.path)
+    if ri >= 0 {
+        let route: Route = routes[ri]
+        req.params = route_match(route.pattern, req.path)
+        let cb: Fn(Request) -> Response = route.handler
+        return cb(req)
     }
 
     // If-None-Match is a conditional request header for ETag-based caching;

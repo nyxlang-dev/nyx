@@ -4693,6 +4693,15 @@ pedidos se procesan **a la vez**, no cuántas conexiones se sostienen.
 Se leen una vez al arrancar el servidor; un valor inválido o no positivo cae a la omisión.
 `serve_idle_connections() -> int` devuelve cuántas conexiones hay estacionadas en ese momento.
 
+**`HEAD`** (desde 2026-09-25): sin ruta `HEAD` propia, un `HEAD` usa la ruta `GET` del mismo path
+(rutas del app y routers montados; una `app_route(app, "HEAD", …)` explícita gana). Toda respuesta a
+un `HEAD` —también 404 y 500— lleva la cabecera que llevaría el `GET` (mismo `Content-Length`) y
+**ningún byte de cuerpo** (RFC 9110 §9.3.2); una ruta `sse_open` no abre el canal ante un `HEAD`.
+Antes el `HEAD` caía al 404 **con** cuerpo, y un proxy que reutilizaba esa conexión keep-alive leía
+esos bytes como el comienzo de la respuesta siguiente y devolvía 502 a otro usuario. Las APIs de bajo
+nivel `http_serve`/`http_serve_mt` escriben el texto que devuelve el handler: ahí omitir el cuerpo
+ante un `HEAD` es responsabilidad del handler.
+
 Pendiente: un cliente que deja de LEER una respuesta grande sigue reteniendo su worker en la
 escritura (no hay plazo de envío).
 

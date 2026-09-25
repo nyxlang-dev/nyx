@@ -2402,6 +2402,16 @@ fn main() -> int {
   - Not covered yet: a client that stops READING a large response still
     blocks its worker in the write (no send timeout); pipelined requests on
     one connection are answered in order by one worker.
+- **HEAD** (fixed 2026-09-25): a `HEAD` request with no `HEAD` route of its own
+  uses the `GET` route of the same path (app routes and mounted routers; an
+  explicit `app_route(app, "HEAD", …)` wins), and every response to a `HEAD` —
+  404s and 500s included — carries the headers the `GET` would (same
+  `Content-Length`) and **no body bytes**; a `sse_open` route answered to a
+  `HEAD` does not open the channel. Before, `HEAD` fell to the 404 *with* its
+  body: a reverse proxy that reused that keep-alive connection read the stray
+  bytes as the start of the next response and answered 502 to another user.
+  The low-level `http_serve`/`http_serve_mt` write whatever string the handler
+  returns — there the handler must omit the body for `HEAD` itself.
 - **Graceful shutdown**: `serve_on_shutdown(fn() -> int)` registers a hook
   that runs during the SIGTERM drain, after in-flight requests finish and
   before `serve_app` returns 0. `NYX_SERVE_DRAIN_SECS` overrides the

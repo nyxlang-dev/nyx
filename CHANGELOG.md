@@ -9,6 +9,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Arreglado
+
+- **`std/serve`: `HEAD` ya no contamina la conexión keep-alive.** Un `HEAD` caía al 404 y el
+  404 salía **con cuerpo**; un proxy que reutilizaba la conexión (nyx-gateway) leía esos bytes
+  como el comienzo de la respuesta siguiente y devolvía **502** a otro usuario — visto en
+  producción en serve.nyxlang.com el 2026-09-25. Ahora un `HEAD` sin ruta propia usa la ruta
+  `GET` del mismo path (también en routers montados; una ruta `HEAD` explícita gana) y toda
+  respuesta a un `HEAD` sale sin cuerpo con el `Content-Length` del `GET` (RFC 9110 §9.3.2); un
+  `sse_open` no abre el canal ante un `HEAD`. Regresión: 8 checks nuevos en
+  `test_serve_std_keepalive.py` (`HEAD` + `GET` pipelineados por la misma conexión; 13 → 21).
+
 ## [0.34.0] — 2026-09-25
 
 Release grande, empujada casi entera por la fricción de nyxerp (ERP en Nyx) antes de su primera
