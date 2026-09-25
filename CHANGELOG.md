@@ -11,6 +11,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Asignar un valor opaco a una variable ya declarada lo convierte a su tipo** (fricción nyxerp
+  20260925-090024). `let x: S = xs[0]` andaba, pero `var s: S = …` + `s = xs[0]` emitía
+  `store %S %<i64>`: IR inválido, `nyx check` callado y el enlace rechazado por clang. La
+  conversión del valor opaco (`xs[i]`, `m.get(k)`, retorno de una `Fn` sin firma) vivía en línea
+  en `codegen_let` y la asignación tenía una copia parcial (solo `String` y `Array`); ahora las
+  dos usan `coerce_opaque_i64` — struct, enum, `Map`, `bool`, `char`, enteros angostos, float,
+  `Array<T>`, `Fn(...)` — y `n = m.get(k)` sobre un `int` declarado hace el `ptrtoint`.
+  Regresión: `test-450-asignar-valor-opaco-a-var-declarada` (9 familias de tipo).
 - **`std/serve`: `HEAD` ya no contamina la conexión keep-alive.** Un `HEAD` caía al 404 y el
   404 salía **con cuerpo**; un proxy que reutilizaba la conexión (nyx-gateway) leía esos bytes
   como el comienzo de la respuesta siguiente y devolvía **502** a otro usuario — visto en

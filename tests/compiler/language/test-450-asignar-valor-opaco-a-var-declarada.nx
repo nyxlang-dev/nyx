@@ -1,0 +1,106 @@
+// test-450 — asignar un valor OPACO (`xs[i]`, `m.get(k)`) a una variable YA
+// declarada lo convierte al tipo de la variable, igual que `let x: T = xs[i]`.
+//
+// POR QUÉ EXISTE (fricción nyxerp 20260925-090024): la conversión del valor
+// opaco al tipo declarado vivía en línea en codegen_let; codegen_assign tenía
+// una copia parcial (solo String y Array). `let x: S = xs[0]` andaba y
+//   var s: S = S { … }
+//   s = xs[0]
+// emitía `store %S %<i64>`: IR inválido, `nyx check` callado y clang
+// rechazando el enlace. Ahora las dos rutas usan coerce_opaque_i64. Se cubre
+// cada familia de tipo, no solo el struct del reporte.
+
+struct S {
+    a: int,
+    b: String,
+}
+
+enum Color {
+    Rojo,
+    Verde(int),
+}
+
+fn doble(x: int) -> int {
+    return x * 2
+}
+
+fn elegir(xs: Array) -> S {
+    var s: S = S { a: 0, b: "" }
+    if xs.length() > 0 {
+        s = xs[0]
+    }
+    return s
+}
+
+fn main() -> int {
+    // struct (el caso del reporte)
+    var xs: Array = []
+    xs.push(S { a: 7, b: "siete" })
+    let s: S = elegir(xs)
+    println(s.b)
+
+    // struct en un bucle: reasignada varias veces
+    xs.push(S { a: 8, b: "ocho" })
+    var ultimo: S = S { a: 0, b: "" }
+    var i: int = 0
+    while i < xs.length() {
+        ultimo = xs[i]
+        i = i + 1
+    }
+    println(int_to_string(ultimo.a))
+
+    // enum
+    var cs: Array = []
+    cs.push(Color.Verde(3))
+    var c: Color = Color.Rojo
+    c = cs[0]
+    match c {
+        Color.Rojo => println("rojo"),
+        Color.Verde(n) => println("verde " + int_to_string(n)),
+    }
+
+    // Map
+    var ms: Array = []
+    var m0: Map = Map.new()
+    m0.insert("k", "v")
+    ms.push(m0)
+    var m: Map = Map.new()
+    m = ms[0]
+    let v: String = m.get("k")
+    println(v)
+
+    // bool
+    var bs: Array = []
+    bs.push(true)
+    var b: bool = false
+    b = bs[0]
+    if b { println("bool ok") }
+
+    // Array<int>
+    var aa: Array = []
+    aa.push([1, 2, 3])
+    var a: Array<int> = []
+    a = aa[0]
+    println(int_to_string(a.length()))
+
+    // String (ya andaba; que no se rompa)
+    var ss: Array = ["uno"]
+    var t: String = ""
+    t = ss[0]
+    println(t)
+
+    // int desde Map.get
+    var mi: Map = Map.new()
+    mi.insert("n", 42)
+    var n: int = 0
+    n = mi.get("n")
+    println(int_to_string(n))
+
+    // Fn guardada en un Array
+    var fs: Array = []
+    fs.push(doble)
+    var f: Fn(int) -> int = doble
+    f = fs[0]
+    println(int_to_string(f(21)))
+    return 0
+}
