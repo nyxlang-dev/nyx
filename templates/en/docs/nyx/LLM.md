@@ -696,12 +696,12 @@ error, wrong function, blank screen). Now:
 - An unqualified call ambiguous between two imported modules is an error
   (**NYX2010**) naming both modules — qualify it or rename. `nyx check` reports it too (since
   2026-09-23), not only `nyx build`.
-- **Transition (2026-09-24, until the next minor version):** up to 0.33.x a resolver bug
+- **Transition (2026-09-24, through 0.34.x; errors from 0.35.0):** up to 0.33.x a resolver bug
   attributed everything a module declared AFTER a newly inlined transitive import to the main
   file, which hid NYX1036/NYX2010 there (and made two private homonyms in different modules
   collide by import order). With it fixed, the cases that only appear because of the corrected
   attribution come out as `⚠ aviso [NYX1036]`/`⚠ aviso [NYX2010]` and still compile (rc 0);
-  they become errors in the next minor version. Add `pub` / qualify the call now.
+  they become errors in 0.35.0. Add `pub` / qualify the call now.
 - `std/percent` holds the single `url_decode` that `std/url` and `std/web` both import.
 - Module fns are emitted as `<module_path>__<fn>` in the IR; the main file
   and the prelude keep bare names (single-file programs: zero change).

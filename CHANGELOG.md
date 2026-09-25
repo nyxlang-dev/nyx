@@ -9,6 +9,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-09-25
+
+Release grande, empujada casi entera por la fricción de nyxerp (ERP en Nyx) antes de su primera
+producción (Sumain, 2026-09-26). Lo principal:
+- **`[lib] modules` listo para proyectos reales**: cualquier forma de import, transitividad, chequeo de
+  tipos idéntico a sin `[lib]` (el importador lee el módulo entero; codegen declara), nombres
+  `<módulo>__<fn>`, y recompilación por INTERFAZ (un comentario en un módulo central: 1 módulo, no 105).
+  Suite de nyxerp: 1.566 s → ~366-431 s.
+- **Toolchain con versiones lado a lado** en `~/.nyx`: instalar ya no le cambia el compilador a una
+  suite en curso; `nyx update --version <rev>` vuelve a una revisión instalada al instante; versiones
+  `.fijada` que no se podan.
+- **Stdlib nueva**: `std/pdf`, `std/barcode` (Code 128, EAN-13, QR), `std/browser_serial` (Web Serial),
+  LISTEN/NOTIFY en `std/postgres`.
+- **`std/serve`**: una conexión keep-alive ociosa ya no retiene un worker; plazos de inactividad y de
+  cabecera.
+- **Tooling**: runtime precompilado automático (`nyx build` 9,9 s → 1,0 s), CAPABILITIES por firma de la
+  stdlib, `nyx check` sin el protocolo LSP en pantalla, huella del compilador en `nyx test`.
+- **wasm**: una guarda contrasta todos los builtins con el runtime de wasm (25 casos arreglados o con
+  error claro).
+- **Transición**: las llamadas a una fn privada de otro módulo (NYX1036) y las ambigüedades (NYX2010)
+  que un bug del resolvedor ocultaba hasta 0.33.x siguen como AVISO en 0.34.0 y pasan a error en
+  **0.35.0** (se mantuvo un ciclo más para no romper builds ajenos en la víspera de producción).
+
 ### Fixed
 - **Seguridad del toolchain compartido** (fricción nyxerp `20260924-020001-team-4`): `nyx update
   --help` actualizaba de verdad (todo argumento desconocido caía a la actualización); ahora
