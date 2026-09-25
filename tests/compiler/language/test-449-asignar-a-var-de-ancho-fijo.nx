@@ -1,0 +1,49 @@
+// test-449 — asignar a una variable YA declarada convierte el valor a su tipo,
+// igual que `let x: T = …`.
+//
+// POR QUÉ EXISTE (2026-09-24): codegen_let convierte el valor a la anotación,
+// pero codegen_assign guardaba el valor con el tipo de la variable sin
+// convertirlo. `s.charAt(i)` sale como i64 (zext del i8), así que
+//   var c: char = 'x'
+//   c = s.charAt(i)
+// emitía `zext i8 … to i64` y después `store i8` de ese i64: IR inválido que
+// clang rechaza. `let c: char = s.charAt(i)` andaba, y el compilador lo
+// esquivaba usando enteros para los caracteres (interfaz_de, build.nx). El
+// caso simétrico —`n = c` con `var n: int` y `c: char`— era el `store i64` de
+// un i8. Lo mismo con i16/i32/u8 y con f32 ← float.
+
+fn main() -> int {
+    let s: String = "hola"
+    var c: char = 'x'
+    var al_reves: String = ""
+    var i: int = 0
+    while i < s.length() {
+        c = s.charAt(i)
+        al_reves = char_to_string(c) + al_reves
+        i = i + 1
+    }
+    print(al_reves)
+
+    // char → int (ensancha sin signo)
+    var n: int = 0
+    n = c
+    print(n.to_string())
+
+    // int → i32 / i16 / u8 (angosta)
+    var w: i32 = 0
+    w = n + 1000
+    var h: i16 = 0
+    h = n - 1
+    var u: u8 = 0
+    u = s.charAt(1)
+    print(w)
+    print(h)
+    print(u)
+
+    // float → f32
+    let g: float = 3.25
+    var f: f32 = 0.5
+    f = g
+    print(f)
+    return 0
+}

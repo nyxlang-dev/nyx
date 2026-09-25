@@ -826,8 +826,8 @@ What it validates today:
 - **Struct init**: unknown fields (with did-you-mean) and per-field type mismatches.
 - **Cross-module**: imported modules are scanned (`scan_module_types`) for structs,
   fields + field types, enums + variants, type-alias targets and `impl Trait for Type`,
-  so checks work across imports. Top-level globals are pre-registered (order-independent
-  forward refs).
+  so checks work across imports. Top-level globals and `const`s are pre-registered
+  (order-independent forward refs; `const` since 2026-09-24).
 - **dyn Trait**: `let d: dyn Show = NotShow{}` validated via the trait-impl registry.
 - **Callability**: calling a non-function value (`let x = 10; x()`) is rejected.
 
@@ -965,7 +965,7 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2004 | generic call trait bound not satisfied (`fn f<T: Display>(x: T)` called with a `T` lacking the impl) — normal path for calls with explicit turbofish (`f<Point>(p)`, which semantic's bound check never covers) and for the implicit form when the concrete type has no local impls (semantic's conservative NYX1020 heuristic is strict only when the type has at least one local `impl`; wildcard otherwise). Semantic only preempts this with NYX1020 for the implicit form when the type has a local impl (of *any* trait). Names the trait's method signature(s) from `ctx.trait_methods` when the trait was already defined earlier in the module |
 | NYX2005 | nested field assignment (`a.b.c = x`) whose receiver chain has a link that is not a struct known to codegen (e.g. an intermediate field typed `Map`/`Array`, or a generic not yet monomorphized). The supported chains DO lower now (a chain of GEPs over the root struct's real memory, see test-322); this code is the residue that used to be dropped silently with exit 0 |
 | NYX2006 | field assignment whose receiver is neither a simple identifier nor a field chain — `f().field = v` (call), `a[0].field = v` (index). Write-side counterpart of NYX2003 |
-| NYX2007 | receiver-type backstop in method dispatch (v0.24.0): a recognized method dispatched to a receiver whose type doesn't have it (`m.length()`/`m.length` on a `Map`, methods on `&String`/`&Array`/`&Map` receivers). The codegen twin of semantic's NYX1022 — the only layer that covers unannotated code and `NYX_SKIP_SEMANTIC=1` |
+| NYX2007 | receiver-type backstop in method dispatch (v0.24.0): a recognized method dispatched to a receiver whose type doesn't have it (`m.length()`/`m.length` on a `Map`, methods on `&String`/`&Array`/`&Map` receivers). The codegen twin of semantic's NYX1022 — the only layer that covers unannotated code and `NYX_SKIP_SEMANTIC=1`. Since 2026-09-24 also a field codegen cannot resolve (`x.f` read or write on an `Array`/`int`/… receiver), which used to read 0 and drop writes silently |
 | NYX2008 | RUNTIME slot-type mismatch (static-tag spec 2026-08-03): an Array slot whose runtime tag names a pointer type (String/Array/Map/pointer) read as float — pointer bits as double are guaranteed garbage. Orderly abort instead of silently-wrong; `NYX_SLOT_CHECK=off` disables it |
 | NYX2009 | a file-scope `global`/`const` whose initializer cannot be evaluated at startup — the constant-folding path of globals accepts literals and a closed set of expressions; anything else (the offending `node_type` is named in the message) used to be dropped silently |
 | NYX2010 | AMBIGUOUS unqualified call: the same function name is exported by several imported modules and none of them is the current one. The message lists the modules that define it — qualify the call instead of letting the resolver pick one (it used to pick silently). Since 2026-09-23 semantic reports it too, with the same criterion, so `nyx check` catches it instead of only `nyx build` (as a regular semantic diagnostic, with line and enclosing function). A builtin with the same name disarms it in both layers: the call goes to the builtin. Same transition as NYX1036 (2026-09-24): an ambiguity hidden up to 0.33.x by the resolver bug is a `⚠ aviso` and resolves as 0.33.x did |
@@ -1954,6 +1954,11 @@ const GREETING = "hello"
 - En uso, los valores se insertan directamente (inline) sin generar `alloca`
 - Se pueden declarar tanto en scope global como local
 - Type annotation es opcional (se infiere del literal)
+- Su visibilidad no depende del orden del texto: una fn escrita ANTES de la `const` la ve,
+  igual que a una global `let`/`var`, y un módulo importado ve las `const` de los módulos
+  que importa sin importar en qué orden el programa escribió sus imports (desde el
+  2026-09-24; antes daba NYX1002). Dos `const` con el mismo nombre en el mismo scope, o una
+  `const` que choca con otra declaración de ese scope, siguen dando NYX1013.
 
 ```nyx
 const MAX: int = 100
@@ -2052,6 +2057,8 @@ fn main() {
 ```
 
 El driver auto-carga `std/prelude.nx` para programas de usuario. Los imports se resuelven leyendo e inlineando el modulo importado.
+
+Las llaves nombran cualquier declaracion del modulo: una `fn`, una `const` o una global se importan igual (`import { f, LIMITE } from "m"`). Como el modulo se inlinea entero, la linea del import por nombre no declara nada por su cuenta; si el modulo ya estaba inlineado (lo importo antes otro archivo) se descarta sin correr las lineas de los diagnosticos. Hasta el 2026-09-24 una `const` importada asi desde un modulo ya inlineado daba NYX1013.
 
 ### Resolucion de paths
 
@@ -2291,6 +2298,11 @@ let i: usize = 42
 | `u64` | `i64` | 0 a 2^64-1 |
 | `f32` | `float` | IEEE 754 single |
 | `usize` | `i64` | Platform pointer size |
+
+La asignacion a una variable ya declarada (`x = expr`) convierte el valor al tipo de `x` igual
+que `let x: T = expr`: trunca al angostar, extiende al ensanchar (sin signo desde `bool`/`char`/`u8`,
+con signo desde `i16`/`i32` —y desde `u16`/`u32`, que comparten su tipo LLVM, como en el resto del codegen—) y pasa `float` ↔ `f32`. Asi `var c: char` + `c = s.charAt(i)` o
+`var n: int` + `n = c` compilan (hasta el 2026-09-24 emitian IR invalido).
 
 ---
 
@@ -4652,6 +4664,37 @@ Conducta:
   upstream cerraba (el cliente no recibía nada) y antes de 0.4.3 además podía mezclar el cuerpo con
   pedidos de OTROS usuarios a través de su pool. Con un proxy más viejo, exponer SSE solo en un
   servidor al que el cliente llega directo.
+
+---
+
+## Conexiones, workers y plazos (`std/serve`)
+
+`serve_app(app, port, workers)` / `serve_app_en(app, host, port, workers)`: `workers` es cuántos
+pedidos se procesan **a la vez**, no cuántas conexiones se sostienen.
+
+- Un worker está ocupado solo mientras lee, atiende y responde un pedido. Al terminar, una
+  conexión keep-alive se **estaciona** en el event loop del runtime (epoll) y el worker queda
+  libre; cuando llega el pedido siguiente por esa conexión, lo toma cualquier worker libre. Las
+  conexiones nuevas siguen el mismo camino: una que conecta y no manda nada no ocupa un hilo.
+  Antes del 2026-09-24 cada conexión keep-alive retenía su worker hasta que el cliente la cerraba,
+  y N conexiones ociosas dejaban sin respuesta a un servidor de N workers.
+- **Conexiones**: hasta 4096 abiertas por servidor (el techo de fds del buffer por conexión de
+  `runtime/net.c`; una conexión en un fd ≥ 4096 se cierra sin respuesta), sujeto a `ulimit -n`.
+- Los pedidos que llegan juntos por una conexión (pipelining) se responden en orden, en el mismo
+  worker.
+
+| Variable | Omisión | Efecto |
+|---|---|---|
+| `NYX_HTTP_KEEPALIVE_SECS` | 15 | Una conexión keep-alive sin pedido nuevo durante ese tiempo se cierra. |
+| `NYX_HTTP_HEADER_SECS` | 10 | Plazo TOTAL para recibir la cabecera completa de un pedido (no por lectura: un cliente que la gotea de a un byte también se corta). Vencido: `408 Request Timeout` y cierre. El mismo valor acota el silencio de una conexión nueva antes de su primer byte y el tiempo que un body puede quedar detenido sin recibir un byte. |
+| `NYX_HTTP_MAX_BODY` | 1 MiB | Body mayor: `413` sin llamar al handler. |
+| `NYX_SERVE_DRAIN_SECS` | 10 | Plazo del drain de SIGTERM; al empezar, las conexiones estacionadas se cierran. |
+
+Se leen una vez al arrancar el servidor; un valor inválido o no positivo cae a la omisión.
+`serve_idle_connections() -> int` devuelve cuántas conexiones hay estacionadas en ese momento.
+
+Pendiente: un cliente que deja de LEER una respuesta grande sigue reteniendo su worker en la
+escritura (no hay plazo de envío).
 
 ---
 

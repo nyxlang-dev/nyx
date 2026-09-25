@@ -1,0 +1,14 @@
+// Backstop NYX2007 de codegen, lado ESCRITURA: asignar un campo sobre un
+// receptor que no es struct. Hermano de codegen-campo-sobre-array.nx; hasta el
+// 2026-09-24 el codegen imprimía «campo no encontrado en field_assign», no
+// emitía el store y salía con 0: la escritura se perdía en silencio.
+// Se compila con NYX_SKIP_SEMANTIC=1 para llegar al codegen.
+fn nodo() -> Array {
+    return ["ok", []]
+}
+
+fn main() -> int {
+    var n = nodo()
+    n.node_type = "error"
+    return 0
+}

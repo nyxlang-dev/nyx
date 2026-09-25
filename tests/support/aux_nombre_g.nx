@@ -1,0 +1,5 @@
+// aux del test-448: importa POR NOMBRE una const (y una fn) de aux_nombre_m,
+// que el programa ya importó antes.
+import { nombre_f, NOMBRE_K } from "tests/support/aux_nombre_m"
+
+pub fn nombre_g() -> int { return nombre_f() + NOMBRE_K }

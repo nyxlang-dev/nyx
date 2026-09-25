@@ -89,5 +89,12 @@ bash -c ". scripts/nyx_toolchain.sh; nyx_tc_podar '$R' 0" >/dev/null 2>&1
 [ ! -d "$R/versions/$A" ] && [ -d "$R/versions/$B" ] && ok "libre A, la poda la borra y B queda" \
     || mal "poda tras liberar A: $(ls "$R/versions" | tr '\n' ' ')"
 
+# 4. Una versión FIJADA (.fijada) no se poda aunque nadie la use: se fija la
+#    activa (B), se instala otra encima con KEEP=0 y B tiene que quedar.
+echo "red de seguridad" > "$R/versions/$B/.fijada"
+out=$(inst NYX_KEEP_VERSIONS=0); C="$(cat "$R/current")"
+[ -d "$R/versions/$B" ] && [ "$C" != "$B" ] && ok "una versión .fijada sobrevive a la poda sin estar en uso" \
+    || mal "la poda borró una versión .fijada: $(ls "$R/versions" | tr '\n' ' ')"
+
 if [ "$fallos" -gt 0 ]; then echo "  toolchain versionado: FALLÓ ($fallos)"; exit 1; fi
 echo "  toolchain versionado: PASS"

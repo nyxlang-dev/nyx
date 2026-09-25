@@ -1,0 +1,26 @@
+// test-447 — la visibilidad de una `const` no depende del ORDEN del texto.
+//
+// POR QUÉ EXISTE (2026-09-24): semantic declaraba las `const` recién al
+// validarlas, en el orden del texto, mientras que las fns y las globales
+// `let`/`var` se pre-registran. Así, una fn escrita antes de la const daba
+// NYX1002, y con imports eso se volvía un problema de ORDEN: importar primero
+// aux_orden_g (que importa aux_orden_m sin llaves) y después aux_orden_m con
+// alias deja el texto de g ANTES que el de m —el resolvedor ya había marcado m
+// como importado y no lo re-inlinea—, y g «no veía» ORDEN_BASE:
+//   error [NYX1002] in 'orden_suma': 'ORDEN_BASE' not declared
+// Con el orden de los imports al revés compilaba. Ahora las const entran en el
+// pre-pase de register_declarations, como las globales.
+import { orden_suma, orden_texto } from "tests/support/aux_orden_g"
+import "tests/support/aux_orden_m" as u
+
+// El mismo caso sin imports: la fn va antes que la const que usa.
+fn doble_local() -> int { return LOCAL_K * 2 }
+const LOCAL_K: int = 21
+
+fn main() -> int {
+    print(orden_suma().to_string())
+    print(orden_texto())
+    print(u.orden_base().to_string())
+    print(doble_local().to_string())
+    return 0
+}

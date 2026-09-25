@@ -1,0 +1,6 @@
+// aux del test-447: el módulo que declara las constantes. Lo importan el
+// programa (con alias) y aux_orden_g (sin llaves).
+const ORDEN_BASE: int = 40
+const ORDEN_NOMBRE: String = "orden"
+
+pub fn orden_base() -> int { return ORDEN_BASE }

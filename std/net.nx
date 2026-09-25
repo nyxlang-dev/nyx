@@ -373,14 +373,11 @@ pub fn try_tcp_read_exact(fd: int, n: int) -> Result<String, Error> {
 //   Err errno_to_kind            fallo del socket
 // Con `max_bytes = 1` sirve de «esperar a que llegue algo» para un protocolo
 // con framing propio: std/postgres lee así el byte de tipo del próximo mensaje.
-// ⚠️ NO VE el buffer transparente del runtime que llenan try_tcp_read_line y
-// try_tcp_read_exact (8 KB por recv): si antes se leyó con esas dos sobre el
-// mismo fd, los bytes que quedaron ahí no cuentan como «llegó algo» y esta
-// función devuelve lo que venga DESPUÉS por el socket, fuera de orden. En un
-// fd donde se usa, leer solo con try_tcp_read / try_tcp_read_partial (que no
-// dejan sobrante) o con esta misma. (Hallazgo del 2026-09-24. El arreglo de
-// raíz es del runtime: que nyx_tcp_read_timed_result drene ese buffer
-// primero, como ya hacen nyx_tcp_read_result y nyx_tcp_read_partial_result.)
+// Como try_tcp_read / try_tcp_read_partial, entrega PRIMERO lo que
+// try_tcp_read_line y try_tcp_read_exact dejaron en el buffer transparente del
+// runtime (8 KB por recv), sin esperar al socket: mezclarla con esas dos
+// conserva el orden del stream. (Hasta el 2026-09-24 no lo veía y esos bytes
+// salían fuera de orden; lo arregla conn_buf_take en runtime/net.c.)
 pub fn try_tcp_read_timed(fd: int, max_bytes: int, timeout_ms: int) -> Result<String, Error> {
     let r: Array = nyx_tcp_read_timed_result(fd, max_bytes, timeout_ms)
     let st: int = r[0]

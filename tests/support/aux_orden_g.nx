@@ -1,0 +1,6 @@
+// aux del test-447: usa las const de aux_orden_m. Si el programa importa ESTE
+// módulo antes que aux_orden_m, su texto queda antes que el de las const.
+import "tests/support/aux_orden_m"
+
+pub fn orden_suma() -> int { return ORDEN_BASE + 2 }
+pub fn orden_texto() -> String { return ORDEN_NOMBRE + "!" }

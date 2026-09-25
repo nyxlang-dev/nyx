@@ -36,6 +36,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   casos que aparecen solo por la atribución corregida salen como **aviso** (compilan, rc 0) hasta la
   próxima versión menor. `std/url` y `std/web` comparten el `url_decode` de `std/percent`, nuevo.
   `test-439`, `test-440`, +4 casos en `test-errors`.
+- **`std/serve`: una conexión keep-alive ociosa ya no retiene un worker** (fricción nyxerp
+  `20260924-200001-team-1`): con N hilos, N navegadores quietos entre clics dejaban el servidor sin
+  responder a NADIE. Tras responder, el worker quedaba bloqueado leyendo el próximo pedido sin plazo.
+  Ahora la conexión se estaciona en el event loop del runtime (como el SSE) hasta que llega otro pedido.
+  Límites: `NYX_HTTP_KEEPALIVE_SECS` (15 s de inactividad) y `NYX_HTTP_HEADER_SECS` (10 s para la
+  cabecera completa: 408 contra slowloris); `serve_idle_connections()`. 13 checks E2E nuevos (6 fallan
+  con el código viejo), receta 120.
+- **Una fn privada de un módulo `[lib]` competía con la propia del que importa** (regresión de la
+  entrega anterior, fricción nyxerp `20260924-220014-team-1`): NYX2010 «AMBIGUA» en 8 archivos de
+  pruebas. Una privada ajena ya no le gana a una visible; `nyx test` solo atribuye un archivo de
+  pruebas a su módulo si está en `[lib]`. Una versión del toolchain con `.fijada` no se poda nunca.
+- **Cinco bugs viejos**: `import { K }` de una `const` daba NYX1013; la visibilidad de las `const`
+  dependía del orden de los imports; asignar `charAt()` a un `var` de ancho fijo emitía IR inválido;
+  tres lecturas `.node_type` sobre Arrays en el propio parser se compilaban como 0 en silencio (los
+  patrones `E.V(a, b)` nunca salían como `match_pattern`; ese catch-all ahora aborta con NYX2007); y
+  `try_tcp_read_timed` no drenaba primero el buffer por fd. `test-447..449`.
 - **`std/postgres`: las notificaciones que llegaban durante una consulta se tiraban** (fricción nyxerp
   `20260924-180024-team-1`). Ahora se guardan en la conexión y las entrega la próxima espera. Nuevo
   LISTEN/NOTIFY: `try_pg_listen`, `try_pg_unlisten`, `try_pg_notify` y `try_pg_wait_notifications`

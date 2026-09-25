@@ -1,0 +1,14 @@
+// NYX1013 — dos `const` con el mismo nombre en el mismo scope siguen siendo
+// error, aunque desde el 2026-09-24 las const se pre-registran (para que su
+// visibilidad no dependa del orden del texto, ver test-447). El pre-pase
+// reserva solo la PRIMERA; la segunda cae en el chequeo de siempre.
+//
+// Expected exit: 1
+
+const LIMITE: int = 1
+const LIMITE: int = 2
+
+fn main() -> int {
+    print(LIMITE.to_string())
+    return 0
+}

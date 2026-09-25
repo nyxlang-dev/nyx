@@ -24,6 +24,8 @@ TESTS=(
   "tests/compiler/errors/test-nyx1032-struct-campos-faltantes.nx|struct literal 'P' is missing fields: b, c"
   "tests/compiler/errors/test-nyx1003-builtin-void-ligado.nx|type mismatch in 'x': expected int, got ()"
   "tests/compiler/errors/test-nyx1013-colision-con-el-prelude.nx|'Error' is already declared by the prelude"
+  "tests/compiler/errors/test-nyx1013-const-duplicada.nx|'LIMITE' already declared in this scope"
+  "tests/compiler/errors/test-import-ya-inlineado-conserva-lineas.nx|in 'main' (line 11): type mismatch in 'x'"
   "tests/compiler/errors/test-m08-unknown-type.nx|unknown type 'Str'"
   "tests/compiler/errors/test-m08-array-mismatch.nx|type mismatch in 'nums': expected Array<int>, got Array<String>"
   "tests/compiler/errors/test-m08-arg-mismatch.nx|argument 1 of 'greet': expected String, got int"
@@ -1847,6 +1849,20 @@ fi
 
 # 4b: método no reconocido sobre un global registrado SOLO en const_values
 # (const literal a nivel de archivo) — rama separada del catch-all de 4a/8866.
+# Backstop NYX2007 del «campo no encontrado» (2026-09-24): lectura y escritura
+# de un campo sobre un receptor Array. Era el print mudo que parser.nx disparaba
+# ×3 al autocompilarse (`Array:node_type`) y compilaba como 0 / descartaba.
+for cfa in codegen-campo-sobre-array codegen-asignar-campo-sobre-array; do
+  name="$cfa"
+  cfa_out=$(NYX_SKIP_SEMANTIC=1 NYX_LANG=en NYX_SRC=tests/compiler/errors/fixtures/$cfa.nx ./nyx_bootstrap 2>&1); cfa_rc=$?
+  rm -f tests/compiler/errors/fixtures/$cfa.ll
+  if [ "$cfa_rc" -ne 0 ] && echo "$cfa_out" | grep -qF "error [NYX2007]: field 'node_type' does not exist on a receiver of type Array"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2007 nombrando 'node_type')\n" "$cfa_rc"
+    echo "$cfa_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+done
 name="codegen-method-on-const-global"
 cmg_out=$(NYX_SRC=tests/compiler/errors/fixtures/codegen-method-on-const-global.nx ./nyx_bootstrap 2>&1); cmg_rc=$?
 if [ "$cmg_rc" -ne 0 ] && echo "$cmg_out" | grep -qF "NYX2002" && echo "$cmg_out" | grep -qF "metodo_que_no_existe"; then

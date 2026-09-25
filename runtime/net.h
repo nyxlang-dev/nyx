@@ -31,6 +31,20 @@ int64_t nyx_resp_write_bulk(int64_t fd, nyx_string* data);
 // Fast HTTP request parser (C-level, minimal GC allocs)
 nyx_array_t* nyx_http_parse_request_fast(int64_t fd);
 int64_t nyx_http_max_body(void);
+// Igual, con plazo para la cabecera (ms; <= 0 = sin plazo). Vencido: pedido
+// vacío con err = 408 en el slot 5. Ver el comentario en net.c.
+nyx_array_t* nyx_http_parse_request_deadline(int64_t fd, int64_t header_ms);
+int64_t nyx_http_header_timeout_secs(void);   // NYX_HTTP_HEADER_SECS, 10
+int64_t nyx_http_keepalive_secs(void);        // NYX_HTTP_KEEPALIVE_SECS, 15
+
+// Estacionamiento de conexiones HTTP ociosas (std/serve). Contrato completo
+// en net.c, sección «Estacionamiento de conexiones HTTP ociosas».
+int64_t nyx_http_park_start(void);
+int64_t nyx_http_park(int64_t fd, int64_t fresh);   // 1 estacionada, 0 pipelining, -1 no
+int64_t nyx_http_park_next(void);
+void    nyx_http_park_post(int64_t v);
+int64_t nyx_http_park_close_all(void);
+int64_t nyx_http_parked_count(void);
 
 // Fast RESP command parser (C-level, zero intermediate allocs)
 // CONTRATO: un array vacío de retorno significa "comando inválido o sobre

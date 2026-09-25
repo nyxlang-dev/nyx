@@ -1,0 +1,13 @@
+// Un `import { … } from` de un módulo que YA está inlineado (acá std/math,
+// que viene en el prelude) no corre las líneas de los diagnósticos que siguen.
+// Hasta el 2026-09-24 el resolvedor borraba ese renglón sin dejar nada y el
+// error de abajo salía con la línea anterior (line 10 en vez de 11).
+//
+// Expected exit: 1
+
+import { abs } from "std/math"
+
+fn main() -> int {
+    let x: int = "no"
+    return x
+}

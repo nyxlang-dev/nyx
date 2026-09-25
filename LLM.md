@@ -548,11 +548,11 @@ of returning a typed error (e.g. `EADDRINUSE` surfaces as `kind ==
    read): `Ok(1..max bytes)` as soon as something arrives, `Err{110, "timeout"}`
    when the deadline passes WITHOUT consuming anything (the fd is intact, wait
    again), `Err{0, "eof"}` when the peer closed; `0` = just look, `< 0` = no
-   limit. ⚠️ It does NOT see the runtime's transparent per-fd buffer that
-   `try_tcp_read_line`/`try_tcp_read_exact` fill (8 KB per `recv`): after those,
-   the bytes left in that buffer don't count as "something arrived" and the
-   next bytes come out of order. On a fd you wait on, read only with
-   `try_tcp_read`/`try_tcp_read_partial` (they leave nothing behind) or with it.
+   limit. Like `try_tcp_read`/`try_tcp_read_partial`, it first hands over what
+   `try_tcp_read_line`/`try_tcp_read_exact` left in the runtime's transparent
+   per-fd buffer (8 KB per `recv`) — immediately, without waiting on the socket
+   — so mixing it with those keeps the stream in order (fixed 2026-09-24;
+   before, those bytes were skipped and came out of order).
 
 For HTTP clients (E5.3, `import "std/http"`), `try_http_get(url)` /
 `try_http_post(url, body)` / `try_http_request(method, url, headers,
@@ -1926,7 +1926,11 @@ gradual typing leaves unannotated. One rule, no aliases: use `size()` on Map, `l
 String/Array. `s.f.length` (property form, no parens) on a String or Array field now returns the real
 length instead of 0. The last residue fell in v0.24.1: `m.length` (property form) on a *local* Map
 variable used to print a mute error and return 0 with rc=0 — now it's NYX2007 too. A Map exposes no
-properties; use the methods (`m.size()`, `m.keys()`, `m.values()`).
+properties; use the methods (`m.size()`, `m.keys()`, `m.values()`). Since 2026-09-24 the same
+backstop covers any field codegen cannot resolve (`x.f` / `x.f = v` where `x` is an `Array`, `int`…,
+e.g. an AST node kept as a plain Array): it used to print «campo no encontrado», read 0 and drop the
+write with rc=0 — the compiler's own parser had three such reads. Read such values by index or bind
+them with their struct type.
 
 14. **The REPL evaluates a declared SUBSET and says so loudly (v0.24.2-3)**. `make repl` runs a
 tree-walking interpreter, NOT the compiler: it covers basic types, control flow, functions, arrays and
@@ -2205,7 +2209,7 @@ fn main() -> int {
     // main() in a test/example that must terminate on its own; run it in a
     // `spawn { ... }` goroutine instead and let the rest of main() drive
     // the process's lifetime (see examples/by-example/78-serve-routes.nx).
-    return serve_app(app, 8080, 4)   // (port, worker threads)
+    return serve_app(app, 8080, 4)   // (port, worker threads = requests IN FLIGHT, not connections)
 }
 ```
 
@@ -2362,10 +2366,47 @@ fn main() -> int {
     `try_pg_notify` inside its transaction and every process runs one listener
     thread (`try_pg_wait_notifications` → `sse_broadcast`) — see § `std/postgres`
     and `examples/by-example/119-postgres-listen-notify.nx`.
+- **Connections vs. worker threads** (fricción nyxerp 20260924-200001): a worker
+  is busy only while a request is being read, handled and answered. After the
+  response, a keep-alive connection is **parked** in the runtime's event loop
+  (epoll; `runtime/net.c`, «Estacionamiento de conexiones HTTP ociosas») and
+  the worker goes back to the queue; when the next request arrives on that
+  connection, any free worker picks it up. New connections take the same path:
+  one that connects and says nothing holds no thread. So idle connections — a
+  browser between clicks, up to 6 per tab, several tabs — never exhaust the
+  workers. Before 2026-09-24 each keep-alive connection held its worker until
+  the client closed it: N idle connections froze a server of N workers for
+  EVERYONE.
+  - **How many connections**: bounded by fds, not threads — up to 4096 open
+    connections per server (the fd ceiling of `runtime/net.c`'s per-connection
+    buffer; a connection on fd ≥ 4096 is closed without a response). Mind the
+    process fd limit (`ulimit -n`, often 1024).
+  - **How many workers**: size them for requests IN FLIGHT at the same time,
+    i.e. for how long a handler blocks (a SQL query, an outgoing HTTP call).
+    4 serves many browsers with fast handlers; handlers that wait on a
+    database want more (8–32). A worker is an OS thread.
+  - **Limits** (environment variables, read once when `serve_app` starts):
+    - `NYX_HTTP_KEEPALIVE_SECS` (default **15**): an idle keep-alive connection
+      with no new request for this long is closed by the server (clients
+      reopen transparently).
+    - `NYX_HTTP_HEADER_SECS` (default **10**): time allowed to receive a
+      request's COMPLETE header (request line + headers), measured as a total,
+      not per read — a client trickling one byte at a time is cut too
+      (slowloris). Over it: `408 Request Timeout` + close. The same value
+      caps how long a NEW connection may stay silent before its first byte,
+      and how long a request body may stall with no byte arriving (a slow
+      upload that keeps progressing is not cut).
+    - Invalid or non-positive values fall back to the default.
+  - `serve_idle_connections()` returns how many connections are parked right
+    now (diagnostics). Recipe: `examples/by-example/120-serve-idle-connections.nx`.
+  - Not covered yet: a client that stops READING a large response still
+    blocks its worker in the write (no send timeout); pipelined requests on
+    one connection are answered in order by one worker.
 - **Graceful shutdown**: `serve_on_shutdown(fn() -> int)` registers a hook
   that runs during the SIGTERM drain, after in-flight requests finish and
   before `serve_app` returns 0. `NYX_SERVE_DRAIN_SECS` overrides the
-  10s default deadline (`0` = no wait).
+  10s default deadline (`0` = no wait). Parked idle keep-alive connections
+  are closed at the start of the drain (they have no request in flight).
 - **Bind address**: `serve_app(app, port, workers)` listens on **loopback
   only** (`127.0.0.1`) — reachable from the same machine, not from the
   network. **Behavior change (2026-09-14)**: earlier versions defaulted to
@@ -2960,6 +3001,16 @@ siembra uno, así que en tu proyecto agrega `packages/` al tuyo a mano — el
 repo del lenguaje ignora `**/packages/nyx-*/`, pero ese patrón vale solo acá.
 
 Imports from dependencies: `import { something } from "nyx-kv/src/commands"`.
+
+**Import order never changes what a module sees** (since 2026-09-24): `const`s
+are pre-registered like functions and `let`/`var` globals, so a module sees the
+constants of the modules it imports whatever order the program wrote its imports
+in, and a fn may use a `const` declared below it. Before, `import { f } from "g"`
+followed by `import "m" as u` (with `g` importing `m`) gave NYX1002 on `m`'s
+constants inside `g`. Two `const`s with the same name in one scope are still NYX1013.
+Likewise `import { f, K } from "m"` names a `const` exactly as it names a fn —
+before, if another file had already imported `m`, that line gave NYX1013
+«'K' already declared».
 
 **AI-first onboarding files** seeded by `nyx init` (read these in a fresh
 project before reading `std/` source): `AGENTS.md` (playbook — what/how/with-

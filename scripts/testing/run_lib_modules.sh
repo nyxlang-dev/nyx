@@ -246,6 +246,25 @@ if [ "$rc" -ne 0 ] && echo "$out" | grep -q "NYX1005" && [ ! -x ./tz ]; then ok 
 else mal "hueco de tipos en la frontera: rc=$rc, sin NYX1005 o con binario ($(echo "$out" | grep -E 'NYX|error' | head -1))"; fi
 cd "$P" || exit 1
 
+echo "── [lib] modules: una privada importada no le gana a la propia (nyxerp 220014) ──"
+# Regresión de a408ff5f: desde que [lib] inlinea el módulo entero, su fn
+# PRIVADA `ayuda` competía con la `ayuda` propia del archivo que lo importa
+# (NYX2010 «AMBIGUA» en 8 archivos de pruebas de nyxerp). Además `nyx test`
+# atribuía todo archivo de pruebas a un «módulo» tests/… aunque no estuviera en
+# [lib]. Una privada ajena nunca le gana a una visible.
+H="$T/homonima"; mkdir -p "$H/src" "$H/tests"; cd "$H" || exit 1
+printf '[package]\nname = "hm"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/a"]\n' > nyx.toml
+printf 'fn ayuda(x: int) -> int { return x + 1 }\npub fn usar() -> int { return ayuda(1) }\n' > src/a.nx
+printf 'import "src/a"\n\nfn ayuda(texto: String) -> int { return texto.length() }\n\ntest "la local gana" {\n    assert(ayuda("hola") == 4, "")\n    assert(usar() == 2, "")\n}\n' > tests/a_test.nx
+printf 'import "src/a"\nfn ayuda(texto: String) -> int { return texto.length() }\nfn main() -> int {\n    println(int_to_string(ayuda("hola")) + " " + int_to_string(usar()))\n    return 0\n}\n' > src/main.nx
+out=$("$ROOT/nyx_test" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q "ALL TESTS PASSED"; then ok "nyx test: la fn propia del archivo de pruebas gana a la privada homónima importada"
+else mal "privada homónima en nyx test (rc=$rc): $(echo "$out" | grep -E 'NYX|FAIL' | head -2 | tr '\n' ' ')"; fi
+rm -f hm; out=$("$NB" build 2>&1); run=$(./hm 2>&1)
+if [ "$run" = "4 2" ]; then ok "nyx build: la fn propia del programa gana a la privada homónima importada (4 2)"
+else mal "privada homónima en nyx build: '$run' $(echo "$out" | grep -E 'NYX|error' | head -2 | tr '\n' ' ')"; fi
+cd "$P" || exit 1
+
 echo "── [lib] modules: errores del manifiesto ──"
 cp nyx.toml nyx.toml.bien
 printf '[package]\nname = "libp"\nversion = "0.1.0"\n\n[lib]\nmodulos = ["src/util"]\n' > nyx.toml

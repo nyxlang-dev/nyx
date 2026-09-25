@@ -224,6 +224,37 @@ else
     fi
 fi
 
+# ── std/serve: conexiones ociosas no retienen workers ────────────────────
+# Regresión de la fricción de nyxerp 20260924-200001: con N workers, N
+# conexiones keep-alive ociosas dejaban al servidor sin responder. Fixture con
+# 2 workers (server_keepalive.nx); el harness abre más ociosas/calladas/SSE que
+# hilos y prueba NYX_HTTP_KEEPALIVE_SECS y NYX_HTTP_HEADER_SECS (408). Puerto
+# 13090 (SERVE_KA_PORT).
+echo -e "\n${BOLD}-- std/serve: keep-alive ocioso --${NC}"
+SK_BIN="/tmp/nyx-serve-std-keepalive-server"
+if [ ! -x ./nyx_bootstrap ]; then
+    echo -e "  SKIP: falta ./nyx_bootstrap (make bootstrap)"
+else
+    echo -e "  Compiling tests/integration/serve_std/server_keepalive.nx..."
+    cp tests/integration/serve_std/server_keepalive.nx script.nx
+    if ./nyx_bootstrap >/dev/null 2>&1 && \
+       clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+           -o "$SK_BIN" 2>/dev/null; then
+        rm -f script.nx script.ll
+        if python3 tests/integration/test_serve_std_keepalive.py "$SK_BIN"; then
+            echo -e "  ${GREEN}std/serve keep-alive E2E passed${NC}"
+        else
+            echo -e "  ${RED}std/serve keep-alive E2E failed${NC}"
+            OVERALL=1
+        fi
+        rm -f "$SK_BIN"
+    else
+        rm -f script.nx script.ll
+        echo -e "  ${RED}std/serve keep-alive: no se pudo compilar el fixture${NC}"
+        OVERALL=1
+    fi
+fi
+
 # ── std/serve: smoke COMPLETO (los 64 checks de nyx-serve v0.7.1) ─────────
 # Fixture tests/integration/serve_std/standalone.nx = examples/standalone.nx
 # del producto con los imports en std/*; harness test_serve_std_smoke.py =

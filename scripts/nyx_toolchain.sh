@@ -134,7 +134,7 @@ _nyx_tc_migrar_ya() {
     nyx_tc_con_flip "$root" nyx_tc_enlazar "$root" "$id"
 }
 
-# Borra versiones viejas: conserva la activa y las KEEP más recientes, y nunca
+# Borra versiones viejas: conserva la activa, las FIJADAS (.fijada) y las KEEP más recientes, y nunca
 # una EN USO (el wrapper tiene su .lock compartido mientras el proceso vive; acá
 # se intenta exclusivo sin esperar y, si no se puede, se deja). Borra también
 # armados a medio hacer de más de un día (un install que murió).
@@ -144,6 +144,10 @@ nyx_tc_podar() {
     find "$root/versions" -maxdepth 1 -name '.staging.*' -mtime +1 -exec rm -rf {} + 2>/dev/null
     for v in $(ls -1t "$root/versions" 2>/dev/null); do
         [ "$v" = "$actual" ] && continue
+        # Una versión FIJADA (archivo .fijada adentro) no se poda nunca: la
+        # fija un equipo como red de seguridad para producción (nyxerp,
+        # 2026-09-24) aunque en ese momento ningún proceso la esté usando.
+        [ -f "$root/versions/$v/.fijada" ] && continue
         n=$((n + 1))
         [ "$n" -le "$keep" ] && continue
         if command -v flock >/dev/null 2>&1; then

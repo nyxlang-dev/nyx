@@ -19,6 +19,8 @@
 #include <gc.h>
 #include "net.h"
 #include "os/nyx_os.h"
+#include "event_loop.h"   // estacionamiento de conexiones HTTP ociosas
+#include "thread.h"       // nyx_channel_* (cola de fds listos)
 
 // Tamaños de buffer heredados de <netinet/in.h>/<netdb.h> -- esas headers
 // salen del include set en esta migración (el contrato os_addr_* no impone
@@ -56,6 +58,23 @@ static void reset_conn_buf(int fd) {
     if (fd >= 0 && fd < NYX_MAX_CONN_BUFS) {
         conn_buf_active[fd] = 0;
     }
+}
+
+// Copia a `out` hasta `max` bytes de lo que read_line/read_exact dejaron en el
+// buffer del fd, y los consume. Devuelve cuántos copió (0 si no había nada).
+// TODA lectura que no pase por el buffer (read, read_partial, read_timed, el
+// body de http_parse_request_fast) tiene que llamarla ANTES de ir al socket:
+// esos bytes ya salieron del kernel, y saltearlos entrega el stream fuera de
+// orden. Vivía copiada en cada lectora y read_timed nació sin ella (2026-09-24).
+static int64_t conn_buf_take(int64_t fd, char* out, int64_t max) {
+    if (fd < 0 || fd >= NYX_MAX_CONN_BUFS || !conn_buf_active[(int)fd]) return 0;
+    nyx_conn_buf_t* cb = &conn_bufs[(int)fd];
+    if (cb->pos >= cb->len || max <= 0) return 0;
+    int64_t avail = cb->len - cb->pos;
+    int64_t n = max < avail ? max : avail;
+    memcpy(out, cb->buf + cb->pos, (size_t)n);
+    cb->pos += (int)n;
+    return n;
 }
 
 // ===== TCP =====
@@ -179,15 +198,7 @@ nyx_string* nyx_tcp_read(int64_t fd, int64_t max_bytes) {
     int64_t total = 0;
 
     // Drain connection buffer first (if any buffered data from read_line)
-    nyx_conn_buf_t* cb = (fd >= 0 && fd < NYX_MAX_CONN_BUFS && conn_buf_active[(int)fd])
-                         ? &conn_bufs[(int)fd] : NULL;
-    if (cb && cb->pos < cb->len) {
-        int avail = cb->len - cb->pos;
-        int64_t to_copy = (max_bytes < avail) ? max_bytes : avail;
-        memcpy(out, cb->buf + cb->pos, to_copy);
-        cb->pos += (int)to_copy;
-        total = to_copy;
-    }
+    total = conn_buf_take(fd, out, max_bytes);
 
     // Read remaining from socket
     while (total < max_bytes) {
@@ -212,15 +223,7 @@ nyx_string* nyx_tcp_read_partial(int64_t fd, int64_t max_bytes) {
     int64_t total = 0;
 
     // Drenar buffer de conexión (datos bufferizados por read_line)
-    nyx_conn_buf_t* cb = (fd >= 0 && fd < NYX_MAX_CONN_BUFS && conn_buf_active[(int)fd])
-                         ? &conn_bufs[(int)fd] : NULL;
-    if (cb && cb->pos < cb->len) {
-        int avail = cb->len - cb->pos;
-        int64_t to_copy = (max_bytes < avail) ? max_bytes : avail;
-        memcpy(out, cb->buf + cb->pos, to_copy);
-        cb->pos += (int)to_copy;
-        total = to_copy;
-    }
+    total = conn_buf_take(fd, out, max_bytes);
 
     // Si el buffer no dio nada, UN solo recv (retorna con lo que haya llegado)
     if (total == 0) {
@@ -334,8 +337,52 @@ void nyx_tcp_close(int64_t fd) {
 
 #include "runtime-arrays.h"
 
+// Espera a que `fd` tenga datos antes de un recv, respetando un plazo
+// ABSOLUTO (os_monotonic_ns). deadline_ns == 0 = sin plazo (recv bloqueante,
+// el comportamiento de siempre). Devuelve 1 si se puede leer (datos, EOF o
+// error: el recv que sigue lo dirá), 0 si venció el plazo.
+// Por qué un plazo absoluto y no SO_RCVTIMEO: ese es POR operación, así que un
+// cliente que gotea un byte cada 9 s no lo vence nunca (slowloris). Mismo
+// razonamiento que nyx_tcp_read_timed_result.
+static int net_wait_readable(int fd, int64_t deadline_ns) {
+    if (deadline_ns == 0) return 1;
+    for (;;) {
+        int64_t rem = (deadline_ns - os_monotonic_ns()) / 1000000;
+        if (rem <= 0) return 0;
+        int ms = rem > 0x7fffffff ? 0x7fffffff : (int)rem;
+        int pr = os_sock_poll1(fd, OS_POLLIN, ms);
+        if (pr == -EINTR) continue;
+        if (pr == 0) return 0;
+        return 1;   // >0 (IN/HUP/ERR) o error: que el recv lo resuelva
+    }
+}
+
 // Buffered line read into stack buffer — NO GC allocation
 // Returns length of line read (0 = connection closed/error)
+// Con deadline_ns != 0 cada recv espera como mucho hasta el plazo; si vence,
+// pone *timed_out = 1 y devuelve lo leído hasta ahí (el llamador descarta).
+static int buffered_read_line_dl(int fd, nyx_conn_buf_t* cb, char* out, int max_len,
+                                 int64_t deadline_ns, int* timed_out) {
+    int lpos = 0;
+    while (lpos < max_len - 1) {
+        if (cb->pos >= cb->len) {
+            if (!net_wait_readable(fd, deadline_ns)) {
+                if (timed_out) *timed_out = 1;
+                break;
+            }
+            int64_t n = os_sock_recv(fd, cb->buf, NYX_NET_BUF_SIZE);
+            if (n <= 0) break;
+            cb->pos = 0;
+            cb->len = (int)n;
+        }
+        char c = cb->buf[cb->pos++];
+        if (c == '\n') break;
+        if (c != '\r') out[lpos++] = c;
+    }
+    out[lpos] = '\0';
+    return lpos;
+}
+
 static int buffered_read_line(int fd, nyx_conn_buf_t* cb, char* out, int max_len) {
     int lpos = 0;
     while (lpos < max_len - 1) {
@@ -528,33 +575,42 @@ int64_t nyx_http_max_body(void) {
     return 1048576;
 }
 
-nyx_array_t* nyx_http_parse_request_fast(int64_t fd) {
+// Arreglo vacío del parser: ["request", "", "", [], "", err]. err = 0 es
+// «el cliente cerró»; 408 es «venció el plazo de la cabecera».
+static nyx_array_t* http_empty_request(int64_t err) {
+    nyx_array_t* empty = nyx_array_new(6);
+    nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr("request"), NYX_TAG_STRING);
+    nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    nyx_array_push_tagged(empty, (int64_t)nyx_array_new(0), NYX_TAG_ARRAY);
+    nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    nyx_array_push_tagged(empty, err, NYX_TAG_INT);
+    return empty;
+}
+
+// Parser común. header_ms <= 0 = sin plazo (el builtin de siempre). Con
+// header_ms > 0:
+//   - la línea de pedido y TODAS las cabeceras tienen que llegar dentro de
+//     header_ms contados desde que se empieza a leer. Si no, el resultado es
+//     un pedido vacío con err = 408 en el slot 5 (el servidor responde 408 y
+//     cierra). Es la defensa contra slowloris: un cliente que gotea la
+//     cabecera un byte por vez ya no retiene un hilo indefinidamente.
+//   - el body tiene plazo de INACTIVIDAD (header_ms sin recibir un solo
+//     byte), no total: una subida lenta pero que avanza no se corta.
+static nyx_array_t* http_parse_request_impl(int64_t fd, int64_t header_ms) {
     nyx_conn_buf_t* cb = get_conn_buf((int)fd);
-    if (!cb) {
-        // Return empty request: ["request", "", "", [], "", 0]
-        nyx_array_t* empty = nyx_array_new(6);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr("request"), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, (int64_t)nyx_array_new(0), NYX_TAG_ARRAY);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, 0, NYX_TAG_INT);
-        return empty;
-    }
+    if (!cb) return http_empty_request(0);
+
+    int64_t deadline = header_ms > 0 ? os_monotonic_ns() + header_ms * 1000000LL : 0;
+    int timed_out = 0;
 
     // Parse request line on stack
     char line[4096];
-    int len = buffered_read_line((int)fd, cb, line, sizeof(line));
+    int len = buffered_read_line_dl((int)fd, cb, line, sizeof(line), deadline, &timed_out);
+    if (timed_out) return http_empty_request(408);
     if (len == 0) {
         // Client disconnected — return empty request
-        nyx_array_t* empty = nyx_array_new(6);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr("request"), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, (int64_t)nyx_array_new(0), NYX_TAG_ARRAY);
-        nyx_array_push_tagged(empty, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
-        nyx_array_push_tagged(empty, 0, NYX_TAG_INT);
-        return empty;
+        return http_empty_request(0);
     }
 
     // Split request line: "GET /path HTTP/1.1"
@@ -577,7 +633,8 @@ nyx_array_t* nyx_http_parse_request_fast(int64_t fd) {
     int64_t content_length = 0;
     char hdr[4096];
     while (1) {
-        int hlen = buffered_read_line((int)fd, cb, hdr, sizeof(hdr));
+        int hlen = buffered_read_line_dl((int)fd, cb, hdr, sizeof(hdr), deadline, &timed_out);
+        if (timed_out) return http_empty_request(408);
         if (hlen == 0) break; // empty line = end of headers
 
         // Find ": " separator
@@ -608,14 +665,12 @@ nyx_array_t* nyx_http_parse_request_fast(int64_t fd) {
         char* body_buf = (char*)GC_malloc_atomic(content_length + 1);
         int64_t total = 0;
         // Drain from connection buffer first
-        if (cb->pos < cb->len) {
-            int avail = cb->len - cb->pos;
-            int64_t to_copy = (content_length < avail) ? content_length : avail;
-            memcpy(body_buf, cb->buf + cb->pos, to_copy);
-            cb->pos += (int)to_copy;
-            total = to_copy;
-        }
+        total = conn_buf_take(fd, body_buf, content_length);
         while (total < content_length) {
+            if (header_ms > 0 &&
+                !net_wait_readable((int)fd, os_monotonic_ns() + header_ms * 1000000LL)) {
+                return http_empty_request(408);
+            }
             int64_t n = os_sock_recv(fd, body_buf + total, content_length - total);
             if (n <= 0) break;
             total += n;
@@ -636,6 +691,248 @@ nyx_array_t* nyx_http_parse_request_fast(int64_t fd) {
     nyx_array_push_tagged(result, (int64_t)body_str, NYX_TAG_STRING);
     nyx_array_push_tagged(result, req_err, NYX_TAG_INT);
     return result;
+}
+
+nyx_array_t* nyx_http_parse_request_fast(int64_t fd) {
+    return http_parse_request_impl(fd, 0);
+}
+
+nyx_array_t* nyx_http_parse_request_deadline(int64_t fd, int64_t header_ms) {
+    return http_parse_request_impl(fd, header_ms);
+}
+
+// Lee un entero positivo de una variable de entorno; `def` si falta o no es
+// un entero > 0. Mismo contrato que nyx_http_max_body.
+static int64_t net_env_positive(const char* name, int64_t def) {
+    const char* env = getenv(name);
+    if (env && *env) {
+        char* end = NULL;
+        long long v = strtoll(env, &end, 10);
+        if (end && *end == '\0' && v > 0) return (int64_t)v;
+    }
+    return def;
+}
+
+// Plazo para recibir la cabecera completa de un pedido (segundos).
+// NYX_HTTP_HEADER_SECS, 10 por omisión.
+int64_t nyx_http_header_timeout_secs(void) {
+    return net_env_positive("NYX_HTTP_HEADER_SECS", 10);
+}
+
+// Inactividad máxima de una conexión keep-alive entre dos pedidos (segundos).
+// NYX_HTTP_KEEPALIVE_SECS, 15 por omisión (el orden de Apache/nginx: 5 y 75;
+// 15 cubre el ir y venir de una persona entre clics sin guardar conexiones
+// muertas mucho tiempo).
+int64_t nyx_http_keepalive_secs(void) {
+    return net_env_positive("NYX_HTTP_KEEPALIVE_SECS", 15);
+}
+
+// ===== Estacionamiento de conexiones HTTP ociosas (fricción nyxerp 2026-09-24) =====
+//
+// El problema: std/serve atendía cada conexión keep-alive con un hilo que,
+// tras responder, se quedaba BLOQUEADO en recv() esperando el próximo pedido.
+// Una conexión ociosa (un navegador entre clics) retenía su hilo para siempre;
+// con N hilos, N conexiones ociosas dejaban al servidor sin responder a nadie.
+//
+// La solución es la misma idea que ya usaba el SSE («el canal no ocupa un
+// worker»): el hilo SUELTA la conexión en cuanto termina de responder. Acá la
+// suelta a un «estacionamiento»: un único hilo que vigila con el event loop
+// del runtime (event_loop.c, epoll en Linux) todas las conexiones ociosas y,
+// cuando una tiene un pedido nuevo, la entrega a la cola de la que leen los
+// workers. Así los hilos solo trabajan mientras hay un pedido en curso, y el
+// número de conexiones abiertas deja de depender del número de hilos.
+//
+// Las conexiones nuevas pasan por el mismo camino: un cliente que conecta y no
+// manda nada tampoco toma un hilo.
+//
+// Plazos (se leen UNA vez al arrancar, ver nyx_http_park_start):
+//   - conexión recién aceptada sin un byte: NYX_HTTP_HEADER_SECS.
+//   - conexión ociosa entre pedidos: NYX_HTTP_KEEPALIVE_SECS.
+// Vencido el plazo, el estacionamiento la cierra (y libera su buffer).
+//
+// Propiedad del fd, sin ambigüedad: mientras está estacionado es SOLO del
+// hilo del estacionamiento (que lo entrega o lo cierra); una vez entregado a
+// la cola es del worker que lo saca. Todo cambio de estado va bajo pk_lock, y
+// el orden de locks es siempre pk_lock -> lock del event loop.
+//
+// Límite: fds < NYX_MAX_CONN_BUFS (el mismo que ya tenía el buffer por fd del
+// parser; un fd más alto no tiene buffer y el parser lo cierra).
+
+typedef struct {
+    int started;
+    int closing;          // drain: no se estaciona nada más
+    int disabled;         // el event loop no acepta fds (win32 hasta IOCP)
+    NyxEventLoop* loop;
+    void* ch;             // cola de fds listos (nyx_channel), la leen los workers
+    int64_t idle_ms;
+    int64_t fresh_ms;
+    int hwm;              // fd más alto estacionado alguna vez + 1
+    int count;            // fds estacionados ahora
+    os_mutex_t lock;
+    os_thread_t th;
+} nyx_http_park_t;
+
+// Static: Boehm escanea el segmento de datos, así que el canal (GC_MALLOC)
+// queda vivo mientras viva el proceso.
+static nyx_http_park_t g_park;
+// 0 = no estacionado; si no, plazo absoluto en ms (monotónico).
+static int64_t g_park_deadline[NYX_MAX_CONN_BUFS];
+static os_once_t g_park_once = OS_ONCE_STATIC_INIT;
+
+static int64_t park_now_ms(void) { return os_monotonic_ns() / 1000000; }
+
+// Saca `fd` del estacionamiento. SIEMPRE con g_park.lock tomado.
+static void park_forget_locked(int fd) {
+    g_park_deadline[fd] = 0;
+    g_park.count--;
+    nyx_event_loop_remove(g_park.loop, fd);
+}
+
+// Llega un pedido (o el cierre del cliente) en una conexión estacionada: se
+// entrega a los workers. Un EOF también se entrega: el worker lee 0 bytes y
+// cierra, igual que antes.
+static void park_ready_cb(int fd, int events, void* ud) {
+    (void)events; (void)ud;
+    if (fd < 0 || fd >= NYX_MAX_CONN_BUFS) return;
+    os_mutex_lock(&g_park.lock);
+    int mio = g_park_deadline[fd] != 0;
+    if (mio) park_forget_locked(fd);
+    os_mutex_unlock(&g_park.lock);
+    // Fuera del lock: si la cola está llena, este hilo espera (contrapresión)
+    // sin frenar a los workers que estacionan.
+    if (mio) nyx_channel_send(g_park.ch, fd);
+}
+
+// Cierra las conexiones cuyo plazo venció.
+static void park_sweep(void) {
+    int64_t now = park_now_ms();
+    os_mutex_lock(&g_park.lock);
+    for (int fd = 0; fd < g_park.hwm; fd++) {
+        int64_t d = g_park_deadline[fd];
+        if (d != 0 && d <= now) {
+            park_forget_locked(fd);
+            nyx_tcp_close(fd);
+        }
+    }
+    os_mutex_unlock(&g_park.lock);
+}
+
+static void* park_thread_main(void* arg) {
+    (void)arg;
+    // epoll ve al instante un fd agregado desde otro hilo; el poll() de los
+    // otros POSIX solo en la vuelta siguiente, de ahí el tick más corto.
+#ifdef __linux__
+    const int tick_ms = 250;
+#else
+    const int tick_ms = 20;
+#endif
+    for (;;) {
+        nyx_event_loop_run_once(g_park.loop, tick_ms);
+        park_sweep();
+    }
+    return NULL;
+}
+
+static void park_init_once(void) {
+    os_mutex_init(&g_park.lock);
+    g_park.idle_ms = nyx_http_keepalive_secs() * 1000;
+    g_park.fresh_ms = nyx_http_header_timeout_secs() * 1000;
+    // Capacidad = todos los fds posibles: el estacionamiento casi nunca
+    // espera por cola llena.
+    g_park.ch = nyx_channel_new(NYX_MAX_CONN_BUFS);
+    g_park.loop = nyx_event_loop_create();
+    if (!g_park.loop) { g_park.disabled = 1; g_park.started = 1; return; }
+    if (os_thread_create(&g_park.th, park_thread_main, NULL) != 0) {
+        g_park.disabled = 1;
+    } else {
+        os_thread_detach(&g_park.th);
+    }
+    g_park.started = 1;
+}
+
+// Arranca el estacionamiento (idempotente). Devuelve 1 si estaciona de
+// verdad, 0 si no puede (sin event loop de fds: los workers leen bloqueando,
+// como antes). La cola de workers existe en los dos casos.
+int64_t nyx_http_park_start(void) {
+    os_once(&g_park_once, park_init_once);
+    return g_park.disabled ? 0 : 1;
+}
+
+// Estaciona `fd` hasta que llegue un pedido. fresh = 1 para una conexión
+// recién aceptada (plazo NYX_HTTP_HEADER_SECS y buffer limpio), 0 para una
+// que acaba de recibir su respuesta (plazo NYX_HTTP_KEEPALIVE_SECS).
+// Devuelve:
+//    1  estacionada: el fd ya NO es del llamador.
+//    0  el buffer del fd ya tiene el pedido siguiente (pipelining): el
+//       llamador sigue atendiéndolo él mismo, sin esperar al event loop
+//       (epoll no avisaría: esos bytes ya salieron del socket).
+//   -1  no se puede estacionar (drain en curso, sin event loop, fd fuera de
+//       rango, tabla llena): el fd sigue siendo del llamador.
+int64_t nyx_http_park(int64_t fd64, int64_t fresh) {
+    int fd = (int)fd64;
+    if (!g_park.started || fd < 0 || fd >= NYX_MAX_CONN_BUFS) return -1;
+    if (fresh) {
+        reset_conn_buf(fd);
+    } else if (conn_buf_active[fd] && conn_bufs[fd].pos < conn_bufs[fd].len) {
+        return 0;
+    }
+    os_mutex_lock(&g_park.lock);
+    if (g_park.closing || g_park.disabled) {
+        os_mutex_unlock(&g_park.lock);
+        return -1;
+    }
+    int64_t plazo = fresh ? g_park.fresh_ms : g_park.idle_ms;
+    g_park_deadline[fd] = park_now_ms() + plazo;
+    g_park.count++;
+    if (fd + 1 > g_park.hwm) g_park.hwm = fd + 1;
+    if (nyx_event_loop_add(g_park.loop, fd, NYX_EV_READ, park_ready_cb, NULL) != 0) {
+        g_park_deadline[fd] = 0;
+        g_park.count--;
+        // Un loop sin soporte de fds (win32) falla siempre: no insistir.
+        if (g_park.count == 0) g_park.disabled = 1;
+        os_mutex_unlock(&g_park.lock);
+        return -1;
+    }
+    os_mutex_unlock(&g_park.lock);
+    return 1;
+}
+
+// Próximo fd con un pedido para atender (bloquea). Negativo = orden de salir.
+int64_t nyx_http_park_next(void) {
+    return nyx_channel_recv(g_park.ch);
+}
+
+// Encola un valor para los workers sin pasar por el event loop: una conexión
+// que no se pudo estacionar, o el centinela de salida (-1) del drain.
+void nyx_http_park_post(int64_t v) {
+    nyx_channel_send(g_park.ch, v);
+}
+
+// Drain: deja de estacionar y cierra las conexiones ociosas (no tienen un
+// pedido en vuelo, así que cerrarlas no corta nada). Devuelve cuántas cerró.
+int64_t nyx_http_park_close_all(void) {
+    if (!g_park.started) return 0;
+    int64_t n = 0;
+    os_mutex_lock(&g_park.lock);
+    g_park.closing = 1;
+    for (int fd = 0; fd < g_park.hwm; fd++) {
+        if (g_park_deadline[fd] != 0) {
+            park_forget_locked(fd);
+            nyx_tcp_close(fd);
+            n++;
+        }
+    }
+    os_mutex_unlock(&g_park.lock);
+    return n;
+}
+
+// Conexiones estacionadas ahora (diagnóstico y tests).
+int64_t nyx_http_parked_count(void) {
+    if (!g_park.started) return 0;
+    os_mutex_lock(&g_park.lock);
+    int64_t n = g_park.count;
+    os_mutex_unlock(&g_park.lock);
+    return n;
 }
 
 // ===== UDP =====
@@ -899,7 +1196,13 @@ nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t ti
     int64_t deadline = timeout_ms >= 0 ? os_monotonic_ns() + timeout_ms * 1000000LL : 0;
     int64_t status = 0;
     nyx_string* data = NULL;
-    for (;;) {
+    char* buf = (char*)GC_MALLOC_ATOMIC((size_t)max_bytes + 1);
+    if (!buf) status = -(int64_t)ENOMEM;
+    // Lo que read_line/read_exact dejaron en el buffer del fd YA llegó: se
+    // entrega sin esperar al socket (si no, sale fuera de orden, o como
+    // timeout con los datos adentro). Mismo contrato que read_partial.
+    int64_t n = buf ? conn_buf_take(fd, buf, max_bytes) : 0;
+    while (status == 0 && n == 0) {
         int ms = -1;
         if (timeout_ms >= 0) {
             int64_t rem = (deadline - os_monotonic_ns()) / 1000000;
@@ -910,17 +1213,16 @@ nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t ti
         if (pr == -EINTR) continue;
         if (pr < 0) { status = pr; break; }
         if (pr == 0) { status = -(int64_t)ETIMEDOUT; break; }
-        char* buf = (char*)GC_MALLOC_ATOMIC((size_t)max_bytes + 1);
-        if (!buf) { status = -(int64_t)ENOMEM; break; }
-        int64_t n = os_sock_recv(fd, buf, (size_t)max_bytes);
+        n = os_sock_recv(fd, buf, (size_t)max_bytes);
         // Un wake espurio (o datos que se llevó otro lector) no es un error:
         // se vuelve a esperar con lo que queda del plazo.
-        if (n == -EINTR || n == -EAGAIN || n == -EWOULDBLOCK) continue;
+        if (n == -EINTR || n == -EAGAIN || n == -EWOULDBLOCK) { n = 0; continue; }
         if (n < 0) { status = n; break; }
         if (n == 0) { status = NYX_NET_EOF; break; }
+    }
+    if (status == 0 && n > 0) {
         buf[n] = '\0';
         data = nyx_string_from_ptr(buf, (size_t)n);
-        break;
     }
     nyx_array_push_tagged(out, status, NYX_TAG_INT);
     nyx_array_push_tagged(out, (int64_t)(data ? data : nyx_string_from_cstr("")), NYX_TAG_STRING);
@@ -1032,15 +1334,7 @@ nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes) {
 
     // Drena el conn_buf primero -- mismo mecanismo que nyx_tcp_read (buffer
     // transparente que llena tcp_read_line).
-    nyx_conn_buf_t* cb = (fd < NYX_MAX_CONN_BUFS && conn_buf_active[(int)fd])
-                         ? &conn_bufs[(int)fd] : NULL;
-    if (cb && cb->pos < cb->len) {
-        int avail = cb->len - cb->pos;
-        int64_t to_copy = (max_bytes < avail) ? max_bytes : avail;
-        memcpy(out_buf, cb->buf + cb->pos, to_copy);
-        cb->pos += (int)to_copy;
-        total = to_copy;
-    }
+    total = conn_buf_take(fd, out_buf, max_bytes);
 
     // Mismo loop que la centinela (recv hasta llenar max_bytes o hasta que
     // recv() corte), pero acá SÍ distinguimos EOF (n==0, Ok) de error real
@@ -1312,15 +1606,7 @@ nyx_array_t* nyx_tcp_read_partial_result(int64_t fd, int64_t max_bytes) {
     int64_t total = 0;
 
     // Drena el conn_buf primero -- mismo mecanismo que la centinela.
-    nyx_conn_buf_t* cb = (fd < NYX_MAX_CONN_BUFS && conn_buf_active[(int)fd])
-                         ? &conn_bufs[(int)fd] : NULL;
-    if (cb && cb->pos < cb->len) {
-        int avail = cb->len - cb->pos;
-        int64_t to_copy = (max_bytes < avail) ? max_bytes : avail;
-        memcpy(out_buf, cb->buf + cb->pos, to_copy);
-        cb->pos += (int)to_copy;
-        total = to_copy;
-    }
+    total = conn_buf_take(fd, out_buf, max_bytes);
 
     // Si el buffer no dio nada, UN solo recv (nunca espera a max_bytes,
     // mismo contrato que nyx_udp_recvfrom_result). n==0 es EOF -- Ok con

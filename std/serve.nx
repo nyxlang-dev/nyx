@@ -662,8 +662,45 @@ fn __core_response(req: Request, extra: Array) -> Response {
     return nf(req)
 }
 
-// Global channel for dispatching client fds to keep-alive workers
-var __serve_ch: Map = Map.new()
+// ── Conexiones ociosas: el estacionamiento del runtime (fricción nyxerp
+// 20260924-200001) ──
+// Hasta acá cada worker, tras responder, se quedaba bloqueado leyendo el
+// PRÓXIMO pedido de la misma conexión keep-alive. Una conexión ociosa (un
+// navegador entre clics) retenía su hilo sin plazo, y con N workers bastaban
+// N conexiones ociosas para que el servidor dejara de responder a TODOS.
+//
+// Ahora un worker solo tiene una conexión mientras hay un pedido en curso:
+// al terminar la responde y la ESTACIONA en el runtime (runtime/net.c,
+// «Estacionamiento de conexiones HTTP ociosas»), que la vigila con el event
+// loop (epoll) y la devuelve a la cola de los workers cuando llega el pedido
+// siguiente. Es la misma idea con la que el SSE ya no ocupaba un worker, con
+// la vuelta que el SSE no necesita: esperar el próximo pedido. Las conexiones
+// nuevas entran por el mismo camino (una que conecta y calla no toma hilo).
+//
+// Plazos (variables de entorno, leídas al arrancar):
+//   NYX_HTTP_KEEPALIVE_SECS (15)  inactividad de una conexión entre pedidos;
+//                                  vencida, el servidor la cierra.
+//   NYX_HTTP_HEADER_SECS    (10)  para recibir la cabecera completa de un
+//                                  pedido (y para el primer byte de una
+//                                  conexión nueva); vencido: 408 y cierre.
+extern "C" fn nyx_http_park_start() -> int
+extern "C" fn nyx_http_park(fd: int, fresh: int) -> int
+extern "C" fn nyx_http_park_next() -> int
+extern "C" fn nyx_http_park_post(v: int)
+extern "C" fn nyx_http_park_close_all() -> int
+extern "C" fn nyx_http_parked_count() -> int
+extern "C" fn nyx_http_parse_request_deadline(fd: int, header_ms: int) -> Array
+extern "C" fn nyx_http_header_timeout_secs() -> int
+extern "C" fn nyx_http_keepalive_secs() -> int
+
+// Plazo de cabecera en ms, fijado una vez en serve_app_en (antes de lanzar
+// los workers: pthread_create da el happens-before).
+var __serve_header_ms: int = 10000
+
+// Conexiones keep-alive ociosas estacionadas ahora mismo (no ocupan hilo).
+pub fn serve_idle_connections() -> int {
+    return nyx_http_parked_count()
+}
 
 // ── Graceful shutdown (v0.6.0) ──
 // SIGTERM → __serve_draining=1 + tcp_close(listener). Cerrar el fd es lo
@@ -726,7 +763,7 @@ fn __drain_deadline_secs() -> int {
 // Keep-alive worker: serves multiple requests per connection
 fn __serve_ka_worker() -> int {
     while 1 > 0 {
-        let client: int = channel_recv(__serve_ch)
+        let client: int = nyx_http_park_next()
         if client < 0 { return 0 }
 
         // Keep-alive loop for this connection
@@ -737,10 +774,19 @@ fn __serve_ka_worker() -> int {
         // Lo mismo para un canal SSE registrado por __sse_attach: el fd pasa
         // a ser del registro de SSE y el worker queda libre para otra conexión.
         var sse_owned: bool = false
+        // La conexión quedó estacionada en el runtime: ya no es de este worker.
+        var parked: bool = false
         while keep_alive {
-            let request: Array = http_parse_request_fast(client)
+            let request: Array = nyx_http_parse_request_deadline(client, __serve_header_ms)
             let method: String = request[1]
             if method.length() == 0 {
+                // Cliente que cerró (err 0) o cabecera que no llegó entera a
+                // tiempo (err 408, NYX_HTTP_HEADER_SECS): en el segundo caso se
+                // avisa antes de cerrar.
+                let perr: int = request[5]
+                if perr == 408 {
+                    tcp_write(client, "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                }
                 keep_alive = false
             } else {
                 // Body sobre el cap (NYX_HTTP_MAX_BODY): el fast parser lo
@@ -833,11 +879,28 @@ fn __serve_ka_worker() -> int {
                     if __serve_draining == 1 {
                         keep_alive = false
                     }
+                    // Respondido y la conexión sigue viva: se estaciona hasta
+                    // el próximo pedido y este worker queda libre. 0 = el
+                    // pedido siguiente ya está en el buffer (pipelining):
+                    // se atiende acá mismo. -1 = no se pudo estacionar (drain
+                    // en curso o sin event loop de fds): se cierra, que es
+                    // HTTP válido aunque la respuesta dijera keep-alive.
+                    if keep_alive {
+                        let pk: int = nyx_http_park(client, 0)
+                        if pk == 1 {
+                            parked = true
+                            keep_alive = false
+                        } else {
+                            if pk < 0 {
+                                keep_alive = false
+                            }
+                        }
+                    }
                 }
                 }
             }
         }
-        if !ws_owned and !sse_owned {
+        if !ws_owned and !sse_owned and !parked {
             tcp_close(client)
         }
     }
@@ -881,7 +944,11 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     __serve_app = app
     print("nyx-serve starting on " + host + ":" + int_to_string(port) + " with " + int_to_string(workers) + " workers")
 
-    __serve_ch = channel_new(512)
+    // Antes de lanzar los workers: crea la cola de la que leen y el hilo del
+    // estacionamiento. Si el runtime no puede estacionar (sin event loop de
+    // fds), las conexiones nuevas van directo a la cola, como antes.
+    let puede_estacionar: int = nyx_http_park_start()
+    __serve_header_ms = nyx_http_header_timeout_secs() * 1000
     let server: int = tcp_listen(host, port)
     if server < 0 {
         print("ERROR: cannot listen on " + host + ":" + int_to_string(port))
@@ -909,7 +976,10 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     while 1 > 0 {
         let client: int = tcp_accept(server)
         if client >= 0 {
-            channel_send(__serve_ch, client)
+            // Una conexión nueva no toma un worker hasta que manda algo.
+            if puede_estacionar == 0 or nyx_http_park(client, 1) != 1 {
+                nyx_http_park_post(client)
+            }
         } else {
             if __serve_draining == 1 {
                 // Despertados por el close del handler: iniciar drain. El
@@ -921,9 +991,12 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
                 // el CLOSE del fd es responsabilidad de este thread.
                 tcp_close(server)
                 print("[nyx-serve] SIGTERM: draining (deadline " + int_to_string(__drain_deadline_secs()) + "s)")
+                // Las conexiones ociosas no tienen pedido en vuelo: se
+                // cierran ya, y no se estaciona nada más.
+                nyx_http_park_close_all()
                 var w: int = 0
                 while w < __serve_workers {
-                    channel_send(__serve_ch, 0 - 1)
+                    nyx_http_park_post(0 - 1)
                     w = w + 1
                 }
                 let deadline_ms: int = __drain_deadline_secs() * 1000

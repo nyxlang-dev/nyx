@@ -1,0 +1,23 @@
+// Backstop NYX2007 de codegen: un campo sobre un receptor que no es struct.
+// Se compila con NYX_SKIP_SEMANTIC=1 para llegar al codegen (con semantic, el
+// acceso lo rechaza antes).
+//
+// POR QUÉ EXISTE (2026-09-24): era el «Error: campo no encontrado:
+// Array:node_type» que imprimía `make recompile-all` al compilar parser.nx.
+// El codegen avisaba por stdout, compilaba el acceso como la constante 0 y
+// salía con 0: en parser.nx, `sub_pat.node_type != "identifier_pattern"` daba
+// SIEMPRE true (todo patrón `E.V(a, b)` salía nested_match_pattern) y
+// `stmt.node_type == "error"` SIEMPRE false (un nodo de error que había
+// consumido tokens entraba al programa). Esto es la misma forma: el nodo es el
+// Array que devuelve una fn, y `.node_type` sobre un Array no es un campo.
+fn nodo() -> Array {
+    return ["error", []]
+}
+
+fn main() -> int {
+    let n = nodo()
+    if n.node_type == "error" {
+        print("es un error")
+    }
+    return 0
+}

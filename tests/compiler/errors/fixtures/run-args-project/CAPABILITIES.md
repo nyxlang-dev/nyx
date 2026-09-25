@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.33.0 -->
-<!-- nyx-stdlib: 2587670598-842607 -->
+<!-- nyx-stdlib: 2253985356-846358 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1390,10 +1390,11 @@
 
 ### `std/serve`
 
-`import "std/serve"` — 27 funciones:
+`import "std/serve"` — 28 funciones:
 
 - `pub fn app_ws(pattern: String, handler: Fn(Array) -> int)`
 - `pub fn serve_ws(handler: Fn(Array) -> int)`
+- `pub fn serve_idle_connections() -> int`
 - `pub fn serve_on_shutdown(handler: Fn)`
 - `pub fn serve_app(app: App, port: int, workers: int) -> int`
 - `pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int`

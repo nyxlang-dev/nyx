@@ -1,0 +1,5 @@
+// aux del test-448: declara una const y una fn. Lo importan por nombre el
+// programa y aux_nombre_g.
+const NOMBRE_K: int = 7
+
+pub fn nombre_f() -> int { return NOMBRE_K + 1 }

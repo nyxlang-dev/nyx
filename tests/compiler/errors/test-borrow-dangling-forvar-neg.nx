@@ -7,7 +7,10 @@ struct Node { p: *int }
 
 fn f() {
     var x: int = 5
-    var nodes: Array = []
+    // Array<Node> y no Array pelado: con el tipo de elemento perdido `row` era
+    // int y el codegen DESCARTABA `row.p = &x` en silencio («campo no
+    // encontrado en field_assign: int:p»); desde el 2026-09-24 eso es NYX2007.
+    var nodes: Array<Node> = []
     for row in nodes {
         row.p = &x
     }

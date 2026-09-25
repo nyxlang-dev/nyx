@@ -1,0 +1,20 @@
+// test-448 — `import { K } from "m"` de una `const` anda igual que el de una fn.
+//
+// POR QUÉ EXISTE (2026-09-24): el resolvedor borra la línea de un import por
+// nombre cuando inlinea el módulo, pero el fixpoint de los módulos transitivos
+// la DEJABA si el módulo ya estaba inlineado. El parser hacía un nodo `import`,
+// semantic declaraba NOMBRE_K como símbolo "import", y la `const` inlineada
+// chocaba con él:
+//   error [NYX1013] (line 1): 'NOMBRE_K' already declared in this scope
+// Con una fn no se notaba. Acá el programa importa aux_nombre_m ANTES que
+// aux_nombre_g, que es lo que deja a m «ya importado» cuando el fixpoint llega
+// al `import { nombre_f, NOMBRE_K }` de g.
+import { nombre_f, NOMBRE_K } from "tests/support/aux_nombre_m"
+import { nombre_g } from "tests/support/aux_nombre_g"
+
+fn main() -> int {
+    print(nombre_f().to_string())
+    print(nombre_g().to_string())
+    print(int_to_string(NOMBRE_K))
+    return 0
+}

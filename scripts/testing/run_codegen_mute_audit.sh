@@ -3,10 +3,10 @@
 # Fase 3): auditoría-RATCHET de los catch-alls mudos de codegen.nx.
 #
 # Las Tasks 4 y 5 convirtieron 4 catch-alls silenciosos en aborts bilingües
-# NYX2001-NYX2004 (exit(1)). Quedan, A PROPÓSITO, los catch-alls de la
-# familia "campo no encontrado" — son el fallback load-bearing del
-# bootstrap (parser.nx los dispara ×3 y hoy funciona así; arreglarlos de
-# raíz es tarea de otra fase, no de esta). Esta auditoría no los arregla:
+# NYX2001-NYX2004 (exit(1)). Quedaban, A PROPÓSITO, los catch-alls de la
+# familia "campo no encontrado" — fallback load-bearing del bootstrap
+# (parser.nx los disparaba ×3); desde el 2026-09-24 abortan con NYX2007 (ver
+# BASELINE abajo). Quedan otros prints mudos. Esta auditoría no los arregla:
 # los CUENTA y falla si el número CRECE (alguien agregó un catch-all mudo
 # nuevo) o si los aborts de Fase 3 desaparecen (alguien revirtió el fix).
 #
@@ -142,10 +142,8 @@ fi
 #   - "'<field>' is not a public member of module" (field_access)
 #   - "namespace member not found" (Warning)
 #   - "variable no definida en field_access"
-#   - "campo no encontrado" (field_access, struct_field_index)
 #   - "'<method>' is not a public member of module" (method call)
 #   - "variable no definida en field_assign"
-#   - "campo no encontrado en field_assign"
 # 2026-07-30 (sub-proyecto 4, Task 5): baja de 10 a 9 — el sitio
 # "field_assign solo soporta identificadores como objeto" dejó de existir:
 # `a.b.c = x` se IMPLEMENTÓ (cadena de GEPs) y los receivers que siguen sin
@@ -159,7 +157,12 @@ fi
 # daban 4. Ahora el bloque atiende las propiedades builtin (`.length` sobre
 # %nyx_string* y sobre { i64, i8* }*) y lo que de verdad no resuelve aborta con
 # NYX2007, como los backstops de la Task 3.
-BASELINE=8
+# 2026-09-24: baja de 8 a 6 — los dos «campo no encontrado» (lectura y
+# field_assign) abortan con NYX2007 (field_no_resuelto). El motivo para dejarlos
+# mudos era que parser.nx los disparaba ×3 al autocompilarse; eran lecturas de
+# `.node_type` sobre nodos Array que evaluaban a 0, o sea un silently-wrong
+# dentro del propio compilador, y parser.nx ya usa astnode_get_type.
+BASELINE=6
 
 current=$(count_mute_prints compiler/codegen.nx)
 

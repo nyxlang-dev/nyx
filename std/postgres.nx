@@ -195,12 +195,10 @@ fn pg_rx(fd: int, tls: int, n: int) -> Result<String, Error> {
     }
     // try_tcp_read y NO try_tcp_read_exact: las dos juntan exactamente n bytes,
     // pero read_exact llena el buffer transparente del runtime (8 KB por recv)
-    // y deja ahí lo que sobra. Esos bytes no los ve el poll de la espera de
-    // notificaciones (try_tcp_read_timed mira el socket), así que una 'A' que
-    // quedara en ese buffer no se entregaría hasta que llegara OTRA. Este
-    // módulo nunca deja bytes en ese buffer: las lecturas frías (handshake,
-    // espera) piden exactamente lo que necesitan, y la caliente
-    // (pg_read_result) lleva su propio buffer y lo vacía antes de volver.
+    // y deja ahí lo que sobra. Desde el 2026-09-24 try_tcp_read_timed lo drena
+    // primero, así que ya no sería un bug; se sigue sin usar ese buffer porque
+    // la lectura caliente (pg_read_result) lleva el suyo propio y dos buffers
+    // sobre el mismo fd serían una fuente de confusión más.
     match try_tcp_read(fd, n) {
         Result.Err(e) => { return Result.Err(err_new(0, "connection", e.msg)) }
         Result.Ok(datos) => {
