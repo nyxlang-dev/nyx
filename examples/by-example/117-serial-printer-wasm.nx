@@ -47,7 +47,7 @@ fn armar_ticket(texto: String) -> Array<int> {
     bytes.push(64)
 
     // el texto del ticket, byte a byte (String = bytes en Nyx — ver
-    // CLAUDE.md — así que esto ya viaja como los bytes ASCII/Latin-1 que
+    // LLM.md §5 — así que esto ya viaja como los bytes ASCII/Latin-1 que
     // espera la impresora, sin decodificar)
     var i: int = 0
     while i < texto.length() {
