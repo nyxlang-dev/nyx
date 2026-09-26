@@ -719,6 +719,27 @@ int64_t nyx_http_header_timeout_secs(void) {
     return net_env_positive("NYX_HTTP_HEADER_SECS", 10);
 }
 
+// Plazo de ENVÍO de un servidor HTTP (segundos): cuánto puede quedar trabado un
+// send() sin avanzar un byte. NYX_HTTP_SEND_SECS, 30 por omisión.
+// Por qué POR operación (SO_SNDTIMEO) y no un plazo total como el de la
+// cabecera: una descarga grande por una red lenta tarda lo que tarda y NO debe
+// cortarse mientras avance; lo que se corta es un cliente que dejó de LEER y
+// retiene al worker bloqueado en la escritura (la semántica de send_timeout de
+// nginx). El caso del goteo —leer un byte cada 29 s— queda acotado por el
+// tamaño de la respuesta, no por el reloj; es el mismo compromiso de nginx.
+int64_t nyx_http_send_timeout_secs(void) {
+    return net_env_positive("NYX_HTTP_SEND_SECS", 30);
+}
+
+// Aplica solo el plazo de envío (SO_SNDTIMEO) a un socket: a diferencia de
+// nyx_tcp_set_timeout no toca SO_RCVTIMEO, porque los servidores HTTP leen con
+// su propio plazo absoluto (net_wait_readable). seconds <= 0 lo desactiva.
+// 0 en éxito, -1 en error (win32/wasm: sin sockets reales todavía).
+int64_t nyx_tcp_set_send_timeout(int64_t fd, int64_t seconds) {
+    if (fd < 0) return -1;
+    return os_sock_set_send_timeout(fd, seconds) == 0 ? 0 : -1;
+}
+
 // Inactividad máxima de una conexión keep-alive entre dos pedidos (segundos).
 // NYX_HTTP_KEEPALIVE_SECS, 15 por omisión (el orden de Apache/nginx: 5 y 75;
 // 15 cubre el ir y venir de una persona entre clics sin guardar conexiones

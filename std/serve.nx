@@ -724,6 +724,8 @@ extern "C" fn nyx_http_parked_count() -> int
 extern "C" fn nyx_http_parse_request_deadline(fd: int, header_ms: int) -> Array
 extern "C" fn nyx_http_header_timeout_secs() -> int
 extern "C" fn nyx_http_keepalive_secs() -> int
+extern "C" fn nyx_http_send_timeout_secs() -> int
+extern "C" fn nyx_tcp_set_send_timeout(fd: int, seconds: int) -> int
 
 // Plazo de cabecera en ms, fijado una vez en serve_app_en (antes de lanzar
 // los workers: pthread_create da el happens-before).
@@ -989,6 +991,11 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     // estacionamiento. Si el runtime no puede estacionar (sin event loop de
     // fds), las conexiones nuevas van directo a la cola, como antes.
     let puede_estacionar: int = nyx_http_park_start()
+    // Plazo de envío (NYX_HTTP_SEND_SECS, 30): un cliente que deja de LEER una
+    // respuesta ya no retiene a su worker bloqueado en la escritura. Se aplica
+    // una vez por conexión (SO_SNDTIMEO sobrevive al estacionamiento); corta
+    // también la escritura a un canal SSE que dejó de leer.
+    let send_secs: int = nyx_http_send_timeout_secs()
     __serve_header_ms = nyx_http_header_timeout_secs() * 1000
     __serve_ka_linea = "Keep-Alive: timeout=" + int_to_string(nyx_http_keepalive_secs()) + "\r\n"
     let server: int = tcp_listen(host, port)
@@ -1018,6 +1025,7 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     while 1 > 0 {
         let client: int = tcp_accept(server)
         if client >= 0 {
+            nyx_tcp_set_send_timeout(client, send_secs)
             // Una conexión nueva no toma un worker hasta que manda algo.
             if puede_estacionar == 0 or nyx_http_park(client, 1) != 1 {
                 nyx_http_park_post(client)

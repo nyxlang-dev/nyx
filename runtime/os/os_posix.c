@@ -617,6 +617,13 @@ int os_sock_set_timeout(int64_t fd, int64_t seconds) {
     int rc2 = setsockopt((int)fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     return rc2 < 0 ? -errno : rc2;
 }
+int os_sock_set_send_timeout(int64_t fd, int64_t seconds) {
+    struct timeval tv;
+    tv.tv_sec  = (time_t)(seconds > 0 ? seconds : 0);
+    tv.tv_usec = 0;
+    int rc = setsockopt((int)fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    return rc < 0 ? -errno : rc;
+}
 int os_sock_set_nonblocking(int64_t fd, int on) {
     int flags = fcntl((int)fd, F_GETFL, 0);
     if (flags < 0) return -errno;

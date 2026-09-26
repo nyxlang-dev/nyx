@@ -11,6 +11,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **Plazo de envío en los servidores HTTP y plazo de cabecera en `http_serve`/`http_serve_mt`.**
+  `NYX_HTTP_SEND_SECS` (30 s por omisión) acota cuánto puede quedar trabada la escritura de una
+  respuesta sin avanzar: un cliente que dejaba de LEER una respuesta grande retenía su worker de
+  `std/serve` para siempre. Es por escritura, no total (una descarga lenta que avanza no se
+  corta). Los dos servidores de `std/http` leían además sin plazo: una conexión que goteaba la
+  cabecera (slowloris) dejaba mudo a `http_serve`, que tiene un solo hilo; ahora usan el parser
+  con plazo de `std/serve` (`NYX_HTTP_HEADER_SECS`, 408 y cierre). Runtime:
+  `os_sock_set_send_timeout` (solo `SO_SNDTIMEO`) y `nyx_tcp_set_send_timeout`. Regresión:
+  sub-suite nueva `test_http_plazos.py` (8 checks, en rojo con el `std/http` anterior) y 1 check
+  en `test_serve_std_keepalive.py` (22 → 23).
+
 - **`std/serve` anuncia su plazo de keep-alive**: cada respuesta con `Connection: keep-alive` lleva
   `Keep-Alive: timeout=N` (N = `NYX_HTTP_KEEPALIVE_SECS`). Un proxy con pool que no lo sabía
   reutilizaba la conexión ya cerrada por el servidor y a un POST —que no se reintenta— le tocaba

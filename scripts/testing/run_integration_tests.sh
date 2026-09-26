@@ -162,6 +162,32 @@ else
     OVERALL=1
 fi
 
+# ── Plazos de http_serve / http_serve_mt (cabecera y envío) ──────────────
+# Fixture propio (tests/integration/http_plazos): los dos servidores de
+# std/http con NYX_HTTP_HEADER_SECS y NYX_HTTP_SEND_SECS en 2 s. Una cabecera
+# goteada (slowloris) o una respuesta grande sin leer ya no retienen los hilos.
+# Puerto 13095 (HTTP_PLAZOS_PORT).
+echo -e "\n${BOLD}-- std/http: plazos de http_serve / http_serve_mt --${NC}"
+HP_BIN="/tmp/nyx-http-plazos-server"
+echo -e "  Compiling tests/integration/http_plazos/server.nx..."
+cp tests/integration/http_plazos/server.nx script.nx
+if NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap >/dev/null 2>&1 && \
+   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+       -o "$HP_BIN" 2>/dev/null; then
+    rm -f script.nx script.ll
+    if python3 tests/integration/test_http_plazos.py "$HP_BIN"; then
+        echo -e "  ${GREEN}std/http plazos E2E passed${NC}"
+    else
+        echo -e "  ${RED}std/http plazos E2E failed${NC}"
+        OVERALL=1
+    fi
+    rm -f "$HP_BIN"
+else
+    rm -f script.nx script.ll
+    echo -e "  ${RED}std/http plazos: no se pudo compilar el fixture${NC}"
+    OVERALL=1
+fi
+
 # ── std/serve (framework web absorbido al core) ──────────────────────────
 # Fixture propio (tests/integration/serve_std): server mínimo con std/serve +
 # std/template. Cubre el CONTRATO público del módulo: {param}, JSON,

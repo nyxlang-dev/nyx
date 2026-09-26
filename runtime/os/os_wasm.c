@@ -157,6 +157,7 @@ int     os_sock_local(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return 
 int     os_sock_set_reuseaddr(int64_t fd) { (void)fd; return -ENOSYS; }
 int     os_sock_set_nodelay(int64_t fd) { (void)fd; return -ENOSYS; }
 int     os_sock_set_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
+int     os_sock_set_send_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
 int     os_sock_set_nonblocking(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
 int     os_sock_error(int64_t fd) { (void)fd; return -ENOSYS; }
 int     os_sock_poll1(int64_t fd, int events, int timeout_ms) { (void)fd; (void)events; (void)timeout_ms; return -ENOSYS; }

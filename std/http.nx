@@ -17,6 +17,10 @@ import "std/tls"
 // compartido con el parser rápido del runtime (net.c). Sin este cap,
 // http_parse_request alocaba lo que dijera el Content-Length remoto.
 extern "C" fn nyx_http_max_body() -> int
+extern "C" fn nyx_http_parse_request_deadline(fd: int, header_ms: int) -> Array
+extern "C" fn nyx_http_header_timeout_secs() -> int
+extern "C" fn nyx_http_send_timeout_secs() -> int
+extern "C" fn nyx_tcp_set_send_timeout(fd: int, seconds: int) -> int
 
 // === Multi-threaded server globals (private) ===
 var __http_mt_ch: Map = Map.new()
@@ -965,47 +969,59 @@ pub fn http_serve(port: int, handler: Fn(Array) -> String) -> int {
     if server < 0 {
         return -1
     }
+    let header_ms: int = nyx_http_header_timeout_secs() * 1000
+    let send_secs: int = nyx_http_send_timeout_secs()
     while 1 > 0 {
         let client: int = tcp_accept(server)
         if client >= 0 {
-            let request: Array = http_parse_request(client)
-            let method: String = request[1]
-            if method.length() > 0 {
-                let req_err: int = request[5]
-                if req_err == 413 {
-                    // Body sobre el cap: 413 sin invocar el handler (el
-                    // socket queda con el body sin drenar — se cierra abajo)
-                    tcp_write(client, http_response(413, ""))
-                } else {
-                    let response: String = handler(request)
-                    tcp_write(client, response)
-                }
-            }
-            tcp_close(client)
+            __http_atender(client, header_ms, send_secs, handler)
         }
     }
+    return 0
+}
+
+// Un pedido por conexión, con los plazos de std/serve (2026-09-26):
+//   NYX_HTTP_HEADER_SECS (10): plazo TOTAL para recibir la cabecera. Vencido:
+//     408 y cierre. Antes http_serve/http_serve_mt leían con el parser en Nyx
+//     sin plazo: un cliente que abría la conexión y goteaba la cabecera
+//     (slowloris) retenía el hilo para siempre — y http_serve tiene UNO solo.
+//   NYX_HTTP_SEND_SECS (30): cuánto puede quedar trabada la escritura de la
+//     respuesta sin avanzar (un cliente que dejó de leer).
+// El parser es el mismo de std/serve (nyx_http_parse_request_deadline), con
+// la misma forma de pedido que http_parse_request.
+fn __http_atender(client: int, header_ms: int, send_secs: int, handler: Fn(Array) -> String) -> int {
+    nyx_tcp_set_send_timeout(client, send_secs)
+    let request: Array = nyx_http_parse_request_deadline(client, header_ms)
+    let method: String = request[1]
+    let req_err: int = request[5]
+    if method.length() > 0 {
+        if req_err == 413 {
+            // Body sobre el cap: 413 sin invocar el handler (el
+            // socket queda con el body sin drenar — se cierra abajo)
+            tcp_write(client, http_response(413, ""))
+        } else {
+            let response: String = handler(request)
+            tcp_write(client, response)
+        }
+    } else {
+        if req_err == 408 {
+            tcp_write(client, "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        }
+    }
+    tcp_close(client)
     return 0
 }
 
 // === Multi-threaded Server ===
 
 fn __http_mt_worker() -> int {
+    let header_ms: int = nyx_http_header_timeout_secs() * 1000
+    let send_secs: int = nyx_http_send_timeout_secs()
+    let h: Fn(Array) -> String = __http_mt_handler
     while 1 > 0 {
         let client: int = channel_recv(__http_mt_ch)
         if client < 0 { return 0 }
-        let request: Array = http_parse_request(client)
-        let method: String = request[1]
-        if method.length() > 0 {
-            let req_err: int = request[5]
-            if req_err == 413 {
-                // Ver http_serve: body sobre el cap → 413 sin handler
-                tcp_write(client, http_response(413, ""))
-            } else {
-                let response: String = __http_mt_handler(request)
-                tcp_write(client, response)
-            }
-        }
-        tcp_close(client)
+        __http_atender(client, header_ms, send_secs, h)
     }
     return 0
 }

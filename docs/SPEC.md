@@ -4687,6 +4687,7 @@ pedidos se procesan **a la vez**, no cuántas conexiones se sostienen.
 |---|---|---|
 | `NYX_HTTP_KEEPALIVE_SECS` | 15 | Una conexión keep-alive sin pedido nuevo durante ese tiempo se cierra. Cada respuesta lo anuncia como `Keep-Alive: timeout=N` (desde 2026-09-25), para que un proxy con pool suelte la conexión antes. |
 | `NYX_HTTP_HEADER_SECS` | 10 | Plazo TOTAL para recibir la cabecera completa de un pedido (no por lectura: un cliente que la gotea de a un byte también se corta). Vencido: `408 Request Timeout` y cierre. El mismo valor acota el silencio de una conexión nueva antes de su primer byte y el tiempo que un body puede quedar detenido sin recibir un byte. |
+| `NYX_HTTP_SEND_SECS` | 30 | Cuánto puede quedar trabada la escritura de una respuesta sin avanzar un byte (desde 2026-09-26): un cliente que dejó de LEER se corta y su worker queda libre. Es POR escritura, no total: una descarga lenta que avanza no se corta (la semántica de `send_timeout` de nginx). También acota la escritura a un canal SSE que dejó de leer. |
 | `NYX_HTTP_MAX_BODY` | 1 MiB | Body mayor: `413` sin llamar al handler. |
 | `NYX_SERVE_DRAIN_SECS` | 10 | Plazo del drain de SIGTERM; al empezar, las conexiones estacionadas se cierran. |
 
@@ -4702,8 +4703,9 @@ esos bytes como el comienzo de la respuesta siguiente y devolvía 502 a otro usu
 nivel `http_serve`/`http_serve_mt` escriben el texto que devuelve el handler: ahí omitir el cuerpo
 ante un `HEAD` es responsabilidad del handler.
 
-Pendiente: un cliente que deja de LEER una respuesta grande sigue reteniendo su worker en la
-escritura (no hay plazo de envío).
+**`http_serve` / `http_serve_mt`** (`std/http`, un pedido por conexión) aplican desde el 2026-09-26
+los mismos `NYX_HTTP_HEADER_SECS` (408 y cierre) y `NYX_HTTP_SEND_SECS`. Antes leían y escribían sin
+plazo: una sola conexión que goteaba la cabecera dejaba mudo a `http_serve`, que tiene un solo hilo.
 
 ---
 

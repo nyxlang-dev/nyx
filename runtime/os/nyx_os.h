@@ -279,6 +279,7 @@ int     os_sock_local(int64_t fd, os_addr_t* out); // getsockname (puerto que as
 int     os_sock_set_reuseaddr(int64_t fd);
 int     os_sock_set_nodelay(int64_t fd);
 int     os_sock_set_timeout(int64_t fd, int64_t seconds); // RCVTIMEO+SNDTIMEO; <=0 desactiva; si el 1ro falla reporta ESE -errno
+int     os_sock_set_send_timeout(int64_t fd, int64_t seconds); // SOLO SNDTIMEO; <=0 desactiva
 int     os_sock_set_nonblocking(int64_t fd, int on);      // fcntl O_NONBLOCK / ioctlsocket FIONBIO
 int     os_sock_error(int64_t fd);                 // getsockopt SO_ERROR: errno pendiente (POSITIVO) o 0; -errno si el propio getsockopt falla / pending errno (POSITIVE) or 0; -errno if getsockopt itself fails
 

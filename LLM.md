@@ -2141,6 +2141,10 @@ import "std/http" as http
 //   req[1]=method, req[2]=path, req[3]=headers (as [k,v] pairs), req[4]=body,
 //   req[5]=err (0 ok; 413 = body over NYX_HTTP_MAX_BODY cap, default 1MiB —
 //   http_serve/http_serve_mt auto-reply 413 and skip the handler)
+// Both servers apply the std/serve deadlines (since 2026-09-26):
+// NYX_HTTP_HEADER_SECS (10, whole header; over it: 408 + close) and
+// NYX_HTTP_SEND_SECS (30, a write stalled with no progress). One request
+// per connection (Connection: close); for keep-alive use std/serve.
 pub fn on_request(req: Array) -> String {
     let path: String = req[2]
     if path == "/" {
@@ -2398,12 +2402,16 @@ fn main() -> int {
       caps how long a NEW connection may stay silent before its first byte,
       and how long a request body may stall with no byte arriving (a slow
       upload that keeps progressing is not cut).
+    - `NYX_HTTP_SEND_SECS` (default **30**, since 2026-09-26): how long writing a
+      response may stay stalled with NO progress — a client that stopped
+      READING a large response is cut and its worker freed. Per write, not a
+      total: a slow download that keeps progressing is never cut (nginx's
+      `send_timeout` semantics). Also bounds a write to an SSE channel whose
+      client stopped reading.
     - Invalid or non-positive values fall back to the default.
   - `serve_idle_connections()` returns how many connections are parked right
     now (diagnostics). Recipe: `examples/by-example/120-serve-idle-connections.nx`.
-  - Not covered yet: a client that stops READING a large response still
-    blocks its worker in the write (no send timeout); pipelined requests on
-    one connection are answered in order by one worker.
+  - Pipelined requests on one connection are answered in order by one worker.
 - **HEAD** (fixed 2026-09-25): a `HEAD` request with no `HEAD` route of its own
   uses the `GET` route of the same path (app routes and mounted routers; an
   explicit `app_route(app, "HEAD", …)` wins), and every response to a `HEAD` —

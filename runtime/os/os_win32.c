@@ -1057,6 +1057,7 @@ int os_sock_local(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return -ENO
 int os_sock_set_reuseaddr(int64_t fd) { (void)fd; return -ENOSYS; }
 int os_sock_set_nodelay(int64_t fd) { (void)fd; return -ENOSYS; }
 int os_sock_set_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
+int os_sock_set_send_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
 int os_sock_set_nonblocking(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
 int os_sock_error(int64_t fd) { (void)fd; return -ENOSYS; }
 // ⚠️ runtime.c lo llama en nyx_read_byte_timeout (poll de stdin). En Windows
