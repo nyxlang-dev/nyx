@@ -4685,7 +4685,7 @@ pedidos se procesan **a la vez**, no cuántas conexiones se sostienen.
 
 | Variable | Omisión | Efecto |
 |---|---|---|
-| `NYX_HTTP_KEEPALIVE_SECS` | 15 | Una conexión keep-alive sin pedido nuevo durante ese tiempo se cierra. |
+| `NYX_HTTP_KEEPALIVE_SECS` | 15 | Una conexión keep-alive sin pedido nuevo durante ese tiempo se cierra. Cada respuesta lo anuncia como `Keep-Alive: timeout=N` (desde 2026-09-25), para que un proxy con pool suelte la conexión antes. |
 | `NYX_HTTP_HEADER_SECS` | 10 | Plazo TOTAL para recibir la cabecera completa de un pedido (no por lectura: un cliente que la gotea de a un byte también se corta). Vencido: `408 Request Timeout` y cierre. El mismo valor acota el silencio de una conexión nueva antes de su primer byte y el tiempo que un body puede quedar detenido sin recibir un byte. |
 | `NYX_HTTP_MAX_BODY` | 1 MiB | Body mayor: `413` sin llamar al handler. |
 | `NYX_SERVE_DRAIN_SECS` | 10 | Plazo del drain de SIGTERM; al empezar, las conexiones estacionadas se cierran. |

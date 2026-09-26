@@ -9,6 +9,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Agregado
+
+- **`std/serve` anuncia su plazo de keep-alive**: cada respuesta con `Connection: keep-alive` lleva
+  `Keep-Alive: timeout=N` (N = `NYX_HTTP_KEEPALIVE_SECS`). Un proxy con pool que no lo sabía
+  reutilizaba la conexión ya cerrada por el servidor y a un POST —que no se reintenta— le tocaba
+  un 502 (nyxerp → sumain2, 2026-09-25). El lado del proxy (descartar conexiones muertas o
+  vencidas antes de escribir) es un encargo a nyx-proxy. Regresión: 1 check en
+  `test_serve_std_keepalive.py` (21 → 22).
+
 ### Arreglado
 
 - **Asignar un valor opaco a una variable ya declarada lo convierte a su tipo** (fricción nyxerp

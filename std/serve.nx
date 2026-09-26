@@ -186,7 +186,9 @@ fn __format_http_response_de(resp: Response, con_cuerpo: bool) -> String {
             i = i + 2
         }
 
-        sb.append("Content-Length: 0\r\nConnection: keep-alive\r\n\r\n")
+        sb.append("Content-Length: 0\r\nConnection: keep-alive\r\n")
+        sb.append(__serve_ka_linea)
+        sb.append("\r\n")
         return sb.to_string()
     }
 
@@ -235,6 +237,7 @@ fn __format_http_response_de(resp: Response, con_cuerpo: bool) -> String {
     }
 
     sb.append("Connection: keep-alive\r\n")
+    sb.append(__serve_ka_linea)
     sb.append("\r\n")
     if con_cuerpo {
         sb.append(body)
@@ -726,6 +729,15 @@ extern "C" fn nyx_http_keepalive_secs() -> int
 // los workers: pthread_create da el happens-before).
 var __serve_header_ms: int = 10000
 
+// `Keep-Alive: timeout=N` (RFC 9112 §9.3 / el header informativo de RFC 2068)
+// que acompaña a cada `Connection: keep-alive`, con N = NYX_HTTP_KEEPALIVE_SECS.
+// POR QUÉ: un proxy con pool (nyx-gateway) que no sabe cuándo el servidor
+// cierra una conexión ociosa la reutiliza ya cerrada, y a un POST —que no se
+// puede reintentar— le toca un 502 (nyxerp, 2026-09-25). Anunciado el plazo, el
+// proxy puede soltarla antes. Vacío hasta que serve_app_en lo fija: una
+// Response formateada fuera del servidor no promete un plazo que no aplica.
+var __serve_ka_linea: String = ""
+
 // Conexiones keep-alive ociosas estacionadas ahora mismo (no ocupan hilo).
 pub fn serve_idle_connections() -> int {
     return nyx_http_parked_count()
@@ -978,6 +990,7 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     // fds), las conexiones nuevas van directo a la cola, como antes.
     let puede_estacionar: int = nyx_http_park_start()
     __serve_header_ms = nyx_http_header_timeout_secs() * 1000
+    __serve_ka_linea = "Keep-Alive: timeout=" + int_to_string(nyx_http_keepalive_secs()) + "\r\n"
     let server: int = tcp_listen(host, port)
     if server < 0 {
         print("ERROR: cannot listen on " + host + ":" + int_to_string(port))

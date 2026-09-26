@@ -2388,7 +2388,9 @@ fn main() -> int {
   - **Limits** (environment variables, read once when `serve_app` starts):
     - `NYX_HTTP_KEEPALIVE_SECS` (default **15**): an idle keep-alive connection
       with no new request for this long is closed by the server (clients
-      reopen transparently).
+      reopen transparently). Every keep-alive response announces it as
+      `Keep-Alive: timeout=N`, so a pooling reverse proxy can drop the
+      connection before the server closes it (since 2026-09-25).
     - `NYX_HTTP_HEADER_SECS` (default **10**): time allowed to receive a
       request's COMPLETE header (request line + headers), measured as a total,
       not per read — a client trickling one byte at a time is cut too
