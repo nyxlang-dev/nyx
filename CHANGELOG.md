@@ -11,6 +11,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`nyx update --sync-docs` ya no pisa lo que un proyecto escribió en su `AGENTS.md`.** Hasta
+  acá resembraba el archivo entero y solo salvaba un bloque `proyecto:inicio`…`proyecto:fin`
+  que el proyecto tenía que conocer; nyxerp perdió así sus «Reglas de este proyecto» varias
+  veces. Ahora nyx reemplaza SOLO su bloque, entre las líneas `<!-- nyx:inicio -->` y
+  `<!-- nyx:fin -->` (lo siembra `nyx init`); lo de afuera es del proyecto, y lo propio va
+  arriba, donde el agente lo lee primero. Un `AGENTS.md` anterior se migra por secciones `## `:
+  la que la plantilla no reconoce como suya se conserva textual arriba, y el sync informa qué
+  conservó y qué reemplazó (con `.bak`). `nyx sdd init` pone su disparador arriba del bloque.
+  Lógica en `nyx_build agents-merge` (`agents_merge`, compiler/build.nx), la misma para `init`
+  y `--sync-docs`. Regresión: escenarios (g)–(k) de `run_sync_docs_migration.sh`; sobre una
+  copia del `AGENTS.md` real de nyxerp, el wrapper anterior dejaba 0 de sus reglas y el nuevo
+  las conserva byte a byte.
+
 - **Plazo de envío en los servidores HTTP y plazo de cabecera en `http_serve`/`http_serve_mt`.**
   `NYX_HTTP_SEND_SECS` (30 s por omisión) acota cuánto puede quedar trabada la escritura de una
   respuesta sin avanzar: un cliente que dejaba de LEER una respuesta grande retenía su worker de

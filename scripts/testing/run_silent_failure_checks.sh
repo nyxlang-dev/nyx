@@ -733,9 +733,13 @@ else
     fi
     [ -e "$SP/.vscode" ] && { seed_ok=0; seed_why="$seed_why [.vscode sembrado: rama borrada 2026-09-03]"; }
     [ -e "$SP/.claude" ] && { seed_ok=0; seed_why="$seed_why [.claude/ sembrado: ADR-1 lo mató]"; }
-    # El cuerpo sembrado es la plantilla byte a byte + línea en blanco + sello.
-    if ! head -n -2 "$SP/AGENTS.md" | cmp -s - templates/en/AGENTS.md; then
-        seed_ok=0; seed_why="$seed_why [AGENTS.md: el cuerpo difiere de templates/en/AGENTS.md]"
+    # Desde el 2026-09-26 la plantilla va DENTRO del bloque de nyx (lo único que
+    # --sync-docs reemplaza; ver agents_merge en compiler/build.nx): lo que hay
+    # entre `<!-- nyx:inicio -->` y `<!-- nyx:fin -->` es la plantilla byte a
+    # byte (sin sus saltos finales).
+    if ! awk '/^<!-- nyx:fin -->$/{f=0} f{print} /^<!-- nyx:inicio -->$/{f=1}' "$SP/AGENTS.md" \
+         | cmp -s - <(sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' templates/en/AGENTS.md); then
+        seed_ok=0; seed_why="$seed_why [AGENTS.md: el bloque de nyx difiere de templates/en/AGENTS.md]"
     fi
     # Adaptadores opt-in: con --agent= los tres van sellados igual que el resto.
     ADAPT_DIR="$TMPDIR/seed_stamp_agents"

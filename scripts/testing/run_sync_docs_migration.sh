@@ -389,6 +389,107 @@ else
 fi
 rm -rf "$F_DIR"
 
+# ── Escenarios (g)–(k): el bloque de nyx (2026-09-26). nyx reemplaza SOLO lo
+# que está entre <!-- nyx:inicio --> y <!-- nyx:fin -->; lo de afuera es del
+# proyecto. Un AGENTS.md anterior al bloque se migra por secciones `## `: lo
+# que no es de la plantilla se conserva, textual, arriba. nyxerp perdió así
+# sus «Reglas de este proyecto» varias veces.
+AG="$TMPDIR/ag"
+mkdir -p "$AG"
+tpl_es="$STAGE/templates/es/AGENTS.md"
+
+echo "== Escenario (g): proyecto nuevo — bloque de nyx, sello al final, sync idempotente =="
+( cd "$AG" && NYX_HOME="$STAGE" "$REPO_ROOT/nyx_build" init g --lang es >/dev/null 2>&1 )
+G="$AG/g/AGENTS.md"
+g_ok=1
+grep -qx '<!-- nyx:inicio -->' "$G" && grep -qx '<!-- nyx:fin -->' "$G" || g_ok=0
+tail -1 "$G" | grep -q 'nyx-version:' || g_ok=0
+cp "$G" "$AG/g.antes"
+run_sync "$AG/g" >/dev/null 2>&1; run_sync "$AG/g" >/dev/null 2>&1
+cmp -s "$G" "$AG/g.antes" || g_ok=0
+[ "$(ls "$AG/g"/AGENTS.md.bak* 2>/dev/null | wc -l)" = 0 ] || g_ok=0
+if [ "$g_ok" = 1 ]; then
+    printf "  ✓ escenario (g): init siembra el bloque, el sello queda al final y dos syncs no tocan nada\n"
+else
+    printf "  ✗ escenario (g): falta el bloque, el sello no es la última línea, o el sync reescribió sin cambios\n"; FAIL=$((FAIL + 1))
+fi
+
+echo "== Escenario (h): lo propio arriba sobrevive byte a byte; el bloque trae la plantilla nueva =="
+( cd "$AG" && NYX_HOME="$STAGE" "$REPO_ROOT/nyx_build" init h --lang es >/dev/null 2>&1 )
+H="$AG/h/AGENTS.md"
+{ printf '# Proyecto h\n\n## Reglas de este proyecto\n- regla h1\n\n```\n## esto es código, no una sección\n```\n\n'; cat "$H"; } > "$H.tmp" && mv "$H.tmp" "$H"
+printf 'debajo del bloque, también mío\n' > "$AG/h.abajo"
+sed -i "/^<!-- nyx-version:/i debajo del bloque, también mío" "$H"
+awk '/^<!-- nyx:inicio -->/{exit} {print}' "$H" > "$AG/h.arriba.antes"
+cp "$tpl_es" "$AG/tpl.bak"
+printf '\nLÍNEA NUEVA DE LA PLANTILLA\n' >> "$tpl_es"
+run_sync "$AG/h" >/dev/null 2>&1
+cp "$AG/tpl.bak" "$tpl_es"
+awk '/^<!-- nyx:inicio -->/{exit} {print}' "$H" > "$AG/h.arriba.despues"
+h_ok=1
+cmp -s "$AG/h.arriba.antes" "$AG/h.arriba.despues" || h_ok=0
+grep -q 'LÍNEA NUEVA DE LA PLANTILLA' "$H" || h_ok=0
+grep -q 'debajo del bloque, también mío' "$H" || h_ok=0
+tail -1 "$H" | grep -q 'nyx-version:' || h_ok=0
+[ "$(grep -c '^<!-- nyx:inicio -->' "$H")" = 1 ] || h_ok=0
+if [ "$h_ok" = 1 ]; then
+    printf "  ✓ escenario (h): lo de arriba idéntico, lo de abajo conservado, el bloque con la plantilla nueva\n"
+else
+    printf "  ✗ escenario (h): se tocó lo del proyecto o el bloque no se actualizó\n"; FAIL=$((FAIL + 1))
+fi
+
+echo "== Escenario (i): AGENTS.md viejo (sin bloque) con reglas propias en el medio =="
+I="$AG/i"; mkdir -p "$I"; printf '[package]\nname = "i"\nversion = "0.1.0"\nmain = "src/main.nx"\n' > "$I/nyx.toml"
+{
+    awk '/^## /{exit} {print}' "$tpl_es"
+    printf '## Reglas de este proyecto (NO vienen de la plantilla)\n\n### Idioma\n- español neutro\n\n### Reportes\n- se firman como i\n\n'
+    awk 'f{print} /^## /{f=1; print}' "$tpl_es" | awk '!seen[$0]++ || !/^## /'
+    printf '\n<!-- sdd:trigger -->\n- disparador de sdd\n\n<!-- nyx-version: 0.32.3 nyx-lang: es -->\n'
+} > "$I/AGENTS.md"
+# Un encabezado de la plantilla renombrado entre versiones: sus líneas siguen
+# siendo de nyx y no tiene que duplicarse.
+sed -i 's/^## Rieles duros.*/## Rieles duros (título viejo)/' "$I/AGENTS.md"
+run_sync "$I" > "$AG/i.log" 2>&1
+i_ok=1
+awk '/^<!-- nyx:inicio -->/{exit} {print}' "$I/AGENTS.md" > "$AG/i.arriba"
+grep -q '^## Reglas de este proyecto' "$AG/i.arriba" || i_ok=0
+grep -q 'se firman como i' "$AG/i.arriba" || i_ok=0
+grep -q 'disparador de sdd' "$AG/i.arriba" || i_ok=0
+[ "$(grep -c '^## Rieles duros' "$I/AGENTS.md")" = 1 ] || i_ok=0
+[ "$(grep -c '^## Trampas' "$I/AGENTS.md")" = 1 ] || i_ok=0
+[ "$(ls "$I"/AGENTS.md.bak* 2>/dev/null | wc -l)" = 1 ] || i_ok=0
+tail -1 "$I/AGENTS.md" | grep -q 'nyx-version:' || i_ok=0
+cp "$I/AGENTS.md" "$AG/i.1"; run_sync "$I" >/dev/null 2>&1
+cmp -s "$I/AGENTS.md" "$AG/i.1" || i_ok=0
+if [ "$i_ok" = 1 ]; then
+    printf "  ✓ escenario (i): las reglas y el disparador quedan arriba, ninguna sección de la plantilla se duplica, un .bak y la segunda corrida no cambia nada\n"
+else
+    printf "  ✗ escenario (i): migración del AGENTS.md viejo incorrecta:\n"; sed 's/^/      /' "$AG/i.log"; FAIL=$((FAIL + 1))
+fi
+
+echo "== Escenario (j): el bloque proyecto:inicio de antes sigue sobreviviendo en un archivo viejo =="
+J="$AG/j"; mkdir -p "$J"; cp "$I/nyx.toml" "$J/nyx.toml"
+{ cat "$tpl_es"; printf '\n<!-- proyecto:inicio -->\n## Mío\n- regla j\n<!-- proyecto:fin -->\n\n<!-- nyx-version: 0.33.0 nyx-lang: es -->\n'; } > "$J/AGENTS.md"
+run_sync "$J" >/dev/null 2>&1
+if awk '/^<!-- nyx:inicio -->/{exit} {print}' "$J/AGENTS.md" | grep -q 'regla j'; then
+    printf "  ✓ escenario (j): el bloque proyecto:inicio … proyecto:fin queda arriba del bloque de nyx\n"
+else
+    printf "  ✗ escenario (j): se perdió el bloque proyecto:inicio\n"; FAIL=$((FAIL + 1))
+fi
+
+echo "== Escenario (k): nyx sdd init pone el disparador ARRIBA del bloque =="
+( cd "$AG/g" && NYX_HOME="$STAGE" "$REPO_ROOT/nyx_build" sdd init >/dev/null 2>&1 )
+k_ok=1
+awk '/^<!-- nyx:inicio -->/{exit} {print}' "$G" | grep -q '<!-- sdd:trigger -->' || k_ok=0
+cp "$G" "$AG/k.antes"; run_sync "$AG/g" >/dev/null 2>&1
+grep -q '<!-- sdd:trigger -->' "$G" || k_ok=0
+cmp -s "$G" "$AG/k.antes" || k_ok=0
+if [ "$k_ok" = 1 ]; then
+    printf "  ✓ escenario (k): el disparador de sdd queda en la zona del proyecto y el sync no lo toca\n"
+else
+    printf "  ✗ escenario (k): el disparador quedó dentro del bloque o el sync lo borró\n"; FAIL=$((FAIL + 1))
+fi
+
 # ── What's new: verificación estática de que scripts/nyx invoca nyx_gendocs
 # fixed-since en la rama `update` (el flujo real necesita git — fuera de
 # alcance de esta guardia, que nunca puede llegar a esa rama).

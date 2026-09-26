@@ -410,6 +410,302 @@ fn seed_file(dst: String, content: String, lang: String) {
     write_file(dst, seed_body(content, lang))
 }
 
+// ===== AGENTS.md: el bloque de nyx y lo que es del proyecto =====
+//
+// AGENTS.md lo leen los agentes PRIMERO, y los proyectos avanzados le escriben
+// sus propias reglas. Hasta el 2026-09-26 `nyx update --sync-docs` lo
+// resembraba entero: solo sobrevivía un bloque entre `proyecto:inicio` y
+// `proyecto:fin` que el proyecto tenía que conocer y adoptar. nyxerp perdió
+// así sus «Reglas de este proyecto» varias veces y las restauraba desde git.
+//
+// Ahora es al revés: nyx reemplaza SOLO lo que puede demostrar que escribió,
+// el texto entre `<!-- nyx:inicio -->` y `<!-- nyx:fin -->`. Todo lo demás es
+// del proyecto y no se toca. El contenido propio va ARRIBA del bloque: el
+// agente lo lee antes y manda sobre la guía general (decisión de Ottavio).
+//
+// Un AGENTS.md anterior a esto (sin el bloque) se migra por secciones `## `:
+// la que la plantilla actual reconoce como suya se reemplaza; cualquier otra
+// se conserva textual, arriba. Ver agents_merge_legado.
+
+fn agents_ini() -> String { return "<!-- nyx:inicio -->" }
+fn agents_fin() -> String { return "<!-- nyx:fin -->" }
+
+fn agents_cabecera(lang: String) -> String {
+    if lang == "es" {
+        return "<!-- Reglas de ESTE proyecto: escríbelas acá arriba, antes del bloque de nyx; mandan sobre él. `nyx update --sync-docs` solo reemplaza lo que está entre nyx:inicio y nyx:fin. -->"
+    }
+    return "<!-- Rules for THIS project: write them up here, above the nyx block; they override it. `nyx update --sync-docs` only replaces what sits between nyx:inicio and nyx:fin. -->"
+}
+
+// La plantilla sin los saltos finales, entre los dos marcadores.
+fn agents_bloque(template: String) -> String {
+    var t: String = template
+    while t.endsWith("\n") {
+        t = t.substring(0, t.length() - 1)
+    }
+    return agents_ini() + "\n" + t + "\n" + agents_fin() + "\n"
+}
+
+// AGENTS.md de un proyecto nuevo: cabecera + bloque + sello (última línea).
+fn agents_seed(template: String, lang: String) -> String {
+    return agents_cabecera(lang) + "\n\n" + agents_bloque(template) + "\n" + seed_stamp(lang)
+}
+
+fn agents_es_sello(linea: String) -> bool {
+    return linea.trim().startsWith("<!-- nyx-version:")
+}
+
+// Índice de la primera línea que es EXACTAMENTE `marca` (sin contar espacios
+// alrededor), desde `desde`; -1 si no hay. Una línea propia, no un substring:
+// la plantilla CITA los marcadores dentro de oraciones para explicarlos.
+fn agents_linea_idx(lineas: Array, marca: String, desde: int) -> int {
+    var i: int = desde
+    while i < lineas.length() {
+        let l: String = lineas[i]
+        if l.trim() == marca { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// Las líneas unidas con "\n" y sin líneas vacías al final.
+fn agents_unir(lineas: Array) -> String {
+    var fin: int = lineas.length()
+    while fin > 0 {
+        let l: String = lineas[fin - 1]
+        if l.trim() != "" { break }
+        fin = fin - 1
+    }
+    var partes: Array = []
+    var i: int = 0
+    while i < fin {
+        partes.push(lineas[i])
+        i = i + 1
+    }
+    return partes.join("\n")
+}
+
+// El resultado de agents_merge: el texto nuevo y el informe para la persona.
+struct AgentsMerge {
+    texto: String,
+    informe: Array
+}
+
+// AGENTS.md con el bloque: se reemplaza el interior; lo de arriba queda byte
+// a byte, lo de abajo también (salvo los sellos viejos), y el sello va al final.
+fn agents_merge_bloque(lineas: Array, ini: int, fin: int, template: String, lang: String) -> String {
+    var antes: String = ""
+    var i: int = 0
+    while i < ini {
+        let l: String = lineas[i]
+        antes = antes + l + "\n"
+        i = i + 1
+    }
+    var despues: Array = []
+    var j: int = fin + 1
+    while j < lineas.length() {
+        let l: String = lineas[j]
+        if agents_es_sello(l) == false { despues.push(l) }
+        j = j + 1
+    }
+    var post: String = agents_unir(despues)
+    if post.trim() != "" { post = post + "\n" }
+    return antes + agents_bloque(template) + post + "\n" + seed_stamp(lang)
+}
+
+// Una sección `## ` (o el preámbulo, con encabezado "") de un AGENTS.md viejo.
+struct AgentsSeccion {
+    encabezado: String,
+    lineas: Array
+}
+
+// Parte en preámbulo + secciones `## `. Un `##` dentro de un bloque de código
+// (```) no abre sección.
+fn agents_secciones(lineas: Array) -> Array {
+    var out: Array = []
+    var actual: AgentsSeccion = AgentsSeccion { encabezado: "", lineas: [] }
+    var en_codigo: bool = false
+    var i: int = 0
+    while i < lineas.length() {
+        let l: String = lineas[i]
+        if l.trim().startsWith("```") {
+            en_codigo = !en_codigo
+        }
+        if en_codigo == false and l.startsWith("## ") {
+            out.push(actual)
+            var nuevas: Array = []
+            nuevas.push(l)
+            actual = AgentsSeccion { encabezado: l.trim(), lineas: nuevas }
+        } else {
+            actual.lineas.push(l)
+        }
+        i = i + 1
+    }
+    out.push(actual)
+    return out
+}
+
+// AGENTS.md sin el bloque (anterior al 2026-09-26). Primero salen como del
+// proyecto los bloques `proyecto:inicio`…`proyecto:fin` (la protección vieja)
+// y el disparador `<!-- sdd:trigger -->` de `nyx sdd init`. Después, por
+// sección: es de nyx si la plantilla actual tiene ese encabezado, si trae un
+// bloque generado (`<!-- gen:`), o si al menos el 60 % de sus líneas están en
+// la plantilla (un encabezado que cambió de nombre entre versiones). El
+// preámbulo es de nyx. Lo demás es del proyecto y se conserva textual, en su
+// orden, ARRIBA del bloque nuevo. Ante la duda se CONSERVA: una sección de
+// más se borra a mano; una de menos era trabajo perdido.
+fn agents_merge_legado(lineas: Array, template: String, lang: String) -> AgentsMerge {
+    var informe: Array = []
+    var propio: Array = []
+    var resto: Array = []
+    var i: int = 0
+    while i < lineas.length() {
+        let l: String = lineas[i]
+        let t: String = l.trim()
+        if t == "<!-- proyecto:inicio -->" {
+            let f: int = agents_linea_idx(lineas, "<!-- proyecto:fin -->", i + 1)
+            if f >= 0 {
+                var blk: Array = []
+                var k: int = i
+                while k <= f {
+                    blk.push(lineas[k])
+                    k = k + 1
+                }
+                propio.push(agents_unir(blk))
+                informe.push("se conservó el bloque proyecto:inicio … proyecto:fin")
+                i = f + 1
+                continue
+            }
+        }
+        if t == "<!-- sdd:trigger -->" {
+            var blk2: Array = []
+            blk2.push(l)
+            var k2: int = i + 1
+            while k2 < lineas.length() {
+                let l2: String = lineas[k2]
+                if l2.trim() == "" or agents_es_sello(l2) { break }
+                blk2.push(l2)
+                k2 = k2 + 1
+            }
+            propio.push(agents_unir(blk2))
+            informe.push("se conservó el disparador de nyx sdd (sdd:trigger)")
+            i = k2
+            continue
+        }
+        if agents_es_sello(l) == false { resto.push(l) }
+        i = i + 1
+    }
+
+    // Lo que la plantilla actual trae: encabezados y líneas.
+    let tlineas: Array = template.split("\n")
+    var t_enc: Map = Map.new()
+    var t_lin: Map = Map.new()
+    let tsecs: Array = agents_secciones(tlineas)
+    var ti: int = 0
+    while ti < tsecs.length() {
+        let ts: AgentsSeccion = tsecs[ti]
+        if ts.encabezado != "" { t_enc.insert(ts.encabezado, 1) }
+        ti = ti + 1
+    }
+    var tl: int = 0
+    while tl < tlineas.length() {
+        let x: String = tlineas[tl]
+        let xt: String = x.trim()
+        if xt != "" { t_lin.insert(xt, 1) }
+        tl = tl + 1
+    }
+
+    let secs: Array = agents_secciones(resto)
+    var si: int = 0
+    while si < secs.length() {
+        let sec: AgentsSeccion = secs[si]
+        var total: int = 0
+        var en_plantilla: int = 0
+        var con_gen: bool = false
+        var li: int = 0
+        while li < sec.lineas.length() {
+            let x: String = sec.lineas[li]
+            let xt: String = x.trim()
+            if xt.startsWith("<!-- gen:") { con_gen = true }
+            if xt != "" and xt != sec.encabezado {
+                total = total + 1
+                if t_lin.contains(xt) { en_plantilla = en_plantilla + 1 }
+            }
+            li = li + 1
+        }
+        var de_nyx: bool = false
+        if sec.encabezado == "" { de_nyx = true }
+        if t_enc.contains(sec.encabezado) { de_nyx = true }
+        if con_gen { de_nyx = true }
+        if total > 0 and en_plantilla * 10 >= total * 6 { de_nyx = true }
+        if de_nyx {
+            let fuera: int = total - en_plantilla
+            if fuera > 0 and sec.encabezado != "" {
+                informe.push("«" + sec.encabezado + "» se reemplazó por la plantilla; " + int_to_string(fuera) + " línea(s) suya(s) no están en la plantilla nueva (texto viejo de nyx o ediciones tuyas): quedaron en el .bak")
+            }
+            if fuera > 0 and sec.encabezado == "" {
+                informe.push("la introducción se reemplazó por la plantilla; " + int_to_string(fuera) + " línea(s) no están en la plantilla nueva: quedaron en el .bak")
+            }
+        } else {
+            let txt: String = agents_unir(sec.lineas)
+            if txt.trim() != "" {
+                propio.push(txt)
+                informe.push("se conservó «" + sec.encabezado + "» (no es de la plantilla)")
+            }
+        }
+        si = si + 1
+    }
+
+    var texto: String = agents_cabecera(lang) + "\n\n"
+    var pi: int = 0
+    while pi < propio.length() {
+        let pt: String = propio[pi]
+        texto = texto + pt + "\n\n"
+        pi = pi + 1
+    }
+    texto = texto + agents_bloque(template) + "\n" + seed_stamp(lang)
+    return AgentsMerge { texto: texto, informe: informe }
+}
+
+// El AGENTS.md que tiene que quedar, dado el que hay (`existente`, "" si no hay).
+fn agents_merge(existente: String, template: String, lang: String) -> AgentsMerge {
+    var vacio: Array = []
+    if existente.trim() == "" {
+        return AgentsMerge { texto: agents_seed(template, lang), informe: vacio }
+    }
+    let lineas: Array = existente.split("\n")
+    let ini: int = agents_linea_idx(lineas, agents_ini(), 0)
+    if ini >= 0 {
+        let fin: int = agents_linea_idx(lineas, agents_fin(), ini + 1)
+        if fin >= 0 {
+            return AgentsMerge { texto: agents_merge_bloque(lineas, ini, fin, template, lang), informe: vacio }
+        }
+    }
+    return agents_merge_legado(lineas, template, lang)
+}
+
+// `nyx_build agents-merge <AGENTS.md> <plantilla> <lang> <salida>`: escribe en
+// <salida> el AGENTS.md que tiene que quedar e imprime el informe. No toca el
+// AGENTS.md: comparar, respaldar (.bak) y reemplazar lo hace el wrapper
+// (`nyx update --sync-docs`), con el mismo _safe_backup del resto del sync.
+fn run_agents_merge(dst: String, tpl: String, lang: String, salida: String) -> bool {
+    if file_exists(tpl) == false {
+        print("error: no existe la plantilla " + tpl)
+        return false
+    }
+    var existente: String = ""
+    if file_exists(dst) { existente = read_file(dst) }
+    let m: AgentsMerge = agents_merge(existente, read_file(tpl), lang)
+    write_file(salida, m.texto)
+    var i: int = 0
+    while i < m.informe.length() {
+        let linea: String = m.informe[i]
+        print("  → AGENTS.md: " + linea)
+        i = i + 1
+    }
+    return true
+}
+
 // .gitignore (F4 del informe de fricción del scaffold, hallazgo A1): nyx init
 // no dejaba ninguno y el primer `git add .` se llevaba el binario, packages/ y
 // los .ll. Plantilla en templates/gitignore ({{binary}} = [package].name).
@@ -508,8 +804,10 @@ fn scaffold_project_files(dir: String, lang: String, agents: String) {
     }
 
     // AGENTS.md — el playbook PRIMARIO que el agente lee primero (rieles + qué/cómo).
+    // Con el bloque de nyx desde el 2026-09-26: lo que el proyecto escriba
+    // arriba sobrevive a `nyx update --sync-docs` (ver agents_merge).
     let agents_md: String = read_file(ldir + "/AGENTS.md")
-    seed_file(dir + "/AGENTS.md", agents_md, lang)
+    write_file(dir + "/AGENTS.md", agents_seed(agents_md, lang))
 
     // CAPABILITIES.md — índice generado de la stdlib (qué existe, no reinventar).
     let cok: bool = run_capabilities(dir + "/CAPABILITIES.md")
@@ -860,6 +1158,15 @@ fn add_agents_triggers(dir: String, lang: String) -> bool {
     } else {
         block = block + "- If `docs/constitution.md` still contains `SDD_INCOMPLETE`, do not write code yet: follow `docs/sdd/onboarding.md` and offer the user to complete it.\n"
         block = block + "- For a new feature with no `specs/NNN-feature/spec.md`, offer to write the spec first (see `specs/README.md`).\n"
+    }
+    // Con el bloque de nyx, el disparador va ARRIBA de él (zona del proyecto):
+    // adentro, el próximo `nyx update --sync-docs` lo borraría.
+    let bi: int = body.indexOf("\n" + agents_ini() + "\n")
+    if bi >= 0 {
+        write_file(path, body.substring(0, bi + 1) + block + "\n" + body.substring(bi + 1, body.length()))
+        print(sdd_msg(lang, "  AGENTS.md (+2 lines: the trigger)",
+                            "  AGENTS.md (+2 líneas: el disparador)"))
+        return true
     }
     let marker: String = "<!-- nyx-version: "
     let at: int = body.indexOf(marker)
@@ -2542,6 +2849,21 @@ fn shell_quote_arg(s: String) -> String {
         }
         let ok: bool = run_report(report_file, do_send)
         if ok { return 0 }
+        return 1
+    }
+
+    // `nyx_build agents-merge <AGENTS.md> <plantilla> <lang> <salida>` — lo
+    // llama `nyx update --sync-docs` (no requiere nyx.toml).
+    if command == "agents-merge" {
+        if args.length() < 6 {
+            print("uso: nyx_build agents-merge <AGENTS.md> <plantilla> <lang> <salida>")
+            return 1
+        }
+        let a_dst: String = args[2]
+        let a_tpl: String = args[3]
+        let a_lang: String = args[4]
+        let a_out: String = args[5]
+        if run_agents_merge(a_dst, a_tpl, a_lang, a_out) { return 0 }
         return 1
     }
 

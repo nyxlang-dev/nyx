@@ -133,8 +133,9 @@ Que una trampa te muerda es normal — corrige según la nota, no reescribas tod
 
 Todo lo de abajo lo sembró `nyx init` y lo refresca `nyx update --sync-docs`. Está escrito
 para un agente, no para un proveedor: cualquier asistente lee los mismos archivos. Las reglas
-propias del proyecto van en este archivo entre `<!-- proyecto:inicio -->` y
-`<!-- proyecto:fin -->`: ese bloque sobrevive a `--sync-docs`; el resto se resiembra.
+propias del proyecto van en este archivo, ARRIBA del bloque de nyx (la línea `nyx:inicio`) y
+mandan sobre esta guía: `--sync-docs` solo reemplaza lo que está entre `nyx:inicio` y
+`nyx:fin`.
 
 | Archivo | Qué es | Cuándo abrirlo |
 |---|---|---|

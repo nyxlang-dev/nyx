@@ -66,9 +66,12 @@ their own; each adapter does nothing but point at `AGENTS.md` and `docs/nyx/guid
 the accepted tool names are in the usage line that `nyx init` prints (they also name the
 files in `templates/adapters/` of the toolchain). `nyx update --sync-docs` re-seeds
 AGENTS.md and docs/nyx/ from the installed toolchain, in the project's language, leaving
-.bak copies. A block between `<!-- proyecto:inicio -->` and `<!-- proyecto:fin -->` in the
-project's AGENTS.md is preserved (the project's own rules); a run that changes nothing
-touches nothing.
+.bak copies. In AGENTS.md it replaces ONLY the nyx block (between the `<!-- nyx:inicio -->`
+and `<!-- nyx:fin -->` lines); everything outside it belongs to the project and is never
+touched — write the project's own rules ABOVE the block (since 2026-09-26). An AGENTS.md
+older than the block is migrated by `## ` section: any section the current template does not
+recognize as its own is kept verbatim above the new block, and the run prints what it kept
+and what it replaced. A run that changes nothing touches nothing.
 
 **Optional SDD scaffolding** — `nyx init --sdd` (new project) or `nyx sdd init` (a project
 that already exists) adds a second, reversible layer for work where deciding costs more
