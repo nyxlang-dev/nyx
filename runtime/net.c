@@ -824,19 +824,56 @@ static void park_ready_cb(int fd, int events, void* ud) {
     if (mio) nyx_channel_send(g_park.ch, fd);
 }
 
-// Cierra las conexiones cuyo plazo venció.
-static void park_sweep(void) {
-    int64_t now = park_now_ms();
+// Cierra las conexiones cuyo plazo venció — salvo las que ya tienen algo
+// para leer, que se entregan a los workers.
+//
+// POR QUÉ (2026-09-27, a raíz de la prueba de carga de nyxerp): un pedido que
+// llega justo cuando vence el plazo puede estar en el socket y no haber pasado
+// todavía por el event loop (el hilo lo verá en la vuelta siguiente, y bajo
+// saturación esa vuelta se atrasa). Cerrar un socket con datos sin leer hace
+// que el kernel mande RST: el cliente ve ECONNRESET en un pedido que el
+// servidor sí había recibido. Si hay datos (o un EOF, que el worker cierra
+// igual), el cliente habló antes que el plazo: se atiende. La comprobación es
+// un poll de 0 ms solo sobre las vencidas. Test:
+// test_http_park_vencida_con_pedido (tests/runtime-unit/test_net.c).
+// Las entregas van FUERA del lock (nyx_channel_send puede esperar), de a
+// tandas de PARK_TANDA; si hay más, las que faltan siguen vencidas y las toma
+// la vuelta siguiente.
+#define PARK_TANDA 64
+static void park_sweep_at(int64_t now) {
+    int entregar[PARK_TANDA];
+    int n = 0;
     os_mutex_lock(&g_park.lock);
     for (int fd = 0; fd < g_park.hwm; fd++) {
         int64_t d = g_park_deadline[fd];
         if (d != 0 && d <= now) {
-            park_forget_locked(fd);
-            nyx_tcp_close(fd);
+            if (os_sock_poll1(fd, OS_POLLIN, 0) > 0) {
+                if (n == PARK_TANDA) break;
+                park_forget_locked(fd);
+                entregar[n++] = fd;
+            } else {
+                park_forget_locked(fd);
+                nyx_tcp_close(fd);
+            }
         }
     }
     os_mutex_unlock(&g_park.lock);
+    for (int i = 0; i < n; i++) nyx_channel_send(g_park.ch, entregar[i]);
 }
+
+static void park_sweep(void) { park_sweep_at(park_now_ms()); }
+
+#ifdef NYX_RUNTIME_TESTING
+// Ganchos SOLO para tests unitarios (tests/runtime-unit/test_net.c), y SOLO
+// existen con -DNYX_RUNTIME_TESTING (mismo patrón que http2.c). La carrera
+// que prueba test_http_park_vencida_con_pedido —un pedido que llega a una
+// conexión estacionada justo cuando su plazo vence y el barrido corre antes
+// de que el event loop lo vea— depende del planificador y no se puede forzar
+// desde afuera: con el hilo del estacionamiento QUIETO, el test la arma.
+static volatile int g_park_test_quieto = 0;
+void nyx_http_park_test_quieto(int64_t on) { g_park_test_quieto = (int)on; }
+void nyx_http_park_test_barrer(int64_t adelanto_ms) { park_sweep_at(park_now_ms() + adelanto_ms); }
+#endif
 
 static void* park_thread_main(void* arg) {
     (void)arg;
@@ -848,6 +885,9 @@ static void* park_thread_main(void* arg) {
     const int tick_ms = 20;
 #endif
     for (;;) {
+#ifdef NYX_RUNTIME_TESTING
+        if (g_park_test_quieto) { os_sleep_ms(tick_ms); continue; }
+#endif
         nyx_event_loop_run_once(g_park.loop, tick_ms);
         park_sweep();
     }

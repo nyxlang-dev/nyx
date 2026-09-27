@@ -61,6 +61,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`std/serve`: una conexión ociosa que vence con un pedido ya llegado se atiende, no se
+  resetea.** El barrido del estacionamiento (`runtime/net.c`) cerraba por plazo sin mirar si el
+  socket ya tenía un pedido que el event loop todavía no había visto; cerrar con datos sin leer
+  hace que el kernel mande RST, y el cliente veía ECONNRESET en un pedido que el servidor sí
+  recibió. Ahora las vencidas con datos se entregan a los workers. Salió al analizar la prueba de
+  carga de nyxerp (ECONNRESET solo bajo saturación); los datos apuntan sobre todo a la carrera de
+  keep-alive del propio generador, así que esto es un blindaje, no la causa medida. Regresión
+  determinista con un gancho `-DNYX_RUNTIME_TESTING` (hilo del estacionamiento quieto):
+  `test_http_park_vencida_con_pedido`, en rojo sin el arreglo (el cliente recibe ECONNRESET).
+
 - **Asignar un valor opaco a una variable ya declarada lo convierte a su tipo** (fricción nyxerp
   20260925-090024). `let x: S = xs[0]` andaba, pero `var s: S = …` + `s = xs[0]` emitía
   `store %S %<i64>`: IR inválido, `nyx check` callado y el enlace rechazado por clang. La
