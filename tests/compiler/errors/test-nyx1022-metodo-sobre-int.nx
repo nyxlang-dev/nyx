@@ -1,0 +1,10 @@
+// NYX1022 sobre un escalar (2026-09-27): sin catálogo de métodos para int/float/bool,
+// semantic aprobaba cualquiera, y `x.contains("a")` con `x: int` bajaba en codegen por
+// la rama de arrays (un i64 puede ser un Array sin tipo): IR inválido que rechazaba
+// clang, con `nyx check` en verde. Sobre un escalar solo existe to_string.
+// Expected stderr (contains): "NYX1022"
+fn main() -> int {
+    var x: int = 9
+    if x.contains("x") { return 1 }
+    return 0
+}

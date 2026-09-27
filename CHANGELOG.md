@@ -73,6 +73,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **NYX1022 también sobre `int`, `float` y `bool`.** El catálogo de métodos por tipo de semantic
+  cubría String, Array, Map, Option y Result; sin catálogo, un escalar aprobaba cualquier método, y
+  `x.contains("a")` con `x: int` bajaba en codegen por la rama de arrays (un `i64` puede ser un
+  Array sin tipo): IR inválido con `nyx check` en verde. Sobre un escalar solo existe `to_string`.
+  El chequeo vale solo para variables DECLARADAS con anotación escalar (`var x: int`): un escalar
+  inferido puede mentir (`[1, "dos"]` se infiere `Array<int>` y `a[1].contains("d")` es legítimo,
+  test-323), así que ahí sigue decidiendo el tag en runtime. Verificado sin falsos positivos contra
+  todos los módulos del compilador con semantic activo, el nyxerp real y los stacks. `char` queda sin catálogo (su `to_string` falta; ficha en TASKS).
+  Regresión: `test-nyx1022-metodo-sobre-int` (test-errors 347 → 348).
+
 - **`let x: T = <escalar de otro ancho>` convierte al tipo anotado.** `let s: int = w + h` con
   `w`/`h` de tipo `i32` guardaba un `i32` en una variable declarada `int`: el `.to_string()`
   siguiente fallaba en codegen con `nyx check` en verde, y la aritmética seguía en 32 bits. La

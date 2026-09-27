@@ -125,6 +125,8 @@ TESTS=(
   # Arco wasm-arena-persistir, Task 4: arena_persist solo copia String o Array
   # de escalares; struct/Map/Array<Struct> son NYX1039 en semantic (antes solo
   # en codegen, con `nyx check` en verde). El Array<Struct> solo lo ve semantic.
+  # NYX1022 sobre un escalar: `x.contains("a")` con x: int era IR inválido.
+  "tests/compiler/errors/test-nyx1022-metodo-sobre-int.nx|NYX1022"
   "tests/compiler/errors/test-nyx1039-arena-persist-struct.nx|NYX1039"
   "tests/compiler/errors/test-nyx1039-arena-persist-array-de-struct.nx|NYX1039"
   "tests/compiler/errors/test-nyx1039-arena-persist-map.nx|NYX1039"
