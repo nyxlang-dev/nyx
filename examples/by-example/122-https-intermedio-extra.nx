@@ -1,0 +1,58 @@
+// Nyx by Example: consultar por HTTPS un sitio que manda mal su cadena de
+// certificados, sin apagar la verificación.
+//
+// Pasa más de lo que parece (sitios de gobierno, bancos): el servidor envía un
+// intermedio que no corresponde a su certificado, y la verificación contra las
+// CAs del sistema falla con «unable to get local issuer certificate» (código
+// 20). El intermedio correcto es público. HttpOpts.cas_extra lo SUMA a las CAs
+// del sistema solo para ESA petición:
+//   - la cadena y el nombre se siguen verificando igual;
+//   - no toca la confianza del resto del proceso (otras peticiones, std/postgres);
+//   - es el CONTENIDO PEM (uno o varios certificados), no una ruta: se puede
+//     traer con include_bytes o read_file.
+//
+// La receta corre sin red: un servidor TCP local acepta la conexión, y se
+// muestra que un cas_extra que no trae ningún certificado se rechaza (invalid,
+// 22) antes del handshake, en vez de pasar como «no hacía falta».
+
+import "std/http"
+import "std/net"
+import "std/error"
+
+var g_listo: Map = Map.new()
+
+fn servidor_mudo() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let puerto: Result<int, Error> = try_local_port(srv)
+    channel_send(g_listo, puerto.unwrap())
+    let fd: int = tcp_accept(srv)
+    sleep(500)
+    tcp_close(fd)
+    return 0
+}
+
+// Lo que haría un programa real: el intermedio correcto, publicado por la CA
+// (la extensión AIA del certificado dice dónde), guardado junto al programa.
+fn consultar(url: String, intermedio_pem: String) -> Result<Array, Error> {
+    var o: HttpOpts = http_opts()
+    o.cas_extra = intermedio_pem
+    return try_http_request_opts("GET", url, [], "", o)
+}
+
+fn main() {
+    g_listo = channel_new(1)
+    thread_spawn(servidor_mudo)
+    let puerto: int = channel_recv(g_listo)
+    let url: String = "https://127.0.0.1:" + int_to_string(puerto) + "/"
+
+    // En un programa real: let pem: String = read_file("certs/intermedio.pem")
+    match consultar(url, "esto no es un certificado") {
+        Result.Ok(r) => {
+            print("inesperado: " + int_to_string(http_status(r)))
+        }
+        Result.Err(e) => {
+            print("rechazado antes del handshake: " + e.kind + " " + int_to_string(e.code))
+            assert(e.kind == "invalid" and e.code == 22, "un PEM ilegible se dice, no se ignora")
+        }
+    }
+}

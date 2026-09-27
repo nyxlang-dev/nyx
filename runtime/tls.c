@@ -994,8 +994,8 @@ void nyx_tls_close_conn(int64_t handle) {
 // Camino único de conexión cliente con plazo y causa: definido más abajo, junto a
 // nyx_tls_connect_result, después de los dos contextos que elige según el modo.
 static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
-                                int64_t connect_ms, int* status, int* vcode,
-                                char* detail, size_t dlen);
+                                int64_t connect_ms, const nyx_string* cas_extra,
+                                int* status, int* vcode, char* detail, size_t dlen);
 
 // Plazo de connect + handshake de las funciones de conexión SIN causa. Son los
 // 10 s que ya tenían como SO_SNDTIMEO/SO_RCVTIMEO, ahora como plazo total.
@@ -1009,7 +1009,7 @@ int64_t nyx_tls_connect(nyx_string* host, int64_t port) {
     if (!host_cstr || host_cstr[0] == '\0') return 0;
     int status = 0, vcode = 0;
     char detail[256];
-    return tls_connect_core(host_cstr, (int)port, 0, TLS_LEGACY_CONNECT_MS,
+    return tls_connect_core(host_cstr, (int)port, 0, TLS_LEGACY_CONNECT_MS, NULL,
                             &status, &vcode, detail, sizeof(detail));
 }
 
@@ -1095,7 +1095,7 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     if (!host_cstr || host_cstr[0] == '\0') return 0;
     int status = 0, vcode = 0;
     char detail[256];
-    return tls_connect_core(host_cstr, (int)port, verify_mode, TLS_LEGACY_CONNECT_MS,
+    return tls_connect_core(host_cstr, (int)port, verify_mode, TLS_LEGACY_CONNECT_MS, NULL,
                             &status, &vcode, detail, sizeof(detail));
 }
 
@@ -1184,9 +1184,33 @@ static int tcp_connect_deadline(const char* host, int port, int64_t deadline_ns,
     return -1;
 }
 
+// Almacén de confianza de UNA conexión: las CAs del sistema (las mismas de
+// SSL_CTX_set_default_verify_paths, SSL_CERT_FILE incluido) más los
+// certificados PEM de `pem`. Devuelve NULL si `pem` no trae ningún certificado
+// legible (el llamador lo reporta: un cas_extra que no se entendió no puede
+// pasar por «no hacía falta»). *n_leidos = cuántos se sumaron.
+static X509_STORE* tls_store_con_extra(const nyx_string* pem, int* n_leidos) {
+    *n_leidos = 0;
+    X509_STORE* st = X509_STORE_new();
+    if (!st) return NULL;
+    X509_STORE_set_default_paths(st);
+    BIO* bio = BIO_new_mem_buf(pem->data, (int)pem->length);
+    if (!bio) { X509_STORE_free(st); return NULL; }
+    for (;;) {
+        X509* c = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+        if (!c) break;
+        if (X509_STORE_add_cert(st, c) == 1) (*n_leidos)++;
+        X509_free(c);
+    }
+    BIO_free(bio);
+    ERR_clear_error();   // el fin del PEM deja un «no start line» en la cola
+    if (*n_leidos == 0) { X509_STORE_free(st); return NULL; }
+    return st;
+}
+
 static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
-                                int64_t connect_ms, int* status, int* vcode,
-                                char* detail, size_t dlen) {
+                                int64_t connect_ms, const nyx_string* cas_extra,
+                                int* status, int* vcode, char* detail, size_t dlen) {
     *status = 0;
     *vcode = 0;
     if (dlen > 0) detail[0] = '\0';
@@ -1218,6 +1242,33 @@ static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
     }
     tls_attach_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host);
+
+    // CAs extra de ESTA conexión (HttpOpts.cas_extra, fricción de nyxerp
+    // 2026-09-27): un sitio que manda mal su cadena se valida sumando el
+    // intermedio correcto, sin tocar el almacén del contexto compartido — el
+    // resto del proceso no se entera (la separación de almacenes del
+    // 2026-09-14 sigue intacta). SSL_set1_verify_cert_store reemplaza el
+    // almacén SOLO para este SSL; la cadena y el nombre se verifican igual.
+    if (cas_extra && cas_extra->length > 0 && verify_mode >= 2) {
+        int n = 0;
+        X509_STORE* st = tls_store_con_extra(cas_extra, &n);
+        if (!st) {
+            SSL_free(ssl);
+            os_sock_close(fd);
+            *status = -EINVAL;
+            snprintf(detail, dlen, "cas_extra no trae ningún certificado PEM legible");
+            return 0;
+        }
+        int ok = SSL_set1_verify_cert_store(ssl, st);
+        X509_STORE_free(st);   // set1 toma su propia referencia
+        if (ok != 1) {
+            SSL_free(ssl);
+            os_sock_close(fd);
+            *status = NYX_TLS_STATUS_TLS;
+            snprintf(detail, dlen, "no se pudo instalar el almacén de cas_extra");
+            return 0;
+        }
+    }
 
     if (verify_mode >= 2) {
         // Estricto: la cadena DEBE verificar y el nombre DEBE corresponder.
@@ -1321,6 +1372,14 @@ static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
 
 nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,
                                     int64_t verify_mode, int64_t connect_ms) {
+    return nyx_tls_connect_result_cas(host, port, verify_mode, connect_ms, NULL);
+}
+
+// Igual que nyx_tls_connect_result, con certificados PEM que se suman a la
+// verificación de ESTA conexión (NULL o "" = ninguno).
+nyx_array_t* nyx_tls_connect_result_cas(nyx_string* host, int64_t port,
+                                        int64_t verify_mode, int64_t connect_ms,
+                                        nyx_string* cas_extra) {
     nyx_array_t* out = nyx_array_new(4);
     int status = 0, vcode = 0;
     char detail[320] = "";
@@ -1333,7 +1392,7 @@ nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,
         status = -EINVAL;
         snprintf(detail, sizeof(detail), "puerto fuera de rango: %lld", (long long)port);
     } else {
-        handle = tls_connect_core(host_cstr, (int)port, verify_mode, connect_ms,
+        handle = tls_connect_core(host_cstr, (int)port, verify_mode, connect_ms, cas_extra,
                                   &status, &vcode, detail, sizeof(detail));
     }
     nyx_array_push_tagged(out, (int64_t)status, NYX_TAG_INT);

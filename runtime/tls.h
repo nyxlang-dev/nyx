@@ -119,6 +119,14 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode);
 #define NYX_TLS_STATUS_TLS 1
 nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,
                                     int64_t verify_mode, int64_t connect_ms);
+// Igual, con certificados PEM (uno o varios) que se SUMAN a las CAs del
+// sistema solo para esta conexión y solo en los modos que verifican (>= 2):
+// intermedios o raíces de un servidor que manda mal su cadena, o de una CA
+// privada. El contexto compartido no se toca. cas_extra NULL o "" = ninguno;
+// si trae texto pero ningún certificado legible, status = -EINVAL.
+nyx_array_t* nyx_tls_connect_result_cas(nyx_string* host, int64_t port,
+                                        int64_t verify_mode, int64_t connect_ms,
+                                        nyx_string* cas_extra);
 
 // Lectura con plazo: devuelve hasta max_bytes de datos de aplicación que lleguen
 // dentro de timeout_ms (con al menos 1 byte), sin esperar a llenar el pedido.

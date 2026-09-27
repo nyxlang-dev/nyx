@@ -35,6 +35,7 @@ extern "C" fn nyx_tls_set_ca_file(path: String) -> int
 extern "C" fn nyx_tls_connect_ex(host: String, port: int, verify_mode: int) -> int
 extern "C" fn nyx_tls_client_upgrade(fd: int, host: String, verify_mode: int) -> int
 extern "C" fn nyx_tls_connect_result(host: String, port: int, verify_mode: int, connect_ms: int) -> Array
+extern "C" fn nyx_tls_connect_result_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Array
 extern "C" fn nyx_tls_read_timed(h: int, max_bytes: int, timeout_ms: int) -> String
 extern "C" fn nyx_tls_read_cause(h: int) -> int
 extern "C" fn nyx_tls_read_error(h: int) -> String
@@ -302,7 +303,17 @@ const TLS_READ_INVALID: int = 5
 //     otro kind/errno             el resto de los fallos de transporte
 //                                 (113 = el host no resuelve o no hay ruta)
 pub fn try_tls_connect(host: String, port: int, verify_mode: int, connect_ms: int) -> Result<int, Error> {
-    let r: Array = nyx_tls_connect_result(host, port, verify_mode, connect_ms)
+    return try_tls_connect_cas(host, port, verify_mode, connect_ms, "")
+}
+
+// Igual que try_tls_connect, con certificados PEM (uno o varios, el CONTENIDO,
+// no una ruta) que se SUMAN a la verificación de ESTA conexión en los modos 2
+// y 4: el intermedio correcto de un servidor que manda mal su cadena, o la
+// raíz de una CA privada. No toca ningún almacén del proceso. La cadena y el
+// nombre se verifican igual. `cas_extra` con texto pero sin ningún
+// certificado legible = Err kind "invalid" code 22. Lo usa HttpOpts.cas_extra.
+pub fn try_tls_connect_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Result<int, Error> {
+    let r: Array = nyx_tls_connect_result_cas(host, port, verify_mode, connect_ms, cas_extra)
     let status: int = r[0]
     let h: int = r[1]
     let verify_code: int = r[2]

@@ -11,6 +11,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`HttpOpts.cas_extra`: sumar certificados a UNA petición HTTPS** (fricción de nyxerp,
+  2026-09-27). Un sitio que manda un intermedio que no corresponde a su hoja no verifica contra las
+  CAs del sistema; desde la separación de almacenes del 2026-09-14, `tls_set_ca_file` ya no llega
+  al HTTPS de `std/http`, y `SSL_CERT_FILE` reemplaza en vez de sumar, para todo el proceso y solo
+  antes del primer https. `cas_extra` (contenido PEM, uno o varios) se suma a las CAs del sistema
+  solo para esa conexión (`SSL_set1_verify_cert_store` sobre un almacén propio del SSL), con la
+  cadena y el nombre verificados igual; el resto del proceso no se entera. PEM sin certificados
+  legibles = `Err(invalid, 22)`. A bajo nivel, `try_tls_connect_cas` (`std/tls`) y
+  `nyx_tls_connect_result_cas` (runtime). Regresión: sub-suite `test_http_cas_extra.py` (PKI de
+  prueba con intermedio equivocado: 5 casos, incluidos «no se filtra a la petición siguiente» y
+  «el nombre se sigue verificando»). Receta `122-https-intermedio-extra`.
+
 - **`arena_persist` cierra su fase 1** `[arco: wasm-arena-persistir]`:
   - **NYX1039 en semantic**: persistir un struct, un `Map`, un `Fn` o un `Array<Struct>` se
     rechaza en `nyx check`, no solo al generar código; semantic además ve el tipo del ELEMENTO de

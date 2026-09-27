@@ -547,12 +547,19 @@ pub struct HttpOpts {
     // true = verificar el certificado (cadena + nombre, CAs del sistema).
     // false = cifrar sin autenticar, SOLO para desarrollo.
     verificar_tls: bool,
+    // Certificados PEM (el CONTENIDO; uno o varios) que se SUMAN a las CAs del
+    // sistema solo para ESTA petición: el intermedio correcto de un sitio que
+    // manda mal su cadena, o la raíz de una CA privada. "" = ninguno. No toca
+    // la confianza del resto del proceso (fricción de nyxerp, 2026-09-27: desde
+    // la separación de almacenes del 2026-09-14, tls_set_ca_file ya no llega a
+    // std/http y SSL_CERT_FILE reemplaza en vez de sumar, para todo el proceso).
+    cas_extra: String,
 }
 
 // Opciones por defecto: 10 s para conectar, 30 s para la respuesta completa, y
 // verificación según http_tls_inseguro (activada salvo que se la haya apagado).
 pub fn http_opts() -> HttpOpts {
-    return HttpOpts { connect_ms: 10000, respuesta_ms: 30000, verificar_tls: g_http_tls_verificar }
+    return HttpOpts { connect_ms: 10000, respuesta_ms: 30000, verificar_tls: g_http_tls_verificar, cas_extra: "" }
 }
 
 // Primer valor de un header, sin distinguir mayúsculas (RFC 9110). "" si falta.
@@ -663,7 +670,7 @@ fn http_err_plazo(esquema: String, host: String, port: int, ms: int) -> Error {
 fn http_https_opts(method: String, host: String, port: int, req: String, opts: HttpOpts) -> Result<Array, Error> {
     var modo: int = 0
     if opts.verificar_tls { modo = 4 }
-    let con_r: Result<int, Error> = try_tls_connect(host, port, modo, opts.connect_ms)
+    let con_r: Result<int, Error> = try_tls_connect_cas(host, port, modo, opts.connect_ms, opts.cas_extra)
     if con_r.is_err() {
         let e: Error = con_r.unwrap_err()
         return Result.Err(err_new(e.code, e.kind, "https " + host + ":" + int_to_string(port) + ": " + e.msg))

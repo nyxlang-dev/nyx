@@ -1062,9 +1062,16 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
 - **Dos almacenes de confianza que NO se mezclan** (seguridad, 2026-09-14):
   - El **del sistema**: lo usan `https_get`/`https_post`, el HTTPS de `std/http` y
     `tls_connect_verified_system(host, port) -> int` (cadena + hostname contra las CAs
-    del sistema; 0 si falla). Para que confíe en una CA privada, exportar
-    `SSL_CERT_FILE` (reemplaza el archivo de CAs por defecto de OpenSSL) antes del
-    primer https.
+    del sistema; 0 si falla). Para sumar certificados a UNA petición de `std/http`
+    —el intermedio correcto de un sitio que manda mal su cadena, o la raíz de una CA
+    privada— usar **`HttpOpts.cas_extra`** (contenido PEM, uno o varios; desde
+    2026-09-27): se suman a las del sistema solo para esa conexión, la cadena y el
+    nombre se verifican igual, y el resto del proceso no se entera. Un `cas_extra` sin
+    ningún certificado legible es `Err(kind "invalid", code 22)`. A bajo nivel:
+    `try_tls_connect_cas(host, port, modo, connect_ms, pem)`. `SSL_CERT_FILE` sigue
+    sirviendo para todo el proceso, pero REEMPLAZA el archivo de CAs por defecto y vale
+    solo si se exporta antes del primer https. Receta:
+    `examples/by-example/122-https-intermedio-extra.nx`.
   - El **explícito**: el que llena `tls_set_ca_file`. Lo usan `tls_connect_checked`,
     `tls_connect_verified`, `tls_upgrade_fd_verified`/`tls_upgrade_fd_ca_only` y el
     `sslmode=verify-ca`/`verify-full` de `std/postgres`. `tls_set_ca_file` **ACUMULA y no

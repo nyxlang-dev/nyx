@@ -3339,8 +3339,10 @@ igual en `http://` y en `https://`, y aceptan plazos con `try_http_request_opts`
 import "std/http"
 import "std/error"
 
-var o: HttpOpts = http_opts()   // connect_ms 10000, respuesta_ms 30000, verificar_tls true
+var o: HttpOpts = http_opts()   // connect_ms 10000, respuesta_ms 30000, verificar_tls true, cas_extra ""
 o.respuesta_ms = 1500           // plazo TOTAL de la respuesta, desde que se envio el request
+// o.cas_extra = read_file("certs/intermedio.pem")  // PEM que se SUMA a las CAs del sistema
+//                                                  // solo para esta peticion (desde 2026-09-27)
 let r: Result<Array, Error> = try_http_request_opts("GET", "https://api.ejemplo.com/tasa", [], "", o)
 match r {
     Result.Ok(resp) => { print(http_body(resp)) }
