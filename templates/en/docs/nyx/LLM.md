@@ -1290,7 +1290,10 @@ match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
 - **Migraciones**: `pg_migrate_init`, `pg_migrate_version`, `pg_migrate(conn,
   version, name, sql)` — el estado vive en una tabla del servidor.
 - **Pool**: `pg_pool_new(conninfo, size)`, `try_pg_pool_get`, `pg_pool_put`,
-  `pg_pool_close`.
+  `pg_pool_close`. **Safe to share between threads** (e.g. the workers of `std/serve`) since
+  2026-09-27 — before, two threads could take the SAME connection and interleave the protocol
+  (hangs, or «Índice 0 fuera de rango»). `try_pg_pool_get` never waits: `Err(kind: "in_use")`
+  when all are busy, so a server retries or answers 503.
 - **Autenticación SCRAM-SHA-256** (lo que exige cualquier PostgreSQL moderno), con
   la firma del servidor verificada en tiempo constante y el nonce sacado de
   `csprng_bytes`.

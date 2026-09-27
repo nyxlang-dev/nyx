@@ -4331,7 +4331,7 @@ try_pg_begin(conn), try_pg_commit(conn), try_pg_rollback(conn)
 // Migraciones (el estado vive en una tabla del servidor)
 pg_migrate_init(conn), pg_migrate_version(conn), pg_migrate(conn, version, name, sql)
 
-// Pool de conexiones
+// Pool de conexiones — seguro entre hilos (desde 2026-09-27); sin espera: Err(kind "in_use")
 pg_pool_new(conninfo, size), try_pg_pool_get(pool), pg_pool_put(pool, conn), pg_pool_close(pool)
 
 // LISTEN/NOTIFY: el canal es un identificador CITADO (mayusculas y tildes cuentan)

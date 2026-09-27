@@ -61,6 +61,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`std/postgres`: el pool es seguro entre hilos** (fricción de nyxerp, 2026-09-27). Con
+  `std/serve` y 16 hilos compartiendo un `pg_pool_new`, el servidor se colgaba en 3 de 6 corridas;
+  con 8, moría con «Índice 0 fuera de rango». `try_pg_pool_get` buscaba un slot libre y lo marcaba
+  en uso en dos pasos sin lock: dos hilos se llevaban la MISMA conexión y mezclaban el protocolo
+  en un socket. `PgPool` lleva ahora un mutex (campo `mu`) tomado solo para el estado de los
+  slots, nunca durante E/S (conectar, el ROLLBACK de `pg_pool_put`, cerrar). Regresión:
+  `tests/postgres/09-pool-hilos.nx` (16 hilos × 300 consultas sobre un pool de 4, cada respuesta
+  comprobada contra su hilo): con el pool anterior falla 4 de 4 corridas, con el nuevo pasa 9 de 9.
+
 - **`std/serve`: una conexión ociosa que vence con un pedido ya llegado se atiende, no se
   resetea.** El barrido del estacionamiento (`runtime/net.c`) cerraba por plazo sin mirar si el
   socket ya tenía un pedido que el event loop todavía no había visto; cerrar con datos sin leer

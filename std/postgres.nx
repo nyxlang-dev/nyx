@@ -1520,6 +1520,17 @@ pub fn pg_migrate(conn: PgConn, version: int, name: String, sql: String) -> bool
 // Un pool simple: N conexiones abiertas y un flag de uso por cada una. Sin
 // bloqueo ni espera — `try_pg_pool_get` devuelve Err si están todas ocupadas,
 // que es más honesto que colgar al llamador sin decirle por qué.
+//
+// SEGURO ENTRE HILOS (fricción de nyxerp, 2026-09-27). Un servidor
+// multihilo (std/serve) comparte un pool entre sus workers. Hasta acá
+// try_pg_pool_get buscaba un slot libre y lo marcaba en uso en dos pasos, sin
+// lock: dos hilos se llevaban la MISMA conexión y mezclaban el protocolo en un
+// socket — con 16 hilos el servidor se colgaba, con 8 moría con «Índice 0
+// fuera de rango». Ahora `mu` protege los tres arrays: se toma solo para leer
+// o cambiar el estado de los slots y NUNCA durante E/S (conectar, el ROLLBACK
+// de pg_pool_put, cerrar), la misma regla que el buzón de LISTEN/NOTIFY. Un
+// slot marcado en uso es de quien lo marcó, así que conectar fuera del lock no
+// compite con nadie. Test: tests/postgres/09-pool-hilos.nx.
 
 pub struct PgPool {
     conninfo: String,
@@ -1529,7 +1540,8 @@ pub struct PgPool {
     // PgConn adentro exigiría un box, y dos arrays paralelos son lo que ya
     // hace `en_uso`.
     tls: Array,
-    en_uso: Array
+    en_uso: Array,
+    mu: Map
 }
 
 pub fn pg_pool_new(conninfo: String, size: int) -> PgPool {
@@ -1546,45 +1558,66 @@ pub fn pg_pool_new(conninfo: String, size: int) -> PgPool {
         en_uso.push(0)
         i = i + 1
     }
-    return PgPool { conninfo: conninfo, conns: conns, tls: tls, en_uso: en_uso }
+    let mu: Map = mutex_new()
+    return PgPool { conninfo: conninfo, conns: conns, tls: tls, en_uso: en_uso, mu: mu }
 }
 
 // Toma una conexión libre; la abre si es la primera vez que se usa ese slot.
 pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error> {
+    // Reservar el slot (buscar libre + marcarlo) es UNA operación bajo el lock.
+    mutex_lock(pool.mu)
+    var slot: int = 0 - 1
+    var fd_guardado: int = 0
+    var tls_guardado: int = 0
     var i: int = 0
-    while i < pool.en_uso.length() {
+    while i < pool.en_uso.length() and slot < 0 {
         let usado: int = pool.en_uso[i]
         if usado == 0 {
             pool.en_uso[i] = 1
-            let fd_guardado: int = pool.conns[i]
-            if fd_guardado > 0 {
-                let tls_guardado: int = pool.tls[i]
-                return Result.Ok(PgConn { fd: fd_guardado, abierta: true, tls: tls_guardado })
-            }
-            match try_pg_connect(pool.conninfo) {
-                Result.Ok(c) => {
-                    pool.conns[i] = c.fd
-                    pool.tls[i] = c.tls
-                    return Result.Ok(c)
-                }
-                Result.Err(e) => {
-                    // El slot vuelve a quedar libre: un fallo de conexión no
-                    // puede consumir un slot del pool para siempre.
-                    pool.en_uso[i] = 0
-                    return Result.Err(e)
-                }
-            }
+            slot = i
+            let fg: int = pool.conns[i]
+            let tg: int = pool.tls[i]
+            fd_guardado = fg
+            tls_guardado = tg
         }
         i = i + 1
     }
-    return Result.Err(err_new(0, "in_use", "el pool no tiene conexiones libres (" + int_to_string(pool.en_uso.length()) + " en uso)"))
+    let total: int = pool.en_uso.length()
+    mutex_unlock(pool.mu)
+    if slot < 0 {
+        return Result.Err(err_new(0, "in_use", "el pool no tiene conexiones libres (" + int_to_string(total) + " en uso)"))
+    }
+    if fd_guardado > 0 {
+        return Result.Ok(PgConn { fd: fd_guardado, abierta: true, tls: tls_guardado })
+    }
+    // Primera vez de este slot: conectar FUERA del lock (el slot ya es nuestro).
+    match try_pg_connect(pool.conninfo) {
+        Result.Ok(c) => {
+            mutex_lock(pool.mu)
+            pool.conns[slot] = c.fd
+            pool.tls[slot] = c.tls
+            mutex_unlock(pool.mu)
+            return Result.Ok(c)
+        }
+        Result.Err(e) => {
+            // El slot vuelve a quedar libre: un fallo de conexión no puede
+            // consumir un slot del pool para siempre.
+            mutex_lock(pool.mu)
+            pool.en_uso[slot] = 0
+            mutex_unlock(pool.mu)
+            return Result.Err(e)
+        }
+    }
+    return Result.Err(err_new(0, "io", "inalcanzable"))
 }
 
 // Devuelve la conexión al pool. Hace ROLLBACK por las dudas: una conexión
 // devuelta con una transacción abierta contaminaría al próximo que la tome —
 // vería datos a medias y su primer BEGIN fallaría.
 pub fn pg_pool_put(pool: PgPool, conn: PgConn) {
+    // El ROLLBACK es E/S: antes del lock, con la conexión todavía reservada.
     let _r = try_pg_rollback(conn)
+    mutex_lock(pool.mu)
     var i: int = 0
     while i < pool.conns.length() {
         let fd_guardado: int = pool.conns[i]
@@ -1595,20 +1628,33 @@ pub fn pg_pool_put(pool: PgPool, conn: PgConn) {
             i = i + 1
         }
     }
+    mutex_unlock(pool.mu)
 }
 
 // Cierra todas las conexiones abiertas del pool.
 pub fn pg_pool_close(pool: PgPool) {
+    // Se vacían los slots bajo el lock y se cierra afuera (cerrar es E/S).
+    var cerrar: Array = []
+    mutex_lock(pool.mu)
     var i: int = 0
     while i < pool.conns.length() {
         let fd_guardado: int = pool.conns[i]
         if fd_guardado > 0 {
             let tls_guardado: int = pool.tls[i]
-            let _c = try_pg_close(PgConn { fd: fd_guardado, abierta: true, tls: tls_guardado })
+            cerrar.push(fd_guardado)
+            cerrar.push(tls_guardado)
             pool.conns[i] = 0
             pool.tls[i] = 0
         }
         pool.en_uso[i] = 0
         i = i + 1
+    }
+    mutex_unlock(pool.mu)
+    var k: int = 0
+    while k + 1 < cerrar.length() {
+        let fd: int = cerrar[k]
+        let tl: int = cerrar[k + 1]
+        let _c = try_pg_close(PgConn { fd: fd, abierta: true, tls: tl })
+        k = k + 2
     }
 }
