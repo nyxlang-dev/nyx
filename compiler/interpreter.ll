@@ -775,6 +775,7 @@ declare void @nyx_array_set_tagged({ i64, i8* }*, i64, i64, i64)
 declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
+declare i64 @nyx_slot_as_array_checked({ i64, i8* }*, i64)
 declare i64 @nyx_row_cell({ i64, i8* }*, i64, i64, i8*, i8*, i64)
 declare %nyx_string* @nyx_row_problema({ i64, i8* }*, i64, i8*, i8*, i64)
 declare i64 @nyx_bool_text_ok(%nyx_string*)
@@ -960,7 +961,7 @@ define internal { i64, i8* }* @make_astnode(
   %41 = load { i64, i8* }*, { i64, i8* }** %37
   %42 = load { i64, i8* }*, { i64, i8* }** %data.ptr
   %43 = ptrtoint { i64, i8* }* %42 to i64
-  call void @nyx_array_push({ i64, i8* }* %41, i64 %43)
+  call void @nyx_array_push_tagged({ i64, i8* }* %41, i64 %43, i64 5)
   %44 = load { i64, i8* }*, { i64, i8* }** %37
   ret { i64, i8* }* %44
 }

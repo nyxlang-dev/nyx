@@ -1,0 +1,15 @@
+// arena_persist sobre un Array<struct>: el Array se copia, pero sus elementos
+// son punteros a structs de la memoria del turno. semantic ve el tipo del
+// elemento (codegen solo ve «un Array») y lo rechaza con NYX1039.
+// Expected stderr (contains): "NYX1039"
+struct Linea {
+    cant: int,
+}
+
+fn main() -> int {
+    var ls: Array<Linea> = []
+    ls.push(Linea { cant: 1 })
+    let p: Array<Linea> = arena_persist(ls)
+    print(p.length())
+    return 0
+}

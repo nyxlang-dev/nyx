@@ -18,15 +18,17 @@
 //       g_pendiente = arena_persist("item:" + codigo)
 //   }
 //
-// arena_persist(x) es un BUILTIN del compilador (solo wasm32-wasi), no una
-// fn de este módulo: la función C que copia se elige por el tipo ESTÁTICO de
-// x (String o Array), porque en tiempo de ejecución un String y un Array no se
-// distinguen. Devuelve una copia profunda en la región persistente, que nunca
-// se libera. Límites de la fase 1 (runtime/wasi/nyx_arena.c, «arena_persist»):
+// arena_persist(x) es un BUILTIN del compilador, no una fn de este módulo (no
+// hace falta importar nada para usarlo; en nativo es la identidad): la
+// función C que copia se elige por el tipo ESTÁTICO de x (String o Array),
+// porque en tiempo de ejecución un String y un Array no se distinguen.
+// Devuelve una copia profunda en la región persistente, que nunca se libera.
+// Límites de la fase 1 (runtime/wasi/nyx_arena.c, «arena_persist»):
 //   - struct/Map/Fn: no se aceptan (no llevan su layout en tiempo de ejecución).
-//   - Array: cada slot tiene que llevar tag de tipo. Hoy un int calculado o un
-//     Array anidado llegan sin tag, y arena_persist ABORTA en vez de copiar a
-//     ciegas.
+//   - Array: cada slot tiene que llevar tag de tipo. String/int/float/bool y
+//     los Array anidados lo llevan (los anidados desde el 2026-09-26); un slot
+//     sin tag (p. ej. un valor de Map.values()) hace ABORTAR a arena_persist en
+//     vez de copiar a ciegas.
 //   - `g.push(...)` sobre un Array global DURANTE un evento es seguro si `g`
 //     es persistente (armado en `_start` o salido de arena_persist): cuando el
 //     push lo hace crecer, el realloc conserva el origen del bloque y el buffer

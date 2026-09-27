@@ -42,13 +42,19 @@ cd "$ROOT" || exit 1
 #   2026-09-23 call-arg-angosto: codegen_call_expr 472064 → 470256 (-1808, BAJA): la coerción
 #     del argumento al tipo del parámetro pasó a coerce_call_arg_to_param — dos sitios de
 #     llamada con ctx (fresh_temp + emit ×2) quedaron en uno.
+#   2026-09-27 wasm-arena-persistir (arrays anidados con tag ARRAY): codegen_call_expr
+#     470256 → 470272 y codegen_method_call 474912 → 474928 (+16 cada una, SUBE). El
+#     elemento Array de un array literal pasó de `bitcast` + push_ptr a `ptrtoint` +
+#     push_tagged; en -O0 eso es una ranura más de 8 B (16 con alineación) en toda función
+#     que arma `[x, [..]]`, y estas dos las arman. 0,003 % del marco; la mitad (2) de la
+#     guarda —la expresión larga con 8 MB— no se movió. Decisión de Ottavio: taguear.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14496
     [codegen_binop]=8544
     [codegen_binop_logico]=21680
-    [codegen_call_expr]=470256
-    [codegen_method_call]=474912
+    [codegen_call_expr]=470272
+    [codegen_method_call]=474928
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
 TECHO_NIVEL=23040

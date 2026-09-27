@@ -1,0 +1,59 @@
+// 121 — wasm: guardar entre eventos un valor que nació en un evento
+// wasm: keep a value born in one event for the next ones
+//
+// Target wasm32-wasi (corre en el navegador, o bajo node con
+// examples/browser/run-node.mjs). Con la arena por evento encendida
+// (`runNyxWasm(bytes, { arena: true })`), todo lo que un handler aloca se
+// descarta al terminar el evento. Un String o un Array armado en un evento y
+// guardado en un global se leería en el evento siguiente como memoria
+// reciclada, en silencio.
+//
+// arena_persist(x) lo copia a la región persistente:
+//   - acepta un String, o un Array de String/int/float/bool (y arrays de
+//     esos: una línea de ticket con sus modificadores se copia entera);
+//   - un struct, un Map, un Fn o un Array<Struct> es NYX1039 al compilar: no
+//     llevan en tiempo de ejecución la descripción de lo que contienen.
+//     Persiste sus campos uno por uno y reconstruye el valor donde se usa;
+//   - es un builtin: no hace falta importar nada, y en nativo es la identidad
+//     (no hay arena), así que la lógica que lo usa corre con `nyx test`.
+//
+// arena_stats() (import "std/wasm_mem", solo wasm) da los bytes persistentes
+// y los del turno, para vigilar que una página larga no crezca sin control.
+//
+// Construir:  nyx build --target wasm32-wasi
+
+import "std/wasm_mem"
+
+var g_ultimo_codigo: String = ""
+var g_ticket: Array = []
+
+// Cada escaneo arma un String y una línea de ticket DURANTE el evento.
+#[export_name = "al_escanear"]
+fn al_escanear(n: int) {
+    let codigo: String = "SKU-" + int_to_string(n)
+    g_ultimo_codigo = arena_persist(codigo)
+    let modificadores: Array = ["sin hielo", "grande"]
+    let linea: Array = [codigo, int_to_float(n) * 1.5, n % 2 == 0, modificadores]
+    g_ticket = arena_persist(linea)
+}
+
+// Un evento posterior lee lo guardado: sigue intacto.
+#[export_name = "al_cobrar"]
+fn al_cobrar() -> int {
+    let precio: float = g_ticket[1]
+    let mods: Array = g_ticket[3]
+    let primero: String = mods[0]
+    print("cobrando " + g_ultimo_codigo + " a " + float_to_string(precio) + " (" + primero + ")")
+    return g_ultimo_codigo.length()
+}
+
+// Diagnóstico: lo persistido solo crece con lo que se guarda a propósito.
+#[export_name = "memoria"]
+fn memoria() -> int {
+    let st: ArenaStats = arena_stats()
+    return st.persistent
+}
+
+fn main() {
+    print("listo: la página llama a al_escanear y a al_cobrar")
+}

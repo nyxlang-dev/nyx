@@ -11,6 +11,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`arena_persist` cierra su fase 1** `[arco: wasm-arena-persistir]`:
+  - **NYX1039 en semantic**: persistir un struct, un `Map`, un `Fn` o un `Array<Struct>` se
+    rechaza en `nyx check`, no solo al generar código; semantic además ve el tipo del ELEMENTO de
+    un Array, que codegen no conoce.
+  - **Arrays anidados**: un Array guardado dentro de otro (literal, `push`, `a[i] = x`) lleva ahora
+    tag `Array` en vez de ninguno, y `arena_persist` lo copia en profundidad (antes abortaba). Las
+    lecturas tipadas que chocan con ese tag —leer un Array como `String` o `float`— pasan de
+    devolver basura en silencio a abortar con diagnóstico; como `int` siguen dando el valor crudo.
+    Verificado: el compilador con los tags nuevos se compila a sí mismo sin abortos en falso
+    (punto fijo en tres pasadas).
+  - **En nativo es la identidad** (decisión de Ottavio): no hay arena por evento y el GC ya
+    conserva el valor, así que el mismo código corre con `nyx test` y en wasm sin ramas por target.
+    Antes era un error de target.
+  - Documentación: SPEC (NYX1039), LLM.md §wasm, gotcha `wasm-arena-closure-env`, receta
+    `121-arena-persist-wasm`. Regresión: 3 casos negativos y 1 positivo en `tests/compiler/errors/`,
+    y el test wasm 36 suma un array anidado con enteros calculados (10.000 eventos, arena encendida).
+
 - **`nyx update --sync-docs` ya no pisa lo que un proyecto escribió en su `AGENTS.md`.** Hasta
   acá resembraba el archivo entero y solo salvaba un bloque `proyecto:inicio`…`proyecto:fin`
   que el proyecto tenía que conocer; nyxerp perdió así sus «Reglas de este proyecto» varias

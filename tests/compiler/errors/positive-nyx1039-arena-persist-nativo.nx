@@ -1,0 +1,22 @@
+// CONTROL POSITIVO de NYX1039: String, Array de escalares y Array de Array de
+// escalares SÍ se aceptan. Y en nativo arena_persist es la identidad (no hay
+// arena por evento; decisión de Ottavio 2026-09-26): el mismo código corre en
+// `nyx test` nativo y en wasm sin ramas por target.
+//
+// Expected exit: 0
+
+fn main() -> int {
+    let s: String = arena_persist("hola")
+    var xs: Array<int> = [1, 2, 3]
+    let p: Array<int> = arena_persist(xs)
+    var ns: Array<String> = ["a", "b"]
+    let q: Array<String> = arena_persist(ns)
+    var mm: Array<Array<int>> = [[1], [2, 3]]
+    let r: Array<Array<int>> = arena_persist(mm)
+    if s != "hola" { return 1 }
+    if p.length() != 3 { return 2 }
+    let q1: String = q[1]
+    if q1 != "b" { return 3 }
+    if r.length() != 2 { return 4 }
+    return 0
+}

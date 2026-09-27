@@ -2070,7 +2070,7 @@ define { i64, i8* }* @gotchas_table(
   %125 = ptrtoint %nyx_string* %124 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %89, i64 %125, i64 2)
   %126 = ptrtoint { i64, i8* }* %89 to i64
-  call void @nyx_array_push({ i64, i8* }* %88, i64 %126)
+  call void @nyx_array_push_tagged({ i64, i8* }* %88, i64 %126, i64 5)
   %127 = load { i64, i8* }*, { i64, i8* }** %87
   %128 = call { i64, i8* }* @nyx_array_new_ptr()
   %129 = getelementptr [21 x i8], [21 x i8]* @.str18, i32 0, i32 0
@@ -2122,7 +2122,7 @@ define { i64, i8* }* @gotchas_table(
   %164 = ptrtoint %nyx_string* %163 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %128, i64 %164, i64 2)
   %165 = ptrtoint { i64, i8* }* %128 to i64
-  call void @nyx_array_push({ i64, i8* }* %127, i64 %165)
+  call void @nyx_array_push_tagged({ i64, i8* }* %127, i64 %165, i64 5)
   %166 = load { i64, i8* }*, { i64, i8* }** %87
   %167 = call { i64, i8* }* @nyx_array_new_ptr()
   %168 = getelementptr [23 x i8], [23 x i8]* @.str30, i32 0, i32 0
@@ -2174,7 +2174,7 @@ define { i64, i8* }* @gotchas_table(
   %203 = ptrtoint %nyx_string* %202 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %167, i64 %203, i64 2)
   %204 = ptrtoint { i64, i8* }* %167 to i64
-  call void @nyx_array_push({ i64, i8* }* %166, i64 %204)
+  call void @nyx_array_push_tagged({ i64, i8* }* %166, i64 %204, i64 5)
   %205 = load { i64, i8* }*, { i64, i8* }** %87
   %206 = call { i64, i8* }* @nyx_array_new_ptr()
   %207 = getelementptr [25 x i8], [25 x i8]* @.str42, i32 0, i32 0
@@ -2226,7 +2226,7 @@ define { i64, i8* }* @gotchas_table(
   %242 = ptrtoint %nyx_string* %241 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %206, i64 %242, i64 2)
   %243 = ptrtoint { i64, i8* }* %206 to i64
-  call void @nyx_array_push({ i64, i8* }* %205, i64 %243)
+  call void @nyx_array_push_tagged({ i64, i8* }* %205, i64 %243, i64 5)
   %244 = load { i64, i8* }*, { i64, i8* }** %87
   %245 = call { i64, i8* }* @nyx_array_new_ptr()
   %246 = getelementptr [27 x i8], [27 x i8]* @.str54, i32 0, i32 0
@@ -2278,7 +2278,7 @@ define { i64, i8* }* @gotchas_table(
   %281 = ptrtoint %nyx_string* %280 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %245, i64 %281, i64 2)
   %282 = ptrtoint { i64, i8* }* %245 to i64
-  call void @nyx_array_push({ i64, i8* }* %244, i64 %282)
+  call void @nyx_array_push_tagged({ i64, i8* }* %244, i64 %282, i64 5)
   %283 = load { i64, i8* }*, { i64, i8* }** %87
   %284 = call { i64, i8* }* @nyx_array_new_ptr()
   %285 = getelementptr [19 x i8], [19 x i8]* @.str66, i32 0, i32 0
@@ -2330,7 +2330,7 @@ define { i64, i8* }* @gotchas_table(
   %320 = ptrtoint %nyx_string* %319 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %284, i64 %320, i64 2)
   %321 = ptrtoint { i64, i8* }* %284 to i64
-  call void @nyx_array_push({ i64, i8* }* %283, i64 %321)
+  call void @nyx_array_push_tagged({ i64, i8* }* %283, i64 %321, i64 5)
   %322 = load { i64, i8* }*, { i64, i8* }** %87
   %323 = call { i64, i8* }* @nyx_array_new_ptr()
   %324 = getelementptr [23 x i8], [23 x i8]* @.str78, i32 0, i32 0
@@ -2382,7 +2382,7 @@ define { i64, i8* }* @gotchas_table(
   %359 = ptrtoint %nyx_string* %358 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %323, i64 %359, i64 2)
   %360 = ptrtoint { i64, i8* }* %323 to i64
-  call void @nyx_array_push({ i64, i8* }* %322, i64 %360)
+  call void @nyx_array_push_tagged({ i64, i8* }* %322, i64 %360, i64 5)
   %361 = load { i64, i8* }*, { i64, i8* }** %87
   %362 = call { i64, i8* }* @nyx_array_new_ptr()
   %363 = getelementptr [18 x i8], [18 x i8]* @.str90, i32 0, i32 0
@@ -2434,7 +2434,7 @@ define { i64, i8* }* @gotchas_table(
   %398 = ptrtoint %nyx_string* %397 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %362, i64 %398, i64 2)
   %399 = ptrtoint { i64, i8* }* %362 to i64
-  call void @nyx_array_push({ i64, i8* }* %361, i64 %399)
+  call void @nyx_array_push_tagged({ i64, i8* }* %361, i64 %399, i64 5)
   %400 = load { i64, i8* }*, { i64, i8* }** %87
   %401 = call { i64, i8* }* @nyx_array_new_ptr()
   %402 = getelementptr [15 x i8], [15 x i8]* @.str102, i32 0, i32 0
@@ -2486,7 +2486,7 @@ define { i64, i8* }* @gotchas_table(
   %437 = ptrtoint %nyx_string* %436 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %401, i64 %437, i64 2)
   %438 = ptrtoint { i64, i8* }* %401 to i64
-  call void @nyx_array_push({ i64, i8* }* %400, i64 %438)
+  call void @nyx_array_push_tagged({ i64, i8* }* %400, i64 %438, i64 5)
   %439 = load { i64, i8* }*, { i64, i8* }** %87
   %440 = call { i64, i8* }* @nyx_array_new_ptr()
   %441 = getelementptr [19 x i8], [19 x i8]* @.str114, i32 0, i32 0
@@ -2538,7 +2538,7 @@ define { i64, i8* }* @gotchas_table(
   %476 = ptrtoint %nyx_string* %475 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %440, i64 %476, i64 2)
   %477 = ptrtoint { i64, i8* }* %440 to i64
-  call void @nyx_array_push({ i64, i8* }* %439, i64 %477)
+  call void @nyx_array_push_tagged({ i64, i8* }* %439, i64 %477, i64 5)
   %478 = load { i64, i8* }*, { i64, i8* }** %87
   %479 = call { i64, i8* }* @nyx_array_new_ptr()
   %480 = getelementptr [20 x i8], [20 x i8]* @.str126, i32 0, i32 0
@@ -2590,7 +2590,7 @@ define { i64, i8* }* @gotchas_table(
   %515 = ptrtoint %nyx_string* %514 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %479, i64 %515, i64 2)
   %516 = ptrtoint { i64, i8* }* %479 to i64
-  call void @nyx_array_push({ i64, i8* }* %478, i64 %516)
+  call void @nyx_array_push_tagged({ i64, i8* }* %478, i64 %516, i64 5)
   %517 = load { i64, i8* }*, { i64, i8* }** %87
   %518 = call { i64, i8* }* @nyx_array_new_ptr()
   %519 = getelementptr [24 x i8], [24 x i8]* @.str138, i32 0, i32 0
@@ -2642,7 +2642,7 @@ define { i64, i8* }* @gotchas_table(
   %554 = ptrtoint %nyx_string* %553 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %518, i64 %554, i64 2)
   %555 = ptrtoint { i64, i8* }* %518 to i64
-  call void @nyx_array_push({ i64, i8* }* %517, i64 %555)
+  call void @nyx_array_push_tagged({ i64, i8* }* %517, i64 %555, i64 5)
   %556 = load { i64, i8* }*, { i64, i8* }** %87
   %557 = call { i64, i8* }* @nyx_array_new_ptr()
   %558 = getelementptr [18 x i8], [18 x i8]* @.str150, i32 0, i32 0
@@ -2694,7 +2694,7 @@ define { i64, i8* }* @gotchas_table(
   %593 = ptrtoint %nyx_string* %592 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %557, i64 %593, i64 2)
   %594 = ptrtoint { i64, i8* }* %557 to i64
-  call void @nyx_array_push({ i64, i8* }* %556, i64 %594)
+  call void @nyx_array_push_tagged({ i64, i8* }* %556, i64 %594, i64 5)
   %595 = load { i64, i8* }*, { i64, i8* }** %87
   %596 = call { i64, i8* }* @nyx_array_new_ptr()
   %597 = getelementptr [18 x i8], [18 x i8]* @.str162, i32 0, i32 0
@@ -2746,7 +2746,7 @@ define { i64, i8* }* @gotchas_table(
   %632 = ptrtoint %nyx_string* %631 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %596, i64 %632, i64 2)
   %633 = ptrtoint { i64, i8* }* %596 to i64
-  call void @nyx_array_push({ i64, i8* }* %595, i64 %633)
+  call void @nyx_array_push_tagged({ i64, i8* }* %595, i64 %633, i64 5)
   %634 = load { i64, i8* }*, { i64, i8* }** %87
   %635 = call { i64, i8* }* @nyx_array_new_ptr()
   %636 = getelementptr [22 x i8], [22 x i8]* @.str174, i32 0, i32 0
@@ -2798,7 +2798,7 @@ define { i64, i8* }* @gotchas_table(
   %671 = ptrtoint %nyx_string* %670 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %635, i64 %671, i64 2)
   %672 = ptrtoint { i64, i8* }* %635 to i64
-  call void @nyx_array_push({ i64, i8* }* %634, i64 %672)
+  call void @nyx_array_push_tagged({ i64, i8* }* %634, i64 %672, i64 5)
   %673 = load { i64, i8* }*, { i64, i8* }** %87
   %674 = call { i64, i8* }* @nyx_array_new_ptr()
   %675 = getelementptr [17 x i8], [17 x i8]* @.str186, i32 0, i32 0
@@ -2850,7 +2850,7 @@ define { i64, i8* }* @gotchas_table(
   %710 = ptrtoint %nyx_string* %709 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %674, i64 %710, i64 2)
   %711 = ptrtoint { i64, i8* }* %674 to i64
-  call void @nyx_array_push({ i64, i8* }* %673, i64 %711)
+  call void @nyx_array_push_tagged({ i64, i8* }* %673, i64 %711, i64 5)
   %712 = load { i64, i8* }*, { i64, i8* }** %87
   %713 = call { i64, i8* }* @nyx_array_new_ptr()
   %714 = getelementptr [19 x i8], [19 x i8]* @.str198, i32 0, i32 0
@@ -2902,7 +2902,7 @@ define { i64, i8* }* @gotchas_table(
   %749 = ptrtoint %nyx_string* %748 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %713, i64 %749, i64 2)
   %750 = ptrtoint { i64, i8* }* %713 to i64
-  call void @nyx_array_push({ i64, i8* }* %712, i64 %750)
+  call void @nyx_array_push_tagged({ i64, i8* }* %712, i64 %750, i64 5)
   %751 = load { i64, i8* }*, { i64, i8* }** %87
   %752 = call { i64, i8* }* @nyx_array_new_ptr()
   %753 = getelementptr [27 x i8], [27 x i8]* @.str210, i32 0, i32 0
@@ -2954,7 +2954,7 @@ define { i64, i8* }* @gotchas_table(
   %788 = ptrtoint %nyx_string* %787 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %752, i64 %788, i64 2)
   %789 = ptrtoint { i64, i8* }* %752 to i64
-  call void @nyx_array_push({ i64, i8* }* %751, i64 %789)
+  call void @nyx_array_push_tagged({ i64, i8* }* %751, i64 %789, i64 5)
   %790 = load { i64, i8* }*, { i64, i8* }** %87
   %791 = call { i64, i8* }* @nyx_array_new_ptr()
   %792 = getelementptr [27 x i8], [27 x i8]* @.str222, i32 0, i32 0
@@ -3006,7 +3006,7 @@ define { i64, i8* }* @gotchas_table(
   %827 = ptrtoint %nyx_string* %826 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %791, i64 %827, i64 2)
   %828 = ptrtoint { i64, i8* }* %791 to i64
-  call void @nyx_array_push({ i64, i8* }* %790, i64 %828)
+  call void @nyx_array_push_tagged({ i64, i8* }* %790, i64 %828, i64 5)
   %829 = load { i64, i8* }*, { i64, i8* }** %87
   %830 = call { i64, i8* }* @nyx_array_new_ptr()
   %831 = getelementptr [30 x i8], [30 x i8]* @.str234, i32 0, i32 0
@@ -3058,7 +3058,7 @@ define { i64, i8* }* @gotchas_table(
   %866 = ptrtoint %nyx_string* %865 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %830, i64 %866, i64 2)
   %867 = ptrtoint { i64, i8* }* %830 to i64
-  call void @nyx_array_push({ i64, i8* }* %829, i64 %867)
+  call void @nyx_array_push_tagged({ i64, i8* }* %829, i64 %867, i64 5)
   %868 = load { i64, i8* }*, { i64, i8* }** %87
   %869 = call { i64, i8* }* @nyx_array_new_ptr()
   %870 = getelementptr [17 x i8], [17 x i8]* @.str246, i32 0, i32 0
@@ -3110,7 +3110,7 @@ define { i64, i8* }* @gotchas_table(
   %905 = ptrtoint %nyx_string* %904 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %869, i64 %905, i64 2)
   %906 = ptrtoint { i64, i8* }* %869 to i64
-  call void @nyx_array_push({ i64, i8* }* %868, i64 %906)
+  call void @nyx_array_push_tagged({ i64, i8* }* %868, i64 %906, i64 5)
   %907 = load { i64, i8* }*, { i64, i8* }** %87
   %908 = call { i64, i8* }* @nyx_array_new_ptr()
   %909 = getelementptr [29 x i8], [29 x i8]* @.str258, i32 0, i32 0
@@ -3162,7 +3162,7 @@ define { i64, i8* }* @gotchas_table(
   %944 = ptrtoint %nyx_string* %943 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %908, i64 %944, i64 2)
   %945 = ptrtoint { i64, i8* }* %908 to i64
-  call void @nyx_array_push({ i64, i8* }* %907, i64 %945)
+  call void @nyx_array_push_tagged({ i64, i8* }* %907, i64 %945, i64 5)
   %946 = load { i64, i8* }*, { i64, i8* }** %87
   %947 = call { i64, i8* }* @nyx_array_new_ptr()
   %948 = getelementptr [25 x i8], [25 x i8]* @.str270, i32 0, i32 0
@@ -3214,7 +3214,7 @@ define { i64, i8* }* @gotchas_table(
   %983 = ptrtoint %nyx_string* %982 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %947, i64 %983, i64 2)
   %984 = ptrtoint { i64, i8* }* %947 to i64
-  call void @nyx_array_push({ i64, i8* }* %946, i64 %984)
+  call void @nyx_array_push_tagged({ i64, i8* }* %946, i64 %984, i64 5)
   %985 = load { i64, i8* }*, { i64, i8* }** %87
   %986 = call { i64, i8* }* @nyx_array_new_ptr()
   %987 = getelementptr [24 x i8], [24 x i8]* @.str282, i32 0, i32 0
@@ -3266,7 +3266,7 @@ define { i64, i8* }* @gotchas_table(
   %1022 = ptrtoint %nyx_string* %1021 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %986, i64 %1022, i64 2)
   %1023 = ptrtoint { i64, i8* }* %986 to i64
-  call void @nyx_array_push({ i64, i8* }* %985, i64 %1023)
+  call void @nyx_array_push_tagged({ i64, i8* }* %985, i64 %1023, i64 5)
   %1024 = load { i64, i8* }*, { i64, i8* }** %87
   %1025 = call { i64, i8* }* @nyx_array_new_ptr()
   %1026 = getelementptr [21 x i8], [21 x i8]* @.str294, i32 0, i32 0
@@ -3318,7 +3318,7 @@ define { i64, i8* }* @gotchas_table(
   %1061 = ptrtoint %nyx_string* %1060 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1025, i64 %1061, i64 2)
   %1062 = ptrtoint { i64, i8* }* %1025 to i64
-  call void @nyx_array_push({ i64, i8* }* %1024, i64 %1062)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1024, i64 %1062, i64 5)
   %1063 = load { i64, i8* }*, { i64, i8* }** %87
   %1064 = call { i64, i8* }* @nyx_array_new_ptr()
   %1065 = getelementptr [25 x i8], [25 x i8]* @.str306, i32 0, i32 0
@@ -3370,7 +3370,7 @@ define { i64, i8* }* @gotchas_table(
   %1100 = ptrtoint %nyx_string* %1099 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1064, i64 %1100, i64 2)
   %1101 = ptrtoint { i64, i8* }* %1064 to i64
-  call void @nyx_array_push({ i64, i8* }* %1063, i64 %1101)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1063, i64 %1101, i64 5)
   %1102 = load { i64, i8* }*, { i64, i8* }** %87
   %1103 = call { i64, i8* }* @nyx_array_new_ptr()
   %1104 = getelementptr [17 x i8], [17 x i8]* @.str318, i32 0, i32 0
@@ -3422,7 +3422,7 @@ define { i64, i8* }* @gotchas_table(
   %1139 = ptrtoint %nyx_string* %1138 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1103, i64 %1139, i64 2)
   %1140 = ptrtoint { i64, i8* }* %1103 to i64
-  call void @nyx_array_push({ i64, i8* }* %1102, i64 %1140)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1102, i64 %1140, i64 5)
   %1141 = load { i64, i8* }*, { i64, i8* }** %87
   %1142 = call { i64, i8* }* @nyx_array_new_ptr()
   %1143 = getelementptr [28 x i8], [28 x i8]* @.str330, i32 0, i32 0
@@ -3474,7 +3474,7 @@ define { i64, i8* }* @gotchas_table(
   %1178 = ptrtoint %nyx_string* %1177 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1142, i64 %1178, i64 2)
   %1179 = ptrtoint { i64, i8* }* %1142 to i64
-  call void @nyx_array_push({ i64, i8* }* %1141, i64 %1179)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1141, i64 %1179, i64 5)
   %1180 = load { i64, i8* }*, { i64, i8* }** %87
   %1181 = call { i64, i8* }* @nyx_array_new_ptr()
   %1182 = getelementptr [21 x i8], [21 x i8]* @.str342, i32 0, i32 0
@@ -3526,7 +3526,7 @@ define { i64, i8* }* @gotchas_table(
   %1217 = ptrtoint %nyx_string* %1216 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1181, i64 %1217, i64 2)
   %1218 = ptrtoint { i64, i8* }* %1181 to i64
-  call void @nyx_array_push({ i64, i8* }* %1180, i64 %1218)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1180, i64 %1218, i64 5)
   %1219 = load { i64, i8* }*, { i64, i8* }** %87
   %1220 = call { i64, i8* }* @nyx_array_new_ptr()
   %1221 = getelementptr [22 x i8], [22 x i8]* @.str354, i32 0, i32 0
@@ -3578,7 +3578,7 @@ define { i64, i8* }* @gotchas_table(
   %1256 = ptrtoint %nyx_string* %1255 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1220, i64 %1256, i64 2)
   %1257 = ptrtoint { i64, i8* }* %1220 to i64
-  call void @nyx_array_push({ i64, i8* }* %1219, i64 %1257)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1219, i64 %1257, i64 5)
   %1258 = load { i64, i8* }*, { i64, i8* }** %87
   %1259 = call { i64, i8* }* @nyx_array_new_ptr()
   %1260 = getelementptr [23 x i8], [23 x i8]* @.str366, i32 0, i32 0
@@ -3630,7 +3630,7 @@ define { i64, i8* }* @gotchas_table(
   %1295 = ptrtoint %nyx_string* %1294 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1259, i64 %1295, i64 2)
   %1296 = ptrtoint { i64, i8* }* %1259 to i64
-  call void @nyx_array_push({ i64, i8* }* %1258, i64 %1296)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1258, i64 %1296, i64 5)
   %1297 = load { i64, i8* }*, { i64, i8* }** %87
   %1298 = call { i64, i8* }* @nyx_array_new_ptr()
   %1299 = getelementptr [19 x i8], [19 x i8]* @.str378, i32 0, i32 0
@@ -3682,7 +3682,7 @@ define { i64, i8* }* @gotchas_table(
   %1334 = ptrtoint %nyx_string* %1333 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1298, i64 %1334, i64 2)
   %1335 = ptrtoint { i64, i8* }* %1298 to i64
-  call void @nyx_array_push({ i64, i8* }* %1297, i64 %1335)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1297, i64 %1335, i64 5)
   %1336 = load { i64, i8* }*, { i64, i8* }** %87
   %1337 = call { i64, i8* }* @nyx_array_new_ptr()
   %1338 = getelementptr [30 x i8], [30 x i8]* @.str390, i32 0, i32 0
@@ -3734,7 +3734,7 @@ define { i64, i8* }* @gotchas_table(
   %1373 = ptrtoint %nyx_string* %1372 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1337, i64 %1373, i64 2)
   %1374 = ptrtoint { i64, i8* }* %1337 to i64
-  call void @nyx_array_push({ i64, i8* }* %1336, i64 %1374)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1336, i64 %1374, i64 5)
   %1375 = load { i64, i8* }*, { i64, i8* }** %87
   %1376 = call { i64, i8* }* @nyx_array_new_ptr()
   %1377 = getelementptr [24 x i8], [24 x i8]* @.str402, i32 0, i32 0
@@ -3786,7 +3786,7 @@ define { i64, i8* }* @gotchas_table(
   %1412 = ptrtoint %nyx_string* %1411 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1376, i64 %1412, i64 2)
   %1413 = ptrtoint { i64, i8* }* %1376 to i64
-  call void @nyx_array_push({ i64, i8* }* %1375, i64 %1413)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1375, i64 %1413, i64 5)
   %1414 = load { i64, i8* }*, { i64, i8* }** %87
   %1415 = call { i64, i8* }* @nyx_array_new_ptr()
   %1416 = getelementptr [30 x i8], [30 x i8]* @.str414, i32 0, i32 0
@@ -3838,7 +3838,7 @@ define { i64, i8* }* @gotchas_table(
   %1451 = ptrtoint %nyx_string* %1450 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1415, i64 %1451, i64 2)
   %1452 = ptrtoint { i64, i8* }* %1415 to i64
-  call void @nyx_array_push({ i64, i8* }* %1414, i64 %1452)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1414, i64 %1452, i64 5)
   %1453 = load { i64, i8* }*, { i64, i8* }** %87
   %1454 = call { i64, i8* }* @nyx_array_new_ptr()
   %1455 = getelementptr [20 x i8], [20 x i8]* @.str426, i32 0, i32 0
@@ -3890,7 +3890,7 @@ define { i64, i8* }* @gotchas_table(
   %1490 = ptrtoint %nyx_string* %1489 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1454, i64 %1490, i64 2)
   %1491 = ptrtoint { i64, i8* }* %1454 to i64
-  call void @nyx_array_push({ i64, i8* }* %1453, i64 %1491)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1453, i64 %1491, i64 5)
   %1492 = load { i64, i8* }*, { i64, i8* }** %87
   %1493 = call { i64, i8* }* @nyx_array_new_ptr()
   %1494 = getelementptr [23 x i8], [23 x i8]* @.str438, i32 0, i32 0
@@ -3942,7 +3942,7 @@ define { i64, i8* }* @gotchas_table(
   %1529 = ptrtoint %nyx_string* %1528 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1493, i64 %1529, i64 2)
   %1530 = ptrtoint { i64, i8* }* %1493 to i64
-  call void @nyx_array_push({ i64, i8* }* %1492, i64 %1530)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1492, i64 %1530, i64 5)
   %1531 = load { i64, i8* }*, { i64, i8* }** %87
   %1532 = call { i64, i8* }* @nyx_array_new_ptr()
   %1533 = getelementptr [31 x i8], [31 x i8]* @.str450, i32 0, i32 0
@@ -3994,7 +3994,7 @@ define { i64, i8* }* @gotchas_table(
   %1568 = ptrtoint %nyx_string* %1567 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1532, i64 %1568, i64 2)
   %1569 = ptrtoint { i64, i8* }* %1532 to i64
-  call void @nyx_array_push({ i64, i8* }* %1531, i64 %1569)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1531, i64 %1569, i64 5)
   %1570 = load { i64, i8* }*, { i64, i8* }** %87
   %1571 = call { i64, i8* }* @nyx_array_new_ptr()
   %1572 = getelementptr [33 x i8], [33 x i8]* @.str462, i32 0, i32 0
@@ -4046,7 +4046,7 @@ define { i64, i8* }* @gotchas_table(
   %1607 = ptrtoint %nyx_string* %1606 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1607, i64 2)
   %1608 = ptrtoint { i64, i8* }* %1571 to i64
-  call void @nyx_array_push({ i64, i8* }* %1570, i64 %1608)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1570, i64 %1608, i64 5)
   %1609 = load { i64, i8* }*, { i64, i8* }** %87
   %1610 = call { i64, i8* }* @nyx_array_new_ptr()
   %1611 = getelementptr [21 x i8], [21 x i8]* @.str474, i32 0, i32 0
@@ -4098,7 +4098,7 @@ define { i64, i8* }* @gotchas_table(
   %1646 = ptrtoint %nyx_string* %1645 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1610, i64 %1646, i64 2)
   %1647 = ptrtoint { i64, i8* }* %1610 to i64
-  call void @nyx_array_push({ i64, i8* }* %1609, i64 %1647)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1609, i64 %1647, i64 5)
   %1648 = load { i64, i8* }*, { i64, i8* }** %87
   %1649 = call { i64, i8* }* @nyx_array_new_ptr()
   %1650 = getelementptr [19 x i8], [19 x i8]* @.str486, i32 0, i32 0
@@ -4150,7 +4150,7 @@ define { i64, i8* }* @gotchas_table(
   %1685 = ptrtoint %nyx_string* %1684 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1649, i64 %1685, i64 2)
   %1686 = ptrtoint { i64, i8* }* %1649 to i64
-  call void @nyx_array_push({ i64, i8* }* %1648, i64 %1686)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1648, i64 %1686, i64 5)
   %1687 = load { i64, i8* }*, { i64, i8* }** %87
   %1688 = call { i64, i8* }* @nyx_array_new_ptr()
   %1689 = getelementptr [20 x i8], [20 x i8]* @.str498, i32 0, i32 0
@@ -4202,7 +4202,7 @@ define { i64, i8* }* @gotchas_table(
   %1724 = ptrtoint %nyx_string* %1723 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1688, i64 %1724, i64 2)
   %1725 = ptrtoint { i64, i8* }* %1688 to i64
-  call void @nyx_array_push({ i64, i8* }* %1687, i64 %1725)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1687, i64 %1725, i64 5)
   %1726 = load { i64, i8* }*, { i64, i8* }** %87
   %1727 = call { i64, i8* }* @nyx_array_new_ptr()
   %1728 = getelementptr [28 x i8], [28 x i8]* @.str510, i32 0, i32 0
@@ -4254,7 +4254,7 @@ define { i64, i8* }* @gotchas_table(
   %1763 = ptrtoint %nyx_string* %1762 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1727, i64 %1763, i64 2)
   %1764 = ptrtoint { i64, i8* }* %1727 to i64
-  call void @nyx_array_push({ i64, i8* }* %1726, i64 %1764)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1726, i64 %1764, i64 5)
   %1765 = load { i64, i8* }*, { i64, i8* }** %87
   %1766 = call { i64, i8* }* @nyx_array_new_ptr()
   %1767 = getelementptr [18 x i8], [18 x i8]* @.str522, i32 0, i32 0
@@ -4306,7 +4306,7 @@ define { i64, i8* }* @gotchas_table(
   %1802 = ptrtoint %nyx_string* %1801 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1766, i64 %1802, i64 2)
   %1803 = ptrtoint { i64, i8* }* %1766 to i64
-  call void @nyx_array_push({ i64, i8* }* %1765, i64 %1803)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1765, i64 %1803, i64 5)
   %1804 = load { i64, i8* }*, { i64, i8* }** %87
   %1805 = call { i64, i8* }* @nyx_array_new_ptr()
   %1806 = getelementptr [27 x i8], [27 x i8]* @.str534, i32 0, i32 0
@@ -4358,7 +4358,7 @@ define { i64, i8* }* @gotchas_table(
   %1841 = ptrtoint %nyx_string* %1840 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1805, i64 %1841, i64 2)
   %1842 = ptrtoint { i64, i8* }* %1805 to i64
-  call void @nyx_array_push({ i64, i8* }* %1804, i64 %1842)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1804, i64 %1842, i64 5)
   %1843 = load { i64, i8* }*, { i64, i8* }** %87
   %1844 = call { i64, i8* }* @nyx_array_new_ptr()
   %1845 = getelementptr [22 x i8], [22 x i8]* @.str546, i32 0, i32 0
@@ -4410,7 +4410,7 @@ define { i64, i8* }* @gotchas_table(
   %1880 = ptrtoint %nyx_string* %1879 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1844, i64 %1880, i64 2)
   %1881 = ptrtoint { i64, i8* }* %1844 to i64
-  call void @nyx_array_push({ i64, i8* }* %1843, i64 %1881)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1843, i64 %1881, i64 5)
   %1882 = load { i64, i8* }*, { i64, i8* }** %87
   %1883 = call { i64, i8* }* @nyx_array_new_ptr()
   %1884 = getelementptr [27 x i8], [27 x i8]* @.str558, i32 0, i32 0
@@ -4462,7 +4462,7 @@ define { i64, i8* }* @gotchas_table(
   %1919 = ptrtoint %nyx_string* %1918 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1883, i64 %1919, i64 2)
   %1920 = ptrtoint { i64, i8* }* %1883 to i64
-  call void @nyx_array_push({ i64, i8* }* %1882, i64 %1920)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1882, i64 %1920, i64 5)
   %1921 = load { i64, i8* }*, { i64, i8* }** %87
   %1922 = call { i64, i8* }* @nyx_array_new_ptr()
   %1923 = getelementptr [30 x i8], [30 x i8]* @.str570, i32 0, i32 0
@@ -4514,7 +4514,7 @@ define { i64, i8* }* @gotchas_table(
   %1958 = ptrtoint %nyx_string* %1957 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1922, i64 %1958, i64 2)
   %1959 = ptrtoint { i64, i8* }* %1922 to i64
-  call void @nyx_array_push({ i64, i8* }* %1921, i64 %1959)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1921, i64 %1959, i64 5)
   %1960 = load { i64, i8* }*, { i64, i8* }** %87
   %1961 = call { i64, i8* }* @nyx_array_new_ptr()
   %1962 = getelementptr [26 x i8], [26 x i8]* @.str582, i32 0, i32 0
@@ -4566,7 +4566,7 @@ define { i64, i8* }* @gotchas_table(
   %1997 = ptrtoint %nyx_string* %1996 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1961, i64 %1997, i64 2)
   %1998 = ptrtoint { i64, i8* }* %1961 to i64
-  call void @nyx_array_push({ i64, i8* }* %1960, i64 %1998)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1960, i64 %1998, i64 5)
   %1999 = load { i64, i8* }*, { i64, i8* }** %87
   %2000 = call { i64, i8* }* @nyx_array_new_ptr()
   %2001 = getelementptr [28 x i8], [28 x i8]* @.str594, i32 0, i32 0
@@ -4618,7 +4618,7 @@ define { i64, i8* }* @gotchas_table(
   %2036 = ptrtoint %nyx_string* %2035 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2000, i64 %2036, i64 2)
   %2037 = ptrtoint { i64, i8* }* %2000 to i64
-  call void @nyx_array_push({ i64, i8* }* %1999, i64 %2037)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1999, i64 %2037, i64 5)
   %2038 = load { i64, i8* }*, { i64, i8* }** %87
   %2039 = call { i64, i8* }* @nyx_array_new_ptr()
   %2040 = getelementptr [29 x i8], [29 x i8]* @.str606, i32 0, i32 0
@@ -4670,7 +4670,7 @@ define { i64, i8* }* @gotchas_table(
   %2075 = ptrtoint %nyx_string* %2074 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2039, i64 %2075, i64 2)
   %2076 = ptrtoint { i64, i8* }* %2039 to i64
-  call void @nyx_array_push({ i64, i8* }* %2038, i64 %2076)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2038, i64 %2076, i64 5)
   %2077 = load { i64, i8* }*, { i64, i8* }** %87
   %2078 = call { i64, i8* }* @nyx_array_new_ptr()
   %2079 = getelementptr [21 x i8], [21 x i8]* @.str618, i32 0, i32 0
@@ -4722,7 +4722,7 @@ define { i64, i8* }* @gotchas_table(
   %2114 = ptrtoint %nyx_string* %2113 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2078, i64 %2114, i64 2)
   %2115 = ptrtoint { i64, i8* }* %2078 to i64
-  call void @nyx_array_push({ i64, i8* }* %2077, i64 %2115)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2077, i64 %2115, i64 5)
   %2116 = load { i64, i8* }*, { i64, i8* }** %87
   %2117 = call { i64, i8* }* @nyx_array_new_ptr()
   %2118 = getelementptr [18 x i8], [18 x i8]* @.str630, i32 0, i32 0
@@ -4774,7 +4774,7 @@ define { i64, i8* }* @gotchas_table(
   %2153 = ptrtoint %nyx_string* %2152 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2117, i64 %2153, i64 2)
   %2154 = ptrtoint { i64, i8* }* %2117 to i64
-  call void @nyx_array_push({ i64, i8* }* %2116, i64 %2154)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2116, i64 %2154, i64 5)
   %2155 = load { i64, i8* }*, { i64, i8* }** %87
   %2156 = call { i64, i8* }* @nyx_array_new_ptr()
   %2157 = getelementptr [15 x i8], [15 x i8]* @.str642, i32 0, i32 0
@@ -4826,7 +4826,7 @@ define { i64, i8* }* @gotchas_table(
   %2192 = ptrtoint %nyx_string* %2191 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2156, i64 %2192, i64 2)
   %2193 = ptrtoint { i64, i8* }* %2156 to i64
-  call void @nyx_array_push({ i64, i8* }* %2155, i64 %2193)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2155, i64 %2193, i64 5)
   %2194 = load { i64, i8* }*, { i64, i8* }** %87
   %2195 = call { i64, i8* }* @nyx_array_new_ptr()
   %2196 = getelementptr [24 x i8], [24 x i8]* @.str654, i32 0, i32 0
@@ -4878,7 +4878,7 @@ define { i64, i8* }* @gotchas_table(
   %2231 = ptrtoint %nyx_string* %2230 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2195, i64 %2231, i64 2)
   %2232 = ptrtoint { i64, i8* }* %2195 to i64
-  call void @nyx_array_push({ i64, i8* }* %2194, i64 %2232)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2194, i64 %2232, i64 5)
   %2233 = load { i64, i8* }*, { i64, i8* }** %87
   %2234 = call { i64, i8* }* @nyx_array_new_ptr()
   %2235 = getelementptr [26 x i8], [26 x i8]* @.str666, i32 0, i32 0
@@ -4930,7 +4930,7 @@ define { i64, i8* }* @gotchas_table(
   %2270 = ptrtoint %nyx_string* %2269 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2234, i64 %2270, i64 2)
   %2271 = ptrtoint { i64, i8* }* %2234 to i64
-  call void @nyx_array_push({ i64, i8* }* %2233, i64 %2271)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2233, i64 %2271, i64 5)
   %2272 = load { i64, i8* }*, { i64, i8* }** %87
   %2273 = call { i64, i8* }* @nyx_array_new_ptr()
   %2274 = getelementptr [21 x i8], [21 x i8]* @.str678, i32 0, i32 0
@@ -4982,7 +4982,7 @@ define { i64, i8* }* @gotchas_table(
   %2309 = ptrtoint %nyx_string* %2308 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2273, i64 %2309, i64 2)
   %2310 = ptrtoint { i64, i8* }* %2273 to i64
-  call void @nyx_array_push({ i64, i8* }* %2272, i64 %2310)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2272, i64 %2310, i64 5)
   %2311 = load { i64, i8* }*, { i64, i8* }** %87
   %2312 = call { i64, i8* }* @nyx_array_new_ptr()
   %2313 = getelementptr [22 x i8], [22 x i8]* @.str690, i32 0, i32 0
@@ -5034,7 +5034,7 @@ define { i64, i8* }* @gotchas_table(
   %2348 = ptrtoint %nyx_string* %2347 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2312, i64 %2348, i64 2)
   %2349 = ptrtoint { i64, i8* }* %2312 to i64
-  call void @nyx_array_push({ i64, i8* }* %2311, i64 %2349)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2311, i64 %2349, i64 5)
   %2350 = load { i64, i8* }*, { i64, i8* }** %87
   %2351 = call { i64, i8* }* @nyx_array_new_ptr()
   %2352 = getelementptr [24 x i8], [24 x i8]* @.str702, i32 0, i32 0
@@ -5086,7 +5086,7 @@ define { i64, i8* }* @gotchas_table(
   %2387 = ptrtoint %nyx_string* %2386 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2351, i64 %2387, i64 2)
   %2388 = ptrtoint { i64, i8* }* %2351 to i64
-  call void @nyx_array_push({ i64, i8* }* %2350, i64 %2388)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2350, i64 %2388, i64 5)
   %2389 = load { i64, i8* }*, { i64, i8* }** %87
   %2390 = call { i64, i8* }* @nyx_array_new_ptr()
   %2391 = getelementptr [22 x i8], [22 x i8]* @.str714, i32 0, i32 0
@@ -5138,7 +5138,7 @@ define { i64, i8* }* @gotchas_table(
   %2426 = ptrtoint %nyx_string* %2425 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2390, i64 %2426, i64 2)
   %2427 = ptrtoint { i64, i8* }* %2390 to i64
-  call void @nyx_array_push({ i64, i8* }* %2389, i64 %2427)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2389, i64 %2427, i64 5)
   %2428 = load { i64, i8* }*, { i64, i8* }** %87
   %2429 = call { i64, i8* }* @nyx_array_new_ptr()
   %2430 = getelementptr [19 x i8], [19 x i8]* @.str726, i32 0, i32 0
@@ -5190,7 +5190,7 @@ define { i64, i8* }* @gotchas_table(
   %2465 = ptrtoint %nyx_string* %2464 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2429, i64 %2465, i64 2)
   %2466 = ptrtoint { i64, i8* }* %2429 to i64
-  call void @nyx_array_push({ i64, i8* }* %2428, i64 %2466)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2428, i64 %2466, i64 5)
   %2467 = load { i64, i8* }*, { i64, i8* }** %87
   %2468 = call { i64, i8* }* @nyx_array_new_ptr()
   %2469 = getelementptr [28 x i8], [28 x i8]* @.str738, i32 0, i32 0
@@ -5242,7 +5242,7 @@ define { i64, i8* }* @gotchas_table(
   %2504 = ptrtoint %nyx_string* %2503 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2468, i64 %2504, i64 2)
   %2505 = ptrtoint { i64, i8* }* %2468 to i64
-  call void @nyx_array_push({ i64, i8* }* %2467, i64 %2505)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2467, i64 %2505, i64 5)
   %2506 = load { i64, i8* }*, { i64, i8* }** %87
   ret { i64, i8* }* %2506
 }

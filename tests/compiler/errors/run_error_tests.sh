@@ -122,6 +122,12 @@ TESTS=(
   # correr (el iterable caía al camino de arrays). NYX1038 en semantic; el
   # backstop de codegen lo cubre el ff_case con skip-semantic de más abajo.
   "tests/compiler/errors/test-nyx1038-for-string.nx|NYX1038"
+  # Arco wasm-arena-persistir, Task 4: arena_persist solo copia String o Array
+  # de escalares; struct/Map/Array<Struct> son NYX1039 en semantic (antes solo
+  # en codegen, con `nyx check` en verde). El Array<Struct> solo lo ve semantic.
+  "tests/compiler/errors/test-nyx1039-arena-persist-struct.nx|NYX1039"
+  "tests/compiler/errors/test-nyx1039-arena-persist-array-de-struct.nx|NYX1039"
+  "tests/compiler/errors/test-nyx1039-arena-persist-map.nx|NYX1039"
   # E6 Task 1 (D2 del review 2026-08-13, repro R4): el `?` exige que el E del
   # callee sea el del caller. Antes compilaba limpio y reenviaba el enum Err
   # entero — un %nyx_string* leído como %MiError*: SEGV o basura, sin aviso.
@@ -591,6 +597,10 @@ ff_case "fn-sin-firma-campo-struct"          "$FF_FX/campo-struct.nx"   "NYX1037
 # NYX1038, capa codegen: con semantic apagado el backstop de codegen_for tiene
 # que rechazar el for-in sobre String y no escribir el .ll.
 ff_case "for-string-nyx1038-codegen" "tests/compiler/errors/test-nyx1038-for-string.nx" "NYX1038" 1
+# NYX1039, capa codegen: con semantic apagado el backstop de
+# codegen_arena_persist rechaza el struct (en nativo también: la identidad
+# solo aplica a String y Array).
+ff_case "arena-persist-nyx1039-codegen" "tests/compiler/errors/test-nyx1039-arena-persist-struct.nx" "NYX1039" 1
 
 # CONTROL POSITIVO: los seis tipos que sí viajan, y el descartado.
 cp "$FF_FX/valido.nx" script.nx
@@ -2630,6 +2640,9 @@ POSITIVE_TESTS=(
   "tests/compiler/errors/positive-nyx1032-struct-completo.nx"
   "tests/compiler/errors/positive-nyx1003-builtin-void-sentencia.nx"
   "tests/compiler/errors/positive-nyx1013-nombre-propio-sin-colision.nx"
+  # Control POSITIVO de NYX1039: String, Array de escalares y Array de Array
+  # se aceptan, y en nativo arena_persist es la identidad.
+  "tests/compiler/errors/positive-nyx1039-arena-persist-nativo.nx"
   "tests/compiler/errors/fixtures/pub-struct-braced-import.nx"
   "tests/compiler/errors/fixtures/pub-type-alias-local.nx"
   # El mixto es la REGRESIÓN concreta que abrió la Task 3: `import { } from`

@@ -926,8 +926,8 @@ define internal %ASTNode @bc_root_of(
   store { i64, i8* }* %arr.param, { i64, i8* }** %arr.ptr
   %31 = call { i64, i8* }* @nyx_array_new_ptr()
   %32 = load { i64, i8* }*, { i64, i8* }** %arr.ptr
-  %33 = bitcast { i64, i8* }* %32 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %31, i8* %33)
+  %33 = ptrtoint { i64, i8* }* %32 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %31, i64 %33, i64 5)
   %34 = alloca { i64, i8* }*
   store { i64, i8* }* %31, { i64, i8* }** %34
   %35 = load { i64, i8* }*, { i64, i8* }** %34
@@ -1110,28 +1110,28 @@ define internal { i64, i8* }* @tm_new(
   store i8* %sigs.param, i8** %sigs.ptr
   %107 = call { i64, i8* }* @nyx_array_new_ptr()
   %108 = call { i64, i8* }* @nyx_array_new_ptr()
-  %109 = bitcast { i64, i8* }* %108 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %109)
+  %109 = ptrtoint { i64, i8* }* %108 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %107, i64 %109, i64 5)
   %110 = call { i64, i8* }* @nyx_array_new_ptr()
-  %111 = bitcast { i64, i8* }* %110 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %111)
+  %111 = ptrtoint { i64, i8* }* %110 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %107, i64 %111, i64 5)
   %112 = load { i64, i8* }*, { i64, i8* }** %affine_names.ptr
-  %113 = bitcast { i64, i8* }* %112 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %113)
+  %113 = ptrtoint { i64, i8* }* %112 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %107, i64 %113, i64 5)
   %114 = call { i64, i8* }* @nyx_array_new_ptr()
-  %115 = bitcast { i64, i8* }* %114 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %115)
+  %115 = ptrtoint { i64, i8* }* %114 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %107, i64 %115, i64 5)
   %116 = call { i64, i8* }* @nyx_array_new_ptr()
-  %117 = bitcast { i64, i8* }* %116 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %117)
+  %117 = ptrtoint { i64, i8* }* %116 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %107, i64 %117, i64 5)
   %118 = load i8*, i8** %sigs.ptr
   call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %118)
   %119 = call { i64, i8* }* @nyx_array_new_ptr()
-  %120 = bitcast { i64, i8* }* %119 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %120)
+  %120 = ptrtoint { i64, i8* }* %119 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %107, i64 %120, i64 5)
   %121 = call { i64, i8* }* @nyx_array_new_ptr()
-  %122 = bitcast { i64, i8* }* %121 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %107, i8* %122)
+  %122 = ptrtoint { i64, i8* }* %121 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %107, i64 %122, i64 5)
   ret { i64, i8* }* %107
 }
 
@@ -6820,8 +6820,8 @@ merge843:
   %3366 = load %nyx_string*, %nyx_string** %3210
   %3367 = call { i64, i8* }* @nyx_array_new_ptr()
   %3368 = load { i64, i8* }*, { i64, i8* }** %3216
-  %3369 = bitcast { i64, i8* }* %3368 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3367, i8* %3369)
+  %3369 = ptrtoint { i64, i8* }* %3368 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3367, i64 %3369, i64 5)
   %3370 = load i64, i64* %3217
   call void @nyx_array_push_tagged({ i64, i8* }* %3367, i64 %3370, i64 1)
   %3371 = call i8* @nyx_string_to_cstr(%nyx_string* %3366)
@@ -6883,8 +6883,8 @@ else857:
 merge858:
   %3396 = call { i64, i8* }* @nyx_array_new_ptr()
   %3397 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3398 = bitcast { i64, i8* }* %3397 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3396, i8* %3398)
+  %3398 = ptrtoint { i64, i8* }* %3397 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3396, i64 %3398, i64 5)
   call void @nyx_array_push_tagged({ i64, i8* }* %3396, i64 0, i64 1)
   ret { i64, i8* }* %3396
 }
@@ -7383,17 +7383,17 @@ define { i64, i8* }* @state_new(
 ) {
   %3632 = call { i64, i8* }* @nyx_array_new_ptr()
   %3633 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3634 = bitcast { i64, i8* }* %3633 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3632, i8* %3634)
+  %3634 = ptrtoint { i64, i8* }* %3633 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3632, i64 %3634, i64 5)
   %3635 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3636 = bitcast { i64, i8* }* %3635 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3632, i8* %3636)
+  %3636 = ptrtoint { i64, i8* }* %3635 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3632, i64 %3636, i64 5)
   %3637 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3638 = bitcast { i64, i8* }* %3637 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3632, i8* %3638)
+  %3638 = ptrtoint { i64, i8* }* %3637 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3632, i64 %3638, i64 5)
   %3639 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3640 = bitcast { i64, i8* }* %3639 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3632, i8* %3640)
+  %3640 = ptrtoint { i64, i8* }* %3639 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3632, i64 %3640, i64 5)
   ret { i64, i8* }* %3632
 }
 
@@ -7933,17 +7933,17 @@ while_body995:
 while_end996:
   %3909 = call { i64, i8* }* @nyx_array_new_ptr()
   %3910 = load { i64, i8* }*, { i64, i8* }** %3866
-  %3911 = bitcast { i64, i8* }* %3910 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3909, i8* %3911)
+  %3911 = ptrtoint { i64, i8* }* %3910 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3909, i64 %3911, i64 5)
   %3912 = load { i64, i8* }*, { i64, i8* }** %3868
-  %3913 = bitcast { i64, i8* }* %3912 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3909, i8* %3913)
+  %3913 = ptrtoint { i64, i8* }* %3912 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3909, i64 %3913, i64 5)
   %3914 = load { i64, i8* }*, { i64, i8* }** %3870
-  %3915 = bitcast { i64, i8* }* %3914 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3909, i8* %3915)
+  %3915 = ptrtoint { i64, i8* }* %3914 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3909, i64 %3915, i64 5)
   %3916 = load { i64, i8* }*, { i64, i8* }** %3872
-  %3917 = bitcast { i64, i8* }* %3916 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %3909, i8* %3917)
+  %3917 = ptrtoint { i64, i8* }* %3916 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3909, i64 %3917, i64 5)
   ret { i64, i8* }* %3909
 }
 

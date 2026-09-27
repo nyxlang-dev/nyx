@@ -1787,7 +1787,9 @@ existing contract ("a handler must not store pointers to turn memory in globals"
 the top of `nyx_arena.c`) applied to closure environments, and only a tracing GC — which wasm does
 not have — would lift it. Mutating captured `int`/`float` by value is always safe, so counters,
 flags and ids work; keep anything string-shaped outside the environment (a module global built in
-`_start`, or re-derive it on each fire). Note this only applies with the arena on: without
+`_start`, or re-derive it on each fire), or copy it out of the turn first with
+`arena_persist(s)` (`std/wasm_mem`), which returns a persistent copy of a String or an Array of
+scalars. Note this only applies with the arena on: without
 `nyx_arena_begin()` nothing is ever freed and the question does not arise. [test: wasm/test-wasm-23-closure-lifetime] [test: wasm/test-wasm-24-dom-on-fn-turnos] [test: wasm/test-wasm-29-arena-autocancelacion]
 
 7. **In wasm32-wasi only ONE function can be suspended in `await` at a time: events that arrive meanwhile are queued and delivered after it finishes.**
@@ -2967,6 +2969,18 @@ preserves the block's origin (fixed 2026-09-23; before, the grown buffer landed
 in the turn arena and the global dangled). The pushed VALUE still follows the
 rule: ints/floats by value, an event-time String via `arena_persist(s)`.
 [test: wasm/test-wasm-38-arena-global-push]
+
+**`arena_persist(x)`** (a builtin: no import needed) copies a value born in an event to the
+persistent region so it can be stored in a global and read in a later event: a `String`, or an
+`Array` of `String`/`int`/`float`/`bool` — nested arrays of those too (their slots are tagged
+`Array` since 2026-09-26 and copied deep). Anything else is **NYX1039** at
+compile time — a struct, a `Map`, a `Fn`, or an `Array<Struct>`: they carry no runtime
+description of their contents, so a copy would keep pointers into the recycled turn memory;
+persist the fields one by one and rebuild the value where it is used. `arena_stats()`
+(`import "std/wasm_mem"`, wasm only) reports persistent and turn bytes from inside the module. **On native targets `arena_persist` is the
+identity** (no per-event arena; the GC already keeps the value), so the same code runs under
+`nyx test` and in wasm with no per-target branches. Recipe:
+`examples/by-example/121-arena-persist-wasm.nx`. [test: wasm/test-wasm-36-arena-persistir]
 
 **Handler state**: closure capture of locals WORKS on both targets. On wasm it is verified end to
 end under the shim, with the arena ON and OFF, for every closure binding: `dom_on_fn`,

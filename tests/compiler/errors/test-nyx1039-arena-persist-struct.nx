@@ -1,0 +1,16 @@
+// Arco wasm-arena-persistir, Task 4: arena_persist(x) solo copia String o Array
+// de escalares. Un struct no lleva en tiempo de ejecución la descripción de lo
+// que contiene: copiarlo dejaría punteros a la memoria del turno. Hasta el
+// 2026-09-26 solo lo rechazaba codegen y `nyx check` daba verde; ahora semantic.
+// Expected stderr (contains): "NYX1039"
+struct Venta {
+    total: int,
+    nota: String,
+}
+
+fn main() -> int {
+    let v: Venta = Venta { total: 10, nota: "x" }
+    let p: Venta = arena_persist(v)
+    print(p.nota)
+    return 0
+}

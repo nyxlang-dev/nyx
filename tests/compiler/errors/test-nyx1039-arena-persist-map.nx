@@ -1,0 +1,10 @@
+// arena_persist sobre un Map: NYX1039 (sin descripción de su contenido en
+// tiempo de ejecución).
+// Expected stderr (contains): "NYX1039"
+fn main() -> int {
+    var m: Map<String, int> = Map.new()
+    m.insert("a", 1)
+    let p: Map<String, int> = arena_persist(m)
+    print(p.length())
+    return 0
+}

@@ -498,8 +498,8 @@ define internal %ASTNode @licm_root_of(
   store { i64, i8* }* %arr.param, { i64, i8* }** %arr.ptr
   %1 = call { i64, i8* }* @nyx_array_new_ptr()
   %2 = load { i64, i8* }*, { i64, i8* }** %arr.ptr
-  %3 = bitcast { i64, i8* }* %2 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1, i8* %3)
+  %3 = ptrtoint { i64, i8* }* %2 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1, i64 %3, i64 5)
   %4 = alloca { i64, i8* }*
   store { i64, i8* }* %1, { i64, i8* }** %4
   %5 = load { i64, i8* }*, { i64, i8* }** %4
@@ -599,7 +599,7 @@ define internal { i64, i8* }* @licm_make(
   %57 = load { i64, i8* }*, { i64, i8* }** %53
   %58 = load { i64, i8* }*, { i64, i8* }** %data.ptr
   %59 = ptrtoint { i64, i8* }* %58 to i64
-  call void @nyx_array_push({ i64, i8* }* %57, i64 %59)
+  call void @nyx_array_push_tagged({ i64, i8* }* %57, i64 %59, i64 5)
   %60 = load { i64, i8* }*, { i64, i8* }** %53
   call void @nyx_array_push_tagged({ i64, i8* }* %60, i64 0, i64 1)
   %61 = load { i64, i8* }*, { i64, i8* }** %53
@@ -999,11 +999,11 @@ then54:
   %265 = load { i64, i8* }*, { i64, i8* }** %248
   %266 = load { i64, i8* }*, { i64, i8* }** %260
   %267 = ptrtoint { i64, i8* }* %266 to i64
-  call void @nyx_array_push({ i64, i8* }* %265, i64 %267)
+  call void @nyx_array_push_tagged({ i64, i8* }* %265, i64 %267, i64 5)
   %268 = load { i64, i8* }*, { i64, i8* }** %248
   %269 = load { i64, i8* }*, { i64, i8* }** %264
   %270 = ptrtoint { i64, i8* }* %269 to i64
-  call void @nyx_array_push({ i64, i8* }* %268, i64 %270)
+  call void @nyx_array_push_tagged({ i64, i8* }* %268, i64 %270, i64 5)
   %271 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %271
 else55:
@@ -1033,7 +1033,7 @@ then59:
   %284 = load { i64, i8* }*, { i64, i8* }** %248
   %285 = load { i64, i8* }*, { i64, i8* }** %283
   %286 = ptrtoint { i64, i8* }* %285 to i64
-  call void @nyx_array_push({ i64, i8* }* %284, i64 %286)
+  call void @nyx_array_push_tagged({ i64, i8* }* %284, i64 %286, i64 5)
   %287 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %287
 else60:
@@ -1063,7 +1063,7 @@ then64:
   %300 = load { i64, i8* }*, { i64, i8* }** %248
   %301 = load { i64, i8* }*, { i64, i8* }** %299
   %302 = ptrtoint { i64, i8* }* %301 to i64
-  call void @nyx_array_push({ i64, i8* }* %300, i64 %302)
+  call void @nyx_array_push_tagged({ i64, i8* }* %300, i64 %302, i64 5)
   %303 = load { i64, i8* }*, { i64, i8* }** %243
   %304 = call i64 @nyx_array_get({ i64, i8* }* %303, i64 1)
   %305 = inttoptr i64 %304 to { i64, i8* }*
@@ -1090,7 +1090,7 @@ while_body68:
   %318 = load { i64, i8* }*, { i64, i8* }** %248
   %319 = load { i64, i8* }*, { i64, i8* }** %317
   %320 = ptrtoint { i64, i8* }* %319 to i64
-  call void @nyx_array_push({ i64, i8* }* %318, i64 %320)
+  call void @nyx_array_push_tagged({ i64, i8* }* %318, i64 %320, i64 5)
   %321 = load i64, i64* %307
   %322 = add i64 %321, 1
   store i64 %322, i64* %307
@@ -1125,7 +1125,7 @@ then72:
   %336 = load { i64, i8* }*, { i64, i8* }** %248
   %337 = load { i64, i8* }*, { i64, i8* }** %335
   %338 = ptrtoint { i64, i8* }* %337 to i64
-  call void @nyx_array_push({ i64, i8* }* %336, i64 %338)
+  call void @nyx_array_push_tagged({ i64, i8* }* %336, i64 %338, i64 5)
   %339 = load { i64, i8* }*, { i64, i8* }** %243
   %340 = call i64 @nyx_array_get({ i64, i8* }* %339, i64 2)
   %341 = inttoptr i64 %340 to { i64, i8* }*
@@ -1152,7 +1152,7 @@ while_body76:
   %354 = load { i64, i8* }*, { i64, i8* }** %248
   %355 = load { i64, i8* }*, { i64, i8* }** %353
   %356 = ptrtoint { i64, i8* }* %355 to i64
-  call void @nyx_array_push({ i64, i8* }* %354, i64 %356)
+  call void @nyx_array_push_tagged({ i64, i8* }* %354, i64 %356, i64 5)
   %357 = load i64, i64* %343
   %358 = add i64 %357, 1
   store i64 %358, i64* %343
@@ -1192,11 +1192,11 @@ then80:
   %376 = load { i64, i8* }*, { i64, i8* }** %248
   %377 = load { i64, i8* }*, { i64, i8* }** %371
   %378 = ptrtoint { i64, i8* }* %377 to i64
-  call void @nyx_array_push({ i64, i8* }* %376, i64 %378)
+  call void @nyx_array_push_tagged({ i64, i8* }* %376, i64 %378, i64 5)
   %379 = load { i64, i8* }*, { i64, i8* }** %248
   %380 = load { i64, i8* }*, { i64, i8* }** %375
   %381 = ptrtoint { i64, i8* }* %380 to i64
-  call void @nyx_array_push({ i64, i8* }* %379, i64 %381)
+  call void @nyx_array_push_tagged({ i64, i8* }* %379, i64 %381, i64 5)
   %382 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %382
 else81:
@@ -1226,7 +1226,7 @@ then85:
   %395 = load { i64, i8* }*, { i64, i8* }** %248
   %396 = load { i64, i8* }*, { i64, i8* }** %394
   %397 = ptrtoint { i64, i8* }* %396 to i64
-  call void @nyx_array_push({ i64, i8* }* %395, i64 %397)
+  call void @nyx_array_push_tagged({ i64, i8* }* %395, i64 %397, i64 5)
   %398 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %398
 else86:
@@ -1274,7 +1274,7 @@ while_body94:
   %422 = load { i64, i8* }*, { i64, i8* }** %248
   %423 = load { i64, i8* }*, { i64, i8* }** %421
   %424 = ptrtoint { i64, i8* }* %423 to i64
-  call void @nyx_array_push({ i64, i8* }* %422, i64 %424)
+  call void @nyx_array_push_tagged({ i64, i8* }* %422, i64 %424, i64 5)
   %425 = load i64, i64* %411
   %426 = add i64 %425, 1
   store i64 %426, i64* %411
@@ -1327,7 +1327,7 @@ while_body102:
   %451 = load { i64, i8* }*, { i64, i8* }** %248
   %452 = load { i64, i8* }*, { i64, i8* }** %450
   %453 = ptrtoint { i64, i8* }* %452 to i64
-  call void @nyx_array_push({ i64, i8* }* %451, i64 %453)
+  call void @nyx_array_push_tagged({ i64, i8* }* %451, i64 %453, i64 5)
   %454 = load i64, i64* %440
   %455 = add i64 %454, 1
   store i64 %455, i64* %440
@@ -1372,15 +1372,15 @@ then106:
   %477 = load { i64, i8* }*, { i64, i8* }** %248
   %478 = load { i64, i8* }*, { i64, i8* }** %468
   %479 = ptrtoint { i64, i8* }* %478 to i64
-  call void @nyx_array_push({ i64, i8* }* %477, i64 %479)
+  call void @nyx_array_push_tagged({ i64, i8* }* %477, i64 %479, i64 5)
   %480 = load { i64, i8* }*, { i64, i8* }** %248
   %481 = load { i64, i8* }*, { i64, i8* }** %472
   %482 = ptrtoint { i64, i8* }* %481 to i64
-  call void @nyx_array_push({ i64, i8* }* %480, i64 %482)
+  call void @nyx_array_push_tagged({ i64, i8* }* %480, i64 %482, i64 5)
   %483 = load { i64, i8* }*, { i64, i8* }** %248
   %484 = load { i64, i8* }*, { i64, i8* }** %476
   %485 = ptrtoint { i64, i8* }* %484 to i64
-  call void @nyx_array_push({ i64, i8* }* %483, i64 %485)
+  call void @nyx_array_push_tagged({ i64, i8* }* %483, i64 %485, i64 5)
   %486 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %486
 else107:
@@ -1415,11 +1415,11 @@ then111:
   %503 = load { i64, i8* }*, { i64, i8* }** %248
   %504 = load { i64, i8* }*, { i64, i8* }** %498
   %505 = ptrtoint { i64, i8* }* %504 to i64
-  call void @nyx_array_push({ i64, i8* }* %503, i64 %505)
+  call void @nyx_array_push_tagged({ i64, i8* }* %503, i64 %505, i64 5)
   %506 = load { i64, i8* }*, { i64, i8* }** %248
   %507 = load { i64, i8* }*, { i64, i8* }** %502
   %508 = ptrtoint { i64, i8* }* %507 to i64
-  call void @nyx_array_push({ i64, i8* }* %506, i64 %508)
+  call void @nyx_array_push_tagged({ i64, i8* }* %506, i64 %508, i64 5)
   %509 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %509
 else112:
@@ -1454,11 +1454,11 @@ then116:
   %526 = load { i64, i8* }*, { i64, i8* }** %248
   %527 = load { i64, i8* }*, { i64, i8* }** %521
   %528 = ptrtoint { i64, i8* }* %527 to i64
-  call void @nyx_array_push({ i64, i8* }* %526, i64 %528)
+  call void @nyx_array_push_tagged({ i64, i8* }* %526, i64 %528, i64 5)
   %529 = load { i64, i8* }*, { i64, i8* }** %248
   %530 = load { i64, i8* }*, { i64, i8* }** %525
   %531 = ptrtoint { i64, i8* }* %530 to i64
-  call void @nyx_array_push({ i64, i8* }* %529, i64 %531)
+  call void @nyx_array_push_tagged({ i64, i8* }* %529, i64 %531, i64 5)
   %532 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %532
 else117:
@@ -1493,11 +1493,11 @@ then121:
   %549 = load { i64, i8* }*, { i64, i8* }** %248
   %550 = load { i64, i8* }*, { i64, i8* }** %544
   %551 = ptrtoint { i64, i8* }* %550 to i64
-  call void @nyx_array_push({ i64, i8* }* %549, i64 %551)
+  call void @nyx_array_push_tagged({ i64, i8* }* %549, i64 %551, i64 5)
   %552 = load { i64, i8* }*, { i64, i8* }** %248
   %553 = load { i64, i8* }*, { i64, i8* }** %548
   %554 = ptrtoint { i64, i8* }* %553 to i64
-  call void @nyx_array_push({ i64, i8* }* %552, i64 %554)
+  call void @nyx_array_push_tagged({ i64, i8* }* %552, i64 %554, i64 5)
   %555 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %555
 else122:
@@ -1545,7 +1545,7 @@ while_body130:
   %579 = load { i64, i8* }*, { i64, i8* }** %248
   %580 = load { i64, i8* }*, { i64, i8* }** %578
   %581 = ptrtoint { i64, i8* }* %580 to i64
-  call void @nyx_array_push({ i64, i8* }* %579, i64 %581)
+  call void @nyx_array_push_tagged({ i64, i8* }* %579, i64 %581, i64 5)
   %582 = load i64, i64* %568
   %583 = add i64 %582, 1
   store i64 %583, i64* %568
@@ -1580,7 +1580,7 @@ then134:
   %597 = load { i64, i8* }*, { i64, i8* }** %248
   %598 = load { i64, i8* }*, { i64, i8* }** %596
   %599 = ptrtoint { i64, i8* }* %598 to i64
-  call void @nyx_array_push({ i64, i8* }* %597, i64 %599)
+  call void @nyx_array_push_tagged({ i64, i8* }* %597, i64 %599, i64 5)
   %600 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %600
 else135:
@@ -1610,7 +1610,7 @@ then139:
   %613 = load { i64, i8* }*, { i64, i8* }** %248
   %614 = load { i64, i8* }*, { i64, i8* }** %612
   %615 = ptrtoint { i64, i8* }* %614 to i64
-  call void @nyx_array_push({ i64, i8* }* %613, i64 %615)
+  call void @nyx_array_push_tagged({ i64, i8* }* %613, i64 %615, i64 5)
   %616 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %616
 else140:
@@ -1640,7 +1640,7 @@ then144:
   %629 = load { i64, i8* }*, { i64, i8* }** %248
   %630 = load { i64, i8* }*, { i64, i8* }** %628
   %631 = ptrtoint { i64, i8* }* %630 to i64
-  call void @nyx_array_push({ i64, i8* }* %629, i64 %631)
+  call void @nyx_array_push_tagged({ i64, i8* }* %629, i64 %631, i64 5)
   %632 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %632
 else145:
@@ -1680,15 +1680,15 @@ then149:
   %653 = load { i64, i8* }*, { i64, i8* }** %248
   %654 = load { i64, i8* }*, { i64, i8* }** %644
   %655 = ptrtoint { i64, i8* }* %654 to i64
-  call void @nyx_array_push({ i64, i8* }* %653, i64 %655)
+  call void @nyx_array_push_tagged({ i64, i8* }* %653, i64 %655, i64 5)
   %656 = load { i64, i8* }*, { i64, i8* }** %248
   %657 = load { i64, i8* }*, { i64, i8* }** %648
   %658 = ptrtoint { i64, i8* }* %657 to i64
-  call void @nyx_array_push({ i64, i8* }* %656, i64 %658)
+  call void @nyx_array_push_tagged({ i64, i8* }* %656, i64 %658, i64 5)
   %659 = load { i64, i8* }*, { i64, i8* }** %248
   %660 = load { i64, i8* }*, { i64, i8* }** %652
   %661 = ptrtoint { i64, i8* }* %660 to i64
-  call void @nyx_array_push({ i64, i8* }* %659, i64 %661)
+  call void @nyx_array_push_tagged({ i64, i8* }* %659, i64 %661, i64 5)
   %662 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %662
 else150:
@@ -1723,11 +1723,11 @@ then154:
   %679 = load { i64, i8* }*, { i64, i8* }** %248
   %680 = load { i64, i8* }*, { i64, i8* }** %674
   %681 = ptrtoint { i64, i8* }* %680 to i64
-  call void @nyx_array_push({ i64, i8* }* %679, i64 %681)
+  call void @nyx_array_push_tagged({ i64, i8* }* %679, i64 %681, i64 5)
   %682 = load { i64, i8* }*, { i64, i8* }** %248
   %683 = load { i64, i8* }*, { i64, i8* }** %678
   %684 = ptrtoint { i64, i8* }* %683 to i64
-  call void @nyx_array_push({ i64, i8* }* %682, i64 %684)
+  call void @nyx_array_push_tagged({ i64, i8* }* %682, i64 %684, i64 5)
   %685 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %685
 else155:
@@ -1762,11 +1762,11 @@ then159:
   %702 = load { i64, i8* }*, { i64, i8* }** %248
   %703 = load { i64, i8* }*, { i64, i8* }** %697
   %704 = ptrtoint { i64, i8* }* %703 to i64
-  call void @nyx_array_push({ i64, i8* }* %702, i64 %704)
+  call void @nyx_array_push_tagged({ i64, i8* }* %702, i64 %704, i64 5)
   %705 = load { i64, i8* }*, { i64, i8* }** %248
   %706 = load { i64, i8* }*, { i64, i8* }** %701
   %707 = ptrtoint { i64, i8* }* %706 to i64
-  call void @nyx_array_push({ i64, i8* }* %705, i64 %707)
+  call void @nyx_array_push_tagged({ i64, i8* }* %705, i64 %707, i64 5)
   %708 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %708
 else160:
@@ -1796,7 +1796,7 @@ then164:
   %721 = load { i64, i8* }*, { i64, i8* }** %248
   %722 = load { i64, i8* }*, { i64, i8* }** %720
   %723 = ptrtoint { i64, i8* }* %722 to i64
-  call void @nyx_array_push({ i64, i8* }* %721, i64 %723)
+  call void @nyx_array_push_tagged({ i64, i8* }* %721, i64 %723, i64 5)
   %724 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %724
 else165:
@@ -1854,7 +1854,7 @@ then175:
   %755 = load { i64, i8* }*, { i64, i8* }** %248
   %756 = load { i64, i8* }*, { i64, i8* }** %754
   %757 = ptrtoint { i64, i8* }* %756 to i64
-  call void @nyx_array_push({ i64, i8* }* %755, i64 %757)
+  call void @nyx_array_push_tagged({ i64, i8* }* %755, i64 %757, i64 5)
   br label %merge177
 else176:
   br label %merge177
@@ -1893,7 +1893,7 @@ then180:
   %773 = load { i64, i8* }*, { i64, i8* }** %248
   %774 = load { i64, i8* }*, { i64, i8* }** %772
   %775 = ptrtoint { i64, i8* }* %774 to i64
-  call void @nyx_array_push({ i64, i8* }* %773, i64 %775)
+  call void @nyx_array_push_tagged({ i64, i8* }* %773, i64 %775, i64 5)
   %776 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %776
 else181:
@@ -1923,7 +1923,7 @@ then185:
   %789 = load { i64, i8* }*, { i64, i8* }** %248
   %790 = load { i64, i8* }*, { i64, i8* }** %788
   %791 = ptrtoint { i64, i8* }* %790 to i64
-  call void @nyx_array_push({ i64, i8* }* %789, i64 %791)
+  call void @nyx_array_push_tagged({ i64, i8* }* %789, i64 %791, i64 5)
   %792 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %792
 else186:
@@ -1958,11 +1958,11 @@ then190:
   %809 = load { i64, i8* }*, { i64, i8* }** %248
   %810 = load { i64, i8* }*, { i64, i8* }** %804
   %811 = ptrtoint { i64, i8* }* %810 to i64
-  call void @nyx_array_push({ i64, i8* }* %809, i64 %811)
+  call void @nyx_array_push_tagged({ i64, i8* }* %809, i64 %811, i64 5)
   %812 = load { i64, i8* }*, { i64, i8* }** %248
   %813 = load { i64, i8* }*, { i64, i8* }** %808
   %814 = ptrtoint { i64, i8* }* %813 to i64
-  call void @nyx_array_push({ i64, i8* }* %812, i64 %814)
+  call void @nyx_array_push_tagged({ i64, i8* }* %812, i64 %814, i64 5)
   %815 = load { i64, i8* }*, { i64, i8* }** %248
   ret { i64, i8* }* %815
 else191:
@@ -2190,20 +2190,20 @@ then224:
   %944 = load i64, i64* %924
   call void @nyx_array_push({ i64, i8* }* %943, i64 %944)
   %945 = load { i64, i8* }*, { i64, i8* }** %936
-  %946 = bitcast { i64, i8* }* %945 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %943, i8* %946)
+  %946 = ptrtoint { i64, i8* }* %945 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %943, i64 %946, i64 5)
   %947 = load { i64, i8* }*, { i64, i8* }** %940
-  %948 = bitcast { i64, i8* }* %947 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %943, i8* %948)
+  %948 = ptrtoint { i64, i8* }* %947 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %943, i64 %948, i64 5)
   %949 = call { i64, i8* }* @licm_make(%nyx_string* %942, { i64, i8* }* %943)
   %950 = ptrtoint { i64, i8* }* %949 to i64
-  call void @nyx_array_push({ i64, i8* }* %941, i64 %950)
+  call void @nyx_array_push_tagged({ i64, i8* }* %941, i64 %950, i64 5)
   br label %merge226
 else225:
   %951 = load { i64, i8* }*, { i64, i8* }** %898
   %952 = load { i64, i8* }*, { i64, i8* }** %912
   %953 = ptrtoint { i64, i8* }* %952 to i64
-  call void @nyx_array_push({ i64, i8* }* %951, i64 %953)
+  call void @nyx_array_push_tagged({ i64, i8* }* %951, i64 %953, i64 5)
   br label %merge226
 merge226:
   %954 = load i64, i64* %899
@@ -2217,11 +2217,11 @@ while_end223:
   %959 = load { i64, i8* }*, { i64, i8* }** %892
   %960 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %961 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %959, { i64, i8* }* %960)
-  %962 = bitcast { i64, i8* }* %961 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %958, i8* %962)
+  %962 = ptrtoint { i64, i8* }* %961 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %958, i64 %962, i64 5)
   %963 = load { i64, i8* }*, { i64, i8* }** %898
-  %964 = bitcast { i64, i8* }* %963 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %958, i8* %964)
+  %964 = ptrtoint { i64, i8* }* %963 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %958, i64 %964, i64 5)
   %965 = call { i64, i8* }* @licm_make(%nyx_string* %957, { i64, i8* }* %958)
   ret { i64, i8* }* %965
 else219:
@@ -2294,13 +2294,13 @@ then229:
   %1005 = load { i64, i8* }*, { i64, i8* }** %996
   %1006 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1007 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1005, { i64, i8* }* %1006)
-  %1008 = bitcast { i64, i8* }* %1007 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1002, i8* %1008)
+  %1008 = ptrtoint { i64, i8* }* %1007 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1002, i64 %1008, i64 5)
   %1009 = load { i64, i8* }*, { i64, i8* }** %1000
   %1010 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1011 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1009, { i64, i8* }* %1010)
-  %1012 = bitcast { i64, i8* }* %1011 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1002, i8* %1012)
+  %1012 = ptrtoint { i64, i8* }* %1011 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1002, i64 %1012, i64 5)
   %1013 = call { i64, i8* }* @licm_make(%nyx_string* %1001, { i64, i8* }* %1002)
   ret { i64, i8* }* %1013
 else230:
@@ -2340,8 +2340,8 @@ then234:
   %1034 = load { i64, i8* }*, { i64, i8* }** %1029
   %1035 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1036 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1034, { i64, i8* }* %1035)
-  %1037 = bitcast { i64, i8* }* %1036 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1031, i8* %1037)
+  %1037 = ptrtoint { i64, i8* }* %1036 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1031, i64 %1037, i64 5)
   %1038 = call { i64, i8* }* @licm_make(%nyx_string* %1030, { i64, i8* }* %1031)
   ret { i64, i8* }* %1038
 else235:
@@ -2399,7 +2399,7 @@ while_body243:
   %1070 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1071 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1069, { i64, i8* }* %1070)
   %1072 = ptrtoint { i64, i8* }* %1071 to i64
-  call void @nyx_array_push({ i64, i8* }* %1068, i64 %1072)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1068, i64 %1072, i64 5)
   %1073 = load i64, i64* %1057
   %1074 = add i64 %1073, 1
   store i64 %1074, i64* %1057
@@ -2410,11 +2410,11 @@ while_end244:
   %1077 = load { i64, i8* }*, { i64, i8* }** %1050
   %1078 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1079 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1077, { i64, i8* }* %1078)
-  %1080 = bitcast { i64, i8* }* %1079 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1076, i8* %1080)
+  %1080 = ptrtoint { i64, i8* }* %1079 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1076, i64 %1080, i64 5)
   %1081 = load { i64, i8* }*, { i64, i8* }** %1056
-  %1082 = bitcast { i64, i8* }* %1081 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1076, i8* %1082)
+  %1082 = ptrtoint { i64, i8* }* %1081 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1076, i64 %1082, i64 5)
   %1083 = call { i64, i8* }* @licm_make(%nyx_string* %1075, { i64, i8* }* %1076)
   ret { i64, i8* }* %1083
 else240:
@@ -2477,7 +2477,7 @@ while_body251:
   %1119 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1120 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1118, { i64, i8* }* %1119)
   %1121 = ptrtoint { i64, i8* }* %1120 to i64
-  call void @nyx_array_push({ i64, i8* }* %1117, i64 %1121)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1117, i64 %1121, i64 5)
   %1122 = load i64, i64* %1106
   %1123 = add i64 %1122, 1
   store i64 %1123, i64* %1106
@@ -2488,14 +2488,14 @@ while_end252:
   %1126 = load { i64, i8* }*, { i64, i8* }** %1095
   %1127 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1128 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1126, { i64, i8* }* %1127)
-  %1129 = bitcast { i64, i8* }* %1128 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1125, i8* %1129)
+  %1129 = ptrtoint { i64, i8* }* %1128 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1125, i64 %1129, i64 5)
   %1130 = load %nyx_string*, %nyx_string** %1099
   %1131 = ptrtoint %nyx_string* %1130 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1125, i64 %1131, i64 2)
   %1132 = load { i64, i8* }*, { i64, i8* }** %1105
-  %1133 = bitcast { i64, i8* }* %1132 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1125, i8* %1133)
+  %1133 = ptrtoint { i64, i8* }* %1132 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1125, i64 %1133, i64 5)
   %1134 = call { i64, i8* }* @licm_make(%nyx_string* %1124, { i64, i8* }* %1125)
   ret { i64, i8* }* %1134
 else248:
@@ -2532,13 +2532,13 @@ then255:
   %1153 = load { i64, i8* }*, { i64, i8* }** %1146
   %1154 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1155 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1153, { i64, i8* }* %1154)
-  %1156 = bitcast { i64, i8* }* %1155 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1152, i8* %1156)
+  %1156 = ptrtoint { i64, i8* }* %1155 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1152, i64 %1156, i64 5)
   %1157 = load { i64, i8* }*, { i64, i8* }** %1150
   %1158 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1159 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1157, { i64, i8* }* %1158)
-  %1160 = bitcast { i64, i8* }* %1159 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1152, i8* %1160)
+  %1160 = ptrtoint { i64, i8* }* %1159 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1152, i64 %1160, i64 5)
   %1161 = call { i64, i8* }* @licm_make(%nyx_string* %1151, { i64, i8* }* %1152)
   ret { i64, i8* }* %1161
 else256:
@@ -2575,8 +2575,8 @@ then260:
   %1180 = load { i64, i8* }*, { i64, i8* }** %1173
   %1181 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1182 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1180, { i64, i8* }* %1181)
-  %1183 = bitcast { i64, i8* }* %1182 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1179, i8* %1183)
+  %1183 = ptrtoint { i64, i8* }* %1182 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1179, i64 %1183, i64 5)
   %1184 = load %nyx_string*, %nyx_string** %1177
   %1185 = ptrtoint %nyx_string* %1184 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1179, i64 %1185, i64 2)
@@ -2632,7 +2632,7 @@ while_body269:
   %1214 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1215 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1213, { i64, i8* }* %1214)
   %1216 = ptrtoint { i64, i8* }* %1215 to i64
-  call void @nyx_array_push({ i64, i8* }* %1212, i64 %1216)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1212, i64 %1216, i64 5)
   %1217 = load i64, i64* %1201
   %1218 = add i64 %1217, 1
   store i64 %1218, i64* %1201
@@ -2641,8 +2641,8 @@ while_end270:
   %1219 = load %nyx_string*, %nyx_string** %974
   %1220 = call { i64, i8* }* @nyx_array_new_ptr()
   %1221 = load { i64, i8* }*, { i64, i8* }** %1200
-  %1222 = bitcast { i64, i8* }* %1221 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1220, i8* %1222)
+  %1222 = ptrtoint { i64, i8* }* %1221 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1220, i64 %1222, i64 5)
   %1223 = call { i64, i8* }* @licm_make(%nyx_string* %1219, { i64, i8* }* %1220)
   ret { i64, i8* }* %1223
 else266:
@@ -2700,7 +2700,7 @@ while_body277:
   %1255 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1256 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1254, { i64, i8* }* %1255)
   %1257 = ptrtoint { i64, i8* }* %1256 to i64
-  call void @nyx_array_push({ i64, i8* }* %1253, i64 %1257)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1253, i64 %1257, i64 5)
   %1258 = load i64, i64* %1242
   %1259 = add i64 %1258, 1
   store i64 %1259, i64* %1242
@@ -2709,11 +2709,11 @@ while_end278:
   %1260 = load %nyx_string*, %nyx_string** %974
   %1261 = call { i64, i8* }* @nyx_array_new_ptr()
   %1262 = load { i64, i8* }*, { i64, i8* }** %1235
-  %1263 = bitcast { i64, i8* }* %1262 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1261, i8* %1263)
+  %1263 = ptrtoint { i64, i8* }* %1262 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1261, i64 %1263, i64 5)
   %1264 = load { i64, i8* }*, { i64, i8* }** %1241
-  %1265 = bitcast { i64, i8* }* %1264 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1261, i8* %1265)
+  %1265 = ptrtoint { i64, i8* }* %1264 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1261, i64 %1265, i64 5)
   %1266 = call { i64, i8* }* @licm_make(%nyx_string* %1260, { i64, i8* }* %1261)
   ret { i64, i8* }* %1266
 else274:
@@ -2755,18 +2755,18 @@ then281:
   %1289 = load { i64, i8* }*, { i64, i8* }** %1278
   %1290 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1291 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1289, { i64, i8* }* %1290)
-  %1292 = bitcast { i64, i8* }* %1291 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1288, i8* %1292)
+  %1292 = ptrtoint { i64, i8* }* %1291 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1288, i64 %1292, i64 5)
   %1293 = load { i64, i8* }*, { i64, i8* }** %1282
   %1294 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1295 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1293, { i64, i8* }* %1294)
-  %1296 = bitcast { i64, i8* }* %1295 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1288, i8* %1296)
+  %1296 = ptrtoint { i64, i8* }* %1295 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1288, i64 %1296, i64 5)
   %1297 = load { i64, i8* }*, { i64, i8* }** %1286
   %1298 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1299 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1297, { i64, i8* }* %1298)
-  %1300 = bitcast { i64, i8* }* %1299 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1288, i8* %1300)
+  %1300 = ptrtoint { i64, i8* }* %1299 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1288, i64 %1300, i64 5)
   %1301 = call { i64, i8* }* @licm_make(%nyx_string* %1287, { i64, i8* }* %1288)
   ret { i64, i8* }* %1301
 else282:
@@ -2803,13 +2803,13 @@ then286:
   %1320 = load { i64, i8* }*, { i64, i8* }** %1313
   %1321 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1322 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1320, { i64, i8* }* %1321)
-  %1323 = bitcast { i64, i8* }* %1322 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1319, i8* %1323)
+  %1323 = ptrtoint { i64, i8* }* %1322 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1319, i64 %1323, i64 5)
   %1324 = load { i64, i8* }*, { i64, i8* }** %1317
   %1325 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1326 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1324, { i64, i8* }* %1325)
-  %1327 = bitcast { i64, i8* }* %1326 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1319, i8* %1327)
+  %1327 = ptrtoint { i64, i8* }* %1326 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1319, i64 %1327, i64 5)
   %1328 = call { i64, i8* }* @licm_make(%nyx_string* %1318, { i64, i8* }* %1319)
   ret { i64, i8* }* %1328
 else287:
@@ -2858,13 +2858,13 @@ then291:
   %1356 = load { i64, i8* }*, { i64, i8* }** %1344
   %1357 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1358 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1356, { i64, i8* }* %1357)
-  %1359 = bitcast { i64, i8* }* %1358 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1353, i8* %1359)
+  %1359 = ptrtoint { i64, i8* }* %1358 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1353, i64 %1359, i64 5)
   %1360 = load { i64, i8* }*, { i64, i8* }** %1348
   %1361 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1362 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1360, { i64, i8* }* %1361)
-  %1363 = bitcast { i64, i8* }* %1362 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1353, i8* %1363)
+  %1363 = ptrtoint { i64, i8* }* %1362 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1353, i64 %1363, i64 5)
   %1364 = load i64, i64* %1351
   call void @nyx_array_push({ i64, i8* }* %1353, i64 %1364)
   %1365 = call { i64, i8* }* @licm_make(%nyx_string* %1352, { i64, i8* }* %1353)
@@ -2909,13 +2909,13 @@ then296:
   %1388 = load { i64, i8* }*, { i64, i8* }** %1380
   %1389 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1390 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1388, { i64, i8* }* %1389)
-  %1391 = bitcast { i64, i8* }* %1390 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1386, i8* %1391)
+  %1391 = ptrtoint { i64, i8* }* %1390 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1386, i64 %1391, i64 5)
   %1392 = load { i64, i8* }*, { i64, i8* }** %1384
   %1393 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1394 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1392, { i64, i8* }* %1393)
-  %1395 = bitcast { i64, i8* }* %1394 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1386, i8* %1395)
+  %1395 = ptrtoint { i64, i8* }* %1394 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1386, i64 %1395, i64 5)
   %1396 = call { i64, i8* }* @licm_make(%nyx_string* %1385, { i64, i8* }* %1386)
   ret { i64, i8* }* %1396
 else297:
@@ -2968,7 +2968,7 @@ while_body305:
   %1424 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1425 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1423, { i64, i8* }* %1424)
   %1426 = ptrtoint { i64, i8* }* %1425 to i64
-  call void @nyx_array_push({ i64, i8* }* %1422, i64 %1426)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1422, i64 %1426, i64 5)
   %1427 = load i64, i64* %1411
   %1428 = add i64 %1427, 1
   store i64 %1428, i64* %1411
@@ -2977,8 +2977,8 @@ while_end306:
   %1429 = load %nyx_string*, %nyx_string** %974
   %1430 = call { i64, i8* }* @nyx_array_new_ptr()
   %1431 = load { i64, i8* }*, { i64, i8* }** %1410
-  %1432 = bitcast { i64, i8* }* %1431 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1430, i8* %1432)
+  %1432 = ptrtoint { i64, i8* }* %1431 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1430, i64 %1432, i64 5)
   %1433 = call { i64, i8* }* @licm_make(%nyx_string* %1429, { i64, i8* }* %1430)
   ret { i64, i8* }* %1433
 else302:
@@ -3026,8 +3026,8 @@ then309:
   %1459 = load { i64, i8* }*, { i64, i8* }** %1451
   %1460 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1461 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1459, { i64, i8* }* %1460)
-  %1462 = bitcast { i64, i8* }* %1461 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1456, i8* %1462)
+  %1462 = ptrtoint { i64, i8* }* %1461 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1456, i64 %1462, i64 5)
   %1463 = load i64, i64* %1454
   call void @nyx_array_push({ i64, i8* }* %1456, i64 %1463)
   %1464 = call { i64, i8* }* @licm_make(%nyx_string* %1455, { i64, i8* }* %1456)
@@ -3073,8 +3073,8 @@ then314:
   %1487 = load { i64, i8* }*, { i64, i8* }** %1482
   %1488 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1489 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1487, { i64, i8* }* %1488)
-  %1490 = bitcast { i64, i8* }* %1489 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1484, i8* %1490)
+  %1490 = ptrtoint { i64, i8* }* %1489 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1484, i64 %1490, i64 5)
   %1491 = call { i64, i8* }* @licm_make(%nyx_string* %1483, { i64, i8* }* %1484)
   ret { i64, i8* }* %1491
 else315:
@@ -3112,8 +3112,8 @@ then319:
   %1510 = load { i64, i8* }*, { i64, i8* }** %1506
   %1511 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1512 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1510, { i64, i8* }* %1511)
-  %1513 = bitcast { i64, i8* }* %1512 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1508, i8* %1513)
+  %1513 = ptrtoint { i64, i8* }* %1512 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1508, i64 %1513, i64 5)
   %1514 = call { i64, i8* }* @licm_make(%nyx_string* %1507, { i64, i8* }* %1508)
   ret { i64, i8* }* %1514
 else320:
@@ -3155,18 +3155,18 @@ then324:
   %1537 = load { i64, i8* }*, { i64, i8* }** %1526
   %1538 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1539 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1537, { i64, i8* }* %1538)
-  %1540 = bitcast { i64, i8* }* %1539 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1536, i8* %1540)
+  %1540 = ptrtoint { i64, i8* }* %1539 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1536, i64 %1540, i64 5)
   %1541 = load { i64, i8* }*, { i64, i8* }** %1530
   %1542 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1543 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1541, { i64, i8* }* %1542)
-  %1544 = bitcast { i64, i8* }* %1543 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1536, i8* %1544)
+  %1544 = ptrtoint { i64, i8* }* %1543 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1536, i64 %1544, i64 5)
   %1545 = load { i64, i8* }*, { i64, i8* }** %1534
   %1546 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1547 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1545, { i64, i8* }* %1546)
-  %1548 = bitcast { i64, i8* }* %1547 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1536, i8* %1548)
+  %1548 = ptrtoint { i64, i8* }* %1547 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1536, i64 %1548, i64 5)
   %1549 = call { i64, i8* }* @licm_make(%nyx_string* %1535, { i64, i8* }* %1536)
   ret { i64, i8* }* %1549
 else325:
@@ -3208,16 +3208,16 @@ then329:
   %1572 = load { i64, i8* }*, { i64, i8* }** %1561
   %1573 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1574 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1572, { i64, i8* }* %1573)
-  %1575 = bitcast { i64, i8* }* %1574 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1571, i8* %1575)
+  %1575 = ptrtoint { i64, i8* }* %1574 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1575, i64 5)
   %1576 = load %nyx_string*, %nyx_string** %1565
   %1577 = ptrtoint %nyx_string* %1576 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1577, i64 2)
   %1578 = load { i64, i8* }*, { i64, i8* }** %1569
   %1579 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1580 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1578, { i64, i8* }* %1579)
-  %1581 = bitcast { i64, i8* }* %1580 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1571, i8* %1581)
+  %1581 = ptrtoint { i64, i8* }* %1580 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1581, i64 5)
   %1582 = call { i64, i8* }* @licm_make(%nyx_string* %1570, { i64, i8* }* %1571)
   ret { i64, i8* }* %1582
 else330:
@@ -3254,13 +3254,13 @@ then334:
   %1601 = load { i64, i8* }*, { i64, i8* }** %1594
   %1602 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1603 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1601, { i64, i8* }* %1602)
-  %1604 = bitcast { i64, i8* }* %1603 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1600, i8* %1604)
+  %1604 = ptrtoint { i64, i8* }* %1603 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1600, i64 %1604, i64 5)
   %1605 = load { i64, i8* }*, { i64, i8* }** %1598
   %1606 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1607 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1605, { i64, i8* }* %1606)
-  %1608 = bitcast { i64, i8* }* %1607 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1600, i8* %1608)
+  %1608 = ptrtoint { i64, i8* }* %1607 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1600, i64 %1608, i64 5)
   %1609 = call { i64, i8* }* @licm_make(%nyx_string* %1599, { i64, i8* }* %1600)
   ret { i64, i8* }* %1609
 else335:
@@ -3292,8 +3292,8 @@ then339:
   %1624 = load { i64, i8* }*, { i64, i8* }** %1621
   %1625 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1626 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1624, { i64, i8* }* %1625)
-  %1627 = bitcast { i64, i8* }* %1626 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1623, i8* %1627)
+  %1627 = ptrtoint { i64, i8* }* %1626 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1623, i64 %1627, i64 5)
   %1628 = call { i64, i8* }* @licm_make(%nyx_string* %1622, { i64, i8* }* %1623)
   ret { i64, i8* }* %1628
 else340:
@@ -3372,16 +3372,16 @@ then350:
   %1675 = load { i64, i8* }*, { i64, i8* }** %1670
   %1676 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1677 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1675, { i64, i8* }* %1676)
-  %1678 = bitcast { i64, i8* }* %1677 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1672, i8* %1678)
+  %1678 = ptrtoint { i64, i8* }* %1677 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1672, i64 %1678, i64 5)
   %1679 = ptrtoint { i64, i8* }* %1672 to i64
-  call void @nyx_array_push({ i64, i8* }* %1671, i64 %1679)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1671, i64 %1679, i64 5)
   br label %merge352
 else351:
   %1680 = load { i64, i8* }*, { i64, i8* }** %1648
   %1681 = load { i64, i8* }*, { i64, i8* }** %1659
   %1682 = ptrtoint { i64, i8* }* %1681 to i64
-  call void @nyx_array_push({ i64, i8* }* %1680, i64 %1682)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1680, i64 %1682, i64 5)
   br label %merge352
 merge352:
   %1683 = load i64, i64* %1649
@@ -3394,8 +3394,8 @@ while_end349:
   %1687 = load i64, i64* %1639
   call void @nyx_array_push({ i64, i8* }* %1686, i64 %1687)
   %1688 = load { i64, i8* }*, { i64, i8* }** %1648
-  %1689 = bitcast { i64, i8* }* %1688 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1686, i8* %1689)
+  %1689 = ptrtoint { i64, i8* }* %1688 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1686, i64 %1689, i64 5)
   %1690 = load i64, i64* %1646
   call void @nyx_array_push({ i64, i8* }* %1686, i64 %1690)
   %1691 = call { i64, i8* }* @licm_make(%nyx_string* %1685, { i64, i8* }* %1686)
@@ -3429,8 +3429,8 @@ then355:
   %1706 = load { i64, i8* }*, { i64, i8* }** %1703
   %1707 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1708 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1706, { i64, i8* }* %1707)
-  %1709 = bitcast { i64, i8* }* %1708 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1705, i8* %1709)
+  %1709 = ptrtoint { i64, i8* }* %1708 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1705, i64 %1709, i64 5)
   %1710 = call { i64, i8* }* @licm_make(%nyx_string* %1704, { i64, i8* }* %1705)
   ret { i64, i8* }* %1710
 else356:
@@ -3466,8 +3466,8 @@ then360:
   %1728 = load { i64, i8* }*, { i64, i8* }** %1722
   %1729 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1730 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1728, { i64, i8* }* %1729)
-  %1731 = bitcast { i64, i8* }* %1730 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1727, i8* %1731)
+  %1731 = ptrtoint { i64, i8* }* %1730 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1727, i64 %1731, i64 5)
   %1732 = load i64, i64* %1725
   call void @nyx_array_push({ i64, i8* }* %1727, i64 %1732)
   %1733 = call { i64, i8* }* @licm_make(%nyx_string* %1726, { i64, i8* }* %1727)
@@ -3510,13 +3510,13 @@ then365:
   %1755 = load { i64, i8* }*, { i64, i8* }** %1745
   %1756 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1757 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1755, { i64, i8* }* %1756)
-  %1758 = bitcast { i64, i8* }* %1757 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1754, i8* %1758)
+  %1758 = ptrtoint { i64, i8* }* %1757 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1754, i64 %1758, i64 5)
   %1759 = load { i64, i8* }*, { i64, i8* }** %1749
   %1760 = load { i64, i8* }*, { i64, i8* }** %litmap.ptr
   %1761 = call { i64, i8* }* @licm_rewrite({ i64, i8* }* %1759, { i64, i8* }* %1760)
-  %1762 = bitcast { i64, i8* }* %1761 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1754, i8* %1762)
+  %1762 = ptrtoint { i64, i8* }* %1761 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1754, i64 %1762, i64 5)
   %1763 = load i64, i64* %1752
   call void @nyx_array_push({ i64, i8* }* %1754, i64 %1763)
   %1764 = call { i64, i8* }* @licm_make(%nyx_string* %1753, { i64, i8* }* %1754)
@@ -3711,7 +3711,7 @@ while_body387:
   %1873 = ptrtoint %nyx_string* %1872 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1869, i64 %1873, i64 2)
   %1874 = ptrtoint { i64, i8* }* %1869 to i64
-  call void @nyx_array_push({ i64, i8* }* %1868, i64 %1874)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1868, i64 %1874, i64 5)
   %1875 = load %nyx_string*, %nyx_string** %1867
   %1876 = call { i64, i8* }* @nyx_array_new_ptr()
   %1877 = call { i64, i8* }* @licm_make(%nyx_string* %1875, { i64, i8* }* %1876)
@@ -3728,13 +3728,13 @@ while_body387:
   %1885 = load %nyx_string*, %nyx_string** %1786
   %1886 = call { i64, i8* }* @nyx_array_new_ptr()
   %1887 = load { i64, i8* }*, { i64, i8* }** %1878
-  %1888 = bitcast { i64, i8* }* %1887 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1886, i8* %1888)
+  %1888 = ptrtoint { i64, i8* }* %1887 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1886, i64 %1888, i64 5)
   %1889 = zext i1 0 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1886, i64 %1889, i64 4)
   %1890 = load { i64, i8* }*, { i64, i8* }** %1884
-  %1891 = bitcast { i64, i8* }* %1890 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1886, i8* %1891)
+  %1891 = ptrtoint { i64, i8* }* %1890 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1886, i64 %1891, i64 5)
   %1892 = load %nyx_string*, %nyx_string** %1789
   %1893 = ptrtoint %nyx_string* %1892 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1886, i64 %1893, i64 2)
@@ -3744,7 +3744,7 @@ while_body387:
   %1896 = load { i64, i8* }*, { i64, i8* }** %1767
   %1897 = load { i64, i8* }*, { i64, i8* }** %1895
   %1898 = ptrtoint { i64, i8* }* %1897 to i64
-  call void @nyx_array_push({ i64, i8* }* %1896, i64 %1898)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1896, i64 %1898, i64 5)
   %1899 = load i64, i64* %1846
   %1900 = add i64 %1899, 1
   store i64 %1900, i64* %1846
@@ -3758,7 +3758,7 @@ while_end388:
   %1905 = load { i64, i8* }*, { i64, i8* }** %1767
   %1906 = load { i64, i8* }*, { i64, i8* }** %1904
   %1907 = ptrtoint { i64, i8* }* %1906 to i64
-  call void @nyx_array_push({ i64, i8* }* %1905, i64 %1907)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1905, i64 %1907, i64 5)
   br label %merge385
 else384:
   %1908 = load { i64, i8* }*, { i64, i8* }** %1767
@@ -3766,7 +3766,7 @@ else384:
   %1910 = load { i64, i8* }*, { i64, i8* }** %counter.ptr
   %1911 = call { i64, i8* }* @licm_descend_stmt({ i64, i8* }* %1909, { i64, i8* }* %1910)
   %1912 = ptrtoint { i64, i8* }* %1911 to i64
-  call void @nyx_array_push({ i64, i8* }* %1908, i64 %1912)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1908, i64 %1912, i64 5)
   br label %merge385
 merge385:
   %1913 = load i64, i64* %1768
@@ -3858,8 +3858,8 @@ merge398:
   %1960 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str77.c, i8* %1959, i64 5)
   %1961 = call { i64, i8* }* @nyx_array_new_ptr()
   %1962 = load { i64, i8* }*, { i64, i8* }** %1958
-  %1963 = bitcast { i64, i8* }* %1962 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %1961, i8* %1963)
+  %1963 = ptrtoint { i64, i8* }* %1962 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %1961, i64 %1963, i64 5)
   %1964 = call { i64, i8* }* @licm_make(%nyx_string* %1960, { i64, i8* }* %1961)
   %1965 = alloca { i64, i8* }*
   store { i64, i8* }* %1964, { i64, i8* }** %1965
@@ -3884,7 +3884,7 @@ then402:
   %1975 = load { i64, i8* }*, { i64, i8* }** %1967
   %1976 = load { i64, i8* }*, { i64, i8* }** %1965
   %1977 = ptrtoint { i64, i8* }* %1976 to i64
-  call void @nyx_array_push({ i64, i8* }* %1975, i64 %1977)
+  call void @nyx_array_push_tagged({ i64, i8* }* %1975, i64 %1977, i64 5)
   br label %merge404
 else403:
   %1978 = load { i64, i8* }*, { i64, i8* }** %1967
@@ -3938,8 +3938,8 @@ then407:
   %2006 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str79.c, i8* %2005, i64 5)
   %2007 = call { i64, i8* }* @nyx_array_new_ptr()
   %2008 = load { i64, i8* }*, { i64, i8* }** %2004
-  %2009 = bitcast { i64, i8* }* %2008 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %2007, i8* %2009)
+  %2009 = ptrtoint { i64, i8* }* %2008 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %2007, i64 %2009, i64 5)
   %2010 = call { i64, i8* }* @licm_make(%nyx_string* %2006, { i64, i8* }* %2007)
   ret { i64, i8* }* %2010
 else408:
@@ -3990,14 +3990,14 @@ then412:
   %2040 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str81.c, i8* %2039, i64 2)
   %2041 = call { i64, i8* }* @nyx_array_new_ptr()
   %2042 = load { i64, i8* }*, { i64, i8* }** %2022
-  %2043 = bitcast { i64, i8* }* %2042 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %2041, i8* %2043)
+  %2043 = ptrtoint { i64, i8* }* %2042 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %2041, i64 %2043, i64 5)
   %2044 = load { i64, i8* }*, { i64, i8* }** %2034
-  %2045 = bitcast { i64, i8* }* %2044 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %2041, i8* %2045)
+  %2045 = ptrtoint { i64, i8* }* %2044 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %2041, i64 %2045, i64 5)
   %2046 = load { i64, i8* }*, { i64, i8* }** %2038
-  %2047 = bitcast { i64, i8* }* %2046 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %2041, i8* %2047)
+  %2047 = ptrtoint { i64, i8* }* %2046 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %2041, i64 %2047, i64 5)
   %2048 = call { i64, i8* }* @licm_make(%nyx_string* %2040, { i64, i8* }* %2041)
   ret { i64, i8* }* %2048
 else413:
@@ -4050,7 +4050,7 @@ while_body421:
   %2076 = load { i64, i8* }*, { i64, i8* }** %counter.ptr
   %2077 = call { i64, i8* }* @licm_descend_stmt({ i64, i8* }* %2075, { i64, i8* }* %2076)
   %2078 = ptrtoint { i64, i8* }* %2077 to i64
-  call void @nyx_array_push({ i64, i8* }* %2074, i64 %2078)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2074, i64 %2078, i64 5)
   %2079 = load i64, i64* %2063
   %2080 = add i64 %2079, 1
   store i64 %2080, i64* %2063
@@ -4077,7 +4077,7 @@ then426:
   %2090 = load { i64, i8* }*, { i64, i8* }** %2082
   %2091 = load { i64, i8* }*, { i64, i8* }** %2062
   %2092 = ptrtoint { i64, i8* }* %2091 to i64
-  call void @nyx_array_push({ i64, i8* }* %2090, i64 %2092)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2090, i64 %2092, i64 5)
   br label %merge428
 else427:
   %2093 = load { i64, i8* }*, { i64, i8* }** %2082
@@ -4149,7 +4149,7 @@ while_body435:
   %2132 = load { i64, i8* }*, { i64, i8* }** %counter.ptr
   %2133 = call { i64, i8* }* @licm_descend_stmt({ i64, i8* }* %2131, { i64, i8* }* %2132)
   %2134 = ptrtoint { i64, i8* }* %2133 to i64
-  call void @nyx_array_push({ i64, i8* }* %2130, i64 %2134)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2130, i64 %2134, i64 5)
   %2135 = load i64, i64* %2119
   %2136 = add i64 %2135, 1
   store i64 %2136, i64* %2119
@@ -4176,7 +4176,7 @@ then440:
   %2146 = load { i64, i8* }*, { i64, i8* }** %2138
   %2147 = load { i64, i8* }*, { i64, i8* }** %2118
   %2148 = ptrtoint { i64, i8* }* %2147 to i64
-  call void @nyx_array_push({ i64, i8* }* %2146, i64 %2148)
+  call void @nyx_array_push_tagged({ i64, i8* }* %2146, i64 %2148, i64 5)
   br label %merge442
 else441:
   %2149 = load { i64, i8* }*, { i64, i8* }** %2138
@@ -4255,8 +4255,8 @@ merge448:
   %2188 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str86.c, i8* %2187, i64 5)
   %2189 = call { i64, i8* }* @nyx_array_new_ptr()
   %2190 = load { i64, i8* }*, { i64, i8* }** %2186
-  %2191 = bitcast { i64, i8* }* %2190 to i8*
-  call void @nyx_array_push_ptr({ i64, i8* }* %2189, i8* %2191)
+  %2191 = ptrtoint { i64, i8* }* %2190 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %2189, i64 %2191, i64 5)
   %2192 = call { i64, i8* }* @licm_make(%nyx_string* %2188, { i64, i8* }* %2189)
   ret { i64, i8* }* %2192
 }
