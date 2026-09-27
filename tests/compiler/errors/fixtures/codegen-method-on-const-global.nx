@@ -5,6 +5,9 @@
 // "Error: método no soportado en global: ..." a stdout SIN abortar, y
 // encima seguía generando IR que referencia un `@N` que nunca se declaró
 // como global real. Ahora debe abortar con NYX2002.
+// Desde 2026-09-27 un const primitivo SÍ tiene los métodos de su tipo
+// (`N.to_string()`); uno que no existe sigue siendo NYX2002, ahora desde el
+// catch-all de codegen_method_call.
 const N: int = 5
 
 fn main() {

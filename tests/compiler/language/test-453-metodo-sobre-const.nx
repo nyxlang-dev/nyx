@@ -1,0 +1,21 @@
+// test-453 — un método sobre una `const` primitiva (int/float/bool), local o importada.
+//
+// POR QUÉ EXISTE (2026-09-27): una const primitiva vive solo en const_values (se
+// inlinea), y `K.to_string()` caía en la rama de GLOBALES de codegen_method_call:
+// «error [NYX2002]: method 'to_string' is not available on the global 'K'», con
+// `nyx check` en verde. Ahora se materializa como variable local y sigue el camino
+// normal. El trío de Map (contains/insert/get) sigue dando NYX2007 sobre una const.
+import { NOMBRE_K } from "tests/support/aux_nombre_m"
+
+const LOCAL: int = 9
+const PI: float = 3.5
+const SI: bool = true
+
+fn main() -> int {
+    println(NOMBRE_K.to_string())
+    println(LOCAL.to_string())
+    println(PI.to_string())
+    println(SI.to_string())
+    println(LOCAL.to_string() + "!")
+    return 0
+}

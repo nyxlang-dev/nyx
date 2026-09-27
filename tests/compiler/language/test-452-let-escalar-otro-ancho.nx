@@ -1,0 +1,24 @@
+// test-452 — `let x: T = <escalar de otro ancho>` convierte al tipo anotado.
+//
+// POR QUÉ EXISTE (2026-09-27): `let s: int = w + h` con w/h `i32` guardaba un i32 en
+// una variable declarada int; el `.to_string()` siguiente fallaba en codegen («not
+// available on a receiver of type 'i32'») con `nyx check` en verde, y la aritmética
+// seguía en 32 bits. La asignación a una variable ya declarada convertía
+// (coerce_scalar_for_store); el `let` no.
+
+fn main() -> int {
+    let w: i32 = 3
+    let h: i32 = 4
+    let s: int = w + h
+    println(s.to_string())
+    // Ya es int de 64 bits: no desborda como un i32.
+    let t: int = s * 1000000000
+    println(t.to_string())
+    let c: char = 65
+    let n: int = c
+    println(n.to_string())
+    let f: f32 = 1.5
+    let d: float = f
+    println(d.to_string())
+    return 0
+}

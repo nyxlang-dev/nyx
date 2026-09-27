@@ -1551,11 +1551,12 @@ fn hash_archivo(f: String, hashes: Map) -> String {
 // Lo que se inlinea de verdad (módulos que no son [lib], los que caen en
 // NYX0302, el prelude y el módulo propio) sigue hasheándose entero.
 
-// Caracteres como ENTEROS (códigos ASCII), como el resto del compilador:
-// asignar charAt() a un `var c: char` ya declarado emite IR inválido (ficha en
-// TASKS). 34 " · 39 ' · 92 \ · 47 / · 42 * · 123 { · 125 } · 40 ( · 41 ).
+// Los caracteres se leen con charAt() como int y se comparan contra literales
+// char ('/', '{', '\n'…). Hasta el 2026-09-27 se comparaban contra códigos ASCII
+// (47, 123, 10…) para esquivar un bug ya arreglado: asignar charAt() a un
+// `var c: char` ya declarado emitía IR inválido.
 fn es_ident_c(c: int) -> bool {
-    return (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 95
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_'
 }
 
 // Fin (exclusivo) del literal que empieza en `i`, o -1 si ahí no empieza uno:
@@ -1563,9 +1564,9 @@ fn es_ident_c(c: int) -> bool {
 fn fin_de_literal(src: String, i: int) -> int {
     let n: int = src.length()
     let c: int = src.charAt(i)
-    if c == 114 and i + 1 < n {
+    if c == 'r' and i + 1 < n {
         let d: int = src.charAt(i + 1)
-        if d == 34 {
+        if d == '"' {
             if i > 0 {
                 let a: int = src.charAt(i - 1)
                 if es_ident_c(a) { return -1 }
@@ -1573,23 +1574,23 @@ fn fin_de_literal(src: String, i: int) -> int {
             var j: int = i + 2
             while j < n {
                 let cj: int = src.charAt(j)
-                if cj == 34 { return j + 1 }
+                if cj == '"' { return j + 1 }
                 j = j + 1
             }
             return n
         }
     }
-    if c == 34 {
+    if c == '"' {
         if i + 2 < n {
             let d1: int = src.charAt(i + 1)
             let d2: int = src.charAt(i + 2)
-            if d1 == 34 and d2 == 34 {
+            if d1 == '"' and d2 == '"' {
                 var k: int = i + 3
                 while k + 2 < n {
                     let k0: int = src.charAt(k)
                     let k1: int = src.charAt(k + 1)
                     let k2: int = src.charAt(k + 2)
-                    if k0 == 34 and k1 == 34 and k2 == 34 { return k + 3 }
+                    if k0 == '"' and k1 == '"' and k2 == '"' { return k + 3 }
                     k = k + 1
                 }
                 return n
@@ -1598,9 +1599,9 @@ fn fin_de_literal(src: String, i: int) -> int {
         var j2: int = i + 1
         while j2 < n {
             let cj2: int = src.charAt(j2)
-            if cj2 == 92 {
+            if cj2 == '\\' {
                 j2 = j2 + 2
-            } else if cj2 == 34 {
+            } else if cj2 == '"' {
                 return j2 + 1
             } else {
                 j2 = j2 + 1
@@ -1608,13 +1609,13 @@ fn fin_de_literal(src: String, i: int) -> int {
         }
         return n
     }
-    if c == 39 {
+    if c == '\'' {
         var j3: int = i + 1
         while j3 < n and j3 < i + 12 {
             let cj3: int = src.charAt(j3)
-            if cj3 == 92 {
+            if cj3 == '\\' {
                 j3 = j3 + 2
-            } else if cj3 == 39 {
+            } else if cj3 == '\'' {
                 return j3 + 1
             } else {
                 j3 = j3 + 1
@@ -1648,14 +1649,14 @@ fn interfaz_de(src: String) -> String {
             let sig: int = src.charAt(i + 1)
             c2 = sig
         }
-        if c == 47 and c2 == 47 {
+        if c == '/' and c2 == '/' {
             var fin_l: bool = false
             while i < n and not fin_l {
                 let cl: int = src.charAt(i)
-                if cl == 10 { fin_l = true } else { i = i + 1 }
+                if cl == '\n' { fin_l = true } else { i = i + 1 }
             }
             espacio = true
-        } else if c == 47 and c2 == 42 {
+        } else if c == '/' and c2 == '*' {
             var prof: int = 1
             i = i + 2
             while i < n and prof > 0 {
@@ -1665,10 +1666,10 @@ fn interfaz_de(src: String) -> String {
                     let bb: int = src.charAt(i + 1)
                     b1 = bb
                 }
-                if b0 == 47 and b1 == 42 {
+                if b0 == '/' and b1 == '*' {
                     prof = prof + 1
                     i = i + 2
-                } else if b0 == 42 and b1 == 47 {
+                } else if b0 == '*' and b1 == '/' {
                     prof = prof - 1
                     i = i + 2
                 } else {
@@ -1687,8 +1688,8 @@ fn interfaz_de(src: String) -> String {
                 }
                 i = fin
             } else if saltando {
-                if c == 123 { cuerpo = cuerpo + 1 }
-                if c == 125 {
+                if c == '{' { cuerpo = cuerpo + 1 }
+                if c == '}' {
                     cuerpo = cuerpo - 1
                     if cuerpo == 0 {
                         saltando = false
@@ -1696,12 +1697,12 @@ fn interfaz_de(src: String) -> String {
                     }
                 }
                 i = i + 1
-            } else if c == 32 or c == 9 or c == 13 or c == 10 {
-                if c == 10 and parens == 0 { fn_pend = false }
+            } else if c == ' ' or c == '\t' or c == '\r' or c == '\n' {
+                if c == '\n' and parens == 0 { fn_pend = false }
                 espacio = true
                 i = i + 1
             } else {
-                if llaves == 0 and c == 102 and c2 == 110 {
+                if llaves == 0 and c == 'f' and c2 == 'n' {
                     var antes_ok: bool = true
                     if i > 0 {
                         let pa: int = src.charAt(i - 1)
@@ -1714,17 +1715,17 @@ fn interfaz_de(src: String) -> String {
                     }
                     if antes_ok and despues_ok { fn_pend = true }
                 }
-                if c == 40 { parens = parens + 1 }
-                if c == 41 { parens = parens - 1 }
+                if c == '(' { parens = parens + 1 }
+                if c == ')' { parens = parens - 1 }
                 if espacio and escrito { sb.append(" ") }
                 espacio = false
-                if c == 123 and llaves == 0 and fn_pend {
+                if c == '{' and llaves == 0 and fn_pend {
                     fn_pend = false
                     saltando = true
                     cuerpo = 1
                 } else {
-                    if c == 123 { llaves = llaves + 1 }
-                    if c == 125 { llaves = llaves - 1 }
+                    if c == '{' { llaves = llaves + 1 }
+                    if c == '}' { llaves = llaves - 1 }
                     sb.append(src.substring(i, i + 1))
                     escrito = true
                 }

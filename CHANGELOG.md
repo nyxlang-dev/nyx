@@ -73,6 +73,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`let x: T = <escalar de otro ancho>` convierte al tipo anotado.** `let s: int = w + h` con
+  `w`/`h` de tipo `i32` guardaba un `i32` en una variable declarada `int`: el `.to_string()`
+  siguiente fallaba en codegen con `nyx check` en verde, y la aritmética seguía en 32 bits. La
+  asignación ya convertía; el `let` no. Enteros entre sí y `float`/`f32` entre sí; un `bool`
+  anotado no se trunca. Regresión: `test-452`.
+- **Un método sobre una `const` primitiva** (`K.to_string()`, local o importada) daba «NYX2002:
+  method 'to_string' is not available on the global 'K'»: una const int/float/bool se inlinea y no
+  es variable, así que caía en la rama de globales. Ahora se materializa como variable local y
+  sigue el camino normal; el trío de Map (`contains`/`insert`/`get`) sigue dando NYX2007 sobre una
+  const. Regresión: `test-453`. De paso quedó fichado que ese mismo trío sobre una VARIABLE `int`
+  da IR inválido sin diagnóstico (bug previo). El error genérico de «método no disponible sobre
+  este receptor» (el catch-all de `codegen_method_call`) no llevaba código: ahora es NYX2002,
+  como el de los globales — un método inexistente sobre un const sigue dando NYX2002.
+- **Interno:** `interfaz_de` (la huella por interfaz de `[lib]`, `compiler/build.nx`) compara
+  contra literales `char` en vez de códigos ASCII, ahora que el bug que lo obligaba está arreglado.
+
 - **Toolchain: una versión nueva ya no hereda la marca `.fijada` de la activa.** `install-local`
   arma la versión nueva copiando la activa, y si esa estaba fijada (hoy, la de producción de
   nyxerp) la copia se llevaba la marca: la versión nueva quedaba fijada sin que nadie lo pidiera, y
