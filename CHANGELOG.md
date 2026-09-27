@@ -73,6 +73,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Toolchain: una versión nueva ya no hereda la marca `.fijada` de la activa.** `install-local`
+  arma la versión nueva copiando la activa, y si esa estaba fijada (hoy, la de producción de
+  nyxerp) la copia se llevaba la marca: la versión nueva quedaba fijada sin que nadie lo pidiera, y
+  la poda nunca la iba a borrar. `nyx_tc_publicar` quita la marca antes de publicar. Guarda:
+  `run_toolchain_versions.sh` (4b), en rojo sin el arreglo.
+
 - **Un valor opaco se puede pasar directo a cualquier builtin** `[arco: builtins-arg-opaco]`. Un
   elemento de un Array sin tipo (`get_args()[i]`, un Array devuelto por una fn), `m.get(k)` o el
   retorno de una `Fn` sin firma llegaba a los builtins como `i64`, y nadie lo convertía:

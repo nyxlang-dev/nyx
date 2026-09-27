@@ -88,6 +88,10 @@ nyx_tc_publicar() {
         rm -rf "$staging"
     else
         : > "$staging/.lock"
+        # Una .fijada es de UNA versión y la pone quien la necesita: install-local
+        # arma el staging copiando la activa, y si esa estaba fijada, la copia se
+        # llevaba la marca (2026-09-27: la versión nueva quedó fijada sin pedirlo).
+        rm -f "$staging/.fijada"
         mv "$staging" "$root/versions/$id"
     fi
     nyx_tc_con_flip "$root" nyx_tc_enlazar "$root" "$id"

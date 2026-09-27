@@ -95,6 +95,11 @@ echo "red de seguridad" > "$R/versions/$B/.fijada"
 out=$(inst NYX_KEEP_VERSIONS=0); C="$(cat "$R/current")"
 [ -d "$R/versions/$B" ] && [ "$C" != "$B" ] && ok "una versión .fijada sobrevive a la poda sin estar en uso" \
     || mal "la poda borró una versión .fijada: $(ls "$R/versions" | tr '\n' ' ')"
+# 4b. La marca es de ESA versión, no se hereda: install-local arma la nueva copiando
+#     la activa (B, fijada), y hasta el 2026-09-27 la copia se llevaba la .fijada
+#     — la versión nueva quedaba fijada sin que nadie lo pidiera.
+[ ! -f "$R/versions/$C/.fijada" ] && ok "la versión nueva no hereda la .fijada de la activa" \
+    || mal "la versión nueva $C heredó la .fijada de $B"
 
 if [ "$fallos" -gt 0 ]; then echo "  toolchain versionado: FALLÓ ($fallos)"; exit 1; fi
 echo "  toolchain versionado: PASS"
