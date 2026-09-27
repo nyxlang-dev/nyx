@@ -1,0 +1,50 @@
+// test-451 — un valor OPACO pasa directo a un builtin y se comporta igual que el
+// valor tipado (arco builtins-arg-opaco, 2026-09-27).
+//
+// POR QUÉ EXISTE: cada handler de builtin pegaba el registro del argumento en una
+// llamada con el tipo escrito a mano, sin convertir un i64 opaco: `read_file(args[2])`
+// era `call @nyx_read_file(i8* %<i64>)` —IR inválido, con `nyx check` en verde—, y lo
+// mismo en 74 builtins (guarda: scripts/testing/run_builtin_arg_opaco.sh). La guarda
+// mira el IR; esto mira que el RESULTADO sea el correcto.
+
+fn opacos() -> Array {
+    // Un Array armado en otra fn y devuelto sin tipo: sus elementos llegan opacos.
+    var xs: Array = []
+    xs.push("hola")
+    xs.push("NYX_TEST_451")
+    xs.push("/tmp/nyx-test-451.txt")
+    return xs
+}
+
+fn main() -> int {
+    let xs: Array = opacos()
+
+    // Strings / cripto: el mismo resultado que con el valor tipado.
+    let tipado: String = "hola"
+    if sha256(xs[0]) != sha256(tipado) { return 1 }
+
+    // Entorno: setenv y getenv con nombre y valor opacos.
+    setenv(xs[1], xs[0])
+    if getenv(xs[1]) != "hola" { return 2 }
+
+    // Archivos: ruta opaca.
+    write_file(xs[2], xs[0])
+    if read_file(xs[2]) != "hola" { return 3 }
+    if file_exists(xs[2]) == false { return 4 }
+
+    // Canal: un String como VALOR (antes: `call @nyx_channel_send(i8*, i64 %<ptr>)`).
+    let ch: Map = channel_new(2)
+    channel_send(ch, xs[0] + "!")
+    let s: String = channel_recv(ch)
+    if s != "hola!" { return 5 }
+
+    // Handle opaco: un mutex guardado en un Array.
+    var ms: Array = []
+    ms.push(mutex_new())
+    let otros: Array = ms
+    mutex_lock(otros[0])
+    mutex_unlock(otros[0])
+
+    println("ok")
+    return 0
+}

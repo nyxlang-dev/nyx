@@ -408,6 +408,7 @@ test-ai-first:
 	bash scripts/testing/run_init_golden.sh
 	bash scripts/testing/run_sdd_init.sh
 	bash scripts/testing/run_sync_docs_migration.sh
+	bash scripts/testing/run_builtin_arg_opaco.sh
 	bash scripts/testing/run_docs_health.sh
 	bash scripts/sdd/selftest
 

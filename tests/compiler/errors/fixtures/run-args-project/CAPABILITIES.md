@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.34.0 -->
-<!-- nyx-stdlib: 876607074-850273 -->
+<!-- nyx-stdlib: 2752882693-853423 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -639,7 +639,7 @@
 
 ### `std/tls`
 
-`import "std/tls"` — 29 funciones:
+`import "std/tls"` — 30 funciones:
 
 - `pub fn tls_version(h: int) -> String`
 - `pub fn tls_cipher(h: int) -> String`
@@ -669,6 +669,7 @@
 - `pub fn cert_is_self_signed(cert: Array) -> bool`
 - `pub fn tls_is_weak(h: int) -> bool`
 - `pub fn try_tls_connect(host: String, port: int, verify_mode: int, connect_ms: int) -> Result<int, Error>`
+- `pub fn try_tls_connect_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Result<int, Error>`
 - `pub fn try_tls_read(h: int, max_bytes: int, timeout_ms: int) -> Result<String, Error>`
 
 ### Builtins globales (sin `import`)

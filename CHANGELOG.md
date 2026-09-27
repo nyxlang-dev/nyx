@@ -73,6 +73,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Un valor opaco se puede pasar directo a cualquier builtin** `[arco: builtins-arg-opaco]`. Un
+  elemento de un Array sin tipo (`get_args()[i]`, un Array devuelto por una fn), `m.get(k)` o el
+  retorno de una `Fn` sin firma llegaba a los builtins como `i64`, y nadie lo convertía:
+  `read_file(args[2])` bajaba a `call @nyx_read_file(i8* %<i64>)` —IR inválido que clang rechazaba
+  al enlazar, con `nyx check` en verde—. Medido: 76 de 87 builtins con un parámetro puntero
+  (archivos, entorno, cripto, regex, red/TLS, mutex/canales/condvar/rwlock, `panic`, …). Un helper
+  único (`codegen_arg` y sus cuatro formas, en `compiler/codegen.nx`) convierte el argumento al tipo
+  que el handler ya declara: `inttoptr` hacia un puntero, `ptrtoint` hacia un slot `i64` (así
+  `channel_send(ch, <String>)`, que tampoco enlazaba, funciona). Las cuatro formas no llevan el tipo
+  como literal para no engordar el marco de `codegen_call_expr` (medido: +5,4 KB por nivel con el
+  literal; con las formas, dentro del techo). Guarda nueva: `run_builtin_arg_opaco.sh` (en
+  `test-ai-first`; 76/87 en rojo con el compilador anterior), y `test-451` comprueba el resultado,
+  no solo el IR (sha256, setenv/getenv, write/read_file, un String por un canal, un mutex sacado de
+  un Array). Cierra dos fichas de TASKS.
+
 - **`std/postgres`: el pool es seguro entre hilos** (fricción de nyxerp, 2026-09-27). Con
   `std/serve` y 16 hilos compartiendo un `pg_pool_new`, el servidor se colgaba en 3 de 6 corridas;
   con 8, moría con «Índice 0 fuera de rango». `try_pg_pool_get` buscaba un slot libre y lo marcaba

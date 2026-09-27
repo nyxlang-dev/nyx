@@ -13675,7 +13675,7 @@ while_body114:
   %519 = call { i64, i8* }* @nyx_array_new_ptr()
   %520 = call { i64, i8* }* @make_astnode(%nyx_string* %518, { i64, i8* }* %519)
   %521 = ptrtoint { i64, i8* }* %520 to i64
-  call void @nyx_array_set({ i64, i8* }* %515, i64 %516, i64 %521)
+  call void @nyx_array_set_tagged({ i64, i8* }* %515, i64 %516, i64 %521, i64 5)
   %522 = load i64, i64* %509
   %523 = add i64 %522, 1
   store i64 %523, i64* %509
@@ -16968,7 +16968,7 @@ then21:
   %98 = call { i64, i8* }* @nyx_array_new_ptr()
   %99 = call { i64, i8* }* @make_astnode(%nyx_string* %97, { i64, i8* }* %98)
   %100 = ptrtoint { i64, i8* }* %99 to i64
-  call void @nyx_array_set({ i64, i8* }* %94, i64 %95, i64 %100)
+  call void @nyx_array_set_tagged({ i64, i8* }* %94, i64 %95, i64 %100, i64 5)
   br label %merge23
 else22:
   br label %merge23

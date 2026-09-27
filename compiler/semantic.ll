@@ -6134,7 +6134,7 @@ then108:
   %800 = load i64, i64* @g_sym_count
   %801 = call { i64, i8* }* @ty_unknown()
   %802 = ptrtoint { i64, i8* }* %801 to i64
-  call void @nyx_array_set({ i64, i8* }* %799, i64 %800, i64 %802)
+  call void @nyx_array_set_tagged({ i64, i8* }* %799, i64 %800, i64 %802, i64 5)
   br label %merge110
 else109:
   %803 = load { i64, i8* }*, { i64, i8* }** @g_sym_names
@@ -6276,7 +6276,7 @@ then114:
   %874 = load i64, i64* @g_sym_count
   %875 = call { i64, i8* }* @ty_unknown()
   %876 = ptrtoint { i64, i8* }* %875 to i64
-  call void @nyx_array_set({ i64, i8* }* %873, i64 %874, i64 %876)
+  call void @nyx_array_set_tagged({ i64, i8* }* %873, i64 %874, i64 %876, i64 5)
   br label %merge116
 else115:
   %877 = load { i64, i8* }*, { i64, i8* }** @g_sym_names
@@ -7183,7 +7183,7 @@ then242:
   %1347 = load i64, i64* %1339
   %1348 = load { i64, i8* }*, { i64, i8* }** %t.ptr
   %1349 = ptrtoint { i64, i8* }* %1348 to i64
-  call void @nyx_array_set({ i64, i8* }* %1346, i64 %1347, i64 %1349)
+  call void @nyx_array_set_tagged({ i64, i8* }* %1346, i64 %1347, i64 %1349, i64 5)
   br label %merge244
 else243:
   br label %merge244
@@ -18843,7 +18843,7 @@ merge1864:
   %8288 = load { i64, i8* }*, { i64, i8* }** %8249
   %8289 = load { i64, i8* }*, { i64, i8* }** %8276
   %8290 = ptrtoint { i64, i8* }* %8289 to i64
-  call void @nyx_array_set({ i64, i8* }* %8288, i64 0, i64 %8290)
+  call void @nyx_array_set_tagged({ i64, i8* }* %8288, i64 0, i64 %8290, i64 5)
   ret i64 1
 }
 
@@ -22423,7 +22423,7 @@ then2344:
   %10494 = load i64, i64* %10460
   %10495 = load { i64, i8* }*, { i64, i8* }** %ret.ptr
   %10496 = ptrtoint { i64, i8* }* %10495 to i64
-  call void @nyx_array_set({ i64, i8* }* %10493, i64 %10494, i64 %10496)
+  call void @nyx_array_set_tagged({ i64, i8* }* %10493, i64 %10494, i64 %10496, i64 5)
   ret i64 0
 else2345:
   br label %merge2346
