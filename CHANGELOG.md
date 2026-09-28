@@ -11,6 +11,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`CAPABILITIES.md` dice qué builtins no existen en wasm32-wasi** (pedido de nyxerp,
+  2026-09-27): cada uno lleva «· *no existe en wasm32-wasi*». `std/builtins.index` suma un sexto
+  campo (`no-wasm`) que el generador saca de `wasm_forbidden_builtin` y de los
+  `codegen_target_guard` con nombre de builtin (atomics, `run`). `run_wasm_builtin_symbols.sh`
+  contrasta esa marca con lo que wasm frena DE VERDAD —compila una sonda por builtin— y falla si
+  difieren: fue el cruce el que encontró los cuatro que no venían de la lista. Un índice viejo de
+  cinco campos sigue sirviendo.
+
 - **Hashes, HMAC y PBKDF2 en wasm32-wasi** (fricción de nyxerp, 2026-09-27). `sha256`,
   `sha256_raw`, `md5`, `hmac_sha256`, `hmac_sha256_raw` y `pbkdf2_hmac_sha256` eran «not supported
   on target 'wasm32-wasi'»: `crypto.c` no entraba al runtime wasm porque incluía OpenSSL, y un POS
@@ -82,6 +90,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `test_serve_std_keepalive.py` (21 → 22).
 
 ### Arreglado
+
+- **`.to_string()` sobre `char` y sobre enteros de ancho fijo** (`i8`, `u8`, `i16`, `u16`, `i32`,
+  `u32`) abortaba con NYX2002. `char`, `i8` y `u8` comparten `i8` en LLVM: el helper recibe ahora
+  el tipo Nyx del receptor, así que un `char` da el carácter («A») y un `u8` el número («200»), y
+  el signo decide `sext`/`zext`. El catálogo de NYX1022 suma `char` (solo con anotación, como los
+  demás escalares). Pila de `codegen_method_call` sin cambios (formas auxiliares sin literales).
+  Regresión: `test-454`.
 
 - **NYX1022 también sobre `int`, `float` y `bool`.** El catálogo de métodos por tipo de semantic
   cubría String, Array, Map, Option y Result; sin catálogo, un escalar aprobaba cualquier método, y

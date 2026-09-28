@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.34.0 -->
-<!-- nyx-stdlib: 2752882693-853423 -->
+<!-- nyx-stdlib: 1179374420-854318 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -387,8 +387,8 @@
 
 ### Builtins globales (sin `import`)
 
-- `resp_read_command_fast` (1 arg)
-- `resp_write_bulk` (2 args)
+- `resp_read_command_fast` (1 arg) · *no existe en wasm32-wasi*
+- `resp_write_bulk` (2 args) · *no existe en wasm32-wasi*
 
 ## Archivos & I/O
 
@@ -515,40 +515,40 @@
 
 ### Builtins globales (sin `import`)
 
-- `getpeername` (1 arg)
-- `http_parse_request_fast` (1 arg)
-- `https_get` (1 arg) — simple GET, NO custom headers, returns the body as a `String`.
-- `https_post` (3 args)
-- `net_interfaces` (0 args) — interfaces IPv4 locales (v0.24.22): Array PLANO de tripletas String `[nombre, ip, máscara, ...]` (stride 3, loopback incluida)
-- `resolve` (1 arg) — (IPv4 del hostname, "" si no resuelve)
-- `resolve_ptr` (1 arg) — reverse DNS (v0.24.22): hostname de una IPv4, "" si no hay PTR o la IP es inválida
-- `tcp_accept` (1 arg)
-- `tcp_close` (1 arg)
-- `tcp_connect` (2 args)
-- `tcp_listen` (2 args)
-- `tcp_read` (2 args)
-- `tcp_read_exact` (2 args)
-- `tcp_read_line` (1 arg)
-- `tcp_read_partial` (2 args)
-- `tcp_set_timeout` (2 args) — SO_RCVTIMEO/SO_SNDTIMEO en un socket cliente (0 = sin timeout).
-- `tcp_shutdown` (2 args)
-- `tcp_write` (2 args)
-- `tls_accept` (1 arg)
-- `tls_close` (1 arg)
-- `tls_close_conn` (1 arg)
-- `tls_connect` (2 args) — , `tls_read`, `tls_write`, `tls_close`
-- `tls_read` (2 args)
-- `tls_read_line` (1 arg)
-- `tls_read_nonblock` (2 args)
-- `tls_read_partial` (2 args)
-- `tls_server_add_cert` (3 args)
-- `tls_server_init` (2 args) — , `tls_server_add_cert`, `tls_accept`, `tls_read_line`, `tls_write_conn`, `tls_close_conn`
-- `tls_wait_readable` (2 args)
-- `tls_write` (2 args)
-- `tls_write_conn` (2 args)
-- `udp_bind` (2 args) — (fd, o -1;
-- `udp_recvfrom` (2 args)
-- `udp_sendto` (4 args)
+- `getpeername` (1 arg) · *no existe en wasm32-wasi*
+- `http_parse_request_fast` (1 arg) · *no existe en wasm32-wasi*
+- `https_get` (1 arg) — simple GET, NO custom headers, returns the body as a `String`. · *no existe en wasm32-wasi*
+- `https_post` (3 args) · *no existe en wasm32-wasi*
+- `net_interfaces` (0 args) — interfaces IPv4 locales (v0.24.22): Array PLANO de tripletas String `[nombre, ip, máscara, ...]` (stride 3, loopback incluida) · *no existe en wasm32-wasi*
+- `resolve` (1 arg) — (IPv4 del hostname, "" si no resuelve) · *no existe en wasm32-wasi*
+- `resolve_ptr` (1 arg) — reverse DNS (v0.24.22): hostname de una IPv4, "" si no hay PTR o la IP es inválida · *no existe en wasm32-wasi*
+- `tcp_accept` (1 arg) · *no existe en wasm32-wasi*
+- `tcp_close` (1 arg) · *no existe en wasm32-wasi*
+- `tcp_connect` (2 args) · *no existe en wasm32-wasi*
+- `tcp_listen` (2 args) · *no existe en wasm32-wasi*
+- `tcp_read` (2 args) · *no existe en wasm32-wasi*
+- `tcp_read_exact` (2 args) · *no existe en wasm32-wasi*
+- `tcp_read_line` (1 arg) · *no existe en wasm32-wasi*
+- `tcp_read_partial` (2 args) · *no existe en wasm32-wasi*
+- `tcp_set_timeout` (2 args) — SO_RCVTIMEO/SO_SNDTIMEO en un socket cliente (0 = sin timeout). · *no existe en wasm32-wasi*
+- `tcp_shutdown` (2 args) · *no existe en wasm32-wasi*
+- `tcp_write` (2 args) · *no existe en wasm32-wasi*
+- `tls_accept` (1 arg) · *no existe en wasm32-wasi*
+- `tls_close` (1 arg) · *no existe en wasm32-wasi*
+- `tls_close_conn` (1 arg) · *no existe en wasm32-wasi*
+- `tls_connect` (2 args) — , `tls_read`, `tls_write`, `tls_close` · *no existe en wasm32-wasi*
+- `tls_read` (2 args) · *no existe en wasm32-wasi*
+- `tls_read_line` (1 arg) · *no existe en wasm32-wasi*
+- `tls_read_nonblock` (2 args) · *no existe en wasm32-wasi*
+- `tls_read_partial` (2 args) · *no existe en wasm32-wasi*
+- `tls_server_add_cert` (3 args) · *no existe en wasm32-wasi*
+- `tls_server_init` (2 args) — , `tls_server_add_cert`, `tls_accept`, `tls_read_line`, `tls_write_conn`, `tls_close_conn` · *no existe en wasm32-wasi*
+- `tls_wait_readable` (2 args) · *no existe en wasm32-wasi*
+- `tls_write` (2 args) · *no existe en wasm32-wasi*
+- `tls_write_conn` (2 args) · *no existe en wasm32-wasi*
+- `udp_bind` (2 args) — (fd, o -1; · *no existe en wasm32-wasi*
+- `udp_recvfrom` (2 args) · *no existe en wasm32-wasi*
+- `udp_sendto` (4 args) · *no existe en wasm32-wasi*
 
 ## Concurrencia
 
@@ -581,37 +581,37 @@
 
 ### Builtins globales (sin `import`)
 
-- `__go_spawn` (1 arg)
-- `atomic_add` (2 args)
-- `atomic_cas` (3 args)
-- `atomic_sub` (2 args)
-- `channel_destroy` (1 arg)
-- `channel_new` (1 arg) — Map (NOT int!)
-- `channel_recv` (1 arg)
-- `channel_send` (2 args)
-- `condvar_broadcast` (1 arg)
-- `condvar_new` (0 args) — Map (opaque handle), `condvar_wait(cv, m)` (hold m locked), `condvar_signal(cv)`, `condvar_broadcast(cv)`, `condvar_timedwait(cv, m, ms)` → 0 signaled / 1 timeout
-- `condvar_signal` (1 arg)
-- `condvar_timedwait` (3 args)
-- `condvar_wait` (2 args)
-- `go_sleep` (1 arg)
-- `mutex_destroy` (1 arg)
-- `mutex_lock` (1 arg)
-- `mutex_new` (0 args) — Map (opaque handle, NOT int! — `let m: int = mutex_new()` is NYX1003 since v0.24.28;
-- `mutex_unlock` (1 arg)
-- `rwlock_destroy` (1 arg)
-- `rwlock_new` (0 args) — Map (opaque handle), `rwlock_rdlock(l)` / `rwlock_wrlock(l)`, `rwlock_tryrdlock(l)` / `rwlock_trywrlock(l)` → 0 acquired / 1 busy, `rwlock_unlock(l)`, `rwlock_destroy(l)` — multi-reader/single-writer;
-- `rwlock_rdlock` (1 arg)
-- `rwlock_tryrdlock` (1 arg)
-- `rwlock_trywrlock` (1 arg)
-- `rwlock_unlock` (1 arg)
-- `rwlock_wrlock` (1 arg)
-- `spawn_task` (1 arg)
-- `task_await` (1 arg)
-- `task_cancel` (1 arg)
-- `task_race` (2 args)
-- `thread_join` (1 arg)
-- `thread_spawn` (1 arg)
+- `__go_spawn` (1 arg) · *no existe en wasm32-wasi*
+- `atomic_add` (2 args) · *no existe en wasm32-wasi*
+- `atomic_cas` (3 args) · *no existe en wasm32-wasi*
+- `atomic_sub` (2 args) · *no existe en wasm32-wasi*
+- `channel_destroy` (1 arg) · *no existe en wasm32-wasi*
+- `channel_new` (1 arg) — Map (NOT int!) · *no existe en wasm32-wasi*
+- `channel_recv` (1 arg) · *no existe en wasm32-wasi*
+- `channel_send` (2 args) · *no existe en wasm32-wasi*
+- `condvar_broadcast` (1 arg) · *no existe en wasm32-wasi*
+- `condvar_new` (0 args) — Map (opaque handle), `condvar_wait(cv, m)` (hold m locked), `condvar_signal(cv)`, `condvar_broadcast(cv)`, `condvar_timedwait(cv, m, ms)` → 0 signaled / 1 timeout · *no existe en wasm32-wasi*
+- `condvar_signal` (1 arg) · *no existe en wasm32-wasi*
+- `condvar_timedwait` (3 args) · *no existe en wasm32-wasi*
+- `condvar_wait` (2 args) · *no existe en wasm32-wasi*
+- `go_sleep` (1 arg) · *no existe en wasm32-wasi*
+- `mutex_destroy` (1 arg) · *no existe en wasm32-wasi*
+- `mutex_lock` (1 arg) · *no existe en wasm32-wasi*
+- `mutex_new` (0 args) — Map (opaque handle, NOT int! — `let m: int = mutex_new()` is NYX1003 since v0.24.28; · *no existe en wasm32-wasi*
+- `mutex_unlock` (1 arg) · *no existe en wasm32-wasi*
+- `rwlock_destroy` (1 arg) · *no existe en wasm32-wasi*
+- `rwlock_new` (0 args) — Map (opaque handle), `rwlock_rdlock(l)` / `rwlock_wrlock(l)`, `rwlock_tryrdlock(l)` / `rwlock_trywrlock(l)` → 0 acquired / 1 busy, `rwlock_unlock(l)`, `rwlock_destroy(l)` — multi-reader/single-writer; · *no existe en wasm32-wasi*
+- `rwlock_rdlock` (1 arg) · *no existe en wasm32-wasi*
+- `rwlock_tryrdlock` (1 arg) · *no existe en wasm32-wasi*
+- `rwlock_trywrlock` (1 arg) · *no existe en wasm32-wasi*
+- `rwlock_unlock` (1 arg) · *no existe en wasm32-wasi*
+- `rwlock_wrlock` (1 arg) · *no existe en wasm32-wasi*
+- `spawn_task` (1 arg) · *no existe en wasm32-wasi*
+- `task_await` (1 arg) · *no existe en wasm32-wasi*
+- `task_cancel` (1 arg) · *no existe en wasm32-wasi*
+- `task_race` (2 args) · *no existe en wasm32-wasi*
+- `thread_join` (1 arg) · *no existe en wasm32-wasi*
+- `thread_spawn` (1 arg) · *no existe en wasm32-wasi*
 
 ## Cripto & seguridad
 
@@ -758,10 +758,10 @@
 - `float_to_string` (1 arg) — (y `print` de un `float`) emite los dígitos MÍNIMOS que releen al mismo double: `0.1 + 0.2` → `0.30000000000000004`, `123456789.0` → `123456789.0`;
 - `int_to_float` (1 arg)
 - `int_to_string` (1 arg) — String
-- `regex_is_match` (2 args)
-- `regex_match` (2 args)
-- `regex_replace` (3 args)
-- `regex_replace_all` (3 args)
+- `regex_is_match` (2 args) · *no existe en wasm32-wasi*
+- `regex_match` (2 args) · *no existe en wasm32-wasi*
+- `regex_replace` (3 args) · *no existe en wasm32-wasi*
+- `regex_replace_all` (3 args) · *no existe en wasm32-wasi*
 - `str_byte_length` (1 arg) — byte length (for HTTP headers)
 - `string_from_bytes` (3 args)
 - `string_from_cstr` (1 arg)
@@ -949,24 +949,24 @@
 
 ### Builtins globales (sin `import`)
 
-- `chdir` (1 arg)
+- `chdir` (1 arg) · *no existe en wasm32-wasi*
 - `chr` (1 arg)
-- `close_fd` (1 arg)
-- `dup2` (2 args)
+- `close_fd` (1 arg) · *no existe en wasm32-wasi*
+- `dup2` (2 args) · *no existe en wasm32-wasi*
 - `exec` (1 arg) — String — run shell command, capture its stdout (binary-safe, strips trailing `\n`s only).
 - `exec_code` (1 arg) — int — run shell command, return its exit code (-1 on error/signal).
-- `execvp` (2 args)
+- `execvp` (2 args) · *no existe en wasm32-wasi*
 - `exit` (1 arg)
-- `fork` (0 args)
+- `fork` (0 args) · *no existe en wasm32-wasi*
 - `get_args` (0 args) — Array — CLI args
-- `getcwd` (0 args)
+- `getcwd` (0 args) · *no existe en wasm32-wasi*
 - `getenv` (1 arg) — String
 - `getenv_default` (2 args) — String
-- `getpid` (0 args)
-- `isatty` (1 arg)
-- `kill_process` (2 args)
-- `open_fd` (2 args)
-- `pipe_new` (0 args)
+- `getpid` (0 args) · *no existe en wasm32-wasi*
+- `isatty` (1 arg) · *no existe en wasm32-wasi*
+- `kill_process` (2 args) · *no existe en wasm32-wasi*
+- `open_fd` (2 args) · *no existe en wasm32-wasi*
+- `pipe_new` (0 args) · *no existe en wasm32-wasi*
 - `raw_mode_enter` (0 args)
 - `raw_mode_exit` (0 args)
 - `read_byte` (0 args) — from stdin in raw mode
@@ -975,12 +975,12 @@
 - `signal_handle` (2 args)
 - `signal_ignore` (1 arg)
 - `signal_reset` (1 arg)
-- `stat` (1 arg)
+- `stat` (1 arg) · *no existe en wasm32-wasi*
 - `term_cols` (0 args)
 - `term_flush` (0 args) — stdout without per-call flush (buffered frames).
 - `term_rows` (0 args)
 - `term_write` (1 arg) — stdout without per-call flush (buffered frames).
-- `waitpid` (2 args)
+- `waitpid` (2 args) · *no existe en wasm32-wasi*
 
 ## Otros
 
@@ -1436,6 +1436,6 @@
 - `format` (-1 args)
 - `map_scan` (2 args)
 - `panic` (1 arg)
-- `run` (1 arg)
-- `setup_shutdown_handler` (1 arg)
+- `run` (1 arg) · *no existe en wasm32-wasi*
+- `setup_shutdown_handler` (1 arg) · *no existe en wasm32-wasi*
 

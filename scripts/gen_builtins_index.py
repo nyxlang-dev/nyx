@@ -5,14 +5,37 @@ que documenta el porqué; acá está el cómo.
 Salida: una línea por builtin, campos separados por TAB (formato estable, fácil
 de parsear desde Nyx sin un lector de TOML/JSON):
 
-    builtin<TAB>nombre<TAB>aridad<TAB>categoría<TAB>descripción
+    builtin<TAB>nombre<TAB>aridad<TAB>categoría<TAB>descripción<TAB>destinos
 
-La descripción puede ser vacía. La categoría cae a "Otros".
+La descripción puede ser vacía. La categoría cae a "Otros". `destinos` es
+"no-wasm" si el builtin NO existe en wasm32-wasi (sale de wasm_forbidden_builtin
+de compiler/codegen.nx, la misma lista que produce el error de compilación), o
+vacío si existe en todos (pedido de nyxerp, 2026-09-27: que un agente no
+descubra el límite recién al compilar).
 """
 import re
 import sys
 
 SEMANTIC = "compiler/semantic.nx"
+CODEGEN = "compiler/codegen.nx"
+
+
+def no_wasm_de_codegen(ruta):
+    """(nombres exactos, prefijos) de wasm_forbidden_builtin."""
+    src = open(ruta, encoding="utf-8").read()
+    i = src.index("\nfn wasm_forbidden_builtin(")
+    j = src.index("\n}\n", i)
+    cuerpo = src[i:j]
+    exactos = set(re.findall(r'name == "([A-Za-z_0-9]+)"', cuerpo))
+    prefijos = re.findall(r'name\.startsWith\("([A-Za-z_0-9]+)"\)', cuerpo)
+    if not exactos and not prefijos:
+        raise SystemExit("gen_builtins_index: wasm_forbidden_builtin sin nombres — ¿cambió su forma?")
+    # Los que se frenan en su propio sitio con codegen_target_guard(…, "<nombre>")
+    # —atomics, run—: un nombre de builtin en ese literal también es «no-wasm».
+    # (run_wasm_builtin_symbols.sh contrasta el total contra lo que wasm frena DE
+    # VERDAD, así que una forma nueva que se escape de acá la hace fallar.)
+    exactos |= set(re.findall(r'codegen_target_guard\([^,]+, ctx, "([A-Za-z_][A-Za-z_0-9]*)"\)', src))
+    return exactos, prefijos
 LLM = "LLM.md"
 
 # Las categorías de LLM.md §4 mapeadas a las de CAPABILITIES.md, para que el
@@ -233,6 +256,7 @@ def main():
               f"{SEMANTIC} — ¿cambió la forma de scope_declare_fn?", file=sys.stderr)
         return 1
     docs = docs_de_llm(LLM)
+    no_wasm, no_wasm_pref = no_wasm_de_codegen(CODEGEN)
     for nombre in reg:
         if docs.get(nombre, ("Otros", ""))[0] != "Otros":
             continue
@@ -247,10 +271,14 @@ def main():
     print("# Regenerar con: bash scripts/gen_builtins_index.sh   (verificar: --check)")
     print("# Catálogo de los builtins GLOBALES (sin import). Fuente de verdad: las")
     print("# llamadas scope_declare_fn(..., \"builtin\", N) de compiler/semantic.nx.")
-    print("# Formato: builtin<TAB>nombre<TAB>aridad<TAB>categoría<TAB>descripción")
+    print("# Formato: builtin<TAB>nombre<TAB>aridad<TAB>categoría<TAB>descripción<TAB>destinos")
+    print("# destinos: \"no-wasm\" = no existe en wasm32-wasi (wasm_forbidden_builtin, codegen.nx).")
     for nombre in sorted(reg):
         cat, desc = docs.get(nombre, ("Otros", ""))
-        print("builtin\t%s\t%d\t%s\t%s" % (nombre, reg[nombre], cat, desc))
+        dest = ""
+        if nombre in no_wasm or any(nombre.startswith(pf) for pf in no_wasm_pref):
+            dest = "no-wasm"
+        print("builtin\t%s\t%d\t%s\t%s\t%s" % (nombre, reg[nombre], cat, desc, dest))
     return 0
 
 

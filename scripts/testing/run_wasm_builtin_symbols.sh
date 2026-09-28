@@ -55,6 +55,7 @@ gen_sonda() {
 echo relleno > "$T/rv.txt"
 excluidos=""
 frenados=0
+frenados_lista=""
 no_sondeables=""
 for vuelta in 1 2 3 4 5 6 7 8; do
     gen_sonda "$excluidos" > "$T/sonda.nx"
@@ -75,6 +76,7 @@ for vuelta in 1 2 3 4 5 6 7 8; do
     for b in $nuevos; do
         if grep -A1 -E "no está soportado|not supported" "$T/c.log" | grep -q "__sonda_$b'"; then
             frenados=$((frenados + 1))
+            frenados_lista="$frenados_lista $b"
         else
             no_sondeables="$no_sondeables $b"
         fi
@@ -100,4 +102,20 @@ if [ -n "$fallos" ]; then
     echo "    O el símbolo va a una unidad portable de wasm.srcs, o el builtin va a wasm_forbidden_builtin (codegen.nx)."
     exit 1
 fi
+# 4. El índice dice la verdad (2026-09-27): los marcados «no-wasm» en
+#    std/builtins.index (lo que CAPABILITIES.md le muestra a un agente) son
+#    EXACTAMENTE los que la guarda de target frena. Si difieren, el índice promete
+#    algo que el compilador no cumple, o calla un límite.
+medidos=$(echo $frenados_lista | tr ' ' '\n' | grep -v '^$' | sort -u)
+marcados=$(awk -F'\t' '$1=="builtin" && $6=="no-wasm" {print $2}' std/builtins.index | sort -u)
+solo_medidos=$(comm -23 <(echo "$medidos") <(echo "$marcados") | tr '\n' ' ')
+solo_marcados=$(comm -13 <(echo "$medidos") <(echo "$marcados") | tr '\n' ' ')
+if [ -n "${solo_medidos// /}" ] || [ -n "${solo_marcados// /}" ]; then
+    echo "  ✗ std/builtins.index no coincide con lo que wasm frena de verdad:"
+    [ -n "${solo_medidos// /}" ] && echo "      frenados pero sin marca no-wasm: $solo_medidos"
+    [ -n "${solo_marcados// /}" ] && echo "      marcados no-wasm pero compilan: $solo_marcados"
+    echo "    La marca sale de wasm_forbidden_builtin (codegen.nx); regenerar: bash scripts/gen_builtins_index.sh"
+    exit 1
+fi
+
 echo "  ✓ builtins en wasm: $n_sond sondeados sin símbolos faltantes, $frenados frenados por la guarda de target${no_sondeables:+, no sondeables:$no_sondeables}"

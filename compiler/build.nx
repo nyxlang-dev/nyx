@@ -2492,11 +2492,19 @@ fn capabilities_builtins_section(std_dir: String, cat: String) -> String {
                     let aridad: String = f[2]
                     let categoria: String = f[3]
                     let desc: String = f[4]
+                    // 6º campo (2026-09-27): "no-wasm" si el builtin no existe en
+                    // wasm32-wasi. Un índice viejo de 5 campos sigue sirviendo.
+                    var dest: String = ""
+                    if f.length() >= 6 {
+                        let d6: String = f[5]
+                        dest = d6
+                    }
                     if categoria == cat {
                         var fila: String = "- `" + nombre + "` (" + aridad + " arg"
                         if aridad != "1" { fila = fila + "s" }
                         fila = fila + ")"
                         if desc != "" { fila = fila + " — " + desc }
+                        if dest == "no-wasm" { fila = fila + " · *no existe en wasm32-wasi*" }
                         body = body + fila + "\n"
                         n = n + 1
                     }

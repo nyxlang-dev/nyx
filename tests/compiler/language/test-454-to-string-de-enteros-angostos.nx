@@ -1,0 +1,24 @@
+// test-454 — `.to_string()` sobre char y sobre enteros de ancho fijo.
+//
+// POR QUÉ EXISTE (2026-09-28): `c.to_string()` sobre un char, o sobre un i8/u8/i16/
+// i32/u32, abortaba con NYX2002 («not available on a receiver of type 'i8'»). char,
+// i8 y u8 comparten `i8` en LLVM: un char tiene que dar el CARÁCTER y un u8 el
+// NÚMERO, así que el helper recibe el tipo Nyx del receptor; el signo decide sext
+// o zext para los demás anchos.
+
+fn main() -> int {
+    let c: char = 65
+    println(c.to_string())
+    let b: u8 = 200
+    println(b.to_string())
+    let n8: i8 = -5
+    println(n8.to_string())
+    let w: i32 = -70000
+    println(w.to_string())
+    let u: u32 = 4000000000
+    println(u.to_string())
+    let h: i16 = -300
+    println(h.to_string())
+    println(c.to_string() + b.to_string())
+    return 0
+}
