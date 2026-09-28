@@ -2761,6 +2761,12 @@ error: 'tcp_listen' is not supported on target 'wasm32-wasi'
 An imported module is emitted whole, so importing `std/http` breaks a wasm build even if that
 branch never runs — split the entry point with `--main` (above).
 
+**Hashing works in wasm** (since 2026-09-27): `sha256`, `sha256_raw`, `md5`, `hmac_sha256`,
+`hmac_sha256_raw` and `pbkdf2_hmac_sha256` compile to wasm32-wasi with the same results as
+native (they are plain C in the runtime; test `wasm/test-wasm-51-cripto`). Offline PIN or
+password checks can run inside the module, no WebCrypto round-trip. The Web Push primitives
+(`std/webpushcrypto`: P-256, HKDF, AES-GCM, CSPRNG) still need OpenSSL and stay native-only.
+
 **No goroutine runtime in wasm — but `await` works.** The target links neither threads nor the
 goroutine scheduler, so `spawn { }`, `run()`, `select`, `go_sleep`,
 `spawn_task`/`task_await`/`task_race`/`task_cancel`, `thread_*`, `channel_*`, `mutex_*`,

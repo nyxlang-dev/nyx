@@ -24,6 +24,11 @@
 #include <gc.h>
 #include "strings.h"
 #include "crypto.h"
+// Hashes, HMAC y PBKDF2 son C propio y compilan TAMBIÉN a wasm32-wasi
+// (runtime/wasm.srcs). Lo de OpenSSL (Web Push: CSPRNG, P-256, HKDF, AES-GCM)
+// queda detrás de __wasi__: en wasm no hay OpenSSL. Fricción de nyxerp
+// 2026-09-27 — un POS offline en wasm tenía que pedirle PBKDF2 a WebCrypto.
+#ifndef __wasi__
 #include <openssl/rand.h>
 #include <openssl/ec.h>
 #include <openssl/ecdsa.h>
@@ -31,6 +36,7 @@
 #include <openssl/bn.h>
 #include <openssl/obj_mac.h>
 #include <openssl/kdf.h>
+#endif
 
 // ============================================================
 //  Helpers
@@ -509,21 +515,60 @@ nyx_string* nyx_hmac_sha256_raw(nyx_string* key, nyx_string* data) {
 }
 
 // ===== nyx_pbkdf2_hmac_sha256 =====
-// PBKDF2-HMAC-SHA256 (RFC 2898 §5.2). Va en C porque SCRAM usa 4096+
-// iteraciones y hacerlas sobre el builtin desde Nyx alocaría un String por
-// vuelta. Devuelve dklen bytes CRUDOS. Se apoya en la OpenSSL que crypto.c ya
-// linkea (-lcrypto), así que no agrega dependencias.
+// PBKDF2-HMAC-SHA256 (RFC 8018 §5.2). Devuelve dklen bytes CRUDOS.
+//
+// C propio desde el 2026-09-27 (antes PKCS5_PBKDF2_HMAC de OpenSSL), para que
+// compile también a wasm32-wasi. Mismo resultado byte a byte: los vectores del
+// RFC 7914 y dos casos fijados con OpenSSL antes del cambio viven en
+// tests/runtime-unit/test_crypto.c.
+//
+// La clave del HMAC se prepara UNA vez (hmac_sha256_digest la recalcula en cada
+// llamada) y cada vuelta usa buffers de PILA: con 80.000 iteraciones, un
+// GC_MALLOC por vuelta en wasm —donde sin arena nada se libera— eran varios MB
+// por derivación.
+static void hmac_sha256_k64(const uint8_t k[64], const uint8_t* msg, size_t len,
+                            uint8_t out[32]) {
+    uint8_t buf[64 + 256];
+    uint8_t* inner = (len <= 256) ? buf : (uint8_t*)GC_MALLOC_ATOMIC(64 + len);
+    for (int i = 0; i < 64; i++) inner[i] = k[i] ^ 0x36;
+    memcpy(inner + 64, msg, len);          // msg puede ser `out`: se copia antes
+    uint8_t ih[32];
+    sha256_raw(inner, 64 + len, ih);
+    uint8_t outer[96];
+    for (int i = 0; i < 64; i++) outer[i] = k[i] ^ 0x5c;
+    memcpy(outer + 64, ih, 32);
+    sha256_raw(outer, 96, out);
+}
+
 nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
                                    int64_t iters, int64_t dklen) {
     if (!pw || !salt) return nyx_string_from_cstr("");
     if (iters <= 0 || dklen <= 0) return nyx_string_from_cstr("");
     if (dklen > (1 << 20)) return nyx_string_from_cstr("");  // techo sano: 1 MiB
 
+    uint8_t k[64];
+    memset(k, 0, 64);
+    if ((size_t)pw->length > 64) sha256_raw((const uint8_t*)pw->data, (size_t)pw->length, k);
+    else memcpy(k, pw->data, (size_t)pw->length);
+
+    size_t sl = (size_t)salt->length;
+    uint8_t* s1 = (uint8_t*)GC_MALLOC_ATOMIC(sl + 4);   // salt || INT(i), una vez
+    memcpy(s1, salt->data, sl);
     unsigned char* out = (unsigned char*)GC_MALLOC_ATOMIC((size_t)dklen);
-    if (PKCS5_PBKDF2_HMAC((const char*)pw->data, (int)pw->length,
-                          (const unsigned char*)salt->data, (int)salt->length,
-                          (int)iters, EVP_sha256(), (int)dklen, out) != 1) {
-        return nyx_string_from_cstr("");
+
+    int64_t hecho = 0;
+    for (uint32_t bloque = 1; hecho < dklen; bloque++) {
+        write_be32(s1 + sl, bloque);
+        uint8_t u[32], t[32];
+        hmac_sha256_k64(k, s1, sl + 4, u);
+        memcpy(t, u, 32);
+        for (int64_t it = 1; it < iters; it++) {
+            hmac_sha256_k64(k, u, 32, u);
+            for (int j = 0; j < 32; j++) t[j] ^= u[j];
+        }
+        int64_t n = dklen - hecho < 32 ? dklen - hecho : 32;
+        memcpy(out + hecho, t, (size_t)n);
+        hecho += n;
     }
     return nyx_string_from_ptr((const char*)out, (size_t)dklen);
 }
@@ -555,20 +600,21 @@ nyx_string* nyx_md5(nyx_string* input) {
 //  Web Push primitives (RFC 8291 / RFC 8292) — thin OpenSSL wrappers
 // ============================================================
 
-// n cryptographically-secure random bytes. Empty string on n<=0 or RAND failure.
-nyx_string* nyx_csprng_bytes(int64_t n) {
-    if (n <= 0) return nyx_string_from_cstr("");
-    unsigned char* buf = (unsigned char*)GC_MALLOC_ATOMIC((size_t)n);
-    if (RAND_bytes(buf, (int)n) != 1) return nyx_string_from_cstr("");
-    return nyx_string_from_ptr((const char*)buf, n);
-}
-
 // A single raw byte (n & 0xff) as a length-1 nyx_string. Unlike chr(0), this
 // preserves a NUL byte (chr collapses it via strlen); nyx_string_concat is
 // binary-safe (memcpy), so this composes into byte strings with NULs.
 nyx_string* nyx_byte(int64_t n) {
     unsigned char b = (unsigned char)(n & 0xff);
     return nyx_string_from_ptr((const char*)&b, 1);
+}
+
+#ifndef __wasi__
+// n cryptographically-secure random bytes. Empty string on n<=0 or RAND failure.
+nyx_string* nyx_csprng_bytes(int64_t n) {
+    if (n <= 0) return nyx_string_from_cstr("");
+    unsigned char* buf = (unsigned char*)GC_MALLOC_ATOMIC((size_t)n);
+    if (RAND_bytes(buf, (int)n) != 1) return nyx_string_from_cstr("");
+    return nyx_string_from_ptr((const char*)buf, n);
 }
 
 // P-256 keypair: 32-byte private (big-endian) ‖ 65-byte public (uncompressed).
@@ -697,3 +743,4 @@ nyx_string* nyx_aes128gcm_encrypt(nyx_string* key, nyx_string* iv,
     if (!ok) return nyx_string_from_cstr("");
     return nyx_string_from_ptr((const char*)out, (int64_t)total + 16);
 }
+#endif  // __wasi__

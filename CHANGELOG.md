@@ -11,6 +11,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **Hashes, HMAC y PBKDF2 en wasm32-wasi** (fricción de nyxerp, 2026-09-27). `sha256`,
+  `sha256_raw`, `md5`, `hmac_sha256`, `hmac_sha256_raw` y `pbkdf2_hmac_sha256` eran «not supported
+  on target 'wasm32-wasi'»: `crypto.c` no entraba al runtime wasm porque incluía OpenSSL, y un POS
+  offline tenía que pedirle PBKDF2 a WebCrypto desde JavaScript. Hashes y HMAC ya eran C propio;
+  PBKDF2 pasa a serlo también (antes `PKCS5_PBKDF2_HMAC`), con el HMAC sobre buffers de pila —en
+  wasm sin arena nada se libera, y 80.000 iteraciones reservando en cada una eran varios MB—.
+  Mismos bytes que OpenSSL: vectores del RFC 7914 y dos casos fijados con OpenSSL antes del cambio
+  (`test_crypto.c`). Lo de OpenSSL (Web Push) queda detrás de `__wasi__`. Regresión:
+  `test-wasm-51-cripto` (wasmtime y shim del navegador).
+
 - **`HttpOpts.cas_extra`: sumar certificados a UNA petición HTTPS** (fricción de nyxerp,
   2026-09-27). Un sitio que manda un intermedio que no corresponde a su hoja no verifica contra las
   CAs del sistema; desde la separación de almacenes del 2026-09-14, `tls_set_ca_file` ya no llega

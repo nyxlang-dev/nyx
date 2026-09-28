@@ -18,6 +18,9 @@ runtime/runtime-arrays.c
 runtime/maps.c
 runtime/iterators.c
 runtime/file-io.c
+# crypto.c: los hashes, HMAC y PBKDF2 son C propio; su parte de OpenSSL (Web
+# Push) queda detrás de __wasi__ (2026-09-27).
+runtime/crypto.c
 runtime/time.c
 runtime/random.c
 runtime/url.c
