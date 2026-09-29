@@ -72,6 +72,7 @@ GOTCHA_IDS=(
   "nested-fn-sees-module"
   "try-early-exit-pop"
   "std-private-shadows-builtin"
+  "string-index-byte"
 )
 
 ANCLAS=(
@@ -122,6 +123,7 @@ MENTIRAS=(
   "open_file(|file-api-names"
   "close_file(|file-api-names"
   "corrupts the value on the next read|array-index-float-write"
+  "returns the wrong character for any index above 0|string-index-byte"
 )
 
 PATTERN_CODES=(

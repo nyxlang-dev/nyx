@@ -11,6 +11,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`s[i]` sobre un `String` lee el carácter correcto.** `codegen_index` no distinguía el receptor
+  String y caía al get de Array —misma forma en memoria—, que lee 8 bytes en la posición `i*8`:
+  `"abcdefghijklmnopq"[1]` daba la `i` en vez de la `b`, `[2]` la `q`, y `let c: int = "abc"[0]` daba
+  6513249, todo con rc 0. `[0]` hacia un `char` salía bien por casualidad. Ahora es el byte `i`, igual
+  que `s.charAt(i)` (y fuera de rango aborta igual). Encontrado midiendo falsos positivos de NYX2019.
+  Regresión: `test-457`, que compara contra `charAt` en ocho contextos (let anotado int/char, sin
+  anotar, comparación con char y con int, bucle, índice calculado, argumento de builtin). Gotcha
+  `string-index-byte`.
+
 - **`nyx archivo.nx` muestra los avisos del compilador.** Con compilación exitosa el wrapper tiraba el
   log entero, así que ningún `⚠` llegaba al usuario en ese camino —tampoco NYX2019, que en 0.35.x es
   aviso justamente para que se vea antes de ser error en 0.36.0—; `nyx build` ya los reenviaba desde

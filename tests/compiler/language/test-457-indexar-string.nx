@@ -1,0 +1,43 @@
+// test-457 — `s[i]` sobre un String es el BYTE i, como `s.charAt(i)`.
+//
+// POR QUÉ EXISTE (2026-09-29, encontrado midiendo falsos positivos de NYX2019):
+// `s[i]` caía al get de Array —el String y el Array tienen la misma forma en
+// memoria— y leía 8 bytes en la posición i*8. `"abcdefghijklmnopq"[1]` daba la
+// `i` (105) en vez de la `b` (98), `[2]` la `q`, y `let c: int = "abc"[0]` daba
+// 6513249 (los tres bytes juntos). Sin error y con rc 0. Cada línea compara
+// contra charAt, que siempre leyó bien, en un contexto distinto.
+
+fn main() -> int {
+    let s: String = "abcdefghijklmnopq"
+    let a: int = s[0]
+    let b: int = s[1]
+    let c: char = s[2]
+    let cc: int = c
+    let x = s[3]
+    let xi: int = x
+    if a != s.charAt(0) { return 1 }
+    if b != s.charAt(1) { return 2 }
+    if cc != s.charAt(2) { return 3 }
+    if xi != s.charAt(3) { return 4 }
+    if s[4] != 'e' { return 5 }
+    if s[5] != 102 { return 6 }
+    var suma: int = 0
+    var i: int = 0
+    while i < s.length() {
+        let v: int = s[i]
+        suma = suma + v
+        i = i + 1
+    }
+    var esperado: int = 0
+    i = 0
+    while i < s.length() {
+        esperado = esperado + s.charAt(i)
+        i = i + 1
+    }
+    if suma != esperado { return 7 }
+    let n: int = 2
+    let desde_expr: int = s[n * 3 + 1]
+    if desde_expr != s.charAt(7) { return 8 }
+    print(int_to_string(s[1]) + " " + int_to_string(suma))
+    return 0
+}

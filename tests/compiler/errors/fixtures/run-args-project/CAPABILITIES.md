@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.34.0 -->
-<!-- nyx-stdlib: 1179374420-854318 -->
+<!-- nyx-version: 0.35.0 -->
+<!-- nyx-stdlib: 152877893-854318 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
