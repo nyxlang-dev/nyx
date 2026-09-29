@@ -708,12 +708,10 @@ error, wrong function, blank screen). Now:
 - An unqualified call ambiguous between two imported modules is an error
   (**NYX2010**) naming both modules — qualify it or rename. `nyx check` reports it too (since
   2026-09-23), not only `nyx build`.
-- **Transition (2026-09-24, through 0.34.x; errors from 0.35.0):** up to 0.33.x a resolver bug
-  attributed everything a module declared AFTER a newly inlined transitive import to the main
-  file, which hid NYX1036/NYX2010 there (and made two private homonyms in different modules
-  collide by import order). With it fixed, the cases that only appear because of the corrected
-  attribution come out as `⚠ aviso [NYX1036]`/`⚠ aviso [NYX2010]` and still compile (rc 0);
-  they become errors in 0.35.0. Add `pub` / qualify the call now.
+- **Since 0.35.0 there is no transition:** in 0.34.x the NYX1036/NYX2010 cases that only appeared
+  because a resolver bug was fixed (up to 0.33.x it attributed what a module declared AFTER a
+  newly inlined transitive import to the main file) were `⚠ aviso` and compiled. Now they are
+  errors like any other: add `pub` / qualify the call.
 - `std/percent` holds the single `url_decode` that `std/url` and `std/web` both import.
 - Module fns are emitted as `<module_path>__<fn>` in the IR; the main file
   and the prelude keep bare names (single-file programs: zero change).
@@ -1553,7 +1551,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1743,6 +1741,15 @@ string forces a choice between bytes and codepoints, and the `String` API is byt
 `char_length()` apart. The dynamic variant has its own guard: a `String` stored in a bare `Array` and
 walked with `for g: Array in xs` now aborts in the OUTER loop with NYX2018 naming the slot and its
 real type, instead of crashing later in the inner one. [test: compiler/errors/test-nyx1038-for-string] [test: 31-recorrer-string-por-indice]
+
+25. **An Array element the compiler knows is a `String` does not go into an `int`/`bool` variable (NYX2019): convert it — `let n: int = string_to_int(fila[0])`.**
+When the Array is `Array<String>` (annotated, or inferred from its literal: `["42"]`) or comes from
+`split()`, `let n: int = fila[0]` used to compile and store the String's ADDRESS as if it were the
+number (the program printed something like `187651305671440` and exited 0); with `bool`, and in the
+assignment `n = fila[0]`, it was invalid IR at link time, reported as a compiler bug. Since 0.35.0 those
+two are compile errors naming the function and the variable; the `let` into an integer is a warning in
+0.35.x and an error from 0.36.0. Untyped elements (an Array returned by a
+function) keep their run-time check, NYX2014; `float` keeps NYX2008. [test: compiler/errors/fixtures/escalar-de-string/let-bool] [test: compiler/language/test-456-escalar-de-string-valido]
 
 <!-- /gen:gotchas -->
 

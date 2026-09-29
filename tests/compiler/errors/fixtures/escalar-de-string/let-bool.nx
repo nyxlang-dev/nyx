@@ -1,0 +1,8 @@
+// NYX2019: con `bool` no era silencioso sino IR inválido al enlazar
+// («defined with type 'ptr' but expected 'i1'»), atribuido a un bug del compilador.
+fn main() -> int {
+    let fila: Array = ["42"]
+    let b: bool = fila[0]
+    if b { print("si") }
+    return 0
+}

@@ -1,4 +1,4 @@
-// aux del aviso de transición NYX1036 (run_error_tests.sh, «transicion-nyx1036»):
+// aux del NYX1036 que en 0.34 era aviso de transición (run_error_tests.sh, «fin-transicion-NYX1036-error»):
 // la forma del caso de nyxerp (acceso_operaciones.nx → usuarios.nx). Este
 // módulo importa aux_reabre_b —nuevo cuando lo encuentra el fixpoint, así que
 // su resto es un tramo reabierto— y llama a una privada que B declara DESPUÉS

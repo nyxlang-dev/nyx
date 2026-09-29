@@ -330,7 +330,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str184.c = internal global %nyx_string* null
 @.str185 = private unnamed_addr constant [11 x i8] c"//#module\0a\00"
 @.str185.c = internal global %nyx_string* null
-@.str186 = private unnamed_addr constant [18 x i8] c"//#module-reabre \00"
+@.str186 = private unnamed_addr constant [11 x i8] c"//#module \00"
 @.str186.c = internal global %nyx_string* null
 @.str187 = private unnamed_addr constant [2 x i8] c"\0a\00"
 @.str187.c = internal global %nyx_string* null
@@ -4670,8 +4670,8 @@ merge521:
 else517:
   br label %merge518
 merge518:
-  %2055 = getelementptr [18 x i8], [18 x i8]* @.str186, i32 0, i32 0
-  %2056 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str186.c, i8* %2055, i64 17)
+  %2055 = getelementptr [11 x i8], [11 x i8]* @.str186, i32 0, i32 0
+  %2056 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str186.c, i8* %2055, i64 10)
   %2057 = load %nyx_string*, %nyx_string** %padre.ptr
   %2058 = call %nyx_string* @nyx_string_concat(%nyx_string* %2056, %nyx_string* %2057)
   %2059 = getelementptr [2 x i8], [2 x i8]* @.str187, i32 0, i32 0

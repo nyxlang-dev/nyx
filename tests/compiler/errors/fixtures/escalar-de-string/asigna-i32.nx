@@ -1,0 +1,8 @@
+// NYX2019 en la asignación a un entero angosto: también era IR inválido
+// («defined with type 'ptr' but expected 'i32'»), así que es error desde 0.35.0.
+fn main() -> int {
+    let fila: Array = ["42"]
+    var n: i32 = 0
+    n = fila[0]
+    return 0
+}

@@ -40,6 +40,7 @@ GOTCHA_IDS=(
   "void-builtin-no-bind"
   "type-names-are-global"
   "for-in-string-rejected"
+  "string-element-into-scalar-rejected"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
   "prelude-frozen-snapshot"
@@ -105,6 +106,7 @@ ANCLAS=(
   "got ()|void-builtin-no-bind"
   "NYX1040|type-names-are-global"
   "NYX1038|for-in-string-rejected"
+  "NYX2019|string-element-into-scalar-rejected"
 )
 
 MENTIRAS=(

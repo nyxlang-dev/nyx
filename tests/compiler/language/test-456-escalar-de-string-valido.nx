@@ -1,0 +1,17 @@
+// test-456 — control positivo de NYX2019 (arco release-0-35) con VALORES, no solo
+// compilación: un elemento String convertido explícito, el String tal cual, un Array
+// de int y el char de un String siguen dando lo correcto.
+
+fn main() -> int {
+    let fila: Array = ["42"]
+    let s: String = fila[0]
+    let n: int = string_to_int(fila[0])
+    var m: int = 0
+    m = string_to_int(fila[0]) + 1
+    let xs: Array = [7, 8]
+    let k: int = xs[1]
+    let palabra: String = "abc"
+    let c: char = palabra[0]
+    print(s + " " + int_to_string(n) + " " + int_to_string(m) + " " + int_to_string(k))
+    return 0
+}

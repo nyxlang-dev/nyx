@@ -1,6 +1,6 @@
-// Aviso de transición NYX1036 (fricción nyxerp 20260924-010014-team-1): la
-// llamada de aux_reabre_c a la privada de aux_reabre_b solo es NYX1036 con la
-// atribución corregida del resolvedor, así que sale como AVISO, compila y corre.
+// NYX1036 que en 0.34 era AVISO de transición (fricción nyxerp 20260924-010014-team-1):
+// la llamada de aux_reabre_c a la privada de aux_reabre_b solo es NYX1036 con la
+// atribución corregida del resolvedor. Desde 0.35.0 es error (fin-transicion-NYX1036-error).
 import "tests/support/aux_reabre_c"
 
 fn main() -> int {

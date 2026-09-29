@@ -9,6 +9,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-09-29
+
+> **MINOR porque rechaza código que antes compilaba** (`[arco: release-0-35]`): NYX1036/NYX2010 sin la
+> transición de 0.34 y NYX2019 (error en el `let` a `bool` y en la asignación; aviso en el `let` a un
+> entero, que pasa a error en 0.36.0). Incluye además todo lo acumulado desde 0.34.0: `nyx exec`, el
+> espejo público con `runtime/wasi/`, cripto en wasm32-wasi, `HttpOpts.cas_extra`, `arena_persist`
+> fase 1 y los arreglos de abajo. Verificado con `make test-all` sobre el corte; la única falla es
+> `test-wasm-29-arena-autocancelacion` bajo el shim de node, intermitente y ya fichada (BAJA): falla
+> igual con 0.34 (5 de 10 corridas contra 4 de 10).
+
+### Cambiado — rechaza código que antes compilaba (por eso 0.35.0)
+
+- **NYX1036 y NYX2010 sin transición: son error** `[arco: release-0-35]`. En 0.34 los casos que
+  aparecían solo por el arreglo del resolvedor del 2026-09-24 (el cierre de un import transitivo
+  reabre al módulo padre, y hasta 0.33.x ese tramo se atribuía al archivo principal) salían como
+  `⚠ aviso` y compilaban. Ahora son error como cualquier otro: agregar `pub` a la función o calificar
+  la llamada. Se retiró todo lo que sostenía la atribución de 0.33.x en semantic y codegen, y
+  `resolve.nx` ya no emite `//#module-reabre`. Consumidores medidos antes: nyx-proxy sin casos, nyxerp
+  resueltos en su línea viva, nyx-queue arreglado en su repo (`mq_ensure_queue` pasa a `pub`).
+- **NYX2019: un elemento de Array que el compilador sabe `String` no entra en una variable `int` o
+  `bool`** `[arco: release-0-35]`. `let n: int = fila[0]` sobre `["42"]` guardaba la DIRECCIÓN del
+  String como si fuera el número y salía 0; con `bool`, y en la asignación `n = fila[0]`, era IR
+  inválido al enlazar, reportado como bug del compilador. El `let` con `bool` y toda asignación son
+  **error** desde ya (nunca enlazaron, así que no se rompe nada que anduviera). El `let` a un entero
+  que no es `bool`, que sí compilaba con el valor equivocado, es **aviso** en 0.35.x y pasa a error en
+  0.36.0 — la regla 7 de `docs/VERSIONING.md`: lo que va a rechazar código avisa un release antes.
+  Convertir con `string_to_int` o declarar `String`. Complementa a NYX2014, que actúa en runtime
+  cuando el tipo del elemento no se conoce. Regresión: tres errores (`let bool`, asignación a `int` y
+  a `i32`), dos avisos que compilan (`let int`, `split()`), el control positivo y `test-456`.
+
 ### Agregado
 
 - **`nyx exec [--version <id>] -- <cmd>`: una sola versión del toolchain para toda una suite**

@@ -620,6 +620,51 @@ fi
 rm -f script.ll
 
 # ==============================================================
+# NYX2019 (arco release-0-35): un elemento de Array que el codegen SABE String
+# guardado en una variable escalar. `let n: int = fila[0]` sobre ["42"]
+# guardaba la DIRECCIÓN del String y salía 0 (en 0.35.x es AVISO, error en
+# 0.36.0); con `bool` y en la asignación era IR inválido al enlazar (error ya). Es del codegen (el checker no conoce el tipo del
+# elemento), así que corre en el build normal. El control positivo es la otra
+# mitad: el String, la conversión explícita, el Array de int y el char de un
+# String tienen que seguir compilando.
+# ==============================================================
+ES_FX="tests/compiler/errors/fixtures/escalar-de-string"
+# ERROR desde 0.35.0: lo que ya no enlazaba (IR inválido) — `let` con bool y toda asignación.
+ff_case "nyx2019-let-bool"   "$ES_FX/let-bool.nx"   "error [NYX2019]"
+ff_case "nyx2019-asigna-int" "$ES_FX/asigna-int.nx" "error [NYX2019]"
+ff_case "nyx2019-asigna-i32" "$ES_FX/asigna-i32.nx" "error [NYX2019]"
+# AVISO en 0.35.x, error en 0.36.0 (regla 7 de docs/VERSIONING.md): el `let` con un
+# entero que no es bool COMPILABA (con el valor equivocado). Tiene que avisar y seguir:
+# rc 0 y .ll escrito.
+for es_av in let-int split-int; do
+  cp "$ES_FX/$es_av.nx" script.nx
+  rm -f script.ll
+  es_av_out=$(timeout 15 ./nyx_bootstrap 2>&1); es_av_rc=$?
+  if [ "$es_av_rc" -eq 0 ] && [ -f script.ll ] && echo "$es_av_out" | grep -qF "⚠ warning [NYX2019]" \
+     && ! echo "$es_av_out" | grep -qF "error [NYX2019]"; then
+    printf "  ✓ nyx2019-aviso-%s\n" "$es_av"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ nyx2019-aviso-%s (esperado rc 0, .ll escrito y «⚠ warning [NYX2019]»)\n" "$es_av"
+    echo "$es_av_out" | sed 's/^/      /' | head -6
+    FAIL=$((FAIL + 1)); FAILED_TESTS+=("nyx2019-aviso-$es_av")
+  fi
+  rm -f script.ll
+done
+cp "$ES_FX/valido.nx" script.nx
+rm -f script.ll
+es_ok=$(timeout 15 ./nyx_bootstrap 2>&1)
+if [ -f script.ll ] && ! echo "$es_ok" | grep -q "NYX2019"; then
+  printf "  ✓ nyx2019-control-positivo\n"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ nyx2019-control-positivo — el diagnóstico se pasó de largo\n"
+  echo "$es_ok" | sed 's/^/      /' | head -8
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("nyx2019-control-positivo")
+fi
+rm -f script.ll
+
+# ==============================================================
 # NYX0302 (arco compilacion-separada, Task 5): un módulo pedido por el camino
 # separado que tiene una fn genérica, métodos (`impl`, con trait o sin él) o un
 # trait NO se compila aparte: se inlinea como siempre y el compilador lo AVISA.
@@ -2589,43 +2634,40 @@ fi
 rm -f script.ll
 
 # ==============================================================
-# TRANSICIÓN 0.33 → 0.34 (fricción nyxerp 20260924-010014-team-1; decisión de
-# Ottavio 2026-09-24). El resolvedor ya no atribuye al archivo principal lo que
-# un módulo declara después de un import transitivo nuevo. Un NYX1036/NYX2010
-# que aparece SOLO por esa corrección sale como AVISO («⚠ aviso [NYXnnnn]»,
-# «hasta 0.33.x …») y la compilación sigue: rc 0 en nyx_bootstrap y en
-# nyx_check. El NYX1036 que ya existía en 0.33.x sigue siendo error
-# (test-module-private-classic, en el recorrido general). Sabotaje: con
-# vis_disparaba_antes devolviendo siempre true, el caso 1036 cae.
+# FIN DE LA TRANSICIÓN 0.33 → 0.34 (arco release-0-35, 2026-09-29). En 0.34 un
+# NYX1036/NYX2010 que aparecía SOLO por la corrección del resolvedor (el cierre
+# de un import transitivo reabre al módulo padre) salía como aviso y compilaba;
+# desde 0.35.0 es error como cualquier otro. Los dos fixtures son los de la
+# transición: tienen que dar `error [NYXnnnn]` con rc != 0 en nyx_bootstrap y en
+# nyx_check, y ya no la frase «hasta 0.33.x». Sabotaje: volver a poner el aviso
+# (o la rama `viejo` de fn_module_resolve_en) y estos cuatro caen.
 # ==============================================================
 for tr_code in NYX1036 NYX2010; do
   case "$tr_code" in
-    NYX1036) tr_fx="tests/compiler/errors/fixtures/transicion-nyx1036-aviso.nx"; tr_llamada="@tests_support_aux_reabre_b__reabre_interna_b(" ;;
-    NYX2010) tr_fx="tests/compiler/errors/fixtures/transicion-nyx2010-aviso.nx"; tr_llamada="@tests_support_aux_ambig_x__etiqueta(" ;;
+    NYX1036) tr_fx="tests/compiler/errors/fixtures/transicion-nyx1036-aviso.nx" ;;
+    NYX2010) tr_fx="tests/compiler/errors/fixtures/transicion-nyx2010-aviso.nx" ;;
   esac
-  name="transicion-$tr_code-aviso"
+  name="fin-transicion-$tr_code-error"
   cp "$tr_fx" script.nx
   tr_out=$(NYX_LANG=es timeout 30 ./nyx_bootstrap 2>&1); tr_rc=$?
-  # NYX2010: el codegen resuelve como en 0.33.x (la de aux_ambig_x, que entonces
-  # era del principal) en vez de abortar; NYX1036: la llamada llega a la privada.
-  if [ "$tr_rc" -eq 0 ] && echo "$tr_out" | grep -qF "⚠ aviso [$tr_code]" \
-     && echo "$tr_out" | grep -qF "hasta 0.33.x quedaba oculto por un bug del resolvedor" \
-     && ! echo "$tr_out" | grep -qF "✗ error" && [ -f script.ll ] && grep -qF "$tr_llamada" script.ll; then
+  if [ "$tr_rc" -ne 0 ] && echo "$tr_out" | grep -qF "error [$tr_code]" \
+     && ! echo "$tr_out" | grep -qF "hasta 0.33.x"; then
     printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
   else
     printf "  ✗ %s\n" "$name"
-    printf "    exit: %d (esperado 0, con «⚠ aviso [%s]» y la llamada %s en el IR)\n" "$tr_rc" "$tr_code" "$tr_llamada"
-    echo "$tr_out" | grep -a "⚠\|✗" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+    printf "    exit: %d (esperado != 0 con «error [%s]» y sin la frase de la transición)\n" "$tr_rc" "$tr_code"
+    echo "$tr_out" | grep -a "⚠\|✗\|error" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
   fi
   rm -f script.ll
   if [ -x ./nyx_check ]; then
-    name="transicion-$tr_code-aviso-nyx-check"
+    name="fin-transicion-$tr_code-error-nyx-check"
     trc_out=$(NYX_LANG=es NYX_SRC="$tr_fx" ./nyx_check 2>&1); trc_rc=$?
-    if [ "$trc_rc" -eq 0 ] && echo "$trc_out" | grep -qF "⚠ aviso [$tr_code]"; then
+    if [ "$trc_rc" -ne 0 ] && echo "$trc_out" | grep -qF "error [$tr_code]" \
+       && ! echo "$trc_out" | grep -qF "hasta 0.33.x"; then
       printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
     else
-      printf "  ✗ %s\n" "$name"; printf "    exit: %d (esperado 0 con «⚠ aviso [%s]»)\n" "$trc_rc" "$tr_code"
-      echo "$trc_out" | grep -a "⚠\|✗" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+      printf "  ✗ %s\n" "$name"; printf "    exit: %d (esperado != 0 con «error [%s]»)\n" "$trc_rc" "$tr_code"
+      echo "$trc_out" | grep -a "⚠\|✗\|error" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
     fi
   fi
 done

@@ -1,8 +1,7 @@
-// Aviso de transición NYX2010 (fricción nyxerp 20260924-010014-team-1): con la
-// atribución corregida `etiqueta` existe en dos módulos y la llamada es
-// ambigua; hasta 0.33.x la de aux_ambig_x era del principal y ganaba. Sale
-// como AVISO y el codegen resuelve como entonces (resolve_module_fn_legado):
-// imprime "x".
+// NYX2010 que en 0.34 era AVISO de transición (fricción nyxerp 20260924-010014-team-1):
+// con la atribución corregida `etiqueta` existe en dos módulos y la llamada es
+// ambigua; hasta 0.33.x la de aux_ambig_x era del principal y ganaba. Desde 0.35.0
+// es error (fin-transicion-NYX2010-error).
 import "tests/support/aux_ambig_x"
 import "tests/support/aux_ambig_y"
 

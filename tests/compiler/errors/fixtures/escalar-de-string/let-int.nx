@@ -1,0 +1,8 @@
+// NYX2019 AVISO (error en 0.36.0, regla 7 de docs/VERSIONING.md): el repro de la ficha — el
+// literal le da al Array el tipo Array<String>, y `: int` guardaba la DIRECCIÓN del String.
+fn main() -> int {
+    let fila: Array = ["42"]
+    let n: int = fila[0]
+    print(int_to_string(n))
+    return 0
+}

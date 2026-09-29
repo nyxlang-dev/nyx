@@ -1,0 +1,8 @@
+// NYX2019 en la ASIGNACIÓN a una variable ya declarada int: también era IR inválido.
+fn main() -> int {
+    let fila: Array = ["42"]
+    var n: int = 0
+    n = fila[0]
+    print(int_to_string(n))
+    return 0
+}
