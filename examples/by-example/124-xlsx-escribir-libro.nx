@@ -1,0 +1,77 @@
+// Nyx by Example: un libro contable en .xlsx.
+//
+// El caso real: un ERP entrega el libro de compras del mes en Excel. std/xlsx
+// escribe un .xlsx de verdad (un zip con XML adentro, en Nyx puro: corre igual
+// en el servidor y en wasm32-wasi) que abren Excel, LibreOffice y openpyxl.
+//
+// Lo que muestra:
+//   - xlsx_sheet_new + row(): una hoja es una lista de filas de celdas;
+//   - constructores por tipo: xlsx_text, xlsx_number(valor, decimales),
+//     xlsx_int, xlsx_date("AAAA-MM-DD"), xlsx_bool, xlsx_blank, xlsx_bold;
+//   - ancho de columna (col_width) y celdas combinadas (merge);
+//   - un total calculado en el programa: las fórmulas NO se escriben, se
+//     escribe el valor;
+//   - los errores (nombre de hoja repetido, fecha inválida...) salen de
+//     xlsx_write como Err, no antes.
+//
+// Correr: nyx run -- libro.xlsx   (sin argumento solo informa el tamaño)
+
+import "std/xlsx"
+import "std/error"
+
+fn libro() -> Result<String, Error> {
+    var h: XlsxSheetOut = xlsx_sheet_new("Libro de compras")
+    h.row([xlsx_bold(xlsx_text("Libro de compras — septiembre 2026"))])
+    h.merge("A1:D1")
+    h.row([])
+    h.row([xlsx_bold(xlsx_text("Fecha")), xlsx_bold(xlsx_text("Proveedor")),
+           xlsx_bold(xlsx_text("Base")), xlsx_bold(xlsx_text("IVA"))])
+
+    let fechas: Array = ["2026-09-01", "2026-09-04", "2026-09-15"]
+    let proveedores: Array = ["Ferretería El Tornillo, C.A.", "Cementos del Centro", "Pinturas Aragua"]
+    let bases: Array = [1000.0, 2500.5, 320.25]
+    var total_base: float = 0.0
+    var total_iva: float = 0.0
+    var i: int = 0
+    while i < fechas.length() {
+        let base: float = bases[i]
+        let iva: float = base * 0.16
+        let fecha: String = fechas[i]
+        let prov: String = proveedores[i]
+        h.row([xlsx_date(fecha), xlsx_text(prov), xlsx_number(base, 2), xlsx_number(iva, 2)])
+        total_base = total_base + base
+        total_iva = total_iva + iva
+        i = i + 1
+    }
+    h.row([xlsx_blank(), xlsx_bold(xlsx_text("Totales")),
+           xlsx_bold(xlsx_number(total_base, 2)), xlsx_bold(xlsx_number(total_iva, 2))])
+    h.col_width(1, 12.0)
+    h.col_width(2, 30.0)
+    h.col_width(3, 14.0)
+    h.col_width(4, 14.0)
+
+    var notas: XlsxSheetOut = xlsx_sheet_new("Notas")
+    notas.row([xlsx_text("Generado por Nyx"), xlsx_int(3), xlsx_bool(true)])
+    return xlsx_write([h, notas])
+}
+
+fn main() -> int {
+    match libro() {
+        Result.Ok(bytes) => {
+            let args: Array = get_args()
+            if args.length() > 1 {
+                let ruta: String = args[1]
+                write_file(ruta, bytes)
+                print("libro escrito en " + ruta + " (" + int_to_string(bytes.length()) + " bytes)")
+            } else {
+                print("libro: " + int_to_string(bytes.length()) + " bytes, empieza con " + bytes.substring(0, 2))
+                print("para escribirlo: nyx run -- libro.xlsx")
+            }
+            return 0
+        }
+        Result.Err(e) => {
+            print("no se pudo armar el libro: " + error_to_string(e))
+            return 1
+        }
+    }
+}

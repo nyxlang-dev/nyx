@@ -1,0 +1,1195 @@
+// std/xlsx — leer y escribir planillas .xlsx (Office Open XML) en Nyx puro.
+//
+// De dónde sale: nyxerp recibe estados de cuenta, listas de precios y planillas
+// de carga en .xlsx, y entrega libros contables en ese formato (fricción
+// 20260929-170012-team-1; spec docs/design/specs/2026-09-29-std-xlsx-design.md).
+// Un .xlsx es un zip (std/zip) con XML adentro (std/xml). Sin ningún
+// `extern "C"`: el mismo código corre en nativo y en wasm32-wasi (una caja en el
+// navegador puede leer una planilla que se arrastra).
+//
+// Leer (D-5):
+//
+//   match xlsx_read(read_file("estado.xlsx"), xlsx_read_opts()) {
+//       Result.Ok(libro) => {
+//           let hoja: XlsxSheet = libro.sheets[0]
+//           let c: XlsxCell = xlsx_cell(hoja, "B13")   // .kind, .text, .number
+//       }
+//       Result.Err(e) => { ... }
+//   }
+//
+// Cada celda trae su TIPO (`kind`): "text", "number", "date", "bool", "error" o
+// "empty", y su valor en `text` (siempre) y `number` (números y fechas):
+//  - número: `text` es el texto TAL CUAL está en el archivo (un importe no se
+//    redondea al leer) y `number` su valor;
+//  - fecha: cuando el formato del estilo de la celda es de fecha u hora; `text`
+//    en ISO ("2026-09-01", "2026-09-01T08:30:00" o "08:30:00" si el formato es
+//    solo de hora), `number` el número de serie de Excel (épocas 1900 y 1904);
+//  - bool: "true"/"false"; error: "#REF!", "#N/A"…;
+//  - las FÓRMULAS no se evalúan: se lee el valor que el archivo ya trae calculado.
+// `rows[f][c]` es la celda de la fila f+1 y la columna c+1: las filas y columnas
+// vacías intermedias quedan como celdas "empty", así la referencia "C7" cae
+// donde va. Las celdas que solo tienen estilo (sin valor) también son "empty".
+//
+// Topes (XlsxReadOpts): los del zip (tamaño del archivo, de cada parte y del
+// total descomprimido) y la cantidad de celdas. Llegan archivos de afuera.
+
+import "std/error"
+import "std/zip"
+import "std/xml"
+
+pub struct XlsxCell {
+    addr: String,       // "B13"
+    row: int,           // desde 1
+    col: int,           // desde 1
+    kind: String,       // "text" | "number" | "date" | "bool" | "error" | "empty"
+    text: String,
+    number: float,
+    format: String,     // código del formato de número ("General", "0.00", "dd/mm/yyyy"…)
+}
+
+pub struct XlsxSheet {
+    name: String,
+    hidden: bool,
+    rows: Array,        // Array<Array<XlsxCell>>
+    merged: Array,      // Array<String>: rangos combinados ("B7:V7")
+}
+
+pub struct XlsxBook {
+    sheets: Array,      // Array<XlsxSheet>, en el orden del libro
+    date1904: bool,
+}
+
+pub struct XlsxReadOpts {
+    zip: ZipReadOpts,
+    max_cells: int,
+}
+
+// Topes por omisión: los de zip_read_opts y un millón de celdas con valor.
+pub fn xlsx_read_opts() -> XlsxReadOpts {
+    return XlsxReadOpts { zip: zip_read_opts(), max_cells: 1000000 }
+}
+
+// El lector de XML para las partes del libro: sin descartar el espacio en blanco
+// (ver XmlOpts.keep_whitespace) y con el tope de bytes del zip por entrada.
+fn __xlsx_xml(texto: String) -> XmlReader {
+    var o: XmlOpts = xml_opts()
+    o.keep_whitespace = true
+    return xml_reader_opts(texto, o)
+}
+
+fn __xlsx_err(msg: String) -> Error {
+    return err_new(22, "parse", "xlsx: " + msg)
+}
+
+// ── Referencias A1 ────────────────────────────────────────────────────────────
+
+// "AB" -> 28. 0 si no hay letras.
+fn __xlsx_col_of(addr: String) -> int {
+    var col: int = 0
+    var i: int = 0
+    while i < addr.length() {
+        let c: int = addr.charAt(i)
+        if c >= 65 and c <= 90 {
+            col = col * 26 + (c - 64)
+        } else if c >= 97 and c <= 122 {
+            col = col * 26 + (c - 96)
+        } else {
+            return col
+        }
+        i = i + 1
+    }
+    return col
+}
+
+// "AB12" -> 12. 0 si no hay dígitos.
+fn __xlsx_row_of(addr: String) -> int {
+    var i: int = 0
+    while i < addr.length() {
+        let c: int = addr.charAt(i)
+        if c >= 48 and c <= 57 {
+            return string_to_int_or(addr.substring(i, addr.length()), 0)
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+// 28 -> "AB".
+pub fn xlsx_col_name(col: int) -> String {
+    var n: int = col
+    var s: String = ""
+    while n > 0 {
+        let r: int = (n - 1) % 26
+        s = chr(65 + r) + s
+        n = (n - 1) / 26
+    }
+    return s
+}
+
+// (13, 2) -> "B13".
+pub fn xlsx_addr(row: int, col: int) -> String {
+    return xlsx_col_name(col) + int_to_string(row)
+}
+
+fn __xlsx_empty(row: int, col: int) -> XlsxCell {
+    return XlsxCell { addr: xlsx_addr(row, col), row: row, col: col, kind: "empty", text: "", number: 0.0, format: "" }
+}
+
+// ── Fechas ────────────────────────────────────────────────────────────────────
+
+// Formatos integrados de fecha/hora (ECMA-376 §18.8.30): 14-17 fecha, 18-21 hora,
+// 22 fecha y hora, 45-47 hora/duración.
+// Devuelve 0 (no es fecha), 1 (fecha o fecha y hora) o 2 (solo hora).
+fn __xlsx_builtin_date(id: int) -> int {
+    if id >= 14 and id <= 17 { return 1 }
+    if id == 22 { return 1 }
+    if id >= 18 and id <= 21 { return 2 }
+    if id >= 45 and id <= 47 { return 2 }
+    return 0
+}
+
+// ¿Un código de formato propio es de fecha? Se mira solo la primera sección
+// (antes de un ';' fuera de comillas) y se saltan: lo que va entre comillas, lo
+// que va entre corchetes ([$-200A], [Red]; salvo [h] [m] [s], que son duración),
+// el carácter escapado con '\', y el que sigue a '_' o '*' (relleno). Con y o d
+// es fecha; sin ellas, con h o s es hora; una m sola (mmmm) es fecha (mes).
+fn __xlsx_custom_date(code: String) -> int {
+    var y: bool = false
+    var d: bool = false
+    var m: bool = false
+    var hs: bool = false
+    var i: int = 0
+    let n: int = code.length()
+    while i < n {
+        let c: int = code.charAt(i)
+        if c == 59 { break }
+        if c == 34 {
+            i = i + 1
+            while i < n and code.charAt(i) != 34 { i = i + 1 }
+        } else if c == 91 {
+            var j: int = i + 1
+            var dentro: String = ""
+            while j < n and code.charAt(j) != 93 {
+                dentro = dentro + chr(code.charAt(j))
+                j = j + 1
+            }
+            let dl: String = dentro.to_lower()
+            if dl == "h" or dl == "hh" or dl == "s" or dl == "ss" or dl == "m" or dl == "mm" { hs = true }
+            i = j
+        } else if c == 92 or c == 95 or c == 42 {
+            i = i + 1
+        } else {
+            if c == 121 or c == 89 { y = true }
+            if c == 100 or c == 68 { d = true }
+            if c == 109 or c == 77 { m = true }
+            if c == 104 or c == 72 or c == 115 or c == 83 { hs = true }
+        }
+        i = i + 1
+    }
+    if y or d { return 1 }
+    if hs { return 2 }
+    if m { return 1 }
+    return 0
+}
+
+fn __xlsx_pad2(v: int) -> String {
+    if v < 10 { return "0" + int_to_string(v) }
+    return int_to_string(v)
+}
+
+// Días desde 1970-01-01 -> "AAAA-MM-DD" (algoritmo civil de H. Hinnant, válido
+// para cualquier fecha del calendario gregoriano proléptico).
+fn __xlsx_civil(days: int) -> String {
+    let z: int = days + 719468
+    var era: int = z / 146097
+    if z < 0 and z % 146097 != 0 { era = era - 1 }
+    let doe: int = z - era * 146097
+    let yoe: int = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    var y: int = yoe + era * 400
+    let doy: int = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp: int = (5 * doy + 2) / 153
+    let dd: int = doy - (153 * mp + 2) / 5 + 1
+    var mm: int = mp + 3
+    if mp >= 10 { mm = mp - 9 }
+    if mm <= 2 { y = y + 1 }
+    var ys: String = int_to_string(y)
+    while ys.length() < 4 { ys = "0" + ys }
+    return ys + "-" + __xlsx_pad2(mm) + "-" + __xlsx_pad2(dd)
+}
+
+// Número de serie -> texto ISO. Época 1900: Excel cuenta un 29 de febrero de
+// 1900 que no existió (serie 60), así que antes de él hay un día de corrimiento.
+// Época 1904: la serie 0 es el 1 de enero de 1904.
+fn __xlsx_serial_text(serial: float, date1904: bool, solo_hora: bool) -> String {
+    var dias: int = __xlsx_floor(serial)
+    var segs: int = __xlsx_round((serial - int_to_float(dias)) * 86400.0)
+    if segs >= 86400 {
+        dias = dias + 1
+        segs = segs - 86400
+    }
+    let hora: String = __xlsx_pad2(segs / 3600) + ":" + __xlsx_pad2((segs / 60) % 60) + ":" + __xlsx_pad2(segs % 60)
+    if solo_hora { return hora }
+    var fecha: String = ""
+    if date1904 {
+        fecha = __xlsx_civil(dias - 24107)
+    } else if dias == 60 {
+        fecha = "1900-02-29"
+    } else if dias < 60 {
+        fecha = __xlsx_civil(dias - 25568)
+    } else {
+        fecha = __xlsx_civil(dias - 25569)
+    }
+    if segs == 0 { return fecha }
+    return fecha + "T" + hora
+}
+
+fn __xlsx_floor(v: float) -> int {
+    var i: int = float_to_int(v)
+    if int_to_float(i) > v { i = i - 1 }
+    return i
+}
+
+fn __xlsx_round(v: float) -> int {
+    return __xlsx_floor(v + 0.5)
+}
+
+// ── Partes del paquete ────────────────────────────────────────────────────────
+
+// Ruta de una parte relativa a xl/ (lo que dice un Target de workbook.xml.rels).
+fn __xlsx_part(target: String) -> String {
+    if target.startsWith("/") { return target.substring(1, target.length()) }
+    var t: String = target
+    while t.startsWith("./") { t = t.substring(2, t.length()) }
+    return "xl/" + t
+}
+
+fn __xlsx_entry(z: ZipArchive, name: String) -> Result<String, Error> {
+    match z.entry(name) {
+        Result.Ok(v) => { return Result.Ok(v) }
+        Result.Err(e) => { return Result.Err(err_new(e.code, e.kind, "xlsx: " + e.msg)) }
+    }
+}
+
+fn __xlsx_xml_err(parte: String, ev: XmlEvent) -> Error {
+    return err_new(ev.code, "parse", "xlsx: " + parte + ": " + ev.text)
+}
+
+// Las cadenas compartidas: el texto de cada <si>, sin la guía fonética (<rPh>).
+fn __xlsx_shared(texto: String, parte: String) -> Result<Array, Error> {
+    var out: Array = []
+    var r: XmlReader = __xlsx_xml(texto)
+    var sb: StringBuilder = StringBuilder.new()
+    var en_t: int = 0
+    var en_fonetica: int = 0
+    while true {
+        let ev: XmlEvent = r.next()
+        if ev.kind == "end" { break }
+        if ev.kind == "error" { return Result.Err(__xlsx_xml_err(parte, ev)) }
+        if ev.kind == "open" {
+            if ev.name == "si" { sb = StringBuilder.new() }
+            if ev.name == "t" { en_t = 1 }
+            if ev.name == "rPh" { en_fonetica = 1 }
+        } else if ev.kind == "close" {
+            if ev.name == "t" { en_t = 0 }
+            if ev.name == "rPh" { en_fonetica = 0 }
+            if ev.name == "si" { out.push(sb.to_string()) }
+        } else if ev.kind == "text" {
+            if en_t == 1 and en_fonetica == 0 { sb.append(ev.text) }
+        }
+    }
+    return Result.Ok(out)
+}
+
+// styles.xml -> Array<String> con el código de formato de cada estilo de celda
+// (índice = el atributo s de la celda), y en paralelo 0/1/2 de __xlsx_*_date.
+fn __xlsx_styles(texto: String, parte: String) -> Result<Array, Error> {
+    var codigos: Map<String, String> = {}
+    var formatos: Array = []
+    var fechas: Array = []
+    var r: XmlReader = __xlsx_xml(texto)
+    var en_xfs: int = 0
+    while true {
+        let ev: XmlEvent = r.next()
+        if ev.kind == "end" { break }
+        if ev.kind == "error" { return Result.Err(__xlsx_xml_err(parte, ev)) }
+        if ev.kind == "open" {
+            if ev.name == "numFmt" {
+                codigos.insert(xml_event_attr(ev, "numFmtId"), xml_event_attr(ev, "formatCode"))
+            }
+            if ev.name == "cellXfs" { en_xfs = 1 }
+            if ev.name == "xf" and en_xfs == 1 {
+                let id_txt: String = xml_event_attr(ev, "numFmtId")
+                let id: int = string_to_int_or(id_txt, 0)
+                var codigo: String = __xlsx_builtin_code(id)
+                var fecha: int = __xlsx_builtin_date(id)
+                if codigos.has(id_txt) {
+                    codigo = codigos.get_or(id_txt, "")
+                    fecha = __xlsx_custom_date(codigo)
+                }
+                formatos.push(codigo)
+                fechas.push(fecha)
+            }
+        } else if ev.kind == "close" {
+            if ev.name == "cellXfs" { en_xfs = 0 }
+        }
+    }
+    return Result.Ok([formatos, fechas])
+}
+
+// Código de los formatos integrados más comunes (para `format`); los que no
+// están acá se nombran por su id.
+fn __xlsx_builtin_code(id: int) -> String {
+    if id == 0 { return "General" }
+    if id == 1 { return "0" }
+    if id == 2 { return "0.00" }
+    if id == 3 { return "#,##0" }
+    if id == 4 { return "#,##0.00" }
+    if id == 9 { return "0%" }
+    if id == 10 { return "0.00%" }
+    if id == 11 { return "0.00E+00" }
+    if id == 14 { return "mm-dd-yy" }
+    if id == 15 { return "d-mmm-yy" }
+    if id == 16 { return "d-mmm" }
+    if id == 17 { return "mmm-yy" }
+    if id == 18 { return "h:mm AM/PM" }
+    if id == 19 { return "h:mm:ss AM/PM" }
+    if id == 20 { return "h:mm" }
+    if id == 21 { return "h:mm:ss" }
+    if id == 22 { return "m/d/yy h:mm" }
+    if id == 49 { return "@" }
+    return "builtin:" + int_to_string(id)
+}
+
+// ── Leer ──────────────────────────────────────────────────────────────────────
+
+pub fn xlsx_read(bytes: String, opts: XlsxReadOpts) -> Result<XlsxBook, Error> {
+    var z: ZipArchive = ZipArchive { data: "", entries: [], opts: opts.zip, used: 0 }
+    match zip_read(bytes, opts.zip) {
+        Result.Ok(a) => { z = a }
+        Result.Err(e) => { return Result.Err(err_new(e.code, e.kind, "xlsx: " + e.msg)) }
+    }
+    if not z.has("xl/workbook.xml") { return Result.Err(__xlsx_err("no es un libro de Excel (falta xl/workbook.xml)")) }
+
+    // workbook.xml: hojas (nombre, r:id, estado) y la época de las fechas.
+    var wb_txt: String = ""
+    match __xlsx_entry(z, "xl/workbook.xml") {
+        Result.Ok(v) => { wb_txt = v }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    var nombres: Array = []
+    var ids: Array = []
+    var ocultas: Array = []
+    var date1904: bool = false
+    var r: XmlReader = __xlsx_xml(wb_txt)
+    while true {
+        let ev: XmlEvent = r.next()
+        if ev.kind == "end" { break }
+        if ev.kind == "error" { return Result.Err(__xlsx_xml_err("xl/workbook.xml", ev)) }
+        if ev.kind == "open" and ev.name == "sheet" {
+            nombres.push(xml_event_attr(ev, "name"))
+            ids.push(xml_event_attr(ev, "r:id"))
+            let estado: String = xml_event_attr(ev, "state")
+            ocultas.push(estado == "hidden" or estado == "veryHidden")
+        }
+        if ev.kind == "open" and ev.name == "workbookPr" {
+            let d4: String = xml_event_attr(ev, "date1904")
+            date1904 = d4 == "1" or d4 == "true"
+        }
+    }
+
+    // workbook.xml.rels: r:id -> parte, y dónde están las cadenas y los estilos.
+    var destinos: Map<String, String> = {}
+    var parte_cadenas: String = "xl/sharedStrings.xml"
+    var parte_estilos: String = "xl/styles.xml"
+    if z.has("xl/_rels/workbook.xml.rels") {
+        var rels_txt: String = ""
+        match __xlsx_entry(z, "xl/_rels/workbook.xml.rels") {
+            Result.Ok(v) => { rels_txt = v }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+        var rr: XmlReader = __xlsx_xml(rels_txt)
+        while true {
+            let ev: XmlEvent = rr.next()
+            if ev.kind == "end" { break }
+            if ev.kind == "error" { return Result.Err(__xlsx_xml_err("xl/_rels/workbook.xml.rels", ev)) }
+            if ev.kind == "open" and ev.name == "Relationship" {
+                let parte: String = __xlsx_part(xml_event_attr(ev, "Target"))
+                destinos.insert(xml_event_attr(ev, "Id"), parte)
+                let tipo: String = xml_event_attr(ev, "Type")
+                if tipo.endsWith("/sharedStrings") { parte_cadenas = parte }
+                if tipo.endsWith("/styles") { parte_estilos = parte }
+            }
+        }
+    }
+
+    var cadenas: Array = []
+    if z.has(parte_cadenas) {
+        var txt: String = ""
+        match __xlsx_entry(z, parte_cadenas) {
+            Result.Ok(v) => { txt = v }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+        match __xlsx_shared(txt, parte_cadenas) {
+            Result.Ok(v) => { cadenas = v }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+    }
+    var formatos: Array = []
+    var fechas: Array = []
+    if z.has(parte_estilos) {
+        var txt: String = ""
+        match __xlsx_entry(z, parte_estilos) {
+            Result.Ok(v) => { txt = v }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+        match __xlsx_styles(txt, parte_estilos) {
+            Result.Ok(v) => {
+                let f0: Array = v[0]
+                let f1: Array = v[1]
+                formatos = f0
+                fechas = f1
+            }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+    }
+
+    var hojas: Array = []
+    var celdas: int = 0
+    var k: int = 0
+    while k < nombres.length() {
+        let nombre: String = nombres[k]
+        let rid: String = ids[k]
+        let oculta: bool = ocultas[k]
+        var parte: String = destinos.get_or(rid, "")
+        if parte == "" { parte = "xl/worksheets/sheet" + int_to_string(k + 1) + ".xml" }
+        var txt: String = ""
+        match __xlsx_entry(z, parte) {
+            Result.Ok(v) => { txt = v }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+        var hoja: XlsxSheet = XlsxSheet { name: nombre, hidden: oculta, rows: [], merged: [] }
+        let leidas: Result<int, Error> = __xlsx_sheet(txt, parte, hoja, cadenas, formatos, fechas, date1904, opts.max_cells - celdas)
+        match leidas {
+            Result.Ok(n) => { celdas = celdas + n }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+        hojas.push(hoja)
+        k = k + 1
+    }
+    return Result.Ok(XlsxBook { sheets: hojas, date1904: date1904 })
+}
+
+// Pone `c` en hoja.rows[c.row - 1][c.col - 1], rellenando con celdas vacías.
+fn __xlsx_place(filas: Array, c: XlsxCell) {
+    while filas.length() < c.row {
+        let vacia: Array = []
+        filas.push(vacia)
+    }
+    let fila: Array = filas[c.row - 1]
+    while fila.length() < c.col - 1 {
+        fila.push(__xlsx_empty(c.row, fila.length() + 1))
+    }
+    if fila.length() == c.col - 1 {
+        fila.push(c)
+    } else {
+        fila[c.col - 1] = c
+    }
+}
+
+// Las celdas de una hoja, por eventos. Llena hoja.rows y hoja.merged (Arrays:
+// se comparten con la hoja aunque el struct llegue por valor). Devuelve cuántas
+// celdas con valor leyó.
+fn __xlsx_sheet(texto: String, parte: String, hoja: XlsxSheet, cadenas: Array, formatos: Array, fechas: Array, date1904: bool, tope: int) -> Result<int, Error> {
+    var r: XmlReader = __xlsx_xml(texto)
+    let filas: Array = hoja.rows
+    let combinadas: Array = hoja.merged
+    var fila_actual: int = 0
+    var col_actual: int = 0
+    // La celda en curso.
+    var en_celda: bool = false
+    var c_addr: String = ""
+    var c_tipo: String = ""
+    var c_estilo: int = 0
+    var c_valor: StringBuilder = StringBuilder.new()
+    var c_tiene_valor: bool = false
+    var en_v: int = 0
+    var en_is_t: int = 0
+    var en_is: int = 0
+    var leidas: int = 0
+    while true {
+        let ev: XmlEvent = r.next()
+        if ev.kind == "end" { break }
+        if ev.kind == "error" { return Result.Err(__xlsx_xml_err(parte, ev)) }
+        if ev.kind == "open" {
+            if ev.name == "row" {
+                let rtxt: String = xml_event_attr(ev, "r")
+                if rtxt != "" {
+                    fila_actual = string_to_int_or(rtxt, fila_actual + 1)
+                } else {
+                    fila_actual = fila_actual + 1
+                }
+                col_actual = 0
+            } else if ev.name == "c" {
+                en_celda = true
+                c_addr = xml_event_attr(ev, "r")
+                c_tipo = xml_event_attr(ev, "t")
+                c_estilo = string_to_int_or(xml_event_attr(ev, "s"), 0)
+                c_valor = StringBuilder.new()
+                c_tiene_valor = false
+            } else if ev.name == "v" and en_celda {
+                en_v = 1
+                c_tiene_valor = true
+            } else if ev.name == "is" and en_celda {
+                en_is = 1
+                c_tiene_valor = true
+            } else if ev.name == "t" and en_is == 1 {
+                en_is_t = 1
+            } else if ev.name == "mergeCell" {
+                combinadas.push(xml_event_attr(ev, "ref"))
+            }
+        } else if ev.kind == "text" {
+            if en_v == 1 or en_is_t == 1 { c_valor.append(ev.text) }
+        } else if ev.kind == "close" {
+            if ev.name == "v" { en_v = 0 }
+            if ev.name == "t" { en_is_t = 0 }
+            if ev.name == "is" { en_is = 0 }
+            if ev.name == "c" and en_celda {
+                en_celda = false
+                var fila: int = fila_actual
+                var col: int = col_actual + 1
+                if c_addr != "" {
+                    let cc: int = __xlsx_col_of(c_addr)
+                    let rf: int = __xlsx_row_of(c_addr)
+                    if cc > 0 { col = cc }
+                    if rf > 0 { fila = rf }
+                }
+                col_actual = col
+                if c_tiene_valor {
+                    leidas = leidas + 1
+                    if leidas > tope {
+                        return Result.Err(err_new(27, "invalid", "xlsx: el libro pasa el tope de celdas"))
+                    }
+                    var formato: String = "General"
+                    var es_fecha: int = 0
+                    if c_estilo >= 0 and c_estilo < formatos.length() {
+                        let fs: String = formatos[c_estilo]
+                        formato = fs
+                        let fd: int = fechas[c_estilo]
+                        es_fecha = fd
+                    }
+                    let crudo: String = c_valor.to_string()
+                    var celda: XlsxCell = XlsxCell { addr: xlsx_addr(fila, col), row: fila, col: col, kind: "text", text: crudo, number: 0.0, format: formato }
+                    if c_tipo == "s" {
+                        let idx: int = string_to_int_or(crudo, 0 - 1)
+                        if idx < 0 or idx >= cadenas.length() {
+                            return Result.Err(__xlsx_err(parte + ": la celda " + celda.addr + " apunta a una cadena compartida que no existe"))
+                        }
+                        let s: String = cadenas[idx]
+                        celda.text = s
+                    } else if c_tipo == "b" {
+                        celda.kind = "bool"
+                        if crudo == "1" or crudo == "true" { celda.text = "true" } else { celda.text = "false" }
+                    } else if c_tipo == "e" {
+                        celda.kind = "error"
+                    } else if c_tipo == "str" or c_tipo == "inlineStr" {
+                        celda.kind = "text"
+                    } else if c_tipo == "d" {
+                        celda.kind = "date"
+                    } else {
+                        // Número (t="n" o sin t).
+                        celda.number = string_to_float_or(crudo, 0.0)
+                        if es_fecha > 0 {
+                            celda.kind = "date"
+                            celda.text = __xlsx_serial_text(celda.number, date1904, es_fecha == 2)
+                        } else {
+                            celda.kind = "number"
+                        }
+                    }
+                    __xlsx_place(filas, celda)
+                }
+            }
+        }
+    }
+    return Result.Ok(leidas)
+}
+
+// ── Consultas ─────────────────────────────────────────────────────────────────
+
+// La hoja con ese nombre (exacto: " RESUMEN" con su espacio), o None.
+pub fn xlsx_sheet(book: XlsxBook, name: String) -> Option<XlsxSheet> {
+    for h: XlsxSheet in book.sheets {
+        if h.name == name { return Option.Some(h) }
+    }
+    return Option.None
+}
+
+// La celda en "B13"; una celda "empty" si está vacía o fuera de lo leído.
+pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell {
+    let col: int = __xlsx_col_of(addr)
+    let row: int = __xlsx_row_of(addr)
+    if row < 1 or col < 1 or row > sheet.rows.length() { return __xlsx_empty(row, col) }
+    let fila: Array = sheet.rows[row - 1]
+    if col > fila.length() { return __xlsx_empty(row, col) }
+    let c: XlsxCell = fila[col - 1]
+    return c
+}
+
+// ── Escribir (D-6) ──────────────────────────────────────────────────────────────
+//
+// Uso:
+//
+//   var h: XlsxSheetOut = xlsx_sheet_new("Libro de compras")
+//   h.row([xlsx_bold(xlsx_text("Fecha")), xlsx_bold(xlsx_text("Monto"))])
+//   h.row([xlsx_date("2026-09-01"), xlsx_number(1234.5, 2)])
+//   h.col_width(1, 14.0)
+//   h.merge("A5:B5")
+//   match xlsx_write([h]) {
+//       Result.Ok(bytes) => { write_file("salida.xlsx", bytes) }
+//       Result.Err(e) => { ... }
+//   }
+//
+// Decisiones (el porqué):
+//  - TEXTO como inline string (t="inlineStr"), no sharedStrings: no hay tabla que
+//    deduplicar ni índices que mantener; Excel, LibreOffice y openpyxl lo leen y
+//    Excel lo convierte a sharedStrings al guardar. Cuesta bytes si el texto se
+//    repite mucho, pero el zip (deflate) los recupera.
+//  - NÚMEROS: el texto de `<v>` lo formateo yo con aritmética entera (decimales
+//    fijos, sin notación científica ni la variación de float_to_string). El
+//    formato visible (`numFmt`) y el valor guardado coinciden: xlsx_number(1234.5, 2)
+//    guarda "1234.50" con formato "0.00". Con decimals < 0 el formato es General y
+//    el valor se guarda tal cual (solo ahí puede salir notación científica, si el
+//    número es enorme).
+//  - FECHAS: número de serie de Excel (época 1900, con el 29/02/1900 ficticio) y
+//    formato "dd/mm/yyyy".
+//  - ESTILOS: styles.xml se genera con solo las combinaciones (negrita × formato)
+//    que se usaron; el estilo 0 es siempre el de por omisión.
+//  - Los caracteres de control prohibidos por XML 1.0 (< 0x20 salvo tab, LF, CR)
+//    se descartan del texto: un solo byte así vuelve ilegible el libro entero.
+//  - Errores de argumentos (nombre de hoja, rango, fecha, número no finito) se
+//    detectan al escribir, en `xlsx_write`, porque los constructores no devuelven Result.
+
+
+pub struct XlsxOut {
+    kind: String,       // "text" | "number" | "int" | "date" | "bool" | "blank" | "baddate"
+    text: String,       // texto, fecha ISO, o el entero como texto
+    number: float,      // valor numérico, serie de la fecha, o 0/1 del bool
+    decimals: int,      // decimales fijos; < 0 = General
+    bold: bool,
+}
+
+pub struct XlsxSheetOut {
+    name: String,
+    rows: Array,        // Array<Array<XlsxOut>>
+    wcols: Array,       // columnas con ancho (int), en paralelo con wvals
+    wvals: Array,       // anchos (float)
+    merges: Array,      // Array<String>
+}
+
+pub fn xlsx_text(s: String) -> XlsxOut {
+    return XlsxOut { kind: "text", text: s, number: 0.0, decimals: 0, bold: false }
+}
+
+pub fn xlsx_number(v: float, decimals: int) -> XlsxOut {
+    return XlsxOut { kind: "number", text: "", number: v, decimals: decimals, bold: false }
+}
+
+pub fn xlsx_int(v: int) -> XlsxOut {
+    return XlsxOut { kind: "int", text: int_to_string(v), number: int_to_float(v), decimals: 0, bold: false }
+}
+
+pub fn xlsx_bool(b: bool) -> XlsxOut {
+    var n: float = 0.0
+    if b { n = 1.0 }
+    return XlsxOut { kind: "bool", text: "", number: n, decimals: 0, bold: false }
+}
+
+pub fn xlsx_blank() -> XlsxOut {
+    return XlsxOut { kind: "blank", text: "", number: 0.0, decimals: 0, bold: false }
+}
+
+// La misma celda, en negrita.
+pub fn xlsx_bold(c: XlsxOut) -> XlsxOut {
+    return XlsxOut { kind: c.kind, text: c.text, number: c.number, decimals: c.decimals, bold: true }
+}
+
+// Días desde 1970-01-01 de una fecha civil (algoritmo de H. Hinnant).
+fn __xlsxw_days(y0: int, m: int, d: int) -> int {
+    var y: int = y0
+    if m <= 2 { y = y - 1 }
+    var era: int = y / 400
+    if y < 0 and y % 400 != 0 { era = era - 1 }
+    let yoe: int = y - era * 400
+    var mp: int = m + 9
+    if m > 2 { mp = m - 3 }
+    let doy: int = (153 * mp + 2) / 5 + d - 1
+    let doe: int = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+fn __xlsxw_leap(y: int) -> bool {
+    return (y % 4 == 0 and y % 100 != 0) or y % 400 == 0
+}
+
+// "AAAA-MM-DD" -> celda fecha. Si no es una fecha válida (o es anterior a
+// 1900-01-01) queda kind "baddate" y xlsx_write devuelve Err.
+pub fn xlsx_date(iso: String) -> XlsxOut {
+    let mala: XlsxOut = XlsxOut { kind: "baddate", text: iso, number: 0.0, decimals: 0, bold: false }
+    if iso.length() != 10 { return mala }
+    if iso.charAt(4) != 45 or iso.charAt(7) != 45 { return mala }
+    var i: int = 0
+    while i < 10 {
+        if i != 4 and i != 7 {
+            let c: int = iso.charAt(i)
+            if c < 48 or c > 57 { return mala }
+        }
+        i = i + 1
+    }
+    let y: int = string_to_int_or(iso.substring(0, 4), 0)
+    let m: int = string_to_int_or(iso.substring(5, 7), 0)
+    let d: int = string_to_int_or(iso.substring(8, 10), 0)
+    if y < 1900 or m < 1 or m > 12 or d < 1 { return mala }
+    var dim: int = 31
+    if m == 4 or m == 6 or m == 9 or m == 11 { dim = 30 }
+    if m == 2 {
+        dim = 28
+        if __xlsxw_leap(y) { dim = 29 }
+    }
+    if d > dim { return mala }
+    let dias: int = __xlsxw_days(y, m, d)
+    // Serie 1 = 1900-01-01; Excel cuenta un 29/02/1900 que no existió (serie 60),
+    // así que desde el 1900-03-01 la serie es dias + 25569 y antes dias + 25568.
+    var serie: int = dias + 25569
+    if y == 1900 and m <= 2 { serie = dias + 25568 }
+    return XlsxOut { kind: "date", text: iso, number: int_to_float(serie), decimals: 0, bold: false }
+}
+
+pub fn xlsx_sheet_new(name: String) -> XlsxSheetOut {
+    return XlsxSheetOut { name: name, rows: [], wcols: [], wvals: [], merges: [] }
+}
+
+impl XlsxSheetOut {
+    // Agrega una fila de celdas (Array<XlsxOut>) al final de la hoja.
+    fn row(&mut self, cells: Array) {
+        let filas: Array = self.rows
+        filas.push(cells)
+    }
+
+    // Ancho de la columna `col` (desde 1) en caracteres. Repetir la columna pisa el ancho.
+    fn col_width(&mut self, col: int, width: float) {
+        let cs: Array = self.wcols
+        let vs: Array = self.wvals
+        var i: int = 0
+        while i < cs.length() {
+            let c: int = cs[i]
+            if c == col {
+                vs[i] = width
+                return
+            }
+            i = i + 1
+        }
+        cs.push(col)
+        vs.push(width)
+    }
+
+    // Combina un rango ("A1:D1").
+    fn merge(&mut self, range: String) {
+        let ms: Array = self.merges
+        ms.push(range)
+    }
+}
+
+fn __xlsxw_err(msg: String) -> Error {
+    return err_new(22, "invalid", "xlsx: " + msg)
+}
+
+// ── Formato de números ────────────────────────────────────────────────────────
+
+// Decimales fijos con aritmética entera: 1234.5, 2 -> "1234.50". Tope 15 decimales
+// y |v|*10^d < 9e18; si no cabe, cae a float_to_string.
+fn __xlsxw_fixed(v: float, d: int) -> String {
+    var a: float = v
+    var neg: bool = false
+    if v < 0.0 {
+        a = 0.0 - v
+        neg = true
+    }
+    var scale: int = 1
+    var k: int = 0
+    while k < d {
+        scale = scale * 10
+        k = k + 1
+    }
+    let big: float = a * int_to_float(scale)
+    if big >= 9000000000000000000.0 { return float_to_string(v) }
+    let sc: int = float_to_int(big + 0.5)
+    var ip: String = int_to_string(sc / scale)
+    var out: String = ip
+    if d > 0 {
+        var fp: String = int_to_string(sc % scale)
+        while fp.length() < d { fp = "0" + fp }
+        out = ip + "." + fp
+    }
+    if neg and sc != 0 { out = "-" + out }
+    return out
+}
+
+// Valor de <v> de una celda numérica.
+fn __xlsxw_num_text(c: XlsxOut) -> String {
+    if c.kind == "int" { return c.text }
+    if c.kind == "date" { return int_to_string(float_to_int(c.number)) }
+    if c.decimals < 0 {
+        let v: float = c.number
+        if v == int_to_float(float_to_int(v)) and v < 1000000000000000.0 and v > 0.0 - 1000000000000000.0 {
+            return int_to_string(float_to_int(v))
+        }
+        return float_to_string(v)
+    }
+    return __xlsxw_fixed(c.number, c.decimals)
+}
+
+// Clave del formato de una celda: "G" (General), "D" (fecha) o "N<d>".
+fn __xlsxw_fmt_key(c: XlsxOut) -> String {
+    if c.kind == "date" { return "D" }
+    if c.kind == "number" and c.decimals >= 0 { return "N" + int_to_string(c.decimals) }
+    return "G"
+}
+
+// Un XML mínimo de texto: descarta los caracteres de control ilegales y escapa.
+fn __xlsxw_clean(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c >= 32 or c == 9 or c == 10 or c == 13 { sb.append(chr(c)) }
+        i = i + 1
+    }
+    return xml_escape(sb.to_string())
+}
+
+// ── Validaciones ──────────────────────────────────────────────────────────────
+
+fn __xlsxw_check_name(name: String, vistos: Array) -> Result<int, Error> {
+    if name.length() == 0 { return Result.Err(__xlsxw_err("el nombre de una hoja no puede estar vacío")) }
+    if name.length() > 31 { return Result.Err(__xlsxw_err("el nombre de hoja '" + name + "' pasa los 31 caracteres")) }
+    var i: int = 0
+    while i < name.length() {
+        let c: int = name.charAt(i)
+        if c == 91 or c == 93 or c == 58 or c == 42 or c == 63 or c == 47 or c == 92 {
+            return Result.Err(__xlsxw_err("el nombre de hoja '" + name + "' tiene un carácter prohibido ([ ] : * ? / \\)"))
+        }
+        if c < 32 { return Result.Err(__xlsxw_err("el nombre de hoja tiene un carácter de control")) }
+        i = i + 1
+    }
+    let bajo: String = name.to_lower()
+    var k: int = 0
+    while k < vistos.length() {
+        let otro: String = vistos[k]
+        if otro == bajo { return Result.Err(__xlsxw_err("el nombre de hoja '" + name + "' está repetido")) }
+        k = k + 1
+    }
+    vistos.push(bajo)
+    return Result.Ok(0)
+}
+
+// "A1" -> col*2^20 + fila codificados en un solo int; -1 si no es una referencia válida.
+fn __xlsxw_ref(s: String) -> int {
+    var i: int = 0
+    var col: int = 0
+    while i < s.length() {
+        var c: int = s.charAt(i)
+        if c >= 97 and c <= 122 { c = c - 32 }
+        if c < 65 or c > 90 { break }
+        col = col * 26 + (c - 64)
+        i = i + 1
+        if col > 16384 { return 0 - 1 }
+    }
+    if col == 0 or i == s.length() { return 0 - 1 }
+    var row: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c < 48 or c > 57 { return 0 - 1 }
+        row = row * 10 + (c - 48)
+        if row > 1048576 { return 0 - 1 }
+        i = i + 1
+    }
+    if row < 1 { return 0 - 1 }
+    return col * 2097152 + row
+}
+
+fn __xlsxw_check_range(r: String) -> bool {
+    let p: int = r.indexOf(":")
+    if p < 0 { return false }
+    let a: int = __xlsxw_ref(r.substring(0, p))
+    let b: int = __xlsxw_ref(r.substring(p + 1, r.length()))
+    if a < 0 or b < 0 { return false }
+    return true
+}
+
+// ── Partes del paquete ────────────────────────────────────────────────────────
+
+fn __xlsxw_head() -> String {
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+}
+
+// Índice en `claves` (bold "0"/"1" + fmt) de la combinación, agregándola si es nueva.
+fn __xlsxw_style(claves: Array, c: XlsxOut) -> int {
+    var b: String = "0"
+    if c.bold { b = "1" }
+    let clave: String = b + __xlsxw_fmt_key(c)
+    var i: int = 0
+    while i < claves.length() {
+        let k: String = claves[i]
+        if k == clave { return i }
+        i = i + 1
+    }
+    claves.push(clave)
+    return claves.length() - 1
+}
+
+fn __xlsxw_styles_xml(claves: Array) -> String {
+    // Formatos propios (id >= 164): la fecha y los "0.000…" de más de 2 decimales.
+    var codigos: Array = []
+    var ids: Array = []
+    var xfs: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < claves.length() {
+        let k: String = claves[i]
+        let bold: bool = k.startsWith("1")
+        let fmt: String = k.substring(1, k.length())
+        var id: int = 0
+        if fmt == "D" {
+            id = 164
+            var ya: bool = false
+            for c: String in codigos { if c == "dd/mm/yyyy" { ya = true } }
+            if not ya {
+                codigos.push("dd/mm/yyyy")
+                ids.push(164)
+            }
+        } else if fmt.startsWith("N") {
+            let d: int = string_to_int_or(fmt.substring(1, fmt.length()), 0)
+            if d == 0 {
+                id = 1
+            } else if d == 2 {
+                id = 2
+            } else {
+                var code: String = "0."
+                var z: int = 0
+                while z < d {
+                    code = code + "0"
+                    z = z + 1
+                }
+                var pos: int = 0 - 1
+                var q: int = 0
+                while q < codigos.length() {
+                    let cq: String = codigos[q]
+                    if cq == code { pos = q }
+                    q = q + 1
+                }
+                if pos < 0 {
+                    codigos.push(code)
+                    pos = codigos.length() - 1
+                    ids.push(164 + pos)
+                }
+                id = 164 + pos
+            }
+        }
+        var fontId: int = 0
+        if bold { fontId = 1 }
+        var attrs: String = " numFmtId=\"" + int_to_string(id) + "\" fontId=\"" + int_to_string(fontId) + "\" fillId=\"0\" borderId=\"0\" xfId=\"0\""
+        if id != 0 { attrs = attrs + " applyNumberFormat=\"1\"" }
+        if bold { attrs = attrs + " applyFont=\"1\"" }
+        xfs.append("<xf" + attrs + "/>")
+        i = i + 1
+    }
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append(__xlsxw_head())
+    sb.append("<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">")
+    if codigos.length() > 0 {
+        sb.append("<numFmts count=\"" + int_to_string(codigos.length()) + "\">")
+        var j: int = 0
+        while j < codigos.length() {
+            let cj: String = codigos[j]
+            let idj: int = ids[j]
+            sb.append("<numFmt numFmtId=\"" + int_to_string(idj) + "\" formatCode=\"" + xml_escape(cj) + "\"/>")
+            j = j + 1
+        }
+        sb.append("</numFmts>")
+    }
+    sb.append("<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font><font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>")
+    sb.append("<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>")
+    sb.append("<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>")
+    sb.append("<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>")
+    sb.append("<cellXfs count=\"" + int_to_string(claves.length()) + "\">")
+    sb.append(xfs.to_string())
+    sb.append("</cellXfs>")
+    sb.append("<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>")
+    sb.append("</styleSheet>")
+    return sb.to_string()
+}
+
+fn __xlsxw_sheet_xml(h: XlsxSheetOut, claves: Array) -> Result<String, Error> {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append(__xlsxw_head())
+    sb.append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">")
+
+    // Anchos, ordenados por columna (el esquema exige orden ascendente).
+    let cs: Array = h.wcols
+    let vs: Array = h.wvals
+    var orden: Array = []
+    var i: int = 0
+    while i < cs.length() {
+        let c: int = cs[i]
+        let w: float = vs[i]
+        if c < 1 or c > 16384 { return Result.Err(__xlsxw_err("hoja '" + h.name + "': la columna " + int_to_string(c) + " está fuera de 1..16384")) }
+        if w < 0.0 or w > 255.0 { return Result.Err(__xlsxw_err("hoja '" + h.name + "': el ancho de la columna " + int_to_string(c) + " debe estar entre 0 y 255")) }
+        var pos: int = orden.length()
+        while pos > 0 {
+            let previo: int = orden[pos - 1]
+            let cp: int = cs[previo]
+            if cp > c { pos = pos - 1 } else { break }
+        }
+        orden.insert(pos, i)
+        i = i + 1
+    }
+    if orden.length() > 0 {
+        sb.append("<cols>")
+        for idx: int in orden {
+            let c: int = cs[idx]
+            let w: float = vs[idx]
+            let cn: String = int_to_string(c)
+            sb.append("<col min=\"" + cn + "\" max=\"" + cn + "\" width=\"" + __xlsxw_fixed(w, 2) + "\" customWidth=\"1\"/>")
+        }
+        sb.append("</cols>")
+    }
+
+    sb.append("<sheetData>")
+    let filas: Array = h.rows
+    var r: int = 0
+    while r < filas.length() {
+        let fila: Array = filas[r]
+        if r + 1 > 1048576 { return Result.Err(__xlsxw_err("hoja '" + h.name + "': más de 1048576 filas")) }
+        if fila.length() > 16384 { return Result.Err(__xlsxw_err("hoja '" + h.name + "': la fila " + int_to_string(r + 1) + " pasa las 16384 columnas")) }
+        var celdas: StringBuilder = StringBuilder.new()
+        var k: int = 0
+        while k < fila.length() {
+            let c: XlsxOut = fila[k]
+            let addr: String = xlsx_addr(r + 1, k + 1)
+            let s: int = __xlsxw_style(claves, c)
+            var sattr: String = ""
+            if s > 0 { sattr = " s=\"" + int_to_string(s) + "\"" }
+            if c.kind == "text" {
+                celdas.append("<c r=\"" + addr + "\"" + sattr + " t=\"inlineStr\"><is><t xml:space=\"preserve\">" + __xlsxw_clean(c.text) + "</t></is></c>")
+            } else if c.kind == "number" or c.kind == "int" {
+                let v: float = c.number
+                if v != v or v > 1000000000000000000000000000000.0 or v < 0.0 - 1000000000000000000000000000000.0 {
+                    return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " no tiene un número finito"))
+                }
+                if c.kind == "number" and c.decimals > 15 {
+                    return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " pide más de 15 decimales"))
+                }
+                celdas.append("<c r=\"" + addr + "\"" + sattr + "><v>" + __xlsxw_num_text(c) + "</v></c>")
+            } else if c.kind == "date" {
+                celdas.append("<c r=\"" + addr + "\"" + sattr + "><v>" + __xlsxw_num_text(c) + "</v></c>")
+            } else if c.kind == "bool" {
+                var b: String = "0"
+                if c.number > 0.5 { b = "1" }
+                celdas.append("<c r=\"" + addr + "\"" + sattr + " t=\"b\"><v>" + b + "</v></c>")
+            } else if c.kind == "blank" {
+                // Solo se escribe si lleva estilo (negrita); si no, no existe.
+                if s > 0 { celdas.append("<c r=\"" + addr + "\"" + sattr + "/>") }
+            } else if c.kind == "baddate" {
+                return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " tiene una fecha inválida ('" + c.text + "'; se espera AAAA-MM-DD desde 1900)"))
+            } else {
+                return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " no es un XlsxOut válido"))
+            }
+            k = k + 1
+        }
+        let cuerpo: String = celdas.to_string()
+        if cuerpo.length() > 0 {
+            sb.append("<row r=\"" + int_to_string(r + 1) + "\">" + cuerpo + "</row>")
+        }
+        r = r + 1
+    }
+    sb.append("</sheetData>")
+
+    let ms: Array = h.merges
+    if ms.length() > 0 {
+        sb.append("<mergeCells count=\"" + int_to_string(ms.length()) + "\">")
+        for m: String in ms {
+            if not __xlsxw_check_range(m) {
+                return Result.Err(__xlsxw_err("hoja '" + h.name + "': rango combinado inválido '" + m + "' (se espera algo como A1:D1)"))
+            }
+            sb.append("<mergeCell ref=\"" + xml_escape(m.to_upper()) + "\"/>")
+        }
+        sb.append("</mergeCells>")
+    }
+    sb.append("</worksheet>")
+    return Result.Ok(sb.to_string())
+}
+
+// ── Escribir ──────────────────────────────────────────────────────────────────
+
+// Arma el .xlsx de `sheets` (Array<XlsxSheetOut>) y devuelve sus bytes.
+pub fn xlsx_write(sheets: Array) -> Result<String, Error> {
+    if sheets.length() == 0 { return Result.Err(__xlsxw_err("un libro necesita al menos una hoja")) }
+    var vistos: Array = []
+    for h: XlsxSheetOut in sheets {
+        match __xlsxw_check_name(h.name, vistos) {
+            Result.Ok(_) => { }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+    }
+    // El estilo 0 (sin negrita, General) siempre existe.
+    var claves: Array = ["0G"]
+    var partes: Array = []
+    for h: XlsxSheetOut in sheets {
+        match __xlsxw_sheet_xml(h, claves) {
+            Result.Ok(x) => { partes.push(x) }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+    }
+
+    var ct: StringBuilder = StringBuilder.new()
+    ct.append(__xlsxw_head())
+    ct.append("<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">")
+    ct.append("<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>")
+    ct.append("<Default Extension=\"xml\" ContentType=\"application/xml\"/>")
+    ct.append("<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>")
+    ct.append("<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>")
+    var wb: StringBuilder = StringBuilder.new()
+    wb.append(__xlsxw_head())
+    wb.append("<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets>")
+    var rels: StringBuilder = StringBuilder.new()
+    rels.append(__xlsxw_head())
+    rels.append("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">")
+    var n: int = 0
+    for h: XlsxSheetOut in sheets {
+        n = n + 1
+        let ns: String = int_to_string(n)
+        ct.append("<Override PartName=\"/xl/worksheets/sheet" + ns + ".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>")
+        wb.append("<sheet name=\"" + xml_escape(h.name) + "\" sheetId=\"" + ns + "\" r:id=\"rId" + ns + "\"/>")
+        rels.append("<Relationship Id=\"rId" + ns + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet" + ns + ".xml\"/>")
+    }
+    ct.append("</Types>")
+    wb.append("</sheets></workbook>")
+    rels.append("<Relationship Id=\"rId" + int_to_string(n + 1) + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>")
+    rels.append("</Relationships>")
+
+    var root: StringBuilder = StringBuilder.new()
+    root.append(__xlsxw_head())
+    root.append("<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>")
+
+    var w: ZipWriter = zip_writer()
+    w.add("[Content_Types].xml", ct.to_string())
+    w.add("_rels/.rels", root.to_string())
+    w.add("xl/workbook.xml", wb.to_string())
+    w.add("xl/_rels/workbook.xml.rels", rels.to_string())
+    w.add("xl/styles.xml", __xlsxw_styles_xml(claves))
+    var i: int = 0
+    while i < partes.length() {
+        let x: String = partes[i]
+        w.add("xl/worksheets/sheet" + int_to_string(i + 1) + ".xml", x)
+        i = i + 1
+    }
+    return Result.Ok(w.finish())
+}

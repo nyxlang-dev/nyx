@@ -1,0 +1,199 @@
+// test-460 — std/xml: lector por eventos y árbol. Cubre atributos con ambas comillas, entidades predefinidas y numéricas (hasta 4 bytes UTF-8), CDATA, comentarios y PI ignorados, autocierre, ñ/acentos, nombres con prefijo, rechazo de DOCTYPE, tope de profundidad y de tamaño, XML mal formado, y fragmentos con la forma de sharedStrings.xml y de una hoja de Excel.
+import "std/xml"
+import "std/error"
+
+// Junta los eventos en un texto compacto: o:nombre, c:nombre, t:texto, y E:mensaje si hay error.
+fn trace(src: String) -> String {
+    var r: XmlReader = xml_reader(src)
+    var out: String = ""
+    while true {
+        let ev: XmlEvent = r.next()
+        if ev.kind == "end" { break }
+        if ev.kind == "error" {
+            out = out + "E "
+            break
+        }
+        if ev.kind == "open" { out = out + "o:" + ev.name + " " }
+        if ev.kind == "close" { out = out + "c:" + ev.name + " " }
+        if ev.kind == "text" { out = out + "t:" + ev.text + " " }
+    }
+    return out
+}
+
+// Parsea con los topes por omisión; aborta si falla.
+fn parse_ok(src: String) -> XmlNode {
+    let r: Result<XmlNode, Error> = xml_parse(src, xml_opts())
+    match r {
+        Result.Ok(n) => { return n }
+        Result.Err(e) => {
+            assert(false, "xml_parse falló: " + e.msg)
+            return XmlNode { name: "", attrs: {}, children: [], text: "" }
+        }
+    }
+}
+
+fn is_err(src: String) -> bool {
+    return trace(src).endsWith("E ")
+}
+
+fn main() -> int {
+    // Atributos con las dos comillas y entidades en el valor.
+    var r: XmlReader = xml_reader("<?xml version=\"1.0\" encoding=\"UTF-8\"?><a x=\"1\" y='dos &amp; &quot;tres&quot;'/>")
+    let e1: XmlEvent = r.next()
+    assert(e1.kind == "open" and e1.name == "a", "open a")
+    assert(xml_event_attr(e1, "x") == "1", "attr comilla doble")
+    assert(xml_event_attr(e1, "y") == "dos & \"tres\"", "attr comilla simple con entidades")
+    assert(xml_event_attr(e1, "z") == "", "attr ausente")
+    let e2: XmlEvent = r.next()
+    assert(e2.kind == "close" and e2.name == "a", "autocierre emite close")
+    let e3: XmlEvent = r.next()
+    assert(e3.kind == "end", "end")
+    let e4: XmlEvent = r.next()
+    assert(e4.kind == "end", "end es estable")
+
+    // Entidades predefinidas y numéricas, incluida una de 4 bytes.
+    let t1: String = trace("<p>&lt;&gt;&amp;&quot;&apos; &#65;&#x42; &#233; &#x1F600;</p>")
+    assert(t1 == "o:p t:<>&\"' AB é 😀 c:p ", "entidades: " + t1)
+    let doc: XmlNode = parse_ok("<p>&#x1F600;</p>")
+    assert(doc.text.length() == 4, "emoji ocupa 4 bytes")
+    assert(doc.text.charAt(0) == 240 and doc.text.charAt(1) == 159 and doc.text.charAt(2) == 152 and doc.text.charAt(3) == 128, "bytes UTF-8 del emoji")
+
+    // CDATA, comentarios, PI.
+    let t2: String = trace("<?xml version=\"1.0\"?><!-- c --><a><?pi x?>uno<![CDATA[<b>&amp;</b>]]><!-- otro -->dos</a>")
+    assert(t2 == "o:a t:uno t:<b>&amp;</b> t:dos c:a ", "cdata/comentarios: " + t2)
+
+    // ñ y acentos, nombres con prefijo.
+    let t3: String = trace("<x:row x:r=\"1\">año más</x:row>")
+    assert(t3 == "o:x:row t:año más c:x:row ", "prefijo y acentos: " + t3)
+    let pn: XmlNode = parse_ok("<x:row x:r=\"7\">ñ</x:row>")
+    assert(pn.name == "x:row" and xml_attr(pn, "x:r") == "7" and pn.text == "ñ", "árbol con prefijo")
+
+    // Espacio en blanco: el de sangría se omite, el resto se conserva sin recortar.
+    let t4: String = trace("<a>\n  <t xml:space=\"preserve\"> b</t>\n</a>")
+    assert(t4 == "o:a o:t t: b c:t c:a ", "espacio preservado: " + t4)
+
+    // DOCTYPE rechazado (sin XXE).
+    assert(is_err("<!DOCTYPE a [<!ENTITY x SYSTEM \"file:///etc/passwd\">]><a>&x;</a>"), "doctype")
+    let dt: Result<XmlNode, Error> = xml_parse("<!DOCTYPE a><a/>", xml_opts())
+    assert(dt.is_err(), "doctype en árbol")
+
+    // Tope de profundidad.
+    var deep: String = ""
+    var i: int = 0
+    while i < 300 {
+        deep = deep + "<a>"
+        i = i + 1
+    }
+    i = 0
+    while i < 300 {
+        deep = deep + "</a>"
+        i = i + 1
+    }
+    let dr: Result<XmlNode, Error> = xml_parse(deep, xml_opts())
+    assert(dr.is_err(), "profundidad 300 supera 256")
+    match dr {
+        Result.Err(er) => { assert(er.code == 27 and er.kind == "invalid", "código de tope") }
+        Result.Ok(n) => { assert(false, "no debía parsear") }
+    }
+    let small: XmlOpts = XmlOpts { max_depth: 300, max_bytes: 1000000, keep_whitespace: false }
+    let dok: Result<XmlNode, Error> = xml_parse(deep, small)
+    assert(dok.is_ok(), "profundidad 300 con tope 300")
+    // Tope de tamaño.
+    let tiny: XmlOpts = XmlOpts { max_depth: 10, max_bytes: 5, keep_whitespace: false }
+    let tr: Result<XmlNode, Error> = xml_parse("<a>hola</a>", tiny)
+    match tr {
+        Result.Err(er) => { assert(er.code == 27, "tope de bytes") }
+        Result.Ok(n) => { assert(false, "no debía parsear por tamaño") }
+    }
+
+    // Mal formado.
+    assert(is_err("<a></b>"), "cierre que no coincide")
+    assert(is_err("<a><b></a>"), "cierre cruzado")
+    assert(is_err("<a><b>"), "sin cerrar")
+    assert(is_err("<a>&foo;</a>"), "entidad desconocida")
+    assert(is_err("<a>&amp</a>"), "entidad sin ;")
+    assert(is_err("<a x=1/>"), "atributo sin comillas")
+    assert(is_err("<a x=\"1\" x=\"2\"/>"), "atributo repetido")
+    assert(is_err("<a/><b/>"), "dos raíces")
+    assert(is_err("</a>"), "cierre sin apertura")
+    assert(is_err(""), "vacío")
+    assert(is_err("<a x=\"&zz;\"/>"), "entidad desconocida en atributo")
+    assert(is_err("<a>&#0;</a>"), "codepoint 0")
+    let bad: Result<XmlNode, Error> = xml_parse("<a></b>", xml_opts())
+    match bad {
+        Result.Err(er) => { assert(er.code == 22 and er.kind == "parse", "código de parse") }
+        Result.Ok(n) => { assert(false, "no debía parsear") }
+    }
+
+    // sharedStrings.xml por eventos.
+    let sst: String = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"2\" uniqueCount=\"2\"><si><t>Hola</t></si><si><r><t>a</t></r><r><t xml:space=\"preserve\"> b</t></r></si></sst>"
+    var rs: XmlReader = xml_reader(sst)
+    var items: Array<String> = []
+    var cur: String = ""
+    var in_si: bool = false
+    while true {
+        let ev: XmlEvent = rs.next()
+        if ev.kind == "end" { break }
+        assert(ev.kind != "error", "sst sin error: " + ev.text)
+        if ev.kind == "open" and ev.name == "si" {
+            in_si = true
+            cur = ""
+        }
+        if ev.kind == "text" and in_si { cur = cur + ev.text }
+        if ev.kind == "close" and ev.name == "si" {
+            in_si = false
+            items.push(cur)
+        }
+    }
+    assert(items.length() == 2 and items[0] == "Hola" and items[1] == "a b", "sst por eventos")
+    // ... y por árbol.
+    let st: XmlNode = parse_ok(sst)
+    assert(st.name == "sst" and xml_attr(st, "count") == "2", "sst raíz")
+    assert(st.children.length() == 2, "dos si")
+    let si2: XmlNode = st.children[1]
+    assert(si2.children.length() == 2, "dos runs")
+    let run2: XmlNode = si2.children[1]
+    let t2n: XmlNode = run2.children[0]
+    assert(t2n.text == " b", "texto preservado en el árbol")
+    match xml_child(st.children[0], "t") {
+        Option.Some(t) => { assert(t.text == "Hola", "xml_child") }
+        Option.None => { assert(false, "xml_child none") }
+    }
+    let nada: Option<XmlNode> = xml_child(st, "nada")
+    assert(nada.is_none(), "xml_child ausente")
+
+    // Hoja de Excel.
+    let ws: String = "<worksheet><sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\"><v>12.5</v></c></row></sheetData></worksheet>"
+    var rw: XmlReader = xml_reader(ws)
+    var refs: String = ""
+    var vals: String = ""
+    while true {
+        let ev: XmlEvent = rw.next()
+        if ev.kind == "end" { break }
+        assert(ev.kind != "error", "hoja sin error")
+        if ev.kind == "open" and ev.name == "c" { refs = refs + xml_event_attr(ev, "r") + ":" + xml_event_attr(ev, "t") + ";" }
+        if ev.kind == "text" { vals = vals + ev.text + ";" }
+    }
+    assert(refs == "A1:s;B1:;", "refs: " + refs)
+    assert(vals == "0;12.5;", "vals: " + vals)
+    let wt: XmlNode = parse_ok(ws)
+    match xml_child(wt, "sheetData") {
+        Option.Some(sd) => {
+            let row: XmlNode = sd.children[0]
+            assert(xml_attr(row, "r") == "1" and row.children.length() == 2, "row")
+            let c2: XmlNode = row.children[1]
+            assert(xml_attr(c2, "r") == "B1" and c2.children.length() == 1, "celda B1")
+            let v2: XmlNode = c2.children[0]
+            assert(v2.text == "12.5", "valor B1")
+        }
+        Option.None => { assert(false, "sheetData") }
+    }
+
+    // Escape.
+    assert(xml_escape("a&b<c>\"d'") == "a&amp;b&lt;c&gt;&quot;d&apos;", "xml_escape")
+    let rt: XmlNode = parse_ok("<a>" + xml_escape("x<&>'\"ñ") + "</a>")
+    assert(rt.text == "x<&>'\"ñ", "escape ida y vuelta")
+
+    println("xml ok")
+    return 0
+}

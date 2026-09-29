@@ -1,0 +1,77 @@
+// Nyx by Example: armar y leer un archivo .zip.
+//
+// El caso real: un ERP empaqueta varios reportes en un solo .zip para
+// adjuntarlo a un correo, y recibe zips de afuera (de un banco, de un
+// contador) que hay que abrir. std/zip es Nyx puro, sin zlib: el mismo
+// programa corre en el servidor y compilado a wasm32-wasi.
+//
+// Lo que muestra:
+//   - zip_writer() + add(nombre, datos) + finish(): los bytes del .zip. Cada
+//     entrada va con DEFLATE salvo que comprimir la agrande;
+//   - zip_read() lee el índice (directorio central); entry(nombre) descomprime
+//     UNA entrada y verifica su CRC-32;
+//   - los topes contra bombas zip (ZipReadOpts): un archivo que llega de
+//     afuera no se lee sin límites;
+//   - un zip que no es zip da Err, no datos a medias.
+//
+// Correr: nyx run (todo en memoria; no escribe archivos)
+
+import "std/zip"
+import "std/error"
+
+fn armar() -> String {
+    var w: ZipWriter = zip_writer()
+    var ventas: String = "fecha,monto\n"
+    var i: int = 1
+    while i <= 200 {
+        ventas = ventas + "2026-09-" + int_to_string(1 + i % 28) + "," + int_to_string(i * 15) + "\n"
+        i = i + 1
+    }
+    w.add("ventas.csv", ventas)              // se repite mucho: DEFLATE lo achica
+    w.add("notas/lea-me.txt", "Cierre de septiembre.\n")
+    return w.finish()
+}
+
+fn main() -> int {
+    let bytes: String = armar()
+    print("zip armado: " + int_to_string(bytes.length()) + " bytes")
+
+    // Lo que llega de afuera se lee con topes. Los de por omisión (64 MB de
+    // zip, 256 MB por entrada, 512 MB en total) se pueden ajustar.
+    var opts: ZipReadOpts = zip_read_opts()
+    opts.max_entry = 1024 * 1024
+    match zip_read(bytes, opts) {
+        Result.Ok(z) => {
+            var arch: ZipArchive = z
+            for nombre: String in arch.names() {
+                print("entrada: " + nombre)
+            }
+            if arch.has("ventas.csv") { print("tiene ventas.csv") }
+            match arch.entry("notas/lea-me.txt") {
+                Result.Ok(txt) => { print("contenido: " + txt.trim()) }
+                Result.Err(e) => {
+                    print("no se pudo leer la entrada: " + error_to_string(e))
+                    return 1
+                }
+            }
+            match arch.entry("ventas.csv") {
+                Result.Ok(csv) => { print("ventas.csv: " + int_to_string(csv.length()) + " bytes descomprimidos") }
+                Result.Err(e) => {
+                    print("no se pudo leer la entrada: " + error_to_string(e))
+                    return 1
+                }
+            }
+        }
+        Result.Err(e) => {
+            print("zip inválido: " + error_to_string(e))
+            return 1
+        }
+    }
+
+    // Un archivo que no es zip: Err con el motivo.
+    match zip_read("esto no es un zip", zip_read_opts()) {
+        Result.Ok(_) => { print("inesperado: lo aceptó") return 1 }
+        Result.Err(e) => { print("rechazado: " + e.msg) }
+    }
+    return 0
+}

@@ -4937,6 +4937,26 @@ Receta completa: `examples/by-example/118-pdf-invoice.nx`.
 
 ---
 
+## Planillas y archivos comprimidos (`std/xlsx`, `std/xml`, `std/zip`)
+
+Leen y escriben `.xlsx` en Nyx puro (sin C: igual en nativo y en `wasm32-wasi`). Un `.xlsx` es un zip
+con XML adentro, así que `std/xlsx` se apoya en los otros dos, que también sirven solos.
+
+- **`std/zip`**: contenedor `.zip` (`zip_read`, `ZipArchive.entry`, `zip_writer`) y el códec DEFLATE
+  (RFC 1951), zlib, CRC-32 y Adler-32 con nombres `zip_*` (no chocan con `std/compress`). Topes contra
+  bombas zip en `ZipReadOpts`; Zip64 y cifrado se rechazan.
+- **`std/xml`**: lector por eventos (`xml_reader`) y árbol chico (`xml_parse`). `<!DOCTYPE` es error
+  (sin XXE ni bombas de expansión).
+- **`std/xlsx`**: `xlsx_read` (celdas tipadas: text, number, date, bool, error, empty; fechas en ISO con
+  épocas 1900 y 1904; las fórmulas no se evalúan, se lee el valor en caché) y `xlsx_write`
+  (`xlsx_sheet_new`, `row`, `xlsx_text`/`xlsx_number`/`xlsx_int`/`xlsx_date`/`xlsx_bool`/`xlsx_bold`,
+  `col_width`, `merge`).
+
+Recetas: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro.nx` y
+`125-xlsx-leer-hoja.nx`.
+
+---
+
 ## Middleware and Sessions
 
 ### Middleware (`std/web.nx`)

@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.35.0 -->
-<!-- nyx-stdlib: 152877893-854318 -->
+<!-- nyx-stdlib: 426079115-942548 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1023,6 +1023,26 @@
 - `pub fn stream_pending(s: Array) -> int`
 - `pub fn stream_collect(s: Array) -> Array`
 
+### `std/xlsx`
+
+`import "std/xlsx"` — 15 funciones:
+
+- `pub fn xlsx_read_opts() -> XlsxReadOpts`
+- `pub fn xlsx_col_name(col: int) -> String`
+- `pub fn xlsx_addr(row: int, col: int) -> String`
+- `pub fn xlsx_read(bytes: String, opts: XlsxReadOpts) -> Result<XlsxBook, Error>`
+- `pub fn xlsx_sheet(book: XlsxBook, name: String) -> Option<XlsxSheet>`
+- `pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell`
+- `pub fn xlsx_text(s: String) -> XlsxOut`
+- `pub fn xlsx_number(v: float, decimals: int) -> XlsxOut`
+- `pub fn xlsx_int(v: int) -> XlsxOut`
+- `pub fn xlsx_bool(b: bool) -> XlsxOut`
+- `pub fn xlsx_blank() -> XlsxOut`
+- `pub fn xlsx_bold(c: XlsxOut) -> XlsxOut`
+- `pub fn xlsx_date(iso: String) -> XlsxOut`
+- `pub fn xlsx_sheet_new(name: String) -> XlsxSheetOut`
+- `pub fn xlsx_write(sheets: Array) -> Result<String, Error>`
+
 ### `std/array`
 
 `import "std/array"` — 10 funciones:
@@ -1278,6 +1298,22 @@
 - `pub fn float_to_fixed(x: float, decimals: int) -> String`
 - `pub fn try_mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> Result<int, Error>`
 
+### `std/zip`
+
+`import "std/zip"` — 11 funciones:
+
+- `pub fn zip_crc32_table() -> Array`
+- `pub fn zip_crc32_part(tab: Array, b: String, desde: int, hasta: int) -> int`
+- `pub fn zip_crc32(data: String) -> int`
+- `pub fn zip_adler32(b: String) -> int`
+- `pub fn zip_inflate_raw(data: String, max_out: int) -> Result<String, Error>`
+- `pub fn zip_inflate_zlib(zdata: String, max_out: int) -> Result<String, Error>`
+- `pub fn zip_deflate_raw(data: String) -> String`
+- `pub fn zip_deflate_zlib(data: String) -> String`
+- `pub fn zip_read_opts() -> ZipReadOpts`
+- `pub fn zip_read(bytes: String, opts: ZipReadOpts) -> Result<ZipArchive, Error>`
+- `pub fn zip_writer() -> ZipWriter`
+
 ### `std/percent`
 
 `import "std/percent"` — 1 funciones:
@@ -1388,6 +1424,19 @@
 - `pub fn errno_to_kind(code: int) -> String`
 - `pub fn error_to_string(e: Error) -> String`
 - `pub fn is_eof(e: Error) -> bool`
+
+### `std/xml`
+
+`import "std/xml"` — 8 funciones:
+
+- `pub fn xml_opts() -> XmlOpts` — Topes por omisión: 256 niveles y 64 MB.
+- `pub fn xml_reader(text: String) -> XmlReader` — Crea un lector con los topes por omisión.
+- `pub fn xml_reader_opts(text: String, opts: XmlOpts) -> XmlReader` — Crea un lector con topes propios.
+- `pub fn xml_parse(text: String, opts: XmlOpts) -> Result<XmlNode, Error>` — Parsea un documento completo y devuelve el elemento raíz. Err(parse, 22) si está mal formado; Err(invalid, 27) si supera un tope.
+- `pub fn xml_attr(node: XmlNode, name: String) -> String` — Valor del atributo `name` de un nodo, o "" si no está.
+- `pub fn xml_event_attr(ev: XmlEvent, name: String) -> String` — Valor del atributo `name` de un evento "open", o "" si no está.
+- `pub fn xml_child(node: XmlNode, name: String) -> Option<XmlNode>` — Primer hijo directo llamado `name`, o None.
+- `pub fn xml_escape(s: String) -> String` — Escapa `& < > " '` para escribir XML (texto o valor de atributo).
 
 ### `std/serve`
 

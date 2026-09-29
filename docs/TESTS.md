@@ -12,11 +12,11 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **475 archivos / 474 ARM64** | 2026-09-29: +3 (`455..457`). 2026-09-27/28: +4 (`451..454`). 2026-09-25: +1 (`450`). 2026-09-24: +15 (`435..449`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **480 archivos / 479 ARM64** | 2026-09-29: +8 (`455..462`). 2026-09-27/28: +4 (`451..454`). 2026-09-25: +1 (`450`). 2026-09-24: +15 (`435..449`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **354** | +6 el 2026-09-29 (NYX2019: 3 errores, 2 avisos, el positivo); +6 el 09-27; +9 el 09-24; +24 el 09-23. Detalle en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
-| Stdlib | `make test-stdlib` | **9** | math + array + integración + template + multipart (serve al core, 2026-08-31) + smtp ×4 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
+| Stdlib | `make test-stdlib` | **9** + verificación externa de zip | math + array + integración + template + multipart (serve al core, 2026-08-31) + smtp ×4 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
 | Runtime C unit (B4) | `make test-runtime` | **35 suites / 1756 asserts** | verificado con corrida real 2026-09-20; +8 del fix de SIGPIPE en TLS (`test_tls_write_to_gone_peer_no_sigpipe`, `test_tls` 261 → 268) sobre los 1748 del arco `http-tls-cliente`; detalle en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **30 programas + 6 casos stdin (x2 targets) + 69 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (69: templates 2, tooling 17, coverage 9, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
@@ -35,14 +35,14 @@
 | Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **20 checks** (9 negativos + 11 positivos) | `[build]`/`--main` (errores previos; no pisa el principal); +6 (2026-09-15): `--main` no reescribe `nyx.lock` (nativo/wasm) ni contradice el manifiesto |
 | Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
-| Recetas by-example | `make test-examples` | **129** (111 ejecutan, 18 solo compilan+enlazan) | +10 desde el 09-23 (`113..122`; 114, 117 y 121 solo wasm); compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
+| Recetas by-example | `make test-examples` | **132** (114 ejecutan, 18 solo compilan+enlazan) | +3 el 09-29 (`123..125`, zip y xlsx); +10 desde el 09-23 (`113..122`; 114, 117 y 121 solo wasm); compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **26 checks** | +1 el 2026-09-20 (NYX3007: `include_bytes` no existe al interpretar); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
 | PostgreSQL E2E | (dentro de `make test-integration`, enganchado el 2026-09-14) `run_postgres_tests.sh` | **9 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **13 sub-suites** (keep-alive de serve 23 + plazos de http_serve 8 + cas_extra 5 + WS proxy 6 + FFI 3 + slots 9 + llm 3 + HTTP/2 1 + body cap 6 + serve contrato 10 + serve bind 6-9 + smoke 103 + serve+kv 10) | detalle de las altas en `CHANGELOG.md` |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
-| WASM (wasm32-wasi) | `make test-wasm` | **67** + guarda de builtins | SKIP sin toolchain (salvo guards); +2 el 2026-09-27 (51 cripto, wasmtime + shim); +16 el 2026-09-24 (41 serial, 42-44 barcode, 45-49 pdf, 50 bytes); +6 el 09-23. Detalle en `CHANGELOG.md` |
+| WASM (wasm32-wasi) | `make test-wasm` | **69** + guarda de builtins | SKIP sin toolchain (salvo guards); +2 el 09-29 (52 xlsx); +2 el 09-27 (51 cripto); +16 el 2026-09-24 (41 serial, 42-44 barcode, 45-49 pdf, 50 bytes); +6 el 09-23. Detalle en `CHANGELOG.md` |
 | Verify + compiler-unit + fmt | `make test-unit` | **23** (13 verify + 5 compiler-unit + 5 fmt) | 5 de 7 compiler-unit activos (resto SKIP, ver abajo); la fila decía 4 hasta que la máquina B del reparto lo midió: `test-emit-bytes-global` ya corría en el runner |
 
 `make test-all` corre las 15 suites, en el orden del `Makefile`: regression +

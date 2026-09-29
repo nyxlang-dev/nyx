@@ -326,6 +326,35 @@ static void nyx_stack_guard_install(void) {
 // Thread-local: which worker is running on this OS thread
 static OS_THREAD_LOCAL NyxWorker* g_current_worker = NULL;
 
+// Leer g_current_worker SIEMPRE a través de esto, nunca directo (salvo el
+// store de worker_thread). Una goroutina que hace os_ctx_swap puede volver en
+// OTRO worker, o sea en otro OS thread; pero para el compilador una función
+// corre entera en un solo thread, así que la DIRECCIÓN de una variable TLS
+// (`llvm.threadlocal.address`) se calcula una vez y se reusa a través del
+// swap. En win32 esa dirección es gs:[0x58][_tls_index] + offset y queda
+// cacheada en un registro: el join anidado (yield inlineado en el loop de
+// nyx_goroutine_join) retomado en el worker B leía el g_current_worker del
+// worker A y hacía swap guardando SU fiber en el ctx de la goroutina que A
+// estaba corriendo, hacia el scheduler_ctx de A — dos threads sobre la misma
+// fiber: SEGV, cuelgue o el abort de «entry retorno» (test-241, ~29% en
+// win32; W4 Task 3). En x86_64 ELF el acceso se pliega a %fs:...@TPOFF por
+// uso y se re-evalúa, por eso Linux no lo veía; es la misma clase de bug que
+// MSVC tapa con /GT («fiber-safe TLS»), flag que clang no tiene. noinline
+// hace que cada llamada calcule la dirección en el thread que la hace; no se
+// CSE-a a través del swap porque os_ctx_swap es una llamada opaca que puede
+// escribir memoria.
+// EN: always read g_current_worker through this (only worker_thread stores
+// it directly). A goroutine that os_ctx_swap()s may resume on ANOTHER worker
+// thread, but the compiler assumes a function runs on one thread and caches
+// the TLS address across the swap (win32: gs:[0x58][_tls_index]+off kept in
+// a register). The nested join then read worker A's slot from worker B and
+// swapped into A's scheduler fiber while A was running it (test-241, W4
+// Task 3). Same bug class MSVC's /GT ("fiber-safe TLS") avoids; clang has no
+// such flag. noinline forces a fresh per-call, per-thread address.
+static __attribute__((noinline)) NyxWorker* current_worker(void) {
+    return g_current_worker;
+}
+
 // ============================================================
 // Scheduler <-> Event Loop bridge (Track 5a.2b)
 // ------------------------------------------------------------
@@ -711,7 +740,7 @@ static void goroutine_entry(void* arg) {
     os_mutex_unlock(&g_join_lock);
 
     // Return to scheduler context
-    NyxWorker* w = g_current_worker;
+    NyxWorker* w = current_worker();
     if (w) {
         os_ctx_swap(g->context, &w->scheduler_ctx);
     }
@@ -1500,7 +1529,7 @@ void nyx_goroutine_detach(int64_t gid) {
 }
 
 void nyx_goroutine_yield(void) {
-    NyxWorker* w = g_current_worker;
+    NyxWorker* w = current_worker();
     if (!w || !w->current) return;
 
     NyxGoroutine* g = w->current;
@@ -1517,7 +1546,8 @@ int64_t nyx_goroutine_join(int64_t gid) {
     //     back to the scheduler and retries, like a cooperative spin.
     //   - anything else (typically main()) blocks on the condvar, woken by
     //     goroutine_entry's broadcast when ANY goroutine completes.
-    if (g_current_worker && g_current_worker->current) {
+    NyxWorker* self = current_worker();
+    if (self && self->current) {
         for (;;) {
             os_mutex_lock(&g_join_lock);
             int rc = try_claim_locked(gid, &result);
@@ -1551,7 +1581,7 @@ int64_t nyx_goroutine_join(int64_t gid) {
 // the BLOCKED arm in worker_thread) -- the OS thread is NOT tied up sleeping;
 // it goes back to running other goroutines/polling until the timer fires.
 void nyx_goroutine_sleep(int64_t ms) {
-    NyxWorker* w = g_current_worker;
+    NyxWorker* w = current_worker();
     if (!w || !w->current) {
         // Not running on a goroutine (e.g. called from main / a plain OS
         // thread outside the scheduler): there is no context to suspend, so
@@ -1614,7 +1644,7 @@ void nyx_goroutine_sleep(int64_t ms) {
 // is expected to retry its syscall -- e.g. read()/write() -- since readiness
 // doesn't guarantee the full requested transfer completed).
 int nyx_goroutine_block_on_fd(int fd, int events) {
-    NyxWorker* w = g_current_worker;
+    NyxWorker* w = current_worker();
     if (!w || !w->current) {
         // Off-goroutine caller: there is no scheduler context to suspend.
         // Documented fallback -- callers outside a goroutine must use a
@@ -1638,7 +1668,15 @@ int nyx_goroutine_block_on_fd(int fd, int events) {
     g->woken = 0;
     g->parked = 0;
     g->home_worker = w->id;
-    nyx_event_loop_add(g_loop, fd, events, wake_cb, g);
+    // W4 Task 4 (2026-09-29): si el event loop no registró el fd, NADA va a
+    // despertar a esta goroutina — antes se ignoraba el -1 y quedaba BLOCKED
+    // para siempre (en win32, con cualquier fd: su event loop no tiene
+    // readiness; en POSIX, con un fd inválido). Se deshace el estado y se
+    // devuelve -1: el llamador lo trata igual que el camino fuera de goroutina.
+    if (nyx_event_loop_add(g_loop, fd, events, wake_cb, g) != 0) {
+        g->state = NYX_GOROUTINE_RUNNING;
+        return -1;
+    }
     os_ctx_swap(g->context, &w->scheduler_ctx);
     return 0;
 }

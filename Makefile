@@ -502,6 +502,7 @@ build-test:
 ## Tests de la Standard Library
 test-stdlib:
 	bash scripts/run_stdlib_tests.sh
+	bash scripts/testing/run_zip_verify.sh
 
 ## Verifica que los ejemplos de "Nyx by Example" compilan (cookbook público)
 test-examples:

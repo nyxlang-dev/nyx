@@ -9,7 +9,39 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Agregado
+
+- **`std/zip`, `std/xml` y `std/xlsx`: leer y escribir planillas `.xlsx` en Nyx puro** (fricción de
+  nyxerp, 2026-09-29) `[arco: std-xlsx]`. Un `.xlsx` es un zip con XML adentro, así que son tres
+  módulos y los dos de abajo sirven solos. `std/zip`: contenedor `.zip` (`zip_read` por el directorio
+  central, `zip_writer`) con topes contra bombas zip (`ZipReadOpts`). `std/xml`: lector por eventos y
+  árbol chico; `<!DOCTYPE` es error, así que no hay XXE ni bombas de expansión. `std/xlsx`:
+  `xlsx_read` da celdas tipadas (texto, número, fecha, bool, error, vacía), con fechas en ISO y las
+  épocas 1900 y 1904; las fórmulas no se evalúan (se lee el valor en caché) y los huecos son celdas
+  `empty`; `xlsx_write` arma el libro (texto, números con decimales fijos, fechas, negrita, anchos,
+  celdas combinadas). Sin `extern "C"`: igual en nativo y en `wasm32-wasi`. El códec DEFLATE
+  (inflate, deflate, CRC-32, Adler-32) se trasladó de `std/pdf` a `std/zip` con nombres `zip_*` (para
+  no chocar con `std/compress`): una sola implementación, y los PDF salen idénticos byte a byte.
+  Verificado contra otros lectores: 818 celdas de un libro real de Excel iguales a las de openpyxl; lo
+  que escribe `xlsx_write` lo abre openpyxl; los `.zip` de `zip_writer` los aceptan `zipfile` y
+  `unzip` (`run_zip_verify.sh`, en `make test-stdlib`; `run_xlsx_verify.sh` aparte, necesita openpyxl). `test-458..462` y las recetas
+  123 (zip), 124 (escribir un libro) y 125 (leer una hoja).
+
 ### Arreglado
+
+- **`await` anidado en win32: el scheduler ya no reusa la dirección TLS a través de `os_ctx_swap`**
+  `[arco: w4-windows]`. `nyx_goroutine_join` (con `yield` inlineado) calculaba la dirección de
+  `g_current_worker` una vez y la reusaba después de cada swap; si la goroutina volvía en otro worker,
+  leía el slot del hilo anterior y hacía swap hacia el scheduler de un worker que estaba corriendo
+  otra cosa: dos hilos sobre la misma fiber, con SEGV, cuelgue o el abort de «entry retorno».
+  `test-241` fallaba ~7-29% en win32 según la máquina; en Linux no, porque el backend ELF re-evalúa la
+  dirección en cada uso. Todas las lecturas pasan por un accessor `noinline`. Diagnóstico y parche de
+  la laptop (W4 Task 3, spike `2026-09-29-w4-test241-fibers`): 723/723 corridas y gate 36/36 en win32.
+- **`nyx_goroutine_block_on_fd` ya no deja una goroutina bloqueada para siempre** `[arco: w4-windows]`.
+  Ignoraba el -1 de `nyx_event_loop_add`: sin nada registrado que la despertara, la goroutina quedaba
+  BLOCKED y su `join` no volvía (en win32 con cualquier fd; en POSIX con uno inválido). Ahora deshace
+  el estado y devuelve -1. Test nuevo en `test_scheduler.c`, con un `alarm` que convierte el cuelgue
+  en falla.
 
 - **`s[i]` sobre un `String` lee el carácter correcto.** `codegen_index` no distinguía el receptor
   String y caía al get de Array —misma forma en memoria—, que lee 8 bytes en la posición `i*8`:

@@ -1,0 +1,113 @@
+// test-462 — la ESCRITURA de std/xlsx (arco std-xlsx, Task 5).
+//
+// Arma un libro de dos hojas con lo que pide un libro contable —cabecera en
+// negrita, fechas (incluidas 1900-02-28 y 2024-02-29), montos con 2 y 3
+// decimales (y el redondeo de 99,999 a 100,00), un entero, booleanos, una celda
+// vacía intermedia, texto con & < > y ñ, espacios y tabs, anchos de columna y una
+// combinada— lo RELEE con xlsx_read y verifica tipos, valores y formatos. También
+// los siete casos que xlsx_write rechaza (nombre de hoja inválido o repetido,
+// fecha mal formada, rango mal formado, número fuera de rango, decimales de más,
+// libro sin hojas). Que otro programa lo abra igual (openpyxl: datetime, formatos,
+// negrita, anchos, combinadas) lo verifica scripts/testing/run_xlsx_verify.sh.
+
+import "std/error"
+import "std/xlsx"
+
+fn falla(r: Result<String, Error>) -> bool {
+    match r {
+        Result.Ok(_) => { return false }
+        Result.Err(_) => { return true }
+    }
+}
+
+fn main() -> int {
+    var h: XlsxSheetOut = xlsx_sheet_new("Libro de compras")
+    h.row([xlsx_bold(xlsx_text("Fecha")), xlsx_bold(xlsx_text("Proveedor & Cía <1>")), xlsx_bold(xlsx_text("Monto"))])
+    h.row([xlsx_date("2026-09-01"), xlsx_text("  Acme\tS.A.  "), xlsx_number(1234.5, 2)])
+    h.row([xlsx_date("1900-02-28"), xlsx_text("ñandú"), xlsx_number(0.0 - 7.005, 3)])
+    h.row([xlsx_date("2024-02-29"), xlsx_blank(), xlsx_int(42), xlsx_bool(true)])
+    h.row([xlsx_bold(xlsx_number(99.999, 2)), xlsx_number(5.0, 0), xlsx_number(2.5, 0 - 1), xlsx_bool(false)])
+    h.col_width(3, 18.5)
+    h.col_width(1, 14.0)
+    h.merge("A7:C7")
+    h.row([])
+    h.row([xlsx_text("Total combinado")])
+    var g: XlsxSheetOut = xlsx_sheet_new("Resumen")
+    g.row([xlsx_text("total"), xlsx_number(1234.5, 2)])
+    var libro: String = ""
+    match xlsx_write([h, g]) {
+        Result.Ok(b) => { libro = b }
+        Result.Err(e) => { println("ERR " + e.msg)
+            return 1 }
+    }
+    // El verificador externo (run_xlsx_verify.sh) pide el archivo para abrirlo con openpyxl.
+    let salida: String = getenv("XLSX_OUT")
+    if salida != "" { write_file(salida, libro) }
+
+    match xlsx_read(libro, xlsx_read_opts()) {
+        Result.Ok(bk) => {
+            assert(bk.sheets.length() == 2, "2 hojas")
+            let s: XlsxSheet = bk.sheets[0]
+            assert(s.name == "Libro de compras", "nombre")
+            var c: XlsxCell = xlsx_cell(s, "A1")
+            assert(c.kind == "text" and c.text == "Fecha", "A1")
+            c = xlsx_cell(s, "B1")
+            assert(c.text == "Proveedor & Cía <1>", "B1 escapado")
+            c = xlsx_cell(s, "A2")
+            assert(c.kind == "date" and c.text == "2026-09-01" and c.format == "dd/mm/yyyy", "A2 fecha")
+            c = xlsx_cell(s, "B2")
+            assert(c.text == "  Acme\tS.A.  ", "B2 espacios")
+            c = xlsx_cell(s, "C2")
+            assert(c.kind == "number" and c.text == "1234.50" and c.number == 1234.5 and c.format == "0.00", "C2")
+            c = xlsx_cell(s, "A3")
+            assert(c.kind == "date" and c.text == "1900-02-28", "A3 antes del 29/02/1900")
+            c = xlsx_cell(s, "C3")
+            assert(c.text == "-7.005" and c.format == "0.000", "C3")
+            c = xlsx_cell(s, "A4")
+            assert(c.kind == "date" and c.text == "2024-02-29", "A4 bisiesto")
+            c = xlsx_cell(s, "B4")
+            assert(c.kind == "empty", "B4 vacia")
+            c = xlsx_cell(s, "C4")
+            assert(c.kind == "number" and c.text == "42" and c.format == "General", "C4 entero")
+            c = xlsx_cell(s, "D4")
+            assert(c.kind == "bool" and c.text == "true", "D4")
+            c = xlsx_cell(s, "A5")
+            assert(c.text == "100.00", "A5 redondeo")
+            c = xlsx_cell(s, "B5")
+            assert(c.text == "5" and c.format == "0", "B5")
+            c = xlsx_cell(s, "C5")
+            assert(c.text == "2.5" and c.format == "General", "C5 general")
+            c = xlsx_cell(s, "D5")
+            assert(c.kind == "bool" and c.text == "false", "D5")
+            assert(s.merged.length() == 1, "merge")
+            let m0: String = s.merged[0]
+            assert(m0 == "A7:C7", "merge A7:C7")
+            c = xlsx_cell(s, "A7")
+            assert(c.text == "Total combinado", "A7")
+            let s2: XlsxSheet = bk.sheets[1]
+            assert(s2.name == "Resumen", "hoja 2")
+            c = xlsx_cell(s2, "B1")
+            assert(c.number == 1234.5, "hoja2 B1")
+        }
+        Result.Err(e) => {
+            println("ERR lectura " + e.msg)
+            return 1
+        }
+    }
+
+    // Validaciones.
+    var v: XlsxSheetOut = xlsx_sheet_new("ok")
+    assert(falla(xlsx_write([])), "sin hojas")
+    assert(falla(xlsx_write([xlsx_sheet_new("")])), "nombre vacio")
+    assert(falla(xlsx_write([xlsx_sheet_new("a/b")])), "nombre con /")
+    assert(falla(xlsx_write([xlsx_sheet_new("a[1]")])), "nombre con []")
+    assert(falla(xlsx_write([xlsx_sheet_new("1234567890123456789012345678901234")])), "nombre largo")
+    assert(falla(xlsx_write([xlsx_sheet_new("Datos"), xlsx_sheet_new("DATOS")])), "repetido")
+    v.row([xlsx_date("2026-02-30")])
+    assert(falla(xlsx_write([v])), "fecha invalida")
+    var m: XlsxSheetOut = xlsx_sheet_new("m")
+    m.merge("A1")
+    assert(falla(xlsx_write([m])), "rango invalido")
+    println("xlsx write ok")
+    return 0
+}

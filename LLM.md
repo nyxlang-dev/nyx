@@ -2642,6 +2642,82 @@ fn invoice() -> Result<String, Error> {
 
 Recipe: `examples/by-example/118-pdf-invoice.nx`.
 
+### std/zip, std/xml, std/xlsx — read and write .xlsx workbooks (pure Nyx, native and wasm)
+
+An `.xlsx` is a zip (`std/zip`) of XML (`std/xml`); `std/xlsx` sits on both. No `extern "C"`: same
+code native and `wasm32-wasi` (`std/compress` needs zlib, `std/zip` does not).
+
+```nyx
+import "std/xlsx"
+import "std/error"
+
+// READ: rows[f][c] is the cell at row f+1, column c+1 (gaps are "empty" cells).
+match xlsx_read(read_file("estado.xlsx"), xlsx_read_opts()) {
+    Result.Ok(libro) => {
+        match xlsx_sheet(libro, "Movimientos") {                  // Option<XlsxSheet>; libro.sheets[0] also works
+            Option.Some(hoja) => {
+                let c: XlsxCell = xlsx_cell(hoja, "B13")            // never fails: out of range = "empty"
+                // c.kind: "text"|"number"|"date"|"bool"|"error"|"empty"; c.text (always), c.number, c.format
+            }
+            Option.None => { }
+        }
+    }
+    Result.Err(e) => { print(e.msg) }
+}
+
+// WRITE: constructors return XlsxOut; errors come out of xlsx_write, not earlier.
+var h: XlsxSheetOut = xlsx_sheet_new("Libro de compras")           // name: <= 31 chars, unique, no []:*?/\
+h.row([xlsx_bold(xlsx_text("Fecha")), xlsx_bold(xlsx_text("Monto"))])
+h.row([xlsx_date("2026-09-01"), xlsx_number(1234.5, 2)])          // (value, fixed decimals; < 0 = General)
+h.col_width(1, 14.0)
+h.merge("A5:B5")
+match xlsx_write([h]) {                                           // Result<String, Error>: the file bytes
+    Result.Ok(bytes) => { write_file("salida.xlsx", bytes) }
+    Result.Err(e) => { print(e.msg) }
+}
+```
+
+Other constructors: `xlsx_int(int)`, `xlsx_bool(bool)`, `xlsx_blank()`. Helpers: `xlsx_col_name(28)`
+= `"AB"`, `xlsx_addr(13, 2)` = `"B13"`. Structs: `XlsxBook{sheets, date1904}`, `XlsxSheet{name,
+hidden, rows, merged}`, `XlsxCell{addr, row, col, kind, text, number, format}`.
+
+**Limits and things that will bite you:**
+
+- **Formulas are NOT evaluated.** Reading gives the value the file already has cached (Excel and
+  LibreOffice always save it); a file written by a tool that does not cache has empty/stale
+  values. Writing: there is no formula constructor — compute in Nyx, write the value.
+- **Numbers keep the file's text**: `c.text` is the literal from the XML (`"1234.50"`, no rounding
+  on read); `c.number` is the float. Money in cents: parse `c.text`, do not go through float.
+- **Dates**: a numeric cell whose number format is a date/time format is `kind == "date"`; `text`
+  is ISO (`"2026-09-01"`, `"2026-09-01T08:30:00"`, or `"08:30:00"` for time-only), `number` the
+  Excel serial. Both epochs are handled (1900, with Excel's fake 1900-02-29, and 1904:
+  `book.date1904`). `xlsx_date` takes `"YYYY-MM-DD"` from 1900 on; anything else is `Err` at write.
+- **Gaps are `"empty"` cells** (intermediate empty rows/columns and style-only cells), so `"C7"` is
+  where it should be. Hidden sheets are read (`hidden == true`); merged ranges in `sheet.merged`.
+- **Files from outside are untrusted — zip bombs**: `XlsxReadOpts{zip: ZipReadOpts, max_cells}`.
+  Defaults (`zip_read_opts()`): 64 MB archive, 256 MB per entry, 512 MB total decompressed, 10,000
+  entries; `max_cells` 1,000,000. Over a cap = `Err(kind "invalid")`, never a partial read. Zip64,
+  encryption and methods other than stored/DEFLATE are `Err`. A broken CRC is `Err`.
+- **Writing**: text as inline strings (no sharedStrings), entries DEFLATE-compressed, fixed zip
+  date (1980-01-01) so the same book gives the same bytes. Control chars XML forbids are dropped
+  from text. Styles: only bold and number format; no colours, no borders.
+- **`std/xml`** (`xml_reader` events `open/close/text/end/error`; `xml_parse(text, xml_opts()) ->
+  Result<XmlNode, Error>`; `xml_attr`, `xml_child`, `xml_escape`): **`<!DOCTYPE` is an error**
+  (no DTD, no external entities: XXE and billion-laughs are impossible); only the 5 predefined and
+  numeric entities. Prefixes are kept as-is (`x:row`), namespaces are not resolved. Whitespace-only
+  text is dropped unless `xml:space="preserve"` (or `xml_opts().keep_whitespace`). `attrs` is a
+  `Map`, attribute order is lost. Bind a call before accessing a field (`let ev = r.next()`).
+- **`std/zip`** (`zip_read(bytes, opts)` -> `ZipArchive` with `names()`, `has(n)`, `entry(&mut self,
+  n) -> Result<String, Error>`; `zip_writer()` with `add(name, data)` and `finish()`) plus the
+  codec: `zip_inflate_raw(data, max_out)`, `zip_inflate_zlib`, `zip_deflate_raw`,
+  `zip_deflate_zlib`, `zip_crc32`, `zip_adler32`. **Every name is `zip_`-prefixed on purpose**:
+  `std/compress` exports `inflate_raw`/`inflate`, and two imported modules with the same public fn
+  make the call ambiguous (NYX2010). `std/pdf` imports this codec (PDFs are byte-identical).
+- `ZipArchive` is read by directory (like every reader), so data-descriptor entries work.
+
+Recipes: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro.nx`,
+`125-xlsx-leer-hoja.nx`.
+
 ### RESP protocol (used by nyx-kv and RESP-speaking servers)
 
 `std/resp` is the shared, binary-safe RESP2 frame reader used to BUILD a

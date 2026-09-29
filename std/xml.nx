@@ -1,0 +1,569 @@
+// std/xml — lector XML por eventos y árbol chico encima, en Nyx puro.
+//
+// De dónde sale: std/xlsx (spec docs/design/specs/2026-09-29-std-xlsx-design.md,
+// D-4) lee `sharedStrings.xml`, `workbook.xml` y las hojas de un libro Excel, que
+// son XML. Una hoja grande trae cientos de miles de celdas, así que el camino
+// principal es POR EVENTOS (no se arma el árbol entero, que duplicaría la
+// memoria); el árbol sirve para lo chico (workbook.xml, styles.xml, facturas).
+// Sin ningún `extern "C"`: corre igual en nativo y compilado a wasm32-wasi.
+//
+//   var r: XmlReader = xml_reader(texto)
+//   while true {
+//       let ev: XmlEvent = r.next()
+//       if ev.kind == "end" { break }
+//       if ev.kind == "error" { ... ev.text trae el mensaje con la posición ... }
+//       if ev.kind == "open" { let id: String = xml_event_attr(ev, "r") ... }
+//   }
+//
+//   let raiz: XmlNode = xml_parse(texto, xml_opts())?
+//
+// Eventos (`kind`): "open" (name + attrs), "close" (name), "text" (text),
+// "end" (fin del documento, bien formado) y "error" (text = mensaje con la
+// posición en bytes; `code` = 22 parse o 27 invalid por tope). Después de un
+// "error" o del "end", `next()` sigue devolviendo "end": un lector que falló
+// nunca sigue leyendo sobre basura.
+//
+// Decisiones:
+//  - `attrs` es un `Map<String, String>` (nombre -> valor); el orden de los
+//    atributos no se conserva. Un atributo repetido en la misma etiqueta es error
+//    (XML lo prohíbe).
+//  - Texto: el que es SOLO espacio en blanco se omite (sangrías entre etiquetas),
+//    SALVO dentro de un elemento con `xml:space="preserve"` o descendiente de uno
+//    (XML 1.0 §2.10): ahí sale tal cual, y una celda de Excel con un espacio no
+//    queda vacía. Cualquier otro texto se emite TAL CUAL, sin recortar.
+//  - CDATA sale como un evento "text" literal, aparte del texto vecino; el árbol
+//    los concatena.
+//  - Se ignoran comentarios y instrucciones de proceso (incluida `<?xml ...?>`).
+//    `<!DOCTYPE` es error: no hay DTD ni entidades externas, así que XXE y las
+//    bombas de expansión ("billion laughs") no son posibles. Solo las cinco
+//    entidades predefinidas y las numéricas (&#N; &#xH;, codificadas a UTF-8).
+//  - Los prefijos de nombre se conservan tal cual (`x:row`); no se resuelven
+//    espacios de nombres.
+//  - Los strings son bytes: las posiciones de error son offsets en bytes.
+
+import "std/error"
+
+/// Topes de seguridad: profundidad máxima de anidamiento y tamaño máximo (bytes)
+/// del texto de entrada. `keep_whitespace`: emitir TAMBIÉN el texto que es solo
+/// espacio en blanco (por omisión se descarta salvo con xml:space="preserve").
+/// std/xlsx lo prende: en una hoja, `<t> </t>` es una celda con un espacio,
+/// escriba o no el programa el xml:space (openpyxl no lo escribe).
+pub struct XmlOpts {
+    max_depth: int,
+    max_bytes: int,
+    keep_whitespace: bool,
+}
+
+/// Topes por omisión: 256 niveles y 64 MB.
+pub fn xml_opts() -> XmlOpts {
+    return XmlOpts { max_depth: 256, max_bytes: 67108864, keep_whitespace: false }
+}
+
+/// Un evento del lector; ver la cabecera del módulo para los valores de `kind`.
+pub struct XmlEvent {
+    kind: String,
+    name: String,
+    attrs: Map<String, String>,
+    text: String,
+    code: int,
+}
+
+/// Un elemento del árbol: `text` es la concatenación de su texto directo (sin el de los hijos).
+pub struct XmlNode {
+    name: String,
+    attrs: Map<String, String>,
+    children: Array<XmlNode>,
+    text: String,
+}
+
+/// Lector por eventos. Campos opacos: se crea con xml_reader y se avanza con next().
+pub struct XmlReader {
+    src: String,
+    pos: int,
+    n: int,
+    max_depth: int,
+    keep_all_space: bool,
+    // Pila de nombres abiertos (para verificar que cada cierre coincida).
+    stack: Array<String>,
+    // Paralela a `stack`: 1 si ese elemento (o un ancestro) tiene
+    // xml:space="preserve", 0 si no.
+    keep_space: Array<int>,
+    // Nombre de un `<a/>` cuyo "close" falta emitir ("" si no hay).
+    pending: String,
+    has_pending: bool,
+    seen_root: bool,
+    finished: bool,
+    // Error diferido (tope de tamaño): se emite en el primer next().
+    early: String,
+}
+
+fn __xml_ev(kind: String, name: String, text: String) -> XmlEvent {
+    let a: Map<String, String> = {}
+    return XmlEvent { kind: kind, name: name, attrs: a, text: text, code: 0 }
+}
+
+fn __xml_err_ev(code: int, msg: String, pos: int) -> XmlEvent {
+    let a: Map<String, String> = {}
+    return XmlEvent { kind: "error", name: "", attrs: a, text: msg + " (byte " + int_to_string(pos) + ")", code: code }
+}
+
+fn __xml_kind(code: int) -> String {
+    if code == 27 { return "invalid" }
+    return "parse"
+}
+
+fn __xml_is_ws(c: int) -> bool {
+    return c == 32 or c == 9 or c == 10 or c == 13
+}
+
+fn __xml_is_name_end(c: int) -> bool {
+    return c == 32 or c == 9 or c == 10 or c == 13 or c == 62 or c == 47 or c == 61 or c == 63 or c == 60
+}
+
+// ── Entidades ──────────────────────────────────────────────────────────────
+
+// Codepoint -> bytes UTF-8. Rechaza lo que XML no admite (0, sustitutos,
+// pasar de U+10FFFF).
+fn __xml_utf8(cp: int) -> String {
+    if cp < 128 { return chr(cp) }
+    if cp < 2048 { return chr(192 | (cp >> 6)) + chr(128 | (cp & 63)) }
+    if cp < 65536 {
+        return chr(224 | (cp >> 12)) + chr(128 | ((cp >> 6) & 63)) + chr(128 | (cp & 63))
+    }
+    return chr(240 | (cp >> 18)) + chr(128 | ((cp >> 12) & 63)) + chr(128 | ((cp >> 6) & 63)) + chr(128 | (cp & 63))
+}
+
+fn __xml_hexval(c: int) -> int {
+    if c >= 48 and c <= 57 { return c - 48 }
+    if c >= 97 and c <= 102 { return c - 87 }
+    if c >= 65 and c <= 70 { return c - 55 }
+    return 0 - 1
+}
+
+// Resuelve el cuerpo de una referencia (lo que va entre & y ;). "" = inválida.
+fn __xml_entity(body: String) -> String {
+    if body == "lt" { return "<" }
+    if body == "gt" { return ">" }
+    if body == "amp" { return "&" }
+    if body == "quot" { return "\"" }
+    if body == "apos" { return "'" }
+    let n: int = body.length()
+    if n >= 2 and body.charAt(0) == 35 {
+        var cp: int = 0
+        var i: int = 1
+        var base: int = 10
+        if body.charAt(1) == 120 {
+            base = 16
+            i = 2
+        }
+        if i >= n { return "" }
+        while i < n {
+            let d: int = __xml_hexval(body.charAt(i))
+            if d < 0 or d >= base { return "" }
+            cp = cp * base + d
+            if cp > 1114111 { return "" }
+            i = i + 1
+        }
+        if cp == 0 or (cp >= 55296 and cp <= 57343) { return "" }
+        return __xml_utf8(cp)
+    }
+    return ""
+}
+
+// Decodifica las entidades de `s`. Devuelve Err(mensaje) si hay una desconocida
+// o mal formada. `at` es la posición del inicio de `s`, solo para el mensaje.
+fn __xml_decode(s: String, at: int) -> Result<String, String> {
+    let n: int = s.length()
+    // Camino rápido: sin '&' no hay nada que decodificar.
+    var amp: int = 0 - 1
+    var k: int = 0
+    while k < n {
+        if s.charAt(k) == 38 {
+            amp = k
+            break
+        }
+        k = k + 1
+    }
+    if amp < 0 { return Result.Ok(s) }
+    var out: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    var start: int = 0
+    while i < n {
+        if s.charAt(i) == 38 {
+            var j: int = i + 1
+            while j < n and s.charAt(j) != 59 and j - i <= 12 {
+                j = j + 1
+            }
+            if j >= n or s.charAt(j) != 59 {
+                return Result.Err("entidad sin cerrar en el byte " + int_to_string(at + i))
+            }
+            let r: String = __xml_entity(s.substring(i + 1, j))
+            if r == "" {
+                return Result.Err("entidad desconocida &" + s.substring(i + 1, j) + "; en el byte " + int_to_string(at + i))
+            }
+            out.append(s.substring(start, i))
+            out.append(r)
+            i = j + 1
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    out.append(s.substring(start, n))
+    return Result.Ok(out.to_string())
+}
+
+// ── Lector ─────────────────────────────────────────────────────────────────
+
+/// Crea un lector con los topes por omisión.
+pub fn xml_reader(text: String) -> XmlReader {
+    return xml_reader_opts(text, xml_opts())
+}
+
+/// Crea un lector con topes propios.
+pub fn xml_reader_opts(text: String, opts: XmlOpts) -> XmlReader {
+    var early: String = ""
+    if text.length() > opts.max_bytes {
+        early = "texto de " + int_to_string(text.length()) + " bytes supera el tope de " + int_to_string(opts.max_bytes)
+    }
+    let st: Array<String> = []
+    let ks: Array<int> = []
+    return XmlReader { src: text, pos: 0, n: text.length(), max_depth: opts.max_depth, keep_all_space: opts.keep_whitespace, stack: st, keep_space: ks, pending: "", has_pending: false, seen_root: false, finished: false, early: early }
+}
+
+// Índice de la primera aparición de `pat` desde `from`, o -1. Byte a byte.
+fn __xml_find(s: String, pat: String, start_at: int) -> int {
+    let n: int = s.length()
+    let m: int = pat.length()
+    let first: int = pat.charAt(0)
+    var i: int = start_at
+    while i + m <= n {
+        if s.charAt(i) == first {
+            var k: int = 1
+            while k < m and s.charAt(i + k) == pat.charAt(k) {
+                k = k + 1
+            }
+            if k == m { return i }
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+fn __xml_all_ws(s: String) -> bool {
+    var i: int = 0
+    while i < s.length() {
+        if not __xml_is_ws(s.charAt(i)) { return false }
+        i = i + 1
+    }
+    return true
+}
+
+impl XmlReader {
+    fn __stop(&mut self, ev: XmlEvent) -> XmlEvent {
+        self.finished = true
+        return ev
+    }
+
+    fn __skip_ws(&mut self) {
+        while self.pos < self.n and __xml_is_ws(self.src.charAt(self.pos)) {
+            self.pos = self.pos + 1
+        }
+    }
+
+    // Lee el nombre en `pos` (hasta espacio, '=', '>', '/', '?', '<').
+    fn __read_name(&mut self) -> String {
+        let s: int = self.pos
+        while self.pos < self.n and not __xml_is_name_end(self.src.charAt(self.pos)) {
+            self.pos = self.pos + 1
+        }
+        return self.src.substring(s, self.pos)
+    }
+
+    // `<` ya consumido; `pos` en el nombre de la etiqueta de apertura.
+    fn __open_tag(&mut self) -> XmlEvent {
+        let at: int = self.pos - 1
+        let name: String = self.__read_name()
+        if name == "" { return self.__stop(__xml_err_ev(22, "nombre de etiqueta vacío", at)) }
+        if self.seen_root and self.stack.length() == 0 {
+            return self.__stop(__xml_err_ev(22, "más de un elemento raíz", at))
+        }
+        if self.stack.length() + 1 > self.max_depth {
+            return self.__stop(__xml_err_ev(27, "anidamiento supera el tope de " + int_to_string(self.max_depth), at))
+        }
+        var attrs: Map<String, String> = {}
+        var selfclose: bool = false
+        while true {
+            self.__skip_ws()
+            if self.pos >= self.n {
+                return self.__stop(__xml_err_ev(22, "etiqueta <" + name + " sin cerrar", at))
+            }
+            let c: int = self.src.charAt(self.pos)
+            if c == 62 {
+                self.pos = self.pos + 1
+                break
+            }
+            if c == 47 {
+                if self.pos + 1 < self.n and self.src.charAt(self.pos + 1) == 62 {
+                    self.pos = self.pos + 2
+                    selfclose = true
+                    break
+                }
+                return self.__stop(__xml_err_ev(22, "'/' inesperado en la etiqueta <" + name, self.pos))
+            }
+            let aname: String = self.__read_name()
+            if aname == "" {
+                return self.__stop(__xml_err_ev(22, "carácter inesperado en la etiqueta <" + name, self.pos))
+            }
+            self.__skip_ws()
+            if self.pos >= self.n or self.src.charAt(self.pos) != 61 {
+                return self.__stop(__xml_err_ev(22, "atributo " + aname + " sin '='", self.pos))
+            }
+            self.pos = self.pos + 1
+            self.__skip_ws()
+            if self.pos >= self.n {
+                return self.__stop(__xml_err_ev(22, "atributo " + aname + " sin valor", self.pos))
+            }
+            let q: int = self.src.charAt(self.pos)
+            if q != 34 and q != 39 {
+                return self.__stop(__xml_err_ev(22, "el valor de " + aname + " debe ir entre comillas", self.pos))
+            }
+            let vs: int = self.pos + 1
+            var ve: int = vs
+            while ve < self.n and self.src.charAt(ve) != q and self.src.charAt(ve) != 60 {
+                ve = ve + 1
+            }
+            if ve >= self.n or self.src.charAt(ve) != q {
+                return self.__stop(__xml_err_ev(22, "valor de " + aname + " sin cerrar", vs))
+            }
+            let dv: Result<String, String> = __xml_decode(self.src.substring(vs, ve), vs)
+            match dv {
+                Result.Err(m) => { return self.__stop(__xml_err_ev(22, m, vs)) }
+                Result.Ok(v) => {
+                    if attrs.has(aname) {
+                        return self.__stop(__xml_err_ev(22, "atributo repetido " + aname, vs))
+                    }
+                    attrs.insert(aname, v)
+                }
+            }
+            self.pos = ve + 1
+        }
+        self.seen_root = true
+        if selfclose {
+            self.pending = name
+            self.has_pending = true
+        } else {
+            self.stack.push(name)
+            var keep: int = 0
+            if self.keep_space.length() > 0 { keep = self.keep_space[self.keep_space.length() - 1] }
+            let sp: String = attrs.get_or("xml:space", "")
+            if sp == "preserve" { keep = 1 }
+            if sp == "default" { keep = 0 }
+            self.keep_space.push(keep)
+        }
+        return XmlEvent { kind: "open", name: name, attrs: attrs, text: "", code: 0 }
+    }
+
+    fn __close_tag(&mut self) -> XmlEvent {
+        let at: int = self.pos - 1
+        self.pos = self.pos + 1
+        let name: String = self.__read_name()
+        self.__skip_ws()
+        if self.pos >= self.n or self.src.charAt(self.pos) != 62 {
+            return self.__stop(__xml_err_ev(22, "etiqueta de cierre </" + name + " mal formada", at))
+        }
+        self.pos = self.pos + 1
+        if self.stack.length() == 0 {
+            return self.__stop(__xml_err_ev(22, "cierre </" + name + "> sin apertura", at))
+        }
+        let top: String = self.stack[self.stack.length() - 1]
+        if top != name {
+            return self.__stop(__xml_err_ev(22, "cierre </" + name + "> no coincide con <" + top + ">", at))
+        }
+        self.stack.pop()
+        self.keep_space.pop()
+        return __xml_ev("close", name, "")
+    }
+
+    /// Siguiente evento; ver la cabecera del módulo.
+    fn next(&mut self) -> XmlEvent {
+        if self.finished { return __xml_ev("end", "", "") }
+        if self.early != "" {
+            return self.__stop(__xml_err_ev(27, self.early, 0))
+        }
+        if self.has_pending {
+            self.has_pending = false
+            let nm: String = self.pending
+            self.pending = ""
+            return __xml_ev("close", nm, "")
+        }
+        while true {
+            if self.pos >= self.n {
+                if self.stack.length() > 0 {
+                    let top: String = self.stack[self.stack.length() - 1]
+                    return self.__stop(__xml_err_ev(22, "etiqueta <" + top + "> sin cerrar", self.pos))
+                }
+                if not self.seen_root {
+                    return self.__stop(__xml_err_ev(22, "documento sin elemento raíz", self.pos))
+                }
+                self.finished = true
+                return __xml_ev("end", "", "")
+            }
+            let c: int = self.src.charAt(self.pos)
+            if c != 60 {
+                // Texto hasta el próximo '<'.
+                let s: int = self.pos
+                var e: int = s
+                while e < self.n and self.src.charAt(e) != 60 {
+                    e = e + 1
+                }
+                self.pos = e
+                let raw: String = self.src.substring(s, e)
+                if __xml_all_ws(raw) and not (self.keep_all_space and self.stack.length() > 0) {
+                    var keep: int = 0
+                    if self.keep_space.length() > 0 { keep = self.keep_space[self.keep_space.length() - 1] }
+                    if keep == 0 { continue }
+                }
+                if self.stack.length() == 0 {
+                    return self.__stop(__xml_err_ev(22, "texto fuera del elemento raíz", s))
+                }
+                let dt: Result<String, String> = __xml_decode(raw, s)
+                match dt {
+                    Result.Err(m) => { return self.__stop(__xml_err_ev(22, m, s)) }
+                    Result.Ok(t) => { return __xml_ev("text", "", t) }
+                }
+            }
+            // Empieza una construcción con '<'.
+            let at: int = self.pos
+            self.pos = self.pos + 1
+            if self.pos >= self.n {
+                return self.__stop(__xml_err_ev(22, "'<' al final del texto", at))
+            }
+            let d: int = self.src.charAt(self.pos)
+            if d == 47 { return self.__close_tag() }
+            if d == 63 {
+                // Instrucción de proceso (incluye <?xml ...?>): se ignora.
+                let e: int = __xml_find(self.src, "?>", self.pos)
+                if e < 0 { return self.__stop(__xml_err_ev(22, "instrucción <? sin cerrar", at)) }
+                self.pos = e + 2
+                continue
+            }
+            if d == 33 {
+                if self.src.substring(at, at + 4) == "<!--" {
+                    let e: int = __xml_find(self.src, "-->", at + 4)
+                    if e < 0 { return self.__stop(__xml_err_ev(22, "comentario sin cerrar", at)) }
+                    self.pos = e + 3
+                    continue
+                }
+                if self.src.substring(at, at + 9) == "<![CDATA[" {
+                    let e: int = __xml_find(self.src, "]]>", at + 9)
+                    if e < 0 { return self.__stop(__xml_err_ev(22, "CDATA sin cerrar", at)) }
+                    self.pos = e + 3
+                    if self.stack.length() == 0 {
+                        return self.__stop(__xml_err_ev(22, "CDATA fuera del elemento raíz", at))
+                    }
+                    return __xml_ev("text", "", self.src.substring(at + 9, e))
+                }
+                if self.src.substring(at, at + 9) == "<!DOCTYPE" {
+                    return self.__stop(__xml_err_ev(22, "<!DOCTYPE no se admite (sin DTD ni entidades externas)", at))
+                }
+                return self.__stop(__xml_err_ev(22, "declaración <! desconocida", at))
+            }
+            return self.__open_tag()
+        }
+        return __xml_ev("end", "", "")
+    }
+}
+
+// ── Árbol ──────────────────────────────────────────────────────────────────
+
+// Por qué iterativo y no recursivo: el lector guarda pos/finished en campos
+// escalares, así que pasarlo por valor a una función auxiliar avanzaría una
+// COPIA (mismo problema que documenta std/pdf). Todo el árbol se arma con el
+// lector local, con una pila explícita de nodos abiertos y de su texto.
+fn __xml_err_of(e: XmlEvent) -> Error {
+    return err_new(e.code, __xml_kind(e.code), e.text)
+}
+
+/// Parsea un documento completo y devuelve el elemento raíz. Err(parse, 22) si está mal formado; Err(invalid, 27) si supera un tope.
+pub fn xml_parse(text: String, opts: XmlOpts) -> Result<XmlNode, Error> {
+    var rd: XmlReader = xml_reader_opts(text, opts)
+    let nodes: Array<XmlNode> = []
+    let texts: Array<String> = []
+    var root: XmlNode = XmlNode { name: "", attrs: {}, children: [], text: "" }
+    var have_root: bool = false
+    while true {
+        let e: XmlEvent = rd.next()
+        if e.kind == "error" { return Result.Err(__xml_err_of(e)) }
+        if e.kind == "end" { break }
+        if e.kind == "open" {
+            let kids: Array<XmlNode> = []
+            nodes.push(XmlNode { name: e.name, attrs: e.attrs, children: kids, text: "" })
+            texts.push("")
+        } else if e.kind == "text" {
+            let top: int = texts.length() - 1
+            texts[top] = texts[top] + e.text
+        } else if e.kind == "close" {
+            var done: XmlNode = nodes[nodes.length() - 1]
+            done.text = texts[texts.length() - 1]
+            nodes.pop()
+            texts.pop()
+            if nodes.length() == 0 {
+                root = done
+                have_root = true
+            } else {
+                var parent: XmlNode = nodes[nodes.length() - 1]
+                parent.children.push(done)
+            }
+        }
+    }
+    if not have_root { return Result.Err(err_new(22, "parse", "documento sin elemento raíz")) }
+    return Result.Ok(root)
+}
+
+// ── Ayudas ─────────────────────────────────────────────────────────────────
+
+/// Valor del atributo `name` de un nodo, o "" si no está.
+pub fn xml_attr(node: XmlNode, name: String) -> String {
+    return node.attrs.get_or(name, "")
+}
+
+/// Valor del atributo `name` de un evento "open", o "" si no está.
+pub fn xml_event_attr(ev: XmlEvent, name: String) -> String {
+    return ev.attrs.get_or(name, "")
+}
+
+/// Primer hijo directo llamado `name`, o None.
+pub fn xml_child(node: XmlNode, name: String) -> Option<XmlNode> {
+    var i: int = 0
+    while i < node.children.length() {
+        let c: XmlNode = node.children[i]
+        if c.name == name { return Option.Some(c) }
+        i = i + 1
+    }
+    return Option.None
+}
+
+/// Escapa `& < > " '` para escribir XML (texto o valor de atributo).
+pub fn xml_escape(s: String) -> String {
+    var out: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c == 38 {
+            out.append("&amp;")
+        } else if c == 60 {
+            out.append("&lt;")
+        } else if c == 62 {
+            out.append("&gt;")
+        } else if c == 34 {
+            out.append("&quot;")
+        } else if c == 39 {
+            out.append("&apos;")
+        } else {
+            out.append(chr(c))
+        }
+        i = i + 1
+    }
+    return out.to_string()
+}

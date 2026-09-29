@@ -1,0 +1,108 @@
+// test-461 — el LECTOR de std/xlsx (arco std-xlsx, Task 4).
+//
+// Los libros los escribe openpyxl (tests/fixtures/xlsx/gen_xlsx.py), y junto a cada
+// uno está el volcado que std/xlsx tiene que producir, calculado por Python:
+// «hoja|A1|tipo|texto» por cada celda con valor. Cubre cadenas con ñ y espacios de
+// borde, una celda que es UN espacio (openpyxl no escribe xml:space), números,
+// fechas con formato integrado y propio, fecha y hora, solo hora, booleanos, un
+// error, texto enriquecido, celdas salteadas, una hoja oculta con espacio inicial
+// en el nombre, 300 filas y la época 1904. Además: la API de consulta, los
+// errores (no es un zip, zip sin libro) y el tope de celdas.
+//
+// El libro real de nyxerp (Excel Android: fórmulas en caché, externalLink,
+// formatos contables) se compara celda por celda con openpyxl fuera de make
+// test, en scripts/testing/run_xlsx_verify.sh: no se versiona en el repo.
+
+import "std/xlsx"
+import "std/zip"
+import "std/error"
+
+const DIR: String = "tests/fixtures/xlsx/"
+
+fn leer(nombre: String) -> XlsxBook {
+    match xlsx_read(read_file(DIR + nombre + ".xlsx"), xlsx_read_opts()) {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            println(nombre + ": " + e.msg)
+            exit(1)
+        }
+    }
+    return XlsxBook { sheets: [], date1904: false }
+}
+
+fn volcado(b: XlsxBook) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    for h: XlsxSheet in b.sheets {
+        for fila: Array in h.rows {
+            for c: XlsxCell in fila {
+                if c.kind != "empty" {
+                    sb.append(h.name + "|" + c.addr + "|" + c.kind + "|" + c.text + "\n")
+                }
+            }
+        }
+    }
+    return sb.to_string()
+}
+
+fn hoja(b: XlsxBook, nombre: String) -> XlsxSheet {
+    match xlsx_sheet(b, nombre) {
+        Option.Some(h) => { return h }
+        Option.None => {
+            println("no hay hoja '" + nombre + "'")
+            exit(1)
+        }
+    }
+    return XlsxSheet { name: "", hidden: false, rows: [], merged: [] }
+}
+
+fn error_de(bytes: String, opts: XlsxReadOpts) -> String {
+    match xlsx_read(bytes, opts) {
+        Result.Ok(b) => { return "OK" }
+        Result.Err(e) => { return e.kind + " " + e.msg }
+    }
+}
+
+fn main() -> int {
+    let tipos: XlsxBook = leer("tipos")
+    assert(volcado(tipos) == read_file(DIR + "tipos.celdas"), "volcado de tipos.xlsx")
+    let mac: XlsxBook = leer("epoca1904")
+    assert(volcado(mac) == read_file(DIR + "epoca1904.celdas"), "volcado de epoca1904.xlsx")
+    assert(mac.date1904 and not tipos.date1904, "época 1904")
+
+    assert(tipos.sheets.length() == 3, "tres hojas")
+    let t: XlsxSheet = hoja(tipos, "Tipos")
+    let oculta: XlsxSheet = hoja(tipos, " Oculta con espacio")
+    assert(oculta.hidden and not t.hidden, "hoja oculta")
+    assert(t.merged.length() == 1, "una combinada")
+    let m0: String = t.merged[0]
+    assert(m0 == "A12:C12", "rango combinado: " + m0)
+
+    let monto: XlsxCell = xlsx_cell(t, "B2")
+    assert(monto.kind == "number" and monto.number == 1234.5 and monto.format == "#,##0.00", "monto")
+    assert(monto.row == 2 and monto.col == 2, "fila y columna")
+    let fecha: XlsxCell = xlsx_cell(t, "C2")
+    assert(fecha.kind == "date" and fecha.text == "2026-09-01" and fecha.number == 46266.0, "fecha")
+    let lejos: XlsxCell = xlsx_cell(t, "E10")
+    assert(lejos.text == "lejos", "celda salteada")
+    let hueco: XlsxCell = xlsx_cell(t, "D10")
+    assert(hueco.kind == "empty" and hueco.addr == "D10", "celda vacía intermedia")
+    let fuera: XlsxCell = xlsx_cell(t, "ZZ9999")
+    assert(fuera.kind == "empty", "fuera de lo leído")
+    let grande: XlsxSheet = hoja(tipos, "Grande")
+    assert(grande.rows.length() == 300, "300 filas")
+    assert(xlsx_col_name(28) == "AB" and xlsx_addr(13, 2) == "B13", "referencias A1")
+
+    let no_zip: String = error_de("no soy un zip", xlsx_read_opts())
+    assert(no_zip.startsWith("parse xlsx: zip: no es un zip"), "no es zip: " + no_zip)
+    var w: ZipWriter = zip_writer()
+    w.add("hola.txt", "hola")
+    let sin_libro: String = error_de(w.finish(), xlsx_read_opts())
+    assert(sin_libro == "parse xlsx: no es un libro de Excel (falta xl/workbook.xml)", "sin libro: " + sin_libro)
+    var poco: XlsxReadOpts = xlsx_read_opts()
+    poco.max_cells = 50
+    let tope: String = error_de(read_file(DIR + "tipos.xlsx"), poco)
+    assert(tope == "invalid xlsx: el libro pasa el tope de celdas", "tope de celdas: " + tope)
+
+    println("xlsx leer ok")
+    return 0
+}

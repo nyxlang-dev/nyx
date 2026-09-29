@@ -1,0 +1,96 @@
+// test-458 — el códec de std/zip contra el zlib de Python (arco std-xlsx, Task 1).
+//
+// GENERADO por tests/fixtures/zip/gen_codec.py: no editar a mano. Cada entrada se
+// comprime con zlib en los niveles 0 (bloques sin comprimir), 1, 6 y 9, con Huffman
+// fijo, y como zlib con encabezado; zip_inflate_* tiene que devolver los bytes
+// originales. Además: CRC-32 y Adler-32 iguales a los de Python, ida y vuelta de
+// zip_deflate_*, el tope de salida y dos streams rotos con su error.
+
+import "std/zip"
+import "std/error"
+
+fn inflado(r: Result<String, Error>) -> String {
+    match r {
+        Result.Ok(v) => { return v }
+        Result.Err(e) => { return "ERR " + e.msg }
+    }
+}
+
+fn main() -> int {
+    let in_vacio: String = include_bytes("tests/fixtures/zip/codec/vacio.bin")
+    assert(zip_crc32(in_vacio) == 0, "crc32 vacio")
+    assert(zip_adler32(in_vacio) == 1, "adler32 vacio")
+    assert(inflado(zip_inflate_raw(zip_deflate_raw(in_vacio), 0)) == in_vacio, "ida y vuelta raw vacio")
+    assert(inflado(zip_inflate_zlib(zip_deflate_zlib(in_vacio), 0)) == in_vacio, "ida y vuelta zlib vacio")
+    let in_un_byte: String = include_bytes("tests/fixtures/zip/codec/un-byte.bin")
+    assert(zip_crc32(in_un_byte) == 2363233923, "crc32 un-byte")
+    assert(zip_adler32(in_un_byte) == 7929977, "adler32 un-byte")
+    assert(inflado(zip_inflate_raw(zip_deflate_raw(in_un_byte), 0)) == in_un_byte, "ida y vuelta raw un-byte")
+    assert(inflado(zip_inflate_zlib(zip_deflate_zlib(in_un_byte), 0)) == in_un_byte, "ida y vuelta zlib un-byte")
+    let in_texto: String = include_bytes("tests/fixtures/zip/codec/texto.bin")
+    assert(zip_crc32(in_texto) == 2738709483, "crc32 texto")
+    assert(zip_adler32(in_texto) == 381368232, "adler32 texto")
+    assert(inflado(zip_inflate_raw(zip_deflate_raw(in_texto), 0)) == in_texto, "ida y vuelta raw texto")
+    assert(inflado(zip_inflate_zlib(zip_deflate_zlib(in_texto), 0)) == in_texto, "ida y vuelta zlib texto")
+    let in_repetitivo_100k: String = include_bytes("tests/fixtures/zip/codec/repetitivo-100k.bin")
+    assert(zip_crc32(in_repetitivo_100k) == 2243364776, "crc32 repetitivo-100k")
+    assert(zip_adler32(in_repetitivo_100k) == 4192590428, "adler32 repetitivo-100k")
+    assert(inflado(zip_inflate_raw(zip_deflate_raw(in_repetitivo_100k), 0)) == in_repetitivo_100k, "ida y vuelta raw repetitivo-100k")
+    assert(inflado(zip_inflate_zlib(zip_deflate_zlib(in_repetitivo_100k), 0)) == in_repetitivo_100k, "ida y vuelta zlib repetitivo-100k")
+    let in_aleatorio_16k: String = include_bytes("tests/fixtures/zip/codec/aleatorio-16k.bin")
+    assert(zip_crc32(in_aleatorio_16k) == 3762886533, "crc32 aleatorio-16k")
+    assert(zip_adler32(in_aleatorio_16k) == 1890334254, "adler32 aleatorio-16k")
+    assert(inflado(zip_inflate_raw(zip_deflate_raw(in_aleatorio_16k), 0)) == in_aleatorio_16k, "ida y vuelta raw aleatorio-16k")
+    assert(inflado(zip_inflate_zlib(zip_deflate_zlib(in_aleatorio_16k), 0)) == in_aleatorio_16k, "ida y vuelta zlib aleatorio-16k")
+    let in_todos_los_bytes: String = include_bytes("tests/fixtures/zip/codec/todos-los-bytes.bin")
+    assert(zip_crc32(in_todos_los_bytes) == 3150855069, "crc32 todos-los-bytes")
+    assert(zip_adler32(in_todos_los_bytes) == 4101369118, "adler32 todos-los-bytes")
+    assert(inflado(zip_inflate_raw(zip_deflate_raw(in_todos_los_bytes), 0)) == in_todos_los_bytes, "ida y vuelta raw todos-los-bytes")
+    assert(inflado(zip_inflate_zlib(zip_deflate_zlib(in_todos_los_bytes), 0)) == in_todos_los_bytes, "ida y vuelta zlib todos-los-bytes")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/vacio.raw0"), 0)) == in_vacio, "vacio.raw0")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/vacio.raw1"), 0)) == in_vacio, "vacio.raw1")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/vacio.raw6"), 0)) == in_vacio, "vacio.raw6")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/vacio.raw9"), 0)) == in_vacio, "vacio.raw9")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/vacio.rawfijo"), 0)) == in_vacio, "vacio.rawfijo")
+    assert(inflado(zip_inflate_zlib(include_bytes("tests/fixtures/zip/codec/vacio.zlib"), 0)) == in_vacio, "vacio.zlib")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/un-byte.raw0"), 0)) == in_un_byte, "un-byte.raw0")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/un-byte.raw1"), 0)) == in_un_byte, "un-byte.raw1")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/un-byte.raw6"), 0)) == in_un_byte, "un-byte.raw6")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/un-byte.raw9"), 0)) == in_un_byte, "un-byte.raw9")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/un-byte.rawfijo"), 0)) == in_un_byte, "un-byte.rawfijo")
+    assert(inflado(zip_inflate_zlib(include_bytes("tests/fixtures/zip/codec/un-byte.zlib"), 0)) == in_un_byte, "un-byte.zlib")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/texto.raw0"), 0)) == in_texto, "texto.raw0")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/texto.raw1"), 0)) == in_texto, "texto.raw1")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/texto.raw6"), 0)) == in_texto, "texto.raw6")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/texto.raw9"), 0)) == in_texto, "texto.raw9")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/texto.rawfijo"), 0)) == in_texto, "texto.rawfijo")
+    assert(inflado(zip_inflate_zlib(include_bytes("tests/fixtures/zip/codec/texto.zlib"), 0)) == in_texto, "texto.zlib")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.raw0"), 0)) == in_repetitivo_100k, "repetitivo-100k.raw0")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.raw1"), 0)) == in_repetitivo_100k, "repetitivo-100k.raw1")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.raw6"), 0)) == in_repetitivo_100k, "repetitivo-100k.raw6")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.raw9"), 0)) == in_repetitivo_100k, "repetitivo-100k.raw9")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.rawfijo"), 0)) == in_repetitivo_100k, "repetitivo-100k.rawfijo")
+    assert(inflado(zip_inflate_zlib(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.zlib"), 0)) == in_repetitivo_100k, "repetitivo-100k.zlib")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/aleatorio-16k.raw0"), 0)) == in_aleatorio_16k, "aleatorio-16k.raw0")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/aleatorio-16k.raw1"), 0)) == in_aleatorio_16k, "aleatorio-16k.raw1")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/aleatorio-16k.raw6"), 0)) == in_aleatorio_16k, "aleatorio-16k.raw6")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/aleatorio-16k.raw9"), 0)) == in_aleatorio_16k, "aleatorio-16k.raw9")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/aleatorio-16k.rawfijo"), 0)) == in_aleatorio_16k, "aleatorio-16k.rawfijo")
+    assert(inflado(zip_inflate_zlib(include_bytes("tests/fixtures/zip/codec/aleatorio-16k.zlib"), 0)) == in_aleatorio_16k, "aleatorio-16k.zlib")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/todos-los-bytes.raw0"), 0)) == in_todos_los_bytes, "todos-los-bytes.raw0")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/todos-los-bytes.raw1"), 0)) == in_todos_los_bytes, "todos-los-bytes.raw1")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/todos-los-bytes.raw6"), 0)) == in_todos_los_bytes, "todos-los-bytes.raw6")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/todos-los-bytes.raw9"), 0)) == in_todos_los_bytes, "todos-los-bytes.raw9")
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/todos-los-bytes.rawfijo"), 0)) == in_todos_los_bytes, "todos-los-bytes.rawfijo")
+    assert(inflado(zip_inflate_zlib(include_bytes("tests/fixtures/zip/codec/todos-los-bytes.zlib"), 0)) == in_todos_los_bytes, "todos-los-bytes.zlib")
+    // Tope de salida: se corta mientras se descomprime, con error y no a medias.
+    let tope: String = inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.raw6"), 1000))
+    assert(tope.startsWith("ERR deflate: la salida supera el tope de 1000 bytes"), "tope: " + tope)
+    assert(inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/repetitivo-100k.raw6"), 101103)) == in_repetitivo_100k, "tope justo")
+    let adler: String = inflado(zip_inflate_zlib(include_bytes("tests/fixtures/zip/codec/roto-adler.zlib"), 0))
+    assert(adler == "ERR zlib: el adler32 no coincide (datos dañados)", "roto adler: " + adler)
+    let cortado: String = inflado(zip_inflate_raw(include_bytes("tests/fixtures/zip/codec/roto-cortado.raw"), 0))
+    assert(cortado.startsWith("ERR deflate: "), "roto cortado: " + cortado)
+    println("zip codec ok")
+    return 0
+}

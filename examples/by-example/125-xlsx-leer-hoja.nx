@@ -1,0 +1,74 @@
+// Nyx by Example: leer una planilla .xlsx e imprimir una hoja.
+//
+// El caso real: un banco manda el estado de cuenta en Excel y el ERP lo
+// concilia. Para no depender de un archivo de entrada, la receta arma primero
+// una planilla con xlsx_write y después la lee como si viniera de afuera.
+//
+// Lo que muestra:
+//   - xlsx_read(bytes, xlsx_read_opts()): topes por omisión contra bombas zip
+//     y libros gigantes (archivo, partes, total descomprimido, celdas);
+//   - cada celda trae su TIPO (kind: text, number, date, bool, error, empty),
+//     `text` (un importe se lee tal cual está escrito) y `number`;
+//   - las fechas salen en ISO (con la época 1900 o 1904 del libro);
+//   - rows[f][c] es la celda de la fila f+1, columna c+1: los huecos son celdas
+//     "empty", así "C7" cae donde debe; xlsx_cell(hoja, "B3") la pide por nombre;
+//   - las FÓRMULAS no se evalúan: se lee el valor que el archivo trae en caché;
+//   - xlsx_sheet(libro, nombre) busca la hoja por nombre (Option).
+//
+// Correr: nyx run
+
+import "std/xlsx"
+import "std/error"
+
+fn planilla() -> Result<String, Error> {
+    var h: XlsxSheetOut = xlsx_sheet_new("Movimientos")
+    h.row([xlsx_text("Fecha"), xlsx_text("Descripción"), xlsx_text("Monto")])
+    h.row([xlsx_date("2026-09-01"), xlsx_text("Depósito"), xlsx_number(1234.5, 2)])
+    h.row([xlsx_date("2026-09-03"), xlsx_text("Comisión"), xlsx_number(0.0 - 12.75, 2)])
+    h.row([xlsx_date("2026-09-10"), xlsx_blank(), xlsx_number(80.0, 2)])
+    return xlsx_write([h])
+}
+
+fn main() -> int {
+    let bytes: String = match planilla() {
+        Result.Ok(b) => b
+        Result.Err(e) => {
+            print("no se pudo armar la planilla: " + error_to_string(e))
+            return 1
+        }
+    }
+
+    match xlsx_read(bytes, xlsx_read_opts()) {
+        Result.Ok(libro) => {
+            match xlsx_sheet(libro, "Movimientos") {
+                Option.Some(hoja) => {
+                    print("hoja " + hoja.name + ": " + int_to_string(hoja.rows.length()) + " filas")
+                    for fila: Array in hoja.rows {
+                        var linea: String = ""
+                        for c: XlsxCell in fila {
+                            var t: String = c.text
+                            if c.kind == "empty" { t = "-" }
+                            linea = linea + t + " | "
+                        }
+                        print(linea)
+                    }
+                    let monto: XlsxCell = xlsx_cell(hoja, "C2")
+                    print("C2 es " + monto.kind + ", vale " + float_to_string(monto.number) + ", formato " + monto.format)
+                    let fecha: XlsxCell = xlsx_cell(hoja, "A3")
+                    print("A3 es " + fecha.kind + ": " + fecha.text)
+                    let hueco: XlsxCell = xlsx_cell(hoja, "B4")
+                    print("B4 es " + hueco.kind)
+                }
+                Option.None => {
+                    print("no hay hoja Movimientos")
+                    return 1
+                }
+            }
+        }
+        Result.Err(e) => {
+            print("planilla inválida: " + error_to_string(e))
+            return 1
+        }
+    }
+    return 0
+}

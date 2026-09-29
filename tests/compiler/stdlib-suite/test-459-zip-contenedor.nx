@@ -1,0 +1,124 @@
+// test-459 — el contenedor .zip de std/zip (arco std-xlsx, Task 2).
+//
+// Lee archivos hechos por OTRO programa (zipfile de Python, tests/fixtures/zip/
+// gen_zip.py): DEFLATE y sin comprimir, carpeta, comentario del archivo, nombre
+// UTF-8 y descriptor de datos (bit 3, tamaños en cero en el encabezado local). Los
+// rotos tienen que dar su error y no datos a medias: CRC dañado, directorio
+// truncado, entrada cifrada y una bomba chica contra el tope. Y lo que escribe
+// zip_writer se relee igual (que otro lector también lo acepta lo verifica
+// scripts/testing/run_zip_verify.sh con zipfile y unzip).
+
+import "std/zip"
+import "std/error"
+
+const DIR: String = "tests/fixtures/zip/archivos/"
+
+fn leer(nombre: String) -> ZipArchive {
+    match zip_read(read_file(DIR + nombre), zip_read_opts()) {
+        Result.Ok(a) => { return a }
+        Result.Err(e) => {
+            println("no se pudo leer " + nombre + ": " + e.msg)
+            exit(1)
+        }
+    }
+    return zip_writer_vacio()
+}
+
+// Solo para que `leer` tenga un retorno en todos los caminos.
+fn zip_writer_vacio() -> ZipArchive {
+    return ZipArchive { data: "", entries: [], opts: zip_read_opts(), used: 0 }
+}
+
+fn contenido(a: ZipArchive, nombre: String) -> String {
+    match a.entry(nombre) {
+        Result.Ok(v) => { return v }
+        Result.Err(e) => { return "ERR " + e.kind + " " + e.msg }
+    }
+}
+
+fn error_de_leer(bytes: String, opts: ZipReadOpts) -> String {
+    match zip_read(bytes, opts) {
+        Result.Ok(a) => { return "OK" }
+        Result.Err(e) => { return e.kind + " " + e.msg }
+    }
+}
+
+fn main() -> int {
+    let filas: String = read_file(DIR + "filas.txt")
+
+    var d: ZipArchive = leer("deflate.zip")
+    let nd: Array = d.names()
+    assert(nd.length() == 3, "deflate: 3 entradas")
+    let n0: String = nd[0]
+    assert(n0 == "xl/", "deflate: la carpeta primero")
+    assert(d.has("xl/a.txt") and not d.has("nada.txt"), "deflate: has")
+    assert(contenido(d, "xl/a.txt") == filas, "deflate: contenido")
+    assert(contenido(d, "b.txt") == "hola", "deflate: b.txt")
+    let falta: String = contenido(d, "nada.txt")
+    assert(falta.startsWith("ERR not_found"), "deflate: entrada que no existe: " + falta)
+
+    var s: ZipArchive = leer("store.zip")
+    assert(contenido(s, "a.txt") == filas, "store: contenido")
+    assert(contenido(s, "vacio.txt") == "", "store: entrada vacía")
+
+    var c: ZipArchive = leer("comentario.zip")
+    assert(contenido(c, "a.txt") == "con comentario", "comentario del archivo")
+
+    var u: ZipArchive = leer("utf8.zip")
+    assert(contenido(u, "año/cañón.txt") == "ñandú", "nombre UTF-8")
+
+    var dd: ZipArchive = leer("descriptor.zip")
+    assert(contenido(dd, "stream.txt") == filas, "descriptor de datos")
+
+    var cm: ZipArchive = leer("crc-malo.zip")
+    let crc: String = contenido(cm, "a.txt")
+    assert(crc == "ERR parse zip: el CRC de 'a.txt' no coincide (datos dañados)", "crc malo: " + crc)
+
+    let trunc: String = error_de_leer(read_file(DIR + "truncado.zip"), zip_read_opts())
+    assert(trunc.startsWith("parse zip: "), "truncado: " + trunc)
+    let cif: String = error_de_leer(read_file(DIR + "cifrado.zip"), zip_read_opts())
+    assert(cif == "invalid zip: 'xl/' está cifrada", "cifrado: " + cif)
+    assert(error_de_leer("no soy un zip", zip_read_opts()).startsWith("parse zip: no es un zip"), "no es zip")
+
+    // La bomba: 5 MB de ceros en unos KB. Con un tope de 1 MB por entrada se
+    // rechaza ANTES de descomprimir (el tamaño declarado ya lo pasa).
+    var chico: ZipReadOpts = zip_read_opts()
+    chico.max_entry = 1024 * 1024
+    var b: ZipArchive = ZipArchive { data: "", entries: [], opts: chico, used: 0 }
+    match zip_read(read_file(DIR + "bomba.zip"), chico) {
+        Result.Ok(a) => { b = a }
+        Result.Err(e) => { println("bomba: " + e.msg) return 1 }
+    }
+    let bomba: String = contenido(b, "ceros.bin")
+    assert(bomba.startsWith("ERR invalid zip: 'ceros.bin' descomprime a 5242880 bytes"), "bomba: " + bomba)
+    // Y el tope del archivo entero.
+    var mini: ZipReadOpts = zip_read_opts()
+    mini.max_archive = 100
+    assert(error_de_leer(read_file(DIR + "deflate.zip"), mini).startsWith("invalid zip: el archivo pesa"), "tope del archivo")
+
+    // Escribir y releer: DEFLATE para lo que comprime, sin comprimir para lo que no.
+    var w: ZipWriter = zip_writer()
+    w.add("xl/filas.txt", filas)
+    w.add("año.txt", "ñ")
+    w.add("vacio", "")
+    let bytes: String = w.finish()
+    var r: ZipArchive = ZipArchive { data: "", entries: [], opts: zip_read_opts(), used: 0 }
+    match zip_read(bytes, zip_read_opts()) {
+        Result.Ok(a) => { r = a }
+        Result.Err(e) => { println("releer: " + e.msg) return 1 }
+    }
+    assert(contenido(r, "xl/filas.txt") == filas, "releer filas")
+    assert(contenido(r, "año.txt") == "ñ", "releer utf-8")
+    assert(contenido(r, "vacio") == "", "releer vacío")
+    let e0: ZipEntry = r.entries[0]
+    assert(e0.method == 8 and e0.compressed_size < filas.length(), "filas va comprimido")
+    // Determinista: lo mismo da los mismos bytes.
+    var w2: ZipWriter = zip_writer()
+    w2.add("xl/filas.txt", filas)
+    w2.add("año.txt", "ñ")
+    w2.add("vacio", "")
+    assert(w2.finish() == bytes, "determinista")
+
+    println("zip contenedor ok")
+    return 0
+}
