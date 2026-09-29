@@ -274,6 +274,10 @@ case "${1:-}" in
         echo "  update --version <rev>   Instalar una revisión concreta (tag, sha o rama)"
         echo "  update --check       Only report whether a newer version exists (changes nothing)"
         echo "  update --sync-docs   Refresh AI context (AGENTS.md + docs/nyx/) in this project"
+        echo "  exec -- <cmd> [args]  Run <cmd> with the toolchain version pinned for it and"
+        echo "                everything it starts (a test suite that calls nyx many times"
+        echo "                keeps one compiler even if 'nyx update' activates another meanwhile)"
+        echo "                  --version <id>     an installed version instead of the active one"
         echo "  report [f.md] Send a friction/bug report to the Nyx team"
         echo "  uninstall     Remove Nyx from this system"
         echo ""
@@ -294,6 +298,59 @@ case "${1:-}" in
         echo "  Removed: ~/.nyx/"
         echo "  Removed: ~/.local/bin/nyx"
         exit 0
+        ;;
+    exec)
+        # ── nyx exec [--version <id>] -- <cmd> [args...]: corre <cmd> con UNA
+        # versión del toolchain fija para él y todo lo que lance.
+        #
+        # POR QUÉ (nyxerp, 2026-09-29): el wrapper fija la versión por PROCESO
+        # (resuelve `current` una vez y exporta NYX_HOME a sus hijos). Una suite
+        # que lanza muchos `nyx test` SUELTOS los resuelve uno por uno, así que
+        # un `nyx update` a mitad la partía entre dos compiladores. Solo quien
+        # lanza la suite sabe dónde empieza y termina esa unidad de trabajo;
+        # `nyx exec` la mete dentro de un proceso de nyx: NYX_HOME exportado a
+        # la ruta REAL de la versión (todo `nyx` anidado lo respeta) y el
+        # candado de versión (fd 8) heredado por el comando, así la poda
+        # tampoco la borra mientras la suite viva. `exec` reemplaza al wrapper
+        # sin cerrar el fd: el candado dura lo que dura el comando.
+        shift
+        if [ "${1:-}" = "--version" ]; then
+            if [ -z "${2:-}" ]; then
+                echo "error: --version necesita el id de una versión instalada" >&2
+                echo "  las instaladas: ls $NYX_ROOT/versions" >&2
+                exit 2
+            fi
+            if [ ! -d "$NYX_ROOT/versions/$2" ] || [ ! -f "$NYX_ROOT/versions/$2/VERSION" ]; then
+                echo "error: la versión '$2' no está instalada en $NYX_ROOT/versions" >&2
+                echo "  las instaladas: ls $NYX_ROOT/versions" >&2
+                exit 2
+            fi
+            NYX_HOME="$NYX_ROOT/versions/$2"; export NYX_HOME
+            shift 2
+        fi
+        [ "${1:-}" = "--" ] && shift
+        if [ $# -eq 0 ]; then
+            echo "usage: nyx exec [--version <id>] -- <command> [args...]" >&2
+            echo "  runs <command> with the toolchain version pinned for it and everything it starts" >&2
+            exit 2
+        fi
+        # Acá el candado NO es «si se puede» como arriba: sin él, una poda
+        # simultánea podría borrar la versión a mitad de la suite. Se retoma
+        # sobre la versión elegida (la de arriba era la activa) y se espera un
+        # poco si una poda lo tiene exclusivo en ese instante; si al tenerlo la
+        # versión ya no existe, la podaron antes: fallar ahora, no a mitad.
+        if [ -f "$NYX_HOME/.lock" ] && command -v flock >/dev/null 2>&1; then
+            exec 8<&- 2>/dev/null
+            if ! { exec 8<"$NYX_HOME/.lock"; } 2>/dev/null || ! flock -s -w 10 8; then
+                echo "error: no se pudo tomar el candado de $NYX_HOME" >&2
+                exit 1
+            fi
+        fi
+        if [ ! -f "$NYX_HOME/VERSION" ]; then
+            echo "error: la versión $NYX_HOME ya no existe (la podó otra instalación); reintenta" >&2
+            exit 1
+        fi
+        exec "$@"
         ;;
     update)
         # ── nyx update --sync-docs: refresca el contexto para agentes del
@@ -574,6 +631,9 @@ case "${1:-}" in
             exit 1
         fi
         . "$_TC"
+        # El update no usa la versión activa (arma otra aparte): suelta su
+        # candado para que nyx_tc_aviso_en_uso vea solo a los procesos AJENOS.
+        exec 8<&- 2>/dev/null
         if ! nyx_tc_versionado "$NYX_ROOT"; then
             nyx_tc_migrar "$NYX_ROOT"
             NYX_HOME="$(nyx_tc_actual "$NYX_ROOT")"; export NYX_HOME

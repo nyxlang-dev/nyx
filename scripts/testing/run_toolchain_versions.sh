@@ -101,5 +101,52 @@ out=$(inst NYX_KEEP_VERSIONS=0); C="$(cat "$R/current")"
 [ ! -f "$R/versions/$C/.fijada" ] && ok "la versión nueva no hereda la .fijada de la activa" \
     || mal "la versión nueva $C heredó la .fijada de $B"
 
+# 5. Una SUITE de varios `nyx` sueltos (nyxerp, 2026-09-29): el wrapper fija la
+#    versión por proceso, así que una suite así se partía entre dos compiladores
+#    si otro install activaba una versión a mitad. `nyx exec -- <suite>` la fija
+#    para toda la suite y la protege de la poda. Control positivo: la MISMA suite
+#    sin `nyx exec` tiene que partirse — si no, el escenario no prueba nada.
+C="$(cat "$R/current")"
+cat > "$F/suite.sh" <<EOF
+#!/usr/bin/env bash
+h() { bash "$R/scripts/nyx" --version 2>&1 | sed -n 's/^  home: *//p'; }
+h > "\$1.1"
+t=0; until [ -f "$F/go" ] || [ "\$t" -ge 120 ]; do sleep 1; t=\$((t + 1)); done
+h > "\$1.2"
+EOF
+rm -f "$F/go"
+( env -u NYX_HOME HOME="$F" bash "$R/scripts/nyx" exec -- bash "$F/suite.sh" "$F/con" & )
+( env -u NYX_HOME HOME="$F" bash "$F/suite.sh" "$F/sin" & )
+t=0; until { [ -s "$F/con.1" ] && [ -s "$F/sin.1" ]; } || [ "$t" -ge 30 ]; do sleep 1; t=$((t + 1)); done
+out=$(inst NYX_KEEP_VERSIONS=0); D="$(cat "$R/current")"
+if [ "$D" != "$C" ] && [ -d "$R/versions/$C" ]; then
+    ok "con una suite bajo nyx exec en curso, la poda conserva su versión"
+else
+    mal "poda con suite bajo nyx exec (C=$C, D=$D): $(ls "$R/versions" | tr '\n' ' ')"
+fi
+echo "$out" | grep -q "aviso: hay procesos usando $C" && ok "el install avisa que hay trabajo en curso con la versión que reemplaza" \
+    || mal "el install no avisó del trabajo en curso: $(echo "$out" | grep -i aviso | head -1)"
+touch "$F/go"
+t=0; until { [ -s "$F/con.2" ] && [ -s "$F/sin.2" ]; } || [ "$t" -ge 30 ]; do sleep 1; t=$((t + 1)); done
+if [ "$(cat "$F/con.1")" = "$R/versions/$C" ] && [ "$(cat "$F/con.2")" = "$R/versions/$C" ]; then
+    ok "bajo nyx exec, los dos nyx de la suite usan la misma versión aunque otra se active en medio"
+else
+    mal "suite bajo nyx exec partida: '$(cat "$F/con.1" 2>/dev/null)' → '$(cat "$F/con.2" 2>/dev/null)'"
+fi
+if [ "$(cat "$F/sin.1")" = "$R/versions/$C" ] && [ "$(cat "$F/sin.2")" = "$R/versions/$D" ]; then
+    ok "control: sin nyx exec la misma suite SÍ se parte (el escenario ve el problema)"
+else
+    mal "control sin nyx exec: '$(cat "$F/sin.1" 2>/dev/null)' → '$(cat "$F/sin.2" 2>/dev/null)' (esperado $C → $D)"
+fi
+
+# 6. `nyx exec --version <id>`: una versión instalada que no es la activa (la
+#    .fijada B), y una que no existe se rechaza con el error esperado.
+hB=$(env -u NYX_HOME HOME="$F" bash "$R/scripts/nyx" exec --version "$B" -- bash "$R/scripts/nyx" --version 2>&1 | sed -n 's/^  home: *//p')
+[ "$hB" = "$R/versions/$B" ] && ok "nyx exec --version corre con una versión instalada no activa" \
+    || mal "nyx exec --version $B: home '$hB'"
+out=$(env -u NYX_HOME HOME="$F" bash "$R/scripts/nyx" exec --version 0.0.0+nada -- true 2>&1); rc=$?
+[ "$rc" -eq 2 ] && echo "$out" | grep -q "no está instalada" && ok "nyx exec --version rechaza una versión que no existe" \
+    || mal "nyx exec --version inexistente: rc=$rc, $out"
+
 if [ "$fallos" -gt 0 ]; then echo "  toolchain versionado: FALLÓ ($fallos)"; exit 1; fi
 echo "  toolchain versionado: PASS"

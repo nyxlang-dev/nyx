@@ -125,6 +125,15 @@ code that used to compile: `nyx --version` prints the version plus a fingerprint
 of the compiler and the prelude, so two installs claiming the same version but
 behaving differently can be told apart.
 
+**One toolchain for a whole suite: `nyx exec -- <cmd>`.** Installed versions live side by
+side under `~/.nyx/versions/`, and each `nyx` process pins the active one when it starts —
+so a script that calls `nyx test` many times resolves it again on every call, and an
+update activated meanwhile splits the run between two compilers. Run the script under
+`nyx exec -- ./verify.sh` (or `nyx exec --version <id> -- …` for an installed, non-active
+version, e.g. one kept as a safety net): every `nyx` it starts uses that one version, and
+it is not pruned while the command runs. Installing never waits for anyone; `nyx exec` is
+what makes a multi-command run safe against it.
+
 `nyx test` takes `--filter <string>` (only run files whose name matches),
 `--verbose`/`-v` (show output even on pass), `--timeout <seconds>` (per
 test, default 30), `--release`, `--coverage` and `--coverage=lcov`. Any other

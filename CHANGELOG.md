@@ -11,6 +11,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`nyx exec [--version <id>] -- <cmd>`: una sola versión del toolchain para toda una suite**
+  (nyxerp, 2026-09-29). El wrapper fija la versión por proceso, así que una suite que lanza muchos
+  `nyx test` sueltos la resolvía en cada uno, y un `nyx update` a mitad la partió entre dos
+  compiladores: hubo que relanzarla entera. `nyx exec` corre el comando con `NYX_HOME` fijo en la
+  ruta real de la versión (la activa, o una instalada con `--version`) y le hereda el candado de
+  versión, así la poda tampoco la borra mientras corre. Y `install-local`/`nyx update` avisan si la
+  versión que reemplazan está en uso. `CLAUDE.md` regla 3 decía que la suite ajena terminaba con su
+  versión; valía solo para un árbol de procesos. Guarda: `make test-toolchain` (casos 5-6, con
+  control positivo: la misma suite sin `exec` se parte).
+
 - **`CAPABILITIES.md` dice qué builtins no existen en wasm32-wasi** (pedido de nyxerp,
   2026-09-27): cada uno lleva «· *no existe en wasm32-wasi*». `std/builtins.index` suma un sexto
   campo (`no-wasm`) que el generador saca de `wasm_forbidden_builtin` y de los
@@ -90,6 +100,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `test_serve_std_keepalive.py` (21 → 22).
 
 ### Arreglado
+
+- **`nyx update` dejaba la versión sin `runtime/wasi/` y nada compilaba a wasm32-wasi** (fricción
+  de nyxerp, 2026-09-29). El espejo público —del que construye `nyx update`— nunca tuvo esa
+  carpeta: `sync_to_public.sh` copiaba `runtime/*.c`, que no entra en subcarpetas, y solo
+  `runtime/os/` iba explícito. Pasó inadvertido porque las instalaciones de desarrollo salen de
+  `make install-local`, que sí la copia. El sync copia ahora la carpeta entera y no commitea si
+  faltan `main_shim.c`, `nyx_arena.c`, los `gc.h` u `os_wasm.c`. Verificado con `install.sh` desde
+  el espejo en un HOME aislado y con `nyx update` real.
 
 - **`.to_string()` sobre `char` y sobre enteros de ancho fijo** (`i8`, `u8`, `i16`, `u16`, `i32`,
   `u32`) abortaba con NYX2002. `char`, `i8` y `u8` comparten `i8` en LLVM: el helper recibe ahora

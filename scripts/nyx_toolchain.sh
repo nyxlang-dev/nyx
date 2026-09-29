@@ -94,7 +94,24 @@ nyx_tc_publicar() {
         rm -f "$staging/.fijada"
         mv "$staging" "$root/versions/$id"
     fi
+    nyx_tc_aviso_en_uso "$root" "$id"
     nyx_tc_con_flip "$root" nyx_tc_enlazar "$root" "$id"
+}
+
+# Avisa (sin frenar nada) si la versión activa que se va a reemplazar está en
+# uso. Los procesos que ya la resolvieron siguen con ella; lo que NO está
+# protegido es una suite de varios `nyx` sueltos que no corre bajo `nyx exec`:
+# sus comandos siguientes tomarán la nueva (nyxerp, 2026-09-29). El aviso es
+# para quien instala: es la señal de que hay trabajo ajeno en curso.
+nyx_tc_aviso_en_uso() {
+    local root="$1" id="$2" viejo
+    viejo="$(tr -d '[:space:]' < "$root/current" 2>/dev/null)"
+    [ -n "$viejo" ] && [ "$viejo" != "$id" ] && [ -f "$root/versions/$viejo/.lock" ] || return 0
+    command -v flock >/dev/null 2>&1 || return 0
+    if ! ( flock -x -n 7 ) 7<"$root/versions/$viejo/.lock" 2>/dev/null; then
+        echo "  aviso: hay procesos usando $viejo; siguen con ella hasta terminar."
+        echo "         Una suite de varios comandos nyx que no corre bajo 'nyx exec' toma la nueva en el siguiente."
+    fi
 }
 
 # Layout plano (todo en la raíz) → versionado. Idempotente. Mueve cada entrada
