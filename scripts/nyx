@@ -1035,5 +1035,10 @@ if [ "$_nyx_rc" -ne 0 ]; then
     fi
     exit 1
 fi
+# Los avisos del compilador (⚠) se tiraban junto con el log cuando la
+# compilación salía bien: `nyx archivo.nx` no mostraba ninguno —ni NYX2019, que
+# en 0.35.x es aviso justamente para que se vea antes de ser error en 0.36.0—.
+# `nyx build` ya los reenvía desde compilacion-separada; este camino faltaba.
+grep -F '⚠' "$BUILD_LOG" >&2 || true
 
 "$TMPDIR_NYX/prog" "$@"

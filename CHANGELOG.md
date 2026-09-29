@@ -9,6 +9,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Arreglado
+
+- **`nyx archivo.nx` muestra los avisos del compilador.** Con compilación exitosa el wrapper tiraba el
+  log entero, así que ningún `⚠` llegaba al usuario en ese camino —tampoco NYX2019, que en 0.35.x es
+  aviso justamente para que se vea antes de ser error en 0.36.0—; `nyx build` ya los reenviaba desde
+  el arco compilacion-separada. Encontrado probando la 0.35.0 instalada. Guarda en
+  `run_tooling_gates.sh` (`make test-ai-first`), con control positivo: un programa sin avisos no
+  muestra ninguno.
+
 ## [0.35.0] — 2026-09-29
 
 > **MINOR porque rechaza código que antes compilaba** (`[arco: release-0-35]`): NYX1036/NYX2010 sin la
