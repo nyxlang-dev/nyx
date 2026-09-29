@@ -101,6 +101,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **El mensaje de un `assert` puede ser un valor opaco** (fricción de nyxerp, 2026-09-17).
+  `assert(arr[0] == "x", arr[0])` con un `Array` devuelto por una fn no enlazaba: el mensaje llegaba
+  como `i64` a `nyx_string_to_cstr`, que pide `%nyx_string*` (IR inválido), con `nyx check` en
+  verde. El arco builtins-arg-opaco había convertido los argumentos de los builtins, pero `assert`
+  es sentencia y quedó afuera. Los tres sitios de `codegen_assert` que evalúan el mensaje (camino
+  genérico y ramas `int == int` y `String == String`) pasan por `codegen_arg_str`. La ficha decía
+  que en `main()` andaba; medido hoy, fallaba igual. Regresión: `test-455` (una línea por sitio,
+  cada una rompía el enlace sola).
+
 - **`nyx update` dejaba la versión sin `runtime/wasi/` y nada compilaba a wasm32-wasi** (fricción
   de nyxerp, 2026-09-29). El espejo público —del que construye `nyx update`— nunca tuvo esa
   carpeta: `sync_to_public.sh` copiaba `runtime/*.c`, que no entra en subcarpetas, y solo

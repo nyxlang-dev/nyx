@@ -1,0 +1,30 @@
+// test-455 — el MENSAJE de un assert puede ser un valor opaco.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-17): `assert(arr[0] == "x", arr[0])` con
+// un Array devuelto por una fn no enlazaba —`nyx_string_to_cstr(%nyx_string* %<i64>)`,
+// IR inválido— mientras `nyx check` daba verde. El arco builtins-arg-opaco (2026-09-27)
+// convirtió los argumentos de los builtins, pero assert es sentencia y quedó afuera.
+// codegen_assert tiene TRES sitios que evalúan el mensaje: el camino genérico y las
+// ramas int==int y String==String del assert de igualdad. Una línea por sitio; cada
+// una, sola, rompía el enlace antes del arreglo (verificado).
+
+fn dame() -> Array {
+    var xs: Array = []
+    xs.push("x")
+    xs.push("y")
+    return xs
+}
+
+fn main() -> int {
+    let arr: Array = dame()
+    let n: int = 3
+    let s: String = "x"
+    // Camino genérico: la condición compara un slot opaco con un String.
+    assert(arr[0] == "x", arr[0])
+    // Rama int == int.
+    assert(n == 3, arr[1])
+    // Rama String == String.
+    assert(s == "x", arr[0])
+    println("ok")
+    return 0
+}

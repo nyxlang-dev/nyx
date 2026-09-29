@@ -67119,7 +67119,7 @@ sc_and_end4249:
 then4250:
   %32387 = load %ASTNode, %ASTNode* %32268
   %32388 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %32389 = call %nyx_string* @codegen_expr(%ASTNode %32387, %CodegenContext %32388)
+  %32389 = call %nyx_string* @codegen_arg_str(%ASTNode %32387, %CodegenContext %32388)
   %32390 = alloca %nyx_string*
   store %nyx_string* %32389, %nyx_string** %32390
   %32391 = load %CodegenContext, %CodegenContext* %ctx.ptr
@@ -67224,7 +67224,7 @@ sc_and_end4256:
 then4257:
   %32471 = load %ASTNode, %ASTNode* %32268
   %32472 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %32473 = call %nyx_string* @codegen_expr(%ASTNode %32471, %CodegenContext %32472)
+  %32473 = call %nyx_string* @codegen_arg_str(%ASTNode %32471, %CodegenContext %32472)
   %32474 = alloca %nyx_string*
   store %nyx_string* %32473, %nyx_string** %32474
   %32475 = load %CodegenContext, %CodegenContext* %ctx.ptr
@@ -67410,7 +67410,7 @@ define internal %nyx_string* @__assert_generic_tail(
   store %CodegenContext %ctx.param, %CodegenContext* %ctx.ptr
   %32613 = load %ASTNode, %ASTNode* %message.ptr
   %32614 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %32615 = call %nyx_string* @codegen_expr(%ASTNode %32613, %CodegenContext %32614)
+  %32615 = call %nyx_string* @codegen_arg_str(%ASTNode %32613, %CodegenContext %32614)
   %32616 = alloca %nyx_string*
   store %nyx_string* %32615, %nyx_string** %32616
   %32617 = load %nyx_string*, %nyx_string** %32616
