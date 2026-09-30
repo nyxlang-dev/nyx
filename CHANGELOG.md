@@ -86,6 +86,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   invalidan solos (la huella incluye el compilador). Las claves siguen como `char*`: una clave con un
   byte 0 se corta (límite conocido). Regresión: `test-469`, un caso por camino.
 
+- **Lectura y escritura de sockets nativas sobre IOCP en Windows** `[arco: w4-windows]`.
+  `os_ev_read`/`os_ev_write`/`os_ev_cancel` de win32 dejan de ser `-ENOSYS`, sin cambiar el contrato
+  de `os_ev`: el read es un `WSARecv` de cero bytes más un `recv` no bloqueante al completarse (el
+  kernel nunca escribe en el buffer del llamador, y un cancel no pierde datos), y el write envía desde
+  una copia interna. `loop_free` cancela y drena lo pendiente. `test_os_ev.c` corre completo en
+  Windows (110/110) y en Linux (111/111), con dos casos nuevos portables (`cancel_lossless`,
+  `free_pending`); gate 240/240. Implementado y medido en la laptop Windows (W4 Task 7).
+
 - **Timers de Windows sobre IOCP, con tabla que crece** `[arco: w4-windows]`. `os_ev_timer`/`os_ev_wake`
   de win32 dejan de ser `-ENOSYS`: esperan en `GetQueuedCompletionStatusEx` con el timeout del deadline
   más próximo, despiertan con `PostQueuedCompletionStatus` (agrupando wakes: a lo sumo uno en vuelo) y

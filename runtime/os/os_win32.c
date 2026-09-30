@@ -1494,6 +1494,54 @@ typedef struct {
     void*    ud;
 } OsEvW32Timer;
 
+// W4 Task 7 — E/S de sockets sobre el port. Decisiones que NO son obvias:
+//  - READ = WSARecv de CERO bytes + recv() no bloqueante al completarse,
+//    dentro de run_once (el «zero-byte read» de libuv). Así el kernel NUNCA
+//    escribe en el buffer del caller: el buffer solo se toca en el thread de
+//    run_once, como en os_posix.c. Eso es lo que deja cumplir el contrato
+//    de os_ev_cancel sin cambiarlo: tras un CancelIoEx la completion
+//    abortada llega DESPUÉS (quizás en otra vuelta), y si la op hubiera
+//    tenido el buffer del caller, el kernel podría escribirlo cuando el
+//    caller ya lo soltó. Y un cancel no pierde datos: la op cancelada no
+//    consumió nada del socket. El recv exige O_NONBLOCK, que ya es
+//    precondición del contrato; un WSAEWOULDBLOCK espurio re-arma la op.
+//  - WRITE = WSASend desde una COPIA interna (malloc), no desde el buffer
+//    del caller: por el mismo motivo, el kernel puede seguir leyendo tras un
+//    cancel. Cuesta un memcpy por write. Una completion parcial re-postea el
+//    resto: el cb corre UNA vez con len o con -errno (contrato).
+//  - Las ops vivas están en una lista bajo el lock; toda decisión sobre una
+//    completion (recv, re-post, descarte por cancel) se toma CON el lock,
+//    igual que el CancelIoEx de os_ev_cancel — así un cancel nunca se cruza
+//    con un re-post. Una op NO cancelada que vuelve abortada
+//    (WSA_OPERATION_ABORTED por un CancelIoEx ajeno) se re-postea; si el
+//    socket ya no existe, el re-post falla y el error va al cb.
+//  - La op (OVERLAPPED incluido) es del kernel hasta que su completion se
+//    desencola: se libera recién ahí, aunque esté cancelada.
+// EN: Task 7 — socket I/O over the port. READ is a ZERO-byte WSARecv plus a
+// nonblocking recv() inside run_once (libuv's zero-byte read): the kernel
+// never writes the caller's buffer, which is what lets os_ev_cancel keep its
+// contract (the aborted completion arrives later) and makes cancel lossless.
+// WRITE sends from an internal copy for the same reason. Every completion
+// decision is taken under the lock, as is cancel's CancelIoEx. An op is
+// owned by the kernel until its completion is dequeued.
+enum { OS_EV_W32_OP_READ = 1, OS_EV_W32_OP_WRITE = 2 };
+
+typedef struct OsEvW32Op {
+    OVERLAPPED        ov;          // PRIMER miembro: entries[i].lpOverlapped == (OVERLAPPED*)op
+    int               kind;
+    int               cancelled;
+    SOCKET            s;
+    os_ev_cb          cb;
+    void*             ud;
+    void*             rbuf;        // READ: buffer del caller (solo lo toca run_once)
+    int64_t           len;
+    char*             wbuf;        // WRITE: copia interna
+    int64_t           wdone;
+    int64_t           preset;      // != 0: -errno de un post que falló en el acto (va por el cb)
+    struct OsEvW32Op* prev;
+    struct OsEvW32Op* next;
+} OsEvW32Op;
+
 struct os_ev_loop {
     HANDLE        port;
     os_mutex_t    lock;
@@ -1501,6 +1549,8 @@ struct os_ev_loop {
     int           timer_count;   // slots usados (activos o reusables)
     int           timer_cap;
     volatile LONG wake_pending;
+    OsEvW32Op*    ops;           // ops con una op de kernel en vuelo (lista doble)
+    int64_t       op_count;
 };
 
 static int64_t os_ev_w32_now_ms(void) {
@@ -1521,10 +1571,52 @@ os_ev_loop_t* os_ev_loop_new(void) {
     return l;
 }
 
+static void os_ev_w32_op_link(os_ev_loop_t* l, OsEvW32Op* op) {
+    op->prev = NULL;
+    op->next = l->ops;
+    if (l->ops) l->ops->prev = op;
+    l->ops = op;
+    l->op_count++;
+}
+static void os_ev_w32_op_unlink(os_ev_loop_t* l, OsEvW32Op* op) {
+    if (op->prev) op->prev->next = op->next; else l->ops = op->next;
+    if (op->next) op->next->prev = op->prev;
+    op->prev = op->next = NULL;
+    l->op_count--;
+}
+static void os_ev_w32_op_free(OsEvW32Op* op) {
+    free(op->wbuf);
+    free(op);
+}
+
 void os_ev_loop_free(os_ev_loop_t* l) {
     // Contrato: descarta lo pendiente en silencio y el caller ya detuvo el
-    // poller. Los paquetes de wake sin consumir mueren con el port.
+    // poller. Los paquetes de wake sin consumir mueren con el port. Las ops
+    // de E/S son del kernel hasta que su completion se desencola: se cancelan
+    // y se drenan antes de liberar. Si alguna no vuelve en ~2 s se FILTRA a
+    // propósito (el kernel todavía escribe su OVERLAPPED): perder memoria es
+    // estrictamente mejor que un use-after-free del kernel.
     if (!l) return;
+    os_mutex_lock(&l->lock);
+    for (OsEvW32Op* op = l->ops; op; op = op->next) {
+        op->cancelled = 1;
+        CancelIoEx((HANDLE)op->s, &op->ov);
+    }
+    os_mutex_unlock(&l->lock);
+    int64_t t0 = os_ev_w32_now_ms();
+    while (l->op_count > 0 && os_ev_w32_now_ms() - t0 < 2000) {
+        OVERLAPPED_ENTRY e[64];
+        ULONG n = 0;
+        if (!GetQueuedCompletionStatusEx(l->port, e, 64, &n, 100, FALSE)) continue;
+        os_mutex_lock(&l->lock);
+        for (ULONG i = 0; i < n; i++) {
+            if (!e[i].lpOverlapped) continue;
+            OsEvW32Op* op = (OsEvW32Op*)e[i].lpOverlapped;
+            os_ev_w32_op_unlink(l, op);
+            os_ev_w32_op_free(op);
+        }
+        os_mutex_unlock(&l->lock);
+    }
     CloseHandle(l->port);
     os_mutex_destroy(&l->lock);
     free(l->timers);
@@ -1576,13 +1668,107 @@ int os_ev_wake(os_ev_loop_t* l) {
     return 0;
 }
 
+// Asocia el socket al port (una vez por socket en su vida: un segundo
+// CreateIoCompletionPort sobre el mismo handle da ERROR_INVALID_PARAMETER, y
+// eso se toma como «ya asociado»). No se lleva un registro propio de sockets
+// asociados: el valor de un SOCKET cerrado se reusa, y un registro creería
+// asociado a uno nuevo que no lo está.
+static int os_ev_w32_assoc(os_ev_loop_t* l, SOCKET s) {
+    if (CreateIoCompletionPort((HANDLE)s, l->port, 0, 0)) return 0;
+    DWORD e = GetLastError();
+    if (e == ERROR_INVALID_PARAMETER) return 0;
+    return -(win_errno(e) ? win_errno(e) : EIO);
+}
+
+// Postea la op de kernel (bajo el lock, ya enlazada). 0 = en vuelo; -errno =
+// no se pudo postear (no habrá completion: el caller la desenlaza y libera).
+static int os_ev_w32_post_locked(OsEvW32Op* op) {
+    memset(&op->ov, 0, sizeof(op->ov));
+    DWORD flags = 0;
+    int rc;
+    if (op->kind == OS_EV_W32_OP_READ) {
+        WSABUF b; b.buf = NULL; b.len = 0;      // zero-byte read
+        rc = WSARecv(op->s, &b, 1, NULL, &flags, &op->ov, NULL);
+    } else {
+        int64_t rem = op->len - op->wdone;
+        WSABUF b;
+        b.buf = op->wbuf + op->wdone;
+        b.len = (ULONG)(rem > 0x7FFFFFFF ? 0x7FFFFFFF : rem);
+        rc = WSASend(op->s, &b, 1, NULL, 0, &op->ov, NULL);
+    }
+    // Éxito inmediato (rc==0) también encola una completion (no se usa
+    // FILE_SKIP_COMPLETION_PORT_ON_SUCCESS): un solo camino de despacho.
+    if (rc == 0) return 0;
+    int e = WSAGetLastError();
+    if (e == WSA_IO_PENDING) return 0;
+    e = wsa_errno(e);
+    return -(e ? e : EIO);
+}
+
+static int os_ev_w32_submit(os_ev_loop_t* l, OsEvW32Op* op) {
+    // Un socket inválido falla ACÁ (registro), igual que el epoll_ctl de
+    // POSIX. Un error de la operación en sí (peer reseteado, etc.) NO: en
+    // POSIX ese error llega por el cb desde run_once, así que acá se encola
+    // una completion propia con el -errno en op->preset.
+    int rc = os_ev_w32_assoc(l, op->s);
+    if (rc < 0) { os_ev_w32_op_free(op); return rc; }
+    os_mutex_lock(&l->lock);
+    os_ev_w32_op_link(l, op);
+    rc = os_ev_w32_post_locked(op);
+    if (rc < 0) {
+        op->preset = rc;
+        memset(&op->ov, 0, sizeof(op->ov));
+        if (!PostQueuedCompletionStatus(l->port, 0, 0, &op->ov)) {
+            os_ev_w32_op_unlink(l, op);
+            os_mutex_unlock(&l->lock);
+            os_ev_w32_op_free(op);
+            return rc;
+        }
+    }
+    os_mutex_unlock(&l->lock);
+    return 0;
+}
+
 int os_ev_read(os_ev_loop_t* l, os_sock_t sock, void* buf, int64_t len, os_ev_cb cb, void* ud) {
-    (void)l; (void)sock; (void)buf; (void)len; (void)cb; (void)ud; return -ENOSYS;
+    if (!l || !cb || !buf || len < 0) return -EINVAL;
+    OsEvW32Op* op = (OsEvW32Op*)calloc(1, sizeof(OsEvW32Op));
+    if (!op) return -ENOMEM;
+    op->kind = OS_EV_W32_OP_READ;
+    op->s = WSOCK(sock);
+    op->cb = cb; op->ud = ud;
+    op->rbuf = buf; op->len = len;
+    return os_ev_w32_submit(l, op);
 }
+
 int os_ev_write(os_ev_loop_t* l, os_sock_t sock, const void* buf, int64_t len, os_ev_cb cb, void* ud) {
-    (void)l; (void)sock; (void)buf; (void)len; (void)cb; (void)ud; return -ENOSYS;
+    if (!l || !cb || (!buf && len > 0) || len < 0) return -EINVAL;
+    OsEvW32Op* op = (OsEvW32Op*)calloc(1, sizeof(OsEvW32Op));
+    if (!op) return -ENOMEM;
+    op->wbuf = (char*)malloc(len > 0 ? (size_t)len : 1);
+    if (!op->wbuf) { free(op); return -ENOMEM; }
+    if (len > 0) memcpy(op->wbuf, buf, (size_t)len);
+    op->kind = OS_EV_W32_OP_WRITE;
+    op->s = WSOCK(sock);
+    op->cb = cb; op->ud = ud;
+    op->len = len;
+    return os_ev_w32_submit(l, op);
 }
-int os_ev_cancel(os_ev_loop_t* l, os_sock_t sock) { (void)l; (void)sock; return -ENOSYS; }
+
+int os_ev_cancel(os_ev_loop_t* l, os_sock_t sock) {
+    // Contrato: sin cbs para lo cancelado, 0 haya o no op pendiente, y lo que
+    // esta vuelta de run_once YA resolvió se despacha igual. Marcar y cancelar
+    // bajo el lock: ninguna completion puede re-postearse en el medio.
+    if (!l) return -EINVAL;
+    SOCKET s = WSOCK(sock);
+    os_mutex_lock(&l->lock);
+    int any = 0;
+    for (OsEvW32Op* op = l->ops; op; op = op->next) {
+        if (op->s == s && !op->cancelled) { op->cancelled = 1; any = 1; }
+    }
+    if (any) CancelIoEx((HANDLE)s, NULL);
+    os_mutex_unlock(&l->lock);
+    return 0;
+}
 int os_ev_run_once(os_ev_loop_t* l, int timeout_ms) {
     if (!l) return -EINVAL;
 
@@ -1602,29 +1788,91 @@ int os_ev_run_once(os_ev_loop_t* l, int timeout_ms) {
     }
 
     // 2) esperar en el port. WAIT_TIMEOUT no es error: vuelta sin paquetes.
-    //    Los únicos paquetes hoy son los de wake (las ops de E/S son Task 7).
+    //    Paquetes: wakes (clave propia, sin OVERLAPPED) y completions de ops.
     OVERLAPPED_ENTRY entries[64];
     ULONG n = 0;
     DWORD wait = (eff < 0) ? INFINITE : (DWORD)eff;
-    if (GetQueuedCompletionStatusEx(l->port, entries, 64, &n, wait, FALSE)) {
-        for (ULONG i = 0; i < n; i++) {
-            if (entries[i].lpCompletionKey == OS_EV_W32_KEY_WAKE)
-                InterlockedExchange(&l->wake_pending, 0);
-        }
-    } else if (GetLastError() != WAIT_TIMEOUT) {
-        return win_last_errno();
+    if (!GetQueuedCompletionStatusEx(l->port, entries, 64, &n, wait, FALSE)) {
+        if (GetLastError() != WAIT_TIMEOUT) return win_last_errno();
+        n = 0;
     }
 
-    // 3) snapshot bajo el lock, one-shot desactivado ANTES de despachar.
-    struct { os_ev_cb cb; void* ud; } snap[OS_EV_W32_SNAP_MAX];
+    // 3) snapshot bajo el lock: completions resueltas (o re-armadas) y
+    //    timers vencidos (one-shot desactivado ANTES de despachar).
+    struct { os_ev_cb cb; void* ud; int64_t result; } snap[OS_EV_W32_SNAP_MAX + 64];
     int sc = 0;
-    int64_t tnow = os_ev_w32_now_ms();
     os_mutex_lock(&l->lock);
-    for (int i = 0; i < l->timer_count && sc < OS_EV_W32_SNAP_MAX; i++) {
+    for (ULONG i = 0; i < n; i++) {
+        if (!entries[i].lpOverlapped) {
+            if (entries[i].lpCompletionKey == OS_EV_W32_KEY_WAKE)
+                InterlockedExchange(&l->wake_pending, 0);
+            continue;
+        }
+        OsEvW32Op* op = (OsEvW32Op*)entries[i].lpOverlapped;
+        os_ev_w32_op_unlink(l, op);
+        if (op->cancelled) { os_ev_w32_op_free(op); continue; }
+        DWORD bytes = 0, fl = 0;
+        int64_t result = 0;
+        int done = 1;
+        if (op->preset) {
+            result = op->preset;               // post fallido en el acto (os_ev_w32_submit)
+        } else if (!WSAGetOverlappedResult(op->s, &op->ov, &bytes, FALSE, &fl)) {
+            int e = WSAGetLastError();
+            if (e == WSA_OPERATION_ABORTED) {
+                // Abortada sin que ESTE loop la cancelara: re-armar; si el
+                // socket ya no existe, el post falla y el error va al cb.
+                os_ev_w32_op_link(l, op);
+                int rc = os_ev_w32_post_locked(op);
+                if (rc == 0) continue;
+                os_ev_w32_op_unlink(l, op);
+                result = rc;
+            } else {
+                e = wsa_errno(e);
+                result = -(e ? e : EIO);
+            }
+        } else if (op->kind == OS_EV_W32_OP_READ) {
+            // El zero-byte read avisa que hay datos (o EOF/error): el recv
+            // real, no bloqueante, se hace ACÁ, en el thread de run_once.
+            int r = recv(op->s, (char*)op->rbuf, (int)wclamp_len((size_t)op->len), 0);
+            if (r >= 0) {
+                result = r;
+            } else {
+                int e = WSAGetLastError();
+                if (e == WSAEWOULDBLOCK) {          // espurio: re-armar
+                    os_ev_w32_op_link(l, op);
+                    int rc = os_ev_w32_post_locked(op);
+                    if (rc == 0) continue;
+                    os_ev_w32_op_unlink(l, op);
+                    result = rc;
+                } else {
+                    e = wsa_errno(e);
+                    result = -(e ? e : EIO);
+                }
+            }
+        } else {
+            op->wdone += bytes;
+            if (op->wdone < op->len && bytes > 0) {   // parcial: postear el resto
+                os_ev_w32_op_link(l, op);
+                int rc = os_ev_w32_post_locked(op);
+                if (rc == 0) done = 0;
+                else { os_ev_w32_op_unlink(l, op); result = rc; }
+            } else {
+                result = op->wdone;
+            }
+        }
+        if (!done) continue;
+        snap[sc].cb = op->cb; snap[sc].ud = op->ud; snap[sc].result = result;
+        sc++;
+        os_ev_w32_op_free(op);
+    }
+    int64_t tnow = os_ev_w32_now_ms();
+    int tfired = 0;
+    for (int i = 0; i < l->timer_count && tfired < OS_EV_W32_SNAP_MAX; i++) {
         if (l->timers[i].active && l->timers[i].deadline_ms <= tnow) {
             snap[sc].cb = l->timers[i].cb;
             snap[sc].ud = l->timers[i].ud;
-            sc++;
+            snap[sc].result = 0;
+            sc++; tfired++;
             l->timers[i].active = 0;
         }
     }
@@ -1633,8 +1881,8 @@ int os_ev_run_once(os_ev_loop_t* l, int timeout_ms) {
     while (l->timer_count > 0 && !l->timers[l->timer_count - 1].active) l->timer_count--;
     os_mutex_unlock(&l->lock);
 
-    // 4) despacho FUERA del lock (el cb puede re-registrar timers).
-    for (int i = 0; i < sc; i++) snap[i].cb(0, snap[i].ud);
+    // 4) despacho FUERA del lock (el cb puede registrar ops y timers nuevos).
+    for (int i = 0; i < sc; i++) snap[i].cb(snap[i].result, snap[i].ud);
     return sc;
 }
 
