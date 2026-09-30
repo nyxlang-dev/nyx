@@ -1,0 +1,103 @@
+// std/serve gzip: text responses go out compressed when the client accepts it
+// std/serve gzip: las respuestas de texto salen comprimidas cuando el cliente lo acepta
+//
+// No code needed: if the request says `Accept-Encoding: gzip`, the body is text
+// (text/*, JSON, JavaScript, XML, SVG), it is at least 1024 bytes and the handler
+// did not set its own Content-Encoding, std/serve compresses it and adds
+// `Content-Encoding: gzip`, `Vary: Accept-Encoding` and the right Content-Length
+// (in bytes of the compressed body). It is ON by default; turn it off or move the
+// size window with:
+//
+//   app_compress(app, false)                 // off
+//   app_compress_limits(app, 2048, 4194304)  // compress bodies of 2 KiB .. 4 MiB
+//
+// Compressed bodies are cached (by sha256 of the body), so a static page or a CSS
+// is compressed once. The codec is std/zip's DEFLATE (fixed Huffman, pure Nyx);
+// zip_gzip / zip_gunzip are also there to use by hand.
+//
+// This recipe plays the client with a raw TCP socket so it can run on its own.
+
+import "std/web"
+import "std/serve"
+import "std/zip"
+import "std/error"
+
+fn pagina(n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < n {
+        sb.append("<tr><td>row " + int_to_string(i) + "</td><td>value</td></tr>\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn tabla(req: Request) -> Response {
+    return response_html(200, "<table>\n" + pagina(300) + "</table>")
+}
+
+// One GET with Connection: close; the whole answer as bytes.
+fn pedir(port: int, extra: String) -> String {
+    var fd: int = 0 - 1
+    var tries: int = 0
+    while fd < 0 and tries < 50 {
+        fd = tcp_connect("127.0.0.1", port)
+        if fd < 0 { sleep(100) }
+        tries = tries + 1
+    }
+    if fd < 0 { return "" }
+    tcp_set_timeout(fd, 5)
+    tcp_write(fd, "GET /tabla HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n" + extra + "\r\n")
+    var sb: StringBuilder = StringBuilder.new()
+    var more: bool = true
+    while more {
+        let chunk: String = tcp_read_partial(fd, 65536)
+        if chunk.length() == 0 {
+            more = false
+        } else {
+            sb.append(chunk)
+        }
+    }
+    tcp_close(fd)
+    return sb.to_string()
+}
+
+fn body_of(resp: String) -> String {
+    let i: int = resp.indexOf("\r\n\r\n")
+    return resp.substring(i + 4, resp.length())
+}
+
+fn main() -> int {
+    let app: App = app_new()
+    let port: int = 18213
+    app_get(app, "/tabla", tabla)
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    let plain: String = pedir(port, "")
+    let gz: String = pedir(port, "Accept-Encoding: gzip\r\n")
+    print("plain body:      " + int_to_string(body_of(plain).length()) + " bytes")
+    print("compressed body: " + int_to_string(body_of(gz).length()) + " bytes")
+    if gz.indexOf("Content-Encoding: gzip") < 0 {
+        print("the answer is not gzip")
+        return 1
+    }
+    print("Content-Encoding: gzip")
+
+    let r: Result<String, Error> = zip_gunzip(body_of(gz), 0)
+    match r {
+        Result.Ok(text) => {
+            if text != body_of(plain) {
+                print("the decompressed body differs")
+                return 1
+            }
+            print("decompressed body equals the plain one")
+        }
+        Result.Err(e) => {
+            print("gunzip failed: " + e.msg)
+            return 1
+        }
+    }
+    return 0
+}

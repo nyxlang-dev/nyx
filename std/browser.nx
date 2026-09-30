@@ -44,6 +44,9 @@ extern "js" fn js_browser_interval_fn(ms: int, handler: Fn) -> int
 extern "js" fn js_browser_geo_fn(handler: Fn)
 extern "js" fn js_browser_sse_fn(url: String, handler: Fn) -> int
 extern "js" fn js_browser_sse_close(id: int)
+// Con plazo y espacio destino (red local). Ver browser_fetch_opts_fn / browser_sse_opts_fn.
+extern "js" fn js_browser_fetch_fn_opts(url: String, method: String, body: String, timeout_ms: int, target_space: String, handler: Fn)
+extern "js" fn js_browser_sse_opts_fn(url: String, timeout_ms: int, target_space: String, handler: Fn) -> int
 
 // HTTP fetch: al resolver, llama al export `handler(status: int, body: String)`.
 // status 0 = error de red (body = mensaje). body de request "" = sin body.
@@ -102,6 +105,38 @@ export fn browser_clear_timer(id: int) {
 // status 0 = error de red (body = mensaje). body de request "" = sin body.
 export fn browser_fetch_fn(url: String, method: String, body: String, handler: Fn) {
     js_browser_fetch_fn(url, method, body, handler)
+}
+
+// ── Red local: permiso de Chrome y plazo ────────────────────────────────────
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-09-29, IDEA)
+//
+// Una PWA instalada en las tablets de un local habla con un servidor de la red
+// local. Chrome pide para eso el permiso de red local (Local Network Access;
+// antes Private Network Access) y lo activa el campo `targetAddressSpace` de
+// `fetch`. Además, contra un equipo apagado o fuera de alcance el fetch se
+// queda esperando muchísimo: hace falta un plazo propio.
+//
+//   browser_fetch_opts_fn("http://192.168.1.20:8080/pedidos", "POST", cuerpo,
+//       3000, "local", fn(status: int, body: String) { ... })
+//
+//   - `timeout_ms` <= 0 = sin plazo. Si vence, se aborta el pedido (AbortController)
+//     y el cierre recibe status 0 y un cuerpo que EMPIEZA con "timeout:".
+//     (Para un Err con kind "timeout" de std/error usar browser_fetch_await_net
+//     de std/browser_await.)
+//   - `target_space`: "local" (LAN), "loopback" o "private" (nombre viejo de
+//     PNA); "" = no pedir nada. Un valor desconocido se ignora, y un navegador
+//     que no conoce el campo también: nunca rompe el pedido.
+//   - No reemplaza los requisitos del lado del servidor: el navegador puede
+//     mandar un preflight con `Access-Control-Request-Local-Network`/
+//     `Access-Control-Request-Private-Network` y el servidor tiene que
+//     contestar con el permiso correspondiente (CORS incluido).
+//
+// EN: fetch with a timeout (AbortController) and Chrome's Local Network Access
+// `targetAddressSpace`. Timeout => closure gets status 0 and a body starting
+// with "timeout:".
+export fn browser_fetch_opts_fn(url: String, method: String, body: String, timeout_ms: int, target_space: String, handler: Fn) {
+    js_browser_fetch_fn_opts(url, method, body, timeout_ms, target_space, handler)
 }
 
 // setTimeout con cierre: llama a `handler()` una vez tras `ms`. Devuelve id
@@ -171,6 +206,27 @@ export fn browser_geo_fn(handler: Fn) {
 //     lo que permite testearlo.
 export fn browser_sse_fn(url: String, handler: Fn) -> int {
     return js_browser_sse_fn(url, handler)
+}
+
+// SSE con plazo de conexión y espacio destino (red local, ver más arriba
+// browser_fetch_opts_fn).
+//
+//   let id: int = browser_sse_opts_fn("http://192.168.1.20:8080/eventos", 3000, "local",
+//       fn(evento: String, datos: String) {
+//           if evento == "nyx-error" { /* datos: "timeout" o "connection" */ }
+//           else if evento == "stock" { dom_set_text("#stock", datos) }
+//       })
+//
+//   - `timeout_ms` es el plazo para CONECTAR (recibir la respuesta), no la
+//     duración del canal; <= 0 = sin plazo. Si vence, se aborta el pedido, el
+//     cierre recibe UNA vez ("nyx-error", "timeout") y el canal se cierra solo
+//     soltando el entorno. Un fallo de conexión es ("nyx-error", "connection").
+//     El nombre "nyx-error" lo pone el shim: un servidor que emita un evento
+//     con ese nombre se confundiría con él.
+//   - Igual que browser_sse_fn: multi-disparo, id > 0, y browser_sse_close
+//     cierra (aborta el pedido si todavía estaba conectando).
+export fn browser_sse_opts_fn(url: String, timeout_ms: int, target_space: String, handler: Fn) -> int {
+    return js_browser_sse_opts_fn(url, timeout_ms, target_space, handler)
 }
 
 // Cierra el canal y SUELTA el entorno del cierre. Llamarlo al desmontar la

@@ -87,6 +87,9 @@
 //     `.toLower()` (camelCase), the one actually emitted
 //     (compiler/codegen.nx ~line 7210).
 
+import "std/error"
+import "std/random"
+
 // ── Public entry point ──────────────────────────────────────────────────────
 
 // Guard against pathological input (e.g. a body crafted with thousands of
@@ -334,4 +337,191 @@ fn mp_index_from(s: String, needle: String, start_at: int) -> int {
         i = i + 1
     }
     return -1
+}
+
+// ── Construcción (cliente) ───────────────────────────────────────────────────
+//
+// El otro sentido: armar un cuerpo `multipart/form-data` para SUBIR archivos con
+// el cliente HTTP (pedido de nyxerp, 2026-09-29: mandar un PDF a la API de
+// WhatsApp Business). Vive al lado del parser porque comparten formato y
+// representación de las partes: una parte es el mismo Array de 4 casillas
+// [nombre, archivo, content-type, valor] que devuelve `multipart_parse`, así que
+// lo que se parsea se puede volver a armar tal cual (ida y vuelta).
+//
+//   var partes: Array = []
+//   partes.push(multipart_field("messaging_product", "whatsapp"))
+//   partes.push(multipart_file("file", "cotizacion.pdf", "application/pdf", pdf_bytes))
+//   match multipart_build(partes) {
+//       Result.Ok(mp) => { /* mp.content_type, mp.body */ }
+//       Result.Err(e) => { ... }
+//   }
+//   // enviarlo: try_http_post_multipart(url, mp, cabeceras)   (std/http)
+//
+// Decisiones:
+//  - El valor de un archivo es BINARIO: bytes con NUL, CR, LF y "--" van tal cual
+//    (el cuerpo es un String de bytes; ver la nota de NUL del parser arriba).
+//  - Boundary: "----NyxBoundary" + 32 hex de bytes aleatorios (std/random, sembrado
+//    de /dev/urandom). Además se VERIFICA que no aparezca en ninguna parte; si
+//    apareciera (probabilidad ~2^-128, o contenido malicioso que la anticipó) se
+//    sortea otro, hasta 16 veces, y si no hay uno libre devuelve Err.
+//  - Nombre y nombre de archivo se escriben entre comillas; `"`, CR y LF dentro
+//    se codifican como %22, %0D y %0A (lo que hacen los navegadores, WHATWG HTML
+//    §4.10.21.8), así un nombre de archivo no rompe las cabeceras ni inyecta otras.
+//    El parser de este módulo NO decodifica esos %XX (hoy).
+//  - El content-type de una parte no puede llevar CR/LF (inyección de cabeceras):
+//    Err. Un archivo sin content-type sale como `application/octet-stream`; un
+//    campo de texto no lleva cabecera Content-Type.
+//  - Nombre vacío -> Err (el parser descarta las partes sin nombre).
+
+/// Resultado de `multipart_build`: el cuerpo listo para enviar y el valor completo
+/// de la cabecera Content-Type (`multipart/form-data; boundary=...`).
+pub struct Multipart {
+    body: String,
+    content_type: String,
+    boundary: String,
+}
+
+/// Parte de texto: campo `name` con valor `value`.
+pub fn multipart_field(name: String, value: String) -> Array {
+    var p: Array = []
+    p.push(name)
+    p.push("")
+    p.push("")
+    p.push(value)
+    return p
+}
+
+/// Parte de archivo: campo `name`, nombre de archivo `filename`, content-type
+/// `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
+pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array {
+    var p: Array = []
+    p.push(name)
+    p.push(filename)
+    if ctype.length() == 0 {
+        p.push("application/octet-stream")
+    } else {
+        p.push(ctype)
+    }
+    p.push(data)
+    return p
+}
+
+const MP_HEX: String = "0123456789abcdef"
+
+fn mp_new_boundary() -> String {
+    let raw: String = random_bytes(16)
+    var s: String = "----NyxBoundary"
+    var i: int = 0
+    while i < 16 {
+        let b: int = raw.charAt(i)
+        let hi: int = b / 16
+        let lo: int = b % 16
+        s = s + MP_HEX.substring(hi, hi + 1) + MP_HEX.substring(lo, lo + 1)
+        i = i + 1
+    }
+    return s
+}
+
+// Codifica `"`, CR y LF de un nombre para ir entre comillas en Content-Disposition.
+fn mp_quote_name(s: String) -> String {
+    var out: String = ""
+    var i: int = 0
+    let n: int = s.length()
+    while i < n {
+        let c: int = s.charAt(i)
+        if c == 34 {
+            out = out + "%22"
+        } else {
+            if c == 13 {
+                out = out + "%0D"
+            } else {
+                if c == 10 {
+                    out = out + "%0A"
+                } else {
+                    out = out + s.substring(i, i + 1)
+                }
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn mp_has_crlf(s: String) -> bool {
+    var i: int = 0
+    let n: int = s.length()
+    while i < n {
+        let c: int = s.charAt(i)
+        if c == 13 or c == 10 {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Arma el cuerpo multipart con las partes dadas (en ese orden). Ver el bloque de
+// decisiones de arriba. Sin partes también es válido (cuerpo solo con el cierre).
+pub fn multipart_build(parts: Array) -> Result<Multipart, Error> {
+    if parts.length() > MP_MAX_PARTS {
+        return Result.Err(err_new(22, "invalid", "multipart_build: mas de " + int_to_string(MP_MAX_PARTS) + " partes"))
+    }
+    var i: int = 0
+    while i < parts.length() {
+        let p: Array = parts[i]
+        let name: String = p[0]
+        let ctype: String = p[2]
+        if name.length() == 0 {
+            return Result.Err(err_new(22, "invalid", "multipart_build: la parte " + int_to_string(i) + " no tiene nombre"))
+        }
+        if mp_has_crlf(ctype) {
+            return Result.Err(err_new(22, "invalid", "multipart_build: content-type con salto de linea en la parte " + int_to_string(i)))
+        }
+        i = i + 1
+    }
+    var boundary: String = ""
+    var tries: int = 0
+    while boundary.length() == 0 and tries < 16 {
+        let cand: String = mp_new_boundary()
+        var libre: bool = true
+        var k: int = 0
+        while k < parts.length() and libre {
+            let q: Array = parts[k]
+            let qv: String = q[3]
+            if mp_index_from(qv, cand, 0) >= 0 {
+                libre = false
+            }
+            k = k + 1
+        }
+        if libre {
+            boundary = cand
+        }
+        tries = tries + 1
+    }
+    if boundary.length() == 0 {
+        return Result.Err(err_new(22, "invalid", "multipart_build: no se encontro un boundary ausente del contenido"))
+    }
+
+    let crlf: String = "\r\n"
+    var body: String = ""
+    var j: int = 0
+    while j < parts.length() {
+        let p: Array = parts[j]
+        let name: String = p[0]
+        let filename: String = p[1]
+        let ctype: String = p[2]
+        let value: String = p[3]
+        var head: String = "--" + boundary + crlf + "Content-Disposition: form-data; name=\"" + mp_quote_name(name) + "\""
+        if filename.length() > 0 {
+            head = head + "; filename=\"" + mp_quote_name(filename) + "\""
+        }
+        head = head + crlf
+        if ctype.length() > 0 {
+            head = head + "Content-Type: " + ctype + crlf
+        }
+        body = body + head + crlf + value + crlf
+        j = j + 1
+    }
+    body = body + "--" + boundary + "--" + crlf
+    return Result.Ok(Multipart { body: body, content_type: "multipart/form-data; boundary=" + boundary, boundary: boundary })
 }

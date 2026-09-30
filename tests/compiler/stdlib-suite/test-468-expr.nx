@@ -1,0 +1,215 @@
+// test-468 — std/expr: evaluador seguro de fórmulas con variables (arco friccion-nyxerp-0929, Task 8).
+//
+// Cubre: precedencia y paréntesis, unarios, decimales EXACTOS (0.1 + 0.2, redondeo de
+// 2.675, mitad hacia afuera del cero), las funciones (min max round floor ceil abs if),
+// comparaciones y lógicos (con cortocircuito), las fórmulas de nómina del pedido, compilar
+// una vez y evaluar muchas, expr_vars, y los rechazos con posición (división por cero,
+// variable sin definir, sintaxis, topes de largo y de anidamiento, desborde).
+
+import "std/error"
+import "std/expr"
+
+var g_fallos: Array = []
+
+// Evalúa `texto` con `d` decimales; "ERR ..." + el mensaje si falla.
+fn ev(texto: String, v: ExprVars, d: int) -> String {
+    match expr_parse(texto) {
+        Result.Ok(f) => {
+            match expr_eval_dec(f, v, d) {
+                Result.Ok(s) => { return s }
+                Result.Err(e) => { return "ERR " + e.msg }
+            }
+        }
+        Result.Err(e) => { return "ERR " + e.msg }
+    }
+}
+
+fn igual(etiqueta: String, got: String, want: String) {
+    if got != want {
+        g_fallos.push(etiqueta + ": obtuve [" + got + "] esperaba [" + want + "]")
+    }
+}
+
+fn main() -> int {
+    var v: ExprVars = expr_vars_new()
+    v.set_dec("salario_diario", "43.33")
+    v.set_int("dias", 15)
+    v.set_dec("base", "12345.67")
+    v.set_dec("salario_minimo", "248.93")
+    v.set_int("a", 7)
+    v.set_int("b", 3)
+
+    // Precedencia, paréntesis y unarios.
+    igual("prec1", ev("2 + 3 * 4", v, 0), "14")
+    igual("prec2", ev("(2 + 3) * 4", v, 0), "20")
+    igual("prec3", ev("10 - 4 - 3", v, 0), "3")
+    igual("prec4", ev("100 / 10 / 5", v, 0), "2")
+    igual("un1", ev("-2 * -3", v, 0), "6")
+    igual("un2", ev("- - 4", v, 0), "4")
+    igual("un3", ev("+5 - -5", v, 0), "10")
+    igual("div1", ev("10 / 4", v, 2), "2.50")
+    igual("div2", ev("1 / 3", v, 6), "0.333333")
+    igual("div3", ev("2 / 3", v, 6), "0.666667")
+    igual("div4", ev("-2 / 3", v, 6), "-0.666667")
+    igual("espacios", ev("  \t 1+\n2 ", v, 0), "3")
+
+    // Precisión: decimal exacto, no float.
+    igual("p1", ev("0.1 + 0.2", v, 6), "0.300000")
+    igual("p2", ev("0.1 + 0.2 == 0.3", v, 0), "1")
+    igual("p3", ev("round(2.675, 2)", v, 2), "2.68")
+    igual("p4", ev("round(-2.675, 2)", v, 2), "-2.68")
+    igual("p5", ev("round(2.5)", v, 0), "3")
+    igual("p6", ev("round(-2.5)", v, 0), "-3")
+    igual("p7", ev("round(1234.5678, 2)", v, 2), "1234.57")
+    igual("p8", ev("1.005 * 100", v, 6), "100.500000")
+    igual("p9", ev("19.99 * 3", v, 2), "59.97")
+    igual("p10", ev("0.000001 * 0.5", v, 6), "0.000001")
+    igual("p11", ev("0.1 * 3 - 0.3", v, 6), "0.000000")
+    igual("fmt-neg0", ev("-0.001", v, 2), "0.00")
+
+    // Nómina (los dos ejemplos del pedido).
+    igual("nom1", ev("salario_diario * dias * 1.5", v, 2), "974.93")
+    igual("nom1x", ev("salario_diario * dias * 1.5", v, 3), "974.925")
+    igual("nom2", ev("min(base, 5 * salario_minimo) * 4 / 100", v, 2), "49.79")
+    igual("nom3", ev("min(base, 5 * salario_minimo)", v, 2), "1244.65")
+
+    // Funciones.
+    igual("f1", ev("max(1, 9, 4)", v, 0), "9")
+    igual("f2", ev("min(5)", v, 0), "5")
+    igual("f3", ev("min(3, -8, 2.5)", v, 1), "-8.0")
+    igual("f4", ev("floor(2.9)", v, 0), "2")
+    igual("f5", ev("floor(-2.1)", v, 0), "-3")
+    igual("f6", ev("ceil(2.1)", v, 0), "3")
+    igual("f7", ev("ceil(-2.9)", v, 0), "-2")
+    igual("f8", ev("abs(-4.5)", v, 1), "4.5")
+    igual("f9", ev("floor(3)", v, 0), "3")
+    igual("f10", ev("round(7 / 3, 3)", v, 3), "2.333")
+
+    // Comparaciones, lógicos y if.
+    igual("c1", ev("a > b", v, 0), "1")
+    igual("c2", ev("a < b", v, 0), "0")
+    igual("c3", ev("a >= 7 and b <= 3", v, 0), "1")
+    igual("c4", ev("a == 7 && b != 3", v, 0), "0")
+    igual("c5", ev("a = 7", v, 0), "1")
+    igual("c6", ev("not (a > b) or b == 3", v, 0), "1")
+    igual("c7", ev("!0", v, 0), "1")
+    igual("if1", ev("if(a > b, a * 2, b)", v, 0), "14")
+    igual("if2", ev("if(a < b, 1, 2)", v, 0), "2")
+    igual("if3", ev("if(1, 5, 1 / 0)", v, 0), "5")
+    igual("if4", ev("if(b > 2, if(a > 100, 1, 2), 3)", v, 0), "2")
+    igual("sc1", ev("0 and 1 / 0", v, 0), "0")
+    igual("sc2", ev("1 or 1 / 0", v, 0), "1")
+
+    // Compilar una vez, evaluar muchas.
+    match expr_parse("salario_diario * dias") {
+        Result.Ok(f) => {
+            var total: int = 0
+            var k: int = 1
+            while k <= 3 {
+                var w: ExprVars = expr_vars_new()
+                w.set_dec("salario_diario", "10.10")
+                w.set_int("dias", k)
+                match expr_eval_micros(f, w) {
+                    Result.Ok(m) => { total = total + m }
+                    Result.Err(_) => { g_fallos.push("muchas: error") }
+                }
+                k = k + 1
+            }
+            if total != 60600000 { g_fallos.push("muchas: total " + int_to_string(total)) }
+            match expr_eval(f, v) {
+                Result.Ok(x) => { if x < 649.949 or x > 649.951 { g_fallos.push("float: " + float_to_string(x)) } }
+                Result.Err(_) => { g_fallos.push("float: error") }
+            }
+        }
+        Result.Err(_) => { g_fallos.push("muchas: parse") }
+    }
+
+    // Variables desde float y desde texto inválido.
+    var w2: ExprVars = expr_vars_new()
+    if not w2.set("x", 43.33) { g_fallos.push("set float") }
+    igual("setf", ev("x * 15 * 1.5", w2, 3), "974.925")
+    if w2.set_dec("y", "1.2345678") { g_fallos.push("set_dec 7 decimales") }
+    if w2.set_dec("y", "abc") { g_fallos.push("set_dec abc") }
+    if w2.set_dec("y", "12,5") { g_fallos.push("set_dec coma") }
+    if not w2.set_dec("neg", "-0.5") { g_fallos.push("set_dec neg") }
+    igual("setneg", ev("neg * 3", w2, 1), "-1.5")
+
+    // expr_vars: sin repetidos, en orden de aparición, sin nombres de funciones.
+    match expr_parse("min(base, 5 * salario_minimo) + base + max(dias, 1)") {
+        Result.Ok(f) => {
+            let nombres: Array = expr_vars(f)
+            var lista: String = ""
+            var i: int = 0
+            while i < nombres.length() {
+                let s: String = nombres[i]
+                lista = lista + s + ","
+                i = i + 1
+            }
+            igual("vars", lista, "base,salario_minimo,dias,")
+        }
+        Result.Err(_) => { g_fallos.push("vars: parse") }
+    }
+
+    // Rechazos con posición (columna 1-based).
+    igual("e-div0", ev("1 + 10 / (a - 7)", v, 2), "ERR expr: división por cero (posición 8)")
+    igual("e-var", ev("dias * faltante", v, 2), "ERR expr: variable sin definir 'faltante' (posición 8)")
+    igual("e-func", ev("sqrt(4)", v, 2), "ERR expr: función desconocida 'sqrt' (permitidas: min, max, round, floor, ceil, abs, if) (posición 1)")
+    igual("e-fin", ev("2 +", v, 2), "ERR expr: la expresión termina donde se esperaba un valor (posición 4)")
+    igual("e-par", ev("(2 + 3", v, 2), "ERR expr: falta cerrar el paréntesis abierto en la posición 1 (posición 7)")
+    igual("e-par2", ev("2 + 3)", v, 2), "ERR expr: paréntesis de cierre sin abrir (posición 6)")
+    igual("e-sobra", ev("2 3", v, 2), "ERR expr: sobra '3' después de la expresión (posición 3)")
+    igual("e-num", ev("1.2.3", v, 2), "ERR expr: número mal formado (posición 1)")
+    igual("e-num2", ev("5.", v, 2), "ERR expr: número mal formado (falta el decimal tras el punto) (posición 1)")
+    igual("e-dec7", ev("1.1234567", v, 2), "ERR expr: número con más de 6 decimales: 1.1234567 (posición 1)")
+    igual("e-char", ev("2 $ 3", v, 2), "ERR expr: carácter no permitido '$' (posición 3)")
+    igual("e-exp", ev("1e3", v, 2), "ERR expr: número mal formado (posición 1)")
+    igual("e-cadena", ev("a < b < 3", v, 2), "ERR expr: comparación encadenada: usar 'and' entre dos comparaciones (posición 7)")
+    igual("e-aridad", ev("round(1, 2, 3)", v, 2), "ERR expr: cantidad de argumentos inválida para round(): 3 (posición 1)")
+    igual("e-if", ev("if(1, 2)", v, 2), "ERR expr: cantidad de argumentos inválida para if(): 2 (posición 1)")
+    igual("e-min0", ev("min()", v, 2), "ERR expr: cantidad de argumentos inválida para min(): 0 (posición 1)")
+    igual("e-round7", ev("round(1.5, 7)", v, 2), "ERR expr: round: los decimales deben ser un entero de 0 a 6 (posición 1)")
+    igual("e-round-frac", ev("round(1.5, 1.5)", v, 2), "ERR expr: round: los decimales deben ser un entero de 0 a 6 (posición 1)")
+    igual("e-reservada", ev("2 * and", v, 2), "ERR expr: palabra reservada 'and' donde va un valor (posición 5)")
+    igual("e-vacia", ev("", v, 2), "ERR expr: la expresión termina donde se esperaba un valor (posición 1)")
+    igual("e-desborde", ev("99999999999 * 99999999999", v, 2), "ERR expr: desbordamiento: el resultado supera 100000000000 (posición 13)")
+    igual("e-desborde2", ev("99999999999 + 99999999999", v, 2), "ERR expr: desbordamiento: el resultado supera 100000000000 (posición 13)")
+    igual("e-desborde3", ev("99999999999 / 0.000001", v, 2), "ERR expr: desbordamiento: el resultado supera 100000000000 (posición 13)")
+    igual("e-numgrande", ev("1000000000000", v, 2), "ERR expr: número fuera de rango: 1000000000000 (posición 1)")
+    igual("e-dentro", ev("99999999999 * 1", v, 0), "99999999999")
+
+    // Topes: largo y anidamiento.
+    var largo: String = "1"
+    var n: int = 0
+    while n < 600 {
+        largo = largo + "+1"
+        n = n + 1
+    }
+    igual("tope-largo", ev(largo, v, 0), "ERR expr: la fórmula supera el tope de 1000 bytes (posición 1001)")
+    var ok32: String = ""
+    var prof: int = 0
+    while prof < 31 {
+        ok32 = ok32 + "("
+        prof = prof + 1
+    }
+    igual("prof-31", ev(ok32 + "1" + ")))))))))))))))))))))))))))))))", v, 0), "1")
+    igual("prof-33", ev(ok32 + "((((1))))" + ")))))))))))))))))))))))))))))))))))", v, 0), "ERR expr: anidamiento supera el tope de 32 niveles (posición 33)")
+    var unarios: String = ""
+    prof = 0
+    while prof < 40 {
+        unarios = unarios + "-"
+        prof = prof + 1
+    }
+    igual("prof-unarios", ev(unarios + "1", v, 0), "ERR expr: anidamiento supera el tope de 32 niveles (posición 32)")
+
+    if g_fallos.length() == 0 {
+        println("expr ok")
+        return 0
+    }
+    var i: int = 0
+    while i < g_fallos.length() {
+        let s: String = g_fallos[i]
+        println(s)
+        i = i + 1
+    }
+    return 1
+}

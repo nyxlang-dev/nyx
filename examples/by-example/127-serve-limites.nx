@@ -1,0 +1,89 @@
+// std/serve limits: a body cap per route and a request limiter per origin
+// Límites de std/serve: tope de cuerpo por ruta y limitador de peticiones por origen
+//
+// Body cap per route (bytes). The global cap is NYX_HTTP_MAX_BODY (1 MiB); a route
+// can be stricter or looser:
+//
+//   app_max_body(app, "POST", "/contacto", 16384)     // a contact form: 16 KiB
+//   app_max_body(app, "POST", "/foto", 8388608)       // photos: 8 MiB
+//
+// Over the cap: 413. The parser reads up to the largest cap declared by any route
+// before a route can refuse, so raise a cap only where it is needed.
+//
+// Request limiter per origin (fixed window), SHARED by all the workers of the
+// process (they are threads of one process, guarded by a mutex):
+//
+//   app_rate_limit(app, 120, 60)                       // whole app: 120 per minute
+//   app_route_rate_limit(app, "POST", "/contacto", 5, 60)   // one route: 5 per minute
+//
+// Over the limit: 429 with `Retry-After: <seconds until the window closes>`. The
+// origin is the client's IP; behind a reverse proxy every request comes from the
+// proxy, so count by another key with app_rate_limit_key(app, fn), for example
+// rate_key_forwarded_for (first X-Forwarded-For) or a user id. An empty key
+// exempts the request. Counts are per process: two instances behind a balancer
+// count separately.
+//
+// This recipe plays the client with raw TCP sockets so it can run on its own.
+
+import "std/web"
+import "std/serve"
+
+fn recibir(req: Request) -> Response {
+    return response_text(200, "got " + int_to_string(req.body.length()) + " bytes")
+}
+
+fn ping(req: Request) -> Response {
+    return response_text(200, "pong")
+}
+
+// The origin is named by a header so the recipe can play several clients from
+// one machine. A real app would use rate_key_forwarded_for or the default (the IP).
+fn origen(req: Request) -> String {
+    return http_find_header(req.headers_flat, "X-Client")
+}
+
+// One request; the status code of the answer (0 = no answer).
+fn pedir(port: int, method: String, path: String, client: String, body: String) -> int {
+    var fd: int = 0 - 1
+    var tries: int = 0
+    while fd < 0 and tries < 50 {
+        fd = tcp_connect("127.0.0.1", port)
+        if fd < 0 { sleep(100) }
+        tries = tries + 1
+    }
+    if fd < 0 { return 0 }
+    tcp_set_timeout(fd, 5)
+    var req: String = method + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
+    if client.length() > 0 { req = req + "X-Client: " + client + "\r\n" }
+    if method == "POST" { req = req + "Content-Length: " + int_to_string(body.length()) + "\r\n" }
+    tcp_write(fd, req + "\r\n" + body)
+    let resp: String = tcp_read_partial(fd, 4096)
+    tcp_close(fd)
+    if resp.length() < 12 { return 0 }
+    return string_to_int_or(resp.substring(9, 12), 0)
+}
+
+fn main() -> int {
+    let app: App = app_new()
+    let port: int = 18214
+    app_get(app, "/ping", ping)
+    app_post(app, "/contacto", recibir)
+
+    app_max_body(app, "POST", "/contacto", 100)
+    app_rate_limit_key(app, origen)
+    app_rate_limit(app, 4, 60)
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    print("100-byte form:  " + int_to_string(pedir(port, "POST", "/contacto", "", "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789")))
+    print("101-byte form:  " + int_to_string(pedir(port, "POST", "/contacto", "", "01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890")))
+
+    var i: int = 1
+    while i <= 5 {
+        print("client ana, request " + int_to_string(i) + ": " + int_to_string(pedir(port, "GET", "/ping", "ana", "")))
+        i = i + 1
+    }
+    print("client beto, request 1: " + int_to_string(pedir(port, "GET", "/ping", "beto", "")))
+    return 0
+}

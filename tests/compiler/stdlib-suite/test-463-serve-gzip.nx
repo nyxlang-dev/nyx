@@ -1,0 +1,217 @@
+// test-463 — gzip en std/zip y compresión de respuestas en std/serve (arco
+// friccion-nyxerp-0929, Task 2).
+//
+// Parte 1: zip_gzip / zip_gunzip (un gzip real de `gzip -9` con FNAME en el
+// encabezado, ida y vuelta, y los errores). Parte 2: un servidor real (2 workers,
+// puerto 18463) al que este mismo programa le habla por TCP crudo con distintos
+// Accept-Encoding y verifica encabezados, Content-Length en bytes y el cuerpo
+// descomprimido.
+
+import "std/web"
+import "std/serve"
+import "std/zip"
+import "std/error"
+
+fn gunzipeado(r: Result<String, Error>) -> String {
+    match r {
+        Result.Ok(v) => { return v }
+        Result.Err(e) => { return "ERR " + e.msg }
+    }
+}
+
+// Respuesta cruda: un pedido con Connection: close y lectura hasta el EOF.
+fn pedir(port: int, metodo: String, path: String, extra: String) -> String {
+    var fd: int = 0 - 1
+    var intentos: int = 0
+    while fd < 0 and intentos < 50 {
+        fd = tcp_connect("127.0.0.1", port)
+        if fd < 0 { sleep(100) }
+        intentos = intentos + 1
+    }
+    if fd < 0 { return "" }
+    tcp_set_timeout(fd, 5)
+    tcp_write(fd, metodo + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n" + extra + "\r\n")
+    var sb: StringBuilder = StringBuilder.new()
+    var seguir: bool = true
+    while seguir {
+        let trozo: String = tcp_read_partial(fd, 65536)
+        if trozo.length() == 0 {
+            seguir = false
+        } else {
+            sb.append(trozo)
+        }
+    }
+    tcp_close(fd)
+    return sb.to_string()
+}
+
+fn cabecera_de(resp: String) -> String {
+    let i: int = resp.indexOf("\r\n\r\n")
+    if i < 0 { return resp }
+    return resp.substring(0, i)
+}
+
+fn cuerpo_de(resp: String) -> String {
+    let i: int = resp.indexOf("\r\n\r\n")
+    if i < 0 { return "" }
+    return resp.substring(i + 4, resp.length())
+}
+
+// Valor de una cabecera (sin distinguir mayúsculas) o "".
+fn valor(resp: String, nombre: String) -> String {
+    let lineas: Array = cabecera_de(resp).split("\r\n")
+    var i: int = 1
+    while i < lineas.length() {
+        let l: String = lineas[i]
+        let c: int = l.indexOf(":")
+        if c > 0 {
+            let k: String = l.substring(0, c)
+            if k.toLower() == nombre.toLower() {
+                return l.substring(c + 1, l.length()).trim()
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn pagina(n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < n {
+        sb.append("<tr><td>fila " + int_to_string(i) + "</td><td>ñandú</td></tr>\n")
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn h_html(req: Request) -> Response {
+    return response_html(200, pagina(200))
+}
+
+fn h_json(req: Request) -> Response {
+    return response_json(200, "{\"filas\":\"" + pagina(200) + "\"}")
+}
+
+fn h_chica(req: Request) -> Response {
+    return response_html(200, "<p>hola</p>")
+}
+
+fn h_png(req: Request) -> Response {
+    let hdrs: Array = ["Content-Type", "image/png"]
+    return Response { status: 200, headers_flat: hdrs, body: pagina(200) }
+}
+
+fn h_ya(req: Request) -> Response {
+    let hdrs: Array = ["Content-Type", "text/html; charset=utf-8", "Content-Encoding", "identity"]
+    return Response { status: 200, headers_flat: hdrs, body: pagina(200) }
+}
+
+fn h_etag(req: Request) -> Response {
+    let hdrs: Array = ["Content-Type", "text/html; charset=utf-8", "ETag", "\"abc\""]
+    return Response { status: 200, headers_flat: hdrs, body: pagina(200) }
+}
+
+fn h_vary(req: Request) -> Response {
+    let hdrs: Array = ["Content-Type", "text/css", "Vary", "Cookie"]
+    return Response { status: 200, headers_flat: hdrs, body: pagina(200) }
+}
+
+fn main() -> int {
+    // ── Parte 1: el códec ──
+    let texto: String = include_bytes("tests/fixtures/zip/gzip/texto.txt")
+    let real: String = include_bytes("tests/fixtures/zip/gzip/texto.gz")
+    assert(gunzipeado(zip_gunzip(real, 0)) == texto, "gunzip de un gzip real (con FNAME)")
+    let mio: String = zip_gzip(texto)
+    assert(mio.charAt(0) == 31 and mio.charAt(1) == 139 and mio.charAt(2) == 8, "encabezado gzip")
+    assert(mio.length() < texto.length(), "comprime")
+    assert(gunzipeado(zip_gunzip(mio, 0)) == texto, "ida y vuelta")
+    assert(gunzipeado(zip_gunzip(zip_gzip(""), 0)) == "", "ida y vuelta vacio")
+    assert(gunzipeado(zip_gunzip(mio, 100)).startsWith("ERR"), "tope de salida")
+    assert(gunzipeado(zip_gunzip("no es gzip, ni cerca de serlo", 0)).startsWith("ERR"), "no es gzip")
+    let roto: String = mio.substring(0, mio.length() - 5)
+    assert(gunzipeado(zip_gunzip(roto, 0)).startsWith("ERR"), "truncado")
+
+    // ── Parte 2: el servidor ──
+    let app: App = app_new()
+    let port: int = 18463
+    app_get(app, "/html", h_html)
+    app_get(app, "/json", h_json)
+    app_get(app, "/chica", h_chica)
+    app_get(app, "/png", h_png)
+    app_get(app, "/ya", h_ya)
+    app_get(app, "/etag", h_etag)
+    app_get(app, "/vary", h_vary)
+    spawn {
+        serve_app(app, port, 2)
+    }
+
+    let original: String = pagina(200)
+
+    // gzip aceptado: encabezados, largo en bytes y cuerpo.
+    let r1: String = pedir(port, "GET", "/html", "Accept-Encoding: gzip, deflate, br\r\n")
+    assert(r1.startsWith("HTTP/1.1 200"), "200")
+    assert(valor(r1, "Content-Encoding") == "gzip", "Content-Encoding gzip")
+    assert(valor(r1, "Vary") == "Accept-Encoding", "Vary")
+    let cuerpo1: String = cuerpo_de(r1)
+    assert(string_to_int_or(valor(r1, "Content-Length"), 0 - 1) == str_byte_length(cuerpo1), "Content-Length en bytes del comprimido")
+    assert(str_byte_length(cuerpo1) < str_byte_length(original), "el comprimido es menor")
+    assert(gunzipeado(zip_gunzip(cuerpo1, 0)) == original, "el cuerpo descomprime al original")
+
+    // Sin Accept-Encoding: igual que siempre, pero con Vary.
+    let r2: String = pedir(port, "GET", "/html", "")
+    assert(valor(r2, "Content-Encoding") == "", "sin Accept-Encoding no se comprime")
+    assert(cuerpo_de(r2) == original, "cuerpo intacto")
+    assert(valor(r2, "Vary") == "Accept-Encoding", "Vary tambien sin comprimir")
+
+    // q=0 lo prohibe, `*` lo permite, q chica sigue siendo aceptar.
+    let r3: String = pedir(port, "GET", "/html", "Accept-Encoding: gzip;q=0, *;q=1\r\n")
+    assert(valor(r3, "Content-Encoding") == "", "gzip;q=0 prohibe")
+    let r4: String = pedir(port, "GET", "/html", "Accept-Encoding: *\r\n")
+    assert(valor(r4, "Content-Encoding") == "gzip", "* acepta")
+    let r5: String = pedir(port, "GET", "/html", "accept-encoding: br, GZIP;q=0.5\r\n")
+    assert(valor(r5, "Content-Encoding") == "gzip", "minusculas y q=0.5")
+    let r6: String = pedir(port, "GET", "/html", "Accept-Encoding: br, deflate\r\n")
+    assert(valor(r6, "Content-Encoding") == "", "solo br y deflate: no gzip")
+
+    // JSON se comprime; una imagen, no; una respuesta chica, no (ni Vary).
+    let rj: String = pedir(port, "GET", "/json", "Accept-Encoding: gzip\r\n")
+    assert(valor(rj, "Content-Encoding") == "gzip", "json comprimido")
+    assert(gunzipeado(zip_gunzip(cuerpo_de(rj), 0)) == "{\"filas\":\"" + original + "\"}", "json intacto")
+    let rp: String = pedir(port, "GET", "/png", "Accept-Encoding: gzip\r\n")
+    assert(valor(rp, "Content-Encoding") == "" and cuerpo_de(rp) == original, "image/png no se comprime")
+    assert(valor(rp, "Vary") == "", "image/png sin Vary")
+    let rc: String = pedir(port, "GET", "/chica", "Accept-Encoding: gzip\r\n")
+    assert(valor(rc, "Content-Encoding") == "" and valor(rc, "Vary") == "", "bajo el umbral: intacta, sin Vary")
+
+    // Content-Encoding ya puesto: no se comprime de nuevo.
+    let ry: String = pedir(port, "GET", "/ya", "Accept-Encoding: gzip\r\n")
+    assert(valor(ry, "Content-Encoding") == "identity" and cuerpo_de(ry) == original, "Content-Encoding previo se respeta")
+
+    // ETag fuerte -> debil al comprimir; Vary previo se amplia, no se duplica.
+    let re: String = pedir(port, "GET", "/etag", "Accept-Encoding: gzip\r\n")
+    assert(valor(re, "ETag") == "W/\"abc\"", "ETag fuerte pasa a debil")
+    let rv: String = pedir(port, "GET", "/vary", "Accept-Encoding: gzip\r\n")
+    assert(valor(rv, "Vary") == "Cookie, Accept-Encoding", "Vary mezclado")
+    assert(valor(rv, "Content-Encoding") == "gzip", "css comprimido")
+
+    // HEAD: mismas cabeceras y el mismo Content-Length que el GET, sin cuerpo.
+    let rh: String = pedir(port, "HEAD", "/html", "Accept-Encoding: gzip\r\n")
+    assert(valor(rh, "Content-Encoding") == "gzip", "HEAD con Content-Encoding")
+    assert(valor(rh, "Content-Length") == valor(r1, "Content-Length"), "HEAD: mismo Content-Length que el GET")
+    assert(cuerpo_de(rh) == "", "HEAD sin cuerpo")
+
+    // Apagado desde la App.
+    app_compress(app, false)
+    let rd: String = pedir(port, "GET", "/html", "Accept-Encoding: gzip\r\n")
+    assert(valor(rd, "Content-Encoding") == "" and cuerpo_de(rd) == original, "app_compress(false)")
+    app_compress(app, true)
+    // Umbral propio: la respuesta chica ahora sí.
+    app_compress_limits(app, 4, 1048576)
+    let rm: String = pedir(port, "GET", "/chica", "Accept-Encoding: gzip\r\n")
+    assert(valor(rm, "Content-Encoding") == "gzip", "umbral bajado")
+    assert(gunzipeado(zip_gunzip(cuerpo_de(rm), 0)) == "<p>hola</p>", "chica intacta")
+
+    println("serve gzip ok")
+    return 0
+}

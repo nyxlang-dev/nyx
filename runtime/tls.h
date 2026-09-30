@@ -127,6 +127,15 @@ nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,
 nyx_array_t* nyx_tls_connect_result_cas(nyx_string* host, int64_t port,
                                         int64_t verify_mode, int64_t connect_ms,
                                         nyx_string* cas_extra);
+// Igual, y además presenta un certificado de CLIENTE (TLS mutuo): `cli_cert` es
+// el PEM del certificado (la hoja primero, luego los intermedios que haya) y
+// `cli_key` su clave privada PEM sin contraseña. Solo para esta conexión.
+// NULL o "" los dejan fuera; uno solo, un PEM ilegible o una clave que no
+// corresponde al certificado = status -EINVAL ANTES de abrir el socket.
+nyx_array_t* nyx_tls_connect_result_mtls(nyx_string* host, int64_t port,
+                                         int64_t verify_mode, int64_t connect_ms,
+                                         nyx_string* cas_extra,
+                                         nyx_string* cli_cert, nyx_string* cli_key);
 
 // Lectura con plazo: devuelve hasta max_bytes de datos de aplicación que lleguen
 // dentro de timeout_ms (con al menos 1 byte), sin esperar a llenar el pedido.

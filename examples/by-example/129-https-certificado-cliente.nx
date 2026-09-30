@@ -1,0 +1,44 @@
+// Nyx by Example: HTTPS con certificado de cliente (TLS mutuo).
+//
+// Algunos bancos y pasarelas de pago exigen que el comercio se identifique con
+// un certificado propio ademas de su clave de API: el servidor pide el
+// certificado durante el handshake y corta la conexion si no llega uno que
+// acepte. HttpOpts lo presenta POR PETICION:
+//   - http_opts_client_cert(opts, cert_pem, key_pem): certificado y clave
+//     privada como CONTENIDO PEM (no rutas: se traen con read_file o
+//     include_bytes). El certificado va primero; si hay intermedios, a
+//     continuacion en el mismo texto. La clave no puede tener contrasena.
+//   - Se validan ANTES de conectar: uno sin el otro, PEM ilegible o una clave que
+//     no corresponde al certificado dan Err invalid 22 sin abrir el socket.
+//   - Solo vale para esa peticion: el resto del proceso no presenta nada.
+//   - Se combina con cas_extra cuando el banco usa una CA privada:
+//         o.cas_extra = read_file("certs/ca-banco.pem")
+//
+// La receta corre sin red: muestra la validacion previa (los errores salen sin
+// conectar, aun contra un puerto cerrado).
+
+import "std/http"
+import "std/error"
+
+fn consultar_saldo(url: String, cert_pem: String, key_pem: String) -> Result<Array, Error> {
+    let o: HttpOpts = http_opts_client_cert(http_opts(), cert_pem, key_pem)
+    return try_http_request_opts("GET", url, [], "", o)
+}
+
+fn main() {
+    // En un programa real:
+    //   let cert: String = read_file("certs/cliente.crt")
+    //   let key: String = read_file("certs/cliente.key")
+    match consultar_saldo("https://127.0.0.1:1/saldo", "esto no es un certificado", "ni una clave") {
+        Result.Ok(r) => { print("inesperado: " + int_to_string(http_status(r))) }
+        Result.Err(e) => {
+            print("rechazado antes de conectar: " + e.kind + " " + int_to_string(e.code))
+            assert(e.kind == "invalid" and e.code == 22, "un par ilegible se dice, no se ignora")
+        }
+    }
+    // Un certificado sin su clave tampoco se manda a medias.
+    match consultar_saldo("https://127.0.0.1:1/saldo", "-----BEGIN CERTIFICATE-----", "") {
+        Result.Ok(r) => { print("inesperado: " + int_to_string(http_status(r))) }
+        Result.Err(e) => { assert(e.kind == "invalid", "certificado sin clave") }
+    }
+}

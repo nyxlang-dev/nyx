@@ -1,0 +1,17 @@
+valida spki: true
+valida pkcs1: true
+valida b64: true
+valida b64 con salto: true
+datos cambiados: false
+firma de otra clave: false
+clave equivocada: false
+firma vacia: false
+firma truncada: false
+pss valida: true
+pss con firma v1.5: false
+v1.5 con firma pss: false
+pem roto: err invalid 22
+pem vacio: err invalid 22
+clave ec: err invalid 22
+b64 invalido: err invalid 22
+firma b64 vacia: false

@@ -1,0 +1,132 @@
+// test-467 — armar multipart/form-data para el cliente HTTP (arco friccion-nyxerp-0929, Task 6).
+//
+// multipart_build produce el cuerpo y el Content-Type; acá se hace la IDA Y VUELTA
+// con el parser de std/multipart (campos, un "PDF" binario con los 256 bytes —NUL
+// incluido—, CR/LF y "--" dentro, un valor que imita un boundary, un archivo
+// vacío), el boundary aleatorio, los rechazos (nombre vacío, content-type con
+// CRLF), el escape de comillas en el nombre de archivo y el Content-Length del
+// request que arma std/http. Que otro parser lo lea igual (Python email) lo
+// verifica scripts/testing/run_multipart_verify.sh.
+
+import "std/error"
+import "std/http"
+import "std/multipart"
+
+fn todos_los_bytes() -> String {
+    var s: String = ""
+    var r: int = 0
+    while r < 3 {
+        var i: int = 0
+        while i < 256 {
+            s = s + chr(i)
+            i = i + 1
+        }
+        r = r + 1
+    }
+    return s + "\r\n--ABC--\r\n\r\n"
+}
+
+fn main() -> int {
+    let pdf: String = "%PDF-1.4\n" + todos_los_bytes() + "%%EOF"
+    var partes: Array = []
+    partes.push(multipart_field("messaging_product", "whatsapp"))
+    partes.push(multipart_field("vacio", ""))
+    partes.push(multipart_field("nota", "linea1\r\nlinea2 -- fin ñandú"))
+    partes.push(multipart_file("file", "cotización \"final\".pdf", "application/pdf", pdf))
+    partes.push(multipart_file("cero", "cero.bin", "", ""))
+    var mp: Multipart = Multipart { body: "", content_type: "", boundary: "" }
+    match multipart_build(partes) {
+        Result.Ok(m) => { mp = m }
+        Result.Err(e) => {
+            println("ERR " + e.msg)
+            return 1
+        }
+    }
+    var fallos: int = 0
+    if !mp.content_type.startsWith("multipart/form-data; boundary=") { fallos = fallos + 1 }
+    if mp.content_type != "multipart/form-data; boundary=" + mp.boundary { fallos = fallos + 1 }
+    if mp.boundary.length() < 30 { fallos = fallos + 1 }
+
+    // Ida y vuelta con el parser.
+    let vuelta: Array = multipart_parse(mp.body, mp.content_type)
+    if vuelta.length() != 5 { fallos = fallos + 1 }
+    if vuelta.length() == 5 {
+        let p0: Array = vuelta[0]
+        let p1: Array = vuelta[1]
+        let p2: Array = vuelta[2]
+        let p3: Array = vuelta[3]
+        let p4: Array = vuelta[4]
+        if part_name(p0) != "messaging_product" or part_value(p0) != "whatsapp" or part_filename(p0) != "" { fallos = fallos + 1 }
+        if part_name(p1) != "vacio" or part_value(p1).length() != 0 { fallos = fallos + 1 }
+        if part_value(p2) != "linea1\r\nlinea2 -- fin ñandú" { fallos = fallos + 1 }
+        if part_name(p3) != "file" or part_ctype(p3) != "application/pdf" { fallos = fallos + 1 }
+        // El nombre con comillas sale escapado (%22) y sin romper las cabeceras.
+        if part_filename(p3) != "cotización %22final%22.pdf" { fallos = fallos + 1 }
+        let v3: String = part_value(p3)
+        if str_byte_length(v3) != str_byte_length(pdf) { fallos = fallos + 1 }
+        var iguales: bool = true
+        var i: int = 0
+        while i < str_byte_length(pdf) and i < str_byte_length(v3) {
+            if v3.charAt(i) != pdf.charAt(i) { iguales = false }
+            i = i + 1
+        }
+        if !iguales { fallos = fallos + 1 }
+        if part_name(p4) != "cero" or part_ctype(p4) != "application/octet-stream" or part_value(p4).length() != 0 { fallos = fallos + 1 }
+    }
+
+    // Boundary distinto en cada armado, y nunca dentro del contenido.
+    var mp2: Multipart = Multipart { body: "", content_type: "", boundary: "" }
+    match multipart_build(partes) {
+        Result.Ok(m) => { mp2 = m }
+        Result.Err(_) => { fallos = fallos + 1 }
+    }
+    if mp2.boundary == mp.boundary { fallos = fallos + 1 }
+
+    // Un valor que contiene un boundary conocido no rompe: el elegido es otro.
+    var t: Array = []
+    t.push(multipart_field("a", "----NyxBoundary0000 y --" + mp.boundary))
+    match multipart_build(t) {
+        Result.Ok(m) => {
+            let v: Array = multipart_parse(m.body, m.content_type)
+            if v.length() != 1 { fallos = fallos + 1 }
+        }
+        Result.Err(_) => { fallos = fallos + 1 }
+    }
+
+    // Rechazos.
+    var malas: Array = []
+    malas.push(multipart_field("", "x"))
+    var cabecera: Array = []
+    cabecera.push(multipart_file("f", "a.txt", "text/plain\r\nX-Evil: 1", "x"))
+    var rechazos: int = 0
+    match multipart_build(malas) {
+        Result.Ok(_) => { }
+        Result.Err(e) => { if e.kind == "invalid" { rechazos = rechazos + 1 } }
+    }
+    match multipart_build(cabecera) {
+        Result.Ok(_) => { }
+        Result.Err(e) => { if e.kind == "invalid" { rechazos = rechazos + 1 } }
+    }
+    if rechazos != 2 { fallos = fallos + 1 }
+
+    // Sin partes: solo el cierre.
+    var ninguna: Array = []
+    match multipart_build(ninguna) {
+        Result.Ok(m) => { if multipart_parse(m.body, m.content_type).length() != 0 { fallos = fallos + 1 } }
+        Result.Err(_) => { fallos = fallos + 1 }
+    }
+
+    // El request que arma std/http lleva el Content-Length en BYTES del cuerpo.
+    let hs: Array = ["Content-Type", mp.content_type, "Authorization", "Bearer x"]
+    let req: String = http_build_request("POST", "api.example.com", "/v1/media", hs, mp.body)
+    let cl: String = "Content-Length: " + int_to_string(str_byte_length(mp.body)) + "\r\n"
+    if req.indexOf(cl) < 0 { fallos = fallos + 1 }
+    if str_byte_length(req) < str_byte_length(mp.body) { fallos = fallos + 1 }
+
+    if fallos == 0 {
+        println("multipart cliente ok")
+        return 0
+    }
+    println("multipart cliente FALLOS " + int_to_string(fallos))
+    return 1
+}

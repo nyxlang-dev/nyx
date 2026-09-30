@@ -58,6 +58,8 @@ pub struct HttpResp {
 #[suspends]
 extern "js" fn js_browser_fetch_await(url: String, method: String, body: String, timeout_ms: int) -> String
 #[suspends]
+extern "js" fn js_browser_fetch_await_net(url: String, method: String, body: String, timeout_ms: int, target_space: String) -> String
+#[suspends]
 extern "js" fn js_browser_sleep_await(ms: int)
 extern "js" fn js_browser_await_status() -> int
 extern "js" fn js_browser_await_error_kind() -> String
@@ -67,6 +69,21 @@ extern "js" fn js_browser_await_error_msg() -> String
 // body de request "" = sin body.
 export async fn browser_fetch_await_opts(url: String, method: String, body: String, timeout_ms: int) -> Result<HttpResp, Error> {
     let cuerpo: String = js_browser_fetch_await(url, method, body, timeout_ms)
+    let kind: String = js_browser_await_error_kind()
+    if kind != "" {
+        return Result.Err(err_new(0, kind, js_browser_await_error_msg()))
+    }
+    return Result.Ok(HttpResp { status: js_browser_await_status(), body: cuerpo })
+}
+
+// fetch que espera, con plazo Y espacio destino para el permiso de red local
+// de Chrome (Local Network Access, campo `targetAddressSpace` de fetch):
+// "local", "loopback" o "private"; "" = no pedir nada; un valor desconocido se
+// ignora, y un navegador que no conoce el campo también. Plazo vencido = Err
+// con kind "timeout"; sin respuesta = kind "connection". Ver
+// browser_fetch_opts_fn en std/browser para los requisitos del servidor.
+export async fn browser_fetch_await_net(url: String, method: String, body: String, timeout_ms: int, target_space: String) -> Result<HttpResp, Error> {
+    let cuerpo: String = js_browser_fetch_await_net(url, method, body, timeout_ms, target_space)
     let kind: String = js_browser_await_error_kind()
     if kind != "" {
         return Result.Err(err_new(0, kind, js_browser_await_error_msg()))

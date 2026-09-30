@@ -995,6 +995,7 @@ void nyx_tls_close_conn(int64_t handle) {
 // nyx_tls_connect_result, después de los dos contextos que elige según el modo.
 static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
                                 int64_t connect_ms, const nyx_string* cas_extra,
+                                const nyx_string* cli_cert, const nyx_string* cli_key,
                                 int* status, int* vcode, char* detail, size_t dlen);
 
 // Plazo de connect + handshake de las funciones de conexión SIN causa. Son los
@@ -1009,7 +1010,7 @@ int64_t nyx_tls_connect(nyx_string* host, int64_t port) {
     if (!host_cstr || host_cstr[0] == '\0') return 0;
     int status = 0, vcode = 0;
     char detail[256];
-    return tls_connect_core(host_cstr, (int)port, 0, TLS_LEGACY_CONNECT_MS, NULL,
+    return tls_connect_core(host_cstr, (int)port, 0, TLS_LEGACY_CONNECT_MS, NULL, NULL, NULL,
                             &status, &vcode, detail, sizeof(detail));
 }
 
@@ -1095,7 +1096,7 @@ int64_t nyx_tls_connect_ex(nyx_string* host, int64_t port, int64_t verify_mode) 
     if (!host_cstr || host_cstr[0] == '\0') return 0;
     int status = 0, vcode = 0;
     char detail[256];
-    return tls_connect_core(host_cstr, (int)port, verify_mode, TLS_LEGACY_CONNECT_MS, NULL,
+    return tls_connect_core(host_cstr, (int)port, verify_mode, TLS_LEGACY_CONNECT_MS, NULL, NULL, NULL,
                             &status, &vcode, detail, sizeof(detail));
 }
 
@@ -1208,8 +1209,91 @@ static X509_STORE* tls_store_con_extra(const nyx_string* pem, int* n_leidos) {
     return st;
 }
 
+// Identidad de CLIENTE de una conexión (TLS mutuo, fricción de nyxerp
+// 2026-09-29): certificado PEM (la hoja primero; los certificados que sigan son
+// la cadena intermedia y se envían tras ella) y su clave privada PEM SIN
+// contraseña. Se lee y se comprueba que la clave corresponda al certificado
+// ANTES de abrir el socket: un par inválido es un Err inmediato, no un
+// handshake que el servidor rechaza con un alert opaco.
+typedef struct {
+    X509* leaf;
+    EVP_PKEY* key;
+    STACK_OF(X509)* chain;
+} tls_client_id;
+
+static void tls_client_id_free(tls_client_id* id) {
+    if (id->leaf) X509_free(id->leaf);
+    if (id->key) EVP_PKEY_free(id->key);
+    if (id->chain) sk_X509_pop_free(id->chain, X509_free);
+    id->leaf = NULL; id->key = NULL; id->chain = NULL;
+}
+
+// Sin contraseña: una clave cifrada da error en vez de preguntar por la tty.
+static int tls_no_password_cb(char* buf, int size, int rw, void* u) {
+    (void)buf; (void)size; (void)rw; (void)u;
+    return 0;
+}
+
+// 0 = ok; -1 = inválido (detail dice por qué).
+static int tls_client_id_load(const nyx_string* cert, const nyx_string* key,
+                              tls_client_id* id, char* detail, size_t dlen) {
+    id->leaf = NULL; id->key = NULL; id->chain = NULL;
+    if (!cert || cert->length <= 0 || !key || key->length <= 0) {
+        snprintf(detail, dlen, "certificado de cliente: hacen falta el certificado Y la clave privada (PEM)");
+        return -1;
+    }
+    BIO* cb = BIO_new_mem_buf(cert->data, (int)cert->length);
+    if (!cb) { snprintf(detail, dlen, "certificado de cliente: sin memoria"); return -1; }
+    id->leaf = PEM_read_bio_X509(cb, NULL, NULL, NULL);
+    if (id->leaf) {
+        id->chain = sk_X509_new_null();
+        for (;;) {
+            X509* c = PEM_read_bio_X509(cb, NULL, NULL, NULL);
+            if (!c) break;
+            if (!id->chain || !sk_X509_push(id->chain, c)) { X509_free(c); break; }
+        }
+    }
+    BIO_free(cb);
+    ERR_clear_error();
+    if (!id->leaf) {
+        snprintf(detail, dlen, "certificado de cliente: no trae ningún certificado PEM legible");
+        tls_client_id_free(id);
+        return -1;
+    }
+    BIO* kb = BIO_new_mem_buf(key->data, (int)key->length);
+    if (kb) {
+        id->key = PEM_read_bio_PrivateKey(kb, NULL, tls_no_password_cb, NULL);
+        BIO_free(kb);
+    }
+    ERR_clear_error();
+    if (!id->key) {
+        snprintf(detail, dlen, "clave privada de cliente: no es un PEM legible (las claves con contraseña no se admiten)");
+        tls_client_id_free(id);
+        return -1;
+    }
+    if (X509_check_private_key(id->leaf, id->key) != 1) {
+        ERR_clear_error();
+        snprintf(detail, dlen, "la clave privada de cliente no corresponde al certificado");
+        tls_client_id_free(id);
+        return -1;
+    }
+    return 0;
+}
+
+// Instala la identidad en ESE SSL (el contexto compartido no se toca). 0 = ok.
+static int tls_client_id_apply(SSL* ssl, tls_client_id* id) {
+    if (SSL_use_certificate(ssl, id->leaf) != 1) return -1;
+    if (SSL_use_PrivateKey(ssl, id->key) != 1) return -1;
+    if (SSL_check_private_key(ssl) != 1) return -1;
+    for (int i = 0; id->chain && i < sk_X509_num(id->chain); i++) {
+        if (SSL_add1_chain_cert(ssl, sk_X509_value(id->chain, i)) != 1) return -1;
+    }
+    return 0;
+}
+
 static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
                                 int64_t connect_ms, const nyx_string* cas_extra,
+                                const nyx_string* cli_cert, const nyx_string* cli_key,
                                 int* status, int* vcode, char* detail, size_t dlen) {
     *status = 0;
     *vcode = 0;
@@ -1229,12 +1313,21 @@ static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
         return 0;
     }
 
+    // Identidad de cliente (TLS mutuo): se valida ANTES de abrir el socket.
+    tls_client_id cid = {NULL, NULL, NULL};
+    int tiene_cid = (cli_cert && cli_cert->length > 0) || (cli_key && cli_key->length > 0);
+    if (tiene_cid && tls_client_id_load(cli_cert, cli_key, &cid, detail, dlen) != 0) {
+        *status = -EINVAL;
+        return 0;
+    }
+
     int64_t deadline = connect_ms > 0 ? os_monotonic_ns() + connect_ms * 1000000LL : 0;
     int fd = tcp_connect_deadline(host, port, deadline, status, detail, dlen);
-    if (fd < 0) return 0;
+    if (fd < 0) { tls_client_id_free(&cid); return 0; }
 
     SSL* ssl = SSL_new(ctx);
     if (!ssl) {
+        tls_client_id_free(&cid);
         os_sock_close(fd);
         *status = NYX_TLS_STATUS_TLS;
         snprintf(detail, dlen, "no se pudo crear la sesión TLS");
@@ -1242,6 +1335,19 @@ static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
     }
     tls_attach_fd(ssl, fd);
     SSL_set_tlsext_host_name(ssl, host);
+
+    if (tiene_cid) {
+        int okid = tls_client_id_apply(ssl, &cid);
+        tls_client_id_free(&cid);   // el SSL tomó sus propias referencias
+        if (okid != 0) {
+            ERR_clear_error();
+            SSL_free(ssl);
+            os_sock_close(fd);
+            *status = -EINVAL;
+            snprintf(detail, dlen, "no se pudo instalar el certificado de cliente en la conexión");
+            return 0;
+        }
+    }
 
     // CAs extra de ESTA conexión (HttpOpts.cas_extra, fricción de nyxerp
     // 2026-09-27): un sitio que manda mal su cadena se valida sumando el
@@ -1380,6 +1486,16 @@ nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,
 nyx_array_t* nyx_tls_connect_result_cas(nyx_string* host, int64_t port,
                                         int64_t verify_mode, int64_t connect_ms,
                                         nyx_string* cas_extra) {
+    return nyx_tls_connect_result_mtls(host, port, verify_mode, connect_ms, cas_extra, NULL, NULL);
+}
+
+// Igual que _cas, además presenta un certificado de cliente (TLS mutuo).
+// cert/key NULL o "" los dejan fuera; uno solo de los dos, o un par que no se
+// lee o no corresponde, da status = -EINVAL antes de abrir el socket.
+nyx_array_t* nyx_tls_connect_result_mtls(nyx_string* host, int64_t port,
+                                         int64_t verify_mode, int64_t connect_ms,
+                                         nyx_string* cas_extra,
+                                         nyx_string* cli_cert, nyx_string* cli_key) {
     nyx_array_t* out = nyx_array_new(4);
     int status = 0, vcode = 0;
     char detail[320] = "";
@@ -1393,7 +1509,7 @@ nyx_array_t* nyx_tls_connect_result_cas(nyx_string* host, int64_t port,
         snprintf(detail, sizeof(detail), "puerto fuera de rango: %lld", (long long)port);
     } else {
         handle = tls_connect_core(host_cstr, (int)port, verify_mode, connect_ms, cas_extra,
-                                  &status, &vcode, detail, sizeof(detail));
+                                  cli_cert, cli_key, &status, &vcode, detail, sizeof(detail));
     }
     nyx_array_push_tagged(out, (int64_t)status, NYX_TAG_INT);
     nyx_array_push_tagged(out, handle, NYX_TAG_INT);

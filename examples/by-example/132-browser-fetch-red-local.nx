@@ -1,0 +1,72 @@
+// 132 — Una PWA que habla con un servidor de la red local, con plazo
+//
+// Target wasm32-wasi (corre en el navegador, o bajo node con
+// examples/browser/run-node.mjs). El caso real: las tablets de un local
+// tienen la aplicación instalada (PWA) y hablan con un servidor que está en la
+// misma red, para seguir funcionando aunque se caiga internet.
+//
+// Construir:  nyx build --target wasm32-wasi
+//   (necesita binaryen: `sudo apt install binaryen`, o NYX_WASM_OPT=/ruta/a/wasm-opt;
+//    nyx build lo usa SOLO porque el programa espera al anfitrión)
+//
+// Lo que conviene saber:
+//   - Chrome pide el permiso de red local (Local Network Access, antes Private
+//     Network Access) para que una página hable con un equipo de la LAN. Se
+//     activa con `targetAddressSpace` en fetch: el tercer argumento
+//     "local" de estas funciones. "" = no pedirlo; un navegador que no conoce
+//     el campo lo ignora, así que nunca rompe el pedido.
+//   - El servidor también tiene que cooperar (CORS y, si el navegador manda
+//     un preflight de red local, contestarlo). Esto NO se pudo verificar
+//     contra un Chrome real desde el repo: los tests fijan que el shim pasa
+//     el campo y que el plazo aborta el pedido.
+//   - Contra un equipo apagado el fetch espera minutos: el plazo (en ms) lo
+//     aborta y devuelve Err con kind "timeout" (o "connection" si no hubo
+//     respuesta alguna).
+//   - En SSE el plazo es para CONECTAR, no para la vida del canal. Si vence
+//     (o la conexión falla) el manejador recibe UNA vez el evento
+//     "nyx-error" con dato "timeout" o "connection", y el canal se cierra solo.
+
+import "std/browser"
+import "std/browser_await"
+import "std/dom"
+import "std/error"
+
+const SERVIDOR: String = "http://192.168.1.20:8080"
+
+// Manda un pedido al servidor local: si no responde en 3 s, avisa en vez de
+// dejar la tablet esperando.
+async fn enviar_pedido(cuerpo: String) -> String {
+    let res = await browser_fetch_await_net(SERVIDOR + "/pedidos", "POST", cuerpo, 3000, "local")
+    match res {
+        Result.Ok(r) => { return "guardado (HTTP " + int_to_string(r.status) + ")" }
+        Result.Err(e) => {
+            if e.kind == "timeout" { return "el servidor local no responde: se guarda para más tarde" }
+            return "sin conexión con el servidor local: " + e.msg
+        }
+    }
+}
+
+#[export_name = "enviar"]
+fn enviar() {
+    dom_set_text("#estado", "enviando...")
+    let texto: String = await enviar_pedido("{\"mesa\":4,\"items\":2}")
+    dom_set_text("#estado", texto)
+}
+
+fn main() {
+    // Aviso de cambios del servidor local; el mismo plazo y permiso.
+    let canal: int = browser_sse_opts_fn(SERVIDOR + "/eventos", 3000, "local",
+        fn(evento: String, datos: String) {
+            if evento == "nyx-error" {
+                dom_set_text("#red", "sin servidor local (" + datos + ")")
+            } else {
+                dom_set_text("#red", evento + ": " + datos)
+            }
+        })
+    if canal == 0 { dom_set_text("#red", "el navegador no permite SSE") }
+    // Con cierre, en vez de await: la misma opción para un fetch de un disparo.
+    browser_fetch_opts_fn(SERVIDOR + "/estado", "GET", "", 3000, "local",
+        fn(status: int, body: String) {
+            if status == 0 { dom_set_text("#estado", body) } else { dom_set_text("#estado", "servidor: " + body) }
+        })
+}

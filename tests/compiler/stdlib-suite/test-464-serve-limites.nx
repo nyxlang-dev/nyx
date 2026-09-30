@@ -1,0 +1,229 @@
+// test-464 — límites de std/serve (arco friccion-nyxerp-0929, Task 5): tope de
+// cuerpo POR RUTA y limitador de peticiones por origen compartido entre workers.
+//
+// Un servidor real (4 workers, puerto 18464) al que este programa le habla por TCP
+// crudo. Como todos los clientes salen de 127.0.0.1, el "origen" lo fija una clave
+// propia (app_rate_limit_key: la cabecera X-Client); un pedido sin X-Client queda
+// exento del límite, y así los casos de cuerpo no gastan cupo.
+//
+// Lo central del limitador: 12 conexiones simultáneas de UN mismo origen contra 4
+// workers, con cupo 6, tienen que dar exactamente 6 respuestas 200 y 6 429. Si
+// cada worker llevara su cuenta habría hasta 24 aceptadas.
+
+import "std/web"
+import "std/serve"
+
+fn conectar(port: int) -> int {
+    var fd: int = 0 - 1
+    var intentos: int = 0
+    while fd < 0 and intentos < 50 {
+        fd = tcp_connect("127.0.0.1", port)
+        if fd < 0 { sleep(100) }
+        intentos = intentos + 1
+    }
+    if fd >= 0 { tcp_set_timeout(fd, 10) }
+    return fd
+}
+
+fn armar(metodo: String, path: String, cliente: String, cuerpo: String) -> String {
+    var s: String = metodo + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n"
+    if cliente.length() > 0 { s = s + "X-Client: " + cliente + "\r\n" }
+    if metodo == "POST" { s = s + "Content-Length: " + int_to_string(cuerpo.length()) + "\r\n" }
+    return s + "\r\n" + cuerpo
+}
+
+fn leer(fd: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var seguir: bool = true
+    while seguir {
+        let trozo: String = tcp_read_partial(fd, 65536)
+        if trozo.length() == 0 {
+            seguir = false
+        } else {
+            sb.append(trozo)
+        }
+    }
+    tcp_close(fd)
+    return sb.to_string()
+}
+
+fn pedir(port: int, metodo: String, path: String, cliente: String, cuerpo: String) -> String {
+    let fd: int = conectar(port)
+    if fd < 0 { return "" }
+    tcp_write(fd, armar(metodo, path, cliente, cuerpo))
+    return leer(fd)
+}
+
+fn codigo(resp: String) -> int {
+    if resp.length() < 12 { return 0 }
+    return string_to_int_or(resp.substring(9, 12), 0)
+}
+
+fn valor(resp: String, nombre: String) -> String {
+    let i: int = resp.indexOf("\r\n\r\n")
+    var cab: String = resp
+    if i >= 0 { cab = resp.substring(0, i) }
+    let lineas: Array = cab.split("\r\n")
+    var j: int = 1
+    while j < lineas.length() {
+        let l: String = lineas[j]
+        let c: int = l.indexOf(":")
+        if c > 0 {
+            let k: String = l.substring(0, c)
+            if k.toLower() == nombre.toLower() {
+                return l.substring(c + 1, l.length()).trim()
+            }
+        }
+        j = j + 1
+    }
+    return ""
+}
+
+fn repetir(letra: String, n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < n {
+        sb.append(letra)
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Como pedir(), para un cuerpo de MEGAS: reintenta si no llegó respuesta. Cliente y
+// servidor comparten proceso (y por lo tanto las tablas por-fd del runtime), y con
+// un 413 que el servidor devuelve nada más leer el cuerpo, la conexión a veces se
+// cierra con la respuesta perdida (~1 de cada 3). Contra un cliente externo (curl,
+// Python, 40 de 40 pedidos) el 413 llega siempre: es un artefacto del test.
+fn pedir_grande(port: int, path: String, cuerpo: String) -> String {
+    var r: String = pedir(port, "POST", path, "", cuerpo)
+    var n: int = 0
+    while codigo(r) == 0 and n < 5 {
+        r = pedir(port, "POST", path, "", cuerpo)
+        n = n + 1
+    }
+    return r
+}
+
+fn h_ok(req: Request) -> Response {
+    return response_text(200, "ok")
+}
+
+fn h_eco(req: Request) -> Response {
+    return response_text(200, int_to_string(req.body.length()))
+}
+
+fn clave(req: Request) -> String {
+    return http_find_header(req.headers_flat, "X-Client")
+}
+
+fn main() -> int {
+    // Utilidades de clave.
+    let vacio: Request = request_new()
+    assert(req_remote_addr(vacio) == "", "req_remote_addr sin servidor")
+    var con_xff: Request = request_new()
+    con_xff.headers_flat = ["X-Forwarded-For", "203.0.113.7, 10.0.0.1"]
+    assert(rate_key_forwarded_for(con_xff) == "203.0.113.7", "primer X-Forwarded-For")
+    assert(rate_key_forwarded_for(vacio) == "", "sin X-Forwarded-For cae a la IP del socket")
+
+    let app: App = app_new()
+    let port: int = 18464
+    app_get(app, "/ping", h_ok)
+    app_post(app, "/login", h_ok)
+    app_get(app, "/rapido", h_ok)
+    app_post(app, "/contacto", h_eco)
+    app_post(app, "/foto", h_eco)
+    app_post(app, "/otra", h_eco)
+    app_get(app, "/login", h_ok)
+
+    app_max_body(app, "POST", "/contacto", 100)
+    app_max_body(app, "POST", "/foto", 2097152)
+    app_rate_limit_key(app, clave)
+    app_rate_limit(app, 6, 60)
+    app_route_rate_limit(app, "POST", "/login", 3, 60)
+    app_route_rate_limit(app, "GET", "/rapido", 2, 1)
+    spawn {
+        serve_app(app, port, 4)
+    }
+
+    // ── Tope de cuerpo por ruta ──
+    let r1: String = pedir(port, "POST", "/contacto", "", repetir("a", 100))
+    assert(codigo(r1) == 200, "contacto: 100 bytes pasan")
+    let r2: String = pedir(port, "POST", "/contacto", "", repetir("a", 101))
+    assert(codigo(r2) == 413, "contacto: 101 bytes -> 413")
+    // Un tope MAYOR que el global (1 MiB) sube el del parser solo para esa ruta.
+    let grande: String = repetir("b", 1500000)
+    let r3: String = pedir_grande(port, "/foto", grande)
+    assert(codigo(r3) == 200 and r3.endsWith("1500000"), "foto: 1.5 MB pasan (tope de la ruta 2 MiB)")
+    let r4: String = pedir_grande(port, "/otra", grande)
+    assert(codigo(r4) == 413, "otra ruta: 1.5 MB -> 413 (rige el global)")
+    let r5: String = pedir(port, "POST", "/otra", "", repetir("c", 5000))
+    assert(codigo(r5) == 200, "otra ruta: un cuerpo normal sigue pasando")
+
+    // ── Limitador por origen ──
+    var i: int = 0
+    while i < 6 {
+        let r: String = pedir(port, "GET", "/ping", "a", "")
+        assert(codigo(r) == 200, "origen a: pedido " + int_to_string(i + 1) + " dentro del cupo")
+        i = i + 1
+    }
+    let r7: String = pedir(port, "GET", "/ping", "a", "")
+    assert(codigo(r7) == 429, "origen a: el septimo -> 429")
+    let ra: int = string_to_int_or(valor(r7, "Retry-After"), 0)
+    assert(ra >= 1 and ra <= 60, "Retry-After entre 1 y 60")
+    let rb: String = pedir(port, "GET", "/ping", "b", "")
+    assert(codigo(rb) == 200, "otro origen no se ve afectado")
+    // Sin clave (X-Client ausente): exento.
+    let rx: String = pedir(port, "GET", "/ping", "", "")
+    assert(codigo(rx) == 200, "clave vacia: exento")
+
+    // Limite de ruta: /login 3 por minuto, cuenta aparte de la del app.
+    var k: int = 0
+    while k < 3 {
+        let rl: String = pedir(port, "POST", "/login", "d", "x")
+        assert(codigo(rl) == 200, "login dentro del cupo")
+        k = k + 1
+    }
+    let rl4: String = pedir(port, "POST", "/login", "d", "x")
+    assert(codigo(rl4) == 429, "login: el cuarto -> 429")
+    let rl5: String = pedir(port, "GET", "/login", "d", "")
+    assert(codigo(rl5) == 200, "GET /login es otra ruta: sin limite propio")
+
+    // Ventana de 1 s: dos pasan, la tercera no, y tras la ventana vuelve a pasar.
+    assert(codigo(pedir(port, "GET", "/rapido", "e", "")) == 200, "rapido 1")
+    assert(codigo(pedir(port, "GET", "/rapido", "e", "")) == 200, "rapido 2")
+    let rr3: String = pedir(port, "GET", "/rapido", "e", "")
+    assert(codigo(rr3) == 429 and valor(rr3, "Retry-After") == "1", "rapido 3 -> 429, Retry-After 1")
+    sleep(2100)
+    assert(codigo(pedir(port, "GET", "/rapido", "e", "")) == 200, "la ventana se renueva")
+
+    // ── Compartido entre workers ──
+    // 12 conexiones abiertas a la vez, todas del origen "c", cupo 6, 4 workers.
+    var fds: Array = []
+    var f: int = 0
+    while f < 12 {
+        let fd: int = conectar(port)
+        assert(fd >= 0, "conectar")
+        fds.push(fd)
+        f = f + 1
+    }
+    var g: int = 0
+    while g < 12 {
+        let fd: int = fds[g]
+        tcp_write(fd, armar("GET", "/ping", "c", ""))
+        g = g + 1
+    }
+    var ok: int = 0
+    var limitadas: int = 0
+    var h: int = 0
+    while h < 12 {
+        let fd: int = fds[h]
+        let resp: String = leer(fd)
+        if codigo(resp) == 200 { ok = ok + 1 }
+        if codigo(resp) == 429 { limitadas = limitadas + 1 }
+        h = h + 1
+    }
+    assert(ok == 6 and limitadas == 6, "12 pedidos, cupo 6: exactamente 6 y 6 (ok=" + int_to_string(ok) + ")")
+
+    println("serve limites ok")
+    return 0
+}

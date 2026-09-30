@@ -31,6 +31,7 @@ int64_t nyx_resp_write_bulk(int64_t fd, nyx_string* data);
 // Fast HTTP request parser (C-level, minimal GC allocs)
 nyx_array_t* nyx_http_parse_request_fast(int64_t fd);
 int64_t nyx_http_max_body(void);
+void nyx_http_set_body_floor(int64_t bytes);   // std/serve: tope por ruta > global
 // Igual, con plazo para la cabecera (ms; <= 0 = sin plazo). Vencido: pedido
 // vacío con err = 408 en el slot 5. Ver el comentario en net.c.
 nyx_array_t* nyx_http_parse_request_deadline(int64_t fd, int64_t header_ms);

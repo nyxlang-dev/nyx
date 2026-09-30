@@ -565,14 +565,26 @@ nyx_array_t* nyx_resp_read_command(int64_t fd) {
 // default 1 MiB. getenv POR LLAMADA (coste despreciable frente al parseo de
 // una request) — ajustable sin recompilar y testeable con setenv.
 // EN: HTTP body cap, env-configurable, read per call.
+// Piso del tope del parser, fijado por std/serve (nyx_http_set_body_floor) cuando
+// alguna ruta declara un tope de cuerpo MAYOR que el global (app_max_body). El
+// parser lee el cuerpo ANTES de que se sepa a qué ruta va, así que tiene que
+// aceptar hasta el mayor tope declarado; std/serve aplica después el tope de
+// cada ruta. Se escribe una sola vez, antes de lanzar los workers.
+static volatile int64_t g_http_body_floor = 0;
+
+void nyx_http_set_body_floor(int64_t bytes) {
+    g_http_body_floor = bytes > 0 ? bytes : 0;
+}
+
 int64_t nyx_http_max_body(void) {
+    int64_t base = 1048576;
     const char* env = getenv("NYX_HTTP_MAX_BODY");
     if (env && *env) {
         char* end = NULL;
         long long v = strtoll(env, &end, 10);
-        if (end && *end == '\0' && v > 0) return (int64_t)v;
+        if (end && *end == '\0' && v > 0) base = (int64_t)v;
     }
-    return 1048576;
+    return base > g_http_body_floor ? base : g_http_body_floor;
 }
 
 // Arreglo vacío del parser: ["request", "", "", [], "", err]. err = 0 es

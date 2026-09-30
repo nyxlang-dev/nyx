@@ -36,6 +36,10 @@
 #include <openssl/bn.h>
 #include <openssl/obj_mac.h>
 #include <openssl/kdf.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/rsa.h>
+#include <openssl/err.h>
 #endif
 
 // ============================================================
@@ -742,5 +746,66 @@ nyx_string* nyx_aes128gcm_encrypt(nyx_string* key, nyx_string* iv,
     if (ctx) EVP_CIPHER_CTX_free(ctx);
     if (!ok) return nyx_string_from_cstr("");
     return nyx_string_from_ptr((const char*)out, (int64_t)total + 16);
+}
+// ------------------------------------------------------------
+//  Verificación de firmas RSA-SHA256 (fricción de nyxerp 2026-09-29: las
+//  pasarelas de pago firman sus avisos con RSA y HMAC no alcanza).
+// ------------------------------------------------------------
+
+// Lee UNA clave pública RSA de un PEM: "PUBLIC KEY" (SubjectPublicKeyInfo) o
+// "RSA PUBLIC KEY" (PKCS#1). NULL si el PEM no se entiende o la clave no es RSA.
+static EVP_PKEY* rsa_pubkey_from_pem(nyx_string* pem) {
+    if (!pem || pem->length <= 0 || pem->length > (1 << 20)) return NULL;
+    BIO* bio = BIO_new_mem_buf(pem->data, (int)pem->length);
+    if (!bio) return NULL;
+    char* name = NULL; char* hdr = NULL; unsigned char* der = NULL; long derlen = 0;
+    EVP_PKEY* pk = NULL;
+    while (!pk && PEM_read_bio(bio, &name, &hdr, &der, &derlen) == 1) {
+        const unsigned char* p = der;
+        if (strcmp(name, "PUBLIC KEY") == 0) pk = d2i_PUBKEY(NULL, &p, derlen);
+        else if (strcmp(name, "RSA PUBLIC KEY") == 0) pk = d2i_PublicKey(EVP_PKEY_RSA, NULL, &p, derlen);
+        OPENSSL_free(name); OPENSSL_free(hdr); OPENSSL_free(der);
+        name = hdr = NULL; der = NULL;
+    }
+    BIO_free(bio);
+    ERR_clear_error();
+    if (pk && EVP_PKEY_base_id(pk) != EVP_PKEY_RSA) { EVP_PKEY_free(pk); pk = NULL; }
+    return pk;
+}
+
+// 1 = firma válida, 0 = firma que no corresponde, -1 = PEM ilegible o clave que
+// no es RSA. pss != 0 usa RSASSA-PSS (MGF1-SHA256, sal de cualquier largo);
+// pss == 0 usa PKCS#1 v1.5. `sig` son los bytes crudos de la firma.
+int64_t nyx_rsa_sha256_verify(nyx_string* pem, nyx_string* data, nyx_string* sig, int64_t pss) {
+    EVP_PKEY* pk = rsa_pubkey_from_pem(pem);
+    if (!pk) return -1;
+    int64_t result = 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_PKEY_CTX* pctx = NULL;
+    if (ctx && EVP_DigestVerifyInit(ctx, &pctx, EVP_sha256(), NULL, pk) == 1) {
+        int ok = 1;
+        if (pss) {
+            ok = EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) > 0
+              && EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, RSA_PSS_SALTLEN_AUTO) > 0
+              && EVP_PKEY_CTX_set_rsa_mgf1_md(pctx, EVP_sha256()) > 0;
+        }
+        if (ok) {
+            const unsigned char* d = (const unsigned char*)(data ? data->data : "");
+            size_t dl = data ? (size_t)data->length : 0;
+            const unsigned char* s = (const unsigned char*)(sig ? sig->data : "");
+            size_t sl = sig ? (size_t)sig->length : 0;
+            if (sl > 0 && EVP_DigestVerify(ctx, s, sl, d, dl) == 1) result = 1;
+        }
+    }
+    if (ctx) EVP_MD_CTX_free(ctx);
+    EVP_PKEY_free(pk);
+    ERR_clear_error();
+    return result;
+}
+#else
+// wasm32-wasi no tiene OpenSSL: el wrapper de std/rsa lo traduce a un Err claro.
+int64_t nyx_rsa_sha256_verify(nyx_string* pem, nyx_string* data, nyx_string* sig, int64_t pss) {
+    (void)pem; (void)data; (void)sig; (void)pss;
+    return -2;
 }
 #endif  // __wasi__

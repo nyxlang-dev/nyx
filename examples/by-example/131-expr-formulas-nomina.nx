@@ -1,0 +1,73 @@
+// Nyx by Example: fórmulas de usuario seguras (nómina) con std/expr.
+//
+// El caso real: una nómina deja que el usuario defina conceptos con una fórmula
+// (`salario_diario * dias * 1.5`, `min(base, 5 * salario_minimo) * 4 / 100`).
+// std/expr es un evaluador de expresiones en Nyx puro, sin acceso a nada fuera de
+// las variables que se le dan.
+//
+// Lo que muestra:
+//   - expr_parse compila UNA vez (y valida al guardar la fórmula: el Err trae la
+//     posición del error); expr_eval_dec la evalúa por cada empleado;
+//   - expr_vars dice qué variables usa la fórmula, para verificar que existan;
+//   - PRECISIÓN: es plata, así que los valores son decimales de punto fijo con 6
+//     decimales, no float: 0.1 + 0.2 da exactamente 0.3 y round(2.675, 2) da 2.68
+//     (en float da 0.30000000000000004 y 2.67);
+//   - funciones permitidas: min, max, round, floor, ceil, abs, if(cond, a, b);
+//   - los errores de evaluación (variable sin definir, división por cero) también
+//     dicen la posición.
+
+import "std/expr"
+import "std/error"
+
+fn evaluar(texto: String, v: ExprVars, decimales: int) {
+    match expr_parse(texto) {
+        Result.Ok(f) => {
+            match expr_eval_dec(f, v, decimales) {
+                Result.Ok(s) => { println(texto + "  =>  " + s) }
+                Result.Err(e) => { println(texto + "  =>  " + e.msg) }
+            }
+        }
+        Result.Err(e) => { println(texto + "  =>  " + e.msg) }
+    }
+}
+
+fn main() {
+    // Datos de un empleado. set_dec recibe el decimal EXACTO en texto.
+    var v: ExprVars = expr_vars_new()
+    v.set_dec("salario_diario", "43.33")
+    v.set_int("dias", 15)
+    v.set_dec("base", "12345.67")
+    v.set_dec("salario_minimo", "248.93")
+
+    evaluar("salario_diario * dias * 1.5", v, 2)
+    evaluar("min(base, 5 * salario_minimo) * 4 / 100", v, 2)
+    evaluar("if(dias >= 15, salario_diario * dias * 0.05, 0)", v, 2)
+
+    // Por qué no float.
+    evaluar("0.1 + 0.2", v, 2)
+    evaluar("0.1 + 0.2 == 0.3", v, 0)
+    evaluar("round(2.675, 2)", v, 2)
+
+    // Validar al guardar la fórmula: qué variables usa y si el catálogo las tiene.
+    match expr_parse("min(base, 5 * salario_minimo) * porcentaje / 100") {
+        Result.Ok(f) => {
+            let usadas: Array = expr_vars(f)
+            var i: int = 0
+            while i < usadas.length() {
+                let nombre: String = usadas[i]
+                if v.has(nombre) {
+                    println("variable " + nombre + ": ok")
+                } else {
+                    println("variable " + nombre + ": NO existe en el catálogo")
+                }
+                i = i + 1
+            }
+        }
+        Result.Err(e) => { println(e.msg) }
+    }
+
+    // Errores con posición.
+    evaluar("base / (dias - 15)", v, 2)
+    evaluar("salario * 2", v, 2)
+    evaluar("2 + * 3", v, 2)
+}

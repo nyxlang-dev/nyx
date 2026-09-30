@@ -997,12 +997,198 @@ export function browserBindings(opts = {}) {
     // `args` es una FUNCIÓN que arma los argumentos, y corre DENTRO del turno:
     // un evento encolado detrás de una pila suspendida (D-3) arma sus Strings
     // cuando le toca, no en un turno que para entonces ya se reseteó.
+    // Espacio de direcciones destino para el permiso de red local de Chrome
+    // (Local Network Access, antes Private Network Access): `fetch` acepta
+    // `targetAddressSpace` con "local" (red privada/LAN), "loopback" y, en el
+    // nombre viejo de PNA, "private". Se pasa TAL CUAL a fetch, pero solo si
+    // es uno de esos valores conocidos: cualquier otra cosa se ignora en vez
+    // de mandar un campo que el navegador podría rechazar. Un navegador que no
+    // conoce el campo lo ignora (es un dict de RequestInit), así que fijarlo
+    // nunca rompe el pedido. Los nombres exactos y sus valores son los de la
+    // documentación de Chrome al escribir esto (2026-09) y NO se pudieron
+    // verificar contra un navegador real desde este entorno.
+    const ESPACIOS_DESTINO = new Set(["local", "private", "loopback"]);
+    const initFetch = (method, body, espacio, signal) => {
+        const init = { method: method || "GET", body: body === "" ? undefined : body };
+        if (ESPACIOS_DESTINO.has(espacio)) init.targetAddressSpace = espacio;
+        if (signal) init.signal = signal;
+        return init;
+    };
     const callExport = (nyx, name, args) => nyx.turn(() => {
         if (!ref.exports || !ref.exports[name]) {
             throw new Error(`browser: export Nyx '${name}' no encontrado (¿#[export_name]? ¿ref.exports seteado?)`);
         }
         return nyx.finish(() => ref.exports[name](...args()), () => { if (ref.afterEvent) ref.afterEvent(); });
     });
+    const fetchFn = (nyx, urlPtr, methodPtr, bodyPtr, ms, espacio, pairPtr) => {
+        const url = nyx.readString(urlPtr);
+        const method = nyx.readString(methodPtr);
+        const body = nyx.readString(bodyPtr);
+        const anchor = nyx.anchorClosure(pairPtr);
+        // un solo disparo: se llame como se llame (ok, error, plazo, sin
+        // fetch), el cierre corre a lo sumo una vez y el entorno se suelta ahí.
+        let disparado = false;
+        const fire = (status, text) => {
+            if (disparado) return;
+            disparado = true;
+            nyx.turn(() => nyx.finish(
+                () => anchor.call(BigInt(status), nyx.makeString(text)),
+                () => {
+                    if (ref.afterEvent) ref.afterEvent();
+                    anchor.release();
+                }));
+        };
+        if (!fetchImpl) { fire(0, "fetch no disponible"); return; }
+        const ctl = ms > 0 && typeof AbortController !== "undefined" ? new AbortController() : null;
+        let reloj = null;
+        if (ms > 0) {
+            reloj = setTimeout(() => {
+                if (ctl) ctl.abort();
+                fire(0, `timeout: sin respuesta en ${ms} ms`);
+            }, ms);
+        }
+        Promise.resolve()
+            .then(() => fetchImpl(url, initFetch(method, body, espacio, ctl && ctl.signal)))
+            .then(async (r) => { const t = await r.text(); if (reloj) clearTimeout(reloj); fire(r.status, t); })
+            .catch((e) => { if (reloj) clearTimeout(reloj); fire(0, String(e && e.message ? e.message : e)); });
+    };
+    const fetchAwait = (nyx, urlPtr, methodPtr, bodyPtr, timeoutMs, espacio) => {
+        return nyx.suspend(() => {
+            const url = nyx.readString(urlPtr);
+            const method = nyx.readString(methodPtr);
+            const body = nyx.readString(bodyPtr);
+            const ms = Number(timeoutMs);
+            if (!fetchImpl) {
+                return { status: 0, text: "", kind: "connection", msg: "fetch no disponible" };
+            }
+            const ctl = ms > 0 && typeof AbortController !== "undefined" ? new AbortController() : null;
+            const init = initFetch(method, body, espacio, ctl && ctl.signal);
+            const pedido = Promise.resolve()
+                .then(() => fetchImpl(url, init))
+                .then(async (r) => ({ status: r.status, text: await r.text(), kind: "", msg: "" }))
+                .catch((e) => ({ status: 0, text: "", kind: "connection",
+                                 msg: String(e && e.message ? e.message : e) }));
+            if (!(ms > 0)) return pedido;
+            let reloj = null;
+            const plazo = new Promise((res) => {
+                reloj = setTimeout(() => {
+                    if (ctl) ctl.abort();
+                    res({ status: 0, text: "", kind: "timeout", msg: `sin respuesta en ${ms} ms` });
+                }, ms);
+            });
+            return Promise.race([pedido, plazo]).finally(() => clearTimeout(reloj));
+        }, (res) => {
+            ultimoAwait.status = res.status;
+            ultimoAwait.kind = res.kind;
+            ultimoAwait.msg = res.msg;
+            return nyx.makeString(res.text);
+        }, 0);
+    };
+    const sseAbrir = (nyx, url, pairPtr, ms, espacio, avisar_ok) => {
+        const anchor = nyx.anchorClosure(pairPtr);
+        const id = ++sseSeq;
+        const ctl = { closed: false, abort: null, anchor };
+        const ac = (ms > 0 || avisar_ok) && typeof AbortController !== "undefined" ? new AbortController() : null;
+        ctl.abort = () => { if (ac) ac.abort(); };
+        let reloj = null;
+        sseChannels.set(id, ctl);
+        const soltar = () => {
+            if (reloj) { clearTimeout(reloj); reloj = null; }
+            if (ctl.closed) return;
+            ctl.closed = true;
+            sseChannels.delete(id);
+            anchor.release();
+        };
+        // El parser del protocolo: líneas, y un frame por línea en blanco.
+        // `data:` puede venir repetido y se une con \n, que es lo que dice
+        // el estándar; `event:` da el nombre, ausente = "message". Las
+        // líneas que empiezan con ':' son comentarios (keep-alive) y los
+        // campos `id:`/`retry:` se ignoran a propósito: reconectar es otra
+        // decisión y no se toma acá sin pedirla.
+        let buf = "";
+        let evento = "";
+        let datos = [];
+        const despachar = () => {
+            if (datos.length === 0 && evento === "") return;
+            const nombre = evento === "" ? "message" : evento;
+            const cuerpo = datos.join("\n");
+            evento = ""; datos = [];
+            if (ctl.closed) return;
+            // Con una pila suspendida el frame se encola (D-3): al tocarle
+            // puede ser que el canal ya se haya cerrado, y ahí no se entrega.
+            nyx.turn(() => {
+                if (ctl.closed) return undefined;
+                return nyx.finish(() => anchor.call(nyx.makeString(nombre), nyx.makeString(cuerpo)),
+                    () => { if (ref.afterEvent) ref.afterEvent(); });
+            });
+        };
+        // Cierre con aviso (solo variante con opciones): entrega UN evento de
+        // control al cierre y después suelta el entorno. El desanclaje va en el
+        // `finish` de esa misma entrega, no antes: con una pila suspendida (D-3)
+        // la llamada se encola y soltar el entorno antes la dejaría sin cierre.
+        const cerrarConAviso = (kind) => {
+            if (ctl.closed) return;
+            if (!avisar_ok) { soltar(); return; }
+            if (reloj) { clearTimeout(reloj); reloj = null; }
+            ctl.closed = true;                 // no más frames del servidor
+            sseChannels.delete(id);
+            nyx.turn(() => nyx.finish(
+                () => anchor.call(nyx.makeString("nyx-error"), nyx.makeString(kind)),
+                () => { if (ref.afterEvent) ref.afterEvent(); anchor.release(); }));
+        };
+        if (!fetchImpl) { cerrarConAviso("connection"); return 0n; }
+        const consumir = (texto) => {
+            buf += texto;
+            let corte;
+            while ((corte = buf.indexOf("\n")) >= 0) {
+                let linea = buf.slice(0, corte);
+                buf = buf.slice(corte + 1);
+                if (linea.endsWith("\r")) linea = linea.slice(0, -1);
+                if (linea === "") { despachar(); continue; }
+                if (linea.startsWith(":")) continue;          // comentario
+                const i = linea.indexOf(":");
+                const campo = i < 0 ? linea : linea.slice(0, i);
+                let valor = i < 0 ? "" : linea.slice(i + 1);
+                if (valor.startsWith(" ")) valor = valor.slice(1);
+                if (campo === "event") evento = valor;
+                else if (campo === "data") datos.push(valor);
+            }
+        };
+
+        if (ms > 0) {
+            reloj = setTimeout(() => {
+                reloj = null;
+                if (ac) ac.abort();
+                cerrarConAviso("timeout");
+            }, ms);
+        }
+        Promise.resolve()
+            .then(() => fetchImpl(url, initFetch("GET", "", espacio, ac && ac.signal)))
+            .then(async (r) => {
+                if (reloj) { clearTimeout(reloj); reloj = null; }   // conectó: el plazo ya no aplica
+                if (ctl.closed) { try { r && r.body && r.body.cancel && r.body.cancel(); } catch (e) {} return; }
+                const body = r && r.body;
+                if (!body || typeof body.getReader !== "function") {
+                    // Sin streaming no hay SSE: se consume lo que haya y se
+                    // cierra, en vez de fingir un canal abierto.
+                    if (r && typeof r.text === "function") consumir(await r.text());
+                    despachar();
+                    soltar();
+                    return;
+                }
+                const reader = body.getReader();
+                ctl.abort = () => { try { reader.cancel(); } catch (e) {} if (ac) ac.abort(); };
+                const dec = new TextDecoder();
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done || ctl.closed) break;
+                    consumir(dec.decode(value, { stream: true }));
+                }
+                soltar();
+            })
+            .catch(() => { cerrarConAviso("connection"); });
+        return BigInt(id);
+    };
     const imports = (nyx) => ({
         js_browser_fetch(urlPtr, methodPtr, bodyPtr, handlerPtr) {
             const url = nyx.readString(urlPtr);
@@ -1039,6 +1225,12 @@ export function browserBindings(opts = {}) {
             Promise.resolve(fetchImpl(url, { method: method || "GET", body: body === "" ? undefined : body }))
                 .then(async (r) => { fire(r.status, await r.text()); })
                 .catch((e) => { fire(0, String(e)); });
+        },
+        // Con plazo (ms > 0) y espacio destino. Si vence el plazo el cierre
+        // recibe status 0 y el cuerpo "timeout: sin respuesta en N ms"; un
+        // fallo de red, status 0 y el texto del error.
+        js_browser_fetch_fn_opts(urlPtr, methodPtr, bodyPtr, timeoutMs, spacePtr, pairPtr) {
+            fetchFn(nyx, urlPtr, methodPtr, bodyPtr, Number(timeoutMs), nyx.readString(spacePtr), pairPtr);
         },
         js_browser_timeout_fn(ms, pairPtr) {
             const anchor = nyx.anchorClosure(pairPtr);
@@ -1207,6 +1399,14 @@ export function browserBindings(opts = {}) {
                 .catch(() => { soltar(); });
             return BigInt(id);
         },
+        // Con plazo de CONEXIÓN (ms > 0: hasta recibir la respuesta, no la
+        // duración del canal) y espacio destino. Además de los eventos del
+        // servidor, el cierre recibe eventos de control con nombre
+        // "nyx-error" y dato "timeout" o "connection", y después el canal se
+        // cierra solo (entorno soltado).
+        js_browser_sse_opts_fn(urlPtr, timeoutMs, spacePtr, pairPtr) {
+            return sseAbrir(nyx, nyx.readString(urlPtr), pairPtr, Number(timeoutMs), nyx.readString(spacePtr), true);
+        },
         js_browser_sse_close(id) {
             const ctl = sseChannels.get(Number(id));
             if (!ctl) return;
@@ -1263,6 +1463,10 @@ export function browserBindings(opts = {}) {
                 ultimoAwait.msg = res.msg;
                 return nyx.makeString(res.text);
             }, 0);
+        },
+        // Igual, con espacio destino (permiso de red local de Chrome).
+        js_browser_fetch_await_net(urlPtr, methodPtr, bodyPtr, timeoutMs, spacePtr) {
+            return fetchAwait(nyx, urlPtr, methodPtr, bodyPtr, timeoutMs, nyx.readString(spacePtr));
         },
         js_browser_sleep_await(ms) {
             return nyx.suspend(() => new Promise((r) => setTimeout(r, Number(ms))), () => undefined, undefined);

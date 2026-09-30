@@ -1,0 +1,907 @@
+// std/expr — evaluador SEGURO de expresiones aritméticas con variables, en Nyx puro.
+//
+// De dónde sale: pedido de nyxerp (2026-09-29). Una nómina (o cualquier sistema
+// configurable) deja que el usuario escriba fórmulas: `salario_diario * dias * 1.5`,
+// `min(base, 5 * salario_minimo) * 4 / 100`. Escribir el analizador en cada
+// aplicación es justo lo que la stdlib hace una vez y bien. Sin `extern "C"`: corre
+// igual en nativo y en wasm32-wasi (mismo resultado bit a bit: no hay float).
+//
+//   match expr_parse("min(base, 5 * salario_minimo) * 4 / 100") {   // se compila UNA vez
+//       Result.Ok(f) => {
+//           var v: ExprVars = expr_vars_new()
+//           v.set_dec("base", "12345.67")                  // decimal EXACTO
+//           v.set_dec("salario_minimo", "248.93")
+//           match expr_eval_dec(f, v, 2) { ... Ok("49.38") ... }   // 2 decimales
+//       }
+//       Result.Err(e) => { ... e.msg dice «(posición N)» ... }
+//   }
+//   expr_vars(f)        // ["base", "salario_minimo"]: validar al guardar la fórmula
+//
+// PRECISIÓN (decisión de diseño). Es plata, así que NO se usa float: 0.1 + 0.2 da
+// 0.30000000000000004 en float y 2.675 redondeado a 2 decimales da 2.67 (el double
+// más cercano a 2.675 es 2.67499999...). Todos los valores son DECIMALES DE PUNTO
+// FIJO con 6 decimales, guardados como enteros ("micros": 1.5 = 1500000):
+//   - 0.1 + 0.2 == 0.3 es exacto; round(2.675, 2) = 2.68 (mitad hacia afuera del cero).
+//   - Suma y resta son exactas. Multiplicación y división redondean al 6.º decimal
+//     (mitad hacia afuera del cero); ej. 1 / 3 = 0.333333, 2 / 3 = 0.666667.
+//   - Rango: |valor| <= 100000000000 (1e11, cien mil millones) con 6 decimales; fuera
+//     de eso, Err de desbordamiento (nunca envuelve en silencio).
+//   - Los números del texto pueden tener hasta 6 decimales (más -> Err, no se
+//     trunca en silencio). Las variables entran como decimal exacto (set_dec, set_int)
+//     o desde un float (set), que se redondea al 6.º decimal.
+//   - expr_eval devuelve float por comodidad (convertido del valor exacto: con
+//     magnitudes de plata normales, <= ~9e9, es exacto al 6.º decimal); para plata
+//     usar expr_eval_dec (texto decimal exacto) o expr_eval_micros (entero).
+//
+// SEGURIDAD. Una fórmula solo puede leer las variables que da el llamador y usar las
+// funciones de la lista; no hay acceso a nada más (ni archivos, ni entorno, ni
+// llamadas a funciones del programa). Topes: largo del texto (1000 bytes),
+// anidamiento (32 niveles de paréntesis / llamadas / unarios), cantidad de nodos
+// (512) y de argumentos por llamada (16). La evaluación recorre el árbol UNA vez,
+// sin bucles ni recursión de usuario, así que siempre termina. División por cero,
+// variable sin definir y desborde devuelven Err con la posición.
+//
+// Gramática (de menor a mayor precedencia):
+//   o      := y (("or" | "||") y)*
+//   y      := cmp (("and" | "&&") cmp)*
+//   cmp    := suma (("<" | "<=" | ">" | ">=" | "==" | "=" | "!=") suma)?   (sin encadenar)
+//   suma   := prod (("+" | "-") prod)*
+//   prod   := unario (("*" | "/") unario)*
+//   unario := ("-" | "+" | "!" | "not") unario | primario
+//   primario := número | variable | función "(" args ")" | "(" o ")"
+// Las comparaciones y los operadores lógicos dan 1 (verdadero) o 0 (falso); cualquier
+// valor distinto de 0 cuenta como verdadero. Números: 12, 12.5 (punto decimal; sin
+// exponente). Variables: [A-Za-z_][A-Za-z0-9_]*; "and", "or", "not" están reservadas.
+//
+// Funciones permitidas (nombres en minúscula):
+//   min(a, b, ...)  max(a, b, ...)   uno o más argumentos (hasta 16)
+//   round(x)        round(x, d)      d = decimales, entero de 0 a 6; mitad hacia afuera del cero
+//   floor(x)  ceil(x)  abs(x)
+//   if(cond, a, b)                   evalúa SOLO la rama elegida (1 / 0 no rompe la otra)
+//
+// Los errores dicen «(posición N)»: columna 1-based en bytes del texto. `code`: 22 =
+// sintaxis o error de evaluación, 27 = tope excedido; `kind`: "parse" o "invalid".
+
+import "std/error"
+
+const EXPR_SCALE: int = 1000000
+// 1e11 unidades = 1e17 micros: cabe con holgura en 64 bits para las sumas parciales.
+const EXPR_MAX: int = 100000000000000000
+const EXPR_MAX_LEN: int = 1000
+const EXPR_MAX_DEPTH: int = 32
+const EXPR_MAX_NODES: int = 512
+const EXPR_MAX_ARGS: int = 16
+
+// Tipos de nodo (casilla 0 de cada registro de 6 enteros: kind, val, a, b, c, pos).
+const EXPR_N_NUM: int = 0
+const EXPR_N_VAR: int = 1
+const EXPR_N_NEG: int = 2
+const EXPR_N_NOT: int = 3
+const EXPR_N_BIN: int = 4
+const EXPR_N_CALL: int = 5
+
+// Operadores binarios.
+const EXPR_OP_ADD: int = 1
+const EXPR_OP_SUB: int = 2
+const EXPR_OP_MUL: int = 3
+const EXPR_OP_DIV: int = 4
+const EXPR_OP_LT: int = 5
+const EXPR_OP_LE: int = 6
+const EXPR_OP_GT: int = 7
+const EXPR_OP_GE: int = 8
+const EXPR_OP_EQ: int = 9
+const EXPR_OP_NE: int = 10
+const EXPR_OP_AND: int = 11
+const EXPR_OP_OR: int = 12
+
+// Funciones.
+const EXPR_F_MIN: int = 1
+const EXPR_F_MAX: int = 2
+const EXPR_F_ROUND: int = 3
+const EXPR_F_FLOOR: int = 4
+const EXPR_F_CEIL: int = 5
+const EXPR_F_ABS: int = 6
+const EXPR_F_IF: int = 7
+
+/// Una fórmula ya compilada. Se arma con `expr_parse` y se evalúa cuantas veces se
+/// quiera (una nómina evalúa la misma fórmula por empleado) con `expr_eval*`.
+/// Los campos son detalle interno: no leerlos.
+pub struct Expr {
+    nodes: Array<int>,
+    args: Array<int>,
+    names: Array<String>,
+    root: int,
+    src: String,
+}
+
+/// Valores de las variables para evaluar: nombre -> decimal de punto fijo.
+pub struct ExprVars {
+    m: Map,
+}
+
+pub fn expr_vars_new() -> ExprVars {
+    var m: Map = map_new()
+    return ExprVars { m: m }
+}
+
+// ── Decimales ───────────────────────────────────────────────────────────────
+
+fn __expr_is_digit(c: int) -> bool {
+    return c >= 48 and c <= 57
+}
+
+fn __expr_is_alpha(c: int) -> bool {
+    return (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 95
+}
+
+// Decimal "123" o "123.45" (solo dígitos y un punto) a micros. Devuelve >= 0, o
+// -1 = mal formado, -2 = más de 6 decimales, -3 = fuera de rango.
+fn __expr_dec(s: String) -> int {
+    let n: int = s.length()
+    if n == 0 { return 0 - 1 }
+    var i: int = 0
+    var ip: int = 0
+    var idig: int = 0
+    while i < n and __expr_is_digit(s.charAt(i)) {
+        if idig >= 12 { return 0 - 3 }
+        ip = ip * 10 + (s.charAt(i) - 48)
+        idig = idig + 1
+        i = i + 1
+    }
+    if idig == 0 { return 0 - 1 }
+    if ip > 100000000000 { return 0 - 3 }
+    var fp: int = 0
+    var fdig: int = 0
+    if i < n {
+        if s.charAt(i) != 46 { return 0 - 1 }
+        i = i + 1
+        if i >= n { return 0 - 1 }
+        while i < n and __expr_is_digit(s.charAt(i)) {
+            if fdig >= 6 { return 0 - 2 }
+            fp = fp * 10 + (s.charAt(i) - 48)
+            fdig = fdig + 1
+            i = i + 1
+        }
+        if i < n { return 0 - 1 }
+    }
+    while fdig < 6 {
+        fp = fp * 10
+        fdig = fdig + 1
+    }
+    let v: int = ip * EXPR_SCALE + fp
+    if v > EXPR_MAX { return 0 - 3 }
+    return v
+}
+
+impl ExprVars {
+    /// Variable con un decimal EXACTO en texto ("43.33", "-5", "+0.5"). Devuelve false
+    /// (y no guarda nada) si no es un decimal válido de hasta 6 decimales y rango.
+    fn set_dec(&mut self, name: String, text: String) -> bool {
+        var t: String = text.trim()
+        var neg: bool = false
+        if t.length() > 0 and (t.charAt(0) == 45 or t.charAt(0) == 43) {
+            neg = t.charAt(0) == 45
+            t = t.substring(1, t.length())
+        }
+        let v: int = __expr_dec(t)
+        if v < 0 { return false }
+        if neg {
+            map_put(self.m, name, 0 - v)
+        } else {
+            map_put(self.m, name, v)
+        }
+        return true
+    }
+
+    /// Variable entera.
+    fn set_int(&mut self, name: String, n: int) -> bool {
+        if n > 100000000000 or n < 0 - 100000000000 { return false }
+        map_put(self.m, name, n * EXPR_SCALE)
+        return true
+    }
+
+    /// Variable desde un float, redondeado al 6.º decimal (mitad hacia afuera del cero).
+    /// false si es NaN o fuera de rango. Para plata preferir set_dec (el float ya
+    /// llega con su error de representación).
+    fn set(&mut self, name: String, v: float) -> bool {
+        if v != v { return false }
+        let f: float = v * 1000000.0
+        if f > 99999999999999000.0 or f < 0.0 - 99999999999999000.0 { return false }
+        var r: int = 0
+        if f >= 0.0 {
+            r = float_to_int(f + 0.5)
+        } else {
+            r = 0 - float_to_int(0.5 - f)
+        }
+        map_put(self.m, name, r)
+        return true
+    }
+
+    /// ¿Está definida la variable?
+    fn has(&self, name: String) -> bool {
+        return map_has(self.m, name)
+    }
+}
+
+// Entero de micros -> texto decimal con exactamente `d` decimales (0..6), redondeando
+// la mitad hacia afuera del cero. Nunca imprime "-0.00".
+fn __expr_fmt(x: int, d: int) -> String {
+    var step: int = 1
+    var k: int = d
+    while k < 6 {
+        step = step * 10
+        k = k + 1
+    }
+    var m: int = x
+    var neg: bool = false
+    if m < 0 {
+        m = 0 - m
+        neg = true
+    }
+    m = ((m + step / 2) / step) * step
+    let ip: int = m / EXPR_SCALE
+    let fp: int = m % EXPR_SCALE
+    var s: String = int_to_string(ip)
+    if d > 0 {
+        var f: String = int_to_string(fp)
+        while f.length() < 6 { f = "0" + f }
+        s = s + "." + f.substring(0, d)
+    }
+    if neg and m != 0 { s = "-" + s }
+    return s
+}
+
+// ── Errores ─────────────────────────────────────────────────────────────────
+
+fn __expr_err(code: int, kind: String, msg: String, pos: int) -> Error {
+    return err_new(code, kind, "expr: " + msg + " (posición " + int_to_string(pos + 1) + ")")
+}
+
+// ── Parser ──────────────────────────────────────────────────────────────────
+
+// Tokens: kind 1 = número, 2 = identificador, 3 = operador/puntuación, 4 = fin.
+struct ExprParser {
+    tk: Array<int>,
+    ts: Array<String>,
+    tp: Array<int>,
+    i: int,
+    depth: int,
+    nodes: Array<int>,
+    args: Array<int>,
+    names: Array<String>,
+    failed: bool,
+    ecode: int,
+    emsg: String,
+    epos: int,
+}
+
+fn __expr_func_id(name: String) -> int {
+    if name == "min" { return EXPR_F_MIN }
+    if name == "max" { return EXPR_F_MAX }
+    if name == "round" { return EXPR_F_ROUND }
+    if name == "floor" { return EXPR_F_FLOOR }
+    if name == "ceil" { return EXPR_F_CEIL }
+    if name == "abs" { return EXPR_F_ABS }
+    if name == "if" { return EXPR_F_IF }
+    return 0
+}
+
+impl ExprParser {
+    fn __fail(&mut self, code: int, msg: String, pos: int) -> int {
+        if not self.failed {
+            self.failed = true
+            self.ecode = code
+            self.emsg = msg
+            self.epos = pos
+        }
+        return 0 - 1
+    }
+
+    fn __node(&mut self, kind: int, val: int, a: int, b: int, c: int, pos: int) -> int {
+        let count: int = self.nodes.length() / 6
+        if count >= EXPR_MAX_NODES {
+            return self.__fail(27, "la fórmula supera el tope de " + int_to_string(EXPR_MAX_NODES) + " nodos", pos)
+        }
+        self.nodes.push(kind)
+        self.nodes.push(val)
+        self.nodes.push(a)
+        self.nodes.push(b)
+        self.nodes.push(c)
+        self.nodes.push(pos)
+        return count
+    }
+
+    fn __kind(&self) -> int {
+        let k: int = self.tk[self.i]
+        return k
+    }
+
+    fn __text(&self) -> String {
+        let s: String = self.ts[self.i]
+        return s
+    }
+
+    fn __pos(&self) -> int {
+        let p: int = self.tp[self.i]
+        return p
+    }
+
+    // ¿El token actual es el operador `op`?
+    fn __is_op(&self, op: String) -> bool {
+        if self.__kind() != 3 { return false }
+        return self.__text() == op
+    }
+
+    // ¿El token actual es la palabra reservada `w` (and / or / not)?
+    fn __is_word(&self, w: String) -> bool {
+        if self.__kind() != 2 { return false }
+        return self.__text() == w
+    }
+
+    fn __enter(&mut self) -> bool {
+        self.depth = self.depth + 1
+        if self.depth > EXPR_MAX_DEPTH {
+            let p: int = self.__pos()
+            self.__fail(27, "anidamiento supera el tope de " + int_to_string(EXPR_MAX_DEPTH) + " niveles", p)
+            return false
+        }
+        return true
+    }
+
+    fn __expr(&mut self) -> int {
+        if not self.__enter() { return 0 - 1 }
+        var l: int = self.__and()
+        while not self.failed and (self.__is_op("||") or self.__is_word("or")) {
+            let p: int = self.__pos()
+            self.i = self.i + 1
+            let r: int = self.__and()
+            if self.failed { break }
+            l = self.__node(EXPR_N_BIN, EXPR_OP_OR, l, r, 0, p)
+        }
+        self.depth = self.depth - 1
+        return l
+    }
+
+    fn __and(&mut self) -> int {
+        var l: int = self.__cmp()
+        while not self.failed and (self.__is_op("&&") or self.__is_word("and")) {
+            let p: int = self.__pos()
+            self.i = self.i + 1
+            let r: int = self.__cmp()
+            if self.failed { break }
+            l = self.__node(EXPR_N_BIN, EXPR_OP_AND, l, r, 0, p)
+        }
+        return l
+    }
+
+    fn __cmp(&mut self) -> int {
+        let l: int = self.__add()
+        if self.failed { return l }
+        var op: int = 0
+        if self.__kind() == 3 {
+            let t: String = self.__text()
+            if t == "<" { op = EXPR_OP_LT }
+            if t == "<=" { op = EXPR_OP_LE }
+            if t == ">" { op = EXPR_OP_GT }
+            if t == ">=" { op = EXPR_OP_GE }
+            if t == "==" or t == "=" { op = EXPR_OP_EQ }
+            if t == "!=" { op = EXPR_OP_NE }
+        }
+        if op == 0 { return l }
+        let p: int = self.__pos()
+        self.i = self.i + 1
+        let r: int = self.__add()
+        if self.failed { return r }
+        let n: int = self.__node(EXPR_N_BIN, op, l, r, 0, p)
+        // Sin encadenar: a < b < c casi siempre es un error de quien escribe.
+        if not self.failed and self.__kind() == 3 {
+            let t2: String = self.__text()
+            if t2 == "<" or t2 == "<=" or t2 == ">" or t2 == ">=" or t2 == "==" or t2 == "=" or t2 == "!=" {
+                let p2: int = self.__pos()
+                return self.__fail(22, "comparación encadenada: usar 'and' entre dos comparaciones", p2)
+            }
+        }
+        return n
+    }
+
+    fn __add(&mut self) -> int {
+        var l: int = self.__mul()
+        while not self.failed and (self.__is_op("+") or self.__is_op("-")) {
+            var op: int = EXPR_OP_ADD
+            if self.__is_op("-") { op = EXPR_OP_SUB }
+            let p: int = self.__pos()
+            self.i = self.i + 1
+            let r: int = self.__mul()
+            if self.failed { break }
+            l = self.__node(EXPR_N_BIN, op, l, r, 0, p)
+        }
+        return l
+    }
+
+    fn __mul(&mut self) -> int {
+        var l: int = self.__unary()
+        while not self.failed and (self.__is_op("*") or self.__is_op("/")) {
+            var op: int = EXPR_OP_MUL
+            if self.__is_op("/") { op = EXPR_OP_DIV }
+            let p: int = self.__pos()
+            self.i = self.i + 1
+            let r: int = self.__unary()
+            if self.failed { break }
+            l = self.__node(EXPR_N_BIN, op, l, r, 0, p)
+        }
+        return l
+    }
+
+    fn __unary(&mut self) -> int {
+        let p: int = self.__pos()
+        if self.__is_op("-") or self.__is_op("+") or self.__is_op("!") or self.__is_word("not") {
+            let neg: bool = self.__is_op("-")
+            let plus: bool = self.__is_op("+")
+            if not self.__enter() { return 0 - 1 }
+            self.i = self.i + 1
+            let x: int = self.__unary()
+            self.depth = self.depth - 1
+            if self.failed { return x }
+            if plus { return x }
+            if neg { return self.__node(EXPR_N_NEG, 0, x, 0, 0, p) }
+            return self.__node(EXPR_N_NOT, 0, x, 0, 0, p)
+        }
+        return self.__primary()
+    }
+
+    fn __primary(&mut self) -> int {
+        let k: int = self.__kind()
+        let p: int = self.__pos()
+        if k == 1 {
+            let t: String = self.__text()
+            let v: int = __expr_dec(t)
+            if v == 0 - 2 { return self.__fail(22, "número con más de 6 decimales: " + t, p) }
+            if v < 0 { return self.__fail(22, "número fuera de rango: " + t, p) }
+            self.i = self.i + 1
+            return self.__node(EXPR_N_NUM, v, 0, 0, 0, p)
+        }
+        if k == 2 {
+            let name: String = self.__text()
+            if name == "and" or name == "or" or name == "not" {
+                return self.__fail(22, "palabra reservada '" + name + "' donde va un valor", p)
+            }
+            self.i = self.i + 1
+            if self.__is_op("(") {
+                return self.__call(name, p)
+            }
+            // Índice del nombre en la tabla (sin repetidos).
+            var idx: int = 0 - 1
+            var j: int = 0
+            while j < self.names.length() {
+                let nm: String = self.names[j]
+                if nm == name { idx = j }
+                j = j + 1
+            }
+            if idx < 0 {
+                self.names.push(name)
+                idx = self.names.length() - 1
+            }
+            return self.__node(EXPR_N_VAR, idx, 0, 0, 0, p)
+        }
+        if k == 3 and self.__text() == "(" {
+            self.i = self.i + 1
+            let x: int = self.__expr()
+            if self.failed { return x }
+            if not self.__is_op(")") {
+                let p2: int = self.__pos()
+                return self.__fail(22, "falta cerrar el paréntesis abierto en la posición " + int_to_string(p + 1), p2)
+            }
+            self.i = self.i + 1
+            return x
+        }
+        if k == 4 { return self.__fail(22, "la expresión termina donde se esperaba un valor", p) }
+        return self.__fail(22, "se esperaba un valor y hay '" + self.__text() + "'", p)
+    }
+
+    // `name` ya leído; el token actual es "(".
+    fn __call(&mut self, name: String, p: int) -> int {
+        let f: int = __expr_func_id(name)
+        if f == 0 { return self.__fail(22, "función desconocida '" + name + "' (permitidas: min, max, round, floor, ceil, abs, if)", p) }
+        self.i = self.i + 1
+        var tmp: Array<int> = []
+        if not self.__is_op(")") {
+            var seguir: bool = true
+            while seguir {
+                if tmp.length() >= EXPR_MAX_ARGS {
+                    let pa: int = self.__pos()
+                    return self.__fail(27, "más de " + int_to_string(EXPR_MAX_ARGS) + " argumentos", pa)
+                }
+                let a: int = self.__expr()
+                if self.failed { return a }
+                tmp.push(a)
+                if self.__is_op(",") {
+                    self.i = self.i + 1
+                } else {
+                    seguir = false
+                }
+            }
+        }
+        if not self.__is_op(")") {
+            let pc: int = self.__pos()
+            return self.__fail(22, "falta ')' o ',' en la llamada a " + name, pc)
+        }
+        self.i = self.i + 1
+        let n: int = tmp.length()
+        var ok: bool = true
+        if f == EXPR_F_MIN or f == EXPR_F_MAX { ok = n >= 1 }
+        if f == EXPR_F_ROUND { ok = n == 1 or n == 2 }
+        if f == EXPR_F_FLOOR or f == EXPR_F_CEIL or f == EXPR_F_ABS { ok = n == 1 }
+        if f == EXPR_F_IF { ok = n == 3 }
+        if not ok { return self.__fail(22, "cantidad de argumentos inválida para " + name + "(): " + int_to_string(n), p) }
+        let start: int = self.args.length()
+        var q: int = 0
+        while q < n {
+            let a: int = tmp[q]
+            self.args.push(a)
+            q = q + 1
+        }
+        return self.__node(EXPR_N_CALL, f, start, n, 0, p)
+    }
+}
+
+// Texto -> tokens. Devuelve el mensaje de error ("" si bien) y deja la posición en `epos[0]`.
+fn __expr_lex(src: String, p: ExprParser, epos: Array<int>) -> String {
+    let n: int = src.length()
+    var i: int = 0
+    while i < n {
+        let c: int = src.charAt(i)
+        if c == 32 or c == 9 or c == 10 or c == 13 {
+            i = i + 1
+        } else {
+            if __expr_is_digit(c) {
+                let st: int = i
+                while i < n and __expr_is_digit(src.charAt(i)) { i = i + 1 }
+                if i < n and src.charAt(i) == 46 {
+                    i = i + 1
+                    if i >= n or not __expr_is_digit(src.charAt(i)) {
+                        epos.push(st)
+                        return "número mal formado (falta el decimal tras el punto)"
+                    }
+                    while i < n and __expr_is_digit(src.charAt(i)) { i = i + 1 }
+                }
+                if i < n and (__expr_is_alpha(src.charAt(i)) or src.charAt(i) == 46) {
+                    epos.push(st)
+                    return "número mal formado"
+                }
+                p.tk.push(1)
+                p.ts.push(src.substring(st, i))
+                p.tp.push(st)
+            } else {
+                if __expr_is_alpha(c) {
+                    let st: int = i
+                    while i < n and (__expr_is_alpha(src.charAt(i)) or __expr_is_digit(src.charAt(i))) { i = i + 1 }
+                    p.tk.push(2)
+                    p.ts.push(src.substring(st, i))
+                    p.tp.push(st)
+                } else {
+                    var op: String = ""
+                    if i + 1 < n {
+                        let d: int = src.charAt(i + 1)
+                        if c == 60 and d == 61 { op = "<=" }
+                        if c == 62 and d == 61 { op = ">=" }
+                        if c == 61 and d == 61 { op = "==" }
+                        if c == 33 and d == 61 { op = "!=" }
+                        if c == 38 and d == 38 { op = "&&" }
+                        if c == 124 and d == 124 { op = "||" }
+                    }
+                    if op == "" {
+                        if c == 43 or c == 45 or c == 42 or c == 47 or c == 40 or c == 41 or c == 44 or c == 60 or c == 62 or c == 61 or c == 33 {
+                            op = src.substring(i, i + 1)
+                        }
+                    }
+                    if op == "" {
+                        epos.push(i)
+                        if c > 127 { return "carácter no permitido (solo ASCII)" }
+                        return "carácter no permitido '" + src.substring(i, i + 1) + "'"
+                    }
+                    p.tk.push(3)
+                    p.ts.push(op)
+                    p.tp.push(i)
+                    i = i + op.length()
+                }
+            }
+        }
+    }
+    p.tk.push(4)
+    p.ts.push("")
+    p.tp.push(n)
+    return ""
+}
+
+/// Compila la fórmula. Err (con la posición en el mensaje) si hay un error de
+/// sintaxis, una función desconocida o de aridad incorrecta, o se pasa de un tope.
+/// No necesita las variables: sirve para validar una fórmula al guardarla.
+pub fn expr_parse(text: String) -> Result<Expr, Error> {
+    if text.length() > EXPR_MAX_LEN {
+        return Result.Err(__expr_err(27, "invalid", "la fórmula supera el tope de " + int_to_string(EXPR_MAX_LEN) + " bytes", EXPR_MAX_LEN))
+    }
+    var p: ExprParser = ExprParser {
+        tk: [], ts: [], tp: [], i: 0, depth: 0, nodes: [], args: [], names: [],
+        failed: false, ecode: 0, emsg: "", epos: 0
+    }
+    var ep: Array<int> = []
+    let lexerr: String = __expr_lex(text, p, ep)
+    if lexerr != "" {
+        let at: int = ep[0]
+        return Result.Err(__expr_err(22, "parse", lexerr, at))
+    }
+    let root: int = p.__expr()
+    if not p.failed and p.__kind() != 4 {
+        let at2: int = p.__pos()
+        if p.__is_op(")") {
+            p.__fail(22, "paréntesis de cierre sin abrir", at2)
+        } else {
+            p.__fail(22, "sobra '" + p.__text() + "' después de la expresión", at2)
+        }
+    }
+    if p.failed {
+        var kind: String = "parse"
+        if p.ecode == 27 { kind = "invalid" }
+        return Result.Err(__expr_err(p.ecode, kind, p.emsg, p.epos))
+    }
+    return Result.Ok(Expr { nodes: p.nodes, args: p.args, names: p.names, root: root, src: text })
+}
+
+/// Nombres de las variables que usa la fórmula, sin repetidos y en orden de
+/// aparición. Para validar al guardar («¿todas existen en el catálogo?»).
+pub fn expr_vars(e: Expr) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i < e.names.length() {
+        let nm: String = e.names[i]
+        out.push(nm)
+        i = i + 1
+    }
+    return out
+}
+
+// ── Evaluación ──────────────────────────────────────────────────────────────
+
+struct ExprRun {
+    nodes: Array<int>,
+    args: Array<int>,
+    names: Array<String>,
+    vars: Map,
+    failed: bool,
+    ecode: int,
+    kind: String,
+    emsg: String,
+    epos: int,
+}
+
+fn __expr_abs(x: int) -> int {
+    if x < 0 { return 0 - x }
+    return x
+}
+
+impl ExprRun {
+    fn __fail(&mut self, msg: String, pos: int) -> int {
+        if not self.failed {
+            self.failed = true
+            self.ecode = 22
+            self.kind = "invalid"
+            self.emsg = msg
+            self.epos = pos
+        }
+        return 0
+    }
+
+    // Comprueba el rango; el desborde es un error, nunca un valor envuelto.
+    fn __chk(&mut self, v: int, pos: int) -> int {
+        if v > EXPR_MAX or v < 0 - EXPR_MAX {
+            return self.__fail("desbordamiento: el resultado supera 100000000000", pos)
+        }
+        return v
+    }
+
+    fn __mul(&mut self, a: int, b: int, pos: int) -> int {
+        let ma: int = __expr_abs(a)
+        let mb: int = __expr_abs(b)
+        let ah: int = ma / EXPR_SCALE
+        let al: int = ma % EXPR_SCALE
+        let bh: int = mb / EXPR_SCALE
+        let bl: int = mb % EXPR_SCALE
+        // ah * bh unidades enteras: se acota ANTES de multiplicar (evita el overflow de 64 bits).
+        if ah > 0 and bh > 100000000000 / ah {
+            return self.__fail("desbordamiento: el resultado supera 100000000000", pos)
+        }
+        let r: int = ah * bh * EXPR_SCALE + ah * bl + al * bh + (al * bl + EXPR_SCALE / 2) / EXPR_SCALE
+        let v: int = self.__chk(r, pos)
+        if (a < 0) != (b < 0) { return 0 - v }
+        return v
+    }
+
+    fn __div(&mut self, a: int, b: int, pos: int) -> int {
+        if b == 0 { return self.__fail("división por cero", pos) }
+        let ma: int = __expr_abs(a)
+        let mb: int = __expr_abs(b)
+        let q: int = ma / mb
+        if q > 100000000000 {
+            return self.__fail("desbordamiento: el resultado supera 100000000000", pos)
+        }
+        var r: int = ma % mb
+        var res: int = q * EXPR_SCALE
+        var unit: int = EXPR_SCALE / 10
+        // Seis dígitos decimales por división larga (r < mb <= 1e17: r * 10 no desborda).
+        while unit >= 1 {
+            r = r * 10
+            let d: int = r / mb
+            r = r % mb
+            res = res + d * unit
+            unit = unit / 10
+        }
+        r = r * 10
+        if r / mb >= 5 { res = res + 1 }
+        let v: int = self.__chk(res, pos)
+        if (a < 0) != (b < 0) { return 0 - v }
+        return v
+    }
+
+    fn __round(&mut self, x: int, d: int, pos: int) -> int {
+        var step: int = 1
+        var k: int = d
+        while k < 6 {
+            step = step * 10
+            k = k + 1
+        }
+        let m: int = __expr_abs(x)
+        let r: int = ((m + step / 2) / step) * step
+        if x < 0 { return 0 - r }
+        return r
+    }
+
+    fn __call(&mut self, f: int, start: int, n: int, pos: int) -> int {
+        if f == EXPR_F_IF {
+            let ci: int = self.args[start]
+            let c: int = self.__ev(ci)
+            if self.failed { return 0 }
+            // Solo se evalúa la rama elegida.
+            if c != 0 {
+                let ti: int = self.args[start + 1]
+                return self.__ev(ti)
+            }
+            let ei: int = self.args[start + 2]
+            return self.__ev(ei)
+        }
+        var vals: Array<int> = []
+        var i: int = 0
+        while i < n {
+            let ai: int = self.args[start + i]
+            let v: int = self.__ev(ai)
+            if self.failed { return 0 }
+            vals.push(v)
+            i = i + 1
+        }
+        let x: int = vals[0]
+        if f == EXPR_F_MIN or f == EXPR_F_MAX {
+            var best: int = x
+            var j: int = 1
+            while j < n {
+                let y: int = vals[j]
+                if f == EXPR_F_MIN and y < best { best = y }
+                if f == EXPR_F_MAX and y > best { best = y }
+                j = j + 1
+            }
+            return best
+        }
+        if f == EXPR_F_ABS { return __expr_abs(x) }
+        if f == EXPR_F_FLOOR {
+            if x >= 0 { return (x / EXPR_SCALE) * EXPR_SCALE }
+            return 0 - ((((0 - x) + EXPR_SCALE - 1) / EXPR_SCALE) * EXPR_SCALE)
+        }
+        if f == EXPR_F_CEIL {
+            if x >= 0 { return ((x + EXPR_SCALE - 1) / EXPR_SCALE) * EXPR_SCALE }
+            return 0 - (((0 - x) / EXPR_SCALE) * EXPR_SCALE)
+        }
+        // round(x) o round(x, d)
+        var d: int = 0
+        if n == 2 {
+            let dv: int = vals[1]
+            if dv % EXPR_SCALE != 0 or dv < 0 or dv > 6 * EXPR_SCALE {
+                return self.__fail("round: los decimales deben ser un entero de 0 a 6", pos)
+            }
+            d = dv / EXPR_SCALE
+        }
+        return self.__round(x, d, pos)
+    }
+
+    fn __ev(&mut self, idx: int) -> int {
+        let b: int = idx * 6
+        let kind: int = self.nodes[b]
+        let val: int = self.nodes[b + 1]
+        let pos: int = self.nodes[b + 5]
+        if kind == EXPR_N_NUM { return val }
+        if kind == EXPR_N_VAR {
+            let name: String = self.names[val]
+            if not map_has(self.vars, name) {
+                return self.__fail("variable sin definir '" + name + "'", pos)
+            }
+            let v: int = map_get_int(self.vars, name)
+            return v
+        }
+        if kind == EXPR_N_CALL {
+            let start: int = self.nodes[b + 2]
+            let n: int = self.nodes[b + 3]
+            return self.__call(val, start, n, pos)
+        }
+        let ai: int = self.nodes[b + 2]
+        let a: int = self.__ev(ai)
+        if self.failed { return 0 }
+        if kind == EXPR_N_NEG { return 0 - a }
+        if kind == EXPR_N_NOT {
+            if a == 0 { return EXPR_SCALE }
+            return 0
+        }
+        // Binarios. and/or cortocircuitan: la rama derecha no se evalúa si no hace falta.
+        let bi: int = self.nodes[b + 3]
+        if val == EXPR_OP_AND {
+            if a == 0 { return 0 }
+            let r: int = self.__ev(bi)
+            if r != 0 { return EXPR_SCALE }
+            return 0
+        }
+        if val == EXPR_OP_OR {
+            if a != 0 { return EXPR_SCALE }
+            let r: int = self.__ev(bi)
+            if r != 0 { return EXPR_SCALE }
+            return 0
+        }
+        let c: int = self.__ev(bi)
+        if self.failed { return 0 }
+        if val == EXPR_OP_ADD { return self.__chk(a + c, pos) }
+        if val == EXPR_OP_SUB { return self.__chk(a - c, pos) }
+        if val == EXPR_OP_MUL { return self.__mul(a, c, pos) }
+        if val == EXPR_OP_DIV { return self.__div(a, c, pos) }
+        var t: bool = false
+        if val == EXPR_OP_LT { t = a < c }
+        if val == EXPR_OP_LE { t = a <= c }
+        if val == EXPR_OP_GT { t = a > c }
+        if val == EXPR_OP_GE { t = a >= c }
+        if val == EXPR_OP_EQ { t = a == c }
+        if val == EXPR_OP_NE { t = a != c }
+        if t { return EXPR_SCALE }
+        return 0
+    }
+}
+
+/// Evalúa la fórmula y devuelve el resultado como ENTERO de micros (1.5 = 1500000):
+/// el valor exacto de punto fijo. Err con posición si falta una variable, hay
+/// división por cero o el resultado se sale del rango.
+pub fn expr_eval_micros(e: Expr, vars: ExprVars) -> Result<int, Error> {
+    var run: ExprRun = ExprRun {
+        nodes: e.nodes, args: e.args, names: e.names, vars: vars.m,
+        failed: false, ecode: 0, kind: "", emsg: "", epos: 0
+    }
+    let v: int = run.__ev(e.root)
+    if run.failed {
+        return Result.Err(__expr_err(run.ecode, run.kind, run.emsg, run.epos))
+    }
+    return Result.Ok(v)
+}
+
+/// Evalúa y devuelve un float (convertido del valor exacto). Cómodo para mostrar o
+/// comparar; para plata usar expr_eval_dec, que no pasa por float.
+pub fn expr_eval(e: Expr, vars: ExprVars) -> Result<float, Error> {
+    match expr_eval_micros(e, vars) {
+        Result.Ok(v) => { return Result.Ok(int_to_float(v) / 1000000.0) }
+        Result.Err(er) => { return Result.Err(er) }
+    }
+}
+
+/// Evalúa y devuelve el resultado como TEXTO decimal exacto con `decimals` decimales
+/// (0 a 6, redondeo mitad hacia afuera del cero): "974.93". Es la salida pensada
+/// para plata; `decimals` fuera de 0..6 se ajusta al rango.
+pub fn expr_eval_dec(e: Expr, vars: ExprVars, decimals: int) -> Result<String, Error> {
+    var d: int = decimals
+    if d < 0 { d = 0 }
+    if d > 6 { d = 6 }
+    match expr_eval_micros(e, vars) {
+        Result.Ok(v) => { return Result.Ok(__expr_fmt(v, d)) }
+        Result.Err(er) => { return Result.Err(er) }
+    }
+}

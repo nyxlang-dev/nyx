@@ -1,0 +1,82 @@
+// Nyx by Example: subir un archivo binario con multipart/form-data.
+//
+// El caso real: mandar una cotización en PDF a una API como la de WhatsApp
+// Business, que pide `multipart/form-data` (campos de texto + el archivo).
+//
+// Lo que muestra:
+//   - multipart_field / multipart_file arman las partes; el archivo es BINARIO
+//     (aquí lleva NUL y saltos de línea adentro y viaja intacto);
+//   - multipart_build elige un boundary aleatorio que no aparece en el contenido
+//     y devuelve el cuerpo y el Content-Type completo;
+//   - try_http_post_multipart lo envía con el cliente HTTP (agrega el Content-Type
+//     con el boundary y calcula el Content-Length en bytes);
+//   - para que corra sin red, la receta levanta su propio servidor local, que
+//     re-lee el POST con multipart_parse y comprueba los bytes recibidos.
+//
+// Con una API real solo cambia la URL y las cabeceras:
+//   try_http_post_multipart("https://graph.facebook.com/v20.0/ID/media", mp,
+//                           ["Authorization", "Bearer TOKEN"])
+
+import "std/http"
+import "std/multipart"
+import "std/net"
+import "std/error"
+
+var g_listo: Map = Map.new()
+
+fn servidor() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let puerto: Result<int, Error> = try_local_port(srv)
+    channel_send(g_listo, puerto.unwrap())
+    let fd: int = tcp_accept(srv)
+    var largo: int = 0
+    var ctype: String = ""
+    var linea: String = tcp_read_line(fd)
+    while linea.trim().length() > 0 {
+        let l: String = linea.trim()
+        if l.toLower().startsWith("content-length:") { largo = string_to_int(l.substring(15, l.length()).trim()) }
+        if l.toLower().startsWith("content-type:") { ctype = l.substring(13, l.length()).trim() }
+        linea = tcp_read_line(fd)
+    }
+    let cuerpo: Result<String, Error> = try_tcp_read_exact(fd, largo)
+    let partes: Array = multipart_parse(cuerpo.unwrap(), ctype)
+    var resumen: String = ""
+    var i: int = 0
+    while i < partes.length() {
+        let p: Array = partes[i]
+        resumen = resumen + part_name(p) + "=" + int_to_string(str_byte_length(part_value(p))) + " bytes; "
+        i = i + 1
+    }
+    tcp_write(fd, "HTTP/1.1 200 OK\r\nContent-Length: " + int_to_string(resumen.length()) + "\r\nConnection: close\r\n\r\n" + resumen)
+    tcp_close(fd)
+    return 0
+}
+
+fn main() {
+    g_listo = channel_new(1)
+    thread_spawn(servidor)
+    let puerto: int = channel_recv(g_listo)
+
+    // Un "PDF" con bytes binarios: NUL, CR, LF y "--" dentro.
+    let pdf: String = "%PDF-1.4\n" + chr(0) + chr(1) + chr(255) + "\r\n--x--\r\n%%EOF"
+
+    var partes: Array = []
+    partes.push(multipart_field("messaging_product", "whatsapp"))
+    partes.push(multipart_file("file", "cotizacion.pdf", "application/pdf", pdf))
+
+    match multipart_build(partes) {
+        Result.Ok(mp) => {
+            println("content-type: " + mp.content_type.substring(0, 30))
+            let cab: Array = ["Authorization", "Bearer TOKEN"]
+            match try_http_post_multipart("http://127.0.0.1:" + int_to_string(puerto) + "/media", mp, cab) {
+                Result.Ok(resp) => {
+                    println("status: " + int_to_string(http_status(resp)))
+                    println("el servidor recibió: " + http_body(resp))
+                    println("enviados: " + int_to_string(str_byte_length(pdf)) + " bytes de PDF")
+                }
+                Result.Err(e) => { println("falló el envío: " + e.kind + " " + e.msg) }
+            }
+        }
+        Result.Err(e) => { println("no se pudo armar el multipart: " + e.msg) }
+    }
+}

@@ -683,6 +683,77 @@ pub fn zip_deflate_zlib(data: String) -> String {
     return sb.to_string()
 }
 
+// ── gzip (RFC 1952): encabezado de 10 bytes + DEFLATE crudo + CRC-32 + tamaño ──
+// Lo que un navegador espera en `Content-Encoding: gzip` (std/serve lo usa para
+// comprimir las respuestas de texto). Se arma sobre el mismo DEFLATE de Huffman
+// fijo de zip_deflate_raw: correcto y razonable, no el mejor ratio.
+
+fn __zip_le32_str(tab: Array, v: int) -> String {
+    let a: String = tab[v & 255]
+    let b: String = tab[(v >> 8) & 255]
+    let c: String = tab[(v >> 16) & 255]
+    let d: String = tab[(v >> 24) & 255]
+    return a + b + c + d
+}
+
+// bytes -> gzip. Encabezado fijo: ID 1f 8b, CM 8 (deflate), sin flags, MTIME 0
+// (salida reproducible, sin filtrar la hora del servidor), XFL 0, OS 255
+// («desconocido»: el sistema que comprime no le importa a quien descomprime).
+// Trailer: CRC-32 y tamaño original mod 2^32, ambos little endian.
+pub fn zip_gzip(data: String) -> String {
+    let tab: Array = __zip_byte_table()
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append(chr(31) + chr(139) + chr(8) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(255))
+    sb.append(zip_deflate_raw(data))
+    sb.append(__zip_le32_str(tab, zip_crc32(data)))
+    sb.append(__zip_le32_str(tab, data.length() & 0xFFFFFFFF))
+    return sb.to_string()
+}
+
+// gzip -> bytes, verificando CRC-32 y tamaño. `max_out` > 0 corta si la salida
+// pasa de ese tamaño (defensa contra bombas de descompresión); 0 = sin tope.
+// Salta los campos opcionales del encabezado (FEXTRA, FNAME, FCOMMENT, FHCRC)
+// que emiten otros compresores. Un solo miembro: no concatena varios.
+pub fn zip_gunzip(data: String, max_out: int) -> Result<String, Error> {
+    if data.length() < 18 {
+        return Result.Err(err_new(22, "parse", "gzip demasiado corto"))
+    }
+    if data.charAt(0) != 31 or data.charAt(1) != 139 or data.charAt(2) != 8 {
+        return Result.Err(err_new(22, "parse", "encabezado gzip inválido"))
+    }
+    let flg: int = data.charAt(3)
+    var pos: int = 10
+    if (flg & 4) != 0 {
+        if pos + 2 > data.length() { return Result.Err(err_new(22, "parse", "gzip: FEXTRA truncado")) }
+        pos = pos + 2 + __zip_le16(data, pos)
+    }
+    if (flg & 8) != 0 {
+        while pos < data.length() and data.charAt(pos) != 0 { pos = pos + 1 }
+        pos = pos + 1
+    }
+    if (flg & 16) != 0 {
+        while pos < data.length() and data.charAt(pos) != 0 { pos = pos + 1 }
+        pos = pos + 1
+    }
+    if (flg & 2) != 0 { pos = pos + 2 }
+    if pos >= data.length() {
+        return Result.Err(err_new(22, "parse", "gzip: encabezado truncado"))
+    }
+    var z: ZipInflate = __zip_inflater(data, pos, max_out)
+    let problema: String = z.blocks()
+    if problema != "" { return Result.Err(err_new(22, "parse", "gzip: " + problema)) }
+    let out: String = z.result()
+    let fin_at: int = z.align()
+    if fin_at + 8 > data.length() { return Result.Err(err_new(22, "parse", "gzip: falta el trailer")) }
+    if __zip_le32(data, fin_at) != zip_crc32(out) {
+        return Result.Err(err_new(22, "parse", "gzip: el CRC-32 no coincide (datos dañados)"))
+    }
+    if __zip_le32(data, fin_at + 4) != (out.length() & 0xFFFFFFFF) {
+        return Result.Err(err_new(22, "parse", "gzip: el tamaño no coincide (datos dañados)"))
+    }
+    return Result.Ok(out)
+}
+
 // ── El contenedor .zip (APPNOTE de PKWARE, 6.3) ───────────────────────────────
 // Se lee por el DIRECTORIO CENTRAL (al final del archivo), no recorriendo los
 // encabezados locales: es lo que hacen todos los lectores, y es lo único

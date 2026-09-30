@@ -1,0 +1,45 @@
+// Nyx by Example: verificar el aviso firmado de una pasarela de pago (RSA-SHA256).
+//
+// El caso real: la pasarela avisa un pago con un POST cuyo cuerpo viene firmado
+// con RSA; la firma llega en base64 en un header. Con HMAC no alcanza porque el
+// proveedor no comparte un secreto: publica su CLAVE PÚBLICA (PEM) y uno
+// verifica con ella. std/rsa lo hace con OpenSSL:
+//   - rsa_sha256_verify_b64(pem, cuerpo, firma_base64): PKCS#1 v1.5, lo común;
+//   - rsa_sha256_verify(pem, cuerpo, firma_cruda): la misma firma en bytes;
+//   - rsa_pss_sha256_verify(pem, cuerpo, firma_cruda): RSASSA-PSS.
+// Ok(true) = firma válida; Ok(false) = el aviso NO es del proveedor (datos
+// alterados o clave ajena); Err = no se pudo ni intentar (PEM ilegible).
+// Se verifica el cuerpo EXACTO recibido, byte a byte, antes de parsearlo.
+//
+// Los datos de la receta son los fixtures de prueba del repo (openssl CLI). En un
+// programa real: la clave con read_file("proveedor.pem") y el cuerpo y la firma
+// de la petición entrante.
+
+import "std/rsa"
+import "std/error"
+
+fn aviso_valido(pem: String, cuerpo: String, firma_b64: String) -> bool {
+    match rsa_sha256_verify_b64(pem, cuerpo, firma_b64) {
+        Result.Ok(ok) => { return ok }
+        Result.Err(e) => {
+            print("no se pudo verificar: " + e.msg)
+            return false
+        }
+    }
+}
+
+fn main() {
+    let pem: String = include_bytes("tests/fixtures/rsa/publica.pem")
+    let cuerpo: String = include_bytes("tests/fixtures/rsa/datos.txt")
+    let firma: String = include_bytes("tests/fixtures/rsa/firma.b64")
+
+    assert(aviso_valido(pem, cuerpo, firma), "el aviso genuino verifica")
+    print("aviso genuino: aceptado")
+
+    // Un atacante cambia el monto: la firma ya no corresponde.
+    assert(aviso_valido(pem, cuerpo + " ", firma) == false, "un cuerpo alterado se rechaza")
+    print("cuerpo alterado: rechazado")
+
+    // Una clave que no se puede leer se dice, no se toma por «firma falsa».
+    assert(aviso_valido("no soy un pem", cuerpo, firma) == false, "PEM ilegible")
+}

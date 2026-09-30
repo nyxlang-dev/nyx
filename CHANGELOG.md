@@ -11,6 +11,34 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **Siete pedidos de nyxerp del 2026-09-29** `[arco: friccion-nyxerp-0929]`, hechos por subagentes en
+  worktrees propios e integrados con una batería completa:
+  - **gzip en `std/serve`, encendido por omisión**: respuestas de texto entre 1 KiB y 1 MiB, cuando el
+    cliente manda `Accept-Encoding: gzip` (con q-values); `Vary`, `Content-Length` en bytes, ETag
+    débil, HEAD igual que GET, caché por sha256. Cambia lo que ven los clientes que aceptan gzip:
+    `app_compress(app, false)` lo apaga. `std/zip` gana `zip_gzip`/`zip_gunzip`. Test 463, receta 126.
+  - **Límites en `std/serve`**: tope de cuerpo por ruta (`app_max_body`, 413) y limitador por origen
+    compartido por todos los workers (`app_rate_limit`, `app_route_rate_limit`, 429 con
+    `Retry-After`; `app_rate_limit_key` y `rate_key_forwarded_for` detrás de un proxy). Test 464,
+    receta 127.
+  - **`std/rsa`**: verificar firmas RSA-SHA256 (v1.5, base64 y PSS) con clave pública PEM, para
+    avisos firmados de pasarelas de pago. `EVP_DigestVerify` en `runtime/crypto.c`; en wasm
+    `Err(invalid 95)`. Test 465 con vectores del CLI de openssl, receta 128.
+  - **TLS mutuo en el cliente HTTPS**: `HttpOpts.client_cert_pem`/`client_key_pem`, solo en esa
+    petición y validado antes de abrir el socket (mismo camino que `cas_extra`). Sub-suite
+    `test_http_mtls.py` con un servidor que exige certificado, receta 129.
+  - **multipart en el cliente HTTP**: `multipart_field`, `multipart_file`, `multipart_build` y
+    `try_http_post_multipart`; binario seguro, verificado contra el parser `email` de Python. Test
+    467, receta 130.
+  - **`std/expr`**: evaluador seguro de fórmulas con variables, en decimales de punto fijo (6), no
+    float: `0.1 + 0.2 == 0.3`, `round(2.675, 2) = 2.68`. 1500 expresiones al azar iguales a `decimal`
+    de Python; mismo resultado en wasm. Test 468, receta 131.
+  - **fetch y SSE del navegador hacia la red local, con plazo**: `targetAddressSpace` de Chrome y
+    AbortController; la API vieja no cambia (el merge la había cambiado sin querer y se restauró:
+    `c3c6a87e`). Test wasm 53, receta 132. El permiso en un Chrome real no se pudo verificar.
+  Specs en BORRADOR para los grandes (imágenes, IMAP, red local, Android) y, en el repo de nyx-proxy,
+  la de dominios sin reinicio y ACME.
+
 - **`std/zip`, `std/xml` y `std/xlsx`: leer y escribir planillas `.xlsx` en Nyx puro** (fricción de
   nyxerp, 2026-09-29) `[arco: std-xlsx]`. Un `.xlsx` es un zip con XML adentro, así que son tres
   módulos y los dos de abajo sirven solos. `std/zip`: contenedor `.zip` (`zip_read` por el directorio

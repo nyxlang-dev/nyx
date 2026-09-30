@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.35.0 -->
-<!-- nyx-stdlib: 426079115-942548 -->
+<!-- nyx-stdlib: 3786550990-1019100 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -22,18 +22,20 @@
 
 ### `std/browser`
 
-`import "std/browser"` — 17 funciones:
+`import "std/browser"` — 19 funciones:
 
 - `export fn browser_fetch(url: String, method: String, body: String, handler: String)`
 - `export fn browser_interval(ms: int, handler: String) -> int`
 - `export fn browser_timeout(ms: int, handler: String) -> int`
 - `export fn browser_clear_timer(id: int)`
 - `export fn browser_fetch_fn(url: String, method: String, body: String, handler: Fn)`
+- `export fn browser_fetch_opts_fn(url: String, method: String, body: String, timeout_ms: int, target_space: String, handler: Fn)`
 - `export fn browser_timeout_fn(ms: int, handler: Fn) -> int`
 - `export fn browser_interval_fn(ms: int, handler: Fn) -> int`
 - `export fn browser_geo(handler: String)`
 - `export fn browser_geo_fn(handler: Fn)`
 - `export fn browser_sse_fn(url: String, handler: Fn) -> int`
+- `export fn browser_sse_opts_fn(url: String, timeout_ms: int, target_space: String, handler: Fn) -> int`
 - `export fn browser_sse_close(id: int)`
 - `export fn ls_get(key: String) -> String`
 - `export fn ls_set(key: String, value: String)`
@@ -107,7 +109,7 @@
 
 ### `std/http`
 
-`import "std/http"` — 27 funciones:
+`import "std/http"` — 30 funciones:
 
 - `pub fn http_status_text(code: int) -> String`
 - `pub fn http_response(status: int, body: String) -> String`
@@ -122,9 +124,12 @@
 - `pub fn http_post(url: String, body: String) -> Array`
 - `pub fn http_request(method: String, url: String, headers: Array, body: String) -> Array`
 - `pub fn http_opts() -> HttpOpts`
+- `pub fn http_opts_client_cert(o: HttpOpts, cert_pem: String, key_pem: String) -> HttpOpts`
 - `pub fn try_http_request_opts(method: String, url: String, headers: Array, body: String, opts: HttpOpts) -> Result<Array, Error>`
 - `pub fn try_http_get(url: String) -> Result<Array, Error>`
 - `pub fn try_http_post(url: String, body: String) -> Result<Array, Error>`
+- `pub fn try_http_post_multipart_opts(url: String, mp: Multipart, headers: Array, opts: HttpOpts) -> Result<Array, Error>`
+- `pub fn try_http_post_multipart(url: String, mp: Multipart, headers: Array) -> Result<Array, Error>`
 - `pub fn try_http_request(method: String, url: String, headers: Array, body: String) -> Result<Array, Error>`
 - `pub fn http_status(resp: Array) -> int`
 - `pub fn http_body(resp: Array) -> String`
@@ -200,9 +205,10 @@
 
 ### `std/browser_await`
 
-`import "std/browser_await"` — 3 funciones:
+`import "std/browser_await"` — 4 funciones:
 
 - `export async fn browser_fetch_await_opts(url: String, method: String, body: String, timeout_ms: int) -> Result<HttpResp, Error>`
+- `export async fn browser_fetch_await_net(url: String, method: String, body: String, timeout_ms: int, target_space: String) -> Result<HttpResp, Error>`
 - `export async fn browser_fetch_await(url: String, method: String, body: String) -> Result<HttpResp, Error>`
 - `export async fn browser_sleep_await(ms: int)`
 
@@ -639,7 +645,7 @@
 
 ### `std/tls`
 
-`import "std/tls"` — 30 funciones:
+`import "std/tls"` — 31 funciones:
 
 - `pub fn tls_version(h: int) -> String`
 - `pub fn tls_cipher(h: int) -> String`
@@ -670,6 +676,7 @@
 - `pub fn tls_is_weak(h: int) -> bool`
 - `pub fn try_tls_connect(host: String, port: int, verify_mode: int, connect_ms: int) -> Result<int, Error>`
 - `pub fn try_tls_connect_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Result<int, Error>`
+- `pub fn try_tls_connect_mtls(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String, client_cert_pem: String, client_key_pem: String) -> Result<int, Error>`
 - `pub fn try_tls_read(h: int, max_bytes: int, timeout_ms: int) -> Result<String, Error>`
 
 ### Builtins globales (sin `import`)
@@ -1000,6 +1007,14 @@
 - `pub fn tpl_partial(name: String, tmpl: String)`
 - `pub fn tpl_render(tmpl: String, ctx: Map) -> String`
 
+### `std/rsa`
+
+`import "std/rsa"` — 3 funciones:
+
+- `pub fn rsa_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
+- `pub fn rsa_sha256_verify_b64(public_key_pem: String, data: String, signature_b64: String) -> Result<bool, Error>`
+- `pub fn rsa_pss_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
+
 ### `std/pool`
 
 `import "std/pool"` — 18 funciones:
@@ -1110,13 +1125,16 @@
 
 ### `std/multipart`
 
-`import "std/multipart"` — 5 funciones:
+`import "std/multipart"` — 8 funciones:
 
 - `pub fn multipart_parse(body: String, content_type: String) -> Array`
 - `pub fn part_name(p: Array) -> String`
 - `pub fn part_filename(p: Array) -> String`
 - `pub fn part_ctype(p: Array) -> String`
 - `pub fn part_value(p: Array) -> String`
+- `pub fn multipart_field(name: String, value: String) -> Array` — Parte de texto: campo `name` con valor `value`.
+- `pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array` — Parte de archivo: campo `name`, nombre de archivo `filename`, content-type `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
+- `pub fn multipart_build(parts: Array) -> Result<Multipart, Error>`
 
 ### `std/proxy`
 
@@ -1300,7 +1318,7 @@
 
 ### `std/zip`
 
-`import "std/zip"` — 11 funciones:
+`import "std/zip"` — 13 funciones:
 
 - `pub fn zip_crc32_table() -> Array`
 - `pub fn zip_crc32_part(tab: Array, b: String, desde: int, hasta: int) -> int`
@@ -1310,9 +1328,22 @@
 - `pub fn zip_inflate_zlib(zdata: String, max_out: int) -> Result<String, Error>`
 - `pub fn zip_deflate_raw(data: String) -> String`
 - `pub fn zip_deflate_zlib(data: String) -> String`
+- `pub fn zip_gzip(data: String) -> String`
+- `pub fn zip_gunzip(data: String, max_out: int) -> Result<String, Error>`
 - `pub fn zip_read_opts() -> ZipReadOpts`
 - `pub fn zip_read(bytes: String, opts: ZipReadOpts) -> Result<ZipArchive, Error>`
 - `pub fn zip_writer() -> ZipWriter`
+
+### `std/expr`
+
+`import "std/expr"` — 6 funciones:
+
+- `pub fn expr_vars_new() -> ExprVars`
+- `pub fn expr_parse(text: String) -> Result<Expr, Error>` — Compila la fórmula. Err (con la posición en el mensaje) si hay un error de sintaxis, una función desconocida o de aridad incorrecta, o se pasa de un tope. No necesita las variables: sirve para validar una fórmula al guardarla.
+- `pub fn expr_vars(e: Expr) -> Array` — Nombres de las variables que usa la fórmula, sin repetidos y en orden de aparición. Para validar al guardar («¿todas existen en el catálogo?»).
+- `pub fn expr_eval_micros(e: Expr, vars: ExprVars) -> Result<int, Error>` — Evalúa la fórmula y devuelve el resultado como ENTERO de micros (1.5 = 1500000): el valor exacto de punto fijo. Err con posición si falta una variable, hay división por cero o el resultado se sale del rango.
+- `pub fn expr_eval(e: Expr, vars: ExprVars) -> Result<float, Error>` — Evalúa y devuelve un float (convertido del valor exacto). Cómodo para mostrar o comparar; para plata usar expr_eval_dec, que no pasa por float.
+- `pub fn expr_eval_dec(e: Expr, vars: ExprVars, decimals: int) -> Result<String, Error>` — Evalúa y devuelve el resultado como TEXTO decimal exacto con `decimals` decimales (0 a 6, redondeo mitad hacia afuera del cero): "974.93". Es la salida pensada para plata; `decimals` fuera de 0..6 se ajusta al rango.
 
 ### `std/percent`
 
@@ -1440,7 +1471,7 @@
 
 ### `std/serve`
 
-`import "std/serve"` — 28 funciones:
+`import "std/serve"` — 36 funciones:
 
 - `pub fn app_ws(pattern: String, handler: Fn(Array) -> int)`
 - `pub fn serve_ws(handler: Fn(Array) -> int)`
@@ -1448,6 +1479,14 @@
 - `pub fn serve_on_shutdown(handler: Fn)`
 - `pub fn serve_app(app: App, port: int, workers: int) -> int`
 - `pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int`
+- `pub fn app_compress(app: App, enabled: bool)`
+- `pub fn app_compress_limits(app: App, min_bytes: int, max_bytes: int)`
+- `pub fn app_max_body(app: App, method: String, pattern: String, max_bytes: int)`
+- `pub fn app_rate_limit(app: App, max_requests: int, window_secs: int)`
+- `pub fn app_route_rate_limit(app: App, method: String, pattern: String, max_requests: int, window_secs: int)`
+- `pub fn app_rate_limit_key(app: App, key_fn: Fn(Request) -> String)`
+- `pub fn req_remote_addr(req: Request) -> String`
+- `pub fn rate_key_forwarded_for(req: Request) -> String`
 - `pub fn detect_mime_type(path: String) -> String`
 - `pub fn try_serve_static(base_dir: String, url_path: String) -> Response`
 - `pub fn serve_static(app: &mut App, base_dir: String)`

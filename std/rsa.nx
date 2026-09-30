@@ -1,0 +1,58 @@
+// std/rsa.nx — verificar firmas RSA con SHA-256 y una clave pública PEM.
+//
+// Para los avisos firmados de pasarelas de pago y otros servicios: el proveedor
+// firma el cuerpo con su clave privada y publica la pública; HMAC no sirve
+// porque no comparten un secreto (fricción de nyxerp, 2026-09-29).
+//
+//     let r: Result<bool, Error> = rsa_sha256_verify(pem, cuerpo, firma_cruda)
+//     rsa_sha256_verify_b64(pem, cuerpo, firma_base64)     // lo común en webhooks
+//     rsa_pss_sha256_verify(pem, cuerpo, firma_cruda)      // RSASSA-PSS
+//
+// Contrato de los tres:
+//   Ok(true)   la firma corresponde a los datos y a la clave.
+//   Ok(false)  la firma no corresponde (datos alterados, otra clave, firma
+//              truncada o vacía). Es el resultado normal ante un aviso falso.
+//   Err        no se pudo ni intentar: PEM ilegible o clave que no es RSA
+//              (kind "invalid", code 22); en wasm32-wasi no hay OpenSSL
+//              (kind "invalid", code 95: el vocabulario de std/error es cerrado); base64 inválido en la variante b64
+//              (kind "invalid", code 22).
+// La clave: PEM "BEGIN PUBLIC KEY" (SubjectPublicKeyInfo) o "BEGIN RSA PUBLIC
+// KEY" (PKCS#1). Un certificado X.509 no vale: extraer antes la clave pública.
+// ECDSA P-256 sobre digest crudo ya existe en std/webpushcrypto
+// (ecdsa_p256_verify); ECDSA con clave PEM no está.
+//
+// Se expone por `extern "C"` (runtime/crypto.c, EVP_DigestVerify de OpenSSL 3),
+// sin tocar el compilador, igual que std/webpushcrypto.nx y std/tls.nx.
+
+import "std/error"
+import "std/base64"
+
+extern "C" fn nyx_rsa_sha256_verify(pem: String, data: String, sig: String, pss: int) -> int
+
+fn rsa_verify_core(pem: String, data: String, sig: String, pss: int) -> Result<bool, Error> {
+    let r: int = nyx_rsa_sha256_verify(pem, data, sig, pss)
+    if r == 1 { return Result.Ok(true) }
+    if r == 0 { return Result.Ok(false) }
+    if r == -2 { return Result.Err(err_new(95, "invalid", "rsa: no disponible en wasm32-wasi (sin OpenSSL)")) }
+    return Result.Err(err_new(22, "invalid", "rsa: la clave pública PEM no se pudo leer o no es RSA"))
+}
+
+// RSASSA-PKCS1-v1_5 con SHA-256; `signature` en bytes crudos.
+pub fn rsa_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error> {
+    return rsa_verify_core(public_key_pem, data, signature, 0)
+}
+
+// Igual, con la firma en base64 estándar (lo que traen los avisos de pasarela).
+pub fn rsa_sha256_verify_b64(public_key_pem: String, data: String, signature_b64: String) -> Result<bool, Error> {
+    let limpio: String = signature_b64.trim()
+    let raw: String = base64_decode(limpio)
+    if raw.length() == 0 and limpio.length() > 0 {
+        return Result.Err(err_new(22, "invalid", "rsa: la firma no es base64 válido"))
+    }
+    return rsa_verify_core(public_key_pem, data, raw, 0)
+}
+
+// RSASSA-PSS con SHA-256 y MGF1-SHA256 (sal de cualquier largo); firma cruda.
+pub fn rsa_pss_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error> {
+    return rsa_verify_core(public_key_pem, data, signature, 1)
+}

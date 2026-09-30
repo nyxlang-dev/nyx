@@ -2718,6 +2718,54 @@ hidden, rows, merged}`, `XlsxCell{addr, row, col, kind, text, number, format}`.
 Recipes: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro.nx`,
 `125-xlsx-leer-hoja.nx`.
 
+
+### Web, crypto and formula additions (2026-09-29)
+
+- **gzip in `std/serve` (on by default).** Text responses (text/*, JSON, JavaScript, XML, SVG, +json,
+  +xml) between 1024 bytes and 1 MiB are gzip-compressed when the request says `Accept-Encoding: gzip`
+  (q-values honored), unless the handler set a Content-Encoding or `Cache-Control: no-transform`. Adds
+  `Content-Encoding: gzip`, `Vary: Accept-Encoding` and a byte Content-Length; a strong ETag becomes
+  weak; HEAD gets the GET headers. `app_compress(app, false)` turns it off, `app_compress_limits(app,
+  min, max)` moves the window. Compressed bodies are cached by sha256 (64 entries, <= 256 KiB). The
+  codec is std/zip's fixed-Huffman DEFLATE (~3 MB/s: a 40 KB page costs ~12 ms the first time);
+  `zip_gzip(data)` / `zip_gunzip(data, max_out)` are public. Gotcha: a Nyx `Map` truncates binary
+  values at the first NUL byte — keep compressed bytes in Arrays.
+- **Limits in `std/serve`** (configure before `serve_app`): per-route body cap `app_max_body(app,
+  method, pattern, max_bytes)` (413; the parser reads up to the largest cap declared, the global
+  NYX_HTTP_MAX_BODY applies elsewhere). Per-origin limiter, fixed window, shared by all worker threads
+  of the process: `app_rate_limit(app, max, window_secs)`, `app_route_rate_limit(app, method, pattern,
+  max, window_secs)` → 429 with `Retry-After`. Origin = socket IP (`req_remote_addr(req)`); behind a
+  proxy use `app_rate_limit_key(app, fn)` with `rate_key_forwarded_for` (empty key = exempt). A fixed
+  window allows up to 2x max across a boundary; counts are per process.
+- **`std/rsa`: verify RSA-SHA256 signatures** with a PEM public key (SPKI or PKCS#1, not an X.509
+  cert): `rsa_sha256_verify(pem, data, sig_raw)` (PKCS#1 v1.5), `rsa_sha256_verify_b64(pem, data,
+  sig_b64)` (the usual webhook shape), `rsa_pss_sha256_verify(pem, data, sig_raw)`. `Ok(false)` =
+  signature does not match (the normal answer to a forged notification); `Err(invalid 22)` = unreadable
+  PEM / non-RSA key / bad base64; on wasm32-wasi `Err(invalid 95)`. Verify the exact raw body before
+  parsing it.
+- **Mutual TLS on the HTTPS client**: `HttpOpts.client_cert_pem` / `client_key_pem` (PEM contents, leaf
+  first; key not password-protected) present a client certificate on that request only;
+  `http_opts_client_cert(opts, cert, key)` returns a copy with both set. The pair is checked before the
+  socket opens (`Err(invalid 22)`). A server that rejects the client cert drops the connection: with
+  TLS 1.3 that surfaces as `Err io 5`, not a handshake error. Low level: `try_tls_connect_mtls`.
+- **multipart upload from the HTTP client**: `multipart_field(name, value)`, `multipart_file(name,
+  filename, ctype, bytes)`, `multipart_build(parts) -> Result<Multipart, Error>` (`body`,
+  `content_type` with the boundary); binary-safe, random boundary verified absent from the content.
+  Send with `try_http_post_multipart(url, mp, headers)` / `_opts`.
+- **`std/expr`: safe formula evaluator** (pure Nyx, same results in wasm). `expr_parse(text)` once,
+  then `expr_eval_dec(e, vars, decimals)` (exact decimal text — use for money), `expr_eval_micros`
+  or `expr_eval` (float); `expr_vars(e)` lists variables. Variables: `var v: ExprVars =
+  expr_vars_new(); v.set_dec("salary", "43.33")`. Grammar: `+ - * /`, unary `- ! not`, comparisons,
+  `and/or`, `min max round(x[,d]) floor ceil abs if(c,a,b)`. PRECISION: fixed-point with 6 decimals,
+  not float (`0.1 + 0.2 == 0.3`, `round(2.675, 2) = 2.68`); overflow is `Err`. Caps: 1000 bytes, 32
+  levels, 512 nodes; errors end in `(posición N)`.
+- **Browser fetch/SSE to the local network with a timeout (wasm)**: `browser_fetch_await_net(url,
+  method, body, timeout_ms, target_space)`, `browser_fetch_opts_fn(...)`, `browser_sse_opts_fn(url,
+  timeout_ms, target_space, handler)` add Chrome's `targetAddressSpace` ("local" | "loopback" |
+  "private"; others ignored) and an AbortController timeout. Await: Err kind "timeout" / "connection";
+  closure: status 0 with body "timeout: ..."; SSE: one ("nyx-error", "timeout"|"connection") event and
+  the channel closes. The old API is unchanged. Field name/values follow Chrome docs and were NOT
+  verified in a real browser; the local server must still answer CORS / local-network preflight.
 ### RESP protocol (used by nyx-kv and RESP-speaking servers)
 
 `std/resp` is the shared, binary-safe RESP2 frame reader used to BUILD a

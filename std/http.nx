@@ -7,6 +7,7 @@
 import "std/json"
 import "std/net"
 import "std/error"
+import "std/multipart"
 // Para el camino HTTPS verificado: tls_connect_verified y tls_set_ca_file son
 // funciones de std/tls, no builtins (tls_connect sí lo es, y esa asimetría es
 // justamente por qué este módulo venía usando la variante que NO verifica).
@@ -554,12 +555,30 @@ pub struct HttpOpts {
     // la separación de almacenes del 2026-09-14, tls_set_ca_file ya no llega a
     // std/http y SSL_CERT_FILE reemplaza en vez de sumar, para todo el proceso).
     cas_extra: String,
+    // TLS mutuo (fricción de nyxerp, 2026-09-29): el certificado de CLIENTE que
+    // se presenta en ESTA petición HTTPS, como CONTENIDO PEM (la hoja primero,
+    // luego los intermedios), y su clave privada PEM SIN contraseña. "" y "" =
+    // no presentar ninguno. Se validan antes de conectar: uno sin el otro, PEM
+    // ilegible o una clave que no corresponde al certificado = Err invalid 22.
+    // Un servidor que exige certificado y no recibe uno aceptable corta la
+    // conexión (Err, típicamente kind "io" code 5). Ver http_opts_client_cert.
+    client_cert_pem: String,
+    client_key_pem: String,
 }
 
 // Opciones por defecto: 10 s para conectar, 30 s para la respuesta completa, y
 // verificación según http_tls_inseguro (activada salvo que se la haya apagado).
 pub fn http_opts() -> HttpOpts {
-    return HttpOpts { connect_ms: 10000, respuesta_ms: 30000, verificar_tls: g_http_tls_verificar, cas_extra: "" }
+    return HttpOpts { connect_ms: 10000, respuesta_ms: 30000, verificar_tls: g_http_tls_verificar, cas_extra: "", client_cert_pem: "", client_key_pem: "" }
+}
+
+// Copia de `o` con el certificado y la clave de cliente (contenido PEM) para
+// TLS mutuo. Los structs se copian por valor: usar el resultado.
+pub fn http_opts_client_cert(o: HttpOpts, cert_pem: String, key_pem: String) -> HttpOpts {
+    var r: HttpOpts = o
+    r.client_cert_pem = cert_pem
+    r.client_key_pem = key_pem
+    return r
 }
 
 // Primer valor de un header, sin distinguir mayúsculas (RFC 9110). "" si falta.
@@ -670,7 +689,7 @@ fn http_err_plazo(esquema: String, host: String, port: int, ms: int) -> Error {
 fn http_https_opts(method: String, host: String, port: int, req: String, opts: HttpOpts) -> Result<Array, Error> {
     var modo: int = 0
     if opts.verificar_tls { modo = 4 }
-    let con_r: Result<int, Error> = try_tls_connect_cas(host, port, modo, opts.connect_ms, opts.cas_extra)
+    let con_r: Result<int, Error> = try_tls_connect_mtls(host, port, modo, opts.connect_ms, opts.cas_extra, opts.client_cert_pem, opts.client_key_pem)
     if con_r.is_err() {
         let e: Error = con_r.unwrap_err()
         return Result.Err(err_new(e.code, e.kind, "https " + host + ":" + int_to_string(port) + ": " + e.msg))
@@ -814,6 +833,35 @@ pub fn try_http_get(url: String) -> Result<Array, Error> {
 pub fn try_http_post(url: String, body: String) -> Result<Array, Error> {
     let headers: Array = ["Content-Type", "text/plain"]
     return try_http_request_opts("POST", url, headers, body, http_opts())
+}
+
+// POST de un cuerpo multipart/form-data armado con multipart_build (std/multipart):
+// subir un PDF a la API de WhatsApp Business, una imagen a un CDN, etc. Pone el
+// Content-Type completo con el boundary (si `headers` ya trae un Content-Type se
+// REEMPLAZA: el del multipart es el único que puede ser correcto) y el
+// Content-Length lo calcula http_build_request sobre los BYTES del cuerpo, con
+// NUL y todo. `headers` = arreglo plano [k, v, k, v, ...] (ej. Authorization).
+// Mismo contrato que try_http_request_opts: Ok(respuesta) para cualquier status.
+pub fn try_http_post_multipart_opts(url: String, mp: Multipart, headers: Array, opts: HttpOpts) -> Result<Array, Error> {
+    var hs: Array = []
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        if k.toLower() != "content-type" {
+            hs.push(k)
+            hs.push(v)
+        }
+        i = i + 2
+    }
+    hs.push("Content-Type")
+    hs.push(mp.content_type)
+    return try_http_request_opts("POST", url, hs, mp.body, opts)
+}
+
+// Igual con los plazos por defecto (http_opts()).
+pub fn try_http_post_multipart(url: String, mp: Multipart, headers: Array) -> Result<Array, Error> {
+    return try_http_post_multipart_opts(url, mp, headers, http_opts())
 }
 
 // Request tipado genérico (método/headers/body a elección) — mismo

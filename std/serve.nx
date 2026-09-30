@@ -24,6 +24,7 @@ import "std/http"
 import "std/json"
 import "std/websocket"
 import "std/time"
+import "std/zip"
 
 // ===== sección: dispatcher (ex server.nx) =====
 
@@ -310,7 +311,8 @@ fn __finalize(req: Request, resp: Response, extra_headers: Array) -> ServeOutput
         }
         r.headers_flat = __sse_sin_marca(hdrs)
     }
-    return ServeOutput { wire: __format_http_response_de(r, !es_head), sse: false, room: "" }
+    let rc: Response = __aplicar_gzip(req, r)
+    return ServeOutput { wire: __format_http_response_de(rc, !es_head), sse: false, room: "" }
 }
 
 // Nombre de la cabecera interna con la que sse_open marca su Response. Lleva
@@ -426,7 +428,7 @@ fn __emit_access_log(req: Request, resp: Response) -> int {
 // El pipeline corre ENTERO dentro de un try: cualquier panic/throw de un
 // hook/middleware/handler/static/after-hook se convierte en 500 (registrable
 // via app_error) — el proceso no muere jamás por un request.
-fn __serve_mt_dispatch(raw: Array) -> ServeOutput {
+fn __serve_mt_dispatch(raw: Array, remote_ip: String) -> ServeOutput {
     let method: String = raw[1]
     let path: String = raw[2]
     let headers: Array = raw[3]
@@ -457,6 +459,7 @@ fn __serve_mt_dispatch(raw: Array) -> ServeOutput {
     // sobre campo encadenado obliga al binding (no "simplificar").
     let ctx0: Map = req.ctx
     ctx0.insert("__t0_us", int_to_string(monotonic_us()))
+    ctx0.insert("remote_addr", remote_ip)
 
     var extra: Array = []
     try {
@@ -471,6 +474,16 @@ fn __serve_mt_dispatch(raw: Array) -> ServeOutput {
             if req_ctype.indexOf("application/x-www-form-urlencoded") >= 0 {
                 req.form = parse_form_data(body, req_ctype)
             }
+        }
+        // Límites antes de correr nada del usuario: el del app (por origen) y el
+        // tope de cuerpo de la ruta. La respuesta pasa por __finalize, así que los
+        // after-hooks y el access-log ven el 429/413 como cualquier otra.
+        let espera: int = __limite_app(req)
+        if espera > 0 {
+            return __finalize(req, __resp_429(espera), extra)
+        }
+        if __cuerpo_excede(method, clean_path, str_byte_length(body)) {
+            return __finalize(req, response_text(413, "413 Payload Too Large"), extra)
         }
         let resp: Response = __dispatch_response(req, extra)
         return __finalize(req, resp, extra)
@@ -665,6 +678,10 @@ fn __core_response(req: Request, extra: Array) -> Response {
     if ri >= 0 {
         let route: Route = routes[ri]
         req.params = route_match(route.pattern, req.path)
+        let espera_ruta: int = __limite_ruta(req, route.method, route.pattern)
+        if espera_ruta > 0 {
+            return __resp_429(espera_ruta)
+        }
         let cb: Fn(Request) -> Response = route.handler
         return cb(req)
     }
@@ -890,7 +907,7 @@ fn __serve_ka_worker() -> int {
                     }
                     keep_alive = false
                 } else {
-                    let out: ServeOutput = __serve_mt_dispatch(request)
+                    let out: ServeOutput = __serve_mt_dispatch(request, getpeername(client))
                     let response: String = out.wire
                     let es_sse: bool = out.sse
                     if es_sse {
@@ -1015,6 +1032,9 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     // establishes happens-before for every worker, so this is race-free.
     ws_init_registry()
     __sse_init_registry()
+    __gz_ensure()
+    __rl_ensure()
+    __body_init()
 
     var i: int = 0
     while i < workers {
@@ -1072,6 +1092,520 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
                 return 0
             }
         }
+    }
+    return 0
+}
+
+// ===== sección: compresión gzip y límites (fricciones nyxerp 20260929, team-2 y team-5) =====
+//
+// Dos capacidades que se cuelgan del mismo pipeline y comparten el patrón de
+// configuración: funciones `app_*(app, …)` que se llaman ANTES de serve_app y
+// dejan su estado en globales de este módulo (igual que app_static). El `app`
+// que reciben no guarda nada: un `App` es una copia por valor y el ejecutor
+// vive en un único proceso, así que la configuración es del proceso.
+//
+//   compresión  app_compress · app_compress_limits          (encendida por omisión)
+//   límites     app_max_body · app_rate_limit · app_route_rate_limit ·
+//               app_rate_limit_key · req_remote_addr · rate_key_forwarded_for
+
+// ── Compresión gzip ──────────────────────────────────────────────────────────
+//
+// Decisiones (todas documentadas en LLM.md §std/serve):
+//  - Encendida por omisión: es lo que hacen nginx con `gzip on` y Caddy con
+//    `encode gzip`, y un cliente que no manda `Accept-Encoding: gzip` recibe la
+//    respuesta de siempre. Apagable con app_compress(app, false).
+//  - Solo tipos de texto (text/*, JSON, JavaScript, XML, SVG, cualquier +json y
+//    +xml): comprimir un PNG o un woff2 gasta CPU y no gana nada.
+//  - Umbral de 1024 bytes (debajo, el encabezado gzip de ~18 bytes y el costo de
+//    CPU no compensan) y tope de 1 MiB (el deflate de std/zip es Nyx puro, unos
+//    3 MB/s: un cuerpo más grande bloquearía a un worker cientos de ms).
+//  - El DEFLATE es de Huffman fijo: ratio menor que zlib nivel 6 (~15% peor en
+//    HTML), a cambio de no depender de zlib ni de C. Por eso hay un cache.
+//  - Cache de cuerpos ya comprimidos (clave: sha256 del cuerpo, 64 entradas, solo
+//    cuerpos <= 256 KiB): una página estática o un CSS se comprime UNA vez, no
+//    por pedido. La respuesta dinámica que cambia en cada pedido paga sha256 +
+//    deflate y no encuentra nada; el cache se vacía entero al llenarse.
+var __gz_enabled: bool = true
+var __gz_min: int = 1024
+var __gz_max: int = 1048576
+var __gz_mu: Map = Map.new()
+var __gz_ready: int = 0
+
+fn __gz_ensure() -> int {
+    // Mismo motivo que ws_init_registry: el mutex se arma con un solo hilo
+    // (configuración, antes de serve_app) y los workers lo ven por el
+    // happens-before de pthread_create. Este ensure cubre a quien usa el
+    // módulo sin serve_app (tests).
+    if __gz_ready == 0 {
+        __gz_mu = mutex_new()
+        __gz_ready = 1
+    }
+    return 0
+}
+
+// Enciende o apaga la compresión gzip de las respuestas de texto. Por omisión
+// está ENCENDIDA. Llamar antes de serve_app.
+pub fn app_compress(app: App, enabled: bool) {
+    __gz_enabled = enabled
+}
+
+// Umbral y tope de tamaño del cuerpo (en bytes) para comprimir: se comprime si
+// min_bytes <= tamaño <= max_bytes. Por omisión 1024 y 1048576.
+pub fn app_compress_limits(app: App, min_bytes: int, max_bytes: int) {
+    __gz_min = min_bytes
+    __gz_max = max_bytes
+}
+
+// Índice del nombre (en minúsculas) en un arreglo plano de cabeceras, o -1.
+// Sin distinguir mayúsculas: los handlers escriben "Content-Type" y otros
+// "content-type", y HTTP no distingue.
+fn __hdr_idx_ci(headers: Array, name_lower: String) -> int {
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        if k.toLower() == name_lower { return i }
+        i = i + 2
+    }
+    return -1
+}
+
+fn __es_comprimible(ctype: String) -> bool {
+    var t: String = ctype.toLower()
+    let sc: int = t.indexOf(";")
+    if sc >= 0 { t = t.substring(0, sc) }
+    t = t.trim()
+    if t.startsWith("text/") { return t != "text/event-stream" }
+    if t == "application/json" or t == "application/javascript" or t == "application/x-javascript" { return true }
+    if t == "application/xml" or t == "application/xhtml+xml" or t == "image/svg+xml" { return true }
+    if t.endsWith("+json") or t.endsWith("+xml") { return true }
+    return false
+}
+
+// ¿Acepta gzip el Accept-Encoding? RFC 9110 §12.5.3: `gzip` con q > 0, o `*` con
+// q > 0 si gzip no está listado aparte; `gzip;q=0` lo prohíbe aunque haya `*`.
+fn __acepta_gzip(ae: String) -> bool {
+    if ae.length() == 0 { return false }
+    let partes: Array = ae.toLower().split(",")
+    var gz: int = -1
+    var estrella: int = -1
+    var i: int = 0
+    while i < partes.length() {
+        let p: String = partes[i]
+        var nombre: String = p.trim()
+        var q: int = 1
+        let pc: int = nombre.indexOf(";")
+        if pc >= 0 {
+            let params: String = nombre.substring(pc + 1, nombre.length())
+            nombre = nombre.substring(0, pc).trim()
+            let qi: int = params.indexOf("q=")
+            if qi >= 0 {
+                // q > 0 si algún dígito 1-9 aparece en el valor ("0", "0.0" = 0).
+                let qv: String = params.substring(qi + 2, params.length()).trim()
+                q = 0
+                var j: int = 0
+                while j < qv.length() {
+                    let c: int = qv.charAt(j)
+                    if c >= 49 and c <= 57 { q = 1 }
+                    j = j + 1
+                }
+            }
+        }
+        if nombre == "gzip" or nombre == "x-gzip" { gz = q }
+        if nombre == "*" { estrella = q }
+        i = i + 1
+    }
+    if gz >= 0 { return gz > 0 }
+    return estrella > 0
+}
+
+// Gzip con cache. Ver la nota de arriba.
+//
+// El cache son DOS ARRAYS paralelos (claves y valores), no un Map: un Map de
+// Nyx guarda los valores como C-strings y corta en el primer byte 0, y un gzip
+// lleva ceros (el MTIME del encabezado, entre otros). Con Map, el segundo pedido
+// de una página recibía 3 bytes. Un Array guarda el String tal cual, con su largo.
+var __gz_keys: Array = []
+var __gz_vals: Array = []
+
+fn __gzip_cacheado(body: String) -> String {
+    __gz_ensure()
+    let blen: int = str_byte_length(body)
+    if blen > 262144 { return zip_gzip(body) }
+    let key: String = sha256(body)
+    var hit: String = ""
+    mutex_lock(__gz_mu)
+    var i: int = 0
+    while i < __gz_keys.length() {
+        let k: String = __gz_keys[i]
+        if k == key {
+            hit = __gz_vals[i]
+            i = __gz_keys.length()
+        }
+        i = i + 1
+    }
+    mutex_unlock(__gz_mu)
+    if hit.length() > 0 { return hit }
+    let gz: String = zip_gzip(body)
+    mutex_lock(__gz_mu)
+    if __gz_keys.length() >= 64 {
+        __gz_keys = []
+        __gz_vals = []
+    }
+    __gz_keys.push(key)
+    __gz_vals.push(gz)
+    mutex_unlock(__gz_mu)
+    return gz
+}
+
+// Aplica gzip a la Response final si corresponde. Corre en __finalize, DESPUÉS
+// de los after-hooks: un hook que cambia el cuerpo o le pone Content-Encoding
+// se respeta. Cualquier fallo devuelve la respuesta sin comprimir: comprimir es
+// una optimización, nunca puede tumbar un pedido.
+//
+//  - No se toca 1xx, 204, 205, 206 (rangos), 3xx ni 304: sin cuerpo útil.
+//  - Con Content-Encoding ya puesto, o `Cache-Control: no-transform`, se deja.
+//  - `Vary: Accept-Encoding` sale en TODA respuesta comprimible (también en la
+//    que este cliente no aceptó comprimida), para que una caché intermedia no le
+//    sirva la variante gzip a quien no la entiende. Se mezcla con un Vary previo.
+//  - ETag: un validador FUERTE describe bytes exactos y los bytes cambian, así
+//    que se debilita a W/"…" al comprimir (RFC 9110 §8.8.3). El ETag débil de
+//    apply_etag se calcula sobre el cuerpo sin comprimir y sirve tal cual para
+//    las dos variantes; el 304 lo resuelve apply_etag antes de llegar acá.
+//  - Content-Length: se quita el que haya puesto un handler (quedaría viejo); el
+//    formateador emite el correcto, en BYTES del cuerpo comprimido.
+//  - HEAD: se comprime igual, para que el Content-Length de HEAD sea el mismo
+//    que el del GET (RFC 9110 §9.3.2); el formateador omite los bytes.
+fn __aplicar_gzip(req: Request, r: Response) -> Response {
+    if !__gz_enabled { return r }
+    let st: int = r.status
+    if st < 200 or st == 204 or st == 205 or st == 206 or st == 304 { return r }
+    if st >= 300 and st < 400 { return r }
+    let body: String = r.body
+    let blen: int = str_byte_length(body)
+    if blen < __gz_min or blen > __gz_max or blen == 0 { return r }
+    let hdrs: Array = r.headers_flat
+    if __hdr_idx_ci(hdrs, "content-encoding") >= 0 { return r }
+    let cci: int = __hdr_idx_ci(hdrs, "cache-control")
+    if cci >= 0 {
+        let ccv: String = hdrs[cci + 1]
+        if ccv.toLower().indexOf("no-transform") >= 0 { return r }
+    }
+    var ctype: String = __detect_content_type(body)
+    let cti: int = __hdr_idx_ci(hdrs, "content-type")
+    if cti >= 0 { ctype = hdrs[cti + 1] }
+    if !__es_comprimible(ctype) { return r }
+
+    var ae: String = ""
+    let aes: Array = http_find_headers(req.headers_flat, "accept-encoding")
+    var ai: int = 0
+    while ai < aes.length() {
+        let av: String = aes[ai]
+        if ae.length() > 0 { ae = ae + "," }
+        ae = ae + av
+        ai = ai + 1
+    }
+    let comprimir: bool = __acepta_gzip(ae)
+
+    try {
+        var nuevos: Array = []
+        var vary_hecho: bool = false
+        var i: int = 0
+        while i + 1 < hdrs.length() {
+            let k: String = hdrs[i]
+            var v: String = hdrs[i + 1]
+            let kl: String = k.toLower()
+            var omitir: bool = false
+            if kl == "vary" {
+                vary_hecho = true
+                let vl: String = v.toLower()
+                if vl.indexOf("accept-encoding") < 0 and vl.trim() != "*" {
+                    v = v + ", Accept-Encoding"
+                }
+            }
+            if comprimir {
+                if kl == "content-length" { omitir = true }
+                if kl == "etag" and !v.startsWith("W/") { v = "W/" + v }
+            }
+            if !omitir {
+                nuevos.push(k)
+                nuevos.push(v)
+            }
+            i = i + 2
+        }
+        if !vary_hecho {
+            nuevos.push("Vary")
+            nuevos.push("Accept-Encoding")
+        }
+        if !comprimir {
+            return Response { status: st, headers_flat: nuevos, body: body }
+        }
+        let gz: String = __gzip_cacheado(body)
+        // Sin Content-Type del handler, el formateador lo deduciría del cuerpo, y
+        // el cuerpo ya comprimido no se parece a nada: se fija el deducido ahora.
+        if cti < 0 {
+            nuevos.push("Content-Type")
+            nuevos.push(ctype)
+        }
+        nuevos.push("Content-Encoding")
+        nuevos.push("gzip")
+        return Response { status: st, headers_flat: nuevos, body: gz }
+    } catch(e: String) {
+        print("[nyx-serve] gzip omitido: " + e)
+    }
+    return r
+}
+
+// ── Límites: tope de cuerpo por ruta y limitador de peticiones por origen ────
+
+// El cuerpo lo lee el parser del runtime ANTES de saber a qué ruta va, con un
+// tope global (NYX_HTTP_MAX_BODY, 1 MiB). Un tope por ruta MAYOR que el global
+// obliga a subir el del parser al mayor declarado (nyx_http_set_body_floor,
+// runtime/net.c) y a aplicar acá el global a todas las demás rutas; uno MENOR se
+// aplica acá también. Consecuencia que hay que conocer: el parser todavía lee
+// hasta el mayor tope declarado de cualquier ruta antes de que esto pueda
+// rechazar; lo que cambia es el 413 (sin cerrar la conexión) y el consumo de
+// handler. Por eso conviene subir el tope solo en las rutas que lo necesitan.
+extern "C" fn nyx_http_set_body_floor(bytes: int)
+extern "C" fn nyx_http_max_body() -> int
+
+// Plano: [método, patrón, max_bytes, …]
+var __body_routes: Array = []
+var __body_base: int = 1048576
+
+// Tope de cuerpo (bytes) para la ruta `method` + `pattern` (el patrón tal como se
+// registró con app_get/app_post/app_route). Vale también para HEAD->GET. Solo
+// rutas del app: las de un router montado usan el tope global. Llamar antes de
+// serve_app.
+pub fn app_max_body(app: App, method: String, pattern: String, max_bytes: int) {
+    __body_routes.push(method)
+    __body_routes.push(pattern)
+    __body_routes.push(max_bytes)
+}
+
+fn __tope_ruta(method: String, pattern: String) -> int {
+    var i: int = 0
+    while i + 2 < __body_routes.length() {
+        let m: String = __body_routes[i]
+        let p: String = __body_routes[i + 1]
+        if m == method and p == pattern {
+            let c: int = __body_routes[i + 2]
+            return c
+        }
+        i = i + 3
+    }
+    return 0
+}
+
+// Ajusta el parser del runtime al mayor tope declarado. Con un solo hilo, antes
+// de lanzar los workers.
+fn __body_init() -> int {
+    __body_base = nyx_http_max_body()
+    var mayor: int = 0
+    var i: int = 0
+    while i + 2 < __body_routes.length() {
+        let c: int = __body_routes[i + 2]
+        if c > mayor { mayor = c }
+        i = i + 3
+    }
+    if mayor > __body_base {
+        nyx_http_set_body_floor(mayor)
+    }
+    return 0
+}
+
+// ¿El cuerpo de este pedido pasa el tope de su ruta (o el global)? Solo trabaja
+// si hay topes por ruta declarados; sin ellos, el parser ya aplicó el global.
+fn __cuerpo_excede(method: String, clean_path: String, blen: int) -> bool {
+    if __body_routes.length() == 0 or blen == 0 { return false }
+    var tope: int = __body_base
+    let routes: Array = __serve_app.routes
+    let ri: int = __ruta_idx(routes, method, clean_path)
+    if ri >= 0 {
+        let route: Route = routes[ri]
+        let c: int = __tope_ruta(route.method, route.pattern)
+        if c > 0 { tope = c }
+    }
+    return blen > tope
+}
+
+// Limitador de ventana fija por clave (por omisión, la IP del cliente),
+// COMPARTIDO por todos los workers del proceso.
+//
+// Los workers son hilos (thread_spawn) del MISMO proceso: comparten las globales
+// de este módulo, así que un único par de Maps protegido por un mutex alcanza —
+// no hace falta memoria compartida entre procesos ni C. Lo que NO comparte es
+// entre procesos (varias instancias detrás de un balanceador llevan cuentas
+// separadas: para eso, nyx-kv u otro almacén externo).
+//
+// Ventana FIJA, no token bucket: un cliente puede hacer hasta 2×max en el cruce
+// de dos ventanas seguidas. A cambio, el estado es un contador y un instante por
+// clave, y el Retry-After es exacto (lo que falta para que la ventana cierre).
+// La cuenta cuenta también los pedidos rechazados, sin extender la ventana.
+//
+// Memoria: cada clave nueva ocupa dos entradas; un barrido cada 60 s (bajo el
+// mismo candado) descarta las de ventanas ya vencidas, así que un escaneo desde
+// muchas IPs no crece sin límite más allá de una ventana.
+var __rl_mu: Map = Map.new()
+var __rl_ready: int = 0
+var __rl_start: Map = Map.new()
+var __rl_count: Map = Map.new()
+var __rl_last_sweep: int = 0
+var __rl_max_window: int = 60
+var __rl_app_max: int = 0
+var __rl_app_window: int = 60
+var __rl_keyfns: Array = []
+// Plano: [método, patrón, max, ventana_s, …]
+var __rl_routes: Array = []
+
+fn __rl_ensure() -> int {
+    if __rl_ready == 0 {
+        __rl_mu = mutex_new()
+        __rl_ready = 1
+    }
+    return 0
+}
+
+// Límite para TODO el app: cada origen puede hacer hasta `max_requests` pedidos
+// por ventana de `window_secs` segundos, sea cual sea la ruta (estáticos y 404
+// incluidos). Pasado el límite, 429 con Retry-After. max_requests <= 0 lo apaga.
+// Llamar antes de serve_app. El upgrade a WebSocket no pasa por el pipeline y
+// no se cuenta.
+pub fn app_rate_limit(app: App, max_requests: int, window_secs: int) {
+    __rl_ensure()
+    __rl_app_max = max_requests
+    __rl_app_window = window_secs
+    if window_secs > __rl_max_window { __rl_max_window = window_secs }
+}
+
+// Límite propio de una ruta (además del del app, si lo hay): la ruta `method` +
+// `pattern` tal como se registró. Su cuenta es aparte de la del app. Solo
+// rutas del app, no las de un router montado.
+pub fn app_route_rate_limit(app: App, method: String, pattern: String, max_requests: int, window_secs: int) {
+    __rl_ensure()
+    __rl_routes.push(method)
+    __rl_routes.push(pattern)
+    __rl_routes.push(max_requests)
+    __rl_routes.push(window_secs)
+    if window_secs > __rl_max_window { __rl_max_window = window_secs }
+}
+
+// Clave por la que se cuenta, en vez de la IP del socket: una función
+// (Request) -> String. Devolver "" exime al pedido del límite. Detrás de un
+// proxy inverso todos los pedidos llegan de la IP del proxy: usar
+// rate_key_forwarded_for, o una clave propia (id de usuario, API key).
+pub fn app_rate_limit_key(app: App, key_fn: Fn(Request) -> String) {
+    __rl_keyfns.push(key_fn)
+}
+
+// IP del extremo TCP del pedido ("" si el Request no vino del servidor).
+pub fn req_remote_addr(req: Request) -> String {
+    let c: Map = req.ctx
+    return c.get_or("remote_addr", "")
+}
+
+// Clave para app_rate_limit_key detrás de un proxy: el primer valor de
+// X-Forwarded-For, o la IP del socket si no viene. OJO: X-Forwarded-For lo puede
+// mandar cualquier cliente; solo es confiable si el proxy lo REESCRIBE (descarta
+// el que trae el cliente) y el servidor no está expuesto sin pasar por él.
+pub fn rate_key_forwarded_for(req: Request) -> String {
+    let xs: Array = http_find_headers(req.headers_flat, "x-forwarded-for")
+    if xs.length() > 0 {
+        let x: String = xs[0]
+        let comas: Array = x.split(",")
+        let primero: String = comas[0]
+        let ip: String = primero.trim()
+        if ip.length() > 0 { return ip }
+    }
+    return req_remote_addr(req)
+}
+
+fn __rl_key(req: Request) -> String {
+    if __rl_keyfns.length() > 0 {
+        let kf: Fn(Request) -> String = __rl_keyfns[0]
+        return kf(req)
+    }
+    return req_remote_addr(req)
+}
+
+// Registra un pedido de `key` en el ámbito `scope`. 0 = permitido; > 0 = rechazado,
+// con los segundos hasta que la ventana se cierre (el Retry-After).
+fn __rl_check(scope: String, key: String, max: int, window: int) -> int {
+    __rl_ensure()
+    let now: int = monotonic_us() / 1000000
+    let k: String = scope + "|" + key
+    var retry: int = 0
+    mutex_lock(__rl_mu)
+    var start: int = now
+    var count: int = 0
+    let st: String = __rl_start.get_or(k, "")
+    if st.length() > 0 {
+        start = string_to_int_or(st, now)
+        if now - start >= window {
+            start = now
+        } else {
+            let cs: String = __rl_count.get_or(k, "0")
+            count = string_to_int_or(cs, 0)
+        }
+    }
+    if count <= max { count = count + 1 }
+    if count > max {
+        retry = window - (now - start)
+        if retry < 1 { retry = 1 }
+    }
+    __rl_start.insert(k, int_to_string(start))
+    __rl_count.insert(k, int_to_string(count))
+    if now - __rl_last_sweep >= 60 {
+        __rl_last_sweep = now
+        var s2: Map = Map.new()
+        var c2: Map = Map.new()
+        let keys: Array = __rl_start.keys()
+        var i: int = 0
+        while i < keys.length() {
+            let kk: String = keys[i]
+            let sv: String = __rl_start.get_or(kk, "")
+            let s: int = string_to_int_or(sv, 0)
+            if now - s < __rl_max_window {
+                let cv: String = __rl_count.get_or(kk, "0")
+                s2.insert(kk, sv)
+                c2.insert(kk, cv)
+            }
+            i = i + 1
+        }
+        __rl_start = s2
+        __rl_count = c2
+    }
+    mutex_unlock(__rl_mu)
+    return retry
+}
+
+fn __resp_429(retry: int) -> Response {
+    let hdrs: Array = ["Retry-After", int_to_string(retry), "Content-Type", "text/plain; charset=utf-8"]
+    return Response { status: 429, headers_flat: hdrs, body: "429 Too Many Requests" }
+}
+
+// 0 si el pedido pasa el límite del app; si no, el Retry-After.
+fn __limite_app(req: Request) -> int {
+    if __rl_app_max <= 0 { return 0 }
+    let key: String = __rl_key(req)
+    if key.length() == 0 { return 0 }
+    return __rl_check("app", key, __rl_app_max, __rl_app_window)
+}
+
+// Ídem para la ruta que atendió el pedido (registrada con app_route_rate_limit).
+fn __limite_ruta(req: Request, method: String, pattern: String) -> int {
+    var i: int = 0
+    while i + 3 < __rl_routes.length() {
+        let m: String = __rl_routes[i]
+        let p: String = __rl_routes[i + 1]
+        if m == method and p == pattern {
+            let max: int = __rl_routes[i + 2]
+            let win: int = __rl_routes[i + 3]
+            if max <= 0 { return 0 }
+            let key: String = __rl_key(req)
+            if key.length() == 0 { return 0 }
+            return __rl_check("route " + m + " " + p, key, max, win)
+        }
+        i = i + 4
     }
     return 0
 }

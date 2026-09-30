@@ -36,6 +36,7 @@ extern "C" fn nyx_tls_connect_ex(host: String, port: int, verify_mode: int) -> i
 extern "C" fn nyx_tls_client_upgrade(fd: int, host: String, verify_mode: int) -> int
 extern "C" fn nyx_tls_connect_result(host: String, port: int, verify_mode: int, connect_ms: int) -> Array
 extern "C" fn nyx_tls_connect_result_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Array
+extern "C" fn nyx_tls_connect_result_mtls(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String, cli_cert: String, cli_key: String) -> Array
 extern "C" fn nyx_tls_read_timed(h: int, max_bytes: int, timeout_ms: int) -> String
 extern "C" fn nyx_tls_read_cause(h: int) -> int
 extern "C" fn nyx_tls_read_error(h: int) -> String
@@ -313,7 +314,21 @@ pub fn try_tls_connect(host: String, port: int, verify_mode: int, connect_ms: in
 // nombre se verifican igual. `cas_extra` con texto pero sin ningún
 // certificado legible = Err kind "invalid" code 22. Lo usa HttpOpts.cas_extra.
 pub fn try_tls_connect_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Result<int, Error> {
-    let r: Array = nyx_tls_connect_result_cas(host, port, verify_mode, connect_ms, cas_extra)
+    return try_tls_connect_mtls(host, port, verify_mode, connect_ms, cas_extra, "", "")
+}
+
+// Igual que try_tls_connect_cas, y además PRESENTA un certificado de cliente
+// (TLS mutuo: bancos y pasarelas de pago que exigen identificar al comercio).
+// `client_cert_pem` es el CONTENIDO PEM del certificado (la hoja primero y, si
+// hay, los intermedios a continuación) y `client_key_pem` su clave privada PEM
+// SIN contraseña; ambos solo para ESTA conexión (el contexto TLS compartido no
+// se toca). Se comprueban ANTES de abrir el socket: certificado o clave
+// ilegibles, uno sin el otro, una clave con contraseña o una clave que no
+// corresponde al certificado = Err kind "invalid" code 22. Un servidor que
+// EXIGE certificado y no recibe uno válido corta la conexión (Err, típicamente kind "io" code 5: con TLS 1.3 el alert llega tras el handshake del cliente).
+// "" y "" = sin certificado (igual que try_tls_connect_cas).
+pub fn try_tls_connect_mtls(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String, client_cert_pem: String, client_key_pem: String) -> Result<int, Error> {
+    let r: Array = nyx_tls_connect_result_mtls(host, port, verify_mode, connect_ms, cas_extra, client_cert_pem, client_key_pem)
     let status: int = r[0]
     let h: int = r[1]
     let verify_code: int = r[2]

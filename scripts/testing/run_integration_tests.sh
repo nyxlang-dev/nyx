@@ -214,6 +214,31 @@ else
     OVERALL=1
 fi
 
+# ── HttpOpts.client_cert_pem/client_key_pem (TLS mutuo) ─────────────────
+# Fixture propio (tests/integration/http_mtls): el harness arma una PKI de prueba
+# con openssl y un servidor Python que EXIGE certificado de cliente. SKIP limpio
+# sin openssl. Puerto 13098 (HTTP_MTLS_PORT).
+echo -e "\n${BOLD}-- std/http: TLS mutuo (certificado de cliente) --${NC}"
+HM_BIN="/tmp/nyx-http-mtls-client"
+echo -e "  Compiling tests/integration/http_mtls/cliente.nx..."
+cp tests/integration/http_mtls/cliente.nx script.nx
+if NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap >/dev/null 2>&1 && \
+   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+       -o "$HM_BIN" 2>/dev/null; then
+    rm -f script.nx script.ll
+    if python3 tests/integration/test_http_mtls.py "$HM_BIN"; then
+        echo -e "  ${GREEN}std/http TLS mutuo E2E passed${NC}"
+    else
+        echo -e "  ${RED}std/http TLS mutuo E2E failed${NC}"
+        OVERALL=1
+    fi
+    rm -f "$HM_BIN"
+else
+    rm -f script.nx script.ll
+    echo -e "  ${RED}std/http TLS mutuo: no se pudo compilar el fixture${NC}"
+    OVERALL=1
+fi
+
 # ── std/serve (framework web absorbido al core) ──────────────────────────
 # Fixture propio (tests/integration/serve_std): server mínimo con std/serve +
 # std/template. Cubre el CONTRATO público del módulo: {param}, JSON,

@@ -1,0 +1,49 @@
+// test-465 — std/rsa: verificar firmas RSA-SHA256 con una clave pública PEM.
+//
+// Los vectores los generó el CLI de openssl (tests/fixtures/rsa/generar.sh):
+// PKCS#1 v1.5 y PSS sobre datos.txt, clave en formato SPKI y PKCS#1, y una
+// segunda clave cuya firma no debe valer.
+
+import "std/error"
+import "std/rsa"
+
+fn estado(r: Result<bool, Error>) -> String {
+    match r {
+        Result.Ok(b) => {
+            if b { return "true" }
+            return "false"
+        }
+        Result.Err(e) => { return "err " + e.kind + " " + int_to_string(e.code) }
+    }
+}
+
+fn main() -> int {
+    let pub_spki: String = include_bytes("tests/fixtures/rsa/publica.pem")
+    let pub_pkcs1: String = include_bytes("tests/fixtures/rsa/publica_pkcs1.pem")
+    let otra_pub: String = include_bytes("tests/fixtures/rsa/otra_publica.pem")
+    let ec_pub: String = include_bytes("tests/fixtures/rsa/ec_publica.pem")
+    let datos: String = include_bytes("tests/fixtures/rsa/datos.txt")
+    let firma: String = include_bytes("tests/fixtures/rsa/firma.bin")
+    let firma_b64: String = include_bytes("tests/fixtures/rsa/firma.b64")
+    let firma_pss: String = include_bytes("tests/fixtures/rsa/firma_pss.bin")
+    let firma_otra: String = include_bytes("tests/fixtures/rsa/firma_otra.bin")
+
+    println("valida spki: " + estado(rsa_sha256_verify(pub_spki, datos, firma)))
+    println("valida pkcs1: " + estado(rsa_sha256_verify(pub_pkcs1, datos, firma)))
+    println("valida b64: " + estado(rsa_sha256_verify_b64(pub_spki, datos, firma_b64)))
+    println("valida b64 con salto: " + estado(rsa_sha256_verify_b64(pub_spki, datos, firma_b64 + "\n")))
+    println("datos cambiados: " + estado(rsa_sha256_verify(pub_spki, datos + "x", firma)))
+    println("firma de otra clave: " + estado(rsa_sha256_verify(pub_spki, datos, firma_otra)))
+    println("clave equivocada: " + estado(rsa_sha256_verify(otra_pub, datos, firma)))
+    println("firma vacia: " + estado(rsa_sha256_verify(pub_spki, datos, "")))
+    println("firma truncada: " + estado(rsa_sha256_verify(pub_spki, datos, firma.substring(0, 100))))
+    println("pss valida: " + estado(rsa_pss_sha256_verify(pub_spki, datos, firma_pss)))
+    println("pss con firma v1.5: " + estado(rsa_pss_sha256_verify(pub_spki, datos, firma)))
+    println("v1.5 con firma pss: " + estado(rsa_sha256_verify(pub_spki, datos, firma_pss)))
+    println("pem roto: " + estado(rsa_sha256_verify("no soy un pem", datos, firma)))
+    println("pem vacio: " + estado(rsa_sha256_verify("", datos, firma)))
+    println("clave ec: " + estado(rsa_sha256_verify(ec_pub, datos, firma)))
+    println("b64 invalido: " + estado(rsa_sha256_verify_b64(pub_spki, datos, "!!!")))
+    println("firma b64 vacia: " + estado(rsa_sha256_verify_b64(pub_spki, datos, "")))
+    return 0
+}
