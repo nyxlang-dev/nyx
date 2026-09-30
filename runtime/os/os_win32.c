@@ -45,7 +45,20 @@
 #define _WIN32_WINNT 0x0A00
 #endif
 #define WIN32_LEAN_AND_MEAN
+// Winsock ANTES de windows.h (con LEAN_AND_MEAN, windows.h ya no arrastra el
+// winsock.h v1, pero el orden canónico evita depender de eso). iphlpapi.h
+// pide winsock2 primero. / Winsock before windows.h, canonical order.
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <mstcpip.h>   // SIO_TCP_INITIAL_RTO (connect a loopback, ver os_sock_connect)
+#include <iphlpapi.h>
 #include <windows.h>
+// Link: ws2_32 (sockets, WSAPoll, getaddrinfo) e iphlpapi
+// (GetAdaptersAddresses) vía /DEFAULTLIB embebido — así las recetas de link
+// (CI, scripts, nyx build) no tienen que enumerarlas.
+// EN: link ws2_32 + iphlpapi via embedded /DEFAULTLIB.
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 #include "nyx_os.h"
 #include "nyx_os_win32.h"  // declaración compartida del corrector (fix round 1 M4)
@@ -1008,74 +1021,430 @@ void os_ctx_free(os_ctx_t* c) {
 }
 
 // ===========================================================================
-// Sockets + resolución — W4 (Winsock: WSAStartup lazy, closesocket,
-// ioctlsocket(FIONBIO), WSAPoll, WSASend, WSAGetLastError → errno-space; ver
-// el mapa en nyx_os.h). Hasta entonces, -ENOSYS LIMPIO: la familia try_ de E5
-// lo ve como un error normal, nunca como basura muda.
-// EN: W4 (Winsock). Until then, a CLEAN -ENOSYS — E5's try_ family sees a
-// normal error, never silent garbage.
+// Sockets + resolución — W4 Task 6 (Winsock). Decisiones que NO son obvias:
+//  - El fd de la capa (int64) ES el SOCKET de Winsock. Los SOCKET son
+//    handles de kernel: valores chicos y positivos en la práctica, así que
+//    caben en int64 y nunca chocan con el espacio -errno de los errores.
+//  - WSAStartup LAZY y una sola vez (InitOnce), en la primera llamada del
+//    dominio: los programas que no usan red no pagan la carga de ws2_32.
+//  - Errores: WSAGetLastError se traduce al errno de la CRT de MSVC, el
+//    MISMO espacio que usa el resto de este archivo (win_errno) y contra el
+//    que net.c compara (-EINPROGRESS, -EAGAIN, -EINTR). OJO: los NÚMEROS de
+//    la CRT no son los de Linux (ECONNREFUSED es 107, no 111), y
+//    std/error.nx clasifica el `kind` con números de Linux. Eso se arregla
+//    en la frontera con Nyx, no acá (ver el reporte de la Task 6).
+//  - connect no bloqueante: Winsock da WSAEWOULDBLOCK; el contrato expone
+//    -EINPROGRESS (lo que net.c y test_os_sock esperan), así que se traduce
+//    SOLO en os_sock_connect.
+//  - accept: el socket aceptado HEREDA el modo no bloqueante del listener en
+//    Winsock (en POSIX no). Se vuelve a bloqueante para igualar POSIX.
+//  - os_sock_set_reuseaddr es un no-op en win32: SO_REUSEADDR de Winsock
+//    deja que DOS sockets escuchen en el mismo puerto (roba el puerto), no
+//    solo re-bindear en TIME_WAIT como en POSIX — y un listen duplicado
+//    tiene que dar EADDRINUSE (test-374). El re-bind tras TIME_WAIT ya es el
+//    comportamiento por omisión de Winsock. Misma elección que Go y libuv.
+//  - Sockets NO heredables (WSA_FLAG_NO_HANDLE_INHERIT): un hijo de exec()
+//    que herede el socket lo mantiene abierto y el peer nunca ve el cierre.
+//  - Timeouts: SO_RCVTIMEO/SO_SNDTIMEO toman un DWORD en MILISEGUNDOS, no un
+//    timeval.
+//  - send: sin SIGPIPE en Windows, no hace falta MSG_NOSIGNAL; escribir a un
+//    peer cerrado da WSAESHUTDOWN/WSAECONNRESET/WSAECONNABORTED → -errno.
+// EN: Winsock domain. The layer's int64 fd IS the SOCKET. Lazy one-time
+// WSAStartup. WSA errors map to the MSVC CRT errno space (same as win_errno,
+// and what net.c compares against) — NOT Linux numbers; std/error.nx's
+// Linux-numbered kind table is a Nyx-boundary issue (Task 6 report).
+// Nonblocking connect's WSAEWOULDBLOCK is surfaced as -EINPROGRESS per the
+// contract. Accepted sockets are reset to blocking (Winsock inherits the
+// listener's mode, POSIX does not). set_reuseaddr is a no-op (Winsock's
+// SO_REUSEADDR allows port stealing). Sockets are non-inheritable.
 // ===========================================================================
-int os_addr_resolve4(const char* host, int port, os_addr_t* out, int max, const char** err_str) {
-    (void)host; (void)port; (void)out; (void)max;
-    if (err_str) *err_str = "sockets no implementados en Windows todavia (W4)";
-    return OS_RES_OTHER;
+_Static_assert(sizeof(SOCKADDR_STORAGE) <= sizeof(((os_addr_t*)0)->storage),
+               "os_addr_t storage < SOCKADDR_STORAGE");
+_Static_assert(_Alignof(os_addr_t) >= _Alignof(SOCKADDR_STORAGE),
+               "os_addr_t sub-alineado para SOCKADDR_STORAGE");
+#define WSIN(a) ((struct sockaddr_in*)(a)->storage)
+#define WSA_(a) ((struct sockaddr*)(a)->storage)
+#define WSOCK(fd) ((SOCKET)(uintptr_t)(fd))
+
+static INIT_ONCE g_wsa_once = INIT_ONCE_STATIC_INIT;
+static int g_wsa_rc = 0;
+static BOOL CALLBACK wsa_init_once(PINIT_ONCE o, PVOID p, PVOID* ctx) {
+    (void)o; (void)p; (void)ctx;
+    WSADATA d;
+    g_wsa_rc = WSAStartup(MAKEWORD(2, 2), &d);
+    return TRUE;
 }
-int os_addr_resolve_any(const char* host, int port, os_addr_t* out, int max, const char** err_str) {
-    (void)host; (void)port; (void)out; (void)max;
-    if (err_str) *err_str = "sockets no implementados en Windows todavia (W4)";
-    return OS_RES_OTHER;
+// 0 o -errno. Cada entrada del dominio que crea o resuelve la llama; las que
+// operan sobre un fd ya existente no la necesitan (el fd prueba que corrió).
+static int wsa_ready(void) {
+    InitOnceExecuteOnce(&g_wsa_once, wsa_init_once, NULL, NULL);
+    return g_wsa_rc == 0 ? 0 : -ENOSYS;
 }
-int os_addr_from_ip4(os_addr_t* a, const char* ip, int port) { (void)a; (void)ip; (void)port; return -ENOSYS; }
-int os_addr_is_ip(const char* s) { (void)s; return 0; }   // predicado: "no sé" == "no es IP"
-int os_addr_ip(const os_addr_t* a, char* buf, int buflen) { (void)a; (void)buf; (void)buflen; return -ENOSYS; }
-int os_addr_port(const os_addr_t* a) { (void)a; return -ENOSYS; }
-int os_addr_hostname(const os_addr_t* a, char* buf, int buflen, int require_name) {
-    (void)a; (void)buf; (void)buflen; (void)require_name;
+
+static int wsa_errno(int e) {
+    switch (e) {
+        case 0:                  return 0;
+        case WSAEWOULDBLOCK:     return EWOULDBLOCK;
+        case WSAEINPROGRESS:     return EINPROGRESS;
+        case WSAEALREADY:        return EALREADY;
+        case WSAENOTSOCK:        return EBADF;   // fd inválido o cerrado: lo que POSIX da como EBADF
+        case WSAEDESTADDRREQ:    return EDESTADDRREQ;
+        case WSAEMSGSIZE:        return EMSGSIZE;
+        case WSAEPROTOTYPE:      return EPROTOTYPE;
+        case WSAENOPROTOOPT:     return ENOPROTOOPT;
+        case WSAEPROTONOSUPPORT: return EPROTONOSUPPORT;
+        case WSAEOPNOTSUPP:      return EOPNOTSUPP;
+        case WSAEAFNOSUPPORT:    return EAFNOSUPPORT;
+        case WSAEADDRINUSE:      return EADDRINUSE;
+        case WSAEADDRNOTAVAIL:   return EADDRNOTAVAIL;
+        case WSAENETDOWN:        return ENETDOWN;
+        case WSAENETUNREACH:     return ENETUNREACH;
+        case WSAENETRESET:       return ENETRESET;
+        case WSAECONNABORTED:    return ECONNABORTED;
+        case WSAECONNRESET:      return ECONNRESET;
+        case WSAENOBUFS:         return ENOBUFS;
+        case WSAEISCONN:         return EISCONN;
+        case WSAENOTCONN:        return ENOTCONN;
+        case WSAESHUTDOWN:       return EPIPE;   // escribir tras shutdown(WR)/cierre: EPIPE en POSIX
+        case WSAETIMEDOUT:       return ETIMEDOUT;
+        case WSAECONNREFUSED:    return ECONNREFUSED;
+        case WSAEHOSTUNREACH:    return EHOSTUNREACH;
+        case WSAEINTR:           return EINTR;
+        case WSAEACCES:          return EACCES;
+        case WSAEFAULT:          return EFAULT;
+        case WSAEINVAL:          return EINVAL;
+        case WSAEMFILE:          return EMFILE;
+        case WSANOTINITIALISED:  return ENOSYS;
+        default:                 return EIO;
+    }
+}
+static int wsa_last(void) {
+    int e = wsa_errno(WSAGetLastError());
+    return -(e ? e : EIO);
+}
+
+static int wres_code(int gai) {
+    if (gai == WSAHOST_NOT_FOUND || gai == EAI_NONAME) return OS_RES_NOTFOUND;
+    if (gai == WSATRY_AGAIN || gai == EAI_AGAIN)       return OS_RES_AGAIN;
     return OS_RES_OTHER;
 }
 
-int64_t os_sock_tcp4(void) { return -ENOSYS; }
-int64_t os_sock_udp4(void) { return -ENOSYS; }
-int64_t os_sock_stream_for(const os_addr_t* a) { (void)a; return -ENOSYS; }
-int os_sock_connect(int64_t fd, const os_addr_t* a) { (void)fd; (void)a; return -ENOSYS; }
-int os_sock_bind(int64_t fd, const os_addr_t* a) { (void)fd; (void)a; return -ENOSYS; }
-int os_sock_listen(int64_t fd, int backlog) { (void)fd; (void)backlog; return -ENOSYS; }
-int64_t os_sock_accept(int64_t fd) { (void)fd; return -ENOSYS; }
-int64_t os_sock_send(int64_t fd, const void* buf, size_t len) { (void)fd; (void)buf; (void)len; return -ENOSYS; }
-int64_t os_sock_sendv(int64_t fd, const os_iovec_t* iov, int n) { (void)fd; (void)iov; (void)n; return -ENOSYS; }
-int64_t os_sock_recv(int64_t fd, void* buf, size_t len) { (void)fd; (void)buf; (void)len; return -ENOSYS; }
+static int wresolve(const char* host, int port, int family, os_addr_t* out, int max,
+                    const char** err_str, const char* empty_msg) {
+    if (wsa_ready() < 0) {
+        if (err_str) *err_str = "WSAStartup fallo";
+        return OS_RES_OTHER;
+    }
+    ADDRINFOA hints; memset(&hints, 0, sizeof(hints));
+    hints.ai_family = family; hints.ai_socktype = SOCK_STREAM;
+    char port_str[16]; snprintf(port_str, sizeof(port_str), "%d", port);
+    ADDRINFOA* result = NULL;
+    int gai = getaddrinfo(host, port_str, &hints, &result);
+    if (gai != 0) {
+        // gai_strerrorA usa un buffer estático: válido hasta la próxima
+        // llamada, el mismo contrato que en POSIX.
+        if (err_str) *err_str = gai_strerrorA(gai);
+        return wres_code(gai);
+    }
+    int n = 0;
+    for (ADDRINFOA* it = result; it != NULL && n < max; it = it->ai_next) {
+        if ((size_t)it->ai_addrlen > sizeof(out[n].storage)) continue;
+        memset(&out[n], 0, sizeof(out[n]));
+        memcpy(out[n].storage, it->ai_addr, it->ai_addrlen);
+        n++;
+    }
+    freeaddrinfo(result);
+    if (n == 0) {
+        if (err_str) *err_str = empty_msg;
+        return OS_RES_OTHER;
+    }
+    return n;
+}
+
+int os_addr_resolve4(const char* host, int port, os_addr_t* out, int max, const char** err_str) {
+    return wresolve(host, port, AF_INET, out, max, err_str,
+                    "no usable AF_INET address in getaddrinfo result");
+}
+int os_addr_resolve_any(const char* host, int port, os_addr_t* out, int max, const char** err_str) {
+    return wresolve(host, port, AF_UNSPEC, out, max, err_str,
+                    "no usable address in getaddrinfo result");
+}
+
+int os_addr_from_ip4(os_addr_t* a, const char* ip, int port) {
+    memset(a, 0, sizeof(*a));
+    WSIN(a)->sin_family = AF_INET;
+    WSIN(a)->sin_port = htons((uint16_t)port);
+    if (inet_pton(AF_INET, ip, &WSIN(a)->sin_addr) != 1) return -EINVAL;
+    return 0;
+}
+
+int os_addr_is_ip(const char* s) {
+    unsigned char buf4[sizeof(struct in_addr)];
+    unsigned char buf6[sizeof(struct in6_addr)];
+    if (inet_pton(AF_INET, s, buf4) == 1) return 1;
+    if (inet_pton(AF_INET6, s, buf6) == 1) return 1;
+    return 0;
+}
+
+// v4-only, igual que os_posix.c (los callers medidos son IPv4 puros).
+int os_addr_ip(const os_addr_t* a, char* buf, int buflen) {
+    if (!inet_ntop(AF_INET, &WSIN((os_addr_t*)a)->sin_addr, buf, (size_t)buflen)) return wsa_last();
+    return 0;
+}
+
+int os_addr_port(const os_addr_t* a) {
+    return ntohs(WSIN((os_addr_t*)a)->sin_port);
+}
+
+int os_addr_hostname(const os_addr_t* a, char* buf, int buflen, int require_name) {
+    if (wsa_ready() < 0) return OS_RES_OTHER;
+    int flags = require_name ? NI_NAMEREQD : 0;
+    int gni = getnameinfo(WSA_((os_addr_t*)a), sizeof(struct sockaddr_in),
+                          buf, (DWORD)buflen, NULL, 0, flags);
+    return gni != 0 ? wres_code(gni) : 0;
+}
+
+// Largo real del sockaddr según la familia (mismo motivo que addr_len en
+// os_posix.c: v4 y v6 tienen tamaños distintos).
+static int waddr_len(const os_addr_t* a) {
+    switch (WSA_((os_addr_t*)a)->sa_family) {
+        case AF_INET:  return (int)sizeof(struct sockaddr_in);
+        case AF_INET6: return (int)sizeof(struct sockaddr_in6);
+        default:       return (int)sizeof(SOCKADDR_STORAGE);
+    }
+}
+
+static int64_t wsocket(int family, int type) {
+    int rc = wsa_ready();
+    if (rc < 0) return rc;
+    SOCKET s = WSASocketW(family, type, 0, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    if (s == INVALID_SOCKET) return wsa_last();
+    return (int64_t)(uintptr_t)s;
+}
+
+// WSA_FLAG_OVERLAPPED: no cambia nada para las llamadas bloqueantes de esta
+// sección, y es lo que os_ev_read/os_ev_write (IOCP, Task 7) van a necesitar
+// sobre el mismo socket.
+int64_t os_sock_tcp4(void) { return wsocket(AF_INET, SOCK_STREAM); }
+int64_t os_sock_udp4(void) { return wsocket(AF_INET, SOCK_DGRAM); }
+int64_t os_sock_stream_for(const os_addr_t* a) {
+    return wsocket(WSA_((os_addr_t*)a)->sa_family, SOCK_STREAM);
+}
+
+static int waddr_is_loopback(const os_addr_t* a) {
+    const struct sockaddr* sa = WSA_((os_addr_t*)a);
+    if (sa->sa_family == AF_INET)
+        return (ntohl(((const struct sockaddr_in*)sa)->sin_addr.s_addr) >> 24) == 127;
+    if (sa->sa_family == AF_INET6) {
+        const IN6_ADDR* x = &((const struct sockaddr_in6*)sa)->sin6_addr;
+        return IN6_IS_ADDR_LOOPBACK(x) ||
+               (IN6_IS_ADDR_V4MAPPED(x) && x->u.Byte[12] == 127);
+    }
+    return 0;
+}
+
+int os_sock_connect(int64_t fd, const os_addr_t* a) {
+    // Loopback: sin retransmisiones de SYN. Ante un RST (puerto cerrado)
+    // Winsock REINTENTA el SYN y tarda ~2 s en devolver ECONNREFUSED (medido:
+    // 2033 ms; 0 ms con esto). En loopback no se pierden paquetes, así que
+    // los reintentos solo agregan latencia a la negativa — POSIX la entrega
+    // de inmediato, y net.c/test_os_sock cuentan con eso. Para destinos
+    // remotos NO se toca: ahí los reintentos protegen de pérdida real.
+    // Best-effort: si el ioctl no existe (Windows viejo) se sigue igual.
+    // EN: loopback only — no SYN retransmissions, so a refused loopback
+    // connect fails immediately (2033 ms -> 0 ms), matching POSIX.
+    if (waddr_is_loopback(a)) {
+        TCP_INITIAL_RTO_PARAMETERS p = { TCP_INITIAL_RTO_UNSPECIFIED_RTT,
+                                         TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS };
+        DWORD br = 0;
+        (void)WSAIoctl(WSOCK(fd), SIO_TCP_INITIAL_RTO, &p, sizeof(p), NULL, 0, &br, NULL, NULL);
+    }
+    if (connect(WSOCK(fd), WSA_((os_addr_t*)a), waddr_len(a)) == 0) return 0;
+    int e = WSAGetLastError();
+    // Contrato: un connect no bloqueante en curso se ve como -EINPROGRESS.
+    if (e == WSAEWOULDBLOCK) return -EINPROGRESS;
+    e = wsa_errno(e);
+    return -(e ? e : EIO);
+}
+int os_sock_bind(int64_t fd, const os_addr_t* a) {
+    return bind(WSOCK(fd), WSA_((os_addr_t*)a), waddr_len(a)) == 0 ? 0 : wsa_last();
+}
+int os_sock_listen(int64_t fd, int backlog) {
+    return listen(WSOCK(fd), backlog) == 0 ? 0 : wsa_last();
+}
+int64_t os_sock_accept(int64_t fd) {
+    SOCKET s = accept(WSOCK(fd), NULL, NULL);
+    if (s == INVALID_SOCKET) return wsa_last();
+    u_long off = 0;
+    ioctlsocket(s, FIONBIO, &off);   // POSIX: el aceptado NO hereda O_NONBLOCK
+    // El aceptado hereda la heredabilidad del listener (no heredable).
+    return (int64_t)(uintptr_t)s;
+}
+static int64_t wclamp_len(size_t len) {
+    // send/recv de Winsock toman int: un len > INT_MAX se parte (transferencia
+    // parcial, que el contrato ya permite).
+    return len > 0x7FFFFFFF ? 0x7FFFFFFF : (int64_t)len;
+}
+int64_t os_sock_send(int64_t fd, const void* buf, size_t len) {
+    int n = send(WSOCK(fd), (const char*)buf, (int)wclamp_len(len), 0);
+    return n == SOCKET_ERROR ? wsa_last() : (int64_t)n;
+}
+int64_t os_sock_sendv(int64_t fd, const os_iovec_t* iov, int n) {
+    if (n > 8) return -EINVAL;
+    WSABUF local[8];
+    for (int i = 0; i < n; i++) {
+        local[i].buf = (CHAR*)iov[i].base;
+        local[i].len = (ULONG)wclamp_len(iov[i].len);
+    }
+    DWORD sent = 0;
+    if (WSASend(WSOCK(fd), local, (DWORD)n, &sent, 0, NULL, NULL) == SOCKET_ERROR) return wsa_last();
+    return (int64_t)sent;
+}
+int64_t os_sock_recv(int64_t fd, void* buf, size_t len) {
+    int n = recv(WSOCK(fd), (char*)buf, (int)wclamp_len(len), 0);
+    return n == SOCKET_ERROR ? wsa_last() : (int64_t)n;
+}
 int64_t os_sock_sendto(int64_t fd, const void* buf, size_t len, const os_addr_t* a) {
-    (void)fd; (void)buf; (void)len; (void)a; return -ENOSYS;
+    int n = sendto(WSOCK(fd), (const char*)buf, (int)wclamp_len(len), 0, WSA_((os_addr_t*)a), waddr_len(a));
+    return n == SOCKET_ERROR ? wsa_last() : (int64_t)n;
 }
 int64_t os_sock_recvfrom(int64_t fd, void* buf, size_t len, os_addr_t* from) {
-    (void)fd; (void)buf; (void)len; (void)from; return -ENOSYS;
+    struct sockaddr_in addr; int alen = (int)sizeof(addr);
+    int n = recvfrom(WSOCK(fd), (char*)buf, (int)wclamp_len(len), 0,
+                     from ? (struct sockaddr*)&addr : NULL, from ? &alen : NULL);
+    if (n == SOCKET_ERROR) return wsa_last();
+    if (from) { memset(from, 0, sizeof(*from)); memcpy(from->storage, &addr, sizeof(addr)); }
+    return (int64_t)n;
 }
-int os_sock_close(int64_t fd) { (void)fd; return -ENOSYS; }
-int os_sock_shutdown(int64_t fd, int64_t how) { (void)fd; (void)how; return -ENOSYS; }
-int os_sock_peer(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return -ENOSYS; }
-int os_sock_local(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return -ENOSYS; }
-int os_sock_set_reuseaddr(int64_t fd) { (void)fd; return -ENOSYS; }
-int os_sock_set_nodelay(int64_t fd) { (void)fd; return -ENOSYS; }
-int os_sock_set_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
-int os_sock_set_send_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
-int os_sock_set_nonblocking(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
-int os_sock_error(int64_t fd) { (void)fd; return -ENOSYS; }
-// ⚠️ runtime.c lo llama en nyx_read_byte_timeout (poll de stdin). En Windows
-// ese camino devolverá -ENOSYS limpio en vez de esperar por el fd: aceptable
-// para W2 — el subset de regresión no usa terminal interactiva. W4 lo cubre
-// (para stdin, con WaitForSingleObject sobre el handle de consola, que WSAPoll
-// NO acepta).
-// EN: runtime.c calls this in nyx_read_byte_timeout (stdin poll). On Windows
-// that path returns a clean -ENOSYS instead of waiting — acceptable for W2
-// (the regression subset uses no interactive terminal). W4 covers it.
+int os_sock_close(int64_t fd) {
+    return closesocket(WSOCK(fd)) == 0 ? 0 : wsa_last();
+}
+int os_sock_shutdown(int64_t fd, int64_t how) {
+    int sh = (how == 0) ? SD_RECEIVE : (how == 1) ? SD_SEND : SD_BOTH;
+    return shutdown(WSOCK(fd), sh) == 0 ? 0 : wsa_last();
+}
+int os_sock_peer(int64_t fd, os_addr_t* out) {
+    memset(out, 0, sizeof(*out));
+    int len = (int)sizeof(struct sockaddr_in);
+    return getpeername(WSOCK(fd), WSA_(out), &len) == 0 ? 0 : wsa_last();
+}
+int os_sock_local(int64_t fd, os_addr_t* out) {
+    memset(out, 0, sizeof(*out));
+    int len = (int)sizeof(out->storage);   // blob completo: getsockname trunca en silencio
+    return getsockname(WSOCK(fd), WSA_(out), &len) == 0 ? 0 : wsa_last();
+}
+int os_sock_set_reuseaddr(int64_t fd) {
+    // No-op a propósito (ver el encabezado de la sección): el SO_REUSEADDR de
+    // Winsock rompe el EADDRINUSE del listen duplicado.
+    (void)fd;
+    return 0;
+}
+int os_sock_set_nodelay(int64_t fd) {
+    BOOL opt = TRUE;
+    return setsockopt(WSOCK(fd), IPPROTO_TCP, TCP_NODELAY, (const char*)&opt, sizeof(opt)) == 0 ? 0 : wsa_last();
+}
+static DWORD wsec_to_ms(int64_t seconds) {
+    if (seconds <= 0) return 0;                        // 0 = sin timeout, igual que POSIX
+    if (seconds > 0x7FFFFFFF / 1000) return 0x7FFFFFFF;
+    return (DWORD)(seconds * 1000);
+}
+int os_sock_set_timeout(int64_t fd, int64_t seconds) {
+    DWORD ms = wsec_to_ms(seconds);
+    if (setsockopt(WSOCK(fd), SOL_SOCKET, SO_RCVTIMEO, (const char*)&ms, sizeof(ms)) != 0) return wsa_last();
+    return setsockopt(WSOCK(fd), SOL_SOCKET, SO_SNDTIMEO, (const char*)&ms, sizeof(ms)) == 0 ? 0 : wsa_last();
+}
+int os_sock_set_send_timeout(int64_t fd, int64_t seconds) {
+    DWORD ms = wsec_to_ms(seconds);
+    return setsockopt(WSOCK(fd), SOL_SOCKET, SO_SNDTIMEO, (const char*)&ms, sizeof(ms)) == 0 ? 0 : wsa_last();
+}
+int os_sock_set_nonblocking(int64_t fd, int on) {
+    u_long mode = on ? 1 : 0;
+    return ioctlsocket(WSOCK(fd), FIONBIO, &mode) == 0 ? 0 : wsa_last();
+}
+int os_sock_error(int64_t fd) {
+    // SO_ERROR entrega un código WSA pendiente EN POSITIVO: se traduce al
+    // errno de la CRT sin negar, igual que el contrato POSIX.
+    int err = 0; int len = (int)sizeof(err);
+    if (getsockopt(WSOCK(fd), SOL_SOCKET, SO_ERROR, (char*)&err, &len) != 0) return wsa_last();
+    return wsa_errno(err);
+}
+
+// WSAPoll de 1 fd. Revents REALES (mismo contrato que os_posix.c): POLLERR y
+// POLLNVAL colapsan en OS_POLLERR, POLLHUP va aparte. Diferencias de Winsock
+// cubiertas acá:
+//  - Sobre un socket ya cerrado WSAPoll FALLA con WSAENOTSOCK en vez de
+//    entregar POLLNVAL: el contrato dice POLLNVAL -> OS_POLLERR, así que se
+//    devuelve OS_POLLERR (test_poll1_closed_fd).
+//  - El bug histórico de WSAPoll (un connect no bloqueante rechazado nunca
+//    marcaba POLLERR/POLLHUP) está corregido desde Windows 10 2004; con el
+//    _WIN32_WINNT pineado a 10 se asume esa base.
+//  - stdin: runtime.c (nyx_read_byte_timeout) llama esto con fd 0, que en
+//    Windows NO es un socket. Sigue siendo -ENOSYS limpio: esperar por la
+//    consola (WaitForSingleObject + PeekConsoleInput) o por un pipe
+//    (PeekNamedPipe) es otro dominio y queda fichado aparte.
 int os_sock_poll1(int64_t fd, int events, int timeout_ms) {
-    (void)fd; (void)events; (void)timeout_ms; return -ENOSYS;
+    if (fd == 0) return -ENOSYS;
+    WSAPOLLFD pfd; pfd.fd = WSOCK(fd); pfd.events = 0; pfd.revents = 0;
+    if (events & OS_POLLIN)  pfd.events |= POLLRDNORM;
+    if (events & OS_POLLOUT) pfd.events |= POLLWRNORM;
+    int rc = WSAPoll(&pfd, 1, timeout_ms);
+    if (rc == SOCKET_ERROR) {
+        int e = WSAGetLastError();
+        if (e == WSAENOTSOCK) return OS_POLLERR;
+        e = wsa_errno(e);
+        return -(e ? e : EIO);
+    }
+    if (rc == 0) return 0;
+    int out = 0;
+    if (pfd.revents & (POLLRDNORM | POLLRDBAND)) out |= OS_POLLIN;
+    if (pfd.revents & POLLWRNORM) out |= OS_POLLOUT;
+    if (pfd.revents & (POLLERR | POLLNVAL)) out |= OS_POLLERR;
+    if (pfd.revents & POLLHUP) out |= OS_POLLHUP;
+    return out;
 }
+
 int64_t os_net_ifaces4(void (*cb)(const char* name, const char* ip, const char* mask, void* ud), void* ud) {
-    (void)cb; (void)ud; return -ENOSYS;   // W4: GetAdaptersAddresses
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 16 * 1024;
+    IP_ADAPTER_ADDRESSES* aa = NULL;
+    ULONG r = ERROR_BUFFER_OVERFLOW;
+    // El tamaño puede cambiar entre llamadas (adaptadores que aparecen):
+    // reintentar con el que devuelve la API, como recomienda su doc.
+    for (int tries = 0; tries < 4 && r == ERROR_BUFFER_OVERFLOW; tries++) {
+        free(aa);
+        aa = (IP_ADAPTER_ADDRESSES*)malloc(size);
+        if (!aa) return -ENOMEM;
+        r = GetAdaptersAddresses(AF_INET, flags, NULL, aa, &size);
+    }
+    if (r != NO_ERROR) { free(aa); return -(win_errno(r) ? win_errno(r) : EIO); }
+    int64_t n = 0;
+    for (IP_ADAPTER_ADDRESSES* it = aa; it != NULL; it = it->Next) {
+        char name[256] = "";
+        // FriendlyName es UTF-16; la capa habla UTF-8 (contrato de nyx_os.h).
+        if (it->FriendlyName)
+            WideCharToMultiByte(CP_UTF8, 0, it->FriendlyName, -1, name, (int)sizeof(name), NULL, NULL);
+        for (IP_ADAPTER_UNICAST_ADDRESS* u = it->FirstUnicastAddress; u != NULL; u = u->Next) {
+            if (!u->Address.lpSockaddr || u->Address.lpSockaddr->sa_family != AF_INET) continue;
+            char ip[INET_ADDRSTRLEN] = "";
+            char mask[INET_ADDRSTRLEN] = "";
+            struct sockaddr_in* sin = (struct sockaddr_in*)u->Address.lpSockaddr;
+            inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
+            // Máscara desde el largo del prefijo, a mano (ConvertLengthToIpv4Mask
+            // pide netioapi y no suma nada).
+            ULONG plen = u->OnLinkPrefixLength > 32 ? 32 : u->OnLinkPrefixLength;
+            struct in_addr m;
+            m.s_addr = htonl(plen == 0 ? 0 : (0xFFFFFFFFu << (32 - plen)));
+            inet_ntop(AF_INET, &m, mask, sizeof(mask));
+            cb(name, ip, mask, ud);
+            n++;
+        }
+    }
+    free(aa);
+    return n;
 }
+
 int os_inet_ntop6(const unsigned char* bytes16, char* buf, int buflen) {
-    (void)bytes16; (void)buf; (void)buflen; return -ENOSYS;   // W4: ws2tcpip InetNtopA
+    return inet_ntop(AF_INET6, bytes16, buf, (size_t)buflen) ? 0 : wsa_last();
 }
 
 // ===========================================================================
@@ -1084,10 +1453,129 @@ int os_inet_ntop6(const unsigned char* bytes16, char* buf, int buflen) {
 // EN: W4 (native IOCP — real completion instead of epoll's readiness
 // emulation).
 // ===========================================================================
-os_ev_loop_t* os_ev_loop_new(void) { return NULL; }
-void os_ev_loop_free(os_ev_loop_t* l) { (void)l; }
-int os_ev_timer(os_ev_loop_t* l, int64_t ms, os_ev_cb cb, void* ud) { (void)l; (void)ms; (void)cb; (void)ud; return -ENOSYS; }
-int os_ev_wake(os_ev_loop_t* l) { (void)l; return -ENOSYS; }
+// W4 Task 5 — timers y wake sobre un completion port. Decisiones no obvias:
+//  - La espera es GetQueuedCompletionStatusEx con el timeout efectivo
+//    (min(caller, deadline más próximo)). Los timers NO son paquetes del
+//    port: viven en una tabla bajo el lock y se resuelven al volver del wait,
+//    igual que en os_posix.c. El port solo aporta lo que Sleep no tenía: un
+//    wait que OTRO thread puede interrumpir (os_ev_wake) — así un timer más
+//    corto registrado mientras el poller duerme no espera al fin del wait.
+//  - La tabla CRECE por duplicación hasta OS_EV_W32_MAX_TIMERS (paridad con
+//    NYX_EV_MAX_SLOTS de event_loop.c). El techo fijo de 256 era el muro de
+//    test-411: el que no conseguía slot caía al fallback os_sleep_ms del
+//    scheduler, que ocupa el worker y deja sin poller a los timers que SÍ
+//    tenían slot (spike 2026-09-29-w4-iocp-vs-readiness §1).
+//  - Wakes coalescidos con wake_pending: sin él, 700 go_sleep simultáneos
+//    encolan 700 paquetes (os_ev_timer despierta incondicionalmente, fix
+//    finding 4 del spike W1). Con el flag hay a lo sumo UN paquete de wake
+//    en vuelo; run_once lo baja a 0 al desencolarlo, así que un wake
+//    posterior vuelve a postear. Nunca se pierde uno: si el flag ya era 1,
+//    hay un paquete sin consumir que va a despertar al próximo wait.
+//  - Granularidad: el timeout de GetQueuedCompletionStatusEx usa el tick
+//    del sistema (~15.6 ms por omisión), igual que Sleep. El wake quita el
+//    retraso por timers nuevos, no la granularidad; un timer de alta
+//    resolución asociado al port es ficha aparte.
+// EN: W4 Task 5 — timers and wake over a completion port. The wait is
+// GetQueuedCompletionStatusEx with the effective timeout; timers are NOT
+// port packets, they live in a table under the lock (as in os_posix.c) —
+// the port adds what Sleep lacked: a wait another thread can interrupt. The
+// table GROWS by doubling up to OS_EV_W32_MAX_TIMERS (the fixed 256 was
+// test-411's wall). Wakes are coalesced via wake_pending (at most one wake
+// packet in flight). Timeout granularity is still the system tick.
+#define OS_EV_W32_MAX_TIMERS  65536   // paridad con NYX_EV_MAX_SLOTS (event_loop.c)
+#define OS_EV_W32_INIT_TIMERS 256
+#define OS_EV_W32_SNAP_MAX    512     // paridad con NYX_EV_SNAP_MAX: el resto, próxima vuelta
+#define OS_EV_W32_KEY_WAKE    ((ULONG_PTR)1)
+
+typedef struct {
+    int      active;
+    int64_t  deadline_ms;
+    os_ev_cb cb;
+    void*    ud;
+} OsEvW32Timer;
+
+struct os_ev_loop {
+    HANDLE        port;
+    os_mutex_t    lock;
+    OsEvW32Timer* timers;        // calloc — invisible para Boehm; ud lo retiene el caller (contrato)
+    int           timer_count;   // slots usados (activos o reusables)
+    int           timer_cap;
+    volatile LONG wake_pending;
+};
+
+static int64_t os_ev_w32_now_ms(void) {
+    return os_monotonic_ns() / 1000000;
+}
+
+os_ev_loop_t* os_ev_loop_new(void) {
+    os_ev_loop_t* l = (os_ev_loop_t*)calloc(1, sizeof(*l));
+    if (!l) return NULL;
+    // Concurrencia 0 = tantos threads como CPUs pueden correr completions a
+    // la vez; hoy un solo poller (g_poller_lock), pero no se lo impone acá.
+    l->port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+    if (!l->port) { free(l); return NULL; }
+    l->timers = (OsEvW32Timer*)calloc(OS_EV_W32_INIT_TIMERS, sizeof(OsEvW32Timer));
+    if (!l->timers) { CloseHandle(l->port); free(l); return NULL; }
+    l->timer_cap = OS_EV_W32_INIT_TIMERS;
+    os_mutex_init(&l->lock);
+    return l;
+}
+
+void os_ev_loop_free(os_ev_loop_t* l) {
+    // Contrato: descarta lo pendiente en silencio y el caller ya detuvo el
+    // poller. Los paquetes de wake sin consumir mueren con el port.
+    if (!l) return;
+    CloseHandle(l->port);
+    os_mutex_destroy(&l->lock);
+    free(l->timers);
+    free(l);
+}
+
+int os_ev_timer(os_ev_loop_t* l, int64_t ms, os_ev_cb cb, void* ud) {
+    if (!l || !cb) return -EINVAL;
+    os_mutex_lock(&l->lock);
+    int slot = -1;
+    // Reuso O(n), igual que event_loop.c (la free-list es la misma ficha).
+    for (int i = 0; i < l->timer_count; i++) {
+        if (!l->timers[i].active) { slot = i; break; }
+    }
+    if (slot < 0) {
+        if (l->timer_count == l->timer_cap) {
+            if (l->timer_cap >= OS_EV_W32_MAX_TIMERS) {
+                os_mutex_unlock(&l->lock);
+                return -ENOSPC;
+            }
+            int ncap = l->timer_cap * 2;
+            if (ncap > OS_EV_W32_MAX_TIMERS) ncap = OS_EV_W32_MAX_TIMERS;
+            OsEvW32Timer* nt = (OsEvW32Timer*)realloc(l->timers, (size_t)ncap * sizeof(OsEvW32Timer));
+            if (!nt) { os_mutex_unlock(&l->lock); return -ENOMEM; }
+            memset(nt + l->timer_cap, 0, (size_t)(ncap - l->timer_cap) * sizeof(OsEvW32Timer));
+            l->timers = nt;
+            l->timer_cap = ncap;
+        }
+        slot = l->timer_count++;
+    }
+    l->timers[slot].active = 1;
+    l->timers[slot].deadline_ms = os_ev_w32_now_ms() + ms;
+    l->timers[slot].cb = cb;
+    l->timers[slot].ud = ud;
+    os_mutex_unlock(&l->lock);
+    // Incondicional, como os_posix.c (fix finding 4 del spike W1): un poller
+    // ya bloqueado calculó su timeout sin este deadline.
+    os_ev_wake(l);
+    return slot;
+}
+
+int os_ev_wake(os_ev_loop_t* l) {
+    if (!l) return -EINVAL;
+    if (InterlockedExchange(&l->wake_pending, 1) != 0) return 0;   // ya hay uno en vuelo
+    if (!PostQueuedCompletionStatus(l->port, 0, OS_EV_W32_KEY_WAKE, NULL)) {
+        InterlockedExchange(&l->wake_pending, 0);
+        return win_last_errno();
+    }
+    return 0;
+}
+
 int os_ev_read(os_ev_loop_t* l, os_sock_t sock, void* buf, int64_t len, os_ev_cb cb, void* ud) {
     (void)l; (void)sock; (void)buf; (void)len; (void)cb; (void)ud; return -ENOSYS;
 }
@@ -1095,7 +1583,60 @@ int os_ev_write(os_ev_loop_t* l, os_sock_t sock, const void* buf, int64_t len, o
     (void)l; (void)sock; (void)buf; (void)len; (void)cb; (void)ud; return -ENOSYS;
 }
 int os_ev_cancel(os_ev_loop_t* l, os_sock_t sock) { (void)l; (void)sock; return -ENOSYS; }
-int os_ev_run_once(os_ev_loop_t* l, int timeout_ms) { (void)l; (void)timeout_ms; return -ENOSYS; }
+int os_ev_run_once(os_ev_loop_t* l, int timeout_ms) {
+    if (!l) return -EINVAL;
+
+    // 1) timeout efectivo = min(caller, deadline más próximo - now), >= 0.
+    int64_t soonest = -1;
+    os_mutex_lock(&l->lock);
+    for (int i = 0; i < l->timer_count; i++) {
+        if (l->timers[i].active && (soonest < 0 || l->timers[i].deadline_ms < soonest))
+            soonest = l->timers[i].deadline_ms;
+    }
+    os_mutex_unlock(&l->lock);
+    int64_t eff = timeout_ms;
+    if (soonest >= 0) {
+        int64_t d = soonest - os_ev_w32_now_ms();
+        if (d < 0) d = 0;
+        if (eff < 0 || d < eff) eff = d;
+    }
+
+    // 2) esperar en el port. WAIT_TIMEOUT no es error: vuelta sin paquetes.
+    //    Los únicos paquetes hoy son los de wake (las ops de E/S son Task 7).
+    OVERLAPPED_ENTRY entries[64];
+    ULONG n = 0;
+    DWORD wait = (eff < 0) ? INFINITE : (DWORD)eff;
+    if (GetQueuedCompletionStatusEx(l->port, entries, 64, &n, wait, FALSE)) {
+        for (ULONG i = 0; i < n; i++) {
+            if (entries[i].lpCompletionKey == OS_EV_W32_KEY_WAKE)
+                InterlockedExchange(&l->wake_pending, 0);
+        }
+    } else if (GetLastError() != WAIT_TIMEOUT) {
+        return win_last_errno();
+    }
+
+    // 3) snapshot bajo el lock, one-shot desactivado ANTES de despachar.
+    struct { os_ev_cb cb; void* ud; } snap[OS_EV_W32_SNAP_MAX];
+    int sc = 0;
+    int64_t tnow = os_ev_w32_now_ms();
+    os_mutex_lock(&l->lock);
+    for (int i = 0; i < l->timer_count && sc < OS_EV_W32_SNAP_MAX; i++) {
+        if (l->timers[i].active && l->timers[i].deadline_ms <= tnow) {
+            snap[sc].cb = l->timers[i].cb;
+            snap[sc].ud = l->timers[i].ud;
+            sc++;
+            l->timers[i].active = 0;
+        }
+    }
+    // Recorte de la cola de slots libres: sin esto timer_count solo crece y
+    // el scan del paso 1 paga para siempre el pico histórico.
+    while (l->timer_count > 0 && !l->timers[l->timer_count - 1].active) l->timer_count--;
+    os_mutex_unlock(&l->lock);
+
+    // 4) despacho FUERA del lock (el cb puede re-registrar timers).
+    for (int i = 0; i < sc; i++) snap[i].cb(0, snap[i].ud);
+    return sc;
+}
 
 // ===========================================================================
 // Procesos — exec()/exec_code() de runtime.c.

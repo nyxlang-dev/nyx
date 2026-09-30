@@ -57,6 +57,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Los valores String de un `Map` se guardan enteros.** El codegen guardaba un String en un `Map`
+  como `char*` y lo leía con `strlen`. Cuatro fallas con esa raíz: un valor con un byte 0 (gzip, hash
+  crudo, imagen) volvía **cortado sin error** —el caché de gzip de `std/serve` recibía 3 bytes—;
+  `values()` sobre un `Map<String, String>` entregaba esos `char*` como String y el programa pedía
+  700 GB y moría; el camino opaco (`get` como entero) daba basura; y en los `Map` globales `insert` ya
+  guardaba el `nyx_string*` mientras `get` lo leía como `char*`. Ahora se guarda el `nyx_string*`
+  entero, como cualquier otro puntero, en los ocho sitios del codegen (literal, métodos, globales,
+  campos de struct, `get_or`). El runtime no cambia; como la convención la usa el propio compilador,
+  se recompilaron los nueve módulos con punto fijo en dos pasadas. Los objetos `[lib]` cacheados se
+  invalidan solos (la huella incluye el compilador). Las claves siguen como `char*`: una clave con un
+  byte 0 se corta (límite conocido). Regresión: `test-469`, un caso por camino.
+
+- **Timers de Windows sobre IOCP, con tabla que crece** `[arco: w4-windows]`. `os_ev_timer`/`os_ev_wake`
+  de win32 dejan de ser `-ENOSYS`: esperan en `GetQueuedCompletionStatusEx` con el timeout del deadline
+  más próximo, despiertan con `PostQueuedCompletionStatus` (agrupando wakes: a lo sumo uno en vuelo) y
+  la tabla crece de 256 a 65536 como la de POSIX. `event_loop_win32.c` pasa a ser un adaptador fino.
+  Antes, con más de ~72 goroutinas durmiendo, el resto no despertaba a tiempo (tabla fija y workers
+  ocupados en el fallback): `test-411` pasa de 0/20 a 20/20, y lo mismo con 1500 goroutinas; gate
+  240/240. Implementado y medido en la laptop Windows (W4 Task 5); test nuevo
+  `tests/runtime-unit/win/test_os_ev_timers_win32.c`. La verificación final del arreglo de
+  `test-241` sobre `main` dio 300/300.
+
 - **`await` anidado en win32: el scheduler ya no reusa la dirección TLS a través de `os_ctx_swap`**
   `[arco: w4-windows]`. `nyx_goroutine_join` (con `yield` inlineado) calculaba la dirección de
   `g_current_worker` una vez y la reusaba después de cada swap; si la goroutina volvía en otro worker,

@@ -1,0 +1,77 @@
+// test-469 — los valores String de un Map se guardan enteros (2026-09-30).
+//
+// POR QUÉ EXISTE: el codegen guardaba un String en un Map como char*
+// (nyx_string_to_cstr) y lo leía con nyx_string_from_cstr (strlen). Tres fallas
+// con la misma raíz: (1) un valor con un byte 0 volvía CORTADO sin error — lo
+// encontró el caché de gzip de std/serve, que recibía 3 bytes; (2) values()
+// entregaba esos char* y usarlos como String era basura (el programa pedía
+// 700 GB y moría); (3) en los Map GLOBALES insert ya guardaba el nyx_string*
+// pero get lo leía como char*. Ahora se guarda el nyx_string* entero, como
+// cualquier otro puntero. Una línea por camino del codegen que cambió.
+
+struct Caja {
+    m: Map<String, String>,
+}
+
+var g_global: Map<String, String> = {}
+
+fn main() -> int {
+    let bin: String = "ab" + chr(0) + "cd" + chr(0)
+    if bin.length() != 6 { return 1 }
+
+    // Map tipado: insert + get.
+    var m: Map<String, String> = Map.new()
+    m.insert("k", bin)
+    let v1: String = m.get("k")
+    if v1 != bin { return 2 }
+
+    // Map sin tipo.
+    var u: Map = Map.new()
+    u.insert("k", bin)
+    let v2: String = u.get("k")
+    if v2.length() != 6 { return 3 }
+
+    // Literal de Map.
+    let lit: Map<String, String> = {"a": bin, "b": "hola"}
+    let v3: String = lit.get("a")
+    if v3 != bin { return 4 }
+
+    // get_or: presente (con NUL) y ausente (el default vuelve entero).
+    let v4: String = m.get_or("k", "x")
+    if v4 != bin { return 5 }
+    let def: String = "de" + chr(0) + "f"
+    let v5: String = m.get_or("falta", def)
+    if v5 != def { return 6 }
+
+    // values(): elementos String de verdad.
+    var vs: Map<String, String> = Map.new()
+    vs.insert("a", "hola")
+    vs.insert("b", "mundo")
+    var total: int = 0
+    for s: String in vs.values() {
+        total = total + s.length()
+    }
+    if total != 9 { return 7 }
+
+    // Map global: insert y get por el camino de los globales.
+    g_global.insert("k", bin)
+    let v6: String = g_global.get("k")
+    if v6 != bin { return 8 }
+
+    // Map como campo de struct.
+    var c: Caja = Caja { m: Map.new() }
+    c.m.insert("k", bin)
+    let v7: String = c.m.get("k")
+    if v7 != bin { return 9 }
+
+    // Iterar claves y leer: el caso de uso más común, sin NUL.
+    var cuenta: int = 0
+    for k: String in vs.keys() {
+        let x: String = vs.get(k)
+        cuenta = cuenta + x.length()
+    }
+    if cuenta != 9 { return 10 }
+
+    println("map valores string ok " + int_to_string(v1.length()))
+    return 0
+}

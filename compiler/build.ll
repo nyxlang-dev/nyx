@@ -11690,7 +11690,7 @@ then860:
   %5202 = load %nyx_string*, %nyx_string** %f.ptr
   %5203 = call i8* @nyx_string_to_cstr(%nyx_string* %5202)
   %5204 = call i8* @nyx_map_get_str(i8* %5201, i8* %5203)
-  %5205 = call %nyx_string* @nyx_string_from_cstr(i8* %5204)
+  %5205 = bitcast i8* %5204 to %nyx_string*
   %5206 = alloca %nyx_string*
   store %nyx_string* %5205, %nyx_string** %5206
   %5207 = load %nyx_string*, %nyx_string** %5206
@@ -11708,7 +11708,7 @@ merge862:
   %5214 = load %nyx_string*, %nyx_string** %f.ptr
   %5215 = load %nyx_string*, %nyx_string** %5212
   %5216 = call i8* @nyx_string_to_cstr(%nyx_string* %5214)
-  %5217 = call i8* @nyx_string_to_cstr(%nyx_string* %5215)
+  %5217 = bitcast %nyx_string* %5215 to i8*
   call void @nyx_map_insert_str(i8* %5213, i8* %5216, i8* %5217)
   %5218 = load %nyx_string*, %nyx_string** %5212
   ret %nyx_string* %5218
@@ -13186,7 +13186,7 @@ then1112:
   %5960 = load %nyx_string*, %nyx_string** %5954
   %5961 = call i8* @nyx_string_to_cstr(%nyx_string* %5960)
   %5962 = call i8* @nyx_map_get_str(i8* %5959, i8* %5961)
-  %5963 = call %nyx_string* @nyx_string_from_cstr(i8* %5962)
+  %5963 = bitcast i8* %5962 to %nyx_string*
   %5964 = alloca %nyx_string*
   store %nyx_string* %5963, %nyx_string** %5964
   %5965 = load %nyx_string*, %nyx_string** %5964
@@ -13225,7 +13225,7 @@ merge1117:
   %5984 = load %nyx_string*, %nyx_string** %5954
   %5985 = load %nyx_string*, %nyx_string** %5972
   %5986 = call i8* @nyx_string_to_cstr(%nyx_string* %5984)
-  %5987 = call i8* @nyx_string_to_cstr(%nyx_string* %5985)
+  %5987 = bitcast %nyx_string* %5985 to i8*
   call void @nyx_map_insert_str(i8* %5983, i8* %5986, i8* %5987)
   %5988 = load %nyx_string*, %nyx_string** %5972
   ret %nyx_string* %5988
