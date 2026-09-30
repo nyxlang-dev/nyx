@@ -17,7 +17,7 @@
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **9** + verificación externa de zip | math + array + integración + template + multipart (serve al core, 2026-08-31) + smtp ×4 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
-| Runtime C unit (B4) | `make test-runtime` | **35 suites / 1827 asserts** | corrida real 2026-09-30 (W4 Task 7: `test_os_ev.c` de 9 a 11 casos, 111 asserts en Linux); detalle en `CHANGELOG.md` |
+| Runtime C unit (B4) | `make test-runtime` | **36 suites / 1853 asserts** | corrida real 2026-09-30 (W4 Task 7: `test_os_ev.c` de 9 a 11 casos; Task 9: suite nueva `test_os_errno_canon.c`, 26); detalle en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **30 programas + 6 casos stdin (x2 targets) + 69 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (69: templates 2, tooling 17, coverage 9, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
 | Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** + autotest | `voseo_filter` (`lib_voseo.sh`: lista + regla general en -á) sobre `compiler/`, `runtime/`, `std/`, `scripts/`, `templates/gitignore` y `tests/**/*.sh` |

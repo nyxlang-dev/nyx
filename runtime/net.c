@@ -1141,7 +1141,7 @@ nyx_string* nyx_resolve(const char* hostname) {
 //     INADDR_ANY, igual que las centinelas viejas con `host && strlen(host)
 //     > 0`); connect SÍ necesita un host real para resolver.
 
-int64_t nyx_tcp_listen_result(nyx_string* host, int64_t port) {
+static int64_t nyx_tcp_listen_result_native(nyx_string* host, int64_t port) {
     if (!host) return -22; // EINVAL — puntero nulo (ABI), no "sin host"
 
     int64_t fd = os_sock_tcp4();
@@ -1184,7 +1184,7 @@ int64_t nyx_tcp_listen_result(nyx_string* host, int64_t port) {
 // de siempre de nyx_tcp_connect_result, con el poll de 3000 ms fijos pasado a
 // parámetro. timeout_ms <= 0 = sin plazo (poll infinito). nyx_tcp_connect_result
 // delega acá con 3000, así que no hay dos copias del camino.
-int64_t nyx_tcp_connect_ms_result(nyx_string* host, int64_t port, int64_t timeout_ms) {
+static int64_t nyx_tcp_connect_ms_result_native(nyx_string* host, int64_t port, int64_t timeout_ms) {
     if (!host || !host->data) return -22; // EINVAL
 
     os_addr_t addr[1];
@@ -1199,7 +1199,7 @@ int64_t nyx_tcp_connect_ms_result(nyx_string* host, int64_t port, int64_t timeou
         // EAI_SYSTEM -- es un fallo de recursos del propio getaddrinfo()
         // (ENOMEM/EMFILE internos), no reproducible con un host inválido.
         // Ver task-2-report.md, sección "Concerns".
-        return -113; // EHOSTUNREACH
+        return -(int64_t)EHOSTUNREACH; // nativo: la frontera (net_code) lo pasa a Linux
     }
 
     int64_t fd = os_sock_tcp4();
@@ -1258,7 +1258,7 @@ int64_t nyx_tcp_connect_result(nyx_string* host, int64_t port) {
 // servidor que gotea un byte cada pocos segundos no la vence nunca. Acá el plazo
 // es un poll sobre lo que queda, y el llamador lleva el total.
 // [status, data] — contrato en runtime/net.h.
-nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t timeout_ms) {
+static nyx_array_t* nyx_tcp_read_timed_result_native(int64_t fd, int64_t max_bytes, int64_t timeout_ms) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {
         nyx_array_push_tagged(out, -9 /* EBADF */, NYX_TAG_INT);
@@ -1302,7 +1302,7 @@ nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t ti
     return out;
 }
 
-int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) {
+static int64_t nyx_udp_bind_result_native(nyx_string* host, int64_t port) {
     if (!host) return -22; // EINVAL — puntero nulo (ABI), no "sin host"
 
     int64_t fd = os_sock_udp4();
@@ -1379,7 +1379,7 @@ int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) {
 //     decide Task 2 (`std/net.nx`) a partir de este code -- acá solo viaja
 //     el número.
 
-int64_t nyx_tcp_accept_result(int64_t listen_fd) {
+static int64_t nyx_tcp_accept_result_native(int64_t listen_fd) {
     if (listen_fd < 0) return -9; // EBADF -- fd inválido, sin llamar accept()
 
     int64_t fd = os_sock_accept(listen_fd);
@@ -1388,7 +1388,7 @@ int64_t nyx_tcp_accept_result(int64_t listen_fd) {
     return fd;
 }
 
-nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes) {
+static nyx_array_t* nyx_tcp_read_result_native(int64_t fd, int64_t max_bytes) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {
         nyx_array_push_tagged(out, 9 /* EBADF */, NYX_TAG_INT);
@@ -1433,7 +1433,7 @@ nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes) {
     return out;
 }
 
-int64_t nyx_tcp_write_result(int64_t fd, nyx_string* data) {
+static int64_t nyx_tcp_write_result_native(int64_t fd, nyx_string* data) {
     if (fd < 0) return -9; // EBADF
     if (!data || !data->data) return -22; // EINVAL -- puntero nulo (ABI)
     if (data->length == 0) return 0; // nada que escribir -- éxito trivial, igual que la centinela
@@ -1462,7 +1462,7 @@ int64_t nyx_tcp_write_result(int64_t fd, nyx_string* data) {
     return (int64_t)total;
 }
 
-int64_t nyx_udp_sendto_result(int64_t fd, nyx_string* data, nyx_string* host, int64_t port) {
+static int64_t nyx_udp_sendto_result_native(int64_t fd, nyx_string* data, nyx_string* host, int64_t port) {
     if (fd < 0) return -9; // EBADF
     if (!data || !data->data) return -22; // EINVAL
     if (!host || !host->data) return -22; // EINVAL
@@ -1480,7 +1480,7 @@ int64_t nyx_udp_sendto_result(int64_t fd, nyx_string* data, nyx_string* host, in
     return sent; // ya es -errno en fallo
 }
 
-nyx_array_t* nyx_udp_recvfrom_result(int64_t fd, int64_t max_bytes) {
+static nyx_array_t* nyx_udp_recvfrom_result_native(int64_t fd, int64_t max_bytes) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {
         nyx_array_push_tagged(out, 9 /* EBADF */, NYX_TAG_INT);
@@ -1512,7 +1512,7 @@ nyx_array_t* nyx_udp_recvfrom_result(int64_t fd, int64_t max_bytes) {
     return out;
 }
 
-nyx_array_t* nyx_resolve_result(nyx_string* host) {
+static nyx_array_t* nyx_resolve_result_native(nyx_string* host) {
     nyx_array_t* out = nyx_array_new(2);
     if (!host || !host->data) {
         nyx_array_push_tagged(out, 22 /* EINVAL */, NYX_TAG_INT);
@@ -1527,7 +1527,7 @@ nyx_array_t* nyx_resolve_result(nyx_string* host) {
         // OS_RES_NOTFOUND/OS_RES_OTHER (incluye lo que antes era EAI_SYSTEM,
         // ya no distinguible -- ver nota en nyx_tcp_connect_result) -> 113
         // (EHOSTUNREACH), mismo mapeo estable que E5.1.
-        int code = (n == OS_RES_AGAIN) ? 110 : 113;
+        int code = (n == OS_RES_AGAIN) ? ETIMEDOUT : EHOSTUNREACH;   // nativos (net_code)
         nyx_array_push_tagged(out, code, NYX_TAG_INT);
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
@@ -1606,7 +1606,7 @@ nyx_array_t* nyx_resolve_result(nyx_string* host) {
 //     os_addr_hostname -- no es un fallo de resolución, es un argumento
 //     malformado.
 
-nyx_array_t* nyx_tcp_read_line_result(int64_t fd) {
+static nyx_array_t* nyx_tcp_read_line_result_native(int64_t fd) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {
         nyx_array_push_tagged(out, 9 /* EBADF */, NYX_TAG_INT);
@@ -1661,7 +1661,7 @@ nyx_array_t* nyx_tcp_read_line_result(int64_t fd) {
     return out;
 }
 
-nyx_array_t* nyx_tcp_read_partial_result(int64_t fd, int64_t max_bytes) {
+static nyx_array_t* nyx_tcp_read_partial_result_native(int64_t fd, int64_t max_bytes) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {
         nyx_array_push_tagged(out, 9 /* EBADF */, NYX_TAG_INT);
@@ -1729,7 +1729,7 @@ static int buffered_read_exact_result(int fd, nyx_conn_buf_t* cb, char* out, int
     return total;
 }
 
-nyx_array_t* nyx_tcp_read_exact_result(int64_t fd, int64_t n) {
+static nyx_array_t* nyx_tcp_read_exact_result_native(int64_t fd, int64_t n) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {
         nyx_array_push_tagged(out, 9 /* EBADF */, NYX_TAG_INT);
@@ -1780,13 +1780,13 @@ nyx_array_t* nyx_tcp_read_exact_result(int64_t fd, int64_t n) {
     return out;
 }
 
-int64_t nyx_tcp_shutdown_result(int64_t fd, int64_t how) {
+static int64_t nyx_tcp_shutdown_result_native(int64_t fd, int64_t how) {
     if (fd < 0) return -9; // EBADF
     int rc = os_sock_shutdown(fd, how);
     return rc < 0 ? rc : 0; // ya es -errno en fallo
 }
 
-int64_t nyx_tcp_set_timeout_result(int64_t fd, int64_t seconds) {
+static int64_t nyx_tcp_set_timeout_result_native(int64_t fd, int64_t seconds) {
     if (fd < 0) return -9; // EBADF
     int rc = os_sock_set_timeout(fd, seconds);
     return rc < 0 ? rc : 0; // ya es -errno en fallo
@@ -1799,7 +1799,7 @@ int64_t nyx_tcp_set_timeout_result(int64_t fd, int64_t seconds) {
 // de las conexiones SALIENTES de cualquier proceso, y chocan con ellas
 // (medido 2026-09-13, test_net_result.c). Éxito = puerto (>= 0: 0 si el socket
 // todavía no tiene dirección local), fallo = -errno.
-int64_t nyx_local_port_result(int64_t fd) {
+static int64_t nyx_local_port_result_native(int64_t fd) {
     if (fd < 0) return -9; // EBADF
     os_addr_t addr;
     int rc = os_sock_local(fd, &addr);
@@ -1807,7 +1807,7 @@ int64_t nyx_local_port_result(int64_t fd) {
     return (int64_t)os_addr_port(&addr);
 }
 
-nyx_array_t* nyx_getpeername_result(int64_t fd) {
+static nyx_array_t* nyx_getpeername_result_native(int64_t fd) {
     nyx_array_t* out = nyx_array_new(2);
     if (fd < 0) {
         nyx_array_push_tagged(out, 9 /* EBADF */, NYX_TAG_INT);
@@ -1828,7 +1828,7 @@ nyx_array_t* nyx_getpeername_result(int64_t fd) {
     return out;
 }
 
-nyx_array_t* nyx_resolve_ptr_result(nyx_string* ip) {
+static nyx_array_t* nyx_resolve_ptr_result_native(nyx_string* ip) {
     nyx_array_t* out = nyx_array_new(2);
     if (!ip || !ip->data) {
         nyx_array_push_tagged(out, 22 /* EINVAL */, NYX_TAG_INT);
@@ -1851,7 +1851,7 @@ nyx_array_t* nyx_resolve_ptr_result(nyx_string* ip) {
         // OS_RES_OTHER -- mismo mapeo estable 113 (EHOSTUNREACH) que
         // nyx_resolve_result usa para "no resuelve" (documentado en el
         // plan; el *kind* Nyx "not_found" lo decide Task 2).
-        nyx_array_push_tagged(out, 113, NYX_TAG_INT);
+        nyx_array_push_tagged(out, EHOSTUNREACH, NYX_TAG_INT);   // nativo (net_code)
         nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
         return out;
     }
@@ -1860,3 +1860,59 @@ nyx_array_t* nyx_resolve_ptr_result(nyx_string* ip) {
     nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(host), NYX_TAG_STRING);
     return out;
 }
+
+// ============================================================================
+// Frontera con Nyx de la familia *_result — numeración canónica de e.code
+// (W4 Task 9, decisión de Ottavio 2026-09-30).
+//
+// ES: `e.code` en Nyx es el errno de LINUX en todas las plataformas
+// (os_errno_canon, nyx_os.h). Los cuerpos de arriba (*_native) trabajan con
+// el errno NATIVO —sus comparaciones contra -EINPROGRESS/-EAGAIN/-EINTR
+// tienen que ver el número de la plataforma— y la conversión pasa UNA sola
+// vez, acá, en la salida de cada función pública. Por eso los literales de
+// Linux que había adentro (113, 110) son ahora las macros nativas: un 113
+// literal convertido otra vez en win32 sería el EISCONN de MSVC. La
+// conversión no es idempotente fuera de Linux: ningún camino puede pasar dos
+// veces por net_code (nyx_tcp_connect_result delega en la PÚBLICA
+// nyx_tcp_connect_ms_result y por eso no se envuelve).
+// EN: Nyx boundary of the *_result family — e.code is Linux errno on every
+// platform. Bodies (*_native) keep NATIVE errno; the conversion happens ONCE,
+// here, on each public function's way out. Not idempotent off Linux: no path
+// may cross net_code twice.
+// ============================================================================
+
+// Retorno entero: >= 0 es éxito (fd, bytes, puerto) y no se toca; < 0 es -errno.
+static int64_t net_code(int64_t rc) {
+    if (rc >= 0) return rc;
+    return -(int64_t)os_errno_canon((int)(-rc));
+}
+// Array [código, dato]: el código viaja con signo según la función (positivo
+// en la mayoría, -errno en read_timed) y 0 / NYX_NET_EOF no son errno.
+static nyx_array_t* net_code_arr(nyx_array_t* out) {
+    if (!out || out->length < 1) return out;
+    int64_t c = nyx_array_get(out, 0);
+    if (c == 0 || c == NYX_NET_EOF) return out;
+    int64_t canon = c < 0 ? -(int64_t)os_errno_canon((int)(-c)) : (int64_t)os_errno_canon((int)c);
+    if (canon != c) nyx_array_set_tagged(out, 0, canon, NYX_TAG_INT);
+    return out;
+}
+
+int64_t nyx_tcp_listen_result(nyx_string* host, int64_t port) { return net_code(nyx_tcp_listen_result_native(host, port)); }
+int64_t nyx_tcp_connect_ms_result(nyx_string* host, int64_t port, int64_t timeout_ms) { return net_code(nyx_tcp_connect_ms_result_native(host, port, timeout_ms)); }
+int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) { return net_code(nyx_udp_bind_result_native(host, port)); }
+int64_t nyx_tcp_accept_result(int64_t listen_fd) { return net_code(nyx_tcp_accept_result_native(listen_fd)); }
+int64_t nyx_tcp_write_result(int64_t fd, nyx_string* data) { return net_code(nyx_tcp_write_result_native(fd, data)); }
+int64_t nyx_udp_sendto_result(int64_t fd, nyx_string* data, nyx_string* host, int64_t port) { return net_code(nyx_udp_sendto_result_native(fd, data, host, port)); }
+int64_t nyx_tcp_shutdown_result(int64_t fd, int64_t how) { return net_code(nyx_tcp_shutdown_result_native(fd, how)); }
+int64_t nyx_tcp_set_timeout_result(int64_t fd, int64_t seconds) { return net_code(nyx_tcp_set_timeout_result_native(fd, seconds)); }
+int64_t nyx_local_port_result(int64_t fd) { return net_code(nyx_local_port_result_native(fd)); }
+
+nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t timeout_ms) { return net_code_arr(nyx_tcp_read_timed_result_native(fd, max_bytes, timeout_ms)); }
+nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes) { return net_code_arr(nyx_tcp_read_result_native(fd, max_bytes)); }
+nyx_array_t* nyx_udp_recvfrom_result(int64_t fd, int64_t max_bytes) { return net_code_arr(nyx_udp_recvfrom_result_native(fd, max_bytes)); }
+nyx_array_t* nyx_resolve_result(nyx_string* host) { return net_code_arr(nyx_resolve_result_native(host)); }
+nyx_array_t* nyx_tcp_read_line_result(int64_t fd) { return net_code_arr(nyx_tcp_read_line_result_native(fd)); }
+nyx_array_t* nyx_tcp_read_partial_result(int64_t fd, int64_t max_bytes) { return net_code_arr(nyx_tcp_read_partial_result_native(fd, max_bytes)); }
+nyx_array_t* nyx_tcp_read_exact_result(int64_t fd, int64_t n) { return net_code_arr(nyx_tcp_read_exact_result_native(fd, n)); }
+nyx_array_t* nyx_getpeername_result(int64_t fd) { return net_code_arr(nyx_getpeername_result_native(fd)); }
+nyx_array_t* nyx_resolve_ptr_result(nyx_string* ip) { return net_code_arr(nyx_resolve_ptr_result_native(ip)); }

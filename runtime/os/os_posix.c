@@ -696,6 +696,19 @@ int os_inet_ntop6(const unsigned char* bytes16, char* buf, int buflen) {
     return inet_ntop(AF_INET6, bytes16, buf, (socklen_t)buflen) ? 0 : -errno;
 }
 
+// Numeración canónica de e.code (W4 Task 9, contrato en nyx_os.h). En Linux
+// es identidad literal: no se pasa por la tabla, así el camino que ya estaba
+// verde no cambia ni en un ciclo. macOS/BSD usan la tabla por nombre.
+// EN: canonical e.code numbering — literal identity on Linux.
+#include "errno_canon.h"
+int os_errno_canon(int e) {
+#if defined(__linux__)
+    return e;
+#else
+    return e <= 0 ? e : nyx_errno_canon_table(e);
+#endif
+}
+
 // --- os_ev: eventos de E/S completion-style / completion-style I/O events (W1 inc 4)
 //
 // ES: adaptado 1:1 de tests/spikes/w1-evloop/os_ev_epoll.c (código VALIDADO del

@@ -314,6 +314,18 @@ int64_t os_net_ifaces4(void (*cb)(const char* name, const char* ip,
 // SANs in tls.c — ASN.1 data formatting, NOT socket I/O). 0 / -errno.
 int     os_inet_ntop6(const unsigned char* bytes16, char* buf, int buflen);
 
+// ES: errno de ESTA plataforma (positivo) -> el mismo error con la numeración
+// de LINUX, que es el espacio canónico de `e.code` en Nyx (decisión de
+// Ottavio, W4 Task 9): std/error.nx clasifica con esos números y los
+// expected/ de los tests los imprimen. Identidad en Linux; en la CRT de MSVC,
+// macOS y WASI difiere desde el 35 en adelante (1-34 coinciden, medido).
+// Se aplica SOLO en la frontera con Nyx (las funciones *_result de net.c):
+// adentro del runtime las comparaciones contra EINPROGRESS/EAGAIN/... siguen
+// viendo el número nativo. e <= 0 sale igual; un errno sin nombre conocido
+// también. / platform errno -> Linux numbering (Nyx's canonical e.code
+// space). Identity on Linux. Apply ONLY at the Nyx boundary.
+int     os_errno_canon(int e);
+
 // --- Procesos / Processes (dominio 5, spec §3.5).
 // ES: SOLO lo que los callers internos medidos usan — exec()/exec_code()
 // de runtime.c (popen/system). La forma spawn-style completa

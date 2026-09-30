@@ -1447,6 +1447,15 @@ int os_inet_ntop6(const unsigned char* bytes16, char* buf, int buflen) {
     return inet_ntop(AF_INET6, bytes16, buf, (size_t)buflen) ? 0 : wsa_last();
 }
 
+// Numeración canónica de e.code (W4 Task 9, contrato en nyx_os.h): la CRT de
+// MSVC numera distinto desde el 35 (ECONNREFUSED 107 en vez de 111,
+// EHOSTUNREACH 110 — que en Linux es ETIMEDOUT). Tabla por nombre simbólico.
+// EN: canonical e.code numbering — the MSVC CRT differs from 35 up.
+#include "errno_canon.h"
+int os_errno_canon(int e) {
+    return e <= 0 ? e : nyx_errno_canon_table(e);
+}
+
 // ===========================================================================
 // os_ev — W4 (IOCP nativo: CreateIoCompletionPort/GetQueuedCompletionStatus,
 // completion de verdad en vez de la emulación sobre readiness de epoll).

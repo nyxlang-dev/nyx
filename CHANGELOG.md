@@ -86,6 +86,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   invalidan solos (la huella incluye el compilador). Las claves siguen como `char*`: una clave con un
   byte 0 se corta (límite conocido). Regresión: `test-469`, un caso por camino.
 
+- **`e.code` con la numeración de errno de Linux en todas las plataformas** `[arco: w4-windows]`.
+  La CRT de MSVC numera distinto desde el 35 (y el 26): `ECONNREFUSED` 107 en vez de 111, y hay
+  colisiones que clasificaban mal —un host inalcanzable en Windows salía como `timeout`—. Nueva
+  `os_errno_canon` (`runtime/os/errno_canon.h`, tabla por nombre simbólico, identidad en Linux) en un
+  solo punto de la frontera de `net.c`: las 18 funciones `*_result` pasan a envoltorios de su cuerpo
+  `*_native`, que sigue viendo el número nativo. `test-374` pasa en Windows; suite de runtime nueva
+  `test_os_errno_canon.c`. Implementado y medido en la laptop Windows (W4 Task 9).
+
 - **Lectura y escritura de sockets nativas sobre IOCP en Windows** `[arco: w4-windows]`.
   `os_ev_read`/`os_ev_write`/`os_ev_cancel` de win32 dejan de ser `-ENOSYS`, sin cambiar el contrato
   de `os_ev`: el read es un `WSARecv` de cero bytes más un `recv` no bloqueante al completarse (el

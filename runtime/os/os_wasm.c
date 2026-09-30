@@ -164,6 +164,11 @@ int     os_sock_poll1(int64_t fd, int events, int timeout_ms) { (void)fd; (void)
 int64_t os_net_ifaces4(void (*cb)(const char* name, const char* ip, const char* mask, void* ud), void* ud) { (void)cb; (void)ud; return -ENOSYS; }
 int     os_inet_ntop6(const unsigned char* bytes16, char* buf, int buflen) { (void)bytes16; (void)buf; (void)buflen; return -ENOSYS; }
 
+// Numeración canónica de e.code (W4 Task 9, contrato en nyx_os.h): WASI
+// numera todo distinto de Linux; la tabla va por nombre simbólico.
+#include "errno_canon.h"
+int     os_errno_canon(int e) { return e <= 0 ? e : nyx_errno_canon_table(e); }
+
 // --- Procesos (W1 inc 5) -- WASI no tiene shell ni popen/system: hereda el
 // contrato EXACTO que runtime.c le daba a exec()/exec_code() bajo su viejo
 // #ifdef __wasi__ (ahora muerto): run_capture nunca llama a cb y devuelve -1
