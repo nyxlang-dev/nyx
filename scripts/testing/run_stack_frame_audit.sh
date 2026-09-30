@@ -48,13 +48,17 @@ cd "$ROOT" || exit 1
 #     push_tagged; en -O0 eso es una ranura más de 8 B (16 con alineación) en toda función
 #     que arma `[x, [..]]`, y estas dos las arman. 0,003 % del marco; la mitad (2) de la
 #     guarda —la expresión larga con 8 MB— no se movió. Decisión de Ottavio: taguear.
+#   2026-09-30 map-indexar: codegen_method_call 474928 → 473712 (-1216, BAJA). El `get`
+#     escalar de un Map (con el bitcast del float nuevo) salió a emit_map_get_escalar: sus
+#     dos copias adentro quedaron en dos llamadas. La primera versión, con el bitcast en
+#     línea, la subía +2144 y esta guarda la paró.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14496
     [codegen_binop]=8544
     [codegen_binop_logico]=21680
     [codegen_call_expr]=470272
-    [codegen_method_call]=474928
+    [codegen_method_call]=473712
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
 TECHO_NIVEL=23040

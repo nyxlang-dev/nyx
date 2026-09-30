@@ -815,6 +815,10 @@ no-ops that ignored the extra argument.
 | `remove(k)` | 1 | — | **only on a local Map var, NOT on a field** (see warning) |
 | `clear()` | 0 | — | — |
 
+**Indexing**: `m[k]` is `m.get(k)` (aborts if missing, same as `get`) and `m[k] = v` is
+`m.insert(k, v)` — on local, global, parameter and struct-field Maps (since 2026-09-30; before it
+failed to link). A `Map<String, float>` reads back the float (before, `get` returned its bits as an int).
+
 **Warning**: Nested Maps work when the value being inserted is a tracked local
 `Map` variable or an inline map-literal (`outer.insert("i", inner)` with
 `let inner: Map = {...}`, or `outer.insert("i", {"k": "v"})`) — `outer.get("i")`

@@ -1,4 +1,4 @@
-// Maps: Map.new(), insert, get, has, size, iterar con keys()
+// Maps: Map.new(), insert, get, has, size, m[k], iterar con keys()
 
 // bool -> texto: int_to_string() espera un int y un bool no se convierte solo,
 // así que la conversión se escribe explícita.
@@ -35,6 +35,18 @@ fn main() -> int {
         let clave: String = k
         print("  " + clave)
     }
+
+    // Indexar: m[k] es m.get(k) (aborta si falta) y m[k] = v es m.insert(k, v).
+    // El patrón contador, con un Map tipado:
+    var cuenta: Map<String, int> = Map.new()
+    for palabra: String in ["sol", "mar", "sol"] {
+        if cuenta.has(palabra) {
+            cuenta[palabra] = cuenta[palabra] + 1
+        } else {
+            cuenta[palabra] = 1
+        }
+    }
+    print("sol aparece " + int_to_string(cuenta["sol"]) + " veces")
 
     return 0
 }

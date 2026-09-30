@@ -4967,7 +4967,7 @@ then418:
   %2128 = load %nyx_string*, %nyx_string** %2005
   %2129 = load %nyx_string*, %nyx_string** %2036
   %2130 = call i8* @nyx_string_to_cstr(%nyx_string* %2128)
-  %2131 = call i8* @nyx_string_to_cstr(%nyx_string* %2129)
+  %2131 = bitcast %nyx_string* %2129 to i8*
   call void @nyx_map_insert_str(i8* %2127, i8* %2130, i8* %2131)
   br label %merge420
 else419:
@@ -5368,7 +5368,7 @@ then438:
   %2397 = load %nyx_string*, %nyx_string** %2371
   %2398 = load %nyx_string*, %nyx_string** %2361
   %2399 = call i8* @nyx_string_to_cstr(%nyx_string* %2397)
-  %2400 = call i8* @nyx_string_to_cstr(%nyx_string* %2398)
+  %2400 = bitcast %nyx_string* %2398 to i8*
   call void @nyx_map_insert_str(i8* %2396, i8* %2399, i8* %2400)
   br label %merge440
 else439:
@@ -5598,7 +5598,7 @@ then459:
   %2563 = load %nyx_string*, %nyx_string** %2549
   %2564 = load %nyx_string*, %nyx_string** %2494
   %2565 = call i8* @nyx_string_to_cstr(%nyx_string* %2563)
-  %2566 = call i8* @nyx_string_to_cstr(%nyx_string* %2564)
+  %2566 = bitcast %nyx_string* %2564 to i8*
   call void @nyx_map_insert_str(i8* %2562, i8* %2565, i8* %2566)
   br label %merge461
 else460:
@@ -5614,7 +5614,7 @@ then462:
   %2572 = load %nyx_string*, %nyx_string** %2545
   %2573 = load %nyx_string*, %nyx_string** %2494
   %2574 = call i8* @nyx_string_to_cstr(%nyx_string* %2572)
-  %2575 = call i8* @nyx_string_to_cstr(%nyx_string* %2573)
+  %2575 = bitcast %nyx_string* %2573 to i8*
   call void @nyx_map_insert_str(i8* %2571, i8* %2574, i8* %2575)
   %2576 = alloca i1
   store i1 false, i1* %2576
@@ -5637,7 +5637,7 @@ then467:
   %2586 = load %nyx_string*, %nyx_string** %2553
   %2587 = load %nyx_string*, %nyx_string** %2494
   %2588 = call i8* @nyx_string_to_cstr(%nyx_string* %2586)
-  %2589 = call i8* @nyx_string_to_cstr(%nyx_string* %2587)
+  %2589 = bitcast %nyx_string* %2587 to i8*
   call void @nyx_map_insert_str(i8* %2585, i8* %2588, i8* %2589)
   br label %merge469
 else468:
@@ -5649,7 +5649,7 @@ else463:
   %2591 = load %nyx_string*, %nyx_string** %2545
   %2592 = load %nyx_string*, %nyx_string** %2494
   %2593 = call i8* @nyx_string_to_cstr(%nyx_string* %2591)
-  %2594 = call i8* @nyx_string_to_cstr(%nyx_string* %2592)
+  %2594 = bitcast %nyx_string* %2592 to i8*
   call void @nyx_map_insert_str(i8* %2590, i8* %2593, i8* %2594)
   br label %merge464
 merge464:

@@ -1,0 +1,80 @@
+// test-470 — `m[k]` y `m[k] = v` sobre un Map son `m.get(k)` y `m.insert(k, v)`.
+//
+// POR QUÉ EXISTE (2026-09-30): la indexación de un Map no estaba implementada ni
+// para leer ni para escribir, y el checker no la rechazaba: caía al camino de
+// Array con una clave String como índice y el programa no ENLAZABA («defined with
+// type 'ptr' but expected 'i64'»), reportado como bug del compilador. Lo
+// encontraron dos agentes escribiendo std/expr y std/serve, que la usaron sin
+// dudar: es lo que escribe cualquiera que venga de Python o JavaScript. Ahora el
+// codegen arma el method_call y usa el mismo camino que insert/get. De paso: un
+// Map<String, float> devolvía los BITS del double convertidos a entero (1.5 →
+// 4.6e18, sin error); ahora get y get_or los reinterpretan (bitcast).
+
+struct Registro {
+    datos: Map<String, String>,
+}
+
+fn main() -> int {
+    // Map<String, String>: escribir, leer, pisar.
+    var s: Map<String, String> = Map.new()
+    s["nombre"] = "Ñandú"
+    s["ciudad"] = "Caracas"
+    s["ciudad"] = "Maracay"
+    let n: String = s["nombre"]
+    let c: String = s["ciudad"]
+    if n != "Ñandú" or c != "Maracay" { return 1 }
+    if s.get("nombre") != "Ñandú" { return 2 }
+    if s.size() != 2 { return 3 }
+
+    // Map<String, int>: el patrón contador.
+    var cuenta: Map<String, int> = Map.new()
+    let palabras: Array = ["a", "b", "a", "c", "a", "b"]
+    for p: String in palabras {
+        if cuenta.contains(p) {
+            let actual: int = cuenta[p]
+            cuenta[p] = actual + 1
+        } else {
+            cuenta[p] = 1
+        }
+    }
+    let ca: int = cuenta["a"]
+    let cb: int = cuenta["b"]
+    let cc: int = cuenta["c"]
+    if ca != 3 or cb != 2 or cc != 1 { return 4 }
+
+    // Map<String, float>: el caso con el que se encontró.
+    var precios: Map<String, float> = Map.new()
+    precios["pan"] = 1.5
+    precios["leche"] = 2.25
+    let total: float = precios["pan"] + precios["leche"]
+    if total != 3.75 { return 5 }
+    // La forma por método también reinterpreta los bits (antes daba 4.6e18).
+    let pm: float = precios.get("pan")
+    if pm != 1.5 { return 9 }
+    let pd: float = precios.get_or("azucar", 0.5)
+    if pd != 0.5 { return 10 }
+    let pl: float = precios.get_or("leche", 0.5)
+    if pl != 2.25 { return 11 }
+
+    // Map sin tipo, con clave en una variable.
+    var u: Map = Map.new()
+    let clave: String = "x"
+    u[clave] = "valor"
+    let uv: String = u[clave]
+    if uv != "valor" { return 6 }
+
+    // Un valor con byte 0 viaja entero también por la indexación.
+    let bin: String = "a" + chr(0) + "b"
+    s["bin"] = bin
+    let b2: String = s["bin"]
+    if b2.length() != 3 { return 7 }
+
+    // Campo de struct.
+    var r: Registro = Registro { datos: Map.new() }
+    r.datos["k"] = "v"
+    let rv: String = r.datos["k"]
+    if rv != "v" { return 8 }
+
+    println("map indexar ok " + int_to_string(ca) + " " + n)
+    return 0
+}

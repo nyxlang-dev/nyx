@@ -57,6 +57,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`m[k]` y `m[k] = v` sobre un `Map`.** La indexación de un `Map` no estaba implementada: caía al
+  camino de Array con una clave String como índice y el programa no enlazaba (`defined with type 'ptr'
+  but expected 'i64'`), también como argumento (`nums.push(m["a"])`) y en una concatenación
+  (`"x" + m["k"]`). Ahora el codegen la reescribe a `get`/`insert`, sobre `Map` locales, globales,
+  parámetros y campos de struct. Dos fallas más salieron al probarlo: el tipo de valor de un
+  `Map<String, int>` se deducía del primer argumento de tipo (la clave), y un `Map<String, float>`
+  devolvía los **bits** del double como entero (1.5 → 4.6e18, sin error) en `get` y `get_or`; ahora
+  se reinterpretan con `bitcast`. Cierra tres fichas de TASKS. Regresión: `test-470`; receta 06.
+
 - **Los valores String de un `Map` se guardan enteros.** El codegen guardaba un String en un `Map`
   como `char*` y lo leía con `strlen`. Cuatro fallas con esa raíz: un valor con un byte 0 (gzip, hash
   crudo, imagen) volvía **cortado sin error** —el caché de gzip de `std/serve` recibía 3 bytes—;
