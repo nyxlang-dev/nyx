@@ -1,0 +1,57 @@
+// test-471 — un elemento de un Array sin tipo, a un campo o comparado con un String.
+//
+// POR QUÉ EXISTE (fricción nyxerp 20260930-040018): `s = xs[i]` construía, pero
+// `c.nombre = xs[i]` guardaba el i64 opaco del elemento directo en el campo
+// `%nyx_string*`, y `f != xs[0]` (el elemento a la DERECHA) se lo pasaba crudo a
+// nyx_string_equals. Los dos daban IR inválido que solo clang rechazaba, con
+// `nyx check` en verde. Ahora la asignación a campo convierte con el mismo
+// código que la asignación a variable (valor_para_store), y `==`/`!=` convierten
+// el lado opaco sea cual sea.
+
+struct Caja {
+    nombre: String,
+    n: int,
+}
+
+struct Envoltura {
+    caja: Caja,
+}
+
+fn main() -> int {
+    var xs: Array = []
+    xs.push("a")
+    xs.push("b")
+
+    // Campo String, directo y por cadena.
+    var c: Caja = Caja { nombre: "", n: 0 }
+    c.nombre = xs[xs.length() - 1]
+    if c.nombre != "b" { return 1 }
+    var e: Envoltura = Envoltura { caja: Caja { nombre: "", n: 0 } }
+    e.caja.nombre = xs[0]
+    if e.caja.nombre != "a" { return 2 }
+
+    // Comparar, con el elemento a cada lado.
+    let f: String = "b"
+    if not (xs[xs.length() - 1] == f) { return 3 }
+    if not (f == xs[1]) { return 4 }
+    if not (f != xs[0]) { return 5 }
+    if not (xs[0] != f) { return 6 }
+    if xs.length() > 0 and xs[xs.length() - 1] == f { c.n = 1 }
+    if c.n != 1 { return 7 }
+
+    // Campo int desde un Array sin tipo de enteros.
+    var ns: Array = []
+    ns.push(41)
+    c.n = ns[0]
+    c.n = c.n + 1
+    if c.n != 42 { return 8 }
+
+    // Campo struct desde un Array sin tipo de structs.
+    var cajas: Array = []
+    cajas.push(Caja { nombre: "z", n: 7 })
+    e.caja = cajas[0]
+    if e.caja.nombre != "z" or e.caja.n != 7 { return 9 }
+
+    println("elemento opaco a campo ok " + c.nombre + e.caja.nombre + int_to_string(c.n))
+    return 0
+}

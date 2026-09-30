@@ -57,6 +57,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Un elemento de un `Array` sin tipo, asignado a un campo o comparado con un String.**
+  `c.nombre = xs[i]` guardaba el entero opaco del elemento directo en el campo, y `f != xs[0]` (el
+  elemento a la derecha) se lo pasaba crudo a la comparación: IR inválido que solo clang rechazaba,
+  con `nyx check` en verde, mientras `s = xs[i]` y `xs[0] == f` sí construían. La asignación a campo
+  convierte ahora con el mismo código que la asignación a variable (también un campo int, float o
+  struct), y `==`/`!=` convierten el lado opaco esté donde esté. Fricción nyxerp 20260930-040018.
+  Regresión: `test-471`.
+
 - **`m[k]` y `m[k] = v` sobre un `Map`.** La indexación de un `Map` no estaba implementada: caía al
   camino de Array con una clave String como índice y el programa no enlazaba (`defined with type 'ptr'
   but expected 'i64'`), también como argumento (`nums.push(m["a"])`) y en una concatenación
