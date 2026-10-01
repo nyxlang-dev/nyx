@@ -31,13 +31,15 @@ source "$AQUI/lib_voseo.sh"
 # ── Autotest del instrumento (primero: sin esto, verde no prueba nada) ──
 AUTO_OK=1
 n="$(printf '%s\n' '> Completá las secciones.' 'Corré la suite otra vez' 'y después CHEQUEÁ el log' \
+    'Sos el dueño' 'si sos admin' \
     | voseo_filter | wc -l)"
-if [ "$n" -ne 3 ]; then
-    echo "  ✗ autotest ROTO — «Completá», «Corré» y «CHEQUEÁ» dieron $n hit(s), se esperaban 3"
+if [ "$n" -ne 5 ]; then
+    echo "  ✗ autotest ROTO — «Completá», «Corré», «CHEQUEÁ», «Sos» y «sos» dieron $n hit(s), se esperaban 5"
     AUTO_OK=0
 fi
 n="$(printf '%s\n' 'Está acá y allá; quizá lo hará o podrá, ESTÁ ACÁ' \
     'lo probé y lo importé ayer' '> Completa las secciones.' \
+    'el encabezado SOS del JPEG' \
     | voseo_filter | wc -l)"
 if [ "$n" -ne 0 ]; then
     echo "  ✗ autotest ROTO — $n falso(s) positivo(s) sobre español neutro"

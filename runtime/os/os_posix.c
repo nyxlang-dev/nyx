@@ -11,7 +11,27 @@
 #include <string.h>
 #include <sched.h>            // sched_yield() para os_yield
 #include <sys/mman.h>         // mmap/mprotect/munmap para os_vm_* (W1 inc 2)
+// ES: cambio de contexto propio en ensamblador aarch64 (NYX_OS_CTX_ASM=1) en lugar de
+// getcontext/makecontext/swapcontext. Por defecto en aarch64 con Linux (Android incluido):
+// bionic no trae esas tres funciones, y en glibc swapcontext hace un rt_sigprocmask por
+// cambio — medido 2026-09-30: ~2230 ns por yield con ucontext contra ~175 ns en asm, con la
+// suite de runtime y 23 programas de goroutines iguales (decisión de Ottavio). Fuera de
+// aarch64, y en macOS (el asm usa directivas ELF), sigue ucontext; -DNYX_OS_CTX_ASM=0 lo
+// fuerza. EN: own aarch64 assembly context switch instead of ucontext; default on aarch64
+// Linux/Android (~12x faster than glibc swapcontext, which does a syscall per switch).
+#ifndef NYX_OS_CTX_ASM
+#  if defined(__aarch64__) && (defined(__linux__) || defined(__ANDROID__))
+#    define NYX_OS_CTX_ASM 1
+#  else
+#    define NYX_OS_CTX_ASM 0
+#  endif
+#endif
+#if NYX_OS_CTX_ASM && !defined(__aarch64__)
+#  error "NYX_OS_CTX_ASM=1 solo esta implementado para aarch64 / only implemented for aarch64"
+#endif
+#if !NYX_OS_CTX_ASM
 #include <ucontext.h>         // getcontext/makecontext/swapcontext para os_ctx_* (W1 inc 2)
+#endif
 #include <unistd.h>           // close/read/write/isatty/fsync/fdatasync/STDIN_FILENO (os_fd_*/os_term_*)
 #include <sys/socket.h>       // socket/bind/listen/accept/send/recv/setsockopt/getsockopt (os_sock_*)
 #include <netinet/in.h>       // struct sockaddr_in
@@ -55,6 +75,104 @@ _Static_assert(sizeof(pthread_key_t)    <= sizeof(os_tls_key_t),"os_tls_key_t st
 #define T(t) ((pthread_t*)(t)->storage)
 #define K(k) ((pthread_key_t*)(k)->storage)
 
+#ifdef __ANDROID__
+// ES: bionic NO trae pthread_timedjoin_np ni pthread_cancel (la cancelación de hilos no está
+// implementada en bionic). Alternativa cooperativa, solo Android: el storage de os_thread_t
+// (8 bytes) guarda un puntero a un registro `athr` con mutex+cond+bandera "terminó". El
+// wrapper de arranque marca `done` y despierta; timedjoin espera esa condición con plazo y
+// luego hace el pthread_join (ya no bloquea). Tras un timedjoin/join exitoso el registro se
+// libera y el handle queda en 0: un segundo join da -EINVAL (en glibc sería UB).
+// Cancelación: bandera cooperativa `cancel_req` (consultable con os_thread_cancel_requested);
+// NO mata el hilo — el contrato de nyx_os.h ya dice «best-effort», el hilo termina cuando su
+// función retorna. No se usa señal: sin handler instalado una señal mataría el proceso.
+// EN: bionic lacks pthread_timedjoin_np and pthread_cancel. Android-only cooperative
+// replacement: os_thread_t storage holds a pointer to an `athr` record (mutex+cond+done flag).
+// The start wrapper sets `done` and wakes waiters; timedjoin waits on it with a deadline, then
+// pthread_join (which no longer blocks). After a successful join the record is freed and the
+// handle zeroed (a second join -> -EINVAL). Cancel = cooperative flag, does not kill the thread
+// (contract is best-effort); no signal, since one with no handler would kill the process.
+// (GC_MALLOC_UNCOLLECTABLE: el registro guarda fn/arg, que Boehm debe seguir viendo.)
+typedef struct {
+    pthread_t th;
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    int done, detached, cancel_req;
+    os_thread_fn fn;
+    void* arg;
+} athr_t;
+static OS_THREAD_LOCAL athr_t* g_athr_self;
+#define AT(t) (*(athr_t**)(t)->storage)
+
+static void* athr_start(void* p) {
+    athr_t* r = (athr_t*)p;
+    g_athr_self = r;
+    r->fn(r->arg);
+    pthread_mutex_lock(&r->mu);
+    r->done = 1;
+    int free_me = r->detached;
+    pthread_cond_broadcast(&r->cv);
+    pthread_mutex_unlock(&r->mu);
+    if (free_me) GC_FREE(r);
+    return NULL;
+}
+static void athr_free(os_thread_t* t, athr_t* r) {
+    pthread_mutex_destroy(&r->mu); pthread_cond_destroy(&r->cv);
+    GC_FREE(r); t->storage[0] = 0;
+}
+// Consulta cooperativa desde el propio hilo / cooperative check from the thread itself.
+int os_thread_cancel_requested(void) {
+    athr_t* r = g_athr_self;
+    return r ? __atomic_load_n(&r->cancel_req, __ATOMIC_RELAXED) : 0;
+}
+int  os_thread_create(os_thread_t* t, os_thread_fn fn, void* arg) {
+    athr_t* r = (athr_t*)GC_MALLOC_UNCOLLECTABLE(sizeof(athr_t));   // ya en cero / zeroed
+    if (!r) return -ENOMEM;
+    pthread_mutex_init(&r->mu, NULL); pthread_cond_init(&r->cv, NULL);
+    r->fn = fn; r->arg = arg;
+    int rc = pthread_create(&r->th, NULL, athr_start, r);
+    if (rc) { pthread_mutex_destroy(&r->mu); pthread_cond_destroy(&r->cv); GC_FREE(r); return -rc; }
+    t->storage[0] = (uint64_t)(uintptr_t)r;
+    return 0;
+}
+int  os_thread_join(os_thread_t* t) {
+    athr_t* r = AT(t); if (!r) return -EINVAL;
+    int rc = pthread_join(r->th, NULL);
+    if (rc == 0) athr_free(t, r);
+    return rc ? -rc : 0;
+}
+int  os_thread_timedjoin(os_thread_t* t, int64_t ms) {
+    athr_t* r = AT(t); if (!r) return -EINVAL;
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);   // pthread_cond_timedwait por defecto usa REALTIME
+    ts.tv_sec += ms / 1000; ts.tv_nsec += (ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+    pthread_mutex_lock(&r->mu);
+    int rc = 0;
+    while (!r->done && rc == 0) rc = pthread_cond_timedwait(&r->cv, &r->mu, &ts);
+    int done = r->done;
+    pthread_mutex_unlock(&r->mu);
+    if (!done) return rc == ETIMEDOUT ? -ETIMEDOUT : -rc;
+    rc = pthread_join(r->th, NULL);
+    if (rc == 0) athr_free(t, r);
+    return rc ? -rc : 0;
+}
+int  os_thread_detach(os_thread_t* t) {
+    athr_t* r = AT(t); if (!r) return -EINVAL;
+    int rc = pthread_detach(r->th);
+    if (rc) return -rc;
+    pthread_mutex_lock(&r->mu);
+    int already = r->done;
+    r->detached = 1;
+    pthread_mutex_unlock(&r->mu);
+    t->storage[0] = 0;
+    if (already) athr_free(t, r);   // el hilo ya no toca r / thread no longer touches r
+    return 0;
+}
+int  os_thread_cancel(os_thread_t* t) {
+    athr_t* r = AT(t); if (!r) return -ESRCH;
+    __atomic_store_n(&r->cancel_req, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+#else
 int  os_thread_create(os_thread_t* t, os_thread_fn fn, void* arg) { int rc = pthread_create(T(t), NULL, fn, arg); return rc ? -rc : 0; }
 int  os_thread_join(os_thread_t* t) { int rc = pthread_join(*T(t), NULL); return rc ? -rc : 0; }
 int  os_thread_timedjoin(os_thread_t* t, int64_t ms) {
@@ -74,6 +192,8 @@ int  os_thread_detach(os_thread_t* t) { int rc = pthread_detach(*T(t)); return r
 // EN: best-effort async cancellation: pthread_cancel only requests it — the thread may
 // take a while to die (or never, if it hits no cancellation point) — full contract in nyx_os.h.
 int  os_thread_cancel(os_thread_t* t) { int rc = pthread_cancel(*T(t)); return rc ? -rc : 0; }
+
+#endif  // __ANDROID__
 
 void os_yield(void) { sched_yield(); }
 
@@ -176,8 +296,83 @@ int os_vm_release(void* base, size_t size) {
 // después. / The opaque storage holds the native ucontext_t FIRST (inheriting
 // os_ctx_t's _Alignas(16), required by glibc aarch64) and the stack-ownership
 // fields after it.
+#if NYX_OS_CTX_ASM
+// ES: registro de contexto propio (aarch64 AAPCS64): solo lo callee-saved. x18 (registro de
+// plataforma; en Android lo usa el Shadow Call Stack) NO se toca. 176 bytes, sin punteros
+// auto-referenciales: un ctx dormido se puede copiar byte a byte (el pool del scheduler lo
+// hace) igual que con ucontext. Offsets fijos, los usa el ensamblador de abajo.
+// EN: own context record (AAPCS64 callee-saved only). x18 (platform register; Android's Shadow
+// Call Stack) is left alone. 176 bytes, no self-referential pointers, so a dormant ctx can be
+// copied byte-wise. Offsets are fixed: the assembly below relies on them.
 typedef struct {
+    uint64_t x19_x28[10];   //   0: x19..x28
+    uint64_t fp, lr;        //  80: x29, x30
+    uint64_t sp, _pad;      //  96
+    uint64_t d8_d15[8];     // 112: d8..d15 (parte baja de v8-v15 / low halves of v8-v15)
+} nyx_regs_t;
+_Static_assert(sizeof(nyx_regs_t) == 176, "nyx_regs_t layout (offsets del asm)");
+extern void nyx_ctx_swap_asm(nyx_regs_t* save, const nyx_regs_t* run);
+extern void nyx_ctx_boot_asm(void);
+
+// ES: `hint #34` (bti c) es NOP en CPUs sin BTI y satisface BTI donde se impone. Contrato:
+// swap guarda el estado en `save`, carga `run` y retorna a su lr. Un ctx nuevo tiene
+// lr=nyx_ctx_boot_asm, x19=entry, x20=arg, fp=0 (corta el unwinding): el boot llama entry(arg)
+// y, si retornara (no debe: goroutine_entry cede al scheduler para siempre), `brk`.
+// EN: `hint #34` (bti c) is a NOP without BTI. New ctx: lr=boot, x19=entry, x20=arg, fp=0
+// (terminates unwinding); boot traps if entry ever returns.
+__asm__(
+    ".text\n"
+    ".balign 16\n"
+    ".globl nyx_ctx_swap_asm\n"
+    ".hidden nyx_ctx_swap_asm\n"
+    ".type nyx_ctx_swap_asm,%function\n"
+    "nyx_ctx_swap_asm:\n"
+    "  hint #34\n"
+    "  stp x19, x20, [x0, #0]\n"
+    "  stp x21, x22, [x0, #16]\n"
+    "  stp x23, x24, [x0, #32]\n"
+    "  stp x25, x26, [x0, #48]\n"
+    "  stp x27, x28, [x0, #64]\n"
+    "  stp x29, x30, [x0, #80]\n"
+    "  mov x9, sp\n"
+    "  str x9, [x0, #96]\n"
+    "  stp d8,  d9,  [x0, #112]\n"
+    "  stp d10, d11, [x0, #128]\n"
+    "  stp d12, d13, [x0, #144]\n"
+    "  stp d14, d15, [x0, #160]\n"
+    "  ldp x19, x20, [x1, #0]\n"
+    "  ldp x21, x22, [x1, #16]\n"
+    "  ldp x23, x24, [x1, #32]\n"
+    "  ldp x25, x26, [x1, #48]\n"
+    "  ldp x27, x28, [x1, #64]\n"
+    "  ldp x29, x30, [x1, #80]\n"
+    "  ldr x9, [x1, #96]\n"
+    "  mov sp, x9\n"
+    "  ldp d8,  d9,  [x1, #112]\n"
+    "  ldp d10, d11, [x1, #128]\n"
+    "  ldp d12, d13, [x1, #144]\n"
+    "  ldp d14, d15, [x1, #160]\n"
+    "  ret\n"
+    ".size nyx_ctx_swap_asm, .-nyx_ctx_swap_asm\n"
+    ".balign 16\n"
+    ".globl nyx_ctx_boot_asm\n"
+    ".hidden nyx_ctx_boot_asm\n"
+    ".type nyx_ctx_boot_asm,%function\n"
+    "nyx_ctx_boot_asm:\n"
+    "  hint #34\n"
+    "  mov x0, x20\n"
+    "  blr x19\n"
+    "  brk #0x1\n"
+    ".size nyx_ctx_boot_asm, .-nyx_ctx_boot_asm\n"
+);
+#endif
+
+typedef struct {
+#if NYX_OS_CTX_ASM
+    nyx_regs_t regs;
+#else
     ucontext_t uc;
+#endif
     char*  map_base;    // base del mapeo COMPLETO (guard + útil) — para munmap
     size_t map_size;    // bytes mapeados en total
     char*  stack_lo;    // área útil (post-guard): lo que el ctx usa como stack
@@ -186,6 +381,7 @@ typedef struct {
     size_t guard_size;
 } os_ctx_posix_t;
 
+#if !NYX_OS_CTX_ASM
 _Static_assert(sizeof(ucontext_t) <= sizeof(((os_ctx_t*)0)->storage),
                "os_ctx_t storage < ucontext_t de esta libc / too small for this libc");
 // ctx v2: el storage tiene que alojar ucontext_t MÁS los 6 campos de
@@ -196,11 +392,16 @@ _Static_assert(sizeof(os_ctx_posix_t) <= sizeof(((os_ctx_t*)0)->storage),
                "os_ctx_t storage < ucontext_t + campos de stack (ctx v2) / too small for ctx v2");
 _Static_assert(_Alignof(os_ctx_t) >= _Alignof(ucontext_t),
                "os_ctx_t sub-alineado para esta libc / underaligned for this libc");
+#endif
 _Static_assert(_Alignof(os_ctx_t) >= _Alignof(os_ctx_posix_t),
                "os_ctx_t sub-alineado para el overlay ctx v2 / underaligned for the ctx v2 overlay");
 #define PCTX(c)  ((os_ctx_posix_t*)(c)->storage)
 #define PCTXC(c) ((const os_ctx_posix_t*)(c)->storage)
+#if NYX_OS_CTX_ASM
+#define CTX(c)   (&PCTX(c)->regs)
+#else
 #define CTX(c)   (&PCTX(c)->uc)
+#endif
 
 // ES: la guard NO puede ser de una sola página. Un frame más grande que una
 // página mueve SP por debajo de la guard sin tocarla nunca (stack clash
@@ -247,6 +448,7 @@ static size_t os_ctx_page_size(void) {
 // EN: makecontext only passes 32-bit ints → the trampoline reassembles BOTH
 // pointers (entry and arg) from 4 halves. Same hi/lo hack scheduler.c had
 // inline — it now lives here; the contract is entry(void*).
+#if !NYX_OS_CTX_ASM
 static void os_ctx_trampoline(uint32_t entry_hi, uint32_t entry_lo,
                               uint32_t arg_hi, uint32_t arg_lo) {
     void (*entry)(void*) = (void (*)(void*))
@@ -254,6 +456,7 @@ static void os_ctx_trampoline(uint32_t entry_hi, uint32_t entry_lo,
     void* arg = (void*)(((uintptr_t)arg_hi << 32) | (uintptr_t)arg_lo);
     entry(arg);
 }
+#endif
 
 // posix: no hay nada que convertir (cualquier thread puede swapcontext).
 // Existe por win32 (ConvertThreadToFiber en el worker, antes del primer swap).
@@ -276,6 +479,17 @@ int os_ctx_remake(os_ctx_t* c, void (*entry)(void*), void* arg) {
     // self-referential pointers (x86_64: uc_mcontext.fpregs -> __fpregs_mem,
     // INSIDE the struct itself). That is what makes a dormant ctx safe to copy
     // byte-wise (the scheduler's pool does exactly that) and then remake.
+#if NYX_OS_CTX_ASM
+    // ES: sin getcontext: se reescribe el registro entero. SP inicial = tope del stack alineado
+    // a 16 (AAPCS64 lo exige en toda entrada de función).
+    // EN: no getcontext — the whole record is rewritten. Initial SP = 16-byte aligned stack top.
+    memset(&p->regs, 0, sizeof(p->regs));
+    p->regs.x19_x28[0] = (uint64_t)(uintptr_t)entry;   // x19
+    p->regs.x19_x28[1] = (uint64_t)(uintptr_t)arg;     // x20
+    p->regs.lr = (uint64_t)(uintptr_t)nyx_ctx_boot_asm;
+    p->regs.sp = ((uint64_t)(uintptr_t)(p->stack_lo + p->stack_size)) & ~(uint64_t)15;
+    return 0;
+#else
     if (getcontext(&p->uc) != 0) return -errno;
     p->uc.uc_stack.ss_sp = p->stack_lo;
     p->uc.uc_stack.ss_size = p->stack_size;
@@ -285,6 +499,7 @@ int os_ctx_remake(os_ctx_t* c, void (*entry)(void*), void* arg) {
                 (uint32_t)(e >> 32), (uint32_t)(e & 0xFFFFFFFFu),
                 (uint32_t)(a >> 32), (uint32_t)(a & 0xFFFFFFFFu));
     return 0;
+#endif
 }
 
 int os_ctx_make(os_ctx_t* c, size_t stack_size, void (*entry)(void*), void* arg) {
@@ -342,7 +557,11 @@ void os_ctx_free(os_ctx_t* c) {
 }
 
 void os_ctx_swap(os_ctx_t* save, os_ctx_t* run) {
+#if NYX_OS_CTX_ASM
+    nyx_ctx_swap_asm(CTX(save), CTX(run));
+#else
     swapcontext(CTX(save), CTX(run));
+#endif
 }
 
 // --- Sockets IPv4 + resolución / IPv4 sockets + resolution (W1 inc 3)

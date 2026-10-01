@@ -1095,6 +1095,17 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
     primera petición: después de un `http_get` a cualquier sitio, el `verify-ca` de
     postgres aceptaba certificados de cualquier CA pública. Regresión:
     `tests/compiler/stdlib-suite/test-424-http-no-contamina-cas.nx`.
+- **STARTTLS verified against the SYSTEM store (2026-10)**:
+  `tls_upgrade_fd_verified_system(fd, host) -> int` upgrades an ALREADY connected fd
+  (IMAP 143, SMTP 587 with a public certificate) checking chain AND name against the
+  system CAs, like `tls_connect_verified_system`. It neither reads nor writes the
+  `tls_set_ca_file` store, so do not call that for it. Returns 0 on any failure and
+  **the fd is already closed** (do not close it again). **Until this version
+  `nyx_tls_client_upgrade` with mode 4 verified NOTHING** (the handshake went through
+  with no check: a silent "verified"); fixed, and any mode outside 0..4 now fails
+  closed. `std/smtp` does NOT use it yet (`smtp_starttls` has its own path); it is
+  the building block for a future IMAP client (probe: `tests/integration/imap_probe/`).
+
 
 ### Threading / Concurrency
 - `thread_spawn(fn)`, `thread_join(tid)`
@@ -2489,7 +2500,7 @@ fn main() -> int {
 ### std/smtp — sending mail
 
 Outgoing SMTP (RFC 5321). **Sends only**: IMAP/POP3 are deliberately out of
-scope — parsing INBOUND MIME is a different, larger problem. No queues and no
+scope; parsing INBOUND mail is `std/mime`. No queues and no
 retries either: sending is one operation, queueing is a product (`nyx-queue`).
 
 ```nyx
@@ -2540,13 +2551,127 @@ match smtp_connect_plain("smtp.provider.com", 587, "mine.com") {
   encoded (RFC 2047); an ASCII one is left alone.
 - **`smtp_render(msg)` is pure**: inspect or test the exact bytestream without
   opening a socket.
-- Error `kind`s are `connection`, `protocol`, `auth`, `sender`, `recipient` —
+- Error `kind`s are `connection`, `protocol`, `auth`, `sender`, `recipient`, `header` —
   `code -1` on a `protocol` error means "no readable reply" (the peer went
   away), as opposed to a real SMTP code.
 - **Windows**: same caveat as `std/serve` — the network builtins it needs are
   not there yet (arc W in progress).
 
+**Message-ID, extra headers and threading** (a reply must land in the customer's
+thread):
+
+```nyx
+import "std/smtp"
+
+fn main() {
+    var m: Array = smtp_message("me@mine.com", ["c@theirs.com"], "Re: Quote", "ok")
+    m = smtp_set_message_id(m, "quote-77@mine.com")      // <> added
+    m = smtp_reply_to(m, "<abc@erp.cl>", ["<root@erp.cl>"])
+    m = smtp_header(m, "Reply-To", "sales@mine.com")
+    println(smtp_message_id(m))
+    println(smtp_render(m))
+}
+```
+
+- `smtp_message_id(m)` — the Message-ID WITH its `<>`. It is fixed when the message is
+  CREATED, so two `smtp_render` of the same message give the same id (store it to
+  recognise the answer: it comes back in its `In-Reply-To`/`References`, see
+  `std/mime`).
+- `smtp_set_message_id(m, id)` — use an id your app already reserved (`<>` added if
+  missing). **An invalid id (empty, with a space, CR or LF) is IGNORED without any
+  error and the previous one stays**: check with `smtp_message_id(m)` afterwards.
+- `smtp_header(m, name, value)` — adds an extra header (appended, never replaces;
+  long values are folded at 76). **`smtp_send` rejects with `Err(kind "header")`** a
+  value containing CR/LF/NUL, an invalid name (not printable ASCII, has space or
+  `:`) and the reserved ones `From`, `To`, `Subject`, `Date`, `Message-ID`,
+  `MIME-Version`, `Content-Type`, `Content-Transfer-Encoding`. **`smtp_render` has no
+  way to return an error**, so it softens instead: CR/LF/NUL in a value become
+  spaces and a header with an invalid or reserved name is omitted. So a bad header
+  is visible only in `smtp_send`'s `Err`, never in the rendered text.
+- `smtp_reply_to(m, original_id, references)` — **despite the name this is NOT the
+  `Reply-To` header.** It adds `In-Reply-To: <original_id>` plus `References:` (the
+  given `references` Array followed by `original_id` if it is not already last), so
+  the mail client threads the answer. To set where replies GO use
+  `smtp_header(m, "Reply-To", "sales@mine.com")`.
+
 Recipe: `examples/by-example/113-smtp.nx`.
+
+### std/mime — read incoming mail
+
+The INBOUND half of `std/smtp`: parses a raw message (`.eml` from disk, a provider
+webhook, whatever a fetcher downloaded). No network, no `extern "C"`: native and
+wasm. It reads; it does not fetch (no IMAP/POP3 here).
+
+```nyx
+import "std/mime"
+import "std/error"
+
+fn main() {
+    let raw: String = "From: Ana <ana@x.cl>\r\nSubject: Re: Cotizaci=?UTF-8?Q?=C3=B3n?=\r\nIn-Reply-To: <abc@erp.cl>\r\nMessage-ID: <r1@x.cl>\r\n\r\nGracias\r\n"
+    match mime_parse(raw, mime_limits()) {
+        Result.Ok(m) => {
+            println(m.subject)
+            let de: MimeAddress = m.from_list[0]
+            println(de.address)
+            println(m.in_reply_to[0])
+            println(m.text)
+            for a: MimePart in m.attachments { println(mime_safe_filename(a.filename)) }
+            if m.is_bounce or m.is_auto_reply { println("not a customer reply") }
+        }
+        Result.Err(e) => { println(e.kind) }
+    }
+}
+```
+
+API:
+
+- `mime_parse(raw, mime_limits()) -> MimeMessage` (CRLF or LF). Fields: `subject`
+  (decoded), `from_list/to_list/cc_list/reply_to_list` (Array of `MimeAddress`
+  `{name, address}`), `date` (epoch UTC, -1 if missing/unparseable), `message_id`,
+  `in_reply_to`, `references` (ids WITH their `<>`, the same form `smtp_message_id`
+  returns, so they compare directly), `text`, `text_ok`, `text_approx`, `html`,
+  `has_html`, `parts`/`attachments`/`inlines` (Array of `MimePart`: `path`,
+  `content_type`, `charset`, `disposition`, `filename`, `content_id`, `size`, `data`
+  (decoded bytes, binary-safe), `text`, `text_ok`, `kind`), `is_auto_reply`,
+  `auto_kind`, `is_list`, `is_dsn`, `is_bounce`, `bounce` (`MimeBounce`: `recipient`,
+  `recipients`, `action`, `status`, `diagnostic`, `original_message_id`, `permanent`),
+  `report_type`, `signed`, `encrypted`, `headers`.
+- Headers: `mime_header(m, name)`, `mime_header_all(m, name)`, `mime_header_text(m,
+  name)` (RFC 2047 resolved), `mime_parse_value(v)` + `mime_param(v, name)` (RFC 2231
+  continuations and `name*=UTF-8''...`), `mime_parse_addresses(s)`, `mime_parse_date(s)`.
+- Decoders: `mime_base64_decode(s, max_bytes)`, `mime_qp_decode(s)`,
+  `mime_decode_words(s)` (RFC 2047), `mime_charset_to_utf8(charset, bytes) ->
+  Option<String>`, `mime_html_to_text(html)`, `mime_safe_filename(name)`.
+- `mime_limits() -> MimeLimits` — defaults: 32 MB message, 10 nesting levels, 500
+  parts, 16 KB per header, 1000 headers, 32 MB per decoded part (`max_size`,
+  `max_depth`, `max_parts`, `max_header_len`, `max_headers`, `max_part_size`).
+
+**Limits and things that will bite you:**
+
+- **Everything that arrives is hostile.** HTML is NOT sanitised (whoever displays it
+  must), signatures/SPF/DKIM are NOT verified (`signed`/`encrypted` only flag S/MIME
+  and PGP), an attached `message/rfc822` is an opaque attachment.
+- **Known limit: exceeding any `MimeLimits` cap makes `mime_parse` return
+  `Err(kind "invalid")` for the WHOLE message**, not a truncated one. One part over
+  `max_part_size` (or the 501st part, or depth 11) loses the entire email, text
+  included. `Err(kind "parse")` means "not an email" (empty or no header). A
+  headers-only message (what `BODY[HEADER]` returns) is valid, with no body.
+- **Charsets**: UTF-8 (invalid bytes become U+FFFD), US-ASCII, ISO-8859-1,
+  ISO-8859-15, windows-1252. Latin-1 is read AS windows-1252 (browser behaviour); a
+  US-ASCII with high bytes or a missing charset is UTF-8 if valid, else
+  windows-1252. Any other (GBK, Shift_JIS, KOI8-R, UTF-16) is NOT converted: the
+  text stays as bytes and `text_ok` is false.
+- **Body**: `text` is the first non-attachment `text/plain`; with only HTML, `text`
+  comes from `mime_html_to_text` (approximate, strips `<style>`/`<script>`) and
+  `text_approx` is true.
+- **Always pass attachment names through `mime_safe_filename`** before touching disk:
+  the name is the sender's text (`../`, control chars, hidden dotfiles).
+- base64 is tolerant (CRLF, spaces, junk) and the cap applies WHILE decoding; do not
+  use `std/base64` for mail, it stops at the first foreign byte.
+- Bounces: `is_bounce` is a delivery report with action failed/delayed;
+  `bounce.original_message_id` is the Message-ID of the bounced mail when present.
+  Use it with `is_auto_reply` to skip non-customer replies when threading.
+- Tests: `tests/compiler/stdlib-suite/test-472..474-mime-*.nx`.
 
 ### std/barcode — QR, Code 128 and EAN-13 (pure Nyx, native and wasm)
 
@@ -2647,6 +2772,87 @@ fn invoice() -> Result<String, Error> {
 - Output is deterministic (no creation date): same document, same bytes.
 
 Recipe: `examples/by-example/118-pdf-invoice.nx`.
+
+### std/image — decode, resize and crop photos (pure Nyx, native and wasm)
+
+Reads JPEG and PNG into pixels, shrinks and crops them. No `extern "C"`, so the
+same code runs native and in `wasm32-wasi` (the inflate is `std/zip`'s, in Nyx).
+Made for "a phone photo of 3-5 MB must be served as a small thumbnail".
+**There is NO encoder yet**: `image_encode_jpeg` arrives in the next batch and
+WebP output is not planned. Today you can decode and transform, not save.
+
+```nyx
+import "std/image"
+import "std/error"
+
+fn thumb(bytes: String) -> Result<Image, Error> {
+    let info: ImageInfo = image_info(bytes)?              // header only: cheap even for 30 MB
+    if info.width < 1 { return Result.Err(err_new(0, "invalid", "empty")) }
+    // Decode at the largest reduction that still has >= 600x600, then crop+scale.
+    let img: Image = image_decode_min(bytes, image_limits(), 600, 600)?
+    let flat: Image = image_flatten(img, 255, 255, 255)   // drop alpha onto white
+    return image_resize_cover(flat, 300, 300)             // square thumbnail
+}
+
+fn main() {
+    match thumb("not an image") {
+        Result.Ok(t) => { println(int_to_string(t.width)) }
+        Result.Err(e) => { println(e.kind) }                // "parse" / "unsupported"
+    }
+}
+```
+
+API (all errors are `Result<_, Error>`; `Image`/`ImageInfo`/`ImageLimits` are structs):
+
+- `image_info(bytes) -> ImageInfo` — `format` ("jpeg"/"png"), `width`, `height`,
+  `channels` (of the FILE), `orientation` (EXIF 1-8; PNG always 1), `progressive`.
+  Reads only the header: cheap on a 30 MB file.
+- `image_decode(bytes, limits) -> Image`, `image_decode_scaled(bytes, limits, denom)`
+  (denom 1/2/4/8, else `Err(invalid)`), `image_decode_min(bytes, limits, min_w, min_h)`
+  (the LARGEST reduction that still leaves >= min_w x min_h after orientation: the
+  entry point for thumbnails). `Image` = `width, height, channels (1 gray / 3 RGB /
+  4 RGBA), rows (Array of String, one per row, 1 byte per sample, top to bottom),
+  icc, reduction`.
+- `image_limits() -> ImageLimits` — defaults 30 MB file, 64 M pixels, 30000 side
+  (`max_bytes`, `max_pixels`, `max_dim`).
+- `image_resize(img, w, h)` (EXACT size, aspect not kept), `image_resize_fit(img,
+  max_w, max_h)` (fits inside, keeps aspect, never enlarges), `image_resize_cover(img,
+  w, h)` (centre crop to the box's aspect then scale; never enlarges),
+  `image_crop(img, x, y, w, h)`, `image_flatten(img, r, g, b)` (composite RGBA on a
+  colour, drops alpha; gray/RGB come back unchanged), `image_orient(img, exif)`.
+- Low level (used by `std/pdf`): `image_png_read`, `image_png_split`, `image_jpeg_frame`.
+
+**Limits and things that will bite you:**
+
+- **Formats**: PNG complete (gray, gray+alpha, RGB, RGBA, palette, 1-16 bit, Adam7;
+  16 bit is cut to the high byte; a tRNS makes gray/RGB/palette come out RGBA).
+  JPEG: baseline sequential (SOF0/1), 8 bit, 1 or 3 components, any common
+  subsampling, restart intervals, several scans. **Progressive, CMYK, 12-bit,
+  lossless and arithmetic JPEG are `Err(unsupported)`** (`image_info` still reports
+  a progressive one with `progressive: true`; `image_decode` refuses it).
+  WebP, GIF, HEIC, AVIF, BMP and TIFF are recognised BY SIGNATURE and give
+  `Err(unsupported)` with a hint (an iPhone "high efficiency" photo is HEIC: tell the
+  user to export JPEG). Unknown signature is `Err(invalid)`.
+- **Error kinds**: `invalid` (limit exceeded, bad parameter, not a JPEG/PNG),
+  `parse` (damaged or truncated file), `unsupported` (known format or variant not
+  decoded).
+- **Limits are checked on the HEADER, before reserving memory.** A 40 KB PNG that
+  declares 60000 x 60000, or whose IDAT inflates to gigabytes, is `Err(invalid)`:
+  the inflate stops at the exact size the IHDR promises WHILE decompressing. Always
+  pass `image_limits()` (or tighter) for files that arrive from outside.
+- **EXIF orientation is applied by `image_decode`** for JPEG (the result is upright,
+  `info.orientation` still tells what the file said). `image_orient` is for those who
+  compose by hand; with 1 it returns the same image. Do not rotate twice.
+- **ICC is exposed, not applied**: `Image.icc` carries the raw profile of a JPEG
+  (APP2, `""` if absent or inconsistent). A PNG with `iCCP` gives `""`. Pixels are
+  never colour-converted; `image_crop` keeps the profile.
+- **Reduction at decode**: a JPEG decoded with `denom` 8 computes a reduced IDCT, so a
+  12 MP photo costs ~190 K pixels of work. A PNG is never reduced (`reduction == 1`).
+  Side of a reduced image is `ceil(side / denom)`.
+- **Resampling is Pillow's, byte for byte** (Lanczos3 when shrinking, bilinear when
+  enlarging, integer weights, premultiplied alpha), verified in tests 479-480.
+  Output is identical on aarch64, x86_64 and wasm.
+- Tests: `tests/compiler/stdlib-suite/test-475..480-image-*.nx`.
 
 ### std/zip, std/xml, std/xlsx — read and write .xlsx workbooks (pure Nyx, native and wasm)
 

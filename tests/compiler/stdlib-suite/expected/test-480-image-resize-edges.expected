@@ -1,0 +1,33 @@
+wide 320x240 -> 320x240 (decodificada 1/2 320x240) ok
+wide 200x200 -> 200x150 (decodificada 1/2 320x240) ok
+wide 100x100 -> 100x75 (decodificada 1/4 160x120) ok
+wide 80x60 -> 80x60 (decodificada 1/8 80x60) ok
+wide 50x50 -> 50x38 (decodificada 1/8 80x60) ok
+wide 640x640 -> 640x480 (decodificada 1/1 640x480) ok
+wide 1000x1000 -> 640x480 (decodificada 1/1 640x480) ok
+wide 1x1 -> 1x1 (decodificada 1/8 80x60) ok
+wide 17x300 -> 17x13 (decodificada 1/8 80x60) ok
+resize 0x5 -> invalid: image_resize: el tamaño pedido tiene que ser positivo (llegó 0 x 5)
+resize 5x-1 -> invalid: image_resize: el tamaño pedido tiene que ser positivo (llegó 5 x -1)
+resize 40000x5 -> invalid: image_resize: el tamaño pedido 40000 x 5 pasa el tope de 30000 de lado o 67108864 píxeles
+resize 20000x20000 -> invalid: image_resize: el tamaño pedido 20000 x 20000 pasa el tope de 30000 de lado o 67108864 píxeles
+fit 0x9 -> invalid: image_resize_fit: el tamaño pedido tiene que ser positivo (llegó 0 x 9)
+cover 9x0 -> invalid: image_resize_cover: el tamaño pedido tiene que ser positivo (llegó 9 x 0)
+crop w=0 -> invalid: image_crop: el tamaño del recorte tiene que ser positivo (llegó 0 x 5)
+crop x<0 -> invalid: image_crop: el recorte 5 x 5 en (-1, 0) se sale de la imagen de 41 x 27
+crop x+w -> invalid: image_crop: el recorte 5 x 5 en (37, 0) se sale de la imagen de 41 x 27
+crop y+h -> invalid: image_crop: el recorte 5 x 3 en (0, 25) se sale de la imagen de 41 x 27
+crop justo 5x5 ch=3 icc=0 red=1
+fit grande: mismo tamaño true mismo hash true
+resize a su tamaño: mismo hash true
+fit ancho justo 8x5 ch=3 icc=0 red=1
+icc1 decodificada red=1 icc=700
+icc crop 10x10 ch=3 icc=700 red=1
+icc fit 20x13 ch=3 icc=700 red=1
+icc cover 12x12 ch=3 icc=700 red=1
+icc resize 60x40 ch=3 icc=700 red=1
+icc decode 1/2 21x14 ch=3 icc=700 red=2
+icc 1/2 -> fit 10x7 ch=3 icc=700 red=1
+flatten clamp: canales 3 igual a (255,0,255) true
+flatten sin alfa: igual true
+fin

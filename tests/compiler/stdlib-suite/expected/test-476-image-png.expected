@@ -1,0 +1,40 @@
+gray1 21 13 1 1688033098
+gray2 21 13 1 3731052942
+gray4 21 13 1 3754558100
+gray8 21 13 1 3169268097
+gray16 21 13 1 421626207
+gray8-trns 21 13 4 4188286817
+rgb8 21 13 3 2884244846
+rgb8-multi-idat 21 13 3 2884244846
+rgb16 21 13 3 2343402607
+rgb8-trns 21 13 4 2992737074
+rgba8 21 13 4 1422584105
+rgba16 21 13 4 3136614341
+ga8 21 13 4 101311780
+ga16 21 13 4 1494833611
+pal1 21 13 3 1918534511
+pal2 21 13 3 3064394726
+pal4 21 13 3 1031239347
+pal8 21 13 3 1014339205
+pal8-trns 21 13 4 3817117723
+rgb8-adam7 21 13 3 2884244846
+rgba8-adam7 21 13 4 1422584105
+gray8-adam7 21 13 1 3851473398
+gray1-adam7 21 13 1 1688033098
+pal4-adam7 21 13 3 1031239347
+rgb16-adam7 21 13 3 2343402607
+ga16-adam7 21 13 4 1494833611
+rgb8-adam7-1x1 1 1 3 193602878
+gray8-adam7-3x2 3 2 1 99069779
+rgb8-adam7-9x9 9 9 3 2742563997
+trunc -> parse: image_decode: image_png: el chunk del byte 33 se sale del archivo
+badcrc -> parse: image_decode: image_png: el CRC del chunk IDAT (byte 33) no coincide: archivo dañado
+badfilter -> parse: image_decode: image_png: filtro de fila 7 desconocido en la fila 0
+palidx -> parse: image_decode: image_png: el píxel 1 usa el índice de paleta 9 y la paleta tiene 4 colores
+bomb-dim -> invalid: image_decode: la imagen declara 60000 x 60000 y el lado máximo es 30000 (ImageLimits.max_dim)
+bomb-inflate -> parse: image_decode: image_png: zlib: la salida supera el tope de 52 bytes
+max_bytes -> invalid: image_decode: el archivo pesa 900 bytes y el tope es 50 (ImageLimits.max_bytes)
+max_pixels -> invalid: image_decode: la imagen declara 21 x 13 píxeles y el tope es 200 (ImageLimits.max_pixels)
+max_dim -> invalid: image_decode: la imagen declara 21 x 13 y el lado máximo es 20 (ImageLimits.max_dim)
+basura -> invalid: image_decode: no parece una imagen JPEG ni PNG (firma desconocida)
+fin

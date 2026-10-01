@@ -31,6 +31,7 @@
 
 import "std/error"
 import "std/zip"
+import "std/image"
 
 /// Tamaño de página: carta (215.9 x 279.4 mm), A4 (210 x 297), media carta (139.7 x 215.9) o Custom (usa width_mm/height_mm, p. ej. el ticket de 80 mm).
 pub enum PdfPageSize { Letter, A4, HalfLetter, Custom }
@@ -414,101 +415,27 @@ fn __pdf_be16(b: String, i: int) -> int {
     return (b.charAt(i) << 8) | b.charAt(i + 1)
 }
 
-fn __pdf_be32(b: String, i: int) -> int {
-    return (b.charAt(i) << 24) | (b.charAt(i + 1) << 16) | (b.charAt(i + 2) << 8) | b.charAt(i + 3)
-}
 
-fn __pdf_u16(b: String, i: int, little: bool) -> int {
-    if little { return b.charAt(i) | (b.charAt(i + 1) << 8) }
-    return __pdf_be16(b, i)
-}
 
-fn __pdf_u32(b: String, i: int, little: bool) -> int {
-    if little {
-        return b.charAt(i) | (b.charAt(i + 1) << 8) | (b.charAt(i + 2) << 16) | (b.charAt(i + 3) << 24)
-    }
-    return __pdf_be32(b, i)
-}
 
-// Orientación EXIF (1-8) de un segmento APP1 [s, e). Un EXIF que no se puede
-// leer cuenta como 1 (sin rotar), que es lo que hace cualquier visor con él.
-fn __pdf_exif_orientation(b: String, s: int, e: int) -> int {
-    if e - s < 14 { return 1 }
-    if b.substring(s, s + 6) != "Exif" + chr(0) + chr(0) { return 1 }
-    let t: int = s + 6
-    var little: bool = false
-    let bo: String = b.substring(t, t + 2)
-    if bo == "II" {
-        little = true
-    } else if bo != "MM" {
-        return 1
-    }
-    if __pdf_u16(b, t + 2, little) != 42 { return 1 }
-    let ifd: int = t + __pdf_u32(b, t + 4, little)
-    if ifd < t or ifd + 2 > e { return 1 }
-    let count: int = __pdf_u16(b, ifd, little)
-    var k: int = 0
-    while k < count {
-        let ent: int = ifd + 2 + 12 * k
-        if ent + 12 > e { return 1 }
-        if __pdf_u16(b, ent, little) == 0x0112 {
-            // SHORT (tipo 3), un valor, guardado en los primeros 2 bytes del campo.
-            if __pdf_u16(b, ent + 2, little) != 3 { return 1 }
-            let v: int = __pdf_u16(b, ent + 8, little)
-            if v >= 1 and v <= 8 { return v }
-            return 1
-        }
-        k = k + 1
-    }
-    return 1
-}
 
 // [ancho, alto, componentes, orientación EXIF] del encabezado de cuadro de un
 // JPEG. PDF (DCTDecode) lee JPEG baseline y progresivo de 8 bits; lo demás se
-// rechaza con la causa, para no incrustar algo que el visor dibuje roto.
+// rechaza con la causa, para no incrustar algo que el visor dibuje roto. La
+// recorrida de marcadores y el EXIF son de std/image (image_jpeg_frame).
 fn __pdf_jpeg_info(b: String) -> Result<Array, Error> {
-    let n: int = b.length()
-    if n < 4 or b.charAt(0) != 0xFF or b.charAt(1) != 0xD8 {
-        return Result.Err(err_new(22, "invalid", "image_jpeg: no es un JPEG (no empieza con FF D8)"))
-    }
-    var orient: int = 1
-    var i: int = 2
-    while true {
-        if i >= n or b.charAt(i) != 0xFF {
-            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG malformado: se esperaba un marcador en el byte " + int_to_string(i)))
-        }
-        while i < n and b.charAt(i) == 0xFF {
-            i = i + 1
-        }
-        if i >= n {
-            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG cortado antes del encabezado de cuadro"))
-        }
-        let m: int = b.charAt(i)
-        i = i + 1
-        if m == 0xD8 or m == 0x01 or (m >= 0xD0 and m <= 0xD7) {
-            continue
-        }
-        if m == 0xD9 or m == 0xDA {
-            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG sin encabezado de cuadro (SOF) antes de los datos"))
-        }
-        if i + 2 > n {
-            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG cortado en el byte " + int_to_string(i)))
-        }
-        let len: int = __pdf_be16(b, i)
-        if len < 2 or i + len > n {
-            return Result.Err(err_new(22, "parse", "image_jpeg: el segmento del byte " + int_to_string(i - 2) + " se sale del archivo"))
-        }
-        if m == 0xE1 {
-            orient = __pdf_exif_orientation(b, i + 2, i + len)
-        }
-        if m == 0xC0 or m == 0xC1 or m == 0xC2 {
-            if len < 8 {
-                return Result.Err(err_new(22, "parse", "image_jpeg: encabezado de cuadro demasiado corto"))
+    let r: Result<Array, Error> = image_jpeg_frame(b)
+    match r {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(f) => {
+            let sof: int = f[4]
+            if sof > 0xC2 {
+                return Result.Err(err_new(22, "invalid", "image_jpeg: JPEG con codificación SOF" + int_to_string(sof - 0xC0) + " (sin pérdida, aritmética o jerárquica), que PDF no lee: guardarlo como JPEG normal"))
             }
-            let prec: int = b.charAt(i + 2)
-            let h: int = __pdf_be16(b, i + 3)
-            let w: int = __pdf_be16(b, i + 5)
-            let nc: int = b.charAt(i + 7)
+            let prec: int = f[5]
+            let w: int = f[0]
+            let h: int = f[1]
+            let nc: int = f[2]
             if prec != 8 {
                 return Result.Err(err_new(22, "invalid", "image_jpeg: JPEG de " + int_to_string(prec) + " bits por muestra; PDF solo lee 8"))
             }
@@ -521,14 +448,9 @@ fn __pdf_jpeg_info(b: String) -> Result<Array, Error> {
             if nc != 1 and nc != 3 {
                 return Result.Err(err_new(22, "invalid", "image_jpeg: JPEG de " + int_to_string(nc) + " componentes; se aceptan 1 (gris) y 3 (color)"))
             }
-            return Result.Ok([w, h, nc, orient])
+            return Result.Ok([w, h, nc, f[3]])
         }
-        if (m >= 0xC3 and m <= 0xCF) and m != 0xC4 and m != 0xC8 and m != 0xCC {
-            return Result.Err(err_new(22, "invalid", "image_jpeg: JPEG con codificación SOF" + int_to_string(m - 0xC0) + " (sin pérdida, aritmética o jerárquica), que PDF no lee: guardarlo como JPEG normal"))
-        }
-        i = i + len
     }
-    return Result.Err(err_new(22, "parse", "image_jpeg: inalcanzable"))
 }
 
 // Matriz «a b c d e f» que lleva el cuadrado unidad de la imagen al rectángulo
@@ -576,21 +498,6 @@ fn __pdf_image_matrix(o: int, x: int, y: int, w: int, h: int) -> String {
 // Adam7 se rechaza (Fuera de alcance de la spec): reordenar sus 7 pasadas es
 // otro decodificador, y ningún exportador lo usa por omisión.
 
-// Strings de un byte, para escribir bytes sin crear un String por cada uno.
-// Se arma una tabla por imagen y viaja como parámetro o campo, NO como global
-// perezosa: en wasm32 con la arena por evento (LLM.md §9) un String creado
-// durante un evento y guardado en una global queda colgando cuando la arena se
-// resetea. Las globales de este módulo son literales (se arman en _start) o
-// tablas de int (valores, no punteros).
-fn __pdf_byte_table() -> Array {
-    var t: Array = []
-    var i: int = 0
-    while i < 256 {
-        t.push(chr(i))
-        i = i + 1
-    }
-    return t
-}
 
 // El códec DEFLATE/zlib, el CRC-32 y el Adler-32 viven en std/zip desde el
 // 2026-09-29 (arco std-xlsx): eran privados de este módulo y ahora los comparte
@@ -609,241 +516,10 @@ fn __pdf_hexstr(s: String) -> String {
     return sb.to_string()
 }
 
-// PNG leído: [ancho, alto, profundidad, tipo de color, paleta (RGB crudo),
-// tRNS crudo, IDAT concatenados].
-fn __pdf_png_read(b: String) -> Result<Array, Error> {
-    let sig: String = chr(137) + "PNG" + chr(13) + chr(10) + chr(26) + chr(10)
-    let n: int = b.length()
-    if n < 8 or b.substring(0, 8) != sig {
-        return Result.Err(err_new(22, "invalid", "image_png: no es un PNG (falta la firma)"))
-    }
-    var w: int = 0
-    var h: int = 0
-    var depth: int = 0
-    var ctype: int = 0
-    var seen_ihdr: bool = false
-    var plte: String = ""
-    var trns: String = ""
-    var idat: StringBuilder = StringBuilder.new()
-    var n_idat: int = 0
-    let crc_tab: Array = zip_crc32_table()
-    var i: int = 8
-    var ended: bool = false
-    while not ended {
-        if i + 12 > n {
-            return Result.Err(err_new(22, "parse", "image_png: PNG cortado (falta IEND)"))
-        }
-        let len: int = __pdf_be32(b, i)
-        if len > n - i - 12 {
-            return Result.Err(err_new(22, "parse", "image_png: el chunk del byte " + int_to_string(i) + " se sale del archivo"))
-        }
-        let typ: String = b.substring(i + 4, i + 8)
-        let d0: int = i + 8
-        if zip_crc32_part(crc_tab, b, i + 4, d0 + len) != __pdf_be32(b, d0 + len) {
-            return Result.Err(err_new(22, "parse", "image_png: el CRC del chunk " + typ + " (byte " + int_to_string(i) + ") no coincide: archivo dañado"))
-        }
-        if not seen_ihdr and typ != "IHDR" {
-            return Result.Err(err_new(22, "parse", "image_png: el primer chunk no es IHDR"))
-        }
-        if typ == "IHDR" {
-            if seen_ihdr or len != 13 {
-                return Result.Err(err_new(22, "parse", "image_png: IHDR repetido o de largo " + int_to_string(len)))
-            }
-            seen_ihdr = true
-            w = __pdf_be32(b, d0)
-            h = __pdf_be32(b, d0 + 4)
-            depth = b.charAt(d0 + 8)
-            ctype = b.charAt(d0 + 9)
-            if b.charAt(d0 + 10) != 0 or b.charAt(d0 + 11) != 0 {
-                return Result.Err(err_new(22, "invalid", "image_png: método de compresión o de filtro desconocido"))
-            }
-            if b.charAt(d0 + 12) == 1 {
-                return Result.Err(err_new(22, "invalid", "image_png: PNG entrelazado (Adam7) no soportado: exportarlo sin entrelazar"))
-            }
-            if b.charAt(d0 + 12) != 0 {
-                return Result.Err(err_new(22, "invalid", "image_png: método de entrelazado desconocido"))
-            }
-            if w <= 0 or h <= 0 or w > 0x7FFFFFFF or h > 0x7FFFFFFF {
-                return Result.Err(err_new(22, "invalid", "image_png: ancho o alto inválido"))
-            }
-            var ok: bool = false
-            if ctype == 0 { ok = depth == 1 or depth == 2 or depth == 4 or depth == 8 or depth == 16 }
-            if ctype == 3 { ok = depth == 1 or depth == 2 or depth == 4 or depth == 8 }
-            if ctype == 2 or ctype == 4 or ctype == 6 { ok = depth == 8 or depth == 16 }
-            if not ok {
-                return Result.Err(err_new(22, "invalid", "image_png: combinación inválida de tipo de color " + int_to_string(ctype) + " y " + int_to_string(depth) + " bits"))
-            }
-        } else if typ == "PLTE" {
-            if len == 0 or len % 3 != 0 or len > 768 {
-                return Result.Err(err_new(22, "parse", "image_png: paleta de largo inválido"))
-            }
-            plte = b.substring(d0, d0 + len)
-        } else if typ == "tRNS" {
-            trns = b.substring(d0, d0 + len)
-        } else if typ == "IDAT" {
-            idat.append(b.substring(d0, d0 + len))
-            n_idat = n_idat + 1
-        } else if typ == "IEND" {
-            ended = true
-        } else if (b.charAt(i + 4) & 32) == 0 {
-            // Primera letra en mayúscula: chunk CRÍTICO, que un lector no puede
-            // saltear sin romper la imagen (PNG §5.4).
-            return Result.Err(err_new(22, "invalid", "image_png: chunk crítico desconocido " + typ))
-        }
-        i = d0 + len + 4
-    }
-    if n_idat == 0 {
-        return Result.Err(err_new(22, "parse", "image_png: PNG sin datos (IDAT)"))
-    }
-    if ctype == 3 and plte == "" {
-        return Result.Err(err_new(22, "parse", "image_png: PNG con paleta sin chunk PLTE"))
-    }
-    return Result.Ok([w, h, depth, ctype, plte, trns, idat.to_string()])
-}
 
-// Predicción PNG (PNG §9.2) del byte x de una fila: a = izquierda (bpp bytes
-// antes), b = arriba, c = arriba a la izquierda.
-fn __pdf_png_pred(f: int, a: int, b: int, c: int) -> int {
-    if f == 1 { return a }
-    if f == 2 { return b }
-    if f == 3 { return (a + b) / 2 }
-    if f == 4 {
-        let p: int = a + b - c
-        var pa: int = p - a
-        if pa < 0 { pa = 0 - pa }
-        var pb: int = p - b
-        if pb < 0 { pb = 0 - pb }
-        var pc: int = p - c
-        if pc < 0 { pc = 0 - pc }
-        if pa <= pb and pa <= pc { return a }
-        if pb <= pc { return b }
-        return c
-    }
-    return 0
-}
 
-// Escribe los n bytes de `row` tal cual. Se probó volver a filtrarlos (None/
-// Sub/Up por fila, la heurística de libpng, con /Predictor 15): con el deflate
-// de Huffman FIJO de abajo, los bytes filtrados no se codifican más corto, y
-// solo el LZ77 se beneficia. Medido: un logo de 300 x 120 salía 21 % MÁS
-// grande filtrado (22.6 KB contra 18.6 KB), una foto RGBA 4 % más grande, y
-// solo un degradé ampliado a 1500 x 600 ganaba (345 KB contra 439 KB). Para
-// logos, que es el caso, sin filtrar es más chico, más simple y más rápido.
-fn __pdf_png_put_row(out: StringBuilder, row: Array, n: int, tab: Array) {
-    var x: int = 0
-    while x < n {
-        let v: int = row[x]
-        let s: String = tab[v]
-        out.append(s)
-        x = x + 1
-    }
-}
 
-fn __pdf_zeros(n: int) -> Array {
-    var z: Array = []
-    var i: int = 0
-    while i < n {
-        z.push(0)
-        i = i + 1
-    }
-    return z
-}
 
-// Des-filtra las filas de PNG (5 filtros, PNG §9) y reparte cada píxel entre
-// `color` y `alpha`. Para gris+alfa y RGBA separa el último canal; para una
-// paleta copia los índices tal cual a `color` y escribe en `alpha` el alfa de
-// la paleta de cada píxel. "" si todo cerró, o la causa.
-fn __pdf_png_split(raw: String, w: int, h: int, depth: int, ctype: int, trns: String, color: StringBuilder, alpha: StringBuilder) -> String {
-    var channels: int = 1
-    if ctype == 2 { channels = 3 }
-    if ctype == 4 { channels = 2 }
-    if ctype == 6 { channels = 4 }
-    let bits: int = channels * depth
-    let stride: int = (w * bits + 7) / 8
-    var bpp: int = bits / 8
-    if bpp < 1 { bpp = 1 }
-    if raw.length() != h * (stride + 1) {
-        return "los datos inflados miden " + int_to_string(raw.length()) + " bytes y el IHDR pide " + int_to_string(h * (stride + 1))
-    }
-    let tab: Array = __pdf_byte_table()
-    let cs: StringBuilder = color
-    let asb: StringBuilder = alpha
-    let bps: int = depth / 8
-    var prev_row: Array = __pdf_zeros(stride)
-    var row: Array = __pdf_zeros(stride)
-    // Filas de salida: color (sin el canal alfa) y alfa.
-    var cstride: int = stride
-    var astride: int = w
-    if ctype != 3 {
-        cstride = w * (channels - 1) * bps
-        astride = w * bps
-    }
-    var crow: Array = __pdf_zeros(cstride)
-    var arow: Array = __pdf_zeros(astride)
-    var y: int = 0
-    while y < h {
-        let base: int = y * (stride + 1)
-        let f: int = raw.charAt(base)
-        if f > 4 { return "filtro de fila " + int_to_string(f) + " desconocido en la fila " + int_to_string(y) }
-        var x: int = 0
-        while x < stride {
-            let v: int = raw.charAt(base + 1 + x)
-            var a: int = 0
-            if x >= bpp { a = row[x - bpp] }
-            let up: int = prev_row[x]
-            var c: int = 0
-            if x >= bpp { c = prev_row[x - bpp] }
-            row[x] = (v + __pdf_png_pred(f, a, up, c)) & 255
-            x = x + 1
-        }
-        // Repartir la fila ya reconstruida.
-        if ctype == 3 {
-            x = 0
-            while x < stride {
-                crow[x] = row[x]
-                x = x + 1
-            }
-            var px: int = 0
-            while px < w {
-                let bitpos: int = px * depth
-                let byte: int = row[bitpos / 8]
-                let idx: int = (byte >> (8 - depth - bitpos % 8)) & ((1 << depth) - 1)
-                var al: int = 255
-                if idx < trns.length() { al = trns.charAt(idx) }
-                arow[px] = al
-                px = px + 1
-            }
-        } else {
-            let pxbytes: int = channels * bps
-            var ci: int = 0
-            var ai: int = 0
-            var px2: int = 0
-            while px2 < w {
-                let o: int = px2 * pxbytes
-                var q: int = 0
-                while q < pxbytes {
-                    if q < pxbytes - bps {
-                        crow[ci] = row[o + q]
-                        ci = ci + 1
-                    } else {
-                        arow[ai] = row[o + q]
-                        ai = ai + 1
-                    }
-                    q = q + 1
-                }
-                px2 = px2 + 1
-            }
-        }
-        __pdf_png_put_row(cs, crow, cstride, tab)
-        __pdf_png_put_row(asb, arow, astride, tab)
-        let t: Array = prev_row
-        prev_row = row
-        row = t
-
-        y = y + 1
-    }
-    return ""
-}
 
 // Hasta dónde se separa el alfa: los píxeles pasan por la memoria (el PNG sin
 // comprimir). 64 MB es un RGBA de 4000 x 4000; un logo pesa mil veces menos.
@@ -1024,17 +700,17 @@ impl Pdf {
 
     /// PNG (bytes de read_file o include_bytes) en el rectángulo de esquina (x, y) mm, w x h mm; un lado en 0 sale de la proporción. Gris, RGB y paleta van sin decodificar; con transparencia (alfa o tRNS) sale transparente. Err si está dañado (CRC, zlib) o entrelazado. Devuelve el número de imagen.
     fn image_png(&mut self, x: float, y: float, w_mm: float, h_mm: float, bytes: String) -> Result<int, Error> {
-        let r: Result<Array, Error> = __pdf_png_read(bytes)
+        let r: Result<ImagePng, Error> = image_png_read(bytes, false)
         match r {
             Result.Err(e) => { return Result.Err(e) }
             Result.Ok(info) => {
-                let pw: int = info[0]
-                let ph: int = info[1]
-                let depth: int = info[2]
-                let ctype: int = info[3]
-                let plte: String = info[4]
-                let trns: String = info[5]
-                let idat: String = info[6]
+                let pw: int = info.width
+                let ph: int = info.height
+                let depth: int = info.depth
+                let ctype: int = info.color_type
+                let plte: String = info.palette
+                let trns: String = info.trns
+                let idat: String = info.idat
                 var channels: int = 1
                 var cs: String = "/DeviceGray"
                 if ctype == 2 or ctype == 6 { cs = "/DeviceRGB" }
@@ -1111,7 +787,7 @@ impl Pdf {
                     Result.Ok(raw) => {
                         var color: StringBuilder = StringBuilder.new()
                         var alpha: StringBuilder = StringBuilder.new()
-                        let problema: String = __pdf_png_split(raw, pw, ph, depth, ctype, trns, color, alpha)
+                        let problema: String = image_png_split(raw, pw, ph, depth, ctype, trns, color, alpha)
                         if problema != "" {
                             return Result.Err(err_new(22, "parse", "image_png: " + problema))
                         }

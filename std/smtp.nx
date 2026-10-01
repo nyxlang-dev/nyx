@@ -472,17 +472,24 @@ const SMTP_MSG_BODY: int = 3
 const SMTP_MSG_HTML: int = 4
 const SMTP_MSG_ATTACH: int = 5
 const SMTP_MSG_BOUNDARY: int = 6
-const SMTP_MSG_SLOTS: int = 7
+// Slots 7 y 8 (spec std-imap, Task 1): cabeceras extra y Message-ID. El id se
+// fija al CREAR el mensaje, no al renderizarlo: así el llamador lo puede leer
+// (smtp_message_id) antes o después de enviar y guardarlo para reconocer la
+// respuesta del cliente por su In-Reply-To. Antes se generaba dentro de
+// smtp_render y se perdía.
+const SMTP_MSG_HEADERS: int = 7
+const SMTP_MSG_ID: int = 8
+const SMTP_MSG_SLOTS: int = 9
 
 // Mensaje de texto plano.
 pub fn smtp_message(de: String, para: Array, asunto: String, cuerpo: String) -> Array {
-    return [de, para, asunto, cuerpo, 0, [], ""]
+    return [de, para, asunto, cuerpo, 0, [], "", [], __smtp_message_id(de)]
 }
 
 // Mensaje con cuerpo HTML. El resto es igual: lo único que cambia es el
 // Content-Type de la parte del cuerpo.
 pub fn smtp_message_html(de: String, para: Array, asunto: String, html: String) -> Array {
-    return [de, para, asunto, html, 1, [], ""]
+    return [de, para, asunto, html, 1, [], "", [], __smtp_message_id(de)]
 }
 
 // Agrega un adjunto. `datos` son los BYTES del archivo tal como salen de
@@ -499,6 +506,123 @@ pub fn smtp_attach(m: Array, nombre: String, ctype: String, datos: String) -> Ar
     let b: String = out[SMTP_MSG_BOUNDARY]
     if b.length() == 0 { out[SMTP_MSG_BOUNDARY] = __smtp_boundary_nuevo() }
     return out
+}
+
+// El Message-ID del mensaje, con sus <>: el que va en la cabecera al enviarlo.
+// Guardarlo permite reconocer después la respuesta (su In-Reply-To/References).
+pub fn smtp_message_id(m: Array) -> String {
+    if m.length() < SMTP_MSG_SLOTS { return "" }
+    let id: String = m[SMTP_MSG_ID]
+    return id
+}
+
+// Fija el Message-ID (p. ej. uno que la aplicación ya reservó). Se agregan los <>
+// si faltan. Un id con CR/LF/espacios o vacío se ignora y queda el generado:
+// smtp_send además lo rechaza, así que un id inyectado nunca llega al cable.
+pub fn smtp_set_message_id(m: Array, id: String) -> Array {
+    var out: Array = m
+    var v: String = id.trim()
+    if v.length() > 0 && v.charAt(0) != 60 { v = "<" + v + ">" }
+    if __smtp_valor_seguro(v) && v.indexOf(" ") < 0 && v.length() > 2 { out[SMTP_MSG_ID] = v }
+    return out
+}
+
+// Agrega una cabecera extra (In-Reply-To, References, X-...). Se agrega, no
+// reemplaza: el llamador que quiera reemplazar arma el mensaje de nuevo. Las
+// que smtp_render ya escribe (From, To, Subject, Date, Message-ID, MIME-Version,
+// Content-Type) no se pueden pisar: darían un mensaje con dos From. Un nombre
+// o valor inválido (CR, LF, NUL, nombre con espacios o ':') NO se guarda en
+// silencio: queda marcado y smtp_send devuelve error "header" — la inyección de
+// cabeceras es el ataque clásico de un formulario de contacto.
+pub fn smtp_header(m: Array, nombre: String, valor: String) -> Array {
+    var out: Array = m
+    var hs: Array = out[SMTP_MSG_HEADERS]
+    hs.push([nombre, valor])
+    out[SMTP_MSG_HEADERS] = hs
+    return out
+}
+
+// In-Reply-To + References de una sola vez, a partir del Message-ID del mensaje
+// original y (opcional) los References que ese mensaje ya traía. Es lo que hace
+// que la respuesta caiga en el hilo del cliente de correo del destinatario.
+pub fn smtp_reply_to(m: Array, original_id: String, references: Array) -> Array {
+    var out: Array = smtp_header(m, "In-Reply-To", original_id)
+    var refs: String = ""
+    var i: int = 0
+    while i < references.length() {
+        let r: String = references[i]
+        if i > 0 { refs = refs + " " }
+        refs = refs + r
+        i = i + 1
+    }
+    if references.length() == 0 || references[references.length() - 1] != original_id {
+        if refs.length() > 0 { refs = refs + " " }
+        refs = refs + original_id
+    }
+    return smtp_header(out, "References", refs)
+}
+
+// Devuelve "" si todas las cabeceras extra son válidas, o el motivo.
+fn __smtp_headers_error(m: Array) -> String {
+    let id: String = m[SMTP_MSG_ID]
+    if id.length() < 3 || __smtp_valor_seguro(id) == false { return "Message-ID inválido" }
+    let hs: Array = m[SMTP_MSG_HEADERS]
+    var i: int = 0
+    while i < hs.length() {
+        let h: Array = hs[i]
+        let n: String = h[0]
+        let v: String = h[1]
+        if n.length() == 0 { return "cabecera con nombre vacío" }
+        if __smtp_nombre_valido(n) == false { return "nombre de cabecera inválido: " + n }
+        if __smtp_valor_seguro(v) == false { return "el valor de la cabecera " + n + " tiene CR, LF o NUL" }
+        if __smtp_nombre_reservado(n) {
+            return "la cabecera " + n + " la escribe smtp_render y no se puede repetir"
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// true si el texto no tiene CR, LF ni NUL.
+// Nombre de cabecera de RFC 5322: ASCII imprimible sin espacio ni `:`.
+fn __smtp_nombre_valido(n: String) -> bool {
+    if n.length() == 0 { return false }
+    var j: int = 0
+    while j < n.length() {
+        let c: int = n.charAt(j)
+        if c <= 32 || c >= 127 || c == 58 { return false }
+        j = j + 1
+    }
+    return true
+}
+
+// Las que escribe smtp_render: una segunda copia sería un From o un To falsos.
+fn __smtp_nombre_reservado(n: String) -> bool {
+    let ln: String = n.to_lower()
+    return ln == "from" || ln == "to" || ln == "subject" || ln == "date" || ln == "message-id" || ln == "mime-version" || ln == "content-type" || ln == "content-transfer-encoding"
+}
+
+// El valor con cada CR, LF y NUL cambiado por un espacio (ver smtp_render).
+fn __smtp_valor_neutro(s: String) -> String {
+    if __smtp_valor_seguro(s) { return s }
+    var row: Array = []
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c == 13 || c == 10 || c == 0 { row.push(32) } else { row.push(c) }
+        i = i + 1
+    }
+    return string_from_bytes(row, 0, row.length())
+}
+
+fn __smtp_valor_seguro(s: String) -> bool {
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c == 13 || c == 10 || c == 0 { return false }
+        i = i + 1
+    }
+    return true
 }
 
 // El boundary que separa las partes, para quien quiera inspeccionarlo.
@@ -527,8 +651,28 @@ pub fn smtp_render(m: Array) -> String {
     out = out + "To: " + __smtp_join(para, ", ") + "\r\n"
     out = out + "Subject: " + __smtp_header_encode(asunto) + "\r\n"
     out = out + "Date: " + __smtp_date(time_epoch()) + "\r\n"
-    out = out + "Message-ID: " + __smtp_message_id(de) + "\r\n"
+    out = out + "Message-ID: " + __smtp_get_id(m, de) + "\r\n"
     out = out + "MIME-Version: 1.0\r\n"
+    // Cabeceras extra (smtp_header), con los valores largos plegados a 76.
+    // smtp_send las rechaza con Err("header") antes de llegar acá, pero
+    // smtp_render es pública y no tiene por dónde devolver un error: un .eml
+    // armado con ella, o un In-Reply-To copiado de un correo entrante con CR/LF,
+    // inyectaba cabeceras (revisión de integracion-0930). Acá un valor con CR, LF
+    // o NUL sale con espacios en su lugar, y una cabecera de nombre inválido o
+    // reservado (un segundo From) no sale.
+    if m.length() >= SMTP_MSG_SLOTS {
+        let hs: Array = m[SMTP_MSG_HEADERS]
+        var hi: int = 0
+        while hi < hs.length() {
+            let h: Array = hs[hi]
+            let hn: String = h[0]
+            let hv: String = h[1]
+            if __smtp_nombre_valido(hn) && __smtp_nombre_reservado(hn) == false {
+                out = out + __smtp_fold_header(hn, __smtp_valor_neutro(hv)) + "\r\n"
+            }
+            hi = hi + 1
+        }
+    }
 
     if adjuntos.length() == 0 {
         out = out + "Content-Type: " + ctype_cuerpo + "\r\n"
@@ -576,6 +720,13 @@ pub fn smtp_send(c: Array, m: Array) -> Result<int, Error> {
     let para: Array = m[SMTP_MSG_TO]
     if para.length() == 0 {
         return Result.Err(err_new(0, "recipient", "el mensaje no tiene destinatarios"))
+    }
+
+    // Antes de tocar el socket: una cabecera con CR/LF es inyección, y descubrirlo
+    // con el MAIL FROM ya mandado dejaría el diálogo a medias.
+    if m.length() >= SMTP_MSG_SLOTS {
+        let he: String = __smtp_headers_error(m)
+        if he.length() > 0 { return Result.Err(err_new(0, "header", he)) }
     }
 
     let r1: Array = smtp_cmd(c, "MAIL FROM:<" + de + ">")
@@ -734,6 +885,43 @@ fn __smtp_termina_en_crlf(s: String) -> bool {
 fn __smtp_pad2(n: int) -> String {
     if n < 10 { return "0" + int_to_string(n) }
     return int_to_string(n)
+}
+
+// El id del mensaje; un mensaje armado a mano con 7 slots (versión anterior)
+// sigue funcionando y recibe un id nuevo al renderizar.
+fn __smtp_get_id(m: Array, de: String) -> String {
+    if m.length() >= SMTP_MSG_SLOTS {
+        let id: String = m[SMTP_MSG_ID]
+        return id
+    }
+    return __smtp_message_id(de)
+}
+
+// «Nombre: valor» plegado en espacios para que ninguna línea pase de ~76
+// (RFC 5322 §2.2.3): un References de una conversación larga se pasa fácil. El
+// plegado solo parte en espacios, nunca dentro de un id.
+fn __smtp_fold_header(n: String, v: String) -> String {
+    var out: String = n + ":"
+    var linea: int = out.length()
+    var ini: int = 0
+    var primero: bool = true
+    while ini <= v.length() {
+        var fin: int = v.indexOf(" ", ini)
+        if fin < 0 { fin = v.length() }
+        let palabra: String = v.substring(ini, fin)
+        if palabra.length() > 0 || primero {
+            if linea + 1 + palabra.length() > 76 && primero == false {
+                out = out + "\r\n " + palabra
+                linea = 1 + palabra.length()
+            } else {
+                out = out + " " + palabra
+                linea = linea + 1 + palabra.length()
+            }
+            primero = false
+        }
+        ini = fin + 1
+    }
+    return out
 }
 
 // Message-ID único. El dominio sale del remitente: un Message-ID con un dominio

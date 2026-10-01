@@ -1,0 +1,56 @@
+trunc-mid -> parse: image_decode: image_jpeg: JPEG truncado: los datos se acaban en el MCU 1 de 6
+trunc-noeoi decodificó 41x27
+trunc-header -> parse: image_decode: image_jpeg: el segmento del byte 89 se sale del archivo
+cmyk -> unsupported: image_decode: JPEG CMYK no soportado (los de Photoshop guardan los colores invertidos y saldrían al revés): convertirlo a RGB
+prog -> unsupported: image_decode: JPEG progresivo (SOF2) todavía no se decodifica: guardarlo como JPEG secuencial (baseline)
+bomb-dim -> invalid: image_decode: la imagen declara 60000 x 60000 y el lado máximo es 30000 (ImageLimits.max_dim)
+bits12 -> unsupported: image_decode: JPEG de 12 bits por muestra; se lee 8
+huff-count -> parse: image_decode: image_jpeg: tabla Huffman cortada o con más de 256 símbolos
+huff-overflow -> parse: image_decode: image_jpeg: tabla Huffman inválida (más códigos de los que caben)
+no-dht -> parse: image_decode: image_jpeg: el escaneo usa una tabla Huffman que nunca se definió
+no-dqt -> parse: image_decode: image_jpeg: falta la tabla de cuantización 0
+rst-broken -> parse: image_decode: image_jpeg: se esperaba un marcador de reinicio (RSTn) y llegó el marcador 254
+no-sof -> parse: image_decode: image_jpeg: JPEG sin encabezado de cuadro (SOF) antes de los datos
+garbage-scan decodificó 41x27
+segment-overrun -> parse: image_decode: image_jpeg: el segmento del byte 20 se sale del archivo
+empty -> parse: image_decode: image_jpeg: JPEG sin encabezado de cuadro (SOF) antes de los datos
+max_bytes -> invalid: image_decode: el archivo pesa 1379 bytes y el tope es 100 (ImageLimits.max_bytes)
+max_pixels -> invalid: image_decode: la imagen declara 41 x 27 píxeles y el tope es 1000 (ImageLimits.max_pixels)
+max_dim -> invalid: image_decode: la imagen declara 41 x 27 y el lado máximo es 40 (ImageLimits.max_dim)
+sos-trunc -> parse: image_decode: image_jpeg: encabezado de escaneo (SOS) inválido
+dht-bomb igual=true
+icc1 700 igual=true
+icc2 700 igual=true
+sin icc 0
+png icc 0 red=1
+orient6 orient=6 41x27
+orient6-xmp orient=6 41x27
+orient1 orient=1 41x27
+s420 orient=1 41x27
+image_orient 2 41x27 igual=true
+image_orient 3 41x27 igual=true
+image_orient 4 41x27 igual=true
+image_orient 5 27x41 igual=true
+image_orient 6 27x41 igual=true
+image_orient 7 27x41 igual=true
+image_orient 8 27x41 igual=true
+image_orient 1 igual=true
+wide 1 640x480 red=1 hash=3401903350
+wide 2 320x240 red=2 hash=2837095858
+wide 4 160x120 red=4 hash=3729283859
+wide 8 80x60 red=8 hash=3322666019
+wide denom 3 -> invalid: image_decode_scaled: la reducción es 1, 2, 4 u 8 (llegó 3)
+wide denom 0 -> invalid: image_decode_scaled: la reducción es 1, 2, 4 u 8 (llegó 0)
+min 320x240 320x240 red=2 hash=2837095858
+min 321x240 640x480 red=1 hash=3401903350
+min 100x100 160x120 red=4 hash=3729283859
+min 80x60 80x60 red=8 hash=3322666019
+min 81x60 160x120 red=4 hash=3729283859
+min 700x500 640x480 red=1 hash=3401903350
+min 1x1 80x60 red=8 hash=3322666019
+min 0x5 -> invalid: image_decode_min: el tamaño mínimo tiene que ser positivo
+orient6 min 14x21 14x21 red=2 hash=4272523963
+orient6 min 15x21 27x41 red=1 hash=2486143399
+orient6 min 21x14 27x41 red=1 hash=2486143399
+png scaled 21x13 red=1 hash=2884244846
+fin

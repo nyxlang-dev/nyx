@@ -265,16 +265,10 @@ impl ZipInflate {
             self.err = "la salida supera el tope de " + int_to_string(self.max_out) + " bytes"
         }
         if self.cur.length() == 32768 {
-            let tab: Array = self.tab
-            var sb: StringBuilder = StringBuilder.new()
-            var i: int = 0
-            while i < 32768 {
-                let x: int = self.cur[i]
-                let s: String = tab[x]
-                sb.append(s)
-                i = i + 1
-            }
-            self.prev = sb.to_string()
+            // El tramo cerrado se sella de un golpe con string_from_bytes en vez de
+            // un StringBuilder de a un byte (~25 % menos de tiempo de inflate,
+            // medido 2026-09-30; spike std-image-prototipo).
+            self.prev = string_from_bytes(self.cur, 0, 32768)
             let d: StringBuilder = self.done
             d.append(self.prev)
             self.cur = []
@@ -437,14 +431,9 @@ impl ZipInflate {
 
     // Lo que quedó en el tramo en curso, volcado a `done`: la salida entera.
     fn result(&mut self) -> String {
-        let tab: Array = self.tab
         var sb: StringBuilder = self.done
-        var i: int = 0
-        while i < self.cur.length() {
-            let x: int = self.cur[i]
-            let s1: String = tab[x]
-            sb.append(s1)
-            i = i + 1
+        if self.cur.length() > 0 {
+            sb.append(string_from_bytes(self.cur, 0, self.cur.length()))
         }
         self.cur = []
         return sb.to_string()

@@ -1,0 +1,211 @@
+// test-472 — std/mime contra correos que escribieron OTROS programas (arco std-imap, Task 3).
+//
+// Los fixtures (tests/fixtures/mime/gen_mime.py) tienen la forma de lo que mandan Gmail,
+// Outlook/Exchange, Postfix (rebote), un autorrespondedor, un reenvío con message/rfc822,
+// un aviso de tienda con HTML solo y un S/MIME; junto a cada .eml está el .dump que
+// producen las bibliotecas de Python (`email` con policy.default) como oráculo
+// independiente: asunto, direcciones, fecha, ids, texto, HTML y, por parte, ruta, tipo,
+// nombre de archivo, Content-ID, tamaño decodificado y checksum de los bytes.
+// Probar solo contra el propio escritor no alcanza (lección de std/xlsx): el analizador
+// se prueba contra lo que otros escribieron.
+//
+// Además de la comparación, las señales de un CRM (rebote, autorespuesta, lista, firma)
+// se afirman por fixture, y el fixture con LF se compara con el de CRLF.
+
+import "std/mime"
+import "std/error"
+
+const DIR: String = "tests/fixtures/mime/"
+
+fn esc(s: String) -> String {
+    return s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
+}
+
+fn suma(s: String) -> int {
+    var acc: int = 0
+    var i: int = 0
+    while i < s.length() {
+        acc = (acc + s.charAt(i) * (i + 1)) % 1000003
+        i = i + 1
+    }
+    return acc
+}
+
+fn dir_lista(xs: Array) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < xs.length() {
+        let a: MimeAddress = xs[i]
+        if i > 0 { out = out + "; " }
+        if a.name != "" { out = out + a.name + " <" + a.address + ">" }
+        else { out = out + "<" + a.address + ">" }
+        i = i + 1
+    }
+    return out
+}
+
+fn ids(xs: Array) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < xs.length() {
+        let x: String = xs[i]
+        if i > 0 { out = out + " " }
+        out = out + x
+        i = i + 1
+    }
+    return out
+}
+
+// El mismo formato que gen_mime.py::volcado.
+fn volcado(m: MimeMessage) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("subject|" + esc(m.subject) + "\n")
+    sb.append("from|" + dir_lista(m.from_list) + "\n")
+    sb.append("to|" + dir_lista(m.to_list) + "\n")
+    sb.append("cc|" + dir_lista(m.cc_list) + "\n")
+    sb.append("reply-to|" + dir_lista(m.reply_to_list) + "\n")
+    sb.append("date|" + int_to_string(m.date) + "\n")
+    sb.append("message-id|" + m.message_id + "\n")
+    sb.append("in-reply-to|" + ids(m.in_reply_to) + "\n")
+    sb.append("references|" + ids(m.references) + "\n")
+    sb.append("content-type|" + m.content_type + "\n")
+    for p: MimePart in m.parts {
+        var tam: String = int_to_string(p.size)
+        var chk: String = int_to_string(suma(p.data))
+        if p.content_type == "message/rfc822" { tam = "-"; chk = "-" }
+        sb.append("part|" + p.path + "|" + p.content_type + "|" + p.filename + "|" + p.content_id + "|" + tam + "|" + chk + "\n")
+    }
+    var texto: String = "<none>"
+    if m.text_approx == false and m.text != "" { texto = esc(m.text) }
+    sb.append("text|" + texto + "\n")
+    var html: String = "<none>"
+    if m.has_html { html = esc(m.html) }
+    sb.append("html|" + html + "\n")
+    return sb.to_string()
+}
+
+fn leer(nombre: String) -> MimeMessage {
+    match mime_parse(read_file(DIR + nombre + ".eml"), mime_limits()) {
+        Result.Ok(m) => { return m }
+        Result.Err(e) => {
+            println(nombre + ": " + e.kind + " " + e.msg)
+            exit(1)
+        }
+    }
+    return leer(nombre)
+}
+
+fn comparar(nombre: String) -> MimeMessage {
+    let m: MimeMessage = leer(nombre)
+    let got: String = volcado(m)
+    let want: String = read_file(DIR + nombre + ".dump")
+    if got != want {
+        // La primera línea distinta, para no tener que adivinar.
+        let a: Array = got.split("\n")
+        let b: Array = want.split("\n")
+        var i: int = 0
+        while i < a.length() and i < b.length() {
+            let la: String = a[i]
+            let lb: String = b[i]
+            if la != lb {
+                println(nombre + " línea " + int_to_string(i + 1) + ":")
+                println("  nyx:    " + la)
+                println("  python: " + lb)
+                break
+            }
+            i = i + 1
+        }
+        exit(1)
+    }
+    return m
+}
+
+fn main() -> int {
+    // Gmail: respuesta con asunto RFC 2047 (Q, con ':' y raya), nombre con tilde, Cc con
+    // nombre entre comillas codificado en base64, cabeceras ARC/DKIM plegadas, QP.
+    let g: MimeMessage = comparar("gmail-respuesta")
+    assert(g.subject == "Re: Cotización 123 — Oficina Providencia", "asunto de Gmail: " + g.subject)
+    let de: MimeAddress = g.from_list[0]
+    assert(de.name == "José Pérez" and de.address == "jose.perez@gmail.com", "remitente de Gmail")
+    assert(g.cc_list.length() == 2, "dos en Cc")
+    let cc0: MimeAddress = g.cc_list[0]
+    assert(cc0.name == "Muñoz, Ana", "nombre entre comillas en base64: " + cc0.name)
+    assert(g.in_reply_to.length() == 1 and g.in_reply_to[0] == "<1790784000.123456789@acme.cl>", "In-Reply-To")
+    assert(g.has_html and g.text_approx == false, "alternative: texto y html")
+    assert(g.is_auto_reply == false and g.is_bounce == false and g.is_list == false, "no es automático")
+    assert(g.message_id == "<CAFx3bM_kQ0p9ZgTq7Yw2r=Nn5Lh8Vb1c@mail.gmail.com>", "Message-ID de Gmail")
+    assert(mime_header(g, "delivered-to") == "ventas@acme.cl", "cabecera por nombre sin mayúsculas")
+    assert(mime_header_all(g, "received").length() == 2, "dos Received")
+    // El mismo mensaje con LF (lo que deja Thunderbird al guardar un .eml) da lo mismo.
+    let glf: MimeMessage = comparar("gmail-respuesta-lf")
+    assert(glf.text == g.text and glf.html == g.html and glf.subject == g.subject, "LF y CRLF dan el mismo texto")
+    assert(glf.date == g.date and dir_lista(glf.cc_list) == dir_lista(g.cc_list), "LF y CRLF dan las mismas cabeceras")
+
+    // Gmail con adjuntos: related + mixed anidados, nombre RFC 2231 con continuación.
+    let ga: MimeMessage = comparar("gmail-adjuntos")
+    assert(ga.attachments.length() == 1 and ga.inlines.length() == 1, "un adjunto y una imagen incrustada")
+    let pdf: MimePart = ga.attachments[0]
+    assert(pdf.filename == "informe mayo ñ.pdf" and pdf.content_type == "application/pdf", "nombre 2231")
+    assert(pdf.data.startsWith("%PDF-1.4"), "los bytes del PDF")
+    let logo: MimePart = ga.inlines[0]
+    assert(logo.content_id == "ii_lk3j2h1g0" and logo.filename == "logo.png", "imagen cid")
+    assert(ga.text_ok, "texto UTF-8")
+
+    // Outlook: Windows-1252 (comillas tipográficas), asunto con dos palabras codificadas
+    // ISO-8859-1 seguidas, nombre de archivo con palabra codificada, related > alternative.
+    let o: MimeMessage = comparar("outlook")
+    assert(o.subject == "RE: Presupuesto año 2026 - versión final", "asunto de Outlook: " + o.subject)
+    assert(o.text.indexOf("“comentarios” – gracias") >= 0, "windows-1252 a UTF-8")
+    let xl: MimePart = o.attachments[0]
+    assert(xl.filename == "Presupuesto año 2026.xlsx" and xl.size == 5204, "adjunto de Outlook")
+    assert(o.inlines.length() == 1, "firma incrustada")
+
+    // Rebote de Postfix.
+    let d: MimeMessage = comparar("dsn-postfix")
+    assert(d.is_bounce and d.is_dsn and d.is_auto_reply, "rebote y auto-submitted")
+    assert(d.report_type == "delivery-status", "report-type")
+    assert(d.bounce.recipient == "noexiste@ejemplo.cl", "destinatario: " + d.bounce.recipient)
+    assert(d.bounce.action == "failed" and d.bounce.status == "5.1.1" and d.bounce.permanent, "acción y estado")
+    assert(d.bounce.diagnostic.startsWith("550 5.1.1 <noexiste@ejemplo.cl>: Recipient address rejected:"), "diagnóstico: " + d.bounce.diagnostic)
+    assert(d.bounce.original_message_id == "<1790784000.987654321@acme.cl>", "Message-ID del original: " + d.bounce.original_message_id)
+    assert(d.attachments.length() == 0, "el informe no cuenta como adjunto")
+
+    // Rebote de Exchange Online: message/rfc822 con el original.
+    let x: MimeMessage = comparar("dsn-exchange")
+    assert(x.is_bounce and x.bounce.status == "5.4.1", "rebote de Exchange")
+    assert(x.bounce.recipient == "ex-empleado@empresa.onmicrosoft.com", "destinatario de Exchange")
+    assert(x.bounce.original_message_id == "<1790845200.555444333@acme.cl>", "id del original en message/rfc822")
+    assert(x.subject == "Undeliverable: Cotización 125", "asunto de Exchange")
+    assert(x.text.indexOf("ya no existe") >= 0, "texto explicativo en base64")
+
+    // Autorrespuesta (ISO-8859-1 de 8 bits crudos).
+    let a: MimeMessage = comparar("autorespuesta")
+    assert(a.is_auto_reply and a.auto_kind == "auto-replied", "auto-submitted: " + a.auto_kind)
+    assert(a.is_bounce == false, "una autorrespuesta no es un rebote")
+    assert(a.text.startsWith("Estaré fuera"), "latin-1 a UTF-8")
+
+    // Reenviado: message/rfc822 es un adjunto opaco; el binario sin nombre también.
+    let r: MimeMessage = comparar("reenviado")
+    assert(r.attachments.length() == 2, "dos adjuntos")
+    let inner: MimePart = r.attachments[0]
+    assert(inner.content_type == "message/rfc822" and inner.filename == "Oferta especial.eml", "rfc822 adjunto")
+    assert(inner.data.indexOf("Message-ID: <oferta-2026@proveedor.cl>") >= 0, "el rfc822 queda sin abrir")
+
+    // HTML solo: el texto sale del HTML y se marca aproximado; lista y bulk.
+    let h: MimeMessage = comparar("solo-html")
+    assert(h.text_approx and h.has_html, "texto aproximado")
+    assert(h.text.startsWith("Su pedido está en camino"), "texto de html: " + h.text)
+    assert(h.text.indexOf("25.990 CLP & envío gratis") >= 0, "entidades: " + h.text)
+    assert(h.text.indexOf("color:red") < 0 and h.text.indexOf("comentario") < 0, "sin style ni comentarios")
+    assert(h.is_list and h.is_auto_reply and h.auto_kind == "precedence:bulk", "lista y bulk")
+    assert(h.inlines.length() == 1, "banner cid")
+
+    // S/MIME: se marca y no se verifica.
+    let s: MimeMessage = comparar("firmado-smime")
+    assert(s.signed and s.encrypted == false, "firmado")
+    assert(s.attachments.length() == 1, "la firma p7s es un adjunto")
+    assert(s.text == "Se recibió su transferencia por $150.000.", "texto QP: " + s.text)
+
+    println("mime fixtures ok")
+    return 0
+}

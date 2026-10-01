@@ -1,0 +1,2494 @@
+// std/image — leer fotos y gráficos (JPEG y PNG) en Nyx puro: formato, tamaño y
+// orientación sin decodificar, y decodificación de PNG a píxeles.
+//
+// De dónde sale: nyxerp recibe fotos de 3-5 MB desde el teléfono y necesita
+// servirlas en tamaños chicos (spec docs/design/specs/2026-09-29-std-image-design.md).
+// Este módulo es la primera etapa: el lector de PNG y el de cabecera JPEG/EXIF,
+// que vivían privados dentro de std/pdf (allá se usan para incrustar sin
+// decodificar), pasaron acá y std/pdf los importa: una sola implementación,
+// mismos bytes de salida en los PDF (verificado con los tests de pdf).
+// Después vienen el decodificador JPEG, el redimensionado y el codificador.
+//
+// Sin ningún `extern "C"`: el mismo código corre en nativo y en wasm32-wasi
+// (donde zlib no existe, por eso el inflate es el de std/zip, en Nyx).
+//
+//   let info: ImageInfo = image_info(bytes)?          // sin decodificar píxeles
+//   let img: Image = image_decode(bytes, image_limits())?
+//
+// Errores: `Result<_, Error>` de std/error con el `kind` del vocabulario del
+// repo: "invalid" (parámetro o tope excedido), "parse" (archivo dañado) y
+// "unsupported" (formato o variante conocida que este módulo no decodifica:
+// HEIC, WebP, CMYK...). El mensaje siempre dice qué hacer.
+//
+// Topes contra archivos maliciosos (D-9): se validan con el ENCABEZADO, antes de
+// reservar nada. Un PNG de 40 KB que declara 60000 x 60000, o cuyo IDAT infla a
+// gigabytes, es `Err(invalid)`, no un proceso sin memoria: el inflate corta en
+// el tamaño exacto que el IHDR promete, MIENTRAS descomprime.
+
+import "std/error"
+import "std/zip"
+
+/// Lo que se sabe de una imagen sin decodificar sus píxeles. `format`: "jpeg" o "png". `channels`: canales del ARCHIVO (gris 1, gris+alfa 2, RGB 3, RGBA 4; una paleta cuenta 3). `orientation`: EXIF 1-8 (1 = sin girar; PNG siempre 1). `progressive`: JPEG progresivo (SOF2).
+pub struct ImageInfo {
+    format: String,
+    width: int,
+    height: int,
+    channels: int,
+    orientation: int,
+    progressive: bool,
+}
+
+/// Topes para archivos que llegan de afuera: bytes del archivo, píxeles totales (ancho x alto) y lado máximo. Se aplican con el encabezado, antes de reservar memoria.
+pub struct ImageLimits {
+    max_bytes: int,
+    max_pixels: int,
+    max_dim: int,
+}
+
+/// Topes por omisión: 30 MB de archivo, 64 millones de píxeles, 30000 de lado.
+pub fn image_limits() -> ImageLimits {
+    return ImageLimits {
+        max_bytes: 30 * 1024 * 1024,
+        max_pixels: 64 * 1024 * 1024,
+        max_dim: 30000
+    }
+}
+
+/// Imagen decodificada: `rows` es un Array de String, una fila por String con 1 byte por muestra (ancho x canales bytes), de arriba a abajo. `channels` es 1 (gris), 3 (RGB) o 4 (RGBA); el gris con alfa sale como RGBA. `icc` es el perfil de color ICC incrustado (bytes crudos, "" si no trae; se expone, no se convierte). `reduction` es 1, 2, 4 u 8: la reducción con que se decodificó (image_decode_scaled/min).
+pub struct Image {
+    width: int,
+    height: int,
+    channels: int,
+    rows: Array,
+    icc: String,
+    reduction: int,
+}
+
+/// PNG leído sin decodificar sus píxeles: los datos del encabezado, la paleta (RGB crudo), el tRNS crudo y los IDAT concatenados (un stream zlib). `interlace` es 0 (sin entrelazar) o 1 (Adam7). Lo usa std/pdf para incrustar sin decodificar.
+pub struct ImagePng {
+    width: int,
+    height: int,
+    depth: int,
+    color_type: int,
+    interlace: int,
+    palette: String,
+    trns: String,
+    idat: String,
+}
+
+fn __image_be16(b: String, i: int) -> int {
+    return (b.charAt(i) << 8) | b.charAt(i + 1)
+}
+
+fn __image_be32(b: String, i: int) -> int {
+    return (b.charAt(i) << 24) | (b.charAt(i + 1) << 16) | (b.charAt(i + 2) << 8) | b.charAt(i + 3)
+}
+
+fn __image_u16(b: String, i: int, little: bool) -> int {
+    if little { return b.charAt(i) | (b.charAt(i + 1) << 8) }
+    return __image_be16(b, i)
+}
+
+fn __image_u32(b: String, i: int, little: bool) -> int {
+    if little {
+        return b.charAt(i) | (b.charAt(i + 1) << 8) | (b.charAt(i + 2) << 16) | (b.charAt(i + 3) << 24)
+    }
+    return __image_be32(b, i)
+}
+
+// Orientación EXIF (1-8) de un segmento APP1 [s, e). Un EXIF que no se puede
+// leer cuenta como 1 (sin rotar), que es lo que hace cualquier visor con él.
+fn __image_exif_orientation(b: String, s: int, e: int) -> int {
+    if e - s < 14 { return 1 }
+    if b.substring(s, s + 6) != "Exif" + chr(0) + chr(0) { return 1 }
+    let t: int = s + 6
+    var little: bool = false
+    let bo: String = b.substring(t, t + 2)
+    if bo == "II" {
+        little = true
+    } else if bo != "MM" {
+        return 1
+    }
+    if __image_u16(b, t + 2, little) != 42 { return 1 }
+    let ifd: int = t + __image_u32(b, t + 4, little)
+    if ifd < t or ifd + 2 > e { return 1 }
+    let count: int = __image_u16(b, ifd, little)
+    var k: int = 0
+    while k < count {
+        let ent: int = ifd + 2 + 12 * k
+        if ent + 12 > e { return 1 }
+        if __image_u16(b, ent, little) == 0x0112 {
+            // SHORT (tipo 3), un valor, guardado en los primeros 2 bytes del campo.
+            if __image_u16(b, ent + 2, little) != 3 { return 1 }
+            let v: int = __image_u16(b, ent + 8, little)
+            if v >= 1 and v <= 8 { return v }
+            return 1
+        }
+        k = k + 1
+    }
+    return 1
+}
+
+// Strings de un byte, para escribir bytes sin crear un String por cada uno.
+// Se arma una tabla por imagen y viaja como parámetro o campo, NO como global
+// perezosa: en wasm32 con la arena por evento (LLM.md §9) un String creado
+// durante un evento y guardado en una global queda colgando cuando la arena se
+// resetea. Las globales de este módulo son literales (se arman en _start) o
+// tablas de int (valores, no punteros).
+fn __image_byte_table() -> Array {
+    var t: Array = []
+    var i: int = 0
+    while i < 256 {
+        t.push(chr(i))
+        i = i + 1
+    }
+    return t
+}
+
+// Valida el IHDR de un PNG (datos en b[d0, d0 + 13)) y devuelve
+// [ancho, alto, profundidad, tipo de color, entrelazado]. `allow_interlace`
+// false rechaza Adam7 (std/pdf incrusta los IDAT tal cual y no lo puede reordenar).
+fn __image_png_ihdr(b: String, d0: int, allow_interlace: bool) -> Result<Array, Error> {
+    let w: int = __image_be32(b, d0)
+    let h: int = __image_be32(b, d0 + 4)
+    let depth: int = b.charAt(d0 + 8)
+    let ctype: int = b.charAt(d0 + 9)
+    if b.charAt(d0 + 10) != 0 or b.charAt(d0 + 11) != 0 {
+        return Result.Err(err_new(22, "invalid", "image_png: método de compresión o de filtro desconocido"))
+    }
+    let il: int = b.charAt(d0 + 12)
+    if il == 1 and not allow_interlace {
+        return Result.Err(err_new(22, "invalid", "image_png: PNG entrelazado (Adam7) no soportado: exportarlo sin entrelazar"))
+    }
+    if il != 0 and il != 1 {
+        return Result.Err(err_new(22, "invalid", "image_png: método de entrelazado desconocido"))
+    }
+    if w <= 0 or h <= 0 or w > 0x7FFFFFFF or h > 0x7FFFFFFF {
+        return Result.Err(err_new(22, "invalid", "image_png: ancho o alto inválido"))
+    }
+    var ok: bool = false
+    if ctype == 0 { ok = depth == 1 or depth == 2 or depth == 4 or depth == 8 or depth == 16 }
+    if ctype == 3 { ok = depth == 1 or depth == 2 or depth == 4 or depth == 8 }
+    if ctype == 2 or ctype == 4 or ctype == 6 { ok = depth == 8 or depth == 16 }
+    if not ok {
+        return Result.Err(err_new(22, "invalid", "image_png: combinación inválida de tipo de color " + int_to_string(ctype) + " y " + int_to_string(depth) + " bits"))
+    }
+    return Result.Ok([w, h, depth, ctype, il])
+}
+
+/// Lee un PNG sin decodificar píxeles: firma, CRC de CADA chunk, IHDR, PLTE, tRNS y los IDAT. `allow_interlace` false rechaza Adam7. Err(parse) si está dañado, Err(invalid) si es de una variante que no se lee (chunk crítico desconocido, combinación inválida).
+pub fn image_png_read(b: String, allow_interlace: bool) -> Result<ImagePng, Error> {
+    let sig: String = chr(137) + "PNG" + chr(13) + chr(10) + chr(26) + chr(10)
+    let n: int = b.length()
+    if n < 8 or b.substring(0, 8) != sig {
+        return Result.Err(err_new(22, "invalid", "image_png: no es un PNG (falta la firma)"))
+    }
+    var w: int = 0
+    var h: int = 0
+    var depth: int = 0
+    var ctype: int = 0
+    var interlace: int = 0
+    var seen_ihdr: bool = false
+    var plte: String = ""
+    var trns: String = ""
+    var idat: StringBuilder = StringBuilder.new()
+    var n_idat: int = 0
+    let crc_tab: Array = zip_crc32_table()
+    var i: int = 8
+    var ended: bool = false
+    while not ended {
+        if i + 12 > n {
+            return Result.Err(err_new(22, "parse", "image_png: PNG cortado (falta IEND)"))
+        }
+        let len: int = __image_be32(b, i)
+        if len > n - i - 12 {
+            return Result.Err(err_new(22, "parse", "image_png: el chunk del byte " + int_to_string(i) + " se sale del archivo"))
+        }
+        let typ: String = b.substring(i + 4, i + 8)
+        let d0: int = i + 8
+        if zip_crc32_part(crc_tab, b, i + 4, d0 + len) != __image_be32(b, d0 + len) {
+            return Result.Err(err_new(22, "parse", "image_png: el CRC del chunk " + typ + " (byte " + int_to_string(i) + ") no coincide: archivo dañado"))
+        }
+        if not seen_ihdr and typ != "IHDR" {
+            return Result.Err(err_new(22, "parse", "image_png: el primer chunk no es IHDR"))
+        }
+        if typ == "IHDR" {
+            if seen_ihdr or len != 13 {
+                return Result.Err(err_new(22, "parse", "image_png: IHDR repetido o de largo " + int_to_string(len)))
+            }
+            seen_ihdr = true
+            let hr: Result<Array, Error> = __image_png_ihdr(b, d0, allow_interlace)
+            match hr {
+                Result.Err(e) => { return Result.Err(e) }
+                Result.Ok(hd) => {
+                    w = hd[0]
+                    h = hd[1]
+                    depth = hd[2]
+                    ctype = hd[3]
+                    interlace = hd[4]
+                }
+            }
+        } else if typ == "PLTE" {
+            if len == 0 or len % 3 != 0 or len > 768 {
+                return Result.Err(err_new(22, "parse", "image_png: paleta de largo inválido"))
+            }
+            plte = b.substring(d0, d0 + len)
+        } else if typ == "tRNS" {
+            trns = b.substring(d0, d0 + len)
+        } else if typ == "IDAT" {
+            idat.append(b.substring(d0, d0 + len))
+            n_idat = n_idat + 1
+        } else if typ == "IEND" {
+            ended = true
+        } else if (b.charAt(i + 4) & 32) == 0 {
+            // Primera letra en mayúscula: chunk CRÍTICO, que un lector no puede
+            // saltear sin romper la imagen (PNG §5.4).
+            return Result.Err(err_new(22, "invalid", "image_png: chunk crítico desconocido " + typ))
+        }
+        i = d0 + len + 4
+    }
+    if n_idat == 0 {
+        return Result.Err(err_new(22, "parse", "image_png: PNG sin datos (IDAT)"))
+    }
+    if ctype == 3 and plte == "" {
+        return Result.Err(err_new(22, "parse", "image_png: PNG con paleta sin chunk PLTE"))
+    }
+    return Result.Ok(ImagePng { width: w, height: h, depth: depth, color_type: ctype, interlace: interlace, palette: plte, trns: trns, idat: idat.to_string() })
+}
+
+// Predicción PNG (PNG §9.2) del byte x de una fila: a = izquierda (bpp bytes
+// antes), b = arriba, c = arriba a la izquierda.
+fn __image_png_pred(f: int, a: int, b: int, c: int) -> int {
+    if f == 1 { return a }
+    if f == 2 { return b }
+    if f == 3 { return (a + b) / 2 }
+    if f == 4 {
+        let p: int = a + b - c
+        var pa: int = p - a
+        if pa < 0 { pa = 0 - pa }
+        var pb: int = p - b
+        if pb < 0 { pb = 0 - pb }
+        var pc: int = p - c
+        if pc < 0 { pc = 0 - pc }
+        if pa <= pb and pa <= pc { return a }
+        if pb <= pc { return b }
+        return c
+    }
+    return 0
+}
+
+// Escribe los n bytes de `row` tal cual. Se probó volver a filtrarlos (None/
+// Sub/Up por fila, la heurística de libpng, con /Predictor 15): con el deflate
+// de Huffman FIJO de abajo, los bytes filtrados no se codifican más corto, y
+// solo el LZ77 se beneficia. Medido: un logo de 300 x 120 salía 21 % MÁS
+// grande filtrado (22.6 KB contra 18.6 KB), una foto RGBA 4 % más grande, y
+// solo un degradé ampliado a 1500 x 600 ganaba (345 KB contra 439 KB). Para
+// logos, que es el caso, sin filtrar es más chico, más simple y más rápido.
+fn __image_png_put_row(out: StringBuilder, row: Array, n: int, tab: Array) {
+    var x: int = 0
+    while x < n {
+        let v: int = row[x]
+        let s: String = tab[v]
+        out.append(s)
+        x = x + 1
+    }
+}
+
+fn __image_zeros(n: int) -> Array {
+    var z: Array = []
+    var i: int = 0
+    while i < n {
+        z.push(0)
+        i = i + 1
+    }
+    return z
+}
+
+// Des-filtra las filas de PNG (5 filtros, PNG §9) y reparte cada píxel entre
+// `color` y `alpha`. Para gris+alfa y RGBA separa el último canal; para una
+// paleta copia los índices tal cual a `color` y escribe en `alpha` el alfa de
+// la paleta de cada píxel. "" si todo cerró, o la causa.
+/// Des-filtra las filas de un PNG (5 filtros) y reparte cada píxel entre `color` y `alpha` (dos flujos crudos, para incrustar en un PDF). "" si todo cerró, o la causa. Lo usa std/pdf; para píxeles use image_decode.
+pub fn image_png_split(raw: String, w: int, h: int, depth: int, ctype: int, trns: String, color: StringBuilder, alpha: StringBuilder) -> String {
+    var channels: int = 1
+    if ctype == 2 { channels = 3 }
+    if ctype == 4 { channels = 2 }
+    if ctype == 6 { channels = 4 }
+    let bits: int = channels * depth
+    let stride: int = (w * bits + 7) / 8
+    var bpp: int = bits / 8
+    if bpp < 1 { bpp = 1 }
+    if raw.length() != h * (stride + 1) {
+        return "los datos inflados miden " + int_to_string(raw.length()) + " bytes y el IHDR pide " + int_to_string(h * (stride + 1))
+    }
+    let tab: Array = __image_byte_table()
+    let cs: StringBuilder = color
+    let asb: StringBuilder = alpha
+    let bps: int = depth / 8
+    var prev_row: Array = __image_zeros(stride)
+    var row: Array = __image_zeros(stride)
+    // Filas de salida: color (sin el canal alfa) y alfa.
+    var cstride: int = stride
+    var astride: int = w
+    if ctype != 3 {
+        cstride = w * (channels - 1) * bps
+        astride = w * bps
+    }
+    var crow: Array = __image_zeros(cstride)
+    var arow: Array = __image_zeros(astride)
+    var y: int = 0
+    while y < h {
+        let base: int = y * (stride + 1)
+        let f: int = raw.charAt(base)
+        if f > 4 { return "filtro de fila " + int_to_string(f) + " desconocido en la fila " + int_to_string(y) }
+        var x: int = 0
+        while x < stride {
+            let v: int = raw.charAt(base + 1 + x)
+            var a: int = 0
+            if x >= bpp { a = row[x - bpp] }
+            let up: int = prev_row[x]
+            var c: int = 0
+            if x >= bpp { c = prev_row[x - bpp] }
+            row[x] = (v + __image_png_pred(f, a, up, c)) & 255
+            x = x + 1
+        }
+        // Repartir la fila ya reconstruida.
+        if ctype == 3 {
+            x = 0
+            while x < stride {
+                crow[x] = row[x]
+                x = x + 1
+            }
+            var px: int = 0
+            while px < w {
+                let bitpos: int = px * depth
+                let byte: int = row[bitpos / 8]
+                let idx: int = (byte >> (8 - depth - bitpos % 8)) & ((1 << depth) - 1)
+                var al: int = 255
+                if idx < trns.length() { al = trns.charAt(idx) }
+                arow[px] = al
+                px = px + 1
+            }
+        } else {
+            let pxbytes: int = channels * bps
+            var ci: int = 0
+            var ai: int = 0
+            var px2: int = 0
+            while px2 < w {
+                let o: int = px2 * pxbytes
+                var q: int = 0
+                while q < pxbytes {
+                    if q < pxbytes - bps {
+                        crow[ci] = row[o + q]
+                        ci = ci + 1
+                    } else {
+                        arow[ai] = row[o + q]
+                        ai = ai + 1
+                    }
+                    q = q + 1
+                }
+                px2 = px2 + 1
+            }
+        }
+        __image_png_put_row(cs, crow, cstride, tab)
+        __image_png_put_row(asb, arow, astride, tab)
+        let t: Array = prev_row
+        prev_row = row
+        row = t
+
+        y = y + 1
+    }
+    return ""
+}
+
+// ── JPEG: encabezado de cuadro ─────────────────────────────────────────────
+
+/// Recorre los marcadores de un JPEG hasta el encabezado de cuadro (SOF) y devuelve [ancho, alto, componentes, orientación EXIF, marcador SOF (0xC0-0xCF), bits por muestra]. Solo entiende la estructura: quien lo llama decide qué variantes acepta (std/pdf pasa SOF0-2; std/image_info solo 8 bits y 1 o 3 componentes). Un SOF que no es 0xC0-0xC2 (sin pérdida, aritmético, jerárquico) devuelve ancho, alto, componentes y bits en 0.
+pub fn image_jpeg_frame(b: String) -> Result<Array, Error> {
+    let n: int = b.length()
+    if n < 4 or b.charAt(0) != 0xFF or b.charAt(1) != 0xD8 {
+        return Result.Err(err_new(22, "invalid", "image_jpeg: no es un JPEG (no empieza con FF D8)"))
+    }
+    var orient: int = 1
+    var i: int = 2
+    while true {
+        if i >= n or b.charAt(i) != 0xFF {
+            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG malformado: se esperaba un marcador en el byte " + int_to_string(i)))
+        }
+        while i < n and b.charAt(i) == 0xFF {
+            i = i + 1
+        }
+        if i >= n {
+            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG cortado antes del encabezado de cuadro"))
+        }
+        let m: int = b.charAt(i)
+        i = i + 1
+        if m == 0xD8 or m == 0x01 or (m >= 0xD0 and m <= 0xD7) {
+            continue
+        }
+        if m == 0xD9 or m == 0xDA {
+            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG sin encabezado de cuadro (SOF) antes de los datos"))
+        }
+        if i + 2 > n {
+            return Result.Err(err_new(22, "parse", "image_jpeg: JPEG cortado en el byte " + int_to_string(i)))
+        }
+        let len: int = __image_be16(b, i)
+        if len < 2 or i + len > n {
+            return Result.Err(err_new(22, "parse", "image_jpeg: el segmento del byte " + int_to_string(i - 2) + " se sale del archivo"))
+        }
+        // Solo un APP1 que ES EXIF: un XMP (también APP1) que llega después no
+        // puede pisar la orientación ya leída.
+        if m == 0xE1 and len >= 8 and b.substring(i + 2, i + 8) == "Exif" + chr(0) + chr(0) {
+            orient = __image_exif_orientation(b, i + 2, i + len)
+        }
+        if m == 0xC0 or m == 0xC1 or m == 0xC2 {
+            if len < 8 {
+                return Result.Err(err_new(22, "parse", "image_jpeg: encabezado de cuadro demasiado corto"))
+            }
+            let prec: int = b.charAt(i + 2)
+            let h: int = __image_be16(b, i + 3)
+            let w: int = __image_be16(b, i + 5)
+            let nc: int = b.charAt(i + 7)
+            return Result.Ok([w, h, nc, orient, m, prec])
+        }
+        if (m >= 0xC3 and m <= 0xCF) and m != 0xC4 and m != 0xC8 and m != 0xCC {
+            return Result.Ok([0, 0, 0, orient, m, 0])
+        }
+        i = i + len
+    }
+    return Result.Err(err_new(22, "parse", "image_jpeg: inalcanzable"))
+}
+
+// ── image_info ─────────────────────────────────────────────────────────────
+
+// Formato por la firma: "jpeg", "png", o el nombre en minúscula de uno conocido
+// que no se decodifica ("webp", "gif", "heic", "avif", "bmp", "tiff"); "" si no
+// se reconoce. HEIC es lo que un iPhone guarda con «alta eficiencia»: hay que
+// saber distinguirlo de un archivo roto (spec D-8).
+fn __image_detect(b: String) -> String {
+    let n: int = b.length()
+    if n >= 3 and b.charAt(0) == 0xFF and b.charAt(1) == 0xD8 and b.charAt(2) == 0xFF { return "jpeg" }
+    if n >= 8 and b.substring(0, 8) == chr(137) + "PNG" + chr(13) + chr(10) + chr(26) + chr(10) { return "png" }
+    if n >= 12 and b.substring(0, 4) == "RIFF" and b.substring(8, 12) == "WEBP" { return "webp" }
+    if n >= 6 and (b.substring(0, 6) == "GIF87a" or b.substring(0, 6) == "GIF89a") { return "gif" }
+    if n >= 12 and b.substring(4, 8) == "ftyp" {
+        let brand: String = b.substring(8, 12)
+        if brand == "avif" or brand == "avis" { return "avif" }
+        if brand == "heic" or brand == "heix" or brand == "hevc" or brand == "hevx" or brand == "heim" or brand == "heis" or brand == "mif1" or brand == "msf1" { return "heic" }
+    }
+    if n >= 2 and b.substring(0, 2) == "BM" { return "bmp" }
+    if n >= 4 and (b.substring(0, 4) == "II" + chr(42) + chr(0) or b.substring(0, 4) == "MM" + chr(0) + chr(42)) { return "tiff" }
+    return ""
+}
+
+fn __image_format_err(fname: String, fmt: String) -> Error {
+    if fmt == "" {
+        return err_new(22, "invalid", fname + ": no parece una imagen JPEG ni PNG (firma desconocida)")
+    }
+    var name: String = fmt
+    var hint: String = "convertirla a JPEG o PNG"
+    if fmt == "heic" {
+        name = "HEIC"
+        hint = "en el iPhone, Ajustes > Cámara > Formatos > «Más compatible» guarda JPEG"
+    }
+    if fmt == "webp" { name = "WebP" }
+    if fmt == "avif" { name = "AVIF" }
+    if fmt == "gif" { name = "GIF" }
+    if fmt == "bmp" { name = "BMP" }
+    if fmt == "tiff" { name = "TIFF" }
+    return err_new(22, "unsupported", fname + ": formato " + name + " no soportado; " + hint)
+}
+
+/// Formato, tamaño y orientación de una imagen SIN decodificar los píxeles (lee solo el encabezado: es barato aunque el archivo sea de 30 MB). Err(unsupported) para HEIC, WebP, AVIF, GIF, CMYK, JPEG de 12 bits, sin pérdida o aritmético; Err(parse) si el encabezado está dañado.
+pub fn image_info(bytes: String) -> Result<ImageInfo, Error> {
+    let fmt: String = __image_detect(bytes)
+    if fmt == "png" {
+        let n: int = bytes.length()
+        // Firma (8) + chunk IHDR (4 largo + 4 tipo + 13 datos + 4 CRC).
+        if n < 33 or bytes.substring(12, 16) != "IHDR" or __image_be32(bytes, 8) != 13 {
+            return Result.Err(err_new(22, "parse", "image_info: PNG sin IHDR al principio"))
+        }
+        let crc_tab: Array = zip_crc32_table()
+        if zip_crc32_part(crc_tab, bytes, 12, 29) != __image_be32(bytes, 29) {
+            return Result.Err(err_new(22, "parse", "image_info: el CRC del IHDR no coincide: archivo dañado"))
+        }
+        let hr: Result<Array, Error> = __image_png_ihdr(bytes, 16, true)
+        match hr {
+            Result.Err(e) => { return Result.Err(err_new(e.code, e.kind, "image_info: " + e.msg)) }
+            Result.Ok(hd) => {
+                var ch: int = 1
+                let ct: int = hd[3]
+                if ct == 2 or ct == 3 { ch = 3 }
+                if ct == 4 { ch = 2 }
+                if ct == 6 { ch = 4 }
+                return Result.Ok(ImageInfo { format: "png", width: hd[0], height: hd[1], channels: ch, orientation: 1, progressive: false })
+            }
+        }
+    }
+    if fmt == "jpeg" {
+        let fr: Result<Array, Error> = image_jpeg_frame(bytes)
+        match fr {
+            Result.Err(e) => { return Result.Err(err_new(e.code, e.kind, "image_info: " + e.msg)) }
+            Result.Ok(f) => {
+                let sof: int = f[4]
+                if sof > 0xC2 {
+                    return Result.Err(err_new(22, "unsupported", "image_info: JPEG con codificación SOF" + int_to_string(sof - 0xC0) + " (sin pérdida, aritmética o jerárquica): guardarlo como JPEG normal"))
+                }
+                let prec: int = f[5]
+                if prec != 8 {
+                    return Result.Err(err_new(22, "unsupported", "image_info: JPEG de " + int_to_string(prec) + " bits por muestra; se lee 8"))
+                }
+                let w: int = f[0]
+                let h: int = f[1]
+                let nc: int = f[2]
+                if w == 0 or h == 0 {
+                    return Result.Err(err_new(22, "parse", "image_info: JPEG sin ancho o alto en el encabezado"))
+                }
+                if nc == 4 {
+                    return Result.Err(err_new(22, "unsupported", "image_info: JPEG CMYK no soportado (los de Photoshop guardan los colores invertidos y saldrían al revés): convertirlo a RGB"))
+                }
+                if nc != 1 and nc != 3 {
+                    return Result.Err(err_new(22, "unsupported", "image_info: JPEG de " + int_to_string(nc) + " componentes; se aceptan 1 (gris) y 3 (color)"))
+                }
+                return Result.Ok(ImageInfo { format: "jpeg", width: w, height: h, channels: nc, orientation: f[3], progressive: sof == 0xC2 })
+            }
+        }
+    }
+    return Result.Err(__image_format_err("image_info", fmt))
+}
+
+// ── PNG a píxeles ──────────────────────────────────────────────────────────
+
+// Pasadas de Adam7 (PNG §8.2): [x inicial, y inicial, salto en x, salto en y].
+fn __image_adam7(p: int) -> Array {
+    if p == 0 { return [0, 0, 8, 8] }
+    if p == 1 { return [4, 0, 8, 8] }
+    if p == 2 { return [0, 4, 4, 8] }
+    if p == 3 { return [2, 0, 4, 4] }
+    if p == 4 { return [0, 2, 2, 4] }
+    if p == 5 { return [1, 0, 2, 2] }
+    return [0, 1, 1, 2]
+}
+
+// Canales de la salida: gris 1 (RGBA si trae tRNS), RGB 3 (RGBA con tRNS),
+// paleta 3 (RGBA con tRNS), gris+alfa y RGBA 4.
+fn __image_png_out_channels(ctype: int, trns: String) -> int {
+    if ctype == 4 or ctype == 6 { return 4 }
+    if trns != "" { return 4 }
+    if ctype == 0 { return 1 }
+    return 3
+}
+
+// Convierte una fila ya des-filtrada (`row`, en los bytes del PNG) a muestras de
+// 8 bits en `orow`. "" si todo cerró, o la causa (índice de paleta fuera de rango).
+fn __image_png_row(row: Array, pw: int, depth: int, ctype: int, plte: String, trns: String, och: int, orow: Array) -> String {
+    let np: int = plte.length() / 3
+    var key0: int = 0 - 1
+    var key1: int = 0 - 1
+    var key2: int = 0 - 1
+    if trns != "" and ctype == 0 { key0 = __image_be16(trns, 0) }
+    if trns != "" and ctype == 2 {
+        key0 = __image_be16(trns, 0)
+        key1 = __image_be16(trns, 2)
+        key2 = __image_be16(trns, 4)
+    }
+    var x: int = 0
+    while x < pw {
+        if ctype == 0 {
+            var v: int = 0
+            var sample: int = 0
+            if depth == 8 {
+                v = row[x]
+                sample = v
+            } else if depth == 16 {
+                v = row[2 * x]
+                sample = (row[2 * x] << 8) | row[2 * x + 1]
+            } else {
+                let bitpos: int = x * depth
+                let mx: int = (1 << depth) - 1
+                sample = (row[bitpos / 8] >> (8 - depth - bitpos % 8)) & mx
+                v = sample * 255 / mx
+            }
+            if och == 1 {
+                orow[x] = v
+            } else {
+                orow[x * 4] = v
+                orow[x * 4 + 1] = v
+                orow[x * 4 + 2] = v
+                if sample == key0 { orow[x * 4 + 3] = 0 } else { orow[x * 4 + 3] = 255 }
+            }
+        } else if ctype == 2 {
+            var r: int = 0
+            var g: int = 0
+            var bl: int = 0
+            var sr: int = 0
+            var sg: int = 0
+            var sb2: int = 0
+            if depth == 8 {
+                r = row[3 * x]
+                g = row[3 * x + 1]
+                bl = row[3 * x + 2]
+                sr = r
+                sg = g
+                sb2 = bl
+            } else {
+                r = row[6 * x]
+                g = row[6 * x + 2]
+                bl = row[6 * x + 4]
+                sr = (row[6 * x] << 8) | row[6 * x + 1]
+                sg = (row[6 * x + 2] << 8) | row[6 * x + 3]
+                sb2 = (row[6 * x + 4] << 8) | row[6 * x + 5]
+            }
+            if och == 3 {
+                orow[x * 3] = r
+                orow[x * 3 + 1] = g
+                orow[x * 3 + 2] = bl
+            } else {
+                orow[x * 4] = r
+                orow[x * 4 + 1] = g
+                orow[x * 4 + 2] = bl
+                if sr == key0 and sg == key1 and sb2 == key2 { orow[x * 4 + 3] = 0 } else { orow[x * 4 + 3] = 255 }
+            }
+        } else if ctype == 3 {
+            let bitpos: int = x * depth
+            let idx: int = (row[bitpos / 8] >> (8 - depth - bitpos % 8)) & ((1 << depth) - 1)
+            if idx >= np {
+                return "el píxel " + int_to_string(x) + " usa el índice de paleta " + int_to_string(idx) + " y la paleta tiene " + int_to_string(np) + " colores"
+            }
+            if och == 3 {
+                orow[x * 3] = plte.charAt(3 * idx)
+                orow[x * 3 + 1] = plte.charAt(3 * idx + 1)
+                orow[x * 3 + 2] = plte.charAt(3 * idx + 2)
+            } else {
+                orow[x * 4] = plte.charAt(3 * idx)
+                orow[x * 4 + 1] = plte.charAt(3 * idx + 1)
+                orow[x * 4 + 2] = plte.charAt(3 * idx + 2)
+                if idx < trns.length() { orow[x * 4 + 3] = trns.charAt(idx) } else { orow[x * 4 + 3] = 255 }
+            }
+        } else if ctype == 4 {
+            let bps: int = depth / 8
+            let gv: int = row[2 * bps * x]
+            orow[x * 4] = gv
+            orow[x * 4 + 1] = gv
+            orow[x * 4 + 2] = gv
+            orow[x * 4 + 3] = row[2 * bps * x + bps]
+        } else {
+            let bps: int = depth / 8
+            let o: int = 4 * bps * x
+            orow[x * 4] = row[o]
+            orow[x * 4 + 1] = row[o + bps]
+            orow[x * 4 + 2] = row[o + 2 * bps]
+            orow[x * 4 + 3] = row[o + 3 * bps]
+        }
+        x = x + 1
+    }
+    return ""
+}
+
+// Bytes por fila (sin el byte de filtro) de una imagen de `pw` píxeles.
+fn __image_png_stride(pw: int, depth: int, ctype: int) -> int {
+    var channels: int = 1
+    if ctype == 2 { channels = 3 }
+    if ctype == 4 { channels = 2 }
+    if ctype == 6 { channels = 4 }
+    return (pw * channels * depth + 7) / 8
+}
+
+// Des-filtra y convierte UNA imagen (el PNG entero, o una pasada de Adam7) que
+// empieza en raw[off]. Devuelve [filas (Array de String), offset siguiente] o
+// Err(parse) con la causa.
+fn __image_png_pass(raw: String, off: int, pw: int, ph: int, depth: int, ctype: int, plte: String, trns: String, och: int) -> Result<Array, Error> {
+    let stride: int = __image_png_stride(pw, depth, ctype)
+    var channels: int = 1
+    if ctype == 2 { channels = 3 }
+    if ctype == 4 { channels = 2 }
+    if ctype == 6 { channels = 4 }
+    var bpp: int = channels * depth / 8
+    if bpp < 1 { bpp = 1 }
+    var prev_row: Array = __image_zeros(stride)
+    var row: Array = __image_zeros(stride)
+    var orow: Array = __image_zeros(pw * och)
+    var rows: Array = []
+    var y: int = 0
+    while y < ph {
+        let base: int = off + y * (stride + 1)
+        let f: int = raw.charAt(base)
+        if f > 4 {
+            return Result.Err(err_new(22, "parse", "image_png: filtro de fila " + int_to_string(f) + " desconocido en la fila " + int_to_string(y)))
+        }
+        var x: int = 0
+        while x < stride {
+            let v: int = raw.charAt(base + 1 + x)
+            var a: int = 0
+            if x >= bpp { a = row[x - bpp] }
+            let up: int = prev_row[x]
+            var c: int = 0
+            if x >= bpp { c = prev_row[x - bpp] }
+            row[x] = (v + __image_png_pred(f, a, up, c)) & 255
+            x = x + 1
+        }
+        let problema: String = __image_png_row(row, pw, depth, ctype, plte, trns, och, orow)
+        if problema != "" {
+            return Result.Err(err_new(22, "parse", "image_png: " + problema))
+        }
+        rows.push(string_from_bytes(orow, 0, pw * och))
+        let t: Array = prev_row
+        prev_row = row
+        row = t
+        y = y + 1
+    }
+    return Result.Ok([rows, off + ph * (stride + 1)])
+}
+
+// Los tRNS de un PNG: el largo tiene que ser el que dice el tipo de color.
+fn __image_png_check_trns(p: ImagePng) -> String {
+    let ct: int = p.color_type
+    let t: String = p.trns
+    if t == "" { return "" }
+    if ct == 0 and t.length() != 2 { return "tRNS de gris no mide 2 bytes" }
+    if ct == 2 and t.length() != 6 { return "tRNS de RGB no mide 6 bytes" }
+    if ct == 3 and t.length() > p.palette.length() / 3 { return "tRNS con más entradas que la paleta" }
+    if ct == 4 or ct == 6 { return "tRNS en una imagen que ya tiene canal alfa" }
+    return ""
+}
+
+fn __image_png_decode(bytes: String) -> Result<Image, Error> {
+    let pr: Result<ImagePng, Error> = image_png_read(bytes, true)
+    match pr {
+        Result.Err(e) => { return Result.Err(err_new(e.code, e.kind, "image_decode: " + e.msg)) }
+        Result.Ok(p) => {
+            let bad: String = __image_png_check_trns(p)
+            if bad != "" { return Result.Err(err_new(22, "parse", "image_decode: image_png: " + bad)) }
+            let w: int = p.width
+            let h: int = p.height
+            let depth: int = p.depth
+            let ctype: int = p.color_type
+            let och: int = __image_png_out_channels(ctype, p.trns)
+            // Tamaño exacto que promete el IHDR: es el tope del inflate, así un IDAT
+            // que infla a gigabytes corta al pasarlo, no después.
+            var expected: int = 0
+            if p.interlace == 0 {
+                expected = h * (__image_png_stride(w, depth, ctype) + 1)
+            } else {
+                var q: int = 0
+                while q < 7 {
+                    let ap: Array = __image_adam7(q)
+                    let pw: int = (w - ap[0] + ap[2] - 1) / ap[2]
+                    let ph: int = (h - ap[1] + ap[3] - 1) / ap[3]
+                    if pw > 0 and ph > 0 { expected = expected + ph * (__image_png_stride(pw, depth, ctype) + 1) }
+                    q = q + 1
+                }
+            }
+            let ri: Result<String, Error> = zip_inflate_zlib(p.idat, expected)
+            match ri {
+                Result.Err(e2) => { return Result.Err(err_new(22, "parse", "image_decode: image_png: " + e2.msg)) }
+                Result.Ok(raw) => {
+                    if raw.length() != expected {
+                        return Result.Err(err_new(22, "parse", "image_decode: image_png: los datos inflados miden " + int_to_string(raw.length()) + " bytes y el IHDR pide " + int_to_string(expected)))
+                    }
+                    if p.interlace == 0 {
+                        let r0: Result<Array, Error> = __image_png_pass(raw, 0, w, h, depth, ctype, p.palette, p.trns, och)
+                        match r0 {
+                            Result.Err(e3) => { return Result.Err(err_new(22, "parse", "image_decode: " + e3.msg)) }
+                            Result.Ok(res) => { return Result.Ok(Image { width: w, height: h, channels: och, rows: res[0], icc: "", reduction: 1 }) }
+                        }
+                    }
+                    // Adam7: cada pasada es una imagen chica; después se arma cada fila
+                    // final leyendo de las pasadas que la tocan.
+                    var passes: Array = []
+                    var off: int = 0
+                    var q2: int = 0
+                    while q2 < 7 {
+                        let ap: Array = __image_adam7(q2)
+                        let pw: int = (w - ap[0] + ap[2] - 1) / ap[2]
+                        let ph: int = (h - ap[1] + ap[3] - 1) / ap[3]
+                        if pw > 0 and ph > 0 {
+                            let rp: Result<Array, Error> = __image_png_pass(raw, off, pw, ph, depth, ctype, p.palette, p.trns, och)
+                            match rp {
+                                Result.Err(e4) => { return Result.Err(err_new(22, "parse", "image_decode: " + e4.msg)) }
+                                Result.Ok(res2) => {
+                                    passes.push(res2[0])
+                                    off = res2[1]
+                                }
+                            }
+                        } else {
+                            passes.push([])
+                        }
+                        q2 = q2 + 1
+                    }
+                    var rows: Array = []
+                    var orow: Array = __image_zeros(w * och)
+                    var y: int = 0
+                    while y < h {
+                        var q3: int = 0
+                        while q3 < 7 {
+                            let ap: Array = __image_adam7(q3)
+                            let pr3: Array = passes[q3]
+                            if pr3.length() > 0 and y >= ap[1] and (y - ap[1]) % ap[3] == 0 {
+                                let src: String = pr3[(y - ap[1]) / ap[3]]
+                                let pw: int = src.length() / och
+                                var k: int = 0
+                                while k < pw {
+                                    let dst: int = (ap[0] + k * ap[2]) * och
+                                    var c: int = 0
+                                    while c < och {
+                                        orow[dst + c] = src.charAt(k * och + c)
+                                        c = c + 1
+                                    }
+                                    k = k + 1
+                                }
+                            }
+                            q3 = q3 + 1
+                        }
+                        rows.push(string_from_bytes(orow, 0, w * och))
+                        y = y + 1
+                    }
+                    return Result.Ok(Image { width: w, height: h, channels: och, rows: rows, icc: "", reduction: 1 })
+                }
+            }
+        }
+    }
+}
+
+// ── JPEG a píxeles ─────────────────────────────────────────────────────────
+//
+// Decodificador secuencial (baseline SOF0/SOF1, 8 bits) de 1 componente (gris) o
+// 3 (YCbCr, o RGB si el marcador Adobe dice transform 0), con submuestreo
+// cualquiera de factores enteros (4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1...), varios
+// escaneos (intercalados o de un componente), intervalos de reinicio (DRI/RSTn),
+// bytes de relleno FF y segmentos APPn/COM que se saltean.
+//
+// Diseño (medido en el prototipo, docs/design/spikes/2026-09-30-std-image-prototipo.md):
+//   - Huffman con tabla de 16 bits (una lectura por símbolo) y lector de bits que
+//     entrega ceros al llegar a un marcador o al fin del archivo (nunca lee fuera
+//     de rango): si el MCU consumió bits que no existían, es Err(parse).
+//   - Los coeficientes no se guardan: cada bloque se decodifica, se le aplica la
+//     IDCT y sus muestras se escriben en el búfer de UNA fila de MCU; al terminar
+//     la fila se sella en Strings (1 byte por muestra) que van al plano del
+//     componente. La conversión de color va al final, fila por fila.
+//   - IDCT entera de libjpeg (jidctint) para el tamaño completo, y la IDCT
+//     REDUCIDA de 4x4, 2x2 o 1x1 (solo el DC: es el promedio del bloque) para
+//     decodificar a 1/2, 1/4 o 1/8. Como en libjpeg, un componente submuestreado
+//     se decodifica con una IDCT MAYOR (la del croma de un 4:2:0 a 1/2 es de 8x8)
+//     cuando así queda a la resolución de salida y no hace falta agrandarlo.
+//   - Al tamaño completo el croma submuestreado se agranda con el filtro
+//     «fancy» triangular de libjpeg (h2v1, h2v2, h1v2); por debajo, y en el
+//     resto de los cocientes, se repite la muestra.
+
+struct ImageJpegDec {
+    qt: Array,
+    qok: Array,
+    lutdc: Array,
+    lutac: Array,
+    rawdc: Array,
+    rawac: Array,
+    w: int,
+    h: int,
+    nc: int,
+    hmax: int,
+    vmax: int,
+    n: int,
+    cid: Array,
+    ch: Array,
+    cv: Array,
+    ctq: Array,
+    cn: Array,
+    planes: Array,
+}
+
+fn __jpg_zigzag() -> Array {
+    return [0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63]
+}
+
+// true si los largos de una tabla Huffman caben en el código canónico: el mismo
+// recorrido que __jpg_lut, sin armar la tabla (a lo sumo 256 pasos).
+fn __jpg_lut_fits(counts: Array) -> bool {
+    var code: int = 0
+    var len: int = 1
+    while len <= 16 {
+        code = code + counts[len - 1]
+        if code > (1 << len) { return false }
+        code = code << 1
+        len = len + 1
+    }
+    return true
+}
+
+// La tabla de decodificación de la clase tc (0 = DC, 1 = AC) y destino th, armada
+// la PRIMERA vez que un escaneo la usa. Revisión de la integración (2026-10-01):
+// el DHT la armaba al leerla —65536 entradas por tabla— y nada limitaba cuántas
+// trae un archivo, así que 1 MB de tablas vacías eran ~4·10⁹ escrituras. Ahora el
+// DHT solo valida y guarda los largos y símbolos (d.rawdc/rawac); como un
+// componente no puede estar en dos escaneos, se arman a lo sumo 2 por escaneo.
+// [] si la tabla nunca se definió.
+fn __jpg_lut_for(d: ImageJpegDec, tc: int, th: int) -> Result<Array, Error> {
+    var cache: Array = d.lutac
+    var raws: Array = d.rawac
+    if tc == 0 {
+        cache = d.lutdc
+        raws = d.rawdc
+    }
+    let hecha: Array = cache[th]
+    if hecha.length() > 0 { return Result.Ok(hecha) }
+    let raw: Array = raws[th]
+    if raw.length() == 0 { return Result.Ok([]) }
+    let lr: Result<Array, Error> = __jpg_lut(raw[0], raw[1])
+    match lr {
+        Result.Err(le) => { return Result.Err(le) }
+        Result.Ok(lut) => {
+            if tc == 0 { d.lutdc[th] = lut } else { d.lutac[th] = lut }
+            return Result.Ok(lut)
+        }
+    }
+}
+
+// Tabla de decodificación de 16 bits: entrada = (largo << 8) | símbolo; 0 = código
+// que no existe. Err(parse) si los largos declaran más códigos de los que caben.
+fn __jpg_lut(counts: Array, syms: Array) -> Result<Array, Error> {
+    var lut: Array = __image_zeros(65536)
+    var code: int = 0
+    var k: int = 0
+    var len: int = 1
+    while len <= 16 {
+        var c: int = 0
+        while c < counts[len - 1] {
+            if code >= (1 << len) {
+                return Result.Err(err_new(22, "parse", "image_jpeg: tabla Huffman inválida (más códigos de los que caben)"))
+            }
+            let first: int = code << (16 - len)
+            let span: int = 1 << (16 - len)
+            let e: int = (len << 8) | syms[k]
+            var j: int = 0
+            while j < span {
+                lut[first + j] = e
+                j = j + 1
+            }
+            code = code + 1
+            k = k + 1
+            c = c + 1
+        }
+        code = code << 1
+        len = len + 1
+    }
+    return Result.Ok(lut)
+}
+
+// Una pasada 1D de la IDCT entera (jidctint de libjpeg, 13 bits de constante):
+// lee 8 valores w[base + k*stride] y los deja en el mismo lugar con el descale
+// de `shift` bits.
+fn __jpg_idct_pass(w: Array, base: int, stride: int, shift: int) {
+    let z2a: int = w[base + 2 * stride]
+    let z3a: int = w[base + 6 * stride]
+    let z1a: int = (z2a + z3a) * 4433
+    let t2: int = z1a + z3a * (0 - 15137)
+    let t3: int = z1a + z2a * 6270
+    let z2b: int = w[base]
+    let z3b: int = w[base + 4 * stride]
+    let t0: int = (z2b + z3b) << 13
+    let t1: int = (z2b - z3b) << 13
+    let t10: int = t0 + t3
+    let t13: int = t0 - t3
+    let t11: int = t1 + t2
+    let t12: int = t1 - t2
+    var a0: int = w[base + 7 * stride]
+    var a1: int = w[base + 5 * stride]
+    var a2: int = w[base + 3 * stride]
+    var a3: int = w[base + stride]
+    var z1: int = a0 + a3
+    var z2: int = a1 + a2
+    var z3: int = a0 + a2
+    var z4: int = a1 + a3
+    let z5: int = (z3 + z4) * 9633
+    a0 = a0 * 2446
+    a1 = a1 * 16819
+    a2 = a2 * 25172
+    a3 = a3 * 12299
+    z1 = z1 * (0 - 7373)
+    z2 = z2 * (0 - 20995)
+    z3 = z3 * (0 - 16069) + z5
+    z4 = z4 * (0 - 3196) + z5
+    a0 = a0 + z1 + z3
+    a1 = a1 + z2 + z4
+    a2 = a2 + z2 + z3
+    a3 = a3 + z1 + z4
+    let r: int = 1 << (shift - 1)
+    w[base] = (t10 + a3 + r) >> shift
+    w[base + 7 * stride] = (t10 - a3 + r) >> shift
+    w[base + stride] = (t11 + a2 + r) >> shift
+    w[base + 6 * stride] = (t11 - a2 + r) >> shift
+    w[base + 2 * stride] = (t12 + a1 + r) >> shift
+    w[base + 5 * stride] = (t12 - a1 + r) >> shift
+    w[base + 3 * stride] = (t13 + a0 + r) >> shift
+    w[base + 4 * stride] = (t13 - a0 + r) >> shift
+}
+
+fn __jpg_clamp(v: int) -> int {
+    if v < 0 { return 0 }
+    if v > 255 { return 255 }
+    return v
+}
+
+
+// IDCT REDUCIDA de 4 x 4 de libjpeg (jidctred.c): salida de 4 x 4 muestras desde el
+// bloque de coeficientes YA descuantizados `w` (64 posiciones en orden natural).
+// Usa las filas y columnas 0-3 y 5-7 (la 4 no entra), en enteros de 13 bits. `tmp`
+// guarda la pasada de columnas. Las constantes son las de libjpeg (FIX_x_xxx).
+fn __jpg_idct4(w: Array, tmp: Array, buf: Array, dst: int, stride: int) {
+    var c: int = 0
+    while c < 8 {
+        if c != 4 {
+            let t0: int = w[c] << 14
+            let z2: int = w[16 + c]
+            let z3: int = w[48 + c]
+            let t2: int = z2 * 15137 - z3 * 6270
+            let t10: int = t0 + t2
+            let t12: int = t0 - t2
+            let z1: int = w[56 + c]
+            let z2b: int = w[40 + c]
+            let z3b: int = w[24 + c]
+            let z4: int = w[8 + c]
+            let o0: int = 0 - z1 * 1730 + z2b * 11893 - z3b * 17799 + z4 * 8697
+            let o2: int = 0 - z1 * 4176 - z2b * 4926 + z3b * 7373 + z4 * 20995
+            tmp[c] = (t10 + o2 + 2048) >> 12
+            tmp[24 + c] = (t10 - o2 + 2048) >> 12
+            tmp[8 + c] = (t12 + o0 + 2048) >> 12
+            tmp[16 + c] = (t12 - o0 + 2048) >> 12
+        }
+        c = c + 1
+    }
+    var r: int = 0
+    while r < 4 {
+        let b: int = r * 8
+        let t0: int = tmp[b] << 14
+        let t2: int = tmp[b + 2] * 15137 - tmp[b + 6] * 6270
+        let t10: int = t0 + t2
+        let t12: int = t0 - t2
+        let z1: int = tmp[b + 7]
+        let z2: int = tmp[b + 5]
+        let z3: int = tmp[b + 3]
+        let z4: int = tmp[b + 1]
+        let o0: int = 0 - z1 * 1730 + z2 * 11893 - z3 * 17799 + z4 * 8697
+        let o2: int = 0 - z1 * 4176 - z2 * 4926 + z3 * 7373 + z4 * 20995
+        let o: int = dst + r * stride
+        buf[o] = __jpg_clamp(((t10 + o2 + 262144) >> 19) + 128)
+        buf[o + 3] = __jpg_clamp(((t10 - o2 + 262144) >> 19) + 128)
+        buf[o + 1] = __jpg_clamp(((t12 + o0 + 262144) >> 19) + 128)
+        buf[o + 2] = __jpg_clamp(((t12 - o0 + 262144) >> 19) + 128)
+        r = r + 1
+    }
+}
+
+// IDCT REDUCIDA de 2 x 2 de libjpeg: usa solo la fila y la columna 0 y las impares
+// (1, 3, 5, 7).
+fn __jpg_idct2(w: Array, tmp: Array, buf: Array, dst: int, stride: int) {
+    var c: int = 0
+    while c < 8 {
+        if c == 0 or c == 1 or c == 3 or c == 5 or c == 7 {
+            let t10: int = w[c] << 15
+            let t0: int = 0 - w[56 + c] * 5906 + w[40 + c] * 6967 - w[24 + c] * 10426 + w[8 + c] * 29692
+            tmp[c] = (t10 + t0 + 4096) >> 13
+            tmp[8 + c] = (t10 - t0 + 4096) >> 13
+        }
+        c = c + 1
+    }
+    var r: int = 0
+    while r < 2 {
+        let b: int = r * 8
+        let t10: int = tmp[b] << 15
+        let t0: int = 0 - tmp[b + 7] * 5906 + tmp[b + 5] * 6967 - tmp[b + 3] * 10426 + tmp[b + 1] * 29692
+        let o: int = dst + r * stride
+        buf[o] = __jpg_clamp(((t10 + t0 + 524288) >> 20) + 128)
+        buf[o + 1] = __jpg_clamp(((t10 - t0 + 524288) >> 20) + 128)
+        r = r + 1
+    }
+}
+
+// IDCT de un bloque de coeficientes YA descuantizados (w: 64 posiciones en orden
+// natural) a n x n muestras (n = 2, 4 u 8), escritas en buf desde dst con `stride`
+// muestras por fila. `tmp` es un búfer de 64 posiciones.
+fn __jpg_emit(w: Array, tmp: Array, n: int, buf: Array, dst: int, stride: int) {
+    if n == 4 {
+        __jpg_idct4(w, tmp, buf, dst, stride)
+        return
+    }
+    if n == 2 {
+        __jpg_idct2(w, tmp, buf, dst, stride)
+        return
+    }
+    var col: int = 0
+    while col < 8 {
+        __jpg_idct_pass(w, col, 8, 11)
+        col = col + 1
+    }
+    var row: int = 0
+    while row < 8 {
+        __jpg_idct_pass(w, row * 8, 1, 18)
+        let o: int = dst + row * stride
+        var x: int = 0
+        while x < 8 {
+            buf[o + x] = __jpg_clamp(w[row * 8 + x] + 128)
+            x = x + 1
+        }
+        row = row + 1
+    }
+}
+
+// Decodifica UN escaneo que empieza en s[at0] (los datos entropía, justo después
+// del encabezado SOS) para los componentes `sc` con las tablas `sdc`/`sac`, y deja
+// las muestras en d.planes. Devuelve la posición donde terminaron los datos.
+fn __jpg_scan(d: ImageJpegDec, s: String, at0: int, sc: Array, sdc: Array, sac: Array, ri: int) -> Result<int, Error> {
+    let n: int = s.length()
+    let ns: int = sc.length()
+    let hmax: int = d.hmax
+    let vmax: int = d.vmax
+    var mcux: int = 0
+    var mcuy: int = 0
+    if ns == 1 {
+        // Escaneo de un solo componente: el MCU es UN bloque y el recorrido cubre
+        // solo los bloques que tocan el componente (no el relleno hasta el MCU).
+        let c0: int = sc[0]
+        mcux = (((d.w * d.ch[c0] + hmax - 1) / hmax) + 7) / 8
+        mcuy = (((d.h * d.cv[c0] + vmax - 1) / vmax) + 7) / 8
+    } else {
+        mcux = (d.w + 8 * hmax - 1) / (8 * hmax)
+        mcuy = (d.h + 8 * vmax - 1) / (8 * vmax)
+    }
+    let zz: Array = __jpg_zigzag()
+    var bh: Array = []
+    var bv: Array = []
+    var nk: Array = []
+    var pw: Array = []
+    var bufs: Array = []
+    var zks: Array = []
+    var ldcs: Array = []
+    var lacs: Array = []
+    var qs: Array = []
+    var prevdc: Array = []
+    var blocks: int = 0
+    var k: int = 0
+    while k < ns {
+        let c: int = sc[k]
+        let pl0: Array = d.planes[c]
+        if pl0.length() > 0 {
+            return Result.Err(err_new(22, "parse", "image_jpeg: un componente aparece en dos escaneos"))
+        }
+        if d.qok[d.ctq[c]] == 0 {
+            return Result.Err(err_new(22, "parse", "image_jpeg: falta la tabla de cuantización " + int_to_string(d.ctq[c])))
+        }
+        var ldc: Array = []
+        var lac: Array = []
+        match __jpg_lut_for(d, 0, sdc[k]) {
+            Result.Err(le) => { return Result.Err(le) }
+            Result.Ok(l) => { ldc = l }
+        }
+        match __jpg_lut_for(d, 1, sac[k]) {
+            Result.Err(le) => { return Result.Err(le) }
+            Result.Ok(l) => { lac = l }
+        }
+        if ldc.length() == 0 or lac.length() == 0 {
+            return Result.Err(err_new(22, "parse", "image_jpeg: el escaneo usa una tabla Huffman que nunca se definió"))
+        }
+        var bhk: int = 1
+        var bvk: int = 1
+        if ns > 1 {
+            bhk = d.ch[c]
+            bvk = d.cv[c]
+        }
+        let nn: int = d.cn[c]
+        blocks = blocks + bhk * bvk
+        bh.push(bhk)
+        bv.push(bvk)
+        nk.push(nn)
+        let width: int = mcux * bhk * nn
+        pw.push(width)
+        bufs.push(__image_zeros(width * bvk * nn))
+        var zk: Array = []
+        var i: int = 0
+        while i < 64 {
+            let p: int = zz[i]
+            // Coeficientes que la IDCT de ese tamaño lee (las reducidas de libjpeg
+            // no leen todos): 8 = todos; 4 = filas y columnas 0-3 y 5-7; 2 = 0, 1,
+            // 3, 5 y 7; 1 = solo el DC.
+            let pr: int = p >> 3
+            let pc: int = p & 7
+            var use: bool = nn == 8
+            if nn == 4 { use = pr != 4 and pc != 4 }
+            if nn == 2 { use = (pr == 0 or pr == 1 or pr == 3 or pr == 5 or pr == 7) and (pc == 0 or pc == 1 or pc == 3 or pc == 5 or pc == 7) }
+            if nn == 1 { use = false }
+            if use {
+                zk.push(p)
+            } else {
+                zk.push(0 - 1)
+            }
+            i = i + 1
+        }
+        zks.push(zk)
+        ldcs.push(ldc)
+        lacs.push(lac)
+        qs.push(d.qt[d.ctq[c]])
+        prevdc.push(0)
+        k = k + 1
+    }
+    if ns > 1 and blocks > 10 {
+        return Result.Err(err_new(22, "parse", "image_jpeg: un MCU con " + int_to_string(blocks) + " bloques (el máximo es 10)"))
+    }
+    var scan_at: int = at0
+    var bb: int = 0
+    var bc: int = 0
+    var pad: int = 0
+    var mcu_n: int = 0
+    var w64: Array = __image_zeros(64)
+    var tmp: Array = __image_zeros(64)
+    var my: int = 0
+    while my < mcuy {
+        var mx: int = 0
+        while mx < mcux {
+            if ri > 0 and mcu_n == ri {
+                // Marcador RSTn: descarta los bits que sobran del byte, lo salta y
+                // reinicia los predictores de DC. Lo que haya en el medio (basura)
+                // se saltea; otro marcador que no sea RSTn es un error.
+                bb = 0
+                bc = 0
+                pad = 0
+                mcu_n = 0
+                var found: bool = false
+                while not found {
+                    if scan_at + 1 >= n {
+                        return Result.Err(err_new(22, "parse", "image_jpeg: JPEG cortado: falta el marcador de reinicio"))
+                    }
+                    if s.charAt(scan_at) == 0xFF {
+                        let m: int = s.charAt(scan_at + 1)
+                        if m >= 0xD0 and m <= 0xD7 {
+                            scan_at = scan_at + 2
+                            found = true
+                        } else if m == 0 {
+                            scan_at = scan_at + 2
+                        } else if m == 0xFF {
+                            scan_at = scan_at + 1
+                        } else {
+                            return Result.Err(err_new(22, "parse", "image_jpeg: se esperaba un marcador de reinicio (RSTn) y llegó el marcador " + int_to_string(m)))
+                        }
+                    } else {
+                        scan_at = scan_at + 1
+                    }
+                }
+                var z0: int = 0
+                while z0 < ns {
+                    prevdc[z0] = 0
+                    z0 = z0 + 1
+                }
+            }
+            mcu_n = mcu_n + 1
+            var c2: int = 0
+            while c2 < ns {
+                let ldc2: Array = ldcs[c2]
+                let lac2: Array = lacs[c2]
+                let q: Array = qs[c2]
+                let zk2: Array = zks[c2]
+                let nn2: int = nk[c2]
+                let width2: int = pw[c2]
+                let buf: Array = bufs[c2]
+                let hc: int = bh[c2]
+                let vc: int = bv[c2]
+                var by: int = 0
+                while by < vc {
+                    var bx: int = 0
+                    while bx < hc {
+                        // DC
+                        while bc <= 48 {
+                            var b: int = 0
+                            if scan_at < n {
+                                b = s.charAt(scan_at)
+                                if b == 0xFF {
+                                    if scan_at + 1 < n and s.charAt(scan_at + 1) == 0 {
+                                        scan_at = scan_at + 2
+                                    } else {
+                                        b = 0
+                                        pad = pad + 1
+                                    }
+                                } else {
+                                    scan_at = scan_at + 1
+                                }
+                            } else {
+                                pad = pad + 1
+                            }
+                            bb = ((bb << 8) | b) & 0xFFFFFFFFFFFFFF
+                            bc = bc + 8
+                        }
+                        var e: int = ldc2[(bb >> (bc - 16)) & 0xFFFF]
+                        if e == 0 {
+                            return Result.Err(err_new(22, "parse", "image_jpeg: código Huffman de DC inválido: archivo dañado"))
+                        }
+                        bc = bc - (e >> 8)
+                        var sz: int = e & 255
+                        if sz > 15 {
+                            return Result.Err(err_new(22, "parse", "image_jpeg: tamaño de DC inválido: archivo dañado"))
+                        }
+                        var dv: int = 0
+                        if sz > 0 {
+                            dv = (bb >> (bc - sz)) & ((1 << sz) - 1)
+                            bc = bc - sz
+                            if dv < (1 << (sz - 1)) { dv = dv - (1 << sz) + 1 }
+                        }
+                        let dc: int = prevdc[c2] + dv
+                        prevdc[c2] = dc
+                        if nn2 > 1 {
+                            var zr: int = 0
+                            while zr < 64 {
+                                w64[zr] = 0
+                                zr = zr + 1
+                            }
+                            w64[0] = dc * q[0]
+                        }
+                        // AC
+                        var kk: int = 1
+                        while kk < 64 {
+                            while bc <= 48 {
+                                var b2: int = 0
+                                if scan_at < n {
+                                    b2 = s.charAt(scan_at)
+                                    if b2 == 0xFF {
+                                        if scan_at + 1 < n and s.charAt(scan_at + 1) == 0 {
+                                            scan_at = scan_at + 2
+                                        } else {
+                                            b2 = 0
+                                            pad = pad + 1
+                                        }
+                                    } else {
+                                        scan_at = scan_at + 1
+                                    }
+                                } else {
+                                    pad = pad + 1
+                                }
+                                bb = ((bb << 8) | b2) & 0xFFFFFFFFFFFFFF
+                                bc = bc + 8
+                            }
+                            e = lac2[(bb >> (bc - 16)) & 0xFFFF]
+                            if e == 0 {
+                                return Result.Err(err_new(22, "parse", "image_jpeg: código Huffman de AC inválido: archivo dañado"))
+                            }
+                            bc = bc - (e >> 8)
+                            let rs: int = e & 255
+                            let r: int = rs >> 4
+                            sz = rs & 15
+                            if sz == 0 {
+                                if r == 15 {
+                                    kk = kk + 16
+                                } else {
+                                    kk = 64
+                                }
+                            } else {
+                                kk = kk + r
+                                var av: int = (bb >> (bc - sz)) & ((1 << sz) - 1)
+                                bc = bc - sz
+                                if av < (1 << (sz - 1)) { av = av - (1 << sz) + 1 }
+                                if kk < 64 {
+                                    let p: int = zk2[kk]
+                                    if p >= 0 { w64[p] = av * q[p] }
+                                }
+                                kk = kk + 1
+                            }
+                        }
+                        let dst: int = by * nn2 * width2 + (mx * hc + bx) * nn2
+                        if nn2 == 1 {
+                            buf[dst] = __jpg_clamp(((dc * q[0] + 4) >> 3) + 128)
+                        } else {
+                            __jpg_emit(w64, tmp, nn2, buf, dst, width2)
+                        }
+                        bx = bx + 1
+                    }
+                    by = by + 1
+                }
+                c2 = c2 + 1
+            }
+            if pad * 8 > bc {
+                return Result.Err(err_new(22, "parse", "image_jpeg: JPEG truncado: los datos se acaban en el MCU " + int_to_string(my * mcux + mx) + " de " + int_to_string(mcux * mcuy)))
+            }
+            mx = mx + 1
+        }
+        // Sella la fila de MCU: una String por fila de muestras de cada componente.
+        var c3: int = 0
+        while c3 < ns {
+            let plane: Array = d.planes[sc[c3]]
+            let buf3: Array = bufs[c3]
+            let w3: int = pw[c3]
+            let rows3: int = bv[c3] * nk[c3]
+            var r3: int = 0
+            while r3 < rows3 {
+                plane.push(string_from_bytes(buf3, r3 * w3, w3))
+                r3 = r3 + 1
+            }
+            c3 = c3 + 1
+        }
+        my = my + 1
+    }
+    return Result.Ok(scan_at)
+}
+
+// Fila y (de la imagen de SALIDA) del componente c, ya a la resolución de salida:
+// una String de al menos outw muestras. Si el componente está a la resolución de
+// salida es la fila del plano tal cual; si no, se agranda con el filtro triangular
+// de libjpeg (fancy: h2v1, h2v2, h1v2) o repitiendo la muestra más cercana.
+fn __jpg_comp_row(d: ImageJpegDec, c: int, y: int, outw: int, fancy: bool, work: Array) -> String {
+    let plane: Array = d.planes[c]
+    let nn: int = d.cn[c]
+    let he: int = d.hmax * d.n / (d.ch[c] * nn)
+    let ve: int = d.vmax * d.n / (d.cv[c] * nn)
+    if he == 1 and ve == 1 {
+        return plane[y]
+    }
+    let cwr: int = (d.w * d.ch[c] * nn + d.hmax * 8 - 1) / (d.hmax * 8)
+    let crows: int = (d.h * d.cv[c] * nn + d.vmax * 8 - 1) / (d.vmax * 8)
+    if fancy and he == 2 and ve == 1 {
+        let sr: String = plane[y]
+        var i: int = 0
+        while i < cwr and 2 * i < outw {
+            let cur: int = sr.charAt(i)
+            var a: int = cur
+            var b: int = cur
+            if i > 0 { a = (3 * cur + sr.charAt(i - 1) + 1) >> 2 }
+            if i < cwr - 1 { b = (3 * cur + sr.charAt(i + 1) + 2) >> 2 }
+            work[2 * i] = a
+            if 2 * i + 1 < outw { work[2 * i + 1] = b }
+            i = i + 1
+        }
+        return string_from_bytes(work, 0, outw)
+    }
+    if fancy and he == 2 and ve == 2 {
+        let near: int = y / 2
+        var far: int = near + 1
+        if y % 2 == 0 { far = near - 1 }
+        if far < 0 { far = 0 }
+        if far > crows - 1 { far = crows - 1 }
+        let s0: String = plane[near]
+        let s1: String = plane[far]
+        var last: int = 0
+        var cs: int = 3 * s0.charAt(0) + s1.charAt(0)
+        var i2: int = 0
+        while i2 < cwr and 2 * i2 < outw {
+            var a2: int = 0
+            var b2: int = 0
+            var next: int = 0
+            if i2 < cwr - 1 { next = 3 * s0.charAt(i2 + 1) + s1.charAt(i2 + 1) }
+            if i2 == 0 { a2 = (4 * cs + 8) >> 4 } else { a2 = (3 * cs + last + 8) >> 4 }
+            if i2 == cwr - 1 { b2 = (4 * cs + 7) >> 4 } else { b2 = (3 * cs + next + 7) >> 4 }
+            work[2 * i2] = a2
+            if 2 * i2 + 1 < outw { work[2 * i2 + 1] = b2 }
+            last = cs
+            cs = next
+            i2 = i2 + 1
+        }
+        return string_from_bytes(work, 0, outw)
+    }
+    if fancy and he == 1 and ve == 2 {
+        let near3: int = y / 2
+        var far3: int = near3 + 1
+        var bias: int = 2
+        if y % 2 == 0 {
+            far3 = near3 - 1
+            bias = 1
+        }
+        if far3 < 0 { far3 = 0 }
+        if far3 > crows - 1 { far3 = crows - 1 }
+        let t0: String = plane[near3]
+        let t1: String = plane[far3]
+        var x3: int = 0
+        while x3 < outw {
+            work[x3] = (3 * t0.charAt(x3) + t1.charAt(x3) + bias) >> 2
+            x3 = x3 + 1
+        }
+        return string_from_bytes(work, 0, outw)
+    }
+    var r: int = y / ve
+    if r > crows - 1 { r = crows - 1 }
+    let sn: String = plane[r]
+    var x: int = 0
+    while x < outw {
+        var cx: int = x / he
+        if cx > cwr - 1 { cx = cwr - 1 }
+        work[x] = sn.charAt(cx)
+        x = x + 1
+    }
+    return string_from_bytes(work, 0, outw)
+}
+
+// Pasa los planos a las filas de la imagen de salida: gris tal cual, o YCbCr / RGB
+// a RGB con las constantes de libjpeg (16 bits de fracción, redondeo).
+fn __jpg_output(d: ImageJpegDec, ycc: bool, outw: int, outh: int) -> Array {
+    var rows: Array = []
+    let fancy: bool = d.n > 1
+    var y: int = 0
+    if d.nc == 1 {
+        while y < outh {
+            let sr: String = __jpg_comp_row(d, 0, y, outw, fancy, [])
+            if sr.length() == outw { rows.push(sr) } else { rows.push(sr.substring(0, outw)) }
+            y = y + 1
+        }
+        return rows
+    }
+    var work: Array = __image_zeros(outw + 2)
+    var orow: Array = __image_zeros(outw * 3)
+    while y < outh {
+        let s0: String = __jpg_comp_row(d, 0, y, outw, fancy, work)
+        let s1: String = __jpg_comp_row(d, 1, y, outw, fancy, work)
+        let s2: String = __jpg_comp_row(d, 2, y, outw, fancy, work)
+        var x: int = 0
+        if ycc {
+            while x < outw {
+                let yv: int = s0.charAt(x)
+                let cb: int = s1.charAt(x) - 128
+                let cr: int = s2.charAt(x) - 128
+                var r: int = yv + ((91881 * cr + 32768) >> 16)
+                var g: int = yv + ((0 - 22554 * cb - 46802 * cr + 32768) >> 16)
+                var b: int = yv + ((116130 * cb + 32768) >> 16)
+                if r < 0 { r = 0 }
+                if r > 255 { r = 255 }
+                if g < 0 { g = 0 }
+                if g > 255 { g = 255 }
+                if b < 0 { b = 0 }
+                if b > 255 { b = 255 }
+                orow[3 * x] = r
+                orow[3 * x + 1] = g
+                orow[3 * x + 2] = b
+                x = x + 1
+            }
+        } else {
+            while x < outw {
+                orow[3 * x] = s0.charAt(x)
+                orow[3 * x + 1] = s1.charAt(x)
+                orow[3 * x + 2] = s2.charAt(x)
+                x = x + 1
+            }
+        }
+        rows.push(string_from_bytes(orow, 0, outw * 3))
+        y = y + 1
+    }
+    return rows
+}
+
+// Perfil ICC de las partes APP2 juntadas: cada parte es [número, total, bytes].
+// "" si no hay o si el conjunto no cierra (falta una, sobra una o el total cambia).
+fn __jpg_icc(parts: Array) -> String {
+    if parts.length() == 0 { return "" }
+    let first: Array = parts[0]
+    let total: int = first[1]
+    if total < 1 or parts.length() != total { return "" }
+    var slots: Array = []
+    var i: int = 0
+    while i < total {
+        slots.push("")
+        i = i + 1
+    }
+    var seen: Array = __image_zeros(total)
+    for p: Array in parts {
+        let seq: int = p[0]
+        if p[1] != total or seq < 1 or seq > total or seen[seq - 1] == 1 { return "" }
+        seen[seq - 1] = 1
+        slots[seq - 1] = p[2]
+    }
+    var sb: StringBuilder = StringBuilder.new()
+    for sl: String in slots {
+        sb.append(sl)
+    }
+    return sb.to_string()
+}
+
+fn __jpg_err(msg: String) -> Error {
+    return err_new(22, "parse", "image_jpeg: " + msg)
+}
+
+// Decodifica un JPEG secuencial a 1/denom del tamaño (denom = 1, 2, 4 u 8), con la
+// orientación EXIF ya aplicada.
+fn __image_jpeg_decode(s: String, denom: int) -> Result<Image, Error> {
+    let n: int = s.length()
+    var d: ImageJpegDec = ImageJpegDec {
+        qt: [__image_zeros(64), __image_zeros(64), __image_zeros(64), __image_zeros(64)],
+        qok: [0, 0, 0, 0],
+        lutdc: [[], [], [], []],
+        lutac: [[], [], [], []],
+        rawdc: [[], [], [], []],
+        rawac: [[], [], [], []],
+        w: 0, h: 0, nc: 0, hmax: 1, vmax: 1, n: 8 / denom,
+        cid: [], ch: [], cv: [], ctq: [], cn: [], planes: []
+    }
+    let zz: Array = __jpg_zigzag()
+    var ri: int = 0
+    var orient: int = 1
+    var jfif: bool = false
+    var adobe: int = 0 - 1
+    var icc_parts: Array = []
+    var pos: int = 2
+    var ended: bool = false
+    while not ended {
+        if pos >= n {
+            ended = true
+        } else {
+            if s.charAt(pos) != 0xFF {
+                return Result.Err(__jpg_err("se esperaba un marcador en el byte " + int_to_string(pos)))
+            }
+            while pos < n and s.charAt(pos) == 0xFF {
+                pos = pos + 1
+            }
+            if pos >= n {
+                ended = true
+            } else {
+                let m: int = s.charAt(pos)
+                pos = pos + 1
+                if m == 0xD9 {
+                    ended = true
+                } else if m == 0xD8 or m == 0x01 or (m >= 0xD0 and m <= 0xD7) {
+                    // sin largo: se saltea
+                } else {
+                    if m == 0 or pos + 2 > n {
+                        return Result.Err(__jpg_err("JPEG cortado o malformado en el byte " + int_to_string(pos)))
+                    }
+                    let len: int = __image_be16(s, pos)
+                    if len < 2 or pos + len > n {
+                        return Result.Err(__jpg_err("el segmento del byte " + int_to_string(pos - 2) + " se sale del archivo"))
+                    }
+                    let e: int = pos + len
+                    if m == 0xDB {
+                        var p: int = pos + 2
+                        while p < e {
+                            let pq: int = s.charAt(p) >> 4
+                            let tq: int = s.charAt(p) & 15
+                            p = p + 1
+                            if tq > 3 or pq > 1 {
+                                return Result.Err(__jpg_err("tabla de cuantización inválida (destino " + int_to_string(tq) + ")"))
+                            }
+                            var need: int = 64
+                            if pq == 1 { need = 128 }
+                            if p + need > e {
+                                return Result.Err(__jpg_err("tabla de cuantización cortada"))
+                            }
+                            let qtab: Array = d.qt[tq]
+                            var k: int = 0
+                            while k < 64 {
+                                if pq == 0 {
+                                    qtab[zz[k]] = s.charAt(p)
+                                    p = p + 1
+                                } else {
+                                    qtab[zz[k]] = __image_be16(s, p)
+                                    p = p + 2
+                                }
+                                k = k + 1
+                            }
+                            d.qok[tq] = 1
+                        }
+                    } else if m == 0xC4 {
+                        var p2: int = pos + 2
+                        while p2 < e {
+                            if p2 + 17 > e {
+                                return Result.Err(__jpg_err("tabla Huffman cortada"))
+                            }
+                            let tc: int = s.charAt(p2) >> 4
+                            let th: int = s.charAt(p2) & 15
+                            p2 = p2 + 1
+                            if tc > 1 or th > 3 {
+                                return Result.Err(__jpg_err("tabla Huffman con destino inválido"))
+                            }
+                            var counts: Array = []
+                            var tot: int = 0
+                            var k2: int = 0
+                            while k2 < 16 {
+                                counts.push(s.charAt(p2 + k2))
+                                tot = tot + s.charAt(p2 + k2)
+                                k2 = k2 + 1
+                            }
+                            p2 = p2 + 16
+                            if tot > 256 or p2 + tot > e {
+                                return Result.Err(__jpg_err("tabla Huffman cortada o con más de 256 símbolos"))
+                            }
+                            var syms: Array = []
+                            k2 = 0
+                            while k2 < tot {
+                                syms.push(s.charAt(p2 + k2))
+                                k2 = k2 + 1
+                            }
+                            p2 = p2 + tot
+                            if not __jpg_lut_fits(counts) {
+                                return Result.Err(err_new(22, "parse", "image_jpeg: tabla Huffman inválida (más códigos de los que caben)"))
+                            }
+                            // Se guarda cruda y se arma al usarla (__jpg_lut_for); una
+                            // redefinición descarta la tabla ya armada.
+                            if tc == 0 {
+                                d.rawdc[th] = [counts, syms]
+                                d.lutdc[th] = []
+                            } else {
+                                d.rawac[th] = [counts, syms]
+                                d.lutac[th] = []
+                            }
+                        }
+                    } else if m == 0xC0 or m == 0xC1 {
+                        if d.nc != 0 {
+                            return Result.Err(__jpg_err("dos encabezados de cuadro (SOF)"))
+                        }
+                        if len < 8 {
+                            return Result.Err(__jpg_err("encabezado de cuadro demasiado corto"))
+                        }
+                        if s.charAt(pos + 2) != 8 {
+                            return Result.Err(err_new(22, "unsupported", "image_jpeg: JPEG de " + int_to_string(s.charAt(pos + 2)) + " bits por muestra; se lee 8"))
+                        }
+                        d.h = __image_be16(s, pos + 3)
+                        d.w = __image_be16(s, pos + 5)
+                        let nc: int = s.charAt(pos + 7)
+                        if d.w == 0 or d.h == 0 {
+                            return Result.Err(__jpg_err("JPEG sin ancho o alto en el encabezado"))
+                        }
+                        if nc != 1 and nc != 3 {
+                            return Result.Err(err_new(22, "unsupported", "image_jpeg: JPEG de " + int_to_string(nc) + " componentes; se aceptan 1 (gris) y 3 (color)"))
+                        }
+                        if len != 8 + 3 * nc {
+                            return Result.Err(__jpg_err("encabezado de cuadro de largo inválido"))
+                        }
+                        var k3: int = 0
+                        while k3 < nc {
+                            let id: int = s.charAt(pos + 8 + 3 * k3)
+                            let hv: int = s.charAt(pos + 9 + 3 * k3)
+                            let hh: int = hv >> 4
+                            let vv: int = hv & 15
+                            let tq3: int = s.charAt(pos + 10 + 3 * k3)
+                            if hh < 1 or hh > 4 or vv < 1 or vv > 4 or tq3 > 3 {
+                                return Result.Err(__jpg_err("factores de muestreo o tabla de cuantización inválidos"))
+                            }
+                            for prev: int in d.cid {
+                                if prev == id {
+                                    return Result.Err(__jpg_err("dos componentes con el mismo identificador"))
+                                }
+                            }
+                            d.cid.push(id)
+                            d.ch.push(hh)
+                            d.cv.push(vv)
+                            d.ctq.push(tq3)
+                            if hh > d.hmax { d.hmax = hh }
+                            if vv > d.vmax { d.vmax = vv }
+                            d.planes.push([])
+                            k3 = k3 + 1
+                        }
+                        d.nc = nc
+                        var k4: int = 0
+                        while k4 < nc {
+                            if d.hmax % d.ch[k4] != 0 or d.vmax % d.cv[k4] != 0 {
+                                return Result.Err(err_new(22, "unsupported", "image_jpeg: submuestreo de factores no enteros (" + int_to_string(d.ch[k4]) + "x" + int_to_string(d.cv[k4]) + " contra " + int_to_string(d.hmax) + "x" + int_to_string(d.vmax) + "): recodificar el JPEG"))
+                            }
+                            // Tamaño de la IDCT del componente: la de la reducción, o mayor si
+                            // así queda a la resolución de salida sin agrandarlo (como libjpeg).
+                            var ss: int = d.n
+                            while ss < 8 and (d.hmax * d.n) % (d.ch[k4] * ss * 2) == 0 and (d.vmax * d.n) % (d.cv[k4] * ss * 2) == 0 {
+                                ss = ss * 2
+                            }
+                            d.cn.push(ss)
+                            k4 = k4 + 1
+                        }
+                    } else if m >= 0xC2 and m <= 0xCF and m != 0xC4 and m != 0xC8 and m != 0xCC {
+                        var what: String = "sin pérdida, aritmético o jerárquico"
+                        if m == 0xC2 { what = "progresivo" }
+                        return Result.Err(err_new(22, "unsupported", "image_decode: JPEG " + what + " (SOF" + int_to_string(m - 0xC0) + ") todavía no se decodifica: guardarlo como JPEG secuencial (baseline)"))
+                    } else if m == 0xDD {
+                        if len != 4 {
+                            return Result.Err(__jpg_err("segmento DRI de largo inválido"))
+                        }
+                        ri = __image_be16(s, pos + 2)
+                    } else if m == 0xE0 {
+                        if len >= 7 and s.substring(pos + 2, pos + 7) == "JFIF" + chr(0) { jfif = true }
+                    } else if m == 0xE1 {
+                        if len >= 8 and s.substring(pos + 2, pos + 8) == "Exif" + chr(0) + chr(0) {
+                            orient = __image_exif_orientation(s, pos + 2, e)
+                        }
+                    } else if m == 0xE2 {
+                        if len >= 16 and s.substring(pos + 2, pos + 14) == "ICC_PROFILE" + chr(0) {
+                            icc_parts.push([s.charAt(pos + 14), s.charAt(pos + 15), s.substring(pos + 16, e)])
+                        }
+                    } else if m == 0xEE {
+                        if len >= 14 and s.substring(pos + 2, pos + 7) == "Adobe" { adobe = s.charAt(pos + 13) }
+                    } else if m == 0xDA {
+                        if d.nc == 0 {
+                            return Result.Err(__jpg_err("datos de imagen (SOS) antes del encabezado de cuadro"))
+                        }
+                        // El largo se mira ANTES de leer ns: un SOS de largo 2 al final
+                        // del archivo dejaba pos + 2 == n y charAt abortaba el proceso.
+                        if len < 3 {
+                            return Result.Err(__jpg_err("encabezado de escaneo (SOS) inválido"))
+                        }
+                        let ns: int = s.charAt(pos + 2)
+                        if ns < 1 or ns > d.nc or len != 6 + 2 * ns {
+                            return Result.Err(__jpg_err("encabezado de escaneo (SOS) inválido"))
+                        }
+                        var sc: Array = []
+                        var sdc: Array = []
+                        var sac: Array = []
+                        var k5: int = 0
+                        while k5 < ns {
+                            let cs: int = s.charAt(pos + 3 + 2 * k5)
+                            let tt: int = s.charAt(pos + 4 + 2 * k5)
+                            var idx: int = 0 - 1
+                            var j: int = 0
+                            while j < d.nc {
+                                if d.cid[j] == cs { idx = j }
+                                j = j + 1
+                            }
+                            if idx < 0 {
+                                return Result.Err(__jpg_err("el escaneo nombra un componente que no existe (" + int_to_string(cs) + ")"))
+                            }
+                            for prev2: int in sc {
+                                if prev2 == idx {
+                                    return Result.Err(__jpg_err("un componente repetido dentro de un escaneo"))
+                                }
+                            }
+                            if (tt >> 4) > 3 or (tt & 15) > 3 {
+                                return Result.Err(__jpg_err("el escaneo usa un destino de tabla Huffman inválido"))
+                            }
+                            sc.push(idx)
+                            sdc.push(tt >> 4)
+                            sac.push(tt & 15)
+                            k5 = k5 + 1
+                        }
+                        let sr: Result<int, Error> = __jpg_scan(d, s, e, sc, sdc, sac, ri)
+                        match sr {
+                            Result.Err(se) => { return Result.Err(se) }
+                            Result.Ok(at) => {
+                                // Salta lo que quede del escaneo hasta el próximo marcador real.
+                                var q: int = at
+                                var found: bool = false
+                                while q + 1 < n and not found {
+                                    if s.charAt(q) == 0xFF and s.charAt(q + 1) != 0 and s.charAt(q + 1) != 0xFF and not (s.charAt(q + 1) >= 0xD0 and s.charAt(q + 1) <= 0xD7) {
+                                        found = true
+                                    } else {
+                                        q = q + 1
+                                    }
+                                }
+                                if not found { q = n }
+                                pos = q - len
+                            }
+                        }
+                    }
+                    pos = pos + len
+                }
+            }
+        }
+    }
+    if d.nc == 0 {
+        return Result.Err(__jpg_err("JPEG sin encabezado de cuadro (SOF)"))
+    }
+    var c: int = 0
+    while c < d.nc {
+        let crows: int = (d.h * d.cv[c] * d.cn[c] + d.vmax * 8 - 1) / (d.vmax * 8)
+        let pl: Array = d.planes[c]
+        if pl.length() < crows {
+            if pl.length() == 0 {
+                return Result.Err(__jpg_err("JPEG incompleto: ningún escaneo trae el componente " + int_to_string(c + 1)))
+            }
+            return Result.Err(__jpg_err("JPEG truncado: el componente " + int_to_string(c + 1) + " tiene " + int_to_string(pl.length()) + " filas de " + int_to_string(crows)))
+        }
+        c = c + 1
+    }
+    // Espacio de color: YCbCr salvo que el marcador Adobe diga RGB (transform 0) o,
+    // sin JFIF ni Adobe, los identificadores de componente sean 'R', 'G', 'B'.
+    var ycc: bool = true
+    if d.nc == 3 {
+        if adobe == 0 { ycc = false }
+        if adobe < 0 and not jfif and d.cid[0] == 82 and d.cid[1] == 71 and d.cid[2] == 66 { ycc = false }
+    }
+    let outw: int = (d.w * d.n + 7) / 8
+    let outh: int = (d.h * d.n + 7) / 8
+    let rows: Array = __jpg_output(d, ycc, outw, outh)
+    var chn: int = 3
+    if d.nc == 1 { chn = 1 }
+    let img: Image = Image { width: outw, height: outh, channels: chn, rows: rows, icc: __jpg_icc(icc_parts), reduction: denom }
+    return Result.Ok(image_orient(img, orient))
+}
+
+// ── Orientación ────────────────────────────────────────────────────────────
+
+// Fila de píxeles de `s` (ch canales) al revés.
+fn __image_flip_row(s: String, ch: int, w: int, work: Array) -> String {
+    var x: int = 0
+    while x < w {
+        var c: int = 0
+        while c < ch {
+            work[(w - 1 - x) * ch + c] = s.charAt(x * ch + c)
+            c = c + 1
+        }
+        x = x + 1
+    }
+    return string_from_bytes(work, 0, w * ch)
+}
+
+/// Aplica una orientación EXIF (1-8) a la imagen y devuelve la imagen «derecha» (con orientación 1): 2 espejo horizontal, 3 giro de 180, 4 espejo vertical, 5 transpuesta, 6 giro de 90 en sentido horario, 7 transversa, 8 giro de 90 antihorario. Con 1 (u otro valor) devuelve la misma imagen. `image_decode` ya la aplica al decodificar un JPEG; esta función sirve para quien decodifica sin orientar o compone.
+pub fn image_orient(img: Image, orientation: int) -> Image {
+    if orientation < 2 or orientation > 8 { return img }
+    let w: int = img.width
+    let h: int = img.height
+    let ch: int = img.channels
+    var rows: Array = []
+    if orientation <= 4 {
+        var work: Array = __image_zeros(w * ch)
+        var y: int = 0
+        while y < h {
+            if orientation == 2 {
+                rows.push(__image_flip_row(img.rows[y], ch, w, work))
+            } else if orientation == 3 {
+                rows.push(__image_flip_row(img.rows[h - 1 - y], ch, w, work))
+            } else {
+                rows.push(img.rows[h - 1 - y])
+            }
+            y = y + 1
+        }
+        return Image { width: w, height: h, channels: ch, rows: rows, icc: img.icc, reduction: img.reduction }
+    }
+    // 5-8: intercambia ancho y alto; cada fila de salida es una columna de entrada.
+    var orow: Array = __image_zeros(h * ch)
+    var j: int = 0
+    while j < w {
+        var i: int = 0
+        while i < h {
+            var src_row: int = i
+            var src_col: int = j
+            if orientation == 6 {
+                src_row = h - 1 - i
+            } else if orientation == 7 {
+                src_row = h - 1 - i
+                src_col = w - 1 - j
+            } else if orientation == 8 {
+                src_col = w - 1 - j
+            }
+            let sr: String = img.rows[src_row]
+            var c: int = 0
+            while c < ch {
+                orow[i * ch + c] = sr.charAt(src_col * ch + c)
+                c = c + 1
+            }
+            i = i + 1
+        }
+        rows.push(string_from_bytes(orow, 0, h * ch))
+        j = j + 1
+    }
+    return Image { width: h, height: w, channels: ch, rows: rows, icc: img.icc, reduction: img.reduction }
+}
+
+// Núcleo común de image_decode / image_decode_scaled / image_decode_min. `mode` 0:
+// reducir a 1/denom (denom fijo); 1: la mayor reducción que deje la imagen con al
+// menos min_w x min_h (medidos sobre la imagen YA orientada).
+fn __image_decode_core(bytes: String, limits: ImageLimits, mode: int, denom: int, min_w: int, min_h: int) -> Result<Image, Error> {
+    if mode == 0 and denom != 1 and denom != 2 and denom != 4 and denom != 8 {
+        return Result.Err(err_new(22, "invalid", "image_decode_scaled: la reducción es 1, 2, 4 u 8 (llegó " + int_to_string(denom) + ")"))
+    }
+    if mode == 1 and (min_w < 1 or min_h < 1) {
+        return Result.Err(err_new(22, "invalid", "image_decode_min: el tamaño mínimo tiene que ser positivo"))
+    }
+    if bytes.length() > limits.max_bytes {
+        return Result.Err(err_new(22, "invalid", "image_decode: el archivo pesa " + int_to_string(bytes.length()) + " bytes y el tope es " + int_to_string(limits.max_bytes) + " (ImageLimits.max_bytes)"))
+    }
+    let ir: Result<ImageInfo, Error> = image_info(bytes)
+    match ir {
+        Result.Err(e) => { return Result.Err(err_new(e.code, e.kind, "image_decode" + e.msg.substring(10, e.msg.length()))) }
+        Result.Ok(info) => {
+            if info.width > limits.max_dim or info.height > limits.max_dim {
+                return Result.Err(err_new(22, "invalid", "image_decode: la imagen declara " + int_to_string(info.width) + " x " + int_to_string(info.height) + " y el lado máximo es " + int_to_string(limits.max_dim) + " (ImageLimits.max_dim)"))
+            }
+            if info.width * info.height > limits.max_pixels {
+                return Result.Err(err_new(22, "invalid", "image_decode: la imagen declara " + int_to_string(info.width) + " x " + int_to_string(info.height) + " píxeles y el tope es " + int_to_string(limits.max_pixels) + " (ImageLimits.max_pixels)"))
+            }
+            if info.format == "png" {
+                // El PNG no se reduce al decodificar (hay que inflar todo el flujo):
+                // sale a tamaño completo y `reduction` vale 1.
+                return __image_png_decode(bytes)
+            }
+            if info.progressive {
+                return Result.Err(err_new(22, "unsupported", "image_decode: JPEG progresivo (SOF2) todavía no se decodifica: guardarlo como JPEG secuencial (baseline)"))
+            }
+            var dn: int = denom
+            if mode == 1 {
+                var ow: int = info.width
+                var oh: int = info.height
+                if info.orientation >= 5 {
+                    ow = info.height
+                    oh = info.width
+                }
+                dn = 1
+                var cand: int = 8
+                while cand >= 2 and dn == 1 {
+                    if (ow + cand - 1) / cand >= min_w and (oh + cand - 1) / cand >= min_h { dn = cand }
+                    cand = cand / 2
+                }
+            }
+            let jr: Result<Image, Error> = __image_jpeg_decode(bytes, dn)
+            match jr {
+                Result.Err(je) => {
+                    // Los errores del decodificador dicen «image_jpeg: ...»; el módulo
+                    // entero dice «image_decode: ...» (como los de PNG).
+                    if je.msg.length() >= 12 and je.msg.substring(0, 12) == "image_decode" { return Result.Err(je) }
+                    return Result.Err(err_new(je.code, je.kind, "image_decode: " + je.msg))
+                }
+                Result.Ok(jimg) => { return Result.Ok(jimg) }
+            }
+        }
+    }
+}
+
+/// Decodifica una imagen a píxeles de 8 bits por canal, al tamaño completo. PNG (gris, gris+alfa, RGB, RGBA y paleta, 1-16 bits, con y sin Adam7; 16 bits se reduce al byte alto) y JPEG secuencial (baseline, gris o YCbCr, cualquier submuestreo común, con reinicios y varios escaneos; el JPEG sale con la orientación EXIF ya aplicada y el perfil ICC en `Image.icc`). Valida los topes con el encabezado ANTES de reservar: Err(invalid) si el archivo, los píxeles o un lado pasan `limits`; Err(unsupported) para formatos que no se decodifican (JPEG progresivo, CMYK, HEIC...); Err(parse) si está dañado o truncado.
+pub fn image_decode(bytes: String, limits: ImageLimits) -> Result<Image, Error> {
+    return __image_decode_core(bytes, limits, 0, 1, 0, 0)
+}
+
+/// Como image_decode pero un JPEG se decodifica REDUCIDO a 1/denom del tamaño (denom 1, 2, 4 u 8; el lado sale techo(lado / denom)): la IDCT se calcula ya reducida, así que a 1/8 no toca los 12 millones de píxeles de una foto sino 190 mil. `Image.reduction` dice la reducción que se aplicó. Un PNG no se reduce al decodificar (sale completo, reduction = 1). Err(invalid) si denom no es 1, 2, 4 u 8.
+pub fn image_decode_scaled(bytes: String, limits: ImageLimits, denom: int) -> Result<Image, Error> {
+    return __image_decode_core(bytes, limits, 0, denom, 0, 0)
+}
+
+/// Decodifica con la MAYOR reducción (1/1, 1/2, 1/4 o 1/8) cuyo resultado, ya orientado, sigue teniendo al menos min_w x min_h píxeles. Es la puerta de entrada de las miniaturas: pedir el tamaño más grande que se va a servir y achicar después con image_resize_fit / image_resize_cover. Si la imagen ya es más chica que el mínimo, sale completa.
+pub fn image_decode_min(bytes: String, limits: ImageLimits, min_w: int, min_h: int) -> Result<Image, Error> {
+    return __image_decode_core(bytes, limits, 1, 1, min_w, min_h)
+}
+
+// ── Redimensionado, recorte y composición de alfa ──────────────────────────
+//
+// Lanczos3 separable (horizontal y después vertical) con el soporte escalado por el
+// factor de reducción, en enteros: es EXACTAMENTE el remuestreo de Pillow (el que
+// usan Pillow y libvips para achicar), con sus pesos de 22 bits, el redondeo y el
+// recorte a 8 bits entre pasadas, así que sale byte a byte igual y se verifica contra
+// él (tests 479-480). Spec D-5 dice 14 bits: el `int` de Nyx es de 64 bits y 22 no
+// cuesta nada, y la razón de la spec (los mismos bytes en aarch64, x86_64 y wasm) se
+// mantiene porque solo se usa aritmética de enteros salvo al fabricar los pesos, y
+// ahí solo +, -, *, / de double (IEEE, sin funciones de libm: el seno es una serie
+// propia). Para AGRANDAR el filtro es el triangular (bilineal) con el mismo esquema.
+// Con canal alfa se premultiplica antes y se desmultiplica después (como Pillow con
+// RGBa), para que un borde transparente no manche de negro el color.
+
+fn __image_floor(v: float) -> int {
+    let i: int = float_to_int(v)
+    if (i as float) > v { return i - 1 }
+    return i
+}
+
+fn __image_ceil(v: float) -> int {
+    let i: int = float_to_int(v)
+    if (i as float) < v { return i + 1 }
+    return i
+}
+
+// sin(pi * x) para |x| pequeño (argumentos del filtro, |x| <= 3): reduce a
+// r = x - redondeo(x) en [-1/2, 1/2] y suma la serie de Taylor hasta t^25, que da
+// el double casi entero. Solo suma, resta, producto y cociente: mismo resultado en
+// cualquier plataforma.
+fn __image_sin_pi(x: float) -> float {
+    let k: int = __image_floor(x + 0.5)
+    let r: float = x - (k as float)
+    let t: float = r * 3.14159265358979323846
+    let t2: float = t * t
+    var s: float = 1.0
+    var m: int = 25
+    while m >= 3 {
+        s = 1.0 - (t2 / (((m - 1) * m) as float)) * s
+        m = m - 2
+    }
+    var v: float = t * s
+    if ((k % 2) + 2) % 2 == 1 { v = 0.0 - v }
+    return v
+}
+
+fn __image_sinc(x: float) -> float {
+    if x == 0.0 { return 1.0 }
+    return __image_sin_pi(x) / (x * 3.14159265358979323846)
+}
+
+fn __image_lanczos(x: float) -> float {
+    if x >= 3.0 or x < 0.0 - 3.0 { return 0.0 }
+    return __image_sinc(x) * __image_sinc(x / 3.0)
+}
+
+fn __image_triangle(x: float) -> float {
+    var a: float = x
+    if a < 0.0 { a = 0.0 - a }
+    if a < 1.0 { return 1.0 - a }
+    return 0.0
+}
+
+// Pesos de UN eje: `in_size` muestras de entrada, el tramo [in0, in1) de entrada
+// (puede ser fraccionario) va a `out_size` muestras. Devuelve [ksize, bounds, coeffs]:
+// para la salida xx, bounds[2xx] es la primera muestra de entrada, bounds[2xx+1] cuántas
+// cuentan y coeffs[xx * ksize + t] el peso entero (22 bits) de la t-ésima. Es
+// precompute_coeffs de Pillow, que es lo que hace idénticos los bytes.
+fn __image_coeffs(in_size: int, in0: float, in1: float, out_size: int, bilinear: bool) -> Array {
+    let scale: float = (in1 - in0) / (out_size as float)
+    var fscale: float = scale
+    if fscale < 1.0 { fscale = 1.0 }
+    var support: float = 3.0 * fscale
+    if bilinear { support = 1.0 * fscale }
+    let ksize: int = __image_ceil(support) * 2 + 1
+    var bounds: Array = []
+    var coeffs: Array = []
+    let ss: float = 1.0 / fscale
+    var xx: int = 0
+    while xx < out_size {
+        let center: float = in0 + ((xx as float) + 0.5) * scale
+        var xmin: int = float_to_int(center - support + 0.5)
+        if xmin < 0 { xmin = 0 }
+        var xmax: int = float_to_int(center + support + 0.5)
+        if xmax > in_size { xmax = in_size }
+        xmax = xmax - xmin
+        var ww: float = 0.0
+        var ws: Array = []
+        var x: int = 0
+        while x < xmax {
+            let arg: float = (((x + xmin) as float) - center + 0.5) * ss
+            var w: float = 0.0
+            if bilinear { w = __image_triangle(arg) } else { w = __image_lanczos(arg) }
+            ws.push(w)
+            ww = ww + w
+            x = x + 1
+        }
+        x = 0
+        while x < ksize {
+            if x < xmax {
+                var v: float = ws[x]
+                if ww != 0.0 { v = v / ww }
+                if v < 0.0 {
+                    coeffs.push(float_to_int(0.0 - 0.5 + v * 4194304.0))
+                } else {
+                    coeffs.push(float_to_int(0.5 + v * 4194304.0))
+                }
+            } else {
+                coeffs.push(0)
+            }
+            x = x + 1
+        }
+        bounds.push(xmin)
+        bounds.push(xmax)
+        xx = xx + 1
+    }
+    return [ksize, bounds, coeffs]
+}
+
+// Pasada horizontal sobre las filas src[y0 .. y1): cada fila de `in_w` píxeles de `ch`
+// canales pasa a `out_w`, con el redondeo de 22 bits y el recorte a 8 bits.
+fn __image_hpass(src: Array, y0: int, y1: int, ch: int, out_w: int, ksize: int, bounds: Array, coeffs: Array) -> Array {
+    var out: Array = []
+    var orow: Array = __image_zeros(out_w * ch)
+    var y: int = y0
+    while y < y1 {
+        let row: String = src[y]
+        var xx: int = 0
+        while xx < out_w {
+            let xmin: int = bounds[2 * xx]
+            let n: int = bounds[2 * xx + 1]
+            let cb: int = xx * ksize
+            var a0: int = 2097152
+            var a1: int = 2097152
+            var a2: int = 2097152
+            var a3: int = 2097152
+            var t: int = 0
+            while t < n {
+                let k: int = coeffs[cb + t]
+                let p: int = (xmin + t) * ch
+                a0 = a0 + row.charAt(p) * k
+                if ch >= 3 {
+                    a1 = a1 + row.charAt(p + 1) * k
+                    a2 = a2 + row.charAt(p + 2) * k
+                    if ch == 4 { a3 = a3 + row.charAt(p + 3) * k }
+                }
+                t = t + 1
+            }
+            let o: int = xx * ch
+            orow[o] = __jpg_clamp(a0 >> 22)
+            if ch >= 3 {
+                orow[o + 1] = __jpg_clamp(a1 >> 22)
+                orow[o + 2] = __jpg_clamp(a2 >> 22)
+                if ch == 4 { orow[o + 3] = __jpg_clamp(a3 >> 22) }
+            }
+            xx = xx + 1
+        }
+        out.push(string_from_bytes(orow, 0, out_w * ch))
+        y = y + 1
+    }
+    return out
+}
+
+// Pasada vertical: la fila yy de salida combina las filas src[bounds[2yy] - base ...]
+// (`base` es la primera fila que `src` conserva). `n_samples` = ancho x canales.
+fn __image_vpass(src: Array, base: int, n_samples: int, out_h: int, ksize: int, bounds: Array, coeffs: Array) -> Array {
+    var out: Array = []
+    var orow: Array = __image_zeros(n_samples)
+    var yy: int = 0
+    while yy < out_h {
+        let ymin: int = bounds[2 * yy]
+        let n: int = bounds[2 * yy + 1]
+        let cb: int = yy * ksize
+        var rs: Array = []
+        var ks: Array = []
+        var t: int = 0
+        while t < n {
+            rs.push(src[ymin - base + t])
+            ks.push(coeffs[cb + t])
+            t = t + 1
+        }
+        var x: int = 0
+        while x < n_samples {
+            var a: int = 2097152
+            var u: int = 0
+            while u < n {
+                let r: String = rs[u]
+                a = a + r.charAt(x) * ks[u]
+                u = u + 1
+            }
+            orow[x] = __jpg_clamp(a >> 22)
+            x = x + 1
+        }
+        out.push(string_from_bytes(orow, 0, n_samples))
+        yy = yy + 1
+    }
+    return out
+}
+
+// RGBA -> RGBa (colores premultiplicados por el alfa) y de vuelta, con las mismas
+// cuentas de Pillow (MULDIV255 y la división entera), para que la salida coincida.
+fn __image_premul_row(s: String, w: int, work: Array) -> String {
+    var x: int = 0
+    while x < w {
+        let a: int = s.charAt(x * 4 + 3)
+        var c: int = 0
+        while c < 3 {
+            let tmp: int = s.charAt(x * 4 + c) * a + 128
+            work[x * 4 + c] = ((tmp >> 8) + tmp) >> 8
+            c = c + 1
+        }
+        work[x * 4 + 3] = a
+        x = x + 1
+    }
+    return string_from_bytes(work, 0, w * 4)
+}
+
+fn __image_unpremul_row(s: String, w: int, work: Array) -> String {
+    var x: int = 0
+    while x < w {
+        let a: int = s.charAt(x * 4 + 3)
+        var c: int = 0
+        while c < 3 {
+            let v: int = s.charAt(x * 4 + c)
+            if a == 0 or a == 255 {
+                work[x * 4 + c] = v
+            } else {
+                work[x * 4 + c] = __jpg_clamp((255 * v) / a)
+            }
+            c = c + 1
+        }
+        work[x * 4 + 3] = a
+        x = x + 1
+    }
+    return string_from_bytes(work, 0, w * 4)
+}
+
+fn __image_check_size(fname: String, w: int, h: int) -> String {
+    let lim: ImageLimits = image_limits()
+    if w < 1 or h < 1 {
+        return fname + ": el tamaño pedido tiene que ser positivo (llegó " + int_to_string(w) + " x " + int_to_string(h) + ")"
+    }
+    if w > lim.max_dim or h > lim.max_dim or w * h > lim.max_pixels {
+        return fname + ": el tamaño pedido " + int_to_string(w) + " x " + int_to_string(h) + " pasa el tope de " + int_to_string(lim.max_dim) + " de lado o " + int_to_string(lim.max_pixels) + " píxeles"
+    }
+    return ""
+}
+
+// Redondea un double al float de 32 bits más cercano (empate al par). Pillow pasa el
+// tramo de origen (`box`) al C como `float`, y esos 24 bits de mantisa deciden los pesos:
+// para dar los mismos bytes en un recorte fraccionario hay que perder las mismas cifras.
+// Solo escala por potencias de dos (exacto) y redondea: sin funciones de libm.
+fn __image_f32(x: float) -> float {
+    if x == 0.0 { return 0.0 }
+    var a: float = x
+    if a < 0.0 { a = 0.0 - a }
+    var p: float = 1.0
+    while p * 2.0 <= a { p = p * 2.0 }
+    while p > a { p = p * 0.5 }
+    let ulp: float = p / 8388608.0
+    let q: float = a / ulp
+    var f: int = float_to_int(q)
+    let frac: float = q - (f as float)
+    if frac > 0.5 or (frac == 0.5 and f % 2 == 1) { f = f + 1 }
+    let v: float = (f as float) * ulp
+    if x < 0.0 { return 0.0 - v }
+    return v
+}
+
+// Remuestrea el tramo [bx0, bx1) x [by0, by1) de la imagen (fracciones de píxel
+// permitidas) a out_w x out_h. Un eje cuyo tramo es entero y del tamaño de la salida
+// no se remuestrea (se copia). Lanczos3 si el eje se achica, triangular si se agranda.
+fn __image_resample(img: Image, box0x: float, box0y: float, box1x: float, box1y: float, out_w: int, out_h: int) -> Image {
+    let bx0: float = __image_f32(box0x)
+    let by0: float = __image_f32(box0y)
+    let bx1: float = __image_f32(box1x)
+    let by1: float = __image_f32(box1y)
+    let ch: int = img.channels
+    let w: int = img.width
+    let h: int = img.height
+    var rows: Array = img.rows
+    // El eje horizontal
+    let x0i: int = float_to_int(bx0)
+    let copy_x: bool = (x0i as float) == bx0 and (float_to_int(bx1) as float) == bx1 and float_to_int(bx1) - x0i == out_w
+    let y0i: int = float_to_int(by0)
+    let copy_y: bool = (y0i as float) == by0 and (float_to_int(by1) as float) == by1 and float_to_int(by1) - y0i == out_h
+    // Filas de entrada que la pasada vertical va a leer.
+    var ymin: int = y0i
+    var ymax: int = float_to_int(by1)
+    var vc: Array = []
+    if not copy_y {
+        let bl: bool = (by1 - by0) < (out_h as float)
+        vc = __image_coeffs(h, by0, by1, out_h, bl)
+        let vb: Array = vc[1]
+        ymin = vb[0]
+        ymax = vb[2 * (out_h - 1)] + vb[2 * (out_h - 1) + 1]
+    }
+    if ch == 4 and not (copy_x and copy_y) {
+        // Solo las filas que se van a leer; el resto queda como marcador vacío.
+        var pw: Array = __image_zeros(w * 4)
+        var pre: Array = []
+        var yp: int = 0
+        while yp < h {
+            if yp >= ymin and yp < ymax { pre.push(__image_premul_row(rows[yp], w, pw)) } else { pre.push("") }
+            yp = yp + 1
+        }
+        rows = pre
+    }
+    var mid: Array = []
+    var mid_w: int = w
+    if copy_x {
+        // Recorte horizontal entero: se copia el pedazo de cada fila necesaria.
+        var y: int = ymin
+        while y < ymax {
+            let r1: String = rows[y]
+            mid.push(r1.substring(x0i * ch, (x0i + out_w) * ch))
+            y = y + 1
+        }
+        mid_w = out_w
+    } else {
+        let bl2: bool = (bx1 - bx0) < (out_w as float)
+        let hc: Array = __image_coeffs(w, bx0, bx1, out_w, bl2)
+        mid = __image_hpass(rows, ymin, ymax, ch, out_w, hc[0], hc[1], hc[2])
+        mid_w = out_w
+    }
+    var res: Array = []
+    if copy_y {
+        res = mid
+    } else {
+        res = __image_vpass(mid, ymin, mid_w * ch, out_h, vc[0], vc[1], vc[2])
+    }
+    if ch == 4 and not (copy_x and copy_y) {
+        var uw: Array = __image_zeros(out_w * 4)
+        var un: Array = []
+        for r2: String in res {
+            un.push(__image_unpremul_row(r2, out_w, uw))
+        }
+        res = un
+    }
+    return Image { width: out_w, height: out_h, channels: ch, rows: res, icc: img.icc, reduction: 1 }
+}
+
+/// Recorta el rectángulo de esquina (x, y) y tamaño w x h. Err(invalid) si algo de eso cae fuera de la imagen o no es positivo. Conserva el perfil ICC.
+pub fn image_crop(img: Image, x: int, y: int, w: int, h: int) -> Result<Image, Error> {
+    if w < 1 or h < 1 {
+        return Result.Err(err_new(22, "invalid", "image_crop: el tamaño del recorte tiene que ser positivo (llegó " + int_to_string(w) + " x " + int_to_string(h) + ")"))
+    }
+    if x < 0 or y < 0 or x + w > img.width or y + h > img.height {
+        return Result.Err(err_new(22, "invalid", "image_crop: el recorte " + int_to_string(w) + " x " + int_to_string(h) + " en (" + int_to_string(x) + ", " + int_to_string(y) + ") se sale de la imagen de " + int_to_string(img.width) + " x " + int_to_string(img.height)))
+    }
+    let ch: int = img.channels
+    var rows: Array = []
+    var j: int = y
+    while j < y + h {
+        let r: String = img.rows[j]
+        if x == 0 and w == img.width { rows.push(r) } else { rows.push(r.substring(x * ch, (x + w) * ch)) }
+        j = j + 1
+    }
+    return Result.Ok(Image { width: w, height: h, channels: ch, rows: rows, icc: img.icc, reduction: 1 })
+}
+
+/// Escala la imagen a EXACTAMENTE w x h (sin conservar la proporción): Lanczos3 con soporte proporcional en el eje que se achica, triangular (bilineal) en el que se agranda; un eje que no cambia no se toca. Err(invalid) si w o h no son positivos o pasan el tope (30000 de lado, 64 millones de píxeles). Salida idéntica a Image.resize de Pillow (LANCZOS al achicar, BILINEAR al agrandar).
+pub fn image_resize(img: Image, w: int, h: int) -> Result<Image, Error> {
+    let bad: String = __image_check_size("image_resize", w, h)
+    if bad != "" { return Result.Err(err_new(22, "invalid", bad)) }
+    if w == img.width and h == img.height { return Result.Ok(img) }
+    return Result.Ok(__image_resample(img, 0.0, 0.0, img.width as float, img.height as float, w, h))
+}
+
+/// Achica la imagen para que CAIGA dentro de max_w x max_h conservando la proporción (uno de los dos lados llega al tope, el otro se redondea al entero más cercano). Nunca agranda: si ya cabe se devuelve la misma imagen. Lanczos3. Err(invalid) si algún tope no es positivo.
+pub fn image_resize_fit(img: Image, max_w: int, max_h: int) -> Result<Image, Error> {
+    let bad: String = __image_check_size("image_resize_fit", max_w, max_h)
+    if bad != "" { return Result.Err(err_new(22, "invalid", bad)) }
+    let w: int = img.width
+    let h: int = img.height
+    if w <= max_w and h <= max_h { return Result.Ok(img) }
+    var nw: int = 0
+    var nh: int = 0
+    if max_w * h <= max_h * w {
+        nw = max_w
+        nh = (h * max_w * 2 + w) / (2 * w)
+    } else {
+        nh = max_h
+        nw = (w * max_h * 2 + h) / (2 * h)
+    }
+    if nw < 1 { nw = 1 }
+    if nh < 1 { nh = 1 }
+    return Result.Ok(__image_resample(img, 0.0, 0.0, w as float, h as float, nw, nh))
+}
+
+/// Llena la caja w x h: recorta al centro la parte de la imagen que tiene la proporción de la caja y la escala a w x h (el cuadrado de una miniatura). Nunca agranda: si la parte recortada es más chica que la caja en algún lado, el resultado es la caja reducida a lo que da la imagen (misma proporción, sin escalar). Lanczos3. Err(invalid) si w o h no son positivos.
+pub fn image_resize_cover(img: Image, w: int, h: int) -> Result<Image, Error> {
+    let bad: String = __image_check_size("image_resize_cover", w, h)
+    if bad != "" { return Result.Err(err_new(22, "invalid", bad)) }
+    let sw: int = img.width
+    let sh: int = img.height
+    // Tamaño final: el pedido, o el que da la imagen si el pedido la obligaría a agrandar.
+    var fw: int = w
+    var fh: int = h
+    if sw < w or sh < h {
+        if sw * h < sh * w {
+            fw = sw
+            fh = (sw * h * 2 + w) / (2 * w)
+        } else {
+            fh = sh
+            fw = (sh * w * 2 + h) / (2 * h)
+        }
+        if fw < 1 { fw = 1 }
+        if fh < 1 { fh = 1 }
+        if fw > sw { fw = sw }
+        if fh > sh { fh = sh }
+    }
+    // Tramo de la imagen con la proporción de la salida, centrado (como ImageOps.fit).
+    // Las mismas cuentas en coma flotante que ImageOps.fit de Pillow, para que el tramo
+    // (y por lo tanto los pesos y los bytes) coincida hasta la última cifra.
+    let out_ratio: float = (fw as float) / (fh as float)
+    var cw: float = sw as float
+    var chh: float = sh as float
+    if (sw as float) / (sh as float) >= out_ratio {
+        cw = out_ratio * (sh as float)
+    } else {
+        chh = (sw as float) / out_ratio
+    }
+    let left: float = ((sw as float) - cw) * 0.5
+    let top: float = ((sh as float) - chh) * 0.5
+    if fw == sw and fh == sh { return Result.Ok(img) }
+    return Result.Ok(__image_resample(img, left, top, left + cw, top + chh, fw, fh))
+}
+
+/// Compone la imagen sobre un fondo de color (r, g, b, 0-255) y quita el canal alfa: una RGBA sale RGB, con c = (c * a + fondo * (255 - a)) / 255 redondeado. Una imagen sin alfa (gris o RGB) se devuelve igual. Es el paso previo a codificar JPEG, que no guarda transparencia.
+pub fn image_flatten(img: Image, r: int, g: int, b: int) -> Image {
+    if img.channels != 4 { return img }
+    let bg: Array = [__jpg_clamp(r), __jpg_clamp(g), __jpg_clamp(b)]
+    let w: int = img.width
+    var rows: Array = []
+    var orow: Array = __image_zeros(w * 3)
+    for row: String in img.rows {
+        var x: int = 0
+        while x < w {
+            let a: int = row.charAt(x * 4 + 3)
+            var c: int = 0
+            while c < 3 {
+                orow[x * 3 + c] = (row.charAt(x * 4 + c) * a + bg[c] * (255 - a) + 127) / 255
+                c = c + 1
+            }
+            x = x + 1
+        }
+        rows.push(string_from_bytes(orow, 0, w * 3))
+    }
+    return Image { width: w, height: img.height, channels: 3, rows: rows, icc: img.icc, reduction: 1 }
+}

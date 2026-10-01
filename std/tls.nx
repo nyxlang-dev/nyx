@@ -226,6 +226,15 @@ pub fn tls_upgrade_fd_ca_only(fd: int, host: String) -> int {
     return nyx_tls_client_upgrade(fd, host, 3)
 }
 
+// VERIFICADO contra el almacén de CAs del SISTEMA (cadena + nombre): el STARTTLS
+// de IMAP (143) y de SMTP (587) de un servidor con certificado público. Igual
+// que tls_connect_verified_system, NO lee ni escribe el almacén de
+// tls_set_ca_file, así que no hace falta —ni conviene— llamarla en nombre del
+// usuario. Devuelve 0 si algo falla (y el fd ya quedó cerrado).
+pub fn tls_upgrade_fd_verified_system(fd: int, host: String) -> int {
+    return nyx_tls_client_upgrade(fd, host, 4)
+}
+
 // ── Las respuestas de una línea a lo que el usuario no podía hacer ─────────
 
 // true si el certificado ya venció (not_after en el pasado).

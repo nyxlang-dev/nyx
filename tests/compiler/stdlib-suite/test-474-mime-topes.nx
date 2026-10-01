@@ -1,0 +1,170 @@
+// test-474 — std/mime frente a correo hostil (arco std-imap, Task 3): los topes de
+// MimeLimits (tamaño, profundidad, partes, cabeceras, parte decodificada) dan Err
+// "invalid" y NO memoria sin fin; lo mal formado da Err "parse" o se toma con
+// tolerancia; y los nombres de archivo de un remitente ajeno se sanean.
+
+import "std/mime"
+import "std/error"
+
+fn kind_de(raw: String, lim: MimeLimits) -> String {
+    match mime_parse(raw, lim) {
+        Result.Ok(m) => { return "OK" }
+        Result.Err(e) => { return e.kind }
+    }
+    return ""
+}
+
+fn parse_ok(raw: String, lim: MimeLimits) -> MimeMessage {
+    match mime_parse(raw, lim) {
+        Result.Ok(m) => { return m }
+        Result.Err(e) => {
+            println("parse: " + e.kind + " " + e.msg)
+            exit(1)
+        }
+    }
+    return parse_ok(raw, lim)
+}
+
+// `n` multipart/mixed anidados, con un text/plain adentro.
+fn anidado(n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("Subject: anidado\r\nContent-Type: multipart/mixed; boundary=\"b0\"\r\n\r\n")
+    var i: int = 0
+    while i < n {
+        sb.append("--b" + int_to_string(i) + "\r\n")
+        if i < n - 1 {
+            sb.append("Content-Type: multipart/mixed; boundary=\"b" + int_to_string(i + 1) + "\"\r\n\r\n")
+        } else {
+            sb.append("Content-Type: text/plain\r\n\r\nfondo\r\n")
+        }
+        i = i + 1
+    }
+    var j: int = n - 1
+    while j >= 0 {
+        sb.append("--b" + int_to_string(j) + "--\r\n")
+        j = j - 1
+    }
+    return sb.to_string()
+}
+
+// multipart/mixed con `n` partes de texto.
+fn muchas(n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("Subject: muchas\r\nContent-Type: multipart/mixed; boundary=\"zz\"\r\n\r\n")
+    var i: int = 0
+    while i < n {
+        sb.append("--zz\r\nContent-Type: text/plain\r\n\r\nparte " + int_to_string(i) + "\r\n")
+        i = i + 1
+    }
+    sb.append("--zz--\r\n")
+    return sb.to_string()
+}
+
+fn repetir(s: String, n: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < n {
+        sb.append(s)
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+fn main() -> int {
+    let lim: MimeLimits = mime_limits()
+
+    // ── vacío y no-correo: Err parse ──
+    assert(kind_de("", lim) == "parse", "vacío")
+    assert(kind_de("hola, esto no es un correo\r\n\r\ncuerpo", lim) == "parse", "sin cabeceras")
+    assert(kind_de("\r\n\r\ncuerpo", lim) == "parse", "empieza con línea vacía")
+
+    // ── tamaño ──
+    var chico: MimeLimits = mime_limits()
+    chico.max_size = 100
+    assert(kind_de("Subject: x\r\n\r\n" + repetir("a", 200), chico) == "invalid", "mensaje pasa el tope de tamaño")
+    assert(kind_de("Subject: x\r\n\r\n" + repetir("a", 50), chico) == "OK", "bajo el tope")
+
+    // ── profundidad: 10 niveles pasan, 11 no ──
+    assert(kind_de(anidado(10), lim) == "OK", "10 niveles")
+    assert(kind_de(anidado(11), lim) == "invalid", "11 niveles")
+    let profundo: MimeMessage = parse_ok(anidado(10), lim)
+    assert(profundo.parts.length() == 1 and profundo.text == "fondo", "el texto del fondo")
+    let bomba: String = anidado(3000)
+    assert(kind_de(bomba, lim) == "invalid", "3000 niveles: error, no recursión sin fin")
+
+    // ── partes ──
+    assert(kind_de(muchas(500), lim) == "OK", "500 partes")
+    assert(kind_de(muchas(501), lim) == "invalid", "501 partes")
+    var pocas: MimeLimits = mime_limits()
+    pocas.max_parts = 3
+    assert(kind_de(muchas(3), pocas) == "OK" and kind_de(muchas(4), pocas) == "invalid", "tope de partes configurable")
+
+    // ── cabeceras ──
+    var largo: String = "Subject: " + repetir("x", 20000) + "\r\n\r\ncuerpo"
+    assert(kind_de(largo, lim) == "invalid", "una cabecera de 20 KB")
+    var plegada: String = "Subject: a\r\n" + repetir(" " + repetir("b", 1000) + "\r\n", 30) + "\r\ncuerpo"
+    assert(kind_de(plegada, lim) == "invalid", "una cabecera plegada que suma 30 KB")
+    var muchas_cab: String = repetir("X-H: v\r\n", 1001) + "\r\ncuerpo"
+    assert(kind_de(muchas_cab, lim) == "invalid", "1001 cabeceras")
+    assert(kind_de(repetir("X-H: v\r\n", 1000) + "\r\ncuerpo", lim) == "OK", "1000 cabeceras")
+
+    // ── parte decodificada ──
+    var parte: MimeLimits = mime_limits()
+    parte.max_part_size = 1000
+    let b64: String = repetir("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=\r\n", 100)
+    let adj: String = "Content-Type: multipart/mixed; boundary=\"q\"\r\n\r\n--q\r\nContent-Type: application/pdf\r\nContent-Transfer-Encoding: base64\r\n\r\n" + b64 + "--q--\r\n"
+    assert(kind_de(adj, parte) == "invalid", "base64 que decodifica a más del tope")
+    assert(kind_de(adj, lim) == "OK", "el mismo con topes por omisión")
+    let qp: String = "Content-Type: text/plain\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + repetir("=41=42=43=44=45=46=47=48\r\n", 200)
+    assert(kind_de(qp, parte) == "invalid", "QP que decodifica a más del tope")
+    let plano: String = "Content-Type: text/plain\r\n\r\n" + repetir("x", 5000)
+    assert(kind_de(plano, parte) == "invalid", "cuerpo 7bit más grande que el tope")
+
+    // ── multipart mal formados: tolerancia ──
+    let sin_cierre: MimeMessage = parse_ok("Content-Type: multipart/mixed; boundary=\"q\"\r\n\r\n--q\r\nContent-Type: text/plain\r\n\r\nhola\r\n--q\r\nContent-Type: text/plain\r\n\r\ntruncado", lim)
+    assert(sin_cierre.parts.length() == 2, "sin el cierre --q--: la última parte llega hasta el final")
+    let sin_bound: MimeMessage = parse_ok("Content-Type: multipart/mixed\r\n\r\nhola sin boundary\r\n", lim)
+    assert(sin_bound.text == "hola sin boundary\n", "multipart sin boundary: se toma como texto")
+    let sin_delim: MimeMessage = parse_ok("Content-Type: multipart/mixed; boundary=\"q\"\r\n\r\nno hay delimitadores\r\n", lim)
+    assert(sin_delim.parts.length() == 0, "multipart sin delimitadores: sin partes")
+    // boundary «ab» no se confunde con «abc»
+    let prefijo: MimeMessage = parse_ok("Content-Type: multipart/mixed; boundary=\"ab\"\r\n\r\n--ab\r\nContent-Type: text/plain\r\n\r\n--abc no es delimitador\r\n--ab--\r\n", lim)
+    assert(prefijo.parts.length() == 1 and prefijo.text.indexOf("--abc no es") >= 0, "prefijo de boundary")
+    // delimitador con espacios al final
+    let espacios: MimeMessage = parse_ok("Content-Type: multipart/mixed; boundary=\"q\"\r\n\r\n--q  \r\nContent-Type: text/plain\r\n\r\nuno\r\n--q--  \r\n", lim)
+    assert(espacios.text == "uno", "espacios tras el delimitador")
+    // cte con mayúsculas y desconocido
+    let cte: MimeMessage = parse_ok("Content-Type: text/plain\r\nContent-Transfer-Encoding: BASE64\r\n\r\nSG9sYQ==\r\n", lim)
+    assert(cte.text == "Hola", "cte en mayúsculas")
+    let raro: MimeMessage = parse_ok("Content-Type: text/plain\r\nContent-Transfer-Encoding: x-uuencode\r\n\r\nquedan los bytes\r\n", lim)
+    assert(raro.text == "quedan los bytes\n", "cte desconocido: los bytes tal cual")
+    // charset desconocido: text_ok false y los bytes en data
+    let koi: MimeMessage = parse_ok("Content-Type: text/plain; charset=koi8-r\r\n\r\n" + chr(200) + chr(201) + "\r\n", lim)
+    assert(koi.text_ok == false and koi.text == "" and koi.parts.length() == 1, "charset no soportado")
+    let kp: MimePart = koi.parts[0]
+    assert(kp.data.length() == 4 and kp.charset == "koi8-r", "los bytes quedan en data")
+    // tipo de contenido roto: se toma como text/plain
+    let roto: MimeMessage = parse_ok("Content-Type: ;;;\r\n\r\nhola", lim)
+    assert(roto.text == "hola", "Content-Type roto")
+    // adjunto de tamaño cero
+    let cero: MimeMessage = parse_ok("Content-Type: multipart/mixed; boundary=\"q\"\r\n\r\n--q\r\nContent-Type: application/pdf; name=\"v.pdf\"\r\n\r\n--q--\r\n", lim)
+    assert(cero.attachments.length() == 1, "un adjunto vacío existe")
+    let cp: MimePart = cero.attachments[0]
+    assert(cp.size == 0 and cp.filename == "v.pdf", "de tamaño cero")
+
+    // ── nombres de archivo ajenos ──
+    assert(mime_safe_filename("informe.pdf") == "informe.pdf", "normal")
+    assert(mime_safe_filename("../../etc/passwd") == "passwd", "recorrido de directorios")
+    assert(mime_safe_filename("C:\\Windows\\system32\\a.exe") == "a.exe", "ruta de Windows")
+    assert(mime_safe_filename("..") == "adjunto" and mime_safe_filename("") == "adjunto" and mime_safe_filename("...") == "adjunto", "solo puntos o vacío")
+    assert(mime_safe_filename(".bashrc") == "bashrc", "oculto")
+    assert(mime_safe_filename("a\r\nb" + chr(0) + ".txt") == "a__b_.txt", "control y NUL")
+    assert(mime_safe_filename("a:b*c?.txt") == "a_b_c_.txt", "caracteres de Windows")
+    assert(mime_safe_filename("informe mayo ñ.pdf") == "informe mayo ñ.pdf", "tildes")
+    assert(mime_safe_filename("  espacios.txt  ") == "espacios.txt", "espacios en los bordes")
+    let larga: String = mime_safe_filename(repetir("ñ", 300))
+    assert(larga.length() <= 200 and larga.length() >= 198, "recorte en borde de carácter")
+
+    println("mime topes ok")
+    return 0
+}

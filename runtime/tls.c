@@ -1542,15 +1542,23 @@ nyx_array_t* nyx_tls_connect_result_mtls(nyx_string* host, int64_t port,
 // tls_verify_result), 2 = estricto (cadena + hostname, o falla),
 // 3 = solo cadena (el `verify-ca` de libpq: la CA tiene que firmar, pero el
 // nombre no se compara — sirve para un servidor detrás de una IP interna cuyo
-// certificado no trae SAN de tipo IP).
+// certificado no trae SAN de tipo IP),
+// 4 = estricto contra el almacén del SISTEMA (mismo criterio que el modo 4 de
+// nyx_tls_connect_ex: g_ssl_ctx, no el de tls_set_ca_file). Lo necesita el
+// STARTTLS de IMAP/SMTP (spec std-imap, sonda TLS 2026-09-30). ANTES de esto el
+// modo 4 caía en `verify_mode >= 2 ? get_verify_ctx()` y NINGUNA de las ramas
+// `== 2`/`== 3` lo tomaba: el handshake se hacía SIN verificar nada —un
+// «verificado» silencioso—, y contra un almacén vacío salvo que alguien hubiera
+// llamado a tls_set_ca_file. Cualquier modo fuera de 0..4 ahora falla cerrado.
 int64_t nyx_tls_client_upgrade(int64_t fd_in, nyx_string* host, int64_t verify_mode) {
     if (fd_in < 0) return 0;
     int fd = (int)fd_in;
+    if (verify_mode < 0 || verify_mode > 4) { os_sock_close(fd); return 0; }
     if (!host) { os_sock_close(fd); return 0; }
     const char* host_cstr = nyx_string_to_cstr(host);
     if (!host_cstr || host_cstr[0] == '\0') { os_sock_close(fd); return 0; }
 
-    SSL_CTX* ctx = (verify_mode >= 2) ? get_verify_ctx() : get_ssl_ctx();
+    SSL_CTX* ctx = (verify_mode == 2 || verify_mode == 3) ? get_verify_ctx() : get_ssl_ctx();
     if (!ctx) { os_sock_close(fd); return 0; }
 
     // El fd viene de try_tcp_connect, que NO pone timeout — a diferencia de
@@ -1568,7 +1576,7 @@ int64_t nyx_tls_client_upgrade(int64_t fd_in, nyx_string* host, int64_t verify_m
         // Solo cadena: la CA firma o falla, sin comparar el nombre.
         SSL_set_verify(ssl, SSL_VERIFY_PEER, NULL);
     }
-    if (verify_mode == 2) {
+    if (verify_mode == 2 || verify_mode == 4) {
         SSL_set_verify(ssl, SSL_VERIFY_PEER, NULL);
         // Uno solo de los dos criterios de identidad: OpenSSL exige que TODOS
         // los configurados pasen, y setear ambos rechazaría un certificado

@@ -1,0 +1,33 @@
+png rgb8: png 21x13 canales=3 orient=1 prog=false
+png rgba8 adam7: png 21x13 canales=4 orient=1 prog=false
+png gray1: png 21x13 canales=1 orient=1 prog=false
+png ga16: png 21x13 canales=2 orient=1 prog=false
+png pal8: png 21x13 canales=3 orient=1 prog=false
+jpeg 4:2:0: jpeg 37x19 canales=3 orient=1 prog=false
+jpeg 4:4:4: jpeg 37x19 canales=3 orient=1 prog=false
+jpeg gris: jpeg 37x19 canales=1 orient=1 prog=false
+jpeg progresivo: jpeg 37x19 canales=3 orient=1 prog=true
+jpeg exif II o8: jpeg 37x19 canales=3 orient=8 prog=false
+jpeg exif MM o6: jpeg 37x19 canales=3 orient=6 prog=false
+jpeg cmyk: ERR unsupported: image_info: JPEG CMYK no soportado (los de Photoshop guardan los colores invertidos y saldrían al revés): convertirlo a RGB
+jpeg sin perdida: ERR unsupported: image_info: JPEG con codificación SOF3 (sin pérdida, aritmética o jerárquica): guardarlo como JPEG normal
+jpeg 12 bits: ERR unsupported: image_info: JPEG de 12 bits por muestra; se lee 8
+jpeg 2 componentes: ERR unsupported: image_info: JPEG de 2 componentes; se aceptan 1 (gris) y 3 (color)
+jpeg sin dimension: ERR parse: image_info: JPEG sin ancho o alto en el encabezado
+jpeg cortado: ERR parse: image_info: image_jpeg: el segmento del byte 2 se sale del archivo
+jpeg sin SOF: ERR parse: image_info: image_jpeg: JPEG sin encabezado de cuadro (SOF) antes de los datos
+webp: ERR unsupported: image_info: formato WebP no soportado; convertirla a JPEG o PNG
+gif: ERR unsupported: image_info: formato GIF no soportado; convertirla a JPEG o PNG
+heic: ERR unsupported: image_info: formato HEIC no soportado; en el iPhone, Ajustes > Cámara > Formatos > «Más compatible» guarda JPEG
+avif: ERR unsupported: image_info: formato AVIF no soportado; convertirla a JPEG o PNG
+bmp: ERR unsupported: image_info: formato BMP no soportado; convertirla a JPEG o PNG
+tiff: ERR unsupported: image_info: formato TIFF no soportado; convertirla a JPEG o PNG
+texto: ERR invalid: image_info: no parece una imagen JPEG ni PNG (firma desconocida)
+vacio: ERR invalid: image_info: no parece una imagen JPEG ni PNG (firma desconocida)
+png solo firma: ERR parse: image_info: PNG sin IHDR al principio
+png IHDR con CRC roto: ERR parse: image_info: el CRC del IHDR no coincide: archivo dañado
+jpeg declara 60000x60000: jpeg 60000x60000 canales=3 orient=1 prog=false
+decode declara 60000x60000: ERR invalid: image_decode: la imagen declara 60000 x 60000 y el lado máximo es 30000 (ImageLimits.max_dim)
+decode jpeg real: decodificó 37x19
+decode webp: ERR unsupported: image_decode: formato WebP no soportado; convertirla a JPEG o PNG
+fin

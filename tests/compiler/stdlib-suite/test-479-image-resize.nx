@@ -1,0 +1,131 @@
+// test-479 — std/image, Task 4: redimensionado, recorte y composición de alfa (spec std-image, D-5/D-7).
+//
+// Cada caso decodifica una fixture (JPEG o PNG), le aplica UNA operación y compara los
+// bytes con la referencia que PILLOW produjo del mismo archivo (tests/fixtures/image/
+// gen_resize_fixtures.py): Image.resize con LANCZOS al achicar y BILINEAR al agrandar,
+// ImageOps.fit para image_resize_cover, Image.crop y Image.paste con máscara para
+// image_flatten; los RGBA se remuestrean premultiplicados como hace Pillow. Pasa si la
+// salida es IDÉNTICA (sumsq 0): el filtro reproduce el de Pillow con sus pesos de 22 bits.
+// Operaciones: 1 image_resize(a, b), 2 image_resize_fit(a, b), 3 image_resize_cover(a, b),
+// 4 image_crop(a, b, c, d), 5 image_flatten(a, b, c).
+
+import "std/image"
+import "std/error"
+
+fn dec(bytes: String) -> Image {
+    let r: Result<Image, Error> = image_decode(bytes, image_limits())
+    match r {
+        Result.Ok(img) => { return img }
+        Result.Err(e) => {
+            println("¡no decodificó!: " + e.msg)
+            return Image { width: 0, height: 0, channels: 1, rows: [], icc: "", reduction: 1 }
+        }
+    }
+}
+
+fn unwrap(r: Result<Image, Error>) -> Image {
+    match r {
+        Result.Ok(img) => { return img }
+        Result.Err(e) => {
+            println("ERR " + e.kind + ": " + e.msg)
+            return Image { width: 0, height: 0, channels: 1, rows: [], icc: "", reduction: 1 }
+        }
+    }
+}
+
+fn case(name: String, src: String, op: int, a: int, b: int, c: int, d: int, ref: String, w: int, h: int, ch: int) {
+    let img: Image = dec(src)
+    var out: Image = img
+    if op == 1 { out = unwrap(image_resize(img, a, b)) }
+    if op == 2 { out = unwrap(image_resize_fit(img, a, b)) }
+    if op == 3 { out = unwrap(image_resize_cover(img, a, b)) }
+    if op == 4 { out = unwrap(image_crop(img, a, b, c, d)) }
+    if op == 5 { out = image_flatten(img, a, b, c) }
+    if out.width != w or out.height != h or out.channels != ch or out.rows.length() != h {
+        println(name + " FORMA " + int_to_string(out.width) + "x" + int_to_string(out.height) + "x" + int_to_string(out.channels) + " esperado " + int_to_string(w) + "x" + int_to_string(h) + "x" + int_to_string(ch))
+        return
+    }
+    if ref.length() != w * h * ch {
+        println(name + " REF de largo " + int_to_string(ref.length()))
+        return
+    }
+    var sumsq: int = 0
+    var mx: int = 0
+    var y: int = 0
+    while y < h {
+        let row: String = out.rows[y]
+        var i: int = 0
+        while i < w * ch {
+            var dd: int = row.charAt(i) - ref.charAt(y * w * ch + i)
+            if dd < 0 { dd = 0 - dd }
+            if dd > mx { mx = dd }
+            sumsq = sumsq + dd * dd
+            i = i + 1
+        }
+        y = y + 1
+    }
+    var verdict: String = "FALLA"
+    if sumsq == 0 { verdict = "ok" }
+    println(name + " " + int_to_string(w) + "x" + int_to_string(h) + " ch=" + int_to_string(ch) + " sumsq=" + int_to_string(sumsq) + " max=" + int_to_string(mx) + " " + verdict)
+}
+
+fn main() -> int {
+    case("resize-pil420-40x30", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 1, 40, 30, 0, 0, include_bytes("tests/fixtures/image/resize/resize-pil420-40x30.ref"), 40, 30, 3)
+    case("resize-pil420-20x15", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 1, 20, 15, 0, 0, include_bytes("tests/fixtures/image/resize/resize-pil420-20x15.ref"), 20, 15, 3)
+    case("resize-pil420-83x30", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 1, 83, 30, 0, 0, include_bytes("tests/fixtures/image/resize/resize-pil420-83x30.ref"), 83, 30, 3)
+    case("resize-pil420-7x61", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 1, 7, 61, 0, 0, include_bytes("tests/fixtures/image/resize/resize-pil420-7x61.ref"), 7, 61, 3)
+    case("resize-pil420-1x1", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 1, 1, 1, 0, 0, include_bytes("tests/fixtures/image/resize/resize-pil420-1x1.ref"), 1, 1, 3)
+    case("resize-pil420-82x60", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 1, 82, 60, 0, 0, include_bytes("tests/fixtures/image/resize/resize-pil420-82x60.ref"), 82, 60, 3)
+    case("resize-pil420-10x50", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 1, 10, 50, 0, 0, include_bytes("tests/fixtures/image/resize/resize-pil420-10x50.ref"), 10, 50, 3)
+    case("resize-s444-100x70", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 1, 100, 70, 0, 0, include_bytes("tests/fixtures/image/resize/resize-s444-100x70.ref"), 100, 70, 3)
+    case("resize-s444-41x60", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 1, 41, 60, 0, 0, include_bytes("tests/fixtures/image/resize/resize-s444-41x60.ref"), 41, 60, 3)
+    case("resize-s444-20x60", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 1, 20, 60, 0, 0, include_bytes("tests/fixtures/image/resize/resize-s444-20x60.ref"), 20, 60, 3)
+    case("resize-s444-82x27", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 1, 82, 27, 0, 0, include_bytes("tests/fixtures/image/resize/resize-s444-82x27.ref"), 82, 27, 3)
+    case("resize-s444-20x13", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 1, 20, 13, 0, 0, include_bytes("tests/fixtures/image/resize/resize-s444-20x13.ref"), 20, 13, 3)
+    case("resize-gray-20x13", include_bytes("tests/fixtures/image/jpeg/gray.jpg"), 1, 20, 13, 0, 0, include_bytes("tests/fixtures/image/resize/resize-gray-20x13.ref"), 20, 13, 1)
+    case("resize-gray-60x40", include_bytes("tests/fixtures/image/jpeg/gray.jpg"), 1, 60, 40, 0, 0, include_bytes("tests/fixtures/image/resize/resize-gray-60x40.ref"), 60, 40, 1)
+    case("resize-rgba8-10x7", include_bytes("tests/fixtures/image/rgba8.png"), 1, 10, 7, 0, 0, include_bytes("tests/fixtures/image/resize/resize-rgba8-10x7.ref"), 10, 7, 4)
+    case("resize-rgba8-30x20", include_bytes("tests/fixtures/image/rgba8.png"), 1, 30, 20, 0, 0, include_bytes("tests/fixtures/image/resize/resize-rgba8-30x20.ref"), 30, 20, 4)
+    case("resize-disc-17x13", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 1, 17, 13, 0, 0, include_bytes("tests/fixtures/image/resize/resize-disc-17x13.ref"), 17, 13, 4)
+    case("resize-disc-24x18", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 1, 24, 18, 0, 0, include_bytes("tests/fixtures/image/resize/resize-disc-24x18.ref"), 24, 18, 4)
+    case("resize-disc-96x72", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 1, 96, 72, 0, 0, include_bytes("tests/fixtures/image/resize/resize-disc-96x72.ref"), 96, 72, 4)
+    case("resize-disc-12x36", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 1, 12, 36, 0, 0, include_bytes("tests/fixtures/image/resize/resize-disc-12x36.ref"), 12, 36, 4)
+    case("resize-orient6-9x14", include_bytes("tests/fixtures/image/jpeg/orient6.jpg"), 1, 9, 14, 0, 0, include_bytes("tests/fixtures/image/resize/resize-orient6-9x14.ref"), 9, 14, 3)
+    case("fit-pil420-30x30", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 2, 30, 30, 0, 0, include_bytes("tests/fixtures/image/resize/fit-pil420-30x30.ref"), 30, 22, 3)
+    case("fit-pil420-50x100", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 2, 50, 100, 0, 0, include_bytes("tests/fixtures/image/resize/fit-pil420-50x100.ref"), 50, 37, 3)
+    case("fit-pil420-100x20", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 2, 100, 20, 0, 0, include_bytes("tests/fixtures/image/resize/fit-pil420-100x20.ref"), 27, 20, 3)
+    case("fit-pil420-83x61", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 2, 83, 61, 0, 0, include_bytes("tests/fixtures/image/resize/fit-pil420-83x61.ref"), 83, 61, 3)
+    case("fit-pil420-200x200", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 2, 200, 200, 0, 0, include_bytes("tests/fixtures/image/resize/fit-pil420-200x200.ref"), 83, 61, 3)
+    case("fit-s444-20x20", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 2, 20, 20, 0, 0, include_bytes("tests/fixtures/image/resize/fit-s444-20x20.ref"), 20, 13, 3)
+    case("fit-gray-13x13", include_bytes("tests/fixtures/image/jpeg/gray.jpg"), 2, 13, 13, 0, 0, include_bytes("tests/fixtures/image/resize/fit-gray-13x13.ref"), 13, 9, 1)
+    case("fit-disc-20x20", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 2, 20, 20, 0, 0, include_bytes("tests/fixtures/image/resize/fit-disc-20x20.ref"), 20, 15, 4)
+    case("cover-pil420-32x32", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 3, 32, 32, 0, 0, include_bytes("tests/fixtures/image/resize/cover-pil420-32x32.ref"), 32, 32, 3)
+    case("cover-pil420-50x20", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 3, 50, 20, 0, 0, include_bytes("tests/fixtures/image/resize/cover-pil420-50x20.ref"), 50, 20, 3)
+    case("cover-pil420-20x50", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 3, 20, 50, 0, 0, include_bytes("tests/fixtures/image/resize/cover-pil420-20x50.ref"), 20, 50, 3)
+    case("cover-pil420-83x61", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 3, 83, 61, 0, 0, include_bytes("tests/fixtures/image/resize/cover-pil420-83x61.ref"), 83, 61, 3)
+    case("cover-pil420-40x30", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 3, 40, 30, 0, 0, include_bytes("tests/fixtures/image/resize/cover-pil420-40x30.ref"), 40, 30, 3)
+    case("cover-s444-20x20", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 3, 20, 20, 0, 0, include_bytes("tests/fixtures/image/resize/cover-s444-20x20.ref"), 20, 20, 3)
+    case("cover-gray-10x10", include_bytes("tests/fixtures/image/jpeg/gray.jpg"), 3, 10, 10, 0, 0, include_bytes("tests/fixtures/image/resize/cover-gray-10x10.ref"), 10, 10, 1)
+    case("cover-disc-20x20", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 3, 20, 20, 0, 0, include_bytes("tests/fixtures/image/resize/cover-disc-20x20.ref"), 20, 20, 4)
+    case("cover-pil420-33x11", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 3, 33, 11, 0, 0, include_bytes("tests/fixtures/image/resize/cover-pil420-33x11.ref"), 33, 11, 3)
+    case("cover-s444-100x100", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 3, 100, 100, 0, 0, include_bytes("tests/fixtures/image/resize/cover-s444-100x100.ref"), 27, 27, 3)
+    case("cover-s444-100x50", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 3, 100, 50, 0, 0, include_bytes("tests/fixtures/image/resize/cover-s444-100x50.ref"), 41, 21, 3)
+    case("cover-s444-30x50", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 3, 30, 50, 0, 0, include_bytes("tests/fixtures/image/resize/cover-s444-30x50.ref"), 16, 27, 3)
+    case("cover-s444-41x27", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 3, 41, 27, 0, 0, include_bytes("tests/fixtures/image/resize/cover-s444-41x27.ref"), 41, 27, 3)
+    case("cover-s444-500x27", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 3, 500, 27, 0, 0, include_bytes("tests/fixtures/image/resize/cover-s444-500x27.ref"), 41, 2, 3)
+    case("crop-pil420-a", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 4, 0, 0, 83, 61, include_bytes("tests/fixtures/image/resize/crop-pil420-a.ref"), 83, 61, 3)
+    case("crop-pil420-b", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 4, 10, 20, 30, 15, include_bytes("tests/fixtures/image/resize/crop-pil420-b.ref"), 30, 15, 3)
+    case("crop-pil420-c", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 4, 82, 60, 1, 1, include_bytes("tests/fixtures/image/resize/crop-pil420-c.ref"), 1, 1, 3)
+    case("crop-pil420-d", include_bytes("tests/fixtures/image/jpeg/pil420.jpg"), 4, 0, 5, 83, 10, include_bytes("tests/fixtures/image/resize/crop-pil420-d.ref"), 83, 10, 3)
+    case("crop-disc", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 4, 8, 4, 30, 20, include_bytes("tests/fixtures/image/resize/crop-disc.ref"), 30, 20, 4)
+    case("flatten-disc-255-255-255", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 5, 255, 255, 255, 0, include_bytes("tests/fixtures/image/resize/flatten-disc-255-255-255.ref"), 48, 36, 3)
+    case("flatten-disc-10-200-30", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 5, 10, 200, 30, 0, include_bytes("tests/fixtures/image/resize/flatten-disc-10-200-30.ref"), 48, 36, 3)
+    case("flatten-disc-0-0-0", include_bytes("tests/fixtures/image/resize/alpha-disc.png"), 5, 0, 0, 0, 0, include_bytes("tests/fixtures/image/resize/flatten-disc-0-0-0.ref"), 48, 36, 3)
+    case("flatten-rgba8-255-255-255", include_bytes("tests/fixtures/image/rgba8.png"), 5, 255, 255, 255, 0, include_bytes("tests/fixtures/image/resize/flatten-rgba8-255-255-255.ref"), 21, 13, 3)
+    case("flatten-rgba8-10-200-30", include_bytes("tests/fixtures/image/rgba8.png"), 5, 10, 200, 30, 0, include_bytes("tests/fixtures/image/resize/flatten-rgba8-10-200-30.ref"), 21, 13, 3)
+    case("flatten-rgba8-0-0-0", include_bytes("tests/fixtures/image/rgba8.png"), 5, 0, 0, 0, 0, include_bytes("tests/fixtures/image/resize/flatten-rgba8-0-0-0.ref"), 21, 13, 3)
+    case("flatten-rgb-noop", include_bytes("tests/fixtures/image/jpeg/s444.jpg"), 5, 255, 255, 255, 0, include_bytes("tests/fixtures/image/resize/flatten-rgb-noop.ref"), 41, 27, 3)
+    case("flatten-gray-noop", include_bytes("tests/fixtures/image/jpeg/gray.jpg"), 5, 255, 255, 255, 0, include_bytes("tests/fixtures/image/resize/flatten-gray-noop.ref"), 41, 27, 1)
+    println("fin")
+    return 0
+}

@@ -1,0 +1,88 @@
+// test-475 — std/image, Task 2: image_info y la detección de formato (spec std-image, D-6/D-8/D-9/D-10).
+//
+// image_info lee SOLO el encabezado: formato, ancho, alto, canales, orientación
+// EXIF (en los dos órdenes de bytes, que es donde falla un lector ingenuo) y si el
+// JPEG es progresivo. Los archivos salen de tests/fixtures/image/ (Pillow) y de
+// tests/fixtures/pdf/ (CMYK, que std/pdf ya cubría). Las variantes que un
+// decodificador no lee (CMYK, sin pérdida, 12 bits) y los formatos que un
+// teléfono puede mandar (HEIC, WebP, AVIF, GIF) tienen que dar Err(unsupported) con
+// el nombre del formato, no un «archivo dañado». Una imagen que DECLARA 60000 x
+// 60000 se ve en image_info sin reservar nada y se rechaza en image_decode por los
+// topes, antes de tocar un píxel.
+
+import "std/image"
+import "std/error"
+
+fn info(name: String, bytes: String) {
+    let r: Result<ImageInfo, Error> = image_info(bytes)
+    match r {
+        Result.Ok(i) => {
+            println(name + ": " + i.format + " " + int_to_string(i.width) + "x" + int_to_string(i.height) + " canales=" + int_to_string(i.channels) + " orient=" + int_to_string(i.orientation) + " prog=" + i.progressive.to_string())
+        }
+        Result.Err(e) => { println(name + ": ERR " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn decode(name: String, bytes: String) {
+    let r: Result<Image, Error> = image_decode(bytes, image_limits())
+    match r {
+        Result.Ok(img) => { println(name + ": decodificó " + int_to_string(img.width) + "x" + int_to_string(img.height)) }
+        Result.Err(e) => { println(name + ": ERR " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn be16(v: int) -> String {
+    return chr(v >> 8) + chr(v & 255)
+}
+
+// JPEG mínimo: SOI + un SOF con el marcador, bits, alto, ancho y componentes que se pidan.
+fn sof(marker: int, prec: int, w: int, h: int, nc: int) -> String {
+    var comps: String = ""
+    var i: int = 0
+    while i < nc {
+        comps = comps + chr(i + 1) + chr(0x11) + chr(0)
+        i = i + 1
+    }
+    return chr(0xFF) + chr(0xD8) + chr(0xFF) + chr(marker) + be16(8 + 3 * nc) + chr(prec) + be16(h) + be16(w) + chr(nc) + comps
+}
+
+fn main() -> int {
+    info("png rgb8", include_bytes("tests/fixtures/image/rgb8.png"))
+    info("png rgba8 adam7", include_bytes("tests/fixtures/image/rgba8-adam7.png"))
+    info("png gray1", include_bytes("tests/fixtures/image/gray1.png"))
+    info("png ga16", include_bytes("tests/fixtures/image/ga16.png"))
+    info("png pal8", include_bytes("tests/fixtures/image/pal8.png"))
+    info("jpeg 4:2:0", include_bytes("tests/fixtures/image/photo-420.jpg"))
+    info("jpeg 4:4:4", include_bytes("tests/fixtures/image/photo-444.jpg"))
+    info("jpeg gris", include_bytes("tests/fixtures/image/photo-gray.jpg"))
+    info("jpeg progresivo", include_bytes("tests/fixtures/image/photo-prog.jpg"))
+    info("jpeg exif II o8", include_bytes("tests/fixtures/image/photo-exif-le-o8.jpg"))
+    info("jpeg exif MM o6", include_bytes("tests/fixtures/image/photo-exif-be-o6.jpg"))
+    info("jpeg cmyk", include_bytes("tests/fixtures/pdf/cmyk-4x4.jpg"))
+    info("jpeg sin perdida", sof(0xC3, 8, 8, 8, 1))
+    info("jpeg 12 bits", sof(0xC1, 12, 8, 8, 1))
+    info("jpeg 2 componentes", sof(0xC0, 8, 8, 8, 2))
+    info("jpeg sin dimension", sof(0xC0, 8, 0, 8, 3))
+    info("jpeg cortado", chr(0xFF) + chr(0xD8) + chr(0xFF) + chr(0xE1) + be16(500) + "Exif")
+    info("jpeg sin SOF", chr(0xFF) + chr(0xD8) + chr(0xFF) + chr(0xDA) + be16(2))
+    // Formatos que se detectan y no se decodifican.
+    info("webp", "RIFF" + chr(0x24) + chr(0) + chr(0) + chr(0) + "WEBPVP8 ")
+    info("gif", "GIF89a" + chr(1) + chr(0) + chr(1) + chr(0))
+    info("heic", chr(0) + chr(0) + chr(0) + chr(0x18) + "ftypheic" + chr(0) + chr(0) + chr(0) + chr(0))
+    info("avif", chr(0) + chr(0) + chr(0) + chr(0x1c) + "ftypavif" + chr(0) + chr(0) + chr(0) + chr(0))
+    info("bmp", "BM" + chr(0x36) + chr(0) + chr(0) + chr(0))
+    info("tiff", "II" + chr(42) + chr(0) + chr(8) + chr(0) + chr(0) + chr(0))
+    info("texto", "hola, esto no es una imagen")
+    info("vacio", "")
+    // PNG con el encabezado dañado.
+    let png: String = include_bytes("tests/fixtures/image/rgb8.png")
+    info("png solo firma", png.substring(0, 12))
+    info("png IHDR con CRC roto", png.substring(0, 20) + chr(255 - png.charAt(20)) + png.substring(21, png.length()))
+    // Los topes: el archivo declara 60000 x 60000 y se ve sin decodificar; decode lo rechaza.
+    info("jpeg declara 60000x60000", sof(0xC0, 8, 60000, 60000, 3))
+    decode("decode declara 60000x60000", sof(0xC0, 8, 60000, 60000, 3))
+    decode("decode jpeg real", include_bytes("tests/fixtures/image/photo-420.jpg"))
+    decode("decode webp", "RIFF" + chr(0x24) + chr(0) + chr(0) + chr(0) + "WEBPVP8 ")
+    println("fin")
+    return 0
+}

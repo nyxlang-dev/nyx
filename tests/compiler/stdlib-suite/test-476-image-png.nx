@@ -1,0 +1,94 @@
+// test-476 — std/image, Task 2: decodificación de PNG a píxeles (spec std-image, D-8/D-9).
+//
+// 29 PNG de tests/fixtures/image/ (gris 1/2/4/8/16 bits, gris con tRNS, RGB 8/16
+// con y sin tRNS, RGBA, gris+alfa, paleta 1/2/4/8 bits con y sin tRNS, varios IDAT
+// y Adam7 en tamaños que dejan pasadas vacías o parciales) se decodifican con
+// image_decode y se comparan por un hash de los píxeles. El esperado NO sale de
+// este código: lo calculó tests/fixtures/image/gen_fixtures.py desde las muestras
+// de origen (y, donde Pillow sabe leer el caso, Pillow confirmó los mismos bytes).
+// Los PNG entrelazados dan EXACTAMENTE el mismo hash que su versión sin entrelazar.
+// Después, lo que tiene que fallar con error y no con abort: PNG cortado, CRC roto,
+// filtro de fila inválido, índice de paleta fuera de rango, la bomba de
+// dimensiones (60000 x 60000) y la bomba de inflate (10 MB de ceros bajo un IHDR
+// de 4 x 4) con sus topes.
+
+import "std/image"
+import "std/error"
+
+fn hash_of(img: Image) -> int {
+    var h: int = 5381
+    for row: String in img.rows {
+        var i: int = 0
+        while i < row.length() {
+            h = (h * 33 + row.charAt(i)) & 0xFFFFFFFF
+            i = i + 1
+        }
+    }
+    return h
+}
+
+fn show(name: String, bytes: String) {
+    let r: Result<Image, Error> = image_decode(bytes, image_limits())
+    match r {
+        Result.Ok(img) => {
+            println(name + " " + int_to_string(img.width) + " " + int_to_string(img.height) + " " + int_to_string(img.channels) + " " + int_to_string(hash_of(img)))
+        }
+        Result.Err(e) => { println(name + " ERR " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn fail(name: String, bytes: String, lim: ImageLimits) {
+    let r: Result<Image, Error> = image_decode(bytes, lim)
+    match r {
+        Result.Ok(img) => { println(name + " ¡decodificó!") }
+        Result.Err(e) => { println(name + " -> " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn main() -> int {
+    show("gray1", include_bytes("tests/fixtures/image/gray1.png"))
+    show("gray2", include_bytes("tests/fixtures/image/gray2.png"))
+    show("gray4", include_bytes("tests/fixtures/image/gray4.png"))
+    show("gray8", include_bytes("tests/fixtures/image/gray8.png"))
+    show("gray16", include_bytes("tests/fixtures/image/gray16.png"))
+    show("gray8-trns", include_bytes("tests/fixtures/image/gray8-trns.png"))
+    show("rgb8", include_bytes("tests/fixtures/image/rgb8.png"))
+    show("rgb8-multi-idat", include_bytes("tests/fixtures/image/rgb8-multi-idat.png"))
+    show("rgb16", include_bytes("tests/fixtures/image/rgb16.png"))
+    show("rgb8-trns", include_bytes("tests/fixtures/image/rgb8-trns.png"))
+    show("rgba8", include_bytes("tests/fixtures/image/rgba8.png"))
+    show("rgba16", include_bytes("tests/fixtures/image/rgba16.png"))
+    show("ga8", include_bytes("tests/fixtures/image/ga8.png"))
+    show("ga16", include_bytes("tests/fixtures/image/ga16.png"))
+    show("pal1", include_bytes("tests/fixtures/image/pal1.png"))
+    show("pal2", include_bytes("tests/fixtures/image/pal2.png"))
+    show("pal4", include_bytes("tests/fixtures/image/pal4.png"))
+    show("pal8", include_bytes("tests/fixtures/image/pal8.png"))
+    show("pal8-trns", include_bytes("tests/fixtures/image/pal8-trns.png"))
+    show("rgb8-adam7", include_bytes("tests/fixtures/image/rgb8-adam7.png"))
+    show("rgba8-adam7", include_bytes("tests/fixtures/image/rgba8-adam7.png"))
+    show("gray8-adam7", include_bytes("tests/fixtures/image/gray8-adam7.png"))
+    show("gray1-adam7", include_bytes("tests/fixtures/image/gray1-adam7.png"))
+    show("pal4-adam7", include_bytes("tests/fixtures/image/pal4-adam7.png"))
+    show("rgb16-adam7", include_bytes("tests/fixtures/image/rgb16-adam7.png"))
+    show("ga16-adam7", include_bytes("tests/fixtures/image/ga16-adam7.png"))
+    show("rgb8-adam7-1x1", include_bytes("tests/fixtures/image/rgb8-adam7-1x1.png"))
+    show("gray8-adam7-3x2", include_bytes("tests/fixtures/image/gray8-adam7-3x2.png"))
+    show("rgb8-adam7-9x9", include_bytes("tests/fixtures/image/rgb8-adam7-9x9.png"))
+    let lim: ImageLimits = image_limits()
+    fail("trunc", include_bytes("tests/fixtures/image/trunc.png"), lim)
+    fail("badcrc", include_bytes("tests/fixtures/image/badcrc.png"), lim)
+    fail("badfilter", include_bytes("tests/fixtures/image/badfilter.png"), lim)
+    fail("palidx", include_bytes("tests/fixtures/image/palidx.png"), lim)
+    fail("bomb-dim", include_bytes("tests/fixtures/image/bomb-dim.png"), lim)
+    fail("bomb-inflate", include_bytes("tests/fixtures/image/bomb-inflate.png"), lim)
+    // Los topes: un archivo de 900 bytes contra max_bytes = 50, y 21 x 13 = 273 píxeles
+    // contra max_pixels = 200 y contra max_dim = 20.
+    let small: String = include_bytes("tests/fixtures/image/rgb8.png")
+    fail("max_bytes", small, ImageLimits { max_bytes: 50, max_pixels: 1000000, max_dim: 1000 })
+    fail("max_pixels", small, ImageLimits { max_bytes: 1000000, max_pixels: 200, max_dim: 1000 })
+    fail("max_dim", small, ImageLimits { max_bytes: 1000000, max_pixels: 1000000, max_dim: 20 })
+    fail("basura", "esto no es una imagen", lim)
+    println("fin")
+    return 0
+}

@@ -1,0 +1,1671 @@
+// std/mime — leer correo electrónico (RFC 5322 + MIME, RFC 2045-2049, 2231) en Nyx puro.
+//
+// De dónde sale: nyxerp manda cotizaciones por correo (std/smtp) y necesita que la
+// respuesta del cliente vuelva a su hilo (fricción team-7, spec
+// docs/design/specs/2026-09-29-std-imap-design.md, D-8). Este módulo es la mitad de
+// ENTRADA: sin red y sin ningún `extern "C"`, así que también corre en wasm32-wasi y
+// sirve sobre un `.eml` de disco, un webhook de un proveedor de correo o lo que baje
+// std/imap. Todo lo que llega lo escribe cualquiera: cada tope de MimeLimits es parte
+// del diseño, no un extra.
+//
+//   match mime_parse(read_file("respuesta.eml"), mime_limits()) {
+//       Result.Ok(m) => {
+//           println(m.subject)                       // ya decodificado (RFC 2047)
+//           let de: MimeAddress = m.from_list[0]     // .name, .address
+//           println(m.in_reply_to[0])                // "<id@dominio>", con los <>
+//           println(m.text)                          // cuerpo en UTF-8, saltos "\n"
+//           for a: MimePart in m.attachments { println(a.filename + " " + int_to_string(a.size)) }
+//           if m.is_bounce or m.is_auto_reply { /* no es una respuesta del cliente */ }
+//       }
+//       Result.Err(e) => { /* e.kind "parse" (no es un correo) o "invalid" (pasó un tope) */ }
+//   }
+//
+// Qué se decodifica (y qué NO):
+//  - Cabeceras con el desdoblado de líneas; direcciones (comillas, comentarios, grupos);
+//    fecha a epoch UTC (-1 si no se entiende); Message-ID / In-Reply-To / References
+//    como ids CON sus `<>` (la forma que devuelve smtp_message_id, así se comparan
+//    directo). Palabras codificadas RFC 2047 en asunto, nombres y parámetros.
+//  - Parámetros con continuaciones y codificación de RFC 2231 (`filename*=UTF-8''a%20b`).
+//  - Transferencia: 7bit/8bit/binary, base64 (tolerante a CRLF, espacios y basura) y
+//    quoted-printable, con el tope aplicado MIENTRAS se decodifica.
+//  - Charsets a UTF-8: UTF-8 (lo inválido pasa a U+FFFD), US-ASCII, ISO-8859-1,
+//    ISO-8859-15 y windows-1252. ISO-8859-1 se lee COMO WINDOWS-1252 (es lo que hacen
+//    los navegadores: un 0x93 rotulado latin1 casi siempre es una comilla tipográfica y
+//    no un carácter de control). Un US-ASCII con bytes altos o un charset ausente se
+//    resuelve así: si es UTF-8 válido se toma como UTF-8, si no como windows-1252. Un
+//    charset que no es de esta lista (GBK, Shift_JIS, KOI8-R, UTF-16...) NO se inventa:
+//    el texto queda en bytes y `text_ok` es false.
+//  - multipart anidado (mixed, alternative, related, report, digest...) con tope de
+//    profundidad y de partes. `message/rfc822` adjunto es un adjunto opaco. S/MIME y PGP
+//    se marcan (`signed`, `encrypted`) y NO se verifican.
+//  - Señales para un CRM: `is_auto_reply` (Auto-Submitted, X-Autoreply, Precedence),
+//    `is_bounce` y `bounce` (informe de entrega multipart/report; incluye el Message-ID
+//    del mensaje original cuando el rebote lo trae), `is_list`.
+// Lo que NO hace: verificar firmas, SPF/DKIM/DMARC, sanear el HTML (es contenido hostil:
+// quien lo muestre lo sanea), otros charsets, parsear el `message/rfc822` adjunto.
+//
+// Cuerpo: `text` es la PRIMERA parte text/plain que no es adjunto y `html` la primera
+// text/html; si solo hay HTML, `text` sale de mime_html_to_text y `text_approx` es true.
+// El resto está en `parts`.
+
+import "std/error"
+import "std/unicode"
+
+// ── Tipos ─────────────────────────────────────────────────────────────────
+
+pub struct MimeLimits {
+    max_size: int,          // bytes del mensaje entero
+    max_depth: int,         // niveles de multipart anidados
+    max_parts: int,         // partes hoja en total
+    max_header_len: int,    // bytes de UNA cabecera ya desdoblada
+    max_headers: int,       // cabeceras por entidad
+    max_part_size: int,     // bytes de UNA parte ya decodificada
+}
+
+// Topes por omisión: 32 MB de mensaje, 10 niveles, 500 partes, 16 KB por cabecera,
+// 1000 cabeceras y 32 MB por parte decodificada.
+pub fn mime_limits() -> MimeLimits {
+    return MimeLimits {
+        max_size: 33554432, max_depth: 10, max_parts: 500,
+        max_header_len: 16384, max_headers: 1000, max_part_size: 33554432
+    }
+}
+
+pub struct MimeAddress {
+    name: String,           // "" si no trae nombre
+    address: String,        // "ana@ejemplo.cl"
+}
+
+// Valor de una cabecera estructurada: `value` sin parámetros y `params` como pares
+// [nombre en minúsculas, valor decodificado] (RFC 2231 y 2047 ya resueltos).
+pub struct MimeValue {
+    value: String,
+    params: Array
+}
+
+pub struct MimePart {
+    path: String,           // "1", "2.1": posición en el árbol
+    content_type: String,   // "text/plain", en minúsculas
+    charset: String,
+    disposition: String,    // "attachment" | "inline" | ""
+    filename: String,       // UTF-8; de Content-Disposition o, si no, de Content-Type name
+    content_id: String,     // sin <>
+    size: int,              // bytes decodificados
+    data: String,           // los bytes decodificados (base64/QP resueltos)
+    text: String,           // partes text/*: en UTF-8 con saltos "\n"; el resto ""
+    text_ok: bool,          // false si el charset no es de los soportados
+    kind: String,           // "body" | "attachment" | "inline" | "report" | "marker"
+}
+
+pub struct MimeBounce {
+    recipient: String,      // Final-Recipient (el primero)
+    recipients: Array,      // todos los Final-Recipient
+    action: String,         // "failed" | "delayed" | ...
+    status: String,         // "5.1.1"
+    diagnostic: String,     // Diagnostic-Code
+    original_message_id: String,   // Message-ID del mensaje rebotado, con <>, o ""
+    permanent: bool,        // action failed o status 5.x.x
+}
+
+pub struct MimeMessage {
+    headers: Array,         // pares [nombre, valor] tal como vienen (desdoblados, sin decodificar)
+    subject: String,
+    from_list: Array,       // Array<MimeAddress>
+    to_list: Array,
+    cc_list: Array,
+    reply_to_list: Array,
+    date: int,              // epoch UTC; -1 si falta o no se entiende
+    message_id: String,     // con <>
+    in_reply_to: Array,     // Array<String>, cada id con <>
+    references: Array,
+    content_type: String,
+    text: String,
+    text_ok: bool,
+    text_approx: bool,      // true si `text` salió del HTML
+    html: String,
+    has_html: bool,
+    parts: Array,           // Array<MimePart>: todas las hojas útiles (body/attachment/inline)
+    attachments: Array,     // Array<MimePart>
+    inlines: Array,         // Array<MimePart>: imágenes `cid:` incrustadas
+    is_auto_reply: bool,
+    auto_kind: String,      // "auto-replied", "x-autoreply", "precedence:bulk", ...
+    is_list: bool,
+    is_dsn: bool,           // trae un informe de entrega
+    is_bounce: bool,        // informe de entrega con action failed o delayed
+    bounce: MimeBounce,
+    report_type: String,    // de multipart/report: "delivery-status", "disposition-notification"
+    signed: bool,
+    encrypted: bool
+}
+
+fn __mime_err_parse(msg: String) -> Error { return err_new(0, "parse", "mime: " + msg) }
+fn __mime_err_limit(msg: String) -> Error { return err_new(22, "invalid", "mime: " + msg) }
+
+// ── Bytes y hexadecimales ─────────────────────────────────────────────────
+
+fn __mime_hex(c: int) -> int {
+    if c >= 48 and c <= 57 { return c - 48 }
+    if c >= 65 and c <= 70 { return c - 55 }
+    if c >= 97 and c <= 102 { return c - 87 }
+    return 0 - 1
+}
+
+fn __mime_is_wsp(c: int) -> bool { return c == 32 or c == 9 }
+
+fn __mime_all_wsp(s: String) -> bool {
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c != 32 and c != 9 and c != 13 and c != 10 { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn __mime_int(s: String) -> int {
+    let t: String = s.trim()
+    if t.length() == 0 { return 0 - 1 }
+    var n: int = 0
+    var i: int = 0
+    while i < t.length() {
+        let c: int = t.charAt(i)
+        if c < 48 or c > 57 { return 0 - 1 }
+        n = n * 10 + (c - 48)
+        if n > 100000000 { return 0 - 1 }
+        i = i + 1
+    }
+    return n
+}
+
+// ── base64 y quoted-printable ─────────────────────────────────────────────
+//
+// Propios y no los de std/base64: base64_decode corta en el primer byte fuera del
+// alfabeto, y el base64 de un correo viene en líneas de 76 con CRLF, o sea que
+// truncaría todo adjunto en la primera línea; además arma la salida byte a byte con
+// un String por byte. Acá la salida se junta en filas de Array y se vuelca con
+// string_from_bytes (NUL-safe) cada 4096 bytes.
+
+fn __mime_b64_val(c: int) -> int {
+    if c >= 65 and c <= 90 { return c - 65 }
+    if c >= 97 and c <= 122 { return c - 71 }
+    if c >= 48 and c <= 57 { return c + 4 }
+    if c == 43 or c == 45 { return 62 }
+    if c == 47 or c == 95 { return 63 }
+    return 0 - 1
+}
+
+// Decodifica base64 tolerante: ignora espacios, CR, LF y cualquier byte fuera del
+// alfabeto (acepta también el alfabeto URL, `-` y `_`); un '=' cierra el grupo en curso
+// y la lectura sigue (base64 concatenado). Err "invalid" si la salida pasa de `max_bytes`.
+pub fn mime_base64_decode(s: String, max_bytes: int) -> Result<String, Error> {
+    var sb: StringBuilder = StringBuilder.new()
+    var row: Array = []
+    var acc: int = 0
+    var bits: int = 0
+    var total: int = 0
+    let n: int = s.length()
+    var i: int = 0
+    while i < n {
+        let c: int = s.charAt(i)
+        let v: int = __mime_b64_val(c)
+        if c == 61 {
+            // relleno: cierra el grupo actual y descarta los bits sueltos; se sigue
+            // leyendo porque hay programas que concatenan trozos cada uno con su `=`.
+            acc = 0
+            bits = 0
+        } else if v >= 0 {
+            acc = ((acc << 6) | v) & 0xFFFFFF
+            bits = bits + 6
+            if bits >= 8 {
+                bits = bits - 8
+                row.push((acc >> bits) & 255)
+                total = total + 1
+                if total > max_bytes {
+                    return Result.Err(__mime_err_limit("una parte decodificada pasa el tope de " + int_to_string(max_bytes) + " bytes"))
+                }
+                if row.length() >= 4096 {
+                    sb.append(string_from_bytes(row, 0, row.length()))
+                    row = []
+                }
+            }
+        }
+        i = i + 1
+    }
+    if row.length() > 0 { sb.append(string_from_bytes(row, 0, row.length())) }
+    return Result.Ok(sb.to_string())
+}
+
+// quoted-printable (RFC 2045 §6.7): =XX, saltos suaves `=\r\n` y `=\n`, y los espacios
+// del final de línea se descartan. Devuelve BYTES. Un `=` que no arma un escape válido
+// queda literal (los mensajes reales lo traen).
+pub fn mime_qp_decode(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var row: Array = []
+    let n: int = s.length()
+    var i: int = 0
+    while i < n {
+        let c: int = s.charAt(i)
+        if c == 61 {
+            if i + 1 < n and s.charAt(i + 1) == 10 {
+                i = i + 2
+            } else if i + 2 < n and s.charAt(i + 1) == 13 and s.charAt(i + 2) == 10 {
+                i = i + 3
+            } else if i + 2 < n and __mime_hex(s.charAt(i + 1)) >= 0 and __mime_hex(s.charAt(i + 2)) >= 0 {
+                row.push(__mime_hex(s.charAt(i + 1)) * 16 + __mime_hex(s.charAt(i + 2)))
+                i = i + 3
+            } else if i + 1 >= n {
+                i = i + 1
+            } else {
+                row.push(61)
+                i = i + 1
+            }
+        } else if c == 32 or c == 9 {
+            var j: int = i
+            while j < n and (s.charAt(j) == 32 or s.charAt(j) == 9) { j = j + 1 }
+            if j >= n or s.charAt(j) == 13 or s.charAt(j) == 10 {
+                i = j
+            } else {
+                while i < j {
+                    row.push(s.charAt(i))
+                    i = i + 1
+                }
+            }
+        } else {
+            row.push(c)
+            i = i + 1
+        }
+        if row.length() >= 4096 {
+            sb.append(string_from_bytes(row, 0, row.length()))
+            row = []
+        }
+    }
+    if row.length() > 0 { sb.append(string_from_bytes(row, 0, row.length())) }
+    return sb.to_string()
+}
+
+// Decodifica según Content-Transfer-Encoding. Un valor que no es base64 ni
+// quoted-printable (7bit, 8bit, binary, uno desconocido) deja los bytes como están.
+fn __mime_decode_cte(body: String, cte: String, max_bytes: int) -> Result<String, Error> {
+    if cte == "base64" { return mime_base64_decode(body, max_bytes) }
+    if cte == "quoted-printable" {
+        if body.length() > max_bytes * 2 + 16 { return Result.Err(__mime_err_limit("una parte pasa el tope de " + int_to_string(max_bytes) + " bytes")) }
+        let d: String = mime_qp_decode(body)
+        if d.length() > max_bytes { return Result.Err(__mime_err_limit("una parte decodificada pasa el tope de " + int_to_string(max_bytes) + " bytes")) }
+        return Result.Ok(d)
+    }
+    if body.length() > max_bytes { return Result.Err(__mime_err_limit("una parte pasa el tope de " + int_to_string(max_bytes) + " bytes")) }
+    return Result.Ok(body)
+}
+
+// ── Charsets ──────────────────────────────────────────────────────────────
+
+// "utf8" | "ascii" | "latin1" | "cp1252" | "latin9" | "" (desconocido o ausente).
+fn __mime_cs_kind(cs: String) -> String {
+    var n: String = cs.trim().to_lower()
+    if n.length() >= 2 and n.charAt(0) == 34 { n = n.substring(1, n.length() - 1) }
+    let star: int = n.indexOf("*")
+    if star > 0 { n = n.substring(0, star) }
+    if n == "utf-8" or n == "utf8" or n == "utf_8" { return "utf8" }
+    if n == "us-ascii" or n == "ascii" or n == "ansi_x3.4-1968" or n == "iso646-us" or n == "us" { return "ascii" }
+    if n == "iso-8859-1" or n == "iso8859-1" or n == "iso_8859-1" or n == "latin1" or n == "l1" or n == "cp819" or n == "ibm819" { return "latin1" }
+    if n == "windows-1252" or n == "cp1252" or n == "x-cp1252" { return "cp1252" }
+    if n == "iso-8859-15" or n == "iso8859-15" or n == "iso_8859-15" or n == "latin9" or n == "latin-9" or n == "l9" { return "latin9" }
+    return ""
+}
+
+fn __mime_has_high(s: String) -> bool {
+    var i: int = 0
+    while i < s.length() {
+        if s.charAt(i) >= 128 { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// Longitud de la secuencia UTF-8 válida que empieza en `i`, o 0 si es inválida.
+fn __mime_utf8_len(s: String, i: int) -> int {
+    let n: int = s.length()
+    let b: int = s.charAt(i)
+    if b < 128 { return 1 }
+    var need: int = 0
+    if b >= 194 and b <= 223 { need = 2 }
+    else if b >= 224 and b <= 239 { need = 3 }
+    else if b >= 240 and b <= 244 { need = 4 }
+    else { return 0 }
+    if i + need > n { return 0 }
+    var k: int = 1
+    while k < need {
+        let c: int = s.charAt(i + k)
+        if c < 128 or c > 191 { return 0 }
+        k = k + 1
+    }
+    let b1: int = s.charAt(i + 1)
+    if b == 224 and b1 < 160 { return 0 }
+    if b == 237 and b1 > 159 { return 0 }
+    if b == 240 and b1 < 144 { return 0 }
+    if b == 244 and b1 > 143 { return 0 }
+    return need
+}
+
+fn __mime_utf8_valid(s: String) -> bool {
+    var i: int = 0
+    let n: int = s.length()
+    while i < n {
+        let l: int = __mime_utf8_len(s, i)
+        if l == 0 { return false }
+        i = i + l
+    }
+    return true
+}
+
+// UTF-8 con lo inválido reemplazado por U+FFFD (un carácter por cada byte suelto).
+fn __mime_utf8_clean(s: String) -> String {
+    if __mime_has_high(s) == false { return s }
+    if __mime_utf8_valid(s) { return s }
+    var sb: StringBuilder = StringBuilder.new()
+    let n: int = s.length()
+    var i: int = 0
+    var run: int = 0
+    while i < n {
+        let l: int = __mime_utf8_len(s, i)
+        if l == 0 {
+            if i > run { sb.append(s.substring(run, i)) }
+            sb.append(utf8_encode(65533))
+            i = i + 1
+            run = i
+        } else {
+            i = i + l
+        }
+    }
+    if n > run { sb.append(s.substring(run, n)) }
+    return sb.to_string()
+}
+
+// ISO-8859-15: igual que Latin-1 salvo ocho posiciones.
+fn __mime_latin9_to_utf8(s: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    var i: int = 0
+    while i < s.length() {
+        let b: int = s.charAt(i)
+        if b < 128 { sb.append(s.substring(i, i + 1)) }
+        else if b == 164 { sb.append(utf8_encode(8364)) }
+        else if b == 166 { sb.append(utf8_encode(352)) }
+        else if b == 168 { sb.append(utf8_encode(353)) }
+        else if b == 180 { sb.append(utf8_encode(381)) }
+        else if b == 184 { sb.append(utf8_encode(382)) }
+        else if b == 188 { sb.append(utf8_encode(338)) }
+        else if b == 189 { sb.append(utf8_encode(339)) }
+        else if b == 190 { sb.append(utf8_encode(376)) }
+        else { sb.append(utf8_encode(b)) }
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// Convierte `bytes` desde `charset` a UTF-8. None si el charset no es de los
+// soportados (UTF-8, US-ASCII, ISO-8859-1, ISO-8859-15, windows-1252) — no se
+// inventa una conversión. Un charset vacío se resuelve por contenido (UTF-8 válido,
+// si no windows-1252), igual que un US-ASCII con bytes altos.
+pub fn mime_charset_to_utf8(charset: String, bytes: String) -> Option<String> {
+    let k: String = __mime_cs_kind(charset)
+    if k == "" and charset.trim().length() > 0 { return Option.None }
+    if __mime_has_high(bytes) == false { return Option.Some(bytes) }
+    if k == "utf8" { return Option.Some(__mime_utf8_clean(bytes)) }
+    if k == "latin1" or k == "cp1252" { return Option.Some(windows1252_to_utf8(bytes)) }
+    if k == "latin9" { return Option.Some(__mime_latin9_to_utf8(bytes)) }
+    // ascii con bytes altos, o sin charset: por contenido.
+    if __mime_utf8_valid(bytes) { return Option.Some(bytes) }
+    return Option.Some(windows1252_to_utf8(bytes))
+}
+
+// ── Palabras codificadas (RFC 2047) ───────────────────────────────────────
+
+// Decodifica `=?charset?B|Q?texto?=` dentro de un texto. Lo que no es una palabra
+// codificada bien formada queda tal cual. Entre dos palabras codificadas seguidas el
+// espacio en blanco se descarta (RFC 2047 §6.2). Un charset no soportado deja la
+// palabra SIN decodificar.
+pub fn mime_decode_words(s: String) -> String {
+    if s.indexOf("=?") < 0 { return s }
+    var sb: StringBuilder = StringBuilder.new()
+    let n: int = s.length()
+    var pos: int = 0
+    var last_enc: bool = false
+    while pos < n {
+        let k: int = s.indexOf("=?", pos)
+        if k < 0 {
+            sb.append(s.substring(pos, n))
+            break
+        }
+        // Candidata: =?charset?enc?texto?=
+        var ok: bool = false
+        var decoded: String = ""
+        var endpos: int = k + 2
+        let q1: int = s.indexOf("?", k + 2)
+        if q1 > k + 2 {
+            let q2: int = s.indexOf("?", q1 + 1)
+            if q2 == q1 + 2 {
+                let enc: int = s.charAt(q1 + 1)
+                let fin: int = s.indexOf("?=", q2 + 1)
+                if fin >= q2 + 1 {
+                    let cs: String = s.substring(k + 2, q1)
+                    let txt: String = s.substring(q2 + 1, fin)
+                    if cs.indexOf(" ") < 0 and txt.indexOf(" ") < 0 {
+                        var bytes: String = ""
+                        var got: bool = false
+                        if enc == 66 or enc == 98 {
+                            match mime_base64_decode(txt, 1048576) {
+                                Result.Ok(b) => { bytes = b; got = true }
+                                Result.Err(e) => { got = false }
+                            }
+                        } else if enc == 81 or enc == 113 {
+                            // `_` es un espacio (RFC 2047 §4.2), pero como "=20" y no
+                            // como " ": mime_qp_decode recorta el espacio al final, y un
+                            // asunto partido en `Cotizaci=C3=B3n_?= =?UTF-8?Q?123` salía
+                            // «Cotización123» (revisión de integracion-0930).
+                            bytes = mime_qp_decode(txt.replace("_", "=20"))
+                            got = true
+                        }
+                        if got {
+                            match mime_charset_to_utf8(cs, bytes) {
+                                Option.Some(u) => { decoded = u; ok = true; endpos = fin + 2 }
+                                Option.None => { ok = false }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if ok == false {
+            sb.append(s.substring(pos, k + 2))
+            pos = k + 2
+            last_enc = false
+        } else {
+            let between: String = s.substring(pos, k)
+            if last_enc and __mime_all_wsp(between) {
+                // se descarta
+            } else {
+                sb.append(between)
+            }
+            sb.append(decoded)
+            last_enc = true
+            pos = endpos
+        }
+    }
+    return sb.to_string()
+}
+
+// ── Cabeceras ─────────────────────────────────────────────────────────────
+
+// Parte una entidad en [cabeceras, cuerpo] por la primera línea vacía (CRLF o LF). Sin
+// línea vacía todo es cabecera: es lo que baja un IMAP con BODY[HEADER] truncado.
+fn __mime_split(raw: String) -> Array {
+    let n: int = raw.length()
+    var pos: int = 0
+    while pos < n {
+        let nl: int = raw.indexOf("\n", pos)
+        var end: int = nl
+        if nl < 0 { end = n }
+        var lend: int = end
+        if lend > pos and raw.charAt(lend - 1) == 13 { lend = lend - 1 }
+        if lend == pos {
+            var b: int = end + 1
+            if b > n { b = n }
+            return [raw.substring(0, pos), raw.substring(b, n)]
+        }
+        if nl < 0 { break }
+        pos = nl + 1
+    }
+    return [raw, ""]
+}
+
+// Cabeceras desdobladas: Array de [nombre, valor]. La línea de continuación (empieza
+// con espacio o tab) se une con UN espacio. Las líneas sin ':' (la `From ` de mbox) se
+// saltan. Tope por cabecera y por cantidad.
+fn __mime_parse_headers(head: String, lim: MimeLimits) -> Result<Array, Error> {
+    var out: Array = []
+    var cur_name: String = ""
+    var cur_val: String = ""
+    var have: bool = false
+    let n: int = head.length()
+    var pos: int = 0
+    while pos <= n {
+        var nl: int = head.indexOf("\n", pos)
+        if nl < 0 { nl = n }
+        var lend: int = nl
+        if lend > pos and head.charAt(lend - 1) == 13 { lend = lend - 1 }
+        let line: String = head.substring(pos, lend)
+        pos = nl + 1
+        if line.length() == 0 { continue }
+        let c0: int = line.charAt(0)
+        if c0 == 32 or c0 == 9 {
+            if have {
+                cur_val = cur_val + " " + line.trim()
+                if cur_val.length() > lim.max_header_len {
+                    return Result.Err(__mime_err_limit("una cabecera pasa el tope de " + int_to_string(lim.max_header_len) + " bytes"))
+                }
+            }
+            continue
+        }
+        if have {
+            out.push([cur_name, cur_val.trim()])
+            have = false
+            if out.length() > lim.max_headers {
+                return Result.Err(__mime_err_limit("hay más de " + int_to_string(lim.max_headers) + " cabeceras"))
+            }
+        }
+        let colon: int = line.indexOf(":")
+        if colon <= 0 { continue }
+        let name: String = line.substring(0, colon)
+        if name.indexOf(" ") >= 0 or name.indexOf("\t") >= 0 { continue }
+        cur_name = name
+        cur_val = line.substring(colon + 1, line.length())
+        have = true
+        if cur_val.length() > lim.max_header_len {
+            return Result.Err(__mime_err_limit("una cabecera pasa el tope de " + int_to_string(lim.max_header_len) + " bytes"))
+        }
+    }
+    if have { out.push([cur_name, cur_val.trim()]) }
+    if out.length() > lim.max_headers {
+        return Result.Err(__mime_err_limit("hay más de " + int_to_string(lim.max_headers) + " cabeceras"))
+    }
+    return Result.Ok(out)
+}
+
+// Valor de la primera cabecera con ese nombre (sin distinguir mayúsculas), o "".
+fn __mime_h(hdrs: Array, name: String) -> String {
+    let want: String = name.to_lower()
+    var i: int = 0
+    while i < hdrs.length() {
+        let h: Array = hdrs[i]
+        let hn: String = h[0]
+        if hn.to_lower() == want {
+            let v: String = h[1]
+            return v
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn __mime_has_h(hdrs: Array, name: String) -> bool {
+    let want: String = name.to_lower()
+    var i: int = 0
+    while i < hdrs.length() {
+        let h: Array = hdrs[i]
+        let hn: String = h[0]
+        if hn.to_lower() == want { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// Valor de la primera cabecera `name` del mensaje, tal como vino (desdoblado), o "".
+pub fn mime_header(m: MimeMessage, name: String) -> String {
+    return __mime_h(m.headers, name)
+}
+
+// Todos los valores de las cabeceras `name` (Received, por ejemplo), en orden.
+pub fn mime_header_all(m: MimeMessage, name: String) -> Array {
+    let want: String = name.to_lower()
+    var out: Array = []
+    // Copia local del campo: indexar `m.headers[i]` para sacar un Array anidado se
+    // cae (gotcha del compilador, ver LLM.md); con una variable local anda.
+    let hs: Array = m.headers
+    var i: int = 0
+    while i < hs.length() {
+        let h: Array = hs[i]
+        let hn: String = h[0]
+        if hn.to_lower() == want {
+            let v: String = h[1]
+            out.push(v)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// La cabecera `name` como texto: palabras codificadas (RFC 2047) ya resueltas.
+pub fn mime_header_text(m: MimeMessage, name: String) -> String {
+    return mime_decode_words(__mime_h(m.headers, name))
+}
+
+// ── Valores con parámetros (Content-Type, Content-Disposition) y RFC 2231 ──
+
+// Decodifica %XX de un valor extendido (RFC 2231).
+fn __mime_pct_decode(s: String) -> String {
+    if s.indexOf("%") < 0 { return s }
+    var sb: StringBuilder = StringBuilder.new()
+    var row: Array = []
+    let n: int = s.length()
+    var i: int = 0
+    while i < n {
+        let c: int = s.charAt(i)
+        if c == 37 and i + 2 < n and __mime_hex(s.charAt(i + 1)) >= 0 and __mime_hex(s.charAt(i + 2)) >= 0 {
+            row.push(__mime_hex(s.charAt(i + 1)) * 16 + __mime_hex(s.charAt(i + 2)))
+            i = i + 3
+        } else {
+            row.push(c)
+            i = i + 1
+        }
+    }
+    if row.length() > 0 { sb.append(string_from_bytes(row, 0, row.length())) }
+    return sb.to_string()
+}
+
+// Parte un valor `principal; k=v; k2="v 2"` en principal y pares crudos [clave, valor].
+// (Struct y no un Array [String, Array]: un literal de arreglo mezcla mal esos tipos.)
+struct MimeRawValue {
+    main: String,
+    raw: Array,
+}
+
+fn __mime_split_params(v: String) -> MimeRawValue {
+    let n: int = v.length()
+    var i: int = 0
+    var q: bool = false
+    // principal: hasta el primer ';' fuera de comillas
+    while i < n {
+        let c: int = v.charAt(i)
+        if c == 34 { q = q == false }
+        if c == 59 and q == false { break }
+        i = i + 1
+    }
+    let main: String = v.substring(0, i).trim()
+    var raw: Array = []
+    while i < n {
+        i = i + 1   // salta el ';'
+        while i < n and (v.charAt(i) == 32 or v.charAt(i) == 9) { i = i + 1 }
+        var ks: int = i
+        while i < n and v.charAt(i) != 61 and v.charAt(i) != 59 { i = i + 1 }
+        let key: String = v.substring(ks, i).trim().to_lower()
+        var val: String = ""
+        if i < n and v.charAt(i) == 61 {
+            i = i + 1
+            while i < n and (v.charAt(i) == 32 or v.charAt(i) == 9) { i = i + 1 }
+            if i < n and v.charAt(i) == 34 {
+                i = i + 1
+                var vb: StringBuilder = StringBuilder.new()
+                while i < n and v.charAt(i) != 34 {
+                    if v.charAt(i) == 92 and i + 1 < n { i = i + 1 }
+                    vb.append(v.substring(i, i + 1))
+                    i = i + 1
+                }
+                val = vb.to_string()
+                if i < n { i = i + 1 }
+                while i < n and v.charAt(i) != 59 { i = i + 1 }
+            } else {
+                let vs: int = i
+                while i < n and v.charAt(i) != 59 { i = i + 1 }
+                val = v.substring(vs, i).trim()
+            }
+        } else {
+            while i < n and v.charAt(i) != 59 { i = i + 1 }
+        }
+        if key.length() > 0 { raw.push([key, val]) }
+    }
+    return MimeRawValue { main: main, raw: raw }
+}
+
+// Analiza una cabecera con parámetros. Une las continuaciones de RFC 2231
+// (`nombre*0=`, `nombre*1=`), decodifica `nombre*=charset'idioma'%XX` y resuelve las
+// palabras codificadas de RFC 2047 que muchos programas ponen (sin derecho) dentro de
+// `filename="..."`. Si un parámetro viene en las dos formas gana la extendida.
+pub fn mime_parse_value(v: String) -> MimeValue {
+    let sp: MimeRawValue = __mime_split_params(v)
+    let main: String = sp.main
+    let raw: Array = sp.raw
+    var plain: Array = []
+    // Grupos de RFC 2231: arreglos paralelos (base, índices, ext 0/1, valores) con una
+    // entrada por SEGMENTO, más la lista de bases en orden de aparición.
+    var bases: Array = []
+    var seg_base: Array = []
+    var seg_idx: Array = []
+    var seg_ext: Array = []
+    var seg_val: Array = []
+    var i: int = 0
+    while i < raw.length() {
+        let p: Array = raw[i]
+        let key: String = p[0]
+        let val: String = p[1]
+        let star: int = key.indexOf("*")
+        if star < 0 {
+            var dec: String = val
+            if val.indexOf("=?") >= 0 { dec = mime_decode_words(val) }
+            plain.push([key, __mime_utf8_clean(dec)])
+        } else {
+            let base: String = key.substring(0, star)
+            let suf: String = key.substring(star + 1, key.length())
+            var idx: int = 0
+            var ext: int = 0
+            if suf == "" { ext = 1 }
+            else {
+                var num: String = suf
+                if suf.charAt(suf.length() - 1) == 42 {
+                    ext = 1
+                    num = suf.substring(0, suf.length() - 1)
+                }
+                idx = __mime_int(num)
+                if idx < 0 { idx = 0 }
+            }
+            var known: bool = false
+            var g: int = 0
+            while g < bases.length() {
+                let gb: String = bases[g]
+                if gb == base { known = true }
+                g = g + 1
+            }
+            if known == false { bases.push(base) }
+            seg_base.push(base)
+            seg_idx.push(idx)
+            seg_ext.push(ext)
+            seg_val.push(val)
+        }
+        i = i + 1
+    }
+    var out: Array = plain
+    var g2: int = 0
+    while g2 < bases.length() {
+        let base: String = bases[g2]
+        var charset: String = ""
+        var sb: StringBuilder = StringBuilder.new()
+        // segmentos de esta base en orden de índice (sin repetir índices)
+        var next: int = 0
+        var found: bool = true
+        while found {
+            found = false
+            var s: int = 0
+            while s < seg_base.length() {
+                let sbase: String = seg_base[s]
+                let sidx: int = seg_idx[s]
+                if sbase == base and sidx == next and found == false {
+                    found = true
+                    let ext: int = seg_ext[s]
+                    var val: String = seg_val[s]
+                    if ext == 1 {
+                        if next == 0 {
+                            let q1: int = val.indexOf("'")
+                            if q1 >= 0 {
+                                let q2: int = val.indexOf("'", q1 + 1)
+                                if q2 >= 0 {
+                                    charset = val.substring(0, q1)
+                                    val = val.substring(q2 + 1, val.length())
+                                }
+                            }
+                        }
+                        sb.append(__mime_pct_decode(val))
+                    } else {
+                        sb.append(val)
+                    }
+                }
+                s = s + 1
+            }
+            next = next + 1
+        }
+        var text: String = sb.to_string()
+        match mime_charset_to_utf8(charset, text) {
+            Option.Some(u) => { text = u }
+            Option.None => { }
+        }
+        // la extendida reemplaza a una simple del mismo nombre
+        var kept: Array = []
+        var o: int = 0
+        while o < out.length() {
+            let e: Array = out[o]
+            let en: String = e[0]
+            if en != base { kept.push(e) }
+            o = o + 1
+        }
+        kept.push([base, __mime_utf8_clean(text)])
+        out = kept
+        g2 = g2 + 1
+    }
+    return MimeValue { value: main, params: out }
+}
+
+// Valor del parámetro `name` (en minúsculas), o "" si no está.
+pub fn mime_param(v: MimeValue, name: String) -> String {
+    let want: String = name.to_lower()
+    let ps: Array = v.params
+    var i: int = 0
+    while i < ps.length() {
+        let p: Array = ps[i]
+        let pn: String = p[0]
+        if pn == want {
+            let pv: String = p[1]
+            return pv
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// ── Direcciones ───────────────────────────────────────────────────────────
+
+fn __mime_unquote(s: String) -> String {
+    let t: String = s.trim()
+    if t.length() >= 2 and t.charAt(0) == 34 and t.charAt(t.length() - 1) == 34 {
+        var sb: StringBuilder = StringBuilder.new()
+        var i: int = 1
+        while i < t.length() - 1 {
+            if t.charAt(i) == 92 and i + 1 < t.length() - 1 { i = i + 1 }
+            sb.append(t.substring(i, i + 1))
+            i = i + 1
+        }
+        return sb.to_string()
+    }
+    return t
+}
+
+// Quita los comentarios `(...)` (anidables, con `\` de escape) fuera de comillas y
+// devuelve [texto sin comentarios, texto del primer comentario].
+fn __mime_strip_comments(s: String) -> Array {
+    var sb: StringBuilder = StringBuilder.new()
+    var first: String = ""
+    var depth: int = 0
+    var q: bool = false
+    var cs: int = 0
+    var i: int = 0
+    let n: int = s.length()
+    while i < n {
+        let c: int = s.charAt(i)
+        if depth == 0 and c == 34 { q = q == false }
+        if q == false and c == 40 {
+            if depth == 0 { cs = i + 1 }
+            depth = depth + 1
+        } else if q == false and c == 41 and depth > 0 {
+            depth = depth - 1
+            if depth == 0 and first == "" { first = s.substring(cs, i) }
+        } else if depth == 0 {
+            if c == 92 and q and i + 1 < n {
+                sb.append(s.substring(i, i + 2))
+                i = i + 1
+            } else {
+                sb.append(s.substring(i, i + 1))
+            }
+        }
+        i = i + 1
+    }
+    return [sb.to_string(), first.trim()]
+}
+
+fn __mime_addr_item(item: String) -> Array {
+    // [name, address] o [] si no hay dirección
+    var name: String = ""
+    var addr: String = ""
+    // '<' fuera de comillas
+    var q: bool = false
+    var lt: int = 0 - 1
+    var i: int = 0
+    while i < item.length() {
+        let c: int = item.charAt(i)
+        if c == 92 and q { i = i + 2; continue }
+        if c == 34 { q = q == false }
+        if c == 60 and q == false { lt = i; break }
+        i = i + 1
+    }
+    if lt >= 0 {
+        var gt: int = item.indexOf(">", lt + 1)
+        if gt < 0 { gt = item.length() }
+        addr = item.substring(lt + 1, gt).trim()
+        var colon: int = 0 - 1
+        var ci: int = 0
+        while ci < addr.length() {
+            if addr.charAt(ci) == 58 { colon = ci }
+            ci = ci + 1
+        }
+        if addr.startsWith("@") and colon >= 0 { addr = addr.substring(colon + 1, addr.length()) }
+        let cm: Array = __mime_strip_comments(addr)
+        addr = cm[0]
+        let before: Array = __mime_strip_comments(item.substring(0, lt))
+        name = before[0]
+        if name.trim().length() == 0 {
+            let cmt: String = before[1]
+            if cmt.length() > 0 { name = cmt }
+        }
+    } else {
+        let cm: Array = __mime_strip_comments(item)
+        addr = cm[0]
+        name = cm[1]
+    }
+    addr = addr.trim()
+    if addr.length() == 0 or addr.indexOf(" ") >= 0 { return [] }
+    name = mime_decode_words(__mime_unquote(name))
+    name = name.trim()
+    return [name, addr]
+}
+
+// Lista de direcciones de From/To/Cc/Reply-To. Soporta `Nombre <a@b>`, `a@b (Nombre)`,
+// nombres entre comillas con comas o `@`, palabras codificadas, comentarios y grupos
+// (`Ventas: a@b, c@d;`; `undisclosed-recipients:;` da lista vacía). Devuelve
+// Array<MimeAddress>; una entrada sin dirección se omite.
+pub fn mime_parse_addresses(s: String) -> Array {
+    var out: Array = []
+    let n: int = s.length()
+    var items: Array = []
+    var q: bool = false
+    var angle: bool = false
+    var paren: int = 0
+    var start: int = 0
+    var i: int = 0
+    while i < n {
+        let c: int = s.charAt(i)
+        if c == 92 and (q or paren > 0) and i + 1 < n {
+            i = i + 2
+            continue
+        }
+        if q {
+            if c == 34 { q = false }
+        } else if paren > 0 {
+            if c == 40 { paren = paren + 1 }
+            else if c == 41 { paren = paren - 1 }
+        } else if c == 34 { q = true }
+        else if c == 40 { paren = 1 }
+        else if angle {
+            if c == 62 { angle = false }
+        } else if c == 60 { angle = true }
+        else if c == 44 or c == 59 {
+            items.push(s.substring(start, i))
+            start = i + 1
+        } else if c == 58 {
+            // dos puntos fuera de todo: nombre de grupo (`Ventas:`); se descarta
+            let head: String = s.substring(start, i)
+            if head.indexOf("@") < 0 { start = i + 1 }
+        }
+        i = i + 1
+    }
+    items.push(s.substring(start, n))
+    var k: int = 0
+    while k < items.length() {
+        let it: String = items[k]
+        if it.trim().length() > 0 {
+            let r: Array = __mime_addr_item(it)
+            if r.length() == 2 {
+                let nm: String = r[0]
+                let ad: String = r[1]
+                out.push(MimeAddress { name: nm, address: ad })
+            }
+        }
+        k = k + 1
+    }
+    return out
+}
+
+// ── Fecha ─────────────────────────────────────────────────────────────────
+
+// Días desde 1970-01-01 (algoritmo de Howard Hinnant); copia local para no depender de
+// std/time y su runtime.
+fn __mime_days(y0: int, m: int, d: int) -> int {
+    var y: int = y0
+    if m <= 2 { y = y - 1 }
+    var era: int = y / 400
+    if y < 0 { era = (y - 399) / 400 }
+    let yoe: int = y - era * 400
+    var mp: int = m + 9
+    if m > 2 { mp = m - 3 }
+    let doy: int = (153 * mp + 2) / 5 + d - 1
+    let doe: int = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    return era * 146097 + doe - 719468
+}
+
+fn __mime_tokens(s: String) -> Array {
+    var out: Array = []
+    var cur: StringBuilder = StringBuilder.new()
+    var has: bool = false
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c == 32 or c == 9 or c == 44 or c == 13 or c == 10 {
+            if has {
+                out.push(cur.to_string())
+                cur = StringBuilder.new()
+                has = false
+            }
+        } else {
+            cur.append(s.substring(i, i + 1))
+            has = true
+        }
+        i = i + 1
+    }
+    if has { out.push(cur.to_string()) }
+    return out
+}
+
+// Fecha RFC 5322 (`Tue, 1 Jan 2019 12:00:00 +0200 (CEST)`) a epoch UTC. -1 si no se
+// entiende. Zonas: ±hhmm, GMT/UT/UTC/Z y las norteamericanas (EST, EDT, CST, CDT,
+// MST, MDT, PST, PDT); una zona desconocida cuenta como UTC.
+pub fn mime_parse_date(s: String) -> int {
+    let cm: Array = __mime_strip_comments(s)
+    let clean: String = cm[0]
+    var t: Array = __mime_tokens(clean)
+    if t.length() > 0 {
+        let first: String = t[0]
+        let c0: int = first.charAt(0)
+        if c0 < 48 or c0 > 57 {
+            var rest: Array = []
+            var i: int = 1
+            while i < t.length() {
+                rest.push(t[i])
+                i = i + 1
+            }
+            t = rest
+        }
+    }
+    if t.length() < 4 { return 0 - 1 }
+    let ds: String = t[0]
+    let ms: String = t[1]
+    let ys: String = t[2]
+    let ts: String = t[3]
+    let day: int = __mime_int(ds)
+    var mon: int = 0
+    if ms.length() >= 3 {
+        let mi: int = "janfebmaraprmayjunjulaugsepoctnovdec".indexOf(ms.substring(0, 3).to_lower())
+        if mi >= 0 and mi % 3 == 0 { mon = mi / 3 + 1 }
+    }
+    var year: int = __mime_int(ys)
+    if day < 1 or day > 31 or mon == 0 or year < 0 { return 0 - 1 }
+    if ys.length() <= 2 {
+        if year < 50 { year = year + 2000 } else { year = year + 1900 }
+    } else if ys.length() == 3 { year = year + 1900 }
+    let tp: Array = ts.split(":")
+    if tp.length() < 2 { return 0 - 1 }
+    let hh: int = __mime_int(tp[0])
+    let mm: int = __mime_int(tp[1])
+    var ss: int = 0
+    if tp.length() > 2 { ss = __mime_int(tp[2]) }
+    if hh < 0 or hh > 23 or mm < 0 or mm > 59 or ss < 0 or ss > 60 { return 0 - 1 }
+    var off: int = 0
+    if t.length() > 4 {
+        let z: String = t[4]
+        let zl: String = z.to_lower()
+        if (z.charAt(0) == 43 or z.charAt(0) == 45) and z.length() == 5 {
+            let zh: int = __mime_int(z.substring(1, 3))
+            let zm: int = __mime_int(z.substring(3, 5))
+            if zh >= 0 and zm >= 0 {
+                off = zh * 3600 + zm * 60
+                if z.charAt(0) == 45 { off = 0 - off }
+            }
+        } else if zl == "est" { off = 0 - 18000 }
+        else if zl == "edt" { off = 0 - 14400 }
+        else if zl == "cst" { off = 0 - 21600 }
+        else if zl == "cdt" { off = 0 - 18000 }
+        else if zl == "mst" { off = 0 - 25200 }
+        else if zl == "mdt" { off = 0 - 21600 }
+        else if zl == "pst" { off = 0 - 28800 }
+        else if zl == "pdt" { off = 0 - 25200 }
+    }
+    return __mime_days(year, mon, day) * 86400 + hh * 3600 + mm * 60 + ss - off
+}
+
+// Los ids `<...>` de una cabecera (Message-ID, In-Reply-To, References), con sus `<>`.
+fn __mime_ids(s: String) -> Array {
+    var out: Array = []
+    var pos: int = 0
+    while pos < s.length() {
+        let a: int = s.indexOf("<", pos)
+        if a < 0 { break }
+        let b: int = s.indexOf(">", a + 1)
+        if b < 0 { break }
+        let id: String = s.substring(a, b + 1)
+        if id.length() > 2 and id.indexOf(" ") < 0 { out.push(id) }
+        pos = b + 1
+    }
+    return out
+}
+
+// ── HTML a texto (aproximado) ─────────────────────────────────────────────
+
+fn __mime_entity(name: String) -> String {
+    if name == "amp" { return "&" }
+    if name == "lt" { return "<" }
+    if name == "gt" { return ">" }
+    if name == "quot" { return "\"" }
+    if name == "apos" { return "'" }
+    if name == "nbsp" { return " " }
+    if name == "iexcl" { return utf8_encode(161) }
+    if name == "aacute" { return utf8_encode(225) }
+    if name == "eacute" { return utf8_encode(233) }
+    if name == "iacute" { return utf8_encode(237) }
+    if name == "oacute" { return utf8_encode(243) }
+    if name == "uacute" { return utf8_encode(250) }
+    if name == "ntilde" { return utf8_encode(241) }
+    if name == "Ntilde" { return utf8_encode(209) }
+    if name == "iquest" { return utf8_encode(191) }
+    if name == "copy" { return utf8_encode(169) }
+    if name == "euro" { return utf8_encode(8364) }
+    if name == "hellip" { return utf8_encode(8230) }
+    if name == "ndash" { return utf8_encode(8211) }
+    if name == "mdash" { return utf8_encode(8212) }
+    return ""
+}
+
+// HTML a texto plano, APROXIMADO (no es un renderizador): quita etiquetas, comentarios,
+// <style> y <script>; <br>, </p>, </div>, </tr>, </li> y los encabezados pasan a salto de
+// línea; decodifica las entidades comunes y las numéricas; colapsa espacios. Sirve para
+// tener algo que leer y buscar cuando el correo solo trae HTML.
+pub fn mime_html_to_text(html: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    let n: int = html.length()
+    // Una sola vez, para buscar el cierre de <style>/<script>/<title> sin
+    // distinguir mayúsculas. Antes se pasaba a minúsculas el HTML ENTERO en cada
+    // una de esas etiquetas: un correo de 1 MB con `<style></style>` repetido
+    // eran ~70.000 copias de 1 MB (revisión de integracion-0930). to_lower
+    // conserva el largo en bytes, así que los índices valen para `html`.
+    let low: String = html.to_lower()
+    var i: int = 0
+    var pending_space: bool = false
+    var nl_count: int = 2       // 2 = al principio: sin saltos iniciales
+    var line_has: bool = false
+    while i < n {
+        let c: int = html.charAt(i)
+        // `<` abre una etiqueta solo si sigue una letra, `/` o `!`: un `a < b` es texto.
+        var abre: bool = false
+        if c == 60 and i + 1 < n {
+            let nx: int = html.charAt(i + 1)
+            abre = (nx >= 65 and nx <= 90) or (nx >= 97 and nx <= 122) or nx == 47 or nx == 33
+        }
+        if abre {
+            var j: int = html.indexOf(">", i + 1)
+            if j < 0 { j = n - 1 }
+            var tag: String = html.substring(i + 1, j).trim()
+            if tag.startsWith("!--") {
+                let e: int = html.indexOf("-->", i + 4)
+                if e < 0 { i = n } else { i = e + 3 }
+                continue
+            }
+            var closing: bool = false
+            if tag.startsWith("/") {
+                closing = true
+                tag = tag.substring(1, tag.length())
+            }
+            var e2: int = 0
+            while e2 < tag.length() and tag.charAt(e2) != 32 and tag.charAt(e2) != 47 and tag.charAt(e2) != 9 and tag.charAt(e2) != 10 and tag.charAt(e2) != 13 { e2 = e2 + 1 }
+            let tname: String = tag.substring(0, e2).to_lower()
+            i = j + 1
+            if closing == false and (tname == "style" or tname == "script" or tname == "title") {
+                let close: int = low.indexOf("</" + tname, i)
+                if close < 0 { i = n } else {
+                    let g: int = html.indexOf(">", close)
+                    if g < 0 { i = n } else { i = g + 1 }
+                }
+                continue
+            }
+            // Saltos de línea: <br> siempre suma uno (tope 2); el cierre de un bloque
+            // grande deja una línea en blanco; el resto asegura al menos un salto.
+            var need: int = 0
+            if tname == "br" or tname == "hr" {
+                if nl_count < 2 { need = nl_count + 1 }
+            } else if closing and (tname == "p" or tname == "table" or tname == "blockquote" or tname == "ul" or tname == "ol" or tname == "h1" or tname == "h2" or tname == "h3" or tname == "h4" or tname == "h5" or tname == "h6") {
+                need = 2
+            } else if tname == "div" or tname == "tr" or tname == "li" or tname == "p" or tname == "h1" or tname == "h2" or tname == "h3" {
+                need = 1
+            }
+            if need > 0 {
+                while nl_count < need {
+                    sb.append("\n")
+                    nl_count = nl_count + 1
+                }
+                pending_space = false
+                line_has = false
+            } else if tname == "td" or tname == "th" {
+                pending_space = true
+            }
+            continue
+        }
+        if c == 38 {
+            let semi: int = html.indexOf(";", i + 1)
+            if semi > i + 1 and semi - i <= 10 {
+                let ent: String = html.substring(i + 1, semi)
+                var rep: String = ""
+                if ent.charAt(0) == 35 {
+                    var cp: int = 0 - 1
+                    if ent.length() > 1 and (ent.charAt(1) == 120 or ent.charAt(1) == 88) {
+                        var v: int = 0
+                        var ok: bool = ent.length() > 2
+                        var k: int = 2
+                        while k < ent.length() {
+                            let h: int = __mime_hex(ent.charAt(k))
+                            if h < 0 { ok = false }
+                            else { v = v * 16 + h }
+                            k = k + 1
+                        }
+                        if ok { cp = v }
+                    } else {
+                        cp = __mime_int(ent.substring(1, ent.length()))
+                    }
+                    if cp > 0 { rep = utf8_encode(cp) }
+                } else {
+                    rep = __mime_entity(ent)
+                }
+                if rep != "" {
+                    if rep == " " {
+                        pending_space = true
+                    } else {
+                        if pending_space and line_has { sb.append(" ") }
+                        pending_space = false
+                        sb.append(rep)
+                        nl_count = 0
+                        line_has = true
+                    }
+                    i = semi + 1
+                    continue
+                }
+            }
+        }
+        if c == 32 or c == 9 or c == 10 or c == 13 {
+            pending_space = true
+            i = i + 1
+            continue
+        }
+        if pending_space and line_has { sb.append(" ") }
+        pending_space = false
+        sb.append(html.substring(i, i + 1))
+        nl_count = 0
+        line_has = true
+        i = i + 1
+    }
+    return sb.to_string().trim()
+}
+
+// Un nombre de archivo apto para guardar en disco a partir del que trae un correo, que
+// es texto ajeno: se queda con lo que sigue a la última `/` o `\`, quita caracteres de
+// control y NUL, los `:` y comillas que rompen en Windows, los puntos y espacios del
+// principio y del final (`..`, `.bashrc` oculto) y lo recorta a 200 bytes en un borde de
+// carácter UTF-8. Si no queda nada devuelve "adjunto".
+pub fn mime_safe_filename(name: String) -> String {
+    var start: int = 0
+    var i: int = 0
+    while i < name.length() {
+        let c: int = name.charAt(i)
+        if c == 47 or c == 92 { start = i + 1 }
+        i = i + 1
+    }
+    var sb: StringBuilder = StringBuilder.new()
+    var k: int = start
+    while k < name.length() {
+        let c: int = name.charAt(k)
+        if c < 32 or c == 127 or c == 58 or c == 34 or c == 60 or c == 62 or c == 124 or c == 42 or c == 63 {
+            sb.append("_")
+        } else {
+            sb.append(name.substring(k, k + 1))
+        }
+        k = k + 1
+    }
+    var t: String = sb.to_string()
+    // puntos y espacios en los bordes
+    var a: int = 0
+    while a < t.length() and (t.charAt(a) == 46 or t.charAt(a) == 32) { a = a + 1 }
+    var b: int = t.length()
+    while b > a and (t.charAt(b - 1) == 46 or t.charAt(b - 1) == 32) { b = b - 1 }
+    t = t.substring(a, b)
+    if t.length() > 200 {
+        var cut: int = 200
+        while cut > 0 and t.charAt(cut) >= 128 and t.charAt(cut) < 192 { cut = cut - 1 }
+        t = t.substring(0, cut)
+    }
+    t = __mime_utf8_clean(t)
+    if t.length() == 0 { return "adjunto" }
+    return t
+}
+
+// ── Multipart ─────────────────────────────────────────────────────────────
+
+// Parte el cuerpo de un multipart por sus líneas `--boundary`. Ignora el preámbulo y
+// el epílogo; el salto de línea que precede a cada delimitador pertenece al
+// delimitador, no a la parte. Sin el cierre `--boundary--` la última parte llega hasta
+// el final (mensajes truncados). Err "invalid" si hay más de `max_parts` partes.
+fn __mime_split_multipart(body: String, boundary: String, max_parts: int) -> Result<Array, Error> {
+    let delim: String = "--" + boundary
+    var parts: Array = []
+    let n: int = body.length()
+    var pos: int = 0
+    var pstart: int = 0 - 1
+    while pos <= n {
+        var nl: int = body.indexOf("\n", pos)
+        var lend: int = nl
+        if nl < 0 { lend = n }
+        var le: int = lend
+        if le > pos and body.charAt(le - 1) == 13 { le = le - 1 }
+        var is_delim: bool = false
+        var is_close: bool = false
+        if le - pos >= delim.length() and body.substring(pos, pos + delim.length()) == delim {
+            let rest: String = body.substring(pos + delim.length(), le)
+            if rest.startsWith("--") and __mime_all_wsp(rest.substring(2, rest.length())) { is_close = true; is_delim = true }
+            else if __mime_all_wsp(rest) { is_delim = true }
+        }
+        if is_delim {
+            if pstart >= 0 {
+                var pend: int = pos
+                if pend > pstart and body.charAt(pend - 1) == 10 { pend = pend - 1 }
+                if pend > pstart and body.charAt(pend - 1) == 13 { pend = pend - 1 }
+                parts.push(body.substring(pstart, pend))
+                if parts.length() > max_parts {
+                    return Result.Err(__mime_err_limit("hay más de " + int_to_string(max_parts) + " partes"))
+                }
+            }
+            if is_close { return Result.Ok(parts) }
+            if nl < 0 { pstart = n } else { pstart = nl + 1 }
+        }
+        if nl < 0 { break }
+        pos = nl + 1
+    }
+    if pstart >= 0 and pstart <= n {
+        let last: String = body.substring(pstart, n)
+        if last.length() > 0 { parts.push(last) }
+    }
+    return Result.Ok(parts)
+}
+
+fn __mime_strip_angle(s: String) -> String {
+    var t: String = s.trim()
+    if t.startsWith("<") and t.endsWith(">") { t = t.substring(1, t.length() - 1) }
+    return t.trim()
+}
+
+fn __mime_crlf_to_lf(s: String) -> String {
+    if s.indexOf("\r") < 0 { return s }
+    return s.replace("\r\n", "\n")
+}
+
+fn __mime_new_part(path: String, ct: String, kind: String) -> MimePart {
+    return MimePart {
+        path: path, content_type: ct, charset: "", disposition: "", filename: "",
+        content_id: "", size: 0, data: "", text: "", text_ok: true, kind: kind
+    }
+}
+
+// Recorre una entidad (mensaje o parte) y devuelve sus hojas en orden, más marcadores
+// (kind "marker") para multipart/signed, encrypted y report. `depth` cuenta los
+// multipart anidados; `count` las hojas ya reunidas por los hermanos (tope global).
+fn __mime_walk(raw: String, depth: int, path: String, lim: MimeLimits, in_report: bool, count: int) -> Result<Array, Error> {
+    let sp: Array = __mime_split(raw)
+    let head: String = sp[0]
+    let body: String = sp[1]
+    var hdrs: Array = []
+    match __mime_parse_headers(head, lim) {
+        Result.Ok(h) => { hdrs = h }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    var ct_h: String = __mime_h(hdrs, "content-type")
+    if ct_h == "" { ct_h = "text/plain" }
+    let ctv: MimeValue = mime_parse_value(ct_h)
+    var ct: String = ctv.value.to_lower()
+    if ct.indexOf("/") < 1 { ct = "text/plain" }
+    let cdv: MimeValue = mime_parse_value(__mime_h(hdrs, "content-disposition"))
+    let disp: String = cdv.value.to_lower()
+    let cte: String = __mime_h(hdrs, "content-transfer-encoding").trim().to_lower()
+    let cid: String = __mime_strip_angle(__mime_h(hdrs, "content-id"))
+    var filename: String = mime_param(cdv, "filename")
+    if filename == "" { filename = mime_param(ctv, "name") }
+    let charset: String = mime_param(ctv, "charset")
+
+    if ct.startsWith("multipart/") {
+        let boundary: String = mime_param(ctv, "boundary")
+        if boundary.length() > 0 {
+            if depth >= lim.max_depth {
+                return Result.Err(__mime_err_limit("multipart anidado más de " + int_to_string(lim.max_depth) + " niveles"))
+            }
+            var out: Array = []
+            if ct == "multipart/signed" or ct == "multipart/encrypted" or ct == "multipart/report" {
+                var mk: MimePart = __mime_new_part(path, ct, "marker")
+                mk.filename = mime_param(ctv, "report-type")
+                out.push(mk)
+            }
+            var kids: Array = []
+            match __mime_split_multipart(body, boundary, lim.max_parts) {
+                Result.Ok(k) => { kids = k }
+                Result.Err(e) => { return Result.Err(e) }
+            }
+            let rep: bool = in_report or ct == "multipart/report"
+            var idx: int = 0
+            while idx < kids.length() {
+                var sub: String = int_to_string(idx + 1)
+                if path != "" { sub = path + "." + sub }
+                let kid: String = kids[idx]
+                match __mime_walk(kid, depth + 1, sub, lim, rep, count + out.length()) {
+                    Result.Ok(ps) => {
+                        var j: int = 0
+                        while j < ps.length() {
+                            out.push(ps[j])
+                            j = j + 1
+                        }
+                    }
+                    Result.Err(e) => { return Result.Err(e) }
+                }
+                if out.length() + count > lim.max_parts {
+                    return Result.Err(__mime_err_limit("hay más de " + int_to_string(lim.max_parts) + " partes"))
+                }
+                idx = idx + 1
+            }
+            return Result.Ok(out)
+        }
+        // multipart sin boundary: no hay cómo partirlo; se lee como texto.
+        ct = "text/plain"
+    }
+
+    // Hoja.
+    var data: String = ""
+    match __mime_decode_cte(body, cte, lim.max_part_size) {
+        Result.Ok(d) => { data = d }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    // Clasificación de la hoja:
+    //  - report: partes de un informe de entrega (delivery-status, headers del original);
+    //  - body: text/plain o text/html sin nombre ni disposición attachment;
+    //  - inline: con Content-ID y sin disposición attachment (las imágenes `cid:` que
+    //    Gmail marca `inline; filename=...` y Outlook `inline` sin más);
+    //  - attachment: el resto (disposición attachment, con nombre, o de tipo no textual).
+    var kind: String = "attachment"
+    if in_report and (ct == "message/delivery-status" or ct == "text/rfc822-headers" or ct == "message/rfc822" or ct == "message/disposition-notification" or ct == "message/feedback-report") {
+        kind = "report"
+    } else if (ct == "text/plain" or ct == "text/html") and disp != "attachment" and filename == "" {
+        kind = "body"
+    } else if cid != "" and disp != "attachment" and ct.startsWith("message/") == false {
+        kind = "inline"
+    }
+    var p: MimePart = __mime_new_part(path, ct, kind)
+    p.charset = charset
+    p.disposition = disp
+    p.filename = filename
+    p.content_id = cid
+    p.size = data.length()
+    p.data = data
+    if ct.startsWith("text/") or kind == "report" {
+        if ct == "message/rfc822" {
+            p.text = ""
+        } else {
+            match mime_charset_to_utf8(charset, data) {
+                Option.Some(u) => { p.text = __mime_crlf_to_lf(u) }
+                Option.None => { p.text = ""; p.text_ok = false }
+            }
+        }
+    }
+    var one: Array = []
+    one.push(p)
+    return Result.Ok(one)
+}
+
+// ── Señales de un CRM: respuesta automática, lista, rebote ────────────────
+
+fn __mime_auto_kind(hdrs: Array) -> String {
+    var a: String = __mime_h(hdrs, "auto-submitted").trim().to_lower()
+    let semi: int = a.indexOf(";")
+    if semi >= 0 { a = a.substring(0, semi).trim() }
+    if a != "" and a != "no" { return a }
+    if __mime_has_h(hdrs, "x-autoreply") or __mime_has_h(hdrs, "x-autorespond") { return "x-autoreply" }
+    let prec: String = __mime_h(hdrs, "precedence").trim().to_lower()
+    if prec == "bulk" or prec == "auto_reply" or prec == "auto-reply" { return "precedence:" + prec }
+    return ""
+}
+
+// `Final-Recipient: rfc822; ana@x.cl` -> "ana@x.cl"
+fn __mime_dsn_addr(v: String) -> String {
+    let semi: int = v.indexOf(";")
+    if semi >= 0 { return v.substring(semi + 1, v.length()).trim() }
+    return v.trim()
+}
+
+// Lee el texto de una parte message/delivery-status: un bloque por mensaje y uno por
+// destinatario, separados por líneas vacías; cada bloque son cabeceras.
+fn __mime_parse_dsn(text: String, lim: MimeLimits) -> MimeBounce {
+    var b: MimeBounce = MimeBounce {
+        recipient: "", recipients: [], action: "", status: "", diagnostic: "",
+        original_message_id: "", permanent: false
+    }
+    let t: String = __mime_crlf_to_lf(text)
+    var pos: int = 0
+    var first_rcpt: bool = true
+    let n: int = t.length()
+    while pos <= n {
+        var e: int = t.indexOf("\n\n", pos)
+        var blockend: int = e
+        if e < 0 { blockend = n }
+        let block: String = t.substring(pos, blockend)
+        if block.trim().length() > 0 {
+            match __mime_parse_headers(block, lim) {
+                Result.Ok(h) => {
+                    let fr: String = __mime_h(h, "final-recipient")
+                    let orig: String = __mime_h(h, "original-recipient")
+                    if fr != "" or orig != "" {
+                        var who: String = __mime_dsn_addr(fr)
+                        if who == "" { who = __mime_dsn_addr(orig) }
+                        b.recipients.push(who)
+                        if first_rcpt {
+                            first_rcpt = false
+                            b.recipient = who
+                            b.action = __mime_h(h, "action").trim().to_lower()
+                            b.status = __mime_h(h, "status").trim()
+                            let dg: String = __mime_h(h, "diagnostic-code")
+                            let semi: int = dg.indexOf(";")
+                            if semi >= 0 { b.diagnostic = dg.substring(semi + 1, dg.length()).trim() }
+                            else { b.diagnostic = dg.trim() }
+                        }
+                    }
+                }
+                Result.Err(x) => { }
+            }
+        }
+        if e < 0 { break }
+        pos = e + 2
+    }
+    b.permanent = b.action == "failed" or b.status.startsWith("5.")
+    return b
+}
+
+// ── mime_parse ────────────────────────────────────────────────────────────
+
+// Analiza un mensaje completo (bytes tal como llegan: CRLF o LF). Err "parse" si está
+// vacío o no tiene ninguna cabecera; Err "invalid" si pasa un tope de MimeLimits (el
+// mensaje, la cabecera, la cantidad de cabeceras, la profundidad, las partes o una
+// parte decodificada). Un mensaje con solo cabeceras (lo que baja BODY[HEADER]) es
+// válido: no tiene cuerpo.
+pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error> {
+    if raw.length() == 0 { return Result.Err(__mime_err_parse("mensaje vacío")) }
+    if raw.length() > lim.max_size {
+        return Result.Err(__mime_err_limit("el mensaje pasa el tope de " + int_to_string(lim.max_size) + " bytes"))
+    }
+    let sp: Array = __mime_split(raw)
+    let head: String = sp[0]
+    var hdrs: Array = []
+    match __mime_parse_headers(head, lim) {
+        Result.Ok(h) => { hdrs = h }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    if hdrs.length() == 0 { return Result.Err(__mime_err_parse("no es un correo: no hay ninguna cabecera")) }
+
+    var leaves: Array = []
+    match __mime_walk(raw, 0, "", lim, false, 0) {
+        Result.Ok(ps) => { leaves = ps }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+
+    let ctv: MimeValue = mime_parse_value(__mime_h(hdrs, "content-type"))
+    var m: MimeMessage = MimeMessage {
+        headers: hdrs,
+        subject: __mime_utf8_clean(mime_decode_words(__mime_h(hdrs, "subject"))),
+        from_list: mime_parse_addresses(__mime_h(hdrs, "from")),
+        to_list: mime_parse_addresses(__mime_h(hdrs, "to")),
+        cc_list: mime_parse_addresses(__mime_h(hdrs, "cc")),
+        reply_to_list: mime_parse_addresses(__mime_h(hdrs, "reply-to")),
+        date: mime_parse_date(__mime_h(hdrs, "date")),
+        message_id: "",
+        in_reply_to: __mime_ids(__mime_h(hdrs, "in-reply-to")),
+        references: __mime_ids(__mime_h(hdrs, "references")),
+        content_type: ctv.value.to_lower(),
+        text: "", text_ok: true, text_approx: false, html: "", has_html: false,
+        parts: [], attachments: [], inlines: [],
+        is_auto_reply: false, auto_kind: "", is_list: false,
+        is_dsn: false, is_bounce: false,
+        bounce: MimeBounce { recipient: "", recipients: [], action: "", status: "", diagnostic: "", original_message_id: "", permanent: false },
+        report_type: "", signed: false, encrypted: false
+    }
+    if m.content_type == "" { m.content_type = "text/plain" }
+    let mids: Array = __mime_ids(__mime_h(hdrs, "message-id"))
+    if mids.length() > 0 { m.message_id = mids[0] }
+
+    let ak: String = __mime_auto_kind(hdrs)
+    m.auto_kind = ak
+    m.is_auto_reply = ak != ""
+    m.is_list = __mime_has_h(hdrs, "list-id") or __mime_has_h(hdrs, "list-unsubscribe")
+
+    var have_text: bool = false
+    var dsn_text: String = ""
+    var have_dsn: bool = false
+    var orig_headers: String = ""
+    var i: int = 0
+    while i < leaves.length() {
+        let p: MimePart = leaves[i]
+        if p.kind == "marker" {
+            if p.content_type == "multipart/signed" { m.signed = true }
+            if p.content_type == "multipart/encrypted" { m.encrypted = true }
+            if p.content_type == "multipart/report" and m.report_type == "" { m.report_type = p.filename.to_lower() }
+        } else if p.kind == "report" {
+            if p.content_type == "message/delivery-status" and have_dsn == false {
+                have_dsn = true
+                dsn_text = p.text
+            }
+            if p.content_type == "text/rfc822-headers" or p.content_type == "message/rfc822" {
+                if orig_headers == "" { orig_headers = p.data }
+            }
+        } else if p.kind == "body" and p.size == 0 {
+            // cuerpo vacío (p. ej. solo las cabeceras que baja un BODY[HEADER]): no hay parte
+        } else {
+            m.parts.push(p)
+            if p.kind == "attachment" { m.attachments.push(p) }
+            else if p.kind == "inline" { m.inlines.push(p) }
+            else if p.kind == "body" {
+                if p.content_type == "text/plain" and have_text == false {
+                    have_text = true
+                    m.text = p.text
+                    m.text_ok = p.text_ok
+                } else if p.content_type == "text/html" and m.has_html == false {
+                    m.has_html = true
+                    m.html = p.text
+                    if p.text_ok == false { m.html = p.data }
+                }
+            }
+        }
+        i = i + 1
+    }
+    if have_text == false and m.has_html {
+        m.text = mime_html_to_text(m.html)
+        m.text_approx = true
+    }
+    if have_dsn {
+        m.is_dsn = true
+        var b: MimeBounce = __mime_parse_dsn(dsn_text, lim)
+        if orig_headers != "" {
+            let os: Array = __mime_split(orig_headers)
+            let oh: String = os[0]
+            match __mime_parse_headers(oh, lim) {
+                Result.Ok(h2) => {
+                    let ids: Array = __mime_ids(__mime_h(h2, "message-id"))
+                    if ids.length() > 0 { b.original_message_id = ids[0] }
+                }
+                Result.Err(x) => { }
+            }
+        }
+        m.bounce = b
+        m.is_bounce = b.action == "failed" or b.action == "delayed"
+    }
+    return Result.Ok(m)
+}

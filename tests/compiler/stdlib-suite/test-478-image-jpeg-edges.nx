@@ -1,0 +1,155 @@
+// test-478 — std/image, Task 3: lo que rodea a la decodificación de JPEG (spec std-image, D-4/D-6/D-9/D-10).
+//
+// 1. Archivos dañados u hostiles: tienen que dar Err con causa, no abort ni bucle: truncado
+//    a mitad de datos y en el encabezado, marcador de reinicio roto, tabla Huffman que
+//    desborda o que falta, tabla de cuantización que falta, SOF que falta, basura en el
+//    escaneo, segmento que se sale del archivo, JPEG vacío, CMYK, 12 bits, progresivo
+//    (unsupported hasta la fase 2) y la bomba de dimensiones (60000 x 60000 en un archivo
+//    de 1.4 KB) con sus topes. Un JPEG al que solo le falta el EOI SÍ se decodifica.
+// 2. El perfil ICC se expone en Image.icc (uno solo y partido en dos APP2 fuera de orden)
+//    y vale "" cuando el archivo no trae; no se convierte ni se aplica.
+// 3. La orientación: image_info la lee aunque un XMP (otro APP1) venga detrás del EXIF, y
+//    decodificar orientk.jpg da exactamente lo mismo que image_orient(decodificar orient1, k).
+// 4. La reducción: image_decode_scaled (1/2, 1/4, 1/8) e image_decode_min (la mayor
+//    reducción que deja el tamaño pedido, con la orientación ya aplicada). Los hashes de la
+//    foto ancha de 640 x 480 salen de Pillow (jpeg/hashes.txt): tamaño completo, 1/2, 1/4 y 1/8.
+
+import "std/image"
+import "std/error"
+
+fn hash_of(img: Image) -> int {
+    var h: int = 5381
+    for row: String in img.rows {
+        var i: int = 0
+        while i < row.length() {
+            h = (h * 33 + row.charAt(i)) & 0xFFFFFFFF
+            i = i + 1
+        }
+    }
+    return h
+}
+
+fn fail(name: String, bytes: String, lim: ImageLimits) {
+    let r: Result<Image, Error> = image_decode(bytes, lim)
+    match r {
+        Result.Ok(img) => { println(name + " decodificó " + int_to_string(img.width) + "x" + int_to_string(img.height)) }
+        Result.Err(e) => { println(name + " -> " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn dims(name: String, r: Result<Image, Error>) {
+    match r {
+        Result.Ok(img) => { println(name + " " + int_to_string(img.width) + "x" + int_to_string(img.height) + " red=" + int_to_string(img.reduction) + " hash=" + int_to_string(hash_of(img))) }
+        Result.Err(e) => { println(name + " -> " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn dec(bytes: String) -> Image {
+    let r: Result<Image, Error> = image_decode(bytes, image_limits())
+    match r {
+        Result.Ok(img) => { return img }
+        Result.Err(e) => {
+            println("¡no decodificó!: " + e.msg)
+            return Image { width: 0, height: 0, channels: 1, rows: [], icc: "", reduction: 1 }
+        }
+    }
+}
+
+fn orient_of(name: String, bytes: String) {
+    let r: Result<ImageInfo, Error> = image_info(bytes)
+    match r {
+        Result.Ok(i) => { println(name + " orient=" + int_to_string(i.orientation) + " " + int_to_string(i.width) + "x" + int_to_string(i.height)) }
+        Result.Err(e) => { println(name + " ERR " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn main() -> int {
+    let lim: ImageLimits = image_limits()
+    // 1. dañados
+    fail("trunc-mid", include_bytes("tests/fixtures/image/jpeg/bad-trunc-mid.jpg"), lim)
+    fail("trunc-noeoi", include_bytes("tests/fixtures/image/jpeg/bad-trunc-noeoi.jpg"), lim)
+    fail("trunc-header", include_bytes("tests/fixtures/image/jpeg/bad-trunc-header.jpg"), lim)
+    fail("cmyk", include_bytes("tests/fixtures/image/jpeg/bad-cmyk.jpg"), lim)
+    fail("prog", include_bytes("tests/fixtures/image/jpeg/bad-prog.jpg"), lim)
+    fail("bomb-dim", include_bytes("tests/fixtures/image/jpeg/bad-bomb-dim.jpg"), lim)
+    fail("bits12", include_bytes("tests/fixtures/image/jpeg/bad-bits12.jpg"), lim)
+    fail("huff-count", include_bytes("tests/fixtures/image/jpeg/bad-huff-count.jpg"), lim)
+    fail("huff-overflow", include_bytes("tests/fixtures/image/jpeg/bad-huff-overflow.jpg"), lim)
+    fail("no-dht", include_bytes("tests/fixtures/image/jpeg/bad-no-dht.jpg"), lim)
+    fail("no-dqt", include_bytes("tests/fixtures/image/jpeg/bad-no-dqt.jpg"), lim)
+    fail("rst-broken", include_bytes("tests/fixtures/image/jpeg/bad-rst-broken.jpg"), lim)
+    fail("no-sof", include_bytes("tests/fixtures/image/jpeg/bad-no-sof.jpg"), lim)
+    fail("garbage-scan", include_bytes("tests/fixtures/image/jpeg/bad-garbage-scan.jpg"), lim)
+    fail("segment-overrun", include_bytes("tests/fixtures/image/jpeg/bad-segment-overrun.jpg"), lim)
+    fail("empty", include_bytes("tests/fixtures/image/jpeg/bad-empty.jpg"), lim)
+    let s420: String = include_bytes("tests/fixtures/image/jpeg/s420.jpg")
+    fail("max_bytes", s420, ImageLimits { max_bytes: 100, max_pixels: 1000000, max_dim: 1000 })
+    fail("max_pixels", s420, ImageLimits { max_bytes: 1000000, max_pixels: 1000, max_dim: 1000 })
+    fail("max_dim", s420, ImageLimits { max_bytes: 1000000, max_pixels: 1000000, max_dim: 40 })
+    // Revisión de la integración (2026-10-01). Un SOS de largo 2 justo al final del
+    // archivo: el decodificador leía la cantidad de componentes fuera de rango y abortaba.
+    let sos: int = s420.indexOf(chr(255) + chr(218))
+    fail("sos-trunc", s420.substring(0, sos) + chr(255) + chr(218) + chr(0) + chr(2), lim)
+    // 2000 tablas Huffman vacías delante de las de verdad (34 KB): antes cada una armaba
+    // una tabla de 65536 entradas al leerla (~4·10⁹ escrituras en 1 MB de DHT). Ahora se
+    // arman al usarlas, y las de verdad que vienen después las reemplazan: decodifica igual.
+    var dht: String = ""
+    var t: int = 0
+    while t < 2000 {
+        dht = dht + chr(((t % 2) << 4) | ((t / 2) % 4)) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0) + chr(0)
+        t = t + 1
+    }
+    let seg: int = dht.length() + 2
+    let bomba: String = s420.substring(0, 2) + chr(255) + chr(196) + chr(seg >> 8) + chr(seg & 255) + dht + s420.substring(2, s420.length())
+    println("dht-bomb igual=" + (hash_of(dec(bomba)) == hash_of(dec(s420))).to_string())
+    // 2. ICC
+    let icc: String = include_bytes("tests/fixtures/image/jpeg/icc.bin")
+    let i1: Image = dec(include_bytes("tests/fixtures/image/jpeg/icc1.jpg"))
+    let i2: Image = dec(include_bytes("tests/fixtures/image/jpeg/icc2.jpg"))
+    let i0: Image = dec(s420)
+    println("icc1 " + int_to_string(i1.icc.length()) + " igual=" + (i1.icc == icc).to_string())
+    println("icc2 " + int_to_string(i2.icc.length()) + " igual=" + (i2.icc == icc).to_string())
+    println("sin icc " + int_to_string(i0.icc.length()))
+    let png: Image = dec(include_bytes("tests/fixtures/image/rgb8.png"))
+    println("png icc " + int_to_string(png.icc.length()) + " red=" + int_to_string(png.reduction))
+    // 3. orientación
+    orient_of("orient6", include_bytes("tests/fixtures/image/jpeg/orient6.jpg"))
+    orient_of("orient6-xmp", include_bytes("tests/fixtures/image/jpeg/orient6-xmp.jpg"))
+    orient_of("orient1", include_bytes("tests/fixtures/image/jpeg/orient1.jpg"))
+    orient_of("s420", s420)
+    let base: Image = dec(include_bytes("tests/fixtures/image/jpeg/orient1.jpg"))
+    let wants: Array = [base, dec(include_bytes("tests/fixtures/image/jpeg/orient2.jpg")), dec(include_bytes("tests/fixtures/image/jpeg/orient3.jpg")), dec(include_bytes("tests/fixtures/image/jpeg/orient4.jpg")), dec(include_bytes("tests/fixtures/image/jpeg/orient5.jpg")), dec(include_bytes("tests/fixtures/image/jpeg/orient6.jpg")), dec(include_bytes("tests/fixtures/image/jpeg/orient7.jpg")), dec(include_bytes("tests/fixtures/image/jpeg/orient8.jpg"))]
+    var k: int = 2
+    while k <= 8 {
+        let want: Image = wants[k - 1]
+        let got: Image = image_orient(base, k)
+        println("image_orient " + int_to_string(k) + " " + int_to_string(got.width) + "x" + int_to_string(got.height) + " igual=" + (hash_of(got) == hash_of(want) and got.width == want.width).to_string())
+        k = k + 1
+    }
+    println("image_orient 1 igual=" + (hash_of(image_orient(base, 1)) == hash_of(base)).to_string())
+    // 4. reducción
+    let wide: String = include_bytes("tests/fixtures/image/jpeg/wide.jpg")
+    dims("wide 1", image_decode(wide, lim))
+    dims("wide 2", image_decode_scaled(wide, lim, 2))
+    dims("wide 4", image_decode_scaled(wide, lim, 4))
+    dims("wide 8", image_decode_scaled(wide, lim, 8))
+    dims("wide denom 3", image_decode_scaled(wide, lim, 3))
+    dims("wide denom 0", image_decode_scaled(wide, lim, 0))
+    dims("min 320x240", image_decode_min(wide, lim, 320, 240))
+    dims("min 321x240", image_decode_min(wide, lim, 321, 240))
+    dims("min 100x100", image_decode_min(wide, lim, 100, 100))
+    dims("min 80x60", image_decode_min(wide, lim, 80, 60))
+    dims("min 81x60", image_decode_min(wide, lim, 81, 60))
+    dims("min 700x500", image_decode_min(wide, lim, 700, 500))
+    dims("min 1x1", image_decode_min(wide, lim, 1, 1))
+    dims("min 0x5", image_decode_min(wide, lim, 0, 5))
+    // La orientación cuenta: orient6 es 41 x 27 en el archivo y 27 x 41 ya orientada.
+    let o6: String = include_bytes("tests/fixtures/image/jpeg/orient6.jpg")
+    dims("orient6 min 14x21", image_decode_min(o6, lim, 14, 21))
+    dims("orient6 min 15x21", image_decode_min(o6, lim, 15, 21))
+    dims("orient6 min 21x14", image_decode_min(o6, lim, 21, 14))
+    // un PNG no se reduce al decodificar
+    dims("png scaled", image_decode_scaled(include_bytes("tests/fixtures/image/rgb8.png"), lim, 4))
+    println("fin")
+    return 0
+}

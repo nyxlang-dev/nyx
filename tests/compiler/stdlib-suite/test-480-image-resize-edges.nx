@@ -1,0 +1,126 @@
+// test-480 — std/image, Task 4: miniaturas de una sola decodificación, errores y metadatos de las operaciones (spec std-image, D-5/D-10).
+//
+// 1. Miniaturas: image_decode_min(final) + image_resize_fit(caja) sobre la foto ancha de
+//    640 x 480, con el mismo hash (h*33 + byte) que produce Pillow con la misma reducción
+//    (draft) y LANCZOS (tests/fixtures/image/gen_resize_fixtures.py, calls2.txt): la
+//    receta que un servidor usa para sacar varios tamaños.
+// 2. Errores: tamaños no positivos o sobre el tope, recortes fuera de la imagen: Err(invalid).
+// 3. fit no agranda (devuelve la misma imagen), resize a su propio tamaño tampoco toca nada.
+// 4. El perfil ICC atraviesa recortar, achicar y componer; `reduction` vuelve a valer 1.
+// 5. image_flatten recorta el fondo a 0-255 y deja pasar imágenes sin alfa.
+
+import "std/image"
+import "std/error"
+
+fn hash_of(img: Image) -> int {
+    var h: int = 5381
+    for row: String in img.rows {
+        var i: int = 0
+        while i < row.length() {
+            h = (h * 33 + row.charAt(i)) & 0xFFFFFFFF
+            i = i + 1
+        }
+    }
+    return h
+}
+
+fn thumb(name: String, bytes: String, mw: int, mh: int, nw: int, nh: int, want: int) {
+    let d: Result<Image, Error> = image_decode_min(bytes, image_limits(), nw, nh)
+    match d {
+        Result.Err(e) => { println(name + " ERR " + e.msg) }
+        Result.Ok(img) => {
+            let f: Result<Image, Error> = image_resize_fit(img, mw, mh)
+            match f {
+                Result.Err(e2) => { println(name + " ERR " + e2.msg) }
+                Result.Ok(out) => {
+                    var verdict: String = "FALLA"
+                    if out.width == nw and out.height == nh and hash_of(out) == want { verdict = "ok" }
+                    println(name + " -> " + int_to_string(out.width) + "x" + int_to_string(out.height) + " (decodificada 1/" + int_to_string(img.reduction) + " " + int_to_string(img.width) + "x" + int_to_string(img.height) + ") " + verdict)
+                }
+            }
+        }
+    }
+}
+
+fn dec(bytes: String) -> Image {
+    let r: Result<Image, Error> = image_decode(bytes, image_limits())
+    match r {
+        Result.Ok(img) => { return img }
+        Result.Err(e) => {
+            println("¡no decodificó!: " + e.msg)
+            return Image { width: 0, height: 0, channels: 1, rows: [], icc: "", reduction: 1 }
+        }
+    }
+}
+
+fn show(name: String, r: Result<Image, Error>) {
+    match r {
+        Result.Ok(img) => { println(name + " " + int_to_string(img.width) + "x" + int_to_string(img.height) + " ch=" + int_to_string(img.channels) + " icc=" + int_to_string(img.icc.length()) + " red=" + int_to_string(img.reduction)) }
+        Result.Err(e) => { println(name + " -> " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn main() -> int {
+    let wide: String = include_bytes("tests/fixtures/image/jpeg/wide.jpg")
+    thumb("wide 320x240", wide, 320, 240, 320, 240, 2837095858)
+    thumb("wide 200x200", wide, 200, 200, 200, 150, 3681424020)
+    thumb("wide 100x100", wide, 100, 100, 100, 75, 687984167)
+    thumb("wide 80x60", wide, 80, 60, 80, 60, 3322666019)
+    thumb("wide 50x50", wide, 50, 50, 50, 38, 2951002943)
+    thumb("wide 640x640", wide, 640, 640, 640, 480, 3401903350)
+    thumb("wide 1000x1000", wide, 1000, 1000, 640, 480, 3401903350)
+    thumb("wide 1x1", wide, 1, 1, 1, 1, 193515091)
+    thumb("wide 17x300", wide, 17, 300, 17, 13, 2781720817)
+    // 2. errores
+    let s444: Image = dec(include_bytes("tests/fixtures/image/jpeg/s444.jpg"))
+    show("resize 0x5", image_resize(s444, 0, 5))
+    show("resize 5x-1", image_resize(s444, 5, 0 - 1))
+    show("resize 40000x5", image_resize(s444, 40000, 5))
+    show("resize 20000x20000", image_resize(s444, 20000, 20000))
+    show("fit 0x9", image_resize_fit(s444, 0, 9))
+    show("cover 9x0", image_resize_cover(s444, 9, 0))
+    show("crop w=0", image_crop(s444, 0, 0, 0, 5))
+    show("crop x<0", image_crop(s444, 0 - 1, 0, 5, 5))
+    show("crop x+w", image_crop(s444, 37, 0, 5, 5))
+    show("crop y+h", image_crop(s444, 0, 25, 5, 3))
+    show("crop justo", image_crop(s444, 36, 22, 5, 5))
+    // 3. sin agrandar
+    let same: Image = unwrap_img(image_resize_fit(s444, 1000, 1000))
+    println("fit grande: mismo tamaño " + (same.width == 41 and same.height == 27).to_string() + " mismo hash " + (hash_of(same) == hash_of(s444)).to_string())
+    let same2: Image = unwrap_img(image_resize(s444, 41, 27))
+    println("resize a su tamaño: mismo hash " + (hash_of(same2) == hash_of(s444)).to_string())
+    show("fit ancho justo", image_resize_fit(s444, 41, 5))
+    // 4. ICC y reducción
+    let icc: Image = dec(include_bytes("tests/fixtures/image/jpeg/icc1.jpg"))
+    println("icc1 decodificada red=" + int_to_string(icc.reduction) + " icc=" + int_to_string(icc.icc.length()))
+    show("icc crop", image_crop(icc, 3, 3, 10, 10))
+    show("icc fit", image_resize_fit(icc, 20, 20))
+    show("icc cover", image_resize_cover(icc, 12, 12))
+    show("icc resize", image_resize(icc, 60, 40))
+    let scaled: Result<Image, Error> = image_decode_scaled(include_bytes("tests/fixtures/image/jpeg/icc1.jpg"), image_limits(), 2)
+    show("icc decode 1/2", scaled)
+    match scaled {
+        Result.Ok(sc) => { show("icc 1/2 -> fit", image_resize_fit(sc, 10, 10)) }
+        Result.Err(e) => { println(e.msg) }
+    }
+    // 5. componer
+    let disc: Image = dec(include_bytes("tests/fixtures/image/resize/alpha-disc.png"))
+    let w1: Image = image_flatten(disc, 300, 0 - 20, 255)
+    let w2: Image = image_flatten(disc, 255, 0, 255)
+    println("flatten clamp: canales " + int_to_string(w1.channels) + " igual a (255,0,255) " + (hash_of(w1) == hash_of(w2)).to_string())
+    let rgb: Image = image_flatten(s444, 1, 2, 3)
+    println("flatten sin alfa: igual " + (hash_of(rgb) == hash_of(s444)).to_string())
+    println("fin")
+    return 0
+}
+
+fn unwrap_img(r: Result<Image, Error>) -> Image {
+    match r {
+        Result.Ok(img) => { return img }
+        Result.Err(e) => {
+            println("ERR " + e.kind + ": " + e.msg)
+            return Image { width: 0, height: 0, channels: 1, rows: [], icc: "", reduction: 1 }
+        }
+    }
+}
+

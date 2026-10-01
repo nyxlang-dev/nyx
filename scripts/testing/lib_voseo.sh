@@ -45,16 +45,27 @@ VOSEO_DENY_RE='\b(sos|tenés|podés|querés|sabés|hacé|seguí|ofrecé|leé|pro
 VOSEO_TILDE_A_RE='\b[[:alpha:]]+á\b'
 VOSEO_TILDE_A_ALLOW_RE='\b(acá|allá|está|quizá|[[:alpha:]]*[aeiíbd]rá)\b'
 
+# SIGLAS EN MAYÚSCULAS que coinciden con una forma de la lista (2026-10-01).
+# La lista se aplica sin distinguir mayúsculas, así que «SOS» —el marcador Start
+# Of Scan de JPEG en std/image, o un pedido de auxilio— caía como el «sos»
+# rioplatense: cinco falsos positivos en std/image al integrar integracion-0930.
+# Se borran ANTES de la lista, distinguiendo mayúsculas: «sos» y «Sos» se
+# siguen cazando. El voseo escrito entero en mayúsculas («VOS SOS») es el precio
+# aceptado; «VOS» lo caza igual.
+VOSEO_SIGLAS_RE='\bSOS\b'
+
 # voseo_filter — lee líneas por stdin y reimprime, en orden, las que tienen
 # voseo según la lista explícita O la regla general en -á. Sin distinguir
-# mayúsculas («Completá», «CHEQUEÁ»). Las dos guardas pasan todo por acá, así
-# que no hay forma de que una aplique una regla y la otra no.
+# mayúsculas («Completá», «CHEQUEÁ»), salvo las siglas de VOSEO_SIGLAS_RE. Las
+# dos guardas pasan todo por acá, así que no hay forma de que una aplique una
+# regla y la otra no.
 voseo_filter() {
     local t
     t="$(mktemp)" || return 2
     cat > "$t"
     {
-        LC_ALL=C.UTF-8 grep -niE -- "$VOSEO_DENY_RE" "$t" | cut -d: -f1
+        LC_ALL=C.UTF-8 sed -E "s/$VOSEO_SIGLAS_RE//g" "$t" \
+            | LC_ALL=C.UTF-8 grep -niE -- "$VOSEO_DENY_RE" | cut -d: -f1
         LC_ALL=C.UTF-8 sed -E "s/$VOSEO_TILDE_A_ALLOW_RE//gI" "$t" \
             | LC_ALL=C.UTF-8 grep -niE -- "$VOSEO_TILDE_A_RE" | cut -d: -f1
     } | sort -un > "$t.idx"

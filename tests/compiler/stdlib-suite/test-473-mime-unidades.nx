@@ -1,0 +1,212 @@
+// test-473 — las piezas de std/mime por separado (arco std-imap, Task 3): palabras
+// codificadas RFC 2047, direcciones, parámetros RFC 2231, base64, quoted-printable,
+// charsets, fechas, HTML a texto y el desdoblado de cabeceras. Los valores esperados de
+// fechas y palabras codificadas salen de `email` de Python (oráculo); el resto son los
+// ejemplos de los RFC.
+
+import "std/mime"
+import "std/error"
+
+fn dir(xs: Array) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < xs.length() {
+        let a: MimeAddress = xs[i]
+        if i > 0 { out = out + " ; " }
+        out = out + "[" + a.name + "]<" + a.address + ">"
+        i = i + 1
+    }
+    return out
+}
+
+fn b64(s: String) -> String {
+    match mime_base64_decode(s, 1000000) {
+        Result.Ok(d) => { return d }
+        Result.Err(e) => { return "ERR " + e.kind }
+    }
+    return ""
+}
+
+fn cs(charset: String, bytes: String) -> String {
+    match mime_charset_to_utf8(charset, bytes) {
+        Option.Some(u) => { return u }
+        Option.None => { return "<none>" }
+    }
+    return ""
+}
+
+fn parse_ok(raw: String) -> MimeMessage {
+    match mime_parse(raw, mime_limits()) {
+        Result.Ok(m) => { return m }
+        Result.Err(e) => {
+            println("parse: " + e.kind + " " + e.msg)
+            exit(1)
+        }
+    }
+    return parse_ok(raw)
+}
+
+fn main() -> int {
+    // ── RFC 2047 ──
+    assert(mime_decode_words("=?UTF-8?B?Q290aXphY2nDs24=?=") == "Cotización", "B utf-8")
+    assert(mime_decode_words("=?utf-8?q?Oto=C3=B1o_2026?=") == "Otoño 2026", "Q minúsculas, _ es espacio")
+    assert(mime_decode_words("=?ISO-8859-1?Q?a=E9?= =?ISO-8859-1?Q?b_c?=") == "aéb c", "el espacio entre dos palabras se descarta")
+    assert(mime_decode_words("Re: =?UTF-8?Q?Cotizaci=C3=B3n?= 123") == "Re: Cotización 123", "mezcla con texto plano")
+    // El `_` final de una palabra Q es un espacio que se queda: así parten los asuntos
+    // largos Thunderbird y Outlook. El espacio ENTRE palabras sí se descarta.
+    assert(mime_decode_words("=?UTF-8?Q?Cotizaci=C3=B3n_?= =?UTF-8?Q?123?=") == "Cotización 123", "_ al final de una palabra Q")
+    assert(mime_decode_words("=?UTF-8?Q?a__?=") == "a  ", "dos _ al final")
+    assert(mime_decode_words("=?UTF-8?Q?a?= texto =?UTF-8?Q?b?=") == "a texto b", "el texto en medio conserva sus espacios")
+    assert(mime_decode_words("=?utf-8?B?4oKs?=") == "€", "euro")
+    assert(mime_decode_words("=?ISO-8859-15?Q?=A4?=") == "€", "latin9: A4 es el euro")
+    assert(mime_decode_words("=?windows-1252?Q?=93hola=94?=") == "“hola”", "cp1252")
+    assert(mime_decode_words("=?UTF-8*es?Q?a?=") == "a", "charset con *idioma (RFC 2231)")
+    assert(mime_decode_words("=?KOI8-R?B?8NLJ18XU?=") == "=?KOI8-R?B?8NLJ18XU?=", "charset no soportado: queda sin decodificar")
+    assert(mime_decode_words("=?UTF-8?X?abc?=") == "=?UTF-8?X?abc?=", "codificación desconocida")
+    assert(mime_decode_words("=?UTF-8?Q?sin cierre") == "=?UTF-8?Q?sin cierre", "malformada")
+    assert(mime_decode_words("a=b?c=?d") == "a=b?c=?d", "signos sueltos")
+    assert(mime_decode_words("sin nada") == "sin nada", "texto plano")
+
+    // ── direcciones ──
+    assert(dir(mime_parse_addresses("ana@x.cl")) == "[]<ana@x.cl>", "solo dirección")
+    assert(dir(mime_parse_addresses("Ana Pérez <ana@x.cl>")) == "[Ana Pérez]<ana@x.cl>", "nombre y dirección")
+    assert(dir(mime_parse_addresses("\"Pérez, Ana\" <ana@x.cl>, bob@y.cl")) == "[Pérez, Ana]<ana@x.cl> ; []<bob@y.cl>", "coma entre comillas")
+    assert(dir(mime_parse_addresses("\"Ana \\\"la jefa\\\"\" <ana@x.cl>")) == "[Ana \"la jefa\"]<ana@x.cl>", "comillas escapadas")
+    assert(dir(mime_parse_addresses("bob@y.cl (Bob Díaz)")) == "[Bob Díaz]<bob@y.cl>", "comentario como nombre")
+    assert(dir(mime_parse_addresses("Ana (la jefa) <ana@x.cl>")) == "[Ana]<ana@x.cl>", "comentario junto a un nombre")
+    assert(dir(mime_parse_addresses("=?UTF-8?Q?Jos=C3=A9?= <j@y.cl>")) == "[José]<j@y.cl>", "nombre codificado")
+    assert(dir(mime_parse_addresses("\"=?UTF-8?B?TXXDsW96?=\" <m@y.cl>")) == "[Muñoz]<m@y.cl>", "nombre codificado entre comillas")
+    assert(dir(mime_parse_addresses("Ventas: a@b.cl, C D <c@d.cl>;")) == "[]<a@b.cl> ; [C D]<c@d.cl>", "grupo")
+    assert(dir(mime_parse_addresses("undisclosed-recipients:;")) == "", "grupo vacío")
+    assert(dir(mime_parse_addresses("<a@b.cl>, , c@d.cl,")) == "[]<a@b.cl> ; []<c@d.cl>", "vacíos")
+    assert(dir(mime_parse_addresses("Ana <a@b.cl> (comentario), Beto <b@c.cl>")) == "[Ana]<a@b.cl> ; [Beto]<b@c.cl>", "comentario tras la dirección")
+    assert(dir(mime_parse_addresses("a@b.cl@c.cl")) == "[]<a@b.cl@c.cl>", "no se inventa nada")
+    assert(dir(mime_parse_addresses("")) == "", "vacío")
+
+    // ── parámetros ──
+    let v1: MimeValue = mime_parse_value("attachment; filename=\"a b.pdf\"; size=10")
+    assert(v1.value == "attachment" and mime_param(v1, "filename") == "a b.pdf" and mime_param(v1, "size") == "10", "simple")
+    let v2: MimeValue = mime_parse_value("attachment; filename*=UTF-8''informe%20mayo%20%C3%B1.pdf")
+    assert(mime_param(v2, "filename") == "informe mayo ñ.pdf", "2231 extendido: " + mime_param(v2, "filename"))
+    let v3: MimeValue = mime_parse_value("attachment; filename*0*=UTF-8''parte%20uno; filename*1*=%20y%20dos; filename*2=\".pdf\"")
+    assert(mime_param(v3, "filename") == "parte uno y dos.pdf", "2231 con continuaciones: " + mime_param(v3, "filename"))
+    let v4: MimeValue = mime_parse_value("attachment; filename=\"viejo.pdf\"; filename*=UTF-8''nuevo.pdf")
+    assert(mime_param(v4, "filename") == "nuevo.pdf", "la extendida gana")
+    let v5: MimeValue = mime_parse_value("attachment; filename*=iso-8859-1'es'a%F1o.txt")
+    assert(mime_param(v5, "filename") == "año.txt", "2231 en latin-1")
+    let v6: MimeValue = mime_parse_value("attachment; filename=\"=?UTF-8?B?bcOhcy5wZGY=?=\"")
+    assert(mime_param(v6, "filename") == "más.pdf", "palabra codificada dentro del filename")
+    let v7: MimeValue = mime_parse_value("multipart/mixed; boundary=\"a;b\"; charset=utf-8")
+    assert(v7.value == "multipart/mixed" and mime_param(v7, "boundary") == "a;b" and mime_param(v7, "charset") == "utf-8", "; entre comillas")
+    let v8: MimeValue = mime_parse_value("text/plain; CHARSET=UTF-8;")
+    assert(mime_param(v8, "charset") == "UTF-8" and mime_param(v8, "Charset") == "UTF-8", "clave sin distinguir mayúsculas")
+    assert(mime_param(v8, "nada") == "", "ausente")
+    let v9: MimeValue = mime_parse_value("")
+    assert(v9.value == "" and v9.params.length() == 0, "vacío")
+
+    // ── base64 ──
+    assert(b64("SG9sYSBtdW5kbw==") == "Hola mundo", "base64 simple")
+    assert(b64("SG9s\r\nYSBt\r\n dW5k\tbw==") == "Hola mundo", "con CRLF, espacios y tab")
+    assert(b64("SG9sYSBtdW5kbw") == "Hola mundo", "sin relleno")
+    assert(b64("SG9sYQ==SG9sYQ==") == "HolaHola", "base64 concatenado: cada trozo con su relleno")
+    assert(b64("SG9sYQ==\r\n\r\n") == "Hola", "relleno seguido de saltos")
+    assert(b64("AAEC/+8=").length() == 5 and b64("AAEC/+8=").charAt(0) == 0 and b64("AAEC/+8=").charAt(3) == 255, "bytes 0 y 255 (NUL y alto)")
+    assert(b64("4oKs") == "€", "utf-8 multibyte")
+    assert(b64("") == "", "vacío")
+    match mime_base64_decode("QUJDREVGRw==", 3) {
+        Result.Ok(d) => { assert(false, "pasó el tope") }
+        Result.Err(e) => { assert(e.kind == "invalid", "tope: " + e.kind) }
+    }
+    match mime_base64_decode("QUJD", 3) {
+        Result.Ok(d) => { assert(d == "ABC", "justo en el tope") }
+        Result.Err(e) => { assert(false, "no debía fallar") }
+    }
+
+    // ── quoted-printable ──
+    assert(mime_qp_decode("caf=C3=A9") == "café", "escape")
+    assert(mime_qp_decode("caf=c3=a9") == "café", "hex en minúsculas")
+    assert(mime_qp_decode("una l=\r\nínea larga") == "una línea larga", "salto suave CRLF")
+    assert(mime_qp_decode("una l=\nínea") == "una línea", "salto suave LF")
+    assert(mime_qp_decode("fin  \r\nsigue \t\r\n") == "fin\r\nsigue\r\n", "espacios de fin de línea")
+    assert(mime_qp_decode("a =20\r\n") == "a  \r\n", "=20 al final se conserva")
+    assert(mime_qp_decode("2 + 2 =5") == "2 + 2 =5", "= suelto")
+    assert(mime_qp_decode("fin=") == "fin", "= al final")
+    assert(mime_qp_decode("x=3D1") == "x=1", "=3D")
+
+    // ── charsets ──
+    assert(cs("utf-8", "año") == "año", "utf-8 válido")
+    assert(cs("UTF-8", "a" + chr(255) + "b") == "a" + chr(239) + chr(191) + chr(189) + "b", "utf-8 inválido -> U+FFFD")
+    assert(cs("iso-8859-1", "a" + chr(241) + "o") == "año", "latin1")
+    assert(cs("latin1", chr(147) + "x" + chr(148)) == "“x”", "latin1 rotulado con bytes de cp1252")
+    assert(cs("windows-1252", chr(128)) == "€", "cp1252 euro")
+    assert(cs("iso-8859-15", chr(164) + chr(166) + chr(168) + chr(180) + chr(184) + chr(188) + chr(189) + chr(190)) == "€ŠšŽžŒœŸ", "latin9: las ocho diferencias")
+    assert(cs("us-ascii", "hola") == "hola", "ascii")
+    assert(cs("us-ascii", "a" + chr(241)) == "añ", "ascii con bytes altos: latin1/cp1252")
+    assert(cs("us-ascii", "año") == "año", "ascii con utf-8 válido: utf-8")
+    assert(cs("", "año") == "año" and cs("", "a" + chr(241)) == "añ", "sin charset: por contenido")
+    assert(cs("koi8-r", "x" + chr(200)) == "<none>", "KOI8-R no se inventa")
+    assert(cs("gbk", "abc") == "<none>", "GBK, aunque sea ASCII, no está soportado")
+    assert(cs("utf-16", "a") == "<none>", "utf-16")
+
+    // ── fechas (valores de Python) ──
+    assert(mime_parse_date("Fri, 21 Nov 1997 09:55:06 -0600") == 880127706, "RFC 822")
+    assert(mime_parse_date("21 Nov 97 09:55 EST") == 880124100, "año de dos dígitos y zona con nombre")
+    assert(mime_parse_date("Sun, 06 Nov 1994 08:49:37 GMT") == 784111777, "GMT")
+    assert(mime_parse_date("Thu, 13 Feb 1969 23:32:54 -0330") == 0 - 27723426, "antes de 1970, media hora")
+    assert(mime_parse_date("Mon, 1 Jan 2018 00:00:00 +0000 (UTC)") == 1514764800, "comentario")
+    assert(mime_parse_date("1 Mar 2020 10:00 PDT") == 1583082000, "sin día de semana ni segundos")
+    assert(mime_parse_date("Tue, 1 Jan 2019 12:00:00 +0200") == 1546336800, "+0200")
+    assert(mime_parse_date("mañana") == 0 - 1 and mime_parse_date("") == 0 - 1, "no se entiende")
+    assert(mime_parse_date("32 Jan 2019 12:00:00 +0000") == 0 - 1 and mime_parse_date("1 Xyz 2019 12:00 +0000") == 0 - 1, "día y mes inválidos")
+    assert(mime_parse_date("1 Jan 2019 25:00 +0000") == 0 - 1, "hora inválida")
+
+    // ── HTML a texto ──
+    assert(mime_html_to_text("<p>Hola <b>mundo</b></p><p>Chao</p>") == "Hola mundo\n\nChao", "párrafos")
+    assert(mime_html_to_text("a<br>b<br><br><br>c") == "a\nb\n\nc", "br, con tope de una línea en blanco")
+    assert(mime_html_to_text("<style>p{x:y}</style><script>var a=1<2;</script>x") == "x", "style y script")
+    assert(mime_html_to_text("<!-- nada --><title>t</title>y") == "y", "comentario y title")
+    assert(mime_html_to_text("<STYLE>p{}</Style>z") == "z", "cierre de style sin distinguir mayúsculas")
+    // Muchas etiquetas <style>: el HTML se pasa a minúsculas UNA vez, no una por etiqueta.
+    var muchos: StringBuilder = StringBuilder.new()
+    var ms: int = 0
+    while ms < 5000 {
+        muchos.append("<style></style>")
+        ms = ms + 1
+    }
+    muchos.append("fin")
+    assert(mime_html_to_text(muchos.to_string()) == "fin", "5000 etiquetas style")
+    assert(mime_html_to_text("&lt;a&gt; &amp; &quot;b&quot; &#233;&#xE9;&nbsp;z &desconocida; &ntilde;") == "<a> & \"b\" éé z &desconocida; ñ", "entidades")
+    assert(mime_html_to_text("<ul><li>uno</li><li>dos</li></ul>") == "uno\ndos", "lista")
+    assert(mime_html_to_text("<table><tr><td>a</td><td>b</td></tr></table>") == "a b", "celdas")
+    assert(mime_html_to_text("  mucho   \n\t espacio  ") == "mucho espacio", "espacios colapsados")
+    assert(mime_html_to_text("a < b y c > d") == "a < b y c > d", "< suelto")
+
+    // ── cabeceras: desdoblado, mbox, tope de líneas ──
+    let m1: MimeMessage = parse_ok("From alguien@x.cl Thu Oct  1 10:00:00 2026\r\nSubject: uno\r\n dos\r\n\ttres\r\nX-Largo: a\r\n b\r\n\r\ncuerpo\r\n")
+    assert(m1.subject == "uno dos tres", "cabecera plegada: " + m1.subject)
+    assert(mime_header(m1, "x-largo") == "a b", "otra plegada")
+    assert(m1.text == "cuerpo\n", "cuerpo simple con CRLF -> LF")
+    assert(m1.content_type == "text/plain", "tipo por omisión")
+    let m2: MimeMessage = parse_ok("Subject: =?UTF-8?B?Q290aXphY2nDsw==?=\r\n =?UTF-8?Q?n_123?=\r\nDate: Thu, 1 Oct 2026 10:00:00 +0000\r\n")
+    assert(m2.subject == "Cotización 123", "palabras codificadas en líneas plegadas: " + m2.subject)
+    assert(m2.text == "" and m2.parts.length() == 0, "solo cabeceras (BODY[HEADER] de IMAP)")
+    assert(m2.date == 1790848800, "fecha")
+    let m3: MimeMessage = parse_ok("Message-ID: <a@b>\nReferences: <r1@x> <r2@x>\n\t<r3@x>\nIn-Reply-To: <r3@x> (comentario)\nSubject: x\n\ncuerpo")
+    assert(m3.message_id == "<a@b>" and m3.references.length() == 3 and m3.in_reply_to.length() == 1, "ids")
+    assert(m3.text == "cuerpo", "LF puro")
+
+    // ── autorrespuesta por cabeceras sueltas ──
+    let au1: MimeMessage = parse_ok("Auto-Submitted: auto-generated\nSubject: x\n\nc")
+    assert(au1.is_auto_reply and au1.auto_kind == "auto-generated", "auto-generated")
+    let au2: MimeMessage = parse_ok("Auto-Submitted: no\nSubject: x\n\nc")
+    assert(au2.is_auto_reply == false, "auto-submitted: no")
+    let au3: MimeMessage = parse_ok("X-Autoreply: yes\nSubject: x\n\nc")
+    assert(au3.auto_kind == "x-autoreply", "x-autoreply")
+    let au4: MimeMessage = parse_ok("Precedence: bulk\nSubject: x\n\nc")
+    assert(au4.auto_kind == "precedence:bulk", "precedence bulk")
+    let au5: MimeMessage = parse_ok("Precedence: list\nList-Id: <l.x.cl>\nSubject: x\n\nc")
+    assert(au5.is_auto_reply == false and au5.is_list, "precedence list no es autorrespuesta, y sí es lista")
+
+    println("mime unidades ok")
+    return 0
+}

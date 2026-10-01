@@ -239,6 +239,32 @@ else
     OVERALL=1
 fi
 
+# ── Sonda TLS de std/imap (lectura de literales tras tls_read_line, STARTTLS
+# verificado contra el sistema, plazos) ─────────────────────────────────────
+# Fixture propio (tests/integration/imap_probe): servidor IMAP de mentira en
+# Python con una PKI armada con openssl. SKIP limpio sin openssl. Puertos
+# 13110-13113 (IMAP_PROBE_PORT).
+echo -e "\n${BOLD}-- std/imap: sonda TLS (buffer de línea, STARTTLS, plazos) --${NC}"
+IP_BIN="/tmp/nyx-imap-probe"
+echo -e "  Compiling tests/integration/imap_probe/sonda.nx..."
+cp tests/integration/imap_probe/sonda.nx script.nx
+if NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap >/dev/null 2>&1 && \
+   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+       -o "$IP_BIN" 2>/dev/null; then
+    rm -f script.nx script.ll
+    if python3 tests/integration/test_imap_tls_probe.py "$IP_BIN"; then
+        echo -e "  ${GREEN}sonda TLS de std/imap passed${NC}"
+    else
+        echo -e "  ${RED}sonda TLS de std/imap failed${NC}"
+        OVERALL=1
+    fi
+    rm -f "$IP_BIN"
+else
+    rm -f script.nx script.ll
+    echo -e "  ${RED}sonda TLS de std/imap: no se pudo compilar el fixture${NC}"
+    OVERALL=1
+fi
+
 # ── std/serve (framework web absorbido al core) ──────────────────────────
 # Fixture propio (tests/integration/serve_std): server mínimo con std/serve +
 # std/template. Cubre el CONTRATO público del módulo: {param}, JSON,

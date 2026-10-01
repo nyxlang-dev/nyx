@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.35.0 -->
-<!-- nyx-stdlib: 3786550990-1019100 -->
+<!-- nyx-stdlib: 1709870180-1191883 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -449,7 +449,7 @@
 
 ### `std/smtp`
 
-`import "std/smtp"` — 26 funciones:
+`import "std/smtp"` — 30 funciones:
 
 - `pub fn smtp_parse_line(line: String) -> Array`
 - `pub fn smtp_line_code(l: Array) -> int`
@@ -474,6 +474,10 @@
 - `pub fn smtp_message(de: String, para: Array, asunto: String, cuerpo: String) -> Array`
 - `pub fn smtp_message_html(de: String, para: Array, asunto: String, html: String) -> Array`
 - `pub fn smtp_attach(m: Array, nombre: String, ctype: String, datos: String) -> Array`
+- `pub fn smtp_message_id(m: Array) -> String`
+- `pub fn smtp_set_message_id(m: Array, id: String) -> Array`
+- `pub fn smtp_header(m: Array, nombre: String, valor: String) -> Array`
+- `pub fn smtp_reply_to(m: Array, original_id: String, references: Array) -> Array`
 - `pub fn smtp_boundary(m: Array) -> String`
 - `pub fn smtp_render(m: Array) -> String`
 - `pub fn smtp_send(c: Array, m: Array) -> Result<int, Error>`
@@ -645,7 +649,7 @@
 
 ### `std/tls`
 
-`import "std/tls"` — 31 funciones:
+`import "std/tls"` — 32 funciones:
 
 - `pub fn tls_version(h: int) -> String`
 - `pub fn tls_cipher(h: int) -> String`
@@ -670,6 +674,7 @@
 - `pub fn tls_upgrade_fd(fd: int, host: String) -> int`
 - `pub fn tls_upgrade_fd_verified(fd: int, host: String) -> int`
 - `pub fn tls_upgrade_fd_ca_only(fd: int, host: String) -> int`
+- `pub fn tls_upgrade_fd_verified_system(fd: int, host: String) -> int`
 - `pub fn cert_is_expired(cert: Array) -> bool`
 - `pub fn cert_days_to_expiry(cert: Array) -> int`
 - `pub fn cert_is_self_signed(cert: Array) -> bool`
@@ -1136,6 +1141,25 @@
 - `pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array` — Parte de archivo: campo `name`, nombre de archivo `filename`, content-type `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
 - `pub fn multipart_build(parts: Array) -> Result<Multipart, Error>`
 
+### `std/image`
+
+`import "std/image"` — 14 funciones:
+
+- `pub fn image_limits() -> ImageLimits` — Topes por omisión: 30 MB de archivo, 64 millones de píxeles, 30000 de lado.
+- `pub fn image_png_read(b: String, allow_interlace: bool) -> Result<ImagePng, Error>` — Lee un PNG sin decodificar píxeles: firma, CRC de CADA chunk, IHDR, PLTE, tRNS y los IDAT. `allow_interlace` false rechaza Adam7. Err(parse) si está dañado, Err(invalid) si es de una variante que no se lee (chunk crítico desconocido, combinación inválida).
+- `pub fn image_png_split(raw: String, w: int, h: int, depth: int, ctype: int, trns: String, color: StringBuilder, alpha: StringBuilder) -> String` — Des-filtra las filas de un PNG (5 filtros) y reparte cada píxel entre `color` y `alpha` (dos flujos crudos, para incrustar en un PDF). "" si todo cerró, o la causa. Lo usa std/pdf; para píxeles use image_decode.
+- `pub fn image_jpeg_frame(b: String) -> Result<Array, Error>` — Recorre los marcadores de un JPEG hasta el encabezado de cuadro (SOF) y devuelve [ancho, alto, componentes, orientación EXIF, marcador SOF (0xC0-0xCF), bits por muestra]. Solo entiende la estructura: quien lo llama decide qué variantes acepta (std/pdf pasa SOF0-2; std/image_info solo 8 bits y 1 o 3 componentes). Un SOF que no es 0xC0-0xC2 (sin pérdida, aritmético, jerárquico) devuelve ancho, alto, componentes y bits en 0.
+- `pub fn image_info(bytes: String) -> Result<ImageInfo, Error>` — Formato, tamaño y orientación de una imagen SIN decodificar los píxeles (lee solo el encabezado: es barato aunque el archivo sea de 30 MB). Err(unsupported) para HEIC, WebP, AVIF, GIF, CMYK, JPEG de 12 bits, sin pérdida o aritmético; Err(parse) si el encabezado está dañado.
+- `pub fn image_orient(img: Image, orientation: int) -> Image` — Aplica una orientación EXIF (1-8) a la imagen y devuelve la imagen «derecha» (con orientación 1): 2 espejo horizontal, 3 giro de 180, 4 espejo vertical, 5 transpuesta, 6 giro de 90 en sentido horario, 7 transversa, 8 giro de 90 antihorario. Con 1 (u otro valor) devuelve la misma imagen. `image_decode` ya la aplica al decodificar un JPEG; esta función sirve para quien decodifica sin orientar o compone.
+- `pub fn image_decode(bytes: String, limits: ImageLimits) -> Result<Image, Error>` — Decodifica una imagen a píxeles de 8 bits por canal, al tamaño completo. PNG (gris, gris+alfa, RGB, RGBA y paleta, 1-16 bits, con y sin Adam7; 16 bits se reduce al byte alto) y JPEG secuencial (baseline, gris o YCbCr, cualquier submuestreo común, con reinicios y varios escaneos; el JPEG sale con la orientación EXIF ya aplicada y el perfil ICC en `Image.icc`). Valida los topes con el encabezado ANTES de reservar: Err(invalid) si el archivo, los píxeles o un lado pasan `limits`; Err(unsupported) para formatos que no se decodifican (JPEG progresivo, CMYK, HEIC...); Err(parse) si está dañado o truncado.
+- `pub fn image_decode_scaled(bytes: String, limits: ImageLimits, denom: int) -> Result<Image, Error>` — Como image_decode pero un JPEG se decodifica REDUCIDO a 1/denom del tamaño (denom 1, 2, 4 u 8; el lado sale techo(lado / denom)): la IDCT se calcula ya reducida, así que a 1/8 no toca los 12 millones de píxeles de una foto sino 190 mil. `Image.reduction` dice la reducción que se aplicó. Un PNG no se reduce al decodificar (sale completo, reduction = 1). Err(invalid) si denom no es 1, 2, 4 u 8.
+- `pub fn image_decode_min(bytes: String, limits: ImageLimits, min_w: int, min_h: int) -> Result<Image, Error>` — Decodifica con la MAYOR reducción (1/1, 1/2, 1/4 o 1/8) cuyo resultado, ya orientado, sigue teniendo al menos min_w x min_h píxeles. Es la puerta de entrada de las miniaturas: pedir el tamaño más grande que se va a servir y achicar después con image_resize_fit / image_resize_cover. Si la imagen ya es más chica que el mínimo, sale completa.
+- `pub fn image_crop(img: Image, x: int, y: int, w: int, h: int) -> Result<Image, Error>` — Recorta el rectángulo de esquina (x, y) y tamaño w x h. Err(invalid) si algo de eso cae fuera de la imagen o no es positivo. Conserva el perfil ICC.
+- `pub fn image_resize(img: Image, w: int, h: int) -> Result<Image, Error>` — Escala la imagen a EXACTAMENTE w x h (sin conservar la proporción): Lanczos3 con soporte proporcional en el eje que se achica, triangular (bilineal) en el que se agranda; un eje que no cambia no se toca. Err(invalid) si w o h no son positivos o pasan el tope (30000 de lado, 64 millones de píxeles). Salida idéntica a Image.resize de Pillow (LANCZOS al achicar, BILINEAR al agrandar).
+- `pub fn image_resize_fit(img: Image, max_w: int, max_h: int) -> Result<Image, Error>` — Achica la imagen para que CAIGA dentro de max_w x max_h conservando la proporción (uno de los dos lados llega al tope, el otro se redondea al entero más cercano). Nunca agranda: si ya cabe se devuelve la misma imagen. Lanczos3. Err(invalid) si algún tope no es positivo.
+- `pub fn image_resize_cover(img: Image, w: int, h: int) -> Result<Image, Error>` — Llena la caja w x h: recorta al centro la parte de la imagen que tiene la proporción de la caja y la escala a w x h (el cuadrado de una miniatura). Nunca agranda: si la parte recortada es más chica que la caja en algún lado, el resultado es la caja reducida a lo que da la imagen (misma proporción, sin escalar). Lanczos3. Err(invalid) si w o h no son positivos.
+- `pub fn image_flatten(img: Image, r: int, g: int, b: int) -> Image` — Compone la imagen sobre un fondo de color (r, g, b, 0-255) y quita el canal alfa: una RGBA sale RGB, con c = (c * a + fondo * (255 - a)) / 255 redondeado. Una imagen sin alfa (gris o RGB) se devuelve igual. Es el paso previo a codificar JPEG, que no guarda transparencia.
+
 ### `std/proxy`
 
 `import "std/proxy"` — 8 funciones:
@@ -1148,6 +1172,26 @@
 - `pub fn proxy_set_healthy(config: ProxyConfig, idx: int)`
 - `pub fn parse_content_length(s: String) -> int`
 - `pub fn proxy_start(config: ProxyConfig)`
+
+### `std/mime`
+
+`import "std/mime"` — 15 funciones:
+
+- `pub fn mime_limits() -> MimeLimits`
+- `pub fn mime_base64_decode(s: String, max_bytes: int) -> Result<String, Error>`
+- `pub fn mime_qp_decode(s: String) -> String`
+- `pub fn mime_charset_to_utf8(charset: String, bytes: String) -> Option<String>`
+- `pub fn mime_decode_words(s: String) -> String`
+- `pub fn mime_header(m: MimeMessage, name: String) -> String`
+- `pub fn mime_header_all(m: MimeMessage, name: String) -> Array`
+- `pub fn mime_header_text(m: MimeMessage, name: String) -> String`
+- `pub fn mime_parse_value(v: String) -> MimeValue`
+- `pub fn mime_param(v: MimeValue, name: String) -> String`
+- `pub fn mime_parse_addresses(s: String) -> Array`
+- `pub fn mime_parse_date(s: String) -> int`
+- `pub fn mime_html_to_text(html: String) -> String`
+- `pub fn mime_safe_filename(name: String) -> String`
+- `pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
 
 ### `std/events`
 

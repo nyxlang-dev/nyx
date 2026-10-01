@@ -55,6 +55,36 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `unzip` (`run_zip_verify.sh`, en `make test-stdlib`; `run_xlsx_verify.sh` aparte, necesita openpyxl). `test-458..462` y las recetas
   123 (zip), 124 (escribir un libro) y 125 (leer una hoja).
 
+- **Primera tanda de los pedidos grandes de nyxerp del 2026-09-29** (GO de Ottavio el 2026-09-30),
+  hecha por subagentes en worktrees propios, revisada e integrada con una batería completa:
+  - **`std/image`: decodificar, achicar y recortar fotos en Nyx puro, igual en nativo y wasm**
+    `[arco: std-image]`. `image_info` (formato por firma, lados, orientación sin decodificar);
+    `image_decode` de PNG completo y de JPEG baseline de 8 bits (gris o color, todos los
+    submuestreos, reinicios), con la orientación EXIF ya aplicada, el perfil ICC expuesto en
+    `Image.icc` sin aplicarlo, y reducción 1/2, 1/4 y 1/8 durante la decodificación
+    (`image_decode_scaled`, `image_decode_min`); `image_resize`, `image_resize_fit`,
+    `image_resize_cover`, `image_crop` e `image_flatten` (alfa premultiplicado). Topes
+    (`ImageLimits`: bytes, píxeles, lado) validados ANTES de reservar memoria. Progresivo, CMYK y 12
+    bits dan `Err(unsupported)` con la salida; WebP, GIF, HEIC, AVIF, BMP y TIFF se reconocen por firma.
+    Verificado contra Pillow (fotos de varios codificadores, las 8 orientaciones, redimensionado).
+    El lector PNG salió de `std/pdf`, que ahora lo importa. Falta el codificador JPEG y las
+    miniaturas en un paso (Tasks 5-6). Tests 475-480, wasm 55-56; spike del prototipo medido.
+  - **`std/mime`: leer correo entrante** `[arco: std-imap]`: cabeceras con plegado, RFC 2047 y
+    2231, base64 y quoted-printable, charsets, multipart anidado con tope de profundidad, adjuntos
+    binarios, rebotes, HTML a texto, y los ids de hilo (Message-ID, In-Reply-To, References). Base
+    de `std/imap` (Tasks 4-6, próxima tanda). Tests 472-474, wasm 54.
+  - **`std/smtp`: Message-ID y cabeceras de hilo** `[arco: std-imap]`: el id se fija al crear el
+    mensaje (antes cambiaba en cada `smtp_render` y no había forma de saber el que salió);
+    `smtp_message_id`, `smtp_set_message_id`, `smtp_header` y `smtp_reply_to` (arma
+    `In-Reply-To` + `References`; la cabecera `Reply-To` se pone con `smtp_header`). `smtp_send`
+    rechaza con `Err(header)` CR/LF/NUL, nombres inválidos y las cabeceras que escribe la biblioteca.
+    `test-stdlib-10`. Pedido de nyxerp del 2026-10-01 (mesa de ayuda).
+  - **`tls_upgrade_fd_verified_system`** en `std/tls`: STARTTLS verificado contra el almacén del
+    sistema, para IMAP (143) y SMTP (587). Sonda TLS de `std/imap` en `make test-integration`.
+  - **Android** `[arco: target-android]`: sonda del build arm64 contra el sysroot del NDK (spike) y
+    la capa `os_*` para bionic: cambio de contexto propio en ensamblador aarch64 y
+    `os_thread_timedjoin`/`cancel` cooperativos.
+
 ### Arreglado
 
 - **Editar un archivo de `include_bytes` no recompilaba su biblioteca de `[lib] modules`.** La huella
@@ -63,6 +93,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   (ni `touch` del `.nx` alcanzaba). Ahora cada archivo hasheado entero suma la ruta y el sha256 de
   cada `include_bytes("…")` que nombra, incluidos los de módulos no-`[lib]` que la biblioteca
   inlinea. Fricción nyxerp 20260930-170003; tres casos nuevos en `run_lib_modules.sh`.
+- **STARTTLS «verificado» no verificaba nada** (`runtime/tls.c`). `nyx_tls_client_upgrade` con modo
+  4 (estricto contra el almacén del sistema) caía en el contexto de `tls_set_ca_file` y ninguna rama
+  lo verificaba: el handshake aceptaba cualquier certificado. Ahora usa el contexto del sistema y
+  verifica cadena y nombre; un modo fuera de 0..4 falla cerrado. Hallado por la sonda TLS de
+  `std/imap` `[arco: std-imap]`.
+- **Revisión de la tanda antes de integrar** (entrada hostil: fotos subidas y correo entrante):
+  - `std/image`: un SOS de largo 2 al final del archivo abortaba el proceso (lectura fuera de
+    rango), y cada tabla Huffman de un DHT armaba al leerse una tabla de 65536 entradas sin tope de
+    cuántas trae el archivo (1 MB de tablas vacías eran ~4·10⁹ escrituras). Ahora se arman al
+    usarlas. Casos en el test 478 `[arco: std-image]`.
+  - `std/mime`: `mime_html_to_text` pasaba el HTML entero a minúsculas en cada `<style>` (DoS
+    cuadrático que controla el remitente), y el `_` final de una palabra Q de RFC 2047 se perdía
+    («Cotización123»). Casos en el test 473 `[arco: std-imap]`.
+  - `std/smtp`: `smtp_render`, que es pública, escribía las cabeceras extra sin validar (inyección de
+    un `Bcc` desde un `In-Reply-To` copiado de un correo entrante). Ahora cambia CR/LF/NUL por
+    espacios y omite los nombres inválidos o reservados.
+  - La guarda de español neutro tomaba la sigla «SOS» (el marcador JPEG) por el «sos» rioplatense.
 
 - **Un elemento de un `Array` sin tipo, asignado a un campo o comparado con un String.**
   `c.nombre = xs[i]` guardaba el entero opaco del elemento directo en el campo, y `f != xs[0]` (el
@@ -148,6 +195,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   el arco compilacion-separada. Encontrado probando la 0.35.0 instalada. Guarda en
   `run_tooling_gates.sh` (`make test-ai-first`), con control positivo: un programa sin avisos no
   muestra ninguno.
+
+### Cambiado
+
+- **El cambio de contexto de las goroutines es ensamblador propio en Linux aarch64** (antes solo
+  opt-in): `swapcontext` de glibc hace un `rt_sigprocmask` por cambio, ~2230 ns por yield contra ~175
+  ns en asm (64 goroutines, 1 worker). Validado con la suite de runtime y 23 programas de goroutines
+  en las dos rutas; `-DNYX_OS_CTX_ASM=0` vuelve a ucontext. macOS y x86_64 siguen con ucontext.
+  Decisión de Ottavio `[arco: target-android]`.
 
 ## [0.35.0] — 2026-09-29
 
