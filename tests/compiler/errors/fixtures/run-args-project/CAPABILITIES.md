@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.35.0 -->
-<!-- nyx-stdlib: 1709870180-1191883 -->
+<!-- nyx-stdlib: 3665615052-1296638 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1143,7 +1143,7 @@
 
 ### `std/image`
 
-`import "std/image"` — 14 funciones:
+`import "std/image"` — 19 funciones:
 
 - `pub fn image_limits() -> ImageLimits` — Topes por omisión: 30 MB de archivo, 64 millones de píxeles, 30000 de lado.
 - `pub fn image_png_read(b: String, allow_interlace: bool) -> Result<ImagePng, Error>` — Lee un PNG sin decodificar píxeles: firma, CRC de CADA chunk, IHDR, PLTE, tRNS y los IDAT. `allow_interlace` false rechaza Adam7. Err(parse) si está dañado, Err(invalid) si es de una variante que no se lee (chunk crítico desconocido, combinación inválida).
@@ -1159,6 +1159,39 @@
 - `pub fn image_resize_fit(img: Image, max_w: int, max_h: int) -> Result<Image, Error>` — Achica la imagen para que CAIGA dentro de max_w x max_h conservando la proporción (uno de los dos lados llega al tope, el otro se redondea al entero más cercano). Nunca agranda: si ya cabe se devuelve la misma imagen. Lanczos3. Err(invalid) si algún tope no es positivo.
 - `pub fn image_resize_cover(img: Image, w: int, h: int) -> Result<Image, Error>` — Llena la caja w x h: recorta al centro la parte de la imagen que tiene la proporción de la caja y la escala a w x h (el cuadrado de una miniatura). Nunca agranda: si la parte recortada es más chica que la caja en algún lado, el resultado es la caja reducida a lo que da la imagen (misma proporción, sin escalar). Lanczos3. Err(invalid) si w o h no son positivos.
 - `pub fn image_flatten(img: Image, r: int, g: int, b: int) -> Image` — Compone la imagen sobre un fondo de color (r, g, b, 0-255) y quita el canal alfa: una RGBA sale RGB, con c = (c * a + fondo * (255 - a)) / 255 redondeado. Una imagen sin alfa (gris o RGB) se devuelve igual. Es el paso previo a codificar JPEG, que no guarda transparencia.
+- `pub fn image_default_quality() -> int` — Calidad por omisión del codificador JPEG: 80 (una foto de producto a 400 px sale en el orden de decenas de KB).
+- `pub fn image_encode_jpeg(img: Image, quality: int) -> Result<String, Error>` — Codifica la imagen como JPEG baseline (secuencial): calidad 1-100 con la fórmula de libjpeg sobre las tablas del Anexo K, Huffman estándar, JFIF; 4:2:0 hasta calidad 90 y 4:4:4 por encima. Una imagen en gris sale de 1 componente; una con alfa (RGBA) se compone antes sobre BLANCO (para otro fondo use image_flatten). No escribe EXIF (la orientación ya viene aplicada al decodificar y la ubicación GPS no se conserva) pero sí el perfil ICC de `Image.icc` si lo trae. Los bytes de salida son los mismos en nativo y en wasm. Err(invalid) si la calidad no está en 1..100, si un lado es cero o pasa de 65535, o si la imagen no es coherente (canales, filas).
+- `pub fn image_thumbnail(bytes: String, max_w: int, max_h: int, quality: int) -> Result<String, Error>` — Miniatura en un paso: decodifica `bytes` (JPEG o PNG, con los topes de image_limits()) con la mayor reducción que deja al menos el doble del tamaño final, aplica la orientación EXIF, achica con Lanczos3 para que CAIGA en max_w x max_h conservando la proporción (nunca agranda), y codifica JPEG con la calidad dada (1-100; image_default_quality() es 80). Con alfa compone sobre blanco. La salida no lleva EXIF ni ubicación. Err(invalid) si la calidad o algún lado no son válidos o el archivo pasa los topes; Err(parse) si está dañado; Err(unsupported) para formatos que no se decodifican.
+- `pub fn image_thumbnails(bytes: String, sizes: Array, quality: int) -> Result<Array, Error>` — Varias miniaturas de UNA sola decodificación: `sizes` es un Array de pares [max_w, max_h] (cada uno con la semántica de image_thumbnail) y el resultado un Array de String (JPEG) en el mismo orden. La decodificación usa la reducción que sirve al tamaño más grande pedido; los demás se achican desde esa misma imagen. Ejemplo: image_thumbnails(foto, [[1200, 1200], [600, 600], [150, 150]], 80). Los mismos errores que image_thumbnail.
+- `pub fn image_strip_icc(img: Image) -> Image` — Quita el perfil ICC de la imagen (`icc` = ""), para que el JPEG codificado no lo lleve. Por omisión el codificador lo conserva (una foto en Display P3 sin su perfil se ve desteñida); quitarlo ahorra 0.5-3 KB por imagen cuando se sabe que el destino es sRGB.
+
+### `std/imap`
+
+`import "std/imap"` — 23 funciones:
+
+- `pub fn imap_opts() -> ImapOpts`
+- `pub fn imap_parse_values(s: String) -> Result<Array, Error>`
+- `pub fn imap_parse_response(raw: String) -> Result<ImapResp, Error>`
+- `pub fn imap_quote(s: String) -> Result<String, Error>`
+- `pub fn imap_connect_tls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_connect_tls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_connect_starttls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_connect_starttls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_capabilities(c: ImapConn) -> Array`
+- `pub fn imap_has_cap(c: ImapConn, cap: String) -> bool`
+- `pub fn imap_login(c: ImapConn, user: String, pass: String) -> Result<int, Error>`
+- `pub fn imap_auth_plain(c: ImapConn, user: String, pass: String) -> Result<int, Error>`
+- `pub fn imap_auth_xoauth2(c: ImapConn, user: String, token: String) -> Result<int, Error>`
+- `pub fn imap_mailbox(c: ImapConn) -> ImapMailbox`
+- `pub fn imap_select(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error>`
+- `pub fn imap_examine(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error>`
+- `pub fn imap_noop(c: ImapConn) -> Result<int, Error>`
+- `pub fn imap_search_unseen(c: ImapConn) -> Result<Array, Error>`
+- `pub fn imap_fetch_message(c: ImapConn, uid: int) -> Result<ImapMessage, Error>`
+- `pub fn imap_fetch_since(c: ImapConn, uidvalidity: int, last_uid: int, max_messages: int) -> Result<ImapFetch, Error>`
+- `pub fn imap_mark_seen(c: ImapConn, uid: int) -> Result<int, Error>`
+- `pub fn imap_logout(c: ImapConn) -> int`
+- `pub fn imap_close(c: ImapConn) -> int`
 
 ### `std/proxy`
 
@@ -1175,7 +1208,7 @@
 
 ### `std/mime`
 
-`import "std/mime"` — 15 funciones:
+`import "std/mime"` — 16 funciones:
 
 - `pub fn mime_limits() -> MimeLimits`
 - `pub fn mime_base64_decode(s: String, max_bytes: int) -> Result<String, Error>`
@@ -1192,6 +1225,7 @@
 - `pub fn mime_html_to_text(html: String) -> String`
 - `pub fn mime_safe_filename(name: String) -> String`
 - `pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
+- `pub fn mime_parse_head(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
 
 ### `std/events`
 

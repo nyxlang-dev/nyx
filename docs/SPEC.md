@@ -4715,8 +4715,8 @@ plazo: una sola conexión que goteaba la cabecera dejaba mudo a `http_serve`, qu
 
 ## Correo saliente (`std/smtp`)
 
-Cliente SMTP (RFC 5321) para **mandar**. No recibe: IMAP y POP3 quedan fuera a propósito, porque
-el parseo de MIME de ENTRADA es un problema distinto y más grande. Tampoco encola ni reintenta —
+Cliente SMTP (RFC 5321) para **mandar**. No recibe: leer un buzón es `std/imap` (sección
+siguiente) y el parseo de MIME de ENTRADA es `std/mime`; POP3 queda fuera. Tampoco encola ni reintenta —
 mandar un correo es una operación, encolarlo es un producto.
 
 ### Conectar
@@ -4808,6 +4808,97 @@ Los `kind` del `Error` distinguen qué hay que arreglar:
 | `recipient` | El servidor rechazó un destinatario — el mensaje del error lo nombra. |
 
 Receta completa: `examples/by-example/113-smtp.nx`.
+
+---
+
+## Correo entrante (`std/imap`)
+
+Cliente IMAP (RFC 3501) sobre TLS para **leer** un buzón: mensajes nuevos, MIME, adjuntos y marcar
+leídos. Solo nativo (sin sockets en wasm); el análisis de cada mensaje es `std/mime` (Nyx puro,
+también en wasm). Nació del pedido de una mesa de ayuda que convierte en casos los correos de una
+casilla y enhebra la respuesta del cliente por `In-Reply-To` / `References` (el id que el sistema
+guardó al enviar con `std/smtp`).
+
+### Conectar y autenticar
+
+| Función | Puerto | Qué hace |
+|---|---|---|
+| `imap_connect_tls(host, port, opts) -> Result<ImapConn, Error>` | 993 | TLS desde el saludo, **verificando** cadena y nombre contra las CAs del sistema. |
+| `imap_connect_starttls(host, port, opts)` | 143 | Saluda en claro, pide `STARTTLS` y recién ahí cifra, **verificando**. |
+| `imap_connect_tls_insecure` / `imap_connect_starttls_insecure` | | Sin verificar. Solo desarrollo. |
+| `imap_login(c, usuario, clave) -> Result<int, Error>` | | `LOGIN` (cPanel/Dovecot, clave de aplicación de Gmail). |
+| `imap_auth_plain(c, usuario, clave)` | | `AUTHENTICATE PLAIN` (con SASL-IR si el servidor lo anuncia). |
+| `imap_auth_xoauth2(c, usuario, token)` | | `AUTHENTICATE XOAUTH2` con un token OAuth2 **que trae la aplicación**. |
+| `imap_logout(c) -> int`, `imap_close(c) -> int` | | Cierran. `imap_logout` nunca da error. |
+
+**Se verifica por omisión** (mismo criterio que `std/smtp`; las variantes sin verificar lo dicen en
+el nombre). **Las credenciales nunca viajan por un canal en claro y no hay flag para forzarlo**: la
+comprobación mira el estado real del canal. `STARTTLS` exige que el servidor lo anuncie y no sigue
+en claro si falla; si el servidor manda datos después de su `OK`, se corta (inyección de
+respuestas). Obtener y renovar el token OAuth2 no es de la biblioteca (no hay `std/oauth2`): para
+Gmail el alcance es `https://mail.google.com/`. Un usuario o clave con bytes no ASCII pasa solo por
+`PLAIN`. Los mensajes de error nunca llevan la clave ni el token.
+
+### Leer
+
+```nyx
+imap_select(c, "INBOX") -> Result<ImapMailbox, Error>      // uidvalidity, uidnext, exists, readonly
+imap_examine(c, "INBOX")                                    // solo lectura
+imap_fetch_since(c, uidvalidity, ultimo_uid, max) -> Result<ImapFetch, Error>
+imap_fetch_message(c, uid) -> Result<ImapMessage, Error>
+imap_search_unseen(c) -> Result<Array, Error>               // UID ascendentes
+imap_mark_seen(c, uid) -> Result<int, Error>                // opcional y aparte
+imap_noop(c), imap_mailbox(c), imap_capabilities(c), imap_has_cap(c, cap)
+```
+
+**El cursor es por UID, no «los no leídos».** `\Seen` es estado compartido con quien abra el mismo
+buzón desde su teléfono: si la respuesta del cliente se lee ahí primero, `imap_search_unseen` ya no
+la devuelve y el sistema nunca se entera. `imap_fetch_since` pide «los UID mayores que el último
+que procesé» y no toca ninguna marca; la aplicación guarda `(uidvalidity, last_uid)` entre
+llamadas. Esconde dos trampas del protocolo: `UID SEARCH n:*` devuelve siempre al menos el último
+mensaje aunque sea ≤ n (se filtra), y si `UIDVALIDITY` cambió los UID guardados ya no significan
+nada (`Err "stale"` con el valor nuevo en `e.code`; se reescanea por `Message-ID`).
+
+La búsqueda es **por tramos** (`UID n:n+K`, K entre 1000 y 100000 ligado a `max_messages`) y no `n:*`:
+con cientos de miles de mensajes la línea de un `n:*` pasaría `max_line` y la primera corrida nunca
+arrancaría. Un tramo vacío igual avanza el cursor (hasta 64 tramos por llamada). `opts.fetch_ms`
+(0 = sin plazo) acota el total de la llamada; un `last_uid` de 4294967295 no tiene nada más nuevo y
+uno mayor es `Err "invalid"`. Un FETCH que existe pero no trae `BODY[]` (o lo trae NIL) es
+`Err "protocol"` y el cursor no se mueve; los datos repartidos en varias respuestas FETCH de un mismo
+UID se juntan.
+
+Todo se pide con `BODY.PEEK`: bajar un mensaje no lo marca como leído. Un mensaje cuyo
+`RFC822.SIZE` pasa de `max_message` (10 MB) baja **solo sus cabeceras**; y si un tope de `std/mime`
+(demasiadas partes, una parte enorme) rechazaría el mensaje entero, se reanaliza con
+`mime_parse_head`. En ambos casos `ImapMessage.truncated` es true y trae asunto, remitente,
+`Message-ID`, `In-Reply-To` y `References`: la mesa de ayuda no pierde el hilo de un correo grande.
+
+### Errores y entrada hostil
+
+| `kind` | Qué pasó |
+|---|---|
+| `connection` | Red, host o puerto; el servidor cortó o dijo `BYE`. |
+| `tls` | El certificado no verifica (`code` = `X509_V_ERR_*`) o falló el handshake. |
+| `timeout` | Venció el plazo de un comando (`cmd_ms`, 30 s). |
+| `auth` | Credenciales rechazadas, o había que cifrar primero. |
+| `protocol` | El servidor dijo algo ilegible, un `NO` inesperado, o se pasó un tope. |
+| `invalid` | Argumento malo: CR/LF/NUL en un nombre, carpeta no ASCII, sin carpeta abierta. |
+| `not_found` | La carpeta o el UID no existen. |
+| `stale` | `UIDVALIDITY` cambió. |
+
+Todo lo que manda el servidor es entrada hostil. Topes en `ImapOpts`, comprobados **antes** de leer o
+reservar: línea (1 MB), literal (16 MB: `{99999999999}` no reserva nada), respuesta (24 MB, **acumulado por comando**),
+respuestas sin etiqueta por comando (5000), profundidad de listas (16) y elementos (262144).
+Cada lectura tiene plazo y cada comando un plazo total: un servidor mudo no cuelga a quien llama.
+Tras un error que rompió el flujo la conexión queda **cerrada** y toda llamada siguiente da
+`Err "connection"`.
+
+**Fuera de alcance** (decisión del arco): IDLE (se sondea cada 30-120 s con `imap_noop` +
+`imap_fetch_since`), `BODYSTRUCTURE` por partes, UTF-7 modificado (una carpeta no ASCII da
+`Err "invalid"`), `EXPUNGE`/`COPY`/`APPEND`/`LIST`, `THREAD`, etiquetas de Gmail. El connect de
+`STARTTLS` usa el plazo del sistema operativo, no `connect_ms`.
+
+Receta completa: `examples/by-example/134-imap-correo-entrante.nx`.
 
 ---
 
@@ -4954,6 +5045,51 @@ con XML adentro, así que `std/xlsx` se apoya en los otros dos, que también sir
 
 Recetas: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro.nx` y
 `125-xlsx-leer-hoja.nx`.
+
+---
+
+## Imágenes (`std/image`)
+
+Lee JPEG y PNG a píxeles, los achica y recorta, y **escribe JPEG** en Nyx puro (sin C: igual en nativo y
+en `wasm32-wasi`, con los mismos bytes de salida). Nació del pedido de nyxerp: una foto de 3-5 MB del
+teléfono tiene que servirse como una versión chica (~600 px) en JPEG, sin la ubicación de la foto.
+Todos los errores son `Result<_, Error>`
+con `kind` `"invalid"` (parámetro o tope), `"parse"` (archivo dañado) o `"unsupported"` (HEIC, WebP,
+GIF, JPEG progresivo, CMYK...).
+
+```nyx
+image_info(bytes: String) -> Result<ImageInfo, Error>          // formato, tamaño, orientación: sin decodificar
+image_decode(bytes: String, limits: ImageLimits) -> Result<Image, Error>
+image_decode_scaled(bytes, limits, denom) / image_decode_min(bytes, limits, min_w, min_h)   // IDCT reducida 1/2, 1/4, 1/8
+image_limits() -> ImageLimits                                  // 30 MB, 64 M píxeles, 30000 de lado
+image_resize / image_resize_fit / image_resize_cover / image_crop / image_flatten / image_orient
+image_encode_jpeg(img: Image, quality: int) -> Result<String, Error>
+image_thumbnail(bytes: String, max_w: int, max_h: int, quality: int) -> Result<String, Error>
+image_thumbnails(bytes: String, sizes: Array, quality: int) -> Result<Array, Error>   // sizes: pares [max_w, max_h]
+image_default_quality() -> int                                 // 80
+image_strip_icc(img: Image) -> Image
+```
+
+- **Decodificar**: PNG completo (gris, gris+alfa, RGB, RGBA, paleta, 1-16 bits, Adam7) y JPEG
+  secuencial (baseline, gris o YCbCr, cualquier submuestreo común, reinicios, varios escaneos). La
+  orientación EXIF se aplica al decodificar; el perfil ICC se expone en `Image.icc` sin convertirse. Los
+  topes se validan con el encabezado, antes de reservar memoria (D-9).
+- **Redimensionar**: Lanczos3 al achicar y bilineal al agrandar, con pesos enteros: sale byte a byte igual
+  a Pillow. `image_resize_fit` no agranda; `image_resize_cover` llena la caja y recorta al centro.
+- **Codificar** (D-7): `image_encode_jpeg` escribe JPEG baseline con la calidad 1-100 de libjpeg sobre
+  las tablas de cuantización del Anexo K, tablas Huffman estándar (Anexo K.3) y encabezado JFIF;
+  4:2:0 hasta calidad 90 y 4:4:4 por encima; gris sale de un componente; una imagen con alfa se compone
+  sobre blanco (`image_flatten` para otro fondo). **No escribe EXIF ni ubicación**; el perfil ICC se
+  conserva (`image_strip_icc` lo quita). La FDCT es entera, así que la salida es determinista; su
+  calidad coincide con la de Pillow/libjpeg a igual calidad (PSNR idéntico hasta q90).
+- **Miniaturas**: `image_thumbnail` decodifica con la mayor reducción que deja al menos el doble del
+  tamaño final, achica con Lanczos3 para que **quepa** en la caja (conserva la proporción, nunca agranda) y
+  codifica. `image_thumbnails` sirve varios tamaños de **una sola** decodificación.
+- **Fuera de alcance**: WebP (ni leer ni escribir), JPEG progresivo, PNG de salida, Huffman óptimo,
+  remuestreo en luz lineal.
+
+Receta: `examples/by-example/133-imagen-miniaturas.nx`. Pruebas: `test-475` a `test-482`
+(`tests/compiler/stdlib-suite/`) y `test-wasm-55` a `test-wasm-57`.
 
 ---
 

@@ -1104,7 +1104,7 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   `nyx_tls_client_upgrade` with mode 4 verified NOTHING** (the handshake went through
   with no check: a silent "verified"); fixed, and any mode outside 0..4 now fails
   closed. `std/smtp` does NOT use it yet (`smtp_starttls` has its own path); it is
-  the building block for a future IMAP client (probe: `tests/integration/imap_probe/`).
+  what `std/imap` uses for `imap_connect_starttls` (port 143).
 
 
 ### Threading / Concurrency
@@ -2499,8 +2499,8 @@ fn main() -> int {
 
 ### std/smtp — sending mail
 
-Outgoing SMTP (RFC 5321). **Sends only**: IMAP/POP3 are deliberately out of
-scope; parsing INBOUND mail is `std/mime`. No queues and no
+Outgoing SMTP (RFC 5321). **Sends only**: POP3 is out of scope; parsing INBOUND mail
+is `std/mime` and reading a mailbox is `std/imap`. No queues and no
 retries either: sending is one operation, queueing is a product (`nyx-queue`).
 
 ```nyx
@@ -2600,7 +2600,7 @@ Recipe: `examples/by-example/113-smtp.nx`.
 
 The INBOUND half of `std/smtp`: parses a raw message (`.eml` from disk, a provider
 webhook, whatever a fetcher downloaded). No network, no `extern "C"`: native and
-wasm. It reads; it does not fetch (no IMAP/POP3 here).
+wasm. It reads; it does not fetch (fetching a mailbox is `std/imap`, no POP3).
 
 ```nyx
 import "std/mime"
@@ -2625,7 +2625,7 @@ fn main() {
 
 API:
 
-- `mime_parse(raw, mime_limits()) -> MimeMessage` (CRLF or LF). Fields: `subject`
+- `mime_parse(raw, mime_limits()) -> Result<MimeMessage, Error>` (CRLF or LF). Fields: `subject`
   (decoded), `from_list/to_list/cc_list/reply_to_list` (Array of `MimeAddress`
   `{name, address}`), `date` (epoch UTC, -1 if missing/unparseable), `message_id`,
   `in_reply_to`, `references` (ids WITH their `<>`, the same form `smtp_message_id`
@@ -2636,6 +2636,9 @@ API:
   `auto_kind`, `is_list`, `is_dsn`, `is_bounce`, `bounce` (`MimeBounce`: `recipient`,
   `recipients`, `action`, `status`, `diagnostic`, `original_message_id`, `permanent`),
   `report_type`, `signed`, `encrypted`, `headers`.
+- `mime_parse_head(raw, mime_limits()) -> Result<MimeMessage, Error>` — parses ONLY the
+  headers and never looks at the body: subject, from, `message_id`, `in_reply_to` and
+  `references` come out even when the body is over a `MimeLimits` cap. No `parts`, no text.
 - Headers: `mime_header(m, name)`, `mime_header_all(m, name)`, `mime_header_text(m,
   name)` (RFC 2047 resolved), `mime_parse_value(v)` + `mime_param(v, name)` (RFC 2231
   continuations and `name*=UTF-8''...`), `mime_parse_addresses(s)`, `mime_parse_date(s)`.
@@ -2651,11 +2654,13 @@ API:
 - **Everything that arrives is hostile.** HTML is NOT sanitised (whoever displays it
   must), signatures/SPF/DKIM are NOT verified (`signed`/`encrypted` only flag S/MIME
   and PGP), an attached `message/rfc822` is an opaque attachment.
-- **Known limit: exceeding any `MimeLimits` cap makes `mime_parse` return
-  `Err(kind "invalid")` for the WHOLE message**, not a truncated one. One part over
-  `max_part_size` (or the 501st part, or depth 11) loses the entire email, text
-  included. `Err(kind "parse")` means "not an email" (empty or no header). A
-  headers-only message (what `BODY[HEADER]` returns) is valid, with no body.
+- **Exceeding any `MimeLimits` cap makes `mime_parse` return `Err(kind "invalid")` for
+  the WHOLE message**, not a truncated one: one part over `max_part_size` (or the 501st
+  part, or depth 11) loses the text too. If you need the thread (`In-Reply-To`) of a mail
+  that may be that big, fall back to `mime_parse_head` on the `Err` (that is what
+  `std/imap` does, and it flags the message `truncated`). `Err(kind "parse")` means "not
+  an email" (empty or no header). A headers-only message (what `BODY[HEADER]` returns) is
+  valid, with no body.
 - **Charsets**: UTF-8 (invalid bytes become U+FFFD), US-ASCII, ISO-8859-1,
   ISO-8859-15, windows-1252. Latin-1 is read AS windows-1252 (browser behaviour); a
   US-ASCII with high bytes or a missing charset is UTF-8 if valid, else
@@ -2671,7 +2676,115 @@ API:
 - Bounces: `is_bounce` is a delivery report with action failed/delayed;
   `bounce.original_message_id` is the Message-ID of the bounced mail when present.
   Use it with `is_auto_reply` to skip non-customer replies when threading.
-- Tests: `tests/compiler/stdlib-suite/test-472..474-mime-*.nx`.
+- Tests: `tests/compiler/stdlib-suite/test-472..474-mime-*.nx`, `test-484-mime-head.nx`.
+
+### std/imap — read a mailbox (IMAP over TLS)
+
+Reads a mailbox: new messages, MIME (via `std/mime`), attachments, mark as read. Native
+only (no sockets in wasm). Built for a help desk that turns the mails of an inbox into
+cases and threads the customer's reply by `In-Reply-To`/`References` (the id your app stored
+when it SENT the mail, `smtp_message_id`).
+
+```nyx
+import "std/imap"
+import "std/error"
+
+fn poll(host: String, user: String, pass: String, v: int, last: int) -> Result<int, Error> {
+    let c: ImapConn = imap_connect_tls(host, 993, imap_opts())?      // verifies chain AND name
+    let a: int = imap_login(c, user, pass)?
+    let mb: ImapMailbox = imap_select(c, "INBOX")?                    // mb.uidvalidity, mb.uidnext
+    let r: ImapFetch = imap_fetch_since(c, v, last, 50)?
+    for m: ImapMessage in r.messages {
+        println(m.mail.subject)                                       // MimeMessage of std/mime
+        if m.mail.in_reply_to.length() > 0 { println(m.mail.in_reply_to[0]) }
+    }
+    imap_logout(c)
+    return Result.Ok(r.last_uid)       // the app stores (r.uidvalidity, r.last_uid) as its checkpoint
+}
+```
+
+**READ THIS FIRST: use the UID checkpoint, not "unseen".** `\Seen` is state SHARED with whoever
+opens the same mailbox from a phone. If the customer's reply is read there first,
+`imap_search_unseen` no longer returns it and your system never learns about it.
+`imap_fetch_since(c, uidvalidity, last_uid, max)` asks for "UIDs greater than the last one I
+processed" and touches no flag. `imap_mark_seen` is optional and separate. First run:
+`(0, 0)` brings everything; to start "from now" pass `imap_mailbox(c).uidnext - 1`.
+
+API (all `Result<_, Error>`; names in English with the `imap_` prefix):
+
+- Connect: `imap_connect_tls(host, 993, opts)` (implicit TLS), `imap_connect_starttls(host,
+  143, opts)`; both VERIFY against the system CAs. `_insecure` variants (dev servers) say
+  so in the name. `imap_opts()` has the limits (below).
+- Authenticate: `imap_login(c, user, pass)` (cPanel/Dovecot, Gmail app passwords; a
+  non-ASCII user/pass is routed to PLAIN by itself), `imap_auth_plain(c, user, pass)`,
+  `imap_auth_xoauth2(c, user, token)`. **The OAuth2 token is brought by your app** (Gmail
+  scope `https://mail.google.com/`, Microsoft 365): obtaining/renewing it is not in std
+  (no `std/oauth2`). Credentials NEVER go over a clear channel (`Err "auth"` before sending
+  anything, no flag to bypass) and never appear in an error message.
+- Mailbox: `imap_select(c, "INBOX")` -> `ImapMailbox {name, uidvalidity, uidnext, exists,
+  readonly}`, `imap_examine` (read-only), `imap_mailbox(c)` (the current one), `imap_noop(c)`.
+- Read: `imap_fetch_since(c, uidvalidity, last_uid, max_messages) -> ImapFetch {uidvalidity,
+  last_uid, messages, more}`, `imap_fetch_message(c, uid) -> ImapMessage`,
+  `imap_search_unseen(c) -> Array<int>`, `imap_mark_seen(c, uid)`.
+- `ImapMessage {uid, size, flags, seen, raw, mail: MimeMessage, parsed, truncated, note}`.
+- Close: `imap_logout(c)` (never errors), `imap_close(c)`.
+- Capabilities: `imap_capabilities(c)`, `imap_has_cap(c, "SASL-IR")`.
+- Pure layer (no network, testable): `imap_parse_response(raw)`, `imap_parse_values(s)`,
+  `imap_quote(s)`.
+
+Things that will bite you:
+
+- **`ImapConn` is by value, its state is shared** (an Array inside): copies of the struct see
+  the same connection. `imap_connect_starttls` returns a NEW `ImapConn` (the TLS handle);
+  use that one. After an error that broke the stream (`timeout`, `connection`, a `protocol`
+  limit) the connection is CLOSED and every later call gives `Err "connection"`: reconnect.
+- **`imap_fetch_since` searches by RANGES** (`UID n:n+K`, K between 1000 and 100000 tied to
+  `max_messages`), not `n:*`: on a mailbox with 100k+ messages a single `n:*` line would exceed
+  `max_line` and a first run would never start. An empty range still advances the checkpoint
+  (at most 64 ranges per call; `more` is true if some remain). If the server sent no
+  UIDNEXT it falls back to ONE `n:*`. `opts.fetch_ms` (0 = none) bounds the whole call.
+  `last_uid` 4294967295 returns nothing new; above that is `Err "invalid"`; a server
+  UIDVALIDITY of 0 is `Err "protocol"` at SELECT.
+- **A FETCH that exists but has no `BODY[]` string (or NIL) is `Err "protocol"`**, never an
+  empty message, and the checkpoint does not move. Data split across several `* n FETCH`
+  responses of one UID is merged. `max_response` is the TOTAL the server may send for one
+  command (not per response).
+- **Checkpoint + `stale`**: if `uidvalidity` is not 0 and differs from the mailbox's,
+  `imap_fetch_since` returns `Err kind "stale"` with the NEW UIDVALIDITY in `e.code`; the old
+  UIDs mean nothing: rescan by `Message-ID`. If a download fails after some messages came
+  down, you get those with `more = true` and the error repeats on the next call. A UID that
+  vanished between search and fetch is skipped.
+- **A "poison" message stops the checkpoint until YOU move it.** An error never advances the
+  checkpoint, so a UID that fails every time (a server that never sends its body) blocks every
+  later mail. The checkpoint is yours: after N failures on the same UID, log it and save
+  `last_uid = that_uid` yourself to step over it. There is no `imap_skip_uid`.
+- **Big or odd messages still give you the headers.** A message whose `RFC822.SIZE` is over
+  `opts.max_message` (10 MB) downloads ONLY `BODY.PEEK[HEADER]`; and if `std/mime` rejects the
+  whole message for one of its caps (501 parts, a huge part) it is re-parsed with
+  `mime_parse_head`. Either way `m.truncated` is true, `m.note` says why, `m.mail` has subject,
+  from, `message_id`, `in_reply_to`, `references`, but no `parts`/`text`. `m.parsed` false only
+  if not even the headers made sense (`m.mail` is then empty).
+- Everything is requested with `BODY.PEEK`: downloading never marks as read.
+- Errors (`e.kind`): `connection`, `tls` (certificate; `e.code` = X509 error), `timeout`,
+  `auth`, `protocol` (the server said something unintelligible, an unexpected NO, or a
+  limit was exceeded), `invalid` (bad argument: CR/LF/NUL in a name, a non-ASCII folder,
+  no folder selected), `not_found` (folder or UID), `stale`.
+- **The server is hostile input.** Caps in `ImapOpts` (all checked BEFORE reading/allocating):
+  `max_line` 1 MB, `max_literal` 16 MB (`{99999999999}` allocates nothing), `max_response`
+  24 MB per COMMAND in total, `max_untagged` 5000 per command, list depth 16, 262144 elements; each read has a
+  deadline and each command a total one (`cmd_ms` 30 s): a mute server does not hang the
+  caller. STARTTLS aborts if the server sent data after its `OK` (response injection).
+- Folders: ASCII names only (`INBOX`); modified UTF-7 is NOT implemented, so a folder like
+  `Papelera/Año` gives `Err "invalid"` with an explanation instead of being sent wrong.
+- Not here: IDLE (poll every 30-120 s with `imap_noop` + `imap_fetch_since`),
+  BODYSTRUCTURE by parts, EXPUNGE/COPY/APPEND/LIST, THREAD, Gmail labels. The STARTTLS
+  connect (143) uses the OS connect timeout, not `connect_ms` (std/net has no timed
+  connect); implicit TLS (993) does honour `connect_ms`.
+- Not yet verified against a real Gmail or Dovecot mailbox (verified against a fake server
+  with a test PKI, plus transcripts shaped like Gmail/Dovecot/Exchange responses).
+- Tests: `test-483-imap-parser.nx`, `test-485-imap-transcripts.nx` (pure),
+  `tests/integration/test_imap_client.py` (client vs fake TLS/STARTTLS server, hostile server
+  included). Recipe: `examples/by-example/134-imap-correo-entrante.nx`.
 
 ### std/barcode — QR, Code 128 and EAN-13 (pure Nyx, native and wasm)
 
@@ -2773,31 +2886,31 @@ fn invoice() -> Result<String, Error> {
 
 Recipe: `examples/by-example/118-pdf-invoice.nx`.
 
-### std/image — decode, resize and crop photos (pure Nyx, native and wasm)
+### std/image — decode, resize, crop and encode JPEG (pure Nyx, native and wasm)
 
-Reads JPEG and PNG into pixels, shrinks and crops them. No `extern "C"`, so the
+Reads JPEG and PNG into pixels, shrinks and crops them, and WRITES baseline JPEG
+(`image_encode_jpeg`, one-step `image_thumbnail`). No `extern "C"`, so the
 same code runs native and in `wasm32-wasi` (the inflate is `std/zip`'s, in Nyx).
 Made for "a phone photo of 3-5 MB must be served as a small thumbnail".
-**There is NO encoder yet**: `image_encode_jpeg` arrives in the next batch and
-WebP output is not planned. Today you can decode and transform, not save.
+WebP output is not planned (a VP8 encoder is out of reach in pure Nyx); progressive
+JPEG decode, PNG encode and optimal Huffman are later phases.
 
 ```nyx
 import "std/image"
 import "std/error"
 
-fn thumb(bytes: String) -> Result<Image, Error> {
+fn thumb(bytes: String) -> Result<String, Error> {
     let info: ImageInfo = image_info(bytes)?              // header only: cheap even for 30 MB
     if info.width < 1 { return Result.Err(err_new(0, "invalid", "empty")) }
-    // Decode at the largest reduction that still has >= 600x600, then crop+scale.
-    let img: Image = image_decode_min(bytes, image_limits(), 600, 600)?
-    let flat: Image = image_flatten(img, 255, 255, 255)   // drop alpha onto white
-    return image_resize_cover(flat, 300, 300)             // square thumbnail
+    // One step: decode at the largest reduction that keeps >= 2x the final size,
+    // fit into 600x600 (Lanczos3, never enlarges), encode JPEG q80, no EXIF/GPS.
+    return image_thumbnail(bytes, 600, 600, image_default_quality())
 }
 
 fn main() {
     match thumb("not an image") {
-        Result.Ok(t) => { println(int_to_string(t.width)) }
-        Result.Err(e) => { println(e.kind) }                // "parse" / "unsupported"
+        Result.Ok(jpeg) => { println(int_to_string(jpeg.length())) }   // write_file / http response body
+        Result.Err(e) => { println(e.kind) }                // "invalid" / "parse" / "unsupported"
     }
 }
 ```
@@ -2820,6 +2933,17 @@ API (all errors are `Result<_, Error>`; `Image`/`ImageInfo`/`ImageLimits` are st
   w, h)` (centre crop to the box's aspect then scale; never enlarges),
   `image_crop(img, x, y, w, h)`, `image_flatten(img, r, g, b)` (composite RGBA on a
   colour, drops alpha; gray/RGB come back unchanged), `image_orient(img, exif)`.
+- `image_encode_jpeg(img, quality) -> String` (the JPEG bytes). Quality 1-100 with
+  libjpeg's formula over the Annex K tables, standard Huffman tables, JFIF, 4:2:0 up to
+  quality 90 and 4:4:4 above; gray -> 1 component; RGBA is composited on WHITE first
+  (call `image_flatten` for another background). `Err(invalid)` for quality outside
+  1..100, a side of 0 or > 65535, or an inconsistent `Image`. `image_default_quality()`
+  is 80. `image_strip_icc(img)` drops the profile before encoding.
+- `image_thumbnail(bytes, max_w, max_h, quality) -> String` = decode with reduction +
+  `image_resize_fit` + `image_encode_jpeg` in one call (JPEG or PNG in, JPEG out, default
+  `image_limits()`). `image_thumbnails(bytes, sizes, quality) -> Array` takes `sizes` as an
+  Array of `[max_w, max_h]` pairs and returns an Array of JPEG Strings in the same order
+  from ONE decode (e.g. `image_thumbnails(photo, [[1200, 1200], [600, 600], [150, 150]], 80)`).
 - Low level (used by `std/pdf`): `image_png_read`, `image_png_split`, `image_jpeg_frame`.
 
 **Limits and things that will bite you:**
@@ -2852,7 +2976,23 @@ API (all errors are `Result<_, Error>`; `Image`/`ImageInfo`/`ImageLimits` are st
 - **Resampling is Pillow's, byte for byte** (Lanczos3 when shrinking, bilinear when
   enlarging, integer weights, premultiplied alpha), verified in tests 479-480.
   Output is identical on aarch64, x86_64 and wasm.
-- Tests: `tests/compiler/stdlib-suite/test-475..480-image-*.nx`.
+- **Encoder output is deterministic and verified against Pillow**: integer FDCT (libjpeg
+  "islow"), so the same bytes on aarch64, x86_64 and wasm; test-481 compares against
+  golden files that Pillow decodes (PSNR equal to Pillow's at the same quality up to q90;
+  above q90 Nyx uses 4:4:4 and comes out better). Size is ~0.5 % over libjpeg (it does
+  not do optimal Huffman). A 1200x900 noisy synthetic image at q80 is ~100 KB, a
+  450x600 thumbnail of it ~43 KB; a real product photo at 400 px is usually 15-40 KB.
+- **The thumbnail path never keeps metadata except ICC**: no EXIF, no GPS, no XMP
+  (the orientation was applied at decode, so the output is upright with no tag). The ICC
+  profile is KEPT (an iPhone Display P3 photo without it looks washed out); use
+  `image_strip_icc` to drop it when the target is known sRGB (saves 0.5-3 KB).
+- **`image_thumbnail` decodes with the reduction that leaves >= 2x the final size**
+  (like Pillow's `reducing_gap`), so a 4000x3000 photo to 600 px decodes at 1/2 and a
+  12 MP photo takes ~1.4 s natively. Result sizes round to nearest like `image_resize_fit`
+  (Pillow's `thumbnail` floors: off by one pixel at most). Wasm has no GC: encode one
+  photo at a time and keep inputs small.
+- Tests: `tests/compiler/stdlib-suite/test-475..482-image-*.nx`, `tests/wasm/test-wasm-55..57`,
+  recipe `examples/by-example/133-imagen-miniaturas.nx`.
 
 ### std/zip, std/xml, std/xlsx — read and write .xlsx workbooks (pure Nyx, native and wasm)
 

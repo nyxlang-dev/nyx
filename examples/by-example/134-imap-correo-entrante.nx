@@ -1,0 +1,179 @@
+// Nyx by Example: convertir en casos los correos de una casilla y enhebrar la respuesta
+// del cliente.
+//
+// El caso real: una mesa de ayuda manda cotizaciones por correo (std/smtp) y necesita que
+// la RESPUESTA del cliente vuelva al hilo de esa conversación. Para eso hay que leer la
+// casilla (std/imap), analizar cada mensaje (std/mime) y atar la respuesta al envío por
+// `In-Reply-To` / `References`, que contienen el Message-ID que el sistema guardó al enviar.
+//
+// Lo que esta receta muestra:
+//   1. el sondeo real contra un buzón: conexión verificada, LOGIN, cursor por UID y marcar
+//      leído (la función `sondear`, que compila y enlaza pero NO se llama: un buzón de
+//      verdad necesita credenciales y esta receta corre sola bajo `make test-examples`);
+//   2. por qué el cursor es por UID y no «los no leídos»;
+//   3. lo que sí corre acá, sin red: el analizador de respuestas de IMAP y std/mime sobre
+//      la respuesta de un servidor, y la decisión de a qué caso pertenece cada mensaje;
+//   4. los errores tipados y qué hacer con cada uno.
+
+import "std/imap"
+import "std/mime"
+import "std/error"
+
+// ── 1. El sondeo real ────────────────────────────────────────────────────
+// Se llama cada 30-120 s desde un temporizador (un CRM no necesita IDLE). `cursor_v` y
+// `cursor_uid` los guarda la aplicación entre llamadas: (0, 0) la primera vez.
+// Devuelve el cursor nuevo para guardar. La clave viene de la configuración, nunca del
+// código.
+fn sondear(host: String, usuario: String, clave: String, cursor_v: int, cursor_uid: int, ids_enviados: Array) -> Result<int, Error> {
+    // 993 con TLS implícito, VERIFICANDO cadena y nombre contra las CAs del sistema.
+    // Para el 143: imap_connect_starttls. Las variantes `_insecure` son solo para
+    // desarrollo, y lo dicen en el nombre.
+    let c: ImapConn = imap_connect_tls(host, 993, imap_opts())?
+
+    // LOGIN sirve para cPanel/Dovecot y para una clave de aplicación de Gmail. Con OAuth2
+    // (Gmail, Microsoft 365) el token lo trae la aplicación: imap_auth_xoauth2(c, usuario,
+    // token). Nunca viajan en claro: sobre un canal sin cifrar fallan antes de mandarlas.
+    let a: int = imap_login(c, usuario, clave)?
+    let mb: ImapMailbox = imap_select(c, "INBOX")?
+
+    // Cursor por UID, NO `imap_search_unseen`: `\Seen` es estado compartido con quien abra el
+    // buzón desde su teléfono; si la respuesta del cliente se lee ahí primero, UNSEEN ya no
+    // la devuelve y el sistema nunca se entera. Aquí se piden «los UID mayores que el último
+    // que procesé» y no se toca ninguna marca.
+    var v: int = cursor_v
+    var ultimo: int = cursor_uid
+    match imap_fetch_since(c, v, ultimo, 50) {
+        Result.Ok(r) => {
+            v = r.uidvalidity
+            for m: ImapMessage in r.messages {
+                let destino: String = decidir(m.mail, ids_enviados)
+                println("UID " + int_to_string(m.uid) + ": " + destino)
+                // m.truncated: un mensaje enorme (o con demasiadas partes) igual trae su
+                // asunto, remitente e In-Reply-To; solo falta el cuerpo. Se puede enhebrar.
+                // Marcar leído es OPCIONAL y aparte (el protocolo no lo hace solo):
+                //   let _s: int = imap_mark_seen(c, m.uid)?
+            }
+            ultimo = r.last_uid
+        }
+        Result.Err(e) => {
+            if e.kind == "stale" {
+                // UIDVALIDITY cambió (se recreó el buzón): los UID guardados ya no
+                // significan nada. e.code trae el valor nuevo; se reescanea por Message-ID
+                // (que además evita procesar dos veces un mensaje).
+                println("el buzón cambió de UIDVALIDITY a " + int_to_string(e.code))
+            } else {
+                imap_logout(c)
+                return Result.Err(e)
+            }
+        }
+    }
+    imap_logout(c)
+    return Result.Ok(ultimo)
+}
+
+// ── 3. La decisión de a qué caso pertenece un mensaje ───────────────────
+// No es una respuesta del cliente: un rebote (el correo no llegó) o una autorrespuesta
+// («estoy de vacaciones»). Tratarlos como respuesta contamina el hilo y puede armar lazos.
+// Si no, se busca el id de algún mensaje que el sistema envió en In-Reply-To o References.
+fn decidir(m: MimeMessage, ids_enviados: Array) -> String {
+    if m.is_bounce { return "rebote de " + m.bounce.original_message_id + " (no es del cliente)" }
+    if m.is_auto_reply { return "autorrespuesta (" + m.auto_kind + "), se ignora" }
+    var candidatos: Array = []
+    for id: String in m.in_reply_to { candidatos.push(id) }
+    for id: String in m.references { candidatos.push(id) }
+    for cand: String in candidatos {
+        for conocido: String in ids_enviados {
+            if cand == conocido { return "respuesta al envío " + conocido + ": «" + m.subject + "»" }
+        }
+    }
+    return "caso nuevo: «" + m.subject + "»"
+}
+
+// Lo que un servidor contesta a `UID FETCH 5 (BODY.PEEK[])`: la línea, el literal de N
+// bytes (que puede traer cualquier cosa, CRLF incluido) y el cierre.
+fn respuesta_de_ejemplo() -> String {
+    let correo: String = "From: Cliente <cliente@empresa.cl>\r\n" +
+        "To: casos@miempresa.cl\r\n" +
+        "Subject: =?UTF-8?Q?Re:_Cotizaci=C3=B3n_123?=\r\n" +
+        "Message-ID: <resp-5@empresa.cl>\r\n" +
+        "In-Reply-To: <caso-123@nyxerp.cl>\r\n" +
+        "References: <inicio@nyxerp.cl> <caso-123@nyxerp.cl>\r\n" +
+        "Content-Type: text/plain; charset=utf-8\r\n" +
+        "Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
+        "Hola, acepto la cotizaci=C3=B3n.\r\n"
+    return "* 2 FETCH (UID 5 BODY[] {" + int_to_string(correo.length()) + "}\r\n" + correo + ")\r\n"
+}
+
+fn rebote_de_ejemplo() -> String {
+    return "From: MAILER-DAEMON@mx.empresa.cl\r\n" +
+        "Subject: Undelivered Mail Returned to Sender\r\n" +
+        "Message-ID: <rebote-1@mx.empresa.cl>\r\n" +
+        "Content-Type: multipart/report; report-type=delivery-status; boundary=\"B\"\r\n\r\n" +
+        "--B\r\nContent-Type: text/plain\r\n\r\nNo se pudo entregar.\r\n" +
+        "--B\r\nContent-Type: message/delivery-status\r\n\r\n" +
+        "Reporting-MTA: dns; mx.empresa.cl\r\n\r\n" +
+        "Final-Recipient: rfc822; nadie@empresa.cl\r\nAction: failed\r\nStatus: 5.1.1\r\n" +
+        "--B\r\nContent-Type: text/rfc822-headers\r\n\r\n" +
+        "Message-ID: <caso-124@nyxerp.cl>\r\nSubject: Cotizacion 124\r\n" +
+        "--B--\r\n"
+}
+
+fn analizar(correo_crudo: String) -> MimeMessage {
+    match mime_parse(correo_crudo, mime_limits()) {
+        Result.Ok(m) => { return m }
+        Result.Err(e) => {
+            println("no es un correo: " + e.kind)
+            exit(1)
+        }
+    }
+    return analizar(correo_crudo)
+}
+
+fn main() -> int {
+    // Los ids que el sistema guardó al ENVIAR (smtp_message_id del mensaje armado).
+    let ids_enviados: Array = ["<caso-123@nyxerp.cl>", "<caso-124@nyxerp.cl>"]
+
+    // ── El analizador de IMAP, sin red ───────────────────────────────────
+    // La respuesta mezcla una línea, un literal de N bytes y un cierre. imap_parse_response
+    // la interpreta: `* 2 FETCH (...)` → verbo FETCH, número 2, una lista con los datos.
+    match imap_parse_response(respuesta_de_ejemplo()) {
+        Result.Ok(r) => {
+            println("respuesta: " + r.name + " del mensaje " + int_to_string(r.num))
+            let datos: ImapVal = r.items[0]
+            // La lista alterna nombre y valor: UID 5 BODY[] <el correo>.
+            let uid: ImapVal = datos.items[1]
+            let cuerpo: ImapVal = datos.items[3]
+            println("UID " + int_to_string(uid.num) + ", " + int_to_string(cuerpo.text.length()) + " bytes de correo")
+            let m: MimeMessage = analizar(cuerpo.text)
+            println(decidir(m, ids_enviados))
+            println("cuerpo: " + m.text.trim())
+        }
+        Result.Err(e) => { println("respuesta ilegible: " + e.kind) }
+    }
+
+    // Un rebote y un correo sin relación con nada enviado.
+    println(decidir(analizar(rebote_de_ejemplo()), ids_enviados))
+    println(decidir(analizar("From: x@y.cl\r\nSubject: Hola\r\n\r\nQuiero comprar\r\n"), ids_enviados))
+
+    // ── 4. Qué hacer con cada error ──────────────────────────────────────
+    println("")
+    println("— qué hacer con cada error —")
+    println(explicar(err_new(0, "auth", "rechazada")))
+    println(explicar(err_new(62, "tls", "nombre")))
+    println(explicar(err_new(110, "timeout", "plazo")))
+    println(explicar(err_new(0, "stale", "uidvalidity")))
+    println(explicar(err_new(0, "protocol", "respuesta ilegible")))
+    println(explicar(err_new(0, "connection", "cortó")))
+    return 0
+}
+
+// Cada `kind` pide una acción distinta; por eso vale la pena que el error sea tipado.
+fn explicar(e: Error) -> String {
+    if e.kind == "auth" { return "auth       → revisar usuario y clave (o renovar el token OAuth2)" }
+    if e.kind == "tls" { return "tls        → el certificado no verifica: NO bajar la guardia, avisar" }
+    if e.kind == "timeout" { return "timeout    → el servidor no contestó: cerrar y reintentar en el próximo sondeo" }
+    if e.kind == "stale" { return "stale      → UIDVALIDITY cambió: reescanear por Message-ID" }
+    if e.kind == "protocol" { return "protocol   → servidor raro o hostil: la conexión se cerró; no marcar nada y reintentar" }
+    if e.kind == "connection" { return "connection → red caída o servidor cortó: reconectar" }
+    return "desconocido"
+}

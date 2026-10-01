@@ -1,0 +1,226 @@
+// test-483 — std/imap, capa pura (arco std-imap, Task 4): el tokenizador y el analizador de
+// respuestas, sin red. Átomos, números, NIL, cadenas entrecomilladas con escapes, literales
+// `{n}` y `{n+}` con CRLF y NUL adentro, listas anidadas, respuestas tagged / untagged /
+// continuación con sus códigos, y entrada hostil (literal truncado, listas sin cerrar,
+// profundidad, bomba de elementos) que da Err "protocol" y no memoria sin fin.
+
+import "std/imap"
+import "std/error"
+
+fn check(nombre: String, got: String, want: String) {
+    if got != want {
+        println("FAIL " + nombre + ": «" + got + "» != «" + want + "»")
+        exit(1)
+    }
+}
+
+fn bs(b: bool) -> String {
+    if b { return "true" }
+    return "false"
+}
+
+// Volcado compacto de un valor: a:atom, 5, NIL, "str", (lista).
+fn dump(v: ImapVal) -> String {
+    if v.kind == "atom" { return "a:" + v.text }
+    if v.kind == "num" { return int_to_string(v.num) }
+    if v.kind == "nil" { return "NIL" }
+    if v.kind == "str" { return "\"" + v.text + "\"" }
+    var out: String = "("
+    var i: int = 0
+    while i < v.items.length() {
+        let x: ImapVal = v.items[i]
+        if i > 0 { out = out + " " }
+        out = out + dump(x)
+        i = i + 1
+    }
+    return out + ")"
+}
+
+fn dump_all(s: String) -> String {
+    match imap_parse_values(s) {
+        Result.Ok(vs) => {
+            var out: String = ""
+            var i: int = 0
+            while i < vs.length() {
+                let v: ImapVal = vs[i]
+                if i > 0 { out = out + " | " }
+                out = out + dump(v)
+                i = i + 1
+            }
+            return out
+        }
+        Result.Err(e) => { return "ERR " + e.kind }
+    }
+    return ""
+}
+
+fn resp_of(raw: String) -> ImapResp {
+    match imap_parse_response(raw) {
+        Result.Ok(r) => { return r }
+        Result.Err(e) => {
+            println("parse de respuesta falló: " + e.kind + " " + e.msg)
+            exit(1)
+        }
+    }
+    return resp_of(raw)
+}
+
+fn resp_kind(raw: String) -> String {
+    match imap_parse_response(raw) {
+        Result.Ok(r) => { return "OK" }
+        Result.Err(e) => { return "ERR " + e.kind }
+    }
+    return ""
+}
+
+fn main() {
+    // ── Tokens ────────────────────────────────────────────────────────────
+    check("atomos", dump_all("FLAGS \\Seen $Forwarded"), "a:FLAGS | a:\\Seen | a:$Forwarded")
+    check("numeros", dump_all("12 007 999999999999999999"), "12 | 7 | 999999999999999999")
+    check("numero largo es atomo", dump_all("1234567890123456789012"), "a:1234567890123456789012")
+    check("nil", dump_all("NIL nil Nil NILA"), "NIL | NIL | NIL | a:NILA")
+    check("quoted", dump_all("\"hola mundo\" \"\""), "\"hola mundo\" | \"\"")
+    check("quoted escapes", dump_all("\"a\\\"b\\\\c\""), "\"a\"b\\c\"")
+    check("lista", dump_all("(1 \"x\" NIL (a b) ())"), "(1 \"x\" NIL (a:a a:b) ())")
+    check("lista pegada", dump_all("((1)(2))"), "((1) (2))")
+    // BODY[...] con espacios y paréntesis adentro es UN átomo.
+    check("seccion", dump_all("(BODY[HEADER.FIELDS (DATE FROM)] NIL)"), "(a:BODY[HEADER.FIELDS (DATE FROM)] NIL)")
+    check("seccion vacia", dump_all("(BODY[] 3 BODY[1.2]<0> 4)"), "(a:BODY[] 3 a:BODY[1.2]<0> 4)")
+
+    // ── Literales ─────────────────────────────────────────────────────────
+    check("literal", dump_all("(BODY[] {5}\r\nhello UID 3)"), "(a:BODY[] \"hello\" a:UID 3)")
+    check("literal sin sincronizar", dump_all("{3+}\r\nabc"), "\"abc\"")
+    check("literal vacio", dump_all("({0}\r\n 1)"), "(\"\" 1)")
+    // El literal es opaco: CRLF, comillas, paréntesis y llaves no se interpretan.
+    check("literal opaco", dump_all("{9}\r\n(a)\r\n\"{1}"), "\"(a)\r\n\"{1}\"")
+    check("literal con LF solo", dump_all("{2}\nab"), "\"ab\"")
+    let con_nul: String = "{3}\r\na" + char_to_string(0) + "b"
+    match imap_parse_values(con_nul) {
+        Result.Ok(vs) => {
+            let v: ImapVal = vs[0]
+            check("literal con NUL", int_to_string(v.text.length()), "3")
+        }
+        Result.Err(e) => { check("literal con NUL", "ERR", "ok") }
+    }
+    check("literal truncado", dump_all("{10}\r\nabc"), "ERR protocol")
+    check("literal sin CRLF", dump_all("{3}abc"), "ERR protocol")
+    check("literal largo absurdo", dump_all("{99999999999}\r\nabc"), "ERR protocol")
+    check("literal sin numero", dump_all("{}\r\n"), "ERR protocol")
+    check("literal mal cerrado", dump_all("{3x}\r\nabc"), "ERR protocol")
+
+    // ── Lo mal formado ────────────────────────────────────────────────────
+    check("lista sin cerrar", dump_all("(1 2"), "ERR protocol")
+    check("parentesis suelto", dump_all("1 ) 2"), "ERR protocol")
+    check("quoted sin cerrar", dump_all("\"abc"), "ERR protocol")
+    check("quoted con salto", dump_all("\"a\r\nb\""), "ERR protocol")
+    check("corchete sin cerrar", dump_all("BODY[HEADER"), "ERR protocol")
+    check("vacio", dump_all(""), "")
+
+    // ── Entrada hostil ────────────────────────────────────────────────────
+    // 16 niveles pasan, 17 no.
+    var ok16: String = ""
+    var i: int = 0
+    while i < 16 { ok16 = ok16 + "("; i = i + 1 }
+    i = 0
+    while i < 16 { ok16 = ok16 + ")"; i = i + 1 }
+    check("profundidad 16", bs(dump_all(ok16) != "ERR protocol"), "true")
+    check("profundidad 17", dump_all("(" + ok16 + ")"), "ERR protocol")
+    // Bomba de elementos: 300000 listas vacías dentro de una (más que el tope de 262144).
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("(")
+    i = 0
+    while i < 300000 { sb.append("()"); i = i + 1 }
+    sb.append(")")
+    check("bomba de elementos", dump_all(sb.to_string()), "ERR protocol")
+    // Lo mismo pero justo debajo del tope pasa.
+    var sb2: StringBuilder = StringBuilder.new()
+    sb2.append("(")
+    i = 0
+    while i < 1000 { sb2.append("() "); i = i + 1 }
+    sb2.append(")")
+    check("mil listas vacias", bs(dump_all(sb2.to_string()) != "ERR protocol"), "true")
+
+    // ── Respuestas ────────────────────────────────────────────────────────
+    let ok: ImapResp = resp_of("A001 OK LOGIN completed\r\n")
+    check("tagged kind", ok.kind, "tagged")
+    check("tagged tag", ok.tag, "A001")
+    check("tagged status", ok.status, "OK")
+    check("tagged text", ok.text, "LOGIN completed")
+
+    let no: ImapResp = resp_of("a7 no [AUTHENTICATIONFAILED] Invalid credentials (Failure)\r\n")
+    check("no status", no.status, "NO")
+    check("no code", no.code, "AUTHENTICATIONFAILED")
+    check("no code_arg", no.code_arg, "")
+    check("no text", no.text, "Invalid credentials (Failure)")
+
+    let bad: ImapResp = resp_of("A3 BAD Command Argument Error. 11\r\n")
+    check("bad status", bad.status, "BAD")
+
+    let uv: ImapResp = resp_of("* OK [UIDVALIDITY 3857529045] UIDs valid\r\n")
+    check("uidvalidity kind", uv.kind, "untagged")
+    check("uidvalidity status", uv.status, "OK")
+    check("uidvalidity code", uv.code, "UIDVALIDITY")
+    check("uidvalidity arg", uv.code_arg, "3857529045")
+    check("uidvalidity text", uv.text, "UIDs valid")
+
+    let cap: ImapResp = resp_of("* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR] ready\r\n")
+    check("cap code", cap.code, "CAPABILITY")
+    check("cap arg", cap.code_arg, "IMAP4rev1 AUTH=PLAIN SASL-IR")
+
+    let ex: ImapResp = resp_of("* 172 EXISTS\r\n")
+    check("exists name", ex.name, "EXISTS")
+    check("exists num", int_to_string(ex.num), "172")
+    check("exists items", int_to_string(ex.items.length()), "0")
+
+    let capr: ImapResp = resp_of("* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED\r\n")
+    check("capability name", capr.name, "CAPABILITY")
+    check("capability num", int_to_string(capr.num), "-1")
+    check("capability items", int_to_string(capr.items.length()), "3")
+
+    let se: ImapResp = resp_of("* SEARCH 4 9 12\r\n")
+    check("search name", se.name, "SEARCH")
+    check("search items", int_to_string(se.items.length()), "3")
+    let se0: ImapResp = resp_of("* SEARCH\r\n")
+    check("search vacio", int_to_string(se0.items.length()), "0")
+
+    let bye: ImapResp = resp_of("* BYE Autologout; idle for too long\r\n")
+    check("bye status", bye.status, "BYE")
+
+    let pre: ImapResp = resp_of("* PREAUTH [CAPABILITY IMAP4rev1] hola\r\n")
+    check("preauth status", pre.status, "PREAUTH")
+
+    let cont: ImapResp = resp_of("+ eyJzdGF0dXMiOiI0MDEifQ==\r\n")
+    check("cont kind", cont.kind, "continuation")
+    check("cont text", cont.text, "eyJzdGF0dXMiOiI0MDEifQ==")
+    let cont0: ImapResp = resp_of("+\r\n")
+    check("cont vacia", cont0.kind + ":" + cont0.text, "continuation:")
+
+    // FETCH con un literal en medio y la línea que lo sigue.
+    let f: ImapResp = resp_of("* 3 FETCH (UID 77 FLAGS (\\Seen \\Answered) RFC822.SIZE 14 BODY[] {14}\r\nSubject: x\r\n\r\n)\r\n")
+    check("fetch name", f.name, "FETCH")
+    check("fetch num", int_to_string(f.num), "3")
+    let f0: ImapVal = f.items[0]
+    check("fetch dump", dump(f0), "(a:UID 77 a:FLAGS (a:\\Seen a:\\Answered) a:RFC822.SIZE 14 a:BODY[] \"Subject: x\r\n\r\n\")")
+
+    // Una respuesta LIST con cadenas y NIL.
+    let l: ImapResp = resp_of("* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n")
+    check("list name", l.name, "LIST")
+    check("list items", int_to_string(l.items.length()), "3")
+
+    // Respuestas ilegibles.
+    check("vacia", resp_kind(""), "ERR protocol")
+    check("sin verbo", resp_kind("* 5\r\n"), "ERR protocol")
+    check("estrella sola", resp_kind("*\r\n"), "ERR protocol")
+    check("tag sin status", resp_kind("A1 PERFECTO ya\r\n"), "ERR protocol")
+    check("tag sin nada", resp_kind("A1\r\n"), "ERR protocol")
+    check("fetch roto", resp_kind("* 1 FETCH (UID 5\r\n"), "ERR protocol")
+
+    // ── imap_quote ────────────────────────────────────────────────────────
+    match imap_quote("ana@ejemplo.cl") { Result.Ok(q) => { check("quote", q, "\"ana@ejemplo.cl\"") } Result.Err(e) => { check("quote", "ERR", "ok") } }
+    match imap_quote("a\"b\\c") { Result.Ok(q) => { check("quote escapes", q, "\"a\\\"b\\\\c\"") } Result.Err(e) => { check("quote escapes", "ERR", "ok") } }
+    match imap_quote("x\r\nA2 DELETE y") { Result.Ok(q) => { check("quote crlf", "ok", "ERR") } Result.Err(e) => { check("quote crlf", e.kind, "invalid") } }
+    match imap_quote("a" + char_to_string(0) + "b") { Result.Ok(q) => { check("quote nul", "ok", "ERR") } Result.Err(e) => { check("quote nul", e.kind, "invalid") } }
+    match imap_quote("Papelera/Año") { Result.Ok(q) => { check("quote no ascii", "ok", "ERR") } Result.Err(e) => { check("quote no ascii", e.kind, "invalid") } }
+
+    println("imap parser ok")
+}

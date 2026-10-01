@@ -1,0 +1,122 @@
+// test-485 — std/imap, analizador frente a transcripciones con la forma de lo que mandan
+// Gmail, Dovecot y Exchange (arco std-imap, Task 4/5; spec D-12: probar contra lo que
+// escribieron otros programas, no solo contra los casos propios). Sin red. Las líneas son
+// respuestas reales escritas a mano a partir de la documentación y de capturas públicas;
+// no hay datos de ninguna cuenta.
+
+import "std/imap"
+import "std/error"
+
+fn check(nombre: String, got: String, want: String) {
+    if got != want {
+        println("FAIL " + nombre + ": «" + got + "» != «" + want + "»")
+        exit(1)
+    }
+}
+
+fn dump(v: ImapVal) -> String {
+    if v.kind == "atom" { return "a:" + v.text }
+    if v.kind == "num" { return int_to_string(v.num) }
+    if v.kind == "nil" { return "NIL" }
+    if v.kind == "str" { return "\"" + v.text + "\"" }
+    var out: String = "("
+    var i: int = 0
+    while i < v.items.length() {
+        let x: ImapVal = v.items[i]
+        if i > 0 { out = out + " " }
+        out = out + dump(x)
+        i = i + 1
+    }
+    return out + ")"
+}
+
+fn parse(raw: String) -> ImapResp {
+    match imap_parse_response(raw) {
+        Result.Ok(r) => { return r }
+        Result.Err(e) => {
+            println("no se pudo analizar «" + raw + "»: " + e.kind + " " + e.msg)
+            exit(1)
+        }
+    }
+    return parse(raw)
+}
+
+fn items_dump(r: ImapResp) -> String {
+    var out: String = ""
+    var i: int = 0
+    while i < r.items.length() {
+        let v: ImapVal = r.items[i]
+        if i > 0 { out = out + " " }
+        out = out + dump(v)
+        i = i + 1
+    }
+    return out
+}
+
+fn main() {
+    // ── Gmail ─────────────────────────────────────────────────────────────
+    let g1: ImapResp = parse("* CAPABILITY IMAP4rev1 UNSELECT IDLE NAMESPACE QUOTA ID XLIST CHILDREN X-GM-EXT-1 UIDPLUS COMPRESS=DEFLATE ENABLE MOVE CONDSTORE ESEARCH UTF8=ACCEPT LIST-EXTENDED LIST-STATUS LITERAL- SPECIAL-USE APPENDLIMIT=35651584\r\n")
+    check("gmail capability", g1.name + " " + int_to_string(g1.items.length()), "CAPABILITY 21")
+    let g2: ImapResp = parse("A3 NO [AUTHENTICATIONFAILED] Invalid credentials (Failure)\r\n")
+    check("gmail login fallido", g2.status + "|" + g2.code + "|" + g2.text, "NO|AUTHENTICATIONFAILED|Invalid credentials (Failure)")
+    // El X-GM-THRID de 19 dígitos no cabe en un número de 18: sale como átomo, sin desbordar.
+    let g3: ImapResp = parse("* 3 FETCH (X-GM-THRID 1780000000000000001 X-GM-MSGID 1780000000000000002 UID 5 FLAGS (\\Seen $NotPhishing) RFC822.SIZE 1234 INTERNALDATE \"29-Sep-2026 10:00:00 +0000\")\r\n")
+    let g3l: ImapVal = g3.items[0]
+    check("gmail fetch", dump(g3l), "(a:X-GM-THRID a:1780000000000000001 a:X-GM-MSGID a:1780000000000000002 a:UID 5 a:FLAGS (a:\\Seen a:$NotPhishing) a:RFC822.SIZE 1234 a:INTERNALDATE \"29-Sep-2026 10:00:00 +0000\")")
+    let g4: ImapResp = parse("* BYE [UNAVAILABLE] Temporary system error\r\n")
+    check("gmail bye", g4.status + "|" + g4.code + "|" + g4.text, "BYE|UNAVAILABLE|Temporary system error")
+    let g5: ImapResp = parse("A9 OK Success\r\n")
+    check("gmail ok", g5.tag + g5.status + g5.text, "A9OKSuccess")
+
+    // ── Dovecot ───────────────────────────────────────────────────────────
+    let d1: ImapResp = parse("* OK [CAPABILITY IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ STARTTLS AUTH=PLAIN] Dovecot ready.\r\n")
+    check("dovecot saludo", d1.status + "|" + d1.code + "|" + d1.text, "OK|CAPABILITY|Dovecot ready.")
+    check("dovecot capacidades", d1.code_arg, "IMAP4rev1 SASL-IR LOGIN-REFERRALS ID ENABLE IDLE LITERAL+ STARTTLS AUTH=PLAIN")
+    let d2: ImapResp = parse("* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft \\*)] Flags permitted.\r\n")
+    check("dovecot permanentflags", d2.code + "|" + d2.code_arg, "PERMANENTFLAGS|(\\Answered \\Flagged \\Deleted \\Seen \\Draft \\*)")
+    let d3: ImapResp = parse("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n")
+    check("dovecot flags", d3.name + " " + items_dump(d3), "FLAGS (a:\\Answered a:\\Flagged a:\\Deleted a:\\Seen a:\\Draft)")
+    let d4: ImapResp = parse("A5 OK [READ-ONLY] Examine completed (0.001 + 0.000 secs).\r\n")
+    check("dovecot examine", d4.code + "|" + d4.text, "READ-ONLY|Examine completed (0.001 + 0.000 secs).")
+    let d5: ImapResp = parse("* OK [HIGHESTMODSEQ 123] Highest\r\n")
+    check("dovecot highestmodseq", d5.code + " " + d5.code_arg, "HIGHESTMODSEQ 123")
+    let d6: ImapResp = parse("* LIST (\\HasNoChildren) \"/\" {5}\r\nINBOX\r\n")
+    check("dovecot list con literal", d6.name + " " + items_dump(d6), "LIST (a:\\HasNoChildren) \"/\" \"INBOX\"")
+    let d7: ImapResp = parse("* STATUS INBOX (MESSAGES 231 UIDNEXT 44292)\r\n")
+    check("dovecot status", items_dump(d7), "a:INBOX (a:MESSAGES 231 a:UIDNEXT 44292)")
+    // Algunos servidores dejan un espacio al final de una búsqueda.
+    let d8: ImapResp = parse("* SEARCH 1 2 3 \r\n")
+    check("search con espacio al final", int_to_string(d8.items.length()), "3")
+    let d9: ImapResp = parse("* 12 FETCH (UID 99 BODY[HEADER] {37}\r\nSubject: hola\r\nIn-Reply-To: <a@b>\r\n\r\n)\r\n")
+    let d9l: ImapVal = d9.items[0]
+    check("dovecot fetch header", dump(d9l), "(a:UID 99 a:BODY[HEADER] \"Subject: hola\r\nIn-Reply-To: <a@b>\r\n\r\n\")")
+
+    // ── Exchange ──────────────────────────────────────────────────────────
+    let e1: ImapResp = parse("* OK The Microsoft Exchange IMAP4 service is ready. [QQBNAEEAUABQAEQAMAA3ADQA]\r\n")
+    check("exchange saludo", e1.status + "|" + e1.code + "|" + e1.text, "OK||The Microsoft Exchange IMAP4 service is ready. [QQBNAEEAUABQAEQAMAA3ADQA]")
+    let e2: ImapResp = parse("* CAPABILITY IMAP4 IMAP4rev1 AUTH=PLAIN AUTH=NTLM AUTH=GSSAPI AUTH=XOAUTH2 UIDPLUS CHILDREN IDLE NAMESPACE LITERAL+\r\n")
+    check("exchange capability", int_to_string(e2.items.length()), "11")
+    let e3: ImapResp = parse("A2 NO AUTHENTICATE failed.\r\n")
+    check("exchange auth fallido", e3.status + "|" + e3.code + "|" + e3.text, "NO||AUTHENTICATE failed.")
+    // XOAUTH2: el servidor manda el error en base64 en una continuación.
+    let e4: ImapResp = parse("+ eyJzdGF0dXMiOiI0MDAiLCJzY2hlbWVzIjoiYmVhcmVyIn0=\r\n")
+    check("xoauth2 continuacion", e4.kind + "|" + e4.text, "continuation|eyJzdGF0dXMiOiI0MDAiLCJzY2hlbWVzIjoiYmVhcmVyIn0=")
+
+    // ── Listas anidadas reales: ENVELOPE y BODYSTRUCTURE ──────────────────
+    let en: ImapResp = parse("* 1 FETCH (UID 9 ENVELOPE (\"Mon, 28 Sep 2026 10:00:00 +0000\" \"Re: Cotizaci\\\"on\" ((\"Ana\" NIL \"ana\" \"ejemplo.cl\")) ((\"Ana\" NIL \"ana\" \"ejemplo.cl\")) NIL ((\"Casos\" NIL \"casos\" \"ejemplo.cl\")) NIL NIL \"<caso-123@nyxerp.cl>\" \"<resp-1@x>\"))\r\n")
+    let enl: ImapVal = en.items[0]
+    check("envelope", dump(enl), "(a:UID 9 a:ENVELOPE (\"Mon, 28 Sep 2026 10:00:00 +0000\" \"Re: Cotizaci\"on\" ((\"Ana\" NIL \"ana\" \"ejemplo.cl\")) ((\"Ana\" NIL \"ana\" \"ejemplo.cl\")) NIL ((\"Casos\" NIL \"casos\" \"ejemplo.cl\")) NIL NIL \"<caso-123@nyxerp.cl>\" \"<resp-1@x>\"))")
+    let bs: ImapResp = parse("* 1 FETCH (BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"utf-8\") NIL NIL \"7BIT\" 12 1)(\"APPLICATION\" \"PDF\" (\"NAME\" \"a.pdf\") NIL NIL \"BASE64\" 100) \"MIXED\"))\r\n")
+    let bsl: ImapVal = bs.items[0]
+    check("bodystructure", dump(bsl), "(a:BODYSTRUCTURE ((\"TEXT\" \"PLAIN\" (\"CHARSET\" \"utf-8\") NIL NIL \"7BIT\" 12 1) (\"APPLICATION\" \"PDF\" (\"NAME\" \"a.pdf\") NIL NIL \"BASE64\" 100) \"MIXED\"))")
+
+    // Un asunto con paréntesis, comillas y llaves adentro de una cadena entrecomillada no
+    // se confunde con la estructura ni con un literal.
+    let tr: ImapResp = parse("* 1 FETCH (UID 4 ENVELOPE (NIL \"Oferta (50%) {urgente} \\\"hoy\\\"\" NIL NIL NIL NIL NIL NIL NIL NIL))\r\n")
+    let trl: ImapVal = tr.items[0]
+    let env: ImapVal = trl.items[3]
+    let asunto: ImapVal = env.items[1]
+    check("asunto con especiales", asunto.text, "Oferta (50%) {urgente} \"hoy\"")
+
+    println("imap transcripts ok")
+}

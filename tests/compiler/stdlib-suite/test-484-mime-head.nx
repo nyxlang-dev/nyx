@@ -1,0 +1,96 @@
+// test-484 — mime_parse_head (arco std-imap, Task 5): un tope de MimeLimits que tumba
+// mime_parse NO pierde las cabeceras. Es lo que usa std/imap para que una mesa de ayuda
+// enhebre por In-Reply-To un correo legítimo con 500+ partes o un adjunto enorme.
+
+import "std/mime"
+import "std/error"
+
+fn kind_de(r: Result<MimeMessage, Error>) -> String {
+    match r {
+        Result.Ok(m) => { return "OK" }
+        Result.Err(e) => { return e.kind }
+    }
+    return ""
+}
+
+fn msg_de(raw: String, lim: MimeLimits) -> MimeMessage {
+    match mime_parse_head(raw, lim) {
+        Result.Ok(m) => { return m }
+        Result.Err(e) => {
+            println("mime_parse_head: " + e.kind + " " + e.msg)
+            exit(1)
+        }
+    }
+    return msg_de(raw, lim)
+}
+
+fn check(nombre: String, cond: bool) {
+    if cond == false {
+        println("FAIL " + nombre)
+        exit(1)
+    }
+}
+
+fn cabeceras() -> String {
+    return "From: =?UTF-8?B?Q2xpZW50ZQ==?= <cliente@empresa.cl>\r\n" +
+        "To: casos@ejemplo.cl\r\n" +
+        "Subject: =?UTF-8?Q?Re:_Cotizaci=C3=B3n_123?=\r\n" +
+        "Message-ID: <resp-1@empresa.cl>\r\n" +
+        "In-Reply-To: <caso-123@nyxerp.cl>\r\n" +
+        "References: <inicio@nyxerp.cl> <caso-123@nyxerp.cl>\r\n"
+}
+
+fn main() {
+    // 600 partes: más que el tope de 500 de mime_limits().
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append(cabeceras())
+    sb.append("Content-Type: multipart/mixed; boundary=\"zz\"\r\n\r\n")
+    var i: int = 0
+    while i < 600 {
+        sb.append("--zz\r\nContent-Type: text/plain\r\n\r\nparte " + int_to_string(i) + "\r\n")
+        i = i + 1
+    }
+    sb.append("--zz--\r\n")
+    let muchas: String = sb.to_string()
+    check("mime_parse rechaza las 600 partes", kind_de(mime_parse(muchas, mime_limits())) == "invalid")
+    let m: MimeMessage = msg_de(muchas, mime_limits())
+    let irt: String = m.in_reply_to[0]
+    let de: MimeAddress = m.from_list[0]
+    check("head: asunto", m.subject == "Re: Cotización 123")
+    check("head: In-Reply-To", irt == "<caso-123@nyxerp.cl>" and m.references.length() == 2)
+    check("head: remitente", de.address == "cliente@empresa.cl" and de.name == "Cliente")
+    check("head: message-id", m.message_id == "<resp-1@empresa.cl>")
+    check("head: sin cuerpo", m.parts.length() == 0 and m.attachments.length() == 0 and m.text == "")
+    check("head: content-type", m.content_type == "multipart/mixed")
+
+    // Mensaje más grande que max_size: mime_parse da Err, la cabecera sale igual.
+    var lim: MimeLimits = mime_limits()
+    lim.max_size = 2000
+    var big: StringBuilder = StringBuilder.new()
+    big.append(cabeceras())
+    big.append("Content-Type: text/plain\r\n\r\n")
+    i = 0
+    while i < 300 { big.append("relleno relleno relleno\r\n"); i = i + 1 }
+    let grande: String = big.to_string()
+    check("mime_parse rechaza el mensaje grande", kind_de(mime_parse(grande, lim)) == "invalid")
+    let m2: MimeMessage = msg_de(grande, lim)
+    check("head de mensaje grande", m2.subject == "Re: Cotización 123" and m2.in_reply_to.length() == 1 and m2.text == "")
+
+    // Sin línea vacía todo es cabecera (lo que baja un BODY[HEADER] cortado).
+    let solo: MimeMessage = msg_de("Subject: hola\r\nIn-Reply-To: <a@b>", mime_limits())
+    check("head sin cuerpo", solo.subject == "hola" and solo.in_reply_to.length() == 1)
+
+    // LF solo, como llega de un .eml de Unix.
+    let lf: MimeMessage = msg_de("Subject: lf\nIn-Reply-To: <x@y>\n\ncuerpo que no se mira\n", mime_limits())
+    check("head con LF", lf.subject == "lf" and lf.text == "")
+
+    // Lo que no es un correo sigue dando Err.
+    check("vacío", kind_de(mime_parse_head("", mime_limits())) == "parse")
+    check("sin cabeceras", kind_de(mime_parse_head("\r\ncuerpo sin cabeceras", mime_limits())) == "parse")
+
+    // Los topes de CABECERAS siguen valiendo: una cabecera de 20 KB no pasa.
+    let gorda: String = "Subject: " + "x".repeat(20000) + "\r\n\r\ncuerpo"
+    check("cabecera gorda", kind_de(mime_parse_head(gorda, mime_limits())) == "invalid")
+
+    println("mime head ok")
+}

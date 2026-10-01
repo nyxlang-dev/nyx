@@ -1,0 +1,1722 @@
+// std/imap — cliente IMAP (RFC 3501) para LEER un buzón: mensajes nuevos, MIME y marcar
+// leídos. Solo nativo (sin sockets en wasm); el análisis del mensaje es std/mime.
+//
+// De dónde sale: nyxerp convierte en casos los correos de una casilla y enhebra las
+// respuestas del cliente por `In-Reply-To` / `References` (fricción team-7; spec
+// docs/design/specs/2026-09-29-std-imap-design.md, D-1 a D-12).
+//
+//   let opts: ImapOpts = imap_opts()
+//   let c: ImapConn = imap_connect_tls("imap.ejemplo.cl", 993, opts)?   // verifica SIEMPRE
+//   let _a: int = imap_login(c, "casos@ejemplo.cl", clave)?             // o imap_auth_xoauth2
+//   let mb: ImapMailbox = imap_select(c, "INBOX")?
+//   let r: ImapFetch = imap_fetch_since(c, uidvalidity_guardado, ultimo_uid_guardado, 50)?
+//   for m: ImapMessage in r.messages {
+//       println(m.mail.subject + " " + m.mail.in_reply_to[0])    // MimeMessage de std/mime
+//   }
+//   // la aplicación guarda (r.uidvalidity, r.last_uid) como cursor
+//   let _l: int = imap_logout(c)
+//
+// ── LO PRIMERO: el cursor por UID, no UNSEEN ─────────────────────────────────────────
+// `\Seen` es estado COMPARTIDO con quien abre el mismo buzón desde su teléfono: si la
+// respuesta del cliente se lee ahí primero, `imap_search_unseen` ya no la devuelve y el
+// sistema nunca se entera. `imap_fetch_since` pide «los UID mayores que el último que
+// procesé» y no toca ninguna marca. `imap_mark_seen` es opcional y aparte.
+//
+// ── Lo que hace por ti (y las trampas del protocolo que esconde) ─────────────────────
+//  - TLS implícito (993) y STARTTLS (143), ambos VERIFICANDO cadena y nombre contra las
+//    CAs del sistema (las variantes `_insecure` lo dicen en el nombre). La contraseña
+//    NUNCA viaja por un canal en claro y no hay flag para permitirlo. STARTTLS exige que
+//    el servidor lo anuncie y NO sigue en claro si falla: un servidor (o un atacante en
+//    el medio) que lo oculta recibe un error, no la clave.
+//  - LOGIN, AUTHENTICATE PLAIN y XOAUTH2. El token de XOAUTH2 lo trae la aplicación
+//    (no hay std/oauth2): se obtiene y se renueva por fuera. Si XOAUTH2 falla el servidor
+//    manda una continuación con un JSON de error y hay que contestar una línea vacía para
+//    recibir el `NO` final: está resuelto, y el JSON (sin secretos) va en el mensaje.
+//  - `UID SEARCH UID n:*` devuelve SIEMPRE al menos el último mensaje aunque sea ≤ n: se
+//    filtra. Si UIDVALIDITY cambió, los UID viejos no significan nada: Err "stale" con el
+//    UIDVALIDITY nuevo en `e.code`; la aplicación reescanea por Message-ID.
+//  - Todo se pide con BODY.PEEK (BODY[] marcaría el mensaje como leído de rebote).
+//  - Un mensaje cuyo RFC822.SIZE pasa `max_message` baja SOLO sus cabeceras y sale con
+//    `truncated`. Y si un tope de std/mime tumba el análisis del cuerpo (500 partes, un
+//    adjunto enorme), el mensaje sale igual, con sus cabeceras (mime_parse_head): una
+//    mesa de ayuda no puede perder el In-Reply-To de un correo legítimo grande.
+//
+// ── Errores (Result<_, Error> de std/error) ──────────────────────────────────────────
+//   "connection" no hay red, el servidor cortó o dijo BYE; "tls" el certificado no
+//   verifica o el handshake falló; "timeout" venció el plazo de un comando; "auth" el
+//   servidor rechazó las credenciales (el mensaje NUNCA lleva la clave ni el token) o
+//   había que cifrar primero; "protocol" el servidor dijo algo que no se entiende, un NO
+//   inesperado, o pasó un tope (línea, literal, respuesta): una conexión que dio este
+//   error por desincronía se cierra; "invalid" argumento mal (CR/LF/NUL en un nombre,
+//   carpeta no ASCII, sin SELECT); "not_found" la carpeta o el mensaje no existen;
+//   "stale" UIDVALIDITY cambió.
+//   Tras "timeout", "connection" o un "protocol" de desincronía la conexión queda
+//   CERRADA: toda llamada siguiente da "connection". Se vuelve a conectar.
+//
+// ── Entrada hostil ───────────────────────────────────────────────────────────────────
+// Todo lo que manda el servidor es hostil. El tope de línea, de literal (se mira ANTES de
+// leerlo), de respuesta, de respuestas sin etiqueta por comando, de profundidad de listas
+// y de elementos son de ImapOpts. Cada lectura tiene plazo y cada comando un plazo TOTAL
+// (`cmd_ms`): un servidor mudo no cuelga a quien llama. Los nombres de usuario y de
+// carpeta se rechazan si traen CR, LF o NUL: sin inyección de comandos.
+//
+// Límites declarados: sin IDLE, sin BODYSTRUCTURE por partes, sin UTF-7 (carpetas no
+// ASCII se rechazan con un error que lo dice), sin EXPUNGE/COPY/APPEND/LIST. El connect
+// de STARTTLS (143) usa el plazo de connect del sistema operativo, no `connect_ms`
+// (std/net no tiene un connect con plazo); el de TLS implícito sí lo respeta.
+
+import "std/error"
+import "std/net"
+import "std/tls"
+import "std/mime"
+
+extern "C" fn nyx_base64_encode(src: String) -> String
+
+// ── Opciones ──────────────────────────────────────────────────────────────
+
+pub struct ImapOpts {
+    connect_ms: int,      // connect + handshake de TLS implícito
+    cmd_ms: int,          // plazo TOTAL de cada comando (todas sus lecturas)
+    max_line: int,        // bytes de UNA línea de respuesta (sin literales)
+    max_literal: int,     // bytes de UN literal; se mira antes de leerlo
+    max_response: int,    // bytes de TODO lo que el servidor manda para UN comando (líneas + literales)
+    max_untagged: int,    // respuestas sin etiqueta que se aceptan por comando
+    max_message: int,     // RFC822.SIZE por encima del cual solo se bajan las cabeceras
+    fetch_ms: int,        // plazo TOTAL de imap_fetch_since (0 = sin plazo propio)
+    mime: MimeLimits      // topes de std/mime al analizar cada mensaje
+}
+
+// Por omisión: 10 s de connect, 30 s por comando, 1 MB por línea (una búsqueda sobre un
+// buzón grande es UNA línea de números), 16 MB por literal, 24 MB por respuesta, 5000
+// respuestas sin etiqueta por comando y 10 MB de mensaje completo.
+pub fn imap_opts() -> ImapOpts {
+    return ImapOpts {
+        connect_ms: 10000, cmd_ms: 30000, max_line: 1048576, max_literal: 16777216,
+        max_response: 25165824, max_untagged: 5000, max_message: 10485760,
+        fetch_ms: 0, mime: mime_limits()
+    }
+}
+
+// ── Tipos ─────────────────────────────────────────────────────────────────
+
+// Un valor del protocolo. kind: "atom" (text), "num" (num), "str" (cadena entrecomillada
+// o literal, ya sin comillas ni escapes, text), "nil", "list" (items: Array<ImapVal>).
+pub struct ImapVal {
+    kind: String,
+    text: String,
+    num: int,
+    items: Array
+}
+
+// Una respuesta del servidor ya interpretada.
+//   kind   "tagged" | "untagged" | "continuation"
+//   tag    de las tagged
+//   status "OK" | "NO" | "BAD" | "BYE" | "PREAUTH" en las de estado; "" en las de datos
+//   code / code_arg  el `[CODIGO arg]` de una respuesta de estado, código en mayúsculas
+//   text   el texto humano de una de estado, o de una continuación
+//   name   el verbo de una de datos en mayúsculas: "FETCH", "SEARCH", "EXISTS", ...
+//   num    el número que precede al verbo (`* 3 FETCH`, `* 23 EXISTS`), o -1
+//   items  los valores que siguen al verbo (`* 3 FETCH (...)` → [lista])
+pub struct ImapResp {
+    kind: String,
+    tag: String,
+    status: String,
+    code: String,
+    code_arg: String,
+    text: String,
+    name: String,
+    num: int,
+    items: Array
+}
+
+// Resultado de un comando: la respuesta final y las que llegaron antes sin etiqueta.
+pub struct ImapReply {
+    status: String,
+    code: String,
+    code_arg: String,
+    text: String,
+    untagged: Array,      // Array<ImapResp>
+    cont: bool,           // true si en vez del cierre llegó una continuación `+`
+    cont_text: String
+}
+
+// La conexión. `st` es un Array COMPARTIDO (los structs se pasan por valor y las copias de
+// `ImapConn` tienen que ver el mismo estado): búfer de lectura, capacidades, plazo, etc.
+// STARTTLS devuelve una ImapConn nueva con el handle TLS; la vieja ya no se usa.
+pub struct ImapConn {
+    fd: int,
+    tls: int,             // 0 mientras el canal está en claro
+    host: String,
+    opts: ImapOpts,
+    st: Array
+}
+
+pub struct ImapMailbox {
+    name: String,
+    uidvalidity: int,
+    uidnext: int,
+    exists: int,
+    readonly: bool
+}
+
+pub struct ImapMessage {
+    uid: int,
+    size: int,            // RFC822.SIZE que dijo el servidor, o -1
+    flags: Array,         // Array<String>, p. ej. "\Seen"
+    seen: bool,
+    raw: String,          // los bytes bajados (mensaje entero, o solo cabeceras si truncated)
+    mail: MimeMessage,    // vacío si parsed es false
+    parsed: bool,         // false si ni las cabeceras se pudieron analizar (ver note)
+    truncated: bool,      // true: solo hay cabeceras (mensaje grande o tope de std/mime)
+    note: String          // por qué quedó truncado o sin analizar; "" si todo bien
+}
+
+pub struct ImapFetch {
+    uidvalidity: int,     // el del buzón: GUÁRDALO junto con last_uid
+    last_uid: int,        // el cursor nuevo: el mayor UID ya procesado
+    messages: Array,      // Array<ImapMessage>, UID ascendente
+    more: bool            // true si quedaron mensajes por bajar (vuelve a llamar)
+}
+
+// Posiciones del Array de estado de ImapConn.
+const IMAP_ST_BUF: int = 0
+const IMAP_ST_POS: int = 1
+const IMAP_ST_CAPS: int = 2
+const IMAP_ST_TAG: int = 3
+const IMAP_ST_DEADLINE: int = 4
+const IMAP_ST_CLOSED: int = 5
+const IMAP_ST_AUTH: int = 6
+const IMAP_ST_SEL: int = 7
+const IMAP_ST_UIDV: int = 8
+const IMAP_ST_UIDNEXT: int = 9
+const IMAP_ST_EXISTS: int = 10
+const IMAP_ST_RO: int = 11
+const IMAP_ST_MBOX: int = 12
+const IMAP_ST_BYE: int = 13
+const IMAP_ST_CMDBYTES: int = 14
+
+// Topes del analizador puro (no dependen de la red).
+const IMAP_MAX_DEPTH: int = 16
+const IMAP_MAX_TOKENS: int = 262144
+const IMAP_READ_CHUNK: int = 32768
+const IMAP_MAX_CAPS: int = 256
+const IMAP_UID_MAX: int = 4294967295
+const IMAP_MAX_RANGES: int = 64
+
+// ── Errores ───────────────────────────────────────────────────────────────
+
+fn __imap_clip(s: String, n: int) -> String {
+    if s.length() <= n { return s }
+    return s.substring(0, n) + "..."
+}
+
+fn __imap_err_proto(msg: String) -> Error { return err_new(0, "protocol", "imap: " + msg) }
+fn __imap_err_conn(msg: String) -> Error { return err_new(0, "connection", "imap: " + msg) }
+fn __imap_err_invalid(msg: String) -> Error { return err_new(22, "invalid", "imap: " + msg) }
+
+// ── Analizador puro (sin red) ─────────────────────────────────────────────
+
+fn __imap_is_digit(c: int) -> bool { return c >= 48 and c <= 57 }
+
+fn __imap_all_digits(s: String) -> bool {
+    if s.length() == 0 { return false }
+    var i: int = 0
+    while i < s.length() {
+        if __imap_is_digit(s.charAt(i)) == false { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Entero de una cadena de 1 a 18 dígitos (sin desbordar un int de 64 bits).
+fn __imap_atoi(s: String) -> int {
+    var n: int = 0
+    var i: int = 0
+    while i < s.length() {
+        n = n * 10 + (s.charAt(i) - 48)
+        i = i + 1
+    }
+    return n
+}
+
+fn __imap_val(kind: String, text: String, num: int, items: Array) -> ImapVal {
+    return ImapVal { kind: kind, text: text, num: num, items: items }
+}
+
+fn __imap_skip_ws(s: String, pos: int) -> int {
+    var p: int = pos
+    let n: int = s.length()
+    while p < n {
+        let c: int = s.charAt(p)
+        if c == 32 or c == 13 or c == 10 or c == 9 { p = p + 1 } else { return p }
+    }
+    return p
+}
+
+// Un valor desde `pos`. Devuelve [ImapVal, posición siguiente]; SIEMPRE consume al menos
+// un byte o da Err, así que ningún bucle que lo llame puede quedarse girando. `ctx` es
+// [tokens vistos, tope de tokens]: una línea de «()()()...» no arma una lista de millones.
+fn __imap_pv(s: String, pos: int, depth: int, ctx: Array) -> Result<Array, Error> {
+    let n: int = s.length()
+    if pos >= n { return Result.Err(__imap_err_proto("se esperaba un valor y la respuesta terminó")) }
+    let seen: int = ctx[0]
+    let cap: int = ctx[1]
+    if seen + 1 > cap { return Result.Err(__imap_err_proto("la respuesta trae demasiados elementos")) }
+    ctx[0] = seen + 1
+    let c: int = s.charAt(pos)
+
+    if c == 40 {
+        if depth >= IMAP_MAX_DEPTH {
+            return Result.Err(__imap_err_proto("listas anidadas a más de " + int_to_string(IMAP_MAX_DEPTH) + " niveles"))
+        }
+        var items: Array = []
+        var p: int = pos + 1
+        while true {
+            p = __imap_skip_ws(s, p)
+            if p >= n { return Result.Err(__imap_err_proto("lista sin cerrar")) }
+            if s.charAt(p) == 41 {
+                return Result.Ok([__imap_val("list", "", 0, items), p + 1])
+            }
+            let r: Array = __imap_pv(s, p, depth + 1, ctx)?
+            let v: ImapVal = r[0]
+            let np: int = r[1]
+            items.push(v)
+            p = np
+        }
+        return Result.Err(__imap_err_proto("lista sin cerrar"))
+    }
+
+    if c == 34 {
+        var sb: StringBuilder = StringBuilder.new()
+        var i: int = pos + 1
+        while i < n {
+            let ch: int = s.charAt(i)
+            if ch == 34 { return Result.Ok([__imap_val("str", sb.to_string(), 0, []), i + 1]) }
+            if ch == 13 or ch == 10 { return Result.Err(__imap_err_proto("cadena entrecomillada con salto de línea")) }
+            if ch == 92 {
+                if i + 1 >= n { return Result.Err(__imap_err_proto("cadena entrecomillada sin cerrar")) }
+                sb.append(s.substring(i + 1, i + 2))
+                i = i + 2
+            } else {
+                // Un tramo de una vez: una cadena larga no se arma byte a byte.
+                var k: int = i
+                while k < n {
+                    let ck: int = s.charAt(k)
+                    if ck == 34 or ck == 92 or ck == 13 or ck == 10 { break }
+                    k = k + 1
+                }
+                sb.append(s.substring(i, k))
+                i = k
+            }
+        }
+        return Result.Err(__imap_err_proto("cadena entrecomillada sin cerrar"))
+    }
+
+    if c == 123 {
+        // Literal: {n}CRLF + n bytes exactos (que pueden traer CRLF y NUL). `{n+}` es la
+        // forma sin espera del cliente; se acepta por tolerancia.
+        var q: int = pos + 1
+        while q < n and __imap_is_digit(s.charAt(q)) { q = q + 1 }
+        let nd: int = q - (pos + 1)
+        if nd == 0 or nd > 10 { return Result.Err(__imap_err_proto("literal con largo inválido")) }
+        let len: int = __imap_atoi(s.substring(pos + 1, q))
+        if q < n and s.charAt(q) == 43 { q = q + 1 }
+        if q >= n or s.charAt(q) != 125 { return Result.Err(__imap_err_proto("literal mal formado")) }
+        q = q + 1
+        if q < n and s.charAt(q) == 13 { q = q + 1 }
+        if q >= n or s.charAt(q) != 10 { return Result.Err(__imap_err_proto("el literal no termina en salto de línea")) }
+        q = q + 1
+        if q + len > n { return Result.Err(__imap_err_proto("literal truncado: declara " + int_to_string(len) + " bytes y hay " + int_to_string(n - q))) }
+        return Result.Ok([__imap_val("str", s.substring(q, q + len), 0, []), q + len])
+    }
+
+    if c == 41 { return Result.Err(__imap_err_proto("«)» sin lista abierta")) }
+    if c == 13 or c == 10 or c == 0 { return Result.Err(__imap_err_proto("carácter inesperado en la respuesta")) }
+
+    // Átomo. Un `[...]` forma parte del átomo aunque traiga espacios y paréntesis:
+    // `BODY[HEADER.FIELDS (DATE FROM)]` es UN nombre de dato.
+    var j: int = pos
+    while j < n {
+        let ch: int = s.charAt(j)
+        if ch == 32 or ch == 40 or ch == 41 or ch == 123 or ch == 34 or ch == 13 or ch == 10 or ch == 0 { break }
+        if ch == 91 {
+            let close: int = s.indexOf("]", j)
+            if close < 0 { return Result.Err(__imap_err_proto("«[» sin cerrar")) }
+            j = close + 1
+        } else {
+            j = j + 1
+        }
+    }
+    if j == pos { return Result.Err(__imap_err_proto("carácter inesperado en la respuesta")) }
+    let text: String = s.substring(pos, j)
+    if __imap_all_digits(text) and text.length() <= 18 {
+        return Result.Ok([__imap_val("num", text, __imap_atoi(text), []), j])
+    }
+    if text.length() == 3 and text.to_upper() == "NIL" {
+        return Result.Ok([__imap_val("nil", "", 0, []), j])
+    }
+    return Result.Ok([__imap_val("atom", text, 0, []), j])
+}
+
+// Todos los valores de `s` desde `start`, separados por espacios (o saltos de línea).
+fn __imap_pvs(s: String, start: int) -> Result<Array, Error> {
+    var out: Array = []
+    let ctx: Array = [0, IMAP_MAX_TOKENS]
+    var p: int = __imap_skip_ws(s, start)
+    while p < s.length() {
+        let r: Array = __imap_pv(s, p, 0, ctx)?
+        let v: ImapVal = r[0]
+        let np: int = r[1]
+        out.push(v)
+        p = __imap_skip_ws(s, np)
+    }
+    return Result.Ok(out)
+}
+
+// Analiza una secuencia de valores IMAP: átomos, números, NIL, cadenas entrecomilladas
+// (con escapes), literales `{n}\r\n<n bytes>` y listas anidadas (tope de profundidad 16 y
+// de 262144 elementos). Función pura. Err "protocol" ante lo mal formado.
+pub fn imap_parse_values(s: String) -> Result<Array, Error> {
+    return __imap_pvs(s, 0)
+}
+
+fn __imap_word_end(s: String, pos: int) -> int {
+    var p: int = pos
+    let n: int = s.length()
+    while p < n {
+        let c: int = s.charAt(p)
+        if c == 32 or c == 13 or c == 10 { return p }
+        p = p + 1
+    }
+    return p
+}
+
+fn __imap_is_status(w: String) -> bool {
+    return w == "OK" or w == "NO" or w == "BAD" or w == "BYE" or w == "PREAUTH"
+}
+
+fn __imap_blank_resp(kind: String) -> ImapResp {
+    return ImapResp {
+        kind: kind, tag: "", status: "", code: "", code_arg: "", text: "",
+        name: "", num: -1, items: []
+    }
+}
+
+// El resto de la PRIMERA línea desde `pos`, sin CR/LF.
+fn __imap_first_line_from(raw: String, pos: int) -> String {
+    var e: int = raw.indexOf("\n", pos)
+    if e < 0 { e = raw.length() }
+    if e > pos and raw.charAt(e - 1) == 13 { e = e - 1 }
+    if e <= pos { return "" }
+    return raw.substring(pos, e)
+}
+
+// Completa code/code_arg/text de una respuesta de estado a partir de su texto:
+// `[UIDVALIDITY 3857529045] UIDs valid` → code "UIDVALIDITY", code_arg "3857529045".
+fn __imap_status_text(r: ImapResp, text: String) -> ImapResp {
+    var out: ImapResp = r
+    var t: String = text.trim()
+    if t.length() > 0 and t.charAt(0) == 91 {
+        let close: int = t.indexOf("]")
+        if close > 0 {
+            let inner: String = t.substring(1, close)
+            let sp: int = inner.indexOf(" ")
+            if sp < 0 {
+                out.code = inner.to_upper()
+            } else {
+                out.code = inner.substring(0, sp).to_upper()
+                out.code_arg = inner.substring(sp + 1, inner.length()).trim()
+            }
+            t = t.substring(close + 1, t.length()).trim()
+        }
+    }
+    out.text = t
+    return out
+}
+
+// Interpreta UNA respuesta completa del servidor (la línea y los literales que la
+// continúan, tal como llegaron). Función pura. Err "protocol" si no se entiende.
+//   "+ texto"                 → continuation
+//   "* OK [CODIGO x] texto"   → untagged con status y code
+//   "* 3 FETCH (...)"         → untagged con name "FETCH", num 3, items [lista]
+//   "* SEARCH 4 9"            → untagged con name "SEARCH", items [4, 9]
+//   "A001 OK texto"           → tagged
+pub fn imap_parse_response(raw: String) -> Result<ImapResp, Error> {
+    if raw.length() == 0 { return Result.Err(__imap_err_proto("respuesta vacía")) }
+    let c0: int = raw.charAt(0)
+    if c0 == 43 {
+        var rc: ImapResp = __imap_blank_resp("continuation")
+        var pc: int = 1
+        if raw.length() > 1 and raw.charAt(1) == 32 { pc = 2 }
+        rc.text = __imap_first_line_from(raw, pc)
+        return Result.Ok(rc)
+    }
+    if c0 == 42 {
+        if raw.length() < 3 or raw.charAt(1) != 32 { return Result.Err(__imap_err_proto("respuesta sin etiqueta mal formada")) }
+        var ru: ImapResp = __imap_blank_resp("untagged")
+        let e1: int = __imap_word_end(raw, 2)
+        let w1: String = raw.substring(2, e1)
+        if w1.length() == 0 { return Result.Err(__imap_err_proto("respuesta sin etiqueta mal formada")) }
+        let w1u: String = w1.to_upper()
+        if __imap_is_status(w1u) {
+            ru.status = w1u
+            return Result.Ok(__imap_status_text(ru, __imap_first_line_from(raw, e1)))
+        }
+        var pu: int = e1
+        if __imap_all_digits(w1) and w1.length() <= 18 {
+            ru.num = __imap_atoi(w1)
+            pu = __imap_skip_ws(raw, e1)
+            let e2: int = __imap_word_end(raw, pu)
+            if e2 == pu { return Result.Err(__imap_err_proto("falta el verbo después del número")) }
+            ru.name = raw.substring(pu, e2).to_upper()
+            pu = e2
+        } else {
+            ru.name = w1u
+        }
+        let items: Array = __imap_pvs(raw, pu)?
+        ru.items = items
+        return Result.Ok(ru)
+    }
+    // Con etiqueta: `tag STATUS texto`.
+    let et: int = __imap_word_end(raw, 0)
+    if et == 0 or et >= raw.length() { return Result.Err(__imap_err_proto("respuesta con etiqueta mal formada")) }
+    var rt: ImapResp = __imap_blank_resp("tagged")
+    rt.tag = raw.substring(0, et)
+    let ps: int = __imap_skip_ws(raw, et)
+    let es: int = __imap_word_end(raw, ps)
+    let st: String = raw.substring(ps, es).to_upper()
+    if __imap_is_status(st) == false {
+        return Result.Err(__imap_err_proto("respuesta con etiqueta sin OK, NO ni BAD"))
+    }
+    rt.status = st
+    return Result.Ok(__imap_status_text(rt, __imap_first_line_from(raw, es)))
+}
+
+// Entrecomilla un argumento (usuario, clave, carpeta) para mandarlo en un comando. Err
+// "invalid" si trae CR, LF o NUL (inyección de comandos) o bytes de control o ≥ 128: un
+// argumento con bytes altos necesitaría un literal; las credenciales así van por
+// imap_auth_plain, que las manda en base64 sin tocarlas.
+pub fn imap_quote(s: String) -> Result<String, Error> {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("\"")
+    var i: int = 0
+    while i < s.length() {
+        let c: int = s.charAt(i)
+        if c < 32 or c > 126 {
+            return Result.Err(__imap_err_invalid("el argumento trae un carácter de control o no ASCII"))
+        }
+        if c == 34 or c == 92 { sb.append("\\") }
+        sb.append(s.substring(i, i + 1))
+        i = i + 1
+    }
+    sb.append("\"")
+    return Result.Ok(sb.to_string())
+}
+
+// ── Lectura y escritura (con plazo) ───────────────────────────────────────
+
+fn __imap_new(fd: int, tls: int, host: String, opts: ImapOpts) -> ImapConn {
+    // buf, pos, caps, tag, deadline, closed, auth, sel, uidvalidity, uidnext, exists,
+    // readonly, mailbox, bye, bytes leídos en el comando actual (posiciones: IMAP_ST_*)
+    let st: Array = ["", 0, "", 0, 0, false, false, false, 0, 0, 0, false, "", false, 0]
+    return ImapConn { fd: fd, tls: tls, host: host, opts: opts, st: st }
+}
+
+fn __imap_closed(c: ImapConn) -> bool {
+    let b: bool = c.st[IMAP_ST_CLOSED]
+    return b
+}
+
+// Cierra el socket (una sola vez) y deja la conexión inutilizable.
+fn __imap_close_raw(c: ImapConn) {
+    if __imap_closed(c) { return }
+    c.st[IMAP_ST_CLOSED] = true
+    if c.tls != 0 { tls_close(c.tls) } else { tcp_close(c.fd) }
+}
+
+// Desincronía o fallo de transporte: se cierra, porque seguir hablando sobre una
+// conexión en estado dudoso solo puede mezclar respuestas.
+fn __imap_fail(c: ImapConn, e: Error) -> Error {
+    __imap_close_raw(c)
+    return e
+}
+
+// Cada comando (y el saludo) arranca con su plazo y su cuenta de bytes en cero.
+fn __imap_set_deadline(c: ImapConn) {
+    c.st[IMAP_ST_DEADLINE] = monotonic_ms() + c.opts.cmd_ms
+    c.st[IMAP_ST_CMDBYTES] = 0
+}
+
+fn __imap_ready(c: ImapConn) -> Result<int, Error> {
+    if __imap_closed(c) {
+        return Result.Err(__imap_err_conn("la conexión está cerrada: vuelve a conectar"))
+    }
+    return Result.Ok(0)
+}
+
+fn __imap_write(c: ImapConn, data: String) -> Result<int, Error> {
+    var n: int = 0
+    if c.tls != 0 { n = tls_write_conn(c.tls, data) } else { n = tcp_write(c.fd, data) }
+    if n < 0 {
+        return Result.Err(__imap_fail(c, __imap_err_conn("no se pudo escribir en el socket")))
+    }
+    return Result.Ok(n)
+}
+
+// Lee del socket lo que haya (hasta IMAP_READ_CHUNK) y lo deja como búfer nuevo. Solo se
+// llama con el búfer ya consumido, así que no se concatena nunca: leer un literal de 10 MB
+// o una línea gigante es lineal, no cuadrático (un servidor que manda de a un byte no
+// puede hacer que se copie el búfer entero en cada llegada).
+fn __imap_fill(c: ImapConn) -> Result<int, Error> {
+    let dl: int = c.st[IMAP_ST_DEADLINE]
+    let left: int = dl - monotonic_ms()
+    if left <= 0 {
+        return Result.Err(__imap_fail(c, err_new(110, "timeout", "imap: venció el plazo del comando (" + int_to_string(c.opts.cmd_ms) + " ms)")))
+    }
+    var r: Result<String, Error> = Result.Ok("")
+    if c.tls != 0 { r = try_tls_read(c.tls, IMAP_READ_CHUNK, left) } else { r = try_tcp_read_timed(c.fd, IMAP_READ_CHUNK, left) }
+    match r {
+        Result.Ok(d) => {
+            if d.length() == 0 {
+                return Result.Err(__imap_fail(c, __imap_err_conn("el servidor cerró la conexión")))
+            }
+            c.st[IMAP_ST_BUF] = d
+            c.st[IMAP_ST_POS] = 0
+            return Result.Ok(d.length())
+        }
+        Result.Err(e) => {
+            if e.kind == "timeout" {
+                return Result.Err(__imap_fail(c, err_new(110, "timeout", "imap: el servidor no contestó a tiempo")))
+            }
+            if e.kind == "eof" {
+                return Result.Err(__imap_fail(c, __imap_err_conn("el servidor cerró la conexión")))
+            }
+            return Result.Err(__imap_fail(c, __imap_err_conn("falló la lectura del socket (" + e.kind + ")")))
+        }
+    }
+    return Result.Ok(0)
+}
+
+// Una línea sin su CRLF, con tope de largo. Lineal: el tramo que aún no tiene salto de
+// línea se acumula en un StringBuilder y la búsqueda del `\n` solo mira lo recién llegado.
+fn __imap_read_line(c: ImapConn) -> Result<String, Error> {
+    var sb: StringBuilder = StringBuilder.new()
+    var have: int = 0
+    while true {
+        let buf: String = c.st[IMAP_ST_BUF]
+        let pos: int = c.st[IMAP_ST_POS]
+        if pos < buf.length() {
+            let idx: int = buf.indexOf("\n", pos)
+            if idx >= 0 {
+                let piece: String = buf.substring(pos, idx)
+                c.st[IMAP_ST_POS] = idx + 1
+                if have + piece.length() > c.opts.max_line {
+                    return Result.Err(__imap_fail(c, __imap_err_proto("línea de más de " + int_to_string(c.opts.max_line) + " bytes")))
+                }
+                sb.append(piece)
+                var line: String = sb.to_string()
+                if line.length() > 0 and line.charAt(line.length() - 1) == 13 {
+                    line = line.substring(0, line.length() - 1)
+                }
+                return Result.Ok(line)
+            }
+            let piece: String = buf.substring(pos, buf.length())
+            have = have + piece.length()
+            if have > c.opts.max_line {
+                return Result.Err(__imap_fail(c, __imap_err_proto("línea de más de " + int_to_string(c.opts.max_line) + " bytes")))
+            }
+            sb.append(piece)
+            c.st[IMAP_ST_POS] = buf.length()
+        }
+        let f: int = __imap_fill(c)?
+    }
+    return Result.Ok("")
+}
+
+// Exactamente `n` bytes (un literal). El llamador ya comprobó `n` contra el tope.
+fn __imap_read_exact(c: ImapConn, n: int) -> Result<String, Error> {
+    if n <= 0 { return Result.Ok("") }
+    var sb: StringBuilder = StringBuilder.new()
+    var need: int = n
+    while need > 0 {
+        let buf: String = c.st[IMAP_ST_BUF]
+        let pos: int = c.st[IMAP_ST_POS]
+        let avail: int = buf.length() - pos
+        if avail > 0 {
+            var take: int = avail
+            if take > need { take = need }
+            // Todo lo que se necesita ya está en el búfer: se evita pasar por el
+            // StringBuilder (el caso del literal chico, el más común).
+            if take == need and need == n {
+                c.st[IMAP_ST_POS] = pos + take
+                return Result.Ok(buf.substring(pos, pos + take))
+            }
+            sb.append(buf.substring(pos, pos + take))
+            c.st[IMAP_ST_POS] = pos + take
+            need = need - take
+        }
+        if need > 0 {
+            let f: int = __imap_fill(c)?
+        }
+    }
+    return Result.Ok(sb.to_string())
+}
+
+// Si la línea termina en `{n}` o `{n+}`, n; si no, -1. n se acota a 12 dígitos.
+fn __imap_literal_len(line: String) -> int {
+    let n: int = line.length()
+    if n < 3 or line.charAt(n - 1) != 125 { return -1 }
+    var j: int = n - 2
+    if line.charAt(j) == 43 { j = j - 1 }
+    var d: int = 0
+    while j >= 0 and __imap_is_digit(line.charAt(j)) {
+        d = d + 1
+        j = j - 1
+    }
+    if d == 0 or d > 12 or j < 0 or line.charAt(j) != 123 { return -1 }
+    let ini: int = j + 1
+    return __imap_atoi(line.substring(ini, ini + d))
+}
+
+// UNA respuesta lógica completa: la línea, y mientras termine en un literal `{n}`, sus n
+// bytes y la línea que sigue. El largo del literal se compara con el tope ANTES de leerlo:
+// `{9999999999}` no reserva memoria ni espera esos bytes.
+//
+// `max_response` es el tope ACUMULADO de todo el comando, no de cada respuesta: sin eso un
+// servidor contesta un NOOP con miles de `* 1 FETCH (X {16000000}...)`, cada uno dentro de
+// max_literal y menos de max_untagged pero con 120 GB entre todos. La cuenta vive en
+// IMAP_ST_CMDBYTES y la reinicia __imap_set_deadline.
+fn __imap_read_response(c: ImapConn) -> Result<String, Error> {
+    var sb: StringBuilder = StringBuilder.new()
+    var total: int = c.st[IMAP_ST_CMDBYTES]
+    var rounds: int = 0
+    while true {
+        let line: String = __imap_read_line(c)?
+        total = total + line.length() + 2
+        if total > c.opts.max_response {
+            return Result.Err(__imap_fail(c, __imap_err_proto("lo que el servidor manda para un comando pasa de " + int_to_string(c.opts.max_response) + " bytes")))
+        }
+        sb.append(line)
+        sb.append("\r\n")
+        var n: int = -1
+        if line.length() < 2 or line.charAt(0) != 43 or line.charAt(1) != 32 { n = __imap_literal_len(line) }
+        if n < 0 {
+            c.st[IMAP_ST_CMDBYTES] = total
+            return Result.Ok(sb.to_string())
+        }
+        if n > c.opts.max_literal {
+            return Result.Err(__imap_fail(c, __imap_err_proto("literal de " + int_to_string(n) + " bytes: pasa el tope de " + int_to_string(c.opts.max_literal))))
+        }
+        total = total + n
+        if total > c.opts.max_response {
+            return Result.Err(__imap_fail(c, __imap_err_proto("lo que el servidor manda para un comando pasa de " + int_to_string(c.opts.max_response) + " bytes")))
+        }
+        rounds = rounds + 1
+        if rounds > 64 {
+            return Result.Err(__imap_fail(c, __imap_err_proto("demasiados literales en una respuesta")))
+        }
+        let data: String = __imap_read_exact(c, n)?
+        sb.append(data)
+    }
+    return Result.Ok("")
+}
+
+// Capacidades guardadas como « A B C » en mayúsculas para buscar una palabra completa.
+// Un servidor real anuncia unas 30; el servidor es hostil, así que se guardan a lo sumo
+// IMAP_MAX_CAPS palabras de a lo sumo 64 bytes (el resto se descarta) y la cadena se arma con
+// un StringBuilder: concatenar `s = s + w` en un bucle sobre una línea de 1 MB era cuadrático.
+fn __imap_set_caps(c: ImapConn, words: Array) {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append(" ")
+    var i: int = 0
+    while i < words.length() and i < IMAP_MAX_CAPS {
+        let w: String = words[i]
+        if w.length() > 0 and w.length() <= 64 {
+            sb.append(w.to_upper())
+            sb.append(" ")
+        }
+        i = i + 1
+    }
+    c.st[IMAP_ST_CAPS] = sb.to_string()
+}
+
+// Lo mismo desde un texto «A B C» (el código [CAPABILITY ...]): se corta en espacios SIN
+// armar un Array con todas las palabras de una línea de hasta 1 MB.
+fn __imap_set_caps_text(c: ImapConn, text: String) {
+    var words: Array = []
+    let n: int = text.length()
+    var i: int = 0
+    while i < n and words.length() < IMAP_MAX_CAPS {
+        while i < n and text.charAt(i) == 32 { i = i + 1 }
+        var j: int = i
+        while j < n and text.charAt(j) != 32 { j = j + 1 }
+        if j > i { words.push(text.substring(i, j)) }
+        i = j
+    }
+    __imap_set_caps(c, words)
+}
+
+fn __imap_caps_from_values(c: ImapConn, vals: Array) {
+    var words: Array = []
+    var i: int = 0
+    while i < vals.length() and words.length() < IMAP_MAX_CAPS {
+        let v: ImapVal = vals[i]
+        if v.kind == "atom" or v.kind == "num" { words.push(v.text) }
+        i = i + 1
+    }
+    __imap_set_caps(c, words)
+}
+
+// Efectos laterales de una respuesta sin etiqueta sobre el estado de la conexión.
+fn __imap_absorb(c: ImapConn, r: ImapResp) {
+    if r.kind != "untagged" { return }
+    if r.name == "EXISTS" and r.num >= 0 { c.st[IMAP_ST_EXISTS] = r.num }
+    if r.name == "CAPABILITY" { __imap_caps_from_values(c, r.items) }
+    if r.status == "OK" and r.code == "CAPABILITY" {
+        __imap_set_caps_text(c, r.code_arg)
+    }
+    if r.status == "OK" and r.code == "UIDNEXT" and __imap_all_digits(r.code_arg) and r.code_arg.length() <= 10 {
+        let un: int = __imap_atoi(r.code_arg)
+        let sel: bool = c.st[IMAP_ST_SEL]
+        if sel and un > 0 { c.st[IMAP_ST_UIDNEXT] = un }
+    }
+    if r.status == "BYE" { c.st[IMAP_ST_BYE] = true }
+}
+
+// Lee y analiza la próxima respuesta. Una que no se entiende desincroniza: se cierra.
+fn __imap_next(c: ImapConn) -> Result<ImapResp, Error> {
+    let raw: String = __imap_read_response(c)?
+    let r: Result<ImapResp, Error> = imap_parse_response(raw)
+    match r {
+        Result.Ok(resp) => {
+            __imap_absorb(c, resp)
+            return Result.Ok(resp)
+        }
+        Result.Err(e) => { return Result.Err(__imap_fail(c, e)) }
+    }
+    return Result.Err(__imap_err_proto("respuesta ilegible"))
+}
+
+fn __imap_reply_of(resp: ImapResp, untagged: Array) -> ImapReply {
+    return ImapReply {
+        status: resp.status, code: resp.code, code_arg: resp.code_arg, text: resp.text,
+        untagged: untagged, cont: false, cont_text: ""
+    }
+}
+
+fn __imap_next_tag(c: ImapConn) -> String {
+    let t: int = c.st[IMAP_ST_TAG]
+    c.st[IMAP_ST_TAG] = t + 1
+    return "A" + int_to_string(t + 1)
+}
+
+// Junta las respuestas hasta la del cierre del comando `tag` (o una continuación).
+fn __imap_collect(c: ImapConn, tag: String) -> Result<ImapReply, Error> {
+    var untagged: Array = []
+    while true {
+        let resp: ImapResp = __imap_next(c)?
+        if resp.kind == "untagged" {
+            if untagged.length() >= c.opts.max_untagged {
+                return Result.Err(__imap_fail(c, __imap_err_proto("más de " + int_to_string(c.opts.max_untagged) + " respuestas sin etiqueta para un comando")))
+            }
+            untagged.push(resp)
+        } else if resp.kind == "continuation" {
+            var rc: ImapReply = __imap_reply_of(resp, untagged)
+            rc.cont = true
+            rc.cont_text = resp.text
+            return Result.Ok(rc)
+        } else {
+            if resp.tag != tag {
+                return Result.Err(__imap_fail(c, __imap_err_proto("llegó el cierre de otro comando («" + __imap_clip(resp.tag, 20) + "»)")))
+            }
+            return Result.Ok(__imap_reply_of(resp, untagged))
+        }
+    }
+    return Result.Err(__imap_err_proto("sin cierre"))
+}
+
+// Manda un comando y espera su cierre, con el plazo total de `cmd_ms`. Una continuación
+// inesperada es un error de protocolo (solo AUTHENTICATE las espera).
+fn __imap_run(c: ImapConn, cmd: String) -> Result<ImapReply, Error> {
+    let ok: int = __imap_ready(c)?
+    __imap_set_deadline(c)
+    let tag: String = __imap_next_tag(c)
+    let w: int = __imap_write(c, tag + " " + cmd + "\r\n")?
+    let rep: ImapReply = __imap_collect(c, tag)?
+    if rep.cont {
+        return Result.Err(__imap_fail(c, __imap_err_proto("el servidor pidió datos que este comando no manda")))
+    }
+    return Result.Ok(rep)
+}
+
+// El cierre tiene que ser OK; NO y BAD se traducen a un error con el texto del servidor.
+fn __imap_expect_ok(rep: ImapReply, what: String) -> Result<int, Error> {
+    if rep.status == "OK" { return Result.Ok(0) }
+    var kind: String = "protocol"
+    if rep.code == "NONEXISTENT" or rep.code == "TRYCREATE" { kind = "not_found" }
+    return Result.Err(err_new(0, kind, "imap: " + what + " rechazado por el servidor (" + rep.status + "): " + __imap_clip(rep.text, 160)))
+}
+
+// ── Conexión ──────────────────────────────────────────────────────────────
+
+fn __imap_check_host(host: String, port: int) -> Result<int, Error> {
+    if host.length() == 0 or host.length() > 253 {
+        return Result.Err(__imap_err_invalid("host vacío o demasiado largo"))
+    }
+    var i: int = 0
+    while i < host.length() {
+        let ch: int = host.charAt(i)
+        if ch <= 32 or ch == 127 { return Result.Err(__imap_err_invalid("el host trae espacios o caracteres de control")) }
+        i = i + 1
+    }
+    if port < 1 or port > 65535 { return Result.Err(__imap_err_invalid("puerto fuera de rango")) }
+    return Result.Ok(0)
+}
+
+// Lee el saludo del servidor y las capacidades. Un `* BYE` es un rechazo.
+fn __imap_greeting(c: ImapConn) -> Result<int, Error> {
+    __imap_set_deadline(c)
+    let g: ImapResp = __imap_next(c)?
+    if g.kind != "untagged" or __imap_is_status(g.status) == false {
+        return Result.Err(__imap_fail(c, __imap_err_proto("el servidor no saludó con * OK")))
+    }
+    if g.status == "BYE" {
+        return Result.Err(__imap_fail(c, __imap_err_conn("el servidor rechazó la conexión: " + __imap_clip(g.text, 160))))
+    }
+    if g.status == "NO" or g.status == "BAD" {
+        return Result.Err(__imap_fail(c, __imap_err_proto("saludo inesperado: " + __imap_clip(g.text, 160))))
+    }
+    if g.status == "PREAUTH" { c.st[IMAP_ST_AUTH] = true }
+    return __imap_ensure_caps(c)
+}
+
+// Pide CAPABILITY si el saludo o el último comando no las trajeron.
+fn __imap_ensure_caps(c: ImapConn) -> Result<int, Error> {
+    let caps: String = c.st[IMAP_ST_CAPS]
+    if caps.length() > 1 { return Result.Ok(0) }
+    return __imap_refresh_caps(c)
+}
+
+fn __imap_refresh_caps(c: ImapConn) -> Result<int, Error> {
+    let rep: ImapReply = __imap_run(c, "CAPABILITY")?
+    return __imap_expect_ok(rep, "CAPABILITY")
+}
+
+fn __imap_tls_connect(host: String, port: int, opts: ImapOpts, verify: bool) -> Result<ImapConn, Error> {
+    let chk: int = __imap_check_host(host, port)?
+    var mode: int = 0
+    if verify { mode = 4 }
+    let h: int = try_tls_connect(host, port, mode, opts.connect_ms)?
+    let c: ImapConn = __imap_new(0, h, host, opts)
+    let g: Result<int, Error> = __imap_greeting(c)
+    if g.is_err() {
+        __imap_close_raw(c)
+        match g {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(x) => { }
+        }
+    }
+    return Result.Ok(c)
+}
+
+// TLS implícito (puerto 993), VERIFICANDO la cadena y el nombre contra las CAs del
+// sistema. Err "tls" si el certificado no verifica (e.code es el X509_V_ERR_*),
+// "connection" si no hay red, "timeout" si no terminó en `connect_ms`.
+pub fn imap_connect_tls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error> {
+    return __imap_tls_connect(host, port, opts, true)
+}
+
+// TLS implícito SIN verificar el certificado. Solo para un servidor de desarrollo.
+pub fn imap_connect_tls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error> {
+    return __imap_tls_connect(host, port, opts, false)
+}
+
+fn __imap_starttls_connect(host: String, port: int, opts: ImapOpts, verify: bool) -> Result<ImapConn, Error> {
+    let chk: int = __imap_check_host(host, port)?
+    let fd: int = try_tcp_connect(host, port)?
+    let c0: ImapConn = __imap_new(fd, 0, host, opts)
+    let g: Result<int, Error> = __imap_greeting(c0)
+    if g.is_err() {
+        __imap_close_raw(c0)
+        match g {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(x) => { }
+        }
+    }
+    let pre: bool = c0.st[IMAP_ST_AUTH]
+    if pre {
+        __imap_close_raw(c0)
+        return Result.Err(__imap_err_proto("el servidor saludó con PREAUTH en un canal en claro: no se sigue"))
+    }
+    let caps: String = c0.st[IMAP_ST_CAPS]
+    if caps.indexOf(" STARTTLS ") < 0 {
+        __imap_close_raw(c0)
+        return Result.Err(__imap_err_proto("el servidor no anuncia STARTTLS: con este servidor no hay forma de cifrar en este puerto; prueba el 993 con imap_connect_tls"))
+    }
+    let rr: Result<ImapReply, Error> = __imap_run(c0, "STARTTLS")
+    match rr {
+        Result.Err(e) => { __imap_close_raw(c0); return Result.Err(e) }
+        Result.Ok(rep) => {
+            let ok: Result<int, Error> = __imap_expect_ok(rep, "STARTTLS")
+            if ok.is_err() {
+                __imap_close_raw(c0)
+                match ok {
+                    Result.Err(e) => { return Result.Err(e) }
+                    Result.Ok(x) => { }
+                }
+            }
+        }
+    }
+    // Nada puede quedar sin leer después del OK de STARTTLS: lo que el servidor (o alguien
+    // en el medio) haya metido en claro ahí lo leería el cliente como si fuera cifrado
+    // (inyección de respuestas, CVE-2011-0411 y compañía). Hay que cortar.
+    let buf: String = c0.st[IMAP_ST_BUF]
+    let pos: int = c0.st[IMAP_ST_POS]
+    if pos < buf.length() {
+        __imap_close_raw(c0)
+        return Result.Err(__imap_err_proto("el servidor mandó datos en claro después del OK de STARTTLS"))
+    }
+    // El handle TOMA la propiedad del fd, con éxito y con fracaso (contrato de std/tls).
+    var h: int = 0
+    if verify { h = tls_upgrade_fd_verified_system(fd, host) } else { h = tls_upgrade_fd(fd, host) }
+    if h == 0 {
+        c0.st[IMAP_ST_CLOSED] = true
+        var d: String = "el handshake TLS falló después de STARTTLS contra " + host
+        if verify { d = d + " (con verificación: el certificado debe venir de una CA del sistema y coincidir con el nombre del host)" }
+        return Result.Err(err_new(0, "tls", "imap: " + d))
+    }
+    let c: ImapConn = ImapConn { fd: fd, tls: h, host: host, opts: opts, st: c0.st }
+    // Las capacidades de antes del cifrado no valen (RFC 3501 §6.2.1): se piden de nuevo.
+    c.st[IMAP_ST_CAPS] = ""
+    c.st[IMAP_ST_BUF] = ""
+    c.st[IMAP_ST_POS] = 0
+    let rc: Result<int, Error> = __imap_refresh_caps(c)
+    if rc.is_err() {
+        __imap_close_raw(c)
+        match rc {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(x) => { }
+        }
+    }
+    return Result.Ok(c)
+}
+
+// STARTTLS (puerto 143): saluda en claro, pide STARTTLS y recién ahí cifra, VERIFICANDO
+// con las CAs del sistema. Si el servidor no anuncia STARTTLS o el handshake falla, es un
+// error: nunca se continúa en claro.
+pub fn imap_connect_starttls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error> {
+    return __imap_starttls_connect(host, port, opts, true)
+}
+
+// STARTTLS sin verificar el certificado. Solo para un servidor de desarrollo.
+pub fn imap_connect_starttls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error> {
+    return __imap_starttls_connect(host, port, opts, false)
+}
+
+// Capacidades que anunció el servidor, en mayúsculas ("IMAP4REV1", "AUTH=PLAIN", ...).
+pub fn imap_capabilities(c: ImapConn) -> Array {
+    let caps: String = c.st[IMAP_ST_CAPS]
+    var out: Array = []
+    let parts: Array = caps.trim().split(" ")
+    var i: int = 0
+    while i < parts.length() {
+        let p: String = parts[i]
+        if p.length() > 0 { out.push(p) }
+        i = i + 1
+    }
+    return out
+}
+
+// ¿Anunció esta capacidad? Palabra completa, sin importar las mayúsculas.
+pub fn imap_has_cap(c: ImapConn, cap: String) -> bool {
+    let caps: String = c.st[IMAP_ST_CAPS]
+    return caps.indexOf(" " + cap.to_upper() + " ") >= 0
+}
+
+// ── Autenticación ─────────────────────────────────────────────────────────
+//
+// NUNCA sobre un canal en claro y sin flag para saltearlo: un servidor mal configurado, o
+// alguien en el medio, puede anunciar LOGIN sin STARTTLS; la comprobación mira el estado
+// REAL del canal, no lo que el servidor dice. Los mensajes de error no llevan la clave ni
+// el token (solo el texto que el servidor mandó).
+
+fn __imap_need_tls(c: ImapConn, mech: String) -> Result<int, Error> {
+    if c.tls == 0 {
+        return Result.Err(err_new(0, "auth", "imap: " + mech + " sobre un canal EN CLARO: las credenciales viajarían legibles. Conecta con imap_connect_tls (993) o imap_connect_starttls (143). No hay forma de saltear esto a propósito."))
+    }
+    return Result.Ok(0)
+}
+
+fn __imap_check_cred(user: String, secret: String, what: String) -> Result<int, Error> {
+    if user.length() == 0 { return Result.Err(__imap_err_invalid("el usuario está vacío")) }
+    if user.length() > 512 or secret.length() > 8192 {
+        return Result.Err(__imap_err_invalid("usuario o " + what + " demasiado largos"))
+    }
+    var i: int = 0
+    while i < user.length() {
+        let ch: int = user.charAt(i)
+        if ch < 32 or ch == 127 { return Result.Err(__imap_err_invalid("el usuario trae caracteres de control")) }
+        i = i + 1
+    }
+    var j: int = 0
+    while j < secret.length() {
+        let ch: int = secret.charAt(j)
+        if ch < 32 or ch == 127 { return Result.Err(__imap_err_invalid("la " + what + " trae caracteres de control")) }
+        j = j + 1
+    }
+    return Result.Ok(0)
+}
+
+fn __imap_has_byte(s: String, b: int) -> bool {
+    var i: int = 0
+    while i < s.length() {
+        if s.charAt(i) == b { return true }
+        i = i + 1
+    }
+    return false
+}
+
+fn __imap_has_high(s: String) -> bool {
+    var i: int = 0
+    while i < s.length() {
+        if s.charAt(i) > 126 { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// Cierre de una autenticación: OK deja la sesión autenticada; NO es "auth"; BAD, "protocol".
+fn __imap_auth_verdict(c: ImapConn, rep: ImapReply, extra: String) -> Result<int, Error> {
+    if rep.status == "OK" {
+        c.st[IMAP_ST_AUTH] = true
+        // Las capacidades cambian al autenticar (Gmail anuncia otras): las del cierre si
+        // vienen en el código, si no se piden.
+        if rep.code == "CAPABILITY" { __imap_set_caps_text(c, rep.code_arg) }
+        else { c.st[IMAP_ST_CAPS] = "" }
+        let caps: String = c.st[IMAP_ST_CAPS]
+        if caps.length() <= 1 { let r: int = __imap_refresh_caps(c)? }
+        return Result.Ok(0)
+    }
+    var detalle: String = __imap_clip(rep.text, 160)
+    if rep.code != "" { detalle = "[" + rep.code + "] " + detalle }
+    if extra != "" { detalle = detalle + " " + extra }
+    if rep.status == "NO" {
+        return Result.Err(err_new(0, "auth", "imap: autenticación rechazada: " + detalle))
+    }
+    return Result.Err(err_new(0, "protocol", "imap: el servidor no aceptó el comando de autenticación (" + rep.status + "): " + detalle))
+}
+
+// LOGIN usuario clave. Para una clave de aplicación de Gmail o un cPanel/Dovecot. Si el
+// usuario o la clave traen bytes no ASCII se usa AUTHENTICATE PLAIN, que los manda en
+// base64 sin tocarlos (un LOGIN entrecomillado no puede llevarlos). Err "auth" si el
+// canal está en claro, si el servidor anuncia LOGINDISABLED o si rechaza las credenciales.
+pub fn imap_login(c: ImapConn, user: String, pass: String) -> Result<int, Error> {
+    let ok0: int = __imap_ready(c)?
+    let t: int = __imap_need_tls(c, "LOGIN")?
+    let chk: int = __imap_check_cred(user, pass, "clave")?
+    if __imap_has_high(user) or __imap_has_high(pass) { return imap_auth_plain(c, user, pass) }
+    if imap_has_cap(c, "LOGINDISABLED") {
+        return Result.Err(err_new(0, "auth", "imap: el servidor tiene LOGIN deshabilitado (LOGINDISABLED): usa imap_auth_plain o imap_auth_xoauth2"))
+    }
+    let qu: String = imap_quote(user)?
+    let qp: String = imap_quote(pass)?
+    let rep: ImapReply = __imap_run(c, "LOGIN " + qu + " " + qp)?
+    return __imap_auth_verdict(c, rep, "")
+}
+
+// AUTHENTICATE con respuesta inicial. `b64` es la respuesta del cliente ya en base64.
+// Con SASL-IR (RFC 4959) va en el mismo comando; sin él se espera la continuación vacía.
+// Una continuación POSTERIOR es el servidor diciendo por qué falló (XOAUTH2 manda un JSON
+// en base64): se contesta una línea vacía para recibir el NO final.
+fn __imap_authenticate(c: ImapConn, mech: String, b64: String) -> Result<int, Error> {
+    let ok0: int = __imap_ready(c)?
+    __imap_set_deadline(c)
+    let tag: String = __imap_next_tag(c)
+    let ir: bool = imap_has_cap(c, "SASL-IR")
+    var line: String = tag + " AUTHENTICATE " + mech
+    if ir { line = line + " " + b64 }
+    let w: int = __imap_write(c, line + "\r\n")?
+    var sent: bool = ir
+    var untagged: Array = []
+    var detail: String = ""
+    var rounds: int = 0
+    while true {
+        rounds = rounds + 1
+        if rounds > 8 {
+            return Result.Err(__imap_fail(c, __imap_err_proto("la autenticación no termina")))
+        }
+        let resp: ImapResp = __imap_next(c)?
+        if resp.kind == "untagged" {
+            if untagged.length() >= c.opts.max_untagged {
+                return Result.Err(__imap_fail(c, __imap_err_proto("demasiadas respuestas sin etiqueta")))
+            }
+            untagged.push(resp)
+        } else if resp.kind == "continuation" {
+            if sent == false {
+                let w2: int = __imap_write(c, b64 + "\r\n")?
+                sent = true
+            } else {
+                // El error en base64 (JSON de estado, sin secretos): se decodifica solo
+                // para el mensaje, con tope.
+                if detail == "" and resp.text.length() > 0 and resp.text.length() < 4096 {
+                    let dec: Result<String, Error> = mime_base64_decode(resp.text, 2048)
+                    match dec {
+                        Result.Ok(d) => { detail = "(detalle del servidor: " + __imap_clip(d, 200) + ")" }
+                        Result.Err(e) => { }
+                    }
+                }
+                let w3: int = __imap_write(c, "\r\n")?
+            }
+        } else {
+            if resp.tag != tag {
+                return Result.Err(__imap_fail(c, __imap_err_proto("llegó el cierre de otro comando")))
+            }
+            return __imap_auth_verdict(c, __imap_reply_of(resp, untagged), detail)
+        }
+    }
+    return Result.Err(__imap_err_proto("sin cierre"))
+}
+
+// AUTHENTICATE PLAIN (RFC 4616). Sirve con cualquier byte en usuario y clave. Err
+// "protocol" si el servidor no anuncia AUTH=PLAIN, "auth" si lo rechaza o el canal está
+// en claro.
+pub fn imap_auth_plain(c: ImapConn, user: String, pass: String) -> Result<int, Error> {
+    let ok0: int = __imap_ready(c)?
+    let t: int = __imap_need_tls(c, "AUTHENTICATE PLAIN")?
+    if user.length() == 0 or user.length() > 512 or pass.length() > 8192 {
+        return Result.Err(__imap_err_invalid("usuario vacío o usuario/clave demasiado largos"))
+    }
+    if __imap_has_byte(user, 0) or __imap_has_byte(pass, 0) {
+        return Result.Err(__imap_err_invalid("usuario y clave no pueden traer NUL (es el separador de PLAIN)"))
+    }
+    if imap_has_cap(c, "AUTH=PLAIN") == false {
+        return Result.Err(__imap_err_proto("el servidor no anuncia AUTH=PLAIN"))
+    }
+    let nul: String = "\0"
+    return __imap_authenticate(c, "PLAIN", nyx_base64_encode(nul + user + nul + pass))
+}
+
+// AUTHENTICATE XOAUTH2 con un token de acceso OAuth2 que TRAE LA APLICACIÓN: obtenerlo y
+// renovarlo (consentimiento, refresh_token, inquilino de Microsoft) no es de este módulo.
+// Para Gmail el alcance es https://mail.google.com/. Err "auth" con el detalle del
+// servidor si el token venció o no sirve (el mensaje no lleva el token).
+pub fn imap_auth_xoauth2(c: ImapConn, user: String, token: String) -> Result<int, Error> {
+    let ok0: int = __imap_ready(c)?
+    let t: int = __imap_need_tls(c, "AUTHENTICATE XOAUTH2")?
+    let chk: int = __imap_check_cred(user, token, "token")?
+    if token.length() == 0 { return Result.Err(__imap_err_invalid("el token está vacío")) }
+    let sep: String = char_to_string(1)
+    if __imap_has_byte(user, 1) or __imap_has_byte(token, 1) {
+        return Result.Err(__imap_err_invalid("usuario y token no pueden traer el byte 0x01 (es el separador de XOAUTH2)"))
+    }
+    if imap_has_cap(c, "AUTH=XOAUTH2") == false {
+        return Result.Err(__imap_err_proto("el servidor no anuncia AUTH=XOAUTH2"))
+    }
+    let payload: String = "user=" + user + sep + "auth=Bearer " + token + sep + sep
+    return __imap_authenticate(c, "XOAUTH2", nyx_base64_encode(payload))
+}
+
+// ── Buzón ─────────────────────────────────────────────────────────────────
+
+fn __imap_need_auth(c: ImapConn) -> Result<int, Error> {
+    let a: bool = c.st[IMAP_ST_AUTH]
+    if a == false { return Result.Err(__imap_err_invalid("primero hay que autenticarse (imap_login, imap_auth_plain o imap_auth_xoauth2)")) }
+    return Result.Ok(0)
+}
+
+fn __imap_need_selected(c: ImapConn) -> Result<int, Error> {
+    let s: bool = c.st[IMAP_ST_SEL]
+    if s == false { return Result.Err(__imap_err_invalid("primero hay que abrir una carpeta con imap_select")) }
+    return Result.Ok(0)
+}
+
+fn __imap_mailbox_of(c: ImapConn) -> ImapMailbox {
+    let name: String = c.st[IMAP_ST_MBOX]
+    let uv: int = c.st[IMAP_ST_UIDV]
+    let un: int = c.st[IMAP_ST_UIDNEXT]
+    let ex: int = c.st[IMAP_ST_EXISTS]
+    let ro: bool = c.st[IMAP_ST_RO]
+    return ImapMailbox { name: name, uidvalidity: uv, uidnext: un, exists: ex, readonly: ro }
+}
+
+// La carpeta abierta y sus números (el último SELECT/EXAMINE).
+pub fn imap_mailbox(c: ImapConn) -> ImapMailbox {
+    return __imap_mailbox_of(c)
+}
+
+fn __imap_select_cmd(c: ImapConn, mailbox: String, verb: String) -> Result<ImapMailbox, Error> {
+    let ok0: int = __imap_ready(c)?
+    let au: int = __imap_need_auth(c)?
+    if mailbox.length() == 0 or mailbox.length() > 255 {
+        return Result.Err(__imap_err_invalid("nombre de carpeta vacío o demasiado largo"))
+    }
+    if __imap_has_high(mailbox) {
+        return Result.Err(__imap_err_invalid("nombre de carpeta no ASCII: los nombres con tildes van en UTF-7 modificado y esa codificación todavía no está implementada; usa un nombre ASCII (INBOX)"))
+    }
+    let q: String = imap_quote(mailbox)?
+    // Un SELECT fallido deja al cliente SIN carpeta abierta (RFC 3501 §6.3.1).
+    c.st[IMAP_ST_SEL] = false
+    c.st[IMAP_ST_UIDV] = 0
+    c.st[IMAP_ST_UIDNEXT] = 0
+    c.st[IMAP_ST_EXISTS] = 0
+    let rep: ImapReply = __imap_run(c, verb + " " + q)?
+    let ok: int = __imap_expect_ok(rep, verb)?
+    var uv: int = -1
+    var un: int = 0
+    var i: int = 0
+    while i < rep.untagged.length() {
+        let r: ImapResp = rep.untagged[i]
+        if r.status == "OK" and r.code == "UIDVALIDITY" and __imap_all_digits(r.code_arg) and r.code_arg.length() <= 18 {
+            uv = __imap_atoi(r.code_arg)
+        }
+        if r.status == "OK" and r.code == "UIDNEXT" and __imap_all_digits(r.code_arg) and r.code_arg.length() <= 18 {
+            un = __imap_atoi(r.code_arg)
+        }
+        i = i + 1
+    }
+    if uv < 0 {
+        return Result.Err(__imap_err_proto("el servidor no informó UIDVALIDITY al abrir la carpeta: sin él no hay cursor por UID"))
+    }
+    // RFC 3501 §2.3.1.1: UIDVALIDITY es un entero de 32 bits distinto de cero. El cero queda
+    // reservado en imap_fetch_since para «primera vez, sin cursor», así que un servidor que lo
+    // mande rompería esa convención en silencio.
+    if uv == 0 or uv > IMAP_UID_MAX {
+        return Result.Err(__imap_err_proto("el servidor informó un UIDVALIDITY inválido (" + int_to_string(uv) + "): debe ser un entero de 32 bits distinto de cero"))
+    }
+    // UIDNEXT ausente o fuera de rango = desconocido (0): imap_fetch_since cae a un único `n:*`.
+    if un > IMAP_UID_MAX + 1 { un = 0 }
+    c.st[IMAP_ST_UIDV] = uv
+    c.st[IMAP_ST_UIDNEXT] = un
+    c.st[IMAP_ST_SEL] = true
+    c.st[IMAP_ST_MBOX] = mailbox
+    c.st[IMAP_ST_RO] = verb == "EXAMINE" or rep.code == "READ-ONLY"
+    return Result.Ok(__imap_mailbox_of(c))
+}
+
+// Abre una carpeta para leer y escribir marcas (SELECT). Devuelve su UIDVALIDITY, UIDNEXT
+// y cantidad de mensajes. Solo nombres ASCII (INBOX); Err "invalid" con otro.
+// Err "not_found" si la carpeta no existe.
+pub fn imap_select(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error> {
+    return __imap_select_cmd(c, mailbox, "SELECT")
+}
+
+// Igual que imap_select pero de SOLO LECTURA (EXAMINE): imap_mark_seen da Err "invalid".
+pub fn imap_examine(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error> {
+    return __imap_select_cmd(c, mailbox, "EXAMINE")
+}
+
+// NOOP: mantiene viva la sesión y deja que el servidor avise de mensajes nuevos
+// (imap_mailbox(c).exists se actualiza).
+pub fn imap_noop(c: ImapConn) -> Result<int, Error> {
+    let rep: ImapReply = __imap_run(c, "NOOP")?
+    return __imap_expect_ok(rep, "NOOP")
+}
+
+// UID SEARCH con un criterio ya validado; devuelve los UID ascendentes y sin repetir.
+fn __imap_search(c: ImapConn, criteria: String) -> Result<Array, Error> {
+    let ok0: int = __imap_need_selected(c)?
+    let rep: ImapReply = __imap_run(c, "UID SEARCH " + criteria)?
+    let ok: int = __imap_expect_ok(rep, "UID SEARCH")?
+    var uids: Array = []
+    var i: int = 0
+    while i < rep.untagged.length() {
+        let r: ImapResp = rep.untagged[i]
+        if r.name == "SEARCH" {
+            var j: int = 0
+            while j < r.items.length() {
+                let v: ImapVal = r.items[j]
+                if v.kind == "num" and v.num > 0 { uids.push(v.num) }
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+    // Ascendente y sin repetidos, sin fiarse del servidor.
+    var sorted: bool = true
+    var k: int = 1
+    while k < uids.length() {
+        let a: int = uids[k - 1]
+        let b: int = uids[k]
+        if b <= a { sorted = false }
+        k = k + 1
+    }
+    if sorted { return Result.Ok(uids) }
+    let s: Array = sort_int(uids)
+    var out: Array = []
+    var m: int = 0
+    while m < s.length() {
+        let v: int = s[m]
+        if out.length() == 0 { out.push(v) }
+        else {
+            let last: int = out[out.length() - 1]
+            if v != last { out.push(v) }
+        }
+        m = m + 1
+    }
+    return Result.Ok(out)
+}
+
+// UID de los mensajes sin leer (UID SEARCH UNSEEN), ascendentes. OJO: `\Seen` es estado
+// COMPARTIDO con quien abra el buzón desde otro cliente; un mensaje leído ahí ya no sale
+// y el sistema no se entera. Para no perder respuestas usa imap_fetch_since (cursor por
+// UID). Err "invalid" si no hay carpeta abierta.
+pub fn imap_search_unseen(c: ImapConn) -> Result<Array, Error> {
+    return __imap_search(c, "UNSEEN")
+}
+
+// ── Mensajes ──────────────────────────────────────────────────────────────
+
+fn __imap_blank_mail() -> MimeMessage {
+    let r: Result<MimeMessage, Error> = mime_parse("X-Imap: sin-datos\r\n\r\n", mime_limits())
+    return r.unwrap()
+}
+
+// Índice, dentro de la lista de datos de un FETCH, del valor del dato `key` (mayúsculas;
+// para BODY[...] se pasa «BODY[» y vale cualquier sección). -1 si no está.
+fn __imap_item_idx(list: ImapVal, key: String) -> int {
+    var i: int = 0
+    while i + 1 < list.items.length() {
+        let k: ImapVal = list.items[i]
+        if k.kind == "atom" {
+            let ku: String = k.text.to_upper()
+            if key == "BODY[" {
+                if ku.length() >= 5 and ku.substring(0, 5) == "BODY[" { return i + 1 }
+            } else if ku == key {
+                return i + 1
+            }
+        }
+        i = i + 2
+    }
+    return -1
+}
+
+// La respuesta `* n FETCH (...)` del UID pedido, o una lista vacía si el servidor no
+// devolvió datos (el mensaje desapareció entre el SEARCH y el FETCH).
+fn __imap_find_fetch(rep: ImapReply, uid: int) -> ImapVal {
+    // RFC 3501 §7.4.2 permite repartir los datos de UN mensaje en varias respuestas FETCH
+    // (`* 3 FETCH (UID 9 FLAGS (\Seen))` y después `* 3 FETCH (BODY[] {n}...)`): se juntan
+    // todas. Primero las que traen el UID pedido (y anotan su número de secuencia); después
+    // las que no traen UID pero son del mismo número de secuencia.
+    var items: Array = []
+    var found: bool = false
+    var seqs: Array = []
+    var i: int = 0
+    while i < rep.untagged.length() {
+        let r: ImapResp = rep.untagged[i]
+        if r.name == "FETCH" and r.items.length() > 0 {
+            let l: ImapVal = r.items[0]
+            if l.kind == "list" {
+                let ui: int = __imap_item_idx(l, "UID")
+                if ui >= 0 {
+                    let uv: ImapVal = l.items[ui]
+                    if uv.kind == "num" and uv.num == uid {
+                        found = true
+                        seqs.push(r.num)
+                        var j: int = 0
+                        while j < l.items.length() {
+                            items.push(l.items[j])
+                            j = j + 1
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    if found == false { return __imap_val("nil", "", 0, []) }
+    var k: int = 0
+    while k < rep.untagged.length() {
+        let r2: ImapResp = rep.untagged[k]
+        if r2.name == "FETCH" and r2.items.length() > 0 and r2.num >= 0 {
+            let l2: ImapVal = r2.items[0]
+            var es_de_otro: bool = false
+            if l2.kind == "list" {
+                let ui2: int = __imap_item_idx(l2, "UID")
+                if ui2 >= 0 { es_de_otro = true }
+                var conocido: bool = false
+                var q: int = 0
+                while q < seqs.length() {
+                    let sq: int = seqs[q]
+                    if sq == r2.num { conocido = true }
+                    q = q + 1
+                }
+                if es_de_otro == false and conocido {
+                    var j2: int = 0
+                    while j2 < l2.items.length() {
+                        items.push(l2.items[j2])
+                        j2 = j2 + 1
+                    }
+                }
+            }
+        }
+        k = k + 1
+    }
+    return __imap_val("list", "", 0, items)
+}
+
+fn __imap_flags_of(l: ImapVal) -> Array {
+    var out: Array = []
+    let fi: int = __imap_item_idx(l, "FLAGS")
+    if fi < 0 { return out }
+    let fv: ImapVal = l.items[fi]
+    if fv.kind != "list" { return out }
+    var i: int = 0
+    while i < fv.items.length() {
+        let f: ImapVal = fv.items[i]
+        if f.kind == "atom" or f.kind == "str" { out.push(f.text) }
+        i = i + 1
+    }
+    return out
+}
+
+fn __imap_has_flag(flags: Array, flag: String) -> bool {
+    let want: String = flag.to_lower()
+    var i: int = 0
+    while i < flags.length() {
+        let f: String = flags[i]
+        if f.length() == want.length() and f.to_lower() == want { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// Baja un mensaje en dos pasos (D-7): RFC822.SIZE y FLAGS primero; si el tamaño pasa de
+// `max_message` solo BODY.PEEK[HEADER], si no BODY.PEEK[] entero. BODY.PEEK no marca el
+// mensaje como leído. Si std/mime rechaza el mensaje entero por un tope (demasiadas
+// partes, una parte enorme) se reintenta SOLO con las cabeceras: el mensaje sale con
+// `truncated` y su asunto, remitente e In-Reply-To. Err "not_found" si el UID ya no
+// existe; "invalid" sin carpeta abierta o con uid ≤ 0.
+pub fn imap_fetch_message(c: ImapConn, uid: int) -> Result<ImapMessage, Error> {
+    let ok0: int = __imap_need_selected(c)?
+    if uid <= 0 { return Result.Err(__imap_err_invalid("uid inválido")) }
+    let us: String = int_to_string(uid)
+    let rep1: ImapReply = __imap_run(c, "UID FETCH " + us + " (RFC822.SIZE FLAGS)")?
+    let ok1: int = __imap_expect_ok(rep1, "UID FETCH")?
+    let meta: ImapVal = __imap_find_fetch(rep1, uid)
+    if meta.kind != "list" {
+        return Result.Err(err_new(0, "not_found", "imap: el UID " + us + " ya no existe en la carpeta"))
+    }
+    var size: int = -1
+    let si: int = __imap_item_idx(meta, "RFC822.SIZE")
+    if si >= 0 {
+        let sv: ImapVal = meta.items[si]
+        if sv.kind == "num" { size = sv.num }
+    }
+    let flags: Array = __imap_flags_of(meta)
+    var head_only: bool = size > c.opts.max_message
+    var what: String = "BODY.PEEK[]"
+    if head_only { what = "BODY.PEEK[HEADER]" }
+    let rep2: ImapReply = __imap_run(c, "UID FETCH " + us + " (" + what + ")")?
+    let ok2: int = __imap_expect_ok(rep2, "UID FETCH")?
+    let body: ImapVal = __imap_find_fetch(rep2, uid)
+    if body.kind != "list" {
+        return Result.Err(err_new(0, "not_found", "imap: el UID " + us + " desapareció mientras se bajaba"))
+    }
+    // Un FETCH del UID sin el cuerpo (o con BODY[] NIL) NO es un mensaje vacío: es un servidor
+    // que no cumplió. Si saliera Ok con raw "", imap_fetch_since adelantaría el cursor y el
+    // correo se perdería para siempre. Se da error y el cursor no se mueve.
+    var raw: String = ""
+    let bi: int = __imap_item_idx(body, "BODY[")
+    if bi < 0 {
+        return Result.Err(__imap_err_proto("el servidor contestó el FETCH del UID " + us + " sin el cuerpo"))
+    }
+    let bv: ImapVal = body.items[bi]
+    if bv.kind != "str" {
+        return Result.Err(__imap_err_proto("el servidor contestó el FETCH del UID " + us + " con el cuerpo vacío (NIL)"))
+    }
+    raw = bv.text
+    var msg: ImapMessage = ImapMessage {
+        uid: uid, size: size, flags: flags, seen: __imap_has_flag(flags, "\\Seen"),
+        raw: raw, mail: __imap_blank_mail(), parsed: false, truncated: head_only, note: ""
+    }
+    if head_only {
+        msg.note = "mensaje de " + int_to_string(size) + " bytes: pasa max_message (" + int_to_string(c.opts.max_message) + "); solo se bajaron las cabeceras"
+    }
+    let pr: Result<MimeMessage, Error> = mime_parse(raw, c.opts.mime)
+    match pr {
+        Result.Ok(m) => {
+            msg.mail = m
+            msg.parsed = true
+            return Result.Ok(msg)
+        }
+        Result.Err(e) => {
+            // El mensaje entero no pasó std/mime (un tope, o no es un correo): se salvan
+            // las cabeceras, que es lo que enhebra la respuesta.
+            let hr: Result<MimeMessage, Error> = mime_parse_head(raw, c.opts.mime)
+            match hr {
+                Result.Ok(m2) => {
+                    msg.mail = m2
+                    msg.parsed = true
+                    msg.truncated = true
+                    if msg.note == "" { msg.note = "el cuerpo no se analizó: " + e.msg }
+                }
+                Result.Err(e2) => {
+                    msg.note = "el mensaje no se pudo analizar: " + e2.msg
+                }
+            }
+            return Result.Ok(msg)
+        }
+    }
+    return Result.Ok(msg)
+}
+
+// LO QUE LA MESA DE AYUDA USA: los mensajes con UID mayor que `last_uid`, en orden, hasta
+// `max_messages` por llamada. El cursor es (uidvalidity, last_uid) y lo guarda LA
+// APLICACIÓN: no depende de `\Seen`, así que sigue funcionando aunque alguien lea el
+// correo desde su teléfono, y no toca ninguna marca.
+//   - Primera vez: uidvalidity 0 y last_uid 0 traen todo; para arrancar «desde ahora»
+//     pasa imap_mailbox(c).uidnext - 1.
+//   - Si `uidvalidity` no es 0 y no coincide con el de la carpeta, Err "stale" con el
+//     UIDVALIDITY NUEVO en e.code: los UID viejos ya no significan nada y hay que
+//     reescanear por Message-ID.
+//   - `more` es true si quedaron mensajes (o tramos sin recorrer): vuelve a llamar con el
+//     `last_uid` nuevo.
+//   - La búsqueda es por TRAMOS (`UID n:n+K`, K ligado a `max_messages`, entre 1000 y 100000),
+//     no `n:*`: con un buzón de cientos de miles de mensajes la línea de un `n:*` pasaría
+//     max_line y nunca arrancaría, y cada llamada volvería a bajar todo lo pendiente. Un tramo
+//     sin mensajes avanza el cursor igual (el servidor dijo que no hay UID ahí); se recorren a
+//     lo sumo 64 tramos por llamada. Si el servidor no informó UIDNEXT se cae a un único
+//     `n:*` (sin tope de tramo: con muchísimos mensajes pendientes puede pasar max_line).
+//   - Si falla la descarga de un mensaje habiendo bajado otros, devuelve los bajados y
+//     `more` true; el error vuelve a aparecer en la llamada siguiente, y el cursor NO pasa
+//     del último mensaje bajado.
+//   - Un UID que desaparece entre la búsqueda y la descarga se salta.
+//   - `opts.fetch_ms` (0 = sin plazo) acota el total de la llamada: al pasarlo se corta antes
+//     de empezar el mensaje siguiente (el primero siempre se intenta) y `more` es true.
+//   - Un `last_uid` de 4294967295 (el UID máximo de 32 bits) no tiene nada más nuevo: Ok vacío;
+//     uno mayor es Err "invalid".
+// Requiere carpeta abierta (imap_select o imap_examine).
+pub fn imap_fetch_since(c: ImapConn, uidvalidity: int, last_uid: int, max_messages: int) -> Result<ImapFetch, Error> {
+    let ok0: int = __imap_need_selected(c)?
+    if last_uid < 0 or uidvalidity < 0 { return Result.Err(__imap_err_invalid("el cursor no puede ser negativo")) }
+    if last_uid > IMAP_UID_MAX { return Result.Err(__imap_err_invalid("un UID no puede pasar de 4294967295 (32 bits): el cursor está mal")) }
+    if max_messages < 1 { return Result.Err(__imap_err_invalid("max_messages debe ser al menos 1")) }
+    let cur: int = c.st[IMAP_ST_UIDV]
+    if uidvalidity != 0 and uidvalidity != cur {
+        return Result.Err(err_new(cur, "stale", "imap: UIDVALIDITY cambió (guardado " + int_to_string(uidvalidity) + ", ahora " + int_to_string(cur) + "): los UID guardados ya no valen; reescanea por Message-ID y guarda el UIDVALIDITY nuevo"))
+    }
+    var out: Array = []
+    var cursor: int = last_uid
+    var more: bool = false
+    if last_uid == IMAP_UID_MAX {
+        return Result.Ok(ImapFetch { uidvalidity: cur, last_uid: cursor, messages: out, more: false })
+    }
+    let t0: int = monotonic_ms()
+    var step: int = max_messages * 4
+    if step < 1000 { step = 1000 }
+    if step > 100000 { step = 100000 }
+    var start: int = last_uid + 1
+    var ranges: int = 0
+    var seguir: bool = true
+    while seguir {
+        if out.length() >= max_messages { more = true; break }
+        if c.opts.fetch_ms > 0 and out.length() > 0 and monotonic_ms() - t0 >= c.opts.fetch_ms { more = true; break }
+        if ranges >= IMAP_MAX_RANGES { more = true; break }
+        ranges = ranges + 1
+        // UIDNEXT puede haber cambiado (un NOOP o un SELECT lo actualizan).
+        let un: int = c.st[IMAP_ST_UIDNEXT]
+        let end: int = start + step - 1
+        var ultimo_tramo: bool = false
+        var crit: String = "UID " + int_to_string(start) + ":" + int_to_string(end)
+        if un == 0 or end >= un - 1 {
+            // El último tramo va hasta `*`: así también entran los mensajes que llegaron
+            // después del SELECT.
+            crit = "UID " + int_to_string(start) + ":*"
+            ultimo_tramo = true
+        }
+        let sr: Result<Array, Error> = __imap_search(c, crit)
+        var found: Array = []
+        match sr {
+            Result.Ok(f) => { found = f }
+            Result.Err(e) => {
+                if out.length() == 0 { return Result.Err(e) }
+                more = true
+                break
+            }
+        }
+        // `n:*` devuelve siempre al menos el último mensaje, aunque su UID sea ≤ n.
+        var todo: Array = []
+        var i: int = 0
+        while i < found.length() {
+            let u: int = found[i]
+            if u > cursor { todo.push(u) }
+            i = i + 1
+        }
+        var j: int = 0
+        var cortado: bool = false
+        while j < todo.length() {
+            if out.length() >= max_messages { more = true; cortado = true; break }
+            if c.opts.fetch_ms > 0 and out.length() > 0 and monotonic_ms() - t0 >= c.opts.fetch_ms { more = true; cortado = true; break }
+            let u: int = todo[j]
+            let r: Result<ImapMessage, Error> = imap_fetch_message(c, u)
+            match r {
+                Result.Ok(m) => {
+                    out.push(m)
+                    cursor = u
+                }
+                Result.Err(e) => {
+                    if e.kind == "not_found" {
+                        cursor = u
+                    } else {
+                        if out.length() == 0 { return Result.Err(e) }
+                        more = true
+                        cortado = true
+                        break
+                    }
+                }
+            }
+            j = j + 1
+        }
+        if cortado { break }
+        if ultimo_tramo { seguir = false } else {
+            // Se recorrió el tramo entero (con o sin mensajes): todo UID hasta `end` está
+            // contabilizado, y el cursor puede pasar por encima de los huecos.
+            cursor = end
+            start = end + 1
+            if start > IMAP_UID_MAX { seguir = false }
+        }
+    }
+    return Result.Ok(ImapFetch { uidvalidity: cur, last_uid: cursor, messages: out, more: more })
+}
+
+// Marca un mensaje como leído (UID STORE +FLAGS.SILENT (\Seen)). Es OPCIONAL y aparte: el
+// protocolo no lo hace solo porque marcar es una decisión de quien llama. Err "invalid"
+// si la carpeta se abrió de solo lectura (imap_examine).
+pub fn imap_mark_seen(c: ImapConn, uid: int) -> Result<int, Error> {
+    let ok0: int = __imap_need_selected(c)?
+    if uid <= 0 { return Result.Err(__imap_err_invalid("uid inválido")) }
+    let ro: bool = c.st[IMAP_ST_RO]
+    if ro { return Result.Err(__imap_err_invalid("la carpeta se abrió de solo lectura (imap_examine): usa imap_select para marcar")) }
+    let rep: ImapReply = __imap_run(c, "UID STORE " + int_to_string(uid) + " +FLAGS.SILENT (\\Seen)")?
+    return __imap_expect_ok(rep, "UID STORE")
+}
+
+// ── Cierre ────────────────────────────────────────────────────────────────
+
+// LOGOUT y cierre del socket. Nunca da error: si el servidor ya no contesta, igual se
+// cierra. Devuelve 0.
+pub fn imap_logout(c: ImapConn) -> int {
+    if __imap_closed(c) { return 0 }
+    c.st[IMAP_ST_DEADLINE] = monotonic_ms() + 5000
+    c.st[IMAP_ST_CMDBYTES] = 0
+    let tag: String = __imap_next_tag(c)
+    let w: Result<int, Error> = __imap_write(c, tag + " LOGOUT\r\n")
+    if w.is_ok() {
+        var n: int = 0
+        while n < 16 {
+            n = n + 1
+            let r: Result<ImapResp, Error> = __imap_next(c)
+            if r.is_err() { break }
+            let resp: ImapResp = r.unwrap()
+            if resp.kind == "tagged" { break }
+        }
+    }
+    __imap_close_raw(c)
+    return 0
+}
+
+// Cierra el socket sin cortesías (LOGOUT). Para limpiar tras un error. Devuelve 0.
+pub fn imap_close(c: ImapConn) -> int {
+    __imap_close_raw(c)
+    return 0
+}

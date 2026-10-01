@@ -1,0 +1,28 @@
+wide-200 200x150 reducción 1/1 5952 bytes igual-a-mano=sí mse*100=9272 ok
+wide-100 100x75 reducción 1/2 2661 bytes igual-a-mano=sí mse*100=24237 ok
+wide-70 70x53 reducción 1/4 1925 bytes igual-a-mano=sí mse*100=39246 ok
+wide-40 40x30 reducción 1/8 1126 bytes igual-a-mano=sí mse*100=58077 ok
+wide-1000 640x480 reducción 1/1 32510 bytes igual-a-mano=sí mse*100=731 ok
+thumbnails[0] 200x150 5952 bytes igual-a-mano=sí
+thumbnails[1] 100x75 2654 bytes igual-a-mano=sí
+thumbnails[2] 40x30 1136 bytes igual-a-mano=sí
+primero == image_thumbnail: sí
+tercero distinto de la de 40 sola (otra reducción): sí
+cajas 100x20 -> 27x20; 20x100 -> 20x15
+orient6 (EXIF 6: sale vertical, 27x41) -> 13x20 ok
+sin EXIF sí, JFIF sí
+png alfa 48x36 -> 24x18x3 esquina 249,255,255
+gris 41x27 -> 20x13x1
+calidad 0 -> invalid: image_thumbnail: la calidad va de 1 a 100 (llegó 0)
+calidad 101 -> invalid: image_thumbnail: la calidad va de 1 a 100 (llegó 101)
+caja 0 -> invalid: image_thumbnail: el tamaño pedido tiene que ser positivo (llegó 0 x 100)
+caja negativa -> invalid: image_thumbnail: el tamaño pedido tiene que ser positivo (llegó 100 x -3)
+basura -> invalid: image_thumbnail: no parece una imagen JPEG ni PNG (firma desconocida)
+vacío -> invalid: image_thumbnail: no parece una imagen JPEG ni PNG (firma desconocida)
+GIF -> unsupported: image_thumbnail: formato GIF no soportado; convertirla a JPEG o PNG
+progresivo -> unsupported: image_thumbnail: JPEG progresivo (SOF2) todavía no se decodifica: guardarlo como JPEG secuencial (baseline)
+JPEG truncado -> parse: image_thumbnail: image_jpeg: JPEG truncado: los datos se acaban en el MCU 93 de 1200
+lista vacía -> invalid: image_thumbnails: hace falta al menos un tamaño
+par roto -> invalid: image_thumbnails: cada tamaño es un par [ancho máximo, alto máximo]
+calidad 200 -> invalid: image_thumbnails: la calidad va de 1 a 100 (llegó 200)
+fin

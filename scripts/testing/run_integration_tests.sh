@@ -265,6 +265,34 @@ else
     OVERALL=1
 fi
 
+# ── std/imap de punta a punta (LOGIN/PLAIN/XOAUTH2, STARTTLS, SELECT, cursor por
+# UID, literales, topes, servidor hostil) ─────────────────────────────────────
+# Fixture propio (tests/integration/imap_client): servidor IMAP de mentira en
+# Python con una PKI armada con openssl; el cliente en Nyx hace las
+# comprobaciones y el harness mira además que ningún secreto salga en su salida
+# y que el servidor no vea un LOGIN en claro ni un BODY[ sin PEEK. SKIP limpio
+# sin openssl. Puertos 13120-13131 (IMAP_CLIENT_PORT).
+echo -e "\n${BOLD}-- std/imap: cliente contra servidor de mentira --${NC}"
+IC_BIN="/tmp/nyx-imap-client"
+echo -e "  Compiling tests/integration/imap_client/cliente.nx..."
+cp tests/integration/imap_client/cliente.nx script.nx
+if NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap >/dev/null 2>&1 && \
+   clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+       -o "$IC_BIN" 2>/dev/null; then
+    rm -f script.nx script.ll
+    if python3 tests/integration/test_imap_client.py "$IC_BIN"; then
+        echo -e "  ${GREEN}std/imap cliente passed${NC}"
+    else
+        echo -e "  ${RED}std/imap cliente failed${NC}"
+        OVERALL=1
+    fi
+    rm -f "$IC_BIN"
+else
+    rm -f script.nx script.ll
+    echo -e "  ${RED}std/imap cliente: no se pudo compilar el fixture${NC}"
+    OVERALL=1
+fi
+
 # ── std/serve (framework web absorbido al core) ──────────────────────────
 # Fixture propio (tests/integration/serve_std): server mínimo con std/serve +
 # std/template. Cubre el CONTRATO público del módulo: {param}, JSON,

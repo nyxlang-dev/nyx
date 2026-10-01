@@ -1,0 +1,113 @@
+// Nyx by Example: miniaturas de la foto de un producto con std/image.
+//
+// El caso real: un comercio sube desde el teléfono la foto de un producto (3-5 MB, 12
+// megapíxeles, a veces girada con la orientación EXIF) y el sistema la tiene que servir
+// chica: ~600 px para la ficha, ~200 px para la lista, en JPEG, sin la ubicación de la foto.
+// std/image es Nyx puro (nativo y wasm32-wasi): no hace falta libjpeg ni ImageMagick.
+//
+// Lo que muestra:
+//   - image_thumbnail: decodificar + achicar + codificar en UN paso. Decodifica con la mayor
+//     reducción posible (1/2, 1/4 o 1/8), así que una foto de 12 MP no se decodifica entera;
+//   - image_thumbnails: varios tamaños de UNA sola decodificación (la de la ficha, la de la
+//     lista y una de 80 px);
+//   - la calidad (1-100; image_default_quality() es 80) y su efecto en los bytes;
+//   - un PNG con transparencia (el logo) sale compuesto sobre blanco, que es lo que un JPEG
+//     puede guardar; para otro fondo se llama image_flatten antes de codificar;
+//   - los errores son Result con kind: "invalid" (parámetro o tope), "parse" (archivo dañado),
+//     "unsupported" (HEIC, WebP, JPEG progresivo...);
+//   - la foto de ejemplo se fabrica acá mismo con image_encode_jpeg para que la receta no
+//     dependa de un archivo: en la vida real son los bytes del `multipart` que llegó.
+
+import "std/image"
+import "std/error"
+
+// Una "foto" sintética: un degradado de color con un círculo, de ancho x alto píxeles.
+fn foto_de_prueba(ancho: int, alto: int) -> Image {
+    var filas: Array = []
+    var y: int = 0
+    while y < alto {
+        var px: Array = []
+        var x: int = 0
+        while x < ancho {
+            var r: int = (x * 255) / ancho
+            var g: int = (y * 255) / alto
+            var b: int = 128
+            let dx: int = x - ancho / 2
+            let dy: int = y - alto / 2
+            if dx * dx + dy * dy < (alto / 3) * (alto / 3) {
+                r = 240
+                g = 200
+                b = 40
+            }
+            px.push(r)
+            px.push(g)
+            px.push(b)
+            x = x + 1
+        }
+        filas.push(string_from_bytes(px, 0, ancho * 3))
+        y = y + 1
+    }
+    return Image { width: ancho, height: alto, channels: 3, rows: filas, icc: "", reduction: 1 }
+}
+
+fn medidas(bytes: String) -> String {
+    match image_info(bytes) {
+        Result.Ok(i) => { return i.format + " " + int_to_string(i.width) + "x" + int_to_string(i.height) }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+fn main() -> int {
+    // La foto "del teléfono": 1600 x 1200 a calidad alta.
+    var original: String = ""
+    match image_encode_jpeg(foto_de_prueba(1600, 1200), 92) {
+        Result.Ok(b) => { original = b }
+        Result.Err(e) => { println("no se pudo armar la foto: " + e.msg) }
+    }
+    println("original: " + medidas(original) + ", " + int_to_string(original.length()) + " bytes")
+
+    // 1. Una miniatura: cabe en 600 x 600 conservando la proporción (nunca agranda).
+    match image_thumbnail(original, 600, 600, image_default_quality()) {
+        Result.Ok(t) => { println("ficha: " + medidas(t) + ", " + int_to_string(t.length()) + " bytes") }
+        Result.Err(e) => { println("error: " + e.kind + ": " + e.msg) }
+    }
+
+    // 2. Tres tamaños de una sola decodificación: se piden de mayor a menor.
+    let tamanos: Array = [[600, 600], [200, 200], [80, 80]]
+    match image_thumbnails(original, tamanos, 80) {
+        Result.Ok(salidas) => {
+            var i: int = 0
+            for s: String in salidas {
+                println("tamaño " + int_to_string(i) + ": " + medidas(s) + ", " + int_to_string(s.length()) + " bytes")
+                i = i + 1
+            }
+        }
+        Result.Err(e) => { println("error: " + e.kind + ": " + e.msg) }
+    }
+
+    // 3. La calidad: menos calidad, menos bytes. Para una lista con datos móviles caros, 60-70.
+    for q: int in [95, 80, 60, 40] {
+        match image_thumbnail(original, 200, 200, q) {
+            Result.Ok(t) => { println("calidad " + int_to_string(q) + ": " + int_to_string(t.length()) + " bytes") }
+            Result.Err(e) => { println("error: " + e.msg) }
+        }
+    }
+
+    // 4. Un logo PNG con transparencia: el JPEG no guarda alfa, sale sobre blanco.
+    let logo: String = include_bytes("examples/by-example/assets/logo-tornillo.png")
+    match image_thumbnail(logo, 64, 64, 90) {
+        Result.Ok(t) => { println("logo: " + medidas(t) + " (sobre blanco)") }
+        Result.Err(e) => { println("error: " + e.kind + ": " + e.msg) }
+    }
+
+    // 5. Lo que no es una foto se rechaza con un motivo, sin abortar.
+    match image_thumbnail("esto no es una imagen", 200, 200, 80) {
+        Result.Ok(t) => { println("???") }
+        Result.Err(e) => { println("rechazada (" + e.kind + "): " + e.msg) }
+    }
+    match image_thumbnail(original, 200, 200, 101) {
+        Result.Ok(t) => { println("???") }
+        Result.Err(e) => { println("rechazada (" + e.kind + "): " + e.msg) }
+    }
+    return 0
+}

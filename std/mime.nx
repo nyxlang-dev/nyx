@@ -1669,3 +1669,19 @@ pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error> {
     }
     return Result.Ok(m)
 }
+
+// Analiza SOLO las cabeceras de un mensaje y descarta el cuerpo sin mirarlo: asunto,
+// remitente, Message-ID, In-Reply-To y References salen aunque el cuerpo pase un tope
+// de MimeLimits (un adjunto de 33 MB, 500 partes) y mime_parse diera Err. Es la salida
+// que usa std/imap para un mensaje grande: perder el In-Reply-To de un correo legítimo
+// es perder el hilo (ficha «Un tope superado tumba el mensaje entero», 2026-10-01).
+// El resultado no tiene `parts`, `attachments` ni texto; los topes de cabeceras
+// (max_header_len, max_headers) siguen valiendo, y el del tamaño se aplica al bloque de
+// cabeceras, no al mensaje entero. Err "parse" si está vacío o no hay ninguna cabecera.
+pub fn mime_parse_head(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error> {
+    if raw.length() == 0 { return Result.Err(__mime_err_parse("mensaje vacío")) }
+    let sp: Array = __mime_split(raw)
+    let head: String = sp[0]
+    // Sin cuerpo no hay partes que recorrer, aunque el Content-Type diga multipart.
+    return mime_parse(head, lim)
+}

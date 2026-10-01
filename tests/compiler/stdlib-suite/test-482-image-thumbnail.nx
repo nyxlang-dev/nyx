@@ -1,0 +1,207 @@
+// test-482 — std/image, Task 6: miniaturas en un paso (spec std-image, D-10 y el atajo de nyxerp).
+//
+// image_thumbnail(bytes, max_w, max_h, quality) = decodificar con la mayor reducción que deja
+// el doble del tamaño final + achicar (Lanczos3) + codificar JPEG. Se verifica que:
+//   1. El atajo es EXACTAMENTE la composición de las piezas públicas (image_info +
+//      image_decode_min + image_resize_fit + image_encode_jpeg), con la reducción esperada
+//      (sin reducir, 1/2, 1/4 y 1/8 sobre la foto de 640 x 480).
+//   2. Las dimensiones son las de image_resize_fit y el error contra la referencia de Pillow
+//      (foto completa -> Image.resize LANCZOS, tests/fixtures/image/thumb/, sin pérdida de JPEG)
+//      queda bajo un techo: lo que cuestan la reducción y el JPEG a calidad 80 (medido: los mismos
+//      números que la tubería de Pillow, draft x2 + resize LANCZOS + JPEG q80, hasta el 1 %).
+//   3. image_thumbnails decodifica UNA vez (la reducción del tamaño mayor) y cada salida es la
+//      composición sobre esa misma imagen; el primero de la lista coincide con image_thumbnail.
+//   4. Nunca agranda; aplica la orientación EXIF; compone el alfa de un PNG sobre blanco; la
+//      salida no lleva EXIF.
+//   5. Errores: calidad, cajas, lista vacía, bytes que no son imagen, formato conocido sin
+//      soporte y JPEG progresivo, todos con kind y mensaje.
+
+import "std/image"
+import "std/error"
+
+fn dec(bytes: String) -> Image {
+    let r: Result<Image, Error> = image_decode(bytes, image_limits())
+    match r {
+        Result.Ok(img) => { return img }
+        Result.Err(e) => {
+            println("¡no decodificó!: " + e.msg)
+            return Image { width: 0, height: 0, channels: 1, rows: [], icc: "", reduction: 1 }
+        }
+    }
+}
+
+fn yn(x: bool) -> String {
+    if x { return "sí" }
+    return "no"
+}
+
+// Error cuadrático medio por muestra x 100 de una imagen contra bytes de referencia (mismo tamaño).
+fn mse100(a: Image, ref: String) -> int {
+    var s: int = 0
+    var n: int = 0
+    var y: int = 0
+    let rw: int = a.width * a.channels
+    while y < a.height {
+        let row: String = a.rows[y]
+        var i: int = 0
+        while i < rw {
+            let d: int = row.charAt(i) - ref.charAt(y * rw + i)
+            s = s + d * d
+            n = n + 1
+            i = i + 1
+        }
+        y = y + 1
+    }
+    return (s * 100) / n
+}
+
+fn thumb(bytes: String, w: int, h: int, q: int) -> String {
+    let r: Result<String, Error> = image_thumbnail(bytes, w, h, q)
+    match r {
+        Result.Ok(s) => { return s }
+        Result.Err(e) => {
+            println("ERR " + e.kind + ": " + e.msg)
+            return ""
+        }
+    }
+}
+
+// La composición de piezas públicas que image_thumbnail promete ser, con la reducción pedida
+// a la decodificación (need_w x need_h = el doble del tamaño final de la caja mayor).
+fn by_hand(bytes: String, need_w: int, need_h: int, boxes: Array, q: int) -> Array {
+    let r: Result<Image, Error> = image_decode_min(bytes, image_limits(), need_w, need_h)
+    match r {
+        Result.Err(e) => {
+            println("by_hand ERR " + e.msg)
+            return []
+        }
+        Result.Ok(img) => {
+            var outs: Array = []
+            for b: Array in boxes {
+                let f: Result<Image, Error> = image_resize_fit(img, b[0], b[1])
+                match f {
+                    Result.Err(e) => { println("by_hand fit ERR " + e.msg) }
+                    Result.Ok(small) => {
+                        let o: Result<String, Error> = image_encode_jpeg(small, q)
+                        match o {
+                            Result.Ok(s) => { outs.push(s) }
+                            Result.Err(e) => { println("by_hand enc ERR " + e.msg) }
+                        }
+                    }
+                }
+            }
+            return outs
+        }
+    }
+}
+
+fn reduction_of(bytes: String, need_w: int, need_h: int) -> int {
+    let r: Result<Image, Error> = image_decode_min(bytes, image_limits(), need_w, need_h)
+    match r {
+        Result.Ok(img) => { return img.reduction }
+        Result.Err(e) => { return 0 - 1 }
+    }
+}
+
+// Un caso de la foto ancha: caja cuadrada `box`, tamaño final esperado (w x h), el mínimo que
+// pide la decodificación (2 x tamaño final), la reducción que eso implica y el techo de error.
+fn case(name: String, src: String, box: int, w: int, h: int, red: int, ref: String, maxmse: int) {
+    let out: String = thumb(src, box, box, 80)
+    let hand: Array = by_hand(src, w * 2, h * 2, [[box, box]], 80)
+    let same: bool = hand.length() == 1 and hand[0] == out
+    let img: Image = dec(out)
+    let m: int = mse100(img, ref)
+    var verdict: String = "ok"
+    if not same or img.width != w or img.height != h or img.channels != 3 or reduction_of(src, w * 2, h * 2) != red or m > maxmse { verdict = "FALLA" }
+    println(name + " " + int_to_string(img.width) + "x" + int_to_string(img.height) + " reducción 1/" + int_to_string(red) + " " + int_to_string(out.length()) + " bytes igual-a-mano=" + yn(same) + " mse*100=" + int_to_string(m) + " " + verdict)
+}
+
+fn fail(name: String, r: Result<String, Error>) {
+    match r {
+        Result.Ok(s) => { println(name + " produjo " + int_to_string(s.length()) + " bytes") }
+        Result.Err(e) => { println(name + " -> " + e.kind + ": " + e.msg) }
+    }
+}
+
+fn main() -> int {
+    let wide: String = include_bytes("tests/fixtures/image/jpeg/wide.jpg")
+    case("wide-200", wide, 200, 200, 150, 1, include_bytes("tests/fixtures/image/thumb/wide-200.ref"), 10200)
+    case("wide-100", wide, 100, 100, 75, 2, include_bytes("tests/fixtures/image/thumb/wide-100.ref"), 26700)
+    case("wide-70", wide, 70, 70, 53, 4, include_bytes("tests/fixtures/image/thumb/wide-70.ref"), 43200)
+    case("wide-40", wide, 40, 40, 30, 8, include_bytes("tests/fixtures/image/thumb/wide-40.ref"), 63900)
+    // nunca agranda: una caja mayor que la foto devuelve la foto (re-codificada), 640 x 480
+    case("wide-1000", wide, 1000, 640, 480, 1, include_bytes("tests/fixtures/image/thumb/wide-1000.ref"), 800)
+
+    // ── varias miniaturas de una sola decodificación ──
+    let boxes: Array = [[200, 200], [100, 100], [40, 40]]
+    let rs: Result<Array, Error> = image_thumbnails(wide, boxes, 80)
+    match rs {
+        Result.Err(e) => { println("thumbnails ERR " + e.kind + ": " + e.msg) }
+        Result.Ok(outs) => {
+            // la reducción es la del mayor (200x150 -> pide 400x300 -> sin reducir) para las tres
+            let hand: Array = by_hand(wide, 400, 300, boxes, 80)
+            var i: int = 0
+            for s: String in outs {
+                let im: Image = dec(s)
+                println("thumbnails[" + int_to_string(i) + "] " + int_to_string(im.width) + "x" + int_to_string(im.height) + " " + int_to_string(s.length()) + " bytes igual-a-mano=" + yn(hand.length() == 3 and hand[i] == s))
+                i = i + 1
+            }
+            println("primero == image_thumbnail: " + yn(outs.length() == 3 and outs[0] == thumb(wide, 200, 200, 80)))
+            // las miniaturas chicas salen de la decodificación grande: NO son iguales a las de un paso solo
+            println("tercero distinto de la de 40 sola (otra reducción): " + yn(outs.length() == 3 and outs[2] != thumb(wide, 40, 40, 80)))
+        }
+    }
+    // cajas rectangulares y lista de un elemento
+    let rs2: Result<Array, Error> = image_thumbnails(wide, [[100, 20], [20, 100]], 70)
+    match rs2 {
+        Result.Err(e) => { println("rect ERR " + e.msg) }
+        Result.Ok(outs) => {
+            let a: Image = dec(outs[0])
+            let b: Image = dec(outs[1])
+            println("cajas 100x20 -> " + int_to_string(a.width) + "x" + int_to_string(a.height) + "; 20x100 -> " + int_to_string(b.width) + "x" + int_to_string(b.height))
+        }
+    }
+
+    // ── orientación EXIF, PNG con alfa, sin metadatos ──
+    let o6: String = include_bytes("tests/fixtures/image/jpeg/orient6.jpg")
+    let o6t: String = thumb(o6, 20, 20, 80)
+    let o6i: Image = dec(o6t)
+    let o6m: int = mse100(o6i, include_bytes("tests/fixtures/image/thumb/orient6-20.ref"))
+    var o6v: String = "ok"
+    if o6i.width != 13 or o6i.height != 20 or o6m > 64700 { o6v = "FALLA" }
+    println("orient6 (EXIF 6: sale vertical, 27x41) -> " + int_to_string(o6i.width) + "x" + int_to_string(o6i.height) + " " + o6v)
+    println("sin EXIF " + yn(o6t.indexOf("Exif") < 0) + ", JFIF " + yn(o6t.indexOf("JFIF") >= 0))
+    let disc: String = include_bytes("tests/fixtures/image/resize/alpha-disc.png")
+    let dt: Image = dec(thumb(disc, 24, 24, 90))
+    println("png alfa 48x36 -> " + int_to_string(dt.width) + "x" + int_to_string(dt.height) + "x" + int_to_string(dt.channels) + " esquina " + int_to_string(dt.rows[0].charAt(0)) + "," + int_to_string(dt.rows[0].charAt(1)) + "," + int_to_string(dt.rows[0].charAt(2)))
+    let gray: Image = dec(thumb(include_bytes("tests/fixtures/image/jpeg/gray.jpg"), 20, 20, 80))
+    println("gris 41x27 -> " + int_to_string(gray.width) + "x" + int_to_string(gray.height) + "x" + int_to_string(gray.channels))
+
+    // ── errores ──
+    fail("calidad 0", image_thumbnail(wide, 100, 100, 0))
+    fail("calidad 101", image_thumbnail(wide, 100, 100, 101))
+    fail("caja 0", image_thumbnail(wide, 0, 100, 80))
+    fail("caja negativa", image_thumbnail(wide, 100, 0 - 3, 80))
+    fail("basura", image_thumbnail("esto no es una imagen", 100, 100, 80))
+    fail("vacío", image_thumbnail("", 100, 100, 80))
+    fail("GIF", image_thumbnail("GIF89a" + "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 100, 100, 80))
+    fail("progresivo", image_thumbnail(include_bytes("tests/fixtures/image/photo-prog.jpg"), 10, 10, 80))
+    fail("JPEG truncado", image_thumbnail(wide.substring(0, 3000), 100, 100, 80))
+    let none: Result<Array, Error> = image_thumbnails(wide, [], 80)
+    match none {
+        Result.Ok(a) => { println("lista vacía produjo " + int_to_string(a.length())) }
+        Result.Err(e) => { println("lista vacía -> " + e.kind + ": " + e.msg) }
+    }
+    let badpair: Result<Array, Error> = image_thumbnails(wide, [[100]], 80)
+    match badpair {
+        Result.Ok(a) => { println("par roto produjo " + int_to_string(a.length())) }
+        Result.Err(e) => { println("par roto -> " + e.kind + ": " + e.msg) }
+    }
+    let badq: Result<Array, Error> = image_thumbnails(wide, [[100, 100]], 200)
+    match badq {
+        Result.Ok(a) => { println("calidad 200 produjo " + int_to_string(a.length())) }
+        Result.Err(e) => { println("calidad 200 -> " + e.kind + ": " + e.msg) }
+    }
+    println("fin")
+    return 0
+}

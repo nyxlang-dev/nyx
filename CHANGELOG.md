@@ -11,6 +11,33 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **Segunda tanda de nyxerp (2026-10-01): JPEG de salida, miniaturas y lectura de correo por IMAP**,
+  revisada antes de integrar e integrada con una batería completa:
+  - **`std/image` escribe JPEG y arma miniaturas** `[arco: std-image]`: `image_encode_jpeg(img,
+    quality)` (baseline, calidad 1-100 estilo libjpeg sobre el Anexo K, Huffman estándar, JFIF, 4:2:0
+    hasta q90 y 4:4:4 por encima, gris de un componente, alfa sobre blanco, sin EXIF, ICC conservado;
+    FDCT entera: los mismos bytes en nativo y wasm). Mismo PSNR que Pillow a igual calidad hasta q90.
+    `image_thumbnail(bytes, max_w, max_h, quality)` e `image_thumbnails(bytes, sizes, quality)`:
+    decodifica con reducción, achica con Lanczos3 y codifica en un paso, una sola decodificación para
+    varios tamaños (12 MP a 600 px en ~1,4 s). `image_default_quality()` (80) e `image_strip_icc`.
+    Tests 481-482, wasm 57, receta 133.
+  - **`std/imap`: leer un buzón** `[arco: std-imap]`: TLS implícito (993) y STARTTLS (143), ambos
+    verificando siempre contra las CAs del sistema; LOGIN, PLAIN y XOAUTH2 (token de la app), nunca en
+    claro; `imap_select`/`imap_examine`, `imap_fetch_since` (cursor por UID, búsqueda por tramos,
+    `stale` ante UIDVALIDITY cambiado, plazo global opcional), `imap_fetch_message`,
+    `imap_search_unseen`, `imap_mark_seen`; todo con BODY.PEEK. El servidor se trata como entrada
+    hostil: topes de línea, literal (antes de leerlo), total por comando y profundidad, y plazos.
+    Un mensaje grande, o que un tope de `std/mime` rechazaría, sale con sus cabeceras y `truncated`.
+    Tests 483-485, sub-suite `test_imap_client.py` (107 comprobaciones contra un servidor de mentira
+    con PKI y casos hostiles), receta 134. Sin verificar todavía contra Gmail ni Dovecot reales.
+  - **`std/mime`: `mime_parse_head`** analiza solo las cabeceras: un cuerpo que pasa un tope ya no
+    hace perder el `In-Reply-To` (resuelve la ficha «un tope superado tumba el mensaje entero» para
+    imap y para quien la llame; `mime_parse` sigue dando Err).
+  - La revisión encontró y se arreglaron, con su caso: FETCH repartido en varias respuestas daba un
+    mensaje vacío y adelantaba el cursor (el correo se perdía); sin tope acumulado por comando
+    (memoria); capacidades con costo cuadrático; la primera corrida de un buzón de >130 mil mensajes
+    no arrancaba. En `std/image`, el re-prefijo de los errores de `image_thumbnail`.
+
 - **Siete pedidos de nyxerp del 2026-09-29** `[arco: friccion-nyxerp-0929]`, hechos por subagentes en
   worktrees propios e integrados con una batería completa:
   - **gzip en `std/serve`, encendido por omisión**: respuestas de texto entre 1 KiB y 1 MiB, cuando el
