@@ -1768,12 +1768,55 @@ fn separable_texto(src: String) -> bool {
     return true
 }
 
+// ===== RECURSOS DE include_bytes EN LA HUELLA (fricción nyxerp 20260930-170003) =====
+// include_bytes lee el archivo AL COMPILAR y lo deja dentro del .o, así que el
+// archivo es parte de lo que entra en el objeto igual que el fuente. Hasta el
+// 2026-10-01 la huella no lo miraba: editar el recurso dejaba el .o viejo y
+// nyx run/test/build servían el contenido anterior en silencio (ni `touch` del
+// .nx alcanzaba, porque la huella es de contenido). Ahora, por cada archivo que
+// se hashea ENTERO, se suman la ruta y el sha256 de cada include_bytes("…") que
+// nombra. La ruta se resuelve desde la raíz del proyecto —el cwd de nyx_build,
+// el mismo que usa lib_cierre—, igual que lo hace el codegen con NYX_PROJECT_DIR.
+// Una biblioteca hasheada por INTERFAZ no aporta los suyos: sus cuerpos no se
+// emiten en esta unidad (solo `declare`), su propio .o lleva su propia huella.
+// Escanear el texto (y no el AST) puede sumar de más —una mención en un
+// comentario—, nunca de menos: lo peor es una recompilación de sobra.
+fn huella_include_bytes(f: String, hashes: Map) -> String {
+    let clave: String = "include_bytes:" + f
+    if hashes.contains(clave) {
+        let h: String = hashes.get(clave)
+        return h
+    }
+    var out: String = ""
+    if file_exists(f) {
+        let src: String = read_file(f)
+        if src.indexOf("include_bytes") >= 0 {
+            let partes: Array = src.split("include_bytes(\"")
+            var i: int = 1
+            while i < partes.length() {
+                let resto: String = partes[i]
+                let fin: int = resto.indexOf("\"")
+                if fin > 0 {
+                    let ruta: String = resto.substring(0, fin)
+                    var h: String = "ausente"
+                    if file_exists(ruta) { h = hash_archivo(ruta, hashes) }
+                    out = out + "|ib:" + ruta + "=" + h
+                }
+                i = i + 1
+            }
+        }
+    }
+    hashes.insert(clave, out)
+    return out
+}
+
 // sha256 de la INTERFAZ de `f` si es una biblioteca separable del proyecto (y
-// no el módulo propio); del contenido entero en otro caso. Memoizado.
+// no el módulo propio); del contenido entero en otro caso, más sus recursos de
+// include_bytes (ver huella_include_bytes). Memoizado.
 fn hash_para_huella(f: String, propio: String, libs: Map, hashes: Map) -> String {
-    if f == propio or not f.endsWith(".nx") { return hash_archivo(f, hashes) }
+    if f == propio or not f.endsWith(".nx") { return hash_archivo(f, hashes) + huella_include_bytes(f, hashes) }
     let modulo: String = f.substring(0, f.length() - 3)
-    if not libs.contains(modulo) { return hash_archivo(f, hashes) }
+    if not libs.contains(modulo) { return hash_archivo(f, hashes) + huella_include_bytes(f, hashes) }
     let clave: String = "interfaz:" + f
     if hashes.contains(clave) {
         let h: String = hashes.get(clave)
@@ -1781,7 +1824,7 @@ fn hash_para_huella(f: String, propio: String, libs: Map, hashes: Map) -> String
     }
     let src: String = read_file(f)
     var h2: String = ""
-    if separable_texto(src) { h2 = "i:" + sha256(interfaz_de(src)) } else { h2 = sha256(src) }
+    if separable_texto(src) { h2 = "i:" + sha256(interfaz_de(src)) } else { h2 = sha256(src) + huella_include_bytes(f, hashes) }
     hashes.insert(clave, h2)
     return h2
 }

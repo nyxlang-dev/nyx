@@ -57,6 +57,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Editar un archivo de `include_bytes` no recompilaba su biblioteca de `[lib] modules`.** La huella
+  de `target/nyx-lib` hasheaba el fuente del módulo y su cierre de imports, pero no los archivos
+  incrustados: `nyx run`/`test`/`build` reutilizaban el `.o` y servían el contenido VIEJO sin error
+  (ni `touch` del `.nx` alcanzaba). Ahora cada archivo hasheado entero suma la ruta y el sha256 de
+  cada `include_bytes("…")` que nombra, incluidos los de módulos no-`[lib]` que la biblioteca
+  inlinea. Fricción nyxerp 20260930-170003; tres casos nuevos en `run_lib_modules.sh`.
+
 - **Un elemento de un `Array` sin tipo, asignado a un campo o comparado con un String.**
   `c.nombre = xs[i]` guardaba el entero opaco del elemento directo en el campo, y `f != xs[0]` (el
   elemento a la derecha) se lo pasaba crudo a la comparación: IR inválido que solo clang rechazaba,

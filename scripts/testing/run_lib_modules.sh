@@ -14,7 +14,8 @@
 #      se reutiliza —eso sería leer offsets equivocados en silencio (Task 4)—;
 #   6. `nyx test` enlaza los mismos objetos (no inlinea el cierre en cada archivo de
 #      prueba), los reutiliza, y probar un módulo de biblioteca no choca con su objeto;
-#   7. errores del manifiesto: una clave desconocida en [lib] y un módulo con .nx.
+#   7. errores del manifiesto: una clave desconocida en [lib] y un módulo con .nx;
+#   8. el contenido de los archivos de include_bytes entra en la huella.
 # Usa el nyx_build del repo con NYX_HOME apuntando al repo.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -263,6 +264,29 @@ else mal "privada homónima en nyx test (rc=$rc): $(echo "$out" | grep -E 'NYX|F
 rm -f hm; out=$("$NB" build 2>&1); run=$(./hm 2>&1)
 if [ "$run" = "4 2" ]; then ok "nyx build: la fn propia del programa gana a la privada homónima importada (4 2)"
 else mal "privada homónima en nyx build: '$run' $(echo "$out" | grep -E 'NYX|error' | head -2 | tr '\n' ' ')"; fi
+# Recursos de include_bytes en la huella (fricción nyxerp 20260930-170003): el
+# archivo incrustado entra en el .o, así que cambiarlo tiene que recompilar la
+# biblioteca —antes se reutilizaba el objeto y salía el contenido VIEJO sin error—.
+# Dos caminos: el include_bytes en la propia biblioteca, y en un módulo que NO es
+# [lib] y que la biblioteca inlinea (su texto entra entero en la unidad).
+R="$T/recursos"; mkdir -p "$R/src" "$R/textos"; cd "$R" || exit 1
+printf '[package]\nname = "rec"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/datos"]\n' > nyx.toml
+printf 'pub fn otro() -> String {\n    return include_bytes("textos/b.txt")\n}\n' > src/aux.nx
+printf 'import "src/aux"\npub fn texto() -> String {\n    return include_bytes("textos/a.txt") + otro()\n}\n' > src/datos.nx
+printf 'import "src/datos"\nfn main() -> int {\n    println(texto())\n    return 0\n}\n' > src/main.nx
+printf 'uno' > textos/a.txt; printf '%s' '-x' > textos/b.txt
+"$NB" build >/dev/null 2>&1; run=$(./rec 2>&1)
+out=$("$NB" build 2>&1)
+if [ "$run" = "uno-x" ] && echo "$out" | grep -q "reusing src/datos"; then ok "include_bytes: sin cambios en el recurso se reutiliza el objeto"
+else mal "include_bytes sin cambios: '$run' $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
+printf 'dos' > textos/a.txt
+out=$("$NB" build 2>&1); run=$(./rec 2>&1)
+if echo "$out" | grep -q "compiling src/datos (lib)" && [ "$run" = "dos-x" ]; then ok "include_bytes: cambiar el recurso de la biblioteca la recompila (dos-x)"
+else mal "recurso de la biblioteca: '$run' $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
+printf '%s' '-y' > textos/b.txt
+out=$("$NB" build 2>&1); run=$(./rec 2>&1)
+if echo "$out" | grep -q "compiling src/datos (lib)" && [ "$run" = "dos-y" ]; then ok "include_bytes: cambiar el recurso de un módulo inlineado recompila la biblioteca (dos-y)"
+else mal "recurso de un módulo inlineado: '$run' $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
 cd "$P" || exit 1
 
 echo "── [lib] modules: errores del manifiesto ──"

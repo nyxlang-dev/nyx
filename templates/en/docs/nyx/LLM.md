@@ -925,7 +925,9 @@ single `Error` struct.
   path, `..` escape, or file not found — each names the resolved path and the
   root), `NYX1035` (over the cap, with the real size). It only exists when
   COMPILING: the interpreter and the REPL answer `NYX3007`, and `read_file` is
-  what you want if the file must be read at run time.
+  what you want if the file must be read at run time. With `[lib] modules`
+  the embedded file's content is part of the cached object's fingerprint:
+  editing it recompiles the library that embeds it.
 
 ### Conversion
 - `int_to_string(n)`, `char_to_string(c)` → String

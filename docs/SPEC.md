@@ -2135,7 +2135,7 @@ modules = ["src/util", "src/geo"]
   `modules` dentro de `[lib]`, un módulo terminado en `.nx`, y un módulo bajo `std/`.
 - `nyx build` compila cada módulo declarado como una unidad aparte a `target/nyx-lib/` y
   **reutiliza el objeto** mientras ni el módulo ni nada de su cierre de imports (incluidos el
-  prelude y los `std/` que use) haya cambiado, y tampoco el compilador ni las flags de build.
+  prelude, los `std/` que use y los archivos que incrusten con `include_bytes`) haya cambiado, y tampoco el compilador ni las flags de build.
   Tocar un módulo lo recompila y, en cascada, recompila a los módulos de `[lib]` que lo importan.
   El programa principal (`main.nx`) **siempre** se compila, contra las interfaces vigentes.
   Solo aplica a targets nativos: con `--target wasm32-wasi` los módulos de `[lib]` se inlinean
