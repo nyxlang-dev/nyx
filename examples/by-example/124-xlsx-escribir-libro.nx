@@ -9,6 +9,8 @@
 //   - constructores por tipo: xlsx_text, xlsx_number(valor, decimales),
 //     xlsx_int, xlsx_date("AAAA-MM-DD"), xlsx_bool, xlsx_blank, xlsx_bold;
 //   - ancho de columna (col_width) y celdas combinadas (merge);
+//   - encabezado fijo al bajar (freeze), autofiltro sobre la tabla y
+//     montos con separador de miles (xlsx_number_fmt con "#,##0.00");
 //   - un total calculado en el programa: las fórmulas NO se escriben, se
 //     escribe el valor;
 //   - los errores (nombre de hoja repetido, fecha inválida...) salen de
@@ -38,17 +40,21 @@ fn libro() -> Result<String, Error> {
         let iva: float = base * 0.16
         let fecha: String = fechas[i]
         let prov: String = proveedores[i]
-        h.row([xlsx_date(fecha), xlsx_text(prov), xlsx_number(base, 2), xlsx_number(iva, 2)])
+        h.row([xlsx_date(fecha), xlsx_text(prov), xlsx_number_fmt(base, "#,##0.00"), xlsx_number_fmt(iva, "#,##0.00")])
         total_base = total_base + base
         total_iva = total_iva + iva
         i = i + 1
     }
     h.row([xlsx_blank(), xlsx_bold(xlsx_text("Totales")),
-           xlsx_bold(xlsx_number(total_base, 2)), xlsx_bold(xlsx_number(total_iva, 2))])
+           xlsx_bold(xlsx_number_fmt(total_base, "#,##0.00")), xlsx_bold(xlsx_number_fmt(total_iva, "#,##0.00"))])
     h.col_width(1, 12.0)
     h.col_width(2, 30.0)
     h.col_width(3, 14.0)
     h.col_width(4, 14.0)
+    // La tabla empieza en la fila 3: se fijan sus tres primeras filas (título,
+    // separador y encabezado) y el filtro cubre encabezado + datos, sin totales.
+    h.freeze(3, 0)
+    h.autofilter("A3:D" + int_to_string(3 + fechas.length()))
 
     var notas: XlsxSheetOut = xlsx_sheet_new("Notas")
     notas.row([xlsx_text("Generado por Nyx"), xlsx_int(3), xlsx_bool(true)])

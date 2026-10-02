@@ -9,14 +9,30 @@
 // fecha mal formada, rango mal formado, número fuera de rango, decimales de más,
 // libro sin hojas). Que otro programa lo abra igual (openpyxl: datetime, formatos,
 // negrita, anchos, combinadas) lo verifica scripts/testing/run_xlsx_verify.sh.
+// 2026-10-02 (fricción de nyxerp): paneles fijos (freeze), autofiltro y
+// xlsx_number_fmt con separador de miles.
 
 import "std/error"
 import "std/xlsx"
+import "std/zip"
 
 fn falla(r: Result<String, Error>) -> bool {
     match r {
         Result.Ok(_) => { return false }
         Result.Err(_) => { return true }
+    }
+}
+
+// El XML de una parte del libro, para mirar lo que std/xlsx no relee.
+fn parte(libro: String, nombre: String) -> String {
+    match zip_read(libro, zip_read_opts()) {
+        Result.Ok(z) => {
+            match z.entry(nombre) {
+                Result.Ok(x) => { return x }
+                Result.Err(_) => { return "" }
+            }
+        }
+        Result.Err(_) => { return "" }
     }
 }
 
@@ -30,10 +46,14 @@ fn main() -> int {
     h.col_width(3, 18.5)
     h.col_width(1, 14.0)
     h.merge("A7:C7")
+    h.freeze(1, 0)
+    h.autofilter("a1:D5")
     h.row([])
     h.row([xlsx_text("Total combinado")])
     var g: XlsxSheetOut = xlsx_sheet_new("Resumen")
     g.row([xlsx_text("total"), xlsx_number(1234.5, 2)])
+    g.row([xlsx_text("miles"), xlsx_number_fmt(1234567.89, "#,##0.00"), xlsx_bold(xlsx_number_fmt(0.125, "0.0%")), xlsx_number_fmt(3.0, "")])
+    g.freeze(1, 1)
     var libro: String = ""
     match xlsx_write([h, g]) {
         Result.Ok(b) => { libro = b }
@@ -88,12 +108,30 @@ fn main() -> int {
             assert(s2.name == "Resumen", "hoja 2")
             c = xlsx_cell(s2, "B1")
             assert(c.number == 1234.5, "hoja2 B1")
+            c = xlsx_cell(s2, "B2")
+            assert(c.kind == "number" and c.number == 1234567.89 and c.format == "#,##0.00", "B2 miles")
+            c = xlsx_cell(s2, "C2")
+            assert(c.number == 0.125 and c.format == "0.0%", "C2 porcentaje propio")
+            c = xlsx_cell(s2, "D2")
+            assert(c.text == "3" and c.format == "General", "D2 codigo vacio = General")
         }
         Result.Err(e) => {
             println("ERR lectura " + e.msg)
             return 1
         }
     }
+
+    // Lo que el lector no expone: paneles, autofiltro y su nombre oculto.
+    let x1: String = parte(libro, "xl/worksheets/sheet1.xml")
+    assert(x1.contains("<pane ySplit=\"1\" topLeftCell=\"A2\" activePane=\"bottomLeft\" state=\"frozen\"/>"), "pane fila")
+    assert(x1.contains("<autoFilter ref=\"A1:D5\"/>"), "autofiltro")
+    assert(x1.indexOf("<sheetViews>") < x1.indexOf("<cols>"), "sheetViews antes de cols")
+    assert(x1.indexOf("<autoFilter") < x1.indexOf("<mergeCells"), "autoFilter antes de mergeCells")
+    let x2: String = parte(libro, "xl/worksheets/sheet2.xml")
+    assert(x2.contains("<pane xSplit=\"1\" ySplit=\"1\" topLeftCell=\"B2\" activePane=\"bottomRight\" state=\"frozen\"/>"), "pane fila y columna")
+    assert(not x2.contains("autoFilter"), "hoja 2 sin autofiltro")
+    let wbx: String = parte(libro, "xl/workbook.xml")
+    assert(wbx.contains("<definedName name=\"_xlnm._FilterDatabase\" localSheetId=\"0\" hidden=\"1\">&apos;Libro de compras&apos;!$A$1:$D$5</definedName>"), "definedName")
 
     // Validaciones.
     var v: XlsxSheetOut = xlsx_sheet_new("ok")
@@ -108,6 +146,34 @@ fn main() -> int {
     var m: XlsxSheetOut = xlsx_sheet_new("m")
     m.merge("A1")
     assert(falla(xlsx_write([m])), "rango invalido")
+    var fz: XlsxSheetOut = xlsx_sheet_new("fz")
+    fz.freeze(0 - 1, 0)
+    assert(falla(xlsx_write([fz])), "freeze negativo")
+    var af: XlsxSheetOut = xlsx_sheet_new("af")
+    af.autofilter("A1")
+    assert(falla(xlsx_write([af])), "autofiltro invalido")
+
+    // Regresión (2026-10-02): un "0.000" ANTES de la primera fecha. La fecha tenía
+    // el id 164 fijo y chocaba con el del "0.000" → el número se leía como fecha.
+    var o: XlsxSheetOut = xlsx_sheet_new("orden")
+    o.row([xlsx_number(1.5, 3), xlsx_date("2026-09-01")])
+    match xlsx_write([o]) {
+        Result.Ok(b) => {
+            match xlsx_read(b, xlsx_read_opts()) {
+                Result.Ok(bk) => {
+                    let so: XlsxSheet = bk.sheets[0]
+                    let a: XlsxCell = xlsx_cell(so, "A1")
+                    assert(a.kind == "number" and a.text == "1.500" and a.format == "0.000", "0.000 antes de la fecha")
+                    let d: XlsxCell = xlsx_cell(so, "B1")
+                    assert(d.kind == "date" and d.text == "2026-09-01", "fecha despues del 0.000")
+                }
+                Result.Err(e) => { println("ERR lectura orden " + e.msg)
+                    return 1 }
+            }
+        }
+        Result.Err(e) => { println("ERR orden " + e.msg)
+            return 1 }
+    }
     println("xlsx write ok")
     return 0
 }

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # xlsx_write_verify.py — abre con openpyxl el libro que escribe test-462
 # (std/xlsx, Task 5) y verifica lo que ve OTRO programa: valores, tipos (fechas como
-# datetime, enteros como int), formatos de número, negrita, anchos y combinadas.
+# datetime, enteros como int), formatos de número, negrita, anchos y combinadas;
+# desde 2026-10-02 también paneles fijos, autofiltro y formatos con miles.
 # Lo llama scripts/testing/run_xlsx_verify.sh. Uso: xlsx_write_verify.py <libro.xlsx>
 import datetime, sys, openpyxl
 wb = openpyxl.load_workbook(sys.argv[1])
@@ -29,6 +30,12 @@ assert ws.column_dimensions['C'].width == 18.5
 assert ws.column_dimensions['A'].customWidth
 assert [str(r) for r in ws.merged_cells.ranges] == ['A7:C7']
 assert ws['A7'].value == 'Total combinado'
+assert ws.freeze_panes == 'A2', ws.freeze_panes
+assert ws.auto_filter.ref == 'A1:D5', ws.auto_filter.ref
 g = wb['Resumen']
 assert g['A1'].value == 'total' and g['B1'].value == 1234.5 and g['B1'].number_format == '0.00'
+assert g.freeze_panes == 'B2', g.freeze_panes
+assert g['B2'].value == 1234567.89 and g['B2'].number_format == '#,##0.00', g['B2'].number_format
+assert g['C2'].value == 0.125 and g['C2'].number_format == '0.0%' and g['C2'].font.b
+assert g['D2'].value == 3 and g['D2'].number_format == 'General'
 print('openpyxl ok')

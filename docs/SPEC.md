@@ -5040,8 +5040,8 @@ con XML adentro, así que `std/xlsx` se apoya en los otros dos, que también sir
   (sin XXE ni bombas de expansión).
 - **`std/xlsx`**: `xlsx_read` (celdas tipadas: text, number, date, bool, error, empty; fechas en ISO con
   épocas 1900 y 1904; las fórmulas no se evalúan, se lee el valor en caché) y `xlsx_write`
-  (`xlsx_sheet_new`, `row`, `xlsx_text`/`xlsx_number`/`xlsx_int`/`xlsx_date`/`xlsx_bool`/`xlsx_bold`,
-  `col_width`, `merge`).
+  (`xlsx_sheet_new`, `row`, `xlsx_text`/`xlsx_number`/`xlsx_number_fmt`/`xlsx_int`/`xlsx_date`/`xlsx_bool`/`xlsx_bold`,
+  `col_width`, `merge`, `freeze`, `autofilter`).
 
 Recetas: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro.nx` y
 `125-xlsx-leer-hoja.nx`.

@@ -70,7 +70,7 @@ done
 # Escritura: test-462 arma el libro y openpyxl lo abre.
 if XLSX_OUT="$T/escrito.xlsx" NYX_HOME="$ROOT" NYX_PROJECT_DIR="$T" bash "$ROOT/scripts/nyx" tests/compiler/stdlib-suite/test-462-xlsx-escribir.nx > "$T/w.log" 2>&1 \
    && [ -f "$T/escrito.xlsx" ] && out=$("$PY" scripts/testing/xlsx_write_verify.py "$T/escrito.xlsx" 2>&1); then
-    echo "  ✓ lo que escribe std/xlsx lo abre openpyxl: valores, tipos, formatos, negrita, anchos, combinadas"
+    echo "  ✓ lo que escribe std/xlsx lo abre openpyxl: valores, tipos, formatos, negrita, anchos, combinadas, paneles, autofiltro"
 else
     echo "  ✗ escritura:"; { tail -5 "$T/w.log"; echo "${out:-}"; } | sed 's/^/      /'
     fallos=$((fallos + 1))

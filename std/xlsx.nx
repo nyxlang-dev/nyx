@@ -641,8 +641,11 @@ pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell {
 //   var h: XlsxSheetOut = xlsx_sheet_new("Libro de compras")
 //   h.row([xlsx_bold(xlsx_text("Fecha")), xlsx_bold(xlsx_text("Monto"))])
 //   h.row([xlsx_date("2026-09-01"), xlsx_number(1234.5, 2)])
+//   h.row([xlsx_text("Total"), xlsx_number_fmt(1234567.89, "#,##0.00")])
 //   h.col_width(1, 14.0)
 //   h.merge("A5:B5")
+//   h.freeze(1, 0)          // la fila de encabezado queda fija al bajar
+//   h.autofilter("A1:B3")   // flechas de filtro en la primera fila del rango
 //   match xlsx_write([h]) {
 //       Result.Ok(bytes) => { write_file("salida.xlsx", bytes) }
 //       Result.Err(e) => { ... }
@@ -659,6 +662,10 @@ pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell {
 //    guarda "1234.50" con formato "0.00". Con decimals < 0 el formato es General y
 //    el valor se guarda tal cual (solo ahí puede salir notación científica, si el
 //    número es enorme).
+//  - xlsx_number_fmt(v, código) NO cumple lo anterior a propósito: un código
+//    arbitrario no dice cuántos decimales tiene, así que el valor va completo y
+//    el formato solo decide cómo se muestra (es lo que hace Excel al formatear
+//    una celda a mano). Los códigos integrados ("#,##0.00" = 4…) usan su id.
 //  - FECHAS: número de serie de Excel (época 1900, con el 29/02/1900 ficticio) y
 //    formato "dd/mm/yyyy".
 //  - ESTILOS: styles.xml se genera con solo las combinaciones (negrita × formato)
@@ -674,6 +681,7 @@ pub struct XlsxOut {
     text: String,       // texto, fecha ISO, o el entero como texto
     number: float,      // valor numérico, serie de la fecha, o 0/1 del bool
     decimals: int,      // decimales fijos; < 0 = General
+    fmt: String,        // código de formato de xlsx_number_fmt ("" = el que dicte `decimals`)
     bold: bool,
 }
 
@@ -683,33 +691,45 @@ pub struct XlsxSheetOut {
     wcols: Array,       // columnas con ancho (int), en paralelo con wvals
     wvals: Array,       // anchos (float)
     merges: Array,      // Array<String>
+    frows: int,         // filas fijas arriba (freeze)
+    fcols: int,         // columnas fijas a la izquierda (freeze)
+    filter: String,     // rango del autofiltro ("" = sin autofiltro)
 }
 
 pub fn xlsx_text(s: String) -> XlsxOut {
-    return XlsxOut { kind: "text", text: s, number: 0.0, decimals: 0, bold: false }
+    return XlsxOut { kind: "text", text: s, number: 0.0, decimals: 0, fmt: "", bold: false }
 }
 
 pub fn xlsx_number(v: float, decimals: int) -> XlsxOut {
-    return XlsxOut { kind: "number", text: "", number: v, decimals: decimals, bold: false }
+    return XlsxOut { kind: "number", text: "", number: v, decimals: decimals, fmt: "", bold: false }
+}
+
+// Número con un código de formato propio: xlsx_number_fmt(1234567.89, "#,##0.00")
+// se ve "1.234.567,89" o "1,234,567.89" según la configuración regional de quien
+// abre el archivo (en el código, "," es SIEMPRE el separador de miles y "." el
+// decimal, como manda el formato). El valor se guarda completo, sin redondear: el
+// formato solo cambia cómo se muestra. Código vacío = General.
+pub fn xlsx_number_fmt(v: float, code: String) -> XlsxOut {
+    return XlsxOut { kind: "number", text: "", number: v, decimals: 0 - 1, fmt: code, bold: false }
 }
 
 pub fn xlsx_int(v: int) -> XlsxOut {
-    return XlsxOut { kind: "int", text: int_to_string(v), number: int_to_float(v), decimals: 0, bold: false }
+    return XlsxOut { kind: "int", text: int_to_string(v), number: int_to_float(v), decimals: 0, fmt: "", bold: false }
 }
 
 pub fn xlsx_bool(b: bool) -> XlsxOut {
     var n: float = 0.0
     if b { n = 1.0 }
-    return XlsxOut { kind: "bool", text: "", number: n, decimals: 0, bold: false }
+    return XlsxOut { kind: "bool", text: "", number: n, decimals: 0, fmt: "", bold: false }
 }
 
 pub fn xlsx_blank() -> XlsxOut {
-    return XlsxOut { kind: "blank", text: "", number: 0.0, decimals: 0, bold: false }
+    return XlsxOut { kind: "blank", text: "", number: 0.0, decimals: 0, fmt: "", bold: false }
 }
 
 // La misma celda, en negrita.
 pub fn xlsx_bold(c: XlsxOut) -> XlsxOut {
-    return XlsxOut { kind: c.kind, text: c.text, number: c.number, decimals: c.decimals, bold: true }
+    return XlsxOut { kind: c.kind, text: c.text, number: c.number, decimals: c.decimals, fmt: c.fmt, bold: true }
 }
 
 // Días desde 1970-01-01 de una fecha civil (algoritmo de H. Hinnant).
@@ -733,7 +753,7 @@ fn __xlsxw_leap(y: int) -> bool {
 // "AAAA-MM-DD" -> celda fecha. Si no es una fecha válida (o es anterior a
 // 1900-01-01) queda kind "baddate" y xlsx_write devuelve Err.
 pub fn xlsx_date(iso: String) -> XlsxOut {
-    let mala: XlsxOut = XlsxOut { kind: "baddate", text: iso, number: 0.0, decimals: 0, bold: false }
+    let mala: XlsxOut = XlsxOut { kind: "baddate", text: iso, number: 0.0, decimals: 0, fmt: "", bold: false }
     if iso.length() != 10 { return mala }
     if iso.charAt(4) != 45 or iso.charAt(7) != 45 { return mala }
     var i: int = 0
@@ -760,11 +780,11 @@ pub fn xlsx_date(iso: String) -> XlsxOut {
     // así que desde el 1900-03-01 la serie es dias + 25569 y antes dias + 25568.
     var serie: int = dias + 25569
     if y == 1900 and m <= 2 { serie = dias + 25568 }
-    return XlsxOut { kind: "date", text: iso, number: int_to_float(serie), decimals: 0, bold: false }
+    return XlsxOut { kind: "date", text: iso, number: int_to_float(serie), decimals: 0, fmt: "", bold: false }
 }
 
 pub fn xlsx_sheet_new(name: String) -> XlsxSheetOut {
-    return XlsxSheetOut { name: name, rows: [], wcols: [], wvals: [], merges: [] }
+    return XlsxSheetOut { name: name, rows: [], wcols: [], wvals: [], merges: [], frows: 0, fcols: 0, filter: "" }
 }
 
 impl XlsxSheetOut {
@@ -795,6 +815,21 @@ impl XlsxSheetOut {
     fn merge(&mut self, range: String) {
         let ms: Array = self.merges
         ms.push(range)
+    }
+
+    // Fija las primeras `rows` filas y `cols` columnas: quedan a la vista al
+    // desplazarse. freeze(1, 0) fija la fila de encabezado; freeze(0, 0) quita lo
+    // fijado. Se valida en xlsx_write.
+    fn freeze(&mut self, rows: int, cols: int) {
+        self.frows = rows
+        self.fcols = cols
+    }
+
+    // Autofiltro (las flechas de filtro de la primera fila) sobre un rango
+    // ("A1:F120"); la primera fila del rango es la del encabezado. Una hoja tiene
+    // un solo autofiltro: volver a llamar lo reemplaza, "" lo quita.
+    fn autofilter(&mut self, range: String) {
+        self.filter = range
     }
 }
 
@@ -847,9 +882,11 @@ fn __xlsxw_num_text(c: XlsxOut) -> String {
     return __xlsxw_fixed(c.number, c.decimals)
 }
 
-// Clave del formato de una celda: "G" (General), "D" (fecha) o "N<d>".
+// Clave del formato de una celda: "G" (General), "D" (fecha), "N<d>" o
+// "F<código>" (xlsx_number_fmt).
 fn __xlsxw_fmt_key(c: XlsxOut) -> String {
     if c.kind == "date" { return "D" }
+    if c.kind == "number" and c.fmt != "" { return "F" + c.fmt }
     if c.kind == "number" and c.decimals >= 0 { return "N" + int_to_string(c.decimals) }
     return "G"
 }
@@ -916,6 +953,14 @@ fn __xlsxw_ref(s: String) -> int {
     return col * 2097152 + row
 }
 
+// "a1" -> "$A$1" (referencia absoluta, para el definedName del autofiltro).
+fn __xlsxw_abs(ref: String) -> String {
+    let r: String = ref.to_upper()
+    var i: int = 0
+    while i < r.length() and r.charAt(i) >= 65 and r.charAt(i) <= 90 { i = i + 1 }
+    return "$" + r.substring(0, i) + "$" + r.substring(i, r.length())
+}
+
 fn __xlsxw_check_range(r: String) -> bool {
     let p: int = r.indexOf(":")
     if p < 0 { return false }
@@ -946,10 +991,41 @@ fn __xlsxw_style(claves: Array, c: XlsxOut) -> int {
     return claves.length() - 1
 }
 
+// Id del formato propio `code`, agregándolo a `codigos` si es nuevo. El id es
+// SIEMPRE 164 + su posición: un id fijo por tipo (la fecha era 164 siempre)
+// chocaba con el de otro formato que hubiera entrado antes, y el libro quedaba
+// con dos numFmt de id 164 — el número se leía como fecha, sin error.
+fn __xlsxw_code_id(codigos: Array, code: String) -> int {
+    var q: int = 0
+    while q < codigos.length() {
+        let cq: String = codigos[q]
+        if cq == code { return 164 + q }
+        q = q + 1
+    }
+    codigos.push(code)
+    return 164 + codigos.length() - 1
+}
+
+// Id de un formato integrado de Excel; -1 si el código no es uno de ellos. Usar
+// el integrado (y no un 164+ con el mismo texto) es lo que hace Excel: así la
+// celda sigue la configuración regional igual que si se hubiera formateado a mano.
+fn __xlsxw_builtin_id(code: String) -> int {
+    if code == "General" { return 0 }
+    if code == "0" { return 1 }
+    if code == "0.00" { return 2 }
+    if code == "#,##0" { return 3 }
+    if code == "#,##0.00" { return 4 }
+    if code == "0%" { return 9 }
+    if code == "0.00%" { return 10 }
+    if code == "0.00E+00" { return 11 }
+    if code == "@" { return 49 }
+    return 0 - 1
+}
+
 fn __xlsxw_styles_xml(claves: Array) -> String {
-    // Formatos propios (id >= 164): la fecha y los "0.000…" de más de 2 decimales.
+    // Formatos propios (id >= 164): la fecha, los "0.000…" de más de 2 decimales y
+    // los códigos de xlsx_number_fmt que no son integrados.
     var codigos: Array = []
-    var ids: Array = []
     var xfs: StringBuilder = StringBuilder.new()
     var i: int = 0
     while i < claves.length() {
@@ -958,13 +1034,10 @@ fn __xlsxw_styles_xml(claves: Array) -> String {
         let fmt: String = k.substring(1, k.length())
         var id: int = 0
         if fmt == "D" {
-            id = 164
-            var ya: bool = false
-            for c: String in codigos { if c == "dd/mm/yyyy" { ya = true } }
-            if not ya {
-                codigos.push("dd/mm/yyyy")
-                ids.push(164)
-            }
+            id = __xlsxw_code_id(codigos, "dd/mm/yyyy")
+        } else if fmt.startsWith("F") {
+            id = __xlsxw_builtin_id(fmt.substring(1, fmt.length()))
+            if id < 0 { id = __xlsxw_code_id(codigos, fmt.substring(1, fmt.length())) }
         } else if fmt.startsWith("N") {
             let d: int = string_to_int_or(fmt.substring(1, fmt.length()), 0)
             if d == 0 {
@@ -978,19 +1051,7 @@ fn __xlsxw_styles_xml(claves: Array) -> String {
                     code = code + "0"
                     z = z + 1
                 }
-                var pos: int = 0 - 1
-                var q: int = 0
-                while q < codigos.length() {
-                    let cq: String = codigos[q]
-                    if cq == code { pos = q }
-                    q = q + 1
-                }
-                if pos < 0 {
-                    codigos.push(code)
-                    pos = codigos.length() - 1
-                    ids.push(164 + pos)
-                }
-                id = 164 + pos
+                id = __xlsxw_code_id(codigos, code)
             }
         }
         var fontId: int = 0
@@ -1009,8 +1070,7 @@ fn __xlsxw_styles_xml(claves: Array) -> String {
         var j: int = 0
         while j < codigos.length() {
             let cj: String = codigos[j]
-            let idj: int = ids[j]
-            sb.append("<numFmt numFmtId=\"" + int_to_string(idj) + "\" formatCode=\"" + xml_escape(cj) + "\"/>")
+            sb.append("<numFmt numFmtId=\"" + int_to_string(164 + j) + "\" formatCode=\"" + xml_escape(cj) + "\"/>")
             j = j + 1
         }
         sb.append("</numFmts>")
@@ -1031,6 +1091,24 @@ fn __xlsxw_sheet_xml(h: XlsxSheetOut, claves: Array) -> Result<String, Error> {
     var sb: StringBuilder = StringBuilder.new()
     sb.append(__xlsxw_head())
     sb.append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">")
+
+    // Paneles fijos. El esquema exige <sheetViews> antes de <cols>.
+    let fr: int = h.frows
+    let fc: int = h.fcols
+    if fr < 0 or fr > 1048575 or fc < 0 or fc > 16383 {
+        return Result.Err(__xlsxw_err("hoja '" + h.name + "': freeze(" + int_to_string(fr) + ", " + int_to_string(fc) + ") fuera de rango (filas 0..1048575, columnas 0..16383)"))
+    }
+    if fr > 0 or fc > 0 {
+        // El panel activo es el de abajo a la derecha de la división que exista.
+        var panel: String = "bottomRight"
+        if fc == 0 { panel = "bottomLeft" }
+        if fr == 0 { panel = "topRight" }
+        var pane: String = "<pane"
+        if fc > 0 { pane = pane + " xSplit=\"" + int_to_string(fc) + "\"" }
+        if fr > 0 { pane = pane + " ySplit=\"" + int_to_string(fr) + "\"" }
+        pane = pane + " topLeftCell=\"" + xlsx_addr(fr + 1, fc + 1) + "\" activePane=\"" + panel + "\" state=\"frozen\"/>"
+        sb.append("<sheetViews><sheetView workbookViewId=\"0\">" + pane + "<selection pane=\"" + panel + "\"/></sheetView></sheetViews>")
+    }
 
     // Anchos, ordenados por columna (el esquema exige orden ascendente).
     let cs: Array = h.wcols
@@ -1084,6 +1162,9 @@ fn __xlsxw_sheet_xml(h: XlsxSheetOut, claves: Array) -> Result<String, Error> {
                 if v != v or v > 1000000000000000000000000000000.0 or v < 0.0 - 1000000000000000000000000000000.0 {
                     return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " no tiene un número finito"))
                 }
+                if c.kind == "number" and c.fmt.length() > 255 {
+                    return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " tiene un formato de más de 255 caracteres"))
+                }
                 if c.kind == "number" and c.decimals > 15 {
                     return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " pide más de 15 decimales"))
                 }
@@ -1111,6 +1192,14 @@ fn __xlsxw_sheet_xml(h: XlsxSheetOut, claves: Array) -> Result<String, Error> {
         r = r + 1
     }
     sb.append("</sheetData>")
+
+    // Autofiltro: va después de <sheetData> y antes de <mergeCells>.
+    if h.filter != "" {
+        if not __xlsxw_check_range(h.filter) {
+            return Result.Err(__xlsxw_err("hoja '" + h.name + "': rango de autofiltro inválido '" + h.filter + "' (se espera algo como A1:F120)"))
+        }
+        sb.append("<autoFilter ref=\"" + xml_escape(h.filter.to_upper()) + "\"/>")
+    }
 
     let ms: Array = h.merges
     if ms.length() > 0 {
@@ -1171,7 +1260,24 @@ pub fn xlsx_write(sheets: Array) -> Result<String, Error> {
         rels.append("<Relationship Id=\"rId" + ns + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet" + ns + ".xml\"/>")
     }
     ct.append("</Types>")
-    wb.append("</sheets></workbook>")
+    wb.append("</sheets>")
+    // Excel guarda el rango de cada autofiltro también como el nombre oculto
+    // _xlnm._FilterDatabase de su hoja; sin él, algunas versiones no muestran el
+    // filtro activo tras ordenar. El rango ya se validó en __xlsxw_sheet_xml.
+    var nombres: StringBuilder = StringBuilder.new()
+    var hi: int = 0
+    for h: XlsxSheetOut in sheets {
+        if h.filter != "" {
+            let p: int = h.filter.indexOf(":")
+            let rango: String = __xlsxw_abs(h.filter.substring(0, p)) + ":" + __xlsxw_abs(h.filter.substring(p + 1, h.filter.length()))
+            let hoja: String = "'" + h.name.replace("'", "''") + "'"
+            nombres.append("<definedName name=\"_xlnm._FilterDatabase\" localSheetId=\"" + int_to_string(hi) + "\" hidden=\"1\">" + xml_escape(hoja + "!" + rango) + "</definedName>")
+        }
+        hi = hi + 1
+    }
+    let dn: String = nombres.to_string()
+    if dn.length() > 0 { wb.append("<definedNames>" + dn + "</definedNames>") }
+    wb.append("</workbook>")
     rels.append("<Relationship Id=\"rId" + int_to_string(n + 1) + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>")
     rels.append("</Relationships>")
 

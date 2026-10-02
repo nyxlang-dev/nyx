@@ -3021,15 +3021,21 @@ match xlsx_read(read_file("estado.xlsx"), xlsx_read_opts()) {
 var h: XlsxSheetOut = xlsx_sheet_new("Libro de compras")           // name: <= 31 chars, unique, no []:*?/\
 h.row([xlsx_bold(xlsx_text("Fecha")), xlsx_bold(xlsx_text("Monto"))])
 h.row([xlsx_date("2026-09-01"), xlsx_number(1234.5, 2)])          // (value, fixed decimals; < 0 = General)
+h.row([xlsx_text("Total"), xlsx_number_fmt(1234567.89, "#,##0.00")])  // own format code: thousands
 h.col_width(1, 14.0)
 h.merge("A5:B5")
+h.freeze(1, 0)                                                    // (rows, cols) stay visible; (0, 0) unfreezes
+h.autofilter("A1:B3")                                             // filter arrows on the range's first row
 match xlsx_write([h]) {                                           // Result<String, Error>: the file bytes
     Result.Ok(bytes) => { write_file("salida.xlsx", bytes) }
     Result.Err(e) => { print(e.msg) }
 }
 ```
 
-Other constructors: `xlsx_int(int)`, `xlsx_bool(bool)`, `xlsx_blank()`. Helpers: `xlsx_col_name(28)`
+Other constructors: `xlsx_int(int)`, `xlsx_bool(bool)`, `xlsx_blank()`. `xlsx_number_fmt(v, code)`:
+any Excel format code (`"#,##0.00"`, `"0.0%"`, `"#,##0 \"Bs\""`); in the code `,` is ALWAYS the
+thousands separator and `.` the decimal — the viewer's locale decides what is shown (1.234.567,89 in
+es-VE). The value is stored unrounded (the code only changes display); `""` = General. Helpers: `xlsx_col_name(28)`
 = `"AB"`, `xlsx_addr(13, 2)` = `"B13"`. Structs: `XlsxBook{sheets, date1904}`, `XlsxSheet{name,
 hidden, rows, merged}`, `XlsxCell{addr, row, col, kind, text, number, format}`.
 
@@ -3052,7 +3058,9 @@ hidden, rows, merged}`, `XlsxCell{addr, row, col, kind, text, number, format}`.
   encryption and methods other than stored/DEFLATE are `Err`. A broken CRC is `Err`.
 - **Writing**: text as inline strings (no sharedStrings), entries DEFLATE-compressed, fixed zip
   date (1980-01-01) so the same book gives the same bytes. Control chars XML forbids are dropped
-  from text. Styles: only bold and number format; no colours, no borders.
+  from text. Styles: only bold and number format; no colours, no borders. Sheet extras: `col_width`,
+  `merge`, `freeze(rows, cols)` and ONE `autofilter(range)` per sheet (a second call replaces it,
+  `""` removes it; out-of-range freeze or a bad range is `Err` at write).
 - **`std/xml`** (`xml_reader` events `open/close/text/end/error`; `xml_parse(text, xml_opts()) ->
   Result<XmlNode, Error>`; `xml_attr`, `xml_child`, `xml_escape`): **`<!DOCTYPE` is an error**
   (no DTD, no external entities: XXE and billion-laughs are impossible); only the 5 predefined and

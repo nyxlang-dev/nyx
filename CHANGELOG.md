@@ -11,6 +11,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`std/xlsx`: paneles fijos, autofiltro y formato con separador de miles** (pedido de nyxerp,
+  2026-10-02): `h.freeze(filas, columnas)` (`<pane state="frozen">`), `h.autofilter("A1:F120")`
+  (con el nombre oculto `_xlnm._FilterDatabase` que guarda Excel) y `xlsx_number_fmt(v, código)`
+  con cualquier código de Excel (`"#,##0.00"` usa el integrado 4; la configuración regional de quien
+  abre decide si se ve 1.234.567,89). Test 462 ampliado y verificado con openpyxl; receta 124.
+
 - **Segunda tanda de nyxerp (2026-10-01): JPEG de salida, miniaturas y lectura de correo por IMAP**,
   revisada antes de integrar e integrada con una batería completa:
   - **`std/image` escribe JPEG y arma miniaturas** `[arco: std-image]`: `image_encode_jpeg(img,
@@ -113,6 +119,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
     `os_thread_timedjoin`/`cancel` cooperativos.
 
 ### Arreglado
+
+- **`std/xlsx`: un número con 3+ decimales escrito antes que la primera fecha se leía como fecha**
+  (silently-wrong): la fecha tenía el `numFmtId` 164 fijo y chocaba con el del `"0.000"`. Ahora todo
+  formato propio toma 164 + su posición. Hallado al revisar el pedido de nyxerp; regresión en test 462.
 
 - **Editar un archivo de `include_bytes` no recompilaba su biblioteca de `[lib] modules`.** La huella
   de `target/nyx-lib` hasheaba el fuente del módulo y su cierre de imports, pero no los archivos
