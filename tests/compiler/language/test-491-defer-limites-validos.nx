@@ -1,0 +1,35 @@
+// Lo que NYX1042 NO prohíbe (arco defer-al-cerrar-bloque, Task 5): un break
+// dentro de un loop escrito en el propio defer, y una lambda dentro de un defer
+// con su propio return. Solo se rechaza SALIR del defer.
+var g_suma: int = 0
+
+fn con_loop_en_defer() -> int {
+    defer {
+        var i = 0
+        while true {
+            if i == 3 {
+                break
+            }
+            g_suma = g_suma + i
+            i = i + 1
+        }
+    }
+    return 7
+}
+
+fn con_lambda_en_defer() -> int {
+    defer {
+        let doble = fn(x: int) -> int { return x * 2 }
+        g_suma = g_suma + doble(50)
+    }
+    return 8
+}
+
+fn main() {
+    assert(con_loop_en_defer() == 7)
+    assert(g_suma == 3)
+    g_suma = 0
+    assert(con_lambda_en_defer() == 8)
+    assert(g_suma == 100)
+    print("ok")
+}

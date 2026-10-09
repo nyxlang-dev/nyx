@@ -1,0 +1,50 @@
+// defer en funciones anidadas (arco defer-al-cerrar-bloque, Task 4). Antes:
+// el defer de una fn anidada no corría nunca, y una fn CON defer que tenía
+// adentro una anidada con return no compilaba («use of undefined value
+// '%__defer_retval'» de clang, sin línea): la anidada heredaba la etiqueta de
+// limpieza de la de afuera. Ahora cada una arma la suya.
+var g_log: String = ""
+// La de afuera tiene defer; la anidada no, y retorna: no puede saltar a la
+// limpieza de la de afuera.
+fn afuera_con_defer() -> int {
+    defer { g_log = g_log + "afuera;" }
+    fn interna(x: int) -> int {
+        if x > 0 {
+            return x * 2
+        }
+        return 0
+    }
+    return interna(5)
+}
+// Anidada void con defer.
+fn anidada_void() -> int {
+    fn aviso() {
+        defer { g_log = g_log + "void;" }
+        g_log = g_log + "cuerpo;"
+    }
+    aviso()
+    return 0
+}
+// Anidada con defer y return temprano desde un bloque.
+fn anidada_return() -> int {
+    fn calc(x: int) -> int {
+        defer { g_log = g_log + "fn;" }
+        if x > 0 {
+            defer { g_log = g_log + "bloque;" }
+            return x
+        }
+        return 0
+    }
+    return calc(3)
+}
+fn main() {
+    assert(afuera_con_defer() == 10)
+    assert(g_log == "afuera;")
+    g_log = ""
+    anidada_void()
+    assert(g_log == "cuerpo;void;")
+    g_log = ""
+    assert(anidada_return() == 3)
+    assert(g_log == "bloque;fn;")
+    print("ok")
+}

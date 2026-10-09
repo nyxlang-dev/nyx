@@ -1,0 +1,14 @@
+// NYX1043: `defer` en una función async no corre (la tarea no pasa por la
+// sección de limpieza); hasta el arco defer-al-cerrar-bloque se descartaba en
+// silencio.
+var g_log: String = ""
+
+async fn tarea(x: int) -> int {
+    defer { g_log = g_log + "async;" }
+    return x
+}
+
+fn main() {
+    let t = spawn_task(tarea(5))
+    print(int_to_string(task_await(t)))
+}

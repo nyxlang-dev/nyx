@@ -1,0 +1,48 @@
+// defer al cerrar su bloque (arco defer-al-cerrar-bloque): dos propiedades que
+// no se ven en el registro del caso ai-first 34.
+//  1. El valor de `return` se evalúa ANTES de que corran los defer: un defer
+//     que cambia `x` no altera lo que ya se devolvió.
+//  2. El cuerpo de un defer se genera una vez por cada salida del bloque; un
+//     `if` adentro tiene que producir labels frescos en cada copia (si se
+//     repitieran, el IR no linkea).
+var g_contador: int = 0
+
+fn valor_antes() -> int {
+    var x: int = 1
+    if true {
+        defer { x = 99 }
+        x = 2
+        return x
+    }
+    return x
+}
+
+fn varias_salidas(n: int) -> int {
+    if true {
+        defer {
+            if n > 0 {
+                g_contador = g_contador + 10
+            } else {
+                g_contador = g_contador + 1
+            }
+        }
+        if n == 1 {
+            return 1
+        }
+        if n == 2 {
+            return 2
+        }
+    }
+    return 0
+}
+
+fn main() {
+    assert(valor_antes() == 2)
+    g_contador = 0
+    assert(varias_salidas(1) == 1)
+    assert(varias_salidas(2) == 2)
+    assert(varias_salidas(0) == 0)
+    print("contador=" + int_to_string(g_contador))
+    assert(g_contador == 21)
+    print("ok")
+}

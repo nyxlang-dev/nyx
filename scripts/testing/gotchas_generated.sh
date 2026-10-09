@@ -48,6 +48,7 @@ GOTCHA_IDS=(
   "hkt-gats-parse-only"
   "wasm-arena-closure-env"
   "wasm-await-one-suspended-stack"
+  "defer-not-on-throw"
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"
@@ -73,6 +74,7 @@ GOTCHA_IDS=(
   "try-early-exit-pop"
   "std-private-shadows-builtin"
   "block-shadowing-restores-outer"
+  "defer-runs-at-block-exit"
   "local-fn-var-shadows-global-fn"
   "string-index-byte"
 )

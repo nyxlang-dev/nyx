@@ -1,0 +1,77 @@
+// Nyx by Example: `defer` corre al cerrar el bloque que lo contiene.
+//
+// Un `defer` se ejecuta cuando el control SALE DEL BLOQUE donde está escrito: al caer al final,
+// por `return`, por `?` con Err, por `break` o `continue`. (Hasta 0.35.0 solo corría el del nivel
+// superior de la función; el de un bloque se descartaba en silencio. Ver
+// docs/gotchas/defer-runs-at-block-exit.md.)
+//
+// Lo que esta receta muestra:
+//   1. `defer` dentro de un loop: libera algo en CADA iteración;
+//   2. `defer` dentro de un `if` con `return` temprano;
+//   3. el orden: LIFO dentro del bloque, de adentro hacia afuera entre bloques;
+//   4. el cuerpo del defer ve los valores AL SALIR, no al declararlo.
+//
+// Límite: un `throw` que sale de la función no corre sus `defer`
+// (ver docs/gotchas/defer-not-on-throw.md). Usa Result y `?` si necesitas la limpieza.
+
+var g_log: String = ""
+
+fn reset() {
+    g_log = ""
+}
+
+// Un «recurso» por iteración: se abre al entrar y se cierra al terminar el cuerpo.
+fn por_iteracion() -> int {
+    var i = 0
+    while i < 3 {
+        g_log = g_log + "abre" + int_to_string(i) + ";"
+        defer { g_log = g_log + "cierra" + int_to_string(i) + ";" }
+        i = i + 1
+    }
+    return i
+}
+
+// El defer del bloque corre también cuando el return sale desde adentro.
+fn temprano(b: bool) -> int {
+    if b {
+        defer { g_log = g_log + "liberado;" }
+        g_log = g_log + "usando;"
+        return 1
+    }
+    g_log = g_log + "sin-recurso;"
+    return 0
+}
+
+// LIFO dentro del bloque; interno, externo y función entre bloques.
+fn orden() -> int {
+    defer { g_log = g_log + "fn;" }
+    if true {
+        defer { g_log = g_log + "externo-1;" }
+        defer { g_log = g_log + "externo-2;" }
+        if true {
+            defer { g_log = g_log + "interno;" }
+            return 7
+        }
+    }
+    return 0
+}
+
+fn main() {
+    reset()
+    assert(por_iteracion() == 3)
+    // el defer ve `i` al salir: ya incrementado
+    assert(g_log == "abre0;cierra1;abre1;cierra2;abre2;cierra3;")
+
+    reset()
+    assert(temprano(true) == 1)
+    assert(g_log == "usando;liberado;")
+    reset()
+    assert(temprano(false) == 0)
+    assert(g_log == "sin-recurso;")
+
+    reset()
+    assert(orden() == 7)
+    assert(g_log == "interno;externo-2;externo-1;fn;")
+
+    print("ok")
+}

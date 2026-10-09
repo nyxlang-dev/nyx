@@ -1,0 +1,17 @@
+// NYX1042: un `break` que saldría del cuerpo de un defer hacia el loop de
+// afuera. Antes compilaba y no hacía nada (el defer de un bloque no corría).
+// Un break dentro de un loop escrito en el propio defer sí vale.
+fn f() -> int {
+    var i = 0
+    while i < 3 {
+        defer {
+            break
+        }
+        i = i + 1
+    }
+    return i
+}
+
+fn main() {
+    print(int_to_string(f()))
+}

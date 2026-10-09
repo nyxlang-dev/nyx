@@ -1,0 +1,13 @@
+// NYX1042: un `return` dentro del cuerpo de un defer. El defer corre cuando la
+// función ya está saliendo; hasta el arco defer-al-cerrar-bloque esto COLGABA
+// el programa (la limpieza volvía a saltar a sí misma).
+fn f() -> int {
+    defer {
+        return 5
+    }
+    return 1
+}
+
+fn main() {
+    print(int_to_string(f()))
+}

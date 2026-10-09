@@ -1,0 +1,97 @@
+// defer al cerrar su bloque, salida NORMAL (el control cae al final del bloque):
+// if, else, while (una vez por iteración, viendo los valores al salir), for de
+// rango y sobre array, brazo de match, LIFO en un bloque y defer dentro de un
+// defer. Arco defer-al-cerrar-bloque, Task 2; antes todos se descartaban en
+// silencio. return/?/break/continue: tests/ai-first/34 y test-488.
+var g_log: String = ""
+fn en_if(b: bool) -> int {
+    if b {
+        defer { g_log = g_log + "if;" }
+        g_log = g_log + "cuerpo;"
+    }
+    g_log = g_log + "despues;"
+    return 0
+}
+fn en_else(b: bool) -> int {
+    if b {
+        g_log = g_log + "then;"
+    } else {
+        defer { g_log = g_log + "else;" }
+        g_log = g_log + "cuerpo;"
+    }
+    g_log = g_log + "despues;"
+    return 0
+}
+fn en_while() -> int {
+    var i = 0
+    while i < 3 {
+        defer { g_log = g_log + "d" + int_to_string(i) + ";" }
+        g_log = g_log + "i" + int_to_string(i) + ";"
+        i = i + 1
+    }
+    return i
+}
+fn en_for() -> int {
+    for i in 0..2 {
+        defer { g_log = g_log + "d" + int_to_string(i) + ";" }
+        g_log = g_log + "i" + int_to_string(i) + ";"
+    }
+    for x: String in ["a", "b"] {
+        defer { g_log = g_log + "e;" }
+        g_log = g_log + x + ";"
+    }
+    return 0
+}
+fn en_match(o: Option<int>) -> int {
+    match o {
+        Option.Some(v) => {
+            defer { g_log = g_log + "brazo;" }
+            g_log = g_log + "some" + int_to_string(v) + ";"
+        },
+        Option.None => { g_log = g_log + "none;" }
+    }
+    g_log = g_log + "despues;"
+    return 0
+}
+fn dos_en_un_bloque() -> int {
+    if true {
+        defer { g_log = g_log + "primero;" }
+        defer { g_log = g_log + "segundo;" }
+        g_log = g_log + "cuerpo;"
+    }
+    return 0
+}
+fn defer_en_defer() -> int {
+    defer {
+        defer { g_log = g_log + "adentro;" }
+        g_log = g_log + "afuera;"
+    }
+    return 1
+}
+fn main() {
+    en_if(true)
+    assert(g_log == "cuerpo;if;despues;")
+    g_log = ""
+    en_if(false)
+    assert(g_log == "despues;")
+    g_log = ""
+    en_else(false)
+    assert(g_log == "cuerpo;else;despues;")
+    g_log = ""
+    en_while()
+    assert(g_log == "i0;d1;i1;d2;i2;d3;")
+    g_log = ""
+    en_for()
+    print(g_log)
+    assert(g_log == "i0;d0;i1;d1;a;e;b;e;")
+    g_log = ""
+    en_match(Option.Some(5))
+    assert(g_log == "some5;brazo;despues;")
+    g_log = ""
+    dos_en_un_bloque()
+    assert(g_log == "cuerpo;segundo;primero;")
+    g_log = ""
+    defer_en_defer()
+    assert(g_log == "afuera;adentro;")
+    print("ok")
+}

@@ -120,6 +120,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`defer` ya no se descarta en silencio fuera del nivel superior de la función; `return` en un
+  `defer` ya no cuelga** `[arco: defer-al-cerrar-bloque]`. Un `defer` dentro de un bloque (`if`,
+  `else`, `while`, `for`, brazo de `match`, `try`, `catch`, `unsafe`), en una fn anidada o en una
+  lambda compilaba, pasaba `nyx check` y no corría nunca. Un `return` dentro de un `defer` colgaba
+  el programa, un `break` no hacía nada, un `defer` dentro de otro se ignoraba, y una fn con `defer`
+  y una fn anidada con `return` no compilaba (error de clang sin línea). Ahora los `defer` corren, y
+  `return`, o `break`/`continue` que salga del cuerpo de un `defer`, es NYX1042; un `defer` en una
+  `async fn` es NYX1043. Tests: `tests/ai-first/34-defer-al-cerrar-bloque.nx`, `test-488` a
+  `test-491`, `test-nyx1042-*`, `test-nyx1043-*`.
 - **`file_write_string("/ruta", "hola")` ya no compila para caerse después: es NYX1031** (fricción
   nyxerp, 2026-10-09). Las funciones del handle de archivo (`file_write_string`, `file_write_bytes`,
   `file_read_line`, `file_read_bytes`, `file_seek`, `file_tell`, `file_flush`, `file_close`) reciben
@@ -269,6 +278,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Cambiado
 
+- **Conducta nueva de `defer`: corre al cerrar el bloque que lo contiene**
+  `[arco: defer-al-cerrar-bloque]`. Al caer al final, por `return`, por `?` con Err, por `break` o
+  `continue`; LIFO en el bloque y de adentro hacia afuera; en el cuerpo de un loop, una vez por
+  iteración; el valor de `return` se evalúa antes de los `defer` y el cuerpo del `defer` ve los
+  valores al salir (semántica de Zig/Swift, no de Go). Se midió con el corpus completo (repo,
+  nyxerp, stacks): 16 `defer`, ninguno fuera del nivel superior, así que ningún programa conocido
+  cambia de resultado. Límite que sigue: un `throw` que sale de la función no corre sus `defer`
+  (`docs/gotchas/defer-not-on-throw.md`); usa `Result` y `?`.
 - **Conducta nueva del sombreado en bloque: tras el bloque se lee la variable de afuera**
   `[arco: alcance-de-bloque-codegen]`. Un programa que dependía de leer o asignar, después del bloque,
   la variable interna que había tapado a la de afuera ahora usa la de afuera. Se midió con

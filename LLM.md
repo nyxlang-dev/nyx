@@ -756,6 +756,17 @@ defer { raw_mode_exit() }    // block form
 defer cleanup()               // bare-expression form also works (v0.16+)
 ```
 
+Since 0.35.1 a `defer` runs when control leaves the BLOCK that contains it (`if`, `else`, `while`,
+`for`, `match` arm, `try`, `catch`, `unsafe`, nested fns, lambdas), not only at function exit: on
+falling off the end, `return`, `?` with Err, `break` or `continue`. Order is LIFO within a block and
+inner to outer across blocks, function-level defers last (a `return` two blocks deep logs
+`inner;outer;fn;`). Inside a loop body it runs on EVERY iteration. The `return` value is evaluated
+BEFORE the defers. The body sees values AT EXIT, not at declaration (Zig/Swift semantics, unlike
+Go): `while i < 3 { defer { log(i) } i = i + 1 }` logs 1, 2, 3. A `defer` inside a `defer` runs at the
+end of the outer one's body. `return`, or `break`/`continue` leaving a defer body, is NYX1042; a
+`defer` in an `async fn` is NYX1043. LIMIT: a `throw` leaving the function does NOT run its defers
+(the `longjmp` skips them): free in the `catch`, or use `Result` and `?`, which do run them.
+
 ---
 
 ## 3. Built-in type methods
@@ -1784,7 +1795,7 @@ Not Nyx bugs: these come from POSIX, from the Boehm GC, or from codegen
 internals you never touch directly.
 
 <!-- gen:gotchas kinds=limit lang=en form=long -->
-<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack -->
+<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack,defer-not-on-throw -->
 
 1. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is
 inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC interacts with POSIX
@@ -1855,6 +1866,11 @@ pile up and fire together. A `#[suspends]` import reached from a nested synchron
 runtime error, never a corrupted stack. `spawn`, channels and goroutines do not exist in wasm; to
 wait for several things, `await` them one after another. [test: wasm/test-wasm-31-asyncify-shim] [test: wasm/test-wasm-33-await-fetch]
 
+8. **A `throw` that leaves a function does not run its `defer`s — neither the block-level ones nor the function-level ones.**
+The `throw` is a `longjmp` that jumps over the cleanup, so a resource released by `defer` leaks when
+the function exits by throwing. No fix yet. Meanwhile, release the resource in the `catch` that
+handles the throw, or report the failure with `Result` and `?`, which do run the `defer`s.
+
 <!-- /gen:gotchas -->
 
 ### 5.4 Already fixed — you can use these
@@ -1863,7 +1879,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,local-fn-var-shadows-global-fn,string-index-byte -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,defer-runs-at-block-exit,local-fn-var-shadows-global-fn,string-index-byte -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2097,7 +2113,16 @@ redeclares it), run `NYX_SCOPE_AUDIT=1 nyx check file.nx`: it reports every use 
 checker and the codegen saw different variables, with the prefix `scope-audit:`. Measured over 1286
 files (this repo, nyxerp, the stacks): zero real cases. [test: 33-sombreado-en-bloque] [test: compiler/language/test-486-defer-con-sombreado]
 
-26. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.35.1 it is also what the type checker checks the call against.**
+26. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.35.1 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
+Until 0.35.0 a `defer` inside an `if`, `else`, `while`, `for`, `match` arm, `try`, `catch` or
+`unsafe` block, at the top level of a nested fn, or in a lambda was silently dropped: it compiled,
+`nyx check` was green and the cleanup never ran. A `return` inside a `defer` hung the program. Now
+order is LIFO within a block and inner to outer across blocks; in a loop body it runs on every
+iteration; the `return` value is evaluated before the defers; the body sees the values at exit, not
+at declaration (unlike Go). `return` (or a `break`/`continue` leaving the body) inside a `defer` is
+NYX1042, and a `defer` in an `async fn` is NYX1043. [test: 34-defer-al-cerrar-bloque] [test: compiler/language/test-489-defer-salida-normal]
+
+27. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.35.1 it is also what the type checker checks the call against.**
 Until 0.35.0, `let leer: Fn(int) -> int = a.leer; leer(21)` failed with a false NYX1005 («argument 1
 of 'leer': expected String, got int») whenever any file of the program declared a
 `fn leer(s: String)`: the checker took the global signature while the binary called the local. With
@@ -2105,7 +2130,7 @@ identical signatures it compiled, and the arguments were checked against the wro
 Reported by a user on 2026-10-04. Now the most recent binding in scope wins in both layers, and a
 `Fn(..) -> R` variable contributes its own parameter and return types. [test: 32-variable-fn-homonima-de-fn-global] [test: compiler/errors/test-m08-arg-mismatch-fn-local-homonima]
 
-27. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
+28. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
 Until then it compiled as an Array read and fetched 8 bytes at position `i*8`: `"abcdefghijklmnopq"[1]`
 gave `i` instead of `b`, and `let c: int = "abc"[0]` gave 6513249 — silently, rc 0. On an older
 toolchain use `s.charAt(i)`, which always read the right byte. Out of range aborts, like `charAt`. [test: compiler/language/test-457-indexar-string]
