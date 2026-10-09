@@ -1879,7 +1879,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,defer-runs-at-block-exit,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2113,7 +2113,15 @@ redeclares it), run `NYX_SCOPE_AUDIT=1 nyx check file.nx`: it reports every use 
 checker and the codegen saw different variables, with the prefix `scope-audit:`. Measured over 1286
 files (this repo, nyxerp, the stacks): zero real cases. [test: 33-sombreado-en-bloque] [test: compiler/language/test-486-defer-con-sombreado]
 
-26. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.35.1 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
+26. **A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.35.1, as long as the name is unique in the function (NYX1044 otherwise).**
+Until 0.35.0 closures only existed at a function's top level: a lambda inside an `if` could not see the
+`if`'s variables (NYX1002 «not declared»), and a named `fn` inside a block did not even link
+(`use of undefined value '@name'` from clang, no line). Closures capture by NAME, so a block variable
+whose name is declared more than once in the function (shadowing an outer one, or in a sibling block),
+a `for` loop variable or a `match` binding cannot be captured: that is NYX1044, never a wrong value.
+Rename the variable, or copy it into a `let` with its own name right before the closure. [test: 36-closure-captura-bloque] [test: compiler/errors/test-nyx1044-captura-nombre-repetido] [test: compiler/errors/test-nyx1044-captura-variable-de-for]
+
+27. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.35.1 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
 Until 0.35.0 a `defer` inside an `if`, `else`, `while`, `for`, `match` arm, `try`, `catch` or
 `unsafe` block, at the top level of a nested fn, or in a lambda was silently dropped: it compiled,
 `nyx check` was green and the cleanup never ran. A `return` inside a `defer` hung the program. Now
@@ -2122,7 +2130,7 @@ iteration; the `return` value is evaluated before the defers; the body sees the 
 at declaration (unlike Go). `return` (or a `break`/`continue` leaving the body) inside a `defer` is
 NYX1042, and a `defer` in an `async fn` is NYX1043. [test: 34-defer-al-cerrar-bloque] [test: compiler/language/test-489-defer-salida-normal]
 
-27. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.35.1.**
+28. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.35.1.**
 Until 0.35.0, iterating a literal directly (`for q in ["x", "y"]`) typed `q` as `int`: `print(q)` and
 `"v=" + q` showed the String's ADDRESS, with no error. An element typed `Array<T>` (annotated, or
 inferred from an `Array<Array<int>>` variable) crashed with SIGSEGV on first use, and a `Map` element
@@ -2130,7 +2138,7 @@ silently reported `m.size() == 0`: both fell into the struct path, which loads o
 The literal now takes the type shared by ALL its elements (a mixed literal like `[1, "dos"]` stays
 untyped rather than inventing one); annotate the loop variable (`for q: String in ...`) to be explicit. [test: 35-for-sobre-literal]
 
-28. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.35.1 it is also what the type checker checks the call against.**
+29. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.35.1 it is also what the type checker checks the call against.**
 Until 0.35.0, `let leer: Fn(int) -> int = a.leer; leer(21)` failed with a false NYX1005 («argument 1
 of 'leer': expected String, got int») whenever any file of the program declared a
 `fn leer(s: String)`: the checker took the global signature while the binary called the local. With
@@ -2138,7 +2146,7 @@ identical signatures it compiled, and the arguments were checked against the wro
 Reported by a user on 2026-10-04. Now the most recent binding in scope wins in both layers, and a
 `Fn(..) -> R` variable contributes its own parameter and return types. [test: 32-variable-fn-homonima-de-fn-global] [test: compiler/errors/test-m08-arg-mismatch-fn-local-homonima]
 
-29. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
+30. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
 Until then it compiled as an Array read and fetched 8 bytes at position `i*8`: `"abcdefghijklmnopq"[1]`
 gave `i` instead of `b`, and `let c: int = "abc"[0]` gave 6513249 — silently, rc 0. On an older
 toolchain use `s.charAt(i)`, which always read the right byte. Out of range aborts, like `charAt`. [test: compiler/language/test-457-indexar-string]

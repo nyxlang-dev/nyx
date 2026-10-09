@@ -1,3 +1,6 @@
+// Desde el arco closures-capturan-bloque la lambda queda dentro de su bloque y
+// este caso lo detecta NYX1044 (q se declara dos veces en la función: la
+// captura sería ambigua). Antes era NYX1041.
 // NYX1041: una lambda escrita dentro de un bloque usa un nombre que, en ese
 // bloque, es otra variable. Las lambdas se elevan a fns anidadas que solo ven
 // las variables de nivel de función, así que capturaría la `q` de afuera (5)

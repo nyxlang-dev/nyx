@@ -120,6 +120,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Una closure dentro de un bloque puede capturar las variables del bloque; una `fn` con nombre en un
+  bloque linkea** `[arco: closures-capturan-bloque]`. Las closures solo existían en el nivel superior:
+  una lambda en un `if` no veía las variables del `if` (NYX1002) y una `fn` con nombre en un bloque no
+  linkeaba (`use of undefined value` de clang, sin línea). El parser deja la lambda en su bloque,
+  codegen junta las funciones anidadas de cualquier bloque y las variables de bloque con nombre único
+  entran al SharedEnv. Lo que no se puede capturar por nombre (un nombre repetido en la función, la
+  variable de un `for`, un binding de `match`) es NYX1044, nunca un valor equivocado. Tests: ai-first
+  36 y dos de error; gotcha `closures-capture-block-vars`.
+
 - **`for` sobre un literal de array, sobre `Array<T>` y sobre `Map`: tres resultados equivocados en la
   misma función de codegen.** `for q in ["x", "y"]` tipaba `q` como `int` (`print(q)` mostraba la
   dirección del String, sin error); un elemento `Array<T>` daba SIGSEGV al usarlo, y uno `Map` devolvía

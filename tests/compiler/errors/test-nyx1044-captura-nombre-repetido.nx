@@ -1,0 +1,20 @@
+// NYX1044: una closure en un bloque usa una variable de BLOQUE que no puede
+// capturar porque su nombre se repite en la función (acá, en un bloque
+// hermano). El SharedEnv lleva las variables por nombre: con el nombre repetido
+// la captura sería ambigua (arco closures-capturan-bloque).
+fn f() -> int {
+    var r: int = 0
+    if true {
+        let z: int = 1
+        r = r + z
+    }
+    if true {
+        let z: int = 2
+        let g = fn() -> int { return z }
+        r = r + g()
+    }
+    return r
+}
+fn main() {
+    print(int_to_string(f()))
+}

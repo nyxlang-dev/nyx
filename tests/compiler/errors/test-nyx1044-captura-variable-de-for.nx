@@ -1,0 +1,14 @@
+// NYX1044: una closure usa la variable de un `for`: no es un `let`/`var`, así
+// que no entra al SharedEnv. Copiarla a un `let` con nombre propio la deja
+// capturar (arco closures-capturan-bloque).
+fn f() -> int {
+    var r: int = 0
+    for x in [1, 2, 3] {
+        let g = fn() -> int { return x }
+        r = r + g()
+    }
+    return r
+}
+fn main() {
+    print(int_to_string(f()))
+}

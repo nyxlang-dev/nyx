@@ -74,6 +74,7 @@ GOTCHA_IDS=(
   "try-early-exit-pop"
   "std-private-shadows-builtin"
   "block-shadowing-restores-outer"
+  "closures-capture-block-vars"
   "defer-runs-at-block-exit"
   "for-in-element-type"
   "local-fn-var-shadows-global-fn"
