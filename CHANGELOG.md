@@ -120,6 +120,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`file_write_string("/ruta", "hola")` ya no compila para caerse después: es NYX1031** (fricción
+  nyxerp, 2026-10-09). Las funciones del handle de archivo (`file_write_string`, `file_write_bytes`,
+  `file_read_line`, `file_read_bytes`, `file_seek`, `file_tell`, `file_flush`, `file_close`) reciben
+  el handle de `file_open`; con una ruta `String` pasaban el checker y el binario moría con SIGSEGV sin
+  mensaje, perdiendo además la salida en el buffer. Ahora el checker lo rechaza con una pista
+  (`file_open` o `write_file`); un handle guardado en un `int` sigue andando. `LLM.md` §4 y
+  `CAPABILITIES.md` dicen el tipo de cada argumento. Test de error nuevo.
+
 - **Un nombre redeclarado dentro de un bloque ya no tapa a la variable de afuera** (fricción nyxerp,
   2026-10-04) `[arco: alcance-de-bloque-codegen]`: el codegen guardaba las variables de una función
   en un mapa plano, así que un `let q` dentro de un `if`/`else`/`while`/`for`/brazo de `match`/`try`/

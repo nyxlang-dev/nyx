@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.35.0 -->
-<!-- nyx-stdlib: 866011404-1302687 -->
+<!-- nyx-stdlib: 405709681-1303065 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -422,16 +422,16 @@
 ### Builtins globales (sin `import`)
 
 - `fdatasync` (1 arg)
-- `file_close` (1 arg)
+- `file_close` (1 arg) — `f`: File
 - `file_exists` (1 arg) — bool
-- `file_flush` (1 arg)
-- `file_open` (2 args)
-- `file_read_bytes` (2 args)
-- `file_read_line` (1 arg)
-- `file_seek` (3 args)
-- `file_tell` (1 arg)
-- `file_write_bytes` (2 args)
-- `file_write_string` (2 args)
+- `file_flush` (1 arg) — `f`: File
+- `file_open` (2 args) — File — `path`, `mode`: String (`"r"`, `"w"`, `"a"`, `"rb"`…);
+- `file_read_bytes` (2 args) — Array — `f`: File, `n`: int;
+- `file_read_line` (1 arg) — String — `f`: File;
+- `file_seek` (3 args) — int — `f`: File, `offset`: int, `whence`: int (0/1/2 = start/current/end)
+- `file_tell` (1 arg) — int — `f`: File;
+- `file_write_bytes` (2 args) — int — `f`: File, `bytes`: Array of byte values;
+- `file_write_string` (2 args) — int — `f`: File from `file_open` (a handle, NOT a path: a path String is `NYX1031`), `text`: String;
 - `fsync` (1 arg)
 - `include_bytes` (1 arg) — String — embeds a BINARY file **at compile time**: the bytes travel inside the executable, so the program keeps working if it is copied alone (a font, an icon, a seed database, a template).
 - `mkdir` (1 arg)

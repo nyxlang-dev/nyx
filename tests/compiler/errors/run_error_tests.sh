@@ -30,6 +30,7 @@ TESTS=(
   "tests/compiler/errors/test-m08-array-mismatch.nx|type mismatch in 'nums': expected Array<int>, got Array<String>"
   "tests/compiler/errors/test-m08-arg-mismatch.nx|argument 1 of 'greet': expected String, got int"
   "tests/compiler/errors/test-m08-arg-mismatch-fn-local-homonima.nx|argument 1 of 'leer': expected int, got String"
+  "tests/compiler/errors/test-nyx1031-file-ruta-en-vez-de-handle.nx|'file_write_string' expects File for argument 1, got String"
   "tests/compiler/errors/test-nyx1041-lambda-captura-de-bloque.nx|the lambda uses 'q', which in this block is a different variable"
   "tests/compiler/errors/test-m08-return-mismatch.nx|return type mismatch in 'pick': expected int, got String"
   "tests/compiler/errors/test-m08-param-unknown-type.nx|unknown type 'Str'"

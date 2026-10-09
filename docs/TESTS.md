@@ -13,7 +13,7 @@
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
 | Regression | `make test` | **504 archivos / 503 ARM64** | 2026-10-09: +2 (`486..487`, alcances de bloque). 2026-10-01: +14 (`472..485`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **357** | +3 el 2026-10-08/09 (variable `Fn` homónima, NYX2020, NYX1041); +6 el 2026-09-29 (NYX2019: 3 errores, 2 avisos, el positivo); +6 el 09-27; +9 el 09-24; +24 el 09-23. Detalle en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **358** | +4 el 2026-10-08/09 (`Fn` homónima, NYX2020, NYX1041, NYX1031 de archivos); +6 el 2026-09-29 (NYX2019: 3 errores, 2 avisos, el positivo); +6 el 09-27; +9 el 09-24; +24 el 09-23. Detalle en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **10** + verificación externa de zip | math + array + integración + template + multipart (serve al core, 2026-08-31) + smtp ×5 (+1 el 2026-10-01: cabeceras de hilo) (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |

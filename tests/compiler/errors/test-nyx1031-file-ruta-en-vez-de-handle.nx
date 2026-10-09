@@ -1,0 +1,9 @@
+// NYX1031, familia de archivos: file_write_string recibe el HANDLE de
+// file_open, no una ruta. Fricción nyxerp 20261009-100001: esto compilaba,
+// `nyx check` daba verde y el binario moría con SIGSEGV sin mensaje (la ruta
+// se usaba como FILE*), perdiendo además la salida que estaba en el buffer.
+fn main() {
+    print("antes")
+    let r = file_write_string("/tmp/salida-prueba.txt", "hola")
+    print("despues")
+}

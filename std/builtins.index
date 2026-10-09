@@ -44,16 +44,16 @@ builtin	exec_code	1	Tooling & CLI	int — run shell command, return its exit cod
 builtin	execvp	2	Tooling & CLI		no-wasm
 builtin	exit	1	Tooling & CLI		
 builtin	fdatasync	1	Archivos & I/O		
-builtin	file_close	1	Archivos & I/O		
+builtin	file_close	1	Archivos & I/O	`f`: File	
 builtin	file_exists	1	Archivos & I/O	bool	
-builtin	file_flush	1	Archivos & I/O		
-builtin	file_open	2	Archivos & I/O		
-builtin	file_read_bytes	2	Archivos & I/O		
-builtin	file_read_line	1	Archivos & I/O		
-builtin	file_seek	3	Archivos & I/O		
-builtin	file_tell	1	Archivos & I/O		
-builtin	file_write_bytes	2	Archivos & I/O		
-builtin	file_write_string	2	Archivos & I/O		
+builtin	file_flush	1	Archivos & I/O	`f`: File	
+builtin	file_open	2	Archivos & I/O	File — `path`, `mode`: String (`"r"`, `"w"`, `"a"`, `"rb"`…);	
+builtin	file_read_bytes	2	Archivos & I/O	Array — `f`: File, `n`: int;	
+builtin	file_read_line	1	Archivos & I/O	String — `f`: File;	
+builtin	file_seek	3	Archivos & I/O	int — `f`: File, `offset`: int, `whence`: int (0/1/2 = start/current/end)	
+builtin	file_tell	1	Archivos & I/O	int — `f`: File;	
+builtin	file_write_bytes	2	Archivos & I/O	int — `f`: File, `bytes`: Array of byte values;	
+builtin	file_write_string	2	Archivos & I/O	int — `f`: File from `file_open` (a handle, NOT a path: a path String is `NYX1031`), `text`: String;	
 builtin	float_to_int	1	Strings & texto		
 builtin	float_to_string	1	Strings & texto	(y `print` de un `float`) emite los dígitos MÍNIMOS que releen al mismo double: `0.1 + 0.2` → `0.30000000000000004`, `123456789.0` → `123456789.0`;	
 builtin	fork	0	Tooling & CLI		no-wasm

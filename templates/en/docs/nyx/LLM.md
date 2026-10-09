@@ -914,6 +914,14 @@ single `Error` struct.
   error — prefer `try_write_file` (`import "std/fs"`) when the caller
   should react instead of dying
 - `file_exists(path)` → bool
+- `file_open(path, mode)` → File — `path`, `mode`: String (`"r"`, `"w"`, `"a"`, `"rb"`…); the handle is `0` if it could not open: check it
+- `file_write_string(f, text)` → int — `f`: File from `file_open` (a handle, NOT a path: a path String is `NYX1031`), `text`: String; bytes written. Whole file in one call: `write_file(path, text)`
+- `file_write_bytes(f, bytes)` → int — `f`: File, `bytes`: Array of byte values; bytes written
+- `file_read_line(f)` → String — `f`: File; the line without `\n`, `":EOF:"` at end of file
+- `file_read_bytes(f, n)` → Array — `f`: File, `n`: int; up to `n` byte values (0-255)
+- `file_seek(f, offset, whence)` → int — `f`: File, `offset`: int, `whence`: int (0/1/2 = start/current/end)
+- `file_tell(f)` → int — `f`: File; current position
+- `file_flush(f)` / `file_close(f)` — `f`: File
 - `include_bytes("ruta")` → String — embeds a BINARY file **at compile time**:
   the bytes travel inside the executable, so the program keeps working if it is
   copied alone (a font, an icon, a seed database, a template). The path is a
