@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.35.0 -->
-<!-- nyx-stdlib: 3665615052-1296638 -->
+<!-- nyx-stdlib: 866011404-1302687 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1045,7 +1045,7 @@
 
 ### `std/xlsx`
 
-`import "std/xlsx"` — 15 funciones:
+`import "std/xlsx"` — 16 funciones:
 
 - `pub fn xlsx_read_opts() -> XlsxReadOpts`
 - `pub fn xlsx_col_name(col: int) -> String`
@@ -1055,6 +1055,7 @@
 - `pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell`
 - `pub fn xlsx_text(s: String) -> XlsxOut`
 - `pub fn xlsx_number(v: float, decimals: int) -> XlsxOut`
+- `pub fn xlsx_number_fmt(v: float, code: String) -> XlsxOut`
 - `pub fn xlsx_int(v: int) -> XlsxOut`
 - `pub fn xlsx_bool(b: bool) -> XlsxOut`
 - `pub fn xlsx_blank() -> XlsxOut`

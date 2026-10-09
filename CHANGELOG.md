@@ -120,6 +120,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Una variable local `Fn` que se llama igual que una `fn` global se chequeaba contra la firma de la
+  global** (fricción nyxerp, 2026-10-04): `let leer: Fn(int) -> int = a.leer; leer(21)` daba NYX1005
+  «expected String, got int» si había una `fn leer(s: String)` en otro archivo, y con firmas iguales el
+  chequeo pasaba contra la función equivocada. Semantic resuelve ahora el nombre como el codegen: la
+  variable más reciente gana y aporta su propia firma `Fn` (también el tipo de retorno y `it.map(f)`).
+  Regresión: ai-first 32 y un test de error.
+
 - **`std/xlsx`: un número con 3+ decimales escrito antes que la primera fecha se leía como fecha**
   (silently-wrong): la fecha tenía el `numFmtId` 164 fijo y chocaba con el del `"0.000"`. Ahora todo
   formato propio toma 164 + su posición. Hallado al revisar el pedido de nyxerp; regresión en test 462.

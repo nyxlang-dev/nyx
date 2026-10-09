@@ -1,0 +1,17 @@
+// Una variable local de tipo Fn tapa a una fn global homónima también al
+// chequear argumentos: `leer("x")` se valida contra Fn(int) -> int (la local),
+// no contra la fn global `leer(s: String)` — que lo aceptaría. Fricción nyxerp
+// 2026-10-04: antes el checker usaba la firma de la global (NYX1005 falso con
+// firmas distintas; chequeo contra la función equivocada con firmas iguales).
+fn leer(s: String) -> String {
+    return s + "!"
+}
+
+fn calcular(f: Fn(int) -> int) -> int {
+    let leer: Fn(int) -> int = f
+    return leer("x")
+}
+
+fn main() {
+    print("no debería compilar")
+}

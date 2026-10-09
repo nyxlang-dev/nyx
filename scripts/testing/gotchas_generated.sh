@@ -72,6 +72,7 @@ GOTCHA_IDS=(
   "nested-fn-sees-module"
   "try-early-exit-pop"
   "std-private-shadows-builtin"
+  "local-fn-var-shadows-global-fn"
   "string-index-byte"
 )
 
