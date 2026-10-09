@@ -1,0 +1,72 @@
+// Un `defer` corre solo si la ejecución lo ALCANZÓ (arco
+// defer-alcanzado-y-throw). Hasta 0.35.1 un defer de nivel de función corría
+// aunque la función saliera antes de llegar a él: la sección de limpieza
+// ejecutaba todos los defer de nivel superior en cada salida.
+var g_log: String = ""
+
+fn antes_y_despues(b: bool) -> int {
+    if b {
+        return 1
+    }
+    defer { g_log = g_log + "defer;" }
+    return 0
+}
+
+fn puede(x: int) -> Result<int, String> {
+    if x < 0 { return Result.Err("neg") }
+    return Result.Ok(x)
+}
+
+fn con_interrogacion(x: int) -> Result<int, String> {
+    let a = puede(x)?
+    defer { g_log = g_log + "tras-interrogacion;" }
+    return Result.Ok(a)
+}
+
+fn dos_defers(b: bool) -> int {
+    defer { g_log = g_log + "primero;" }
+    if b {
+        return 1
+    }
+    defer { g_log = g_log + "segundo;" }
+    return 0
+}
+
+fn anidada(b: bool) -> int {
+    fn interna(c: bool) -> int {
+        if c {
+            return 1
+        }
+        defer { g_log = g_log + "anidada;" }
+        return 0
+    }
+    return interna(b)
+}
+
+fn main() {
+    antes_y_despues(true)
+    assert(g_log == "")
+    antes_y_despues(false)
+    assert(g_log == "defer;")
+
+    g_log = ""
+    let e = con_interrogacion(-1)
+    assert(e.is_err())
+    assert(g_log == "")
+    let o = con_interrogacion(2)
+    assert(g_log == "tras-interrogacion;")
+
+    g_log = ""
+    dos_defers(true)
+    assert(g_log == "primero;")
+    g_log = ""
+    dos_defers(false)
+    assert(g_log == "segundo;primero;")
+
+    g_log = ""
+    anidada(true)
+    assert(g_log == "")
+    anidada(false)
+    assert(g_log == "anidada;")
+    print("ok")
+}

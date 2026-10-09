@@ -5289,7 +5289,7 @@ let original: String = base64url_decode(url_safe)
 | Box/Rc/MoveOnly | Soportado | Tipos `#[affine]` REALES en `std/owned.nx` con enforcement del compilador: drop determinista/RAII + use-after-move NYX1230 (ver nota 4) |
 | `&T`/`&mut T` | Soportado | Bajan a alias de punteros (`T*`); `&mut self` en metodos SI muta y persiste al caller. Chequeo de aliasing = lint opt-in (ver nota 3) |
 | Bare `return` | Soportado (v0.12.0) | `return` in void functions synthesizes `return 0` |
-| Defer | Soportado (v0.12.0; por bloque desde v0.35.1) | `defer { expr() }` — LIFO, corre al salir del bloque que lo contiene (caer al final, `return`, `?`, `break`, `continue`); en loops, por iteración. Un `throw` que sale de la función no corre sus `defer`; en `async fn` es NYX1043 |
+| Defer | Soportado (v0.12.0; por bloque desde v0.35.1) | `defer { expr() }` — LIFO, corre al salir del bloque que lo contiene (caer al final, `return`, `?`, `break`, `continue`); en loops, por iteración. Solo corren los alcanzados; un `throw` corre los alcanzados antes del `catch` (no en wasm32-wasi); en `async fn` es NYX1043 |
 | Short-circuit and/or | Soportado (v0.12.0) | Lazy evaluation; second operand skipped if unnecessary |
 | Terminal I/O | Soportado (v0.12.0) | `raw_mode_enter/exit`, `read_byte`, `term_cols/rows`, `chr` |
 | arr.insert/remove | Soportado (v0.12.0) | `arr.insert(idx, val)`, `arr.remove(idx)` |

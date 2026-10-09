@@ -120,6 +120,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Un `defer` corre solo si se alcanzó, y un `throw` corre los `defer` alcanzados**
+  `[arco: defer-alcanzado-y-throw]`. Silently-wrong: `if b { return 1 } defer {...}` corría el
+  `defer` con `b` verdadero, porque la sección de limpieza generaba todos los de nivel superior en
+  cada salida. Y un `throw` saltaba toda la limpieza. Ahora el cuerpo de la función es un alcance más
+  (los `defer` se generan en línea en las salidas que los alcanzaron) y cada `defer` empuja al
+  ejecutarse un marco de `try` implícito cuyo catch lo corre y relanza: corren los alcanzados, del más
+  interno al más externo, antes del `catch`; un `throw` dentro de un `defer` no lo repite. Tests 492 y
+  `tests/ai-first/37`; el gotcha `defer-not-on-throw` pasa a `fixed`.
+
 - **Una closure dentro de un bloque puede capturar las variables del bloque; una `fn` con nombre en un
   bloque linkea** `[arco: closures-capturan-bloque]`. Las closures solo existían en el nivel superior:
   una lambda en un `if` no veía las variables del `if` (NYX1002) y una `fn` con nombre en un bloque no

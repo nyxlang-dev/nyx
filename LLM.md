@@ -764,8 +764,9 @@ inner to outer across blocks, function-level defers last (a `return` two blocks 
 BEFORE the defers. The body sees values AT EXIT, not at declaration (Zig/Swift semantics, unlike
 Go): `while i < 3 { defer { log(i) } i = i + 1 }` logs 1, 2, 3. A `defer` inside a `defer` runs at the
 end of the outer one's body. `return`, or `break`/`continue` leaving a defer body, is NYX1042; a
-`defer` in an `async fn` is NYX1043. LIMIT: a `throw` leaving the function does NOT run its defers
-(the `longjmp` skips them): free in the `catch`, or use `Result` and `?`, which do run them.
+`defer` in an `async fn` is NYX1043. Only REACHED defers run (a `return` before the `defer`
+statement skips it), and a `throw` leaving the block runs the reached ones, innermost first, before
+the `catch` (not on wasm32-wasi, which has no `try`).
 
 ---
 
@@ -1795,7 +1796,7 @@ Not Nyx bugs: these come from POSIX, from the Boehm GC, or from codegen
 internals you never touch directly.
 
 <!-- gen:gotchas kinds=limit lang=en form=long -->
-<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack,defer-not-on-throw -->
+<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack -->
 
 1. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is
 inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC interacts with POSIX
@@ -1866,11 +1867,6 @@ pile up and fire together. A `#[suspends]` import reached from a nested synchron
 runtime error, never a corrupted stack. `spawn`, channels and goroutines do not exist in wasm; to
 wait for several things, `await` them one after another. [test: wasm/test-wasm-31-asyncify-shim] [test: wasm/test-wasm-33-await-fetch]
 
-8. **A `throw` that leaves a function does not run its `defer`s — neither the block-level ones nor the function-level ones.**
-The `throw` is a `longjmp` that jumps over the cleanup, so a resource released by `defer` leaks when
-the function exits by throwing. No fix yet. Meanwhile, release the resource in the `catch` that
-handles the throw, or report the failure with `Result` and `?`, which do run the `defer`s.
-
 <!-- /gen:gotchas -->
 
 ### 5.4 Already fixed — you can use these
@@ -1879,7 +1875,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,defer-not-on-throw -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2150,6 +2146,13 @@ Reported by a user on 2026-10-04. Now the most recent binding in scope wins in b
 Until then it compiled as an Array read and fetched 8 bytes at position `i*8`: `"abcdefghijklmnopq"[1]`
 gave `i` instead of `b`, and `let c: int = "abc"[0]` gave 6513249 — silently, rc 0. On an older
 toolchain use `s.charAt(i)`, which always read the right byte. Out of range aborts, like `charAt`. [test: compiler/language/test-457-indexar-string]
+
+31. **A `throw` that leaves a block or a function runs the `defer`s it already reached — innermost first — before landing in the `catch`; and a `defer` the function never reached does not run.**
+Until 0.35.1 the `throw` was a bare `longjmp` that skipped every cleanup, and a function-level `defer`
+ran on every exit even when the function returned BEFORE reaching it (`if b { return 1 } defer {...}`).
+Now each `defer` pushes its own implicit `try` frame when it executes; its catch runs that defer and
+re-throws, so only reached defers run, in LIFO order. A `throw` inside a defer does not run that same
+defer again. Not on wasm32-wasi, which has no `try`/`throw`. [test: 37-throw-corre-defer] [test: compiler/language/test-492-defer-no-alcanzado]
 
 <!-- /gen:gotchas -->
 

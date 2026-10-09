@@ -48,7 +48,6 @@ GOTCHA_IDS=(
   "hkt-gats-parse-only"
   "wasm-arena-closure-env"
   "wasm-await-one-suspended-stack"
-  "defer-not-on-throw"
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"
@@ -79,6 +78,7 @@ GOTCHA_IDS=(
   "for-in-element-type"
   "local-fn-var-shadows-global-fn"
   "string-index-byte"
+  "defer-not-on-throw"
 )
 
 ANCLAS=(
