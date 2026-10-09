@@ -1,0 +1,36 @@
+// Una closure que captura una variable de nivel de función sigue viendo ESA
+// variable aunque un bloque declare otra con el mismo nombre (arco
+// alcance-de-bloque-codegen, Task 5). Con el mapa plano anterior, el caso de
+// la lambda daba 801 en vez de 707: la `q` de afuera quedaba tapada por la del
+// for. El caso opuesto —una lambda DENTRO del bloque que use la variable del
+// bloque— es NYX1041 (tests/compiler/errors/test-nyx1041-*).
+fn fn_anidada() -> int {
+    var q: int = 5
+    fn leer() -> int {
+        return q
+    }
+    if true {
+        let q: int = 99
+        assert(q == 99)
+    }
+    return leer()
+}
+
+fn lambda() -> int {
+    var q: int = 7
+    let g = fn() -> int { return q }
+    for i in 0..2 {
+        let q: int = 100 + i
+        assert(q >= 100)
+    }
+    return g() * 100 + q
+}
+
+fn main() {
+    let a: int = fn_anidada()
+    let c: int = lambda()
+    print("a=" + int_to_string(a) + " c=" + int_to_string(c))
+    assert(a == 5)
+    assert(c == 707)
+    print("ok")
+}

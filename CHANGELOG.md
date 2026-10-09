@@ -120,6 +120,25 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Un nombre redeclarado dentro de un bloque ya no tapa a la variable de afuera** (fricción nyxerp,
+  2026-10-04) `[arco: alcance-de-bloque-codegen]`: el codegen guardaba las variables de una función
+  en un mapa plano, así que un `let q` dentro de un `if`/`else`/`while`/`for`/brazo de `match`/`try`/
+  `catch`/`unsafe`, la variable de un `for q in ...` o el binding de `Option.Some(q) =>` REEMPLAZABA a
+  la de afuera hasta el final de la función. Compilaba, `nyx check` daba verde (el checker sí la
+  restauraba) y el resultado era basura o segfault con otro tipo, y el valor de la interna sin ningún
+  síntoma con el mismo: `let q: S = S{a:3}; if true { let q: S = S{a:99} }; return q.a` daba 99. Ahora
+  cada bloque es un alcance real y al cerrarlo el nombre vuelve a ser la variable de afuera, con su
+  valor y su tipo. Además: un `defer` de nivel de función ve la `q` de la función aunque el `return`
+  salga de un bloque que declaró otra; una closure que captura una variable de nivel de función la
+  sigue viendo aunque un bloque declare otra igual (una lambda devolvía 801 en vez de 707); el checker
+  abre alcance en el cuerpo de `try` y en `unsafe` (un `let` del `try` era visible en el `catch` y
+  rechazaba programas válidos con NYX1014). Diagnósticos nuevos: NYX1041 (una lambda escrita dentro de
+  un bloque usa un nombre que en ese bloque es otra variable: las lambdas solo capturan variables de
+  nivel de función) y NYX2020 (dos locales de un tipo `#[affine]` con `Drop` con el mismo nombre en una
+  función; antes, error de clang sin línea). Tests: `tests/ai-first/33-sombreado-en-bloque.nx` (13
+  casos), 486, 487, `test-nyx1041-lambda-captura-de-bloque` y `test-nyx2020-drop-sombreado`; receta
+  135; gotcha `block-shadowing-restores-outer`.
+
 - **Una variable local `Fn` que se llama igual que una `fn` global se chequeaba contra la firma de la
   global** (fricción nyxerp, 2026-10-04): `let leer: Fn(int) -> int = a.leer; leer(21)` daba NYX1005
   «expected String, got int» si había una `fn leer(s: String)` en otro archivo, y con firmas iguales el
@@ -241,6 +260,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   muestra ninguno.
 
 ### Cambiado
+
+- **Conducta nueva del sombreado en bloque: tras el bloque se lee la variable de afuera**
+  `[arco: alcance-de-bloque-codegen]`. Un programa que dependía de leer o asignar, después del bloque,
+  la variable interna que había tapado a la de afuera ahora usa la de afuera. Se midió con
+  `NYX_SCOPE_AUDIT=1` (en el checker: informa cada uso de un nombre donde checker y codegen veían
+  variables distintas) sobre 1286 archivos del repo, el ERP nyxerp y los stacks: cero casos reales,
+  así que ningún programa conocido cambia de resultado. Para revisar código propio:
+  `NYX_SCOPE_AUDIT=1 nyx check archivo.nx` (líneas con prefijo `scope-audit:`). `let x = x + 1` en el
+  mismo alcance sigue reemplazando, como siempre.
 
 - **El cambio de contexto de las goroutines es ensamblador propio en Linux aarch64** (antes solo
   opt-in): `swapcontext` de glibc hace un `rt_sigprocmask` por cambio, ~2230 ns por yield contra ~175

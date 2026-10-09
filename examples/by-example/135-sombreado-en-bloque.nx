@@ -1,0 +1,89 @@
+// Nyx by Example: sombrear un nombre dentro de un bloque.
+//
+// Un nombre redeclarado dentro de un bloque (`if`, `else`, `while`, `for`, brazo de `match`,
+// `try`/`catch`) es OTRA variable: vive hasta el cierre del bloque y, al salir, el nombre vuelve
+// a ser la variable de afuera, con su valor y su tipo. (Hasta 0.35.0 la interna tapaba a la de
+// afuera hasta el final de la función; ver docs/gotchas/block-shadowing-restores-outer.md.)
+//
+// Lo que esta receta muestra:
+//   1. sombreado en un `if` con OTRO tipo y con el MISMO tipo;
+//   2. la variable de un `for q in ...` y el binding de un patrón `Option.Some(q) =>`;
+//   3. la forma correcta de «sacar» un valor de un bloque: declarar afuera y asignar adentro.
+//
+// En el mismo alcance no hay bloque: `let x = x + 1` sigue reemplazando.
+
+struct S { a: int }
+
+fn usar(s: S) -> int {
+    return s.a
+}
+
+// Otro tipo dentro del bloque; después se lee la de afuera.
+fn otro_tipo() -> int {
+    let q: S = S { a: 3 }
+    if true {
+        let q: String = "interna"
+        assert(q.length() == 7)
+    }
+    return usar(q)
+}
+
+// El mismo tipo: la interna vale 99 solo dentro del bloque.
+fn mismo_tipo() -> int {
+    let q: S = S { a: 3 }
+    if true {
+        let q: S = S { a: 99 }
+        assert(q.a == 99)
+    }
+    return q.a
+}
+
+fn variable_del_for() -> int {
+    let q: S = S { a: 1 }
+    var vistos = 0
+    for q in ["x", "y"] {
+        assert(q.length() == 1)
+        vistos = vistos + 1
+    }
+    assert(vistos == 2)
+    return usar(q)
+}
+
+fn binding_del_match(o: Option<int>) -> int {
+    let q: S = S { a: 4 }
+    match o {
+        Option.Some(q) => assert(q == 7),
+        Option.None => assert(false)
+    }
+    return usar(q)
+}
+
+// Para sacar un valor de un bloque: declarar afuera y asignar adentro (sin `let` en el bloque).
+fn sacar_valor(b: bool) -> int {
+    var resultado: int = 0
+    if b {
+        resultado = 42
+    } else {
+        let resultado: String = "no sale"
+        assert(resultado.length() == 7)
+    }
+    return resultado
+}
+
+// Mismo alcance: reemplaza, como siempre.
+fn mismo_alcance() -> int {
+    let x = 1
+    let x = x + 1
+    return x
+}
+
+fn main() {
+    assert(otro_tipo() == 3)
+    assert(mismo_tipo() == 3)
+    assert(variable_del_for() == 1)
+    assert(binding_del_match(Option.Some(7)) == 4)
+    assert(sacar_valor(true) == 42)
+    assert(sacar_valor(false) == 0)
+    assert(mismo_alcance() == 2)
+    print("ok")
+}

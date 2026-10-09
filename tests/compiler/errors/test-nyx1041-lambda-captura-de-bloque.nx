@@ -1,0 +1,19 @@
+// NYX1041: una lambda escrita dentro de un bloque usa un nombre que, en ese
+// bloque, es otra variable. Las lambdas se elevan a fns anidadas que solo ven
+// las variables de nivel de función, así que capturaría la `q` de afuera (5)
+// en vez de la del bloque (42) — antes, en silencio (arco
+// alcance-de-bloque-codegen, Task 5).
+fn caso() -> int {
+    var q: int = 5
+    var r: int = 0
+    if true {
+        let q: int = 42
+        let f = fn() -> int { return q }
+        r = f()
+    }
+    return r
+}
+
+fn main() {
+    print(int_to_string(caso()))
+}

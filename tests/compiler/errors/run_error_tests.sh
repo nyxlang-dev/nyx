@@ -30,6 +30,7 @@ TESTS=(
   "tests/compiler/errors/test-m08-array-mismatch.nx|type mismatch in 'nums': expected Array<int>, got Array<String>"
   "tests/compiler/errors/test-m08-arg-mismatch.nx|argument 1 of 'greet': expected String, got int"
   "tests/compiler/errors/test-m08-arg-mismatch-fn-local-homonima.nx|argument 1 of 'leer': expected int, got String"
+  "tests/compiler/errors/test-nyx1041-lambda-captura-de-bloque.nx|the lambda uses 'q', which in this block is a different variable"
   "tests/compiler/errors/test-m08-return-mismatch.nx|return type mismatch in 'pick': expected int, got String"
   "tests/compiler/errors/test-m08-param-unknown-type.nx|unknown type 'Str'"
   "tests/compiler/errors/test-m08-logical-non-bool.nx|left operand of '&&' must be bool, got int"
@@ -439,6 +440,9 @@ done
 # Each test: "<file> | <expected output fragment>"
 # ==============================================================
 RESOLVE_TESTS=(
+  # NYX2020 (codegen): dos afín-con-Drop homónimos en una función (arco
+  # alcance-de-bloque-codegen) → error con nombre, no el «redefinition» de clang.
+  "tests/compiler/errors/test-nyx2020-drop-sombreado.nx|'r' is declared twice with an affine type that implements Drop"
   "tests/compiler/errors/test-import-unresolved.nx|could not resolve import \"definitivamente_inexistente_xyz\""
   # Task 10 (Fase 4): did-you-mean real (Levenshtein contra std/) en vez
   # del hint fijo "src/<path>" — "jso" sugiere "std/json" (NYX0301).

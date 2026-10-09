@@ -1,0 +1,28 @@
+// Un `defer` de nivel de función que lee `q` ve la `q` de la FUNCIÓN aunque el
+// return salga de un bloque que declaró otra `q` (arco
+// alcance-de-bloque-codegen, Task 4). La limpieza se emite una vez, al final
+// de la función, cuando ya cerraron todos los alcances de bloque; antes, con
+// el mapa plano, el cuerpo del defer leía la última `q` declarada.
+var g_visto: int = 0
+
+fn f(b: bool) -> int {
+    let q: int = 7
+    defer { g_visto = q }
+    if b {
+        let q: int = 99
+        return q
+    }
+    return 0
+}
+
+fn main() {
+    let r: int = f(true)
+    print("r=" + int_to_string(r) + " visto=" + int_to_string(g_visto))
+    assert(r == 99)
+    assert(g_visto == 7)
+    g_visto = 0
+    let r2: int = f(false)
+    assert(r2 == 0)
+    assert(g_visto == 7)
+    print("ok")
+}

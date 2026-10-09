@@ -52,16 +52,26 @@ cd "$ROOT" || exit 1
 #     escalar de un Map (con el bitcast del float nuevo) salió a emit_map_get_escalar: sus
 #     dos copias adentro quedaron en dos llamadas. La primera versión, con el bitcast en
 #     línea, la subía +2144 y esta guarda la paró.
+#   2026-10-09 alcance-de-bloque-codegen: TODOS suben +1,5 a 1,6 % (expr 14496 → 14736,
+#     binop 8544 → 8672, logico 21680 → 21984, call_expr 470272 → 477200, method_call
+#     473712 → 480592; por nivel 23040 → 23408, con SROA 1968 → 2000). Es UN campo nuevo de
+#     CodegenContext (`alcances`, la pila de deshacer de los alcances de bloque, el arreglo de
+#     un silently-wrong): +8 B en cada copia por valor del struct, y estas funciones tienen
+#     cientos. La primera versión, con cuatro campos, subía method_call +27 KB y esta guarda la
+#     paró. Sin campo no hay forma limpia: un global Array genera `__nyx_init_globals` en
+#     codegen y choca al enlazar con el de semantic, y esconder la pila en otra tabla con
+#     claves reservadas es un atajo. La mitad (2) no se movió: 250 operandos con 8 MB siguen
+#     compilando. La raíz es la misma de siempre: el arco `structs-byval`.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
-    [codegen_expr]=14496
-    [codegen_binop]=8544
-    [codegen_binop_logico]=21680
-    [codegen_call_expr]=470272
-    [codegen_method_call]=473712
+    [codegen_expr]=14736
+    [codegen_binop]=8672
+    [codegen_binop_logico]=21984
+    [codegen_call_expr]=477200
+    [codegen_method_call]=480592
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
-TECHO_NIVEL=23040
+TECHO_NIVEL=23408
 # Operandos que tienen que compilar con 8 MB, sin la subida de los lanzadores.
 # Techo real medido por bisección: 322 sin SROA, ~2.400 con SROA (Task 4). Se
 # pide lo que aguanta el compilador construido SIN opt, porque es el peor caso
@@ -71,7 +81,8 @@ OPERANDOS=250
 # clang): costo por nivel después del pase. Ratchet aparte, porque son dos
 # compiladores distintos que se pueden construir.
 #   2026-09-23 Task 4: expr 800 + binop 1168.
-TECHO_NIVEL_SROA=1968
+#   2026-10-09 alcance-de-bloque-codegen: 1968 → 2000 (+32, el campo `alcances`; ver arriba).
+TECHO_NIVEL_SROA=2000
 
 fallos=0
 
