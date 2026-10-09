@@ -75,6 +75,7 @@ GOTCHA_IDS=(
   "std-private-shadows-builtin"
   "block-shadowing-restores-outer"
   "defer-runs-at-block-exit"
+  "for-in-element-type"
   "local-fn-var-shadows-global-fn"
   "string-index-byte"
 )

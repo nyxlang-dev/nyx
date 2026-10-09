@@ -120,6 +120,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`for` sobre un literal de array, sobre `Array<T>` y sobre `Map`: tres resultados equivocados en la
+  misma función de codegen.** `for q in ["x", "y"]` tipaba `q` como `int` (`print(q)` mostraba la
+  dirección del String, sin error); un elemento `Array<T>` daba SIGSEGV al usarlo, y uno `Map` devolvía
+  `m.size() == 0` en silencio (los dos caían en la rama de struct, con un load de más). El literal toma
+  el tipo común de todos sus elementos (uno mixto queda sin tipo); `Array<T>` y `Map`/`Map<K, V>`
+  tienen su rama. Test `tests/ai-first/35`; gotcha `for-in-element-type`.
+
 - **`defer` ya no se descarta en silencio fuera del nivel superior de la función; `return` en un
   `defer` ya no cuelga** `[arco: defer-al-cerrar-bloque]`. Un `defer` dentro de un bloque (`if`,
   `else`, `while`, `for`, brazo de `match`, `try`, `catch`, `unsafe`), en una fn anidada o en una
