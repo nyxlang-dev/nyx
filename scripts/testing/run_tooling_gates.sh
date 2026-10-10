@@ -877,15 +877,16 @@ fi
 # ── `nyx archivo.nx` muestra los avisos del compilador (2026-09-29) ─────
 # Con compilación exitosa el wrapper tiraba el log entero, avisos incluidos:
 # NYX2019 —aviso en 0.35.x para que se vea ANTES de ser error en 0.36.0— no
-# salía en `nyx archivo.nx` aunque sí en `nyx build`. Control positivo: un
-# programa sin avisos no muestra ninguno.
-printf 'fn main() -> int {\n    let fila: Array = ["42"]\n    let n: int = fila[0]\n    print("corrio")\n    return 0\n}\n' > "$GATE_TMP/aviso.nx"
+# salía en `nyx archivo.nx` aunque sí en `nyx build`. Desde 0.36.0 NYX2019 es
+# error; el aviso que se usa es el de concatenar `arr[i]` de un Array sin tipo.
+# Control positivo: un programa sin avisos no muestra ninguno.
+printf 'fn main() -> int {\n    let xs: Array = [1]\n    print("v" + xs[0])\n    print("corrio")\n    return 0\n}\n' > "$GATE_TMP/aviso.nx"
 printf 'fn main() -> int {\n    print("corrio")\n    return 0\n}\n' > "$GATE_TMP/sin_aviso.nx"
 AV_ERR=$(NYX_HOME="$ROOT" bash "$ROOT/scripts/nyx" "$GATE_TMP/aviso.nx" 2>&1 >"$GATE_TMP/aviso.out")
-if echo "$AV_ERR" | grep -qF "⚠ warning [NYX2019]" && grep -qx "corrio" "$GATE_TMP/aviso.out"; then
+if echo "$AV_ERR" | grep -qF "untyped Array" && grep -qx "corrio" "$GATE_TMP/aviso.out"; then
     ok "aviso-archivo-suelto: 'nyx archivo.nx' muestra el ⚠ del compilador por stderr y corre"
 else
-    bad "aviso-archivo-suelto — sin el ⚠ NYX2019 en stderr o el programa no corrió" "aviso-archivo-suelto"
+    bad "aviso-archivo-suelto — sin el ⚠ «untyped Array» en stderr o el programa no corrió" "aviso-archivo-suelto"
     echo "$AV_ERR" | head -3 | sed 's/^/      /'
 fi
 SA_ERR=$(NYX_HOME="$ROOT" bash "$ROOT/scripts/nyx" "$GATE_TMP/sin_aviso.nx" 2>&1 >/dev/null)

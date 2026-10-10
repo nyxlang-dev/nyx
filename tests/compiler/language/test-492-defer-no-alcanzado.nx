@@ -1,5 +1,5 @@
 // Un `defer` corre solo si la ejecución lo ALCANZÓ (arco
-// defer-alcanzado-y-throw). Hasta 0.35.1 un defer de nivel de función corría
+// defer-alcanzado-y-throw). Hasta 0.35.x un defer de nivel de función corría
 // aunque la función saliera antes de llegar a él: la sección de limpieza
 // ejecutaba todos los defer de nivel superior en cada salida.
 var g_log: String = ""

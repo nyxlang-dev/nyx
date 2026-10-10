@@ -1,4 +1,4 @@
-// NYX2019 AVISO (error en 0.36.0) cuando el tipo del elemento sale de split(), que da Array<String>.
+// NYX2019 (aviso en 0.35.x, error desde 0.36.0) cuando el tipo del elemento sale de split(), que da Array<String>.
 fn main() -> int {
     let partes: Array = "10,20".split(",")
     let n: int = partes[1]

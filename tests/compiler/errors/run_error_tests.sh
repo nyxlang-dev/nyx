@@ -641,23 +641,10 @@ ES_FX="tests/compiler/errors/fixtures/escalar-de-string"
 ff_case "nyx2019-let-bool"   "$ES_FX/let-bool.nx"   "error [NYX2019]"
 ff_case "nyx2019-asigna-int" "$ES_FX/asigna-int.nx" "error [NYX2019]"
 ff_case "nyx2019-asigna-i32" "$ES_FX/asigna-i32.nx" "error [NYX2019]"
-# AVISO en 0.35.x, error en 0.36.0 (regla 7 de docs/VERSIONING.md): el `let` con un
-# entero que no es bool COMPILABA (con el valor equivocado). Tiene que avisar y seguir:
-# rc 0 y .ll escrito.
-for es_av in let-int split-int; do
-  cp "$ES_FX/$es_av.nx" script.nx
-  rm -f script.ll
-  es_av_out=$(timeout 15 ./nyx_bootstrap 2>&1); es_av_rc=$?
-  if [ "$es_av_rc" -eq 0 ] && [ -f script.ll ] && echo "$es_av_out" | grep -qF "⚠ warning [NYX2019]" \
-     && ! echo "$es_av_out" | grep -qF "error [NYX2019]"; then
-    printf "  ✓ nyx2019-aviso-%s\n" "$es_av"; PASS=$((PASS + 1))
-  else
-    printf "  ✗ nyx2019-aviso-%s (esperado rc 0, .ll escrito y «⚠ warning [NYX2019]»)\n" "$es_av"
-    echo "$es_av_out" | sed 's/^/      /' | head -6
-    FAIL=$((FAIL + 1)); FAILED_TESTS+=("nyx2019-aviso-$es_av")
-  fi
-  rm -f script.ll
-done
+# El `let` con un entero que no es bool COMPILABA (con el valor equivocado): fue aviso
+# en 0.35.x (regla 7 de docs/VERSIONING.md) y es error desde 0.36.0.
+ff_case "nyx2019-let-int"   "$ES_FX/let-int.nx"   "error [NYX2019]"
+ff_case "nyx2019-split-int" "$ES_FX/split-int.nx" "error [NYX2019]"
 cp "$ES_FX/valido.nx" script.nx
 rm -f script.ll
 es_ok=$(timeout 15 ./nyx_bootstrap 2>&1)

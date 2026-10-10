@@ -1,4 +1,4 @@
-// NYX2019 AVISO (error en 0.36.0, regla 7 de docs/VERSIONING.md): el repro de la ficha — el
+// NYX2019 (aviso en 0.35.x, error desde 0.36.0 por la regla 7 de docs/VERSIONING.md): el repro de la ficha — el
 // literal le da al Array el tipo Array<String>, y `: int` guardaba la DIRECCIÓN del String.
 fn main() -> int {
     let fila: Array = ["42"]

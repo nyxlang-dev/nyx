@@ -9,6 +9,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-10-10
+
+> **MINOR porque rechaza código que antes compilaba** (decisión #3): NYX2019 pasa a error en el `let`
+> a un entero (fue aviso en 0.35.x, regla 7 de `docs/VERSIONING.md`); NYX1031 para la familia del
+> handle de archivo con una ruta (antes, SIGSEGV al correr); NYX1042 (`return`/`break`/`continue`
+> que sale de un `defer`; antes colgaba o no hacía nada), NYX1043 (`defer` en `async fn`) y NYX1044
+> (captura por nombre ambigua en una closure de bloque). Ninguno rechaza un programa que diera el
+> resultado correcto. El grueso es la semántica de bloques: alcances reales en codegen, `defer` y
+> drops de `#[affine]` al cerrar su bloque (también en `throw`), closures dentro de bloques
+> (decisión #22). Además, los pedidos de nyxerp: `std/zip`/`xml`/`xlsx`, `std/image`, `std/mime`,
+> `std/imap`, `std/expr`, `std/rsa`, gzip y límites en `std/serve`, mTLS y multipart en el cliente
+> HTTP.
+
 ### Agregado
 
 - **`std/xlsx`: paneles fijos, autofiltro y formato con separador de miles** (pedido de nyxerp,
@@ -184,9 +197,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   sigue viendo aunque un bloque declare otra igual (una lambda devolvía 801 en vez de 707); el checker
   abre alcance en el cuerpo de `try` y en `unsafe` (un `let` del `try` era visible en el `catch` y
   rechazaba programas válidos con NYX1014). Diagnósticos nuevos: NYX1041 (una lambda escrita dentro de
-  un bloque usa un nombre que en ese bloque es otra variable: las lambdas solo capturan variables de
-  nivel de función) y NYX2020 (dos locales de un tipo `#[affine]` con `Drop` con el mismo nombre en una
-  función; antes, error de clang sin línea). Tests: `tests/ai-first/33-sombreado-en-bloque.nx` (13
+  un bloque usa un nombre que en ese bloque es otra variable; el arco `closures-capturan-bloque` lo
+  dejó como respaldo de NYX1044) y NYX2020 (dos afines con `Drop` homónimos; retirado en este mismo
+  release por `drop-por-declaracion`). Tests: `tests/ai-first/33-sombreado-en-bloque.nx` (13
   casos), 486, 487, `test-nyx1041-lambda-captura-de-bloque` y `test-nyx2020-drop-sombreado`; receta
   135; gotcha `block-shadowing-restores-outer`.
 
@@ -312,14 +325,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Cambiado
 
+- **NYX2019 es error también en el `let` a un entero**: `let n: int = fila[0]` con un elemento que el
+  compilador sabe `String` (`Array<String>` anotado o inferido de su literal, o `split()`) compilaba y
+  guardaba la DIRECCIÓN del String como si fuera el número. En 0.35.x fue `⚠ warning`, un release
+  antes del rechazo (regla 7 de `docs/VERSIONING.md`); desde 0.36.0 la compilación falla con la
+  función y la variable. Se convierte explícito (`string_to_int`) o se declara `String`. Los casos
+  `nyx2019-let-int` y `nyx2019-split-int` del runner de errores pasan a esperar el error; la guarda
+  de avisos de `nyx archivo.nx` usa ahora el aviso de «untyped Array».
+
 - **Conducta nueva de `defer`: corre al cerrar el bloque que lo contiene**
   `[arco: defer-al-cerrar-bloque]`. Al caer al final, por `return`, por `?` con Err, por `break` o
   `continue`; LIFO en el bloque y de adentro hacia afuera; en el cuerpo de un loop, una vez por
   iteración; el valor de `return` se evalúa antes de los `defer` y el cuerpo del `defer` ve los
   valores al salir (semántica de Zig/Swift, no de Go). Se midió con el corpus completo (repo,
   nyxerp, stacks): 16 `defer`, ninguno fuera del nivel superior, así que ningún programa conocido
-  cambia de resultado. Límite que sigue: un `throw` que sale de la función no corre sus `defer`
-  (`docs/gotchas/defer-not-on-throw.md`); usa `Result` y `?`.
+  cambia de resultado. Un `throw` que sale de la función también corre los `defer` alcanzados (arco
+  `defer-alcanzado-y-throw`, en este mismo release).
 - **Conducta nueva del sombreado en bloque: tras el bloque se lee la variable de afuera**
   `[arco: alcance-de-bloque-codegen]`. Un programa que dependía de leer o asignar, después del bloque,
   la variable interna que había tapado a la de afuera ahora usa la de afuera. Se midió con

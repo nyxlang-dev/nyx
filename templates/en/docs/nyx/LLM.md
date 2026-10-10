@@ -756,7 +756,7 @@ defer { raw_mode_exit() }    // block form
 defer cleanup()               // bare-expression form also works (v0.16+)
 ```
 
-Since 0.35.1 a `defer` runs when control leaves the BLOCK that contains it (`if`, `else`, `while`,
+Since 0.36.0 a `defer` runs when control leaves the BLOCK that contains it (`if`, `else`, `while`,
 `for`, `match` arm, `try`, `catch`, `unsafe`, nested fns, lambdas), not only at function exit: on
 falling off the end, `return`, `?` with Err, `break` or `continue`. Order is LIFO within a block and
 inner to outer across blocks, function-level defers last (a `return` two blocks deep logs
@@ -1784,9 +1784,9 @@ When the Array is `Array<String>` (annotated, or inferred from its literal: `["4
 `split()`, `let n: int = fila[0]` used to compile and store the String's ADDRESS as if it were the
 number (the program printed something like `187651305671440` and exited 0); with `bool`, and in the
 assignment `n = fila[0]`, it was invalid IR at link time, reported as a compiler bug. Since 0.35.0 those
-two are compile errors naming the function and the variable; the `let` into an integer is a warning in
-0.35.x and an error from 0.36.0. Untyped elements (an Array returned by a
-function) keep their run-time check, NYX2014; `float` keeps NYX2008. [test: compiler/errors/fixtures/escalar-de-string/let-bool] [test: compiler/language/test-456-escalar-de-string-valido]
+two are compile errors naming the function and the variable; the `let` into an integer was a warning in
+0.35.x and is an error since 0.36.0. Untyped elements (an Array returned by a
+function) keep their run-time check, NYX2014; `float` keeps NYX2008. [test: compiler/errors/fixtures/escalar-de-string/let-bool] [test: compiler/errors/fixtures/escalar-de-string/let-int] [test: compiler/language/test-456-escalar-de-string-valido]
 
 <!-- /gen:gotchas -->
 
@@ -2093,7 +2093,7 @@ one. Resolution is unchanged — the call still reaches the BUILTIN, which matte
 behave differently on bad input (`string_to_int("4x2")` aborts in the builtin, while the `std/toml`
 one would skip the `x` and return 42). [test: 30-std-privada-homonima-de-builtin]
 
-25. **A name redeclared inside a block is another variable: when the block closes, the name is the outer variable again, with its value and its type (since 0.35.1).**
+25. **A name redeclared inside a block is another variable: when the block closes, the name is the outer variable again, with its value and its type (since 0.36.0).**
 Until 0.35.0 the codegen kept a function's variables in one flat map, so a `let q` inside an
 `if`/`else`/`while`/`for`/`match` arm/`try`/`catch`/`unsafe`, the variable of a `for q in ...`, or the
 binding of `Option.Some(q) =>` REPLACED the outer `q` until the end of the function. It compiled,
@@ -2109,7 +2109,7 @@ redeclares it), run `NYX_SCOPE_AUDIT=1 nyx check file.nx`: it reports every use 
 checker and the codegen saw different variables, with the prefix `scope-audit:`. Measured over 1286
 files (this repo, nyxerp, the stacks): zero real cases. [test: 33-sombreado-en-bloque] [test: compiler/language/test-486-defer-con-sombreado]
 
-26. **A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.35.1, as long as the name is unique in the function (NYX1044 otherwise).**
+26. **A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.36.0, as long as the name is unique in the function (NYX1044 otherwise).**
 Until 0.35.0 closures only existed at a function's top level: a lambda inside an `if` could not see the
 `if`'s variables (NYX1002 «not declared»), and a named `fn` inside a block did not even link
 (`use of undefined value '@name'` from clang, no line). Closures capture by NAME, so a block variable
@@ -2117,7 +2117,7 @@ whose name is declared more than once in the function (shadowing an outer one, o
 a `for` loop variable or a `match` binding cannot be captured: that is NYX1044, never a wrong value.
 Rename the variable, or copy it into a `let` with its own name right before the closure. [test: 36-closure-captura-bloque] [test: compiler/errors/test-nyx1044-captura-nombre-repetido] [test: compiler/errors/test-nyx1044-captura-variable-de-for]
 
-27. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.35.1 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
+27. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.36.0 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
 Until 0.35.0 a `defer` inside an `if`, `else`, `while`, `for`, `match` arm, `try`, `catch` or
 `unsafe` block, at the top level of a nested fn, or in a lambda was silently dropped: it compiled,
 `nyx check` was green and the cleanup never ran. A `return` inside a `defer` hung the program. Now
@@ -2126,7 +2126,7 @@ iteration; the `return` value is evaluated before the defers; the body sees the 
 at declaration (unlike Go). `return` (or a `break`/`continue` leaving the body) inside a `defer` is
 NYX1042, and a `defer` in an `async fn` is NYX1043. [test: 34-defer-al-cerrar-bloque] [test: compiler/language/test-489-defer-salida-normal]
 
-28. **An `#[affine]` value with `impl Drop` is dropped when its BLOCK closes, once per declaration — in a loop once per iteration, on a `throw` too — since 0.35.1.**
+28. **An `#[affine]` value with `impl Drop` is dropped when its BLOCK closes, once per declaration — in a loop once per iteration, on a `throw` too — since 0.36.0.**
 Until 0.35.0 deterministic drop worked by variable NAME and per FUNCTION: values were dropped only when
 the function returned, so inside a loop each iteration overwrote the same slot and only the LAST value
 was ever dropped (the rest leaked silently); a `throw` dropped nothing; and two affine variables with
@@ -2134,7 +2134,7 @@ the same name in one function were rejected (NYX2020, retired). Now each declara
 and its drop is an implicit `defer` of that declaration. A value moved out (returned, passed by value)
 is dropped by its new owner, not at the original block. [test: 38-drop-al-cerrar-bloque]
 
-29. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.35.1.**
+29. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.36.0.**
 Until 0.35.0, iterating a literal directly (`for q in ["x", "y"]`) typed `q` as `int`: `print(q)` and
 `"v=" + q` showed the String's ADDRESS, with no error. An element typed `Array<T>` (annotated, or
 inferred from an `Array<Array<int>>` variable) crashed with SIGSEGV on first use, and a `Map` element
@@ -2142,7 +2142,7 @@ silently reported `m.size() == 0`: both fell into the struct path, which loads o
 The literal now takes the type shared by ALL its elements (a mixed literal like `[1, "dos"]` stays
 untyped rather than inventing one); annotate the loop variable (`for q: String in ...`) to be explicit. [test: 35-for-sobre-literal]
 
-30. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.35.1 it is also what the type checker checks the call against.**
+30. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.36.0 it is also what the type checker checks the call against.**
 Until 0.35.0, `let leer: Fn(int) -> int = a.leer; leer(21)` failed with a false NYX1005 («argument 1
 of 'leer': expected String, got int») whenever any file of the program declared a
 `fn leer(s: String)`: the checker took the global signature while the binary called the local. With
@@ -2156,7 +2156,7 @@ gave `i` instead of `b`, and `let c: int = "abc"[0]` gave 6513249 — silently, 
 toolchain use `s.charAt(i)`, which always read the right byte. Out of range aborts, like `charAt`. [test: compiler/language/test-457-indexar-string]
 
 32. **A `throw` that leaves a block or a function runs the `defer`s it already reached — innermost first — before landing in the `catch`; and a `defer` the function never reached does not run.**
-Until 0.35.1 the `throw` was a bare `longjmp` that skipped every cleanup, and a function-level `defer`
+Before 0.36.0 the `throw` was a bare `longjmp` that skipped every cleanup, and a function-level `defer`
 ran on every exit even when the function returned BEFORE reaching it (`if b { return 1 } defer {...}`).
 Now each `defer` pushes its own implicit `try` frame when it executes; its catch runs that defer and
 re-throws, so only reached defers run, in LIFO order. A `throw` inside a defer does not run that same
@@ -2200,7 +2200,7 @@ a value of a type marked `#[affine]` can only be used once — moving it
 (rebinding, passing by value) invalidates the original binding (use-after-move
 → `NYX1230`). If the type also has `impl Drop { fn drop(self) { ... } }`, the
 destructor runs exactly once when the BLOCK that declared it closes (fall-through,
-return, `?`, break/continue, and also a `throw` — since 0.35.1; before it ran only
+return, `?`, break/continue, and also a `throw` — since 0.36.0; before it ran only
 at function exit), unless the value was moved out (returned or passed by value, in
 which case the new owner drops it). One drop per declaration: in a loop, once per
 iteration; two affine variables with the same name in one function each get their
