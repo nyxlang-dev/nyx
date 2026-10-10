@@ -120,6 +120,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **El drop de un valor `#[affine]` con `Drop` es por declaración y corre al cerrar su bloque**
+  `[arco: drop-por-declaracion]`. Silently-wrong: el drop iba por nombre y por función, así que en un
+  loop cada iteración pisaba el mismo slot y solo se soltaba el último valor (el resto se perdía sin
+  aviso); un `throw` no soltaba nada; y dos afines homónimos eran NYX2020. Ahora el drop es un `defer`
+  implícito de su declaración (slot propio, entrada pendiente del alcance con su marco de `try`): una
+  vez por declaración, también por iteración y en `throw`. La bandera de un valor devuelto se apaga
+  antes de las salidas. Se fueron la sección de limpieza de la función, `%__defer_retval` y NYX2020.
+  Test `tests/ai-first/38`; gotcha `drop-per-declaration`.
+
 - **Un `defer` corre solo si se alcanzó, y un `throw` corre los `defer` alcanzados**
   `[arco: defer-alcanzado-y-throw]`. Silently-wrong: `if b { return 1 } defer {...}` corría el
   `defer` con `b` verdadero, porque la sección de limpieza generaba todos los de nivel superior en

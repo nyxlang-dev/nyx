@@ -75,6 +75,7 @@ GOTCHA_IDS=(
   "block-shadowing-restores-outer"
   "closures-capture-block-vars"
   "defer-runs-at-block-exit"
+  "drop-per-declaration"
   "for-in-element-type"
   "local-fn-var-shadows-global-fn"
   "string-index-byte"

@@ -446,9 +446,6 @@ done
 # Each test: "<file> | <expected output fragment>"
 # ==============================================================
 RESOLVE_TESTS=(
-  # NYX2020 (codegen): dos afín-con-Drop homónimos en una función (arco
-  # alcance-de-bloque-codegen) → error con nombre, no el «redefinition» de clang.
-  "tests/compiler/errors/test-nyx2020-drop-sombreado.nx|'r' is declared twice with an affine type that implements Drop"
   "tests/compiler/errors/test-import-unresolved.nx|could not resolve import \"definitivamente_inexistente_xyz\""
   # Task 10 (Fase 4): did-you-mean real (Levenshtein contra std/) en vez
   # del hint fijo "src/<path>" — "jso" sugiere "std/json" (NYX0301).
