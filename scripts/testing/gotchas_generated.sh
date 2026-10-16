@@ -80,6 +80,7 @@ GOTCHA_IDS=(
   "local-fn-var-shadows-global-fn"
   "string-index-byte"
   "defer-not-on-throw"
+  "builtin-conversion-untyped-slot"
 )
 
 ANCLAS=(

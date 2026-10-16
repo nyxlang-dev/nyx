@@ -62,12 +62,17 @@ cd "$ROOT" || exit 1
 #     codegen y choca al enlazar con el de semantic, y esconder la pila en otra tabla con
 #     claves reservadas es un atajo. La mitad (2) no se movió: 250 operandos con 8 MB siguen
 #     compilando. La raíz es la misma de siempre: el arco `structs-byval`.
+#   2026-10-16 fricción nyxerp (int_to_float/float_to_int sobre casilla sin tipo):
+#     codegen_call_expr 477200 → 474464 (-2736, BAJA). La primera versión del fix —guardar,
+#     fijar y restaurar ctx.expected_type en línea en cada builtin— subía +80/+96 y esta guarda
+#     la paró. Los dos cuerpos salieron a codegen_conversion_numerica (+ el helper
+#     codegen_expr_con_hint): seis sitios de llamada con ctx adentro quedaron en uno.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14736
     [codegen_binop]=8672
     [codegen_binop_logico]=21984
-    [codegen_call_expr]=477200
+    [codegen_call_expr]=474464
     [codegen_method_call]=480592
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.

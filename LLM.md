@@ -1875,7 +1875,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,defer-not-on-throw -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,defer-not-on-throw,builtin-conversion-untyped-slot -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2161,6 +2161,14 @@ ran on every exit even when the function returned BEFORE reaching it (`if b { re
 Now each `defer` pushes its own implicit `try` frame when it executes; its catch runs that defer and
 re-throws, so only reached defers run, in LIFO order. A `throw` inside a defer does not run that same
 defer again. Not on wasm32-wasi, which has no `try`/`throw`. [test: 37-throw-corre-defer] [test: compiler/language/test-492-defer-no-alcanzado]
+
+33. **`int_to_float(arr[i])` and `float_to_int(arr[i])` on an `Array` without `<T>`, bound to a typed `let`, compile and convert** (fixed 2026-10-16, v0.36.1). Until 0.36.0
+the index read inherited the `let`'s expected type instead of the builtin's: `let f: float =
+int_to_float(cuentas[q])` read the slot as a double and fed it to `sitofp i64`; `let n: int =
+float_to_int(pesos[0])` read raw bits as an i64 and fed them to `fptosi double`. `nyx check` said
+nothing and clang failed with «invalid IR» (reported by nyxerp). The old workaround (`let c: int =
+cuentas[q]` first, then convert) still works but is no longer needed: both builtins now fix the hint
+their argument must have (`int` / `float`) while it is generated, like `string_to_int` does with `String`. [test: 39-conversion-de-casilla-sin-tipo]
 
 <!-- /gen:gotchas -->
 
@@ -2623,6 +2631,14 @@ match smtp_connect_plain("smtp.provider.com", 587, "mine.com") {
   advertises: a misconfigured server (or a man in the middle) can advertise
   `AUTH` without offering `STARTTLS`, and believing it puts the password on the
   wire in the clear.
+- **Gmail / Microsoft 365 want OAuth2, not a password**: `smtp_auth_xoauth2(c, user,
+  access_token)` (same contract as `imap_auth_xoauth2`: the token is obtained and
+  refreshed by YOUR app; scopes `https://mail.google.com/` and
+  `https://outlook.office.com/SMTP.Send`). It checks the EHLO advertised `XOAUTH2`
+  and handles the mechanism's odd rejection dance (a `334` carrying a base64 JSON,
+  then an empty line, then the `535`): the decoded JSON lands in `Error.msg`, the
+  token never does. There is no `std/oauth2` yet (arc `oauth2-cliente`, GO pending):
+  the refresh is a form POST to the provider's token endpoint with `std/http` + `std/json`.
 - **Certificates are verified by default.** `smtp_connect_tls` and
   `smtp_starttls` verify chain and hostname; the `_insecure` variants say so in
   the name. Same rationale as `https_get`, which until 2026-09-11 encrypted

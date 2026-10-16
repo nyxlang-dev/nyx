@@ -9,6 +9,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Agregado
+
+- **`smtp_auth_xoauth2(c, usuario, token)` en `std/smtp`** (fricción nyxerp, 2026-10-11): el
+  simétrico de `imap_auth_xoauth2` para ENVIAR por Gmail y Microsoft 365, que ya no aceptan usuario y
+  contraseña. Exige que el EHLO haya anunciado `XOAUTH2` y maneja el rechazo propio del mecanismo
+  (`334` con un JSON en base64 → línea vacía → `535`); el JSON decodificado va al `Error`, el token
+  nunca. Caso (e) de `test-stdlib-07-smtp-tls` (token bueno, token vencido, servidor sin el
+  mecanismo). Obtener y renovar el token sigue siendo de la aplicación: `std/oauth2` quedó sembrado
+  como arco `oauth2-cliente` (BORRADOR, GO pendiente) en
+  `docs/design/specs/2026-10-16-oauth2-cliente-design.md`.
+
+### Arreglado
+
+- **`int_to_float(arr[i])` / `float_to_int(arr[i])` sobre un `Array` sin `<T>` ligados a un `let`
+  con tipo generaban IR inválido que `nyx check` no veía** (fricción nyxerp, 2026-10-16). El
+  indexado heredaba el `expected_type` del `let`: con `let f: float = int_to_float(cuentas[q])` la
+  casilla se leía como `double` y el `sitofp i64` recibía un `double`; con
+  `let n: int = float_to_int(pesos[0])`, al revés (`fptosi double` sobre un `i64` crudo). Recién
+  fallaba clang con «invalid IR». Ahora los dos builtins fijan el hint del tipo que exigen (`int` /
+  `float`) mientras se codegena su argumento, igual que `string_to_int` con `String`. Regresión:
+  `tests/ai-first/39-conversion-de-casilla-sin-tipo.nx` (+1 en `make test-ai-first`).
+
 ## [0.36.0] — 2026-10-10
 
 > **MINOR porque rechaza código que antes compilaba** (decisión #3): NYX2019 pasa a error en el `let`

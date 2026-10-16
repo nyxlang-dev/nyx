@@ -66,6 +66,8 @@ fn main() -> int {
     //       Result.Ok(c0) => {
     //           match smtp_starttls(c0, "miempresa.com") {
     //               Result.Ok(c) => {
+    //                   // Gmail / Microsoft 365 piden OAuth2 en vez de clave:
+    //                   //   smtp_auth_xoauth2(c, "usuario@empresa.com", token_de_acceso)
     //                   match smtp_auth_plain(c, "usuario", "clave") {
     //                       Result.Ok(_x) => {
     //                           match smtp_send(c, msg) {

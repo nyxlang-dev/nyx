@@ -311,6 +311,8 @@ fn __smtp_diag(code: int, texto: String) -> String {
 // certificado autofirmado, y dicen en el nombre lo que hacen.
 
 extern "C" fn nyx_base64_encode(src: String) -> String
+// decode: el 334 de XOAUTH2 trae un JSON en base64 con el porqué del rechazo.
+extern "C" fn nyx_base64_decode(src: String) -> String
 
 // TLS implícito (465), VERIFICANDO cadena y nombre.
 pub fn smtp_connect_tls(host: String, port: int, quien: String) -> Result<Array, Error> {
@@ -428,6 +430,84 @@ pub fn smtp_auth_login(c: Array, usuario: String, clave: String) -> Result<int, 
     }
     let r3: Array = smtp_cmd(c, nyx_base64_encode(clave))
     return __smtp_veredicto_auth(r3)
+}
+
+// AUTH XOAUTH2 (Gmail, Microsoft 365) con un token de acceso OAuth2 que TRAE LA
+// APLICACIÓN — simétrico a imap_auth_xoauth2. Obtenerlo y renovarlo
+// (consentimiento, refresh_token, inquilino de Microsoft) no es de este módulo:
+// hoy se arma con std/http + std/json; un `std/oauth2` está fichado como arco.
+// Alcances: Gmail https://mail.google.com/, Microsoft 365
+// https://outlook.office.com/SMTP.Send.
+//
+// El rechazo tiene forma propia, y es el gotcha del mecanismo: el servidor NO
+// contesta 535 de entrada. Contesta 334 con un JSON en base64 que explica el
+// porqué (token vencido, alcance insuficiente) y espera una línea VACÍA para
+// dictar el veredicto. Un cliente que no la manda se queda esperando, o lee ese
+// 535 como respuesta del comando siguiente. Acá se manda, y el JSON va
+// decodificado en el Error (el token nunca).
+pub fn smtp_auth_xoauth2(c: Array, usuario: String, token: String) -> Result<int, Error> {
+    let g: Result<int, Error> = __smtp_exigir_cifrado(c, "XOAUTH2")
+    if g.is_err() { return g }
+    if usuario.length() == 0 { return Result.Err(err_new(0, "auth", "XOAUTH2: el usuario está vacío")) }
+    if token.length() == 0 { return Result.Err(err_new(0, "auth", "XOAUTH2: el token está vacío")) }
+    if __smtp_tiene_byte(usuario, 1) or __smtp_tiene_byte(token, 1) {
+        return Result.Err(err_new(0, "auth", "XOAUTH2: usuario y token no pueden traer el byte 0x01 (es el separador del mecanismo)"))
+    }
+    if __smtp_anuncia_mecanismo(c, "XOAUTH2") == false {
+        return Result.Err(err_new(0, "auth", "el servidor no anuncia AUTH XOAUTH2 (capacidades: " + smtp_conn_caps(c).replace("\n", " / ") + ")"))
+    }
+    let sep: String = char_to_string(1)
+    let payload: String = "user=" + usuario + sep + "auth=Bearer " + token + sep + sep
+    let r: Array = smtp_cmd(c, "AUTH XOAUTH2 " + nyx_base64_encode(payload))
+    let code: int = r[0]
+    if smtp_is_intermediate(code) {
+        let texto: String = r[1]
+        let detalle: String = nyx_base64_decode(texto.trim())
+        let r2: Array = smtp_cmd(c, "")
+        let c2: int = r2[0]
+        let t2: String = r2[1]
+        if smtp_is_ok(c2) { return Result.Ok(c2) }
+        var msg: String = "autenticación rechazada: " + __smtp_diag(c2, t2)
+        if detalle.length() > 0 { msg = msg + " — el servidor explicó: " + detalle }
+        return Result.Err(err_new(c2, "auth", msg))
+    }
+    return __smtp_veredicto_auth(r)
+}
+
+// ¿El último EHLO anunció este mecanismo en su línea AUTH? Se mira token por
+// token: `smtp_has_cap(c, "AUTH")` solo dice que hay ALGÚN mecanismo.
+fn __smtp_anuncia_mecanismo(c: Array, mecanismo: String) -> bool {
+    let caps: String = smtp_conn_caps(c)
+    if caps.length() == 0 { return false }
+    let quiero: String = mecanismo.to_upper()
+    let lineas: Array = caps.split("\n")
+    var i: int = 0
+    while i < lineas.length() {
+        let linea: String = lineas[i]
+        let l: String = linea.to_upper()
+        // "AUTH PLAIN LOGIN XOAUTH2" y también la forma vieja "AUTH=PLAIN LOGIN".
+        if l.length() > 5 && l.substring(0, 4) == "AUTH" {
+            let resto: String = l.substring(4, l.length()).replace("=", " ")
+            let toks: Array = resto.trim().split(" ")
+            var j: int = 0
+            while j < toks.length() {
+                let t: String = toks[j]
+                if t == quiero { return true }
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+    return false
+}
+
+fn __smtp_tiene_byte(s: String, b: int) -> bool {
+    var i: int = 0
+    while i < s.length() {
+        if s.charAt(i) == b { return true }
+        i = i + 1
+    }
+    return false
 }
 
 // La comprobación que hace que la promesa sea real.

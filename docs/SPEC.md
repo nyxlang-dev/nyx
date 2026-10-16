@@ -4749,9 +4749,17 @@ cambian al cifrar: un servidor que no anuncia `AUTH` en claro sí lo anuncia sob
 ### Autenticar
 
 ```nyx
-smtp_auth_plain(c, usuario, clave) -> Result<int, Error>   // un paso
-smtp_auth_login(c, usuario, clave) -> Result<int, Error>   // tres vueltas, servidores viejos
+smtp_auth_plain(c, usuario, clave) -> Result<int, Error>     // un paso
+smtp_auth_login(c, usuario, clave) -> Result<int, Error>     // tres vueltas, servidores viejos
+smtp_auth_xoauth2(c, usuario, token) -> Result<int, Error>   // Gmail, Microsoft 365: token OAuth2 que trae la app
 ```
+
+**`smtp_auth_xoauth2`** es el simétrico de `imap_auth_xoauth2`: el token de acceso lo obtiene y
+renueva la aplicación (alcances: Gmail `https://mail.google.com/`, Microsoft 365
+`https://outlook.office.com/SMTP.Send`). Exige que el EHLO haya anunciado `XOAUTH2` y maneja el
+rechazo propio del mecanismo: el servidor contesta `334` con un JSON en base64 que explica el porqué
+y espera una línea vacía antes del `535`; la función la manda y pone el JSON decodificado en el
+`Error` (el token, nunca).
 
 **Nunca sobre un canal en claro, y no hay flag para forzarlo.** La comprobación mira el estado real
 del canal, no lo que el servidor anuncia: un servidor mal configurado —o alguien en el medio—
