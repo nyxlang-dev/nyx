@@ -4824,6 +4824,51 @@ Receta completa: `examples/by-example/113-smtp.nx`.
 
 ---
 
+## OAuth2 de cliente (`std/oauth2`)
+
+Obtiene y renueva el token de acceso que piden Gmail y Microsoft 365 (ya no aceptan usuario y
+contraseña) para `imap_auth_xoauth2` y `smtp_auth_xoauth2`. Cliente y **sin estado**: genera, arma,
+canjea y renueva; dónde se guarda el `refresh_token` lo decide la aplicación. No abre el navegador,
+no levanta el servidor del `redirect_uri` (eso es `std/serve`), no es un servidor OAuth2 ni OpenID
+Connect.
+
+```nyx
+struct OAuth2Opts { client_id, client_secret, auth_url, token_url, device_url, redirect_uri: String, scopes: Array }
+struct OAuth2Pkce { verifier: String, challenge: String }          // S256, siempre
+struct OAuth2Token { access_token, refresh_token, token_type: String, expires_at: int, scope: String }
+struct OAuth2DeviceCode { device_code, user_code, verification_url, verification_url_complete: String, expires_at, interval: int }
+
+oauth2_opts(client_id, client_secret, auth_url, token_url, redirect_uri, scopes) -> OAuth2Opts
+oauth2_with_device_url(o, device_url) -> OAuth2Opts
+oauth2_pkce_new() -> OAuth2Pkce                 // 32 bytes CSPRNG → verifier de 43 chars
+oauth2_pkce_from(verifier) -> OAuth2Pkce
+oauth2_state_new() -> String                    // 32 chars; la app lo guarda y lo compara al volver
+oauth2_authorize_url(o, pkce, state) -> String
+oauth2_authorize_url_extra(o, pkce, state, keys, vals) -> String   // Google: access_type=offline, prompt=consent
+oauth2_exchange_code(o, code, pkce) -> Result<OAuth2Token, Error>
+oauth2_refresh(o, refresh_token) -> Result<OAuth2Token, Error>     // conserva el refresh_token si no viene uno nuevo
+oauth2_client_credentials(o) -> Result<OAuth2Token, Error>         // sin usuario; exige client_secret
+oauth2_expired(t, margen_s) -> bool                                // true también si expires_at == 0
+oauth2_device_code(o) -> Result<OAuth2DeviceCode, Error>           // RFC 8628; acepta verification_uri y _url
+oauth2_device_poll(o, d) -> Result<OAuth2Token, Error>             // UN sondeo; Err "pending" (code = segundos a esperar)
+oauth2_device_wait(o, d) -> Result<OAuth2Token, Error>             // sondea hasta autorizar, negar o vencer
+```
+
+**Reglas.** PKCE es siempre S256 (no hay `plain`). El `state` es obligatorio en la URL. El canje y
+la renovación son un POST `application/x-www-form-urlencoded` con `client_id`/`client_secret` en el
+cuerpo (Google y Microsoft); si un proveedor exige `Basic`, se agrega una opción. `expires_at` se
+calcula con `time_epoch()` al recibir la respuesta más `expires_in` (número o string).
+
+**Errores.** `auth` (el proveedor rechazó: `error: error_description` del JSON, con el status HTTP
+en `code`), `protocol` (cuerpo que no es JSON o sin `access_token`), `pending` (device code: la
+persona todavía no autorizó; `slow_down` suma 5 s), `invalid` (argumentos: código vacío, sin
+`device_url`, sin `client_secret`). Ningún `Error` lleva el token, el secreto ni el `code_verifier`.
+
+**Gotchas.** Google NO devuelve `refresh_token` sin `access_type=offline` (y `prompt=consent` la
+primera vez); Microsoft necesita el inquilino en la ruta de sus tres endpoints (las URL exactas y
+los scopes de Gmail y Microsoft 365 están en `LLM.md`, sección `std/oauth2`). `oauth2_expired`
+depende del reloj de esta máquina.
+
 ## Correo entrante (`std/imap`)
 
 Cliente IMAP (RFC 3501) sobre TLS para **leer** un buzón: mensajes nuevos, MIME, adjuntos y marcar

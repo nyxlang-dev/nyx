@@ -1,0 +1,101 @@
+// Nyx by Example: OAuth2 para leer y contestar un buzón de Gmail o Microsoft 365.
+//
+// El caso real: la mesa de ayuda de un ERP lee soporte@miempresa.com por IMAP y contesta por
+// SMTP en el mismo hilo (receta 134). Gmail y Microsoft 365 ya no aceptan usuario y contraseña:
+// piden un token OAuth2, y `imap_auth_xoauth2` / `smtp_auth_xoauth2` lo reciben hecho. Esta
+// receta muestra cómo se OBTIENE y se RENUEVA con std/oauth2.
+//
+// Lo que esta receta muestra:
+//   1. la primera vez: una persona autoriza en el navegador (PKCE + state, la URL, el canje);
+//   2. todas las demás: renovar antes de que venza y guardar el refresh_token;
+//   3. un servidor sin navegador: device code («abre esta URL y escribe este código»);
+//   4. lo que corre acá sin red: PKCE, state y la URL de autorización. Las funciones que
+//      hablan con Google compilan y enlazan pero NO se llaman: necesitan un client_id real y
+//      esta receta corre sola bajo `make test-examples`.
+
+import "std/oauth2"
+import "std/error"
+
+// Google. Para Microsoft 365 las URLs llevan el inquilino:
+//   https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize | token | devicecode
+// y los scopes son https://outlook.office.com/IMAP.AccessAsUser.All,
+// https://outlook.office.com/SMTP.Send y offline_access (el que da el refresh_token).
+fn opciones(client_id: String, client_secret: String) -> OAuth2Opts {
+    return oauth2_opts(client_id, client_secret,
+        "https://accounts.google.com/o/oauth2/v2/auth",
+        "https://oauth2.googleapis.com/token",
+        "http://127.0.0.1:8080/oauth2/callback",
+        ["https://mail.google.com/"])
+}
+
+// ── 1. La primera vez: la persona autoriza en el navegador ────────────────
+// La aplicación guarda `pkce` y `state` hasta que el navegador vuelve al redirect_uri con
+// ?code=…&state=… (una ruta de std/serve). Si el state no coincide, NO se canjea el código.
+fn primera_vez(o: OAuth2Opts, code_que_volvio: String, state_que_volvio: String, pkce: OAuth2Pkce, state: String) -> Result<OAuth2Token, Error> {
+    if state_que_volvio != state {
+        return Result.Err(err_new(0, "auth", "el state no coincide: no es nuestra autorización"))
+    }
+    return oauth2_exchange_code(o, code_que_volvio, pkce)
+}
+
+// ── 2. Todas las demás: renovar antes de que venza ────────────────────────
+// Google no repite el refresh_token al renovar; Microsoft lo rota. Por eso SIEMPRE se guarda
+// el que viene en el token nuevo (oauth2_refresh conserva el viejo si no vino uno).
+fn token_vigente(o: OAuth2Opts, t: OAuth2Token) -> Result<OAuth2Token, Error> {
+    if oauth2_expired(t, 60) == false { return Result.Ok(t) }
+    return oauth2_refresh(o, t.refresh_token)
+}
+
+// ── 3. Sin navegador: device code ─────────────────────────────────────────
+fn desde_el_servidor(o: OAuth2Opts) -> Result<OAuth2Token, Error> {
+    let od: OAuth2Opts = oauth2_with_device_url(o, "https://oauth2.googleapis.com/device/code")
+    let d: OAuth2DeviceCode = oauth2_device_code(od)?
+    println("Abre " + d.verification_url + " y escribe el código " + d.user_code)
+    // Bloquea sondeando cada `interval` segundos hasta que la persona autoriza, niega o el
+    // código vence. Si el programa tiene que seguir atendiendo, correrlo en un thread.
+    return oauth2_device_wait(od, d)
+}
+
+fn explicar(e: Error) -> String {
+    if e.kind == "auth" { return "auth       → el proveedor dijo: " + e.msg }
+    if e.kind == "pending" { return "pending    → la persona no autorizó todavía; esperar " + int_to_string(e.code) + " s" }
+    if e.kind == "protocol" { return "protocol   → la respuesta no es la de un endpoint OAuth2 (¿proxy? ¿URL equivocada?)" }
+    if e.kind == "invalid" { return "invalid    → argumentos: " + e.msg }
+    return e.kind + " → " + e.msg
+}
+
+fn main() {
+    // ── 4. Lo que corre sin red ───────────────────────────────────────────
+    let o: OAuth2Opts = opciones("mi-client-id.apps.googleusercontent.com", "mi-secreto")
+
+    // PKCE: el verifier se guarda, el challenge viaja en la URL. Siempre S256.
+    let pkce: OAuth2Pkce = oauth2_pkce_new()
+    let state: String = oauth2_state_new()
+    println("verifier:  " + int_to_string(pkce.verifier.length()) + " chars (nunca va en la URL)")
+    println("challenge: " + pkce.challenge)
+    println("state:     " + state)
+
+    // Google: sin access_type=offline NO devuelve refresh_token; prompt=consent fuerza la
+    // pantalla de consentimiento la primera vez (o cuando se perdió el refresh_token).
+    let url: String = oauth2_authorize_url_extra(o, pkce, state, ["access_type", "prompt"], ["offline", "consent"])
+    println("URL para el navegador:")
+    println("  " + url)
+    assert(url.indexOf("code_challenge_method=S256") >= 0)
+    assert(url.indexOf(pkce.verifier) < 0)
+
+    // Un token con vencimiento: ¿hay que renovar?
+    let t: OAuth2Token = OAuth2Token { access_token: "ya-...", refresh_token: "1//0g...", token_type: "Bearer", expires_at: time_epoch() + 3600, scope: "https://mail.google.com/" }
+    if oauth2_expired(t, 60) { println("renovar") } else { println("token vigente por ahora") }
+
+    // Los errores, por clase (los que vuelven de las funciones de red de arriba):
+    println(explicar(err_new(400, "auth", "invalid_grant: Token has been expired or revoked.")))
+    println(explicar(err_new(5, "pending", "la persona todavía no autorizó")))
+    println(explicar(err_new(502, "protocol", "la respuesta del endpoint de token no es JSON (HTTP 502)")))
+
+    // Las tres funciones de red compilan y enlazan; no se llaman acá (hace falta un client_id real).
+    if url.length() == 0 {
+        let _a: Result<OAuth2Token, Error> = primera_vez(o, "code", state, pkce, state)
+        let _b: Result<OAuth2Token, Error> = token_vigente(o, t)
+        let _c: Result<OAuth2Token, Error> = desde_el_servidor(o)
+    }
+}

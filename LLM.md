@@ -2889,6 +2889,82 @@ Things that will bite you:
   `tests/integration/test_imap_client.py` (client vs fake TLS/STARTTLS server, hostile server
   included). Recipe: `examples/by-example/134-imap-correo-entrante.nx`.
 
+### std/oauth2 — get and refresh the OAuth2 token for Gmail / Microsoft 365
+
+Gmail and Microsoft 365 no longer accept a password for IMAP/SMTP: they want an OAuth2 access
+token (`imap_auth_xoauth2`, `smtp_auth_xoauth2`). `std/oauth2` obtains and refreshes it. It is a
+**stateless client**: it generates PKCE and `state`, builds the authorization URL, exchanges the
+code, refreshes, and polls a device code. Where the `refresh_token` lives (file, nyx-kv, env) is
+YOUR decision; the module never touches disk, never opens a browser, and is not an OAuth2 server.
+
+```nyx
+import "std/oauth2"
+import "std/imap"
+
+// Gmail. Scope https://mail.google.com/ covers IMAP and SMTP.
+let o: OAuth2Opts = oauth2_opts(client_id, client_secret,
+    "https://accounts.google.com/o/oauth2/v2/auth",
+    "https://oauth2.googleapis.com/token",
+    "http://127.0.0.1:8080/oauth2/callback", ["https://mail.google.com/"])
+
+// 1) first time: a person authorizes in the browser
+let pkce: OAuth2Pkce = oauth2_pkce_new()
+let state: String = oauth2_state_new()            // store both until the redirect comes back
+let url: String = oauth2_authorize_url_extra(o, pkce, state,
+    ["access_type", "prompt"], ["offline", "consent"])   // Google: WITHOUT these, no refresh_token
+// ... your std/serve route /oauth2/callback receives ?code=…&state=…; compare state, then:
+match oauth2_exchange_code(o, code, pkce) {
+    Result.Ok(t) => { /* store t.refresh_token as a secret; use t.access_token now */ }
+    Result.Err(e) => { /* e.kind "auth": provider said error: description */ }
+}
+
+// 2) every time, before talking to the mailbox
+if oauth2_expired(t, 60) {
+    match oauth2_refresh(o, t.refresh_token) { Result.Ok(t2) => { t = t2 } Result.Err(e) => { ... } }
+}
+let _a: int = imap_auth_xoauth2(c, "soporte@miempresa.com", t.access_token)?
+
+// 3) a server without a browser: device code (RFC 8628)
+let od: OAuth2Opts = oauth2_with_device_url(o, "https://oauth2.googleapis.com/device/code")
+match oauth2_device_code(od) {
+    Result.Ok(d) => {
+        println("Open " + d.verification_url + " and type " + d.user_code)
+        match oauth2_device_wait(od, d) { Result.Ok(t) => { ... } Result.Err(e) => { ... } }  // blocks: run it in a thread if you must keep serving
+    }
+    Result.Err(e) => { ... }
+}
+```
+
+Microsoft 365: tenant in the URLs —
+`https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize`, `.../v2.0/token`,
+`.../v2.0/devicecode`; scopes `https://outlook.office.com/IMAP.AccessAsUser.All`,
+`https://outlook.office.com/SMTP.Send` and `offline_access` (that one is what gives you the
+`refresh_token`). With application permissions (no user) use `oauth2_client_credentials`
+(needs `client_secret`; scope `https://outlook.office.com/.default`).
+
+**Limits and things that will bite you:**
+
+- **Google gives NO `refresh_token` without `access_type=offline`** (and `prompt=consent` the
+  first time, or when you lost the old one). Then the access token dies in an hour and you are
+  back in the browser.
+- **PKCE is always S256**; there is no `plain`. The `code_verifier` travels only in the exchange
+  POST, never in the URL. `state` is mandatory: store it, compare it when the redirect comes back,
+  and do NOT exchange the code if it differs.
+- **`oauth2_refresh` keeps the `refresh_token` you passed** when the provider does not return a
+  new one (Google usually does not; Microsoft rotates it). Always store `t.refresh_token` after a
+  refresh.
+- **`oauth2_expired(t, margin)` uses this machine's clock** and treats `expires_at == 0` as
+  expired. A 401 from IMAP/SMTP with a token you believed valid means: refresh and retry once.
+- **`oauth2_device_wait` blocks** (it sleeps between polls, `interval` seconds, +5 on
+  `slow_down`). `oauth2_device_poll` is the one-shot version: `Err.kind == "pending"`, with the
+  seconds to wait in `Err.code`.
+- Error kinds: `auth` (provider rejected; `code` = HTTP status; message is
+  `error: error_description`), `protocol` (non-JSON body, e.g. a proxy's HTML, or no
+  `access_token`), `pending`, `invalid` (your arguments). No error ever carries the token, the
+  secret or the verifier.
+- Not covered: OpenID Connect (`id_token` is ignored), `Basic` client auth at the token endpoint,
+  OAUTHBEARER in IMAP/SMTP (XOAUTH2 is what Gmail and Microsoft 365 use).
+
 ### std/barcode — QR, Code 128 and EAN-13 (pure Nyx, native and wasm)
 
 Returns **data, not drawings**: the module matrix of a QR and the bar/space

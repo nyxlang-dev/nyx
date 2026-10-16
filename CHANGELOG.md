@@ -11,6 +11,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`std/oauth2`: cliente OAuth2 sin estado** `[arco: oauth2-cliente]` (fricción nyxerp 2026-10-11,
+  GO 2026-10-16): PKCE S256 y `state` (CSPRNG), URL de autorización (+ extras del proveedor:
+  `access_type=offline` de Google), canje del código, renovación que conserva el `refresh_token`,
+  `client_credentials` y device code (RFC 8628: `oauth2_device_code` / `_poll` / `_wait`, con
+  `verification_uri` y la `_url` de Google). Errores `auth` / `protocol` / `pending` / `invalid`,
+  nunca con el token, el secreto ni el verifier. Sin runtime nuevo: `std/http` + `std/json` +
+  `std/url` + `std/base64` + `std/webpushcrypto`. `test-stdlib-11-oauth2` (vector RFC 7636 B y un
+  proveedor canned con la forma de Google y Microsoft), receta `137-oauth2`, SPEC y LLM.md con las
+  recetas Gmail y Microsoft 365. CAPABILITIES: `oauth2` en «Cripto & seguridad», y de paso `imap` y
+  `mime` salen de «Otros» a «Red».
 - **`smtp_auth_xoauth2(c, usuario, token)` en `std/smtp`** (fricción nyxerp, 2026-10-11): el
   simétrico de `imap_auth_xoauth2` para ENVIAR por Gmail y Microsoft 365, que ya no aceptan usuario y
   contraseña. Exige que el EHLO haya anunciado `XOAUTH2` y maneja el rechazo propio del mecanismo

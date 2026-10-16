@@ -1,0 +1,330 @@
+// std/oauth2 — cliente OAuth2 (RFC 6749, PKCE RFC 7636, device code RFC 8628).
+//
+// De dónde sale: nyxerp lee un buzón de soporte por IMAP y contesta por SMTP en
+// el mismo hilo. Gmail y Microsoft 365 —los buzones que más usan las empresas—
+// ya no aceptan usuario y contraseña: piden OAuth2. `imap_auth_xoauth2` y
+// `smtp_auth_xoauth2` reciben el token hecho; este módulo es el que lo OBTIENE
+// y lo RENUEVA (spec 2026-10-16, arco oauth2-cliente).
+//
+// Alcance: cliente y SIN ESTADO. Genera, arma, canjea y renueva; no guarda
+// nada. Dónde vive el refresh_token (archivo, nyx-kv, variable de entorno) lo
+// decide la aplicación. Tampoco abre el navegador ni levanta el servidor del
+// redirect_uri: eso es std/serve en la aplicación. No es un servidor OAuth2 y
+// no es OpenID Connect (no mira el id_token).
+//
+// ── Las tres formas de conseguir un token ─────────────────────────────────
+//   1. Código de autorización con PKCE (una persona autoriza en el navegador):
+//      oauth2_pkce_new + oauth2_state_new → oauth2_authorize_url → el usuario
+//      vuelve al redirect_uri con ?code=…&state=… → oauth2_exchange_code.
+//   2. Device code (el programa corre en un servidor sin navegador): el programa
+//      muestra «abre esta URL y escribe este código» y sondea hasta que el
+//      usuario autoriza: oauth2_device_code → oauth2_device_wait.
+//   3. client_credentials (sin usuario; permisos de aplicación, Microsoft):
+//      oauth2_client_credentials.
+// Y después, siempre: oauth2_expired → oauth2_refresh.
+//
+// ── Seguridad ─────────────────────────────────────────────────────────────
+// PKCE es siempre S256 (no hay parámetro para elegir `plain`). El `state` es
+// obligatorio en la URL de autorización y lo compara la aplicación al volver.
+// Ningún Error lleva el token, el secreto del cliente ni el code_verifier.
+// El client_secret y el refresh_token pasan como String y el GC no los borra:
+// lo mismo que la clave en smtp_auth_plain.
+//
+// Gotcha de Google: sin `access_type=offline` (y `prompt=consent` la primera
+// vez) NO devuelve refresh_token, y el access_token muere en una hora. Van en
+// oauth2_authorize_url_extra; la receta está en LLM.md.
+
+import "std/error"
+import "std/http"
+import "std/json"
+import "std/url"
+import "std/base64"
+import "std/webpushcrypto"
+
+// ── Opciones ──────────────────────────────────────────────────────────────
+// Las URLs son del proveedor y el módulo no las conoce: Google y Microsoft
+// (con su inquilino) van en la doc. device_url queda "" si no se usa el flujo
+// de device code.
+pub struct OAuth2Opts {
+    client_id: String,
+    client_secret: String,     // "" para clientes públicos (solo PKCE)
+    auth_url: String,          // endpoint de autorización (navegador)
+    token_url: String,         // endpoint de token (canje, renovación, client_credentials, device)
+    device_url: String,        // endpoint de device authorization ("" si no se usa)
+    redirect_uri: String,
+    scopes: Array,             // ["https://mail.google.com/"]
+}
+
+pub fn oauth2_opts(client_id: String, client_secret: String, auth_url: String, token_url: String, redirect_uri: String, scopes: Array) -> OAuth2Opts {
+    return OAuth2Opts { client_id: client_id, client_secret: client_secret, auth_url: auth_url, token_url: token_url, device_url: "", redirect_uri: redirect_uri, scopes: scopes }
+}
+
+pub fn oauth2_with_device_url(o: OAuth2Opts, device_url: String) -> OAuth2Opts {
+    return OAuth2Opts { client_id: o.client_id, client_secret: o.client_secret, auth_url: o.auth_url, token_url: o.token_url, device_url: device_url, redirect_uri: o.redirect_uri, scopes: o.scopes }
+}
+
+// ── PKCE y state ──────────────────────────────────────────────────────────
+pub struct OAuth2Pkce {
+    verifier: String,          // 43 chars base64url (32 bytes CSPRNG)
+    challenge: String,         // base64url(sha256(verifier)), método S256
+}
+
+pub fn oauth2_pkce_new() -> OAuth2Pkce {
+    return oauth2_pkce_from(base64url_encode(csprng_bytes(32)))
+}
+
+// Con un verifier dado (p.ej. para reproducir el vector del RFC 7636 apéndice B).
+pub fn oauth2_pkce_from(verifier: String) -> OAuth2Pkce {
+    return OAuth2Pkce { verifier: verifier, challenge: base64url_encode(sha256_bytes(verifier)) }
+}
+
+// 24 bytes CSPRNG → 32 chars base64url. La aplicación lo guarda y lo compara
+// con el `state` que vuelve en el redirect: si no coincide, no canjea el código.
+pub fn oauth2_state_new() -> String {
+    return base64url_encode(csprng_bytes(24))
+}
+
+// ── Token ─────────────────────────────────────────────────────────────────
+pub struct OAuth2Token {
+    access_token: String,
+    refresh_token: String,     // "" si el proveedor no lo devolvió
+    token_type: String,        // "Bearer"
+    expires_at: int,           // epoch en segundos; 0 si el proveedor no dio expires_in
+    scope: String,
+}
+
+// ¿Vence en menos de margen_s segundos? Un token sin vencimiento conocido
+// (expires_at == 0) se da por vencido: mejor renovar de más que mandar uno
+// muerto al IMAP. Depende del reloj de esta máquina (gotcha documentado).
+pub fn oauth2_expired(t: OAuth2Token, margen_s: int) -> bool {
+    if t.expires_at == 0 { return true }
+    return time_epoch() + margen_s >= t.expires_at
+}
+
+fn __oauth2_scope(o: OAuth2Opts) -> String {
+    return o.scopes.join(" ")
+}
+
+fn __oauth2_sep(url: String) -> String {
+    if url.indexOf("?") >= 0 { return "&" }
+    return "?"
+}
+
+// ── URL de autorización ───────────────────────────────────────────────────
+pub fn oauth2_authorize_url(o: OAuth2Opts, pkce: OAuth2Pkce, state: String) -> String {
+    return oauth2_authorize_url_extra(o, pkce, state, [], [])
+}
+
+// Igual, con parámetros extra del proveedor (Google: access_type=offline,
+// prompt=consent; Microsoft: login_hint). keys y vals van en paralelo.
+pub fn oauth2_authorize_url_extra(o: OAuth2Opts, pkce: OAuth2Pkce, state: String, keys: Array, vals: Array) -> String {
+    var ks: Array = ["response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method"]
+    var vs: Array = ["code", o.client_id, o.redirect_uri, __oauth2_scope(o), state, pkce.challenge, "S256"]
+    var i: int = 0
+    while i < keys.length() && i < vals.length() {
+        let k: String = keys[i]
+        let v: String = vals[i]
+        ks.push(k)
+        vs.push(v)
+        i = i + 1
+    }
+    return o.auth_url + __oauth2_sep(o.auth_url) + build_query_string(ks, vs)
+}
+
+// ── El POST al endpoint de token ──────────────────────────────────────────
+// application/x-www-form-urlencoded con client_id/client_secret en el cuerpo
+// (lo que aceptan Google y Microsoft), no Basic en la cabecera. Si un
+// proveedor exige Basic, se agrega una opción; no se adivina.
+
+fn __oauth2_err_json(status: int, j: Array) -> String {
+    let e: String = json_as_string(json_get(j, "error"))
+    let d: String = json_as_string(json_get(j, "error_description"))
+    var msg: String = e
+    if d.length() > 0 { msg = msg + ": " + d }
+    if msg.length() == 0 { msg = "HTTP " + int_to_string(status) + " sin error en el cuerpo" }
+    return msg
+}
+
+// Un entero que puede venir como número o como string ("3600" lo manda algún
+// proveedor). 0 si no está.
+fn __oauth2_int(j: Array, key: String) -> int {
+    let v: Array = json_get(j, key)
+    let t: String = json_type(v)
+    if t == "number" { return json_as_int(v) }
+    if t == "string" { return string_to_int_or(json_as_string(v), 0) }
+    return 0
+}
+
+// Parseo de la respuesta del endpoint de token. refresh_prev: en la
+// renovación muchos proveedores NO repiten el refresh_token; se conserva el
+// que se usó, así el llamador no pierde el suyo.
+fn __oauth2_parse_token(status: int, body: String, refresh_prev: String) -> Result<OAuth2Token, Error> {
+    let pj: Result<Array, Error> = try_json_parse(body)
+    if pj.is_err() {
+        return Result.Err(err_new(status, "protocol", "la respuesta del endpoint de token no es JSON (HTTP " + int_to_string(status) + ")"))
+    }
+    let j: Array = pj.unwrap()
+    let e: String = json_as_string(json_get(j, "error"))
+    if status != 200 or e.length() > 0 {
+        return Result.Err(err_new(status, "auth", "el proveedor rechazó la petición: " + __oauth2_err_json(status, j)))
+    }
+    let access: String = json_as_string(json_get(j, "access_token"))
+    if access.length() == 0 {
+        return Result.Err(err_new(status, "protocol", "la respuesta del endpoint de token no trae access_token"))
+    }
+    var refresh: String = json_as_string(json_get(j, "refresh_token"))
+    if refresh.length() == 0 { refresh = refresh_prev }
+    var tt: String = json_as_string(json_get(j, "token_type"))
+    if tt.length() == 0 { tt = "Bearer" }
+    let exp_in: int = __oauth2_int(j, "expires_in")
+    var exp_at: int = 0
+    if exp_in > 0 { exp_at = time_epoch() + exp_in }
+    let scope: String = json_as_string(json_get(j, "scope"))
+    return Result.Ok(OAuth2Token { access_token: access, refresh_token: refresh, token_type: tt, expires_at: exp_at, scope: scope })
+}
+
+fn __oauth2_post(url: String, keys: Array, vals: Array) -> Result<Array, Error> {
+    if url.length() == 0 {
+        return Result.Err(err_new(0, "invalid", "falta la URL del endpoint en OAuth2Opts"))
+    }
+    let body: String = build_query_string(keys, vals)
+    let headers: Array = ["Content-Type", "application/x-www-form-urlencoded", "Accept", "application/json"]
+    return try_http_request("POST", url, headers, body)
+}
+
+fn __oauth2_token_post(o: OAuth2Opts, keys: Array, vals: Array, refresh_prev: String) -> Result<OAuth2Token, Error> {
+    var ks: Array = keys
+    var vs: Array = vals
+    ks.push("client_id")
+    vs.push(o.client_id)
+    if o.client_secret.length() > 0 {
+        ks.push("client_secret")
+        vs.push(o.client_secret)
+    }
+    let r: Result<Array, Error> = __oauth2_post(o.token_url, ks, vs)
+    if r.is_err() { return Result.Err(r.unwrap_err()) }
+    let resp: Array = r.unwrap()
+    return __oauth2_parse_token(http_status(resp), http_body(resp), refresh_prev)
+}
+
+// ── Canje, renovación, client_credentials ─────────────────────────────────
+
+// Canjea el `code` que llegó al redirect_uri. El pkce es el MISMO con el que
+// se armó la URL (el verifier viaja acá; el challenge viajó en la URL).
+pub fn oauth2_exchange_code(o: OAuth2Opts, code: String, pkce: OAuth2Pkce) -> Result<OAuth2Token, Error> {
+    if code.length() == 0 { return Result.Err(err_new(0, "invalid", "el código de autorización está vacío")) }
+    let ks: Array = ["grant_type", "code", "redirect_uri", "code_verifier"]
+    let vs: Array = ["authorization_code", code, o.redirect_uri, pkce.verifier]
+    return __oauth2_token_post(o, ks, vs, "")
+}
+
+// Renueva con el refresh_token. Si el proveedor no devuelve uno nuevo, el
+// token resultante conserva el que se usó.
+pub fn oauth2_refresh(o: OAuth2Opts, refresh_token: String) -> Result<OAuth2Token, Error> {
+    if refresh_token.length() == 0 { return Result.Err(err_new(0, "invalid", "el refresh_token está vacío")) }
+    let ks: Array = ["grant_type", "refresh_token"]
+    let vs: Array = ["refresh_token", refresh_token]
+    return __oauth2_token_post(o, ks, vs, refresh_token)
+}
+
+// Sin usuario (RFC 6749 §4.4): permisos de aplicación. Exige client_secret.
+pub fn oauth2_client_credentials(o: OAuth2Opts) -> Result<OAuth2Token, Error> {
+    if o.client_secret.length() == 0 { return Result.Err(err_new(0, "invalid", "client_credentials necesita client_secret")) }
+    let ks: Array = ["grant_type", "scope"]
+    let vs: Array = ["client_credentials", __oauth2_scope(o)]
+    return __oauth2_token_post(o, ks, vs, "")
+}
+
+// ── Device code (RFC 8628) ────────────────────────────────────────────────
+pub struct OAuth2DeviceCode {
+    device_code: String,              // lo que sondea el programa (secreto)
+    user_code: String,                // lo que escribe la persona
+    verification_url: String,         // dónde lo escribe
+    verification_url_complete: String,// "" si el proveedor no la da
+    expires_at: int,                  // epoch; después de esto el código no sirve
+    interval: int,                    // segundos entre sondeos (mínimo que pide el proveedor)
+}
+
+pub fn oauth2_device_code(o: OAuth2Opts) -> Result<OAuth2DeviceCode, Error> {
+    if o.device_url.length() == 0 {
+        return Result.Err(err_new(0, "invalid", "device code necesita device_url en OAuth2Opts (oauth2_with_device_url)"))
+    }
+    let ks: Array = ["client_id", "scope"]
+    let vs: Array = [o.client_id, __oauth2_scope(o)]
+    let r: Result<Array, Error> = __oauth2_post(o.device_url, ks, vs)
+    if r.is_err() { return Result.Err(r.unwrap_err()) }
+    let resp: Array = r.unwrap()
+    let status: int = http_status(resp)
+    let pj: Result<Array, Error> = try_json_parse(http_body(resp))
+    if pj.is_err() {
+        return Result.Err(err_new(status, "protocol", "la respuesta del endpoint de device code no es JSON (HTTP " + int_to_string(status) + ")"))
+    }
+    let j: Array = pj.unwrap()
+    let e: String = json_as_string(json_get(j, "error"))
+    if status != 200 or e.length() > 0 {
+        return Result.Err(err_new(status, "auth", "el proveedor rechazó el device code: " + __oauth2_err_json(status, j)))
+    }
+    let dc: String = json_as_string(json_get(j, "device_code"))
+    let uc: String = json_as_string(json_get(j, "user_code"))
+    // El RFC dice verification_uri; Google manda verification_url.
+    var vu: String = json_as_string(json_get(j, "verification_uri"))
+    if vu.length() == 0 { vu = json_as_string(json_get(j, "verification_url")) }
+    var vuc: String = json_as_string(json_get(j, "verification_uri_complete"))
+    if vuc.length() == 0 { vuc = json_as_string(json_get(j, "verification_url_complete")) }
+    if dc.length() == 0 or uc.length() == 0 or vu.length() == 0 {
+        return Result.Err(err_new(status, "protocol", "la respuesta del device code no trae device_code, user_code o verification_uri"))
+    }
+    let exp_in: int = __oauth2_int(j, "expires_in")
+    var exp_at: int = 0
+    if exp_in > 0 { exp_at = time_epoch() + exp_in }
+    var iv: int = __oauth2_int(j, "interval")
+    if iv <= 0 { iv = 5 }
+    return Result.Ok(OAuth2DeviceCode { device_code: dc, user_code: uc, verification_url: vu, verification_url_complete: vuc, expires_at: exp_at, interval: iv })
+}
+
+// UN sondeo. Err kind "pending" mientras la persona no autorizó (el code del
+// Error es el intervalo en segundos que hay que esperar antes del siguiente:
+// el del proveedor, +5 si pidió slow_down). "auth" si negó o el código venció.
+pub fn oauth2_device_poll(o: OAuth2Opts, d: OAuth2DeviceCode) -> Result<OAuth2Token, Error> {
+    let ks: Array = ["grant_type", "device_code"]
+    let vs: Array = ["urn:ietf:params:oauth:grant-type:device_code", d.device_code]
+    var cks: Array = ks
+    var cvs: Array = vs
+    cks.push("client_id")
+    cvs.push(o.client_id)
+    if o.client_secret.length() > 0 {
+        cks.push("client_secret")
+        cvs.push(o.client_secret)
+    }
+    let r: Result<Array, Error> = __oauth2_post(o.token_url, cks, cvs)
+    if r.is_err() { return Result.Err(r.unwrap_err()) }
+    let resp: Array = r.unwrap()
+    let status: int = http_status(resp)
+    let body: String = http_body(resp)
+    let pj: Result<Array, Error> = try_json_parse(body)
+    if pj.is_ok() {
+        let j: Array = pj.unwrap()
+        let e: String = json_as_string(json_get(j, "error"))
+        if e == "authorization_pending" { return Result.Err(err_new(d.interval, "pending", "la persona todavía no autorizó")) }
+        if e == "slow_down" { return Result.Err(err_new(d.interval + 5, "pending", "el proveedor pide sondear más despacio")) }
+    }
+    return __oauth2_parse_token(status, body, "")
+}
+
+// Sondea hasta que la persona autoriza, niega, o el código vence. Bloquea el
+// hilo (sleep entre sondeos): correrlo en un thread si el programa tiene que
+// seguir atendiendo.
+pub fn oauth2_device_wait(o: OAuth2Opts, d: OAuth2DeviceCode) -> Result<OAuth2Token, Error> {
+    var seguir: bool = true
+    while seguir {
+        let r: Result<OAuth2Token, Error> = oauth2_device_poll(o, d)
+        if r.is_ok() { return r }
+        let e: Error = r.unwrap_err()
+        if e.kind != "pending" { return Result.Err(e) }
+        if d.expires_at > 0 && time_epoch() >= d.expires_at {
+            return Result.Err(err_new(0, "auth", "el código de dispositivo venció sin autorización"))
+        }
+        sleep(e.code * 1000)
+    }
+    return Result.Err(err_new(0, "auth", "sin autorización"))
+}
