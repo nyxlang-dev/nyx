@@ -18,7 +18,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   camino. Salida y enlace en el orden del manifiesto; con un error se reportan todas las unidades que
   fallaron y no queda ningún objeto a medio escribir. Dos builds del mismo proyecto a la vez (varios
   `nyx test` en paralelo, como corre nyxerp) toman un candado sobre `target/nyx-lib`: el segundo
-  espera y reutiliza; antes se borraban los temporales uno al otro. Medición en
+  espera y reutiliza; antes se borraban los temporales uno al otro. Un build sin nada que compilar
+  no lanza procesos auxiliares (el que pasa `nyx test` en cada archivo). Medido en una copia de
+  nyxerp: 300 bibliotecas en frío, 2.894 s en serie y 1.057 s con `-j 4`. Medición en
   `docs/design/spikes/2026-10-17-build-lib-paralelo-medicion.md`: menos de 600 MB por unidad. Caso 10
   de `run_lib_modules.sh`.
 
@@ -33,7 +35,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `StringBuilder`, los prefijos se calculan una vez (`ctx.alcances[3]`), la búsqueda de una función
   entre los módulos se memoriza (`ctx.alcances[4]`, con la versión del conjunto en la clave),
   `extract_exports` no recorta las líneas que no pueden exportar nada y `scan_module_types` no relee un
-  módulo ya escaneado. El IR sale idéntico byte a byte. Medido: 105,6 s → 11,2 s y 822 → 642 MB en el
+  módulo ya escaneado. La huella de `[lib]` en `nyx_build` tenía el mismo patrón (`todo = todo + …`
+  sobre el cierre de imports): un `nyx_build libs` sin cambios, que `nyx test` corre en cada archivo,
+  bajó de 5,7 s a 2,0 s en nyxerp. El IR sale idéntico byte a byte. Medido: 105,6 s → 11,2 s y 822 → 642 MB en el
   archivo más grande; 3,5 s → 1,6 s en uno mediano. Spike:
   `docs/design/spikes/2026-10-17-test-sin-repetir-medicion.md`.
 - **Operadores entre primitivos de clases distintas: NYX1010 en vez de SIGSEGV o IR inválido.** El
