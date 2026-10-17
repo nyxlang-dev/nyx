@@ -1838,10 +1838,47 @@ fn lib_huella(modulo: String, base: String, std_dir: String, hashes: Map, import
     var i: int = 0
     while i < visitados.length() {
         let f: String = visitados[i]
-        todo = todo + "|" + f + "=" + hash_para_huella(f, propio, libs, hashes)
+        // Los std/ entran por su ruta RELATIVA: la absoluta lleva la carpeta de
+        // la instalación (versions/<id>), que cambia en cada install aunque el
+        // archivo sea el mismo (ver lib_identidad_compilador). Su contenido sí
+        // entra, por el hash.
+        var nombre: String = f
+        if f.startsWith(std_dir + "/") { nombre = "std" + f.substring(std_dir.length(), f.length()) }
+        todo = todo + "|" + nombre + "=" + hash_para_huella(f, propio, libs, hashes)
         i = i + 1
     }
     return sha256(todo)
+}
+
+// Identidad del compilador para la huella de [lib]: el sha256 de su CONTENIDO,
+// no su ruta. Hasta 2026-10-17 era ruta + tamaño + mtime (el criterio de
+// make/ninja), y como cada `make install-local` / `nyx update` arma
+// ~/.nyx/versions/<id-con-fecha>/, una reinstalación con el MISMO compilador
+// recompilaba todo target/nyx-lib (fricción nyxerp 20261017: 302 módulos, ~50
+// min). Hashear los 8 MB cuesta ~300 ms, así que el hash se guarda en
+// target/nyx-lib/.compilador junto a la clave ruta:tamaño:mtime que lo produjo:
+// se paga una vez por instalación, no por build. Si la clave no coincide o el
+// archivo no está, se recalcula; nunca se confía en un hash sin su clave.
+fn lib_identidad_compilador(nyx_bin: String) -> String {
+    let st: Array = stat(nyx_bin)
+    if st.length() < 3 { return nyx_bin }
+    let tam: int = st[0]
+    let mt: int = st[2]
+    let clave: String = nyx_bin + ":" + int_to_string(tam) + ":" + int_to_string(mt)
+    let cache: String = "target/nyx-lib/.compilador"
+    if file_exists(cache) {
+        let lineas: Array = read_file(cache).split("\n")
+        if lineas.length() >= 2 {
+            let c0: String = lineas[0]
+            let c1: String = lineas[1]
+            if c0 == clave and c1.length() == 64 { return "c:" + c1 }
+        }
+    }
+    let h: String = sha256(read_file(nyx_bin))
+    mkdir("target")
+    mkdir("target/nyx-lib")
+    write_file(cache, clave + "\n" + h + "\n")
+    return "c:" + h
 }
 
 // Bash que deja en $LIB_OBJS los .o de las bibliotecas: reutiliza el de huella
@@ -1850,15 +1887,7 @@ fn lib_huella(modulo: String, base: String, std_dir: String, hashes: Map, import
 fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_flags: String, gc_flag: String) -> String {
     if config.lib_modules.length() == 0 { return "" }
     let lista: String = config.lib_modules.join(",")
-    // Identidad del compilador: ruta + tamaño + mtime del binario, el criterio
-    // de make/ninja. Hashear los 8 MB del binario costaba ~430 ms por build.
-    let st: Array = stat(nyx_bin)
-    var ident: String = nyx_bin
-    if st.length() >= 3 {
-        let tam: int = st[0]
-        let mt: int = st[2]
-        ident = ident + ":" + int_to_string(tam) + ":" + int_to_string(mt)
-    }
+    let ident: String = lib_identidad_compilador(nyx_bin)
     let base: String = ident + "|" + opt_flags + "|" + gc_flag + "|" + lista
     var hashes: Map = Map.new()
     var imports_de: Map = Map.new()

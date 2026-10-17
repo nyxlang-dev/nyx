@@ -15,7 +15,8 @@
 #   6. `nyx test` enlaza los mismos objetos (no inlinea el cierre en cada archivo de
 #      prueba), los reutiliza, y probar un módulo de biblioteca no choca con su objeto;
 #   7. errores del manifiesto: una clave desconocida en [lib] y un módulo con .nx;
-#   8. el contenido de los archivos de include_bytes entra en la huella.
+#   8. el contenido de los archivos de include_bytes entra en la huella;
+#   9. reinstalar el mismo compilador en otra carpeta no invalida los objetos.
 # Usa el nyx_build del repo con NYX_HOME apuntando al repo.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -75,6 +76,27 @@ else mal "fallback del genérico: aviso/marcador/objeto no cuadran"; fi
 out=$("$NB" build 2>&1)
 if echo "$out" | grep -q "reusing src/util" && echo "$out" | grep -q "reusing src/geo" && ! echo "$out" | grep -q "(lib)$"; then ok "sin cambios: se reutilizan los objetos"
 else mal "sin cambios no reutilizó: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
+
+# Reinstalación (fricción nyxerp 20261017): el MISMO compilador en otra carpeta de
+# toolchain —lo que deja cada `make install-local` en ~/.nyx/versions/<id>— no
+# invalida target/nyx-lib. Antes la huella llevaba la ruta y el mtime del binario y
+# la ruta absoluta de cada std/, y una reinstalación igual recompilaba los 302
+# módulos de nyxerp (~50 min). Y al revés: otro compilador SÍ recompila.
+H2="$T/home2"; mkdir -p "$H2"
+for x in "$ROOT"/*; do b=$(basename "$x"); [ "$b" = nyx_bootstrap ] || ln -s "$x" "$H2/$b"; done
+cp "$ROOT/nyx_bootstrap" "$H2/nyx_bootstrap"; touch -d '2001-01-01' "$H2/nyx_bootstrap"
+out=$(NYX_HOME="$H2" "$NB" build 2>&1); run=$(./libp 2>&1)
+if echo "$out" | grep -q "reusing src/util" && echo "$out" | grep -q "reusing src/geo" && [ "$run" = "hola mundo 42 21 20 7" ]; then
+    ok "reinstalación con el mismo compilador (otra ruta, otro mtime, std/ en otra carpeta): se reutilizan los objetos"
+else mal "reinstalación igual recompiló: $(echo "$out" | grep -E 'reusing|compiling|error' | tr '\n' ' ') → '$run'"; fi
+out=$("$NB" build 2>&1)
+if echo "$out" | grep -q "reusing src/util"; then ok "de vuelta al toolchain original: sigue reutilizando"
+else mal "volver al toolchain original recompiló: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
+printf '\0' >> "$H2/nyx_bootstrap"
+out=$(NYX_HOME="$H2" "$NB" build 2>&1)
+if echo "$out" | grep -q "compiling src/util (lib)"; then ok "otro compilador (contenido distinto): se recompila"
+else mal "un compilador distinto reutilizó objetos: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
+"$NB" build >/dev/null 2>&1
 
 # Huella por INTERFAZ (2026-09-24, fricción nyxerp 150024): geo importa util,
 # pero de util solo genera `declare`; su .o depende de la interfaz de util, no de

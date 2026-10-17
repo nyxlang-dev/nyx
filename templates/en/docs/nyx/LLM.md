@@ -3764,7 +3764,9 @@ modules = ["src/util", "src/geo"]   # one line; path as written in the import, n
 `nyx build` compiles each declared module once, as a library unit, to
 `target/nyx-lib/<mod>-<hash>.o`, and reuses the object while neither the
 module nor anything in its import closure (prelude + `std/` it uses) changed,
-and neither did the compiler binary or the build flags. Touching a module
+and neither did the compiler or the build flags. The compiler counts by
+CONTENT (sha256), not by path: reinstalling the same compiler (a new
+`~/.nyx/versions/<id>`) keeps `target/nyx-lib` valid. Touching a module
 recompiles it and cascades to the `[lib]` modules that import it; `main.nx`
 always recompiles, against the current interfaces. Native targets only — with
 `--target wasm32-wasi` a `[lib]` module inlines like any other import.

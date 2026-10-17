@@ -9,6 +9,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Arreglado
+
+- **Reinstalar el mismo compilador ya no invalida `target/nyx-lib`** (fricción nyxerp, 2026-10-17).
+  La huella de cada objeto de `[lib]` llevaba la ruta y el mtime del binario del compilador, y la
+  ruta absoluta de cada `std/` del cierre. Como cada `make install-local` / `nyx update` arma una
+  carpeta nueva en `~/.nyx/versions/`, reinstalar el mismo compilador recompilaba todo: 302 módulos
+  y unos 50 minutos en nyxerp. Ahora el compilador cuenta por el sha256 de su contenido, guardado en
+  `target/nyx-lib/.compilador` junto a la ruta, el tamaño y el mtime que lo produjeron, y los `std/`
+  por su ruta relativa. Caso 9 de `run_lib_modules.sh`: reinstalación igual reutiliza, otro
+  compilador recompila.
+
 ## [0.36.1] — 2026-10-17
 
 > **PATCH**: un arreglo de codegen (conversión numérica sobre una casilla de `Array` sin tipo) y dos
