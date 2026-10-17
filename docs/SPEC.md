@@ -2143,6 +2143,15 @@ modules = ["src/util", "src/geo"]
   prelude, los `std/` que use y los archivos que incrusten con `include_bytes`) haya cambiado, y tampoco el compilador ni las flags de build.
   El compilador cuenta por su CONTENIDO (sha256), no por su ruta: reinstalar el mismo compilador
   (una carpeta nueva en `~/.nyx/versions/`) no invalida `target/nyx-lib`.
+- Los módulos sin objeto vigente **se compilan a la vez**: `nyx build -j N` (o `--jobs N`, o la
+  variable `NYX_JOBS`; la bandera manda) fija cuántos; por omisión, los núcleos de la máquina.
+  `-j 1` compila en serie. `nyx test` pasa por el mismo camino y respeta `NYX_JOBS`. Las líneas
+  `compiling`/`reusing` y los avisos salen en el orden del manifiesto; si una unidad falla, las
+  que estaban corriendo terminan, no se lanzan más, y se reportan todas las que fallaron. Un objeto
+  a medio escribir nunca queda con su nombre definitivo. Un `-j` que no sea un entero positivo es
+  error. Dos builds del mismo proyecto a la vez (por ejemplo, varios `nyx test` en paralelo) no se
+  pisan: el segundo espera a que el primero termine con `target/nyx-lib` («esperando a otro build
+  del mismo proyecto») y después reutiliza sus objetos (candado con `flock`; sin `flock`, como antes).
   Tocar un módulo lo recompila y, en cascada, recompila a los módulos de `[lib]` que lo importan.
   El programa principal (`main.nx`) **siempre** se compila, contra las interfaces vigentes.
   Solo aplica a targets nativos: con `--target wasm32-wasi` los módulos de `[lib]` se inlinean

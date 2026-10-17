@@ -9,8 +9,43 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Agregado
+
+- **`nyx build -j N`: las unidades de `[lib]` se compilan en paralelo** `[arco: build-lib-paralelo]`
+  (fricción nyxerp, 2026-10-17). Antes iban en serie: 302 módulos y unos 50 minutos en frío en 4
+  núcleos. Las unidades no dependen unas de otras para compilar, así que ahora se lanzan hasta N a la
+  vez (`-j N`, `--jobs N` o `NYX_JOBS`; por omisión, los núcleos). `nyx test` pasa por el mismo
+  camino. Salida y enlace en el orden del manifiesto; con un error se reportan todas las unidades que
+  fallaron y no queda ningún objeto a medio escribir. Dos builds del mismo proyecto a la vez (varios
+  `nyx test` en paralelo, como corre nyxerp) toman un candado sobre `target/nyx-lib`: el segundo
+  espera y reutiliza; antes se borraban los temporales uno al otro. Medición en
+  `docs/design/spikes/2026-10-17-build-lib-paralelo-medicion.md`: menos de 600 MB por unidad. Caso 10
+  de `run_lib_modules.sh`.
+
 ### Arreglado
 
+- **El compilador ya no copia de forma cuadrática: un archivo de prueba grande de nyxerp compila 9 veces
+  más rápido** `[arco: test-sin-repetir]` (fricción nyxerp, 2026-10-17: ~42 s por archivo de `nyx test`).
+  La medición por fase mostró que el tiempo crecía más rápido que el IR, y un perfilador de muestreo
+  que el 81% era el GC, provocado por concatenaciones que recopiaban todo lo acumulado: las constantes
+  de texto en `generate_llvm`, las declaraciones de módulo en `resolve_source`, y el prefijo de símbolo
+  de cada módulo recalculado carácter por carácter en cada llamada sin calificar. Ahora van con
+  `StringBuilder`, los prefijos se calculan una vez (`ctx.alcances[3]`), la búsqueda de una función
+  entre los módulos se memoriza (`ctx.alcances[4]`, con la versión del conjunto en la clave),
+  `extract_exports` no recorta las líneas que no pueden exportar nada y `scan_module_types` no relee un
+  módulo ya escaneado. El IR sale idéntico byte a byte. Medido: 105,6 s → 11,2 s y 822 → 642 MB en el
+  archivo más grande; 3,5 s → 1,6 s en uno mediano. Spike:
+  `docs/design/spikes/2026-10-17-test-sin-repetir-medicion.md`.
+- **Operadores entre primitivos de clases distintas: NYX1010 en vez de SIGSEGV o IR inválido.** El
+  chequeo dejaba pasar aritmética y comparación entre cualquier par de tipos. La matriz medida el
+  2026-10-17 (cuatro tipos por lado, nueve operadores) mostró que solo existen números con números,
+  `String + x`, `==`/`!=` entre dos String o dos bool y el orden entre dos String; el resto moría con
+  SIGSEGV al ejecutar la línea (`5 + "a"`, `5 == "5"`, `"a" < 5`) o daba IR inválido que recién
+  rechazaba clang (`x * "dos"`, `2.5 + "a"`, `true + 1`). Lo segundo nunca produjo un binario y es
+  error ya; lo primero compilaba, así que por la regla 7 de `docs/VERSIONING.md` es
+  `warning [NYX1010]` en 0.36.x y **error en 0.37.0**. Nyxerp (539 archivos) no tiene ningún caso.
+  Tests: `test-493-operadores-primitivos-mixtos` (los valores de lo que sí existe) y cinco de
+  `make test-errors`; gotcha `mixed-primitive-operators`.
 - **Reinstalar el mismo compilador ya no invalida `target/nyx-lib`** (fricción nyxerp, 2026-10-17).
   La huella de cada objeto de `[lib]` llevaba la ruta y el mtime del binario del compilador, y la
   ruta absoluta de cada `std/` del cierre. Como cada `make install-local` / `nyx update` arma una

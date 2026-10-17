@@ -16,7 +16,9 @@
 #      prueba), los reutiliza, y probar un módulo de biblioteca no choca con su objeto;
 #   7. errores del manifiesto: una clave desconocida en [lib] y un módulo con .nx;
 #   8. el contenido de los archivos de include_bytes entra en la huella;
-#   9. reinstalar el mismo compilador en otra carpeta no invalida los objetos.
+#   9. reinstalar el mismo compilador en otra carpeta no invalida los objetos;
+#  10. -j N / NYX_JOBS compila las unidades a la vez, con el mismo resultado, y
+#      reporta todos los errores sin dejar objetos.
 # Usa el nyx_build del repo con NYX_HOME apuntando al repo.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -97,6 +99,60 @@ out=$(NYX_HOME="$H2" "$NB" build 2>&1)
 if echo "$out" | grep -q "compiling src/util (lib)"; then ok "otro compilador (contenido distinto): se recompila"
 else mal "un compilador distinto reutilizó objetos: $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
 "$NB" build >/dev/null 2>&1
+
+# -j N / NYX_JOBS (arco build-lib-paralelo, 2026-10-17): las unidades de [lib] sin
+# objeto vigente se compilan a la vez. Un "compilador" de prueba (el real envuelto)
+# anota entrada y salida y duerme 2 s: con -j 3 las dos bibliotecas (util, geo)
+# se solapan; con -j 1, nunca. Mismo resultado en los dos casos.
+H3="$T/home3"; mkdir -p "$H3"
+for x in "$ROOT"/*; do b=$(basename "$x"); [ "$b" = nyx_bootstrap ] || ln -s "$x" "$H3/$b"; done
+cat > "$H3/nyx_bootstrap" <<EOW
+#!/bin/bash
+echo "+ \$(date +%s%N)" >> "$T/solape.log"; sleep 2
+"$ROOT/nyx_bootstrap" "\$@"; rc=\$?
+echo "- \$(date +%s%N)" >> "$T/solape.log"; exit \$rc
+EOW
+chmod +x "$H3/nyx_bootstrap"
+max_solape() { sort -k2 -n "$T/solape.log" | awk '{ if ($1 == "+") n++; else n--; if (n > m) m = n } END { print m + 0 }'; }
+J="$T/projj"; cp -r "$P" "$J"; rm -rf "$J/target"; cd "$J" || exit 1
+: > "$T/solape.log"; out=$(NYX_HOME="$H3" "$NB" build -j 3 2>&1); rc=$?; run=$(./libp 2>&1)
+if [ "$rc" -eq 0 ] && [ "$run" = "hola mundo 42 21 20 7" ] && [ "$(max_solape)" -ge 2 ]; then ok "-j 3: util y geo se compilan a la vez, mismo resultado"
+else mal "-j 3 (rc=$rc, solape=$(max_solape)): $(echo "$out" | grep -E 'compiling|error' | tr '\n' ' ') → '$run'"; fi
+rm -rf target; : > "$T/solape.log"; out=$(NYX_HOME="$H3" NYX_JOBS=1 "$NB" build 2>&1); rc=$?; run=$(./libp 2>&1)
+if [ "$rc" -eq 0 ] && [ "$run" = "hola mundo 42 21 20 7" ] && [ "$(max_solape)" -eq 1 ]; then ok "NYX_JOBS=1: en serie, mismo resultado"
+else mal "NYX_JOBS=1 (rc=$rc, solape=$(max_solape)) → '$run'"; fi
+if echo "$out" | grep -q NYX0302 && [ "$(echo "$out" | grep -c 'compiling src/.* (lib)')" -eq 3 ]; then ok "en serie se ven las tres unidades y el aviso NYX0302"
+else mal "salida en serie: $(echo "$out" | grep -E 'compiling|NYX0302' | tr '\n' ' ')"; fi
+# Dos bibliotecas rotas a la vez: se reportan LAS DOS, en orden, y no queda .o
+# de ninguna (ni a medio escribir).
+rm -rf target; sed -i 's/return x \* 2/return no_existe_u(x)/' src/util.nx; sed -i 's/return p.x + p.y/return no_existe_g(p.x)/' src/geo.nx
+out=$(NYX_HOME="$H3" "$NB" build -j 3 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && echo "$out" | grep -q "nyx compile failed (src/util)" && echo "$out" | grep -q "nyx compile failed (src/geo)" \
+   && ! ls target/nyx-lib/src_util-* target/nyx-lib/src_geo-* >/dev/null 2>&1; then ok "-j 3 con dos bibliotecas rotas: las dos se reportan y no queda objeto"
+else mal "errores en paralelo (rc=$rc): $(echo "$out" | grep -E 'failed|compiling' | tr '\n' ' ') / $(ls target/nyx-lib 2>/dev/null | tr '\n' ' ')"; fi
+# Dos builds del MISMO proyecto a la vez (nyxerp corre cuatro `nyx test` en
+# paralelo y cada uno pasa por `nyx_build libs`): sin candado, uno borraba o
+# pisaba los objetos que el otro estaba escribiendo. Con el candado de
+# target/nyx-lib el segundo espera y reutiliza. Las bibliotecas vuelven a estar
+# sanas para esto.
+sed -i 's/return no_existe_u(x)/return x * 2/' src/util.nx; sed -i 's/return no_existe_g(p.x)/return p.x + p.y/' src/geo.nx
+if command -v flock >/dev/null 2>&1; then
+    rm -rf target
+    : > "$T/solape.log"
+    ( NYX_HOME="$H3" "$NB" build -j 3 > "$T/a.out" 2>&1; echo $? > "$T/a.rc" ) &
+    n=0; until grep -q '^+' "$T/solape.log" 2>/dev/null || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
+    ( NYX_HOME="$H3" "$NB" build -j 3 > "$T/b.out" 2>&1; echo $? > "$T/b.rc" ) &
+    wait
+    run=$(./libp 2>&1)
+    if [ "$(cat "$T/a.rc")" = 0 ] && [ "$(cat "$T/b.rc")" = 0 ] && [ "$run" = "hola mundo 42 21 20 7" ] \
+       && [ "$(ls target/nyx-lib/*.o | wc -l)" -eq 2 ] && grep -q "esperando a otro build" "$T/b.out" \
+       && grep -q "reusing src/util" "$T/b.out"; then ok "dos builds a la vez del mismo proyecto: los dos terminan bien y no se pisan"
+    else mal "builds concurrentes: rc=$(cat "$T/a.rc")/$(cat "$T/b.rc") '$run' $(grep -hE 'error|failed' "$T/a.out" "$T/b.out" | head -2 | tr '\n' ' ')"; fi
+else echo "  - sin flock: se salta el caso de builds concurrentes"; fi
+out=$("$NB" build -j cero 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && echo "$out" | grep -q -- "-j necesita"; then ok "-j con un valor que no es un entero positivo es error"
+else mal "-j cero (rc=$rc): $(echo "$out" | tail -2 | tr '\n' ' ')"; fi
+cd "$P" || exit 1
 
 # Huella por INTERFAZ (2026-09-24, fricción nyxerp 150024): geo importa util,
 # pero de util solo genera `declare`; su .o depende de la interfaz de util, no de

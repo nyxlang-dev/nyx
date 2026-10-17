@@ -1905,7 +1905,25 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
     // misma lección que `emit` (codegen) y el body del resolvedor.
     var sh: StringBuilder = StringBuilder.new()
     sh.append(lib_pista_import_sh())
+    sh.append(lib_paralelo_sh(nyx_bin, lista, opt_flags, gc_flag))
     sh.append("LIB_OBJS=\"\"\nLIB_MAP=\"\"\nmkdir -p \"$ORIG_DIR/target/nyx-lib\"\n")
+    // Candado del PROYECTO sobre target/nyx-lib, exclusivo y hasta el final del
+    // script (se suelta al salir). Dos builds del mismo proyecto a la vez —nyxerp
+    // corre cuatro `nyx test` en paralelo y cada uno pasa por `nyx_build libs`—
+    // se borraban y pisaban los objetos: el `rm -f <módulo>-*` de una unidad se
+    // llevaba el temporal que el otro build estaba escribiendo (visto el
+    // 2026-10-17 en la verificación del arco build-lib-paralelo: «clang: unable to
+    // rename temporary»). Con el candado, el segundo espera y después reutiliza lo
+    // que el primero dejó. Sin flock (macOS sin util-linux) se sigue como antes.
+    // FD 8: el 9 es el candado compartido del toolchain.
+    sh.append("if command -v flock >/dev/null 2>&1; then exec 8>\"$ORIG_DIR/target/nyx-lib/.lock\"\n")
+    sh.append("  flock -n 8 || { echo '   esperando a otro build del mismo proyecto (target/nyx-lib)'; flock 8; }\nfi\n")
+    // Primera pasada, en el orden del manifiesto: cada unidad reutiliza su objeto o
+    // se lanza en segundo plano (hasta NYX_J a la vez). Las líneas `reusing` y
+    // `compiling` salen en ese orden; los avisos de cada unidad, en cuanto ella y
+    // todas las anteriores terminaron (nyx_lib_vaciar). Con NYX_J=1 eso es
+    // exactamente la salida de antes del arco.
+    var mods: StringBuilder = StringBuilder.new()
     var i: int = 0
     while i < config.lib_modules.length() {
         let m: String = config.lib_modules[i]
@@ -1913,22 +1931,86 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
         let h: String = lib_huella(m, base, nyx_home + "/std", hashes, imports_de, libs_set).substring(0, 16)
         let obj: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".o"
         let inl: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".inline"
-        let env_unidad: String = "( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_SELF=\"" + m + "\" NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"" + m + ".nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" )"
-        sh.append("if [ -f \"" + obj + "\" ]; then echo '   reusing " + m + " (lib, sin cambios)'; LIB_OBJS=\"$LIB_OBJS " + obj + "\"; LIB_MAP=\"$LIB_MAP " + m + "=" + obj + "\"\n")
-        sh.append("elif [ -f \"" + inl + "\" ]; then :\n")
-        sh.append("else\n  echo '   compiling " + m + " (lib)'\n")
-        sh.append("  rm -f \"$ORIG_DIR/target/nyx-lib/" + seguro + "-\"*\n")
-        sh.append("  LSRC=\"$(mktemp /tmp/nyx_lib_XXXXXX)\"; cp \"$ORIG_DIR/" + m + ".nx\" \"$LSRC.nx\"\n")
-        sh.append("  lrc=0; " + env_unidad + " > \"$LOG\" 2>&1 || lrc=$?\n")
-        sh.append("  if [ $lrc -eq 3 ]; then grep -F '⚠' \"$LOG\" >&2 || true; : > \"" + inl + "\"\n")
-        sh.append("  elif [ $lrc -ne 0 ]; then echo \"error: nyx compile failed (" + m + "):\" >&2; cat \"$LOG\" >&2; nyx_pista $lrc; nyx_pista_import \"$LOG\"; rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"; exit 1\n")
-        sh.append("  else\n    grep -F '⚠' \"$LOG\" >&2 || true\n")
-        sh.append("    clang -c " + opt_flags + " -Wno-override-module \"$LSRC.ll\" -o \"" + obj + "\" 2> \"$LOG\" || { echo \"error: clang failed (" + m + "):\" >&2; cat \"$LOG\" >&2; exit 1; }\n")
-        sh.append("    LIB_OBJS=\"$LIB_OBJS " + obj + "\"; LIB_MAP=\"$LIB_MAP " + m + "=" + obj + "\"\n  fi\n")
-        sh.append("  rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"\nfi\n")
+        let k: String = int_to_string(i)
+        sh.append("nyx_lib_turno || NYX_PARAR=1\n")
+        sh.append("if [ -z \"$NYX_PARAR\" ]; then\n")
+        sh.append("  if [ -f \"" + obj + "\" ]; then echo '   reusing " + m + " (lib, sin cambios)'; : > \"$LIBJ/" + k + ".done\"\n")
+        sh.append("  elif [ -f \"" + inl + "\" ]; then : > \"$LIBJ/" + k + ".done\"\n")
+        sh.append("  else echo '   compiling " + m + " (lib)'; nyx_lib_unidad " + k + " \"" + m + "\" \"" + obj + "\" \"" + inl + "\" \"" + seguro + "\" &\n  fi\n")
+        sh.append("else : > \"$LIBJ/" + k + ".done\"; fi\n")
+        mods.append(k + " " + m + " " + obj + "\n")
         i = i + 1
     }
+    sh.append("wait\nnyx_lib_vaciar\n")
+    // Segunda pasada: los errores de TODAS las unidades que fallaron, en orden, y
+    // recién después LIB_OBJS/LIB_MAP en el orden del manifiesto (enlace
+    // determinista). Una unidad que no llegó a correr (por un error anterior) no
+    // tiene objeto y no se enlaza: el build sale con error igual.
+    sh.append("NYX_FALLO=0\n")
+    sh.append("while read -r k m obj; do\n")
+    sh.append("  if [ -f \"$LIBJ/$k.fail\" ]; then NYX_FALLO=1; frc=$(cat \"$LIBJ/$k.fail\")\n")
+    sh.append("    if [ \"$frc\" = clang ]; then echo \"error: clang failed ($m):\" >&2; cat \"$LIBJ/$k.clang\" >&2\n")
+    sh.append("    else echo \"error: nyx compile failed ($m):\" >&2; cat \"$LIBJ/$k.log\" >&2; nyx_pista \"$frc\"; nyx_pista_import \"$LIBJ/$k.log\"; fi\n")
+    sh.append("  elif [ -f \"$obj\" ]; then LIB_OBJS=\"$LIB_OBJS $obj\"; LIB_MAP=\"$LIB_MAP $m=$obj\"; fi\n")
+    sh.append("done <<NYX_LIB_MODS\n")
+    sh.append(mods.to_string())
+    sh.append("NYX_LIB_MODS\n")
+    sh.append("rm -rf \"$LIBJ\"\n[ \"$NYX_FALLO\" = 0 ] || exit 1\n")
     return sh.to_string()
+}
+
+// `-j` / NYX_JOBS: un entero positivo escrito solo con dígitos.
+fn jobs_valido(v: String) -> bool {
+    if v.length() == 0 or v.length() > 4 { return false }
+    var i: int = 0
+    while i < v.length() {
+        let c: char = v.charAt(i)
+        if c < '0' or c > '9' { return false }
+        i = i + 1
+    }
+    return string_to_int_or(v, 0) > 0
+}
+
+// Las funciones bash del build paralelo de [lib] (arco build-lib-paralelo,
+// 2026-10-17). Las unidades no dependen unas de otras para compilar —una
+// biblioteca que importa otra lee su TEXTO y solo emite `declare`—, así que no
+// hay grafo que ordenar: solo el enlace necesita todos los objetos.
+//   NYX_J            trabajos a la vez: NYX_JOBS, o los núcleos (nproc / getconf).
+//   nyx_lib_turno    espera un lugar libre, vacía los avisos ya listos y devuelve
+//                    1 si alguna unidad falló (no se lanzan más).
+//   nyx_lib_unidad   compila UNA unidad en segundo plano con su propio temporal,
+//                    log y marcadores ($LIBJ/<k>.log/.warn/.fail/.clang/.done). El
+//                    .o se escribe a un temporal y se publica con `mv`: un objeto a
+//                    medio escribir nunca tiene el nombre que la huella reutiliza.
+//   nyx_lib_vaciar   imprime los avisos (⚠) de las unidades terminadas, en orden,
+//                    sin saltear una que siga corriendo.
+// `jobs -rp` y un sleep corto en vez de `wait -n`, que bash 3.2 (macOS) no tiene.
+fn lib_paralelo_sh(nyx_bin: String, lista: String, opt_flags: String, gc_flag: String) -> String {
+    var s: StringBuilder = StringBuilder.new()
+    s.append("NYX_J=\"$NYX_JOBS\"\n")
+    s.append("[ -n \"$NYX_J\" ] || NYX_J=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)\n")
+    s.append("case \"$NYX_J\" in ''|*[!0-9]*|0) NYX_J=1 ;; esac\n")
+    s.append("LIBJ=\"$(mktemp -d /tmp/nyx_libj.XXXXXX)\"\nNYX_PARAR=\"\"\nNYX_SIG=0\n")
+    s.append("nyx_lib_vaciar() {\n")
+    s.append("  while [ -f \"$LIBJ/$NYX_SIG.done\" ]; do\n")
+    s.append("    [ -s \"$LIBJ/$NYX_SIG.warn\" ] && cat \"$LIBJ/$NYX_SIG.warn\" >&2\n")
+    s.append("    NYX_SIG=$((NYX_SIG + 1))\n  done\n  return 0\n}\n")
+    s.append("nyx_lib_turno() {\n")
+    s.append("  while [ \"$(jobs -rp | wc -l)\" -ge \"$NYX_J\" ]; do sleep 0.1; done\n")
+    s.append("  nyx_lib_vaciar\n")
+    s.append("  ls \"$LIBJ\"/*.fail >/dev/null 2>&1 && return 1\n  return 0\n}\n")
+    s.append("nyx_lib_unidad() {\n  set +e\n")
+    s.append("  local k=\"$LIBJ/$1\" lrc=0 LSRC\n")
+    s.append("  rm -f \"$ORIG_DIR/target/nyx-lib/$5-\"*\n")
+    s.append("  LSRC=\"$(mktemp /tmp/nyx_lib_XXXXXX)\"; cp \"$ORIG_DIR/$2.nx\" \"$LSRC.nx\"\n")
+    s.append("  ( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_SELF=\"$2\" NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"$2.nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" ) > \"$k.log\" 2>&1 || lrc=$?\n")
+    s.append("  if [ $lrc -eq 3 ]; then grep -F '⚠' \"$k.log\" > \"$k.warn\"; : > \"$4\"\n")
+    s.append("  elif [ $lrc -ne 0 ]; then echo \"$lrc\" > \"$k.fail\"\n")
+    s.append("  else grep -F '⚠' \"$k.log\" > \"$k.warn\"\n")
+    s.append("    if clang -c " + opt_flags + " -Wno-override-module \"$LSRC.ll\" -o \"$3.tmp$1\" 2> \"$k.clang\"; then mv -f \"$3.tmp$1\" \"$3\"\n")
+    s.append("    else rm -f \"$3.tmp$1\"; echo clang > \"$k.fail\"; fi\n  fi\n")
+    s.append("  rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"; : > \"$k.done\"\n}\n")
+    return s.to_string()
 }
 
 // `nyx_build libs [--release]` — interno, lo llama `nyx test`. Construye (o
@@ -2720,6 +2802,28 @@ fn shell_quote_arg(s: String) -> String {
             }
         }
         else if flag == "--help" or flag == "-h" { pide_ayuda = true }
+        else if flag == "-j" or flag == "--jobs" or flag.startsWith("-j") or flag.startsWith("--jobs=") {
+            // Trabajos a la vez para las unidades de [lib] (arco build-lib-paralelo).
+            // Viaja al script generado como NYX_JOBS, la misma variable que puede
+            // fijar quien llama (nyx test pasa por `nyx_build libs` sin flags).
+            var jval: String = ""
+            if flag == "-j" or flag == "--jobs" {
+                if fi + 1 < args.length() {
+                    let jv: String = args[fi + 1]
+                    jval = jv
+                    fi = fi + 1
+                }
+            } else if flag.startsWith("--jobs=") {
+                jval = flag.substring(7, flag.length())
+            } else {
+                jval = flag.substring(2, flag.length())
+            }
+            if jobs_valido(jval) {
+                setenv("NYX_JOBS", jval)
+            } else if flag_desconocida == "" {
+                flag_desconocida = "-j necesita un entero positivo (por ejemplo: -j 4); recibió «" + jval + "»"
+            }
+        }
         else if flag == "--target" {
             if fi + 1 < args.length() {
                 let tval: String = args[fi + 1]
@@ -2744,6 +2848,8 @@ fn shell_quote_arg(s: String) -> String {
         print("  --target <triple>    destino de compilación (por defecto, el de [build] en nyx.toml)")
         print("  --main <archivo.nx>  otro punto de entrada del proyecto (por defecto, el main de nyx.toml);")
         print("                       el artefacto va a target/<nombre>-<archivo> para no pisar el principal")
+        print("  -j, --jobs <n>       unidades de [lib] que se compilan a la vez (por defecto, los núcleos;")
+        print("                       también NYX_JOBS). -j 1 compila en serie")
         print("  --help, -h           esta ayuda")
         print("")
         print("El proyecto se lee de nyx.toml: nombre, versión, main y dependencias.")

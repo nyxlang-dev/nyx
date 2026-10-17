@@ -41,6 +41,12 @@ TESTS=(
   "tests/compiler/errors/test-m08-param-unknown-type.nx|unknown type 'Str'"
   "tests/compiler/errors/test-m08-logical-non-bool.nx|left operand of '&&' must be bool, got int"
   "tests/compiler/errors/test-m08-bitwise-non-int.nx|left operand of '&' must be an integer, got String"
+  # Operadores entre primitivos que no existen (2026-10-17) y que eran IR
+  # inválido que rechazaba clang (`x * "dos"`, `true + 1`): error ya. Los que
+  # compilaban y morían con SIGSEGV van como AVISO (bloque NYX1010-aviso, abajo).
+  # Control positivo con los valores: tests/compiler/language/test-493-operadores-primitivos-mixtos.nx.
+  "tests/compiler/errors/test-nyx1010-int-por-string-mixto.nx|'*' does not accept int and String"
+  "tests/compiler/errors/test-nyx1010-bool-mas-int-mixto.nx|'+' does not accept bool and int; a bool is not a number"
   "tests/compiler/errors/test-m08-binop-type-result.nx|type mismatch in 's': expected String, got int"
   "tests/compiler/errors/test-m08-method-return-mismatch.nx|type mismatch in 'n': expected String, got int"
   "tests/compiler/errors/test-m08-impl-arg-mismatch.nx|argument 1 of 'Point.with_x': expected int, got String"
@@ -220,6 +226,28 @@ done
 # "+" means "any line > 0"; "-" skips the check.
 # Format: "<file> | <code> | <suggestion or -> | <line, + or ->"
 # ==============================================================
+
+# NYX1010 como AVISO (2026-10-17): entero con String en `+` (entero a la
+# izquierda) o en una comparación COMPILABA y moría con SIGSEGV al ejecutar esa
+# línea. Por la regla 7 de docs/VERSIONING.md es aviso en 0.36.x y error en
+# 0.37.0: tiene que seguir compilando, avisar y anunciar el error.
+for entry in \
+  "tests/compiler/errors/test-nyx1010-int-mas-string-mixto.nx|'+' does not accept int and String; to concatenate, put the String first" \
+  "tests/compiler/errors/test-nyx1010-int-igual-string-mixto.nx|'==' does not accept int and String; convert one side" \
+  "tests/compiler/errors/test-nyx1010-string-menor-int-mixto.nx|'<' does not accept String and int"; do
+  file="${entry%%|*}"; expected="${entry#*|}"; name="aviso:$(basename "$file" .nx)"
+  cp "$file" script.nx; rm -f script.ll
+  output=$(timeout 30 ./nyx_bootstrap 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] && [ -f script.ll ] && echo "$output" | grep -qF "warning [NYX1010]" \
+     && echo "$output" | grep -qF "$expected" && echo "$output" | grep -qF "error in 0.37.0"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s (rc=%d, esperado 0 con el aviso)\n" "$name" "$rc"
+    echo "$output" | grep -a "NYX\|error" | sed 's/^/      /' | head -5; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+done
+
 JSON_TESTS=(
   "tests/compiler/errors/test-m08-type-mismatch.nx|NYX1003|-|5"
   "tests/compiler/errors/test-m08-unknown-type.nx|NYX1001|-|+"

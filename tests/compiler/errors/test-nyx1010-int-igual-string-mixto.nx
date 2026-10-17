@@ -1,0 +1,5 @@
+fn main() {
+    let n: int = 5
+    let s: String = "5"
+    if n == s { print("igual") }
+}

@@ -1588,7 +1588,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,mixed-primitive-operators -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1787,6 +1787,15 @@ assignment `n = fila[0]`, it was invalid IR at link time, reported as a compiler
 two are compile errors naming the function and the variable; the `let` into an integer was a warning in
 0.35.x and is an error since 0.36.0. Untyped elements (an Array returned by a
 function) keep their run-time check, NYX2014; `float` keeps NYX2008. [test: compiler/errors/fixtures/escalar-de-string/let-bool] [test: compiler/errors/fixtures/escalar-de-string/let-int] [test: compiler/language/test-456-escalar-de-string-valido]
+
+26. **Operators between primitives of different kinds are NYX1010** (since 0.36.2). Only these exist:
+numbers with numbers (any operator), `String + x` (concatenation: int, float, String, bool), `==`/`!=`
+between two Strings or two bools, and `<` `>` `<=` `>=` between two Strings. Everything else used to
+compile and either died with SIGSEGV when the line ran (`5 + "a"`, `5 == "5"`, `"a" < 5`) or produced
+invalid IR that only clang rejected (`x * "dos"`, `2.5 + "a"`, `true + 1`). The second group is an error
+now; the first is a `warning [NYX1010]` in 0.36.x and an error in 0.37.0. To concatenate, put the
+String first or convert (`int_to_string(n) + s`); to compare, convert one side (`string_to_int_or`).
+Operands of unknown type, structs, enums and char are not affected. [test: compiler/errors/test-nyx1010-int-por-string-mixto]
 
 <!-- /gen:gotchas -->
 
@@ -3766,7 +3775,14 @@ modules = ["src/util", "src/geo"]   # one line; path as written in the import, n
 module nor anything in its import closure (prelude + `std/` it uses) changed,
 and neither did the compiler or the build flags. The compiler counts by
 CONTENT (sha256), not by path: reinstalling the same compiler (a new
-`~/.nyx/versions/<id>`) keeps `target/nyx-lib` valid. Touching a module
+`~/.nyx/versions/<id>`) keeps `target/nyx-lib` valid. Units without a valid
+object compile in parallel: `nyx build -j N` / `--jobs N` / `NYX_JOBS=N`
+(default: the number of cores; `-j 1` is serial; `nyx test` honors
+`NYX_JOBS`). Output and link order follow the manifest; when a unit fails,
+running ones finish, no new ones start, and every failure is reported.
+Concurrent builds of the same project (e.g. several `nyx test` at once) take
+a `flock` on `target/nyx-lib`: the second waits, then reuses the objects.
+Peak memory measured on nyxerp: under 600 MB per unit. Touching a module
 recompiles it and cascades to the `[lib]` modules that import it; `main.nx`
 always recompiles, against the current interfaces. Native targets only — with
 `--target wasm32-wasi` a `[lib]` module inlines like any other import.

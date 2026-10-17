@@ -1,0 +1,4 @@
+fn duplicar(x: int) -> int {
+    return x * "dos"
+}
+fn main() { print(int_to_string(duplicar(2))) }

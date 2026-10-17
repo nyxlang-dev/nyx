@@ -1,0 +1,5 @@
+fn main() {
+    let s: String = "a"
+    let n: int = 5
+    if s < n { print("menor") }
+}

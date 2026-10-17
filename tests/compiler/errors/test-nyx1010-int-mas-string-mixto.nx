@@ -1,0 +1,6 @@
+fn main() {
+    let n: int = 5
+    let s: String = "a"
+    let r = n + s
+    print(r)
+}

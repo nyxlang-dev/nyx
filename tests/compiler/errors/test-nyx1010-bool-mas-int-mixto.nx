@@ -1,0 +1,6 @@
+fn main() {
+    let b: bool = true
+    let n: int = 1
+    let r = b + n
+    print(r)
+}

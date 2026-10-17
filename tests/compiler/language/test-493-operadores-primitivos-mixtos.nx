@@ -1,0 +1,26 @@
+// Operadores entre primitivos de tipos distintos: las combinaciones que
+// EXISTEN siguen compilando y dan el valor correcto. Las que no existen
+// (`5 + "a"`, `5 == "5"`, `5 * "dos"`, `true + 1`…) son NYX1010 desde el
+// 2026-10-17; antes compilaban y morían con SIGSEGV o eran IR inválido
+// (tests/compiler/errors/test-nyx1010-*-mixto.nx).
+fn main() {
+    let i: int = 5
+    let f: float = 2.5
+    let s: String = "a"
+    let b: bool = true
+    assert(s + i == "a5")
+    assert(s + f == "a2.5")
+    assert(s + b == "atrue")
+    assert(s + s == "aa")
+    assert(i + f == 7.5)
+    assert(f * i == 12.5)
+    assert(i % 2 == 1)
+    assert(i < f == false)
+    assert(f < i)
+    assert(s == "a")
+    assert(s != "b")
+    assert(s < "b")
+    assert(b == true)
+    assert(b != false)
+    print("ok")
+}
