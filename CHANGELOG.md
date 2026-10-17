@@ -9,6 +9,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.36.1] — 2026-10-17
+
+> **PATCH**: un arreglo de codegen (conversión numérica sobre una casilla de `Array` sin tipo) y dos
+> capacidades aditivas pedidas por nyxerp para correo con OAuth2: `smtp_auth_xoauth2` en `std/smtp` y
+> el módulo nuevo `std/oauth2`. Nada que compilaba deja de compilar.
+
 ### Agregado
 
 - **`std/oauth2`: cliente OAuth2 sin estado** `[arco: oauth2-cliente]` (fricción nyxerp 2026-10-11,

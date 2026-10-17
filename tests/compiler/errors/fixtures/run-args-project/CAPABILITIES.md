@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.36.0 -->
-<!-- nyx-stdlib: 3386317634-1303065 -->
+<!-- nyx-version: 0.36.1 -->
+<!-- nyx-stdlib: 1196123406-1324356 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -449,7 +449,7 @@
 
 ### `std/smtp`
 
-`import "std/smtp"` — 30 funciones:
+`import "std/smtp"` — 31 funciones:
 
 - `pub fn smtp_parse_line(line: String) -> Array`
 - `pub fn smtp_line_code(l: Array) -> int`
@@ -471,6 +471,7 @@
 - `pub fn smtp_starttls_insecure(c: Array, quien: String) -> Result<Array, Error>`
 - `pub fn smtp_auth_plain(c: Array, usuario: String, clave: String) -> Result<int, Error>`
 - `pub fn smtp_auth_login(c: Array, usuario: String, clave: String) -> Result<int, Error>`
+- `pub fn smtp_auth_xoauth2(c: Array, usuario: String, token: String) -> Result<int, Error>`
 - `pub fn smtp_message(de: String, para: Array, asunto: String, cuerpo: String) -> Array`
 - `pub fn smtp_message_html(de: String, para: Array, asunto: String, html: String) -> Array`
 - `pub fn smtp_attach(m: Array, nombre: String, ctype: String, datos: String) -> Array`
@@ -481,6 +482,55 @@
 - `pub fn smtp_boundary(m: Array) -> String`
 - `pub fn smtp_render(m: Array) -> String`
 - `pub fn smtp_send(c: Array, m: Array) -> Result<int, Error>`
+
+### `std/imap`
+
+`import "std/imap"` — 23 funciones:
+
+- `pub fn imap_opts() -> ImapOpts`
+- `pub fn imap_parse_values(s: String) -> Result<Array, Error>`
+- `pub fn imap_parse_response(raw: String) -> Result<ImapResp, Error>`
+- `pub fn imap_quote(s: String) -> Result<String, Error>`
+- `pub fn imap_connect_tls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_connect_tls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_connect_starttls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_connect_starttls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
+- `pub fn imap_capabilities(c: ImapConn) -> Array`
+- `pub fn imap_has_cap(c: ImapConn, cap: String) -> bool`
+- `pub fn imap_login(c: ImapConn, user: String, pass: String) -> Result<int, Error>`
+- `pub fn imap_auth_plain(c: ImapConn, user: String, pass: String) -> Result<int, Error>`
+- `pub fn imap_auth_xoauth2(c: ImapConn, user: String, token: String) -> Result<int, Error>`
+- `pub fn imap_mailbox(c: ImapConn) -> ImapMailbox`
+- `pub fn imap_select(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error>`
+- `pub fn imap_examine(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error>`
+- `pub fn imap_noop(c: ImapConn) -> Result<int, Error>`
+- `pub fn imap_search_unseen(c: ImapConn) -> Result<Array, Error>`
+- `pub fn imap_fetch_message(c: ImapConn, uid: int) -> Result<ImapMessage, Error>`
+- `pub fn imap_fetch_since(c: ImapConn, uidvalidity: int, last_uid: int, max_messages: int) -> Result<ImapFetch, Error>`
+- `pub fn imap_mark_seen(c: ImapConn, uid: int) -> Result<int, Error>`
+- `pub fn imap_logout(c: ImapConn) -> int`
+- `pub fn imap_close(c: ImapConn) -> int`
+
+### `std/mime`
+
+`import "std/mime"` — 16 funciones:
+
+- `pub fn mime_limits() -> MimeLimits`
+- `pub fn mime_base64_decode(s: String, max_bytes: int) -> Result<String, Error>`
+- `pub fn mime_qp_decode(s: String) -> String`
+- `pub fn mime_charset_to_utf8(charset: String, bytes: String) -> Option<String>`
+- `pub fn mime_decode_words(s: String) -> String`
+- `pub fn mime_header(m: MimeMessage, name: String) -> String`
+- `pub fn mime_header_all(m: MimeMessage, name: String) -> Array`
+- `pub fn mime_header_text(m: MimeMessage, name: String) -> String`
+- `pub fn mime_parse_value(v: String) -> MimeValue`
+- `pub fn mime_param(v: MimeValue, name: String) -> String`
+- `pub fn mime_parse_addresses(s: String) -> Array`
+- `pub fn mime_parse_date(s: String) -> int`
+- `pub fn mime_html_to_text(html: String) -> String`
+- `pub fn mime_safe_filename(name: String) -> String`
+- `pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
+- `pub fn mime_parse_head(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
 
 ### `std/http2`
 
@@ -646,6 +696,25 @@
 - `pub fn uuid_v4() -> String`
 - `pub fn uuid_is_valid(s: String) -> bool`
 - `pub fn uuid_version(s: String) -> int`
+
+### `std/oauth2`
+
+`import "std/oauth2"` — 14 funciones:
+
+- `pub fn oauth2_opts(client_id: String, client_secret: String, auth_url: String, token_url: String, redirect_uri: String, scopes: Array) -> OAuth2Opts`
+- `pub fn oauth2_with_device_url(o: OAuth2Opts, device_url: String) -> OAuth2Opts`
+- `pub fn oauth2_pkce_new() -> OAuth2Pkce`
+- `pub fn oauth2_pkce_from(verifier: String) -> OAuth2Pkce`
+- `pub fn oauth2_state_new() -> String`
+- `pub fn oauth2_expired(t: OAuth2Token, margen_s: int) -> bool`
+- `pub fn oauth2_authorize_url(o: OAuth2Opts, pkce: OAuth2Pkce, state: String) -> String`
+- `pub fn oauth2_authorize_url_extra(o: OAuth2Opts, pkce: OAuth2Pkce, state: String, keys: Array, vals: Array) -> String`
+- `pub fn oauth2_exchange_code(o: OAuth2Opts, code: String, pkce: OAuth2Pkce) -> Result<OAuth2Token, Error>`
+- `pub fn oauth2_refresh(o: OAuth2Opts, refresh_token: String) -> Result<OAuth2Token, Error>`
+- `pub fn oauth2_client_credentials(o: OAuth2Opts) -> Result<OAuth2Token, Error>`
+- `pub fn oauth2_device_code(o: OAuth2Opts) -> Result<OAuth2DeviceCode, Error>`
+- `pub fn oauth2_device_poll(o: OAuth2Opts, d: OAuth2DeviceCode) -> Result<OAuth2Token, Error>`
+- `pub fn oauth2_device_wait(o: OAuth2Opts, d: OAuth2DeviceCode) -> Result<OAuth2Token, Error>`
 
 ### `std/tls`
 
@@ -1166,34 +1235,6 @@
 - `pub fn image_thumbnails(bytes: String, sizes: Array, quality: int) -> Result<Array, Error>` — Varias miniaturas de UNA sola decodificación: `sizes` es un Array de pares [max_w, max_h] (cada uno con la semántica de image_thumbnail) y el resultado un Array de String (JPEG) en el mismo orden. La decodificación usa la reducción que sirve al tamaño más grande pedido; los demás se achican desde esa misma imagen. Ejemplo: image_thumbnails(foto, [[1200, 1200], [600, 600], [150, 150]], 80). Los mismos errores que image_thumbnail.
 - `pub fn image_strip_icc(img: Image) -> Image` — Quita el perfil ICC de la imagen (`icc` = ""), para que el JPEG codificado no lo lleve. Por omisión el codificador lo conserva (una foto en Display P3 sin su perfil se ve desteñida); quitarlo ahorra 0.5-3 KB por imagen cuando se sabe que el destino es sRGB.
 
-### `std/imap`
-
-`import "std/imap"` — 23 funciones:
-
-- `pub fn imap_opts() -> ImapOpts`
-- `pub fn imap_parse_values(s: String) -> Result<Array, Error>`
-- `pub fn imap_parse_response(raw: String) -> Result<ImapResp, Error>`
-- `pub fn imap_quote(s: String) -> Result<String, Error>`
-- `pub fn imap_connect_tls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
-- `pub fn imap_connect_tls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
-- `pub fn imap_connect_starttls(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
-- `pub fn imap_connect_starttls_insecure(host: String, port: int, opts: ImapOpts) -> Result<ImapConn, Error>`
-- `pub fn imap_capabilities(c: ImapConn) -> Array`
-- `pub fn imap_has_cap(c: ImapConn, cap: String) -> bool`
-- `pub fn imap_login(c: ImapConn, user: String, pass: String) -> Result<int, Error>`
-- `pub fn imap_auth_plain(c: ImapConn, user: String, pass: String) -> Result<int, Error>`
-- `pub fn imap_auth_xoauth2(c: ImapConn, user: String, token: String) -> Result<int, Error>`
-- `pub fn imap_mailbox(c: ImapConn) -> ImapMailbox`
-- `pub fn imap_select(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error>`
-- `pub fn imap_examine(c: ImapConn, mailbox: String) -> Result<ImapMailbox, Error>`
-- `pub fn imap_noop(c: ImapConn) -> Result<int, Error>`
-- `pub fn imap_search_unseen(c: ImapConn) -> Result<Array, Error>`
-- `pub fn imap_fetch_message(c: ImapConn, uid: int) -> Result<ImapMessage, Error>`
-- `pub fn imap_fetch_since(c: ImapConn, uidvalidity: int, last_uid: int, max_messages: int) -> Result<ImapFetch, Error>`
-- `pub fn imap_mark_seen(c: ImapConn, uid: int) -> Result<int, Error>`
-- `pub fn imap_logout(c: ImapConn) -> int`
-- `pub fn imap_close(c: ImapConn) -> int`
-
 ### `std/proxy`
 
 `import "std/proxy"` — 8 funciones:
@@ -1206,27 +1247,6 @@
 - `pub fn proxy_set_healthy(config: ProxyConfig, idx: int)`
 - `pub fn parse_content_length(s: String) -> int`
 - `pub fn proxy_start(config: ProxyConfig)`
-
-### `std/mime`
-
-`import "std/mime"` — 16 funciones:
-
-- `pub fn mime_limits() -> MimeLimits`
-- `pub fn mime_base64_decode(s: String, max_bytes: int) -> Result<String, Error>`
-- `pub fn mime_qp_decode(s: String) -> String`
-- `pub fn mime_charset_to_utf8(charset: String, bytes: String) -> Option<String>`
-- `pub fn mime_decode_words(s: String) -> String`
-- `pub fn mime_header(m: MimeMessage, name: String) -> String`
-- `pub fn mime_header_all(m: MimeMessage, name: String) -> Array`
-- `pub fn mime_header_text(m: MimeMessage, name: String) -> String`
-- `pub fn mime_parse_value(v: String) -> MimeValue`
-- `pub fn mime_param(v: MimeValue, name: String) -> String`
-- `pub fn mime_parse_addresses(s: String) -> Array`
-- `pub fn mime_parse_date(s: String) -> int`
-- `pub fn mime_html_to_text(html: String) -> String`
-- `pub fn mime_safe_filename(name: String) -> String`
-- `pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
-- `pub fn mime_parse_head(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
 
 ### `std/events`
 
