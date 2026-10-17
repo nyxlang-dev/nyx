@@ -64,7 +64,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,mixed-primitive-operators -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,mixed-primitive-operators,string-escapes -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`**
 2. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
@@ -118,6 +118,7 @@ WHICH clock.**
 31. **`for c in s` over a `String` is an error (NYX1038): iterate by index — bytes with `for i in 0..s.length() { s.substring(i, i + 1) }`, UTF-8 characters with `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
 32. **An Array element the compiler knows is a `String` does not go into an `int`/`bool` variable (NYX2019): convert it — `let n: int = string_to_int(fila[0])`.**
 33. **Operators between primitives of different kinds are NYX1010**
+34. **String escapes: `\xNN` and `\u{…}` exist since 0.36.2; any other unknown escape is NYX1045.**
 
 <!-- /gen:gotchas -->
 

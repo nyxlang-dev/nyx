@@ -248,6 +248,55 @@ for entry in \
   rm -f script.ll
 done
 
+# NYX1045 (arco escapes-de-string, 2026-10-17). Un escape MALFORMADO de los
+# nuevos (\x corto, \u{…} fuera de rango, surrogate, sin llaves, o de más de un
+# byte en un char) es error del lexer, con línea y columna: nunca compiló a lo
+# que decía. Un escape DESCONOCIDO (\q, \e) compilaba perdiendo la barra, así
+# que en 0.36.x es aviso y sigue compilando (regla 7). Control positivo:
+# tests/compiler/language/test-494-escapes-hex-unicode.nx.
+for entry in \
+  "tests/compiler/errors/test-nyx1045-x-corto.nx|(línea 2, columna 23): \`\\x\` necesita exactamente dos dígitos hex" \
+  "tests/compiler/errors/test-nyx1045-u-fuera-de-rango.nx|fuera de rango: el máximo es" \
+  "tests/compiler/errors/test-nyx1045-u-surrogate.nx|son surrogates de UTF-16" \
+  "tests/compiler/errors/test-nyx1045-u-sin-llaves.nx|va con llaves" \
+  "tests/compiler/errors/test-nyx1045-char-u-multibyte.nx|un \`char\` es un byte"; do
+  file="${entry%%|*}"; expected="${entry#*|}"; name="lex:$(basename "$file" .nx)"
+  cp "$file" script.nx; rm -f script.ll
+  output=$(timeout 30 ./nyx_bootstrap 2>&1); rc=$?
+  if [ "$rc" -ne 0 ] && echo "$output" | grep -qF "Error [NYX1045]" && echo "$output" | grep -qF "$expected"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s (rc=%d, esperado error NYX1045)\n" "$name" "$rc"
+    echo "$output" | grep -a "NYX\|rror" | sed 's/^/      /' | head -5; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+done
+for entry in \
+  "tests/compiler/errors/test-nyx1045-escape-desconocido.nx|(line 3): unknown escape \`\\q\`" \
+  "tests/compiler/errors/test-nyx1045-escape-e.nx|unknown escape \`\\e\`"; do
+  file="${entry%%|*}"; expected="${entry#*|}"; name="aviso:$(basename "$file" .nx)"
+  cp "$file" script.nx; rm -f script.ll
+  output=$(timeout 30 ./nyx_bootstrap 2>&1); rc=$?
+  if [ "$rc" -eq 0 ] && [ -f script.ll ] && echo "$output" | grep -qF "warning [NYX1045]" \
+     && echo "$output" | grep -qF "$expected" && echo "$output" | grep -qF "error in 0.37.0"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s (rc=%d, esperado 0 con el aviso)\n" "$name" "$rc"
+    echo "$output" | grep -a "NYX\|rror" | sed 's/^/      /' | head -5; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+  rm -f script.ll
+done
+# Y por NDJSON, con su código y su línea (NYX_DIAG=json).
+cp tests/compiler/errors/test-nyx1045-escape-desconocido.nx script.nx; rm -f script.ll
+output=$(NYX_DIAG=json timeout 30 ./nyx_bootstrap 2>&1)
+if echo "$output" | grep '"severity":"warning"' | grep -F '"line":3' | grep -qF 'NYX1045'; then
+  printf "  ✓ %s\n" "json:nyx1045-aviso"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "json:nyx1045-aviso"
+  echo "$output" | grep -a 'warning' | sed 's/^/      /' | head -3; FAIL=$((FAIL + 1)); FAILED_TESTS+=("json:nyx1045-aviso")
+fi
+rm -f script.ll
+
 JSON_TESTS=(
   "tests/compiler/errors/test-m08-type-mismatch.nx|NYX1003|-|5"
   "tests/compiler/errors/test-m08-unknown-type.nx|NYX1001|-|+"

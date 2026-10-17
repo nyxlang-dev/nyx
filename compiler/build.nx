@@ -2529,20 +2529,30 @@ fn capabilities_std_dir() -> String {
 
 // Categoría por tarea de un módulo (tabla curada). "" = "Otros".
 fn module_category(name: String) -> String {
+    // La guarda (d) de run_capabilities_test.sh falla si un módulo de std/ cae en
+    // «Otros»: un módulo nuevo se agrega acá en el mismo commit que lo crea. Hasta
+    // 2026-10-17 caían 34, entre ellos serve, postgres, error y math.
+    if name == "error" or name == "prelude" { return "Núcleo" }
     if name == "http" or name == "web" or name == "websocket" or name == "cookie" { return "HTTP & Web" }
     // Módulos del navegador (wasm32-wasi con el shim): van con la web, no a «Otros».
-    if name.startsWith("browser") or name == "dom" or name == "vdom" { return "HTTP & Web" }
-    if name == "sqlite" or name == "db" or name == "kvclient" { return "Bases de datos & KV" }
+    if name.startsWith("browser") or name == "dom" or name == "vdom" or name == "component" or name == "router" or name == "routematch" { return "HTTP & Web" }
+    if name == "serve" or name == "template" or name == "multipart" or name == "session" or name == "proxy" or name == "webpush" { return "HTTP & Web" }
+    if name == "sqlite" or name == "db" or name == "kvclient" or name == "postgres" or name == "resp" { return "Bases de datos & KV" }
     if name == "json" or name == "msgpack" or name == "toml" or name == "csv" or name == "base64" or name == "compress" or name == "barcode" or name == "pdf" { return "Serialización & datos" }
+    if name == "xml" or name == "xlsx" or name == "zip" or name == "image" or name == "percent" { return "Serialización & datos" }
     if name == "fs" or name == "file" or name == "io" or name == "path" { return "Archivos & I/O" }
     if name == "tcp" or name == "udp" or name == "net" or name == "http2" or name == "dns" or name == "url" or name == "smtp" or name == "imap" or name == "mime" { return "Red" }
-    if name == "thread" or name == "channel" or name == "scheduler" or name == "sync" or name == "async" { return "Concurrencia" }
-    if name == "crypto" or name == "tls" or name == "hash" or name == "random" or name == "uuid" or name == "oauth2" { return "Cripto & seguridad" }
+    if name == "thread" or name == "channel" or name == "scheduler" or name == "sync" or name == "async" or name == "pool" { return "Concurrencia" }
+    if name == "crypto" or name == "tls" or name == "hash" or name == "random" or name == "uuid" or name == "oauth2" or name == "rsa" or name == "webpushcrypto" { return "Cripto & seguridad" }
     if name == "time" or name == "datetime" { return "Tiempo" }
-    if name == "string" or name == "strings" or name == "stringbuilder" or name == "regex" { return "Strings & texto" }
+    if name == "string" or name == "strings" or name == "stringbuilder" or name == "regex" or name == "unicode" { return "Strings & texto" }
+    if name == "math" or name == "math_ext" or name == "expr" { return "Matemática" }
+    if name == "array" or name == "map" or name == "collections" { return "Colecciones & estructuras" }
     if name == "set" or name == "deque" or name == "linkedlist" or name == "stack" or name == "btreemap" or name == "priorityqueue" or name == "graph" or name == "matrix" { return "Colecciones & estructuras" }
-    if name == "arena" or name == "box" or name == "rc" or name == "ownership" { return "Memoria" }
-    if name == "args" or name == "cli" or name == "log" or name == "logging" or name == "semver" or name == "testing" or name == "quickcheck" { return "Tooling & CLI" }
+    if name == "statemachine" or name == "events" { return "Colecciones & estructuras" }
+    if name == "arena" or name == "box" or name == "rc" or name == "ownership" or name == "owned" or name == "wasm_mem" { return "Memoria" }
+    if name == "llm" { return "IA & LLM" }
+    if name == "args" or name == "cli" or name == "log" or name == "logging" or name == "semver" or name == "testing" or name == "quickcheck" or name == "proptest" { return "Tooling & CLI" }
     return ""
 }
 
@@ -2690,9 +2700,8 @@ fn run_capabilities(out_arg: String) -> bool {
         return false
     }
     let entries: Array = readdir(std_dir)
-    // "Matemática" la traen SOLO los builtins (math_*): no hay módulo std/ de
-    // matemática pura, así que la categoría no existía en este listado.
-    let cats: Array<String> = ["HTTP & Web", "Bases de datos & KV", "Serialización & datos", "Archivos & I/O", "Red", "Concurrencia", "Cripto & seguridad", "Tiempo", "Strings & texto", "Matemática", "Colecciones & estructuras", "Memoria", "Tooling & CLI", "Otros"]
+    // "Matemática" agrupa std/math, std/math_ext, std/expr y los builtins math_*.
+    let cats: Array<String> = ["Núcleo", "HTTP & Web", "Bases de datos & KV", "Serialización & datos", "Archivos & I/O", "Red", "Concurrencia", "Cripto & seguridad", "Tiempo", "Strings & texto", "Matemática", "Colecciones & estructuras", "Memoria", "IA & LLM", "Tooling & CLI", "Otros"]
     var doc = "# CAPABILITIES — índice de la stdlib de Nyx\n\n"
     doc = doc + "<!-- nyx-version: " + toolchain_version() + " -->\n"
     // Firma de la stdlib que calcula el wrapper (_caps_stamp en scripts/nyx):

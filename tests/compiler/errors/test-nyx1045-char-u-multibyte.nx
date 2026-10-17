@@ -1,0 +1,4 @@
+fn main() {
+    let c: char = '\u{e9}'
+    print(c)
+}

@@ -1588,7 +1588,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,mixed-primitive-operators -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,mixed-primitive-operators,string-escapes -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1796,6 +1796,15 @@ invalid IR that only clang rejected (`x * "dos"`, `2.5 + "a"`, `true + 1`). The 
 now; the first is a `warning [NYX1010]` in 0.36.x and an error in 0.37.0. To concatenate, put the
 String first or convert (`int_to_string(n) + s`); to compare, convert one side (`string_to_int_or`).
 Operands of unknown type, structs, enums and char are not affected. [test: compiler/errors/test-nyx1010-int-por-string-mixto]
+
+27. **String escapes: `\xNN` and `\u{…}` exist since 0.36.2; any other unknown escape is NYX1045.** Valid:
+`\n \t \r \0 \\ \" \' \$`, `\xNN` (one byte, exactly two hex digits: `"\x1F"`, `"\x1b[0m"`) and
+`\u{H…}` (a codepoint in UTF-8: `"\u{e9}"`, `"\u{1F600}"`). `\$` writes `${` without interpolating.
+Before 0.36.2 every other escape silently dropped the backslash: `"\x41"` was `x41` and `"\u{0}"` was
+`u{0}`. A malformed `\x` or `\u{…}` is now a lexer error; any other escape (`\q`, `\e`) is a
+`warning [NYX1045]` in 0.36.x and an error in 0.37.0. There is no `\e`/`\a`/`\v`/`\f` and no 4-digit
+`\uNNNN`: write `\x1b` and `\u{…}`. In a `char`, `\u{…}` only goes up to `\u{7F}`. Raw `r"…"` and
+multiline `"""…"""` strings process no escapes. [test: compiler/language/test-494-escapes-hex-unicode]
 
 <!-- /gen:gotchas -->
 

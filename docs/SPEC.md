@@ -926,6 +926,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1042 | a `return` inside the body of a `defer`, or a `break`/`continue` that would leave it (one inside a loop written in the defer itself is fine). A defer runs while the block or the function is already exiting; a `return` there used to hang the program and a `break` compiled and did nothing. Compute the value before the `return` and keep only the cleanup in the defer |
 | NYX1043 | `defer` inside an `async fn`: the task does not go through the cleanup section, so it would never run (it used to be dropped silently). Do the cleanup explicitly before each `return`, or move the work into a non-async fn the task calls |
 | NYX1044 | a closure (lambda or named `fn`) uses a BLOCK variable it cannot capture: its name is declared more than once in the function (shadowing another, or in a sibling block), or it is not a `let`/`var` (a `for` variable, a `match` binding). Closures capture by name, so the capture would be ambiguous. Rename it, or copy it into a `let` with its own name right before the closure |
+| NYX1045 | invalid string or char escape. A malformed `\xNN` (not two hex digits) or `\u{…}` (no braces, empty, more than 6 digits, above `10FFFF`, a surrogate, or above `7F` in a `char`) is a lexer error with line and column. Any other unknown escape (`\q`, `\e`) is a warning in 0.36.x and an error in 0.37.0: it used to compile dropping the backslash |
 | NYX1033 | `include_bytes` with a path that is not a String literal — the file is read when COMPILING, so a variable or an interpolation cannot be known |
 | NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
@@ -1028,6 +1029,22 @@ let texto = """
 ```
 
 Las multiline strings se delimitan con `"""` (triple comillas). Los saltos de linea internos se preservan tal cual.
+
+### Escapes
+
+| Escape | Valor |
+|---|---|
+| `\n` `\t` `\r` `\0` | salto de línea, tabulador, retorno de carro, byte 0 |
+| `\\` `\"` `\'` | barra, comilla doble, comilla simple |
+| `\$` | `$` literal: `"\${x}"` es el texto `${x}`, sin interpolar |
+| `\xNN` | el byte `NN`, exactamente dos dígitos hex (`"\x1F"`, `"\x1b[0m"`, `"\xFF"`) |
+| `\u{H…}` | el codepoint `H…` (1 a 6 dígitos hex, hasta `10FFFF`, sin surrogates) codificado en UTF-8 |
+
+Valen igual en un String, en lo que sigue a una interpolación y en un literal de carácter; en un `char`,
+`\u{…}` admite solo hasta `\u{7F}` (un byte). Un `\x` o un `\u{…}` malformado es error de lexer
+NYX1045 con línea y columna. Cualquier otro escape (`\q`, `\e`) es `warning [NYX1045]` en 0.36.x y
+error en 0.37.0: antes de 0.36.2 perdía la barra en silencio (`"\x41"` valía `x41`). Los multilínea
+`"""…"""` y los raw `r"…"` no procesan escapes.
 
 ### Raw strings
 ```nyx

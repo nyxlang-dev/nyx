@@ -1,0 +1,60 @@
+// Escapes de literales (arco escapes-de-string, 2026-10-17). Antes de este
+// arco el lexer solo conocía \n \t \\ \" \r \0, y cualquier otro escape perdía
+// la barra en silencio: "\x41" valía `x41`, "\u{0}" valía `u{0}` y '\x41'
+// imprimía `41`. Los casos de error y el aviso NYX1045 viven en
+// tests/compiler/errors/test-nyx1045-*.nx.
+fn main() {
+    // Los seis de siempre no cambian.
+    assert("a\nb".byte_length() == 3)
+    assert("\t".byte_length() == 1)
+    assert("\\".byte_length() == 1)
+    assert("\"".byte_length() == 1)
+    assert("\r".byte_length() == 1)
+    assert("a\0b".byte_length() == 3)
+
+    // \' y \$ son válidos; \$ escribe ${ sin interpolar.
+    assert("\'" == "'")
+    let x: int = 7
+    let lit: String = "\${x}"
+    assert(lit.byte_length() == 4)
+    assert(lit.startsWith("$"))
+    assert("${x}" == "7")
+
+    // \xNN: un byte.
+    assert("\x41" == "A")
+    assert("\x61\x62" == "ab")
+    assert("a\x00b".byte_length() == 3)
+    assert("\x1F".byte_length() == 1)
+    assert(("\x1F".charAt(0) as int) == 31)
+    assert("\xFF".byte_length() == 1)
+    assert("\x1b[0m".byte_length() == 4)
+
+    // \u{…}: el codepoint en UTF-8.
+    assert("\u{41}" == "A")
+    assert("\u{0}".byte_length() == 1)
+    assert("\u{e9}" == "é")
+    assert("\u{e9}".byte_length() == 2)
+    assert("\u{20AC}" == "€")
+    assert("\u{1F600}".byte_length() == 4)
+    assert("\u{1F600}" == "😀")
+    assert("\u{10FFFF}".byte_length() == 4)
+
+    // Los mismos después de una interpolación (scan_string_rest).
+    let n: int = 1
+    let r: String = "${n}\x41\u{e9}"
+    assert(r == "1Aé")
+
+    // Y en un String interior abierto con \" dentro de una interpolación.
+    let t: String = "<${"\x42" + \"\u{43}\"}>"
+    assert(t == "<BC>")
+
+    // Literal de carácter.
+    let c: char = '\x41'
+    assert(c == 'A')
+    let d: char = '\u{7A}'
+    assert(d == 'z')
+    let q: char = '\''
+    assert((q as int) == 39)
+
+    print("test-494 escapes OK")
+}

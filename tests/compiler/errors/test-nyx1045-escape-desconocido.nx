@@ -1,0 +1,5 @@
+fn main() {
+    let a: String = "ok"
+    let s: String = "\q"
+    print(a + s)
+}

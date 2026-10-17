@@ -42,8 +42,12 @@ mkdir -p "$P"
 # target/ y .claude/worktrees (copias completas del repo): el 2026-09-24 esa
 # copia llenó el /tmp de la máquina (tmpfs de 1,9 GB) y tumbó la suite de
 # nyxerp. Si una prueba lee otra carpeta, se agrega con NYXERP_LIB_EXTRA.
-for d in nyx.toml src tests ${NYXERP_LIB_EXTRA:-}; do
-    [ -e "$SRC/$d" ] && cp -r "$SRC/$d" "$P/"
+# docs/ayuda: desde el 2026-10 src/modulos/sitio/ayuda.nx la incrusta con
+# include_bytes, así que sin ella el build da NYX1034 (unos cientos de KB).
+for d in nyx.toml src tests docs/ayuda ${NYXERP_LIB_EXTRA:-}; do
+    [ -e "$SRC/$d" ] || continue
+    mkdir -p "$P/$(dirname "$d")"
+    cp -r "$SRC/$d" "$P/$(dirname "$d")/"
 done
 libre_kb=$(df -Pk "$T" | awk 'NR==2{print $4}')
 if [ "${libre_kb:-0}" -lt 300000 ]; then

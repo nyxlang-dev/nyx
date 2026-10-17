@@ -93,6 +93,18 @@ for EXPECTED in "$EXPECTED_1" "$EXPECTED_2" "$EXPECTED_3"; do
     fi
 done
 
+# --- (d) Ningún módulo de std/ cae en «Otros» ---
+# `module_category` (compiler/build.nx) es una tabla curada, y un módulo nuevo que
+# nadie agrega ahí cae al final del índice, en el cajón de sastre. El 2026-10-17
+# eran 34 de 78, entre ellos serve, postgres, error y math: el índice que los LLMs
+# leen para no reinventar escondía justo los módulos más usados.
+OTROS="$(awk '/^## /{sec=$0} /^### `std\//{ if (sec == "## Otros") print $2 }' "$OUT" | tr -d '`')"
+if [ -n "$OTROS" ]; then
+    echo "❌ módulos de std/ sin categoría (caen en «Otros»); agregarlos a module_category en compiler/build.nx:"
+    echo "$OTROS" | sed 's/^/   /'
+    exit 1
+fi
+
 # ── Los BUILTINS GLOBALES están en el índice ────────────────────────────────
 # Fricción de nyxerp (2026-09-11): este índice se arma escaneando `std/*.nx`, y
 # los builtins globales no viven ahí — los declara el compilador. Los 191

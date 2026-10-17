@@ -1,0 +1,4 @@
+fn main() {
+    let s: String = "\u{D800}"
+    print(s)
+}

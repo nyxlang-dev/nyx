@@ -42,6 +42,7 @@ GOTCHA_IDS=(
   "for-in-string-rejected"
   "string-element-into-scalar-rejected"
   "mixed-primitive-operators"
+  "string-escapes"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
   "prelude-frozen-snapshot"
@@ -118,6 +119,7 @@ ANCLAS=(
   "NYX1038|for-in-string-rejected"
   "NYX2019|string-element-into-scalar-rejected"
   "NYX1010|mixed-primitive-operators"
+  "NYX1045|string-escapes"
 )
 
 MENTIRAS=(

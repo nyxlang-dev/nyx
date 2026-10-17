@@ -1,0 +1,4 @@
+fn main() {
+    let s: String = "\u{110000}"
+    print(s)
+}

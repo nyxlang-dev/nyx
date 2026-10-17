@@ -26,6 +26,25 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Escapes de String: `\xNN` y `\u{…}` valen lo que dicen, y un escape desconocido avisa (NYX1045)**
+  `[arco: escapes-de-string]`. Antes el lexer conocía solo `\n \t \\ \" \r \0` y cualquier otro escape
+  perdía la barra en silencio: `"\x41"` valía `x41`, `"\u{0}"` valía `u{0}` y `'\x41'` imprimía `41`.
+  Había tres casos reales, todos equivocados sin que nadie lo notara: el centinela `"\u{0}"` de la
+  configuración de nyxerp, el separador `"\x1F"` de la clave de `DISTINCT` de nyx-db (y su copia en
+  venezuelainfo), y las secuencias ANSI `"\x1b[…"` del ejemplo de nyx-edit. Con este arreglo los tres
+  valen lo que quisieron decir sin tocar su código. `\'` y `\$` (`"\${x}"` es `${x}` literal) quedan
+  documentados. Un `\x` o `\u{…}` malformado es error de lexer con línea y columna. Cualquier otro
+  escape es `warning [NYX1045]` y pasa a error en 0.37.0. Los cuatro caminos del lexer que leían
+  escapes, que eran cuatro copias del mismo `if`, ahora pasan por una sola función.
+  `test-494-escapes-hex-unicode`, siete casos `test-nyx1045-*` y gotcha `string-escapes`.
+
+- **`CAPABILITIES.md` ya no esconde 34 módulos de la stdlib en «Otros»**. La tabla curada
+  `module_category` de `compiler/build.nx` no tenía 34 de los 78 módulos, entre ellos `serve`,
+  `postgres`, `error`, `math`, `map`, `router`, `template`, `xlsx`, `pdf` e `image`. Todos tienen ahora
+  categoría, y se suman dos categorías nuevas: «Núcleo» (`error`, `prelude`) e «IA & LLM». «Otros»
+  queda solo para builtins sin tema. Guarda nueva (d) en `run_capabilities_test.sh`: falla si un
+  módulo de `std/` cae en «Otros», así que un módulo nuevo entra a la tabla en el mismo commit que lo crea.
+
 - **El compilador ya no copia de forma cuadrática: un archivo de prueba grande de nyxerp compila 9 veces
   más rápido** `[arco: test-sin-repetir]` (fricción nyxerp, 2026-10-17: ~42 s por archivo de `nyx test`).
   La medición por fase mostró que el tiempo crecía más rápido que el IR, y un perfilador de muestreo

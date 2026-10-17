@@ -1,0 +1,4 @@
+fn main() {
+    let s: String = "a\x4"
+    print(s)
+}

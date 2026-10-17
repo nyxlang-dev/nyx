@@ -12,8 +12,8 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **510 archivos / 509 ARM64** | 2026-10-17: +1 (`493` operadores entre primitivos). 2026-10-09: +7 (`486..487` alcances de bloque, `488..492` defer). 2026-10-01: +14 (`472..485`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **367** | +5 el 2026-10-17 (NYX1010 entre primitivos: 2 errores, 3 avisos); +8 el 2026-10-08/09 (NYX1031, 1041-1044); +6 el 2026-09-29 (NYX2019); +6 el 09-27; +9 el 09-24; +24 el 09-23. Detalle en `CHANGELOG.md` |
+| Regression | `make test` | **511 archivos / 510 ARM64** | 2026-10-17: +2 (`493` operadores entre primitivos, `494` escapes). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **375** | +13 el 2026-10-17 (NYX1010: 2 errores y 3 avisos; NYX1045: 5 errores, 2 avisos y 1 NDJSON); +8 el 2026-10-08/09 (NYX1031, 1041-1044); +6 el 2026-09-29 (NYX2019); +6 el 09-27; +9 el 09-24; +24 el 09-23. Detalle en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **11** + verificación externa de zip | math + array + integración + template + multipart (serve al core, 2026-08-31) + oauth2 (2026-10-16) + smtp ×5 (+1 el 2026-10-01: hilo; +XOAUTH2 2026-10-16) (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
