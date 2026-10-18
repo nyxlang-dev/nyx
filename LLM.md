@@ -2678,9 +2678,15 @@ match smtp_connect_plain("smtp.provider.com", 587, "mine.com") {
 - **Dot-stuffing is handled for you.** A body line starting with `.` is sent
   doubled; without that the server ends the message there and delivers half of
   it, with no error anywhere.
-- **MIME scope**: text or HTML body plus base64 attachments. NO nested
-  multipart, NO quoted-printable, NO RFC 2047 filenames. A non-ASCII SUBJECT is
-  encoded (RFC 2047); an ASCII one is left alone.
+- **MIME scope**: text or HTML body (one part, 8bit) plus base64 attachments,
+  and `smtp_message_alternative(from, to, subject, text, html)` for a
+  multipart/alternative (text first, HTML second, both quoted-printable; with
+  `smtp_attach` it nests as mixed > alternative). Send BOTH versions: an
+  HTML-only mail is a spam signal (`MIME_HTML_ONLY`). The text is never derived
+  for you; if you only have HTML use `mime_html_to_text(html)` from `std/mime`.
+  An empty text is `Err("invalid")` at `smtp_send`. NO `multipart/related`
+  (`cid:` images), NO RFC 2047 filenames. A non-ASCII SUBJECT is encoded
+  (RFC 2047); an ASCII one is left alone.
 - **`smtp_render(msg)` is pure**: inspect or test the exact bytestream without
   opening a socket.
 - Error `kind`s are `connection`, `protocol`, `auth`, `sender`, `recipient`, `header` —
@@ -2727,6 +2733,50 @@ fn main() {
   `smtp_header(m, "Reply-To", "sales@mine.com")`.
 
 Recipe: `examples/by-example/113-smtp.nx`.
+
+### std/dns — TXT, CNAME and MX lookups
+
+`resolve()` only maps a name to an IPv4 address (`getaddrinfo`). To read **other record
+types** — typically SPF/DMARC (TXT) and DKIM (CNAME) before turning mail on — use
+`std/dns`: an RFC 1035 client written in Nyx over UDP, retried over TCP when the
+answer comes back truncated (`TC`). No link dependency (no libresolv, no `dig`).
+
+```nyx
+import "std/dns"
+
+match dns_txt("_dmarc.mine.com") {              // Array<String>, ONE element per record
+    Result.Ok(recs) => { ... }                  // multi-string records are already joined
+    Result.Err(e) => {
+        if dns_is_nxdomain(e) { ... }           // the name does not exist
+        else if dns_is_nodata(e) { ... }        // it exists but publishes no TXT
+        else { ... }                            // e.kind: timeout | connection | io | parse
+    }
+}
+let cn: Result<String, Error> = dns_cname("sel1._domainkey.mine.com")   // no trailing dot
+let mx: Result<Array, Error> = dns_mx("mine.com")        // [[pref, host], ...] ascending pref
+let raw: Result<Array, Error> = dns_query("mine.com", 16) // [[type, ttl, rdata], ...]
+```
+
+**Limits and things that will bite you:**
+
+- **NXDOMAIN vs NODATA are different answers** and both are `kind: "not_found"`: tell them
+  apart with `dns_is_nxdomain(e)` / `dns_is_nodata(e)` (codes 3 and 61), never by the message.
+  A `timeout` is code 110; `SERVFAIL`/`REFUSED` are `kind: "io"` with the RCODE as `code`.
+- **No cache, no IPv6, no `search`/`ndots`, no EDNS(0), no DNSSEC.** Pass full names
+  (`"mine.com"`, not `"mine"`). The answer is only as trustworthy as the channel: the
+  client checks a random 16-bit ID and the repeated question, nothing more.
+- **Servers**: up to 3 IPv4 `nameserver` lines of `/etc/resolv.conf` (IPv6 ones are skipped).
+  There are **no public default servers** (a query never leaves for the Internet unless the
+  operator's resolver sends it). Without any, the error is `not_found` code 2. **On
+  Windows there is no `resolv.conf`: call `dns_set_server("ip")` first.** In wasm every call
+  returns `Err` (no sockets).
+- Timeouts: 2 s per attempt, 2 attempts per server (`dns_set_timeout(seconds)`, 1..30). The
+  wait blocks the OS thread, not just the fiber.
+- `dns_cname` does not follow chains (it answers «what is the CNAME of this name»); `dns_txt`
+  and `dns_mx` return `Err` NODATA when the name has no record of that type even if the
+  answer carried other types.
+- It gives the **records, not the verdict**: evaluating `include:` in SPF or DKIM alignment
+  is up to you. Recipe: `examples/by-example/142-dns-spf-dkim-dmarc.nx`.
 
 ### std/mime — read incoming mail
 
@@ -3214,8 +3264,19 @@ API (all errors are `Result<_, Error>`; `Image`/`ImageInfo`/`ImageLimits` are st
   12 MP photo takes ~1.4 s natively. Result sizes round to nearest like `image_resize_fit`
   (Pillow's `thumbnail` floors: off by one pixel at most). Wasm has no GC: encode one
   photo at a time and keep inputs small.
-- Tests: `tests/compiler/stdlib-suite/test-475..482-image-*.nx`, `tests/wasm/test-wasm-55..57`,
-  recipe `examples/by-example/133-imagen-miniaturas.nx`.
+- **Scanned sheets (documents) do not get the reduced decode.** A letter page at 150 ppp
+  (1275x1650) or 300 ppp (2550x3300) going to 1600 px barely shrinks, and the "keep >= 2x the
+  target" rule leaves no room to reduce, so `image_thumbnail` decodes the whole page, shrinks a
+  little (`image_resize_fit` always resamples: contract unchanged) and re-encodes. Cost is
+  proportional to the page, not the target. CPU time of `image_thumbnail(page, 1600, 1600, 80)`:
+  1275x1650 = 1.0 s built with `nyx build` (clang `-O0`) / 0.25 s with `--release` (`-O2`);
+  2550x3300 = 2.4 s / 0.65 s. **A build without `--release` is ~4x slower than `--release`**
+  for this module: measure the way you ship. Previews (300 px) do reduce (1/2). The hot loops use
+  raw pointers (native 64-bit only; wasm32 falls back to `charAt` loops, same bytes). Benchmark:
+  `scripts/bench_image_thumb.nx`; fingerprints: test-497.
+- Tests: `tests/compiler/stdlib-suite/test-475..482-image-*.nx`, `test-497-image-rapido.nx`,
+  `tests/wasm/test-wasm-55..57`, recipes `examples/by-example/133-imagen-miniaturas.nx` and
+  `examples/by-example/140-imagen-hojas-escaneadas.nx`.
 
 ### std/zip, std/xml, std/xlsx — read and write .xlsx workbooks (pure Nyx, native and wasm)
 

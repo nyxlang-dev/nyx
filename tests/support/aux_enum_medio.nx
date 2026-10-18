@@ -1,0 +1,7 @@
+// Apoyo de test-498: NO importa std/pdf; le llega por aux_enum_hoja.
+import "tests/support/aux_enum_hoja"
+pub fn medio_uno() -> int {
+    let f: PdfFont = hoja_fuente()
+    if hoja_es_helvetica(f) { return 1 }
+    return 0
+}

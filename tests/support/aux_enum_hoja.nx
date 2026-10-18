@@ -1,0 +1,9 @@
+// Apoyo de test-498: importa std/pdf directo.
+import "std/pdf"
+pub fn hoja_fuente() -> PdfFont { return PdfFont.Helvetica }
+pub fn hoja_es_helvetica(f: PdfFont) -> bool {
+    match f {
+        PdfFont.Helvetica => { return true }
+        _ => { return false }
+    }
+}

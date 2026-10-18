@@ -1,0 +1,24 @@
+// test-498 — las variantes de un enum de UNA línea no dependen del camino del import.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-10-18): std/pdf declara
+// `pub enum PdfFont { Helvetica, ... }` en una sola línea. Cuando el módulo
+// llegaba primero por un import transitivo (main → aux_enum_medio →
+// aux_enum_hoja → std/pdf), el escaneo por líneas de semantic leía las
+// variantes en las líneas SIGUIENTES y registraba basura; como el primer
+// registro gana, `PdfFont.Helvetica` daba NYX2012 «has no variant» (y antes
+// de NYX2012, «unknown enum variant» en codegen). Con los imports al revés
+// compilaba. Un enum de varias líneas nunca falló.
+import "tests/support/aux_enum_medio"
+import "tests/support/aux_enum_otra"
+
+fn main() -> int {
+    let f: PdfFont = otra_fuente()
+    var ok: int = 0
+    match f {
+        PdfFont.Courier => { ok = 1 }
+        _ => { ok = 0 }
+    }
+    println("courier: " + int_to_string(ok))
+    println("medio: " + int_to_string(medio_uno()))
+    return 0
+}

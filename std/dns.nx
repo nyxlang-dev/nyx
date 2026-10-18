@@ -1,0 +1,590 @@
+// std/dns.nx — consultas DNS TXT, CNAME y MX (arco dns-registros).
+//
+// Cliente DNS propio (RFC 1035) escrito en Nyx sobre los sockets de std/net:
+// UDP con reintento por TCP si la respuesta viene truncada (bit TC). Sin
+// dependencias de enlace nuevas (decisión D-1 del GO: ni libresolv ni dig).
+// Motivo de existir: `resolve()` baja a getaddrinfo, que solo entiende de
+// direcciones; para verificar SPF (TXT), DKIM (CNAME) y DMARC (TXT) antes de
+// encender el correo hace falta pedir otros tipos de registro.
+//
+//   dns_txt(nombre)   -> Result<Array, Error>  Array<String>: UN elemento por
+//                        registro TXT (las cadenas de 255 bytes de un mismo
+//                        registro van UNIDAS, como exige RFC 7208 §3.3)
+//   dns_cname(nombre) -> Result<String, Error> el nombre canónico, sin punto
+//                        final. NO sigue cadenas de CNAME.
+//   dns_mx(nombre)    -> Result<Array, Error>  Array de [preferencia: int,
+//                        host: String] ordenado por preferencia ascendente
+//                        (host "" = «null MX», RFC 7505)
+//   dns_query(nombre, tipo) -> Result<Array, Error>  bajo nivel: la sección de
+//                        respuesta cruda, Array de [tipo, ttl, rdata]. rdata es
+//                        String para TXT (unido), CNAME/NS/PTR (nombre) y los
+//                        tipos que no se decodifican (bytes crudos); para MX
+//                        es [preferencia, host].
+//   dns_set_server(ip) / dns_set_timeout(segundos): configuración explícita.
+//
+// Errores (decisión D-3 A: kinds existentes, se distingue por `code`; usar los
+// helpers en vez de comparar números):
+//   NXDOMAIN (el nombre no existe)           not_found  code 3    dns_is_nxdomain
+//   NODATA   (existe, pero sin ese tipo)     not_found  code 61   dns_is_nodata
+//   sin respuesta a tiempo                   timeout    code 110
+//   SERVFAIL / REFUSED / otro RCODE          io         code = RCODE
+//   respuesta malformada o ID que no cuadra  parse
+//   sin red / servidor inalcanzable          connection (code = errno del socket)
+//   nombre o servidor inválido               invalid    code 22
+//   sin servidores configurados              not_found  code 2
+//
+// Qué NO hace (primer corte): sin caché, sin IPv6 (ni servidores ni AAAA), sin
+// `search`/`ndots` (pasar nombres completos), sin EDNS(0), sin DNSSEC (no hay
+// garantía más allá del canal: se verifican ID aleatorio de 16 bits y la
+// pregunta repetida, el puerto de origen lo elige el kernel). Servidores: hasta
+// 3 `nameserver` IPv4 de /etc/resolv.conf, sin servidores públicos por omisión;
+// en Windows (sin resolv.conf) hay que llamar dns_set_server. En wasm no hay
+// sockets: toda consulta devuelve Err.
+//
+// Plazos: dns_set_timeout (2 s por defecto) por intento, 2 intentos por
+// servidor. La granularidad es de segundo (SO_RCVTIMEO); la lectura bloquea el
+// hilo del sistema, no solo el fiber.
+
+import "std/error"
+import "std/net"
+import "std/fs"
+import "std/random"
+
+var __dns_server: String = ""
+var __dns_timeout: int = 2
+var __dns_port: int = 53
+var __dns_bind_port: int = 0
+
+// ---------------------------------------------------------------- errores
+
+fn __dns_err_parse(msg: String) -> Error { return err_new(0, "parse", "dns: " + msg) }
+fn __dns_err_id(msg: String) -> Error { return err_new(1, "parse", "dns: " + msg) }
+fn __dns_err_invalid(msg: String) -> Error { return err_new(22, "invalid", "dns: " + msg) }
+
+/// El nombre no existe (NXDOMAIN: not_found, code 3).
+pub fn dns_is_nxdomain(e: Error) -> bool {
+    return e.kind == "not_found" and e.code == 3
+}
+
+/// El nombre existe pero no tiene ese tipo de registro (NODATA: not_found, code 61).
+pub fn dns_is_nodata(e: Error) -> bool {
+    return e.kind == "not_found" and e.code == 61
+}
+
+// ---------------------------------------------------------------- bytes
+
+fn __dns_u16(p: String, i: int) -> int {
+    return p.charAt(i) * 256 + p.charAt(i + 1)
+}
+
+fn __dns_u32(p: String, i: int) -> int {
+    return ((p.charAt(i) * 256 + p.charAt(i + 1)) * 256 + p.charAt(i + 2)) * 256 + p.charAt(i + 3)
+}
+
+// ---------------------------------------------------------------- consulta
+
+// Nombre -> bytes de etiquetas (con el 0 final). Err si el nombre no cabe en
+// RFC 1035: etiqueta vacía o > 63 bytes, nombre > 253 caracteres.
+fn __dns_encode_name(name: String, out: Array) -> Result<int, Error> {
+    var n: String = name
+    if n.length() > 0 and n.charAt(n.length() - 1) == 46 {
+        n = n.substring(0, n.length() - 1)     // punto final (FQDN) permitido
+    }
+    if n.length() == 0 {
+        out.push(0)
+        return Result.Ok(0)                    // la raíz
+    }
+    if n.length() > 253 { return Result.Err(__dns_err_invalid("nombre de más de 253 bytes")) }
+    var start: int = 0
+    var i: int = 0
+    while i <= n.length() {
+        if i == n.length() or n.charAt(i) == 46 {
+            let l: int = i - start
+            if l == 0 { return Result.Err(__dns_err_invalid("etiqueta vacía en '" + name + "'")) }
+            if l > 63 { return Result.Err(__dns_err_invalid("etiqueta de más de 63 bytes")) }
+            out.push(l)
+            var k: int = start
+            while k < i {
+                out.push(n.charAt(k))
+                k = k + 1
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    out.push(0)
+    return Result.Ok(0)
+}
+
+// Cabecera de 12 bytes (RD=1, un QD) + QNAME + QTYPE + QCLASS=IN.
+/// INTERNO (tests): arma el paquete de consulta; usa dns_query/dns_txt/dns_cname/dns_mx.
+pub fn __dns_build_query(name: String, qtype: int, id: int) -> Result<String, Error> {
+    if qtype < 1 or qtype > 65535 { return Result.Err(__dns_err_invalid("tipo de registro fuera de rango")) }
+    if id < 0 or id > 65535 { return Result.Err(__dns_err_invalid("ID fuera de rango")) }
+    var b: Array = [id / 256, id % 256, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+    let r: Result<int, Error> = __dns_encode_name(name, b)
+    match r {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(_x) => {}
+    }
+    b.push(qtype / 256)
+    b.push(qtype % 256)
+    b.push(0)
+    b.push(1)
+    return Result.Ok(string_from_bytes(b, 0, b.length()))
+}
+
+// ---------------------------------------------------------------- respuesta
+
+// Lee un nombre (con compresión) en `start`. Devuelve [nombre, siguiente] con
+// siguiente = -1 si es inválido. Entrada hostil: tope de 16 saltos, nombre de a
+// lo más 255 bytes, toda lectura contra el largo del paquete.
+/// INTERNO (tests): lee un nombre con compresión; usa dns_query/dns_txt/dns_cname/dns_mx.
+pub fn __dns_read_name(p: String, start: int) -> Array {
+    let len: int = p.length()
+    var pos: int = start
+    var next: int = -1
+    var jumps: int = 0
+    var total: int = 0
+    var out: String = ""
+    var done: bool = false
+    while not done {
+        if pos < 0 or pos >= len { return ["", -1] }
+        let c: int = p.charAt(pos)
+        if c == 0 {
+            if next < 0 { next = pos + 1 }
+            done = true
+        } else if c >= 192 {
+            if pos + 1 >= len { return ["", -1] }
+            if next < 0 { next = pos + 2 }
+            jumps = jumps + 1
+            if jumps > 16 { return ["", -1] }
+            pos = (c - 192) * 256 + p.charAt(pos + 1)
+        } else if c >= 64 {
+            return ["", -1]                       // tipos de etiqueta reservados
+        } else {
+            if pos + 1 + c > len { return ["", -1] }
+            total = total + c + 1
+            if total > 255 { return ["", -1] }
+            if out.length() > 0 { out = out + "." }
+            out = out + p.substring(pos + 1, pos + 1 + c)
+            pos = pos + 1 + c
+        }
+    }
+    return [out, next]
+}
+
+// RDATA de TXT: cadenas con prefijo de largo, unidas.
+fn __dns_txt_join(p: String, rs: int, re: int) -> Result<String, Error> {
+    var i: int = rs
+    var out: String = ""
+    while i < re {
+        let l: int = p.charAt(i)
+        if i + 1 + l > re { return Result.Err(__dns_err_parse("cadena TXT que se sale del registro")) }
+        out = out + p.substring(i + 1, i + 1 + l)
+        i = i + 1 + l
+    }
+    return Result.Ok(out)
+}
+
+// Decodifica un paquete de respuesta. Éxito = [tc, registros]; con tc = 1 la
+// respuesta vino truncada y los registros están vacíos (hay que repetir por
+// TCP). `id` y `qname` ("" = no comprobar) validan que sea la respuesta a
+// NUESTRA pregunta. Errores: ID distinto (parse, code 1), malformada (parse,
+// code 0), NXDOMAIN (not_found 3), RCODE distinto de 0 (io, code = RCODE),
+// NODATA (not_found 61, respuesta sin ningún registro).
+/// INTERNO (tests): decodifica un paquete de respuesta; usa dns_query/dns_txt/dns_cname/dns_mx.
+pub fn __dns_parse_response(p: String, id: int, qname: String) -> Result<Array, Error> {
+    let len: int = p.length()
+    if len < 12 { return Result.Err(__dns_err_parse("paquete de menos de 12 bytes")) }
+    if id >= 0 and __dns_u16(p, 0) != id { return Result.Err(__dns_err_id("ID de respuesta distinto del de la consulta")) }
+    let flags: int = __dns_u16(p, 2)
+    if flags < 32768 { return Result.Err(__dns_err_parse("no es una respuesta (QR=0)")) }
+    let tc: int = (flags / 512) % 2
+    let rcode: int = flags % 16
+    let qd: int = __dns_u16(p, 4)
+    let an: int = __dns_u16(p, 6)
+    var pos: int = 12
+    var q: int = 0
+    while q < qd {
+        let nm: Array = __dns_read_name(p, pos)
+        let nx: int = nm[1]
+        if nx < 0 or nx + 4 > len { return Result.Err(__dns_err_parse("pregunta malformada")) }
+        if q == 0 and qname.length() > 0 {
+            var want: String = qname.to_lower()
+            if want.length() > 0 and want.charAt(want.length() - 1) == 46 { want = want.substring(0, want.length() - 1) }
+            let got: String = nm[0]
+            if got.to_lower() != want { return Result.Err(__dns_err_id("la pregunta repetida no es la enviada")) }
+        }
+        pos = nx + 4
+        q = q + 1
+    }
+    if tc == 1 { return Result.Ok([1, []]) }
+    if rcode == 3 { return Result.Err(err_new(3, "not_found", "dns: NXDOMAIN")) }
+    if rcode != 0 { return Result.Err(err_new(rcode, "io", "dns: el servidor respondió RCODE " + int_to_string(rcode))) }
+    if an == 0 { return Result.Err(err_new(61, "not_found", "dns: NODATA (el nombre existe pero no tiene ese tipo de registro)")) }
+    if an > (len - pos) / 11 + 1 { return Result.Err(__dns_err_parse("cuenta de registros mayor que el paquete")) }
+    var recs: Array = []
+    var i: int = 0
+    while i < an {
+        let nm: Array = __dns_read_name(p, pos)
+        let nx: int = nm[1]
+        if nx < 0 or nx + 10 > len { return Result.Err(__dns_err_parse("registro truncado")) }
+        let rtype: int = __dns_u16(p, nx)
+        let rclass: int = __dns_u16(p, nx + 2)
+        let ttl: int = __dns_u32(p, nx + 4)
+        let rdlen: int = __dns_u16(p, nx + 8)
+        let rs: int = nx + 10
+        let re: int = rs + rdlen
+        if re > len { return Result.Err(__dns_err_parse("RDLENGTH mayor que lo que queda del paquete")) }
+        if rclass == 1 {
+            if rtype == 16 {
+                let t: Result<String, Error> = __dns_txt_join(p, rs, re)
+                match t {
+                    Result.Err(e) => { return Result.Err(e) }
+                    Result.Ok(s) => { recs.push([rtype, ttl, s]) }
+                }
+            } else if rtype == 5 or rtype == 2 or rtype == 12 {
+                let t: Array = __dns_read_name(p, rs)
+                let tn: int = t[1]
+                if tn < 0 or tn > re { return Result.Err(__dns_err_parse("nombre de RDATA inválido")) }
+                recs.push([rtype, ttl, t[0]])
+            } else if rtype == 15 {
+                if rdlen < 3 { return Result.Err(__dns_err_parse("MX demasiado corto")) }
+                let t: Array = __dns_read_name(p, rs + 2)
+                let tn: int = t[1]
+                if tn < 0 or tn > re { return Result.Err(__dns_err_parse("host de MX inválido")) }
+                recs.push([rtype, ttl, [__dns_u16(p, rs), t[0]]])
+            } else {
+                recs.push([rtype, ttl, p.substring(rs, re)])
+            }
+        }
+        pos = re
+        i = i + 1
+    }
+    return Result.Ok([0, recs])
+}
+
+// ---------------------------------------------------------------- servidores
+
+fn __dns_is_ipv4(s: String) -> bool {
+    let parts: Array = s.split(".")
+    if parts.length() != 4 { return false }
+    var i: int = 0
+    while i < 4 {
+        let x: String = parts[i]
+        if x.length() == 0 or x.length() > 3 { return false }
+        var k: int = 0
+        while k < x.length() {
+            let c: int = x.charAt(k)
+            if c < 48 or c > 57 { return false }
+            k = k + 1
+        }
+        if string_to_int(x) > 255 { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Hasta 3 `nameserver` IPv4 de un texto estilo resolv.conf (los IPv6 se saltan).
+/// INTERNO (tests): extrae los nameserver de un resolv.conf; usa dns_query/dns_txt/dns_cname/dns_mx.
+pub fn __dns_parse_resolv(text: String) -> Array {
+    var out: Array = []
+    let lines: Array = text.split("\n")
+    var i: int = 0
+    while i < lines.length() {
+        let line: String = lines[i]
+        let t: String = line.trim()
+        if t.length() > 11 and t.substring(0, 10) == "nameserver" {
+            let rest: String = t.substring(10, t.length())
+            let first: int = rest.charAt(0)
+            if first == 32 or first == 9 {
+                let ip: String = rest.trim()
+                if __dns_is_ipv4(ip) and out.length() < 3 { out.push(ip) }
+            }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn __dns_servers() -> Result<Array, Error> {
+    if __dns_server.length() > 0 { return Result.Ok([__dns_server]) }
+    let r: Result<String, Error> = try_read_file("/etc/resolv.conf")
+    var text: String = ""
+    match r {
+        Result.Ok(s) => { text = s }
+        Result.Err(_e) => {}
+    }
+    let list: Array = __dns_parse_resolv(text)
+    if list.length() == 0 {
+        return Result.Err(err_new(2, "not_found", "dns: sin servidores: /etc/resolv.conf no tiene 'nameserver' IPv4 legible; usa dns_set_server(ip)"))
+    }
+    return Result.Ok(list)
+}
+
+/// Fija el servidor DNS (IPv4 numérica); "" vuelve a /etc/resolv.conf. Obligatorio en Windows.
+pub fn dns_set_server(ip: String) -> Result<int, Error> {
+    if ip.length() > 0 and not __dns_is_ipv4(ip) {
+        return Result.Err(__dns_err_invalid("el servidor debe ser una IPv4 numérica (o \"\" para volver a resolv.conf)"))
+    }
+    __dns_server = ip
+    return Result.Ok(0)
+}
+
+/// Plazo por intento en segundos (1..30, por omisión 2); 2 intentos por servidor.
+pub fn dns_set_timeout(secs: int) -> Result<int, Error> {
+    if secs < 1 or secs > 30 { return Result.Err(__dns_err_invalid("el plazo va de 1 a 30 segundos")) }
+    __dns_timeout = secs
+    return Result.Ok(0)
+}
+
+// ---------------------------------------------------------------- transporte
+
+// El Err{code:11, kind:"io"} de una lectura vencida (SO_RCVTIMEO) es un timeout.
+fn __dns_net_err(e: Error, what: String) -> Error {
+    if e.code == 11 { return err_new(110, "timeout", "dns: sin respuesta de " + what) }
+    if e.kind == "timeout" { return err_new(110, "timeout", "dns: sin respuesta de " + what) }
+    return err_new(e.code, "connection", "dns: " + what + ": " + e.msg)
+}
+
+fn __dns_udp_exchange(server: String, pkt: String, id: int, qname: String) -> Result<Array, Error> {
+    let b: Result<int, Error> = try_udp_bind("", __dns_bind_port)
+    var fd: int = -1
+    match b {
+        Result.Ok(f) => { fd = f }
+        Result.Err(e) => { return Result.Err(__dns_net_err(e, "udp_bind")) }
+    }
+    var res: Result<Array, Error> = Result.Err(err_new(110, "timeout", "dns: sin respuesta de " + server))
+    let _t: Result<int, Error> = try_tcp_set_timeout(fd, __dns_timeout)
+    let s: Result<int, Error> = try_udp_sendto(fd, pkt, server, __dns_port)
+    match s {
+        Result.Err(e) => { res = Result.Err(__dns_net_err(e, server)) }
+        Result.Ok(_n) => {
+            // Datagramas con otro ID (basura o suplantación) se descartan sin
+            // perder el plazo: hasta 4 lecturas por intento.
+            var k: int = 0
+            var go: bool = true
+            while go and k < 4 {
+                k = k + 1
+                let rr: Result<String, Error> = try_udp_recvfrom(fd, 4096)
+                match rr {
+                    Result.Err(e) => {
+                        res = Result.Err(__dns_net_err(e, server))
+                        go = false
+                    }
+                    Result.Ok(data) => {
+                        let pr: Result<Array, Error> = __dns_parse_response(data, id, qname)
+                        match pr {
+                            Result.Ok(v) => {
+                                res = Result.Ok(v)
+                                go = false
+                            }
+                            Result.Err(e) => {
+                                res = Result.Err(e)
+                                if not (e.kind == "parse" and e.code == 1) { go = false }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    tcp_close(fd)
+    return res
+}
+
+fn __dns_tcp_exchange(server: String, pkt: String, id: int, qname: String) -> Result<Array, Error> {
+    let c: Result<int, Error> = try_tcp_connect(server, __dns_port)
+    var fd: int = -1
+    match c {
+        Result.Ok(f) => { fd = f }
+        Result.Err(e) => { return Result.Err(__dns_net_err(e, server)) }
+    }
+    let _t: Result<int, Error> = try_tcp_set_timeout(fd, __dns_timeout)
+    var res: Result<Array, Error> = Result.Err(err_new(110, "timeout", "dns: sin respuesta de " + server))
+    let n: int = pkt.length()
+    let w: Result<int, Error> = try_tcp_write(fd, string_from_bytes([n / 256, n % 256], 0, 2) + pkt)
+    match w {
+        Result.Err(e) => { res = Result.Err(__dns_net_err(e, server)) }
+        Result.Ok(_w) => {
+            let h: Result<String, Error> = try_tcp_read_exact(fd, 2)
+            match h {
+                Result.Err(e) => { res = Result.Err(__dns_net_err(e, server)) }
+                Result.Ok(hd) => {
+                    let want: int = __dns_u16(hd, 0)
+                    if want < 12 {
+                        res = Result.Err(__dns_err_parse("largo TCP de respuesta inválido"))
+                    } else {
+                        let body: Result<String, Error> = try_tcp_read_exact(fd, want)
+                        match body {
+                            Result.Err(e) => { res = Result.Err(__dns_net_err(e, server)) }
+                            Result.Ok(data) => { res = __dns_parse_response(data, id, qname) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    tcp_close(fd)
+    return res
+}
+
+// Una pregunta a UN servidor: 2 intentos UDP (solo si el fallo es de red) y TCP si TC.
+fn __dns_ask(server: String, pkt: String, id: int, qname: String) -> Result<Array, Error> {
+    var last: Error = err_new(110, "timeout", "dns: sin respuesta de " + server)
+    var attempt: int = 0
+    while attempt < 2 {
+        attempt = attempt + 1
+        let r: Result<Array, Error> = __dns_udp_exchange(server, pkt, id, qname)
+        match r {
+            Result.Ok(v) => {
+                let tc: int = v[0]
+                if tc == 1 {
+                    let t: Result<Array, Error> = __dns_tcp_exchange(server, pkt, id, qname)
+                    match t {
+                        Result.Ok(tv) => {
+                            let tc2: int = tv[0]
+                            if tc2 == 1 { return Result.Err(__dns_err_parse("respuesta truncada también por TCP")) }
+                            return Result.Ok(tv)
+                        }
+                        Result.Err(e) => { return Result.Err(e) }
+                    }
+                }
+                return Result.Ok(v)
+            }
+            Result.Err(e) => {
+                last = e
+                // Solo el fallo de red se reintenta contra el mismo servidor.
+                if e.kind != "timeout" and e.kind != "connection" { return Result.Err(e) }
+            }
+        }
+    }
+    return Result.Err(last)
+}
+
+// ---------------------------------------------------------------- API pública
+
+/// Consulta cruda: devuelve la sección de respuesta como Array de [tipo, ttl, rdata].
+pub fn dns_query(name: String, qtype: int) -> Result<Array, Error> {
+    let id: int = random_int() % 65536
+    let pk: Result<String, Error> = __dns_build_query(name, qtype, id)
+    var pkt: String = ""
+    match pk {
+        Result.Ok(s) => { pkt = s }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    let sv: Result<Array, Error> = __dns_servers()
+    var servers: Array = []
+    match sv {
+        Result.Ok(a) => { servers = a }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    var last: Error = err_new(110, "timeout", "dns: sin respuesta")
+    var i: int = 0
+    while i < servers.length() {
+        let server: String = servers[i]
+        let r: Result<Array, Error> = __dns_ask(server, pkt, id, name)
+        match r {
+            Result.Ok(v) => { return Result.Ok(v[1]) }
+            Result.Err(e) => {
+                // Respuesta definitiva del nombre: no se pregunta a los demás.
+                if e.kind == "not_found" { return Result.Err(e) }
+                last = e
+            }
+        }
+        i = i + 1
+    }
+    return Result.Err(last)
+}
+
+fn __dns_nodata(name: String, what: String) -> Error {
+    return err_new(61, "not_found", "dns: NODATA (" + name + " no tiene registros " + what + ")")
+}
+
+/// Registros TXT: un String por registro (cadenas unidas). NXDOMAIN/NODATA: ver dns_is_nxdomain/dns_is_nodata.
+pub fn dns_txt(name: String) -> Result<Array, Error> {
+    let r: Result<Array, Error> = dns_query(name, 16)
+    match r {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(recs) => {
+            var out: Array = []
+            var i: int = 0
+            while i < recs.length() {
+                let rec: Array = recs[i]
+                if rec[0] == 16 { out.push(rec[2]) }
+                i = i + 1
+            }
+            if out.length() == 0 { return Result.Err(__dns_nodata(name, "TXT")) }
+            return Result.Ok(out)
+        }
+    }
+}
+
+/// CNAME del nombre, sin punto final (no sigue cadenas).
+pub fn dns_cname(name: String) -> Result<String, Error> {
+    let r: Result<Array, Error> = dns_query(name, 5)
+    match r {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(recs) => {
+            var i: int = 0
+            while i < recs.length() {
+                let rec: Array = recs[i]
+                if rec[0] == 5 {
+                    let target: String = rec[2]
+                    return Result.Ok(target)
+                }
+                i = i + 1
+            }
+            return Result.Err(__dns_nodata(name, "CNAME"))
+        }
+    }
+}
+
+/// MX del nombre: Array de [preferencia, host] ordenado por preferencia ascendente.
+pub fn dns_mx(name: String) -> Result<Array, Error> {
+    let r: Result<Array, Error> = dns_query(name, 15)
+    match r {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(recs) => {
+            var out: Array = []
+            var i: int = 0
+            while i < recs.length() {
+                let rec: Array = recs[i]
+                if rec[0] == 15 {
+                    // inserción estable por preferencia
+                    let item: Array = rec[2]
+                    let pref: int = item[0]
+                    var k: int = out.length()
+                    out.push(item)
+                    var moving: bool = true
+                    while moving and k > 0 {
+                        let prev: Array = out[k - 1]
+                        let pp: int = prev[0]
+                        if pp <= pref {
+                            moving = false
+                        } else {
+                            out[k] = prev
+                            out[k - 1] = item
+                            k = k - 1
+                        }
+                    }
+                }
+                i = i + 1
+            }
+            if out.length() == 0 { return Result.Err(__dns_nodata(name, "MX")) }
+            return Result.Ok(out)
+        }
+    }
+}
+
+// ---------------------------------------------------------------- ganchos de prueba
+//
+// NO son API. try_udp_recvfrom no devuelve el remitente del datagrama, así que un
+// servidor falso local no puede contestar a un puerto efímero: los tests fijan el
+// puerto de origen del cliente (bind_port) y el del servidor (port). Con los
+// valores por omisión (0 y 53) el comportamiento es el normal.
+/// INTERNO (tests): puerto del servidor DNS; no es API, usa dns_set_server.
+pub fn __dns_set_port(port: int) { __dns_port = port }
+/// INTERNO (tests): puerto de origen del cliente; no es API.
+pub fn __dns_set_bind_port(port: int) { __dns_bind_port = port }

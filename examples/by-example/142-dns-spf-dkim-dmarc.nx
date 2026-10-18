@@ -1,0 +1,155 @@
+// Nyx by Example: verificar SPF, DKIM y DMARC antes de enviar correo (std/dns).
+//
+// El caso real: una aplicación que va a mandar facturas por correo quiere
+// comprobar, desde sí misma, que el dominio del remitente tiene sus registros
+// DNS en regla, y mostrarle al administrador qué falta en lugar de dejar que
+// los mensajes caigan en spam:
+//   - SPF   : un registro TXT del dominio que empieza por "v=spf1";
+//   - DKIM  : el CNAME (o TXT) de «<selector>._domainkey.<dominio>»;
+//   - DMARC : un registro TXT de «_dmarc.<dominio>» que empieza por "v=DMARC1".
+//
+// Lo que muestra:
+//   - dns_txt devuelve UN elemento por registro (las cadenas de 255 bytes de un
+//     registro largo ya vienen unidas), así que basta buscar el prefijo;
+//   - distinguir «el nombre no existe» (NXDOMAIN) de «existe pero no publicó ese
+//     registro» (NODATA) con dns_is_nxdomain / dns_is_nodata, sin leer mensajes;
+//   - separar la LÓGICA de comprobar (funciones puras sobre los registros) de la
+//     consulta de red, para probarla sin red;
+//   - este módulo da los registros, no el veredicto: evaluar `include:` de SPF o
+//     la alineación de DKIM es trabajo de quien lo usa.
+//
+// Correr:  nyx run                       (sin argumentos: demostración sin red)
+//          nyx run -- midominio.com sel1 (consulta el DNS real del sistema)
+// Sin `nameserver` en /etc/resolv.conf (o en Windows) llamar antes a
+// dns_set_server("ip").
+
+import "std/dns"
+import "std/error"
+
+// ---- lógica pura: no toca la red
+
+fn tiene_prefijo(s: String, pref: String) -> bool {
+    if s.length() < pref.length() { return false }
+    return s.substring(0, pref.length()).to_lower() == pref.to_lower()
+}
+
+// El primer registro cuyo texto empieza por `pref`, o "" si ninguno.
+fn buscar(recs: Array, pref: String) -> String {
+    var i: int = 0
+    while i < recs.length() {
+        let r: String = recs[i]
+        if tiene_prefijo(r.trim(), pref) { return r.trim() }
+        i = i + 1
+    }
+    return ""
+}
+
+// La política de un registro DMARC: «p=reject; rua=...» -> "reject".
+fn dmarc_politica(registro: String) -> String {
+    let partes: Array = registro.split(";")
+    var i: int = 0
+    while i < partes.length() {
+        let p: String = partes[i]
+        let t: String = p.trim()
+        if tiene_prefijo(t, "p=") { return t.substring(2, t.length()).trim() }
+        i = i + 1
+    }
+    return ""
+}
+
+// Informe de un dominio a partir de lo que devolvió el DNS (o "" si no hay).
+fn informe(spf: String, dkim: String, dmarc: String) -> Array {
+    var out: Array = []
+    if spf == "" { out.push("SPF: falta el registro TXT 'v=spf1 ...' del dominio") }
+    else { out.push("SPF: ok (" + spf + ")") }
+    if dkim == "" { out.push("DKIM: falta el registro del selector") }
+    else { out.push("DKIM: ok (apunta a " + dkim + ")") }
+    if dmarc == "" {
+        out.push("DMARC: falta el registro TXT de _dmarc")
+    } else {
+        let pol: String = dmarc_politica(dmarc)
+        if pol == "none" { out.push("DMARC: presente pero p=none (solo monitorea, no protege)") }
+        else { out.push("DMARC: ok (p=" + pol + ")") }
+    }
+    return out
+}
+
+// ---- consulta de red: cada pieza distingue «no existe» de «no publicó»
+
+// Los TXT de un nombre, o [] si no hay (NXDOMAIN o NODATA); Err solo por fallos reales.
+fn txt_o_vacio(nombre: String) -> Result<Array, Error> {
+    let r: Result<Array, Error> = dns_txt(nombre)
+    match r {
+        Result.Ok(v) => { return Result.Ok(v) }
+        Result.Err(e) => {
+            if dns_is_nxdomain(e) or dns_is_nodata(e) { return Result.Ok([]) }
+            return Result.Err(e)
+        }
+    }
+}
+
+fn consultar(dominio: String, selector: String) -> Result<Array, Error> {
+    let spf_recs: Result<Array, Error> = txt_o_vacio(dominio)
+    var spf: String = ""
+    match spf_recs {
+        Result.Ok(v) => { spf = buscar(v, "v=spf1") }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+
+    // DKIM: normalmente un CNAME hacia el proveedor; algunos publican el TXT directo.
+    var dkim: String = ""
+    let nombre_dkim: String = selector + "._domainkey." + dominio
+    let c: Result<String, Error> = dns_cname(nombre_dkim)
+    match c {
+        Result.Ok(destino) => { dkim = destino }
+        Result.Err(e) => {
+            if not (dns_is_nxdomain(e) or dns_is_nodata(e)) { return Result.Err(e) }
+            let t: Result<Array, Error> = txt_o_vacio(nombre_dkim)
+            match t {
+                Result.Ok(v) => {
+                    if buscar(v, "v=dkim1") != "" { dkim = "un registro TXT" }
+                }
+                Result.Err(e2) => { return Result.Err(e2) }
+            }
+        }
+    }
+
+    let dm: Result<Array, Error> = txt_o_vacio("_dmarc." + dominio)
+    var dmarc: String = ""
+    match dm {
+        Result.Ok(v) => { dmarc = buscar(v, "v=dmarc1") }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    return Result.Ok(informe(spf, dkim, dmarc))
+}
+
+fn imprimir(lineas: Array) {
+    var i: int = 0
+    while i < lineas.length() {
+        print(lineas[i])
+        i = i + 1
+    }
+}
+
+fn main() {
+    let args: Array = get_args()
+    if args.length() > 1 {
+        let dominio: String = args[1]
+        var selector: String = "default"
+        if args.length() > 2 { selector = args[2] }
+        match consultar(dominio, selector) {
+            Result.Ok(lineas) => { imprimir(lineas) }
+            Result.Err(e) => { print("no se pudo consultar el DNS: " + e.msg) }
+        }
+        return
+    }
+
+    // Demostración sin red: lo que devolvería el DNS de un dominio bien configurado
+    // y de uno a medias.
+    print("== dominio completo")
+    imprimir(informe("v=spf1 include:_spf.proveedor.com -all", "sel1.dkim.proveedor.com", "v=DMARC1; p=reject; rua=mailto:dmarc@mine.com"))
+    print("== dominio a medias")
+    imprimir(informe("v=spf1 -all", "", "v=DMARC1; p=none"))
+    print("== sin nada")
+    imprimir(informe("", "", ""))
+}

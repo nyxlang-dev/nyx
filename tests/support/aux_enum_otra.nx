@@ -1,0 +1,3 @@
+// Apoyo de test-498: importa std/pdf directo, pero DESPUÉS en el orden de main.
+import "std/pdf"
+pub fn otra_fuente() -> PdfFont { return PdfFont.Courier }

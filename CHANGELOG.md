@@ -11,6 +11,34 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`std/dns`: consultas TXT, CNAME y MX** `[arco: dns-registros]` (pedido de nyxerp, 2026-10-18, para
+  revisar SPF, DKIM y DMARC antes de encender el correo). Módulo nuevo con cliente DNS propio en Nyx
+  (RFC 1035) sobre UDP, con reintento por TCP si la respuesta viene truncada y sin dependencias de enlace.
+  - `dns_txt` (un String por registro), `dns_cname`, `dns_mx` (ordenado por preferencia), `dns_query`
+    crudo, `dns_set_server`, `dns_set_timeout`, `dns_is_nxdomain` y `dns_is_nodata`.
+  - Errores `Result<_, Error>`: NXDOMAIN `not_found` 3, NODATA `not_found` 61, `timeout` 110,
+    SERVFAIL/REFUSED `io`, `parse`.
+  - Parser de entrada hostil: tope de 16 saltos de compresión, nombres de 255 bytes, ID aleatorio y
+    pregunta verificados. Servidores desde `/etc/resolv.conf` (hasta 3 IPv4); en Windows exige
+    `dns_set_server`. Sin caché, IPv6, EDNS(0) ni DNSSEC.
+  - Verificado contra la red real (SPF y DMARC de gmail.com, 17 TXT de google.com por TCP).
+  - Tests `test-499-dns` (paquetes fijos), `test-500-dns-servidor` (servidor falso UDP/TCP) y
+    `test-501-dns-red-real` (SKIP sin red); receta `142-dns-spf-dkim-dmarc`.
+- **`std/smtp`: correo con texto y HTML (`multipart/alternative`)** `[arco: smtp-alternative]` (pedido de
+  nyxerp, 2026-10-18). `smtp_message_alternative(de, para, asunto, texto, html)`: texto primero y HTML
+  después (RFC 2046), cada parte en quoted-printable (RFC 2045 §6.7). Con `smtp_attach` sale
+  `multipart/mixed` › `alternative` + adjuntos, con boundaries distintos y dot-stuffing por parte.
+  `smtp_message` y `smtp_message_html` no cambian un byte. Test `test-stdlib-12-smtp-alternative`
+  (incluye vuelta completa por `mime_parse`) y receta `141-smtp-texto-y-html`.
+- **`std/image`: miniaturas de hojas escaneadas en décimas de segundo** `[arco: image-rapido]` (fricción
+  nyxerp, 2026-10-18), con la salida idéntica byte a byte (sigue igual a Pillow).
+  - Resize, decodificador y codificador JPEG leen y escriben por punteros en nativo de 64 bits; wasm32
+    conserva las versiones anteriores, y las dos rutas dan los mismos bytes.
+  - Hoja de 1275×1650, tiempo de CPU de `image_thumbnail`: 3,6 s → 1,0 s con `nyx build` (clang `-O0`)
+    y 0,92 s → 0,25 s con `--release` (`-O2`). En 2550×3300: 8,6 s → 2,4 s y 2,3 s → 0,65 s.
+  - Buena parte de los 3,5 s reportados era compilar sin `--release`.
+  - Test `test-497-image-rapido` (huellas CRC32 fijadas antes de optimizar), receta
+    `140-imagen-hojas-escaneadas` y `scripts/bench_image_thumb.nx`.
 - **`std/xlsx`: listas desplegables y color de relleno** `[arco: xlsx-validacion]` (pedido de nyxerp,
   2026-10-17, para plantillas de carga masiva).
   - `XlsxSheetOut.validate_list(rango, valores)` y `validate_list_range(rango, origen)` emiten
@@ -46,6 +74,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Las variantes de un enum de una sola línea ya no dependen del camino del import** (fricción nyxerp,
+  2026-10-18). `std/pdf` declara `pub enum PdfFont { Helvetica, … }` en una línea; cuando llegaba primero por
+  un import transitivo, el escaneo por líneas de `semantic` buscaba las variantes en las líneas siguientes
+  y registraba basura. Como el primer registro gana, `PdfFont.Helvetica` daba NYX2012 «has no variant» (el
+  chequeo de NYX2012 en expresiones, nuevo en esta versión, lo hizo visible; antes fallaba en codegen
+  con «unknown enum variant»). Con los imports al revés compilaba. Regresión: `test-498`.
 - **`std/smtp` verifica contra las CAs del sistema** (fricción nyxerp, 2026-10-18). `smtp_starttls` (587) y
   `smtp_connect_tls` (465) verificaban contra el almacén de `tls_set_ca_file`, que arranca vacío: todo relé
   público con certificado válido daba «unknown ca». El rodeo, `tls_set_ca_file("")`, sumaba todas las CAs

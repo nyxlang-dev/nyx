@@ -1,0 +1,104 @@
+// Nyx by Example: miniaturas de documentos escaneados (hojas carta) con std/image.
+//
+// El caso real: nyxerp recibe hojas escaneadas (1275 x 1650 a 150 ppp, 2550 x 3300 a 300 ppp)
+// y genera una versión liviana de cada una al subirla. Una hoja NO es una foto de 12
+// megapíxeles: la «miniatura» que se quiere es de 1600 px de lado, o sea casi el tamaño de
+// origen. Eso cambia qué esperar de std/image:
+//
+//   - La decodificación reducida (1/2, 1/4, 1/8) que usan las fotos NO entra acá: la regla es
+//     «reducir mientras queden al menos el doble de píxeles que el destino», y 1650 -> 1600
+//     no deja margen para reducir nada. Se decodifica la hoja entera, se achica poco (Lanczos3,
+//     byte a byte igual a Pillow) y se vuelve a codificar. El trabajo es proporcional a la hoja,
+//     no al destino.
+//   - Por eso importa cómo se compila. `nyx build` sin --release no optimiza (clang -O0) y
+//     `nyx build --release` pasa -O2. Tiempos medidos en la hoja de 1275 x 1650 (aarch64, CPU):
+//
+//         image_thumbnail(hoja, 1600, 1600, 80)   -O0 ~1,0 s     -O2 ~0,25 s
+//         decodificar                             -O0 ~0,37 s    -O2 ~0,09 s
+//         image_resize_fit a 1600                 -O0 ~0,28 s    -O2 ~0,08 s
+//         codificar JPEG q80                      -O0 ~0,34 s    -O2 ~0,075 s
+//
+//     La hoja de 2550 x 3300 cuesta ~4 veces eso. Antes del arco image-rapido el mismo
+//     image_thumbnail tardaba 3,6 s en -O0 (y 8,6 s de CPU la hoja grande).
+//   - Para una vista previa chica (ej. 300 px) sí hay reducción: una hoja de 1275 x 1650 se
+//     decodifica a 1/2 y sale en una fracción del tiempo.
+//
+// La hoja de ejemplo se fabrica acá mismo (papel blanco con renglones de «texto»), para que la
+// receta no dependa de un archivo: en la vida real son los bytes que llegaron por multipart.
+
+import "std/image"
+import "std/error"
+
+// Una hoja carta: fondo blanco y bandas oscuras que imitan renglones de texto.
+fn hoja_de_prueba(ancho: int, alto: int) -> Image {
+    let blanca: String = " ".repeat(ancho * 3)
+    var filas: Array = []
+    var y: int = 0
+    while y < alto {
+        if (y / 6) % 5 == 0 and y > alto / 10 and y < alto - alto / 10 {
+            var px: Array = []
+            var x: int = 0
+            while x < ancho {
+                var v: int = 255
+                if x > ancho / 8 and x < ancho - ancho / 8 and (x / 9) % 4 != 3 { v = 30 }
+                px.push(v)
+                px.push(v)
+                px.push(v)
+                x = x + 1
+            }
+            filas.push(string_from_bytes(px, 0, ancho * 3))
+        } else {
+            filas.push(blanca)
+        }
+        y = y + 1
+    }
+    return Image { width: ancho, height: alto, channels: 3, rows: filas, icc: "", reduction: 1 }
+}
+
+fn medidas(bytes: String) -> String {
+    match image_info(bytes) {
+        Result.Ok(i) => { return i.format + " " + int_to_string(i.width) + "x" + int_to_string(i.height) }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+fn main() -> int {
+    // La hoja «escaneada»: 1275 x 1650 a calidad 85.
+    var hoja: String = ""
+    match image_encode_jpeg(hoja_de_prueba(1275, 1650), 85) {
+        Result.Ok(b) => { hoja = b }
+        Result.Err(e) => { println("no se pudo armar la hoja: " + e.msg) }
+    }
+    println("hoja: " + medidas(hoja) + ", " + int_to_string(hoja.length()) + " bytes")
+
+    // 1. La versión liviana para guardar: cabe en 1600 x 1600. No hay reducción posible.
+    match image_thumbnail(hoja, 1600, 1600, 80) {
+        Result.Ok(t) => { println("guardar: " + medidas(t) + ", " + int_to_string(t.length()) + " bytes") }
+        Result.Err(e) => { println("error: " + e.kind + ": " + e.msg) }
+    }
+
+    // 2. Cuánto reduce al decodificar cada destino. Para 1600 px: nada (reduction 1). Para una
+    //    vista previa de 300 px el destino ×2 es 600 x 600 y la hoja se decodifica a 1/2.
+    for lado: int in [1600, 300] {
+        match image_decode_min(hoja, image_limits(), lado * 2, lado * 2) {
+            Result.Ok(img) => {
+                println("destino " + int_to_string(lado) + ": decodifica a " + int_to_string(img.width) + "x" + int_to_string(img.height) + " (reducción 1/" + int_to_string(img.reduction) + ")")
+            }
+            Result.Err(e) => { println("error: " + e.kind + ": " + e.msg) }
+        }
+    }
+
+    // 3. Varios tamaños de UNA decodificación: el de guardar y la vista previa.
+    match image_thumbnails(hoja, [[1600, 1600], [300, 300]], 80) {
+        Result.Ok(salidas) => {
+            for s: String in salidas {
+                println("salida: " + medidas(s) + ", " + int_to_string(s.length()) + " bytes")
+            }
+        }
+        Result.Err(e) => { println("error: " + e.kind + ": " + e.msg) }
+    }
+
+    // 4. La hoja de 2550 x 3300 (300 ppp) hace lo mismo con 4 veces los píxeles: ~4 veces el
+    //    tiempo de la tabla de arriba. Para medir en tu máquina: monotonic_ms() antes y después.
+    return 0
+}

@@ -1,0 +1,281 @@
+// test-500 — std/dns de punta a punta contra un servidor DNS falso local
+// (UDP + TCP en 127.0.0.1:17499, en hilos), sin red real.
+//
+// try_udp_recvfrom no devuelve el remitente, así que el servidor falso no puede
+// contestar a un puerto efímero: el cliente fija su puerto de origen (17498) con
+// el gancho __dns_set_bind_port, y el servidor le contesta ahí. El resto del
+// camino (ID aleatorio, pregunta, parseo, reintentos, TCP si TC) es el real.
+//
+// Lo que se puede romper sin que nada falle a la vista:
+//   - TXT multicadena unido y MX ordenado por preferencia (el servidor las
+//     entrega desordenadas);
+//   - un datagrama con OTRO ID (suplantación) no debe aceptarse ni hacer perder
+//     la respuesta verdadera que llega después;
+//   - el bit TC debe repetir la pregunta por TCP (con prefijo de 2 bytes);
+//   - un servidor mudo es `timeout` code 110, no un `io` code 11 de SO_RCVTIMEO.
+
+import "std/dns"
+import "std/net"
+import "std/error"
+
+let g_port: int = 17499
+let g_cport: int = 17498
+var g_ready: Map = Map.new()
+var g_done: Map = Map.new()
+
+fn hv(c: int) -> int {
+    if c >= 48 and c <= 57 { return c - 48 }
+    return c - 87
+}
+
+fn hx(s: String) -> String {
+    let parts: Array = s.split(" ")
+    var b: Array = []
+    var i: int = 0
+    while i < parts.length() {
+        let t: String = parts[i]
+        if t.length() == 2 { b.push(hv(t.charAt(0)) * 16 + hv(t.charAt(1))) }
+        i = i + 1
+    }
+    return string_from_bytes(b, 0, b.length())
+}
+
+// Respuesta: ID del cliente + flags + 1 pregunta + N respuestas + la pregunta repetida.
+fn build_reply(id: String, flags: String, an: String, question: String, answers: String) -> String {
+    return id + hx(flags + " 00 01 " + an + " 00 00 00 00") + question + hx(answers)
+}
+
+// Los registros que el servidor sirve según el nombre (c0 0c = nombre de la pregunta).
+fn answers_for(name: String) -> String {
+    if name == "txt.test" or name == "tcp.test" {
+        return "c0 0c 00 10 00 01 00 00 00 3c 00 0c 0b 76 3d 73 70 66 31 20 2d 61 6c 6c"
+            + " c0 0c 00 10 00 01 00 00 00 3c 00 06 02 61 62 02 63 64"
+    }
+    if name == "cname.test" {
+        return "c0 0c 00 05 00 01 00 00 01 2c 00 11 03 73 65 6c 07 65 78 61 6d 70 6c 65 03 6e 65 74 00"
+    }
+    if name == "mx.test" {
+        return "c0 0c 00 0f 00 01 00 00 00 3c 00 08 00 14 03 6d 78 32 c0 0c"
+            + " c0 0c 00 0f 00 01 00 00 00 3c 00 08 00 05 03 6d 78 31 c0 0c"
+            + " c0 0c 00 0f 00 01 00 00 00 3c 00 08 00 0a 03 6d 78 33 c0 0c"
+    }
+    if name == "spoof.test" {
+        return "c0 0c 00 10 00 01 00 00 00 3c 00 05 04 72 65 61 6c"
+    }
+    return ""
+}
+
+fn answer_count(name: String) -> String {
+    if name == "txt.test" or name == "tcp.test" { return "00 02" }
+    if name == "mx.test" { return "00 03" }
+    if name == "cname.test" or name == "spoof.test" { return "00 01" }
+    return "00 00"
+}
+
+fn flags_for(name: String) -> String {
+    if name == "nx.test" { return "81 83" }
+    if name == "fail.test" { return "81 82" }
+    if name == "tc.test" { return "83 80" }
+    return "81 80"
+}
+
+fn udp_server() -> int {
+    let sfd: int = udp_bind("127.0.0.1", g_port)
+    channel_send(g_ready, 1)
+    var run: bool = true
+    while run {
+        let q: String = udp_recvfrom(sfd, 512)
+        let nm: Array = __dns_read_name(q, 12)
+        let name: String = nm[0]
+        let id: String = q.substring(0, 2)
+        let question: String = q.substring(12, q.length())
+        if name == "silent.test" {
+            // no contesta: el cliente debe vencer por plazo
+        } else if name == "spoof.test" {
+            // primero un datagrama con otro ID y otra carga, luego el verdadero
+            let bad: String = string_from_bytes([(id.charAt(0) + 1) % 256, id.charAt(1)], 0, 2)
+            udp_sendto(sfd, build_reply(bad, "81 80", "00 01", question,
+                "c0 0c 00 10 00 01 00 00 00 3c 00 06 05 66 61 6c 73 6f"), "127.0.0.1", g_cport)
+            udp_sendto(sfd, build_reply(id, "81 80", "00 01", question, answers_for(name)), "127.0.0.1", g_cport)
+        } else {
+            udp_sendto(sfd, build_reply(id, flags_for(name), answer_count(name), question, answers_for(name)), "127.0.0.1", g_cport)
+            if name == "end.test" { run = false }
+        }
+    }
+    tcp_close(sfd)
+    channel_send(g_done, 1)
+    return 0
+}
+
+// Atiende UNA conexión TCP: la reconsulta de tc.test. Sirve «tcp.test» (dos TXT)
+// sea cual sea el nombre pedido, con el ID y la pregunta del cliente.
+fn tcp_server() -> int {
+    let srv: int = tcp_listen("127.0.0.1", g_port)
+    channel_send(g_ready, 1)
+    let cli: int = tcp_accept(srv)
+    let h: Result<String, Error> = try_tcp_read_exact(cli, 2)
+    match h {
+        Result.Ok(hd) => {
+            let n: int = hd.charAt(0) * 256 + hd.charAt(1)
+            let b: Result<String, Error> = try_tcp_read_exact(cli, n)
+            match b {
+                Result.Ok(q) => {
+                    let id: String = q.substring(0, 2)
+                    let question: String = q.substring(12, q.length())
+                    let data: String = build_reply(id, "81 80", "00 02", question, answers_for("tcp.test"))
+                    let m: int = data.length()
+                    tcp_write(cli, string_from_bytes([m / 256, m % 256], 0, 2) + data)
+                }
+                Result.Err(_e) => {}
+            }
+        }
+        Result.Err(_e) => {}
+    }
+    tcp_close(cli)
+    tcp_close(srv)
+    channel_send(g_done, 1)
+    return 0
+}
+
+fn expect_err_kind(r: Result<Array, Error>, kind: String, code: int) {
+    match r {
+        Result.Ok(_v) => {
+            print("se esperaba Err " + kind)
+            assert(false)
+        }
+        Result.Err(e) => {
+            if e.kind != kind or e.code != code {
+                print("Err inesperado: " + e.kind + " " + int_to_string(e.code) + " " + e.msg)
+            }
+            assert(e.kind == kind)
+            assert(e.code == code)
+        }
+    }
+}
+
+fn main() {
+    g_ready = channel_new(2)
+    g_done = channel_new(2)
+    thread_spawn(udp_server)
+    thread_spawn(tcp_server)
+    let _r1: int = channel_recv(g_ready)
+    let _r2: int = channel_recv(g_ready)
+
+    // configuración inválida: no cambia nada y no abre sockets
+    let bad1: Result<int, Error> = dns_set_server("::1")
+    match bad1 {
+        Result.Ok(_v) => { assert(false) }
+        Result.Err(e) => { assert(e.kind == "invalid") }
+    }
+    let bad2: Result<int, Error> = dns_set_server("999.1.1.1")
+    match bad2 {
+        Result.Ok(_v) => { assert(false) }
+        Result.Err(e) => { assert(e.kind == "invalid") }
+    }
+    let bad3: Result<int, Error> = dns_set_timeout(0)
+    match bad3 {
+        Result.Ok(_v) => { assert(false) }
+        Result.Err(e) => { assert(e.kind == "invalid") }
+    }
+    let _s: Result<int, Error> = dns_set_server("127.0.0.1")
+    let _t: Result<int, Error> = dns_set_timeout(1)
+    __dns_set_port(g_port)
+    __dns_set_bind_port(g_cport)
+    print("config ok")
+
+    // TXT: un elemento por registro, cadenas unidas
+    let t: Result<Array, Error> = dns_txt("txt.test")
+    match t {
+        Result.Ok(v) => {
+            assert(v.length() == 2)
+            assert(v[0] == "v=spf1 -all")
+            assert(v[1] == "abcd")
+        }
+        Result.Err(e) => { print(e.msg); assert(false) }
+    }
+
+    // CNAME sin punto final; y pedir CNAME de un nombre que solo tiene TXT es NODATA
+    let c: Result<String, Error> = dns_cname("cname.test")
+    match c {
+        Result.Ok(v) => { assert(v == "sel.example.net") }
+        Result.Err(e) => { print(e.msg); assert(false) }
+    }
+    let c2: Result<String, Error> = dns_cname("txt.test")
+    match c2 {
+        Result.Ok(_v) => { assert(false) }
+        Result.Err(e) => { assert(dns_is_nodata(e)) }
+    }
+
+    // MX ordenado por preferencia
+    let m: Result<Array, Error> = dns_mx("mx.test")
+    match m {
+        Result.Ok(v) => {
+            assert(v.length() == 3)
+            let a: Array = v[0]
+            let b: Array = v[1]
+            let d: Array = v[2]
+            assert(a[0] == 5 and a[1] == "mx1.mx.test")
+            assert(b[0] == 10 and b[1] == "mx3.mx.test")
+            assert(d[0] == 20 and d[1] == "mx2.mx.test")
+        }
+        Result.Err(e) => { print(e.msg); assert(false) }
+    }
+
+    // dns_query crudo
+    let qr: Result<Array, Error> = dns_query("txt.test", 16)
+    match qr {
+        Result.Ok(v) => {
+            let r0: Array = v[0]
+            assert(r0[0] == 16)
+            assert(r0[1] == 60)
+            assert(r0[2] == "v=spf1 -all")
+        }
+        Result.Err(_e) => { assert(false) }
+    }
+    print("registros ok")
+
+    // errores
+    expect_err_kind(dns_query("nx.test", 16), "not_found", 3)
+    expect_err_kind(dns_query("nodata.test", 16), "not_found", 61)
+    expect_err_kind(dns_query("fail.test", 16), "io", 2)
+    expect_err_kind(dns_query("a..b", 16), "invalid", 22)
+    let nx: Result<Array, Error> = dns_txt("nx.test")
+    match nx {
+        Result.Ok(_v) => { assert(false) }
+        Result.Err(e) => { assert(dns_is_nxdomain(e) and not dns_is_nodata(e)) }
+    }
+    print("errores ok")
+
+    // suplantación: el datagrama con otro ID se descarta y se acepta el verdadero
+    let sp: Result<Array, Error> = dns_txt("spoof.test")
+    match sp {
+        Result.Ok(v) => {
+            assert(v.length() == 1)
+            assert(v[0] == "real")
+        }
+        Result.Err(e) => { print(e.msg); assert(false) }
+    }
+    print("suplantacion ok")
+
+    // TC por UDP -> la reconsulta por TCP trae la respuesta completa
+    let tc: Result<Array, Error> = dns_txt("tc.test")
+    match tc {
+        Result.Ok(v) => {
+            assert(v.length() == 2)
+            assert(v[0] == "v=spf1 -all")
+            assert(v[1] == "abcd")
+        }
+        Result.Err(e) => { print(e.msg); assert(false) }
+    }
+    print("tcp ok")
+
+    // servidor mudo: 2 intentos de 1 s y luego timeout (code 110, no el 11 de SO_RCVTIMEO)
+    expect_err_kind(dns_query("silent.test", 16), "timeout", 110)
+    print("timeout ok")
+
+    // cierre del servidor UDP (contesta una última vez y termina)
+    let _e: Result<Array, Error> = dns_query("end.test", 16)
+    let _d1: int = channel_recv(g_done)
+    let _d2: int = channel_recv(g_done)
+    print("servidor falso ok")
+}

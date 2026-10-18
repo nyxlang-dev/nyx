@@ -536,10 +536,13 @@ fn __smtp_veredicto_auth(r: Array) -> Result<int, Error> {
 
 // ── El mensaje ────────────────────────────────────────────────────────────
 //
-// Alcance MIME (D-2): texto o HTML, y adjuntos binarios con base64 +
-// Content-Type + Content-Disposition. Sin multipart anidado, sin
-// quoted-printable y sin nombres de archivo RFC 2047. El asunto no-ASCII SÍ se
-// codifica: es una línea, y en castellano pasa siempre.
+// Alcance MIME: texto o HTML (una sola parte, 8bit como siempre), la alternativa
+// texto+HTML (multipart/alternative, anidada en multipart/mixed si hay adjuntos,
+// con las dos partes en quoted-printable) y adjuntos binarios con base64 +
+// Content-Type + Content-Disposition. Sin nombres de archivo RFC 2047. Los
+// mensajes de una sola parte NO usan quoted-printable (conservan sus bytes; se
+// migrarán aparte). El asunto no-ASCII SÍ se codifica: es una línea, y en
+// castellano pasa siempre.
 //
 // ── DOT-STUFFING, el bug clásico del protocolo ────────────────────────────
 // El cuerpo termina con una línea que dice solo ".". Entonces una línea del
@@ -554,6 +557,7 @@ const SMTP_MSG_FROM: int = 0
 const SMTP_MSG_TO: int = 1
 const SMTP_MSG_SUBJECT: int = 2
 const SMTP_MSG_BODY: int = 3
+// 0 = texto plano, 1 = HTML, 2 = alternativa (texto + HTML, ranura ALT_HTML).
 const SMTP_MSG_HTML: int = 4
 const SMTP_MSG_ATTACH: int = 5
 const SMTP_MSG_BOUNDARY: int = 6
@@ -564,17 +568,37 @@ const SMTP_MSG_BOUNDARY: int = 6
 // smtp_render y se perdía.
 const SMTP_MSG_HEADERS: int = 7
 const SMTP_MSG_ID: int = 8
-const SMTP_MSG_SLOTS: int = 9
+// Ranura 9 (arco smtp-alternative): el HTML de un mensaje «alternativa», con el
+// texto en SMTP_MSG_BODY. SMTP_MSG_SLOTS_V1 es el largo del formato anterior (9
+// ranuras): los guardias que protegen los campos viejos siguen usándolo, de modo
+// que un Array armado a mano o guardado antes de este arco se lee igual que antes.
+// La ranura 9 solo se lee con SMTP_MSG_SLOTS (10).
+const SMTP_MSG_ALT_HTML: int = 9
+const SMTP_MSG_SLOTS_V1: int = 9
+const SMTP_MSG_SLOTS: int = 10
 
 // Mensaje de texto plano.
 pub fn smtp_message(de: String, para: Array, asunto: String, cuerpo: String) -> Array {
-    return [de, para, asunto, cuerpo, 0, [], "", [], __smtp_message_id(de)]
+    return [de, para, asunto, cuerpo, 0, [], "", [], __smtp_message_id(de), ""]
 }
 
 // Mensaje con cuerpo HTML. El resto es igual: lo único que cambia es el
 // Content-Type de la parte del cuerpo.
 pub fn smtp_message_html(de: String, para: Array, asunto: String, html: String) -> Array {
-    return [de, para, asunto, html, 1, [], "", [], __smtp_message_id(de)]
+    return [de, para, asunto, html, 1, [], "", [], __smtp_message_id(de), ""]
+}
+
+// Mensaje con DOS versiones del mismo contenido: `texto` y `html`
+// (multipart/alternative, RFC 2046 §5.1.4: la parte de texto va primero y la HTML
+// después; el cliente muestra la última que entiende). Un correo solo-HTML es una
+// señal clásica de spam (SpamAssassin MIME_HTML_ONLY), de ahí este constructor.
+// Con smtp_attach el resultado es multipart/mixed que contiene la alternativa y
+// luego los adjuntos. El texto NO se deriva del HTML (una conversión automática
+// mala es peor que pedirla): quien no lo tenga puede pasar
+// mime_html_to_text(html) de std/mime. Las dos partes salen en quoted-printable.
+// smtp_send rechaza con Err("invalid") un texto vacío.
+pub fn smtp_message_alternative(de: String, para: Array, asunto: String, texto: String, html: String) -> Array {
+    return [de, para, asunto, texto, 2, [], "", [], __smtp_message_id(de), html]
 }
 
 // Agrega un adjunto. `datos` son los BYTES del archivo tal como salen de
@@ -596,7 +620,7 @@ pub fn smtp_attach(m: Array, nombre: String, ctype: String, datos: String) -> Ar
 // El Message-ID del mensaje, con sus <>: el que va en la cabecera al enviarlo.
 // Guardarlo permite reconocer después la respuesta (su In-Reply-To/References).
 pub fn smtp_message_id(m: Array) -> String {
-    if m.length() < SMTP_MSG_SLOTS { return "" }
+    if m.length() < SMTP_MSG_SLOTS_V1 { return "" }
     let id: String = m[SMTP_MSG_ID]
     return id
 }
@@ -712,7 +736,7 @@ fn __smtp_valor_seguro(s: String) -> bool {
 
 // El boundary que separa las partes, para quien quiera inspeccionarlo.
 pub fn smtp_boundary(m: Array) -> String {
-    if m.length() < SMTP_MSG_SLOTS { return "" }
+    if m.length() < SMTP_MSG_SLOTS_V1 { return "" }
     let b: String = m[SMTP_MSG_BOUNDARY]
     return b
 }
@@ -745,7 +769,7 @@ pub fn smtp_render(m: Array) -> String {
     // inyectaba cabeceras (revisión de integracion-0930). Acá un valor con CR, LF
     // o NUL sale con espacios en su lugar, y una cabecera de nombre inválido o
     // reservado (un segundo From) no sale.
-    if m.length() >= SMTP_MSG_SLOTS {
+    if m.length() >= SMTP_MSG_SLOTS_V1 {
         let hs: Array = m[SMTP_MSG_HEADERS]
         var hi: int = 0
         while hi < hs.length() {
@@ -757,6 +781,10 @@ pub fn smtp_render(m: Array) -> String {
             }
             hi = hi + 1
         }
+    }
+
+    if es_html == 2 && m.length() >= SMTP_MSG_SLOTS {
+        return out + __smtp_render_alternativa(m)
     }
 
     if adjuntos.length() == 0 {
@@ -797,6 +825,62 @@ pub fn smtp_render(m: Array) -> String {
     return out
 }
 
+// Las partes de la alternativa, de «--b» a «--b--» SIN el CRLF final: así sirve
+// tanto de cuerpo de un multipart/alternative como de primera parte de un mixed.
+fn __smtp_alt_partes(texto: String, html: String, b: String) -> String {
+    var o: String = "--" + b + "\r\n"
+    o = o + "Content-Type: text/plain; charset=utf-8\r\n"
+    o = o + "Content-Transfer-Encoding: quoted-printable\r\n\r\n"
+    o = o + __smtp_dot_stuff(__smtp_qp_encode(__smtp_crlf(texto))) + "\r\n"
+    o = o + "--" + b + "\r\n"
+    o = o + "Content-Type: text/html; charset=utf-8\r\n"
+    o = o + "Content-Transfer-Encoding: quoted-printable\r\n\r\n"
+    o = o + __smtp_dot_stuff(__smtp_qp_encode(__smtp_crlf(html))) + "\r\n"
+    o = o + "--" + b + "--"
+    return o
+}
+
+// Cuerpo de un mensaje alternativa (desde su Content-Type): multipart/alternative
+// solo, o multipart/mixed > alternative + adjuntos. El boundary de la alternativa
+// es otro que el del mixed y se elige para que no aparezca en el contenido (en
+// quoted-printable un «=» sale como =3D, así que ni siquiera podría, pero se
+// comprueba igual).
+fn __smtp_render_alternativa(m: Array) -> String {
+    let texto: String = m[SMTP_MSG_BODY]
+    let html: String = m[SMTP_MSG_ALT_HTML]
+    let adjuntos: Array = m[SMTP_MSG_ATTACH]
+    let b1: String = m[SMTP_MSG_BOUNDARY]
+    var b2: String = "=_nyx_alt_" + int_to_string(time_epoch()) + "_" + int_to_string(random_int())
+    while b2 == b1 || texto.indexOf(b2) >= 0 || html.indexOf(b2) >= 0 {
+        b2 = b2 + "x"
+    }
+    let preambulo: String = "Este mensaje tiene varias partes en formato MIME.\r\n"
+    let alt: String = __smtp_alt_partes(texto, html, b2)
+    if adjuntos.length() == 0 {
+        return "Content-Type: multipart/alternative; boundary=\"" + b2 + "\"\r\n\r\n" + preambulo + "\r\n" + alt + "\r\n"
+    }
+    var out: String = "Content-Type: multipart/mixed; boundary=\"" + b1 + "\"\r\n\r\n"
+    out = out + preambulo + "\r\n--" + b1 + "\r\n"
+    out = out + "Content-Type: multipart/alternative; boundary=\"" + b2 + "\"\r\n\r\n"
+    out = out + alt + "\r\n"
+    var i: int = 0
+    while i < adjuntos.length() {
+        let a: Array = adjuntos[i]
+        let nombre: String = a[0]
+        let ctype: String = a[1]
+        let datos: String = a[2]
+        out = out + "\r\n--" + b1 + "\r\n"
+        out = out + "Content-Type: " + ctype + "\r\n"
+        out = out + "Content-Transfer-Encoding: base64\r\n"
+        out = out + "Content-Disposition: attachment; filename=\"" + nombre + "\"\r\n"
+        out = out + "\r\n"
+        out = out + __smtp_wrap76(nyx_base64_encode(datos)) + "\r\n"
+        i = i + 1
+    }
+    out = out + "\r\n--" + b1 + "--\r\n"
+    return out
+}
+
 // ── Envío ─────────────────────────────────────────────────────────────────
 
 // Manda el mensaje por una conexión ya lista (y autenticada, si hacía falta).
@@ -807,9 +891,18 @@ pub fn smtp_send(c: Array, m: Array) -> Result<int, Error> {
         return Result.Err(err_new(0, "recipient", "el mensaje no tiene destinatarios"))
     }
 
+    // Una alternativa sin parte de texto es peor para el filtro que no tenerla.
+    if m.length() >= SMTP_MSG_SLOTS {
+        let modo: int = m[SMTP_MSG_HTML]
+        let alt_texto: String = m[SMTP_MSG_BODY]
+        if modo == 2 && alt_texto.length() == 0 {
+            return Result.Err(err_new(0, "invalid", "el texto de la alternativa está vacío"))
+        }
+    }
+
     // Antes de tocar el socket: una cabecera con CR/LF es inyección, y descubrirlo
     // con el MAIL FROM ya mandado dejaría el diálogo a medias.
-    if m.length() >= SMTP_MSG_SLOTS {
+    if m.length() >= SMTP_MSG_SLOTS_V1 {
         let he: String = __smtp_headers_error(m)
         if he.length() > 0 { return Result.Err(err_new(0, "header", he)) }
     }
@@ -883,6 +976,65 @@ fn __smtp_crlf(s: String) -> String {
         }
         i = i + 1
     }
+    return out
+}
+
+// quoted-printable (RFC 2045 §6.7) de un texto YA con CRLF. Codifica por octeto:
+// «=» y todo byte fuera de 33..126 salen como =XX (mayúsculas), así que una
+// secuencia UTF-8 puede partirse entre dos líneas sin problema. Espacio y tab
+// salen literales salvo al final de línea (un servidor los borra): ahí =20 / =09.
+// Las líneas no pasan de 76 caracteres, soft break «=\r\n» incluido; los CRLF del
+// texto se conservan. Una línea de 5000 octetos queda partida bajo el techo de 998.
+fn __smtp_qp_encode(s: String) -> String {
+    let hex: String = "0123456789ABCDEF"
+    let n: int = s.length()
+    var out: String = ""
+    var row: Array = []
+    var col: int = 0
+    var i: int = 0
+    while i < n {
+        let c: int = s.charAt(i)
+        if c == 13 && i + 1 < n && s.charAt(i + 1) == 10 {
+            row.push(13)
+            row.push(10)
+            col = 0
+            i = i + 2
+        } else {
+            // ¿es el último octeto de su línea?
+            var ultimo: bool = i + 1 >= n
+            if ultimo == false && s.charAt(i + 1) == 13 && i + 2 < n && s.charAt(i + 2) == 10 { ultimo = true }
+            var codificar: bool = true
+            if c == 32 || c == 9 {
+                codificar = ultimo
+            } else if c >= 33 && c <= 126 && c != 61 {
+                codificar = false
+            }
+            var largo: int = 1
+            if codificar { largo = 3 }
+            var tope: int = 75
+            if ultimo { tope = 76 }
+            if col + largo > tope {
+                row.push(61)
+                row.push(13)
+                row.push(10)
+                col = 0
+            }
+            if codificar {
+                row.push(61)
+                row.push(hex.charAt(c / 16))
+                row.push(hex.charAt(c % 16))
+            } else {
+                row.push(c)
+            }
+            col = col + largo
+            i = i + 1
+        }
+        if row.length() >= 4096 {
+            out = out + string_from_bytes(row, 0, row.length())
+            row = []
+        }
+    }
+    if row.length() > 0 { out = out + string_from_bytes(row, 0, row.length()) }
     return out
 }
 
@@ -975,7 +1127,7 @@ fn __smtp_pad2(n: int) -> String {
 // El id del mensaje; un mensaje armado a mano con 7 slots (versión anterior)
 // sigue funcionando y recibe un id nuevo al renderizar.
 fn __smtp_get_id(m: Array, de: String) -> String {
-    if m.length() >= SMTP_MSG_SLOTS {
+    if m.length() >= SMTP_MSG_SLOTS_V1 {
         let id: String = m[SMTP_MSG_ID]
         return id
     }

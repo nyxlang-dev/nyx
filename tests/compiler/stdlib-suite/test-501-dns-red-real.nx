@@ -1,0 +1,74 @@
+// test-501 — std/dns contra el resolvedor REAL de la máquina (arco dns-registros).
+//
+// Depende de la red, así que NUNCA puede dejar la suite en rojo por ella: si la
+// primera consulta no obtiene respuesta (sin red, sin nameserver en
+// /etc/resolv.conf, resolvedor que no contesta, sandbox), todo el test se
+// SALTA con limpieza. Solo se afirma algo cuando el resolvedor sí contestó.
+// La salida es la misma en ambos casos (el expected no puede depender de la red);
+// el detalle de qué pasó solo se imprime con NYX_DNS_VERBOSE=1 (prefijo «dns-red-real:»).
+
+import "std/dns"
+import "std/error"
+
+fn sin_red(e: Error) -> bool {
+    if e.kind == "timeout" or e.kind == "connection" { return true }
+    if e.kind == "not_found" and e.code == 2 { return true }     // sin nameserver
+    if e.kind == "io" { return true }                            // SERVFAIL / REFUSED del resolvedor
+    return false
+}
+
+fn nota(s: String) {
+    if getenv_default("NYX_DNS_VERBOSE", "") == "1" { print("dns-red-real: " + s) }
+}
+
+fn main() {
+    let _t: Result<int, Error> = dns_set_timeout(1)
+    let r: Result<Array, Error> = dns_txt("example.com")
+    match r {
+        Result.Err(e) => {
+            if sin_red(e) {
+                nota("SKIP (" + e.kind + ": " + e.msg + ")")
+                print("dns red real ok")
+                return
+            }
+            nota("fallo inesperado: " + e.kind + " " + e.msg)
+            assert(false)
+        }
+        Result.Ok(v) => {
+            assert(v.length() > 0)
+            nota("TXT example.com: " + int_to_string(v.length()) + " registros")
+        }
+    }
+
+    // MX de un dominio con correo conocido, ordenado por preferencia
+    let m: Result<Array, Error> = dns_mx("gmail.com")
+    match m {
+        Result.Ok(v) => {
+            assert(v.length() > 0)
+            var i: int = 1
+            while i < v.length() {
+                let p: Array = v[i - 1]
+                let n: Array = v[i]
+                assert(p[0] <= n[0])
+                i = i + 1
+            }
+            nota("MX gmail.com: " + int_to_string(v.length()) + " registros")
+        }
+        Result.Err(e) => { nota("MX gmail.com: " + e.msg) }
+    }
+
+    // un dominio reservado (.invalid, RFC 6761) no existe: NXDOMAIN (o NODATA si un
+    // resolvedor «amable» lo intercepta; nunca Ok)
+    let nx: Result<Array, Error> = dns_txt("nyx-dns-prueba.invalid")
+    match nx {
+        Result.Ok(_v) => { assert(false) }
+        Result.Err(e) => {
+            if sin_red(e) {
+                nota("NXDOMAIN no verificado (" + e.msg + ")")
+            } else {
+                assert(dns_is_nxdomain(e) or dns_is_nodata(e))
+            }
+        }
+    }
+    print("dns red real ok")
+}

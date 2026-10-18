@@ -1,0 +1,65 @@
+// Nyx by Example: un correo con versión de texto Y versión HTML.
+//
+// El caso real: un ERP mandaba sus facturas solo en HTML y los filtros de spam
+// las castigaban. Un mensaje sin parte de texto es una señal clásica
+// (SpamAssassin: MIME_HTML_ONLY). La salida es multipart/alternative: la misma
+// información en dos versiones, y el cliente de correo muestra la mejor que
+// entiende.
+//
+// Lo que muestra esta receta:
+//   1. smtp_message_alternative(de, para, asunto, texto, html);
+//   2. que se combina con smtp_attach: queda multipart/mixed > alternative;
+//   3. que el texto NO se inventa solo: si solo hay HTML, mime_html_to_text
+//      (std/mime) arma uno aproximado, y es decisión de quien llama usarlo;
+//   4. la estructura que viaja, vista con smtp_render (función pura).
+//
+// NO abre ninguna conexión: corre sola bajo `make test-examples`.
+
+import "std/smtp"
+import "std/mime"
+
+fn main() -> int {
+    let html: String = "<h1>Factura de septiembre</h1>\n<p>Estimado cliente: adjuntamos su factura.</p>\n<p>Total: <b>$ 1.250</b></p>"
+
+    // Texto escrito a mano: lo mejor. Si no se tiene, una aproximación:
+    //   let texto: String = mime_html_to_text(html)
+    let texto: String = "Factura de septiembre\n\nEstimado cliente: adjuntamos su factura.\nTotal: $ 1.250"
+
+    var msg: Array = smtp_message_alternative(
+        "facturacion@miempresa.com",
+        ["cliente@ejemplo.com"],
+        "Factura de septiembre",
+        texto,
+        html)
+    msg = smtp_attach(msg, "factura.pdf", "application/pdf", "%PDF-1.4 (ejemplo)")
+
+    let raw: String = smtp_render(msg)
+    print("— estructura MIME que viaja —")
+    var i: int = 0
+    var lineas: int = 0
+    while i < raw.length() {
+        let fin: int = raw.indexOf("\r\n", i)
+        if fin < 0 { break }
+        let linea: String = raw.substring(i, fin)
+        if linea.startsWith("Content-Type:") || linea.startsWith("Content-Transfer-Encoding:") {
+            print("  " + linea)
+            lineas = lineas + 1
+        }
+        i = fin + 2
+    }
+
+    // Lo que un cliente ve al leerlo: las dos partes y el adjunto.
+    match mime_parse(raw, mime_limits()) {
+        Result.Ok(p) => {
+            print("")
+            print("texto : " + int_to_string(p.text.length()) + " bytes")
+            print("html  : " + int_to_string(p.html.length()) + " bytes")
+            print("adjuntos: " + int_to_string(p.attachments.length()))
+        }
+        Result.Err(e) => { print("no se pudo leer el mensaje armado") }
+    }
+
+    // Enviarlo es igual que cualquier otro mensaje: smtp_send(c, msg). Un texto
+    // vacío se rechaza con Err("invalid") antes de abrir el diálogo SMTP.
+    return 0
+}

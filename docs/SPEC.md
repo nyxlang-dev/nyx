@@ -3007,8 +3007,31 @@ tcp_close(sock)
 
 ### DNS
 ```nyx
-let ip: String = resolve("example.com")    // "93.184.216.34"
+let ip: String = resolve("example.com")    // "93.184.216.34" (solo IPv4, vía getaddrinfo)
 ```
+
+Para otros tipos de registro, `std/dns` (cliente RFC 1035 propio sobre UDP, con reintento
+por TCP si la respuesta viene truncada; sin dependencias de enlace):
+
+```nyx
+import "std/dns"
+
+dns_txt("_dmarc.example.com")      // Result<Array, Error>: un String por registro TXT
+dns_cname("sel._domainkey.example.com")   // Result<String, Error>: sin punto final
+dns_mx("example.com")              // Result<Array, Error>: [[preferencia, host], ...] ascendente
+dns_query("example.com", 16)       // Result<Array, Error>: [[tipo, ttl, rdata], ...]
+dns_set_server("10.0.0.2")         // IPv4 numérica; "" vuelve a /etc/resolv.conf
+dns_set_timeout(2)                 // segundos por intento (1..30), 2 intentos por servidor
+```
+
+Las cadenas de un mismo registro TXT se unen (RFC 7208 §3.3). Errores (`Result<_, Error>`
+con los `kind` del vocabulario cerrado): NXDOMAIN es `not_found` code 3 (`dns_is_nxdomain`),
+NODATA `not_found` code 61 (`dns_is_nodata`), plazo vencido `timeout` code 110,
+SERVFAIL/REFUSED `io` con el RCODE como `code`, respuesta malformada `parse`, sin red
+`connection`. Servidores: hasta 3 `nameserver` IPv4 de `/etc/resolv.conf`, sin servidores
+públicos por omisión; en Windows hay que llamar `dns_set_server`. Sin caché, sin IPv6, sin
+`search`/`ndots`, sin EDNS(0) y sin DNSSEC (solo se verifican el ID aleatorio y la pregunta
+repetida); en wasm toda llamada devuelve `Err`.
 
 ---
 
@@ -4800,6 +4823,7 @@ puede anunciar `AUTH` sin ofrecer `STARTTLS`, y si el cliente le cree, la clave 
 ```nyx
 smtp_message(de, para: Array, asunto, cuerpo) -> Array        // text/plain
 smtp_message_html(de, para: Array, asunto, html) -> Array     // text/html
+smtp_message_alternative(de, para: Array, asunto, texto, html) -> Array  // multipart/alternative
 smtp_attach(m, nombre, content_type, datos) -> Array          // datos = BYTES, el base64 lo hace la función
 smtp_render(m) -> String                                       // el mensaje tal como viaja (función pura)
 smtp_boundary(m) -> String
@@ -4819,8 +4843,25 @@ Lo que el módulo resuelve solo, y que es donde se rompen las implementaciones a
 - **RFC 2047 en el asunto**, y solo si tiene bytes no-ASCII. Un asunto ASCII no se codifica.
 - **`Message-ID` con el dominio del remitente**: uno con otro dominio es señal de spam.
 
-Fuera de alcance (decisión del arco): multipart anidado, `quoted-printable`, nombres de archivo
-RFC 2047, DKIM/SPF/DMARC.
+**Texto y HTML (`smtp_message_alternative`).** Un correo solo-HTML es una señal clásica de spam
+(SpamAssassin `MIME_HTML_ONLY`). El mensaje alternativo lleva las dos versiones como
+`multipart/alternative`: la parte de **texto primero y la HTML después** (RFC 2046 §5.1.4, el cliente
+muestra la última que entiende). Con `smtp_attach` queda `multipart/mixed` que contiene la
+alternativa y luego cada adjunto en base64. Las dos partes salen en `quoted-printable`
+(RFC 2045 §6.7: líneas de a lo más 76 caracteres con soft break `=`, `=` literal como `=3D`, espacio
+o tab al final de línea como `=20`/`=09`), y el boundary de la alternativa es distinto del del
+`mixed`. El texto no se deriva del HTML (una conversión automática mala es peor que pedirla): quien
+solo tenga HTML puede pasar `mime_html_to_text(html)` de `std/mime`. `smtp_send` devuelve
+`Err("invalid")` si el texto está vacío. `Content-Type` sigue reservado en `smtp_header`. Receta:
+`examples/by-example/141-smtp-texto-y-html.nx`.
+
+**Los mensajes de una sola parte (`smtp_message`, `smtp_message_html`) siguen en 8bit**, sin
+`Content-Transfer-Encoding`, con exactamente los mismos bytes de siempre; migrarlos a
+quoted-printable es una tarea aparte. El mensaje es un `Array` de 10 ranuras (la 9 guarda el HTML
+de la alternativa); un `Array` de 9 ranuras armado con el formato anterior se sigue leyendo igual.
+
+Fuera de alcance (decisión del arco): `multipart/related` e imágenes `cid:`, nombres de archivo
+RFC 2047/2231, `SMTPUTF8`, DKIM/SPF/DMARC.
 
 ### Respuestas y errores
 
@@ -5208,11 +5249,33 @@ image_strip_icc(img: Image) -> Image
 - **Miniaturas**: `image_thumbnail` decodifica con la mayor reducción que deja al menos el doble del
   tamaño final, achica con Lanczos3 para que **quepa** en la caja (conserva la proporción, nunca agranda) y
   codifica. `image_thumbnails` sirve varios tamaños de **una sola** decodificación.
+- **Hojas escaneadas (documentos)**: una hoja carta (1275 x 1650 a 150 ppp, 2550 x 3300 a 300 ppp)
+  llevada a 1600 px casi no se achica, así que **la decodificación reducida no entra**: la regla es
+  «reducir mientras queden al menos el doble de píxeles que el destino» y 1650 -> 1600 no deja margen.
+  Se decodifica la hoja entera, se achica poco y se vuelve a codificar; el costo es proporcional a la
+  hoja, no al destino. (`image_resize_fit` mantiene su contrato: siempre remuestrea y cabe en la caja.)
+  Para una vista previa chica (300 px) sí hay reducción 1/2. Tiempos de CPU de `image_thumbnail(hoja,
+  1600, 1600, 80)` en aarch64, hoja de 1275 x 1650 / hoja de 2550 x 3300, **compilado sin optimizar**
+  (`nyx build`, clang `-O0`) y optimizado (`nyx build --release`, `-O2`):
+
+  | | -O0 | -O2 |
+  |---|---:|---:|
+  | 1275 x 1650 | 1,0 s (antes 3,6 s) | 0,25 s (antes 0,92 s) |
+  | 2550 x 3300 | 2,4 s (antes 8,6 s) | 0,65 s (antes 2,3 s) |
+
+  El trabajo se reparte en decodificar (~37 %), redimensionar (~28 %) y codificar (~34 %). Los bucles
+  internos del redimensionado, del decodificador (IDCT, conversión de color, escalado del croma) y del
+  codificador (conversión a YCbCr, FDCT, cuantización) leen y escriben por punteros crudos en lugar de
+  `charAt`/`Array[i]` (cada una es una llamada al runtime): la aritmética entera es la misma y la salida
+  es idéntica byte a byte (test-497 fija huellas CRC32). Solo en nativo de 64 bits; en wasm32 se usan
+  las versiones con `charAt` (mismos bytes, más lentas).
 - **Fuera de alcance**: WebP (ni leer ni escribir), JPEG progresivo, PNG de salida, Huffman óptimo,
   remuestreo en luz lineal.
 
-Receta: `examples/by-example/133-imagen-miniaturas.nx`. Pruebas: `test-475` a `test-482`
-(`tests/compiler/stdlib-suite/`) y `test-wasm-55` a `test-wasm-57`.
+Recetas: `examples/by-example/133-imagen-miniaturas.nx` y
+`examples/by-example/140-imagen-hojas-escaneadas.nx` (documentos escaneados). Pruebas: `test-475` a
+`test-482` y `test-497` (`tests/compiler/stdlib-suite/`) y `test-wasm-55` a `test-wasm-57`.
+Medición: `scripts/bench_image_thumb.nx`.
 
 ---
 

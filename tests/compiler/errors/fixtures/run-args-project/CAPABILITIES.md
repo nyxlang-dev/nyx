@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.36.1 -->
-<!-- nyx-stdlib: 3927056848-1342758 -->
+<!-- nyx-stdlib: 3984903640-1425356 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -766,7 +766,7 @@
 
 ### `std/smtp`
 
-`import "std/smtp"` — 31 funciones:
+`import "std/smtp"` — 32 funciones:
 
 - `pub fn smtp_parse_line(line: String) -> Array`
 - `pub fn smtp_line_code(l: Array) -> int`
@@ -791,6 +791,7 @@
 - `pub fn smtp_auth_xoauth2(c: Array, usuario: String, token: String) -> Result<int, Error>`
 - `pub fn smtp_message(de: String, para: Array, asunto: String, cuerpo: String) -> Array`
 - `pub fn smtp_message_html(de: String, para: Array, asunto: String, html: String) -> Array`
+- `pub fn smtp_message_alternative(de: String, para: Array, asunto: String, texto: String, html: String) -> Array`
 - `pub fn smtp_attach(m: Array, nombre: String, ctype: String, datos: String) -> Array`
 - `pub fn smtp_message_id(m: Array) -> String`
 - `pub fn smtp_set_message_id(m: Array, id: String) -> Array`
@@ -848,6 +849,25 @@
 - `pub fn mime_safe_filename(name: String) -> String`
 - `pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
 - `pub fn mime_parse_head(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
+
+### `std/dns`
+
+`import "std/dns"` — 14 funciones:
+
+- `pub fn dns_is_nxdomain(e: Error) -> bool` — El nombre no existe (NXDOMAIN: not_found, code 3).
+- `pub fn dns_is_nodata(e: Error) -> bool` — El nombre existe pero no tiene ese tipo de registro (NODATA: not_found, code 61).
+- `pub fn __dns_build_query(name: String, qtype: int, id: int) -> Result<String, Error>` — INTERNO (tests): arma el paquete de consulta; usa dns_query/dns_txt/dns_cname/dns_mx.
+- `pub fn __dns_read_name(p: String, start: int) -> Array` — INTERNO (tests): lee un nombre con compresión; usa dns_query/dns_txt/dns_cname/dns_mx.
+- `pub fn __dns_parse_response(p: String, id: int, qname: String) -> Result<Array, Error>` — INTERNO (tests): decodifica un paquete de respuesta; usa dns_query/dns_txt/dns_cname/dns_mx.
+- `pub fn __dns_parse_resolv(text: String) -> Array` — INTERNO (tests): extrae los nameserver de un resolv.conf; usa dns_query/dns_txt/dns_cname/dns_mx.
+- `pub fn dns_set_server(ip: String) -> Result<int, Error>` — Fija el servidor DNS (IPv4 numérica); "" vuelve a /etc/resolv.conf. Obligatorio en Windows.
+- `pub fn dns_set_timeout(secs: int) -> Result<int, Error>` — Plazo por intento en segundos (1..30, por omisión 2); 2 intentos por servidor.
+- `pub fn dns_query(name: String, qtype: int) -> Result<Array, Error>` — Consulta cruda: devuelve la sección de respuesta como Array de [tipo, ttl, rdata].
+- `pub fn dns_txt(name: String) -> Result<Array, Error>` — Registros TXT: un String por registro (cadenas unidas). NXDOMAIN/NODATA: ver dns_is_nxdomain/dns_is_nodata.
+- `pub fn dns_cname(name: String) -> Result<String, Error>` — CNAME del nombre, sin punto final (no sigue cadenas).
+- `pub fn dns_mx(name: String) -> Result<Array, Error>` — MX del nombre: Array de [preferencia, host] ordenado por preferencia ascendente.
+- `pub fn __dns_set_port(port: int)` — INTERNO (tests): puerto del servidor DNS; no es API, usa dns_set_server.
+- `pub fn __dns_set_bind_port(port: int)` — INTERNO (tests): puerto de origen del cliente; no es API.
 
 ### `std/http2`
 
