@@ -20,7 +20,7 @@
 //
 // Correr:  nyx run                       (sin argumentos: demostración sin red)
 //          nyx run -- midominio.com sel1 (consulta el DNS real del sistema)
-// Sin `nameserver` en /etc/resolv.conf (o en Windows) llamar antes a
+// Sin `nameserver` en /etc/resolv.conf (o en un sistema sin ese archivo) llamar antes a
 // dns_set_server("ip").
 
 import "std/dns"

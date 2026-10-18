@@ -7,10 +7,10 @@
 // `In-Reply-To` / `References`, que contienen el Message-ID que el sistema guardó al enviar.
 //
 // Lo que esta receta muestra:
-//   1. el sondeo real contra un buzón: conexión verificada, LOGIN, cursor por UID y marcar
+//   1. el sondeo real contra un buzón: conexión verificada, LOGIN, punto de avance por UID y marcar
 //      leído (la función `sondear`, que compila y enlaza pero NO se llama: un buzón de
 //      verdad necesita credenciales y esta receta corre sola bajo `make test-examples`);
-//   2. por qué el cursor es por UID y no «los no leídos»;
+//   2. por qué el punto de avance es por UID y no «los no leídos»;
 //   3. lo que sí corre acá, sin red: el analizador de respuestas de IMAP y std/mime sobre
 //      la respuesta de un servidor, y la decisión de a qué caso pertenece cada mensaje;
 //   4. los errores tipados y qué hacer con cada uno.
@@ -20,11 +20,11 @@ import "std/mime"
 import "std/error"
 
 // ── 1. El sondeo real ────────────────────────────────────────────────────
-// Se llama cada 30-120 s desde un temporizador (un CRM no necesita IDLE). `cursor_v` y
-// `cursor_uid` los guarda la aplicación entre llamadas: (0, 0) la primera vez.
-// Devuelve el cursor nuevo para guardar. La clave viene de la configuración, nunca del
+// Se llama cada 30-120 s desde un temporizador (un CRM no necesita IDLE). `punto_v` y
+// `punto_uid` los guarda la aplicación entre llamadas: (0, 0) la primera vez.
+// Devuelve el punto de avance nuevo para guardar. La clave viene de la configuración, nunca del
 // código.
-fn sondear(host: String, usuario: String, clave: String, cursor_v: int, cursor_uid: int, ids_enviados: Array) -> Result<int, Error> {
+fn sondear(host: String, usuario: String, clave: String, punto_v: int, punto_uid: int, ids_enviados: Array) -> Result<int, Error> {
     // 993 con TLS implícito, VERIFICANDO cadena y nombre contra las CAs del sistema.
     // Para el 143: imap_connect_starttls. Las variantes `_insecure` son solo para
     // desarrollo, y lo dicen en el nombre.
@@ -36,12 +36,12 @@ fn sondear(host: String, usuario: String, clave: String, cursor_v: int, cursor_u
     let a: int = imap_login(c, usuario, clave)?
     let mb: ImapMailbox = imap_select(c, "INBOX")?
 
-    // Cursor por UID, NO `imap_search_unseen`: `\Seen` es estado compartido con quien abra el
+    // Punto de avance por UID, NO `imap_search_unseen`: `\Seen` es estado compartido con quien abra el
     // buzón desde su teléfono; si la respuesta del cliente se lee ahí primero, UNSEEN ya no
     // la devuelve y el sistema nunca se entera. Aquí se piden «los UID mayores que el último
     // que procesé» y no se toca ninguna marca.
-    var v: int = cursor_v
-    var ultimo: int = cursor_uid
+    var v: int = punto_v
+    var ultimo: int = punto_uid
     match imap_fetch_since(c, v, ultimo, 50) {
         Result.Ok(r) => {
             v = r.uidvalidity
