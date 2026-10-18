@@ -83,6 +83,7 @@ GOTCHA_IDS=(
   "string-index-byte"
   "defer-not-on-throw"
   "builtin-conversion-untyped-slot"
+  "untyped-slot-as-argument"
 )
 
 ANCLAS=(

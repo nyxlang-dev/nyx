@@ -46,6 +46,10 @@ TESTS=(
   # compilaban y morían con SIGSEGV van como AVISO (bloque NYX1010-aviso, abajo).
   # Control positivo con los valores: tests/compiler/language/test-493-operadores-primitivos-mixtos.nx.
   "tests/compiler/errors/test-nyx1010-int-por-string-mixto.nx|'*' does not accept int and String"
+  # NYX2012 en una expresión (2026-10-18): una variante inexistente pasaba `nyx check` y
+  # recién el codegen la rechazaba, pidiendo una anotación de tipo (fricción nyxerp).
+  "tests/compiler/errors/test-nyx2012-variante-inexistente.nx|enum 'Unidad' has no variant 'Litros' (did you mean 'Litro'?)"
+  "tests/compiler/errors/test-nyx2012-variante-importada.nx|enum 'PdfFont' has no variant 'Zzzz'"
   "tests/compiler/errors/test-nyx1010-bool-mas-int-mixto.nx|'+' does not accept bool and int; a bool is not a number"
   "tests/compiler/errors/test-m08-binop-type-result.nx|type mismatch in 's': expected String, got int"
   "tests/compiler/errors/test-m08-method-return-mismatch.nx|type mismatch in 'n': expected String, got int"

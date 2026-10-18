@@ -1,0 +1,6 @@
+enum Unidad { Kilo, Litro, Unidad }
+
+fn main() {
+    let u: Unidad = Unidad.Litros
+    print("ok")
+}

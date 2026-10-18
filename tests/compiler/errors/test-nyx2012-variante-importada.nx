@@ -1,0 +1,6 @@
+import "std/pdf"
+
+fn main() {
+    let a: float = pdf_text_width("x", PdfFont.Zzzz, 10.0)
+    print(float_to_string(a))
+}

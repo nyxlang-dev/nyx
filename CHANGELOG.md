@@ -26,6 +26,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Una casilla de un `Array` sin `<T>` pasada directo a un parámetro struct, o usada como clave de
+  `Map`, ya funciona** (fricción nyxerp, 2026-10-17). `texto(hs[0])`, con `fn texto(h: Hoja)`, pasaba
+  el `i64` crudo de la casilla donde la función esperaba el struct por valor. El resultado era «GC heap
+  exhausted» o, en otro programa de nyxerp, la función recibía otro elemento. `m.insert(pares[0],
+  pares[1])` usaba el `i64` como puntero de la clave y clang rechazaba el IR. En los dos casos
+  `nyx check` daba verde. Ahora la casilla se convierte al struct del parámetro (`inttoptr` + `load`,
+  como en `let h: Hoja = hs[0]`), y la clave de un método de Map que sale de una casilla se lee como
+  String. El propio compilador tenía el mismo patrón en `cg_tipo_duplicado(decls[i], …)`, que andaba
+  de casualidad por la convención de llamadas de aarch64. `ASTNode` queda afuera: en una casilla es un
+  Array y no un puntero. Regresión: `tests/ai-first/40-casilla-sin-tipo-como-argumento.nx` y gotcha
+  `untyped-slot-as-argument`.
+- **`nyx check` rechaza una variante de enum que no existe (NYX2012)** (fricción nyxerp, 2026-10-17).
+  `PdfFont.Zzzz` pasaba el chequeo en verde y recién el codegen lo rechazaba, con un mensaje que pedía
+  una anotación de tipo. Ahora es NYX2012, con «did you mean» si hay una variante cercana, tanto para
+  enums locales como importados. No se valida cuando el nombre corresponde a una variable o a un
+  parámetro. Casos `test-nyx2012-variante-{inexistente,importada}`.
+
 - **Escapes de String: `\xNN` y `\u{…}` valen lo que dicen, y un escape desconocido avisa (NYX1045)**
   `[arco: escapes-de-string]`. Antes el lexer conocía solo `\n \t \\ \" \r \0` y cualquier otro escape
   perdía la barra en silencio: `"\x41"` valía `x41`, `"\u{0}"` valía `u{0}` y `'\x41'` imprimía `41`.
