@@ -1,0 +1,179 @@
+// test-495 — listas desplegables y relleno de std/xlsx (arco xlsx-validacion).
+//
+// Lo que no se ve al releer con xlsx_read se mira en el XML: la validación de
+// lista (fija y por rango) con sus elementos en el orden que exige el esquema
+// (ECMA-376 Part 1 §18.3.1.99: sheetData < autoFilter < mergeCells <
+// dataValidations < pageMargins; Excel "repara" el archivo si no), los Err de
+// validate_list, y los estilos negrita × formato × relleno de styles.xml.
+
+import "std/error"
+import "std/xlsx"
+import "std/zip"
+
+fn parte(libro: String, nombre: String) -> String {
+    match zip_read(libro, zip_read_opts()) {
+        Result.Ok(z) => {
+            match z.entry(nombre) {
+                Result.Ok(x) => { return x }
+                Result.Err(_) => { return "" }
+            }
+        }
+        Result.Err(_) => { return "" }
+    }
+}
+
+fn falla(sheets: Array) -> bool {
+    match xlsx_write(sheets) {
+        Result.Ok(_) => { return false }
+        Result.Err(_) => { return true }
+    }
+}
+
+fn mensaje(sheets: Array) -> String {
+    match xlsx_write(sheets) {
+        Result.Ok(_) => { return "" }
+        Result.Err(e) => { return e.msg }
+    }
+}
+
+fn escribe(sheets: Array) -> String {
+    match xlsx_write(sheets) {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            println("ERR " + e.msg)
+            return ""
+        }
+    }
+}
+
+fn main() -> int {
+    // ── Task 1: listas desplegables ──────────────────────────────────────────
+    var h: XlsxSheetOut = xlsx_sheet_new("Catalogo")
+    h.row([xlsx_bold(xlsx_text("Codigo")), xlsx_bold(xlsx_text("Unidad")), xlsx_bold(xlsx_text("Categoria"))])
+    h.row([xlsx_text("A1"), xlsx_text("UND"), xlsx_text("Ferreteria")])
+    h.merge("A5:C5")
+    h.autofilter("A1:C2")
+    h.validate_list("B2:B500", ["UND", "KG", "LT & m<2>"])
+    h.validate_list_range("C2:C500", "Listas!$A$1:$A$40")
+    var l: XlsxSheetOut = xlsx_sheet_new("Listas")
+    l.row([xlsx_text("Ferreteria")])
+    let libro: String = escribe([h, l])
+    assert(libro != "", "escribe")
+    let x: String = parte(libro, "xl/worksheets/sheet1.xml")
+    assert(x.indexOf("<dataValidations count=\"2\">") >= 0, "count")
+    assert(x.indexOf("<dataValidation type=\"list\" allowBlank=\"1\" showErrorMessage=\"1\" sqref=\"B2:B500\"><formula1>") >= 0, "atributos")
+    assert(x.indexOf("UND,KG,LT &amp; m&lt;2&gt;") >= 0, "lista fija escapada")
+    assert(x.indexOf("sqref=\"C2:C500\"><formula1>Listas!$A$1:$A$40</formula1>") >= 0, "por rango")
+    // Orden de los hijos de <worksheet>.
+    let iData: int = x.indexOf("</sheetData>")
+    let iFilt: int = x.indexOf("<autoFilter")
+    let iMerge: int = x.indexOf("<mergeCells")
+    let iVal: int = x.indexOf("<dataValidations")
+    assert(iData > 0 and iData < iFilt and iFilt < iMerge and iMerge < iVal, "orden sheetData<autoFilter<mergeCells<dataValidations")
+    assert(x.indexOf("</dataValidations></worksheet>") >= 0, "dataValidations al final")
+    assert(x.indexOf("<pageMargins") < 0 or x.indexOf("<pageMargins") > iVal, "pageMargins despues")
+    // Una hoja sin validaciones no emite el elemento.
+    var sin: XlsxSheetOut = xlsx_sheet_new("Sin")
+    sin.row([xlsx_text("x")])
+    assert(parte(escribe([sin]), "xl/worksheets/sheet1.xml").indexOf("dataValidation") < 0, "sin validacion")
+    // xlsx_read sigue leyendo las celdas.
+    match xlsx_read(libro, xlsx_read_opts()) {
+        Result.Ok(bk) => {
+            let s: XlsxSheet = bk.sheets[0]
+            let b2: XlsxCell = xlsx_cell(s, "B2")
+            let c1: XlsxCell = xlsx_cell(s, "C1")
+            assert(b2.text == "UND", "round-trip B2")
+            assert(c1.text == "Categoria", "round-trip C1")
+        }
+        Result.Err(e) => {
+            println("ERR " + e.msg)
+            return 1
+        }
+    }
+    // Los Err.
+    var largo: Array = []
+    var i: int = 0
+    while i < 40 {
+        largo.push("VALOR-" + int_to_string(i))
+        i = i + 1
+    }
+    var e1: XlsxSheetOut = xlsx_sheet_new("E1")
+    e1.validate_list("A1:A9", largo)
+    assert(falla([e1]) and mensaje([e1]).indexOf("validate_list_range") >= 0, "pasa de 255")
+    var e2: XlsxSheetOut = xlsx_sheet_new("E2")
+    e2.validate_list("A1:A9", ["a,b", "c"])
+    assert(falla([e2]), "coma")
+    var e3: XlsxSheetOut = xlsx_sheet_new("E3")
+    e3.validate_list("A1:A9", ["a\"b"])
+    assert(falla([e3]), "comilla")
+    var e4: XlsxSheetOut = xlsx_sheet_new("E4")
+    e4.validate_list("zz", ["a"])
+    assert(falla([e4]), "rango invalido")
+    var e5: XlsxSheetOut = xlsx_sheet_new("E5")
+    e5.validate_list_range("A1:A9", "Listas!$A$1:$A$300")
+    assert(not falla([e5]), "el origen por rango no tiene tope de valores")
+    // Justo en el tope: 50 x "abcd" + "abcde" + 50 comas = 255 entra; con una más, 257 no.
+    var ok255: Array = []
+    var j: int = 0
+    while j < 50 {
+        ok255.push("abcd")
+        j = j + 1
+    }
+    ok255.push("abcde")
+    var e6: XlsxSheetOut = xlsx_sheet_new("E6")
+    e6.validate_list("A1", ok255)
+    assert(not falla([e6]), "255 caracteres exactos entran")
+    ok255.push("a")
+    var e8: XlsxSheetOut = xlsx_sheet_new("E8")
+    e8.validate_list("A1", ok255)
+    assert(falla([e8]), "257 caracteres no entran")
+
+    // ── Task 2: relleno ──────────────────────────────────────────────────────
+    var f: XlsxSheetOut = xlsx_sheet_new("Rellenos")
+    f.row([
+        xlsx_number_fmt(1.5, "0.00"),
+        xlsx_bold(xlsx_number_fmt(1.5, "0.00")),
+        xlsx_fill(xlsx_number_fmt(1.5, "0.00"), "ffc7ce"),
+        xlsx_fill(xlsx_bold(xlsx_number_fmt(1.5, "0.00")), "#FFC7CE"),
+        xlsx_fill(xlsx_text("verde"), "C6EFCE"),
+        xlsx_fill(xlsx_blank(), "C6EFCE")
+    ])
+    let lf: String = escribe([f])
+    assert(lf != "", "escribe rellenos")
+    let st: String = parte(lf, "xl/styles.xml")
+    assert(st.indexOf("<fills count=\"4\">") >= 0, "2 obligatorios + 2 colores")
+    assert(st.indexOf("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFFFC7CE\"/>") >= 0, "rojo")
+    assert(st.indexOf("<fgColor rgb=\"FFC6EFCE\"/>") >= 0, "verde")
+    assert(st.indexOf("<cellXfs count=\"6\">") >= 0, "estilos: 0, cuatro con formato y verde")
+    assert(st.indexOf("<xf numFmtId=\"2\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>") >= 0, "ni negrita ni relleno")
+    assert(st.indexOf("<xf numFmtId=\"2\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\" applyFont=\"1\"/>") >= 0, "negrita")
+    assert(st.indexOf("<xf numFmtId=\"2\" fontId=\"0\" fillId=\"2\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\" applyFill=\"1\"/>") >= 0, "relleno")
+    assert(st.indexOf("<xf numFmtId=\"2\" fontId=\"1\" fillId=\"2\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\" applyFill=\"1\" applyFont=\"1\"/>") >= 0, "negrita y relleno")
+    assert(st.indexOf("<xf numFmtId=\"0\" fontId=\"0\" fillId=\"3\" borderId=\"0\" xfId=\"0\" applyFill=\"1\"/>") >= 0, "relleno verde sin formato")
+    // La celda vacía con relleno se escribe (lleva estilo).
+    let hoja: String = parte(lf, "xl/worksheets/sheet1.xml")
+    assert(hoja.indexOf("<c r=\"F1\" s=\"5\"/>") >= 0, "blank con relleno")
+    match xlsx_read(lf, xlsx_read_opts()) {
+        Result.Ok(bk) => {
+            let s: XlsxSheet = bk.sheets[0]
+            let e1c: XlsxCell = xlsx_cell(s, "E1")
+            assert(e1c.text == "verde", "round-trip texto con relleno")
+        }
+        Result.Err(e) => {
+            println("ERR " + e.msg)
+            return 1
+        }
+    }
+    // Colores inválidos.
+    var m1: XlsxSheetOut = xlsx_sheet_new("M1")
+    m1.row([xlsx_fill(xlsx_text("x"), "FFF")])
+    assert(falla([m1]) and mensaje([m1]).indexOf("relleno") >= 0, "3 digitos")
+    var m2: XlsxSheetOut = xlsx_sheet_new("M2")
+    m2.row([xlsx_fill(xlsx_text("x"), "GGGGGG")])
+    assert(falla([m2]), "no hex")
+    var m3: XlsxSheetOut = xlsx_sheet_new("M3")
+    m3.row([xlsx_fill(xlsx_text("x"), "")])
+    assert(not falla([m3]), "sin color = sin relleno")
+    println("test-495 OK")
+    return 0
+}

@@ -30,6 +30,10 @@
 // vacías intermedias quedan como celdas "empty", así la referencia "C7" cae
 // donde va. Las celdas que solo tienen estilo (sin valor) también son "empty".
 //
+// Escribir plantillas de carga: `hoja.validate_list(rango, valores)` y
+// `hoja.validate_list_range(rango, origen)` ponen una lista desplegable en las
+// celdas del rango; `xlsx_fill(celda, "FFC7CE")` da relleno de color.
+//
 // Topes (XlsxReadOpts): los del zip (tamaño del archivo, de cada parte y del
 // total descomprimido) y la cantidad de celdas. Llegan archivos de afuera.
 
@@ -668,7 +672,7 @@ pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell {
 //    una celda a mano). Los códigos integrados ("#,##0.00" = 4…) usan su id.
 //  - FECHAS: número de serie de Excel (época 1900, con el 29/02/1900 ficticio) y
 //    formato "dd/mm/yyyy".
-//  - ESTILOS: styles.xml se genera con solo las combinaciones (negrita × formato)
+//  - ESTILOS: styles.xml se genera con solo las combinaciones (negrita × formato × relleno)
 //    que se usaron; el estilo 0 es siempre el de por omisión.
 //  - Los caracteres de control prohibidos por XML 1.0 (< 0x20 salvo tab, LF, CR)
 //    se descartan del texto: un solo byte así vuelve ilegible el libro entero.
@@ -683,6 +687,7 @@ pub struct XlsxOut {
     decimals: int,      // decimales fijos; < 0 = General
     fmt: String,        // código de formato de xlsx_number_fmt ("" = el que dicte `decimals`)
     bold: bool,
+    fill: String,       // color de relleno RRGGBB ("" = sin relleno), de xlsx_fill
 }
 
 pub struct XlsxSheetOut {
@@ -694,14 +699,16 @@ pub struct XlsxSheetOut {
     frows: int,         // filas fijas arriba (freeze)
     fcols: int,         // columnas fijas a la izquierda (freeze)
     filter: String,     // rango del autofiltro ("" = sin autofiltro)
+    vrefs: Array,       // validaciones de lista: rango al que se aplican (String)
+    vdefs: Array,       // ...y su origen, en paralelo: "L"+valores (sep. chr(1)) o "R"+rango
 }
 
 pub fn xlsx_text(s: String) -> XlsxOut {
-    return XlsxOut { kind: "text", text: s, number: 0.0, decimals: 0, fmt: "", bold: false }
+    return XlsxOut { kind: "text", text: s, number: 0.0, decimals: 0, fmt: "", bold: false, fill: "" }
 }
 
 pub fn xlsx_number(v: float, decimals: int) -> XlsxOut {
-    return XlsxOut { kind: "number", text: "", number: v, decimals: decimals, fmt: "", bold: false }
+    return XlsxOut { kind: "number", text: "", number: v, decimals: decimals, fmt: "", bold: false, fill: "" }
 }
 
 // Número con un código de formato propio: xlsx_number_fmt(1234567.89, "#,##0.00")
@@ -710,26 +717,35 @@ pub fn xlsx_number(v: float, decimals: int) -> XlsxOut {
 // decimal, como manda el formato). El valor se guarda completo, sin redondear: el
 // formato solo cambia cómo se muestra. Código vacío = General.
 pub fn xlsx_number_fmt(v: float, code: String) -> XlsxOut {
-    return XlsxOut { kind: "number", text: "", number: v, decimals: 0 - 1, fmt: code, bold: false }
+    return XlsxOut { kind: "number", text: "", number: v, decimals: 0 - 1, fmt: code, bold: false, fill: "" }
 }
 
 pub fn xlsx_int(v: int) -> XlsxOut {
-    return XlsxOut { kind: "int", text: int_to_string(v), number: int_to_float(v), decimals: 0, fmt: "", bold: false }
+    return XlsxOut { kind: "int", text: int_to_string(v), number: int_to_float(v), decimals: 0, fmt: "", bold: false, fill: "" }
 }
 
 pub fn xlsx_bool(b: bool) -> XlsxOut {
     var n: float = 0.0
     if b { n = 1.0 }
-    return XlsxOut { kind: "bool", text: "", number: n, decimals: 0, fmt: "", bold: false }
+    return XlsxOut { kind: "bool", text: "", number: n, decimals: 0, fmt: "", bold: false, fill: "" }
 }
 
 pub fn xlsx_blank() -> XlsxOut {
-    return XlsxOut { kind: "blank", text: "", number: 0.0, decimals: 0, fmt: "", bold: false }
+    return XlsxOut { kind: "blank", text: "", number: 0.0, decimals: 0, fmt: "", bold: false, fill: "" }
 }
 
 // La misma celda, en negrita.
 pub fn xlsx_bold(c: XlsxOut) -> XlsxOut {
-    return XlsxOut { kind: c.kind, text: c.text, number: c.number, decimals: c.decimals, fmt: c.fmt, bold: true }
+    return XlsxOut { kind: c.kind, text: c.text, number: c.number, decimals: c.decimals, fmt: c.fmt, bold: true, fill: c.fill }
+}
+
+// La misma celda, con relleno sólido del color `rgb` (6 dígitos hex, "FFC7CE"; con
+// o sin "#"). Se encadena con xlsx_bold: xlsx_fill(xlsx_bold(c), "FFC7CE"). Un
+// color que no tenga 6 dígitos hex hace que xlsx_write devuelva Err.
+pub fn xlsx_fill(c: XlsxOut, rgb: String) -> XlsxOut {
+    var col: String = rgb
+    if col.startsWith("#") { col = col.substring(1, col.length()) }
+    return XlsxOut { kind: c.kind, text: c.text, number: c.number, decimals: c.decimals, fmt: c.fmt, bold: c.bold, fill: col.to_upper() }
 }
 
 // Días desde 1970-01-01 de una fecha civil (algoritmo de H. Hinnant).
@@ -753,7 +769,7 @@ fn __xlsxw_leap(y: int) -> bool {
 // "AAAA-MM-DD" -> celda fecha. Si no es una fecha válida (o es anterior a
 // 1900-01-01) queda kind "baddate" y xlsx_write devuelve Err.
 pub fn xlsx_date(iso: String) -> XlsxOut {
-    let mala: XlsxOut = XlsxOut { kind: "baddate", text: iso, number: 0.0, decimals: 0, fmt: "", bold: false }
+    let mala: XlsxOut = XlsxOut { kind: "baddate", text: iso, number: 0.0, decimals: 0, fmt: "", bold: false, fill: "" }
     if iso.length() != 10 { return mala }
     if iso.charAt(4) != 45 or iso.charAt(7) != 45 { return mala }
     var i: int = 0
@@ -780,11 +796,11 @@ pub fn xlsx_date(iso: String) -> XlsxOut {
     // así que desde el 1900-03-01 la serie es dias + 25569 y antes dias + 25568.
     var serie: int = dias + 25569
     if y == 1900 and m <= 2 { serie = dias + 25568 }
-    return XlsxOut { kind: "date", text: iso, number: int_to_float(serie), decimals: 0, fmt: "", bold: false }
+    return XlsxOut { kind: "date", text: iso, number: int_to_float(serie), decimals: 0, fmt: "", bold: false, fill: "" }
 }
 
 pub fn xlsx_sheet_new(name: String) -> XlsxSheetOut {
-    return XlsxSheetOut { name: name, rows: [], wcols: [], wvals: [], merges: [], frows: 0, fcols: 0, filter: "" }
+    return XlsxSheetOut { name: name, rows: [], wcols: [], wvals: [], merges: [], frows: 0, fcols: 0, filter: "", vrefs: [], vdefs: [] }
 }
 
 impl XlsxSheetOut {
@@ -830,6 +846,36 @@ impl XlsxSheetOut {
     // un solo autofiltro: volver a llamar lo reemplaza, "" lo quita.
     fn autofilter(&mut self, range: String) {
         self.filter = range
+    }
+
+    // Lista desplegable en las celdas de `rango` ("C2:C500"): solo admite los
+    // `valores` (Array<String>). Excel guarda la lista dentro de la fórmula, así
+    // que el tope es de 255 caracteres en total (valores y comas) y un valor no
+    // puede llevar coma ni comillas; si no cabe, xlsx_write devuelve Err: usa
+    // validate_list_range. Se valida en xlsx_write.
+    fn validate_list(&mut self, rango: String, valores: Array) {
+        var sb: StringBuilder = StringBuilder.new()
+        sb.append("L")
+        var i: int = 0
+        while i < valores.length() {
+            let v: String = valores[i]
+            if i > 0 { sb.append(chr(1)) }
+            sb.append(v)
+            i = i + 1
+        }
+        let rs: Array = self.vrefs
+        let ds: Array = self.vdefs
+        rs.push(rango)
+        ds.push(sb.to_string())
+    }
+
+    // Lista desplegable cuyos valores salen de un rango ("Listas!$A$1:$A$40"), sin
+    // el tope de 255 caracteres. El rango de origen puede estar en otra hoja.
+    fn validate_list_range(&mut self, rango: String, origen: String) {
+        let rs: Array = self.vrefs
+        let ds: Array = self.vdefs
+        rs.push(rango)
+        ds.push("R" + origen)
     }
 }
 
@@ -970,6 +1016,25 @@ fn __xlsxw_check_range(r: String) -> bool {
     return true
 }
 
+// Un sqref de validación: una celda ("C2") o un rango ("C2:C500").
+fn __xlsxw_check_sqref(r: String) -> bool {
+    if r.indexOf(":") >= 0 { return __xlsxw_check_range(r) }
+    return __xlsxw_ref(r) >= 0
+}
+
+// Un color de relleno: exactamente 6 dígitos hex.
+fn __xlsxw_check_rgb(c: String) -> bool {
+    if c.length() != 6 { return false }
+    var i: int = 0
+    while i < 6 {
+        let b: int = c.charAt(i)
+        let ok: bool = (b >= 48 and b <= 57) or (b >= 65 and b <= 70) or (b >= 97 and b <= 102)
+        if not ok { return false }
+        i = i + 1
+    }
+    return true
+}
+
 // ── Partes del paquete ────────────────────────────────────────────────────────
 
 fn __xlsxw_head() -> String {
@@ -980,7 +1045,8 @@ fn __xlsxw_head() -> String {
 fn __xlsxw_style(claves: Array, c: XlsxOut) -> int {
     var b: String = "0"
     if c.bold { b = "1" }
-    let clave: String = b + __xlsxw_fmt_key(c)
+    // Clave: negrita "|" relleno "|" formato (el formato puede traer cualquier texto).
+    let clave: String = b + "|" + c.fill + "|" + __xlsxw_fmt_key(c)
     var i: int = 0
     while i < claves.length() {
         let k: String = claves[i]
@@ -1026,12 +1092,31 @@ fn __xlsxw_styles_xml(claves: Array) -> String {
     // Formatos propios (id >= 164): la fecha, los "0.000…" de más de 2 decimales y
     // los códigos de xlsx_number_fmt que no son integrados.
     var codigos: Array = []
+    var rellenos: Array = []
     var xfs: StringBuilder = StringBuilder.new()
     var i: int = 0
     while i < claves.length() {
         let k: String = claves[i]
         let bold: bool = k.startsWith("1")
-        let fmt: String = k.substring(1, k.length())
+        let resto: String = k.substring(2, k.length())
+        let p2: int = resto.indexOf("|")
+        let relleno: String = resto.substring(0, p2)
+        let fmt: String = resto.substring(p2 + 1, resto.length())
+        var fillId: int = 0
+        if relleno != "" {
+            var q: int = 0
+            var hallado: int = 0 - 1
+            while q < rellenos.length() {
+                let rq: String = rellenos[q]
+                if rq == relleno { hallado = q }
+                q = q + 1
+            }
+            if hallado < 0 {
+                rellenos.push(relleno)
+                hallado = rellenos.length() - 1
+            }
+            fillId = 2 + hallado
+        }
         var id: int = 0
         if fmt == "D" {
             id = __xlsxw_code_id(codigos, "dd/mm/yyyy")
@@ -1056,8 +1141,9 @@ fn __xlsxw_styles_xml(claves: Array) -> String {
         }
         var fontId: int = 0
         if bold { fontId = 1 }
-        var attrs: String = " numFmtId=\"" + int_to_string(id) + "\" fontId=\"" + int_to_string(fontId) + "\" fillId=\"0\" borderId=\"0\" xfId=\"0\""
+        var attrs: String = " numFmtId=\"" + int_to_string(id) + "\" fontId=\"" + int_to_string(fontId) + "\" fillId=\"" + int_to_string(fillId) + "\" borderId=\"0\" xfId=\"0\""
         if id != 0 { attrs = attrs + " applyNumberFormat=\"1\"" }
+        if fillId != 0 { attrs = attrs + " applyFill=\"1\"" }
         if bold { attrs = attrs + " applyFont=\"1\"" }
         xfs.append("<xf" + attrs + "/>")
         i = i + 1
@@ -1076,7 +1162,11 @@ fn __xlsxw_styles_xml(claves: Array) -> String {
         sb.append("</numFmts>")
     }
     sb.append("<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font><font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>")
-    sb.append("<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>")
+    var fl: StringBuilder = StringBuilder.new()
+    for rc: String in rellenos {
+        fl.append("<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF" + rc + "\"/><bgColor indexed=\"64\"/></patternFill></fill>")
+    }
+    sb.append("<fills count=\"" + int_to_string(2 + rellenos.length()) + "\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill>" + fl.to_string() + "</fills>")
     sb.append("<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>")
     sb.append("<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>")
     sb.append("<cellXfs count=\"" + int_to_string(claves.length()) + "\">")
@@ -1152,6 +1242,9 @@ fn __xlsxw_sheet_xml(h: XlsxSheetOut, claves: Array) -> Result<String, Error> {
         while k < fila.length() {
             let c: XlsxOut = fila[k]
             let addr: String = xlsx_addr(r + 1, k + 1)
+            if c.fill != "" and not __xlsxw_check_rgb(c.fill) {
+                return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " tiene un color de relleno inválido '" + c.fill + "' (se esperan 6 dígitos hex, como FFC7CE)"))
+            }
             let s: int = __xlsxw_style(claves, c)
             var sattr: String = ""
             if s > 0 { sattr = " s=\"" + int_to_string(s) + "\"" }
@@ -1176,7 +1269,7 @@ fn __xlsxw_sheet_xml(h: XlsxSheetOut, claves: Array) -> Result<String, Error> {
                 if c.number > 0.5 { b = "1" }
                 celdas.append("<c r=\"" + addr + "\"" + sattr + " t=\"b\"><v>" + b + "</v></c>")
             } else if c.kind == "blank" {
-                // Solo se escribe si lleva estilo (negrita); si no, no existe.
+                // Solo se escribe si lleva estilo (negrita o relleno); si no, no existe.
                 if s > 0 { celdas.append("<c r=\"" + addr + "\"" + sattr + "/>") }
             } else if c.kind == "baddate" {
                 return Result.Err(__xlsxw_err("hoja '" + h.name + "': la celda " + addr + " tiene una fecha inválida ('" + c.text + "'; se espera AAAA-MM-DD desde 1900)"))
@@ -1212,6 +1305,55 @@ fn __xlsxw_sheet_xml(h: XlsxSheetOut, claves: Array) -> Result<String, Error> {
         }
         sb.append("</mergeCells>")
     }
+
+    // Validaciones de lista: <dataValidations> va después de <mergeCells> y antes de
+    // <pageMargins> (ECMA-376 §18.3.1.99); Excel "repara" el archivo si no.
+    let vr: Array = h.vrefs
+    let vd: Array = h.vdefs
+    if vr.length() > 0 {
+        var dv: StringBuilder = StringBuilder.new()
+        var n: int = 0
+        while n < vr.length() {
+            let rango: String = vr[n]
+            let def: String = vd[n]
+            if not __xlsxw_check_sqref(rango) {
+                return Result.Err(__xlsxw_err("hoja '" + h.name + "': rango de validación inválido '" + rango + "' (se espera algo como C2:C500)"))
+            }
+            var f1: String = ""
+            if def.startsWith("R") {
+                f1 = def.substring(1, def.length())
+                if f1.length() == 0 or f1.length() > 255 {
+                    return Result.Err(__xlsxw_err("hoja '" + h.name + "': el origen de la lista de '" + rango + "' está vacío o pasa los 255 caracteres"))
+                }
+            } else {
+                let cuerpo: String = def.substring(1, def.length())
+                if cuerpo.length() == 0 {
+                    return Result.Err(__xlsxw_err("hoja '" + h.name + "': la lista de '" + rango + "' no tiene valores"))
+                }
+                var joined: StringBuilder = StringBuilder.new()
+                var q: int = 0
+                while q < cuerpo.length() {
+                    let ch: int = cuerpo.charAt(q)
+                    if ch == 1 {
+                        joined.append(",")
+                    } else if ch == 44 or ch == 34 {
+                        return Result.Err(__xlsxw_err("hoja '" + h.name + "': un valor de la lista de '" + rango + "' lleva coma o comillas; usa validate_list_range con un rango de origen"))
+                    } else {
+                        joined.append(chr(ch))
+                    }
+                    q = q + 1
+                }
+                let lista: String = joined.to_string()
+                if lista.length() > 255 {
+                    return Result.Err(__xlsxw_err("hoja '" + h.name + "': la lista de '" + rango + "' pasa los 255 caracteres que admite Excel (" + int_to_string(lista.length()) + "); usa validate_list_range con un rango de origen"))
+                }
+                f1 = "\"" + lista + "\""
+            }
+            dv.append("<dataValidation type=\"list\" allowBlank=\"1\" showErrorMessage=\"1\" sqref=\"" + xml_escape(rango.to_upper()) + "\"><formula1>" + xml_escape(f1) + "</formula1></dataValidation>")
+            n = n + 1
+        }
+        sb.append("<dataValidations count=\"" + int_to_string(vr.length()) + "\">" + dv.to_string() + "</dataValidations>")
+    }
     sb.append("</worksheet>")
     return Result.Ok(sb.to_string())
 }
@@ -1229,7 +1371,7 @@ pub fn xlsx_write(sheets: Array) -> Result<String, Error> {
         }
     }
     // El estilo 0 (sin negrita, General) siempre existe.
-    var claves: Array = ["0G"]
+    var claves: Array = ["0||G"]
     var partes: Array = []
     for h: XlsxSheetOut in sheets {
         match __xlsxw_sheet_xml(h, claves) {

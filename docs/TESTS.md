@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **511 archivos / 510 ARM64** | 2026-10-17: +2 (`493` operadores entre primitivos, `494` escapes). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **513 archivos / 512 ARM64** | 2026-10-18: +2 (`495` xlsx validación, `496` pdf fase 2). 2026-10-17: +2 (`493`, `494`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **375** | +13 el 2026-10-17 (NYX1010: 2 errores y 3 avisos; NYX1045: 5 errores, 2 avisos y 1 NDJSON); +8 el 2026-10-08/09 (NYX1031, 1041-1044); +6 el 2026-09-29 (NYX2019); +6 el 09-27; +9 el 09-24; +24 el 09-23. Detalle en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

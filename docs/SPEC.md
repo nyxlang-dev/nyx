@@ -5048,7 +5048,11 @@ puntos y el volteo del sistema de PDF. El resultado son los bytes del archivo: s
 
 ```nyx
 pub enum PdfPageSize { Letter, A4, HalfLetter, Custom }   // carta, A4, media carta, a medida
-pub enum PdfFont { Helvetica, HelveticaBold, TimesRoman }
+pub enum PdfFont {                                        // las 12 fuentes de texto estándar
+    Helvetica, HelveticaBold, HelveticaOblique, HelveticaBoldOblique,
+    TimesRoman, TimesBold, TimesItalic, TimesBoldItalic,
+    Courier, CourierBold, CourierOblique, CourierBoldOblique
+}
 
 pdf_new(size: PdfPageSize, width_mm: float, height_mm: float) -> Pdf   // medidas solo con Custom
 pdf_text_width(s: String, font: PdfFont, size_pt: float) -> float      // ancho en mm
@@ -5057,6 +5061,10 @@ pdf_text_supported(s: String) -> bool                                  // ¿text
 impl Pdf {
     fn add_page(&mut self, size: PdfPageSize, width_mm: float, height_mm: float)
     fn text(&mut self, x: float, y: float, s: String, font: PdfFont, size_pt: float)   // y = línea base
+    fn text_rotated(&mut self, x: float, y: float, s: String, font: PdfFont, size_pt: float, grados: float)
+    fn line_width(&mut self, mm: float)                  // grosor del trazo, 0 a 100 mm
+    fn gray(&mut self, nivel: float)                     // 0.0 negro .. 1.0 blanco (trazo y relleno)
+    fn color(&mut self, r: int, g: int, b: int)          // 0-255 por canal (trazo y relleno)
     fn line(&mut self, x1: float, y1: float, x2: float, y2: float)
     fn rect(&mut self, x: float, y: float, w: float, h: float, filled: bool)          // (x, y) = arriba a la izq.
     fn image_jpeg(&mut self, x: float, y: float, w_mm: float, h_mm: float, bytes: String) -> Result<int, Error>
@@ -5072,16 +5080,32 @@ impl Pdf {
 | `HalfLetter` | 139,7 x 215,9 mm |
 | `Custom` | `width_mm` x `height_mm`, de 1,06 mm a 5080 mm por lado (el ticket de 80 mm) |
 
-**Texto.** Las tres fuentes estándar de PDF, sin incrustar (todo visor las trae), con
+**Texto.** Las 12 fuentes de texto estándar de PDF (Helvetica, Times y Courier, cada una en recta,
+negrita, cursiva u oblicua y negrita cursiva), sin incrustar (todo visor las trae), con
 `WinAnsiEncoding`: el español entero (á é í ó ú ü ñ Ñ ¿ ¡ €, comillas tipográficas, rayas) en un byte
 por carácter. `y` es la **línea base** del texto. Una llamada dibuja una línea: sin saltos ni
 tabulaciones. Los anchos de las fuentes van dentro del archivo (`/Widths`), así que todo visor
 avanza exactamente lo que mide `pdf_text_width`: para alinear un monto a la derecha,
-`x = borde - pdf_text_width(monto, fuente, tamaño)`. Sin kerning.
+`x = borde - pdf_text_width(monto, fuente, tamaño)`. Sin kerning. `HelveticaOblique` y
+`HelveticaBoldOblique` miden igual que sus rectas; las cuatro `Courier` miden 600 milésimas de em
+por carácter. Symbol y ZapfDingbats no están.
 
-**Líneas y rectángulos** en negro, con el trazo de 1 pt por omisión de PDF. `rect` con
-`filled = true` rellena; dos rectángulos que se tocan en mm se tocan exactos en el archivo (los
-módulos de un QR se dibujan sin rendijas).
+**Texto girado.** `text_rotated(x, y, s, fuente, tamaño, grados)` gira `grados` en sentido
+contrario a las agujas del reloj alrededor de `(x, y)`, que sigue siendo el inicio de la línea
+base: 90 sube por el margen izquierdo, 270 baja, y sirve cualquier ángulo finito. Valida
+igual que `text`. El ancho no cambia: `pdf_text_width` mide a lo largo de la línea base.
+
+**Líneas y rectángulos** con el grosor y el color vigentes (por omisión negro y el trazo de 1 pt
+de PDF). `rect` con `filled = true` rellena; dos rectángulos que se tocan en mm se tocan exactos
+en el archivo (los módulos de un QR se dibujan sin rendijas).
+
+**Grosor y color.** `line_width(mm)` fija el grosor de los trazos siguientes (`line` y el borde de
+`rect`); `gray(nivel)` y `color(r, g, b)` cambian a la vez el trazo y el relleno, y el relleno es
+también el color del texto. Valen para lo que se dibuja DESPUÉS en esa página; cada página nueva
+arranca otra vez en negro con el trazo por omisión (1 pt, 0,353 mm). Para sombrear un
+encabezado: `d.gray(0.85)`, `d.rect(..., true)`, `d.gray(0.0)` y recién entonces el texto. Un valor
+fuera de rango (grosor fuera de 0 a 100 mm, gris fuera de 0 a 1, un canal fuera de 0 a 255, NaN)
+hace fallar `bytes()` con `Err(invalid)`, como el resto.
 
 **Imágenes.** `image_jpeg` incrusta el JPEG tal cual (baseline o progresivo, gris o color) y
 respeta la **orientación EXIF** de las fotos de teléfono. `image_png` acepta gris, RGB y paleta de
@@ -5104,13 +5128,14 @@ informa el **primer** problema, con la llamada y la página.
 | `invalid` | `bytes()`: un carácter que las fuentes estándar no tienen (lo nombra con su codepoint; `pdf_text_supported` lo pregunta antes), un control, UTF-8 inválido, un tamaño de página o de letra fuera de rango, una medida no finita, un ancho negativo. Imágenes: no es JPEG/PNG, JPEG CMYK, de 12 bits o sin pérdida/aritmético, PNG entrelazado (Adam7), un chunk crítico desconocido, un PNG con alfa de más de 64 MB sin comprimir, medidas inválidas. |
 | `parse` | Imágenes dañadas: CRC de un chunk PNG, zlib roto (adler32), un JPEG cortado. |
 
-**Fuera de alcance (fase 1):** fuentes TrueType incrustadas y otros alfabetos, colores (todo es
-negro), grosor de línea, formularios, firmas digitales, PDF/A, ajuste de texto en varias líneas y
+**Fuera de alcance (fases 1 y 2):** fuentes TrueType incrustadas y otros alfabetos, Symbol y
+ZapfDingbats, transparencia, curvas, trazos punteados, formularios, firmas digitales, PDF/A, ajuste de texto en varias líneas y
 numeración automática de páginas (el llamador posiciona cada cosa), y la compresión del contenido
 de las páginas (va sin comprimir: una factura mide pocos KB). La tabla es una receta, no una
 función del módulo.
 
-Receta completa: `examples/by-example/118-pdf-invoice.nx`.
+Recetas completas: `examples/by-example/118-pdf-invoice.nx` (factura) y
+`examples/by-example/139-pdf-preimpreso.nx` (marco, sombreado, Times y Courier, texto girado).
 
 ---
 
@@ -5127,10 +5152,20 @@ con XML adentro, así que `std/xlsx` se apoya en los otros dos, que también sir
 - **`std/xlsx`**: `xlsx_read` (celdas tipadas: text, number, date, bool, error, empty; fechas en ISO con
   épocas 1900 y 1904; las fórmulas no se evalúan, se lee el valor en caché) y `xlsx_write`
   (`xlsx_sheet_new`, `row`, `xlsx_text`/`xlsx_number`/`xlsx_number_fmt`/`xlsx_int`/`xlsx_date`/`xlsx_bool`/`xlsx_bold`,
-  `col_width`, `merge`, `freeze`, `autofilter`).
+  `col_width`, `merge`, `freeze`, `autofilter`, `validate_list`, `validate_list_range`, `xlsx_fill`).
+  - **Listas desplegables** (plantillas de carga): `hoja.validate_list("C2:C500", ["UND", "KG", "LT"])`
+    para una lista fija y `hoja.validate_list_range("D2:D500", "Listas!$A$1:$A$40")` para una lista que
+    sale de un rango. Emiten `<dataValidations>` en el lugar que exige el esquema (después de
+    `mergeCells`, antes de `pageMargins`; ECMA-376 §18.3.1.99). `xlsx_write` devuelve `Err` si la
+    lista fija pasa de 255 caracteres (tope de Excel, comas incluidas), si un valor lleva coma o
+    comillas (se usa la forma de rango) o si el rango no es válido. `xlsx_read` ignora la validación.
+  - **Relleno**: `xlsx_fill(celda, "FFC7CE")` (6 dígitos hex, con o sin `#`), encadenable con
+    `xlsx_bold`. El estilo es la combinación negrita × formato × relleno; un color que no sea de 6
+    dígitos hex hace que `xlsx_write` devuelva `Err`.
 
 Recetas: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro.nx` y
-`125-xlsx-leer-hoja.nx`.
+`125-xlsx-leer-hoja.nx`; la plantilla con listas desplegables y relleno, en
+`138-xlsx-plantilla.nx`.
 
 ---
 

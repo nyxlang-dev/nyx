@@ -1,0 +1,90 @@
+// Nyx by Example: un documento que calca una hoja preimpresa (std/pdf, fase 2).
+//
+// El caso real: un ERP llena formularios que el negocio ya imprime en papel con
+// marco, encabezados sombreados y rótulos laterales; y etiquetas con texto en
+// Courier. Hace falta dibujar encima lo mismo que trae el papel.
+//
+// Lo que muestra:
+//   - el grosor de línea (d.line_width, en mm): marco grueso, divisiones finas;
+//   - sombreado en gris (d.gray) y en color (d.color): el encabezado de una
+//     tabla, y la vuelta a negro para escribir encima;
+//   - las 12 fuentes de texto estándar: Times y Courier en negrita y cursiva;
+//   - texto girado (d.text_rotated) para el rótulo del margen: 90 grados sube
+//     por el borde izquierdo, 270 baja;
+//   - que el estado gráfico vale PARA LO QUE SE DIBUJA DESPUÉS en esa página, y
+//     cada página nueva arranca otra vez en negro con el trazo de 1 pt.
+//
+// Correr: nyx run -- preimpreso.pdf   (sin argumento solo informa el tamaño)
+
+import "std/pdf"
+import "std/error"
+
+fn preimpreso() -> Result<String, Error> {
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+
+    // Marco exterior grueso (0,6 mm) y divisiones finas (0,15 mm).
+    d.line_width(0.6)
+    d.rect(15.0, 15.0, 185.9, 120.0, false)
+    d.line_width(0.15)
+    d.line(15.0, 45.0, 200.9, 45.0)
+    d.line(15.0, 55.0, 200.9, 55.0)
+    d.line(110.0, 45.0, 110.0, 135.0)
+
+    // Encabezado sombreado en gris claro: se rellena primero y el texto va encima,
+    // en negro (el relleno y el texto comparten color, así que se vuelve a negro).
+    d.gray(0.85)
+    d.rect(15.3, 45.3, 185.3, 9.4, true)
+    d.gray(0.0)
+    d.text(18.0, 51.5, "Concepto", PdfFont.HelveticaBold, 10.0)
+    d.text(112.0, 51.5, "Observación", PdfFont.HelveticaBoldOblique, 10.0)
+
+    // Título en Times, con un filete de color debajo.
+    d.text(18.0, 28.0, "Orden de entrega", PdfFont.TimesBold, 20.0)
+    d.text(18.0, 38.0, "Original para el cliente", PdfFont.TimesItalic, 11.0)
+    d.color(0, 90, 160)
+    d.line_width(0.8)
+    d.line(18.0, 31.0, 90.0, 31.0)
+    d.color(0, 0, 0)
+
+    // Filas con Courier: ancho fijo, las columnas de cifras quedan alineadas.
+    d.line_width(0.15)
+    d.text(18.0, 63.0, "0001  Tornillo 1/4 x 2", PdfFont.Courier, 10.0)
+    d.text(18.0, 69.0, "0002  Tuerca hex 1/4", PdfFont.Courier, 10.0)
+    d.text(18.0, 75.0, "0003  Arandela plana", PdfFont.CourierOblique, 10.0)
+    d.text(18.0, 81.0, "TOTAL 3 renglones", PdfFont.CourierBold, 10.0)
+    d.text(112.0, 63.0, "Entregar en almacén", PdfFont.TimesRoman, 10.0)
+    d.text(112.0, 69.0, "Frágil", PdfFont.TimesBoldItalic, 10.0)
+
+    // Rótulo del margen izquierdo, girado 90 grados: arranca abajo (y = 130) y
+    // sube. En el margen derecho, el mismo texto girado 270 baja.
+    d.text_rotated(10.0, 130.0, "ORIGINAL - CLIENTE", PdfFont.Helvetica, 8.0, 90.0)
+    d.text_rotated(206.0, 20.0, "ORIGINAL - CLIENTE", PdfFont.Helvetica, 8.0, 270.0)
+
+    // Segunda página: vuelve a empezar en negro con el trazo por omisión.
+    d.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    d.text(18.0, 25.0, "Copia sin sombreado", PdfFont.CourierBoldOblique, 12.0)
+    d.line(18.0, 28.0, 120.0, 28.0)
+
+    return d.bytes()
+}
+
+fn main() -> int {
+    match preimpreso() {
+        Result.Ok(pdf) => {
+            let args: Array = get_args()
+            if args.length() > 1 {
+                let ruta: String = args[1]
+                write_file(ruta, pdf)
+                print("preimpreso escrito en " + ruta + " (" + int_to_string(pdf.length()) + " bytes)")
+            } else {
+                print("preimpreso: " + int_to_string(pdf.length()) + " bytes, empieza con " + pdf.substring(0, 8))
+                print("para escribirlo: nyx run -- preimpreso.pdf")
+            }
+            return 0
+        }
+        Result.Err(e) => {
+            print("no se pudo armar el preimpreso: " + error_to_string(e))
+            return 1
+        }
+    }
+}

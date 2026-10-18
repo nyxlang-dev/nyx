@@ -1,12 +1,72 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.36.1 -->
-<!-- nyx-stdlib: 1196123406-1324356 -->
+<!-- nyx-stdlib: 3927056848-1342758 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
 
+## Núcleo
+
+### `std/prelude`
+
+`import "std/prelude"` — 37 funciones:
+
+- `pub fn println(s: String)`
+- `pub fn read_stdin_all() -> String`
+- `pub fn abs(n: int) -> int`
+- `pub fn min(a: int, b: int) -> int`
+- `pub fn max(a: int, b: int) -> int`
+- `pub fn clamp(n: int, lo: int, hi: int) -> int`
+- `pub fn pow_int(base: int, exp: int) -> int`
+- `pub fn gcd(a: int, b: int) -> int`
+- `pub fn lcm(a: int, b: int) -> int`
+- `pub fn is_even(n: int) -> bool`
+- `pub fn is_odd(n: int) -> bool`
+- `pub fn sqrt_int(n: int) -> int`
+- `pub fn checked_add(a: int, b: int) -> Option<int>`
+- `pub fn checked_sub(a: int, b: int) -> Option<int>`
+- `pub fn checked_mul(a: int, b: int) -> Option<int>`
+- `pub fn checked_div(a: int, b: int) -> Option<int>`
+- `pub fn mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int`
+- `pub fn array_sum(arr: Array) -> int`
+- `pub fn array_min(arr: Array) -> int`
+- `pub fn array_max(arr: Array) -> int`
+- `pub fn array_reverse(arr: Array) -> Array`
+- `pub fn array_contains_int(arr: Array, val: int) -> bool`
+- `pub fn array_index_of(arr: Array, val: int) -> int`
+- `pub fn sort_int(arr: Array) -> Array`
+- `pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array`
+- `pub fn str_compare(a: String, b: String) -> int`
+- `pub fn sort_str(arr: Array) -> Array`
+- `pub fn read_text(path: String) -> String`
+- `pub fn write_text(path: String, content: String)`
+- `pub fn map_new() -> Map`
+- `pub fn map_put(m: Map, k: String, v: int)`
+- `pub fn map_get_int(m: Map, k: String) -> int`
+- `pub fn map_has(m: Map, k: String) -> bool`
+- `pub fn err_new(code: int, kind: String, msg: String) -> Error`
+- `pub fn errno_to_kind(code: int) -> String`
+- `pub fn error_to_string(e: Error) -> String`
+- `pub fn is_eof(e: Error) -> bool`
+
+### `std/error`
+
+`import "std/error"` — 4 funciones:
+
+- `pub fn err_new(code: int, kind: String, msg: String) -> Error`
+- `pub fn errno_to_kind(code: int) -> String`
+- `pub fn error_to_string(e: Error) -> String`
+- `pub fn is_eof(e: Error) -> bool`
+
 ## HTTP & Web
+
+### `std/template`
+
+`import "std/template"` — 2 funciones:
+
+- `pub fn tpl_partial(name: String, tmpl: String)`
+- `pub fn tpl_render(tmpl: String, ctx: Map) -> String`
 
 ### `std/vdom`
 
@@ -44,6 +104,19 @@
 - `export fn browser_get_hash() -> String`
 - `export fn browser_on_hashchange(f: Fn)`
 
+### `std/multipart`
+
+`import "std/multipart"` — 8 funciones:
+
+- `pub fn multipart_parse(body: String, content_type: String) -> Array`
+- `pub fn part_name(p: Array) -> String`
+- `pub fn part_filename(p: Array) -> String`
+- `pub fn part_ctype(p: Array) -> String`
+- `pub fn part_value(p: Array) -> String`
+- `pub fn multipart_field(name: String, value: String) -> Array` — Parte de texto: campo `name` con valor `value`.
+- `pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array` — Parte de archivo: campo `name`, nombre de archivo `filename`, content-type `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
+- `pub fn multipart_build(parts: Array) -> Result<Multipart, Error>`
+
 ### `std/websocket`
 
 `import "std/websocket"` — 9 funciones:
@@ -57,6 +130,46 @@
 - `pub fn ws_close() -> String`
 - `pub fn ws_is_upgrade(request: String) -> bool`
 - `pub fn ws_frame_size(frame: String) -> int`
+
+### `std/proxy`
+
+`import "std/proxy"` — 8 funciones:
+
+- `pub fn proxy_new(port: int) -> ProxyConfig`
+- `pub fn proxy_add_backend(config: ProxyConfig, host: String, port: int)`
+- `pub fn select_backend(config: ProxyConfig) -> Backend`
+- `pub fn proxy_check_health(config: ProxyConfig) -> Array`
+- `pub fn proxy_set_unhealthy(config: ProxyConfig, idx: int)`
+- `pub fn proxy_set_healthy(config: ProxyConfig, idx: int)`
+- `pub fn parse_content_length(s: String) -> int`
+- `pub fn proxy_start(config: ProxyConfig)`
+
+### `std/webpush`
+
+`import "std/webpush"` — 4 funciones:
+
+- `pub fn vapid_jwt(priv: String, audience: String, subject: String, exp: int) -> String`
+- `pub fn webpush_encrypt_with_keys(payload: String, client_p256dh: String, auth: String, salt: String, as_priv: String, as_pub: String) -> String`
+- `pub fn webpush_encrypt(payload: String, client_p256dh: String, auth: String) -> String`
+- `pub fn webpush_send(endpoint: String, jwt: String, vapid_pub: String, encrypted: String, ttl: int = 86400) -> Array`
+
+### `std/session`
+
+`import "std/session"` — 5 funciones:
+
+- `pub fn session_configure(host: String, port: int, ttl: int)`
+- `pub fn session_start(req: Request, resp: Response) -> String`
+- `pub fn session_get(req: Request, key: String) -> String`
+- `pub fn session_set(req: Request, key: String, value: String)`
+- `pub fn session_destroy(req: Request, resp: Response)`
+
+### `std/component`
+
+`import "std/component"` — 3 funciones:
+
+- `pub fn component_new(state: Array, render: Fn(Array) -> VNode) -> Array`
+- `pub fn mount(comp: Array, sel: String)`
+- `pub fn update(comp: Array)`
 
 ### `std/web`
 
@@ -154,6 +267,13 @@
 - `export async fn serial_read(p: SerialPort, max_bytes: int, timeout_ms: int) -> Result<Array, Error>`
 - `export async fn serial_close(p: SerialPort) -> Result<int, Error>`
 
+### `std/routematch`
+
+`import "std/routematch"` — 2 funciones:
+
+- `pub fn route_match(pattern: String, hash: String) -> Array`
+- `pub fn route_resolve(routes_patterns: Array, hash: String, default_idx: int) -> Array`
+
 ### `std/browser_idb`
 
 `import "std/browser_idb"` — 4 funciones:
@@ -203,6 +323,54 @@
 - `export fn dom_on_h(h: int, evento: String, handler: Fn)`
 - `export fn dom_child_count(h: int) -> int`
 
+### `std/serve`
+
+`import "std/serve"` — 36 funciones:
+
+- `pub fn app_ws(pattern: String, handler: Fn(Array) -> int)`
+- `pub fn serve_ws(handler: Fn(Array) -> int)`
+- `pub fn serve_idle_connections() -> int`
+- `pub fn serve_on_shutdown(handler: Fn)`
+- `pub fn serve_app(app: App, port: int, workers: int) -> int`
+- `pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int`
+- `pub fn app_compress(app: App, enabled: bool)`
+- `pub fn app_compress_limits(app: App, min_bytes: int, max_bytes: int)`
+- `pub fn app_max_body(app: App, method: String, pattern: String, max_bytes: int)`
+- `pub fn app_rate_limit(app: App, max_requests: int, window_secs: int)`
+- `pub fn app_route_rate_limit(app: App, method: String, pattern: String, max_requests: int, window_secs: int)`
+- `pub fn app_rate_limit_key(app: App, key_fn: Fn(Request) -> String)`
+- `pub fn req_remote_addr(req: Request) -> String`
+- `pub fn rate_key_forwarded_for(req: Request) -> String`
+- `pub fn detect_mime_type(path: String) -> String`
+- `pub fn try_serve_static(base_dir: String, url_path: String) -> Response`
+- `pub fn serve_static(app: &mut App, base_dir: String)`
+- `pub fn app_static(app: App, prefix: String, directory: String) -> int`
+- `pub fn app_static_cached(app: App, prefix: String, directory: String, max_age: int) -> int`
+- `pub fn compute_weak_etag(content: String) -> String`
+- `pub fn apply_etag(resp: Response, if_none_match: String) -> Response`
+- `pub fn try_serve_static_prefix(path: String) -> Response`
+- `pub fn ws_init_registry() -> int`
+- `pub fn ws_join(fd: int, room: String)`
+- `pub fn ws_leave(fd: int)`
+- `pub fn ws_broadcast(room: String, payload: String)`
+- `pub fn ws_count() -> int`
+- `pub fn ws_count_room(room: String) -> int`
+- `pub fn ws_accept(fd: int, room: String, headers: Array) -> int`
+- `pub fn ws_drain_close() -> int`
+- `pub fn sse_frame(evento: String, datos: String) -> String`
+- `pub fn sse_broadcast(room: String, evento: String, datos: String) -> int`
+- `pub fn sse_count() -> int`
+- `pub fn sse_count_room(room: String) -> int`
+- `pub fn sse_open(req: Request, room: String) -> Response`
+- `pub fn sse_drain_close() -> int`
+
+### `std/router`
+
+`import "std/router"` — 2 funciones:
+
+- `pub fn router_new(patterns: Array, makes: Array, default_idx: int) -> Array`
+- `pub fn router_start(r: Array, sel: String)`
+
 ### `std/browser_await`
 
 `import "std/browser_await"` — 4 funciones:
@@ -238,6 +406,72 @@
 - `pub fn kv_srem(h: int, key: String, member: String) -> int`
 - `pub fn kv_token_list(h: int) -> Array`
 - `pub fn kv_token_revoke(h: int, token: String) -> bool`
+
+### `std/postgres`
+
+`import "std/postgres"` — 45 funciones:
+
+- `pub fn pg_be32(n: int) -> String`
+- `pub fn pg_be16(n: int) -> String`
+- `pub fn pg_read_be32(s: String, off: int) -> int`
+- `pub fn pg_read_be16(s: String, off: int) -> int`
+- `pub fn pg_cstr(s: String) -> String`
+- `pub fn pg_msg(tipo: String, payload: String) -> String`
+- `pub fn pg_scram_proof(password: String, salt_b64: String, iters: int, client_first_bare: String, server_first: String, client_final_bare: String) -> Array`
+- `pub fn pg_scram_attr(msg: String, attr: String) -> String`
+- `pub fn pg_conninfo_get(conninfo: String, clave: String, por_defecto: String) -> String`
+- `pub fn pg_read_message(fd: int, tls: int) -> Result<Array, Error>`
+- `pub fn pg_parse_error(payload: String) -> Error`
+- `pub fn pg_sqlstate(e: Error) -> String`
+- `pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error>`
+- `pub fn try_pg_close(conn: PgConn) -> Result<int, Error>`
+- `pub fn pg_parse_notification(payload: String) -> Array`
+- `pub fn pg_null() -> String`
+- `pub fn pg_is_null(valor: String) -> bool`
+- `pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error>`
+- `pub fn try_pg_query(conn: PgConn, sql: String) -> Result<Array, Error>`
+- `pub fn try_pg_query_cols(conn: PgConn, sql: String) -> Result<Array, Error>`
+- `pub fn pg_col(columnas: Array, nombre: String) -> int`
+- `pub fn pg_row_str(fila: Array, i: int) -> String`
+- `pub fn pg_row_int(fila: Array, i: int) -> int`
+- `pub fn pg_row_float(fila: Array, i: int) -> float`
+- `pub fn pg_row_bool(fila: Array, i: int) -> bool`
+- `pub fn pg_int(n: int) -> String`
+- `pub fn pg_text(s: String) -> String`
+- `pub fn pg_float(f: float) -> String`
+- `pub fn pg_bool(b: bool) -> String`
+- `pub fn try_pg_query_params(conn: PgConn, sql: String, params: Array) -> Result<Array, Error>`
+- `pub fn try_pg_exec_params(conn: PgConn, sql: String, params: Array) -> Result<int, Error>`
+- `pub fn try_pg_begin(conn: PgConn) -> Result<int, Error>`
+- `pub fn try_pg_commit(conn: PgConn) -> Result<int, Error>`
+- `pub fn try_pg_rollback(conn: PgConn) -> Result<int, Error>`
+- `pub fn try_pg_listen(conn: PgConn, canal: String) -> Result<int, Error>`
+- `pub fn try_pg_unlisten(conn: PgConn, canal: String) -> Result<int, Error>`
+- `pub fn try_pg_notify(conn: PgConn, canal: String, payload: String) -> Result<int, Error>`
+- `pub fn try_pg_wait_notifications(conn: PgConn, timeout_ms: int) -> Result<Array, Error>`
+- `pub fn pg_migrate_init(conn: PgConn) -> bool`
+- `pub fn pg_migrate_version(conn: PgConn) -> int`
+- `pub fn pg_migrate(conn: PgConn, version: int, name: String, sql: String) -> bool`
+- `pub fn pg_pool_new(conninfo: String, size: int) -> PgPool`
+- `pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error>`
+- `pub fn pg_pool_put(pool: PgPool, conn: PgConn)`
+- `pub fn pg_pool_close(pool: PgPool)`
+
+### `std/resp`
+
+`import "std/resp"` — 11 funciones:
+
+- `pub fn resp_parse_len(s: String) -> int`
+- `pub fn resp_read_framed(handle: int, is_tls: bool) -> Array`
+- `pub fn resp_read_command(fd: int) -> Array`
+- `pub fn resp_simple_string(s: String) -> String`
+- `pub fn resp_error(msg: String) -> String`
+- `pub fn resp_integer(n: int) -> String`
+- `pub fn resp_bulk_string(s: String) -> String`
+- `pub fn resp_null_bulk() -> String`
+- `pub fn resp_array_header(count: int) -> String`
+- `pub fn resp_bulk_array(items: Array) -> String`
+- `pub fn resp_mixed_array(items: Array, flags: Array) -> String`
 
 ### `std/sqlite`
 
@@ -301,6 +535,52 @@
 - `pub fn json_parse(input: String) -> Array`
 - `pub fn try_json_parse(input: String) -> Result<Array, Error>`
 
+### `std/xlsx`
+
+`import "std/xlsx"` — 17 funciones:
+
+- `pub fn xlsx_read_opts() -> XlsxReadOpts`
+- `pub fn xlsx_col_name(col: int) -> String`
+- `pub fn xlsx_addr(row: int, col: int) -> String`
+- `pub fn xlsx_read(bytes: String, opts: XlsxReadOpts) -> Result<XlsxBook, Error>`
+- `pub fn xlsx_sheet(book: XlsxBook, name: String) -> Option<XlsxSheet>`
+- `pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell`
+- `pub fn xlsx_text(s: String) -> XlsxOut`
+- `pub fn xlsx_number(v: float, decimals: int) -> XlsxOut`
+- `pub fn xlsx_number_fmt(v: float, code: String) -> XlsxOut`
+- `pub fn xlsx_int(v: int) -> XlsxOut`
+- `pub fn xlsx_bool(b: bool) -> XlsxOut`
+- `pub fn xlsx_blank() -> XlsxOut`
+- `pub fn xlsx_bold(c: XlsxOut) -> XlsxOut`
+- `pub fn xlsx_fill(c: XlsxOut, rgb: String) -> XlsxOut`
+- `pub fn xlsx_date(iso: String) -> XlsxOut`
+- `pub fn xlsx_sheet_new(name: String) -> XlsxSheetOut`
+- `pub fn xlsx_write(sheets: Array) -> Result<String, Error>`
+
+### `std/image`
+
+`import "std/image"` — 19 funciones:
+
+- `pub fn image_limits() -> ImageLimits` — Topes por omisión: 30 MB de archivo, 64 millones de píxeles, 30000 de lado.
+- `pub fn image_png_read(b: String, allow_interlace: bool) -> Result<ImagePng, Error>` — Lee un PNG sin decodificar píxeles: firma, CRC de CADA chunk, IHDR, PLTE, tRNS y los IDAT. `allow_interlace` false rechaza Adam7. Err(parse) si está dañado, Err(invalid) si es de una variante que no se lee (chunk crítico desconocido, combinación inválida).
+- `pub fn image_png_split(raw: String, w: int, h: int, depth: int, ctype: int, trns: String, color: StringBuilder, alpha: StringBuilder) -> String` — Des-filtra las filas de un PNG (5 filtros) y reparte cada píxel entre `color` y `alpha` (dos flujos crudos, para incrustar en un PDF). "" si todo cerró, o la causa. Lo usa std/pdf; para píxeles use image_decode.
+- `pub fn image_jpeg_frame(b: String) -> Result<Array, Error>` — Recorre los marcadores de un JPEG hasta el encabezado de cuadro (SOF) y devuelve [ancho, alto, componentes, orientación EXIF, marcador SOF (0xC0-0xCF), bits por muestra]. Solo entiende la estructura: quien lo llama decide qué variantes acepta (std/pdf pasa SOF0-2; std/image_info solo 8 bits y 1 o 3 componentes). Un SOF que no es 0xC0-0xC2 (sin pérdida, aritmético, jerárquico) devuelve ancho, alto, componentes y bits en 0.
+- `pub fn image_info(bytes: String) -> Result<ImageInfo, Error>` — Formato, tamaño y orientación de una imagen SIN decodificar los píxeles (lee solo el encabezado: es barato aunque el archivo sea de 30 MB). Err(unsupported) para HEIC, WebP, AVIF, GIF, CMYK, JPEG de 12 bits, sin pérdida o aritmético; Err(parse) si el encabezado está dañado.
+- `pub fn image_orient(img: Image, orientation: int) -> Image` — Aplica una orientación EXIF (1-8) a la imagen y devuelve la imagen «derecha» (con orientación 1): 2 espejo horizontal, 3 giro de 180, 4 espejo vertical, 5 transpuesta, 6 giro de 90 en sentido horario, 7 transversa, 8 giro de 90 antihorario. Con 1 (u otro valor) devuelve la misma imagen. `image_decode` ya la aplica al decodificar un JPEG; esta función sirve para quien decodifica sin orientar o compone.
+- `pub fn image_decode(bytes: String, limits: ImageLimits) -> Result<Image, Error>` — Decodifica una imagen a píxeles de 8 bits por canal, al tamaño completo. PNG (gris, gris+alfa, RGB, RGBA y paleta, 1-16 bits, con y sin Adam7; 16 bits se reduce al byte alto) y JPEG secuencial (baseline, gris o YCbCr, cualquier submuestreo común, con reinicios y varios escaneos; el JPEG sale con la orientación EXIF ya aplicada y el perfil ICC en `Image.icc`). Valida los topes con el encabezado ANTES de reservar: Err(invalid) si el archivo, los píxeles o un lado pasan `limits`; Err(unsupported) para formatos que no se decodifican (JPEG progresivo, CMYK, HEIC...); Err(parse) si está dañado o truncado.
+- `pub fn image_decode_scaled(bytes: String, limits: ImageLimits, denom: int) -> Result<Image, Error>` — Como image_decode pero un JPEG se decodifica REDUCIDO a 1/denom del tamaño (denom 1, 2, 4 u 8; el lado sale techo(lado / denom)): la IDCT se calcula ya reducida, así que a 1/8 no toca los 12 millones de píxeles de una foto sino 190 mil. `Image.reduction` dice la reducción que se aplicó. Un PNG no se reduce al decodificar (sale completo, reduction = 1). Err(invalid) si denom no es 1, 2, 4 u 8.
+- `pub fn image_decode_min(bytes: String, limits: ImageLimits, min_w: int, min_h: int) -> Result<Image, Error>` — Decodifica con la MAYOR reducción (1/1, 1/2, 1/4 o 1/8) cuyo resultado, ya orientado, sigue teniendo al menos min_w x min_h píxeles. Es la puerta de entrada de las miniaturas: pedir el tamaño más grande que se va a servir y achicar después con image_resize_fit / image_resize_cover. Si la imagen ya es más chica que el mínimo, sale completa.
+- `pub fn image_crop(img: Image, x: int, y: int, w: int, h: int) -> Result<Image, Error>` — Recorta el rectángulo de esquina (x, y) y tamaño w x h. Err(invalid) si algo de eso cae fuera de la imagen o no es positivo. Conserva el perfil ICC.
+- `pub fn image_resize(img: Image, w: int, h: int) -> Result<Image, Error>` — Escala la imagen a EXACTAMENTE w x h (sin conservar la proporción): Lanczos3 con soporte proporcional en el eje que se achica, triangular (bilineal) en el que se agranda; un eje que no cambia no se toca. Err(invalid) si w o h no son positivos o pasan el tope (30000 de lado, 64 millones de píxeles). Salida idéntica a Image.resize de Pillow (LANCZOS al achicar, BILINEAR al agrandar).
+- `pub fn image_resize_fit(img: Image, max_w: int, max_h: int) -> Result<Image, Error>` — Achica la imagen para que CAIGA dentro de max_w x max_h conservando la proporción (uno de los dos lados llega al tope, el otro se redondea al entero más cercano). Nunca agranda: si ya cabe se devuelve la misma imagen. Lanczos3. Err(invalid) si algún tope no es positivo.
+- `pub fn image_resize_cover(img: Image, w: int, h: int) -> Result<Image, Error>` — Llena la caja w x h: recorta al centro la parte de la imagen que tiene la proporción de la caja y la escala a w x h (el cuadrado de una miniatura). Nunca agranda: si la parte recortada es más chica que la caja en algún lado, el resultado es la caja reducida a lo que da la imagen (misma proporción, sin escalar). Lanczos3. Err(invalid) si w o h no son positivos.
+- `pub fn image_flatten(img: Image, r: int, g: int, b: int) -> Image` — Compone la imagen sobre un fondo de color (r, g, b, 0-255) y quita el canal alfa: una RGBA sale RGB, con c = (c * a + fondo * (255 - a)) / 255 redondeado. Una imagen sin alfa (gris o RGB) se devuelve igual. Es el paso previo a codificar JPEG, que no guarda transparencia.
+- `pub fn image_default_quality() -> int` — Calidad por omisión del codificador JPEG: 80 (una foto de producto a 400 px sale en el orden de decenas de KB).
+- `pub fn image_encode_jpeg(img: Image, quality: int) -> Result<String, Error>` — Codifica la imagen como JPEG baseline (secuencial): calidad 1-100 con la fórmula de libjpeg sobre las tablas del Anexo K, Huffman estándar, JFIF; 4:2:0 hasta calidad 90 y 4:4:4 por encima. Una imagen en gris sale de 1 componente; una con alfa (RGBA) se compone antes sobre BLANCO (para otro fondo use image_flatten). No escribe EXIF (la orientación ya viene aplicada al decodificar y la ubicación GPS no se conserva) pero sí el perfil ICC de `Image.icc` si lo trae. Los bytes de salida son los mismos en nativo y en wasm. Err(invalid) si la calidad no está en 1..100, si un lado es cero o pasa de 65535, o si la imagen no es coherente (canales, filas).
+- `pub fn image_thumbnail(bytes: String, max_w: int, max_h: int, quality: int) -> Result<String, Error>` — Miniatura en un paso: decodifica `bytes` (JPEG o PNG, con los topes de image_limits()) con la mayor reducción que deja al menos el doble del tamaño final, aplica la orientación EXIF, achica con Lanczos3 para que CAIGA en max_w x max_h conservando la proporción (nunca agranda), y codifica JPEG con la calidad dada (1-100; image_default_quality() es 80). Con alfa compone sobre blanco. La salida no lleva EXIF ni ubicación. Err(invalid) si la calidad o algún lado no son válidos o el archivo pasa los topes; Err(parse) si está dañado; Err(unsupported) para formatos que no se decodifican.
+- `pub fn image_thumbnails(bytes: String, sizes: Array, quality: int) -> Result<Array, Error>` — Varias miniaturas de UNA sola decodificación: `sizes` es un Array de pares [max_w, max_h] (cada uno con la semántica de image_thumbnail) y el resultado un Array de String (JPEG) en el mismo orden. La decodificación usa la reducción que sirve al tamaño más grande pedido; los demás se achican desde esa misma imagen. Ejemplo: image_thumbnails(foto, [[1200, 1200], [600, 600], [150, 150]], 80). Los mismos errores que image_thumbnail.
+- `pub fn image_strip_icc(img: Image) -> Image` — Quita el perfil ICC de la imagen (`icc` = ""), para que el JPEG codificado no lo lleve. Por omisión el codificador lo conserva (una foto en Display P3 sin su perfil se ve desteñida); quitarlo ahorra 0.5-3 KB por imagen cuando se sabe que el destino es sRGB.
+
 ### `std/toml`
 
 `import "std/toml"` — 6 funciones:
@@ -349,6 +629,24 @@
 - `pub fn ean13_widths(digits: String) -> Result<Array, Error>` — EAN-13: 59 anchos (95 módulos) empezando en barra; 12 dígitos calcula el control, 13 lo valida. Err(invalid) si no.
 - `pub fn qr_matrix(data: String, ecc: QrEcc) -> Result<Array, Error>` — QR (versiones 1-10, modo y máscara automáticos): Array de filas de int 1 oscuro / 0 claro, lado 17+4V, sin zona de silencio. Err(invalid) si no entra.
 
+### `std/zip`
+
+`import "std/zip"` — 13 funciones:
+
+- `pub fn zip_crc32_table() -> Array`
+- `pub fn zip_crc32_part(tab: Array, b: String, desde: int, hasta: int) -> int`
+- `pub fn zip_crc32(data: String) -> int`
+- `pub fn zip_adler32(b: String) -> int`
+- `pub fn zip_inflate_raw(data: String, max_out: int) -> Result<String, Error>`
+- `pub fn zip_inflate_zlib(zdata: String, max_out: int) -> Result<String, Error>`
+- `pub fn zip_deflate_raw(data: String) -> String`
+- `pub fn zip_deflate_zlib(data: String) -> String`
+- `pub fn zip_gzip(data: String) -> String`
+- `pub fn zip_gunzip(data: String, max_out: int) -> Result<String, Error>`
+- `pub fn zip_read_opts() -> ZipReadOpts`
+- `pub fn zip_read(bytes: String, opts: ZipReadOpts) -> Result<ZipArchive, Error>`
+- `pub fn zip_writer() -> ZipWriter`
+
 ### `std/msgpack`
 
 `import "std/msgpack"` — 14 funciones:
@@ -367,6 +665,12 @@
 - `pub fn msgpack_pack_uint16(v: int) -> String`
 - `pub fn msgpack_size(data: String) -> int`
 - `pub fn msgpack_is_nil(data: String) -> bool`
+
+### `std/percent`
+
+`import "std/percent"` — 1 funciones:
+
+- `pub fn url_decode(s: String) -> String`
 
 ### `std/pdf`
 
@@ -390,6 +694,19 @@
 - `pub fn base64_encode(data: String) -> String`
 - `pub fn base64_decode(encoded: String) -> String`
 - `pub fn hex_to_b64(hex: String) -> String`
+
+### `std/xml`
+
+`import "std/xml"` — 8 funciones:
+
+- `pub fn xml_opts() -> XmlOpts` — Topes por omisión: 256 niveles y 64 MB.
+- `pub fn xml_reader(text: String) -> XmlReader` — Crea un lector con los topes por omisión.
+- `pub fn xml_reader_opts(text: String, opts: XmlOpts) -> XmlReader` — Crea un lector con topes propios.
+- `pub fn xml_parse(text: String, opts: XmlOpts) -> Result<XmlNode, Error>` — Parsea un documento completo y devuelve el elemento raíz. Err(parse, 22) si está mal formado; Err(invalid, 27) si supera un tope.
+- `pub fn xml_attr(node: XmlNode, name: String) -> String` — Valor del atributo `name` de un nodo, o "" si no está.
+- `pub fn xml_event_attr(ev: XmlEvent, name: String) -> String` — Valor del atributo `name` de un evento "open", o "" si no está.
+- `pub fn xml_child(node: XmlNode, name: String) -> Option<XmlNode>` — Primer hijo directo llamado `name`, o None.
+- `pub fn xml_escape(s: String) -> String` — Escapa `& < > " '` para escribir XML (texto o valor de atributo).
 
 ### Builtins globales (sin `import`)
 
@@ -612,6 +929,29 @@
 
 ## Concurrencia
 
+### `std/pool`
+
+`import "std/pool"` — 18 funciones:
+
+- `pub fn pool_new(max_size: int, timeout_ms: int) -> Array`
+- `pub fn pool_capacity(pool: Array) -> int`
+- `pub fn pool_available_count(pool: Array) -> int`
+- `pub fn pool_in_use_count(pool: Array) -> int`
+- `pub fn pool_created_count(pool: Array) -> int`
+- `pub fn pool_total_active(pool: Array) -> int`
+- `pub fn pool_acquire(pool: Array) -> int`
+- `pub fn pool_acquire_wait(pool: Array) -> int`
+- `pub fn pool_release(pool: Array, handle: int)`
+- `pub fn pool_drain(pool: Array)`
+- `pub fn pool_reset(pool: Array)`
+- `pub fn stream_new() -> Array`
+- `pub fn stream_push(s: Array, val: String)`
+- `pub fn stream_close(s: Array)`
+- `pub fn stream_poll(s: Array) -> String`
+- `pub fn stream_is_done(s: Array) -> bool`
+- `pub fn stream_pending(s: Array) -> int`
+- `pub fn stream_collect(s: Array) -> Array`
+
 ### `std/sync`
 
 `import "std/sync"` — 22 funciones:
@@ -689,6 +1029,14 @@
 - `pub fn random_shuffle(arr: Array) -> Array`
 - `pub fn random_sample_indices(n: int, k: int) -> Array`
 
+### `std/rsa`
+
+`import "std/rsa"` — 3 funciones:
+
+- `pub fn rsa_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
+- `pub fn rsa_sha256_verify_b64(public_key_pem: String, data: String, signature_b64: String) -> Result<bool, Error>`
+- `pub fn rsa_pss_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
+
 ### `std/uuid`
 
 `import "std/uuid"` — 3 funciones:
@@ -752,6 +1100,20 @@
 - `pub fn try_tls_connect_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Result<int, Error>`
 - `pub fn try_tls_connect_mtls(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String, client_cert_pem: String, client_key_pem: String) -> Result<int, Error>`
 - `pub fn try_tls_read(h: int, max_bytes: int, timeout_ms: int) -> Result<String, Error>`
+
+### `std/webpushcrypto`
+
+`import "std/webpushcrypto"` — 9 funciones:
+
+- `pub fn csprng_bytes(n: int) -> String`
+- `pub fn u8(n: int) -> String`
+- `pub fn sha256_bytes(s: String) -> String`
+- `pub fn ec_p256_keypair() -> String`
+- `pub fn ecdh_p256(priv: String, peer_pub: String) -> String`
+- `pub fn ecdsa_p256_sign(priv: String, hash: String) -> String`
+- `pub fn ecdsa_p256_verify(pubkey: String, hash: String, sig: String) -> int`
+- `pub fn hkdf_sha256(salt: String, ikm: String, info: String, len: int) -> String`
+- `pub fn aes128gcm_encrypt(key: String, iv: String, pt: String, aad: String) -> String`
 
 ### Builtins globales (sin `import`)
 
@@ -832,6 +1194,16 @@
 - `pub fn regex_replace(text: String, pattern: String, replacement: String) -> String` — Replace the first match of `pattern` in `text` with `replacement`.
 - `pub fn regex_replace_all(text: String, pattern: String, replacement: String) -> String` — Replace all matches of `pattern` in `text` with `replacement`.
 
+### `std/unicode`
+
+`import "std/unicode"` — 5 funciones:
+
+- `pub fn utf8_encode(codepoint: int) -> String`
+- `pub fn wcwidth(codepoint: int) -> int`
+- `pub fn display_width(s: String) -> int`
+- `pub fn latin1_to_utf8(s: String) -> String`
+- `pub fn windows1252_to_utf8(s: String) -> String`
+
 ### Builtins globales (sin `import`)
 
 - `char_to_string` (1 arg) — String
@@ -852,6 +1224,61 @@
 - `string_to_int_or` (2 args) — variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
 
 ## Matemática
+
+### `std/math`
+
+`import "std/math"` — 15 funciones:
+
+- `pub fn abs(n: int) -> int`
+- `pub fn min(a: int, b: int) -> int`
+- `pub fn max(a: int, b: int) -> int`
+- `pub fn clamp(n: int, lo: int, hi: int) -> int`
+- `pub fn pow_int(base: int, exp: int) -> int`
+- `pub fn gcd(a: int, b: int) -> int`
+- `pub fn lcm(a: int, b: int) -> int`
+- `pub fn is_even(n: int) -> bool`
+- `pub fn is_odd(n: int) -> bool`
+- `pub fn sqrt_int(n: int) -> int`
+- `pub fn checked_add(a: int, b: int) -> Option<int>`
+- `pub fn checked_sub(a: int, b: int) -> Option<int>`
+- `pub fn checked_mul(a: int, b: int) -> Option<int>`
+- `pub fn checked_div(a: int, b: int) -> Option<int>`
+- `pub fn mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int`
+
+### `std/math_ext`
+
+`import "std/math_ext"` — 19 funciones:
+
+- `pub fn is_prime(n: int) -> bool`
+- `pub fn primes_up_to(n: int) -> Array`
+- `pub fn extended_gcd(a: int, b: int) -> Array`
+- `pub fn pow_mod(base: int, exp: int, mod_n: int) -> int`
+- `pub fn fibonacci(n: int) -> int`
+- `pub fn binomial(n: int, k: int) -> int`
+- `pub fn int_sum(arr: Array) -> int`
+- `pub fn int_product(arr: Array) -> int`
+- `pub fn int_min_arr(arr: Array) -> int`
+- `pub fn int_max_arr(arr: Array) -> int`
+- `pub fn stats_mean(arr: Array) -> float`
+- `pub fn stats_median(arr: Array) -> float`
+- `pub fn stats_variance(arr: Array) -> float`
+- `pub fn stats_range(arr: Array) -> int`
+- `pub fn dist_2d(x1: float, y1: float, x2: float, y2: float) -> float`
+- `pub fn clamp_float(x: float, lo: float, hi: float) -> float`
+- `pub fn lerp(a: float, b: float, t: float) -> float`
+- `pub fn float_to_fixed(x: float, decimals: int) -> String`
+- `pub fn try_mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> Result<int, Error>`
+
+### `std/expr`
+
+`import "std/expr"` — 6 funciones:
+
+- `pub fn expr_vars_new() -> ExprVars`
+- `pub fn expr_parse(text: String) -> Result<Expr, Error>` — Compila la fórmula. Err (con la posición en el mensaje) si hay un error de sintaxis, una función desconocida o de aridad incorrecta, o se pasa de un tope. No necesita las variables: sirve para validar una fórmula al guardarla.
+- `pub fn expr_vars(e: Expr) -> Array` — Nombres de las variables que usa la fórmula, sin repetidos y en orden de aparición. Para validar al guardar («¿todas existen en el catálogo?»).
+- `pub fn expr_eval_micros(e: Expr, vars: ExprVars) -> Result<int, Error>` — Evalúa la fórmula y devuelve el resultado como ENTERO de micros (1.5 = 1500000): el valor exacto de punto fijo. Err con posición si falta una variable, hay división por cero o el resultado se sale del rango.
+- `pub fn expr_eval(e: Expr, vars: ExprVars) -> Result<float, Error>` — Evalúa y devuelve un float (convertido del valor exacto). Cómodo para mostrar o comparar; para plata usar expr_eval_dec, que no pasa por float.
+- `pub fn expr_eval_dec(e: Expr, vars: ExprVars, decimals: int) -> Result<String, Error>` — Evalúa y devuelve el resultado como TEXTO decimal exacto con `decimals` decimales (0 a 6, redondeo mitad hacia afuera del cero): "974.93". Es la salida pensada para plata; `decimals` fuera de 0..6 se ajusta al rango.
 
 ### Builtins globales (sin `import`)
 
@@ -874,6 +1301,21 @@
 - `math_tan` (1 arg)
 
 ## Colecciones & estructuras
+
+### `std/array`
+
+`import "std/array"` — 10 funciones:
+
+- `pub fn array_sum(arr: Array) -> int`
+- `pub fn array_min(arr: Array) -> int`
+- `pub fn array_max(arr: Array) -> int`
+- `pub fn array_reverse(arr: Array) -> Array`
+- `pub fn array_contains_int(arr: Array, val: int) -> bool`
+- `pub fn array_index_of(arr: Array, val: int) -> int`
+- `pub fn sort_int(arr: Array) -> Array`
+- `pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array`
+- `pub fn str_compare(a: String, b: String) -> int`
+- `pub fn sort_str(arr: Array) -> Array`
 
 ### `std/linkedlist`
 
@@ -926,11 +1368,74 @@
 - `pub fn mat_frobenius_sq(m: Array) -> int`
 - `pub fn mat_print(m: Array)`
 
+### `std/events`
+
+`import "std/events"` — 13 funciones:
+
+- `pub fn event_bus_new() -> Array`
+- `pub fn event_on(bus: Array, event: String, handler: Fn(String) -> bool) -> int`
+- `pub fn event_emit(bus: Array, event: String, payload: String) -> int`
+- `pub fn event_off(bus: Array, event: String)`
+- `pub fn event_history(bus: Array) -> Array`
+- `pub fn event_history_count(bus: Array) -> int`
+- `pub fn event_was_emitted(bus: Array, event: String) -> bool`
+- `pub fn observable_new(initial: int) -> Array`
+- `pub fn observable_get(obs: Array) -> int`
+- `pub fn observable_set(obs: Array, new_val: int)`
+- `pub fn observable_watch(obs: Array, handler: Fn(int) -> bool)`
+- `pub fn observable_history(obs: Array) -> Array`
+- `pub fn observable_computed(source: Array, transform: Fn(int) -> int) -> int`
+
+### `std/statemachine`
+
+`import "std/statemachine"` — 16 funciones:
+
+- `pub fn fsm_new(initial_state: String) -> Array`
+- `pub fn fsm_add_state(fsm: Array, state: String)`
+- `pub fn fsm_add_transition(fsm: Array, from_state: String, event: String, to_state: String)`
+- `pub fn fsm_state(fsm: Array) -> String`
+- `pub fn fsm_send(fsm: Array, event: String) -> bool`
+- `pub fn fsm_is(fsm: Array, state: String) -> bool`
+- `pub fn fsm_can(fsm: Array, event: String) -> bool`
+- `pub fn fsm_reset(fsm: Array, initial_state: String)`
+- `pub fn fsm_states(fsm: Array) -> Array`
+- `pub fn fsm_traced_new(initial_state: String) -> Array`
+- `pub fn fsm_traced_add_transition(traced: Array, from_state: String, event: String, to_state: String)`
+- `pub fn fsm_traced_send(traced: Array, event: String) -> bool`
+- `pub fn fsm_traced_state(traced: Array) -> String`
+- `pub fn fsm_traced_log(traced: Array) -> Array`
+- `pub fn fsm_traced_is(traced: Array, state: String) -> bool`
+- `pub fn traffic_light_fsm() -> Array`
+
+### `std/map`
+
+`import "std/map"` — 4 funciones:
+
+- `pub fn map_new() -> Map`
+- `pub fn map_put(m: Map, k: String, v: int)`
+- `pub fn map_get_int(m: Map, k: String) -> int`
+- `pub fn map_has(m: Map, k: String) -> bool`
+
 ### `std/stack`
 
 `import "std/stack"` — 1 funciones:
 
 - `pub fn stack_new() -> Stack`
+
+### `std/collections`
+
+`import "std/collections"` — 10 funciones:
+
+- `pub fn set_new() -> Map`
+- `pub fn set_add(s: Map, val: String)`
+- `pub fn set_add_int(s: Map, val: int)`
+- `pub fn set_has(s: Map, val: String) -> bool`
+- `pub fn set_has_int(s: Map, val: int) -> bool`
+- `pub fn set_remove(s: Map, val: String)`
+- `pub fn set_size(s: Map) -> int`
+- `pub fn set_to_array(s: Map) -> Array`
+- `pub fn set_union(a: Map, b: Map) -> Map`
+- `pub fn set_intersection(a: Map, b: Map) -> Map`
 
 ### `std/btreemap`
 
@@ -983,12 +1488,48 @@
 - `pub fn arena_reset(a: Array)`
 - `pub fn arena_free(a: Array)`
 
+### `std/wasm_mem`
+
+`import "std/wasm_mem"` — 1 funciones:
+
+- `pub fn arena_stats() -> ArenaStats`
+
+### `std/owned`
+
+`import "std/owned"` — 14 funciones:
+
+- `pub fn box_new<T>(v: T) -> Box<T>`
+- `pub fn box_get<T>(b: &Box<T>) -> T`
+- `pub fn box_into<T>(b: Box<T>) -> T`
+- `pub fn rc_new<T>(v: T) -> Rc<T>`
+- `pub fn rc_clone<T>(r: &Rc<T>) -> Rc<T>`
+- `pub fn rc_get<T>(r: &Rc<T>) -> T`
+- `pub fn rc_count<T>(r: &Rc<T>) -> int`
+- `pub fn move_new<T>(v: T) -> MoveOnly<T>`
+- `pub fn move_consume<T>(m: MoveOnly<T>) -> T`
+- `pub fn file_guard_open(path: String, mode: String) -> Array`
+- `pub fn file_guard_write(g: Array, content: String)`
+- `pub fn file_guard_read_line(g: Array) -> String`
+- `pub fn file_guard_close(g: Array)`
+- `pub fn file_guard_is_open(g: Array) -> bool`
+
 ### Builtins globales (sin `import`)
 
 - `alloc` (1 arg)
 - `free` (1 arg)
 - `volatile_load` (1 arg)
 - `volatile_store` (2 args)
+
+## IA & LLM
+
+### `std/llm`
+
+`import "std/llm"` — 4 funciones:
+
+- `pub fn llm_load_ctx(path: String, n_ctx: int) -> LLM` — Carga un modelo GGUF con n_ctx explícito. Aborta con mensaje claro si falla.
+- `pub fn llm_load(path: String) -> LLM` — Carga un modelo GGUF (n_ctx = 2048 por defecto).
+- `pub fn llm_generate(l: &LLM, prompt: String, max_tokens: int) -> String` — Genera texto (greedy). Presta el handle — no lo consume.
+- `pub fn llm_generate_stream(l: &LLM, prompt: String, max_tokens: int, cb: *i8) -> String` — Genera con STREAMING: cb = c_fn_ptr(mi_cb) donde `fn mi_cb(piece: *i8)` recibe cada token generado (convertir con string_from_cstr adentro). Devuelve además el texto completo.
 
 ## Tooling & CLI
 
@@ -1028,6 +1569,21 @@
 - `pub fn has_error(parsed: ParsedArgs) -> bool` — Check if parsing had an error.
 - `pub fn print_help(parser: ArgParser)` — Print usage/help text.
 
+### `std/proptest`
+
+`import "std/proptest"` — 10 funciones:
+
+- `pub fn gen_int(min: int, max: int) -> int`
+- `pub fn gen_bool() -> bool`
+- `pub fn gen_string(max_len: int) -> String`
+- `pub fn gen_int_array(size: int, min: int, max: int) -> Array`
+- `pub fn gen_float() -> float`
+- `pub fn prop_int(property: Fn(int) -> bool, min: int, max: int, num_runs: int ) -> Array`
+- `pub fn prop_int2(property: Fn(int, int) -> bool, min: int, max: int, num_runs: int ) -> Array`
+- `pub fn prop_report(name: String, result: Array)`
+- `pub fn prop_assert(name: String, result: Array) -> bool`
+- `pub fn char_from_code(code: int) -> String`
+
 ### Builtins globales (sin `import`)
 
 - `chdir` (1 arg) · *no existe en wasm32-wasi*
@@ -1064,557 +1620,6 @@
 - `waitpid` (2 args) · *no existe en wasm32-wasi*
 
 ## Otros
-
-### `std/llm`
-
-`import "std/llm"` — 4 funciones:
-
-- `pub fn llm_load_ctx(path: String, n_ctx: int) -> LLM` — Carga un modelo GGUF con n_ctx explícito. Aborta con mensaje claro si falla.
-- `pub fn llm_load(path: String) -> LLM` — Carga un modelo GGUF (n_ctx = 2048 por defecto).
-- `pub fn llm_generate(l: &LLM, prompt: String, max_tokens: int) -> String` — Genera texto (greedy). Presta el handle — no lo consume.
-- `pub fn llm_generate_stream(l: &LLM, prompt: String, max_tokens: int, cb: *i8) -> String` — Genera con STREAMING: cb = c_fn_ptr(mi_cb) donde `fn mi_cb(piece: *i8)` recibe cada token generado (convertir con string_from_cstr adentro). Devuelve además el texto completo.
-
-### `std/template`
-
-`import "std/template"` — 2 funciones:
-
-- `pub fn tpl_partial(name: String, tmpl: String)`
-- `pub fn tpl_render(tmpl: String, ctx: Map) -> String`
-
-### `std/rsa`
-
-`import "std/rsa"` — 3 funciones:
-
-- `pub fn rsa_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
-- `pub fn rsa_sha256_verify_b64(public_key_pem: String, data: String, signature_b64: String) -> Result<bool, Error>`
-- `pub fn rsa_pss_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
-
-### `std/pool`
-
-`import "std/pool"` — 18 funciones:
-
-- `pub fn pool_new(max_size: int, timeout_ms: int) -> Array`
-- `pub fn pool_capacity(pool: Array) -> int`
-- `pub fn pool_available_count(pool: Array) -> int`
-- `pub fn pool_in_use_count(pool: Array) -> int`
-- `pub fn pool_created_count(pool: Array) -> int`
-- `pub fn pool_total_active(pool: Array) -> int`
-- `pub fn pool_acquire(pool: Array) -> int`
-- `pub fn pool_acquire_wait(pool: Array) -> int`
-- `pub fn pool_release(pool: Array, handle: int)`
-- `pub fn pool_drain(pool: Array)`
-- `pub fn pool_reset(pool: Array)`
-- `pub fn stream_new() -> Array`
-- `pub fn stream_push(s: Array, val: String)`
-- `pub fn stream_close(s: Array)`
-- `pub fn stream_poll(s: Array) -> String`
-- `pub fn stream_is_done(s: Array) -> bool`
-- `pub fn stream_pending(s: Array) -> int`
-- `pub fn stream_collect(s: Array) -> Array`
-
-### `std/xlsx`
-
-`import "std/xlsx"` — 16 funciones:
-
-- `pub fn xlsx_read_opts() -> XlsxReadOpts`
-- `pub fn xlsx_col_name(col: int) -> String`
-- `pub fn xlsx_addr(row: int, col: int) -> String`
-- `pub fn xlsx_read(bytes: String, opts: XlsxReadOpts) -> Result<XlsxBook, Error>`
-- `pub fn xlsx_sheet(book: XlsxBook, name: String) -> Option<XlsxSheet>`
-- `pub fn xlsx_cell(sheet: XlsxSheet, addr: String) -> XlsxCell`
-- `pub fn xlsx_text(s: String) -> XlsxOut`
-- `pub fn xlsx_number(v: float, decimals: int) -> XlsxOut`
-- `pub fn xlsx_number_fmt(v: float, code: String) -> XlsxOut`
-- `pub fn xlsx_int(v: int) -> XlsxOut`
-- `pub fn xlsx_bool(b: bool) -> XlsxOut`
-- `pub fn xlsx_blank() -> XlsxOut`
-- `pub fn xlsx_bold(c: XlsxOut) -> XlsxOut`
-- `pub fn xlsx_date(iso: String) -> XlsxOut`
-- `pub fn xlsx_sheet_new(name: String) -> XlsxSheetOut`
-- `pub fn xlsx_write(sheets: Array) -> Result<String, Error>`
-
-### `std/array`
-
-`import "std/array"` — 10 funciones:
-
-- `pub fn array_sum(arr: Array) -> int`
-- `pub fn array_min(arr: Array) -> int`
-- `pub fn array_max(arr: Array) -> int`
-- `pub fn array_reverse(arr: Array) -> Array`
-- `pub fn array_contains_int(arr: Array, val: int) -> bool`
-- `pub fn array_index_of(arr: Array, val: int) -> int`
-- `pub fn sort_int(arr: Array) -> Array`
-- `pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array`
-- `pub fn str_compare(a: String, b: String) -> int`
-- `pub fn sort_str(arr: Array) -> Array`
-
-### `std/postgres`
-
-`import "std/postgres"` — 45 funciones:
-
-- `pub fn pg_be32(n: int) -> String`
-- `pub fn pg_be16(n: int) -> String`
-- `pub fn pg_read_be32(s: String, off: int) -> int`
-- `pub fn pg_read_be16(s: String, off: int) -> int`
-- `pub fn pg_cstr(s: String) -> String`
-- `pub fn pg_msg(tipo: String, payload: String) -> String`
-- `pub fn pg_scram_proof(password: String, salt_b64: String, iters: int, client_first_bare: String, server_first: String, client_final_bare: String) -> Array`
-- `pub fn pg_scram_attr(msg: String, attr: String) -> String`
-- `pub fn pg_conninfo_get(conninfo: String, clave: String, por_defecto: String) -> String`
-- `pub fn pg_read_message(fd: int, tls: int) -> Result<Array, Error>`
-- `pub fn pg_parse_error(payload: String) -> Error`
-- `pub fn pg_sqlstate(e: Error) -> String`
-- `pub fn try_pg_connect(conninfo: String) -> Result<PgConn, Error>`
-- `pub fn try_pg_close(conn: PgConn) -> Result<int, Error>`
-- `pub fn pg_parse_notification(payload: String) -> Array`
-- `pub fn pg_null() -> String`
-- `pub fn pg_is_null(valor: String) -> bool`
-- `pub fn try_pg_exec(conn: PgConn, sql: String) -> Result<int, Error>`
-- `pub fn try_pg_query(conn: PgConn, sql: String) -> Result<Array, Error>`
-- `pub fn try_pg_query_cols(conn: PgConn, sql: String) -> Result<Array, Error>`
-- `pub fn pg_col(columnas: Array, nombre: String) -> int`
-- `pub fn pg_row_str(fila: Array, i: int) -> String`
-- `pub fn pg_row_int(fila: Array, i: int) -> int`
-- `pub fn pg_row_float(fila: Array, i: int) -> float`
-- `pub fn pg_row_bool(fila: Array, i: int) -> bool`
-- `pub fn pg_int(n: int) -> String`
-- `pub fn pg_text(s: String) -> String`
-- `pub fn pg_float(f: float) -> String`
-- `pub fn pg_bool(b: bool) -> String`
-- `pub fn try_pg_query_params(conn: PgConn, sql: String, params: Array) -> Result<Array, Error>`
-- `pub fn try_pg_exec_params(conn: PgConn, sql: String, params: Array) -> Result<int, Error>`
-- `pub fn try_pg_begin(conn: PgConn) -> Result<int, Error>`
-- `pub fn try_pg_commit(conn: PgConn) -> Result<int, Error>`
-- `pub fn try_pg_rollback(conn: PgConn) -> Result<int, Error>`
-- `pub fn try_pg_listen(conn: PgConn, canal: String) -> Result<int, Error>`
-- `pub fn try_pg_unlisten(conn: PgConn, canal: String) -> Result<int, Error>`
-- `pub fn try_pg_notify(conn: PgConn, canal: String, payload: String) -> Result<int, Error>`
-- `pub fn try_pg_wait_notifications(conn: PgConn, timeout_ms: int) -> Result<Array, Error>`
-- `pub fn pg_migrate_init(conn: PgConn) -> bool`
-- `pub fn pg_migrate_version(conn: PgConn) -> int`
-- `pub fn pg_migrate(conn: PgConn, version: int, name: String, sql: String) -> bool`
-- `pub fn pg_pool_new(conninfo: String, size: int) -> PgPool`
-- `pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error>`
-- `pub fn pg_pool_put(pool: PgPool, conn: PgConn)`
-- `pub fn pg_pool_close(pool: PgPool)`
-
-### `std/multipart`
-
-`import "std/multipart"` — 8 funciones:
-
-- `pub fn multipart_parse(body: String, content_type: String) -> Array`
-- `pub fn part_name(p: Array) -> String`
-- `pub fn part_filename(p: Array) -> String`
-- `pub fn part_ctype(p: Array) -> String`
-- `pub fn part_value(p: Array) -> String`
-- `pub fn multipart_field(name: String, value: String) -> Array` — Parte de texto: campo `name` con valor `value`.
-- `pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array` — Parte de archivo: campo `name`, nombre de archivo `filename`, content-type `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
-- `pub fn multipart_build(parts: Array) -> Result<Multipart, Error>`
-
-### `std/image`
-
-`import "std/image"` — 19 funciones:
-
-- `pub fn image_limits() -> ImageLimits` — Topes por omisión: 30 MB de archivo, 64 millones de píxeles, 30000 de lado.
-- `pub fn image_png_read(b: String, allow_interlace: bool) -> Result<ImagePng, Error>` — Lee un PNG sin decodificar píxeles: firma, CRC de CADA chunk, IHDR, PLTE, tRNS y los IDAT. `allow_interlace` false rechaza Adam7. Err(parse) si está dañado, Err(invalid) si es de una variante que no se lee (chunk crítico desconocido, combinación inválida).
-- `pub fn image_png_split(raw: String, w: int, h: int, depth: int, ctype: int, trns: String, color: StringBuilder, alpha: StringBuilder) -> String` — Des-filtra las filas de un PNG (5 filtros) y reparte cada píxel entre `color` y `alpha` (dos flujos crudos, para incrustar en un PDF). "" si todo cerró, o la causa. Lo usa std/pdf; para píxeles use image_decode.
-- `pub fn image_jpeg_frame(b: String) -> Result<Array, Error>` — Recorre los marcadores de un JPEG hasta el encabezado de cuadro (SOF) y devuelve [ancho, alto, componentes, orientación EXIF, marcador SOF (0xC0-0xCF), bits por muestra]. Solo entiende la estructura: quien lo llama decide qué variantes acepta (std/pdf pasa SOF0-2; std/image_info solo 8 bits y 1 o 3 componentes). Un SOF que no es 0xC0-0xC2 (sin pérdida, aritmético, jerárquico) devuelve ancho, alto, componentes y bits en 0.
-- `pub fn image_info(bytes: String) -> Result<ImageInfo, Error>` — Formato, tamaño y orientación de una imagen SIN decodificar los píxeles (lee solo el encabezado: es barato aunque el archivo sea de 30 MB). Err(unsupported) para HEIC, WebP, AVIF, GIF, CMYK, JPEG de 12 bits, sin pérdida o aritmético; Err(parse) si el encabezado está dañado.
-- `pub fn image_orient(img: Image, orientation: int) -> Image` — Aplica una orientación EXIF (1-8) a la imagen y devuelve la imagen «derecha» (con orientación 1): 2 espejo horizontal, 3 giro de 180, 4 espejo vertical, 5 transpuesta, 6 giro de 90 en sentido horario, 7 transversa, 8 giro de 90 antihorario. Con 1 (u otro valor) devuelve la misma imagen. `image_decode` ya la aplica al decodificar un JPEG; esta función sirve para quien decodifica sin orientar o compone.
-- `pub fn image_decode(bytes: String, limits: ImageLimits) -> Result<Image, Error>` — Decodifica una imagen a píxeles de 8 bits por canal, al tamaño completo. PNG (gris, gris+alfa, RGB, RGBA y paleta, 1-16 bits, con y sin Adam7; 16 bits se reduce al byte alto) y JPEG secuencial (baseline, gris o YCbCr, cualquier submuestreo común, con reinicios y varios escaneos; el JPEG sale con la orientación EXIF ya aplicada y el perfil ICC en `Image.icc`). Valida los topes con el encabezado ANTES de reservar: Err(invalid) si el archivo, los píxeles o un lado pasan `limits`; Err(unsupported) para formatos que no se decodifican (JPEG progresivo, CMYK, HEIC...); Err(parse) si está dañado o truncado.
-- `pub fn image_decode_scaled(bytes: String, limits: ImageLimits, denom: int) -> Result<Image, Error>` — Como image_decode pero un JPEG se decodifica REDUCIDO a 1/denom del tamaño (denom 1, 2, 4 u 8; el lado sale techo(lado / denom)): la IDCT se calcula ya reducida, así que a 1/8 no toca los 12 millones de píxeles de una foto sino 190 mil. `Image.reduction` dice la reducción que se aplicó. Un PNG no se reduce al decodificar (sale completo, reduction = 1). Err(invalid) si denom no es 1, 2, 4 u 8.
-- `pub fn image_decode_min(bytes: String, limits: ImageLimits, min_w: int, min_h: int) -> Result<Image, Error>` — Decodifica con la MAYOR reducción (1/1, 1/2, 1/4 o 1/8) cuyo resultado, ya orientado, sigue teniendo al menos min_w x min_h píxeles. Es la puerta de entrada de las miniaturas: pedir el tamaño más grande que se va a servir y achicar después con image_resize_fit / image_resize_cover. Si la imagen ya es más chica que el mínimo, sale completa.
-- `pub fn image_crop(img: Image, x: int, y: int, w: int, h: int) -> Result<Image, Error>` — Recorta el rectángulo de esquina (x, y) y tamaño w x h. Err(invalid) si algo de eso cae fuera de la imagen o no es positivo. Conserva el perfil ICC.
-- `pub fn image_resize(img: Image, w: int, h: int) -> Result<Image, Error>` — Escala la imagen a EXACTAMENTE w x h (sin conservar la proporción): Lanczos3 con soporte proporcional en el eje que se achica, triangular (bilineal) en el que se agranda; un eje que no cambia no se toca. Err(invalid) si w o h no son positivos o pasan el tope (30000 de lado, 64 millones de píxeles). Salida idéntica a Image.resize de Pillow (LANCZOS al achicar, BILINEAR al agrandar).
-- `pub fn image_resize_fit(img: Image, max_w: int, max_h: int) -> Result<Image, Error>` — Achica la imagen para que CAIGA dentro de max_w x max_h conservando la proporción (uno de los dos lados llega al tope, el otro se redondea al entero más cercano). Nunca agranda: si ya cabe se devuelve la misma imagen. Lanczos3. Err(invalid) si algún tope no es positivo.
-- `pub fn image_resize_cover(img: Image, w: int, h: int) -> Result<Image, Error>` — Llena la caja w x h: recorta al centro la parte de la imagen que tiene la proporción de la caja y la escala a w x h (el cuadrado de una miniatura). Nunca agranda: si la parte recortada es más chica que la caja en algún lado, el resultado es la caja reducida a lo que da la imagen (misma proporción, sin escalar). Lanczos3. Err(invalid) si w o h no son positivos.
-- `pub fn image_flatten(img: Image, r: int, g: int, b: int) -> Image` — Compone la imagen sobre un fondo de color (r, g, b, 0-255) y quita el canal alfa: una RGBA sale RGB, con c = (c * a + fondo * (255 - a)) / 255 redondeado. Una imagen sin alfa (gris o RGB) se devuelve igual. Es el paso previo a codificar JPEG, que no guarda transparencia.
-- `pub fn image_default_quality() -> int` — Calidad por omisión del codificador JPEG: 80 (una foto de producto a 400 px sale en el orden de decenas de KB).
-- `pub fn image_encode_jpeg(img: Image, quality: int) -> Result<String, Error>` — Codifica la imagen como JPEG baseline (secuencial): calidad 1-100 con la fórmula de libjpeg sobre las tablas del Anexo K, Huffman estándar, JFIF; 4:2:0 hasta calidad 90 y 4:4:4 por encima. Una imagen en gris sale de 1 componente; una con alfa (RGBA) se compone antes sobre BLANCO (para otro fondo use image_flatten). No escribe EXIF (la orientación ya viene aplicada al decodificar y la ubicación GPS no se conserva) pero sí el perfil ICC de `Image.icc` si lo trae. Los bytes de salida son los mismos en nativo y en wasm. Err(invalid) si la calidad no está en 1..100, si un lado es cero o pasa de 65535, o si la imagen no es coherente (canales, filas).
-- `pub fn image_thumbnail(bytes: String, max_w: int, max_h: int, quality: int) -> Result<String, Error>` — Miniatura en un paso: decodifica `bytes` (JPEG o PNG, con los topes de image_limits()) con la mayor reducción que deja al menos el doble del tamaño final, aplica la orientación EXIF, achica con Lanczos3 para que CAIGA en max_w x max_h conservando la proporción (nunca agranda), y codifica JPEG con la calidad dada (1-100; image_default_quality() es 80). Con alfa compone sobre blanco. La salida no lleva EXIF ni ubicación. Err(invalid) si la calidad o algún lado no son válidos o el archivo pasa los topes; Err(parse) si está dañado; Err(unsupported) para formatos que no se decodifican.
-- `pub fn image_thumbnails(bytes: String, sizes: Array, quality: int) -> Result<Array, Error>` — Varias miniaturas de UNA sola decodificación: `sizes` es un Array de pares [max_w, max_h] (cada uno con la semántica de image_thumbnail) y el resultado un Array de String (JPEG) en el mismo orden. La decodificación usa la reducción que sirve al tamaño más grande pedido; los demás se achican desde esa misma imagen. Ejemplo: image_thumbnails(foto, [[1200, 1200], [600, 600], [150, 150]], 80). Los mismos errores que image_thumbnail.
-- `pub fn image_strip_icc(img: Image) -> Image` — Quita el perfil ICC de la imagen (`icc` = ""), para que el JPEG codificado no lo lleve. Por omisión el codificador lo conserva (una foto en Display P3 sin su perfil se ve desteñida); quitarlo ahorra 0.5-3 KB por imagen cuando se sabe que el destino es sRGB.
-
-### `std/proxy`
-
-`import "std/proxy"` — 8 funciones:
-
-- `pub fn proxy_new(port: int) -> ProxyConfig`
-- `pub fn proxy_add_backend(config: ProxyConfig, host: String, port: int)`
-- `pub fn select_backend(config: ProxyConfig) -> Backend`
-- `pub fn proxy_check_health(config: ProxyConfig) -> Array`
-- `pub fn proxy_set_unhealthy(config: ProxyConfig, idx: int)`
-- `pub fn proxy_set_healthy(config: ProxyConfig, idx: int)`
-- `pub fn parse_content_length(s: String) -> int`
-- `pub fn proxy_start(config: ProxyConfig)`
-
-### `std/events`
-
-`import "std/events"` — 13 funciones:
-
-- `pub fn event_bus_new() -> Array`
-- `pub fn event_on(bus: Array, event: String, handler: Fn(String) -> bool) -> int`
-- `pub fn event_emit(bus: Array, event: String, payload: String) -> int`
-- `pub fn event_off(bus: Array, event: String)`
-- `pub fn event_history(bus: Array) -> Array`
-- `pub fn event_history_count(bus: Array) -> int`
-- `pub fn event_was_emitted(bus: Array, event: String) -> bool`
-- `pub fn observable_new(initial: int) -> Array`
-- `pub fn observable_get(obs: Array) -> int`
-- `pub fn observable_set(obs: Array, new_val: int)`
-- `pub fn observable_watch(obs: Array, handler: Fn(int) -> bool)`
-- `pub fn observable_history(obs: Array) -> Array`
-- `pub fn observable_computed(source: Array, transform: Fn(int) -> int) -> int`
-
-### `std/resp`
-
-`import "std/resp"` — 11 funciones:
-
-- `pub fn resp_parse_len(s: String) -> int`
-- `pub fn resp_read_framed(handle: int, is_tls: bool) -> Array`
-- `pub fn resp_read_command(fd: int) -> Array`
-- `pub fn resp_simple_string(s: String) -> String`
-- `pub fn resp_error(msg: String) -> String`
-- `pub fn resp_integer(n: int) -> String`
-- `pub fn resp_bulk_string(s: String) -> String`
-- `pub fn resp_null_bulk() -> String`
-- `pub fn resp_array_header(count: int) -> String`
-- `pub fn resp_bulk_array(items: Array) -> String`
-- `pub fn resp_mixed_array(items: Array, flags: Array) -> String`
-
-### `std/statemachine`
-
-`import "std/statemachine"` — 16 funciones:
-
-- `pub fn fsm_new(initial_state: String) -> Array`
-- `pub fn fsm_add_state(fsm: Array, state: String)`
-- `pub fn fsm_add_transition(fsm: Array, from_state: String, event: String, to_state: String)`
-- `pub fn fsm_state(fsm: Array) -> String`
-- `pub fn fsm_send(fsm: Array, event: String) -> bool`
-- `pub fn fsm_is(fsm: Array, state: String) -> bool`
-- `pub fn fsm_can(fsm: Array, event: String) -> bool`
-- `pub fn fsm_reset(fsm: Array, initial_state: String)`
-- `pub fn fsm_states(fsm: Array) -> Array`
-- `pub fn fsm_traced_new(initial_state: String) -> Array`
-- `pub fn fsm_traced_add_transition(traced: Array, from_state: String, event: String, to_state: String)`
-- `pub fn fsm_traced_send(traced: Array, event: String) -> bool`
-- `pub fn fsm_traced_state(traced: Array) -> String`
-- `pub fn fsm_traced_log(traced: Array) -> Array`
-- `pub fn fsm_traced_is(traced: Array, state: String) -> bool`
-- `pub fn traffic_light_fsm() -> Array`
-
-### `std/webpush`
-
-`import "std/webpush"` — 4 funciones:
-
-- `pub fn vapid_jwt(priv: String, audience: String, subject: String, exp: int) -> String`
-- `pub fn webpush_encrypt_with_keys(payload: String, client_p256dh: String, auth: String, salt: String, as_priv: String, as_pub: String) -> String`
-- `pub fn webpush_encrypt(payload: String, client_p256dh: String, auth: String) -> String`
-- `pub fn webpush_send(endpoint: String, jwt: String, vapid_pub: String, encrypted: String, ttl: int = 86400) -> Array`
-
-### `std/session`
-
-`import "std/session"` — 5 funciones:
-
-- `pub fn session_configure(host: String, port: int, ttl: int)`
-- `pub fn session_start(req: Request, resp: Response) -> String`
-- `pub fn session_get(req: Request, key: String) -> String`
-- `pub fn session_set(req: Request, key: String, value: String)`
-- `pub fn session_destroy(req: Request, resp: Response)`
-
-### `std/unicode`
-
-`import "std/unicode"` — 5 funciones:
-
-- `pub fn utf8_encode(codepoint: int) -> String`
-- `pub fn wcwidth(codepoint: int) -> int`
-- `pub fn display_width(s: String) -> int`
-- `pub fn latin1_to_utf8(s: String) -> String`
-- `pub fn windows1252_to_utf8(s: String) -> String`
-
-### `std/proptest`
-
-`import "std/proptest"` — 10 funciones:
-
-- `pub fn gen_int(min: int, max: int) -> int`
-- `pub fn gen_bool() -> bool`
-- `pub fn gen_string(max_len: int) -> String`
-- `pub fn gen_int_array(size: int, min: int, max: int) -> Array`
-- `pub fn gen_float() -> float`
-- `pub fn prop_int(property: Fn(int) -> bool, min: int, max: int, num_runs: int ) -> Array`
-- `pub fn prop_int2(property: Fn(int, int) -> bool, min: int, max: int, num_runs: int ) -> Array`
-- `pub fn prop_report(name: String, result: Array)`
-- `pub fn prop_assert(name: String, result: Array) -> bool`
-- `pub fn char_from_code(code: int) -> String`
-
-### `std/math`
-
-`import "std/math"` — 15 funciones:
-
-- `pub fn abs(n: int) -> int`
-- `pub fn min(a: int, b: int) -> int`
-- `pub fn max(a: int, b: int) -> int`
-- `pub fn clamp(n: int, lo: int, hi: int) -> int`
-- `pub fn pow_int(base: int, exp: int) -> int`
-- `pub fn gcd(a: int, b: int) -> int`
-- `pub fn lcm(a: int, b: int) -> int`
-- `pub fn is_even(n: int) -> bool`
-- `pub fn is_odd(n: int) -> bool`
-- `pub fn sqrt_int(n: int) -> int`
-- `pub fn checked_add(a: int, b: int) -> Option<int>`
-- `pub fn checked_sub(a: int, b: int) -> Option<int>`
-- `pub fn checked_mul(a: int, b: int) -> Option<int>`
-- `pub fn checked_div(a: int, b: int) -> Option<int>`
-- `pub fn mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int`
-
-### `std/map`
-
-`import "std/map"` — 4 funciones:
-
-- `pub fn map_new() -> Map`
-- `pub fn map_put(m: Map, k: String, v: int)`
-- `pub fn map_get_int(m: Map, k: String) -> int`
-- `pub fn map_has(m: Map, k: String) -> bool`
-
-### `std/collections`
-
-`import "std/collections"` — 10 funciones:
-
-- `pub fn set_new() -> Map`
-- `pub fn set_add(s: Map, val: String)`
-- `pub fn set_add_int(s: Map, val: int)`
-- `pub fn set_has(s: Map, val: String) -> bool`
-- `pub fn set_has_int(s: Map, val: int) -> bool`
-- `pub fn set_remove(s: Map, val: String)`
-- `pub fn set_size(s: Map) -> int`
-- `pub fn set_to_array(s: Map) -> Array`
-- `pub fn set_union(a: Map, b: Map) -> Map`
-- `pub fn set_intersection(a: Map, b: Map) -> Map`
-
-### `std/math_ext`
-
-`import "std/math_ext"` — 19 funciones:
-
-- `pub fn is_prime(n: int) -> bool`
-- `pub fn primes_up_to(n: int) -> Array`
-- `pub fn extended_gcd(a: int, b: int) -> Array`
-- `pub fn pow_mod(base: int, exp: int, mod_n: int) -> int`
-- `pub fn fibonacci(n: int) -> int`
-- `pub fn binomial(n: int, k: int) -> int`
-- `pub fn int_sum(arr: Array) -> int`
-- `pub fn int_product(arr: Array) -> int`
-- `pub fn int_min_arr(arr: Array) -> int`
-- `pub fn int_max_arr(arr: Array) -> int`
-- `pub fn stats_mean(arr: Array) -> float`
-- `pub fn stats_median(arr: Array) -> float`
-- `pub fn stats_variance(arr: Array) -> float`
-- `pub fn stats_range(arr: Array) -> int`
-- `pub fn dist_2d(x1: float, y1: float, x2: float, y2: float) -> float`
-- `pub fn clamp_float(x: float, lo: float, hi: float) -> float`
-- `pub fn lerp(a: float, b: float, t: float) -> float`
-- `pub fn float_to_fixed(x: float, decimals: int) -> String`
-- `pub fn try_mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> Result<int, Error>`
-
-### `std/zip`
-
-`import "std/zip"` — 13 funciones:
-
-- `pub fn zip_crc32_table() -> Array`
-- `pub fn zip_crc32_part(tab: Array, b: String, desde: int, hasta: int) -> int`
-- `pub fn zip_crc32(data: String) -> int`
-- `pub fn zip_adler32(b: String) -> int`
-- `pub fn zip_inflate_raw(data: String, max_out: int) -> Result<String, Error>`
-- `pub fn zip_inflate_zlib(zdata: String, max_out: int) -> Result<String, Error>`
-- `pub fn zip_deflate_raw(data: String) -> String`
-- `pub fn zip_deflate_zlib(data: String) -> String`
-- `pub fn zip_gzip(data: String) -> String`
-- `pub fn zip_gunzip(data: String, max_out: int) -> Result<String, Error>`
-- `pub fn zip_read_opts() -> ZipReadOpts`
-- `pub fn zip_read(bytes: String, opts: ZipReadOpts) -> Result<ZipArchive, Error>`
-- `pub fn zip_writer() -> ZipWriter`
-
-### `std/expr`
-
-`import "std/expr"` — 6 funciones:
-
-- `pub fn expr_vars_new() -> ExprVars`
-- `pub fn expr_parse(text: String) -> Result<Expr, Error>` — Compila la fórmula. Err (con la posición en el mensaje) si hay un error de sintaxis, una función desconocida o de aridad incorrecta, o se pasa de un tope. No necesita las variables: sirve para validar una fórmula al guardarla.
-- `pub fn expr_vars(e: Expr) -> Array` — Nombres de las variables que usa la fórmula, sin repetidos y en orden de aparición. Para validar al guardar («¿todas existen en el catálogo?»).
-- `pub fn expr_eval_micros(e: Expr, vars: ExprVars) -> Result<int, Error>` — Evalúa la fórmula y devuelve el resultado como ENTERO de micros (1.5 = 1500000): el valor exacto de punto fijo. Err con posición si falta una variable, hay división por cero o el resultado se sale del rango.
-- `pub fn expr_eval(e: Expr, vars: ExprVars) -> Result<float, Error>` — Evalúa y devuelve un float (convertido del valor exacto). Cómodo para mostrar o comparar; para plata usar expr_eval_dec, que no pasa por float.
-- `pub fn expr_eval_dec(e: Expr, vars: ExprVars, decimals: int) -> Result<String, Error>` — Evalúa y devuelve el resultado como TEXTO decimal exacto con `decimals` decimales (0 a 6, redondeo mitad hacia afuera del cero): "974.93". Es la salida pensada para plata; `decimals` fuera de 0..6 se ajusta al rango.
-
-### `std/percent`
-
-`import "std/percent"` — 1 funciones:
-
-- `pub fn url_decode(s: String) -> String`
-
-### `std/wasm_mem`
-
-`import "std/wasm_mem"` — 1 funciones:
-
-- `pub fn arena_stats() -> ArenaStats`
-
-### `std/component`
-
-`import "std/component"` — 3 funciones:
-
-- `pub fn component_new(state: Array, render: Fn(Array) -> VNode) -> Array`
-- `pub fn mount(comp: Array, sel: String)`
-- `pub fn update(comp: Array)`
-
-### `std/owned`
-
-`import "std/owned"` — 14 funciones:
-
-- `pub fn box_new<T>(v: T) -> Box<T>`
-- `pub fn box_get<T>(b: &Box<T>) -> T`
-- `pub fn box_into<T>(b: Box<T>) -> T`
-- `pub fn rc_new<T>(v: T) -> Rc<T>`
-- `pub fn rc_clone<T>(r: &Rc<T>) -> Rc<T>`
-- `pub fn rc_get<T>(r: &Rc<T>) -> T`
-- `pub fn rc_count<T>(r: &Rc<T>) -> int`
-- `pub fn move_new<T>(v: T) -> MoveOnly<T>`
-- `pub fn move_consume<T>(m: MoveOnly<T>) -> T`
-- `pub fn file_guard_open(path: String, mode: String) -> Array`
-- `pub fn file_guard_write(g: Array, content: String)`
-- `pub fn file_guard_read_line(g: Array) -> String`
-- `pub fn file_guard_close(g: Array)`
-- `pub fn file_guard_is_open(g: Array) -> bool`
-
-### `std/webpushcrypto`
-
-`import "std/webpushcrypto"` — 9 funciones:
-
-- `pub fn csprng_bytes(n: int) -> String`
-- `pub fn u8(n: int) -> String`
-- `pub fn sha256_bytes(s: String) -> String`
-- `pub fn ec_p256_keypair() -> String`
-- `pub fn ecdh_p256(priv: String, peer_pub: String) -> String`
-- `pub fn ecdsa_p256_sign(priv: String, hash: String) -> String`
-- `pub fn ecdsa_p256_verify(pubkey: String, hash: String, sig: String) -> int`
-- `pub fn hkdf_sha256(salt: String, ikm: String, info: String, len: int) -> String`
-- `pub fn aes128gcm_encrypt(key: String, iv: String, pt: String, aad: String) -> String`
-
-### `std/prelude`
-
-`import "std/prelude"` — 37 funciones:
-
-- `pub fn println(s: String)`
-- `pub fn read_stdin_all() -> String`
-- `pub fn abs(n: int) -> int`
-- `pub fn min(a: int, b: int) -> int`
-- `pub fn max(a: int, b: int) -> int`
-- `pub fn clamp(n: int, lo: int, hi: int) -> int`
-- `pub fn pow_int(base: int, exp: int) -> int`
-- `pub fn gcd(a: int, b: int) -> int`
-- `pub fn lcm(a: int, b: int) -> int`
-- `pub fn is_even(n: int) -> bool`
-- `pub fn is_odd(n: int) -> bool`
-- `pub fn sqrt_int(n: int) -> int`
-- `pub fn checked_add(a: int, b: int) -> Option<int>`
-- `pub fn checked_sub(a: int, b: int) -> Option<int>`
-- `pub fn checked_mul(a: int, b: int) -> Option<int>`
-- `pub fn checked_div(a: int, b: int) -> Option<int>`
-- `pub fn mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int`
-- `pub fn array_sum(arr: Array) -> int`
-- `pub fn array_min(arr: Array) -> int`
-- `pub fn array_max(arr: Array) -> int`
-- `pub fn array_reverse(arr: Array) -> Array`
-- `pub fn array_contains_int(arr: Array, val: int) -> bool`
-- `pub fn array_index_of(arr: Array, val: int) -> int`
-- `pub fn sort_int(arr: Array) -> Array`
-- `pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array`
-- `pub fn str_compare(a: String, b: String) -> int`
-- `pub fn sort_str(arr: Array) -> Array`
-- `pub fn read_text(path: String) -> String`
-- `pub fn write_text(path: String, content: String)`
-- `pub fn map_new() -> Map`
-- `pub fn map_put(m: Map, k: String, v: int)`
-- `pub fn map_get_int(m: Map, k: String) -> int`
-- `pub fn map_has(m: Map, k: String) -> bool`
-- `pub fn err_new(code: int, kind: String, msg: String) -> Error`
-- `pub fn errno_to_kind(code: int) -> String`
-- `pub fn error_to_string(e: Error) -> String`
-- `pub fn is_eof(e: Error) -> bool`
-
-### `std/routematch`
-
-`import "std/routematch"` — 2 funciones:
-
-- `pub fn route_match(pattern: String, hash: String) -> Array`
-- `pub fn route_resolve(routes_patterns: Array, hash: String, default_idx: int) -> Array`
-
-### `std/error`
-
-`import "std/error"` — 4 funciones:
-
-- `pub fn err_new(code: int, kind: String, msg: String) -> Error`
-- `pub fn errno_to_kind(code: int) -> String`
-- `pub fn error_to_string(e: Error) -> String`
-- `pub fn is_eof(e: Error) -> bool`
-
-### `std/xml`
-
-`import "std/xml"` — 8 funciones:
-
-- `pub fn xml_opts() -> XmlOpts` — Topes por omisión: 256 niveles y 64 MB.
-- `pub fn xml_reader(text: String) -> XmlReader` — Crea un lector con los topes por omisión.
-- `pub fn xml_reader_opts(text: String, opts: XmlOpts) -> XmlReader` — Crea un lector con topes propios.
-- `pub fn xml_parse(text: String, opts: XmlOpts) -> Result<XmlNode, Error>` — Parsea un documento completo y devuelve el elemento raíz. Err(parse, 22) si está mal formado; Err(invalid, 27) si supera un tope.
-- `pub fn xml_attr(node: XmlNode, name: String) -> String` — Valor del atributo `name` de un nodo, o "" si no está.
-- `pub fn xml_event_attr(ev: XmlEvent, name: String) -> String` — Valor del atributo `name` de un evento "open", o "" si no está.
-- `pub fn xml_child(node: XmlNode, name: String) -> Option<XmlNode>` — Primer hijo directo llamado `name`, o None.
-- `pub fn xml_escape(s: String) -> String` — Escapa `& < > " '` para escribir XML (texto o valor de atributo).
-
-### `std/serve`
-
-`import "std/serve"` — 36 funciones:
-
-- `pub fn app_ws(pattern: String, handler: Fn(Array) -> int)`
-- `pub fn serve_ws(handler: Fn(Array) -> int)`
-- `pub fn serve_idle_connections() -> int`
-- `pub fn serve_on_shutdown(handler: Fn)`
-- `pub fn serve_app(app: App, port: int, workers: int) -> int`
-- `pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int`
-- `pub fn app_compress(app: App, enabled: bool)`
-- `pub fn app_compress_limits(app: App, min_bytes: int, max_bytes: int)`
-- `pub fn app_max_body(app: App, method: String, pattern: String, max_bytes: int)`
-- `pub fn app_rate_limit(app: App, max_requests: int, window_secs: int)`
-- `pub fn app_route_rate_limit(app: App, method: String, pattern: String, max_requests: int, window_secs: int)`
-- `pub fn app_rate_limit_key(app: App, key_fn: Fn(Request) -> String)`
-- `pub fn req_remote_addr(req: Request) -> String`
-- `pub fn rate_key_forwarded_for(req: Request) -> String`
-- `pub fn detect_mime_type(path: String) -> String`
-- `pub fn try_serve_static(base_dir: String, url_path: String) -> Response`
-- `pub fn serve_static(app: &mut App, base_dir: String)`
-- `pub fn app_static(app: App, prefix: String, directory: String) -> int`
-- `pub fn app_static_cached(app: App, prefix: String, directory: String, max_age: int) -> int`
-- `pub fn compute_weak_etag(content: String) -> String`
-- `pub fn apply_etag(resp: Response, if_none_match: String) -> Response`
-- `pub fn try_serve_static_prefix(path: String) -> Response`
-- `pub fn ws_init_registry() -> int`
-- `pub fn ws_join(fd: int, room: String)`
-- `pub fn ws_leave(fd: int)`
-- `pub fn ws_broadcast(room: String, payload: String)`
-- `pub fn ws_count() -> int`
-- `pub fn ws_count_room(room: String) -> int`
-- `pub fn ws_accept(fd: int, room: String, headers: Array) -> int`
-- `pub fn ws_drain_close() -> int`
-- `pub fn sse_frame(evento: String, datos: String) -> String`
-- `pub fn sse_broadcast(room: String, evento: String, datos: String) -> int`
-- `pub fn sse_count() -> int`
-- `pub fn sse_count_room(room: String) -> int`
-- `pub fn sse_open(req: Request, room: String) -> Response`
-- `pub fn sse_drain_close() -> int`
-
-### `std/router`
-
-`import "std/router"` — 2 funciones:
-
-- `pub fn router_new(patterns: Array, makes: Array, default_idx: int) -> Array`
-- `pub fn router_start(r: Array, sel: String)`
 
 ### Builtins globales (sin `import`)
 

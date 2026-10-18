@@ -1,0 +1,67 @@
+// Nyx by Example: una plantilla .xlsx de carga masiva, con listas desplegables.
+//
+// El caso real: un ERP entrega a sus usuarios una plantilla de catálogo para
+// llenar y volver a subir. Si la columna «Unidad» solo acepta UND, KG o LT, una
+// lista desplegable en la celda impide escribir otro valor y la carga rechaza
+// muchas menos filas. Y en el .xlsx que vuelve, las filas rechazadas se marcan
+// con color de relleno.
+//
+// Lo que muestra:
+//   - validate_list(rango, valores): lista fija (Excel la guarda dentro de la
+//     fórmula: tope de 255 caracteres en total, sin comas ni comillas en los
+//     valores; si no cabe, xlsx_write devuelve Err);
+//   - validate_list_range(rango, origen): la lista sale de un rango, aquí la
+//     pestaña «Listas», sin tope de largo;
+//   - xlsx_fill(celda, "RRGGBB"): relleno sólido, encadenable con xlsx_bold;
+//   - los errores (color que no sea de 6 dígitos hex) salen de xlsx_write.
+//
+// Correr: nyx run -- plantilla.xlsx   (sin argumento solo informa el tamaño)
+
+import "std/xlsx"
+import "std/error"
+
+fn plantilla() -> Result<String, Error> {
+    var h: XlsxSheetOut = xlsx_sheet_new("Catalogo")
+    h.row([xlsx_bold(xlsx_text("Codigo")), xlsx_bold(xlsx_text("Descripcion")),
+           xlsx_bold(xlsx_text("Unidad")), xlsx_bold(xlsx_text("Categoria"))])
+    // Una fila de ejemplo y otra rechazada por la carga anterior (unidad inválida),
+    // marcada en rojo claro con el motivo al lado.
+    h.row([xlsx_text("T-001"), xlsx_text("Tornillo 1/4"), xlsx_text("UND"), xlsx_text("Ferreteria")])
+    h.row([xlsx_fill(xlsx_text("T-002"), "FFC7CE"), xlsx_fill(xlsx_text("Cemento"), "FFC7CE"),
+           xlsx_fill(xlsx_text("SACO"), "FFC7CE"), xlsx_fill(xlsx_text("Construccion"), "FFC7CE"),
+           xlsx_text("unidad no válida")])
+    h.col_width(2, 28.0)
+    h.col_width(5, 20.0)
+    h.freeze(1, 0)
+
+    // Unidad: lista fija, corta. Categoria: sale de la pestaña «Listas».
+    h.validate_list("C2:C500", ["UND", "KG", "LT"])
+    h.validate_list_range("D2:D500", "Listas!$A$1:$A$3")
+
+    var listas: XlsxSheetOut = xlsx_sheet_new("Listas")
+    listas.row([xlsx_text("Ferreteria")])
+    listas.row([xlsx_text("Construccion")])
+    listas.row([xlsx_text("Pintura")])
+    return xlsx_write([h, listas])
+}
+
+fn main() -> int {
+    match plantilla() {
+        Result.Ok(bytes) => {
+            let args: Array = get_args()
+            if args.length() > 1 {
+                let ruta: String = args[1]
+                write_file(ruta, bytes)
+                print("plantilla escrita en " + ruta + " (" + int_to_string(bytes.length()) + " bytes)")
+            } else {
+                print("plantilla: " + int_to_string(bytes.length()) + " bytes, empieza con " + bytes.substring(0, 2))
+                print("para escribirla: nyx run -- plantilla.xlsx")
+            }
+            return 0
+        }
+        Result.Err(e) => {
+            print("no se pudo armar la plantilla: " + error_to_string(e))
+            return 1
+        }
+    }
+}

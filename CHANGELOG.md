@@ -11,6 +11,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`std/xlsx`: listas desplegables y color de relleno** `[arco: xlsx-validacion]` (pedido de nyxerp,
+  2026-10-17, para plantillas de carga masiva).
+  - `XlsxSheetOut.validate_list(rango, valores)` y `validate_list_range(rango, origen)` emiten
+    `<dataValidations>` en el orden que exige el esquema ECMA-376. `xlsx_write` devuelve `Err` si la
+    lista fija pasa de 255 caracteres, si un valor lleva coma o comillas, o si el rango es inválido.
+  - `xlsx_fill(celda, "RRGGBB")` da relleno sólido y se encadena con `xlsx_bold`.
+  - `xlsx_read` no cambia.
+  - Test `test-495-xlsx-validacion` y receta `138-xlsx-plantilla`.
+- **`std/pdf` fase 2: grosor, gris y color, 12 fuentes Core14 y texto girado** `[arco: pdf-fase-2]`
+  (pedido de nyxerp, 2026-10-17, para hojas preimpresas y etiquetas).
+  - `line_width`, `gray` y `color` cambian a la vez el trazo y el relleno de lo que se dibuja después.
+    Cada página arranca en el estado por omisión del PDF: negro y 1 pt.
+  - Fuentes nuevas: `HelveticaOblique`, `HelveticaBoldOblique`, `TimesBold`, `TimesItalic`,
+    `TimesBoldItalic` y las cuatro `Courier`. Las tres tablas AFM nuevas de Times se cruzaron entre
+    pypdf y pdfminer.six; la única diferencia es el €, que pdfminer no trae.
+  - `text_rotated` gira el texto con la matriz `Tm`, a cualquier ángulo, con seno y coseno calculados
+    sin libm; los múltiplos de 90° salen exactos.
+  - Ningún PDF de la fase 1 cambia de bytes.
+  - Test `test-496-pdf-fase-2` y receta `139-pdf-preimpreso`.
+
 - **`nyx build -j N`: las unidades de `[lib]` se compilan en paralelo** `[arco: build-lib-paralelo]`
   (fricción nyxerp, 2026-10-17). Antes iban en serie: 302 módulos y unos 50 minutos en frío en 4
   núcleos. Las unidades no dependen unas de otras para compilar, así que ahora se lanzan hasta N a la

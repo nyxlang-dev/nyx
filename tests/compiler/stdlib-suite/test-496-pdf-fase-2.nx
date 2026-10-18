@@ -1,0 +1,286 @@
+// test-496 — std/pdf fase 2 (arco pdf-fase-2): grosor, gris y color, las 12
+// fuentes de texto estándar y texto girado.
+//
+// Lo que se puede romper sin que nada falle a la vista:
+//   - los ANCHOS de las tres tablas nuevas de Times: una cifra mal transcrita
+//     desalinea los montos a la derecha. Los vectores salen de pypdf y se
+//     cruzaron con pdfminer.six fuera de este test (cero diferencias salvo el €);
+//   - la MATRIZ de rotación: un signo cambiado gira para el lado contrario, y un
+//     «-0» en el flujo no lo acepta todo visor;
+//   - que el texto SIN girar y las fuentes de la fase 1 salgan con los mismos
+//     bytes de siempre (los tests 441-445 lo fijan, aquí se repite el flujo).
+
+import "std/pdf"
+import "std/error"
+
+fn bytes_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return b }
+        Result.Err(e) => {
+            assert(false, "bytes() no debía fallar: " + error_to_string(e))
+            return ""
+        }
+    }
+}
+
+fn err_of(d: Pdf) -> String {
+    let r: Result<String, Error> = d.bytes()
+    match r {
+        Result.Ok(b) => { return "OK" }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+// Contenido de la página n (desde 1): el n-ésimo stream sin diccionario propio.
+fn content_of(b: String, n: int) -> String {
+    var at: int = 0
+    var k: int = 0
+    var from_at: int = 0
+    while k < n {
+        at = b.indexOf("<< /Length ", from_at)
+        from_at = at + 1
+        k = k + 1
+    }
+    let s: int = b.indexOf("stream\n", at) + 7
+    let e: int = b.indexOf("\nendstream", s)
+    return b.substring(s, e)
+}
+
+// El arreglo /Widths del objeto de la fuente con ese /BaseFont.
+fn widths_of(b: String, base: String) -> String {
+    let at: int = b.indexOf("/BaseFont /" + base + " ")
+    assert(at >= 0, "el PDF no tiene la fuente " + base)
+    let w: int = b.indexOf("/Widths [", at)
+    let e: int = b.indexOf("]", w)
+    return b.substring(w + 9, e)
+}
+
+fn count_of(b: String, pat: String) -> int {
+    var n: int = 0
+    var from_at: int = 0
+    var at: int = b.indexOf(pat, from_at)
+    while at >= 0 {
+        n = n + 1
+        from_at = at + 1
+        at = b.indexOf(pat, from_at)
+    }
+    return n
+}
+
+// Unidades AFM de `s` con esa fuente, a tamaño 10: ancho(mm) * 72000 / (25.4 * 10).
+fn units(s: String, font: PdfFont) -> int {
+    let w: float = pdf_text_width(s, font, 10.0)
+    return float_to_int(w * 72000.0 / 254.0 + 0.5)
+}
+
+// Times-Bold, bytes WinAnsi 32..255 (0 = sin glifo), según pypdf 6.21.1 y pdfminer.six 20260107.
+fn anchos_times_bold() -> String {
+    return "250 333 555 500 500 1000 833 278 333 333 500 570 250 333 250 278 500 500 500 500 500 500 500 500 500 500 333 333 570 570 570 500 930 722 667 722 722 667 611 778 778 389 500 778 667 944 722 778 611 778 722 556 667 722 722 1000 722 722 667 333 278 333 581 500 333 500 556 444 556 444 333 500 556 278 333 556 278 833 556 500 556 556 444 389 333 556 500 722 500 500 444 394 220 394 520 0 500 0 333 500 500 1000 500 500 333 1000 556 333 1000 0 667 0 0 333 333 500 500 350 500 1000 333 1000 389 333 722 0 444 722 250 333 500 500 500 500 220 500 333 747 300 500 570 333 747 333 400 570 300 300 333 556 540 250 333 300 330 500 750 750 750 500 722 722 722 722 722 722 1000 722 667 667 667 667 389 389 389 389 722 722 778 778 778 778 778 570 778 722 722 722 722 722 611 556 500 500 500 500 500 500 722 444 444 444 444 444 278 278 278 278 500 556 500 500 500 500 500 570 500 556 556 556 556 500 556 500"
+}
+
+// Times-Italic, bytes WinAnsi 32..255 (0 = sin glifo), según pypdf 6.21.1 y pdfminer.six 20260107.
+fn anchos_times_italic() -> String {
+    return "250 333 420 500 500 833 778 214 333 333 500 675 250 333 250 278 500 500 500 500 500 500 500 500 500 500 333 333 675 675 675 500 920 611 611 667 722 611 611 722 722 333 444 667 556 833 667 722 611 722 611 500 556 722 611 833 611 556 556 389 278 389 422 500 333 500 500 444 500 444 278 500 500 278 278 444 278 722 500 500 500 500 389 389 278 500 444 667 444 444 389 400 275 400 541 0 500 0 333 500 556 889 500 500 333 1000 500 333 944 0 556 0 0 333 333 556 556 350 500 889 333 980 389 333 667 0 389 556 250 389 500 500 500 500 275 500 333 760 276 500 675 333 760 333 400 675 300 300 333 500 523 250 333 300 310 500 750 750 750 500 611 611 611 611 611 611 889 667 611 611 611 611 333 333 333 333 722 667 722 722 722 722 722 675 722 722 722 722 722 556 611 500 500 500 500 500 500 500 667 444 444 444 444 444 278 278 278 278 500 500 500 500 500 500 500 675 500 500 500 500 500 444 500 444"
+}
+
+// Times-BoldItalic, bytes WinAnsi 32..255 (0 = sin glifo), según pypdf 6.21.1 y pdfminer.six 20260107.
+fn anchos_times_bold_italic() -> String {
+    return "250 389 555 500 500 833 778 278 333 333 500 570 250 333 250 278 500 500 500 500 500 500 500 500 500 500 333 333 570 570 570 500 832 667 667 667 722 667 667 722 778 389 500 667 611 889 722 722 611 722 667 556 611 722 667 889 667 611 611 333 278 333 570 500 333 500 500 444 500 444 333 500 556 278 278 500 278 778 556 500 500 500 389 389 278 556 444 667 500 444 389 348 220 348 570 0 500 0 333 500 500 1000 500 500 333 1000 556 333 944 0 611 0 0 333 333 500 500 350 500 1000 333 1000 389 333 722 0 389 611 250 389 500 500 500 500 220 500 333 747 266 500 606 333 747 333 400 570 300 300 333 576 500 250 333 300 300 500 750 750 750 500 667 667 667 667 667 667 944 667 667 667 667 667 389 389 389 389 722 722 722 722 722 722 722 570 722 722 722 722 722 611 611 500 500 500 500 500 500 500 722 444 444 444 444 444 278 278 278 278 500 556 500 500 500 500 500 570 500 556 556 556 556 444 500 444"
+}
+
+// Courier, bytes WinAnsi 32..255 (0 = sin glifo), según pypdf 6.21.1 y pdfminer.six 20260107.
+fn anchos_courier() -> String {
+    return "600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 0 600 0 600 600 600 600 600 600 600 600 600 600 600 0 600 0 0 600 600 600 600 600 600 600 600 600 600 600 600 0 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600 600"
+}
+
+fn main() {
+    // ── Task 1: estado gráfico ─────────────────────────────────────────────
+    // 0.5 mm = 1.417 pt. gray(0.5) -> 0.5; color(255, 128, 0): 128/255 = 0.502.
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    d.line_width(0.5)
+    d.gray(0.5)
+    d.line(10.0, 20.0, 200.0, 20.0)
+    d.gray(0.0)
+    d.gray(1.0)
+    d.gray(0.25)
+    d.color(255, 128, 0)
+    d.color(0, 0, 0)
+    d.rect(10.0, 20.0, 30.0, 15.0, true)
+    d.line_width(0.0)
+    let c1: String = content_of(bytes_of(d), 1)
+    assert(c1 == "1.417 w\n" +
+                 "0.5 g 0.5 G\n" +
+                 "28.346 735.307 m 566.929 735.307 l S\n" +
+                 "0 g 0 G\n" +
+                 "1 g 1 G\n" +
+                 "0.25 g 0.25 G\n" +
+                 "1 0.502 0 rg 1 0.502 0 RG\n" +
+                 "0 0 0 rg 0 0 0 RG\n" +
+                 "28.346 692.787 85.04 42.52 re f\n" +
+                 "0 w\n", "operadores gráficos en orden: " + c1)
+
+    // Cada página arranca limpia: nada del estado de la anterior se emite solo.
+    d.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    d.line(10.0, 20.0, 200.0, 20.0)
+    let b1: String = bytes_of(d)
+    assert(content_of(b1, 2) == "28.346 735.307 m 566.929 735.307 l S\n", "la página 2 no hereda operadores")
+
+    // Errores: el primero queda, nombra la llamada y la página.
+    var e1: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    e1.line_width(0.0 - 1.0)
+    e1.gray(2.0)
+    let r1: String = err_of(e1)
+    assert(r1.startsWith("invalid: pdf: line_width: "), "line_width negativo: " + r1)
+    assert(r1.endsWith("(página 1)"), "con la página: " + r1)
+
+    var e2: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    e2.add_page(PdfPageSize.A4, 0.0, 0.0)
+    e2.gray(1.5)
+    let r2: String = err_of(e2)
+    assert(r2.startsWith("invalid: pdf: gray: "), "gray fuera de rango: " + r2)
+    assert(r2.endsWith("(página 2)"), "página 2: " + r2)
+
+    var e3: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    e3.gray(0.0 - 0.01)
+    assert(err_of(e3).startsWith("invalid: pdf: gray: "), "gray negativo")
+    var e4: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    e4.color(256, 0, 0)
+    assert(err_of(e4).startsWith("invalid: pdf: color: "), "color r=256")
+    var e5: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    e5.color(0, 0, 0 - 1)
+    assert(err_of(e5).startsWith("invalid: pdf: color: "), "color b=-1")
+    var e6: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    let cero: float = 0.0
+    let nan: float = cero / cero
+    e6.gray(nan)
+    assert(err_of(e6).startsWith("invalid: pdf: gray: "), "gray NaN")
+    var e7: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    e7.line_width(nan)
+    assert(err_of(e7).startsWith("invalid: pdf: line_width: "), "line_width NaN")
+    var e8: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    e8.line_width(100.5)
+    assert(err_of(e8).startsWith("invalid: pdf: line_width: "), "line_width 100.5")
+
+    // ── Task 2: las doce fuentes ───────────────────────────────────────────
+    // Frase fija a tamaño 10: unidades AFM sumadas de pypdf/pdfminer por byte.
+    let frase: String = "Factura Nº 123: Año AVATAR wyvern € ¿Qué?"
+    assert(units(frase, PdfFont.Helvetica) == 20929, "Helvetica")
+    assert(units(frase, PdfFont.HelveticaBold) == 21925, "HelveticaBold")
+    assert(units(frase, PdfFont.TimesRoman) == 19500, "TimesRoman")
+    assert(units(frase, PdfFont.HelveticaOblique) == 20929, "HelveticaOblique = Helvetica")
+    assert(units(frase, PdfFont.HelveticaBoldOblique) == 21925, "HelveticaBoldOblique = HelveticaBold")
+    assert(units(frase, PdfFont.TimesBold) == 20522, "TimesBold")
+    assert(units(frase, PdfFont.TimesItalic) == 19058, "TimesItalic")
+    assert(units(frase, PdfFont.TimesBoldItalic) == 19774, "TimesBoldItalic")
+    // Courier: 600 por glifo; la frase tiene 41 caracteres y todos existen.
+    assert(units(frase, PdfFont.Courier) == 24600, "Courier")
+    assert(units(frase, PdfFont.CourierBold) == 24600, "CourierBold")
+    assert(units(frase, PdfFont.CourierOblique) == 24600, "CourierOblique")
+    assert(units(frase, PdfFont.CourierBoldOblique) == 24600, "CourierBoldOblique")
+    assert(units("", PdfFont.Courier) == 0, "vacío")
+    assert(units("i", PdfFont.CourierBold) == 600 and units("W", PdfFont.CourierBold) == 600, "monoespaciada")
+    // Lo que las fuentes estándar no tienen mide 0 (como en la fase 1).
+    assert(units("日本", PdfFont.Courier) == 0, "sin glifo mide 0")
+
+    // Una sola vez cada fuente aunque se use en varias páginas y varias veces.
+    var f: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    f.text(10.0, 20.0, "uno", PdfFont.TimesBold, 10.0)
+    f.text(10.0, 30.0, "dos", PdfFont.TimesBold, 12.0)
+    f.text(10.0, 40.0, "tres", PdfFont.CourierBoldOblique, 10.0)
+    f.add_page(PdfPageSize.Letter, 0.0, 0.0)
+    f.text(10.0, 20.0, "cuatro", PdfFont.TimesBold, 10.0)
+    f.text(10.0, 30.0, "cinco", PdfFont.HelveticaOblique, 10.0)
+    f.text(10.0, 40.0, "seis", PdfFont.TimesItalic, 10.0)
+    f.text(10.0, 50.0, "siete", PdfFont.TimesBoldItalic, 10.0)
+    f.text(10.0, 60.0, "ocho", PdfFont.Courier, 10.0)
+    f.text(10.0, 70.0, "nueve", PdfFont.CourierBold, 10.0)
+    f.text(10.0, 80.0, "diez", PdfFont.CourierOblique, 10.0)
+    f.text(10.0, 90.0, "once", PdfFont.HelveticaBoldOblique, 10.0)
+    let bf: String = bytes_of(f)
+    assert(count_of(bf, "/Type /Font ") == 9, "nueve fuentes distintas, un objeto cada una")
+    assert(count_of(bf, "/BaseFont /Times-Bold ") == 1, "Times-Bold una vez")
+    assert(count_of(bf, "/BaseFont /Courier-BoldOblique ") == 1, "Courier-BoldOblique una vez")
+    assert(count_of(bf, "/BaseFont /Helvetica-Oblique ") == 1, "Helvetica-Oblique una vez")
+    assert(count_of(bf, "/BaseFont /Helvetica-BoldOblique ") == 1, "Helvetica-BoldOblique una vez")
+    assert(count_of(bf, "/BaseFont /Times-Italic ") == 1, "Times-Italic una vez")
+    assert(count_of(bf, "/BaseFont /Times-BoldItalic ") == 1, "Times-BoldItalic una vez")
+    assert(count_of(bf, "/BaseFont /Courier ") == 1, "Courier una vez")
+    assert(count_of(bf, "/BaseFont /Courier-Bold ") == 1, "Courier-Bold una vez")
+    assert(count_of(bf, "/BaseFont /Courier-Oblique ") == 1, "Courier-Oblique una vez")
+    assert(count_of(bf, "/Encoding /WinAnsiEncoding") == 9, "WinAnsiEncoding en cada una")
+    // /F6 = Times-Bold, /F12 = Courier-BoldOblique (el orden de PdfFont).
+    let c2: String = content_of(bf, 1)
+    assert(c2 == "BT /F6 10 Tf 28.346 735.307 Td (uno) Tj ET\n" +
+                 "BT /F6 12 Tf 28.346 706.961 Td (dos) Tj ET\n" +
+                 "BT /F12 10 Tf 28.346 678.614 Td (tres) Tj ET\n", "fuentes en el flujo: " + c2)
+
+    // Los /Widths que van al archivo son las tablas AFM de cada fuente, byte
+    // por byte (32..255), no solo las cuentas de arriba.
+    assert(widths_of(bf, "Times-Bold") == anchos_times_bold(), "Widths de Times-Bold")
+    assert(widths_of(bf, "Times-Italic") == anchos_times_italic(), "Widths de Times-Italic")
+    assert(widths_of(bf, "Times-BoldItalic") == anchos_times_bold_italic(), "Widths de Times-BoldItalic")
+    assert(widths_of(bf, "Courier") == anchos_courier(), "Widths de Courier")
+    assert(widths_of(bf, "Courier-BoldOblique") == anchos_courier(), "Widths de Courier-BoldOblique")
+    assert(widths_of(bf, "Courier-Bold") == anchos_courier(), "Widths de Courier-Bold")
+    assert(widths_of(bf, "Courier-Oblique") == anchos_courier(), "Widths de Courier-Oblique")
+
+    var h: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    h.text(10.0, 20.0, "a", PdfFont.Helvetica, 10.0)
+    h.text(10.0, 30.0, "b", PdfFont.HelveticaBold, 10.0)
+    h.text(10.0, 40.0, "c", PdfFont.HelveticaOblique, 10.0)
+    h.text(10.0, 50.0, "d", PdfFont.HelveticaBoldOblique, 10.0)
+    let bh: String = bytes_of(h)
+    assert(widths_of(bh, "Helvetica") == widths_of(bh, "Helvetica-Oblique"), "Oblique mide como Helvetica")
+    assert(widths_of(bh, "Helvetica-Bold") == widths_of(bh, "Helvetica-BoldOblique"), "BoldOblique mide como Bold")
+
+    // ── Task 3: texto girado ───────────────────────────────────────────────
+    // 10 mm -> 28.346 pt; 20 mm desde arriba -> 735.307 (carta: 792).
+    let rot0: String = "28.346 735.307 Tm (A) Tj ET\n"
+    var t: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 0.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 90.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 180.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 270.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 360.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 0.0 - 90.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 450.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 30.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 45.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 60.0)
+    t.text_rotated(10.0, 20.0, "A", PdfFont.Helvetica, 12.0, 0.0 - 30.0)
+    let c3: String = content_of(bytes_of(t), 1)
+    assert(c3 == "BT /F1 12 Tf 1 0 0 1 " + rot0 +
+                 "BT /F1 12 Tf 0 1 -1 0 " + rot0 +
+                 "BT /F1 12 Tf -1 0 0 -1 " + rot0 +
+                 "BT /F1 12 Tf 0 -1 1 0 " + rot0 +
+                 "BT /F1 12 Tf 1 0 0 1 " + rot0 +
+                 "BT /F1 12 Tf 0 -1 1 0 " + rot0 +
+                 "BT /F1 12 Tf 0 1 -1 0 " + rot0 +
+                 "BT /F1 12 Tf 0.866025 0.5 -0.5 0.866025 " + rot0 +
+                 "BT /F1 12 Tf 0.707107 0.707107 -0.707107 0.707107 " + rot0 +
+                 "BT /F1 12 Tf 0.5 0.866025 -0.866025 0.5 " + rot0 +
+                 "BT /F1 12 Tf 0.866025 -0.5 0.5 0.866025 " + rot0, "matrices de rotación: " + c3)
+    assert(c3.indexOf("-0 ") < 0 and c3.indexOf("e-") < 0, "ni -0 ni notación científica")
+
+    // El texto sin girar no cambia (Td, no Tm) y tampoco el ancho.
+    var u: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    u.text(10.0, 20.0, "A", PdfFont.Helvetica, 12.0)
+    assert(content_of(bytes_of(u), 1) == "BT /F1 12 Tf 28.346 735.307 Td (A) Tj ET\n", "text sin girar igual que siempre")
+
+    // Un carácter sin glifo, un ángulo o una posición inválidos fallan en bytes().
+    var g1: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    g1.text_rotated(10.0, 20.0, "日", PdfFont.Courier, 12.0, 90.0)
+    assert(err_of(g1).startsWith("invalid: pdf: text_rotated: "), "carácter sin glifo")
+    var g2: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    g2.text_rotated(10.0, 20.0, "A", PdfFont.Courier, 12.0, nan)
+    assert(err_of(g2).startsWith("invalid: pdf: text_rotated: "), "ángulo NaN")
+    var g3: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    g3.text_rotated(nan, 20.0, "A", PdfFont.Courier, 12.0, 90.0)
+    assert(err_of(g3).startsWith("invalid: pdf: text_rotated: "), "x NaN")
+    var g4: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    g4.text_rotated(10.0, 20.0, "A", PdfFont.Courier, 0.0, 90.0)
+    assert(err_of(g4).startsWith("invalid: pdf: text_rotated: "), "tamaño 0")
+
+    println("test-496 pdf fase 2: OK")
+}

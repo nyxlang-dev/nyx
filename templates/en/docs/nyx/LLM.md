@@ -3058,7 +3058,11 @@ fn invoice() -> Result<String, Error> {
     let w: float = pdf_text_width(amount, PdfFont.Helvetica, 10.0)                // mm
     d.text(200.9 - w, 60.0, amount, PdfFont.Helvetica, 10.0)                      // right-aligned
     d.line(15.0, 62.0, 200.9, 62.0)
-    d.rect(15.0, 70.0, 0.8, 0.8, true)                    // (x, y) = top-left; filled = black
+    d.rect(15.0, 70.0, 0.8, 0.8, true)                    // (x, y) = top-left; filled = current colour
+    d.line_width(0.6)                                     // stroke width in mm (default 1 pt)
+    d.gray(0.85)                                          // 0 black .. 1 white; stroke AND fill
+    d.color(0, 90, 160)                                   // RGB 0-255; stroke AND fill
+    d.text_rotated(10.0, 130.0, "ORIGINAL", PdfFont.Courier, 8.0, 90.0)   // CCW degrees around (x, y)
     d.add_page(PdfPageSize.Letter, 0.0, 0.0)
     return d.bytes()
 }
@@ -3066,8 +3070,9 @@ fn invoice() -> Result<String, Error> {
 
 **Limits and things that will bite you:**
 
-- **Fonts = the 3 standard PDF fonts, WinAnsiEncoding** (Helvetica,
-  Helvetica-Bold, Times-Roman, not embedded). Covers all of Spanish/Western
+- **Fonts = the 12 standard text fonts, WinAnsiEncoding** (Helvetica, Times and
+  Courier, each regular/bold/italic-or-oblique/bold-italic: `PdfFont.TimesBold`,
+  `.CourierOblique`, ...; not embedded; no Symbol/ZapfDingbats). Covers all of Spanish/Western
   Latin (á ñ ¿ ¡ € “ ” – —). A character outside it (CJK, emoji, `Ł`), a control
   char (`\n`, `\t` — one call per line) or invalid UTF-8 makes **`bytes()`
   return `Err(invalid)`** naming the character — never a silently missing glyph.
@@ -3085,12 +3090,22 @@ fn invoice() -> Result<String, Error> {
   `/SMask`). Interlaced (Adam7) PNG is `Err` — re-export without interlacing.
   Alpha PNGs are decoded in memory: over 64 MB uncompressed is `Err`. The same
   bytes added twice (logo on every page) are stored once.
-- **No colours, no line width, no text wrapping, no automatic page numbers** in
-  phase 1: everything is black, strokes are 1 pt, and you position every line
-  yourself. A table is a recipe on `pdf_text_width` + `line`, not a function.
+- **Graphics state is per page and applies to what is drawn AFTER the call**:
+  `line_width`/`gray`/`color` change stroke and fill together, and the fill is
+  also the TEXT colour — shade a header with `gray(0.85)`, `rect(.., true)`, then
+  `gray(0.0)` BEFORE writing on it. Each new page restarts black, 1 pt. Out of
+  range (width not in 0..100 mm, gray not in 0..1, channel not in 0..255, NaN)
+  is a deferred `Err(invalid)` from `bytes()`.
+- **`text_rotated` pivots on (x, y)**, the start of the baseline: 90 reads
+  bottom-to-top (left margin label), 270 top-to-bottom. `pdf_text_width` is
+  unchanged (measures along the baseline).
+- **No text wrapping, no automatic page numbers, no dashes/curves/transparency**:
+  you position every line yourself. A table is a recipe on `pdf_text_width` +
+  `line`, not a function.
 - Output is deterministic (no creation date): same document, same bytes.
 
-Recipe: `examples/by-example/118-pdf-invoice.nx`.
+Recipes: `examples/by-example/118-pdf-invoice.nx`, `examples/by-example/139-pdf-preimpreso.nx`
+(frame, shading, Times/Courier, rotated text).
 
 ### std/image — decode, resize, crop and encode JPEG (pure Nyx, native and wasm)
 
@@ -3237,6 +3252,13 @@ match xlsx_write([h]) {                                           // Result<Stri
     Result.Err(e) => { print(e.msg) }
 }
 ```
+
+Upload templates: `h.validate_list("C2:C500", ["UND", "KG", "LT"])` puts a dropdown on the range
+(values are stored inside the formula: 255 chars total incl. commas, no comma or `"` in a value, else
+`xlsx_write` returns `Err`); `h.validate_list_range("D2:D500", "Listas!$A$1:$A$40")` takes the values
+from a range (no length cap, may be another sheet). `xlsx_fill(cell, "FFC7CE")` gives a solid fill (6 hex
+digits, else `Err` at write time) and chains with `xlsx_bold`. `xlsx_read` ignores validations. Recipe:
+`examples/by-example/138-xlsx-plantilla.nx`.
 
 Other constructors: `xlsx_int(int)`, `xlsx_bool(bool)`, `xlsx_blank()`. `xlsx_number_fmt(v, code)`:
 any Excel format code (`"#,##0.00"`, `"0.0%"`, `"#,##0 \"Bs\""`); in the code `,` is ALWAYS the
