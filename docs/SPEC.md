@@ -4766,7 +4766,9 @@ mandar un correo es una operación, encolarlo es un producto.
 `quien` es el nombre que va en el `EHLO`, no el host del certificado — ese sale del `host` con el
 que se abrió la conexión.
 
-**Se verifica por omisión.** Las variantes que no verifican lo dicen en el nombre. El motivo es un
+**Se verifica por omisión, contra las CAs del sistema.** Las variantes que no verifican lo dicen en el
+nombre. No se usa el almacén de `tls_set_ca_file`: hasta el 2026-10-18 sí, y como arranca vacío, un relé
+público con certificado válido daba «unknown ca». El motivo es un
 precedente propio: hasta el 2026-09-11 `https_get` cifraba sin autenticar, y contra badssl.com un
 certificado vencido, uno autofirmado y uno emitido para otro nombre devolvían los tres 200 OK.
 Cifrar contra un impostor no protege nada.

@@ -1123,8 +1123,8 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   **the fd is already closed** (do not close it again). **Until this version
   `nyx_tls_client_upgrade` with mode 4 verified NOTHING** (the handshake went through
   with no check: a silent "verified"); fixed, and any mode outside 0..4 now fails
-  closed. `std/smtp` does NOT use it yet (`smtp_starttls` has its own path); it is
-  what `std/imap` uses for `imap_connect_starttls` (port 143).
+  closed. `std/imap` uses it for `imap_connect_starttls` (port 143) and, since
+  2026-10-18, `std/smtp` for `smtp_starttls` (587).
 
 
 ### Threading / Concurrency
@@ -2667,8 +2667,10 @@ match smtp_connect_plain("smtp.provider.com", 587, "mine.com") {
   token never does. There is no `std/oauth2` yet (arc `oauth2-cliente`, GO pending):
   the refresh is a form POST to the provider's token endpoint with `std/http` + `std/json`.
 - **Certificates are verified by default.** `smtp_connect_tls` and
-  `smtp_starttls` verify chain and hostname; the `_insecure` variants say so in
-  the name. Same rationale as `https_get`, which until 2026-09-11 encrypted
+  `smtp_starttls` verify chain and hostname **against the system CAs** (since
+  2026-10-18; before, they used the empty `tls_set_ca_file` store and rejected every
+  public relay with «unknown ca» — drop any `tls_set_ca_file("")` workaround). The
+  `_insecure` variants say so in the name. Same rationale as `https_get`, which until 2026-09-11 encrypted
   without authenticating.
 - **The second `EHLO` after `STARTTLS` is mandatory** and `smtp_starttls` does
   it for you: capabilities change once the channel is encrypted (a server that

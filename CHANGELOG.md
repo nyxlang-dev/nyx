@@ -46,6 +46,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`std/smtp` verifica contra las CAs del sistema** (fricción nyxerp, 2026-10-18). `smtp_starttls` (587) y
+  `smtp_connect_tls` (465) verificaban contra el almacén de `tls_set_ca_file`, que arranca vacío: todo relé
+  público con certificado válido daba «unknown ca». El rodeo, `tls_set_ca_file("")`, sumaba todas las CAs
+  públicas a un almacén global que también usa el `verify-ca` de `std/postgres`. Ahora usan
+  `tls_upgrade_fd_verified_system` / `tls_connect_verified_system`, como ya hacía `std/imap`. Verificado
+  contra `smtp.gmail.com` en 587 y 465: antes fallaban los dos, ahora verifican. El autofirmado sigue
+  rechazado (`test-stdlib-07`, caso d). El rodeo ya no hace falta; una CA privada por conexión queda
+  fichada.
 - **Una casilla de un `Array` sin `<T>` pasada directo a un parámetro struct, o usada como clave de
   `Map`, ya funciona** (fricción nyxerp, 2026-10-17). `texto(hs[0])`, con `fn texto(h: Hoja)`, pasaba
   el `i64` crudo de la casilla donde la función esperaba el struct por valor. El resultado era «GC heap

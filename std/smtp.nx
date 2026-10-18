@@ -29,8 +29,8 @@
 
 import "std/error"
 import "std/net"
-// std/tls: las variantes que VERIFICAN (tls_connect_verified,
-// tls_upgrade_fd_verified) son funciones de ese módulo, no builtins — sin este
+// std/tls: las variantes que VERIFICAN (tls_connect_verified_system,
+// tls_upgrade_fd_verified_system) son funciones de ese módulo, no builtins — sin este
 // import, cualquier programa que importe std/smtp sin importar std/tls falla
 // con NYX1002 «not declared», y el error apunta a ESTE archivo, no al suyo.
 import "std/tls"
@@ -326,11 +326,15 @@ pub fn smtp_connect_tls_insecure(host: String, port: int, quien: String) -> Resu
 
 fn __smtp_connect_tls(host: String, port: int, quien: String, verificar: bool) -> Result<Array, Error> {
     var h: int = 0
-    if verificar { h = tls_connect_verified(host, port) }
+    // Contra el almacén del SISTEMA, no el de tls_set_ca_file: ese arranca vacío,
+    // así que un relé público con certificado válido daba «unknown ca» (fricción de
+    // nyxerp, 2026-10-18), y el rodeo `tls_set_ca_file("")` sumaba todas las CAs
+    // públicas al almacén global que también usa el verify-ca de std/postgres.
+    if verificar { h = tls_connect_verified_system(host, port) }
     else { h = tls_connect(host, port) }
     if h == 0 {
         var detalle: String = "no se pudo abrir el canal TLS contra " + host + ":" + int_to_string(port)
-        if verificar { detalle = detalle + " (con verificación: revisa la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)" }
+        if verificar { detalle = detalle + " (con verificación contra las CAs del sistema: revisa que el certificado lo firme una CA pública y que el nombre del host coincida)" }
         return Result.Err(err_new(0, "connection", detalle))
     }
     var c: Array = [0, h, host, ""]
@@ -376,11 +380,12 @@ fn __smtp_starttls(c: Array, quien: String, verificar: bool) -> Result<Array, Er
     let fd: int = c[SMTP_CONN_FD]
     let host: String = c[SMTP_CONN_HOST]
     var h: int = 0
-    if verificar { h = tls_upgrade_fd_verified(fd, host) }
+    // Mismo almacén que __smtp_connect_tls: el del sistema (ver el porqué allí).
+    if verificar { h = tls_upgrade_fd_verified_system(fd, host) }
     else { h = tls_upgrade_fd(fd, host) }
     if h == 0 {
         var detalle: String = "el handshake TLS falló después del STARTTLS contra " + host
-        if verificar { detalle = detalle + " (con verificación: revisa la CA con tls_set_ca_file y que el nombre del host coincida con el certificado)" }
+        if verificar { detalle = detalle + " (con verificación contra las CAs del sistema: revisa que el certificado lo firme una CA pública y que el nombre del host coincida)" }
         return Result.Err(err_new(0, "connection", detalle))
     }
     var out: Array = c
