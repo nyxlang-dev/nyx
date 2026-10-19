@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.36.1 -->
-<!-- nyx-stdlib: 3984903640-1425356 -->
+<!-- nyx-stdlib: 1903779186-2034915 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1640,6 +1640,16 @@
 - `waitpid` (2 args) · *no existe en wasm32-wasi*
 
 ## Otros
+
+### `std/pdf_render`
+
+`import "std/pdf_render"` — 5 funciones:
+
+- `pub fn pdf_open_limits() -> PdfOpenLimits` — Límites por defecto: archivo de 256 MiB, 128 MiB por stream y 512 MiB por documento descomprimidos, 64 niveles de anidamiento, 12 de formularios, 5 millones de operadores por página, 600 ppp, 64 Mpx (como image_limits).
+- `pub fn pdf_open(bytes: String, lim: PdfOpenLimits) -> Result<PdfDoc, Error>` — Abre un PDF: lee la tabla de objetos (o la reconstruye si está rota) y el árbol de páginas. No dibuja nada todavía. Err(invalid) si no es un PDF o pasa un límite, Err(unsupported) si está cifrado.
+- `pub fn pdf_page_to_image(bytes: String, page: int, dpi: int) -> Result<Image, Error>` — Atajo: abre el PDF con los límites por defecto y dibuja una página (1-based) a `dpi` ppp, en modo estricto. Es `pdf_open(bytes, pdf_open_limits())?.render(page, dpi, pdf_render_strict())`.
+- `pub fn pdf_render_strict() -> PdfRenderOpts` — Opciones estrictas (por defecto): lo no soportado da Err(unsupported) nombrando qué falta.
+- `pub fn pdf_render_best_effort() -> PdfRenderOpts` — Opciones best_effort: lo no soportado se saltea y doc.render_report lo devuelve en la lista `omitted`.
 
 ### Builtins globales (sin `import`)
 

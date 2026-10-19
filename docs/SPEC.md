@@ -5182,6 +5182,64 @@ Recetas completas: `examples/by-example/118-pdf-invoice.nx` (factura) y
 
 ---
 
+## Dibujar un PDF como imagen (`std/pdf_render`)
+
+Lee un PDF y dibuja una página en la misma `Image` de `std/image` (RGB, fondo blanco), para
+achicarla o codificarla como cualquier foto. Nyx puro, como `std/pdf`: igual en nativo y en
+`wasm32-wasi`. Nació de nyxerp: el editor de formatos calca una hoja preimpresa que la imprenta
+entrega en PDF (spec `docs/design/specs/2026-10-19-pdf-a-imagen-design.md`).
+
+```nyx
+pub struct PdfOpenLimits {      // topes contra PDFs rotos u hostiles (todos ajustables)
+    max_bytes: int,             // archivo                         256 MiB
+    max_stream_bytes: int,      // descomprimido por stream        128 MiB
+    max_total_bytes: int,       // descomprimido por documento     512 MiB
+    max_depth: int,             // anidamiento de objetos          64
+    max_form_depth: int,        // Form XObjects anidados          12
+    max_ops: int,               // operadores por página           5 000 000
+    max_dpi: int,               // ppp de render                   600
+    max_pixels: int,            // píxeles de la imagen            64 Mpx
+}
+pdf_open_limits() -> PdfOpenLimits
+pdf_open(bytes: String, lim: PdfOpenLimits) -> Result<PdfDoc, Error>   // xref y páginas
+pdf_render_strict() -> PdfRenderOpts                                   // lo no soportado es Err
+pdf_render_best_effort() -> PdfRenderOpts                              // se saltea y se lista
+pdf_page_to_image(bytes: String, page: int, dpi: int) -> Result<Image, Error>   // atajo, estricto
+
+impl PdfDoc {
+    fn page_count(self) -> int
+    fn page_size(self, page: int) -> Result<Array, Error>      // [ancho, alto] en puntos
+    fn render(self, page: int, dpi: int, opts: PdfRenderOpts) -> Result<Image, Error>
+    fn render_report(self, page: int, dpi: int, opts: PdfRenderOpts) -> Result<PdfRendered, Error>
+}
+pub struct PdfRendered { image: Image, omitted: Array }      // omitted: Array de String
+```
+
+Las páginas van de 1 a `page_count()`. `page_size` y la imagen respetan `/Rotate` (en sentido
+horario, como un visor) y `/CropBox`.
+
+**Qué se dibuja.** Trayectos y rellenos (nonzero y even-odd) con antialias: cobertura exacta en
+horizontal y 4 submuestras por fila. Trazos con grosor, uniones, puntas, punteado y *stroke
+adjustment* (las líneas de hasta 1,5 px se alinean al píxel, como poppler). Recortes. Colores:
+gris, RGB, CMYK, ICCBased (por `/N`), Indexed, Lab, Separation y DeviceN con funciones de tipo 0,
+2, 3 y 4. Alfa constante (`ca`/`CA`). Imágenes JPEG (baseline, por `std/image`) y crudas de 1 a 16
+bits, en línea o XObject, con `/Decode`, stencil (`ImageMask`), `/Mask` y `/SMask`. Form XObjects.
+Texto: TrueType y CFF incrustadas (simples, Type0/CID con Identity-H o CMap incrustada,
+OpenType-CFF), encodings con `/Differences`, `Tr` de 0 a 3. Las 14 estándar sin incrustar se
+dibujan con un subconjunto de Liberation (métrica compatible, OFL 1.1); otras sin incrustar, con
+una cara de la misma familia estirada a los `/Widths`.
+
+**Qué no**, y da `Err(unsupported)` nombrándolo en modo estricto, o entra en `omitted` en
+best_effort: sombreados y patrones, fuentes Type 1 y Type 3, JBIG2/JPX/CCITT, JPEG CMYK y
+progresivo, modos de fusión y máscaras suaves, texto como recorte (`Tr` 4-7), texto vertical,
+CMaps CJK predefinidas, PDFs cifrados. Sin gestión de color ICC: CMYK usa la interpolación de 16
+vértices de poppler y coincide con `pdftoppm`.
+
+**Errores.** `invalid` si el archivo está roto o pasa un límite (el mensaje nombra el campo de
+`PdfOpenLimits`); `unsupported` si usa algo que no se dibuja. Una xref rota se reconstruye
+barriendo el archivo. Nada del archivo puede colgar al módulo: toda recursión y todo bucle tiene
+tope.
+
 ## Planillas y archivos comprimidos (`std/xlsx`, `std/xml`, `std/zip`)
 
 Leen y escriben `.xlsx` en Nyx puro (sin C: igual en nativo y en `wasm32-wasi`). Un `.xlsx` es un zip

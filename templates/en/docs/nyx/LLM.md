@@ -1893,7 +1893,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,defer-not-on-throw,builtin-conversion-untyped-slot,untyped-slot-as-argument -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2188,7 +2188,11 @@ nothing and clang failed with «invalid IR» (reported by nyxerp). The old worka
 cuentas[q]` first, then convert) still works but is no longer needed: both builtins now fix the hint
 their argument must have (`int` / `float`) while it is generated, like `string_to_int` does with `String`. [test: 39-conversion-de-casilla-sin-tipo]
 
-34. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.36.2). Until 0.36.1
+34. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.36.2). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
+
+35. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.36.2). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
+
+36. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.36.2). Until 0.36.1
 `texto(hs[0])` (with `fn texto(h: Hoja)`) passed the slot's raw i64 where the function expected the
 struct by value: the program died with «GC heap exhausted» or, worse, the function silently received
 ANOTHER element. `m.insert(pares[0], pares[1])` used the raw i64 as the key pointer and clang rejected
@@ -2196,6 +2200,8 @@ the IR. In both cases `nyx check` said nothing (reported by nyxerp). The workaro
 hs[0]` first) still works but is no longer needed: the slot is converted to the parameter's struct,
 and a Map key that comes from a slot is read as the String it holds. Same family as
 `int_to_float(arr[i])`, fixed in 0.36.1. [test: 40-casilla-sin-tipo-como-argumento]
+
+37. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.36.2). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
 
 <!-- /gen:gotchas -->
 
@@ -3158,6 +3164,55 @@ fn invoice() -> Result<String, Error> {
 
 Recipes: `examples/by-example/118-pdf-invoice.nx`, `examples/by-example/139-pdf-preimpreso.nx`
 (frame, shading, Times/Courier, rotated text).
+
+### std/pdf_render — draw a page of a PDF as an Image (pure Nyx, native and wasm)
+
+Reads a PDF and rasterizes one page into the same `Image` that `std/image` uses
+(RGB, 3 channels, white background), so you can resize/encode it like any photo.
+
+```nyx
+import "std/pdf_render"
+import "std/image"
+import "std/error"
+
+fn fondo(bytes: String) -> Result<String, Error> {
+    let doc: PdfDoc = pdf_open(bytes, pdf_open_limits())?    // xref + page tree, nothing drawn yet
+    let n: int = doc.page_count()
+    let img: Image = doc.render(1, 150, pdf_render_strict())?   // page 1 (1-based) at 150 dpi
+    let small: Image = image_resize_fit(img, 1600, 1600)?
+    return image_encode_jpeg(small, 85)
+}
+// one-liner: pdf_page_to_image(bytes, page, dpi) -> Result<Image, Error>
+```
+
+**Limits and things that will bite you:**
+
+- **Strict by default.** Anything the module does not draw is `Err(unsupported)`
+  naming it: shadings/patterns (`sh`, gradient fills), Type 1 and Type 3 fonts,
+  JBIG2/JPX/CCITT images, blend modes and soft masks (constant alpha `ca`/`CA` IS
+  drawn), vertical text (Identity-V), predefined CJK CMaps, encrypted PDFs. Use
+  `doc.render_report(page, dpi, pdf_render_best_effort())` → `PdfRendered
+  { image, omitted }` to draw the rest and get the list of what was skipped —
+  never a silently incomplete image.
+- **Broken or hostile PDFs give `Err(invalid)`, never a hang.** A broken xref is
+  rebuilt by scanning the file (like viewers do). `PdfOpenLimits` caps file size,
+  bytes decompressed per stream and per document, nesting, Form XObject depth,
+  operators per page, dpi (1..600) and pixels; each error names the limit
+  (`lim.max_stream_bytes = ...` on a `var` copy of `pdf_open_limits()`).
+- **Fonts**: embedded TrueType and CFF (simple, Type0/CID, OpenType-CFF) are drawn
+  with their own outlines. The 14 standard fonts when NOT embedded (what `std/pdf`
+  writes) use metric-compatible built-in faces (a Liberation subset); other
+  non-embedded fonts are substituted by family/style and stretched to the PDF's
+  `/Widths`, as poppler does. Glyphs have no hinting: text is slightly softer
+  than in a desktop viewer, positions are exact.
+- **Colour is approximate**: CMYK uses poppler's 16-vertex interpolation (matches
+  `pdftoppm`), no ICC profiles; Separation/DeviceN go through their alternate
+  space with type 0/2/3/4 functions.
+- **Speed**: pure Nyx. A letter page at 150 dpi is ~0.1-0.5 s with `nyx build
+  --release` (-O2) and 2-4x that without it; pages with thousands of glyphs cost
+  more. `page_size(page)` → `[w, h]` in points with `/Rotate` and `/CropBox`.
+
+Recipe: `examples/by-example/143-pdf-a-imagen.nx`.
 
 ### std/image — decode, resize, crop and encode JPEG (pure Nyx, native and wasm)
 

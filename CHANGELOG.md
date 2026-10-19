@@ -11,6 +11,33 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`std/pdf_render`: dibujar una página de un PDF como imagen** `[arco: pdf-a-imagen]` (fricción
+  nyxerp 20261019-080021-team-1: calcar en el editor de formatos la hoja preimpresa que la imprenta
+  manda en PDF). Módulo nuevo en Nyx puro: el mismo código en nativo y en `wasm32-wasi`, con la
+  imagen byte a byte igual en los dos.
+  - `pdf_open(bytes, pdf_open_limits()) -> Result<PdfDoc, Error>`, `doc.page_count()`,
+    `doc.page_size(p)`, `doc.render(p, ppp, pdf_render_strict())` y `doc.render_report(...)` con
+    `pdf_render_best_effort()`, que devuelve la imagen y la lista de lo omitido. Atajo
+    `pdf_page_to_image(bytes, página, ppp)`. La salida es la `Image` de `std/image`.
+  - Parser con xref clásica, xref streams, object streams, actualizaciones incrementales y
+    reconstrucción por barrido; filtros Flate (con predictores), LZW, ASCIIHex, ASCII85 y RunLength.
+  - Rasterizador con antialias (cobertura exacta horizontal × 4 submuestras), nonzero y even-odd,
+    trazos con uniones, puntas, punteado y stroke adjustment, y recortes.
+  - Color gris, RGB, CMYK (la interpolación de poppler), ICCBased, Indexed, Lab, Separation y DeviceN
+    con funciones de tipo 0, 2, 3 y 4; alfa constante.
+  - Imágenes JPEG y crudas, con SMask, Mask y stencil. Las grandes se reducen en una pasada al tamaño
+    que ocupan en la página, sin materializarlas enteras.
+  - Texto con TrueType y CFF incrustadas (simples y Type0/CID). Las 14 estándar sin incrustar usan un
+    subconjunto de Liberation (OFL 1.1, 227 KB, licencia incluida en el bloque generado). Caché de
+    glifos rasterizados.
+  - Estricto por defecto: lo no soportado (sombreados, Type 1/3, JBIG2/JPX/CCITT, cifrado...) es
+    `Err(unsupported)` con el nombre. `PdfOpenLimits` acota tamaño, descompresión, anidamiento,
+    formularios, operadores, ppp y píxeles: un PDF hostil da `Err(invalid)` nombrando el límite.
+  - Verificado contra poppler 25.03: corpus sintético de 12 PDFs (`tests/pdf-corpus/`,
+    `scripts/testing/pdf_render_oracle.sh`) y 44 PDFs reales locales (93 páginas, ninguna falla).
+  - Tests `test-503-pdf-render`, `test-wasm-59-pdf-render` y `tests/ai-first/41-pdf-pagina-a-imagen`;
+    receta `143-pdf-a-imagen`.
+
 - **`std/dns`: consultas TXT, CNAME y MX** `[arco: dns-registros]` (pedido de nyxerp, 2026-10-18, para
   revisar SPF, DKIM y DMARC antes de encender el correo). Módulo nuevo con cliente DNS propio en Nyx
   (RFC 1035) sobre UDP, con reintento por TCP si la respuesta viene truncada y sin dependencias de enlace.
@@ -74,6 +101,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Los literales de string compilan en tiempo lineal** `[arco: pdf-a-imagen]`. El lexer y
+  `escape_string` concatenaban un byte por vez: un literal de 64 KB tardaba ~4 s en el frontend y uno
+  de 400 KB, 32 s. Ahora 64 KB tardan 35 ms. `test-lexer` y `test-emit-bytes-global` lo fijan.
+- **Un float de una casilla sin `<T>` conserva su valor al asignarlo y al empujarlo**
+  `[arco: pdf-a-imagen]`. `x = d[i]` con `x: float` ya declarada, y `b.push(a[2 * i])`, daban los
+  bits del double como número (1.5 → 4,6e18) en silencio. Test `test-502`.
+- **wasm32: una casilla pasada directo a un método de `impl`** `[arco: pdf-a-imagen]`. Con un
+  parámetro `Array` o `String`, la llamada emitía el i64 crudo: en nativo pasaba de casualidad, en
+  wasm32 era un trap `unreachable`. Ahora se convierte, igual que en las funciones libres. Test
+  `test-wasm-58`.
 - **Las variantes de un enum de una sola línea ya no dependen del camino del import** (fricción nyxerp,
   2026-10-18). `std/pdf` declara `pub enum PdfFont { Helvetica, … }` en una línea; cuando llegaba primero por
   un import transitivo, el escaneo por líneas de `semantic` buscaba las variantes en las líneas siguientes
@@ -5187,7 +5224,6 @@ Los arrays que arma el **runtime C** llevan tag, y el tag **se propaga** entre a
 - **Maps anidados siguen dando SEGV al leerlos** (`outer.get("i")` de un Map insertado) — estaba
   en LLM.md como gotcha 15 pero nunca catalogado; ahora sí, con repro. Workaround: claves planas.
 
-
 ## [0.22.17] — 2026-07-26
 
 Lectura tipada de slots CHEQUEADA — cierra el último criterio de la spec de slots-tag
@@ -5218,7 +5254,6 @@ Lectura tipada de slots CHEQUEADA — cierra el último criterio de la spec de s
 - Un int que viaja por una VARIABLE (`let n = 42; a.push(n)`) queda UNKNOWN → una lectura String
   de ese slot sigue siendo el SEGV histórico (el tag no puede afirmarse sin riesgo de falso
   positivo; ficha raíz en TASKS.md).
-
 
 ## [0.22.16] — 2026-07-26
 
@@ -5257,7 +5292,6 @@ Cierre de **slots-tag**: Etapas 4 y 5 de 5 (spec:
 - `http_parse_url` ya retorna slots tagueados (literal Nyx) — la migración a struct real queda
   como follow-up de ergonomía, no de corrección.
 
-
 ## [0.22.15] — 2026-07-26
 
 Arranque de **slots-tag**: los slots de Array llevan etiqueta de tipo. Etapas 1-3 de 5
@@ -5286,7 +5320,6 @@ Arranque de **slots-tag**: los slots de Array llevan etiqueta de tipo. Etapas 1-
   registra como `Array<int>`. Es la causa próxima del gotcha; los tags le ganan en la concatenación,
   pero la inferencia sigue siendo incorrecta en otros caminos. Catalogado con propuesta de fix.
 
-
 ## [0.22.14] — 2026-07-26
 
 ### Changed (cambio de contrato del compilador)
@@ -5305,7 +5338,6 @@ Arranque de **slots-tag**: los slots de Array llevan etiqueta de tipo. Etapas 1-
   codegen lo despacha por la rama de Map y emite IR inválido, pese a que el runtime ya tiene
   `nyx_array_contains`. Catalogado en TASKS.md con el diagnóstico completo.
 
-
 ## [0.22.13] — 2026-07-26
 
 ### Fixed
@@ -5320,7 +5352,6 @@ Arranque de **slots-tag**: los slots de Array llevan etiqueta de tipo. Etapas 1-
 - `contains` encadenado sobre un retorno `Array` sigue devolviendo 0 — bindear primero (gotcha 24
   de LLM.md). El catch-all mudo que causa esta familia de bugs queda catalogado para una sesión
   dedicada, con el método de medición correcto anotado en TASKS.md.
-
 
 ## [0.22.12] — 2026-07-25
 
@@ -5342,7 +5373,6 @@ Cosecha [dogfooding:friction-portscan] — los 2 P1 del escáner de red.
 - **pm/wrapper**: `nyx run --help` muestra la ayuda del comando sin compilar (convención
   cargo/npm; `nyx run -- --help` se lo pasa al programa) y `nyx help [cmd]` dejó de buscar un
   archivo llamado "help".
-
 
 ## [0.22.11] — 2026-07-25
 
@@ -5366,7 +5396,6 @@ Cosecha [dogfooding:friction-browser] A2 + A3 + B3 — **cierra la cosecha compl
 - **driver**: el banner imprimía "v0.21.0" hardcodeado con toolchain v0.22.x — el usuario no sabía
   qué versión citar al reportar. Ahora lee el archivo `VERSION`, como el resto del toolchain. (B3)
 
-
 ## [0.22.10] — 2026-07-25
 
 Cosecha [dogfooding:friction-browser] D6 — cliente HTTP: headers repetidos + docs. Cierra la
@@ -5388,7 +5417,6 @@ cosecha del navegador (D1-D6).
 - `f(args).length()` encadenado sobre el retorno `Array` de una user fn devuelve 0 SILENCIOSO
   — bindear a una variable primero. TASKS.md + gotcha 24 de LLM.md. Familia slots-sin-tag.
 
-
 ## [0.22.9] — 2026-07-25
 
 Cosecha [dogfooding:friction-browser] D4 + D5 — columnas de terminal y encodings legacy.
@@ -5404,7 +5432,6 @@ Cosecha [dogfooding:friction-browser] D4 + D5 — columnas de terminal y encodin
   `windows1252_to_utf8` (tabla cp1252 en 0x80-0x9F — comillas tipográficas, guiones, €, ™;
   slots indefinidos pasan como C1, semántica WHATWG de browsers). Páginas legacy dejan de
   verse como mojibake. (test-304)
-
 
 ## [0.22.8] — 2026-07-25
 
@@ -5425,7 +5452,6 @@ Cosecha [dogfooding:friction-browser] D2 + D3 — codepoints y entidades HTML de
   curada de ~50 entidades nombradas (antes 7), y lo malformado/desconocido queda literal como
   en los browsers. `std/url` importa `std/unicode`. (test-302)
 
-
 ## [0.22.7] — 2026-07-25
 
 Cosecha [dogfooding:friction-browser] D1 — descompresión gzip/deflate para HTTP.
@@ -5444,7 +5470,6 @@ Cosecha [dogfooding:friction-browser] D1 — descompresión gzip/deflate para HT
   `dlopen("libz.so.1")` + `dlsym` (patrón sqlite_adapter). Landmine general de símbolos
   catalogada para fix a nivel compilador. (aa66abd)
 
-
 ## [0.22.6] — 2026-07-25
 
 Cosecha [dogfooding:friction-browser] A7 + A8 — dos fallos SILENCIOSOS de tipos/aridad.
@@ -5458,7 +5483,6 @@ Cosecha [dogfooding:friction-browser] A7 + A8 — dos fallos SILENCIOSOS de tipo
   (`s.startsWith("hola", 99)` → true ignorando el 99; `s.trim(42)` → sin error). Ahora una tabla
   de aridad máxima rechaza el exceso con NYX1006 (mismo código que las user-fns), preservando el
   overload legítimo `indexOf(needle)`/`indexOf(needle, from)`. (6070dba, test-299 + 3 error tests)
-
 
 ## [0.22.5] — 2026-07-25
 
@@ -5485,7 +5509,6 @@ Cosecha [dogfooding:friction-browser] A7 + A8 — dos fallos SILENCIOSOS de tipo
   wrappers de índice pub); `map_size` retirado del índice hasta arreglar su bug de tamaño.
   (dddc9cd/e230267, C3)
 
-
 ## [0.22.4] — 2026-07-25
 
 Cosecha [dogfooding:friction-browser] A1 + B1 + B2 — los dos P1 AI-first del reporte del
@@ -5509,7 +5532,6 @@ navegador y la ambigüedad de parser que los disparaba.
 ### Notas
 - Catalogados: `match p {}` vacío hereda la ambigüedad struct-init (pre-existente);
   field-access sobre struct-literal temporal devuelve 0 (gap de codegen).
-
 
 ## [0.22.3] — 2026-07-25
 
@@ -5536,7 +5558,6 @@ del navegador de terminal (usuario anónimo, ~2.400 líneas de Nyx), resueltos e
   hoy vía env `GC_MAXIMUM_HEAP_SIZE`).
 - `write_file` no es binary-safe (ABI char*) — catalogado (hallazgo colateral de A5).
 
-
 ## [0.22.2] — 2026-07-24
 
 ### Fixed
@@ -5548,7 +5569,6 @@ del navegador de terminal (usuario anónimo, ~2.400 líneas de Nyx), resueltos e
   migrados (build/test/playground); `let x: int = exec(...)` ahora es ERROR de compilación
   accionable (antes miscompile silencioso). Tests: ai-first nuevo + regression + 58 asserts C.
   (9d60422)
-
 
 ## [0.22.1] — 2026-07-23
 
@@ -5587,7 +5607,6 @@ Campaña "revisión de pendientes 2026-07-23" — bug fixes del core + saneamien
 - CLAUDE.md 78K→37K (bitácoras → docs/SESSION_LOG.md restaurado y fusionado); agentes y
   skills de .claude/ reparados (frontmatter/formato directorio). (93f7609, f6bc5e7, 47a1229)
 - Paths de la migración de layout ~/nyx/ en deploy/ y scripts/. (d840977)
-
 
 ## [0.22.0] — 2026-07-22 — MINOR: campaña integral — SCAN cursor-estable + borrow sin deuda + warnings + codepoints
 

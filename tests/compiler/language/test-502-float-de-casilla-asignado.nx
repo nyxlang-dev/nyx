@@ -1,0 +1,91 @@
+// Un float leído de una casilla de un Array sin <T> conserva su valor también
+// cuando se ASIGNA o se EMPUJA, no solo en `let x: float = a[i]` (arco
+// pdf-a-imagen, 2026-10-19). Antes:
+//   - `x = d[i]` con `x: float` ya declarada leía la casilla como i64 y le
+//     aplicaba sitofp a los bits del double: 1.5 se volvía 4,6e18;
+//   - `b.push(a[2 * i])` (índice con aritmética) empujaba la casilla sin su
+//     tag, y después `let x: float = b[0]` daba los bits como número.
+// Las dos formas daban un número enorme sin ningún aviso; `let` y `push(a[i])`
+// (índice variable) ya andaban y siguen igual.
+
+fn asignado(d: Array, i: int) -> float {
+    var x: float = 0.0
+    x = d[i]
+    return x
+}
+
+fn asignado_en_cuenta(d: Array, i: int) -> float {
+    var x: float = 0.0
+    x = d[i] * 2.0
+    return x
+}
+
+fn asignado_int(d: Array, i: int) -> int {
+    var n: int = 0
+    n = d[i]
+    return n
+}
+
+fn asignado_string(d: Array, i: int) -> String {
+    var s: String = ""
+    s = d[i]
+    return s
+}
+
+fn empujado_con_cuenta(a: Array) -> Array {
+    var b: Array = []
+    var i: int = a.length() / 2 - 1
+    while i >= 0 {
+        b.push(a[2 * i])
+        b.push(a[2 * i + 1])
+        i = i - 1
+    }
+    return b
+}
+
+fn empujado_negativo(a: Array, i: int) -> Array {
+    var b: Array = []
+    b.push(a[-i + 2])
+    return b
+}
+
+fn main() {
+    var d: Array = []
+    d.push(1.5)
+    d.push(2.25)
+    assert(asignado(d, 0) == 1.5)
+    assert(asignado(d, 1) == 2.25)
+    assert(asignado_en_cuenta(d, 1) == 4.5)
+
+    var ints: Array = []
+    ints.push(7)
+    ints.push(9)
+    assert(asignado_int(ints, 1) == 9)
+
+    var strs: Array = []
+    strs.push("hola")
+    assert(asignado_string(strs, 0) == "hola")
+
+    let r: Array = empujado_con_cuenta([1.5, 2.5, 3.5, 4.5])
+    let r0: float = r[0]
+    let r1: float = r[1]
+    let r3: float = r[3]
+    assert(r0 == 3.5)
+    assert(r1 == 4.5)
+    assert(r3 == 2.5)
+
+    let n: Array = empujado_negativo([10.5, 20.5, 30.5], 1)
+    let n0: float = n[0]
+    assert(n0 == 20.5)
+
+    // Lo que ya andaba sigue igual.
+    let l: float = d[1]
+    assert(l == 2.25)
+    var e: Array = []
+    let k: int = 0
+    e.push(d[k])
+    let e0: float = e[0]
+    assert(e0 == 1.5)
+
+    print("test-502: OK")
+}

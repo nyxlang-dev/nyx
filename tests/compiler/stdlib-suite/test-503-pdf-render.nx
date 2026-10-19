@@ -1,0 +1,210 @@
+// test-503 — std/pdf_render (arco pdf-a-imagen): una página de un PDF a Image.
+//
+// Las huellas (ancho x alto : CRC32 de los píxeles) se aprobaron contra poppler
+// 25.03 con el mismo corpus (tests/pdf-corpus/gen_corpus.py) antes de fijarlas:
+// todas por encima de 37 dB de PSNR salvo las imágenes en línea y reducidas,
+// donde poppler reparte las muestras con otro redondeo (27 y 20 dB, ningún
+// píxel fuera de los bordes de las muestras). Si una cambia, se vuelve a
+// comparar contra el oráculo ANTES de actualizarla:
+//   bash scripts/testing/pdf_render_oracle.sh
+//
+// Lo que se puede romper sin que nada falle a la vista:
+//   - la xref: un PDF con xref stream y object streams y uno con la xref rota
+//     tienen que dar EXACTAMENTE la misma imagen que sus gemelos con xref clásica;
+//   - los límites: un PDF hostil (bomba de deflate, anidamiento, Form que se
+//     dibuja a sí mismo) tiene que dar Err nombrando el límite, nunca colgarse;
+//   - el modo estricto: algo no soportado es Err; en best_effort se dibuja el
+//     resto y lo omitido queda en la lista.
+
+import "std/pdf_render"
+import "std/pdf"
+import "std/image"
+import "std/zip"
+import "std/error"
+
+fn huella(img: Image) -> String {
+    let rows: Array = img.rows
+    var sb: StringBuilder = StringBuilder.new()
+    var y: int = 0
+    while y < img.height {
+        let r: String = rows[y]
+        sb.append(r)
+        y = y + 1
+    }
+    return int_to_string(img.width) + "x" + int_to_string(img.height) + ":" + int_to_string(zip_crc32(sb.to_string()))
+}
+
+fn render_ok(b: String, dpi: int) -> Image {
+    let r: Result<Image, Error> = pdf_page_to_image(b, 1, dpi)
+    match r {
+        Result.Ok(img) => { return img }
+        Result.Err(e) => {
+            assert(false, "no debía fallar: " + error_to_string(e))
+            return render_ok(b, dpi)
+        }
+    }
+}
+
+fn err_kind_msg(b: String, dpi: int) -> String {
+    let r: Result<Image, Error> = pdf_page_to_image(b, 1, dpi)
+    match r {
+        Result.Ok(img) => { return "OK" }
+        Result.Err(e) => { return e.kind + ": " + e.msg }
+    }
+}
+
+// Color del píxel (x, y) como 0xRRGGBB.
+fn pixel(img: Image, x: int, y: int) -> int {
+    let rows: Array = img.rows
+    let r: String = rows[y]
+    let i: int = 3 * x
+    return ((r.charAt(i) & 255) << 16) | ((r.charAt(i + 1) & 255) << 8) | (r.charAt(i + 2) & 255)
+}
+
+// Un PDF mínimo con el contenido dado (xref clásica bien calculada).
+fn pdf_con(contenido: String, recursos: String) -> String {
+    var objs: Array = []
+    objs.push("<< /Type /Catalog /Pages 2 0 R >>")
+    objs.push("<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    objs.push("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources " + recursos + " /Contents 4 0 R >>")
+    objs.push("<< /Length " + int_to_string(contenido.length()) + " >>\nstream\n" + contenido + "\nendstream")
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("%PDF-1.4\n")
+    var offs: Array = []
+    var acc: String = "%PDF-1.4\n"
+    var i: int = 0
+    while i < objs.length() {
+        offs.push(acc.length())
+        let o: String = objs[i]
+        let txt: String = int_to_string(i + 1) + " 0 obj\n" + o + "\nendobj\n"
+        acc = acc + txt
+        i = i + 1
+    }
+    let xref: int = acc.length()
+    acc = acc + "xref\n0 5\n0000000000 65535 f \n"
+    i = 0
+    while i < offs.length() {
+        let off: int = offs[i]
+        var s: String = int_to_string(off)
+        while s.length() < 10 { s = "0" + s }
+        acc = acc + s + " 00000 n \n"
+        i = i + 1
+    }
+    return acc + "trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n" + int_to_string(xref) + "\n%%EOF\n"
+}
+
+fn main() {
+    // ── Corpus sintético contra las huellas aprobadas ──
+    let nombres: Array = ["g-alpha", "g-broken", "g-caps", "g-clip", "g-form", "g-images", "g-inline", "g-paths", "g-rotate", "g-rules", "g-sep", "g-xrefstm"]
+    let huellas: Array = ["300x200:3229152335", "300x200:3486114675", "300x200:732536695", "300x200:3160956521", "300x200:3226703082", "300x200:2440785060", "300x200:4031426360", "300x200:2509586531", "180x280:4209766275", "300x200:3486114675", "300x200:2733373993", "300x200:2509586531"]
+    var i: int = 0
+    while i < nombres.length() {
+        let n: String = nombres[i]
+        let b: String = read_file("tests/pdf-corpus/" + n + ".pdf")
+        assert(b.length() > 0, "falta tests/pdf-corpus/" + n + ".pdf")
+        let h: String = huella(render_ok(b, 72))
+        let want: String = huellas[i]
+        if h != want { print(n + ": " + h + " (esperada " + want + ")") }
+        assert(h == want)
+        i = i + 1
+    }
+
+    // ── Píxeles que se explican solos ──
+    let rect: Image = render_ok(pdf_con("1 0 0 rg 10 10 30 20 re f 0 0 1 rg 50 50 40 40 re f", "<< >>"), 72)
+    assert(rect.width == 100 and rect.height == 100)
+    assert(pixel(rect, 20, 80) == 16711680)      // dentro del rojo (y crece hacia abajo)
+    assert(pixel(rect, 70, 30) == 255)           // dentro del azul
+    assert(pixel(rect, 5, 5) == 16777215)        // fondo blanco
+    let gris: Image = render_ok(pdf_con("0.5 g 0 0 100 100 re f", "<< >>"), 72)
+    assert(pixel(gris, 50, 50) == 8421504)       // 0.5 → 128
+    // CMYK con la interpolación de poppler: cian puro es un celeste, no (0,255,255).
+    let cian: Image = render_ok(pdf_con("1 0 0 0 k 0 0 100 100 re f", "<< >>"), 72)
+    assert(pixel(cian, 50, 50) == 44527)         // (0, 173, 239), igual que pdftoppm
+    // Rotate 90: la página de 100 x 50 sale de 50 x 100.
+    let rot: String = pdf_con("0 g 0 0 100 50 re f", "<< >>").replace("/MediaBox [0 0 100 100]", "/MediaBox [0 0 100 50] /Rotate 90")
+    let ri: Image = render_ok(rot, 72)
+    assert(ri.width == 50 and ri.height == 100)
+
+    // ── Texto: una factura de std/pdf (Helvetica sin incrustar → Liberation) ──
+    var d: Pdf = pdf_new(PdfPageSize.Custom, 80.0, 30.0)
+    d.text(5.0, 12.0, "Ferretería Ñandú", PdfFont.HelveticaBold, 12.0)
+    d.text(5.0, 22.0, "Total 1.234,56 €", PdfFont.TimesRoman, 10.0)
+    d.line(5.0, 25.0, 75.0, 25.0)
+    let fb: Result<String, Error> = d.bytes()
+    let fbytes: String = fb.unwrap()
+    let fimg: Image = render_ok(fbytes, 100)
+    assert(fimg.width == 315 and fimg.height == 119)
+    // Hay tinta donde va el texto y nada fuera de él.
+    var tinta: int = 0
+    var y: int = 30
+    while y < 50 {
+        var x: int = 20
+        while x < 200 {
+            if pixel(fimg, x, y) < 8421504 { tinta = tinta + 1 }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    assert(tinta > 300)
+    assert(pixel(fimg, 300, 5) == 16777215)
+    let fh: String = huella(fimg)
+    if fh != "315x119:1557607146" { print("factura: " + fh) }
+    assert(fh == "315x119:1557607146")
+
+    // ── API ──
+    let rd: Result<PdfDoc, Error> = pdf_open(read_file("tests/pdf-corpus/g-rotate.pdf"), pdf_open_limits())
+    let doc: PdfDoc = rd.unwrap()
+    assert(doc.page_count() == 1)
+    let rsz: Result<Array, Error> = doc.page_size(1)
+    let sz: Array = rsz.unwrap()
+    let sw: float = sz[0]
+    let sh: float = sz[1]
+    assert(sw == 180.0 and sh == 280.0)              // CropBox 280 x 180, girada
+    let rsz2: Result<Array, Error> = doc.page_size(2)
+    assert(rsz2.is_err())
+    assert(err_kind_msg(read_file("tests/pdf-corpus/g-paths.pdf"), 0).startsWith("invalid"))
+    assert(err_kind_msg(read_file("tests/pdf-corpus/g-paths.pdf"), 601).startsWith("invalid"))
+
+    // ── PDFs rotos u hostiles: Err con el motivo, nunca un cuelgue ──
+    assert(err_kind_msg("no soy un pdf", 72).indexOf("no es un PDF") >= 0)
+    assert(err_kind_msg("%PDF-1.4\n%%EOF", 72).startsWith("invalid"))
+    let cifrado: String = pdf_con("", "<< >>").replace("/Root 1 0 R >>", "/Root 1 0 R /Encrypt << /Filter /Standard >> >>")
+    assert(err_kind_msg(cifrado, 72).startsWith("unsupported"))
+    // Un array anidado diez mil veces: tope de anidamiento.
+    let hondo: String = pdf_con("[".repeat(10000) + " re f", "<< >>")
+    assert(err_kind_msg(hondo, 72).indexOf("niveles") >= 0)
+    // Un Form XObject que se dibuja a sí mismo.
+    var fo: String = pdf_con("/F Do", "<< /XObject << /F 5 0 R >> >>")
+    fo = fo.replace("trailer", "5 0 obj\n<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources << /XObject << /F 5 0 R >> >> /Length 5 >>\nstream\n/F Do\nendstream\nendobj\ntrailer")
+    // (la xref no lista el objeto 5: se reconstruye barriendo el archivo)
+    let ciclo: String = err_kind_msg(fo, 72)
+    assert(ciclo.indexOf("ciclo") >= 0 or ciclo.indexOf("niveles") >= 0)
+    // Bomba de deflate: 2 MB de ceros en un stream, con un tope de 1 MB.
+    let ceros: String = zip_deflate_zlib("\x00".repeat(2 * 1024 * 1024))
+    var bomba: String = pdf_con("", "<< >>")
+    bomba = bomba.replace("<< /Length 0 >>\nstream\n\nendstream", "<< /Length " + int_to_string(ceros.length()) + " /Filter /FlateDecode >>\nstream\n" + ceros + "\nendstream")
+    var lim: PdfOpenLimits = pdf_open_limits()
+    lim.max_stream_bytes = 1024 * 1024
+    let rb: Result<PdfDoc, Error> = pdf_open(bomba, lim)
+    let db: PdfDoc = rb.unwrap()
+    let rr: Result<Image, Error> = db.render(1, 72, pdf_render_strict())
+    match rr {
+        Result.Ok(img) => { assert(false, "la bomba no debía dibujarse") }
+        Result.Err(e) => { assert(e.msg.indexOf("max_stream_bytes") >= 0) }
+    }
+
+    // ── Estricto contra best_effort ──
+    let sombra: String = pdf_con("1 0 0 rg 10 10 30 30 re f /Sh0 sh", "<< >>")
+    assert(err_kind_msg(sombra, 72).indexOf("sombreado") >= 0)
+    let rs: Result<PdfDoc, Error> = pdf_open(sombra, pdf_open_limits())
+    let ds: PdfDoc = rs.unwrap()
+    let rrep: Result<PdfRendered, Error> = ds.render_report(1, 72, pdf_render_best_effort())
+    let rep: PdfRendered = rrep.unwrap()
+    let om: Array = rep.omitted
+    assert(om.length() == 1)
+    let om0: String = om[0]
+    assert(om0.indexOf("sombreado") >= 0)
+    assert(pixel(rep.image, 20, 70) == 16711680)  // lo demás sí se dibujó
+
+    print("test-503: OK")
+}

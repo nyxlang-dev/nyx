@@ -83,7 +83,10 @@ GOTCHA_IDS=(
   "string-index-byte"
   "defer-not-on-throw"
   "builtin-conversion-untyped-slot"
+  "float-slot-assign"
+  "pdf-page-to-image"
   "untyped-slot-as-argument"
+  "wasm-method-slot-arg"
 )
 
 ANCLAS=(
@@ -137,6 +140,7 @@ MENTIRAS=(
   "close_file(|file-api-names"
   "corrupts the value on the next read|array-index-float-write"
   "returns the wrong character for any index above 0|string-index-byte"
+  "std/pdf only writes PDF|pdf-page-to-image"
 )
 
 PATTERN_CODES=(

@@ -1520,7 +1520,7 @@ then129:
   %559 = load { i64, i8* }*, { i64, i8* }** %558
   store { i64, i8* }* %559, { i64, i8* }** %540
   %560 = load { i64, i8* }*, { i64, i8* }** %558
-  %561 = call i64 @nyx_array_get({ i64, i8* }* %560, i64 0)
+  %561 = call i64 @nyx_array_get_checked({ i64, i8* }* %560, i64 0, i64 2)
   %562 = inttoptr i64 %561 to %nyx_string*
   store %nyx_string* %562, %nyx_string** %544
   br label %merge131

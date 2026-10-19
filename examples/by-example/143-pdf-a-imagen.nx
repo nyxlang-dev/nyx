@@ -1,0 +1,114 @@
+// Nyx by Example: dibujar una página de un PDF como imagen con std/pdf_render.
+//
+// El caso real: un editor de formatos de impresión deja «calcar» una hoja preimpresa (una
+// factura con su membrete y sus casillas) poniendo la hoja de FONDO y ubicando los campos
+// encima. La imprenta entrega el modelo en PDF, así que hay que convertir una página del PDF a
+// imagen en el servidor, sin programas externos, para achicarla y guardarla como cualquier foto.
+//
+//   let doc: PdfDoc = pdf_open(bytes, pdf_open_limits())?     // lee la xref y las páginas
+//   let img: Image = doc.render(1, 150, pdf_render_strict())?  // página 1 a 150 ppp
+//
+// Qué dibuja: trazos y rellenos con antialias, recortes, colores (gris, RGB, CMYK, Indexed,
+// Separation, DeviceN, Lab), imágenes (JPEG, crudas, con máscara), formularios (Form XObjects)
+// y texto con fuentes TrueType o CFF incrustadas, o con las 14 estándar sin incrustar (las
+// dibuja con caras de métrica compatible). Qué NO: sombreados y patrones, Type 1 y Type 3,
+// JBIG2/JPX/CCITT, transparencia salvo el alfa constante, PDFs cifrados.
+//
+// Dos modos. Estricto (pdf_render_strict, el de siempre): si la página usa algo que no se
+// dibuja, Err(unsupported) diciendo qué; nunca sale una imagen con un pedazo de menos sin
+// avisar. Best effort (pdf_render_best_effort + render_report): se dibuja lo demás y lo omitido
+// vuelve en una lista, para decidir si alcanza (un degradé decorativo que falta no estorba
+// para calcar casillas).
+//
+// Tiempos de esta receta entera (armar la hoja, dibujarla a 150 ppp, achicarla y pasarla a
+// JPEG), aarch64, una CPU: nyx build ~0,5 s, nyx build --release ~0,17 s. Páginas reales con
+// fuentes incrustadas e imágenes, a 100 ppp sin --release: de 0,1 a 2,6 s (las que más tardan
+// son las de muchos glifos).
+//
+// La hoja se fabrica acá con std/pdf para que la receta no dependa de un archivo: en la vida
+// real son los bytes que subió la persona.
+
+import "std/pdf"
+import "std/pdf_render"
+import "std/image"
+import "std/error"
+
+// Una «hoja preimpresa»: membrete, casillas y una tabla vacía.
+fn hoja_preimpresa() -> Result<String, Error> {
+    var d: Pdf = pdf_new(PdfPageSize.Letter, 0.0, 0.0)
+    d.text(20.0, 25.0, "IMPRENTA LA ESTRELLA, C.A.", PdfFont.HelveticaBold, 14.0)
+    d.text(20.0, 31.0, "RIF J-12345678-9 · Av. Bolívar, Valencia", PdfFont.Helvetica, 9.0)
+    d.text(150.0, 25.0, "FACTURA", PdfFont.TimesBold, 16.0)
+    d.text(150.0, 31.0, "N.º de control 00-", PdfFont.TimesRoman, 9.0)
+    d.line_width(0.4)
+    d.rect(20.0, 40.0, 175.9, 22.0, false)
+    d.text(23.0, 46.0, "Cliente:", PdfFont.Helvetica, 9.0)
+    d.text(23.0, 53.0, "RIF/C.I.:", PdfFont.Helvetica, 9.0)
+    d.text(23.0, 60.0, "Domicilio:", PdfFont.Helvetica, 9.0)
+    d.gray(0.85)
+    d.rect(20.0, 70.0, 175.9, 7.0, true)
+    d.gray(0.0)
+    d.text(23.0, 75.0, "Cantidad      Descripción", PdfFont.HelveticaBold, 9.0)
+    d.text(160.0, 75.0, "Importe", PdfFont.HelveticaBold, 9.0)
+    var y: float = 84.0
+    while y < 200.0 {
+        d.line(20.0, y, 195.9, y)
+        y = y + 8.0
+    }
+    return d.bytes()
+}
+
+fn main() -> int {
+    let rb: Result<String, Error> = hoja_preimpresa()
+    if rb.is_err() {
+        println("no se pudo armar la hoja")
+        return 1
+    }
+    let bytes: String = rb.unwrap()
+
+    // Abrir: valida la estructura y cuenta las páginas sin dibujar nada.
+    let rd: Result<PdfDoc, Error> = pdf_open(bytes, pdf_open_limits())
+    match rd {
+        Result.Err(e) => {
+            println("PDF inválido: " + error_to_string(e))
+            return 1
+        }
+        Result.Ok(doc) => {
+            println("páginas: " + int_to_string(doc.page_count()))
+            let rs: Result<Array, Error> = doc.page_size(1)
+            let tam: Array = rs.unwrap()
+            let w: float = tam[0]
+            let h: float = tam[1]
+            println("página 1: " + float_to_string(w) + " x " + float_to_string(h) + " puntos")
+
+            // Dibujar a 150 ppp con lo no soportado como lista, no como error.
+            let rr: Result<PdfRendered, Error> = doc.render_report(1, 150, pdf_render_best_effort())
+            match rr {
+                Result.Err(e) => {
+                    println("no se pudo dibujar: " + error_to_string(e))
+                    return 1
+                }
+                Result.Ok(res) => {
+                    let img: Image = res.image
+                    println("imagen: " + int_to_string(img.width) + " x " + int_to_string(img.height) + " px")
+                    let om: Array = res.omitted
+                    if om.length() > 0 { println("omitido: " + om.join("; ")) }
+                    // Como cualquier foto: achicar para el editor y guardar en JPEG.
+                    let rc: Result<Image, Error> = image_resize_fit(img, 1000, 1000)
+                    let chica: Image = rc.unwrap()
+                    let rj: Result<String, Error> = image_encode_jpeg(chica, 85)
+                    let jpg: String = rj.unwrap()
+                    println("fondo para el editor: " + int_to_string(chica.width) + " x " + int_to_string(chica.height) + ", " + int_to_string(jpg.length()) + " bytes de JPEG")
+                }
+            }
+        }
+    }
+
+    // Un archivo que no es un PDF da Err con el motivo, no un cuelgue.
+    let malo: Result<Image, Error> = pdf_page_to_image("esto no es un PDF", 1, 150)
+    match malo {
+        Result.Ok(img) => { println("¿?") }
+        Result.Err(e) => { println("rechazado: " + error_to_string(e)) }
+    }
+    return 0
+}

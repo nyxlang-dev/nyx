@@ -7764,7 +7764,7 @@ else234:
 merge235:
   %1502 = load { i64, i8* }*, { i64, i8* }** @g_sym_prev
   %1503 = load i64, i64* %1475
-  %1504 = call i64 @nyx_array_get({ i64, i8* }* %1502, i64 %1503)
+  %1504 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1502, i64 %1503)
   store i64 %1504, i64* %1475
   br label %while_cond228
 while_end230:
@@ -7808,7 +7808,7 @@ else243:
 merge244:
   %1522 = load { i64, i8* }*, { i64, i8* }** @g_sym_prev
   %1523 = load i64, i64* %1507
-  %1524 = call i64 @nyx_array_get({ i64, i8* }* %1522, i64 %1523)
+  %1524 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1522, i64 %1523)
   store i64 %1524, i64* %1507
   br label %while_cond239
 while_end241:
@@ -7928,7 +7928,7 @@ else249:
 merge250:
   %1574 = load { i64, i8* }*, { i64, i8* }** @g_sym_prev
   %1575 = load i64, i64* %1536
-  %1576 = call i64 @nyx_array_get({ i64, i8* }* %1574, i64 %1575)
+  %1576 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1574, i64 %1575)
   store i64 %1576, i64* %1536
   br label %while_cond245
 while_end247:
@@ -8108,7 +8108,7 @@ else292:
 merge293:
   %1659 = load { i64, i8* }*, { i64, i8* }** @g_sym_prev
   %1660 = load i64, i64* %1623
-  %1661 = call i64 @nyx_array_get({ i64, i8* }* %1659, i64 %1660)
+  %1661 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %1659, i64 %1660)
   store i64 %1661, i64* %1623
   br label %while_cond288
 while_end290:
@@ -12132,7 +12132,7 @@ while_body1046:
   store i64 %3747, i64* %3739
   %3748 = load { i64, i8* }*, { i64, i8* }** @g_fn_sig_next
   %3749 = load i64, i64* %3739
-  %3750 = call i64 @nyx_array_get({ i64, i8* }* %3748, i64 %3749)
+  %3750 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3748, i64 %3749)
   store i64 %3750, i64* %3743
   br label %while_cond1045
 while_end1047:
@@ -12222,7 +12222,7 @@ else1061:
 merge1062:
   %3791 = load { i64, i8* }*, { i64, i8* }** @g_fn_sig_next
   %3792 = load i64, i64* %3775
-  %3793 = call i64 @nyx_array_get({ i64, i8* }* %3791, i64 %3792)
+  %3793 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %3791, i64 %3792)
   store i64 %3793, i64* %3775
   br label %while_cond1054
 while_end1056:
@@ -13017,7 +13017,7 @@ then1165:
   br i1 %4211, label %then1168, label %else1169
 then1168:
   %4212 = load { i64, i8* }*, { i64, i8* }** %t.ptr
-  %4213 = call i64 @nyx_array_get({ i64, i8* }* %4212, i64 2)
+  %4213 = call i64 @nyx_array_get_checked({ i64, i8* }* %4212, i64 2, i64 2)
   %4214 = inttoptr i64 %4213 to %nyx_string*
   store %nyx_string* %4214, %nyx_string** %4208
   br label %merge1170
@@ -13061,7 +13061,7 @@ then1171:
   br i1 %4237, label %then1174, label %else1175
 then1174:
   %4238 = load { i64, i8* }*, { i64, i8* }** %t.ptr
-  %4239 = call i64 @nyx_array_get({ i64, i8* }* %4238, i64 2)
+  %4239 = call i64 @nyx_array_get_checked({ i64, i8* }* %4238, i64 2, i64 2)
   %4240 = inttoptr i64 %4239 to %nyx_string*
   store %nyx_string* %4240, %nyx_string** %4234
   br label %merge1176
@@ -14704,7 +14704,7 @@ then1355:
 else1356:
   %5166 = load { i64, i8* }*, { i64, i8* }** @g_sym_prev
   %5167 = load i64, i64* %5138
-  %5168 = call i64 @nyx_array_get({ i64, i8* }* %5166, i64 %5167)
+  %5168 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %5166, i64 %5167)
   store i64 %5168, i64* %5138
   br label %merge1357
 merge1357:
@@ -14855,7 +14855,7 @@ else1378:
 merge1379:
   %5248 = load { i64, i8* }*, { i64, i8* }** @g_sym_prev
   %5249 = load i64, i64* %5218
-  %5250 = call i64 @nyx_array_get({ i64, i8* }* %5248, i64 %5249)
+  %5250 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %5248, i64 %5249)
   store i64 %5250, i64* %5218
   br label %while_cond1372
 while_end1374:
@@ -20940,10 +20940,10 @@ while_end2111:
   br i1 %9223, label %then2115, label %else2116
 then2115:
   %9224 = load { i64, i8* }*, { i64, i8* }** %9218
-  %9225 = call i64 @nyx_array_get({ i64, i8* }* %9224, i64 2)
+  %9225 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %9224, i64 2)
   store i64 %9225, i64* %9219
   %9226 = load { i64, i8* }*, { i64, i8* }** %9218
-  %9227 = call i64 @nyx_array_get({ i64, i8* }* %9226, i64 3)
+  %9227 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %9226, i64 3)
   store i64 %9227, i64* %9220
   br label %merge2117
 else2116:
@@ -26901,7 +26901,7 @@ while_body2927:
 then2931:
   %12759 = load { i64, i8* }*, { i64, i8* }** %lines.ptr
   %12760 = load i64, i64* %12734
-  %12761 = call i64 @nyx_array_get({ i64, i8* }* %12759, i64 %12760)
+  %12761 = call i64 @nyx_array_get_checked({ i64, i8* }* %12759, i64 %12760, i64 2)
   %12762 = inttoptr i64 %12761 to %nyx_string*
   store %nyx_string* %12762, %nyx_string** %12755
   br label %merge2933

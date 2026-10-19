@@ -1902,7 +1902,7 @@ while_body94:
 then96:
   %314 = load { i64, i8* }*, { i64, i8* }** %arr.ptr
   %315 = load i64, i64* %303
-  %316 = call i64 @nyx_array_get({ i64, i8* }* %314, i64 %315)
+  %316 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %314, i64 %315)
   store i64 %316, i64* %302
   br label %merge98
 else97:
@@ -1946,7 +1946,7 @@ while_body100:
 then102:
   %334 = load { i64, i8* }*, { i64, i8* }** %arr.ptr
   %335 = load i64, i64* %323
-  %336 = call i64 @nyx_array_get({ i64, i8* }* %334, i64 %335)
+  %336 = call i64 @nyx_slot_as_int_checked({ i64, i8* }* %334, i64 %335)
   store i64 %336, i64* %322
   br label %merge104
 else103:

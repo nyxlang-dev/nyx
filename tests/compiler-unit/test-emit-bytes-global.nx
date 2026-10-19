@@ -5,10 +5,12 @@
 // Qué verifica:
 //   1. Control positivo: emit_bytes_global produce EXACTAMENTE el mismo
 //      global (`@.strN = ... c"...\00"`) que armar a mano la misma cadena
-//      con escape_string, para un contenido con los 256 valores de byte
-//      posibles ×4 (1024 bytes, incluido el NUL). Si esto falla, el emisor
-//      nuevo diverge del oráculo (escape_string) y NO se mergea (self-review
-//      del plan).
+//      con el ORÁCULO de abajo (oracle_escape: el escape_string byte a byte
+//      de antes, copiado acá), para un contenido con los 256 valores de byte
+//      posibles ×4 (1024 bytes, incluido el NUL). Desde 2026-10-19
+//      emit_bytes_global delega en escape_string, que pasó a ser lineal: el
+//      oráculo tiene que vivir FUERA de codegen o el test se compara consigo
+//      mismo.
 //   2. Umbral de tiempo: 1 MB de bytes deterministas (pseudoaleatorios, LCG
 //      fijo — reproducible) emite por debajo de un umbral con margen 5x
 //      sobre lo medido en esta corrida (Step 1 de la Task 1: 40 KB/400 KB
@@ -60,8 +62,34 @@ fn build_all256_x4() -> String {
     return string_from_bytes(arr, 0, 1024)
 }
 
+// El escape_string cuadrático de antes del 2026-10-19, tal cual: lento a
+// propósito (un `+` por byte) y por eso obviamente correcto. Solo se usa sobre
+// los fixtures chicos (≤1024 bytes), nunca sobre el de 1 MiB.
+fn oracle_escape(s: String) -> String {
+    let hexd = "0123456789abcdef"
+    var result = ""
+    var i = 0
+    let slen = str_byte_length(s)
+    while i < slen {
+        let c = s.charAt(i)
+        var b: int = c as int
+        if b < 0 { b = b + 256 }
+        if b < 32 or b == 34 or b == 92 or b == 127 {
+            let hi: int = b / 16
+            let lo: int = b - hi * 16
+            result = result + "\\" + hexd.substring(hi, hi + 1) + hexd.substring(lo, lo + 1)
+        } else {
+            result = result + s.substring(i, i + 1)
+        }
+        i = i + 1
+    }
+    return result
+}
+
 fn expected_definition(name: String, content: String) -> String {
-    let escaped: String = escape_string(content)
+    let escaped: String = oracle_escape(content)
+    // escape_string (la lineal, la de verdad) debe dar lo mismo que el oráculo.
+    assert(escape_string(content) == escaped)
     let byte_len: int = str_byte_length(content) + 1
     return name + " = private unnamed_addr constant [" + int_to_string(byte_len) + " x i8] c\"" + escaped + "\\00\""
 }

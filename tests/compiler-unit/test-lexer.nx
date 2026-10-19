@@ -3,7 +3,7 @@
 // Ejecutar: NYX_INLINE_COMPILER=1 make run FILE=tests/compiler-unit/test-lexer.nx
 //
 // NYX_INLINE_COMPILER=1 (ver compiler/nyx.nx): permite que este programa de
-// usuario inlinee `import { tokenize } from "compiler/lexer"` como un import
+// usuario inlinee `import { tokenize, Token } from "compiler/lexer"` como un import
 // normal (por default esos imports se excluyen — se compilan por separado y
 // se linkean, ver Makefile `recompile`). Habilita testear funciones del
 // compilador con inputs armados en vez de solo end-to-end.
@@ -16,8 +16,12 @@
 //   Test 3: ""                            → 1 token  (solo EOF)
 //   Test 4: "fn if else while for return" → 7 tokens (6 keywords + EOF)
 //   Test 5: "x + y * z - 1"               → 8 tokens (x,+,y,*,z,-,1,EOF)
+//   Test 6: el VALOR de un STRING con UTF-8, \x, \0 y \n sale byte a byte
+//   Test 7: un literal de 256 KB tokeniza en tiempo LINEAL (2026-10-19:
+//           build_string_from_chars concatenaba por carácter — O(n²), un
+//           literal de 64 KB tardaba ~4 s en el frontend)
 
-import { tokenize } from "compiler/lexer"
+import { tokenize, Token } from "compiler/lexer"
 
 fn main() {
     // Test 1: declaración let simple
@@ -39,6 +43,32 @@ fn main() {
     // Test 5: operadores
     let toks5 = tokenize("x + y * z - 1")
     assert(toks5.length() == 8)
+
+    // Test 6: contenido exacto del literal — la ñ (2 bytes UTF-8, char con
+    // signo), \x00 y \xff (extremos del byte), \0 y \n.
+    let toks6 = tokenize("\"a\u{f1}\\x00\\xff\\0\\nz\"")
+    assert(toks6.length() == 2)
+    let t6: Token = toks6[0]
+    assert(t6.type == "STRING")
+    let want6: String = string_from_bytes([97, 195, 177, 0, 255, 0, 10, 122], 0, 8)
+    assert(str_byte_length(t6.value) == 8)
+    assert(t6.value == want6)
+
+    // Test 7: 256 KB de literal. Medido tras el fix: ~decenas de ms; la
+    // cuadrática vieja proyectaba minutos. 3000 ms deja margen de sobra para
+    // una máquina compartida y sigue muy lejos de una regresión.
+    let big: String = "abcdefghijklmnop".repeat(16384)
+    let src7: String = "\"" + big + "\""
+    let t0: int = monotonic_us()
+    let toks7 = tokenize(src7)
+    let ms7: int = (monotonic_us() - t0) / 1000
+    assert(toks7.length() == 2)
+    let tk7: Token = toks7[0]
+    assert(str_byte_length(tk7.value) == 262144)
+    if ms7 > 3000 {
+        print("TEST-LEXER: literal de 256 KB en " + int_to_string(ms7) + " ms (umbral 3000)")
+        assert(false)
+    }
 
     print("TEST-LEXER: OK")
 }
