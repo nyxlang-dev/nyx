@@ -11,6 +11,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`std/http`: leer una respuesta por partes** `[arco: http-streaming]` (fricción nyxerp
+  20261019-200016-team-1: reenviar al navegador cada trozo de una API de modelos de lenguaje apenas
+  llega). `try_http_stream_opts(method, url, headers, body, http_stream_opts())` → `HttpStream`, que
+  vuelve con el estado y las cabeceras:
+  - `read()` da trozos del cuerpo sin el marco chunked; `read_event()` da eventos `text/event-stream`
+    ya armados (`SseEvent { evento, datos, id }`, WHATWG).
+  - Plazos `connect_ms`, `primer_byte_ms`, `lectura_ms` (entre dos trozos) y `total_ms` (sin tope por
+    defecto). HTTP y HTTPS.
+  - `sse_wait_room(room, ms)` en `std/serve` cierra la carrera del reenvío: el canal entra al room
+    después de que el handler devuelve, y sin esperar los primeros eventos se perdían.
+  - Test `test-504-http-stream` (chunked partido, Content-Length, hasta el cierre, SSE partido, plazos,
+    gzip, cortes, TLS), `tests/ai-first/42`, receta `144-reenviar-eventos`.
 - **`std/pdf_render`: dibujar una página de un PDF como imagen** `[arco: pdf-a-imagen]` (fricción
   nyxerp 20261019-080021-team-1: calcar en el editor de formatos la hoja preimpresa que la imprenta
   manda en PDF). Módulo nuevo en Nyx puro: el mismo código en nativo y en `wasm32-wasi`, con la

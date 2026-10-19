@@ -1813,7 +1813,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str904.c = internal global %nyx_string* null
 @.str905 = private unnamed_addr constant [162 x i8] c"Un `float` leído de una casilla de un `Array` sin `<T>` conserva su valor al ASIGNARLO (`x = d[i]`) o al empujarlo con un índice calculado (`b.push(a[2 * i])`)\00"
 @.str905.c = internal global %nyx_string* null
-@.str906 = private unnamed_addr constant [18 x i8] c"pdf-page-to-image\00"
+@.str906 = private unnamed_addr constant [24 x i8] c"http-response-streaming\00"
 @.str906.c = internal global %nyx_string* null
 @.str907 = private unnamed_addr constant [6 x i8] c"fixed\00"
 @.str907.c = internal global %nyx_string* null
@@ -1829,15 +1829,15 @@ target triple = "x86_64-pc-linux-gnu"
 @.str912.c = internal global %nyx_string* null
 @.str913 = private unnamed_addr constant [1 x i8] c"\00"
 @.str913.c = internal global %nyx_string* null
-@.str914 = private unnamed_addr constant [24 x i8] c"std/pdf only writes PDF\00"
+@.str914 = private unnamed_addr constant [1 x i8] c"\00"
 @.str914.c = internal global %nyx_string* null
-@.str915 = private unnamed_addr constant [41 x i8] c"tests/ai-first/41-pdf-pagina-a-imagen.nx\00"
+@.str915 = private unnamed_addr constant [47 x i8] c"tests/ai-first/42-http-respuesta-por-partes.nx\00"
 @.str915.c = internal global %nyx_string* null
-@.str916 = private unnamed_addr constant [102 x i8] c"A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`\00"
+@.str916 = private unnamed_addr constant [119 x i8] c"An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`\00"
 @.str916.c = internal global %nyx_string* null
-@.str917 = private unnamed_addr constant [114 x i8] c"Una página de un PDF se puede dibujar como `Image`: `pdf_page_to_image(bytes, página, ppp)` en `std/pdf_render`\00"
+@.str917 = private unnamed_addr constant [126 x i8] c"Una respuesta HTTP se puede leer a medida que llega: `try_http_stream` devuelve un `HttpStream` con `read()` y `read_event()`\00"
 @.str917.c = internal global %nyx_string* null
-@.str918 = private unnamed_addr constant [25 x i8] c"untyped-slot-as-argument\00"
+@.str918 = private unnamed_addr constant [18 x i8] c"pdf-page-to-image\00"
 @.str918.c = internal global %nyx_string* null
 @.str919 = private unnamed_addr constant [6 x i8] c"fixed\00"
 @.str919.c = internal global %nyx_string* null
@@ -1853,15 +1853,15 @@ target triple = "x86_64-pc-linux-gnu"
 @.str924.c = internal global %nyx_string* null
 @.str925 = private unnamed_addr constant [1 x i8] c"\00"
 @.str925.c = internal global %nyx_string* null
-@.str926 = private unnamed_addr constant [1 x i8] c"\00"
+@.str926 = private unnamed_addr constant [24 x i8] c"std/pdf only writes PDF\00"
 @.str926.c = internal global %nyx_string* null
-@.str927 = private unnamed_addr constant [53 x i8] c"tests/ai-first/40-casilla-sin-tipo-como-argumento.nx\00"
+@.str927 = private unnamed_addr constant [41 x i8] c"tests/ai-first/41-pdf-pagina-a-imagen.nx\00"
 @.str927.c = internal global %nyx_string* null
-@.str928 = private unnamed_addr constant [104 x i8] c"A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works\00"
+@.str928 = private unnamed_addr constant [102 x i8] c"A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`\00"
 @.str928.c = internal global %nyx_string* null
-@.str929 = private unnamed_addr constant [116 x i8] c"Una casilla de un `Array` sin `<T>` pasada directo a un parámetro struct, o usada como clave de un `Map`, funciona\00"
+@.str929 = private unnamed_addr constant [114 x i8] c"Una página de un PDF se puede dibujar como `Image`: `pdf_page_to_image(bytes, página, ppp)` en `std/pdf_render`\00"
 @.str929.c = internal global %nyx_string* null
-@.str930 = private unnamed_addr constant [21 x i8] c"wasm-method-slot-arg\00"
+@.str930 = private unnamed_addr constant [25 x i8] c"untyped-slot-as-argument\00"
 @.str930.c = internal global %nyx_string* null
 @.str931 = private unnamed_addr constant [6 x i8] c"fixed\00"
 @.str931.c = internal global %nyx_string* null
@@ -1879,38 +1879,62 @@ target triple = "x86_64-pc-linux-gnu"
 @.str937.c = internal global %nyx_string* null
 @.str938 = private unnamed_addr constant [1 x i8] c"\00"
 @.str938.c = internal global %nyx_string* null
-@.str939 = private unnamed_addr constant [42 x i8] c"tests/wasm/test-wasm-58-metodo-casilla.nx\00"
+@.str939 = private unnamed_addr constant [53 x i8] c"tests/ai-first/40-casilla-sin-tipo-como-argumento.nx\00"
 @.str939.c = internal global %nyx_string* null
-@.str940 = private unnamed_addr constant [93 x i8] c"On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works\00"
+@.str940 = private unnamed_addr constant [104 x i8] c"A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works\00"
 @.str940.c = internal global %nyx_string* null
-@.str941 = private unnamed_addr constant [109 x i8] c"En wasm32, una casilla de un `Array` sin tipo pasada directo a un MÉTODO de `impl` (`obj.m(a[i])`) funciona\00"
+@.str941 = private unnamed_addr constant [116 x i8] c"Una casilla de un `Array` sin `<T>` pasada directo a un parámetro struct, o usada como clave de un `Map`, funciona\00"
 @.str941.c = internal global %nyx_string* null
-@.str942 = private unnamed_addr constant [3 x i8] c"id\00"
+@.str942 = private unnamed_addr constant [21 x i8] c"wasm-method-slot-arg\00"
 @.str942.c = internal global %nyx_string* null
-@.str943 = private unnamed_addr constant [5 x i8] c"kind\00"
+@.str943 = private unnamed_addr constant [6 x i8] c"fixed\00"
 @.str943.c = internal global %nyx_string* null
-@.str944 = private unnamed_addr constant [9 x i8] c"severity\00"
+@.str944 = private unnamed_addr constant [4 x i8] c"n/a\00"
 @.str944.c = internal global %nyx_string* null
-@.str945 = private unnamed_addr constant [6 x i8] c"since\00"
+@.str945 = private unnamed_addr constant [7 x i8] c"0.36.2\00"
 @.str945.c = internal global %nyx_string* null
-@.str946 = private unnamed_addr constant [9 x i8] c"fixed_in\00"
+@.str946 = private unnamed_addr constant [7 x i8] c"0.36.2\00"
 @.str946.c = internal global %nyx_string* null
-@.str947 = private unnamed_addr constant [8 x i8] c"pattern\00"
+@.str947 = private unnamed_addr constant [1 x i8] c"\00"
 @.str947.c = internal global %nyx_string* null
-@.str948 = private unnamed_addr constant [9 x i8] c"vet_code\00"
+@.str948 = private unnamed_addr constant [1 x i8] c"\00"
 @.str948.c = internal global %nyx_string* null
-@.str949 = private unnamed_addr constant [7 x i8] c"anchor\00"
+@.str949 = private unnamed_addr constant [1 x i8] c"\00"
 @.str949.c = internal global %nyx_string* null
-@.str950 = private unnamed_addr constant [5 x i8] c"lies\00"
+@.str950 = private unnamed_addr constant [1 x i8] c"\00"
 @.str950.c = internal global %nyx_string* null
-@.str951 = private unnamed_addr constant [5 x i8] c"test\00"
+@.str951 = private unnamed_addr constant [42 x i8] c"tests/wasm/test-wasm-58-metodo-casilla.nx\00"
 @.str951.c = internal global %nyx_string* null
-@.str952 = private unnamed_addr constant [9 x i8] c"title_en\00"
+@.str952 = private unnamed_addr constant [93 x i8] c"On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works\00"
 @.str952.c = internal global %nyx_string* null
-@.str953 = private unnamed_addr constant [9 x i8] c"title_es\00"
+@.str953 = private unnamed_addr constant [109 x i8] c"En wasm32, una casilla de un `Array` sin tipo pasada directo a un MÉTODO de `impl` (`obj.m(a[i])`) funciona\00"
 @.str953.c = internal global %nyx_string* null
-@.str954 = private unnamed_addr constant [1 x i8] c"\00"
+@.str954 = private unnamed_addr constant [3 x i8] c"id\00"
 @.str954.c = internal global %nyx_string* null
+@.str955 = private unnamed_addr constant [5 x i8] c"kind\00"
+@.str955.c = internal global %nyx_string* null
+@.str956 = private unnamed_addr constant [9 x i8] c"severity\00"
+@.str956.c = internal global %nyx_string* null
+@.str957 = private unnamed_addr constant [6 x i8] c"since\00"
+@.str957.c = internal global %nyx_string* null
+@.str958 = private unnamed_addr constant [9 x i8] c"fixed_in\00"
+@.str958.c = internal global %nyx_string* null
+@.str959 = private unnamed_addr constant [8 x i8] c"pattern\00"
+@.str959.c = internal global %nyx_string* null
+@.str960 = private unnamed_addr constant [9 x i8] c"vet_code\00"
+@.str960.c = internal global %nyx_string* null
+@.str961 = private unnamed_addr constant [7 x i8] c"anchor\00"
+@.str961.c = internal global %nyx_string* null
+@.str962 = private unnamed_addr constant [5 x i8] c"lies\00"
+@.str962.c = internal global %nyx_string* null
+@.str963 = private unnamed_addr constant [5 x i8] c"test\00"
+@.str963.c = internal global %nyx_string* null
+@.str964 = private unnamed_addr constant [9 x i8] c"title_en\00"
+@.str964.c = internal global %nyx_string* null
+@.str965 = private unnamed_addr constant [9 x i8] c"title_es\00"
+@.str965.c = internal global %nyx_string* null
+@.str966 = private unnamed_addr constant [1 x i8] c"\00"
+@.str966.c = internal global %nyx_string* null
 @__nyx_test_failed = external global i64
 @__nyx_test_mode = external global i64
 ; Nyx Compiler Bootstrap v3.0
@@ -6305,8 +6329,8 @@ define { i64, i8* }* @gotchas_table(
   call void @nyx_array_push_tagged({ i64, i8* }* %2974, i64 %3012, i64 5)
   %3013 = load { i64, i8* }*, { i64, i8* }** %87
   %3014 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3015 = getelementptr [18 x i8], [18 x i8]* @.str906, i32 0, i32 0
-  %3016 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str906.c, i8* %3015, i64 17)
+  %3015 = getelementptr [24 x i8], [24 x i8]* @.str906, i32 0, i32 0
+  %3016 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str906.c, i8* %3015, i64 23)
   %3017 = ptrtoint %nyx_string* %3016 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3014, i64 %3017, i64 2)
   %3018 = getelementptr [6 x i8], [6 x i8]* @.str907, i32 0, i32 0
@@ -6337,28 +6361,28 @@ define { i64, i8* }* @gotchas_table(
   %3037 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str913.c, i8* %3036, i64 0)
   %3038 = ptrtoint %nyx_string* %3037 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3014, i64 %3038, i64 2)
-  %3039 = getelementptr [24 x i8], [24 x i8]* @.str914, i32 0, i32 0
-  %3040 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str914.c, i8* %3039, i64 23)
+  %3039 = getelementptr [1 x i8], [1 x i8]* @.str914, i32 0, i32 0
+  %3040 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str914.c, i8* %3039, i64 0)
   %3041 = ptrtoint %nyx_string* %3040 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3014, i64 %3041, i64 2)
-  %3042 = getelementptr [41 x i8], [41 x i8]* @.str915, i32 0, i32 0
-  %3043 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str915.c, i8* %3042, i64 40)
+  %3042 = getelementptr [47 x i8], [47 x i8]* @.str915, i32 0, i32 0
+  %3043 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str915.c, i8* %3042, i64 46)
   %3044 = ptrtoint %nyx_string* %3043 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3014, i64 %3044, i64 2)
-  %3045 = getelementptr [102 x i8], [102 x i8]* @.str916, i32 0, i32 0
-  %3046 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str916.c, i8* %3045, i64 101)
+  %3045 = getelementptr [119 x i8], [119 x i8]* @.str916, i32 0, i32 0
+  %3046 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str916.c, i8* %3045, i64 118)
   %3047 = ptrtoint %nyx_string* %3046 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3014, i64 %3047, i64 2)
-  %3048 = getelementptr [114 x i8], [114 x i8]* @.str917, i32 0, i32 0
-  %3049 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str917.c, i8* %3048, i64 113)
+  %3048 = getelementptr [126 x i8], [126 x i8]* @.str917, i32 0, i32 0
+  %3049 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str917.c, i8* %3048, i64 125)
   %3050 = ptrtoint %nyx_string* %3049 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3014, i64 %3050, i64 2)
   %3051 = ptrtoint { i64, i8* }* %3014 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3013, i64 %3051, i64 5)
   %3052 = load { i64, i8* }*, { i64, i8* }** %87
   %3053 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3054 = getelementptr [25 x i8], [25 x i8]* @.str918, i32 0, i32 0
-  %3055 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str918.c, i8* %3054, i64 24)
+  %3054 = getelementptr [18 x i8], [18 x i8]* @.str918, i32 0, i32 0
+  %3055 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str918.c, i8* %3054, i64 17)
   %3056 = ptrtoint %nyx_string* %3055 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3053, i64 %3056, i64 2)
   %3057 = getelementptr [6 x i8], [6 x i8]* @.str919, i32 0, i32 0
@@ -6389,28 +6413,28 @@ define { i64, i8* }* @gotchas_table(
   %3076 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str925.c, i8* %3075, i64 0)
   %3077 = ptrtoint %nyx_string* %3076 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3053, i64 %3077, i64 2)
-  %3078 = getelementptr [1 x i8], [1 x i8]* @.str926, i32 0, i32 0
-  %3079 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str926.c, i8* %3078, i64 0)
+  %3078 = getelementptr [24 x i8], [24 x i8]* @.str926, i32 0, i32 0
+  %3079 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str926.c, i8* %3078, i64 23)
   %3080 = ptrtoint %nyx_string* %3079 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3053, i64 %3080, i64 2)
-  %3081 = getelementptr [53 x i8], [53 x i8]* @.str927, i32 0, i32 0
-  %3082 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str927.c, i8* %3081, i64 52)
+  %3081 = getelementptr [41 x i8], [41 x i8]* @.str927, i32 0, i32 0
+  %3082 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str927.c, i8* %3081, i64 40)
   %3083 = ptrtoint %nyx_string* %3082 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3053, i64 %3083, i64 2)
-  %3084 = getelementptr [104 x i8], [104 x i8]* @.str928, i32 0, i32 0
-  %3085 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str928.c, i8* %3084, i64 103)
+  %3084 = getelementptr [102 x i8], [102 x i8]* @.str928, i32 0, i32 0
+  %3085 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str928.c, i8* %3084, i64 101)
   %3086 = ptrtoint %nyx_string* %3085 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3053, i64 %3086, i64 2)
-  %3087 = getelementptr [116 x i8], [116 x i8]* @.str929, i32 0, i32 0
-  %3088 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str929.c, i8* %3087, i64 115)
+  %3087 = getelementptr [114 x i8], [114 x i8]* @.str929, i32 0, i32 0
+  %3088 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str929.c, i8* %3087, i64 113)
   %3089 = ptrtoint %nyx_string* %3088 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3053, i64 %3089, i64 2)
   %3090 = ptrtoint { i64, i8* }* %3053 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3052, i64 %3090, i64 5)
   %3091 = load { i64, i8* }*, { i64, i8* }** %87
   %3092 = call { i64, i8* }* @nyx_array_new_ptr()
-  %3093 = getelementptr [21 x i8], [21 x i8]* @.str930, i32 0, i32 0
-  %3094 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str930.c, i8* %3093, i64 20)
+  %3093 = getelementptr [25 x i8], [25 x i8]* @.str930, i32 0, i32 0
+  %3094 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str930.c, i8* %3093, i64 24)
   %3095 = ptrtoint %nyx_string* %3094 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3092, i64 %3095, i64 2)
   %3096 = getelementptr [6 x i8], [6 x i8]* @.str931, i32 0, i32 0
@@ -6445,22 +6469,74 @@ define { i64, i8* }* @gotchas_table(
   %3118 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str938.c, i8* %3117, i64 0)
   %3119 = ptrtoint %nyx_string* %3118 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3092, i64 %3119, i64 2)
-  %3120 = getelementptr [42 x i8], [42 x i8]* @.str939, i32 0, i32 0
-  %3121 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str939.c, i8* %3120, i64 41)
+  %3120 = getelementptr [53 x i8], [53 x i8]* @.str939, i32 0, i32 0
+  %3121 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str939.c, i8* %3120, i64 52)
   %3122 = ptrtoint %nyx_string* %3121 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3092, i64 %3122, i64 2)
-  %3123 = getelementptr [93 x i8], [93 x i8]* @.str940, i32 0, i32 0
-  %3124 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str940.c, i8* %3123, i64 92)
+  %3123 = getelementptr [104 x i8], [104 x i8]* @.str940, i32 0, i32 0
+  %3124 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str940.c, i8* %3123, i64 103)
   %3125 = ptrtoint %nyx_string* %3124 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3092, i64 %3125, i64 2)
-  %3126 = getelementptr [109 x i8], [109 x i8]* @.str941, i32 0, i32 0
-  %3127 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str941.c, i8* %3126, i64 108)
+  %3126 = getelementptr [116 x i8], [116 x i8]* @.str941, i32 0, i32 0
+  %3127 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str941.c, i8* %3126, i64 115)
   %3128 = ptrtoint %nyx_string* %3127 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3092, i64 %3128, i64 2)
   %3129 = ptrtoint { i64, i8* }* %3092 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3091, i64 %3129, i64 5)
   %3130 = load { i64, i8* }*, { i64, i8* }** %87
-  ret { i64, i8* }* %3130
+  %3131 = call { i64, i8* }* @nyx_array_new_ptr()
+  %3132 = getelementptr [21 x i8], [21 x i8]* @.str942, i32 0, i32 0
+  %3133 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str942.c, i8* %3132, i64 20)
+  %3134 = ptrtoint %nyx_string* %3133 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3134, i64 2)
+  %3135 = getelementptr [6 x i8], [6 x i8]* @.str943, i32 0, i32 0
+  %3136 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str943.c, i8* %3135, i64 5)
+  %3137 = ptrtoint %nyx_string* %3136 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3137, i64 2)
+  %3138 = getelementptr [4 x i8], [4 x i8]* @.str944, i32 0, i32 0
+  %3139 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str944.c, i8* %3138, i64 3)
+  %3140 = ptrtoint %nyx_string* %3139 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3140, i64 2)
+  %3141 = getelementptr [7 x i8], [7 x i8]* @.str945, i32 0, i32 0
+  %3142 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str945.c, i8* %3141, i64 6)
+  %3143 = ptrtoint %nyx_string* %3142 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3143, i64 2)
+  %3144 = getelementptr [7 x i8], [7 x i8]* @.str946, i32 0, i32 0
+  %3145 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str946.c, i8* %3144, i64 6)
+  %3146 = ptrtoint %nyx_string* %3145 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3146, i64 2)
+  %3147 = getelementptr [1 x i8], [1 x i8]* @.str947, i32 0, i32 0
+  %3148 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str947.c, i8* %3147, i64 0)
+  %3149 = ptrtoint %nyx_string* %3148 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3149, i64 2)
+  %3150 = getelementptr [1 x i8], [1 x i8]* @.str948, i32 0, i32 0
+  %3151 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str948.c, i8* %3150, i64 0)
+  %3152 = ptrtoint %nyx_string* %3151 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3152, i64 2)
+  %3153 = getelementptr [1 x i8], [1 x i8]* @.str949, i32 0, i32 0
+  %3154 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str949.c, i8* %3153, i64 0)
+  %3155 = ptrtoint %nyx_string* %3154 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3155, i64 2)
+  %3156 = getelementptr [1 x i8], [1 x i8]* @.str950, i32 0, i32 0
+  %3157 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str950.c, i8* %3156, i64 0)
+  %3158 = ptrtoint %nyx_string* %3157 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3158, i64 2)
+  %3159 = getelementptr [42 x i8], [42 x i8]* @.str951, i32 0, i32 0
+  %3160 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str951.c, i8* %3159, i64 41)
+  %3161 = ptrtoint %nyx_string* %3160 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3161, i64 2)
+  %3162 = getelementptr [93 x i8], [93 x i8]* @.str952, i32 0, i32 0
+  %3163 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str952.c, i8* %3162, i64 92)
+  %3164 = ptrtoint %nyx_string* %3163 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3164, i64 2)
+  %3165 = getelementptr [109 x i8], [109 x i8]* @.str953, i32 0, i32 0
+  %3166 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str953.c, i8* %3165, i64 108)
+  %3167 = ptrtoint %nyx_string* %3166 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3131, i64 %3167, i64 2)
+  %3168 = ptrtoint { i64, i8* }* %3131 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %3130, i64 %3168, i64 5)
+  %3169 = load { i64, i8* }*, { i64, i8* }** %87
+  ret { i64, i8* }* %3169
 }
 
 define %nyx_string* @gotcha_field(
@@ -6469,159 +6545,159 @@ define %nyx_string* @gotcha_field(
   store { i64, i8* }* %row.param, { i64, i8* }** %row.ptr
   %name.ptr = alloca %nyx_string*
   store %nyx_string* %name.param, %nyx_string** %name.ptr
-  %3131 = sub i64 0, 1
-  %3132 = alloca i64
-  store i64 %3131, i64* %3132
-  %3133 = load %nyx_string*, %nyx_string** %name.ptr
-  %3134 = getelementptr [3 x i8], [3 x i8]* @.str942, i32 0, i32 0
-  %3135 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str942.c, i8* %3134, i64 2)
-  %3136 = call i1 @nyx_string_equals(%nyx_string* %3133, %nyx_string* %3135)
-  br i1 %3136, label %then24, label %else25
+  %3170 = sub i64 0, 1
+  %3171 = alloca i64
+  store i64 %3170, i64* %3171
+  %3172 = load %nyx_string*, %nyx_string** %name.ptr
+  %3173 = getelementptr [3 x i8], [3 x i8]* @.str954, i32 0, i32 0
+  %3174 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str954.c, i8* %3173, i64 2)
+  %3175 = call i1 @nyx_string_equals(%nyx_string* %3172, %nyx_string* %3174)
+  br i1 %3175, label %then24, label %else25
 then24:
-  store i64 0, i64* %3132
+  store i64 0, i64* %3171
   br label %merge26
 else25:
   br label %merge26
 merge26:
-  %3137 = load %nyx_string*, %nyx_string** %name.ptr
-  %3138 = getelementptr [5 x i8], [5 x i8]* @.str943, i32 0, i32 0
-  %3139 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str943.c, i8* %3138, i64 4)
-  %3140 = call i1 @nyx_string_equals(%nyx_string* %3137, %nyx_string* %3139)
-  br i1 %3140, label %then27, label %else28
+  %3176 = load %nyx_string*, %nyx_string** %name.ptr
+  %3177 = getelementptr [5 x i8], [5 x i8]* @.str955, i32 0, i32 0
+  %3178 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str955.c, i8* %3177, i64 4)
+  %3179 = call i1 @nyx_string_equals(%nyx_string* %3176, %nyx_string* %3178)
+  br i1 %3179, label %then27, label %else28
 then27:
-  store i64 1, i64* %3132
+  store i64 1, i64* %3171
   br label %merge29
 else28:
   br label %merge29
 merge29:
-  %3141 = load %nyx_string*, %nyx_string** %name.ptr
-  %3142 = getelementptr [9 x i8], [9 x i8]* @.str944, i32 0, i32 0
-  %3143 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str944.c, i8* %3142, i64 8)
-  %3144 = call i1 @nyx_string_equals(%nyx_string* %3141, %nyx_string* %3143)
-  br i1 %3144, label %then30, label %else31
+  %3180 = load %nyx_string*, %nyx_string** %name.ptr
+  %3181 = getelementptr [9 x i8], [9 x i8]* @.str956, i32 0, i32 0
+  %3182 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str956.c, i8* %3181, i64 8)
+  %3183 = call i1 @nyx_string_equals(%nyx_string* %3180, %nyx_string* %3182)
+  br i1 %3183, label %then30, label %else31
 then30:
-  store i64 2, i64* %3132
+  store i64 2, i64* %3171
   br label %merge32
 else31:
   br label %merge32
 merge32:
-  %3145 = load %nyx_string*, %nyx_string** %name.ptr
-  %3146 = getelementptr [6 x i8], [6 x i8]* @.str945, i32 0, i32 0
-  %3147 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str945.c, i8* %3146, i64 5)
-  %3148 = call i1 @nyx_string_equals(%nyx_string* %3145, %nyx_string* %3147)
-  br i1 %3148, label %then33, label %else34
+  %3184 = load %nyx_string*, %nyx_string** %name.ptr
+  %3185 = getelementptr [6 x i8], [6 x i8]* @.str957, i32 0, i32 0
+  %3186 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str957.c, i8* %3185, i64 5)
+  %3187 = call i1 @nyx_string_equals(%nyx_string* %3184, %nyx_string* %3186)
+  br i1 %3187, label %then33, label %else34
 then33:
-  store i64 3, i64* %3132
+  store i64 3, i64* %3171
   br label %merge35
 else34:
   br label %merge35
 merge35:
-  %3149 = load %nyx_string*, %nyx_string** %name.ptr
-  %3150 = getelementptr [9 x i8], [9 x i8]* @.str946, i32 0, i32 0
-  %3151 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str946.c, i8* %3150, i64 8)
-  %3152 = call i1 @nyx_string_equals(%nyx_string* %3149, %nyx_string* %3151)
-  br i1 %3152, label %then36, label %else37
+  %3188 = load %nyx_string*, %nyx_string** %name.ptr
+  %3189 = getelementptr [9 x i8], [9 x i8]* @.str958, i32 0, i32 0
+  %3190 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str958.c, i8* %3189, i64 8)
+  %3191 = call i1 @nyx_string_equals(%nyx_string* %3188, %nyx_string* %3190)
+  br i1 %3191, label %then36, label %else37
 then36:
-  store i64 4, i64* %3132
+  store i64 4, i64* %3171
   br label %merge38
 else37:
   br label %merge38
 merge38:
-  %3153 = load %nyx_string*, %nyx_string** %name.ptr
-  %3154 = getelementptr [8 x i8], [8 x i8]* @.str947, i32 0, i32 0
-  %3155 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str947.c, i8* %3154, i64 7)
-  %3156 = call i1 @nyx_string_equals(%nyx_string* %3153, %nyx_string* %3155)
-  br i1 %3156, label %then39, label %else40
+  %3192 = load %nyx_string*, %nyx_string** %name.ptr
+  %3193 = getelementptr [8 x i8], [8 x i8]* @.str959, i32 0, i32 0
+  %3194 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str959.c, i8* %3193, i64 7)
+  %3195 = call i1 @nyx_string_equals(%nyx_string* %3192, %nyx_string* %3194)
+  br i1 %3195, label %then39, label %else40
 then39:
-  store i64 5, i64* %3132
+  store i64 5, i64* %3171
   br label %merge41
 else40:
   br label %merge41
 merge41:
-  %3157 = load %nyx_string*, %nyx_string** %name.ptr
-  %3158 = getelementptr [9 x i8], [9 x i8]* @.str948, i32 0, i32 0
-  %3159 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str948.c, i8* %3158, i64 8)
-  %3160 = call i1 @nyx_string_equals(%nyx_string* %3157, %nyx_string* %3159)
-  br i1 %3160, label %then42, label %else43
+  %3196 = load %nyx_string*, %nyx_string** %name.ptr
+  %3197 = getelementptr [9 x i8], [9 x i8]* @.str960, i32 0, i32 0
+  %3198 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str960.c, i8* %3197, i64 8)
+  %3199 = call i1 @nyx_string_equals(%nyx_string* %3196, %nyx_string* %3198)
+  br i1 %3199, label %then42, label %else43
 then42:
-  store i64 6, i64* %3132
+  store i64 6, i64* %3171
   br label %merge44
 else43:
   br label %merge44
 merge44:
-  %3161 = load %nyx_string*, %nyx_string** %name.ptr
-  %3162 = getelementptr [7 x i8], [7 x i8]* @.str949, i32 0, i32 0
-  %3163 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str949.c, i8* %3162, i64 6)
-  %3164 = call i1 @nyx_string_equals(%nyx_string* %3161, %nyx_string* %3163)
-  br i1 %3164, label %then45, label %else46
+  %3200 = load %nyx_string*, %nyx_string** %name.ptr
+  %3201 = getelementptr [7 x i8], [7 x i8]* @.str961, i32 0, i32 0
+  %3202 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str961.c, i8* %3201, i64 6)
+  %3203 = call i1 @nyx_string_equals(%nyx_string* %3200, %nyx_string* %3202)
+  br i1 %3203, label %then45, label %else46
 then45:
-  store i64 7, i64* %3132
+  store i64 7, i64* %3171
   br label %merge47
 else46:
   br label %merge47
 merge47:
-  %3165 = load %nyx_string*, %nyx_string** %name.ptr
-  %3166 = getelementptr [5 x i8], [5 x i8]* @.str950, i32 0, i32 0
-  %3167 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str950.c, i8* %3166, i64 4)
-  %3168 = call i1 @nyx_string_equals(%nyx_string* %3165, %nyx_string* %3167)
-  br i1 %3168, label %then48, label %else49
+  %3204 = load %nyx_string*, %nyx_string** %name.ptr
+  %3205 = getelementptr [5 x i8], [5 x i8]* @.str962, i32 0, i32 0
+  %3206 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str962.c, i8* %3205, i64 4)
+  %3207 = call i1 @nyx_string_equals(%nyx_string* %3204, %nyx_string* %3206)
+  br i1 %3207, label %then48, label %else49
 then48:
-  store i64 8, i64* %3132
+  store i64 8, i64* %3171
   br label %merge50
 else49:
   br label %merge50
 merge50:
-  %3169 = load %nyx_string*, %nyx_string** %name.ptr
-  %3170 = getelementptr [5 x i8], [5 x i8]* @.str951, i32 0, i32 0
-  %3171 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str951.c, i8* %3170, i64 4)
-  %3172 = call i1 @nyx_string_equals(%nyx_string* %3169, %nyx_string* %3171)
-  br i1 %3172, label %then51, label %else52
+  %3208 = load %nyx_string*, %nyx_string** %name.ptr
+  %3209 = getelementptr [5 x i8], [5 x i8]* @.str963, i32 0, i32 0
+  %3210 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str963.c, i8* %3209, i64 4)
+  %3211 = call i1 @nyx_string_equals(%nyx_string* %3208, %nyx_string* %3210)
+  br i1 %3211, label %then51, label %else52
 then51:
-  store i64 9, i64* %3132
+  store i64 9, i64* %3171
   br label %merge53
 else52:
   br label %merge53
 merge53:
-  %3173 = load %nyx_string*, %nyx_string** %name.ptr
-  %3174 = getelementptr [9 x i8], [9 x i8]* @.str952, i32 0, i32 0
-  %3175 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str952.c, i8* %3174, i64 8)
-  %3176 = call i1 @nyx_string_equals(%nyx_string* %3173, %nyx_string* %3175)
-  br i1 %3176, label %then54, label %else55
+  %3212 = load %nyx_string*, %nyx_string** %name.ptr
+  %3213 = getelementptr [9 x i8], [9 x i8]* @.str964, i32 0, i32 0
+  %3214 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str964.c, i8* %3213, i64 8)
+  %3215 = call i1 @nyx_string_equals(%nyx_string* %3212, %nyx_string* %3214)
+  br i1 %3215, label %then54, label %else55
 then54:
-  store i64 10, i64* %3132
+  store i64 10, i64* %3171
   br label %merge56
 else55:
   br label %merge56
 merge56:
-  %3177 = load %nyx_string*, %nyx_string** %name.ptr
-  %3178 = getelementptr [9 x i8], [9 x i8]* @.str953, i32 0, i32 0
-  %3179 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str953.c, i8* %3178, i64 8)
-  %3180 = call i1 @nyx_string_equals(%nyx_string* %3177, %nyx_string* %3179)
-  br i1 %3180, label %then57, label %else58
+  %3216 = load %nyx_string*, %nyx_string** %name.ptr
+  %3217 = getelementptr [9 x i8], [9 x i8]* @.str965, i32 0, i32 0
+  %3218 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str965.c, i8* %3217, i64 8)
+  %3219 = call i1 @nyx_string_equals(%nyx_string* %3216, %nyx_string* %3218)
+  br i1 %3219, label %then57, label %else58
 then57:
-  store i64 11, i64* %3132
+  store i64 11, i64* %3171
   br label %merge59
 else58:
   br label %merge59
 merge59:
-  %3181 = load i64, i64* %3132
-  %3182 = icmp slt i64 %3181, 0
-  br i1 %3182, label %then60, label %else61
+  %3220 = load i64, i64* %3171
+  %3221 = icmp slt i64 %3220, 0
+  br i1 %3221, label %then60, label %else61
 then60:
-  %3183 = getelementptr [1 x i8], [1 x i8]* @.str954, i32 0, i32 0
-  %3184 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str954.c, i8* %3183, i64 0)
-  ret %nyx_string* %3184
+  %3222 = getelementptr [1 x i8], [1 x i8]* @.str966, i32 0, i32 0
+  %3223 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str966.c, i8* %3222, i64 0)
+  ret %nyx_string* %3223
 else61:
   br label %merge62
 merge62:
-  %3185 = load { i64, i8* }*, { i64, i8* }** %row.ptr
-  %3186 = load i64, i64* %3132
-  %3187 = call i64 @nyx_array_get_checked({ i64, i8* }* %3185, i64 %3186, i64 2)
-  %3188 = inttoptr i64 %3187 to %nyx_string*
-  %3189 = alloca %nyx_string*
-  store %nyx_string* %3188, %nyx_string** %3189
-  %3190 = load %nyx_string*, %nyx_string** %3189
-  ret %nyx_string* %3190
+  %3224 = load { i64, i8* }*, { i64, i8* }** %row.ptr
+  %3225 = load i64, i64* %3171
+  %3226 = call i64 @nyx_array_get_checked({ i64, i8* }* %3224, i64 %3225, i64 2)
+  %3227 = inttoptr i64 %3226 to %nyx_string*
+  %3228 = alloca %nyx_string*
+  store %nyx_string* %3227, %nyx_string** %3228
+  %3229 = load %nyx_string*, %nyx_string** %3228
+  ret %nyx_string* %3229
 }
 
 

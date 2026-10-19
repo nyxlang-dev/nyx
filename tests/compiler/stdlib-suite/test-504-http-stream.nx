@@ -1,0 +1,294 @@
+// test-504 — std/http: leer una respuesta por partes (arco http-streaming).
+//
+// Un servidor falso (un hilo, una conexión por escenario según la ruta) manda
+// cuerpos chunked, con Content-Length, hasta el cierre y text/event-stream, con
+// pausas y cortes en lugares incómodos. Lo que se puede romper sin que nada
+// falle a la vista:
+//   - que read() espere el cuerpo ENTERO (el bug del reporte): el primer trozo
+//     tiene que llegar mientras el servidor todavía duerme antes del resto;
+//   - un chunk o un evento partido entre dos lecturas;
+//   - los plazos: un servidor que se calla da Err(timeout), nunca un cuelgue.
+
+import "std/http"
+import "std/net"
+import "std/error"
+
+var g_port: int = 18431
+var g_tls_port: int = 18432
+var g_ready: Map = channel_new(1)
+
+fn manda(cli: int, s: String) {
+    let n: int = tcp_write(cli, s)
+}
+
+fn hex(n: int) -> String {
+    let d: String = "0123456789abcdef"
+    if n < 16 { return d.substring(n, n + 1) }
+    return hex(n / 16) + d.substring(n % 16, n % 16 + 1)
+}
+
+// Un chunk con su tamaño bien calculado.
+fn chunk(s: String) -> String {
+    return hex(s.length()) + "\r\n" + s + "\r\n"
+}
+
+// Lee el pedido hasta la línea en blanco y devuelve la ruta.
+fn ruta(cli: int) -> String {
+    var raw: String = ""
+    var guard: int = 0
+    while raw.indexOf("\r\n\r\n") < 0 and guard < 1000 {
+        let r: Result<String, Error> = try_tcp_read_partial(cli, 4096)
+        if r.is_err() { return "" }
+        let d: String = r.unwrap()
+        if d.length() == 0 { return "" }
+        raw = raw + d
+        guard = guard + 1
+    }
+    let primera: String = raw.substring(0, raw.indexOf("\r\n"))
+    let partes: Array = primera.split(" ")
+    if partes.length() < 2 { return "" }
+    let p: String = partes[1]
+    return p
+}
+
+fn servidor() -> int {
+    let srv: int = tcp_listen("127.0.0.1", g_port)
+    channel_send(g_ready, 1)
+    var vivo: bool = true
+    while vivo {
+        let cli: int = tcp_accept(srv)
+        let p: String = ruta(cli)
+        if p == "/chunked" {
+            manda(cli, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n5\r\nhel")
+            sleep(150)
+            manda(cli, "lo\r\n6;ext=1\r\n mundo\r")
+            sleep(50)
+            manda(cli, "\n0\r\nX-Fin: si\r\n\r\n")
+        } else if p == "/cl" {
+            manda(cli, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n01234")
+            sleep(50)
+            manda(cli, "56789")
+        } else if p == "/cierre" {
+            manda(cli, "HTTP/1.1 200 OK\r\n\r\nhasta")
+            sleep(50)
+            manda(cli, " el cierre")
+        } else if p == "/sse" {
+            manda(cli, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+            // Eventos partidos a propósito entre chunks: «dat|a: Hola», «data|: lin2»,
+            // y un \r suelto al final de un chunk (¿fin de línea o \r\n?).
+            manda(cli, chunk(": comentario\r\nevent: delta\r\ndat"))
+            sleep(30)
+            manda(cli, chunk("a: Hola\r\n\r\ndata: lin1\ndata"))
+            manda(cli, chunk(": lin2\nid: 7\n\ndata: cr\r\r"))
+            sleep(30)
+            manda(cli, chunk("event: fin\r\r"))
+            manda(cli, chunk("data: a medi") + "0\r\n\r\n")
+        } else if p == "/callado" {
+            manda(cli, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n")
+            sleep(800)
+        } else if p == "/sin-cabeceras" {
+            sleep(800)
+        } else if p == "/gzip" {
+            manda(cli, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 3\r\n\r\nabc")
+        } else if p == "/cortado" {
+            manda(cli, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\n12345")
+        } else if p == "/404" {
+            manda(cli, "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 404 Not Found\r\nContent-Length: 2\r\n\r\nno")
+        } else if p == "/fin" {
+            vivo = false
+        }
+        tcp_close(cli)
+    }
+    tcp_close(srv)
+    return 0
+}
+
+// Una conexión TLS: lee el pedido y manda un cuerpo chunked en dos partes.
+fn servidor_tls() -> int {
+    let l: int = tcp_listen("127.0.0.1", g_tls_port)
+    channel_send(g_ready, 1)
+    let fd: int = tcp_accept(l)
+    let h: int = tls_accept(fd)
+    if h == 0 {
+        tcp_close(l)
+        return 1
+    }
+    var linea: String = tls_read_line(h)
+    var guard: int = 0
+    while linea.trim().length() > 0 and guard < 100 {
+        linea = tls_read_line(h)
+        guard = guard + 1
+    }
+    tls_write_conn(h, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + chunk("cifrado "))
+    sleep(150)
+    tls_write_conn(h, chunk("por partes") + "0\r\n\r\n")
+    tls_close_conn(h)
+    tcp_close(l)
+    return 0
+}
+
+fn url(p: String) -> String {
+    return "http://127.0.0.1:" + int_to_string(g_port) + p
+}
+
+fn abre(p: String, opts: HttpStreamOpts) -> HttpStream {
+    var nada: Array = []
+    let r: Result<HttpStream, Error> = try_http_stream_opts("GET", url(p), nada, "", opts)
+    match r {
+        Result.Ok(s) => { return s }
+        Result.Err(e) => {
+            print(p + ": " + error_to_string(e))
+            assert(false)
+            return abre(p, opts)
+        }
+    }
+}
+
+// Todo el cuerpo con read(), y la cantidad de trozos.
+fn todo(s: HttpStream) -> Array {
+    var out: String = ""
+    var n: int = 0
+    while true {
+        let r: Result<String, Error> = s.read()
+        let t: String = r.unwrap()
+        if t.length() == 0 { break }
+        out = out + t
+        n = n + 1
+    }
+    return [out, n]
+}
+
+fn err_de(p: String, opts: HttpStreamOpts, leer: bool) -> Error {
+    var nada: Array = []
+    let r: Result<HttpStream, Error> = try_http_stream_opts("GET", url(p), nada, "", opts)
+    match r {
+        Result.Err(e) => { return e }
+        Result.Ok(s) => {
+            if leer {
+                var guard: int = 0
+                while guard < 100 {
+                    let rr: Result<String, Error> = s.read()
+                    match rr {
+                        Result.Err(e2) => { return e2 }
+                        Result.Ok(t) => {
+                            if t.length() == 0 {
+                                assert(false, p + ": se esperaba un error leyendo")
+                            }
+                        }
+                    }
+                    guard = guard + 1
+                }
+            }
+            assert(false, p + ": se esperaba Err")
+            return err_new(0, "", "")
+        }
+    }
+}
+
+fn main() {
+    thread_spawn(servidor)
+    let _r: int = channel_recv(g_ready)
+    let o: HttpStreamOpts = http_stream_opts()
+
+    // ── chunked: el primer trozo llega ANTES de que el servidor termine ──
+    let t0: int = monotonic_ms()
+    let s1: HttpStream = abre("/chunked", o)
+    assert(s1.status() == 200)
+    assert(http_find_header(s1.headers(), "Content-Type") == "text/plain")
+    let r1: Result<String, Error> = s1.read()
+    let p1: String = r1.unwrap()
+    let ms1: int = monotonic_ms() - t0
+    assert(p1 == "hel")
+    if ms1 >= 140 { print("el primer trozo tardó " + int_to_string(ms1) + " ms (esperaba el cuerpo entero)") }
+    assert(ms1 < 140)
+    let resto: Array = todo(s1)
+    let rs: String = resto[0]
+    assert(rs == "lo mundo")
+    s1.close()
+
+    // ── Content-Length en dos envíos, y cuerpo hasta el cierre ──
+    let s2: HttpStream = abre("/cl", o)
+    let c2: Array = todo(s2)
+    let b2: String = c2[0]
+    assert(b2 == "0123456789")
+    let s3: HttpStream = abre("/cierre", o)
+    let c3: Array = todo(s3)
+    let b3: String = c3[0]
+    assert(b3 == "hasta el cierre")
+
+    // ── text/event-stream: eventos partidos, \r\n, \r solo, comentarios ──
+    let s4: HttpStream = abre("/sse", o)
+    let re1: Result<SseEvent, Error> = s4.read_event()
+    let e1: SseEvent = re1.unwrap()
+    assert(e1.evento == "delta")
+    assert(e1.datos == "Hola")
+    let re2: Result<SseEvent, Error> = s4.read_event()
+    let e2: SseEvent = re2.unwrap()
+    assert(e2.evento == "message")
+    assert(e2.datos == "lin1\nlin2")
+    assert(e2.id == "7")
+    let re3: Result<SseEvent, Error> = s4.read_event()
+    let e3: SseEvent = re3.unwrap()
+    assert(e3.datos == "cr")
+    assert(e3.id == "7")
+    // `event: fin` sin data no se despacha; el `data: a medi` final sin línea
+    // en blanco se descarta: lo que sigue es el fin del stream.
+    let re4: Result<SseEvent, Error> = s4.read_event()
+    let e4: SseEvent = re4.unwrap()
+    assert(e4.evento == "")
+
+    // ── plazos, compresión y cortes: Err con el motivo, nunca un cuelgue ──
+    var corto: HttpStreamOpts = http_stream_opts()
+    corto.lectura_ms = 200
+    corto.primer_byte_ms = 200
+    let t5: int = monotonic_ms()
+    let e5: Error = err_de("/callado", corto, true)
+    assert(e5.kind == "timeout")
+    assert(monotonic_ms() - t5 < 700)
+    let e6: Error = err_de("/sin-cabeceras", corto, false)
+    assert(e6.kind == "timeout")
+    let e7: Error = err_de("/gzip", o, false)
+    assert(e7.kind == "unsupported")
+    let e8: Error = err_de("/cortado", o, true)
+    assert(e8.kind == "io")
+
+    // ── 100 Continue se saltea; 404 es Ok con su cuerpo ──
+    let s9: HttpStream = abre("/404", o)
+    assert(s9.status() == 404)
+    let c9: Array = todo(s9)
+    let b9: String = c9[0]
+    assert(b9 == "no")
+
+    // ── plazo total ──
+    var tot: HttpStreamOpts = http_stream_opts()
+    tot.total_ms = 100
+    let e10: Error = err_de("/chunked", tot, true)
+    assert(e10.kind == "timeout")
+    assert(e10.msg.indexOf("total_ms") >= 0)
+
+    var nada: Array = []
+    let rf: Result<HttpStream, Error> = try_http_stream("GET", url("/fin"), nada, "")
+
+    // ── TLS: el mismo comportamiento sobre https (SKIP sin openssl) ──
+    let rc: int = exec_code("openssl req -x509 -newkey rsa:2048 -keyout /tmp/nyx_t504.key -out /tmp/nyx_t504.crt -days 2 -nodes -subj /CN=localhost 2>/dev/null")
+    if rc != 0 or tls_server_init("/tmp/nyx_t504.crt", "/tmp/nyx_t504.key") != 0 {
+        print("test-504: TLS SKIP (sin openssl o sin tls_server_init)")
+    } else {
+        thread_spawn(servidor_tls)
+        let _r2: int = channel_recv(g_ready)
+        var ot: HttpStreamOpts = http_stream_opts()
+        ot.verificar_tls = false
+        let tt: int = monotonic_ms()
+        let rt: Result<HttpStream, Error> = try_http_stream_opts("GET", "https://127.0.0.1:" + int_to_string(g_tls_port) + "/", nada, "", ot)
+        let st: HttpStream = rt.unwrap()
+        assert(st.status() == 200)
+        let rp: Result<String, Error> = st.read()
+        let pt: String = rp.unwrap()
+        assert(pt == "cifrado ")
+        assert(monotonic_ms() - tt < 140)
+        let ct: Array = todo(st)
+        let bt: String = ct[0]
+        assert(bt == "por partes")
+    }
+    print("test-504: OK")
+}

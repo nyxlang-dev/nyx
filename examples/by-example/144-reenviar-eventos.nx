@@ -1,0 +1,138 @@
+// Nyx by Example: reenviar al navegador, apenas llega, la respuesta por partes de otra API.
+//
+// El caso real: un servidor llama a una API de modelos de lenguaje que contesta con eventos
+// (`text/event-stream`) durante varios segundos. En vez de esperar la respuesta entera y mostrar
+// un «pensando», cada trozo se reenvía al navegador en cuanto llega.
+//
+// Las dos mitades:
+//   - Cliente: try_http_stream_opts vuelve con el estado y las cabeceras, y el cuerpo se lee de a
+//     poco: s.read() da trozos crudos y s.read_event() da eventos ya armados (event, data, id).
+//     El plazo `lectura_ms` es la espera máxima ENTRE dos trozos: una API colgada da
+//     Err(timeout), no un cuelgue. No hay plazo total por defecto.
+//   - Servidor: la ruta del navegador devuelve sse_open(req, room) con un room propio del pedido,
+//     y un HILO lee la API y llama a sse_broadcast(room, ...). El hilo espera con
+//     sse_wait_room: el canal se registra recién después de que el handler devuelve, y sin esa
+//     espera los primeros eventos se pierden.
+//
+// La receta corre sola: hace de API falsa (un hilo que emite tres eventos con pausas), de servidor
+// (std/serve) y de navegador (un socket que lee lo que llega).
+
+import "std/http"
+import "std/net"
+import "std/serve"
+import "std/error"
+
+var g_api_port: int = 18451
+var g_app_port: int = 18452
+var g_listo: Map = channel_new(1)
+
+// La API de afuera: tres eventos `delta` y uno `fin`, con pausas como un modelo que va escribiendo.
+fn api_falsa() -> int {
+    let l: int = tcp_listen("127.0.0.1", g_api_port)
+    channel_send(g_listo, 1)
+    let c: int = tcp_accept(l)
+    let pedido: String = tcp_read_partial(c, 4096)
+    let w0: int = tcp_write(c, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+    let partes: Array = ["Hola", ", ¿en qué", " te ayudo?"]
+    var i: int = 0
+    while i < partes.length() {
+        let p: String = partes[i]
+        sleep(200)
+        let w: int = tcp_write(c, "event: delta\ndata: " + p + "\n\n")
+        i = i + 1
+    }
+    let wf: int = tcp_write(c, "event: fin\ndata: listo\n\n")
+    tcp_close(c)
+    tcp_close(l)
+    return 0
+}
+
+// El hilo que reenvía: espera al navegador, lee la API y difunde cada evento al room del pedido.
+fn reenviar(room: String) -> int {
+    if not sse_wait_room(room, 5000) { return 1 }
+    var cab: Array = []
+    cab.push("Accept")
+    cab.push("text/event-stream")
+    let rs: Result<HttpStream, Error> = try_http_stream("GET", "http://127.0.0.1:" + int_to_string(g_api_port) + "/v1/eventos", cab, "")
+    match rs {
+        Result.Err(e) => {
+            let n: int = sse_broadcast(room, "error", error_to_string(e))
+            return 1
+        }
+        Result.Ok(s) => {
+            while true {
+                let re: Result<SseEvent, Error> = s.read_event()
+                if re.is_err() {
+                    let e: Error = re.unwrap_err()
+                    let n: int = sse_broadcast(room, "error", e.msg)
+                    break
+                }
+                let ev: SseEvent = re.unwrap()
+                if ev.evento == "" { break }
+                let n: int = sse_broadcast(room, ev.evento, ev.datos)
+            }
+            s.close()
+        }
+    }
+    return 0
+}
+
+// La ruta del navegador: abre el canal y lanza el hilo que reenvía.
+fn chat(req: Request) -> Response {
+    let room: String = "resp:1"
+    thread_spawn(fn() -> int { return reenviar(room) })
+    return sse_open(req, room)
+}
+
+fn main() -> int {
+    thread_spawn(api_falsa)
+    let _a: int = channel_recv(g_listo)
+
+    let app: App = app_new()
+    app_get(app, "/chat", chat)
+    spawn {
+        serve_app(app, g_app_port, 2)
+    }
+
+    // El «navegador»: abre el canal y va mostrando lo que llega, con la hora relativa.
+    var fd: int = 0 - 1
+    var intentos: int = 0
+    while fd < 0 and intentos < 50 {
+        fd = tcp_connect("127.0.0.1", g_app_port)
+        if fd < 0 { sleep(100) }
+        intentos = intentos + 1
+    }
+    if fd < 0 {
+        println("el servidor no arrancó")
+        return 1
+    }
+    tcp_set_timeout(fd, 5)
+    let t0: int = monotonic_ms()
+    let w: int = tcp_write(fd, "GET /chat HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n")
+    var visto: String = ""
+    var guard: int = 0
+    while visto.indexOf("event: fin") < 0 and guard < 50 {
+        let r: Result<String, Error> = try_tcp_read_partial(fd, 4096)
+        if r.is_err() { break }
+        let d: String = r.unwrap()
+        if d.length() == 0 { break }
+        visto = visto + d
+        let lineas: Array = d.split("\n")
+        var k: int = 0
+        while k < lineas.length() {
+            let ln: String = lineas[k]
+            if ln.startsWith("data: ") {
+                println("+" + int_to_string((monotonic_ms() - t0) / 100 * 100) + " ms  " + ln.substring(6, ln.length()))
+            }
+            k = k + 1
+        }
+        guard = guard + 1
+    }
+    tcp_close(fd)
+    if visto.indexOf("te ayudo") < 0 {
+        println("no llegó la respuesta completa")
+        return 1
+    }
+    println("cada trozo llegó apenas la API lo mandó, no todo junto al final")
+    return 0
+}

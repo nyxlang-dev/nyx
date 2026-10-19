@@ -870,6 +870,489 @@ pub fn try_http_request(method: String, url: String, headers: Array, body: Strin
     return try_http_request_opts(method, url, headers, body, http_opts())
 }
 
+// ── Respuesta por partes (arco http-streaming) ─────────────────────────────
+// try_http_stream_opts vuelve apenas llegan el estado y las cabeceras; el
+// cuerpo queda en la conexión y se lee de a trozos con s.read() (bytes del
+// cuerpo ya sin el marco chunked) o con s.read_event() (eventos de un
+// text/event-stream, WHATWG). Pedido de nyxerp: reenviar al navegador cada
+// trozo de una API de modelos de lenguaje apenas llega.
+//
+// Plazos (D-1): connect_ms para conectar y el handshake, primer_byte_ms hasta
+// tener las cabeceras, lectura_ms como espera máxima ENTRE dos trozos (es lo
+// que delata una API colgada) y total_ms opcional para todo. Un plazo vencido
+// da Err(timeout) y deja el stream cerrado. No hay plazo total por defecto:
+// un respuesta_ms como el de HttpOpts cortaría a la mitad una respuesta larga
+// que está llegando bien.
+
+/// Plazos y TLS de try_http_stream_opts. Defaults de http_stream_opts(): 10 s para conectar, 30 s hasta las cabeceras, 60 s entre trozos, sin plazo total (total_ms <= 0).
+pub struct HttpStreamOpts {
+    connect_ms: int,
+    primer_byte_ms: int,
+    lectura_ms: int,
+    total_ms: int,
+    verificar_tls: bool,
+    cas_extra: String,
+    client_cert_pem: String,
+    client_key_pem: String,
+}
+
+/// Opciones por defecto para streams (verificación TLS según http_tls_inseguro).
+pub fn http_stream_opts() -> HttpStreamOpts {
+    return HttpStreamOpts { connect_ms: 10000, primer_byte_ms: 30000, lectura_ms: 60000, total_ms: 0, verificar_tls: g_http_tls_verificar, cas_extra: "", client_cert_pem: "", client_key_pem: "" }
+}
+
+/// Un evento de un text/event-stream: `evento` ("message" si el servidor no manda `event:`), `datos` (las líneas `data:` unidas con \n) e `id` (el último `id:` visto). Un evento con `evento` vacío marca el fin del stream.
+pub struct SseEvent {
+    evento: String,
+    datos: String,
+    id: String,
+}
+
+// Estado (todos los campos son referencias: una copia del manejador ve y
+// cambia el mismo stream, y se puede pasar a una goroutine):
+//   st:  [tls 0/1, fd o handle, abierto 0/1, status, modo del cuerpo
+//         (0 Content-Length, 1 chunked, 2 hasta el cierre, 3 sin cuerpo),
+//         bytes que faltan (del cuerpo o del chunk actual), fase chunked
+//         (0 línea de tamaño, 1 datos, 2 CRLF tras los datos, 3 trailers,
+//         4 terminado), lectura_ms, límite total (monotonic_ms, 0 = sin), eof 0/1]
+//   meta: [esquema, host, port]
+//   hdrs: cabeceras [nombre, valor, ...]
+//   buf: [bytes crudos leídos y no consumidos]
+//   ev:  [texto pendiente para eventos, datos acumulados, tipo, último id, ¿hay datos? 0/1]
+/// Una respuesta HTTP que se lee por partes. Se obtiene con try_http_stream_opts; métodos status, headers, read, read_event y close. La usa una goroutine a la vez.
+pub struct HttpStream {
+    st: Array,
+    meta: Array,
+    hdrs: Array,
+    buf: Array,
+    ev: Array,
+}
+
+fn __hs_err(s: HttpStream, kind: String, code: int, msg: String) -> Error {
+    let m: Array = s.meta
+    let esq: String = m[0]
+    let host: String = m[1]
+    let port: int = m[2]
+    return err_new(code, kind, esq + " " + host + ":" + int_to_string(port) + ": " + msg)
+}
+
+// Lee lo que haya en la conexión (hasta 64 KiB) esperando como mucho `ms`.
+// Ok("") = el servidor cerró (y marca eof).
+fn __hs_raw(s: HttpStream, ms: int) -> Result<String, Error> {
+    var st: Array = s.st
+    let tls: int = st[0]
+    let h: int = st[1]
+    if tls == 1 {
+        let rd: Result<String, Error> = try_tls_read(h, 65536, ms)
+        if rd.is_ok() { return rd }
+        let e: Error = rd.unwrap_err()
+        if e.kind == "eof" {
+            st[9] = 1
+            return Result.Ok("")
+        }
+        return Result.Err(e)
+    }
+    let rd: Array = nyx_tcp_read_timed_result(h, 65536, ms)
+    let code: int = rd[0]
+    let datos: String = rd[1]
+    if code == 0 { return Result.Ok(datos) }
+    if code == NYX_HTTP_EOF {
+        st[9] = 1
+        return Result.Ok("")
+    }
+    if code == -110 { return Result.Err(err_new(110, "timeout", "lectura")) }
+    let c: int = 0 - code
+    return Result.Err(err_new(c, errno_to_kind(c), "leyendo la respuesta"))
+}
+
+// Agrega al buffer lo próximo que llegue; respeta lectura_ms y el total.
+// Devuelve false si el servidor cerró sin mandar nada más.
+fn __hs_fill(s: HttpStream, espera_ms: int) -> Result<bool, Error> {
+    let st: Array = s.st
+    let limite: int = st[8]
+    var ms: int = espera_ms
+    var por_total: bool = false
+    if limite > 0 {
+        let resto: int = limite - monotonic_ms()
+        if resto <= 0 {
+            s.close()
+            return Result.Err(__hs_err(s, "timeout", 110, "se venció el plazo total del stream (total_ms)"))
+        }
+        if ms <= 0 or resto < ms {
+            ms = resto
+            por_total = true
+        }
+    }
+    if ms <= 0 { ms = -1 }
+    let r: Result<String, Error> = __hs_raw(s, ms)
+    if r.is_err() {
+        let e: Error = r.unwrap_err()
+        s.close()
+        if e.kind == "timeout" {
+            if por_total {
+                return Result.Err(__hs_err(s, "timeout", 110, "se venció el plazo total del stream (total_ms)"))
+            }
+            return Result.Err(__hs_err(s, "timeout", 110, "no llegó nada en " + int_to_string(espera_ms) + " ms"))
+        }
+        return Result.Err(__hs_err(s, e.kind, e.code, e.msg))
+    }
+    let d: String = r.unwrap()
+    if d.length() == 0 { return Result.Ok(false) }
+    var b: Array = s.buf
+    let prev: String = b[0]
+    b[0] = prev + d
+    return Result.Ok(true)
+}
+
+impl HttpStream {
+    /// Código de estado HTTP de la respuesta.
+    fn status(self) -> int {
+        let st: Array = self.st
+        let c: int = st[3]
+        return c
+    }
+
+    /// Cabeceras de la respuesta [nombre, valor, ...] (usar http_find_header).
+    fn headers(self) -> Array {
+        let h: Array = self.hdrs
+        return h
+    }
+
+    /// Cierra la conexión (se puede llamar más de una vez).
+    fn close(self) {
+        var st: Array = self.st
+        let abierto: int = st[2]
+        if abierto == 1 {
+            let tls: int = st[0]
+            let h: int = st[1]
+            if tls == 1 { tls_close(h) } else { tcp_close(h) }
+            st[2] = 0
+        }
+    }
+
+    /// Próximo trozo del cuerpo, tal como llegó (sin el marco chunked). "" cuando el cuerpo terminó. Err(timeout) si pasaron lectura_ms sin que llegue nada; Err(io) si la conexión se cortó antes de completar el cuerpo.
+    fn read(self) -> Result<String, Error> {
+        var st: Array = self.st
+        var b: Array = self.buf
+        let lectura: int = st[7]
+        var guard: int = 0
+        while guard < 100000000 {
+            guard = guard + 1
+            let modo: int = st[4]
+            let pend: String = b[0]
+            if modo == 3 { return Result.Ok("") }
+            if modo == 0 {
+                let falta: int = st[5]
+                if falta <= 0 {
+                    self.close()
+                    return Result.Ok("")
+                }
+                if pend.length() > 0 {
+                    var n: int = pend.length()
+                    if n > falta { n = falta }
+                    b[0] = pend.substring(n, pend.length())
+                    st[5] = falta - n
+                    return Result.Ok(pend.substring(0, n))
+                }
+                let hay: bool = __hs_fill(self, lectura)?
+                if not hay {
+                    self.close()
+                    return Result.Err(__hs_err(self, "io", 5, "el cuerpo se cortó: faltaban " + int_to_string(falta) + " bytes"))
+                }
+            } else if modo == 2 {
+                if pend.length() > 0 {
+                    b[0] = ""
+                    return Result.Ok(pend)
+                }
+                let hay: bool = __hs_fill(self, lectura)?
+                if not hay {
+                    self.close()
+                    return Result.Ok("")
+                }
+            } else {
+                // chunked
+                let fase: int = st[6]
+                if fase == 4 {
+                    self.close()
+                    return Result.Ok("")
+                }
+                var necesita: bool = false
+                if fase == 0 {
+                    let k: int = pend.indexOf("\r\n")
+                    if k < 0 {
+                        if pend.length() > 4096 {
+                            self.close()
+                            return Result.Err(__hs_err(self, "parse", 5, "línea de tamaño de chunk demasiado larga"))
+                        }
+                        necesita = true
+                    } else {
+                        let tam: int = http_parse_hex(pend.substring(0, k).trim())
+                        b[0] = pend.substring(k + 2, pend.length())
+                        if tam <= 0 {
+                            st[6] = 3
+                        } else {
+                            st[5] = tam
+                            st[6] = 1
+                        }
+                    }
+                } else if fase == 1 {
+                    if pend.length() == 0 {
+                        necesita = true
+                    } else {
+                        let falta: int = st[5]
+                        var n: int = pend.length()
+                        if n > falta { n = falta }
+                        b[0] = pend.substring(n, pend.length())
+                        st[5] = falta - n
+                        if falta - n == 0 { st[6] = 2 }
+                        return Result.Ok(pend.substring(0, n))
+                    }
+                } else if fase == 2 {
+                    if pend.length() < 2 {
+                        necesita = true
+                    } else {
+                        b[0] = pend.substring(2, pend.length())
+                        st[6] = 0
+                    }
+                } else if fase == 3 {
+                    // Trailers opcionales; termina en una línea vacía.
+                    let k: int = pend.indexOf("\r\n")
+                    if k < 0 {
+                        necesita = true
+                    } else {
+                        b[0] = pend.substring(k + 2, pend.length())
+                        if k == 0 { st[6] = 4 }
+                    }
+                }
+                if necesita {
+                    let hay: bool = __hs_fill(self, lectura)?
+                    if not hay {
+                        self.close()
+                        return Result.Err(__hs_err(self, "io", 5, "el cuerpo chunked se cortó antes del chunk final"))
+                    }
+                }
+            }
+        }
+        return Result.Ok("")
+    }
+
+    /// Próximo evento de un text/event-stream (WHATWG): `event:`, `data:` (varias líneas unidas con \n), `id:`, comentarios `:` ignorados, finales de línea \n, \r\n o \r, y eventos partidos entre trozos. Al terminar el stream devuelve un SseEvent con `evento` vacío (un evento a medio llegar se descarta, como manda la norma).
+    fn read_event(self) -> Result<SseEvent, Error> {
+        var ev: Array = self.ev
+        var guard: int = 0
+        while guard < 100000000 {
+            guard = guard + 1
+            let txt: String = ev[0]
+            // Una línea completa: termina en \n, en \r\n, o en \r seguido de otra cosa.
+            var fin: int = -1
+            var salto: int = 0
+            let ln: int = txt.indexOf("\n")
+            let cr: int = txt.indexOf("\r")
+            if cr >= 0 and (ln < 0 or cr < ln) {
+                if cr + 1 < txt.length() {
+                    fin = cr
+                    salto = 1
+                    if txt.charAt(cr + 1) == 10 { salto = 2 }
+                }
+            } else if ln >= 0 {
+                fin = ln
+                salto = 1
+            }
+            if fin < 0 {
+                let mas: String = self.read()?
+                if mas.length() == 0 {
+                    // Fin del stream: lo que quedó sin línea en blanco se descarta.
+                    return Result.Ok(SseEvent { evento: "", datos: "", id: "" })
+                }
+                ev[0] = txt + mas
+                continue
+            }
+            let linea: String = txt.substring(0, fin)
+            ev[0] = txt.substring(fin + salto, txt.length())
+            if linea.length() == 0 {
+                let hay: int = ev[4]
+                let tipo0: String = ev[2]
+                ev[2] = ""
+                if hay == 1 {
+                    var datos: String = ev[1]
+                    ev[1] = ""
+                    ev[4] = 0
+                    if datos.endsWith("\n") { datos = datos.substring(0, datos.length() - 1) }
+                    var tipo: String = tipo0
+                    if tipo.length() == 0 { tipo = "message" }
+                    let idv: String = ev[3]
+                    return Result.Ok(SseEvent { evento: tipo, datos: datos, id: idv })
+                }
+                ev[1] = ""
+                continue
+            }
+            if linea.charAt(0) == 58 { continue }
+            var campo: String = linea
+            var valor: String = ""
+            let dp: int = linea.indexOf(":")
+            if dp >= 0 {
+                campo = linea.substring(0, dp)
+                valor = linea.substring(dp + 1, linea.length())
+                if valor.length() > 0 and valor.charAt(0) == 32 { valor = valor.substring(1, valor.length()) }
+            }
+            if campo == "data" {
+                let d0: String = ev[1]
+                ev[1] = d0 + valor + "\n"
+                ev[4] = 1
+            } else if campo == "event" {
+                ev[2] = valor
+            } else if campo == "id" {
+                if valor.indexOf("\x00") < 0 { ev[3] = valor }
+            }
+        }
+        return Result.Ok(SseEvent { evento: "", datos: "", id: "" })
+    }
+}
+
+/// Abre un pedido y vuelve cuando llegaron el estado y las cabeceras; el cuerpo se lee después con read() o read_event(). Mismo contrato de dos niveles que try_http_request_opts: Ok para cualquier status HTTP, Err solo ante fallo de transporte o plazo vencido. No sigue redirecciones. Una respuesta con Content-Encoding da Err(unsupported) (el pedido no manda Accept-Encoding).
+pub fn try_http_stream_opts(method: String, url: String, headers: Array, body: String, opts: HttpStreamOpts) -> Result<HttpStream, Error> {
+    let parsed: Array = http_parse_url(url)
+    let host: String = parsed[1]
+    let port: int = parsed[2]
+    let path: String = parsed[3]
+    let secure: int = parsed[4]
+    if host.length() == 0 {
+        return Result.Err(err_new(22, "invalid", "http_parse_url: sin host valido en '" + url + "'"))
+    }
+    var esq: String = "http"
+    var defport: int = 80
+    if secure == 1 {
+        esq = "https"
+        defport = 443
+    }
+    let req: String = http_build_request(method, http_host_header(host, port, defport), path, headers, body)
+    var limite: int = 0
+    if opts.total_ms > 0 { limite = monotonic_ms() + opts.total_ms }
+    var h: int = 0
+    var tls: int = 0
+    if secure == 1 {
+        var modo: int = 0
+        if opts.verificar_tls { modo = 4 }
+        let con_r: Result<int, Error> = try_tls_connect_mtls(host, port, modo, opts.connect_ms, opts.cas_extra, opts.client_cert_pem, opts.client_key_pem)
+        if con_r.is_err() {
+            let e: Error = con_r.unwrap_err()
+            return Result.Err(err_new(e.code, e.kind, "https " + host + ":" + int_to_string(port) + ": " + e.msg))
+        }
+        h = con_r.unwrap()
+        tls = 1
+        if tls_write(h, req) < str_byte_length(req) {
+            tls_close(h)
+            return Result.Err(err_new(5, "io", "https " + host + ":" + int_to_string(port) + ": no se pudo enviar el request completo"))
+        }
+    } else {
+        let fd: int = nyx_tcp_connect_ms_result(host, port, opts.connect_ms)
+        if fd < 0 {
+            let code: int = 0 - fd
+            return Result.Err(err_new(code, errno_to_kind(code), "http " + host + ":" + int_to_string(port) + ": connect"))
+        }
+        h = fd
+        let wr: Result<int, Error> = try_tcp_write(fd, req)
+        if wr.is_err() {
+            tcp_close(fd)
+            return Result.Err(wr.unwrap_err())
+        }
+        if wr.unwrap() < str_byte_length(req) {
+            tcp_close(fd)
+            return Result.Err(err_new(5, "io", "http " + host + ":" + int_to_string(port) + ": no se pudo enviar el request completo"))
+        }
+    }
+    var vacio: Array = []
+    let s: HttpStream = HttpStream {
+        st: [tls, h, 1, 0, 3, 0, 0, opts.lectura_ms, limite, 0],
+        meta: [esq, host, port],
+        hdrs: vacio,
+        buf: [""],
+        ev: ["", "", "", "", 0]
+    }
+    // Cabeceras (las respuestas 1xx intermedias se saltean, salvo 101).
+    var hasta: int = 0
+    if opts.primer_byte_ms > 0 { hasta = monotonic_ms() + opts.primer_byte_ms }
+    var guard: int = 0
+    while guard < 1000 {
+        guard = guard + 1
+        var b: Array = s.buf
+        let pend: String = b[0]
+        let sep: int = pend.indexOf("\r\n\r\n")
+        if sep < 0 {
+            if pend.length() > 65536 {
+                s.close()
+                return Result.Err(__hs_err(s, "parse", 5, "cabeceras de más de 64 KiB"))
+            }
+            var espera: int = 0
+            if hasta > 0 {
+                espera = hasta - monotonic_ms()
+                if espera <= 0 {
+                    s.close()
+                    return Result.Err(__hs_err(s, "timeout", 110, "las cabeceras no llegaron en " + int_to_string(opts.primer_byte_ms) + " ms"))
+                }
+            }
+            let r: Result<bool, Error> = __hs_fill(s, espera)
+            if r.is_err() {
+                let e: Error = r.unwrap_err()
+                if e.kind == "timeout" and hasta > 0 and monotonic_ms() >= hasta {
+                    return Result.Err(__hs_err(s, "timeout", 110, "las cabeceras no llegaron en " + int_to_string(opts.primer_byte_ms) + " ms"))
+                }
+                return Result.Err(e)
+            }
+            let hay: bool = r.unwrap()
+            if not hay {
+                s.close()
+                return Result.Err(__hs_err(s, "io", 5, "la conexión se cerró antes de terminar las cabeceras"))
+            }
+            continue
+        }
+        let resp: Array = http_parse_raw_response(pend.substring(0, sep + 4))
+        b[0] = pend.substring(sep + 4, pend.length())
+        let status: int = resp[1]
+        if status < 100 or status > 599 {
+            s.close()
+            return Result.Err(__hs_err(s, "parse", 5, "respuesta HTTP invalida o vacia"))
+        }
+        if status >= 100 and status < 200 and status != 101 { continue }
+        let hs: Array = resp[2]
+        var hd: Array = s.hdrs
+        var k: int = 0
+        while k < hs.length() {
+            let v: String = hs[k]
+            hd.push(v)
+            k = k + 1
+        }
+        var st: Array = s.st
+        st[3] = status
+        let ce: String = http_header_ci(hs, "Content-Encoding").toLower()
+        if method == "HEAD" or status == 204 or status == 304 or status == 101 {
+            st[4] = 3
+        } else if ce.length() > 0 and ce != "identity" {
+            s.close()
+            return Result.Err(__hs_err(s, "unsupported", 95, "la respuesta viene con Content-Encoding " + ce))
+        } else if http_header_ci(hs, "Transfer-Encoding").toLower().indexOf("chunked") >= 0 {
+            st[4] = 1
+            st[6] = 0
+        } else {
+            let cl: String = http_header_ci(hs, "Content-Length")
+            if cl.length() > 0 {
+                st[4] = 0
+                st[5] = http_parse_int(cl)
+            } else {
+                st[4] = 2
+            }
+        }
+        return Result.Ok(s)
+    }
+    s.close()
+    return Result.Err(__hs_err(s, "parse", 5, "demasiadas respuestas 1xx"))
+}
+
+/// try_http_stream_opts con http_stream_opts().
+pub fn try_http_stream(method: String, url: String, headers: Array, body: String) -> Result<HttpStream, Error> {
+    return try_http_stream_opts(method, url, headers, body, http_stream_opts())
+}
+
 pub fn http_status(resp: Array) -> int {
     let s: int = resp[1]
     return s

@@ -3690,6 +3690,30 @@ try_http_get(url) try_http_post(url, body) try_http_request(method, url, headers
 http_opts() -> HttpOpts   try_http_request_opts(method, url, headers, body, opts)
 ```
 
+**Respuesta por partes** (arco http-streaming): `try_http_stream_opts(method, url, headers, body,
+opts) -> Result<HttpStream, Error>` vuelve cuando llegaron el estado y las cabeceras; el cuerpo se
+lee después. `try_http_stream(...)` usa `http_stream_opts()`.
+
+```
+http_stream_opts() -> HttpStreamOpts   // connect_ms 10000, primer_byte_ms 30000,
+                                       // lectura_ms 60000 (entre dos trozos), total_ms 0 (sin tope)
+impl HttpStream {
+    fn status(self) -> int             fn headers(self) -> Array
+    fn read(self) -> Result<String, Error>         // trozo del cuerpo sin el marco chunked; "" = fin
+    fn read_event(self) -> Result<SseEvent, Error> // text/event-stream (WHATWG); evento "" = fin
+    fn close(self)
+}
+pub struct SseEvent { evento: String, datos: String, id: String }   // evento "message" por defecto
+```
+
+Cuerpo por `Transfer-Encoding: chunked` (un chunk partido entre lecturas sale entero), por
+`Content-Length` o hasta el cierre. Un plazo vencido es `Err(timeout)` y cierra el stream; un corte
+antes de completar el cuerpo es `Err(io)`; `Content-Encoding` es `Err(unsupported)` (el pedido no
+manda `Accept-Encoding`). No sigue redirecciones. Un `HttpStream` lo usa un hilo o goroutine a la
+vez. Para reenviar al navegador: `sse_open(req, room)` en la ruta y, en un hilo, `sse_wait_room(room,
+ms) -> bool` (de `std/serve`) antes del primer `sse_broadcast`, porque el canal entra al room recién
+después de que el handler devuelve.
+
 ---
 
 ## Async/Await

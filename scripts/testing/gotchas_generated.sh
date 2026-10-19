@@ -84,6 +84,7 @@ GOTCHA_IDS=(
   "defer-not-on-throw"
   "builtin-conversion-untyped-slot"
   "float-slot-assign"
+  "http-response-streaming"
   "pdf-page-to-image"
   "untyped-slot-as-argument"
   "wasm-method-slot-arg"

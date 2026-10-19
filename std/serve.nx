@@ -2294,6 +2294,26 @@ pub fn sse_count_room(room: String) -> int {
     return n
 }
 
+// Espera a que haya al menos un cliente en el room, hasta `timeout_ms`
+// (arco http-streaming, D-5). Para el patrón de reenvío: el handler devuelve
+// sse_open(req, room) y una goroutine o un hilo lee la otra fuente y llama a
+// sse_broadcast. Pero el canal se registra en el room DESPUÉS de que el
+// handler devuelve (el worker escribe la cabecera y recién ahí lo anota):
+// los primeros sse_broadcast llegaban a un room vacío y se perdían sin aviso.
+// Esperar acá antes de empezar a reenviar cierra esa carrera. true = hay un
+// cliente; false = venció el plazo (el navegador nunca llegó o se fue).
+// Duerme de a 10 ms con sleep: llamarla desde un hilo (thread_spawn), no desde
+// un handler.
+pub fn sse_wait_room(room: String, timeout_ms: int) -> bool {
+    let fin: int = monotonic_ms() + timeout_ms
+    while true {
+        if sse_count_room(room) > 0 { return true }
+        if monotonic_ms() >= fin { return false }
+        sleep(10)
+    }
+    return false
+}
+
 // Abre un canal text/event-stream desde una ruta NORMAL:
 //
 //     app_get(app, "/eventos/inventario", fn(req: Request) -> Response {
