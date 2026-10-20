@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.36.1 -->
-<!-- nyx-stdlib: 1903779186-2034915 -->
+<!-- nyx-stdlib: 2706247549-2055889 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -222,7 +222,7 @@
 
 ### `std/http`
 
-`import "std/http"` — 30 funciones:
+`import "std/http"` — 33 funciones:
 
 - `pub fn http_status_text(code: int) -> String`
 - `pub fn http_response(status: int, body: String) -> String`
@@ -244,6 +244,9 @@
 - `pub fn try_http_post_multipart_opts(url: String, mp: Multipart, headers: Array, opts: HttpOpts) -> Result<Array, Error>`
 - `pub fn try_http_post_multipart(url: String, mp: Multipart, headers: Array) -> Result<Array, Error>`
 - `pub fn try_http_request(method: String, url: String, headers: Array, body: String) -> Result<Array, Error>`
+- `pub fn http_stream_opts() -> HttpStreamOpts` — Opciones por defecto para streams (verificación TLS según http_tls_inseguro).
+- `pub fn try_http_stream_opts(method: String, url: String, headers: Array, body: String, opts: HttpStreamOpts) -> Result<HttpStream, Error>` — Abre un pedido y vuelve cuando llegaron el estado y las cabeceras; el cuerpo se lee después con read() o read_event(). Mismo contrato de dos niveles que try_http_request_opts: Ok para cualquier status HTTP, Err solo ante fallo de transporte o plazo vencido. No sigue redirecciones. Una respuesta con Content-Encoding da Err(unsupported) (el pedido no manda Accept-Encoding).
+- `pub fn try_http_stream(method: String, url: String, headers: Array, body: String) -> Result<HttpStream, Error>` — try_http_stream_opts con http_stream_opts().
 - `pub fn http_status(resp: Array) -> int`
 - `pub fn http_body(resp: Array) -> String`
 - `pub fn http_headers(resp: Array) -> Array`
@@ -325,7 +328,7 @@
 
 ### `std/serve`
 
-`import "std/serve"` — 36 funciones:
+`import "std/serve"` — 37 funciones:
 
 - `pub fn app_ws(pattern: String, handler: Fn(Array) -> int)`
 - `pub fn serve_ws(handler: Fn(Array) -> int)`
@@ -361,6 +364,7 @@
 - `pub fn sse_broadcast(room: String, evento: String, datos: String) -> int`
 - `pub fn sse_count() -> int`
 - `pub fn sse_count_room(room: String) -> int`
+- `pub fn sse_wait_room(room: String, timeout_ms: int) -> bool`
 - `pub fn sse_open(req: Request, room: String) -> Response`
 - `pub fn sse_drain_close() -> int`
 
@@ -619,6 +623,16 @@
 - `pub fn base64_decode(input: String) -> String`
 - `pub fn base64url_encode(input: String) -> String`
 - `pub fn base64url_decode(input: String) -> String`
+
+### `std/pdf_render`
+
+`import "std/pdf_render"` — 5 funciones:
+
+- `pub fn pdf_open_limits() -> PdfOpenLimits` — Límites por defecto: archivo de 256 MiB, 128 MiB por stream y 512 MiB por documento descomprimidos, 64 niveles de anidamiento, 12 de formularios, 5 millones de operadores por página, 600 ppp, 64 Mpx (como image_limits).
+- `pub fn pdf_open(bytes: String, lim: PdfOpenLimits) -> Result<PdfDoc, Error>` — Abre un PDF: lee la tabla de objetos (o la reconstruye si está rota) y el árbol de páginas. No dibuja nada todavía. Err(invalid) si no es un PDF o pasa un límite, Err(unsupported) si está cifrado.
+- `pub fn pdf_page_to_image(bytes: String, page: int, dpi: int) -> Result<Image, Error>` — Atajo: abre el PDF con los límites por defecto y dibuja una página (1-based) a `dpi` ppp, en modo estricto. Es `pdf_open(bytes, pdf_open_limits())?.render(page, dpi, pdf_render_strict())`.
+- `pub fn pdf_render_strict() -> PdfRenderOpts` — Opciones estrictas (por defecto): lo no soportado da Err(unsupported) nombrando qué falta.
+- `pub fn pdf_render_best_effort() -> PdfRenderOpts` — Opciones best_effort: lo no soportado se saltea y doc.render_report lo devuelve en la lista `omitted`.
 
 ### `std/barcode`
 
@@ -1640,16 +1654,6 @@
 - `waitpid` (2 args) · *no existe en wasm32-wasi*
 
 ## Otros
-
-### `std/pdf_render`
-
-`import "std/pdf_render"` — 5 funciones:
-
-- `pub fn pdf_open_limits() -> PdfOpenLimits` — Límites por defecto: archivo de 256 MiB, 128 MiB por stream y 512 MiB por documento descomprimidos, 64 niveles de anidamiento, 12 de formularios, 5 millones de operadores por página, 600 ppp, 64 Mpx (como image_limits).
-- `pub fn pdf_open(bytes: String, lim: PdfOpenLimits) -> Result<PdfDoc, Error>` — Abre un PDF: lee la tabla de objetos (o la reconstruye si está rota) y el árbol de páginas. No dibuja nada todavía. Err(invalid) si no es un PDF o pasa un límite, Err(unsupported) si está cifrado.
-- `pub fn pdf_page_to_image(bytes: String, page: int, dpi: int) -> Result<Image, Error>` — Atajo: abre el PDF con los límites por defecto y dibuja una página (1-based) a `dpi` ppp, en modo estricto. Es `pdf_open(bytes, pdf_open_limits())?.render(page, dpi, pdf_render_strict())`.
-- `pub fn pdf_render_strict() -> PdfRenderOpts` — Opciones estrictas (por defecto): lo no soportado da Err(unsupported) nombrando qué falta.
-- `pub fn pdf_render_best_effort() -> PdfRenderOpts` — Opciones best_effort: lo no soportado se saltea y doc.render_report lo devuelve en la lista `omitted`.
 
 ### Builtins globales (sin `import`)
 

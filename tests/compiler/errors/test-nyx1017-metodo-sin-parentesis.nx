@@ -1,0 +1,23 @@
+// NYX1017 cuando el nombre es un MÉTODO del struct, no un campo: `s.status`
+// en vez de `s.status()` (fricción nyxerp 2026-10-20, con HttpStream de
+// std/http). Hasta acá el mensaje solo buscaba campos parecidos y no decía que
+// faltaban los paréntesis.
+// Expected stderr (contains): "'status' is a method: call it with parentheses, .status()"
+// Expected exit: non-zero (semantic check fails)
+
+struct Respuesta {
+    st: Array
+}
+
+impl Respuesta {
+    fn status(self) -> int {
+        let c: int = self.st[0]
+        return c
+    }
+}
+
+fn main() -> int {
+    let r: Respuesta = Respuesta { st: [200] }
+    let c: int = r.status
+    return 0
+}

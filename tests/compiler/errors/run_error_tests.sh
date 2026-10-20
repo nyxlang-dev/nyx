@@ -113,6 +113,7 @@ TESTS=(
   # 0 — ya cablea al mismo NYX1017 que struct_init, con did-you-mean.
   "tests/compiler/errors/test-field-access-typo.nx|field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
   "tests/compiler/errors/test-field-access-typo-fncall.nx|field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
+  "tests/compiler/errors/test-nyx1017-metodo-sin-parentesis.nx|'status' is a method: call it with parentheses, .status()"
   "tests/compiler/errors/test-field-assign-typo.nx|field 'nombree' does not exist in struct 'Usuario' (did you mean 'nombre'?)"
   # Task 1 ronda 2: mismo NYX1017 pero sobre `self.<typo>` DENTRO de un
   # método de impl — validate_impl/validate_impl_trait no bindeaban el
@@ -315,6 +316,7 @@ JSON_TESTS=(
   "tests/compiler/errors/test-m08-enum-payload-arity.nx|NYX1006|-|+"
   "tests/compiler/errors/test-a8-string-arity-startswith.nx|NYX1006|-|+"
   "tests/compiler/errors/test-field-access-typo.nx|NYX1017|nombre|+"
+  "tests/compiler/errors/test-nyx1017-metodo-sin-parentesis.nx|NYX1017|status()|+"
   "tests/compiler/errors/test-module-import-type-typo.nx|NYX1001|Point|11"
 )
 

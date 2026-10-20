@@ -2572,8 +2572,32 @@ fn capabilities_paren_delta(s: String) -> int {
     return delta
 }
 
-// Sección markdown de un módulo: sus pub fn (firma hasta '{') + /// doc si hay.
-// Retorna "" si el módulo no tiene funciones públicas.
+// Firma de una declaración hasta '{' (o hasta el fin si no hay), sin espacios
+// sobrantes.
+fn capabilities_cut_sig(sig: String) -> String {
+    var cut = -1
+    var bi = 0
+    while bi < sig.length() {
+        let c: char = sig.charAt(bi)
+        if c == '{' and cut == -1 { cut = bi }
+        bi = bi + 1
+    }
+    if cut >= 0 { return sig.substring(0, cut).trim() }
+    return sig.trim()
+}
+
+// Sección markdown de un módulo: sus pub fn (firma hasta '{') + /// doc si hay,
+// y después sus tipos públicos con los métodos de sus `impl`.
+//
+// Los tipos y métodos entran desde el 2026-10-20 (fricción nyxerp): el índice
+// solo listaba funciones libres, así que una API hecha de métodos —`doc.render()`
+// de std/pdf_render, `s.read()` de std/http, `d.text()` de std/pdf— quedaba
+// invisible para quien consulta CAPABILITIES.md, igual que los structs que la
+// sostienen (HttpStream, PdfRendered...). Un método es una línea `    fn` (o
+// `    pub fn`) dentro de un bloque `impl T` que cierra con `}` en la columna 0,
+// como están escritos todos los std/*.nx; los que empiezan con `__` son
+// internos y no se listan.
+// Retorna "" si el módulo no tiene nada público.
 fn capabilities_module_section(std_dir: String, filename: String) -> String {
     let modname: String = filename.substring(0, filename.length() - 3)  // strip .nx
     let source: String = read_file(std_dir + "/" + filename)
@@ -2581,10 +2605,17 @@ fn capabilities_module_section(std_dir: String, filename: String) -> String {
     var body = ""
     var pending_doc = ""
     var count = 0
+    // Tipos públicos en orden de aparición, y métodos por tipo (Arrays paralelos).
+    var type_names: Array = []
+    var type_lines: Array = []
+    var meth_owner: Array = []
+    var meth_lines: Array = []
+    var in_impl = ""
     var i = 0
     while i < lines.length() {
         let ln: String = lines[i]
         let trimmed: String = ln.trim()
+        if ln.startsWith("}") { in_impl = "" }
         if trimmed.startsWith("///") {
             let dt: String = trimmed.substring(3, trimmed.length())
             let dtt: String = dt.trim()
@@ -2593,7 +2624,42 @@ fn capabilities_module_section(std_dir: String, filename: String) -> String {
             // `async fn` también (std/browser_idb, std/browser_serial): sin esto los
             // módulos de await en wasm no aparecían en el índice y nadie los encontraba.
             let is_fn: bool = trimmed.startsWith("pub fn ") or trimmed.startsWith("export fn ") or trimmed.startsWith("pub async fn ") or trimmed.startsWith("export async fn ")
-            if is_fn {
+            let is_type: bool = (trimmed.startsWith("pub struct ") or trimmed.startsWith("pub enum ")) and in_impl == ""
+            let is_impl: bool = ln.startsWith("impl ")
+            let is_method: bool = in_impl != "" and ln.startsWith("    ") and not ln.startsWith("     ") and (trimmed.startsWith("fn ") or trimmed.startsWith("pub fn ")) and not trimmed.startsWith("fn __") and not trimmed.startsWith("pub fn __")
+            if is_impl {
+                // `impl T {`, `impl<T> Caja<T> {` o `impl Rasgo for T {`: el dueño
+                // es el tipo después de `for` si lo hay, si no el primer nombre.
+                var head: String = capabilities_cut_sig(trimmed.substring(5, trimmed.length()))
+                let fpos: int = head.indexOf(" for ")
+                if fpos >= 0 { head = head.substring(fpos + 5, head.length()).trim() }
+                let lt: int = head.indexOf("<")
+                if lt >= 0 { head = head.substring(0, lt) }
+                in_impl = head.trim()
+            } else if is_type {
+                let tparts: Array<String> = capabilities_cut_sig(trimmed).split(" ")
+                var tname: String = ""
+                if tparts.length() >= 3 { tname = tparts[2] }
+                let tlt: int = tname.indexOf("<")
+                if tlt >= 0 { tname = tname.substring(0, tlt) }
+                type_names.push(tname)
+                var tl: String = "- `" + capabilities_cut_sig(trimmed) + "`"
+                if pending_doc != "" { tl = tl + " — " + pending_doc }
+                type_lines.push(tl)
+            } else if is_method {
+                var sig: String = trimmed
+                var balance: int = capabilities_paren_delta(sig)
+                while balance > 0 and i + 1 < lines.length() {
+                    i = i + 1
+                    let cont: String = lines[i].trim()
+                    if cont != "" { sig = sig + " " + cont }
+                    balance = balance + capabilities_paren_delta(cont)
+                }
+                var ml: String = "  - `" + capabilities_cut_sig(sig) + "`"
+                if pending_doc != "" { ml = ml + " — " + pending_doc }
+                meth_owner.push(in_impl)
+                meth_lines.push(ml)
+            } else if is_fn {
                 var sig: String = trimmed
                 // Firma multi-línea (params partidos entre líneas): mientras los
                 // paréntesis no balanceen, seguir consumiendo líneas y unir con un
@@ -2612,16 +2678,7 @@ fn capabilities_module_section(std_dir: String, filename: String) -> String {
                     }
                     balance = balance + capabilities_paren_delta(cont)
                 }
-                var cut = -1
-                var bi = 0
-                while bi < sig.length() {
-                    let c: char = sig.charAt(bi)
-                    if c == '{' and cut == -1 { cut = bi }
-                    bi = bi + 1
-                }
-                if cut >= 0 { sig = sig.substring(0, cut) }
-                let sigt: String = sig.trim()
-                body = body + "- `" + sigt + "`"
+                body = body + "- `" + capabilities_cut_sig(sig) + "`"
                 if pending_doc != "" { body = body + " — " + pending_doc }
                 body = body + "\n"
                 count = count + 1
@@ -2630,10 +2687,39 @@ fn capabilities_module_section(std_dir: String, filename: String) -> String {
         }
         i = i + 1
     }
-    if count == 0 { return "" }
+    // Tipos: los públicos con sus métodos; métodos de un tipo que no es público
+    // del módulo (impl de un tipo de otro módulo) no se listan.
+    var types_md = ""
+    var nmeth = 0
+    var ti = 0
+    while ti < type_names.length() {
+        let tn: String = type_names[ti]
+        let tl: String = type_lines[ti]
+        types_md = types_md + tl + "\n"
+        var mi = 0
+        while mi < meth_owner.length() {
+            let mo: String = meth_owner[mi]
+            if mo == tn {
+                let ml: String = meth_lines[mi]
+                types_md = types_md + ml + "\n"
+                nmeth = nmeth + 1
+            }
+            mi = mi + 1
+        }
+        ti = ti + 1
+    }
+    if count == 0 and type_names.length() == 0 { return "" }
     var out = "### `std/" + modname + "`\n\n"
-    out = out + "`import \"std/" + modname + "\"` — " + int_to_string(count) + " funciones:\n\n"
-    out = out + body + "\n"
+    if count > 0 {
+        out = out + "`import \"std/" + modname + "\"` — " + int_to_string(count) + " funciones:\n\n"
+        out = out + body + "\n"
+    } else {
+        out = out + "`import \"std/" + modname + "\"`\n\n"
+    }
+    if type_names.length() > 0 {
+        out = out + "Tipos (" + int_to_string(type_names.length()) + ") y métodos (" + int_to_string(nmeth) + "):\n\n"
+        out = out + types_md + "\n"
+    }
     return out
 }
 

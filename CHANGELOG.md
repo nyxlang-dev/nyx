@@ -113,6 +113,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **`CAPABILITIES.md` lista los tipos públicos y sus métodos**: hasta acá solo funciones libres, así que
+  APIs hechas de métodos (`doc.render()`, `s.read()`, `d.text()`) y sus structs no aparecían (fricción
+  nyxerp, 2026-10-20).
+- **NYX1017 sugiere la llamada cuando el nombre es un método**: `s.status` sobre un `HttpStream` ahora
+  dice «'status' is a method: call it with parentheses, .status()» (fricción nyxerp, 2026-10-20). Test
+  `test-nyx1017-metodo-sin-parentesis`.
 - **Los literales de string compilan en tiempo lineal** `[arco: pdf-a-imagen]`. El lexer y
   `escape_string` concatenaban un byte por vez: un literal de 64 KB tardaba ~4 s en el frontend y uno
   de 400 KB, 32 s. Ahora 64 KB tardan 35 ms. `test-lexer` y `test-emit-bytes-global` lo fijan.

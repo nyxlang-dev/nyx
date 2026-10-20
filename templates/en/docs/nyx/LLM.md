@@ -2374,6 +2374,8 @@ connection.
 ```nyx
 import "std/http"
 let s: HttpStream = try_http_stream("POST", url, ["Content-Type", "application/json"], body)?
+let code: int = s.status()                // METHODS, with (): s.status, without (), is NYX1017
+let ct: String = http_find_header(s.headers(), "Content-Type")
 while true {
     let ev: SseEvent = s.read_event()?    // or s.read() for raw body pieces ("" = end)
     if ev.evento == "" { break }          // end of stream
