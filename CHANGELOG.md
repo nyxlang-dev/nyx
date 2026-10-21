@@ -113,6 +113,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Arreglado
 
+- **Una cabecera escrita como `"Nombre: valor"` en un solo elemento llega al pedido** (silently-wrong,
+  fricción nyxerp). El cliente de `std/http` solo leía pares `[nombre, valor]` y la descartaba sin aviso;
+  ahora acepta las dos formas, también mezcladas (un nombre de cabecera no puede tener `:`, así que no
+  hay ambigüedad con valores como `Bearer a:b`). Test `tests/ai-first/43`.
 - **`CAPABILITIES.md` lista los tipos públicos y sus métodos**: hasta acá solo funciones libres, así que
   APIs hechas de métodos (`doc.render()`, `s.read()`, `d.text()`) y sus structs no aparecían (fricción
   nyxerp, 2026-10-20).

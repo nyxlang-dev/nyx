@@ -1893,7 +1893,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-response-streaming,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2190,11 +2190,13 @@ their argument must have (`int` / `float`) while it is generated, like `string_t
 
 34. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.36.2). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
 
-35. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.36.2). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
+35. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.36.2). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
 
-36. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.36.2). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
+36. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.36.2). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
 
-37. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.36.2). Until 0.36.1
+37. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.36.2). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
+
+38. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.36.2). Until 0.36.1
 `texto(hs[0])` (with `fn texto(h: Hoja)`) passed the slot's raw i64 where the function expected the
 struct by value: the program died with «GC heap exhausted» or, worse, the function silently received
 ANOTHER element. `m.insert(pares[0], pares[1])` used the raw i64 as the key pointer and clang rejected
@@ -2203,7 +2205,7 @@ hs[0]` first) still works but is no longer needed: the slot is converted to the 
 and a Map key that comes from a slot is read as the String it holds. Same family as
 `int_to_float(arr[i])`, fixed in 0.36.1. [test: 40-casilla-sin-tipo-como-argumento]
 
-38. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.36.2). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
+39. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.36.2). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
 
 <!-- /gen:gotchas -->
 
@@ -2384,8 +2386,8 @@ while true {
 s.close()
 ```
 
-- Headers are a FLAT list `[name, value, ...]`; a single `"Name: value"` element is silently
-  ignored today (TASKS ALTA).
+- Headers: flat pairs `[name, value, ...]` or one `"Name: value"` element each (both forms, also
+  mixed; since 2026-10-21 — before, the one-element form was silently dropped).
 - `http_stream_opts()`: `connect_ms` 10 s, `primer_byte_ms` 30 s (until the headers),
   `lectura_ms` 60 s **between two pieces**, `total_ms` 0 = no overall limit. A timeout is
   `Err(timeout)` and closes the stream. No redirects; `Content-Encoding` is `Err(unsupported)`.
