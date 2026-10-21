@@ -11,6 +11,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **SNI con comodín en el servidor TLS**: `tls_server_add_cert("*.dominio", cert, key)` cubre una
+  etiqueta (`a.dominio`, no `dominio` ni `a.b.dominio`, RFC 6125), los nombres exactos ganan sobre el
+  comodín sin importar el orden, la comparación ya no distingue mayúsculas y el tope sube de 16 a 64
+  dominios. Pedido de nyxerp (fase C0 de su alta automática de clientes `<cliente>.nyxerp.com`).
+  Test `test_sni_name_matches` (runtime) y handshake real verificado con `openssl s_client`.
 - **`std/http`: leer una respuesta por partes** `[arco: http-streaming]` (fricción nyxerp
   20261019-200016-team-1: reenviar al navegador cada trozo de una API de modelos de lenguaje apenas
   llega). `try_http_stream_opts(method, url, headers, body, http_stream_opts())` → `HttpStream`, que

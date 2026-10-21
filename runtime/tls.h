@@ -46,6 +46,8 @@ int64_t nyx_tls_server_init(nyx_string* cert_path, nyx_string* key_path);
 // Add an SNI certificate for a specific hostname.
 // Must be called after tls_server_init. Returns 0 on success, -1 on error.
 int64_t nyx_tls_server_add_cert(nyx_string* hostname, nyx_string* cert_path, nyx_string* key_path);
+// 1 si el nombre SNI `name` corresponde a `pattern` (exacto o `*.sufijo` de una etiqueta).
+int nyx_sni_name_matches(const char* pattern, const char* name);
 
 // Perform a TLS handshake on an already-accepted TCP socket fd.
 // Returns an opaque handle (NyxTlsHandle* cast to int64_t) on success, 0 on error.

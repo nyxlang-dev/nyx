@@ -761,24 +761,73 @@ typedef struct {
 static SSL_CTX* g_ssl_server_ctx = NULL;
 
 // SNI: per-hostname SSL contexts (max 16 domains)
-#define MAX_SNI_DOMAINS 16
+#define MAX_SNI_DOMAINS 64
 static SSL_CTX* g_sni_contexts[MAX_SNI_DOMAINS];
 static char     g_sni_hostnames[MAX_SNI_DOMAINS][256];
 static int      g_sni_count = 0;
 
 // SNI callback: select the correct SSL_CTX based on the hostname in ClientHello
+// ¿El nombre SNI que pidió el cliente corresponde a `pattern`? Exacto, o un
+// comodín `*.sufijo` que cubre UNA etiqueta no vacía delante del sufijo
+// (RFC 6125 §6.4.3, lo mismo que acepta un navegador para un certificado
+// comodín): `*.nyxerp.com` cubre `a.nyxerp.com`, no `nyxerp.com` ni
+// `a.b.nyxerp.com`. Sin distinguir mayúsculas: los nombres DNS no las
+// distinguen, y el strcmp de antes hacía que `Demo.nyxerp.com` cayera en el
+// certificado por defecto. Pedido de nyxerp (2026-10-21): dar de alta clientes
+// `<cliente>.nyxerp.com` con un solo certificado comodín, sin tocar el gateway.
+// Igualdad ASCII sin mayúsculas. Propia y no strcasecmp: este archivo también
+// compila para win32, donde MSVC no la tiene (allá es _stricmp).
+static int sni_ieq(const char* a, const char* b) {
+    while (*a && *b) {
+        unsigned char x = (unsigned char)*a, y = (unsigned char)*b;
+        if (x >= 'A' && x <= 'Z') x = (unsigned char)(x + 32);
+        if (y >= 'A' && y <= 'Z') y = (unsigned char)(y + 32);
+        if (x != y) return 0;
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+int nyx_sni_name_matches(const char* pattern, const char* name) {
+    if (!pattern || !name) return 0;
+    if (sni_ieq(pattern, name)) return 1;
+    if (pattern[0] != '*' || pattern[1] != '.') return 0;
+    const char* suffix = pattern + 1;              // ".nyxerp.com"
+    size_t sl = strlen(suffix), nl = strlen(name);
+    if (sl < 2 || nl <= sl) return 0;
+    if (!sni_ieq(name + (nl - sl), suffix)) return 0;
+    // La parte cubierta por el `*`: no vacía y sin puntos (una sola etiqueta).
+    for (size_t i = 0; i < nl - sl; i++) {
+        if (name[i] == '.') return 0;
+    }
+    return 1;
+}
+
+static void sni_use_ctx(SSL* ssl, SSL_CTX* new_ctx) {
+    SSL_set_SSL_CTX(ssl, new_ctx);
+    // SSL_set_SSL_CTX switches the context but does NOT reload the
+    // certificate into the SSL object. We must do it explicitly.
+    SSL_use_certificate(ssl, SSL_CTX_get0_certificate(new_ctx));
+    SSL_use_PrivateKey(ssl, SSL_CTX_get0_privatekey(new_ctx));
+}
+
+// Dos pasadas: primero los nombres exactos y después los comodines, para que
+// un certificado específico (demo.nyxerp.com) gane siempre sobre *.nyxerp.com
+// sin depender del orden en que se registraron.
 static int sni_callback(SSL *ssl, int *al, void *arg) {
     (void)al; (void)arg;
     const char* servername = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
     if (servername) {
         for (int i = 0; i < g_sni_count; i++) {
-            if (strcmp(g_sni_hostnames[i], servername) == 0) {
-                SSL_CTX* new_ctx = g_sni_contexts[i];
-                SSL_set_SSL_CTX(ssl, new_ctx);
-                // SSL_set_SSL_CTX switches the context but does NOT reload the
-                // certificate into the SSL object. We must do it explicitly.
-                SSL_use_certificate(ssl, SSL_CTX_get0_certificate(new_ctx));
-                SSL_use_PrivateKey(ssl, SSL_CTX_get0_privatekey(new_ctx));
+            if (g_sni_hostnames[i][0] != '*' && sni_ieq(g_sni_hostnames[i], servername)) {
+                sni_use_ctx(ssl, g_sni_contexts[i]);
+                return SSL_TLSEXT_ERR_OK;
+            }
+        }
+        for (int i = 0; i < g_sni_count; i++) {
+            if (g_sni_hostnames[i][0] == '*' && nyx_sni_name_matches(g_sni_hostnames[i], servername)) {
+                sni_use_ctx(ssl, g_sni_contexts[i]);
                 return SSL_TLSEXT_ERR_OK;
             }
         }
@@ -844,6 +893,10 @@ int64_t nyx_tls_server_add_cert(nyx_string* hostname, nyx_string* cert_path, nyx
     const char* cert = nyx_string_to_cstr(cert_path);
     const char* key  = nyx_string_to_cstr(key_path);
     if (!host || !cert || !key) return -1;
+    // Un `*` solo vale como etiqueta entera de la izquierda (`*.dominio`), como
+    // en un certificado comodín; en otra posición no lo cubriría ninguno.
+    const char* star = strchr(host, '*');
+    if (star && (star != host || host[1] != '.' || strchr(host + 1, '*'))) return -1;
 
     SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx) return -1;

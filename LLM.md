@@ -1057,6 +1057,11 @@ single `Error` struct.
 - `tls_connect(host, port)`, `tls_read`, `tls_write`, `tls_close`
 - Server: `tls_server_init(cert, key)`, `tls_server_add_cert`,
   `tls_accept`, `tls_read_line`, `tls_write_conn`, `tls_close_conn`
+- `tls_server_add_cert(hostname, cert, key) -> int` registers an extra certificate chosen by SNI
+  (up to 64). `hostname` is exact (case-insensitive) or a wildcard `*.example.com`, which covers ONE
+  label (`a.example.com`, not `example.com` nor `a.b.example.com`, as RFC 6125); exact names win over
+  the wildcard regardless of order; a `*` anywhere else is rejected (-1). An unknown name gets the
+  certificate of `tls_server_init`.
 
 ### `std/tls` — introspección del peer y verificación de certificados (opt-in)
 `tls_connect`/`tls_read`/`tls_write`/`tls_close` de arriba son builtins, sin import.
