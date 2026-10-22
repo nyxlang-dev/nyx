@@ -9,6 +9,28 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-10-22
+
+> **MINOR**: dos avisos de 0.36.x pasan a error, como anunciaban (regla 7 de `docs/VERSIONING.md`):
+> NYX1010 entre entero y String, y NYX1045 en un escape desconocido. Lo demás es aditivo: `std/pdf_render`,
+> respuestas HTTP por partes, SNI con comodín, `http_serve_en`, registros DNS, `nyx build -j N` y
+> varias mejoras de `std/pdf`, `std/xlsx`, `std/image` y `std/smtp`. Antes del corte se revisaron
+> 1201 archivos (nyxerp, los productos, los sitios, y std, ejemplos y compilador de este repo) con el
+> compilador de 0.36.x: ningún caso de los dos avisos.
+
+### Cambiado
+
+- **NYX1010 entre entero y String es error** (aviso en 0.36.x). `5 + "a"`, `5 == "5"` y `"a" < 5`
+  compilaban y morían con SIGSEGV al ejecutar la línea; ahora no compilan, con la misma pista
+  (`int_to_string`, `string_to_int_or`). Los tres casos `test-nyx1010-*-mixto` pasan a la lista de
+  errores de `run_error_tests.sh`. Sigue siendo aviso cuando un lado lee una casilla (`dst[1] == "dos"`):
+  el tipo de elemento inferido de un Array puede mentir (`var dst = [9]` y después `dst.push(src[1])`
+  con un String) y la casilla lleva su tag, así que ese programa anda (`test-323`, caso 6; aviso en
+  `test-nyx1010-casilla-aviso`).
+- **NYX1045 en un escape desconocido es error** (aviso en 0.36.x). `"\q"` o `"\e"` valían la letra sin la
+  barra; ahora el análisis los rechaza con línea y la lista de escapes válidos (`\x1b` en lugar de
+  `\e`). Sale con el formato y el NDJSON de los demás errores del análisis (`"severity":"error"`).
+
 ### Agregado
 
 - **`std/http`: `http_serve_en(host, port, handler)` y `http_serve_mt_en(host, port, workers, handler)`**

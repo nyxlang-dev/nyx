@@ -41,11 +41,15 @@ TESTS=(
   "tests/compiler/errors/test-m08-param-unknown-type.nx|unknown type 'Str'"
   "tests/compiler/errors/test-m08-logical-non-bool.nx|left operand of '&&' must be bool, got int"
   "tests/compiler/errors/test-m08-bitwise-non-int.nx|left operand of '&' must be an integer, got String"
-  # Operadores entre primitivos que no existen (2026-10-17) y que eran IR
-  # inválido que rechazaba clang (`x * "dos"`, `true + 1`): error ya. Los que
-  # compilaban y morían con SIGSEGV van como AVISO (bloque NYX1010-aviso, abajo).
+  # Operadores entre primitivos que no existen (2026-10-17). Los que eran IR
+  # inválido que rechazaba clang (`x * "dos"`, `true + 1`) son error desde
+  # entonces; los que compilaban y morían con SIGSEGV (`5 + "a"`, `5 == "5"`,
+  # `"a" < 5`) fueron aviso en 0.36.x y son error desde 0.37.0 (regla 7).
   # Control positivo con los valores: tests/compiler/language/test-493-operadores-primitivos-mixtos.nx.
   "tests/compiler/errors/test-nyx1010-int-por-string-mixto.nx|'*' does not accept int and String"
+  "tests/compiler/errors/test-nyx1010-int-mas-string-mixto.nx|'+' does not accept int and String; to concatenate, put the String first"
+  "tests/compiler/errors/test-nyx1010-int-igual-string-mixto.nx|'==' does not accept int and String; convert one side"
+  "tests/compiler/errors/test-nyx1010-string-menor-int-mixto.nx|'<' does not accept String and int"
   # NYX2012 en una expresión (2026-10-18): una variante inexistente pasaba `nyx check` y
   # recién el codegen la rechazaba, pidiendo una anotación de tipo (fricción nyxerp).
   "tests/compiler/errors/test-nyx2012-variante-inexistente.nx|enum 'Unidad' has no variant 'Litros' (did you mean 'Litro'?)"
@@ -232,19 +236,16 @@ done
 # Format: "<file> | <code> | <suggestion or -> | <line, + or ->"
 # ==============================================================
 
-# NYX1010 como AVISO (2026-10-17): entero con String en `+` (entero a la
-# izquierda) o en una comparación COMPILABA y moría con SIGSEGV al ejecutar esa
-# línea. Por la regla 7 de docs/VERSIONING.md es aviso en 0.36.x y error en
-# 0.37.0: tiene que seguir compilando, avisar y anunciar el error.
+# NYX1010 sigue como AVISO cuando un lado lee una casilla (`dst[1] == "dos"`): el
+# tipo de elemento inferido puede mentir y la casilla lleva su tag, así que el
+# programa anda (test-323, caso 6). Tiene que compilar y avisar.
 for entry in \
-  "tests/compiler/errors/test-nyx1010-int-mas-string-mixto.nx|'+' does not accept int and String; to concatenate, put the String first" \
-  "tests/compiler/errors/test-nyx1010-int-igual-string-mixto.nx|'==' does not accept int and String; convert one side" \
-  "tests/compiler/errors/test-nyx1010-string-menor-int-mixto.nx|'<' does not accept String and int"; do
+  "tests/compiler/errors/test-nyx1010-casilla-aviso.nx|one side reads an Array slot"; do
   file="${entry%%|*}"; expected="${entry#*|}"; name="aviso:$(basename "$file" .nx)"
   cp "$file" script.nx; rm -f script.ll
   output=$(timeout 30 ./nyx_bootstrap 2>&1); rc=$?
   if [ "$rc" -eq 0 ] && [ -f script.ll ] && echo "$output" | grep -qF "warning [NYX1010]" \
-     && echo "$output" | grep -qF "$expected" && echo "$output" | grep -qF "error in 0.37.0"; then
+     && echo "$output" | grep -qF "$expected"; then
     printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
   else
     printf "  ✗ %s (rc=%d, esperado 0 con el aviso)\n" "$name" "$rc"
@@ -256,8 +257,9 @@ done
 # NYX1045 (arco escapes-de-string, 2026-10-17). Un escape MALFORMADO de los
 # nuevos (\x corto, \u{…} fuera de rango, surrogate, sin llaves, o de más de un
 # byte en un char) es error del lexer, con línea y columna: nunca compiló a lo
-# que decía. Un escape DESCONOCIDO (\q, \e) compilaba perdiendo la barra, así
-# que en 0.36.x es aviso y sigue compilando (regla 7). Control positivo:
+# que decía. Un escape DESCONOCIDO (\q, \e) compilaba perdiendo la barra: fue
+# aviso en 0.36.x y es error desde 0.37.0 (regla 7), con el formato del análisis
+# semántico (`error [NYX1045] (line N)`), no el del lexer. Control positivo:
 # tests/compiler/language/test-494-escapes-hex-unicode.nx.
 for entry in \
   "tests/compiler/errors/test-nyx1045-x-corto.nx|(línea 2, columna 23): \`\\x\` necesita exactamente dos dígitos hex" \
@@ -279,14 +281,14 @@ done
 for entry in \
   "tests/compiler/errors/test-nyx1045-escape-desconocido.nx|(line 3): unknown escape \`\\q\`" \
   "tests/compiler/errors/test-nyx1045-escape-e.nx|unknown escape \`\\e\`"; do
-  file="${entry%%|*}"; expected="${entry#*|}"; name="aviso:$(basename "$file" .nx)"
+  file="${entry%%|*}"; expected="${entry#*|}"; name="sem:$(basename "$file" .nx)"
   cp "$file" script.nx; rm -f script.ll
   output=$(timeout 30 ./nyx_bootstrap 2>&1); rc=$?
-  if [ "$rc" -eq 0 ] && [ -f script.ll ] && echo "$output" | grep -qF "warning [NYX1045]" \
-     && echo "$output" | grep -qF "$expected" && echo "$output" | grep -qF "error in 0.37.0"; then
+  if [ "$rc" -ne 0 ] && [ ! -f script.ll ] && echo "$output" | grep -qF "error [NYX1045]" \
+     && echo "$output" | grep -qF "$expected"; then
     printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
   else
-    printf "  ✗ %s (rc=%d, esperado 0 con el aviso)\n" "$name" "$rc"
+    printf "  ✗ %s (rc=%d, esperado error NYX1045 sin script.ll)\n" "$name" "$rc"
     echo "$output" | grep -a "NYX\|rror" | sed 's/^/      /' | head -5; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
   fi
   rm -f script.ll
@@ -294,11 +296,11 @@ done
 # Y por NDJSON, con su código y su línea (NYX_DIAG=json).
 cp tests/compiler/errors/test-nyx1045-escape-desconocido.nx script.nx; rm -f script.ll
 output=$(NYX_DIAG=json timeout 30 ./nyx_bootstrap 2>&1)
-if echo "$output" | grep '"severity":"warning"' | grep -F '"line":3' | grep -qF 'NYX1045'; then
-  printf "  ✓ %s\n" "json:nyx1045-aviso"; PASS=$((PASS + 1))
+if echo "$output" | grep '"severity":"error"' | grep -F '"line":3' | grep -qF 'NYX1045'; then
+  printf "  ✓ %s\n" "json:nyx1045-error"; PASS=$((PASS + 1))
 else
-  printf "  ✗ %s\n" "json:nyx1045-aviso"
-  echo "$output" | grep -a 'warning' | sed 's/^/      /' | head -3; FAIL=$((FAIL + 1)); FAILED_TESTS+=("json:nyx1045-aviso")
+  printf "  ✗ %s\n" "json:nyx1045-error"
+  echo "$output" | grep -a 'NYX1045' | sed 's/^/      /' | head -3; FAIL=$((FAIL + 1)); FAILED_TESTS+=("json:nyx1045-error")
 fi
 rm -f script.ll
 

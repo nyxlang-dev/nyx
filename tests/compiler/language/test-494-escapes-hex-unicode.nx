@@ -1,7 +1,7 @@
 // Escapes de literales (arco escapes-de-string, 2026-10-17). Antes de este
 // arco el lexer solo conocía \n \t \\ \" \r \0, y cualquier otro escape perdía
 // la barra en silencio: "\x41" valía `x41`, "\u{0}" valía `u{0}` y '\x41'
-// imprimía `41`. Los casos de error y el aviso NYX1045 viven en
+// imprimía `41`. Los casos de error NYX1045 viven en
 // tests/compiler/errors/test-nyx1045-*.nx.
 fn main() {
     // Los seis de siempre no cambian.

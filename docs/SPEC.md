@@ -926,7 +926,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1042 | a `return` inside the body of a `defer`, or a `break`/`continue` that would leave it (one inside a loop written in the defer itself is fine). A defer runs while the block or the function is already exiting; a `return` there used to hang the program and a `break` compiled and did nothing. Compute the value before the `return` and keep only the cleanup in the defer |
 | NYX1043 | `defer` inside an `async fn`: the task does not go through the cleanup section, so it would never run (it used to be dropped silently). Do the cleanup explicitly before each `return`, or move the work into a non-async fn the task calls |
 | NYX1044 | a closure (lambda or named `fn`) uses a BLOCK variable it cannot capture: its name is declared more than once in the function (shadowing another, or in a sibling block), or it is not a `let`/`var` (a `for` variable, a `match` binding). Closures capture by name, so the capture would be ambiguous. Rename it, or copy it into a `let` with its own name right before the closure |
-| NYX1045 | invalid string or char escape. A malformed `\xNN` (not two hex digits) or `\u{…}` (no braces, empty, more than 6 digits, above `10FFFF`, a surrogate, or above `7F` in a `char`) is a lexer error with line and column. Any other unknown escape (`\q`, `\e`) is a warning in 0.36.x and an error in 0.37.0: it used to compile dropping the backslash |
+| NYX1045 | invalid string or char escape. A malformed `\xNN` (not two hex digits) or `\u{…}` (no braces, empty, more than 6 digits, above `10FFFF`, a surrogate, or above `7F` in a `char`) is a lexer error with line and column. Any other unknown escape (`\q`, `\e`) is an error since 0.37.0 (a warning in 0.36.x): it used to compile dropping the backslash |
 | NYX1033 | `include_bytes` with a path that is not a String literal — the file is read when COMPILING, so a variable or an interpolation cannot be known |
 | NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
@@ -976,7 +976,7 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2009 | a file-scope `global`/`const` whose initializer cannot be evaluated at startup — the constant-folding path of globals accepts literals and a closed set of expressions; anything else (the offending `node_type` is named in the message) used to be dropped silently |
 | NYX2010 | AMBIGUOUS unqualified call: the same function name is exported by several imported modules and none of them is the current one. The message lists the modules that define it — qualify the call instead of letting the resolver pick one (it used to pick silently). Since 2026-09-23 semantic reports it too, with the same criterion, so `nyx check` catches it instead of only `nyx build` (as a regular semantic diagnostic, with line and enclosing function). A builtin with the same name disarms it in both layers: the call goes to the builtin. In 0.34.x an ambiguity hidden up to 0.33.x by that resolver bug was a `⚠ aviso` resolved as 0.33.x did; since 0.35.0 it is an error like any other |
 | NYX2011 | `generic_call` with no registered generic template for the base name (turbofish over a name that is not a generic function in scope) |
-| NYX2012 | unknown enum variant — in a **pattern** (the variant named in a `match` arm is not registered for that enum: enum not defined/imported, or the variant misspelled) or, since 0.36.2, in an **expression** (`PdfFont.Zzzz`), reported by `nyx check` with a did-you-mean when a close variant exists |
+| NYX2012 | unknown enum variant — in a **pattern** (the variant named in a `match` arm is not registered for that enum: enum not defined/imported, or the variant misspelled) or, since 0.37.0, in an **expression** (`PdfFont.Zzzz`), reported by `nyx check` with a did-you-mean when a close variant exists |
 | NYX2013 | `#[derive(Fields)]` on a struct with a field the derive cannot convert. Only `int`, `bool`, `float` and `String` are supported; an `Array`/`Map`/nested-struct field aborts compilation on purpose, because inheriting `Display`'s `"ptr"` fallback would write false data into a database column (see the `Fields` row in [Derive Macros](#derive-macros)) |
 | NYX2014 | RUNTIME slot-type mismatch, int side: an Array slot whose runtime tag is `String` or `float` read as `int` (`a.push("hola")` then `let x: int = a[0]` used to print the POINTER as a plausible number and exit 0). Only those two tags are reported — the ones where the raw i64 means something else (an address, or the bits of a double); `bool`, `int`, untagged slots and opaque pointers still yield the raw value, so `let b: int = a[0]` over a bool keeps returning 1. `NYX_SLOT_CHECK=off` disables it |
 | NYX2015 | integer literal out of range: a decimal literal whose text does not fit in a 64-bit `int` (`let c: int = 170141183460469231731687303715884105727` used to print `-1`, and `18446744073709551616` printed `0` — the lexer keeps the literal as TEXT and codegen emitted it verbatim, so clang truncated the constant with no error and no warning). The check is textual, on the digits, because converting is exactly what overflows. The inclusive cap is `2^63` and not `2^63-1` ON PURPOSE: `-9223372036854775808` is INT_MIN and is perfectly valid, but the lexer sees the POSITIVE literal with a separate unary minus — rejecting `9223372036854775808` would break `const INT_MIN` in `std/math` and in the prelude, which travels in EVERY program. The positive form of that one value still wraps to INT_MIN, which is standard two's-complement behaviour |
@@ -1042,8 +1042,8 @@ Las multiline strings se delimitan con `"""` (triple comillas). Los saltos de li
 
 Valen igual en un String, en lo que sigue a una interpolación y en un literal de carácter; en un `char`,
 `\u{…}` admite solo hasta `\u{7F}` (un byte). Un `\x` o un `\u{…}` malformado es error de lexer
-NYX1045 con línea y columna. Cualquier otro escape (`\q`, `\e`) es `warning [NYX1045]` en 0.36.x y
-error en 0.37.0: antes de 0.36.2 perdía la barra en silencio (`"\x41"` valía `x41`). Los multilínea
+NYX1045 con línea y columna. Cualquier otro escape (`\q`, `\e`) es error NYX1045 desde
+0.37.0 (aviso en 0.36.x): antes de 0.37.0 perdía la barra en silencio (`"\x41"` valía `x41`). Los multilínea
 `"""…"""` y los raw `r"…"` no procesan escapes.
 
 ### Raw strings
@@ -3634,7 +3634,7 @@ Multiple `defer` blocks se ejecutan en LIFO order.
 |---------|-------------|
 | `http_response(status, body)` | Construye HTTP response string |
 | `http_serve(port, handler)` | Inicia servidor HTTP (blocking) |
-| `http_serve_en(host, port, handler)` | Igual, ligado solo a `host` (`"127.0.0.1"` detrás de un proxy; `http_serve` liga `0.0.0.0`) — también `http_serve_mt_en(host, port, workers, handler)` (0.36.2) |
+| `http_serve_en(host, port, handler)` | Igual, ligado solo a `host` (`"127.0.0.1"` detrás de un proxy; `http_serve` liga `0.0.0.0`) — también `http_serve_mt_en(host, port, workers, handler)` (0.37.0) |
 | `http_get(url)` | HTTP GET request |
 | `http_post(url, body)` | HTTP POST request |
 | `http_request(method, url, body)` | HTTP request generico |

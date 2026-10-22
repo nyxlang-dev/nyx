@@ -1793,23 +1793,25 @@ two are compile errors naming the function and the variable; the `let` into an i
 0.35.x and is an error since 0.36.0. Untyped elements (an Array returned by a
 function) keep their run-time check, NYX2014; `float` keeps NYX2008. [test: compiler/errors/fixtures/escalar-de-string/let-bool] [test: compiler/errors/fixtures/escalar-de-string/let-int] [test: compiler/language/test-456-escalar-de-string-valido]
 
-26. **`http_serve`/`http_serve_mt` listen on ALL interfaces (`0.0.0.0`); behind a proxy use `http_serve_en("127.0.0.1", port, handler)`.** Unlike `serve_app` (`std/serve`), whose default is `127.0.0.1`, the low-level `std/http` servers bind every interface, so a port meant to be reached only through a reverse proxy is also open directly, without TLS or rate limiting, unless a firewall blocks it. Nothing fails: the program works, the exposure is silent. `http_serve_en(host, port, handler)` and `http_serve_mt_en(host, port, workers, handler)` (since 0.36.2) take the address explicitly, with the same `host` semantics as `tcp_listen` (`""`/`"0.0.0.0"` = all, a numeric IP = only that one). The defaults of `http_serve`/`http_serve_mt` stay `0.0.0.0` for compatibility. [test: compiler/stdlib-suite/test-505-http-serve-en]
+26. **`http_serve`/`http_serve_mt` listen on ALL interfaces (`0.0.0.0`); behind a proxy use `http_serve_en("127.0.0.1", port, handler)`.** Unlike `serve_app` (`std/serve`), whose default is `127.0.0.1`, the low-level `std/http` servers bind every interface, so a port meant to be reached only through a reverse proxy is also open directly, without TLS or rate limiting, unless a firewall blocks it. Nothing fails: the program works, the exposure is silent. `http_serve_en(host, port, handler)` and `http_serve_mt_en(host, port, workers, handler)` (since 0.37.0) take the address explicitly, with the same `host` semantics as `tcp_listen` (`""`/`"0.0.0.0"` = all, a numeric IP = only that one). The defaults of `http_serve`/`http_serve_mt` stay `0.0.0.0` for compatibility. [test: compiler/stdlib-suite/test-505-http-serve-en]
 
-27. **Operators between primitives of different kinds are NYX1010** (since 0.36.2). Only these exist:
+27. **Operators between primitives of different kinds are NYX1010** (since 0.37.0). Only these exist:
 numbers with numbers (any operator), `String + x` (concatenation: int, float, String, bool), `==`/`!=`
-between two Strings or two bools, and `<` `>` `<=` `>=` between two Strings. Everything else used to
-compile and either died with SIGSEGV when the line ran (`5 + "a"`, `5 == "5"`, `"a" < 5`) or produced
-invalid IR that only clang rejected (`x * "dos"`, `2.5 + "a"`, `true + 1`). The second group is an error
-now; the first is a `warning [NYX1010]` in 0.36.x and an error in 0.37.0. To concatenate, put the
+between two Strings or two bools, and `<` `>` `<=` `>=` between two Strings. Everything else is an error.
+Before, it compiled and either died with SIGSEGV when the line ran (`5 + "a"`, `5 == "5"`, `"a" < 5`;
+a `warning [NYX1010]` in 0.36.x) or produced invalid IR that only clang rejected (`x * "dos"`,
+`2.5 + "a"`, `true + 1`). To concatenate, put the
 String first or convert (`int_to_string(n) + s`); to compare, convert one side (`string_to_int_or`).
-Operands of unknown type, structs, enums and char are not affected. [test: compiler/errors/test-nyx1010-int-por-string-mixto]
+Operands of unknown type, structs, enums and char are not affected. Exception: if one side reads an Array slot
+(`dst[1] == "dos"`), int-with-String stays a warning, because an inferred element type can be wrong
+and the slot carries its runtime tag. [test: compiler/errors/test-nyx1010-int-por-string-mixto]
 
-28. **String escapes: `\xNN` and `\u{…}` exist since 0.36.2; any other unknown escape is NYX1045.** Valid:
+28. **String escapes: `\xNN` and `\u{…}` exist since 0.37.0; any other unknown escape is NYX1045.** Valid:
 `\n \t \r \0 \\ \" \' \$`, `\xNN` (one byte, exactly two hex digits: `"\x1F"`, `"\x1b[0m"`) and
 `\u{H…}` (a codepoint in UTF-8: `"\u{e9}"`, `"\u{1F600}"`). `\$` writes `${` without interpolating.
-Before 0.36.2 every other escape silently dropped the backslash: `"\x41"` was `x41` and `"\u{0}"` was
-`u{0}`. A malformed `\x` or `\u{…}` is now a lexer error; any other escape (`\q`, `\e`) is a
-`warning [NYX1045]` in 0.36.x and an error in 0.37.0. There is no `\e`/`\a`/`\v`/`\f` and no 4-digit
+Before 0.37.0 every other escape silently dropped the backslash: `"\x41"` was `x41` and `"\u{0}"` was
+`u{0}`. A malformed `\x` or `\u{…}` is a lexer error; any other escape (`\q`, `\e`) is error NYX1045
+(a warning in 0.36.x). There is no `\e`/`\a`/`\v`/`\f` and no 4-digit
 `\uNNNN`: write `\x1b` and `\u{…}`. In a `char`, `\u{…}` only goes up to `\u{7F}`. Raw `r"…"` and
 multiline `"""…"""` strings process no escapes. [test: compiler/language/test-494-escapes-hex-unicode]
 
@@ -2195,15 +2197,15 @@ nothing and clang failed with «invalid IR» (reported by nyxerp). The old worka
 cuentas[q]` first, then convert) still works but is no longer needed: both builtins now fix the hint
 their argument must have (`int` / `float`) while it is generated, like `string_to_int` does with `String`. [test: 39-conversion-de-casilla-sin-tipo]
 
-34. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.36.2). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
+34. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.37.0). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
 
-35. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.36.2). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
+35. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.37.0). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
 
-36. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.36.2). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
+36. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.37.0). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
 
-37. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.36.2). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
+37. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.37.0). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
 
-38. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.36.2). Until 0.36.1
+38. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.37.0). Until 0.36.1
 `texto(hs[0])` (with `fn texto(h: Hoja)`) passed the slot's raw i64 where the function expected the
 struct by value: the program died with «GC heap exhausted» or, worse, the function silently received
 ANOTHER element. `m.insert(pares[0], pares[1])` used the raw i64 as the key pointer and clang rejected
@@ -2212,7 +2214,7 @@ hs[0]` first) still works but is no longer needed: the slot is converted to the 
 and a Map key that comes from a slot is read as the String it holds. Same family as
 `int_to_float(arr[i])`, fixed in 0.36.1. [test: 40-casilla-sin-tipo-como-argumento]
 
-39. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.36.2). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
+39. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
 
 <!-- /gen:gotchas -->
 

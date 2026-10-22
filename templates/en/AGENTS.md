@@ -119,7 +119,7 @@ WHICH clock.**
 32. **An Array element the compiler knows is a `String` does not go into an `int`/`bool` variable (NYX2019): convert it — `let n: int = string_to_int(fila[0])`.**
 33. **`http_serve`/`http_serve_mt` listen on ALL interfaces (`0.0.0.0`); behind a proxy use `http_serve_en("127.0.0.1", port, handler)`.**
 34. **Operators between primitives of different kinds are NYX1010**
-35. **String escapes: `\xNN` and `\u{…}` exist since 0.36.2; any other unknown escape is NYX1045.**
+35. **String escapes: `\xNN` and `\u{…}` exist since 0.37.0; any other unknown escape is NYX1045.**
 
 <!-- /gen:gotchas -->
 

@@ -1,0 +1,6 @@
+fn main() {
+    let src = [1, "dos"]
+    var dst = [9]
+    dst.push(src[1])
+    if dst[1] == "dos" { print("igual") }
+}

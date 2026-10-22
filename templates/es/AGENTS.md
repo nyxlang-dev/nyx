@@ -125,7 +125,7 @@ nombre que dice CUÁL reloj es.**
 32. **Un elemento de Array que el compilador sabe `String` no entra en una variable `int`/`bool` (NYX2019): conviértelo — `let n: int = string_to_int(fila[0])`.**
 33. **`http_serve`/`http_serve_mt` escuchan en TODAS las interfaces (`0.0.0.0`); detrás de un proxy, usar `http_serve_en("127.0.0.1", puerto, handler)`.**
 34. **Los operadores entre primitivos de clases distintas son NYX1010**
-35. **Escapes de String: `\xNN` y `\u{…}` existen desde 0.36.2; cualquier otro escape desconocido es
+35. **Escapes de String: `\xNN` y `\u{…}` existen desde 0.37.0; cualquier otro escape desconocido es
 NYX1045.**
 
 <!-- /gen:gotchas -->

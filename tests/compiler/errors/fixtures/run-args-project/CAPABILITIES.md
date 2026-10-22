@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.36.1 -->
-<!-- nyx-stdlib: 2706247549-2055889 -->
+<!-- nyx-version: 0.37.0 -->
+<!-- nyx-stdlib: 2873354303-2058380 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -50,6 +50,11 @@
 - `pub fn error_to_string(e: Error) -> String`
 - `pub fn is_eof(e: Error) -> bool`
 
+Tipos (2) y métodos (0):
+
+- `pub enum RoundMode`
+- `pub struct Error`
+
 ### `std/error`
 
 `import "std/error"` — 4 funciones:
@@ -58,6 +63,10 @@
 - `pub fn errno_to_kind(code: int) -> String`
 - `pub fn error_to_string(e: Error) -> String`
 - `pub fn is_eof(e: Error) -> bool`
+
+Tipos (1) y métodos (0):
+
+- `pub struct Error`
 
 ## HTTP & Web
 
@@ -79,6 +88,11 @@
 - `pub fn patch_kind(p: Patch) -> String`
 - `pub fn patch_path(p: Patch) -> Array`
 - `pub fn vdiff(old: VNode, new: VNode) -> Array`
+
+Tipos (2) y métodos (0):
+
+- `pub enum VNode`
+- `pub enum Patch`
 
 ### `std/browser`
 
@@ -116,6 +130,10 @@
 - `pub fn multipart_field(name: String, value: String) -> Array` — Parte de texto: campo `name` con valor `value`.
 - `pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array` — Parte de archivo: campo `name`, nombre de archivo `filename`, content-type `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
 - `pub fn multipart_build(parts: Array) -> Result<Multipart, Error>`
+
+Tipos (1) y métodos (0):
+
+- `pub struct Multipart` — Resultado de `multipart_build`: el cuerpo listo para enviar y el valor completo de la cabecera Content-Type (`multipart/form-data; boundary=...`).
 
 ### `std/websocket`
 
@@ -222,7 +240,7 @@
 
 ### `std/http`
 
-`import "std/http"` — 33 funciones:
+`import "std/http"` — 35 funciones:
 
 - `pub fn http_status_text(code: int) -> String`
 - `pub fn http_response(status: int, body: String) -> String`
@@ -230,7 +248,7 @@
 - `pub fn http_json_response(status: int, data: Array) -> String`
 - `pub fn http_parse_url(url: String) -> Array`
 - `pub fn http_host_header(host: String, port: int, default_port: int) -> String`
-- `pub fn http_build_request(method: String, host_header: String, path: String, headers: Array, body: String) -> String`
+- `pub fn http_build_request(method: String, host_header: String, path: String, headers0: Array, body: String) -> String`
 - `pub fn http_tls_inseguro(si: bool)`
 - `pub fn http_tls_request(host: String, port: int, req: String) -> Array`
 - `pub fn http_get(url: String) -> Array`
@@ -241,7 +259,7 @@
 - `pub fn try_http_request_opts(method: String, url: String, headers: Array, body: String, opts: HttpOpts) -> Result<Array, Error>`
 - `pub fn try_http_get(url: String) -> Result<Array, Error>`
 - `pub fn try_http_post(url: String, body: String) -> Result<Array, Error>`
-- `pub fn try_http_post_multipart_opts(url: String, mp: Multipart, headers: Array, opts: HttpOpts) -> Result<Array, Error>`
+- `pub fn try_http_post_multipart_opts(url: String, mp: Multipart, headers0: Array, opts: HttpOpts) -> Result<Array, Error>`
 - `pub fn try_http_post_multipart(url: String, mp: Multipart, headers: Array) -> Result<Array, Error>`
 - `pub fn try_http_request(method: String, url: String, headers: Array, body: String) -> Result<Array, Error>`
 - `pub fn http_stream_opts() -> HttpStreamOpts` — Opciones por defecto para streams (verificación TLS según http_tls_inseguro).
@@ -256,7 +274,21 @@
 - `pub fn http_cors_headers(origin: String) -> Array`
 - `pub fn http_cors_response(origin: String) -> String`
 - `pub fn http_serve(port: int, handler: Fn(Array) -> String) -> int`
+- `pub fn http_serve_en(host: String, port: int, handler: Fn(Array) -> String) -> int`
 - `pub fn http_serve_mt(port: int, num_workers: int, handler: Fn) -> int`
+- `pub fn http_serve_mt_en(host: String, port: int, num_workers: int, handler: Fn) -> int`
+
+Tipos (4) y métodos (5):
+
+- `pub struct HttpOpts`
+- `pub struct HttpStreamOpts` — Plazos y TLS de try_http_stream_opts. Defaults de http_stream_opts(): 10 s para conectar, 30 s hasta las cabeceras, 60 s entre trozos, sin plazo total (total_ms <= 0).
+- `pub struct SseEvent` — Un evento de un text/event-stream: `evento` ("message" si el servidor no manda `event:`), `datos` (las líneas `data:` unidas con \n) e `id` (el último `id:` visto). Un evento con `evento` vacío marca el fin del stream.
+- `pub struct HttpStream` — Una respuesta HTTP que se lee por partes. Se obtiene con try_http_stream_opts; métodos status, headers, read, read_event y close. La usa una goroutine a la vez.
+  - `fn status(self) -> int` — Código de estado HTTP de la respuesta.
+  - `fn headers(self) -> Array` — Cabeceras de la respuesta [nombre, valor, ...] (usar http_find_header).
+  - `fn close(self)` — Cierra la conexión (se puede llamar más de una vez).
+  - `fn read(self) -> Result<String, Error>` — Próximo trozo del cuerpo, tal como llegó (sin el marco chunked). "" cuando el cuerpo terminó. Err(timeout) si pasaron lectura_ms sin que llegue nada; Err(io) si la conexión se cortó antes de completar el cuerpo.
+  - `fn read_event(self) -> Result<SseEvent, Error>` — Próximo evento de un text/event-stream (WHATWG): `event:`, `data:` (varias líneas unidas con \n), `id:`, comentarios `:` ignorados, finales de línea \n, \r\n o \r, y eventos partidos entre trozos. Al terminar el stream devuelve un SseEvent con `evento` vacío (un evento a medio llegar se descarta, como manda la norma).
 
 ### `std/browser_serial`
 
@@ -269,6 +301,10 @@
 - `export async fn serial_write(p: SerialPort, datos: Array) -> Result<int, Error>`
 - `export async fn serial_read(p: SerialPort, max_bytes: int, timeout_ms: int) -> Result<Array, Error>`
 - `export async fn serial_close(p: SerialPort) -> Result<int, Error>`
+
+Tipos (1) y métodos (0):
+
+- `pub struct SerialPort`
 
 ### `std/routematch`
 
@@ -384,6 +420,10 @@
 - `export async fn browser_fetch_await(url: String, method: String, body: String) -> Result<HttpResp, Error>`
 - `export async fn browser_sleep_await(ms: int)`
 
+Tipos (1) y métodos (0):
+
+- `pub struct HttpResp`
+
 ## Bases de datos & KV
 
 ### `std/kvclient`
@@ -460,6 +500,11 @@
 - `pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error>`
 - `pub fn pg_pool_put(pool: PgPool, conn: PgConn)`
 - `pub fn pg_pool_close(pool: PgPool)`
+
+Tipos (2) y métodos (0):
+
+- `pub struct PgConn`
+- `pub struct PgPool`
 
 ### `std/resp`
 
@@ -561,6 +606,22 @@
 - `pub fn xlsx_sheet_new(name: String) -> XlsxSheetOut`
 - `pub fn xlsx_write(sheets: Array) -> Result<String, Error>`
 
+Tipos (6) y métodos (7):
+
+- `pub struct XlsxCell`
+- `pub struct XlsxSheet`
+- `pub struct XlsxBook`
+- `pub struct XlsxReadOpts`
+- `pub struct XlsxOut`
+- `pub struct XlsxSheetOut`
+  - `fn row(&mut self, cells: Array)`
+  - `fn col_width(&mut self, col: int, width: float)`
+  - `fn merge(&mut self, range: String)`
+  - `fn freeze(&mut self, rows: int, cols: int)`
+  - `fn autofilter(&mut self, range: String)`
+  - `fn validate_list(&mut self, rango: String, valores: Array)`
+  - `fn validate_list_range(&mut self, rango: String, origen: String)`
+
 ### `std/image`
 
 `import "std/image"` — 19 funciones:
@@ -584,6 +645,13 @@
 - `pub fn image_thumbnail(bytes: String, max_w: int, max_h: int, quality: int) -> Result<String, Error>` — Miniatura en un paso: decodifica `bytes` (JPEG o PNG, con los topes de image_limits()) con la mayor reducción que deja al menos el doble del tamaño final, aplica la orientación EXIF, achica con Lanczos3 para que CAIGA en max_w x max_h conservando la proporción (nunca agranda), y codifica JPEG con la calidad dada (1-100; image_default_quality() es 80). Con alfa compone sobre blanco. La salida no lleva EXIF ni ubicación. Err(invalid) si la calidad o algún lado no son válidos o el archivo pasa los topes; Err(parse) si está dañado; Err(unsupported) para formatos que no se decodifican.
 - `pub fn image_thumbnails(bytes: String, sizes: Array, quality: int) -> Result<Array, Error>` — Varias miniaturas de UNA sola decodificación: `sizes` es un Array de pares [max_w, max_h] (cada uno con la semántica de image_thumbnail) y el resultado un Array de String (JPEG) en el mismo orden. La decodificación usa la reducción que sirve al tamaño más grande pedido; los demás se achican desde esa misma imagen. Ejemplo: image_thumbnails(foto, [[1200, 1200], [600, 600], [150, 150]], 80). Los mismos errores que image_thumbnail.
 - `pub fn image_strip_icc(img: Image) -> Image` — Quita el perfil ICC de la imagen (`icc` = ""), para que el JPEG codificado no lo lleve. Por omisión el codificador lo conserva (una foto en Display P3 sin su perfil se ve desteñida); quitarlo ahorra 0.5-3 KB por imagen cuando se sabe que el destino es sRGB.
+
+Tipos (4) y métodos (0):
+
+- `pub struct ImageInfo` — Lo que se sabe de una imagen sin decodificar sus píxeles. `format`: "jpeg" o "png". `channels`: canales del ARCHIVO (gris 1, gris+alfa 2, RGB 3, RGBA 4; una paleta cuenta 3). `orientation`: EXIF 1-8 (1 = sin girar; PNG siempre 1). `progressive`: JPEG progresivo (SOF2).
+- `pub struct ImageLimits` — Topes para archivos que llegan de afuera: bytes del archivo, píxeles totales (ancho x alto) y lado máximo. Se aplican con el encabezado, antes de reservar memoria.
+- `pub struct Image` — Imagen decodificada: `rows` es un Array de String, una fila por String con 1 byte por muestra (ancho x canales bytes), de arriba a abajo. `channels` es 1 (gris), 3 (RGB) o 4 (RGBA); el gris con alfa sale como RGBA. `icc` es el perfil de color ICC incrustado (bytes crudos, "" si no trae; se expone, no se convierte). `reduction` es 1, 2, 4 u 8: la reducción con que se decodificó (image_decode_scaled/min).
+- `pub struct ImagePng` — PNG leído sin decodificar sus píxeles: los datos del encabezado, la paleta (RGB crudo), el tRNS crudo y los IDAT concatenados (un stream zlib). `interlace` es 0 (sin entrelazar) o 1 (Adam7). Lo usa std/pdf para incrustar sin decodificar.
 
 ### `std/toml`
 
@@ -615,6 +683,10 @@
 - `pub fn new_doc(header_names: Array) -> CsvDoc` — Create an empty CsvDoc with given headers.
 - `pub fn add_row(doc: CsvDoc, row: Array)` — Add a row to an existing CsvDoc.
 
+Tipos (1) y métodos (0):
+
+- `pub struct CsvDoc` — CSV document: array of rows, each row is an Array of String fields.
+
 ### `std/base64`
 
 `import "std/base64"` — 4 funciones:
@@ -634,6 +706,17 @@
 - `pub fn pdf_render_strict() -> PdfRenderOpts` — Opciones estrictas (por defecto): lo no soportado da Err(unsupported) nombrando qué falta.
 - `pub fn pdf_render_best_effort() -> PdfRenderOpts` — Opciones best_effort: lo no soportado se saltea y doc.render_report lo devuelve en la lista `omitted`.
 
+Tipos (4) y métodos (4):
+
+- `pub struct PdfOpenLimits` — Topes que protegen de un PDF roto u hostil: tamaño del archivo, bytes descomprimidos por stream y por documento, anidamiento de objetos y de formularios, operadores por página, ppp y píxeles de la imagen. Superar cualquiera da Err(invalid) nombrando el límite.
+- `pub struct PdfDoc` — Un PDF abierto: bytes, tabla de objetos (xref), páginas y cachés. Se obtiene con pdf_open.
+  - `fn page_count(self) -> int` — Cantidad de páginas.
+  - `fn page_size(self, page: int) -> Result<Array, Error>` — Ancho y alto de la página (1-based) en puntos, ya con /Rotate y /CropBox aplicados: [ancho, alto]. Err(invalid) si la página no existe.
+  - `fn render(self, page: int, dpi: int, opts: PdfRenderOpts) -> Result<Image, Error>` — Dibuja la página (1-based) a `dpi` puntos por pulgada como Image RGB sobre fondo blanco. Estricto o best_effort según opts; en best_effort lo omitido se pierde (usar render_report para verlo).
+  - `fn render_report(self, page: int, dpi: int, opts: PdfRenderOpts) -> Result<PdfRendered, Error>` — Como render, y además devuelve la lista de lo omitido (en best_effort).
+- `pub struct PdfRenderOpts` — Opciones de dibujo: estricto (lo no soportado da Err) o best_effort (se saltea y se anota en la lista de omisiones).
+- `pub struct PdfRendered` — Resultado de render_report: la imagen y la lista de lo que se omitió (vacía en modo estricto, que falla en vez de omitir).
+
 ### `std/barcode`
 
 `import "std/barcode"` — 4 funciones:
@@ -642,6 +725,10 @@
 - `pub fn code128_widths(data: String) -> Result<Array, Error>` — Code 128: anchos alternados barra/espacio en módulos, empezando en barra, sin zona de silencio. Err(invalid) si vacío o byte fuera de ASCII 32-127.
 - `pub fn ean13_widths(digits: String) -> Result<Array, Error>` — EAN-13: 59 anchos (95 módulos) empezando en barra; 12 dígitos calcula el control, 13 lo valida. Err(invalid) si no.
 - `pub fn qr_matrix(data: String, ecc: QrEcc) -> Result<Array, Error>` — QR (versiones 1-10, modo y máscara automáticos): Array de filas de int 1 oscuro / 0 claro, lado 17+4V, sin zona de silencio. Err(invalid) si no entra.
+
+Tipos (1) y métodos (0):
+
+- `pub enum QrEcc`
 
 ### `std/zip`
 
@@ -660,6 +747,20 @@
 - `pub fn zip_read_opts() -> ZipReadOpts`
 - `pub fn zip_read(bytes: String, opts: ZipReadOpts) -> Result<ZipArchive, Error>`
 - `pub fn zip_writer() -> ZipWriter`
+
+Tipos (4) y métodos (7):
+
+- `pub struct ZipReadOpts`
+- `pub struct ZipEntry`
+- `pub struct ZipArchive`
+  - `fn names(self) -> Array`
+  - `fn has(self, name: String) -> bool`
+  - `fn entry(&mut self, name: String) -> Result<String, Error>`
+- `pub struct ZipWriter`
+  - `fn le16(self, v: int) -> String`
+  - `fn le32(self, v: int) -> String`
+  - `fn add(&mut self, name: String, data: String)`
+  - `fn finish(&mut self) -> String`
 
 ### `std/msgpack`
 
@@ -694,6 +795,23 @@
 - `pub fn pdf_text_width(s: String, font: PdfFont, size_pt: float) -> float` — Ancho en mm de `s` (UTF-8) con esa fuente y tamaño, sin kerning (igual que lo dibuja text): x = derecha - ancho alinea a la derecha. Lo que las fuentes estándar no tienen mide 0.
 - `pub fn pdf_text_supported(s: String) -> bool` — true si text() puede dibujar `s` tal cual: UTF-8 válido, sin controles, y todo dentro de WinAnsiEncoding (latín occidental). Para limpiar datos de usuario antes de armar el PDF.
 
+Tipos (3) y métodos (11):
+
+- `pub enum PdfPageSize` — Tamaño de página: carta (215.9 x 279.4 mm), A4 (210 x 297), media carta (139.7 x 215.9) o Custom (usa width_mm/height_mm, p. ej. el ticket de 80 mm).
+- `pub enum PdfFont` — Las 12 fuentes de texto estándar de PDF (Helvetica, Times y Courier en recta, negrita, cursiva y negrita cursiva; no se incrustan; cubren latín occidental con WinAnsiEncoding: tildes, ñ, ¿ ¡, €).
+- `pub struct Pdf`
+  - `fn add_page(&mut self, size: PdfPageSize, width_mm: float, height_mm: float)` — Cierra la página en curso y abre una nueva del tamaño dado; lo que se dibuja desde ahora va a la nueva.
+  - `fn text(&mut self, x: float, y: float, s: String, font: PdfFont, size_pt: float)` — Dibuja `s` (UTF-8, una línea) con la LÍNEA BASE en (x, y) mm desde arriba a la izquierda. Un carácter fuera de WinAnsiEncoding hace fallar bytes() con Err(invalid).
+  - `fn line(&mut self, x1: float, y1: float, x2: float, y2: float)` — Línea recta de (x1, y1) a (x2, y2) mm, trazo con el color y el grosor vigentes en la página (por omisión negro de 1 pt, el de PDF; ver line_width, gray y color).
+  - `fn rect(&mut self, x: float, y: float, w: float, h: float, filled: bool)` — Rectángulo con la esquina de arriba a la izquierda en (x, y) mm, w de ancho y h de alto; filled=true lo rellena con el color vigente (negro por omisión), false traza el borde con el grosor vigente (1 pt por omisión).
+  - `fn line_width(&mut self, mm: float)` — Grosor de los trazos que se dibujan después en esta página (line y el borde de rect), en mm: de 0 a 100. Cada página arranca con el grosor por omisión de PDF, 1 pt (0.353 mm). 0 es la línea más fina que el visor pueda dibujar.
+  - `fn gray(&mut self, nivel: float)` — Gris para trazo y relleno de lo que se dibuja después en esta página (y del texto): 0.0 negro, 1.0 blanco. Fuera de 0..1 hace fallar bytes() con Err(invalid). Cada página arranca en negro.
+  - `fn color(&mut self, r: int, g: int, b: int)` — Color RGB (0-255 por canal) para trazo y relleno de lo que se dibuja después en esta página (y del texto). Fuera de 0..255 hace fallar bytes() con Err(invalid). Cada página arranca en negro.
+  - `fn text_rotated(&mut self, x: float, y: float, s: String, font: PdfFont, size_pt: float, grados: float)` — Como text, pero girado `grados` en sentido contrario a las agujas del reloj alrededor de (x, y), que sigue siendo el inicio de la línea base: 90 sube por el margen izquierdo, 270 baja. Cualquier ángulo finito. El ancho (pdf_text_width) no cambia.
+  - `fn image_jpeg(&mut self, x: float, y: float, w_mm: float, h_mm: float, bytes: String) -> Result<int, Error>` — JPEG (bytes de read_file o include_bytes) en el rectángulo de esquina (x, y) mm, w x h mm; un lado en 0 se calcula con la proporción. Respeta la orientación EXIF. Err(invalid/parse) si PDF no lo puede leer (CMYK, 12 bits, sin pérdida). Devuelve el número de imagen.
+  - `fn image_png(&mut self, x: float, y: float, w_mm: float, h_mm: float, bytes: String) -> Result<int, Error>` — PNG (bytes de read_file o include_bytes) en el rectángulo de esquina (x, y) mm, w x h mm; un lado en 0 sale de la proporción. Gris, RGB y paleta van sin decodificar; con transparencia (alfa o tRNS) sale transparente. Err si está dañado (CRC, zlib) o entrelazado. Devuelve el número de imagen.
+  - `fn bytes(self) -> Result<String, Error>` — El archivo PDF entero (bytes, para write_file o smtp_attach). Err(invalid) con el primer problema anotado por text/line/rect/add_page.
+
 ### `std/compress`
 
 `import "std/compress"` — 10 funciones:
@@ -721,6 +839,14 @@
 - `pub fn xml_event_attr(ev: XmlEvent, name: String) -> String` — Valor del atributo `name` de un evento "open", o "" si no está.
 - `pub fn xml_child(node: XmlNode, name: String) -> Option<XmlNode>` — Primer hijo directo llamado `name`, o None.
 - `pub fn xml_escape(s: String) -> String` — Escapa `& < > " '` para escribir XML (texto o valor de atributo).
+
+Tipos (4) y métodos (1):
+
+- `pub struct XmlOpts` — Topes de seguridad: profundidad máxima de anidamiento y tamaño máximo (bytes) del texto de entrada. `keep_whitespace`: emitir TAMBIÉN el texto que es solo espacio en blanco (por omisión se descarta salvo con xml:space="preserve"). std/xlsx lo prende: en una hoja, `<t> </t>` es una celda con un espacio, escriba o no el programa el xml:space (openpyxl no lo escribe).
+- `pub struct XmlEvent` — Un evento del lector; ver la cabecera del módulo para los valores de `kind`.
+- `pub struct XmlNode` — Un elemento del árbol: `text` es la concatenación de su texto directo (sin el de los hijos).
+- `pub struct XmlReader` — Lector por eventos. Campos opacos: se crea con xml_reader y se avanza con next().
+  - `fn next(&mut self) -> XmlEvent` — Siguiente evento; ver la cabecera del módulo.
 
 ### Builtins globales (sin `import`)
 
@@ -843,6 +969,17 @@
 - `pub fn imap_logout(c: ImapConn) -> int`
 - `pub fn imap_close(c: ImapConn) -> int`
 
+Tipos (8) y métodos (0):
+
+- `pub struct ImapOpts`
+- `pub struct ImapVal`
+- `pub struct ImapResp`
+- `pub struct ImapReply`
+- `pub struct ImapConn`
+- `pub struct ImapMailbox`
+- `pub struct ImapMessage`
+- `pub struct ImapFetch`
+
 ### `std/mime`
 
 `import "std/mime"` — 16 funciones:
@@ -863,6 +1000,15 @@
 - `pub fn mime_safe_filename(name: String) -> String`
 - `pub fn mime_parse(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
 - `pub fn mime_parse_head(raw: String, lim: MimeLimits) -> Result<MimeMessage, Error>`
+
+Tipos (6) y métodos (0):
+
+- `pub struct MimeLimits`
+- `pub struct MimeAddress`
+- `pub struct MimeValue`
+- `pub struct MimePart`
+- `pub struct MimeBounce`
+- `pub struct MimeMessage`
 
 ### `std/dns`
 
@@ -952,7 +1098,7 @@
 - `tls_read_line` (1 arg) · *no existe en wasm32-wasi*
 - `tls_read_nonblock` (2 args) · *no existe en wasm32-wasi*
 - `tls_read_partial` (2 args) · *no existe en wasm32-wasi*
-- `tls_server_add_cert` (3 args) · *no existe en wasm32-wasi*
+- `tls_server_add_cert` (3 args) — registers an extra certificate chosen by SNI (up to 64). · *no existe en wasm32-wasi*
 - `tls_server_init` (2 args) — , `tls_server_add_cert`, `tls_accept`, `tls_read_line`, `tls_write_conn`, `tls_close_conn` · *no existe en wasm32-wasi*
 - `tls_wait_readable` (2 args) · *no existe en wasm32-wasi*
 - `tls_write` (2 args) · *no existe en wasm32-wasi*
@@ -1012,6 +1158,14 @@
 - `pub fn counter_dec(c: AtomicCounter) -> int` — Atomically decrement and return new value.
 - `pub fn counter_get(c: AtomicCounter) -> int` — Get current value atomically.
 - `pub fn counter_set(c: AtomicCounter, val: int)` — Set value atomically.
+
+Tipos (5) y métodos (0):
+
+- `pub struct WaitGroup` — WaitGroup allows waiting for a collection of threads to finish.
+- `pub struct Semaphore` — Semaphore: controls access to a shared resource with a count limit.
+- `pub struct Once` — Once: ensures a function is executed exactly once, even from multiple threads.
+- `pub struct MutexGuard` — MutexGuard: high-level mutex wrapper.
+- `pub struct AtomicCounter` — AtomicCounter: thread-safe counter using mutex.
 
 ### Builtins globales (sin `import`)
 
@@ -1097,6 +1251,13 @@
 - `pub fn oauth2_device_code(o: OAuth2Opts) -> Result<OAuth2DeviceCode, Error>`
 - `pub fn oauth2_device_poll(o: OAuth2Opts, d: OAuth2DeviceCode) -> Result<OAuth2Token, Error>`
 - `pub fn oauth2_device_wait(o: OAuth2Opts, d: OAuth2DeviceCode) -> Result<OAuth2Token, Error>`
+
+Tipos (4) y métodos (0):
+
+- `pub struct OAuth2Opts`
+- `pub struct OAuth2Pkce`
+- `pub struct OAuth2Token`
+- `pub struct OAuth2DeviceCode`
 
 ### `std/tls`
 
@@ -1194,6 +1355,10 @@
 - `pub fn try_time_utc_offset(epoch: int) -> Result<int, Error>` — Segundos al este de UTC vigentes en ese instante (varía con el horario de verano). Err si la plataforma no lo resuelve — nunca devuelve 0, que sería afirmar «es UTC» sin saberlo.
 - `pub fn try_time_breakdown_local(epoch: int) -> Result<DateTime, Error>` — Vista descompuesta en la hora LOCAL del proceso. Err si no se puede resolver el huso. Los campos son hora local; el instante sigue siendo el epoch que se pasó.
 
+Tipos (1) y métodos (0):
+
+- `pub struct DateTime` — Vista descompuesta de un instante. Derivada, no canónica: se obtiene con `time_breakdown(epoch)` y se descarta. Lo que se guarda y se ordena es el epoch.
+
 ### Builtins globales (sin `import`)
 
 - `datetime_day` (1 arg)
@@ -1279,6 +1444,10 @@
 - `pub fn checked_div(a: int, b: int) -> Option<int>`
 - `pub fn mul_div_round(a: int, b: int, c: int, mode: RoundMode) -> int`
 
+Tipos (1) y métodos (0):
+
+- `pub enum RoundMode`
+
 ### `std/math_ext`
 
 `import "std/math_ext"` — 19 funciones:
@@ -1313,6 +1482,15 @@
 - `pub fn expr_eval_micros(e: Expr, vars: ExprVars) -> Result<int, Error>` — Evalúa la fórmula y devuelve el resultado como ENTERO de micros (1.5 = 1500000): el valor exacto de punto fijo. Err con posición si falta una variable, hay división por cero o el resultado se sale del rango.
 - `pub fn expr_eval(e: Expr, vars: ExprVars) -> Result<float, Error>` — Evalúa y devuelve un float (convertido del valor exacto). Cómodo para mostrar o comparar; para plata usar expr_eval_dec, que no pasa por float.
 - `pub fn expr_eval_dec(e: Expr, vars: ExprVars, decimals: int) -> Result<String, Error>` — Evalúa y devuelve el resultado como TEXTO decimal exacto con `decimals` decimales (0 a 6, redondeo mitad hacia afuera del cero): "974.93". Es la salida pensada para plata; `decimals` fuera de 0..6 se ajusta al rango.
+
+Tipos (2) y métodos (4):
+
+- `pub struct Expr` — Una fórmula ya compilada. Se arma con `expr_parse` y se evalúa cuantas veces se quiera (una nómina evalúa la misma fórmula por empleado) con `expr_eval*`. Los campos son detalle interno: no leerlos.
+- `pub struct ExprVars` — Valores de las variables para evaluar: nombre -> decimal de punto fijo.
+  - `fn set_dec(&mut self, name: String, text: String) -> bool` — Variable con un decimal EXACTO en texto ("43.33", "-5", "+0.5"). Devuelve false (y no guarda nada) si no es un decimal válido de hasta 6 decimales y rango.
+  - `fn set_int(&mut self, name: String, n: int) -> bool` — Variable entera.
+  - `fn set(&mut self, name: String, v: float) -> bool` — Variable desde un float, redondeado al 6.º decimal (mitad hacia afuera del cero). false si es NaN o fuera de rango. Para plata preferir set_dec (el float ya llega con su error de representación).
+  - `fn has(&self, name: String) -> bool` — ¿Está definida la variable?
 
 ### Builtins globales (sin `import`)
 
@@ -1456,6 +1634,15 @@
 
 - `pub fn stack_new() -> Stack`
 
+Tipos (1) y métodos (5):
+
+- `pub struct Stack`
+  - `fn push(&mut self, x: int)`
+  - `fn pop(&mut self) -> int`
+  - `fn peek(self) -> int`
+  - `fn len(self) -> int`
+  - `fn is_empty(self) -> bool`
+
 ### `std/collections`
 
 `import "std/collections"` — 10 funciones:
@@ -1528,6 +1715,10 @@
 
 - `pub fn arena_stats() -> ArenaStats`
 
+Tipos (1) y métodos (0):
+
+- `pub struct ArenaStats`
+
 ### `std/owned`
 
 `import "std/owned"` — 14 funciones:
@@ -1565,6 +1756,11 @@
 - `pub fn llm_generate(l: &LLM, prompt: String, max_tokens: int) -> String` — Genera texto (greedy). Presta el handle — no lo consume.
 - `pub fn llm_generate_stream(l: &LLM, prompt: String, max_tokens: int, cb: *i8) -> String` — Genera con STREAMING: cb = c_fn_ptr(mi_cb) donde `fn mi_cb(piece: *i8)` recibe cada token generado (convertir con string_from_cstr adentro). Devuelve además el texto completo.
 
+Tipos (1) y métodos (1):
+
+- `pub struct LLM`
+  - `fn drop(self)`
+
 ## Tooling & CLI
 
 ### `std/semver`
@@ -1577,6 +1773,10 @@
 - `pub fn satisfies(version: String, constraint: String) -> bool` — Check if version string satisfies a constraint. Supported constraints: "=1.0.0", ">=1.0.0", ">1.0.0", "<=1.0.0", "<1.0.0", "*", "^1.0.0", "~1.0.0"
 - `pub fn to_string(v: Version) -> String` — Format a Version to string.
 - `pub fn resolve(versions: Array, constraint: String) -> String` — Find the best matching version from a list given a constraint. Returns "" if no match. Versions should be sorted ascending.
+
+Tipos (1) y métodos (0):
+
+- `pub struct Version`
 
 ### `std/log`
 
@@ -1602,6 +1802,12 @@
 - `pub fn get_positional(parsed: ParsedArgs) -> Array` — Get positional arguments (non-flag args).
 - `pub fn has_error(parsed: ParsedArgs) -> bool` — Check if parsing had an error.
 - `pub fn print_help(parser: ArgParser)` — Print usage/help text.
+
+Tipos (3) y métodos (0):
+
+- `pub struct ArgDef` — An argument definition (flag or option with value).
+- `pub struct ParsedArgs` — Result of parsing command-line arguments.
+- `pub struct ArgParser` — Argument parser configuration.
 
 ### `std/proptest`
 
