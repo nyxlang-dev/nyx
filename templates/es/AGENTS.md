@@ -69,7 +69,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,mixed-primitive-operators,string-escapes -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes -->
 
 1. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
 2. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
@@ -123,8 +123,9 @@ nombre que dice CUÁL reloj es.**
 30. **Los nombres de `struct` y `enum` son GLOBALES al programa, aunque no sean `pub`: el mismo nombre declarado en dos módulos es NYX1040.**
 31. **`for c in s` sobre un `String` es error (NYX1038): recorre por índice —bytes con `for i in 0..s.length() { s.substring(i, i + 1) }`, caracteres UTF-8 con `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
 32. **Un elemento de Array que el compilador sabe `String` no entra en una variable `int`/`bool` (NYX2019): conviértelo — `let n: int = string_to_int(fila[0])`.**
-33. **Los operadores entre primitivos de clases distintas son NYX1010**
-34. **Escapes de String: `\xNN` y `\u{…}` existen desde 0.36.2; cualquier otro escape desconocido es
+33. **`http_serve`/`http_serve_mt` escuchan en TODAS las interfaces (`0.0.0.0`); detrás de un proxy, usar `http_serve_en("127.0.0.1", puerto, handler)`.**
+34. **Los operadores entre primitivos de clases distintas son NYX1010**
+35. **Escapes de String: `\xNN` y `\u{…}` existen desde 0.36.2; cualquier otro escape desconocido es
 NYX1045.**
 
 <!-- /gen:gotchas -->

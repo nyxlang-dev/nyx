@@ -1539,8 +1539,19 @@ pub fn http_cors_response(origin: String) -> String {
 // el runtime además lo grita por stderr desde v0.24.4). CHEQUEA el
 // retorno: descartarlo deja el programa "corriendo" sin servidor.
 //   if http_serve(8080, handler) < 0 { return 1 }
+// Escucha en TODAS las interfaces, a diferencia de serve_app (std/serve), que
+// por defecto usa 127.0.0.1. Detrás de un proxy, usar http_serve_en con
+// "127.0.0.1": así el puerto no queda expuesto sin pasar por el proxy.
 pub fn http_serve(port: int, handler: Fn(Array) -> String) -> int {
-    let server: int = tcp_listen("0.0.0.0", port)
+    return http_serve_en("0.0.0.0", port, handler)
+}
+
+// Igual que http_serve, con la dirección de bind explícita (2026-10-21: el
+// playground de producción quedaba en 0.0.0.0:8081 aunque lo sirve el gateway).
+// Misma semántica de `host` que tcp_listen: "" o "0.0.0.0" = todas las
+// interfaces; una IP numérica (ej. "127.0.0.1") liga SOLO esa interfaz.
+pub fn http_serve_en(host: String, port: int, handler: Fn(Array) -> String) -> int {
+    let server: int = tcp_listen(host, port)
     if server < 0 {
         return -1
     }
@@ -1604,9 +1615,14 @@ fn __http_mt_worker() -> int {
 // Variante multi-thread de http_serve. Mismo contrato de retorno: NO
 // retorna en éxito; -1 si el bind falla (ruidoso por stderr desde v0.24.4).
 pub fn http_serve_mt(port: int, num_workers: int, handler: Fn) -> int {
+    return http_serve_mt_en("0.0.0.0", port, num_workers, handler)
+}
+
+// http_serve_mt con la dirección de bind explícita (ver http_serve_en).
+pub fn http_serve_mt_en(host: String, port: int, num_workers: int, handler: Fn) -> int {
     __http_mt_ch = channel_new(512)
     __http_mt_handler = handler
-    let server: int = tcp_listen("0.0.0.0", port)
+    let server: int = tcp_listen(host, port)
     if server < 0 { return -1 }
     var i: int = 0
     while i < num_workers {

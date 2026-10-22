@@ -11,6 +11,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Agregado
 
+- **`std/http`: `http_serve_en(host, port, handler)` y `http_serve_mt_en(host, port, workers, handler)`**
+  eligen la dirección de bind; `http_serve`/`http_serve_mt` siguen en `0.0.0.0` por compatibilidad
+  (gotcha `http-serve-all-interfaces`). El playground pasa a `127.0.0.1:8081`: en producción quedaba
+  abierto directo aunque lo sirve el gateway (orden del servidor, 2026-10-21). Test
+  `test-505-http-serve-en` (liga `127.0.0.2` y mide que `127.0.0.1` no conecte).
 - **SNI con comodín en el servidor TLS**: `tls_server_add_cert("*.dominio", cert, key)` cubre una
   etiqueta (`a.dominio`, no `dominio` ni `a.b.dominio`, RFC 6125), los nombres exactos ganan sobre el
   comodín sin importar el orden, la comparación ya no distingue mayúsculas y el tope sube de 16 a 64

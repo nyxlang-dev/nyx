@@ -1593,7 +1593,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,mixed-primitive-operators,string-escapes -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1793,7 +1793,9 @@ two are compile errors naming the function and the variable; the `let` into an i
 0.35.x and is an error since 0.36.0. Untyped elements (an Array returned by a
 function) keep their run-time check, NYX2014; `float` keeps NYX2008. [test: compiler/errors/fixtures/escalar-de-string/let-bool] [test: compiler/errors/fixtures/escalar-de-string/let-int] [test: compiler/language/test-456-escalar-de-string-valido]
 
-26. **Operators between primitives of different kinds are NYX1010** (since 0.36.2). Only these exist:
+26. **`http_serve`/`http_serve_mt` listen on ALL interfaces (`0.0.0.0`); behind a proxy use `http_serve_en("127.0.0.1", port, handler)`.** Unlike `serve_app` (`std/serve`), whose default is `127.0.0.1`, the low-level `std/http` servers bind every interface, so a port meant to be reached only through a reverse proxy is also open directly, without TLS or rate limiting, unless a firewall blocks it. Nothing fails: the program works, the exposure is silent. `http_serve_en(host, port, handler)` and `http_serve_mt_en(host, port, workers, handler)` (since 0.36.2) take the address explicitly, with the same `host` semantics as `tcp_listen` (`""`/`"0.0.0.0"` = all, a numeric IP = only that one). The defaults of `http_serve`/`http_serve_mt` stay `0.0.0.0` for compatibility. [test: compiler/stdlib-suite/test-505-http-serve-en]
+
+27. **Operators between primitives of different kinds are NYX1010** (since 0.36.2). Only these exist:
 numbers with numbers (any operator), `String + x` (concatenation: int, float, String, bool), `==`/`!=`
 between two Strings or two bools, and `<` `>` `<=` `>=` between two Strings. Everything else used to
 compile and either died with SIGSEGV when the line ran (`5 + "a"`, `5 == "5"`, `"a" < 5`) or produced
@@ -1802,7 +1804,7 @@ now; the first is a `warning [NYX1010]` in 0.36.x and an error in 0.37.0. To con
 String first or convert (`int_to_string(n) + s`); to compare, convert one side (`string_to_int_or`).
 Operands of unknown type, structs, enums and char are not affected. [test: compiler/errors/test-nyx1010-int-por-string-mixto]
 
-27. **String escapes: `\xNN` and `\u{…}` exist since 0.36.2; any other unknown escape is NYX1045.** Valid:
+28. **String escapes: `\xNN` and `\u{…}` exist since 0.36.2; any other unknown escape is NYX1045.** Valid:
 `\n \t \r \0 \\ \" \' \$`, `\xNN` (one byte, exactly two hex digits: `"\x1F"`, `"\x1b[0m"`) and
 `\u{H…}` (a codepoint in UTF-8: `"\u{e9}"`, `"\u{1F600}"`). `\$` writes `${` without interpolating.
 Before 0.36.2 every other escape silently dropped the backslash: `"\x41"` was `x41` and `"\u{0}"` was

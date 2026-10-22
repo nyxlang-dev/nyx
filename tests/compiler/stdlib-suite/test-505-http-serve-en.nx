@@ -1,0 +1,65 @@
+// test-505 — std/http: http_serve_en / http_serve_mt_en escuchan SOLO en la
+// dirección pedida (2026-10-21).
+//
+// http_serve ligaba 0.0.0.0 sin opción, y el playground de producción quedaba
+// abierto en :8081 aunque lo sirve el gateway. Lo que se puede romper sin que
+// nada falle a la vista: que la variante con dirección ignore `host` y siga en
+// 0.0.0.0 — el pedido por la dirección correcta anda igual. Por eso se liga a
+// 127.0.0.2 y se mide que 127.0.0.1 (otra dirección de loopback) NO conecte.
+
+import "std/http"
+import "std/net"
+
+let PUERTO: int = 18461
+let PUERTO_MT: int = 18462
+
+fn hola(req: Array) -> String {
+    return http_response(200, "hola")
+}
+
+fn servir() -> int {
+    let rc: int = http_serve_en("127.0.0.2", PUERTO, hola)
+    return rc
+}
+
+fn servir_mt() -> int {
+    let rc: int = http_serve_mt_en("127.0.0.2", PUERTO_MT, 2, hola)
+    return rc
+}
+
+// Conecta (con reintentos mientras el hilo arranca) y devuelve la respuesta.
+fn pedir(ip: String, puerto: int) -> String {
+    var fd: int = 0 - 1
+    var intentos: int = 0
+    while fd < 0 and intentos < 50 {
+        fd = tcp_connect(ip, puerto)
+        if fd < 0 { sleep(20) }
+        intentos = intentos + 1
+    }
+    if fd < 0 { return "" }
+    tcp_set_timeout(fd, 2)
+    let w: int = tcp_write(fd, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    var out: String = ""
+    var guard: int = 0
+    while guard < 50 {
+        let d: String = tcp_read_partial(fd, 4096)
+        if d.length() == 0 { break }
+        out = out + d
+        guard = guard + 1
+    }
+    tcp_close(fd)
+    return out
+}
+
+fn main() {
+    thread_spawn(servir)
+    thread_spawn(servir_mt)
+    let r1: String = pedir("127.0.0.2", PUERTO)
+    assert(r1.indexOf("hola") >= 0, "http_serve_en atiende en la dirección pedida")
+    let r2: String = pedir("127.0.0.2", PUERTO_MT)
+    assert(r2.indexOf("hola") >= 0, "http_serve_mt_en atiende en la dirección pedida")
+    // Otra dirección de loopback: si el bind hubiera sido 0.0.0.0, conectaría.
+    assert(tcp_connect("127.0.0.1", PUERTO) < 0, "http_serve_en no escucha en otras direcciones")
+    assert(tcp_connect("127.0.0.1", PUERTO_MT) < 0, "http_serve_mt_en no escucha en otras direcciones")
+    print("test-505: OK")
+}

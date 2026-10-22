@@ -185,7 +185,7 @@ builtin	tls_read	2	Red		no-wasm
 builtin	tls_read_line	1	Red		no-wasm
 builtin	tls_read_nonblock	2	Red		no-wasm
 builtin	tls_read_partial	2	Red		no-wasm
-builtin	tls_server_add_cert	3	Red		no-wasm
+builtin	tls_server_add_cert	3	Red	registers an extra certificate chosen by SNI (up to 64).	no-wasm
 builtin	tls_server_init	2	Red	, `tls_server_add_cert`, `tls_accept`, `tls_read_line`, `tls_write_conn`, `tls_close_conn`	no-wasm
 builtin	tls_wait_readable	2	Red		no-wasm
 builtin	tls_write	2	Red		no-wasm

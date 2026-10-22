@@ -3634,6 +3634,7 @@ Multiple `defer` blocks se ejecutan en LIFO order.
 |---------|-------------|
 | `http_response(status, body)` | Construye HTTP response string |
 | `http_serve(port, handler)` | Inicia servidor HTTP (blocking) |
+| `http_serve_en(host, port, handler)` | Igual, ligado solo a `host` (`"127.0.0.1"` detrás de un proxy; `http_serve` liga `0.0.0.0`) — también `http_serve_mt_en(host, port, workers, handler)` (0.36.2) |
 | `http_get(url)` | HTTP GET request |
 | `http_post(url, body)` | HTTP POST request |
 | `http_request(method, url, body)` | HTTP request generico |

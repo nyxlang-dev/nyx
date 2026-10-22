@@ -41,6 +41,7 @@ GOTCHA_IDS=(
   "type-names-are-global"
   "for-in-string-rejected"
   "string-element-into-scalar-rejected"
+  "http-serve-all-interfaces"
   "mixed-primitive-operators"
   "string-escapes"
   "fork-gc-child-exec"
@@ -124,6 +125,7 @@ ANCLAS=(
   "NYX1040|type-names-are-global"
   "NYX1038|for-in-string-rejected"
   "NYX2019|string-element-into-scalar-rejected"
+  "http_serve_en|http-serve-all-interfaces"
   "NYX1010|mixed-primitive-operators"
   "NYX1045|string-escapes"
 )

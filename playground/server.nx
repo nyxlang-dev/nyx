@@ -184,5 +184,9 @@ fn main() {
     print("Listening on http://localhost:" + int_to_string(PORT))
     print("Press Ctrl+C to stop")
     print("")
-    http_serve(PORT, playground_handler)
+    // Solo localhost: en producción lo sirve el gateway (/playground), y en
+    // desarrollo se abre en http://localhost:8081.
+    if http_serve_en("127.0.0.1", PORT, playground_handler) < 0 {
+        print("ERROR: no se pudo escuchar en 127.0.0.1:" + int_to_string(PORT))
+    }
 }
