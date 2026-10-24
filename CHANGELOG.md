@@ -9,6 +9,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Corregido
+- **NYX1046**: un patrón de enum (`Result.Ok(v)`, `Option.None`) en un `match` cuyo valor es primitivo
+  (`int`, `float`, `bool`, `String`) es error. Antes pasaba `nyx check` y clang fallaba con IR inválido
+  o, con un String, compilaba y no entraba a ningún brazo (fricción de nyxerp con
+  `match string_to_int(s)`, que devuelve `int`). +2 tests de error.
+
+### Agregado
+- **`sse_close_room(room) -> int`** en `std/serve`: cierra solo los canales de un room; el resto sigue y
+  el room se puede volver a abrir. `sse_drain_close` no servía: deja el registro en drenaje y ninguna
+  apertura posterior se registra (fricción de nyxerp). +5 checks en el smoke de serve.
+- **`std/postgres` toma la clave como libpq** cuando la cadena no trae `password=`: `PGPASSWORD`, después
+  `passfile=`, `PGPASSFILE` o `~/.pgpass` (comodines `*`, escapes `\:` y `\\`; un archivo legible por
+  otros se ignora). Expuesta `pg_pgpass_buscar` (fricción de nyxerp). +1 test (`506`).
+
 ## [0.37.0] — 2026-10-22
 
 > **MINOR**: dos avisos de 0.36.x pasan a error, como anunciaban (regla 7 de `docs/VERSIONING.md`):

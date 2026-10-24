@@ -1,0 +1,9 @@
+// NYX1046: un patrón de enum sobre un String compilaba y en runtime no entraba
+// a ningún brazo; ahora es error.
+fn main() {
+    let x: String = "hola"
+    match x {
+        Option.Some(v) => { print("some") }
+        Option.None => { print("none") }
+    }
+}

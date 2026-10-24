@@ -37,6 +37,8 @@ TESTS=(
   "tests/compiler/errors/test-nyx1041-lambda-captura-de-bloque.nx|a closure uses 'q', a block variable it cannot capture: its name is declared 2 times in the function"
   "tests/compiler/errors/test-nyx1044-captura-nombre-repetido.nx|a closure uses 'z', a block variable it cannot capture: its name is declared 2 times in the function"
   "tests/compiler/errors/test-nyx1044-captura-variable-de-for.nx|a closure uses 'x', a block variable it cannot capture: it is not a"
+  "tests/compiler/errors/test-nyx1046-match-result-sobre-int.nx|belongs to an enum, but the match subject is int — the function returns int"
+  "tests/compiler/errors/test-nyx1046-match-option-sobre-string.nx|belongs to an enum, but the match subject is String"
   "tests/compiler/errors/test-m08-return-mismatch.nx|return type mismatch in 'pick': expected int, got String"
   "tests/compiler/errors/test-m08-param-unknown-type.nx|unknown type 'Str'"
   "tests/compiler/errors/test-m08-logical-non-bool.nx|left operand of '&&' must be bool, got int"

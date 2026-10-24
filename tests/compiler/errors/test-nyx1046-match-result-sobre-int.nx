@@ -1,0 +1,9 @@
+// NYX1046: string_to_int devuelve int, no Result (fricción de nyxerp, 2026-10-22).
+// Antes pasaba el chequeo y clang fallaba con IR inválido.
+fn main() {
+    let n = match string_to_int("42") {
+        Result.Ok(v) => v,
+        Result.Err(_) => 0
+    }
+    print(n)
+}

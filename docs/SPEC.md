@@ -927,6 +927,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1043 | `defer` inside an `async fn`: the task does not go through the cleanup section, so it would never run (it used to be dropped silently). Do the cleanup explicitly before each `return`, or move the work into a non-async fn the task calls |
 | NYX1044 | a closure (lambda or named `fn`) uses a BLOCK variable it cannot capture: its name is declared more than once in the function (shadowing another, or in a sibling block), or it is not a `let`/`var` (a `for` variable, a `match` binding). Closures capture by name, so the capture would be ambiguous. Rename it, or copy it into a `let` with its own name right before the closure |
 | NYX1045 | invalid string or char escape. A malformed `\xNN` (not two hex digits) or `\u{…}` (no braces, empty, more than 6 digits, above `10FFFF`, a surrogate, or above `7F` in a `char`) is a lexer error with line and column. Any other unknown escape (`\q`, `\e`) is an error since 0.37.0 (a warning in 0.36.x): it used to compile dropping the backslash |
+| NYX1046 | an enum pattern (`Result.Ok(v)`, `Option.None`) in a `match` whose subject is a primitive (`int`, `float`, `bool`, `String`) — with a number or a bool it reached codegen and clang failed with invalid IR; with a String it compiled and no arm ever matched. The usual cause is a builtin that aborts instead of returning `Result` (`string_to_int`): use its `try_`/`_or` sibling, e.g. `string_to_int_or(s, 0)` (0.37.1) |
 | NYX1033 | `include_bytes` with a path that is not a String literal — the file is read when COMPILING, so a variable or an interpolation cannot be known |
 | NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
@@ -4388,6 +4389,9 @@ Sin `libpq` y sin ninguna otra dependencia externa (v0.31.0).
 ```
 // Conexion (cadena con el formato de libpq) y cierre
 try_pg_connect(conninfo) -> Result<PgConn, Error>
+// Sin `password=` en la cadena, la clave sale de PGPASSWORD o del archivo de claves
+// (`passfile=`, PGPASSFILE o ~/.pgpass), como libpq; un archivo legible por otros se ignora (0.37.1)
+pg_pgpass_buscar(ruta, host, port, dbname, user) -> String   // "" si no hay línea
 try_pg_close(conn)
 
 // Consultas: las filas son Array de Array de String (formato text del protocolo)
@@ -4730,7 +4734,8 @@ let n: int = sse_broadcast("inventario", "stock", "{\"sku\":\"A-1\"}")
 | `sse_open(req, room) -> Response` | Response marcada: al final del pipeline el worker escribe la cabecera SSE, registra el fd en `room` y suelta la conexión (el canal no ocupa un worker). Con el tope alcanzado devuelve 503 |
 | `sse_broadcast(room, evento, datos) -> int` | Difunde un evento; devuelve a cuántos clientes se les escribió el frame completo. Un `evento` con `\r` o `\n` se rechaza (0) |
 | `sse_count() -> int` / `sse_count_room(room) -> int` | Canales abiertos, en total o en un room |
-| `sse_drain_close() -> int` | Cierra todos los canales; `serve_app` lo llama en el drain de SIGTERM |
+| `sse_close_room(room) -> int` | Cierra solo los canales de ese room (los demás siguen); el room se puede volver a abrir. Devuelve cuántos cerró (0.37.1) |
+| `sse_drain_close() -> int` | Cierra todos los canales y deja el registro en drenaje (ninguna apertura posterior se registra); `serve_app` lo llama en el drain de SIGTERM. Para cortar un solo room, `sse_close_room` |
 
 Conducta:
 - **Cabecera**: `200 OK`, `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache`,

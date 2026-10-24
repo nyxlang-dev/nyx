@@ -1287,7 +1287,8 @@ mensaje.
 ```nyx
 import "std/postgres"
 
-// La cadena tiene el formato de libpq.
+// La cadena tiene el formato de libpq. Sin password=, la clave sale de PGPASSWORD,
+// passfile= / PGPASSFILE / ~/.pgpass (solo si es 0600, como libpq).
 match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
     Result.Err(e) => { print("no conecta: " + e.msg) }
     Result.Ok(conn) => {
@@ -2575,6 +2576,11 @@ fn main() -> int {
     gets a normal **503**. The hard ceiling is 4096 fds for the whole server
     (`runtime/net.c` indexes its per-connection buffer by fd; a connection on
     fd ≥ 4096 is closed without a response).
+  - Close ONE room: `sse_close_room(room) -> int` (how many it closed); other
+    rooms stay open and the room can be reopened. Use it when the source a
+    room relays ends, so the browser reconnects. NOT `sse_drain_close()`: it
+    closes every room AND leaves the registry draining — no later `sse_open`
+    registers until the process restarts.
   - SIGTERM drain: `sse_drain_close()` runs next to `ws_drain_close()`,
     before shutdown hooks — clients see the stream end.
   - Not in phase 1: `id:`, `retry:`, replay from `Last-Event-ID` (the header

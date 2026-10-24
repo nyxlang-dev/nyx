@@ -2429,6 +2429,46 @@ pub fn sse_drain_close() -> int {
     return fds.length()
 }
 
+// Cierra los canales de UN room y deja el resto abierto (fricción de nyxerp,
+// 2026-10-22): un proxy que retransmite un origen por room necesita cortar
+// solo ese canal cuando el origen cierra, para que el navegador reconecte.
+// sse_drain_close no sirve para eso: cierra todos los rooms y además deja el
+// registro en drenaje, así que ninguna apertura posterior se registra. Mismo
+// cierre que el drain (comentario final, timeout de 1 s, close fuera del
+// lock), sin tocar __sse_draining. Devuelve cuántos canales cerró.
+pub fn sse_close_room(room: String) -> int {
+    __sse_init_registry()
+    mutex_lock(__sse_mu)
+    var cerrar: Array = []
+    var nf: Array = []
+    var nr: Array = []
+    var i: int = 0
+    while i < __sse_fds.length() {
+        let fd: int = __sse_fds[i]
+        let r: String = __sse_rooms[i]
+        if r == room {
+            cerrar.push(fd)
+        } else {
+            nf.push(fd)
+            nr.push(r)
+        }
+        i = i + 1
+    }
+    __sse_fds = nf
+    __sse_rooms = nr
+    mutex_unlock(__sse_mu)
+
+    var j: int = 0
+    while j < cerrar.length() {
+        let fd: int = cerrar[j]
+        tcp_set_timeout(fd, 1)
+        tcp_write(fd, ": cierre\n\n")
+        tcp_close(fd)
+        j = j + 1
+    }
+    return cerrar.length()
+}
+
 // El worker le entrega el fd de un canal SSE ya aprobado por el pipeline.
 // Devuelve 1 si el registro tomó posesión del fd (el worker no lo toca más) o
 // 0 si no se pudo abrir (el worker lo cierra).

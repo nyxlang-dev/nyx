@@ -1,0 +1,41 @@
+// `pg_pgpass_buscar`: la clave de PostgreSQL desde un archivo estilo ~/.pgpass.
+//
+// POR QUÉ EXISTE (fricción de nyxerp, 2026-10-22, IDEA)
+//
+// psql, pg_dump y los guiones de respaldo toman la clave de ~/.pgpass; std/postgres
+// la exigía en la cadena, así que la clave vivía escrita en cada archivo de
+// configuración. Ahora try_pg_connect, si la cadena no trae `password=`, la busca
+// como libpq: PGPASSWORD, después `passfile=` / PGPASSFILE / ~/.pgpass. Este test
+// ejerce la búsqueda (pura salvo por el archivo): comodines, escapes, primera
+// línea que coincide, y que un archivo legible por otros se ignora.
+//
+// Expected exit: 0
+
+import "std/postgres"
+
+fn main() -> int {
+    let ruta: String = "/tmp/nyx-test-506-pgpass-" + int_to_string(getpid())
+    var t: String = "# comentario: se salta\n"
+    t = t + "otrohost:5432:*:admin:no-es-esta\n"
+    t = t + "127.0.0.1:5432:postgres:admin:primera\n"
+    t = t + "127.0.0.1:5432:*:admin:segunda\n"
+    t = t + "*:*:*:lector:comodin\n"
+    t = t + "127.0.0.1:5433:app:raro\\:user:con\\\\barra:y:dos-puntos\r\n"
+    write_file(ruta, t)
+
+    // 0644 (lo que deja write_file): legible por otros → se ignora, como libpq.
+    exec("chmod 644 " + ruta)
+    assert(pg_pgpass_buscar(ruta, "127.0.0.1", "5432", "postgres", "admin") == "", "0644 se ignora")
+
+    exec("chmod 600 " + ruta)
+    assert(pg_pgpass_buscar(ruta, "127.0.0.1", "5432", "postgres", "admin") == "primera", "gana la primera que coincide")
+    assert(pg_pgpass_buscar(ruta, "127.0.0.1", "5432", "ventas", "admin") == "segunda", "comodin en la base")
+    assert(pg_pgpass_buscar(ruta, "10.0.0.9", "6000", "x", "lector") == "comodin", "comodin en todo")
+    assert(pg_pgpass_buscar(ruta, "127.0.0.1", "5433", "app", "raro:user") == "con\\barra:y:dos-puntos", "escapes y dos puntos en la clave")
+    assert(pg_pgpass_buscar(ruta, "127.0.0.1", "5432", "postgres", "nadie") == "", "sin coincidencia")
+    assert(pg_pgpass_buscar(ruta + "-no-existe", "127.0.0.1", "5432", "postgres", "admin") == "", "archivo inexistente")
+
+    exec("rm -f " + ruta)
+    println("OK test-506 pg_pgpass_buscar")
+    return 0
+}
