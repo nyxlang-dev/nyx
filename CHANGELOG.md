@@ -9,6 +9,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.37.1] — 2026-10-24
+
+> **PATCH**: los tres reportes de fricción de nyxerp del 2026-10-22.
+
 ### Corregido
 - **NYX1046**: un patrón de enum (`Result.Ok(v)`, `Option.None`) en un `match` cuyo valor es primitivo
   (`int`, `float`, `bool`, `String`) es error. Antes pasaba `nyx check` y clang fallaba con IR inválido
