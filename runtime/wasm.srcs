@@ -23,6 +23,7 @@ runtime/file-io.c
 runtime/crypto.c
 runtime/time.c
 runtime/random.c
+runtime/csv.c
 runtime/url.c
 runtime/wasi/main_shim.c
 runtime/wasi/nyx_arena.c

@@ -1,0 +1,35 @@
+// test-508 — string_to_float / _or / _range pasan por el fast path de Clinger
+// (runtime/strings.c, nyx_parse_float_bytes) y tienen que dar lo mismo que
+// strtod. Acá, los bordes vistos desde Nyx: dentro del fast path (≤15 dígitos
+// sin exponente), en la frontera, y los que caen a strtod.
+fn main() {
+    // Dentro del fast path.
+    assert(string_to_float("111.33") == 111.33)
+    assert(string_to_float("0.1") + string_to_float("0.2") == 0.1 + 0.2)
+    assert(string_to_float("-2.25") == -2.25)
+    assert(string_to_float(".5") == 0.5)
+    assert(string_to_float("5.") == 5.0)
+    assert(string_to_float("+7") == 7.0)
+    assert(string_to_float("123456789012345") == 123456789012345.0)
+    // 16 y 17 dígitos: fuera del fast path, strtod.
+    assert(string_to_float("1234567890123456") == 1234567890123456.0)
+    assert(string_to_float("9007199254740993") == 9007199254740992.0)
+    assert(string_to_float_or("0.12345678901234567", -1.0) == 0.12345678901234567)
+    // Exponentes, inf: strtod, como antes.
+    assert(string_to_float("1e3") == 1000.0)
+    assert(string_to_float("2.5E-1") == 0.25)
+    assert(string_to_float_or("inf", 0.0) > string_to_float("1e308"))
+    // Espacio inicial: strtod lo acepta, se conserva.
+    assert(string_to_float_or(" 1.5", -1.0) == 1.5)
+    // Inválidos → default.
+    assert(string_to_float_or("1.5 ", -1.0) == -1.0)
+    assert(string_to_float_or("1..5", -1.0) == -1.0)
+    assert(string_to_float_or(".", -1.0) == -1.0)
+    assert(string_to_float_or("-", -1.0) == -1.0)
+    assert(string_to_float_or("", -1.0) == -1.0)
+    // _range sin copia: el rango termina antes del fin del String.
+    let fila: String = "a,999.99,b"
+    assert(string_to_float_range(fila, 2, 8, -1.0) == 999.99)
+    assert(string_to_float_range(fila, 2, 9, -1.0) == -1.0)
+    print("float-parse-bordes OK")
+}

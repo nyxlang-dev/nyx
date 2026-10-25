@@ -956,7 +956,7 @@ single `Error` struct.
   (`1e-05`, `1e+16`). Para un ancho fijo de decimales (precios): `float_to_fixed` de `std/math_ext`
 - `string_to_int(s)`, `string_to_float(s)` — **abortan el proceso (exit 1)** si `s` es vacío o no numérico
 - `string_to_int_or(s, def)`, `string_to_float_or(s, def)` — variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
-- `string_to_int_range(s, ini, fin, def)`, `string_to_float_range(s, ini, fin, def)` — parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto). Para datos grandes: ubicar los campos con `indexOf` y parsear sobre el rango evita las asignaciones de `split()` por fila (CSV de 5M filas: ver `examples/by-example/145-csv-sin-split.nx`) [test: compiler/language/test-507-string-to-num-range]
+- `string_to_int_range(s, ini, fin, def)`, `string_to_float_range(s, ini, fin, def)` — parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto). Para datos grandes: ubicar los campos con `indexOf` y parsear sobre el rango evita las asignaciones de `split()` por fila (receta `145-csv-sin-split`); para un CSV entero, mejor `try_csv_read` de `std/csv` [test: compiler/language/test-507-string-to-num-range]
 - `int_to_float(n)`, `float_to_int(n)`
 - `str_byte_length(s)` — byte length (for HTTP headers)
 
@@ -1254,6 +1254,33 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   «invalid redefinition» en todo programa que importe los dos.
 - El material aleatorio (salts, nonces) sale de `csprng_bytes`, NO de `random_bytes` —
   ver el gotcha 13 de §5.1.
+
+### `std/csv` — CSV grandes por columnas (`try_csv_read`, 2026-10-25)
+`import "std/csv"`. Para más de unos miles de filas, **no** partir con `split("\n")` + `split(",")`:
+cada `split` de una fila de 4 campos hace ~11 asignaciones y en 5M filas eso es la mitad del tiempo.
+`try_csv_read` parsea en una pasada directo a columnas tipadas (núcleo en `runtime/csv.c`):
+```nyx
+let t: CsvTable = try_csv_read(read_file("ventas.csv"), "city:cat,value:float,qty:int", csv_opts())?
+let v: Array<float> = t.floats("value")       // también t.ints, t.strs
+let c: Array<int> = t.codes("city")           // una `cat`: códigos...
+let d: Array<String> = t.dict("city")         // ...y cada valor distinto una vez: d[c[i]]
+```
+- Esquema `"nombre:tipo,..."`, tipos `int`, `float`, `str`, `cat`. Con cabecera las columnas se buscan
+  por nombre, en cualquier orden, y **las que no se nombran se saltan sin parsear**. Sin cabecera
+  (`o.header = false`) el esquema lista todas en orden. `try_csv_guess_schema(texto, opts)` propone
+  uno con las primeras 1000 filas: imprimirlo, revisarlo, pegarlo.
+- `cat` es la forma rápida de una columna de texto repetitivo: agrupar es indexar un `Array` por el
+  código (`sumas[c[i]] += v[i]`), sin `Map` ni un String por fila.
+- **Estricto**: un número vacío o inválido, una fila con otra cantidad de campos o una comilla sin
+  cerrar dan `Err` (kind `invalid`) con fila —contando la cabecera— y columna. No hay nulos: una
+  columna con huecos va como `str` y se convierte con `string_to_X_or`.
+- RFC 4180: comillas con `""`, delimitador y salto de línea entre comillas, `\r\n`, BOM. `CsvOpts`:
+  `delimiter` (un byte: `;`, `\t`), `header`, `max_rows` (0 = todas).
+- Pedir una columna con el tipo equivocado o un nombre que no existe **aborta** nombrando lo que hay
+  (error del programa, como `Map.get`), no devuelve un array vacío.
+- Medido (5M filas, 132 MB, agrupar + filtrar): 0.93 s y 265 MB; pandas 1.21 s, polars con 1 hilo
+  1.19 s. `csv.parse` (la API vieja, filas de Strings) sigue igual y es para archivos chicos.
+  Receta: `examples/by-example/146-csv-columnar.nx`. [test: compiler/stdlib-suite/test-509-csv-columnar]
 
 ### `std/sqlite` — el contrato empírico (verificado contra el runtime 2026-08-11; NULL e int64 al 2026-09-09)
 `import "std/sqlite"`. Lo que las firmas no dicen y cuesta horas descubrir:

@@ -17,7 +17,12 @@
 //   let val: String = csv.get_field(row0, 1)
 //
 //   let out: String = csv.stringify(rows)
+//
+// Para datos grandes, el lector columnar (ver la sección LECTOR COLUMNAR):
+//   let t: CsvTable = try_csv_read(texto, "id:int,city:cat,value:float", csv_opts())?
 // ============================================================
+
+import "std/error"
 
 // ===== TYPES =====
 
@@ -229,4 +234,173 @@ pub fn new_doc(header_names: Array) -> CsvDoc {
 /// Add a row to an existing CsvDoc.
 pub fn add_row(doc: CsvDoc, row: Array) {
     doc.rows.push(row)
+}
+
+// ===== LECTOR COLUMNAR (arco csv-columnar, 2026-10-25) =====
+// Para datos grandes: parsea en UNA pasada directo a columnas tipadas, sin un
+// String por campo. El núcleo vive en runtime/csv.c (medido en 5M filas: el
+// mismo parseo en Nyx puro tardaba 2.2 s, en C 0.8 s). Diseño y números:
+// docs/design/specs/2026-10-25-csv-columnar-design.md.
+//
+//   let t: CsvTable = try_csv_read(texto, "id:int,city:cat,value:float", csv_opts())?
+//   let v: Array<float> = t.floats("value")
+//   let c: Array<int> = t.codes("city")        // índice en t.dict("city")
+
+extern "C" fn nyx_csv_read(texto: String, esquema: String, delim: int, header: int, max_rows: int) -> Array
+extern "C" fn nyx_csv_guess_schema(texto: String, delim: int, header: int) -> Array
+
+/// Opciones del lector columnar: delimitador de un byte, si la primera fila es cabecera, y un tope de filas (0 = todas).
+pub struct CsvOpts {
+    delimiter: String,
+    header: bool,
+    max_rows: int
+}
+
+/// Opciones por omisión: coma, con cabecera, sin tope de filas.
+pub fn csv_opts() -> CsvOpts {
+    return CsvOpts { delimiter: ",", header: true, max_rows: 0 }
+}
+
+/// Una tabla leída por columnas. Cada columna se pide por nombre y con su tipo del esquema: ints, floats, strs, o codes + dict para una `cat`.
+pub struct CsvTable {
+    n: int,
+    nombres: Array<String>,
+    tipos: Array<String>,
+    casillas: Array<int>,   // dónde empieza la columna k dentro de `cols`
+    cols: Array
+}
+
+fn __csv_delim(o: CsvOpts) -> int {
+    if o.delimiter.length() != 1 { return -1 }
+    return o.delimiter.charAt(0)
+}
+
+fn __csv_header(o: CsvOpts) -> int {
+    if o.header { return 1 }
+    return 0
+}
+
+/// Lee `texto` a columnas según `esquema` ("nombre:tipo,..." con tipo int | float | str | cat). Con cabecera, las columnas se buscan por nombre y las que el esquema no nombra se saltan. Estricto: un número vacío o inválido, una fila con otra cantidad de campos o una comilla sin cerrar dan Err con la fila y la columna.
+pub fn try_csv_read(texto: String, esquema: String, opts: CsvOpts) -> Result<CsvTable, Error> {
+    let delim: int = __csv_delim(opts)
+    if delim < 0 {
+        return Result.Err(err_new(22, "invalid", "csv: el delimitador tiene que ser un solo byte, no \"" + opts.delimiter + "\""))
+    }
+    let r: Array = nyx_csv_read(texto, esquema, delim, __csv_header(opts), opts.max_rows)
+    let error: String = r[0]
+    if error.length() > 0 {
+        return Result.Err(err_new(22, "invalid", error))
+    }
+    let filas: int = r[1]
+    // El C ya validó el esquema; acá solo se parte para saber qué casilla es de quién.
+    var nombres: Array<String> = []
+    var tipos: Array<String> = []
+    var casillas: Array<int> = []
+    var cols: Array = []
+    var i: int = 2
+    let partes: Array<String> = esquema.split(",")
+    for parte in partes {
+        let p: String = parte
+        let pt: String = p.trim()
+        if pt.length() == 0 { continue }
+        let dos: int = pt.indexOf(":")
+        nombres.push(pt.substring(0, dos).trim())
+        let tipo: String = pt.substring(dos + 1, pt.length()).trim()
+        tipos.push(tipo)
+        casillas.push(cols.length())
+        let datos: Array = r[i]
+        cols.push(datos)
+        i = i + 1
+        if tipo == "cat" {
+            let dicc: Array = r[i]
+            cols.push(dicc)
+            i = i + 1
+        }
+    }
+    return Result.Ok(CsvTable { n: filas, nombres: nombres, tipos: tipos, casillas: casillas, cols: cols })
+}
+
+/// Propone un esquema mirando las primeras 1000 filas: int si todo es entero, si no float, si no cat cuando los valores distintos son pocos, si no str. Es un punto de partida: imprimirlo, revisarlo y pegarlo en try_csv_read.
+pub fn try_csv_guess_schema(texto: String, opts: CsvOpts) -> Result<String, Error> {
+    let delim: int = __csv_delim(opts)
+    if delim < 0 {
+        return Result.Err(err_new(22, "invalid", "csv: el delimitador tiene que ser un solo byte, no \"" + opts.delimiter + "\""))
+    }
+    let r: Array = nyx_csv_guess_schema(texto, delim, __csv_header(opts))
+    let error: String = r[0]
+    if error.length() > 0 {
+        return Result.Err(err_new(22, "invalid", error))
+    }
+    let esquema: String = r[1]
+    return Result.Ok(esquema)
+}
+
+impl CsvTable {
+    /// Cantidad de filas de datos (sin la cabecera).
+    fn rows(self) -> int {
+        return self.n
+    }
+
+    /// Nombres de las columnas, en el orden del esquema.
+    fn names(self) -> Array<String> {
+        let ns: Array<String> = self.nombres
+        return ns
+    }
+
+    // Casilla de la columna `nombre`, que tiene que ser del tipo `tipo`. Un
+    // nombre o un tipo equivocados son un error del PROGRAMA, no del dato:
+    // aborta nombrando lo que hay, como Map.get con una clave que falta.
+    fn __casilla(self, nombre: String, tipo: String, acceso: String) -> int {
+        let ns: Array<String> = self.nombres
+        let ts: Array<String> = self.tipos
+        let cs: Array<int> = self.casillas
+        var k: int = 0
+        var hay: String = ""
+        while k < ns.length() {
+            let n: String = ns[k]
+            let t: String = ts[k]
+            if n == nombre {
+                if t != tipo {
+                    panic("CsvTable." + acceso + "(\"" + nombre + "\"): la columna es '" + t + "', no '" + tipo + "'")
+                }
+                let c: int = cs[k]
+                return c
+            }
+            if hay.length() > 0 { hay = hay + ", " }
+            hay = hay + n + ":" + t
+            k = k + 1
+        }
+        panic("CsvTable." + acceso + "(\"" + nombre + "\"): no hay una columna con ese nombre — hay: " + hay)
+        return -1
+    }
+
+    /// Columna `int` por nombre.
+    fn ints(self, nombre: String) -> Array<int> {
+        let c: Array<int> = self.cols[self.__casilla(nombre, "int", "ints")]
+        return c
+    }
+
+    /// Columna `float` por nombre.
+    fn floats(self, nombre: String) -> Array<float> {
+        let c: Array<float> = self.cols[self.__casilla(nombre, "float", "floats")]
+        return c
+    }
+
+    /// Columna `str` por nombre (un String por fila).
+    fn strs(self, nombre: String) -> Array<String> {
+        let c: Array<String> = self.cols[self.__casilla(nombre, "str", "strs")]
+        return c
+    }
+
+    /// Códigos de una columna `cat`: el valor de la fila i es dict(nombre)[codes(nombre)[i]].
+    fn codes(self, nombre: String) -> Array<int> {
+        let c: Array<int> = self.cols[self.__casilla(nombre, "cat", "codes")]
+        return c
+    }
+
+    /// Diccionario de una columna `cat`: cada valor distinto una vez, en orden de aparición.
+    fn dict(self, nombre: String) -> Array<String> {
+        let c: Array<String> = self.cols[self.__casilla(nombre, "cat", "dict") + 1]
+        return c
+    }
 }

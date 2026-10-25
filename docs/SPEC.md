@@ -4574,9 +4574,22 @@ toml_parse(str), toml_get(doc, key)
 
 ### std/csv.nx
 ```
-csv_parse(str), csv_get(row, field)
-csv_stringify(data)
+// Filas de Strings (archivos chicos)
+parse(texto) -> CsvDoc, parse_with_delimiter(texto, delim, has_header)
+headers(doc), data_rows(doc), get_row(doc, i), get_field(row, col), get_by_name(doc, row, nombre)
+row_count(doc), col_count(doc), stringify(doc), stringify_with_delimiter(doc, delim)
+
+// Por columnas (datos grandes; núcleo en runtime/csv.c, 2026-10-25)
+csv_opts() -> CsvOpts { delimiter: ",", header: true, max_rows: 0 }
+try_csv_read(texto, esquema, opts) -> Result<CsvTable, Error>   // esquema "nombre:tipo,..." int|float|str|cat
+try_csv_guess_schema(texto, opts) -> Result<String, Error>
+t.rows(), t.names(), t.ints(n), t.floats(n), t.strs(n), t.codes(n), t.dict(n)
 ```
+`try_csv_read` es estricto: un número vacío o inválido, una fila con otra cantidad de
+campos o una comilla sin cerrar dan `Err` con la fila (contando la cabecera) y la
+columna. Una columna `cat` llega como códigos `int` (`t.codes`) más un diccionario con
+cada valor distinto una vez, en orden de aparición (`t.dict`). Pedir una columna con
+otro tipo o un nombre inexistente aborta.
 
 ### std/args.nx
 ```

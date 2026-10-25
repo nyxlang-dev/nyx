@@ -23,7 +23,7 @@ for test_file in tests/advanced/test-A*.nx; do
             runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c \
             runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c \
             runtime/compress.c runtime/random.c runtime/url.c \
-            runtime/msgpack.c runtime/websocket.c runtime/persist.c runtime/http2.c \
+            runtime/msgpack.c runtime/csv.c runtime/websocket.c runtime/persist.c runtime/http2.c \
             runtime/os/os_posix.c \
             -lgc -lpthread -ldl -lm -lssl -lcrypto -lz -o /tmp/nyx_adv_test 2>/dev/null; then
             # Run with timeout

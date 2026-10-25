@@ -18,6 +18,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   se descartó: −4% en el split gigante, +4..9% en los cortos. +1 test (`507`), receta
   `examples/by-example/145-csv-sin-split.nx`.
 
+- **`std/csv`: lector columnar `try_csv_read(texto, esquema, opts)`** [arco: csv-columnar]: parsea en una pasada
+  directo a columnas tipadas (`int`, `float`, `str`, y `cat` = códigos + diccionario), con el núcleo en el
+  nuevo `runtime/csv.c` (RFC 4180: comillas, saltos de línea entre comillas, CRLF, BOM). Estricto: un dato
+  inválido es `Err` con fila y columna. `try_csv_guess_schema` propone el esquema. En el bench de 5M filas
+  agrupar y filtrar tarda 0.93 s y 265 MB, contra 1.21 s de pandas y 1.19 s de polars con un hilo (con
+  `split()` + `Map`: 5.5 s). +1 test (`509`), +1 suite C (`test_csv.c`), receta `146-csv-columnar`.
+
+### Cambiado
+- **`string_to_float` / `_or` / `_range` parsean con el fast path de Clinger** [arco: csv-columnar]: un número
+  `[+-]dígitos[.dígitos]` de hasta 15 dígitos se convierte con una división exacta, que da el mismo double
+  que `strtod` bit a bit; el resto (exponentes, 16+ dígitos, `inf`, hex, espacios) sigue yendo a `strtod`.
+  Verificado contra `strtod` en 5M valores aleatorios y en los bordes (`test_float_parse.c`). En el bench de
+  5M filas, `indexOf` + `_range` baja de 2.67 s a 2.13 s. +1 test (`508`), +1 suite C.
+
 ## [0.37.1] — 2026-10-24
 
 > **PATCH**: los tres reportes de fricción de nyxerp del 2026-10-22.

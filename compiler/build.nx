@@ -2151,7 +2151,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     var rt_fuentes: String = "$RT/runtime.c $RT/strings.c $RT/runtime-arrays.c " +
         "$RT/maps.c $RT/file-io.c $RT/iterators.c $RT/net.c $RT/thread.c $RT/regex.c " +
         "$RT/time.c $RT/crypto.c $RT/tls.c $RT/scheduler.c $RT/event_loop.c $RT/sqlite_adapter.c " +
-        "$RT/compress.c $RT/random.c $RT/url.c $RT/msgpack.c $RT/websocket.c $RT/persist.c " +
+        "$RT/compress.c $RT/random.c $RT/url.c $RT/msgpack.c $RT/csv.c $RT/websocket.c $RT/persist.c " +
         // llama_adapter va SIEMPRE: es dlopen-lazy (cero dependencia dura de
         // libllama) y sin él todo import de std/llm muere en el LINK con
         // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31).

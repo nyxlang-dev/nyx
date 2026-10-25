@@ -1,0 +1,113 @@
+// `try_csv_read`: el lector columnar de std/csv (arco csv-columnar, 2026-10-25).
+//
+// POR QUÉ EXISTE
+//
+// Leer un CSV grande con split() + string_to_float hace ~11 asignaciones por fila
+// y deja a Nyx 2-4x detrás de pandas (bench de 5M filas del 2026-10-25). El lector
+// parsea en una pasada directo a columnas tipadas, con el núcleo en runtime/csv.c.
+// Este test ejerce la API de Nyx: cada tipo, accesos por nombre, la agrupación por
+// códigos de una `cat`, los Err con fila y columna, sin cabecera y el esquema
+// propuesto. Los bordes del parseo (comillas, CRLF, BOM) los cubre test_csv.c.
+//
+// Expected exit: 0
+
+import "std/csv"
+
+fn main() -> int {
+    let texto: String = "id,city,value,qty,nota\n1,lima,10.5,3,\"a, b\"\n2,quito,99.25,1,x\n3,lima,0.75,10,\"dijo \"\"sí\"\"\"\n"
+
+    // Cada tipo, pedido por nombre; `id` no está en el esquema y se saltea.
+    match try_csv_read(texto, "city:cat, value:float, qty:int, nota:str", csv_opts()) {
+        Result.Ok(t) => {
+            assert(t.rows() == 3, "3 filas")
+            let nombres: Array<String> = t.names()
+            assert(nombres.length() == 4, "4 columnas pedidas")
+            assert(nombres[0] == "city", "orden del esquema")
+            let valores: Array<float> = t.floats("value")
+            let cantidades: Array<int> = t.ints("qty")
+            let notas: Array<String> = t.strs("nota")
+            assert(valores[1] == 99.25, "value[1]")
+            assert(cantidades[2] == 10, "qty[2]")
+            assert(notas[0] == "a, b", "coma entre comillas")
+            assert(notas[2] == "dijo \"sí\"", "comilla escapada")
+
+            // Agrupar por ciudad con códigos, sin Map ni un String por fila.
+            let codigos: Array<int> = t.codes("city")
+            let ciudades: Array<String> = t.dict("city")
+            assert(ciudades.length() == 2, "dos ciudades")
+            assert(ciudades[0] == "lima", "en orden de aparición")
+            var sumas: Array<float> = []
+            for c in ciudades { sumas.push(0.0) }
+            var i: int = 0
+            while i < t.rows() {
+                sumas[codigos[i]] = sumas[codigos[i]] + valores[i]
+                i = i + 1
+            }
+            assert(sumas[0] == 11.25, "lima: 10.5 + 0.75")
+            assert(sumas[1] == 99.25, "quito")
+        }
+        Result.Err(e) => {
+            print("inesperado: " + e.msg)
+            return 1
+        }
+    }
+
+    // Un dato inválido: Err con la fila (contando la cabecera) y la columna.
+    match try_csv_read("a,v\n1,2.5\n2,abc\n", "a:int,v:float", csv_opts()) {
+        Result.Ok(t) => { return 2 }
+        Result.Err(e) => {
+            assert(e.msg.contains("fila 3"), "fila 3")
+            assert(e.msg.contains("columna 'v'"), "columna v")
+            assert(e.kind == "invalid", "kind invalid")
+        }
+    }
+
+    // El esquema se valida antes de parsear.
+    match try_csv_read("a,b\n1,2\n", "a:int,zz:int", csv_opts()) {
+        Result.Ok(t) => { return 3 }
+        Result.Err(e) => { assert(e.msg.contains("'zz' no está en la cabecera"), "nombre que falta") }
+    }
+
+    // Sin cabecera, con punto y coma y un tope de filas.
+    var o: CsvOpts = csv_opts()
+    o.header = false
+    o.delimiter = ";"
+    o.max_rows = 2
+    match try_csv_read("1;x\n2;y\n3;z\n", "n:int,s:str", o) {
+        Result.Ok(t) => {
+            assert(t.rows() == 2, "max_rows")
+            let s: Array<String> = t.strs("s")
+            assert(s[1] == "y", "s[1]")
+        }
+        Result.Err(e) => {
+            print("inesperado: " + e.msg)
+            return 4
+        }
+    }
+
+    // Un delimitador de más de un byte es Err, no se recorta en silencio.
+    var o2: CsvOpts = csv_opts()
+    o2.delimiter = "::"
+    match try_csv_read("a\n1\n", "a:int", o2) {
+        Result.Ok(t) => { return 5 }
+        Result.Err(e) => { assert(e.msg.contains("un solo byte"), "delimitador largo") }
+    }
+
+    // El esquema propuesto se puede pegar tal cual en try_csv_read.
+    match try_csv_guess_schema(texto, csv_opts()) {
+        Result.Ok(esq) => {
+            assert(esq == "id:int,city:str,value:float,qty:int,nota:str", "esquema propuesto")
+            match try_csv_read(texto, esq, csv_opts()) {
+                Result.Ok(t) => { assert(t.rows() == 3, "el propuesto lee el mismo texto") }
+                Result.Err(e) => { return 6 }
+            }
+        }
+        Result.Err(e) => {
+            print("inesperado: " + e.msg)
+            return 7
+        }
+    }
+
+    print("csv-columnar OK")
+    return 0
+}

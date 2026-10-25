@@ -58,7 +58,7 @@ RUNTIME_SRCS="
     runtime/compress.c
     runtime/random.c
     runtime/url.c
-    runtime/msgpack.c
+    runtime/msgpack.c runtime/csv.c
     runtime/websocket.c
     runtime/persist.c
     runtime/process.c

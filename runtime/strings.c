@@ -708,6 +708,61 @@ int64_t nyx_string_to_int(nyx_string* str) {
     return result;
 }
 
+// Parseo de float sobre n bytes (sin NUL final obligatorio). *ok = 0 si los
+// bytes no son, enteros, un número para strtod — el contrato estricto de
+// string_to_float_or. Lo usan las tres variantes públicas y runtime/csv.c.
+//
+// Fast path de Clinger: para [+-]?dígitos[.dígitos] con a lo sumo 15 dígitos,
+// el entero w cabe exacto en un double (< 2^53) y 10^k también (k <= 15 <= 22);
+// una sola división IEEE da el double correctamente redondeado, que es el mismo
+// que devuelve strtod. Todo lo demás (exponentes, 16+ dígitos, inf/nan, hex,
+// espacios) va a strtod. strtod era el costo dominante al parsear números en
+// volumen (bench 2026-10-25: C+strtod 1.25 s, con este fast path 0.60 s).
+// Supuesto: aritmética double sin precisión extendida (SSE2/aarch64/wasm;
+// FLT_EVAL_METHOD 0). Guarda: tests/runtime-unit/test_float_parse.c compara bit
+// a bit contra strtod.
+// EN: Clinger fast path — bit-identical to strtod, falls back outside its domain.
+static const double nyx_pow10_exacto[16] = {
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15
+};
+
+#define NYX_FLOAT_STACK_BUF 64
+
+double nyx_parse_float_bytes(const char* p, int64_t n, int* ok) {
+    *ok = 0;
+    if (!p || n <= 0) return 0.0;
+    const char* q = p;
+    const char* e = p + n;
+    int neg = 0;
+    if (*q == '-' || *q == '+') { neg = (*q == '-'); q++; }
+    uint64_t w = 0;
+    int digitos = 0, decimales = 0;
+    while (q < e && *q >= '0' && *q <= '9') { w = w * 10 + (uint64_t)(*q - '0'); digitos++; q++; }
+    if (q < e && *q == '.') {
+        q++;
+        while (q < e && *q >= '0' && *q <= '9') {
+            w = w * 10 + (uint64_t)(*q - '0'); digitos++; decimales++; q++;
+        }
+    }
+    if (q == e && digitos > 0 && digitos <= 15) {
+        double r = (double)w / nyx_pow10_exacto[decimales];
+        *ok = 1;
+        return neg ? -r : r;
+    }
+    // Fuera del dominio: strtod sobre una copia NUL-terminada, con el mismo
+    // chequeo de siempre (*endptr == '\0').
+    char pila[NYX_FLOAT_STACK_BUF];
+    char* buf = pila;
+    if (n >= NYX_FLOAT_STACK_BUF) buf = (char*)GC_malloc_atomic((size_t)n + 1);
+    memcpy(buf, p, (size_t)n);
+    buf[n] = '\0';
+    char* endptr;
+    double r = strtod(buf, &endptr);
+    if (*endptr != '\0') return 0.0;
+    *ok = 1;
+    return r;
+}
+
 // Convertir string a float
 double nyx_string_to_float(nyx_string* str) {
     if (!str || str->length == 0) {
@@ -715,10 +770,10 @@ double nyx_string_to_float(nyx_string* str) {
         exit(1);
     }
 
-    char* endptr;
-    double result = strtod(str->data, &endptr);
+    int ok;
+    double result = nyx_parse_float_bytes(str->data, str->length, &ok);
 
-    if (*endptr != '\0') {
+    if (!ok) {
         fprintf(stderr, "💥 Runtime Error: String '%s' no es un número válido\n", str->data);
         exit(1);
     }
@@ -740,10 +795,9 @@ int64_t nyx_string_to_int_or(nyx_string* str, int64_t def) {
 
 double nyx_string_to_float_or(nyx_string* str, double def) {
     if (!str || str->length == 0) return def;
-    char* endptr;
-    double result = strtod(str->data, &endptr);
-    if (*endptr != '\0') return def;
-    return result;
+    int ok;
+    double result = nyx_parse_float_bytes(str->data, str->length, &ok);
+    return ok ? result : def;
 }
 
 // Variantes de RANGO: string_to_X_range(s, ini, fin, def) es, por contrato,
@@ -788,13 +842,16 @@ int64_t nyx_string_to_int_range(nyx_string* str, int64_t ini, int64_t fin, int64
 }
 
 double nyx_string_to_float_range(nyx_string* str, int64_t ini, int64_t fin, double def) {
-    char stack_buf[NYX_RANGE_STACK_BUF];
-    char* buf;
-    if (nyx_range_cbuf(str, ini, fin, stack_buf, &buf) == 0) return def;
-    char* endptr;
-    double result = strtod(buf, &endptr);
-    if (*endptr != '\0') return def;
-    return result;
+    if (!str) return def;
+    // Mismos clamps que substring (ver nyx_range_cbuf); el parseo no necesita copia.
+    if (ini < 0) ini = 0;
+    if (fin < 0) fin = 0;
+    if (ini > str->length) ini = str->length;
+    if (fin > str->length) fin = str->length;
+    if (ini > fin) ini = fin;
+    int ok;
+    double result = nyx_parse_float_bytes(str->data + ini, fin - ini, &ok);
+    return ok ? result : def;
 }
 
 // ===== IMPRESIÓN =====
