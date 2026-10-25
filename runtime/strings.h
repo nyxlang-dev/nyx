@@ -102,6 +102,8 @@ double nyx_string_to_float(nyx_string* str);
 // Safe variants: return `def` on empty/invalid input instead of exit(1).
 int64_t nyx_string_to_int_or(nyx_string* str, int64_t def);
 double nyx_string_to_float_or(nyx_string* str, double def);
+int64_t nyx_string_to_int_range(nyx_string* str, int64_t ini, int64_t fin, int64_t def);
+double nyx_string_to_float_range(nyx_string* str, int64_t ini, int64_t fin, double def);
 
 // Impresión
 void nyx_print_string_debug(nyx_string* str);

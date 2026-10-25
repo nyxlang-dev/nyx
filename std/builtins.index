@@ -151,8 +151,10 @@ builtin	string_from_bytes	3	Strings & texto
 builtin	string_from_cstr	1	Strings & texto		
 builtin	string_to_float	1	Strings & texto	**abortan el proceso (exit 1)** si `s` es vacío o no numérico	
 builtin	string_to_float_or	2	Strings & texto	variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)	
+builtin	string_to_float_range	4	Strings & texto	parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto).	
 builtin	string_to_int	1	Strings & texto	**abortan el proceso (exit 1)** si `s` es vacío o no numérico	
 builtin	string_to_int_or	2	Strings & texto	variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)	
+builtin	string_to_int_range	4	Strings & texto	parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto).	
 builtin	task_await	1	Concurrencia		no-wasm
 builtin	task_cancel	1	Concurrencia		no-wasm
 builtin	task_race	2	Concurrencia		no-wasm

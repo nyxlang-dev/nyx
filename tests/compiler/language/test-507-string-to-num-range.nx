@@ -1,0 +1,65 @@
+// test-507 — string_to_int_range / string_to_float_range (s, ini, fin, def):
+// parsear un número que vive en los bytes [ini, fin) de s SIN alocar el
+// substring. Contrato: el resultado es SIEMPRE el de
+// string_to_X_or(s.substring(ini, fin), def) — mismos clamps de offsets y mismo
+// parseo estricto. Motivación: bench CSV 2026-10-25 (5M filas), donde
+// split()+string_to_float por fila se llevaba ~50% del tiempo en asignaciones.
+
+fn mismo_int(s: String, ini: int, fin: int, def: int) -> bool {
+    return string_to_int_range(s, ini, fin, def) == string_to_int_or(s.substring(ini, fin), def)
+}
+
+fn mismo_float(s: String, ini: int, fin: int, def: float) -> bool {
+    return string_to_float_range(s, ini, fin, def) == string_to_float_or(s.substring(ini, fin), def)
+}
+
+fn main() {
+    // Caso de uso: una fila de CSV, campos ubicados con indexOf, sin split.
+    let fila: String = "1234567,city_654,111.33,95"
+    let c1: int = fila.indexOf(",")
+    let c2: int = fila.indexOf(",", c1 + 1)
+    let c3: int = fila.indexOf(",", c2 + 1)
+    assert(string_to_int_range(fila, 0, c1, -1) == 1234567)
+    let v: float = string_to_float_range(fila, c2 + 1, c3, -1.0)
+    assert(v == 111.33)
+    assert(string_to_int_range(fila, c3 + 1, fila.length(), -1) == 95)
+    // El campo de texto no es número → default, sin abortar.
+    assert(string_to_int_range(fila, c1 + 1, c2, -7) == -7)
+
+    // Solo cuenta el rango: la basura FUERA de él no invalida.
+    let sucio: String = "x42abc"
+    assert(string_to_int_range(sucio, 1, 3, 0) == 42)
+    // ...y la basura DENTRO sí (parseo estricto, como string_to_int_or).
+    assert(string_to_int_range(sucio, 1, 4, 0) == 0)
+    assert(string_to_float_range("-2.25e1z", 0, 7, 0.0) == -22.5)
+
+    // Rango vacío → default.
+    assert(string_to_int_range("123", 1, 1, 99) == 99)
+    assert(string_to_float_range("", 0, 0, 1.5) == 1.5)
+
+    // Clamps de offsets idénticos a substring.
+    let n: String = "987"
+    assert(mismo_int(n, -5, 2, 0))
+    assert(mismo_int(n, 1, 100, 0))
+    assert(mismo_int(n, 2, 1, 4))
+    assert(mismo_int(n, 50, 60, 4))
+    assert(mismo_float("3.5", -1, 99, 0.0))
+    assert(string_to_int_range(n, -5, 100, 0) == 987)
+
+    // Más de 63 bytes: el buffer de pila no alcanza y el rango va al GC.
+    let largo: String = "[0." + "0".repeat(70) + "1]"
+    assert(mismo_float(largo, 1, largo.length() - 1, -1.0))
+    assert(string_to_float_range(largo, 1, largo.length() - 1, -1.0) > 0.0)
+
+    // Casilla de un Array sin <T> como String (llega opaca al codegen).
+    let partes: Array = "12,x".split(",")
+    assert(string_to_int_range(partes[0], 0, 2, -1) == 12)
+    assert(string_to_float_range(partes[1], 0, 1, 0.5) == 0.5)
+
+    // El default puede ser una expresión; el resultado entra en aritmética.
+    let base: int = 10
+    assert(string_to_int_range("7", 0, 1, base * 2) + 1 == 8)
+    assert(string_to_int_range("?", 0, 1, base * 2) == 20)
+
+    print("string-to-num-range OK")
+}

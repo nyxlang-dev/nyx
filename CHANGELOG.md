@@ -9,6 +9,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Agregado
+- **`string_to_int_range(s, ini, fin, def)` / `string_to_float_range(s, ini, fin, def)`**: parsean el
+  número de los bytes `[ini, fin)` de `s` sin crear el substring; valen siempre lo mismo que
+  `string_to_X_or(s.substring(ini, fin), def)`. Motivo: en un CSV de 5M filas, `split()` +
+  `string_to_float` por fila hace ~11 asignaciones GC por fila y se lleva la mitad del tiempo
+  (bench 2026-10-25 contra Python/pandas/polars). Antes se probó pre-dimensionar el Array de `split()` y
+  se descartó: −4% en el split gigante, +4..9% en los cortos. +1 test (`507`), receta
+  `examples/by-example/145-csv-sin-split.nx`.
+
 ## [0.37.1] — 2026-10-24
 
 > **PATCH**: los tres reportes de fricción de nyxerp del 2026-10-22.

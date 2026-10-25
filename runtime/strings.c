@@ -746,6 +746,57 @@ double nyx_string_to_float_or(nyx_string* str, double def) {
     return result;
 }
 
+// Variantes de RANGO: string_to_X_range(s, ini, fin, def) es, por contrato,
+// string_to_X_or(s.substring(ini, fin), def) —mismos clamps de offsets que
+// substring y mismo parseo estricto— pero sin alocar el String intermedio.
+// Motivo: parsear un CSV grande con split()+string_to_float hace ~11
+// asignaciones GC por fila de 4 campos y eso domina el tiempo (bench
+// 2026-10-25: 5M filas, ~50% del total en split). strtod/strtoll exigen NUL
+// final, así que el rango se copia a un buffer en la PILA; solo un número de
+// más de 63 bytes (raro, pero válido: "0.000…1") cae al GC.
+// EN: range variants — same result as _or over substring(ini, fin), no alloc.
+#define NYX_RANGE_STACK_BUF 64
+
+// Deja en *out un char* NUL-terminado con los bytes [ini, fin) de str (clamp
+// idéntico a nyx_string_substring). Devuelve la longitud; 0 = rango vacío.
+static int64_t nyx_range_cbuf(nyx_string* str, int64_t ini, int64_t fin,
+                              char* stack_buf, char** out) {
+    if (!str) return 0;
+    if (ini < 0) ini = 0;
+    if (fin < 0) fin = 0;
+    if (ini > str->length) ini = str->length;
+    if (fin > str->length) fin = str->length;
+    if (ini > fin) ini = fin;
+    int64_t len = fin - ini;
+    if (len == 0) return 0;
+    char* buf = stack_buf;
+    if (len >= NYX_RANGE_STACK_BUF) buf = (char*)GC_malloc_atomic((size_t)len + 1);
+    memcpy(buf, str->data + ini, (size_t)len);
+    buf[len] = '\0';
+    *out = buf;
+    return len;
+}
+
+int64_t nyx_string_to_int_range(nyx_string* str, int64_t ini, int64_t fin, int64_t def) {
+    char stack_buf[NYX_RANGE_STACK_BUF];
+    char* buf;
+    if (nyx_range_cbuf(str, ini, fin, stack_buf, &buf) == 0) return def;
+    char* endptr;
+    int64_t result = strtoll(buf, &endptr, 10);
+    if (*endptr != '\0') return def;
+    return result;
+}
+
+double nyx_string_to_float_range(nyx_string* str, int64_t ini, int64_t fin, double def) {
+    char stack_buf[NYX_RANGE_STACK_BUF];
+    char* buf;
+    if (nyx_range_cbuf(str, ini, fin, stack_buf, &buf) == 0) return def;
+    char* endptr;
+    double result = strtod(buf, &endptr);
+    if (*endptr != '\0') return def;
+    return result;
+}
+
 // ===== IMPRESIÓN =====
 
 // Imprimir string (para debugging)

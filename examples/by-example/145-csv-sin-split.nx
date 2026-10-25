@@ -1,0 +1,52 @@
+// 145: CSV grande sin split() por fila — indexOf + string_to_X_range
+//
+// `fila.split(",")` crea un Array y un String por campo: en un CSV de millones
+// de filas esas asignaciones son la mitad del tiempo (medido 2026-10-25, 5M
+// filas). string_to_int_range / string_to_float_range parsean el número
+// directo de los bytes [ini, fin) del texto, sin crear el substring. Dan
+// siempre lo mismo que string_to_X_or(s.substring(ini, fin), def).
+
+fn main() -> int {
+    // Un CSV chico armado en memoria (en la vida real: read_file(ruta)).
+    let texto: String = "id,ciudad,valor,cantidad\n1,lima,10.5,3\n2,quito,99.25,1\n3,lima,0.75,10\n"
+
+    // Estilo split: claro, pero aloca un Array + un String por campo y por fila.
+    var total_split: float = 0.0
+    let lineas: Array = texto.split("\n")
+    var i: int = 1
+    while i < lineas.length() {
+        let linea: String = lineas[i]
+        i = i + 1
+        if linea.length() == 0 { continue }
+        let campos: Array = linea.split(",")
+        total_split = total_split + string_to_float(campos[2])
+    }
+
+    // Estilo rango: las comas se ubican con indexOf y los números se parsean
+    // en su lugar. Solo la ciudad, que sí se guarda, se copia con substring.
+    var total: float = 0.0
+    var unidades: int = 0
+    var por_ciudad: Map<String, float> = Map.new()
+    let n: int = texto.length()
+    var p: int = texto.indexOf("\n") + 1          // saltar la cabecera
+    while p < n {
+        var fin: int = texto.indexOf("\n", p)
+        if fin < 0 { fin = n }
+        let c1: int = texto.indexOf(",", p)
+        let c2: int = texto.indexOf(",", c1 + 1)
+        let c3: int = texto.indexOf(",", c2 + 1)
+        let ciudad: String = texto.substring(c1 + 1, c2)
+        // El default (0.0 / 0) entra si el campo viene vacío o no es número.
+        let valor: float = string_to_float_range(texto, c2 + 1, c3, 0.0)
+        unidades = unidades + string_to_int_range(texto, c3 + 1, fin, 0)
+        total = total + valor
+        por_ciudad[ciudad] = por_ciudad.get_or(ciudad, 0.0) + valor
+        p = fin + 1
+    }
+
+    print("total con split: " + float_to_string(total_split))
+    print("total con rango: " + float_to_string(total))
+    print("unidades: " + int_to_string(unidades))
+    print("lima: " + float_to_string(por_ciudad["lima"]))
+    return 0
+}

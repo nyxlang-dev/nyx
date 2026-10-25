@@ -765,7 +765,18 @@ texto.split(" ")            // ["Nyx", "Language"]
 int_to_string(42)           // "42"
 float_to_string(3.14)       // "3.14"
 char_to_string('A')         // "A"
+string_to_int("42")         // 42  (aborta con exit 1 si no es un número)
+string_to_int_or("4x", 0)   // 0   (variante segura: el default en vez de abortar)
+string_to_float_or("2.5", 0.0)          // 2.5
+string_to_int_range("id=42;", 3, 5, 0)  // 42  (bytes [3, 5), sin crear el substring)
+string_to_float_range("v:1.5", 2, 5, 0.0) // 1.5
 ```
+
+`string_to_X_range(s, ini, fin, def)` vale por definición lo mismo que
+`string_to_X_or(s.substring(ini, fin), def)`: offsets en bytes con los mismos
+clamps que `substring`, y el mismo parseo estricto (basura dentro del rango →
+`def`). La diferencia es que no aloca: sirve para parsear campos de un texto
+grande ubicados con `indexOf`, sin el `split()` por fila.
 
 ### UTF-8 semantics: one contract, bytes / Semántica UTF-8: un contrato, bytes
 
