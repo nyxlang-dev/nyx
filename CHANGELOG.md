@@ -9,6 +9,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Agregado
+- **`CHANGELOG.en.md`, el CHANGELOG en inglés** desde 0.33.0 (decisión de Ottavio): lo publica
+  nyxlang.com/changelog/. Cada release traduce su entrada: `release-check.sh` no deja cortar sin ella y el
+  nuevo check 13 de `make docs-health` exige los mismos encabezados, subtítulos e ítems por versión.
+
 ## [0.38.0] — 2026-10-26
 
 > **MINOR**: API nueva para procesar datos tabulares: el lector columnar `try_csv_read` de `std/csv`

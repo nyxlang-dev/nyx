@@ -18,7 +18,7 @@
 # aceptar su conclusión.
 #
 # Uso:
-#   bash scripts/release-check.sh            # modo release: exige "## [VERSION]" en CHANGELOG.md
+#   bash scripts/release-check.sh            # modo release: exige "## [VERSION]" en CHANGELOG.md (y en CHANGELOG.en.md)
 #   bash scripts/release-check.sh --pre       # modo pre-release: exige un solo "[Unreleased]"
 #   bash scripts/release-check.sh --selftest  # el checker se verifica a sí mismo (detecta drift)
 set -u
@@ -74,6 +74,13 @@ else
     V_RE=$(printf '%s' "$V" | sed 's/[.[\*^$()+?{}|\\]/\\&/g')
     if ! grep -qE -- "^## \[$V_RE\]" "$ROOT/CHANGELOG.md" 2>/dev/null; then
         echo "✗ CHANGELOG.md: esperaba \"## [$V]\"" >&2
+        FAIL=1
+    fi
+    # Gemelo en inglés (desde 0.33.0, lo publica nyxlang.com/changelog/): un
+    # release no sale sin su traducción. La paridad fina (encabezado idéntico,
+    # mismos subtítulos e ítems) la verifica el check 13 de docs-health.
+    if [ -f "$ROOT/CHANGELOG.en.md" ] && ! grep -qE -- "^## \[$V_RE\]" "$ROOT/CHANGELOG.en.md"; then
+        echo "✗ CHANGELOG.en.md: falta la traducción de \"## [$V]\"" >&2
         FAIL=1
     fi
 fi

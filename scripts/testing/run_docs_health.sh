@@ -50,9 +50,10 @@ DEFAULT_10=on   # frescura DURA de PROJECT_STATE.md, relativa al último commit 
                 #   Task 5 del arco SDD-nyx (era WARN y estaba dormida)
 DEFAULT_11=on   # state-check del método SDD-nyx (scripts/sdd/state-check) — ON desde la Task 5
 DEFAULT_12=on   # nombres RESERVADOS de Windows en el árbol — ON desde 2026-09-20 (ver check_12)
+DEFAULT_13=on   # paridad CHANGELOG.md / CHANGELOG.en.md — ON desde 2026-10-26 (ver check_13)
                 #   del arco SDD-nyx, que cosechó los 15 ledgers históricos y limpió las citas
 
-PUBLIC_DOCS="README.md LLM.md CHANGELOG.md docs/GETTING_STARTED.md docs/CONTRIBUTING.md docs/COMPARISON.md docs/COMPARISON.es.md docs/DEPLOYMENT.md docs/SPEC.md docs/SPEC.es.md docs/VERSIONING.md docs/ROADMAP.md docs/TESTS.md docs/README.es.md"
+PUBLIC_DOCS="README.md LLM.md CHANGELOG.md CHANGELOG.en.md docs/GETTING_STARTED.md docs/CONTRIBUTING.md docs/COMPARISON.md docs/COMPARISON.es.md docs/DEPLOYMENT.md docs/SPEC.md docs/SPEC.es.md docs/VERSIONING.md docs/ROADMAP.md docs/TESTS.md docs/README.es.md"
 
 FAIL=0; WARN=0; SLEEPING=()
 
@@ -277,13 +278,49 @@ check_12() {
     return 0
 }
 
+check_13() {
+    # CHANGELOG.en.md es el gemelo en inglés de CHANGELOG.md desde 0.33.0: lo
+    # publica /changelog/ en nyxlang.com (la página en castellano lee el
+    # normativo). La política §8 de CLAUDE.md prohíbe un gemelo sin compromiso
+    # de mantenerlo; este check ES ese compromiso. Exige, desde la versión más
+    # vieja del gemelo hacia arriba:
+    #   · las MISMAS versiones, con el encabezado `## [X.Y.Z] — fecha` idéntico
+    #     byte a byte ([Unreleased] no se traduce: el gemelo arranca al cortar);
+    #   · en cada versión, la misma cantidad de subtítulos `### ` y de ítems de
+    #     lista (`- ` a cualquier sangría) — atrapa un ítem que no se tradujo.
+    # La traducción en sí no se puede verificar acá; la estructura sí.
+    local es=CHANGELOG.md en=CHANGELOG.en.md
+    [ -f "$en" ] || return 0
+    local hdr='^## \[[0-9]+\.[0-9]+\.[0-9]+\]'
+    local en_v es_v oldest
+    en_v=$(grep -E "$hdr" "$en")
+    [ -n "$en_v" ] || { echo "  ✗ [13] $en sin ninguna versión"; FAIL=$((FAIL+1)); return 0; }
+    oldest=$(printf '%s\n' "$en_v" | tail -1)
+    es_v=$(grep -E "$hdr" "$es" | awk -v o="$oldest" '{print} $0==o{exit}')
+    if [ "$en_v" != "$es_v" ]; then
+        echo "  ✗ [13] versiones de $en ≠ $es desde ${oldest%% —*} (falta traducir una versión o difiere un encabezado):"
+        diff <(printf '%s\n' "$es_v") <(printf '%s\n' "$en_v") | grep '^[<>]' | sed 's/^/        /' | head -6
+        FAIL=$((FAIL+1)); return 0
+    fi
+    local shape='/^## \[[0-9]/{v=$0; next} /^## /{v=""} v=="" {next} /^### /{h[v]++} /^[[:space:]]*- /{l[v]++} END{for (k in h) print k "|h" h[k]; for (k in l) print k "|l" l[k]}'
+    local a b
+    a=$(awk -v o="$oldest" "$shape" "$es" | grep -F -f <(printf '%s\n' "$en_v") | sort)
+    b=$(awk "$shape" "$en" | sort)
+    if [ "$a" != "$b" ]; then
+        echo "  ✗ [13] estructura distinta entre $es y $en (subtítulos «h» o ítems «l» por versión):"
+        diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") | grep '^[<>]' | sed 's/^/        /' | head -6
+        FAIL=$((FAIL+1))
+    fi
+    return 0
+}
+
 DESCS=("" "no-version-pin cuarteto" "paths muertos" "refs a archivos inexistentes" \
     "links relativos rotos (públicos)" "un solo [Unreleased]" "presupuestos" \
     "paridad scores COMPARISON" "INDEX design completo" "ratchet SPEC v1-6" \
     "frescura dura PROJECT_STATE vs último commit" "state-check SDD-nyx" \
-    "nombres reservados de Windows")
+    "nombres reservados de Windows" "paridad CHANGELOG.md / CHANGELOG.en.md")
 
-for n in 1 2 3 4 5 6 7 8 9 10 11 12; do
+for n in 1 2 3 4 5 6 7 8 9 10 11 12 13; do
     if is_on "$n"; then "check_$n"; else SLEEPING+=("[$n] ${DESCS[$n]}"); fi
 done
 

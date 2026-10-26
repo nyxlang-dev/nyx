@@ -65,7 +65,8 @@ Bug fixes, correcciones de docs, mejoras de rendimiento **sin features nuevas**.
    fallbacks hardcodeados contra `VERSION` y exige `[Unreleased]` en
    `CHANGELOG.md`; con `--pre` en vez de sin flag durante el trabajo previo
    al corte).
-3. Mover `[Unreleased]` de `CHANGELOG.md` a `## [X.Y.Z] — fecha`.
+3. Mover `[Unreleased]` de `CHANGELOG.md` a `## [X.Y.Z] — fecha`, y traducir esa entrada al
+   inglés en `CHANGELOG.en.md` (mismo encabezado byte a byte; check 13 de `make docs-health`).
 4. `git tag vX.Y.Z` + `bash scripts/sync_to_public.sh core --push` (mirror +
    push) + `make install-local` (refresca `~/.nyx`) + Release por API de
    GitHub.
