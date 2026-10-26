@@ -9,6 +9,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-10-26
+
+> **MINOR**: API nueva para procesar datos tabulares: el lector columnar `try_csv_read` de `std/csv`
+  [arco: csv-columnar] y `string_to_X_range`. Además, un entero que no entra en 64 bits pasa a ser inválido
+  en vez de saturarse: `string_to_int` sobre un número así ahora aborta (antes daba INT64_MAX en silencio).
+>
+> **Migración**: si tu código valida que el texto sean solo dígitos y después llama a `string_to_int`, un
+> número de 19+ dígitos que llega de afuera ahora **aborta el proceso** (antes se saturaba). La salida es
+> `string_to_int_or(s, def)` o rechazar el desborde antes. Afecta hoy a nyx-kv (`INCRBY`, `LRANGE`, `SCAN`,
+> `SET … EX`, `INCR`), nyx-db (`LIMIT`/`OFFSET`), nyx-proxy (`max-age`) y el webhook de kv: no
+> recompilarlos con 0.38.0 hasta que tengan su arreglo (fichado en `TASKS.md`).
+
 ### Agregado
 - **`string_to_int_range(s, ini, fin, def)` / `string_to_float_range(s, ini, fin, def)`**: parsean el
   número de los bytes `[ini, fin)` de `s` sin crear el substring; valen siempre lo mismo que
