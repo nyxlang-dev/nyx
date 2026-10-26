@@ -2710,7 +2710,9 @@ retries either: sending is one operation, queueing is a product (`nyx-queue`).
 ```nyx
 import "std/smtp"
 
-var msg: Array = smtp_message("me@mine.com", ["client@theirs.com"],
+// From/To accept "Display Name <addr>": the SMTP envelope and the Message-ID use only
+// the address, and a non-ASCII name is RFC 2047-encoded in the header.
+var msg: Array = smtp_message("My Shop <me@mine.com>", ["client@theirs.com"],
                               "Invoice", "Body with \n newlines")
 msg = smtp_attach(msg, "invoice.pdf", "application/pdf", read_file("invoice.pdf"))
 

@@ -756,8 +756,15 @@ pub fn smtp_render(m: Array) -> String {
     var ctype_cuerpo: String = "text/plain; charset=utf-8"
     if es_html == 1 { ctype_cuerpo = "text/html; charset=utf-8" }
 
-    var out: String = "From: " + de + "\r\n"
-    out = out + "To: " + __smtp_join(para, ", ") + "\r\n"
+    var out: String = "From: " + __smtp_cabecera_direccion(de) + "\r\n"
+    var para_cab: Array = []
+    var pi: int = 0
+    while pi < para.length() {
+        let p: String = para[pi]
+        para_cab.push(__smtp_cabecera_direccion(p))
+        pi = pi + 1
+    }
+    out = out + "To: " + __smtp_join(para_cab, ", ") + "\r\n"
     out = out + "Subject: " + __smtp_header_encode(asunto) + "\r\n"
     out = out + "Date: " + __smtp_date(time_epoch()) + "\r\n"
     out = out + "Message-ID: " + __smtp_get_id(m, de) + "\r\n"
@@ -907,7 +914,7 @@ pub fn smtp_send(c: Array, m: Array) -> Result<int, Error> {
         if he.length() > 0 { return Result.Err(err_new(0, "header", he)) }
     }
 
-    let r1: Array = smtp_cmd(c, "MAIL FROM:<" + de + ">")
+    let r1: Array = smtp_cmd(c, "MAIL FROM:<" + __smtp_direccion(de) + ">")
     let c1: int = r1[0]
     if smtp_is_ok(c1) == false {
         let t1: String = r1[1]
@@ -917,7 +924,7 @@ pub fn smtp_send(c: Array, m: Array) -> Result<int, Error> {
     var i: int = 0
     while i < para.length() {
         let destino: String = para[i]
-        let r2: Array = smtp_cmd(c, "RCPT TO:<" + destino + ">")
+        let r2: Array = smtp_cmd(c, "RCPT TO:<" + __smtp_direccion(destino) + ">")
         let c2: int = r2[0]
         // 251 («no es local, lo reenvío») también es aceptación.
         if smtp_is_ok(c2) == false {
@@ -1084,7 +1091,8 @@ fn __smtp_join(xs: Array, sep: String) -> String {
     return out
 }
 
-// RFC 2047, SOLO para el asunto (D-2). Un header con un byte alto suelto es
+// RFC 2047 para el asunto (D-2) y, desde 2026-10-26, para el nombre visible
+// de From/To (__smtp_cabecera_direccion). Un header con un byte alto suelto es
 // inválido, y un cliente puede mostrarlo como basura o rechazarlo. Si el texto
 // es ASCII puro NO se codifica: codificar de más deja un header ilegible para
 // un humano que mira el mensaje crudo.
@@ -1161,12 +1169,57 @@ fn __smtp_fold_header(n: String, v: String) -> String {
     return out
 }
 
+// Remitente y destinatarios pueden venir como «Nombre <dirección>» (name-addr,
+// RFC 5322 §3.4) o como la dirección sola. El SOBRE (MAIL FROM, RCPT TO) y el
+// dominio del Message-ID llevan solo la dirección: un servidor real rechaza
+// MAIL FROM:<Tienda <ventas@x.com>> (fricción de nyxerp, 2026-10-26). Se toma
+// el ÚLTIMO '<' porque un nombre entre comillas puede contener otro.
+fn __smtp_direccion(s: String) -> String {
+    let t: String = s.trim()
+    var lt: int = -1
+    var i: int = 0
+    while i < t.length() {
+        if t.charAt(i) == 60 { lt = i }
+        i = i + 1
+    }
+    if lt < 0 { return t }
+    let resto: String = t.substring(lt + 1, t.length())
+    let gt: int = resto.indexOf(">")
+    if gt < 0 { return t }
+    return resto.substring(0, gt).trim()
+}
+
+// La forma de la cabecera From/To: un nombre ASCII queda tal cual lo escribió el
+// llamador; uno con bytes altos va en RFC 2047 (mismo codificador que el
+// asunto), sin las comillas que lo rodeen, porque una encoded-word no puede ir
+// dentro de "..." (RFC 2047 §5).
+fn __smtp_cabecera_direccion(s: String) -> String {
+    let t: String = s.trim()
+    let dir: String = __smtp_direccion(t)
+    if dir == t { return t }
+    var lt: int = -1
+    var i: int = 0
+    while i < t.length() {
+        if t.charAt(i) == 60 { lt = i }
+        i = i + 1
+    }
+    var nombre: String = t.substring(0, lt).trim()
+    if nombre.length() == 0 { return "<" + dir + ">" }
+    let cod: String = __smtp_header_encode(nombre)
+    if cod == nombre { return t }
+    if nombre.length() >= 2 && nombre.startsWith("\"") && nombre.endsWith("\"") {
+        nombre = nombre.substring(1, nombre.length() - 1)
+    }
+    return __smtp_header_encode(nombre) + " <" + dir + ">"
+}
+
 // Message-ID único. El dominio sale del remitente: un Message-ID con un dominio
 // que no es del remitente es una señal de spam para varios filtros.
 fn __smtp_message_id(de: String) -> String {
     var dominio: String = "localhost"
-    let at: int = de.indexOf("@")
-    if at >= 0 && at + 1 < de.length() { dominio = de.substring(at + 1, de.length()) }
+    let dir: String = __smtp_direccion(de)
+    let at: int = dir.indexOf("@")
+    if at >= 0 && at + 1 < dir.length() { dominio = dir.substring(at + 1, dir.length()) }
     return "<" + int_to_string(time_epoch()) + "." + int_to_string(random_int()) + "@" + dominio + ">"
 }
 

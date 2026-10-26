@@ -4882,6 +4882,8 @@ smtp_message_alternative(de, para: Array, asunto, texto, html) -> Array  // mult
 smtp_attach(m, nombre, content_type, datos) -> Array          // datos = BYTES, el base64 lo hace la función
 smtp_render(m) -> String                                       // el mensaje tal como viaja (función pura)
 smtp_boundary(m) -> String
+// de / para: la dirección sola o «Nombre <dirección>». El sobre (MAIL FROM, RCPT TO) y el dominio del
+// Message-ID usan solo la dirección; un nombre no ASCII sale en RFC 2047 en From/To.
 smtp_send(c, m) -> Result<int, Error>
 ```
 

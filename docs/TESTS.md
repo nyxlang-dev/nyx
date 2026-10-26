@@ -16,7 +16,7 @@
 | Error paths (parse+semantic) | `make test-errors` | **382** | +2 el 2026-10-23 (NYX1046); +1 el 2026-10-22 (NYX1010 sobre una casilla); +2 el 2026-10-20 (NYX1017 método); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
-| Stdlib | `make test-stdlib` | **12** + verificación externa de zip | math + array + integración + template + multipart + oauth2 (2026-10-16) + smtp ×6 (+alternative 10-18) (+1 el 2026-10-01: hilo; +XOAUTH2 2026-10-16) (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
+| Stdlib | `make test-stdlib` | **13** + verificación externa de zip | math + array + integración + template + multipart + oauth2 (2026-10-16) + smtp ×7 (+alternative 10-18, +remitente con nombre 10-26) (+hilo 10-01; +XOAUTH2 10-16) (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
 | Runtime C unit (B4) | `make test-runtime` | **39 suites / 2053 asserts** | 2026-10-25 (+3 suites: `test_float_parse.c` 63, `test_csv.c` 82, `test_int_parse.c` 41). Antes, en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **43 programas + 6 casos stdin (x2 targets) + 69 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (69: templates 2, tooling 17, coverage 9, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |

@@ -14,6 +14,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   nyxlang.com/changelog/. Cada release traduce su entrada: `release-check.sh` no deja cortar sin ella y el
   nuevo check 13 de `make docs-health` exige los mismos encabezados, subtítulos e ítems por versión.
 
+### Arreglado
+- **`std/smtp` con remitente o destinatarios «Nombre <dirección>»** [dogfooding:nyxerp]: el sobre salía como
+  `MAIL FROM:<Tienda <ventas@x.com>>` (un servidor real lo rechaza), el Message-ID tomaba `x.com>` como
+  dominio y un nombre con acentos viajaba en UTF-8 crudo en `From`. Ahora `MAIL FROM` y `RCPT TO` llevan
+  solo la dirección, el Message-ID usa su dominio y el nombre visible de `From`/`To` sale en RFC 2047
+  cuando no es ASCII (sin las comillas que lo rodeen). Test nuevo `test-stdlib-13-smtp-remitente-nombre`.
+
 ## [0.38.0] — 2026-10-26
 
 > **MINOR**: API nueva para procesar datos tabulares: el lector columnar `try_csv_read` de `std/csv`

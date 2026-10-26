@@ -25,7 +25,9 @@ fn main() -> int {
     let cuerpo: String = "Estimado cliente,\n\nAdjuntamos la factura del mes.\n\nSaludos"
 
     var msg: Array = smtp_message(
-        "facturacion@miempresa.com",          // de
+        // de: la dirección sola o «Nombre <dirección>». El sobre SMTP lleva solo
+        // la dirección; un nombre con acentos sale codificado (RFC 2047).
+        "Facturación Mi Empresa <facturacion@miempresa.com>",
         ["cliente@ejemplo.com"],              // para (varios: agregar a la lista)
         "Factura de septiembre",              // asunto
         cuerpo)
