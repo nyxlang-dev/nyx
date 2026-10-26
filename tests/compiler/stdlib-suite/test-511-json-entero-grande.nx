@@ -1,0 +1,30 @@
+// `json_parse` con un entero que no entra en 64 bits (2026-10-25).
+//
+// POR QUÉ EXISTE
+//
+// Desde que un entero que desborda es inválido en string_to_int (antes se
+// saturaba a INT64_MAX en silencio), std/json no puede pasarle a esa función
+// el texto de un número que llega de afuera: un solo pedido con
+// 99999999999999999999 tumbaría al servidor. Ese número es JSON válido; se
+// guarda como "float" con su texto, igual que uno con decimales.
+//
+// Expected exit: 0
+
+import "std/json"
+
+fn main() -> int {
+    let doc: Array = json_parse("{\"id\": 99999999999999999999, \"n\": 7, \"min\": -9223372036854775808}")
+    let id: Array = json_get(doc, "id")
+    let tag: String = id[0]
+    assert(tag == "float", "el entero grande va como float")
+    assert(json_stringify(id) == "99999999999999999999", "reemite el texto exacto")
+    assert(json_as_float(id) > 9000000000000000000.0, "json_as_float da el double")
+    let n: Array = json_get(doc, "n")
+    let tn: String = n[0]
+    assert(tn == "number", "un entero chico sigue siendo number")
+    assert(json_as_int(n) == 7, "7")
+    let m: Array = json_get(doc, "min")
+    assert(json_as_int(m) == -9223372036854775808, "INT64_MIN entra como number")
+    print("json-entero-grande OK")
+    return 0
+}

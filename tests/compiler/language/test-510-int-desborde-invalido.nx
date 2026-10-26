@@ -1,0 +1,25 @@
+// test-510 — un entero que no entra en 64 bits es INVÁLIDO en string_to_int_or
+// y string_to_int_range (devuelven el default), no se satura. Decisión de
+// Ottavio, 2026-10-25: strtoll lo dejaba en INT64_MAX/MIN con ERANGE y nadie
+// miraba errno, así que string_to_int_or("99999999999999999999", 0) daba
+// 9223372036854775807 — un valor incorrecto en silencio. Los extremos exactos
+// siguen siendo válidos. (string_to_int aborta; lo cubre test_int_parse.c.)
+fn main() {
+    let max: int = 9223372036854775807
+    let min: int = -9223372036854775808
+    // Los extremos exactos: válidos.
+    assert(string_to_int_or("9223372036854775807", 0) == max)
+    assert(string_to_int_or("-9223372036854775808", 0) == min)
+    assert(string_to_int("9223372036854775807") == max)
+    // Uno de más, en cada dirección: inválido → default.
+    assert(string_to_int_or("9223372036854775808", -1) == -1)
+    assert(string_to_int_or("-9223372036854775809", -1) == -1)
+    assert(string_to_int_or("99999999999999999999", 42) == 42)
+    // _range: lo mismo sobre el rango; 18 dígitos entran.
+    let s: String = "id=99999999999999999999;"
+    assert(string_to_int_range(s, 3, 23, -1) == -1)
+    assert(string_to_int_range(s, 3, 21, -1) == 999999999999999999)
+    // Ceros a la izquierda no son desborde.
+    assert(string_to_int_or("000000000000000000000000007", 0) == 7)
+    print("int-desborde-invalido OK")
+}

@@ -26,6 +26,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `split()` + `Map`: 5.5 s). +1 test (`509`), +1 suite C (`test_csv.c`), receta `146-csv-columnar`.
 
 ### Cambiado
+- **Un entero que no entra en 64 bits es inválido, no se satura**: `string_to_int` aborta con un mensaje
+  propio, `string_to_int_or`/`_range` devuelven el default y una columna `int` de `try_csv_read` da `Err`
+  («no entra en un int»). Antes `strtoll` lo dejaba en INT64_MAX/MIN y nadie miraba `ERANGE`:
+  `string_to_int_or("99999999999999999999", 0)` daba 9223372036854775807 en silencio (decisión de Ottavio).
+  Consecuencias que se arreglaron con el cambio: **`std/json`** guarda un entero así como `"float"` con su
+  texto (antes lo saturaba; con el cambio habría abortado el proceso por un número llegado de afuera), y
+  **el intérprete/REPL** aplica la misma regla NYX2015 que el compilador: `-9223372036854775808` da
+  INT_MIN exacto (daba -9223372036854775807) y un literal que no entra es error (daba INT_MAX). +2 tests
+  (`510`, `511`), +1 suite C (`test_int_parse.c`), +2 checks en el smoke del REPL.
 - **`string_to_float` / `_or` / `_range` parsean con el fast path de Clinger** [arco: csv-columnar]: un número
   `[+-]dígitos[.dígitos]` de hasta 15 dígitos se convierte con una división exacta, que da el mismo double
   que `strtod` bit a bit; el resto (exponentes, 16+ dígitos, `inf`, hex, espacios) sigue yendo a `strtod`.

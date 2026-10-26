@@ -956,6 +956,7 @@ single `Error` struct.
   (`1e-05`, `1e+16`). Para un ancho fijo de decimales (precios): `float_to_fixed` de `std/math_ext`
 - `string_to_int(s)`, `string_to_float(s)` — **abortan el proceso (exit 1)** si `s` es vacío o no numérico
 - `string_to_int_or(s, def)`, `string_to_float_or(s, def)` — variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
+- **Un entero que no entra en 64 bits es INVÁLIDO** en `string_to_int` (aborta), `string_to_int_or`/`_range` (dan `def`) y en las columnas `int` de `try_csv_read` (`Err`): no se satura a INT64_MAX/MIN (antes sí, en silencio; cambiado el 2026-10-25). `"-9223372036854775808"` es válido. [test: compiler/language/test-510-int-desborde-invalido]
 - `string_to_int_range(s, ini, fin, def)`, `string_to_float_range(s, ini, fin, def)` — parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto). Para datos grandes: ubicar los campos con `indexOf` y parsear sobre el rango evita las asignaciones de `split()` por fila (receta `145-csv-sin-split`); para un CSV entero, mejor `try_csv_read` de `std/csv` [test: compiler/language/test-507-string-to-num-range]
 - `int_to_float(n)`, `float_to_int(n)`
 - `str_byte_length(s)` — byte length (for HTTP headers)

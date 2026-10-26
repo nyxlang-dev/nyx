@@ -3188,7 +3188,8 @@ Soporta: strings, numeros (int/float), booleans, null, arrays y objetos anidados
 
 `json_parse` guarda el TEXTO original de cada número con decimales o exponente
 (tag `"float"`), no solo el double; un entero sin punto ni exponente se guarda
-como `int` (tag `"number"`). Por eso `json_stringify` sobre el documento
+como `int` (tag `"number"`), salvo que no entre en 64 bits: ese va como `"float"`
+con su texto (no se satura ni aborta; desde el 2026-10-25). Por eso `json_stringify` sobre el documento
 completo, o sobre un nodo suelto (`json_get`/`json_array_get`), reemite un
 número con decimales tal como vino — sin redondeo ni cambio de notación —, lo que sirve por ejemplo para reemitir un array de
 floats de un embedding, que es a la vez su literal para pgvector:

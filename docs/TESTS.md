@@ -12,12 +12,12 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **526 archivos / 525 ARM64** | 2026-10-25: +3 (`507`-`509`). 2026-10-23: +1 (`506`). 2026-10-21: +1 (`505`). 2026-10-19: +3 (`502`-`504`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **528 archivos / 527 ARM64** | 2026-10-25: +5 (`507`-`511`). 2026-10-23: +1 (`506`). 2026-10-21: +1 (`505`). 2026-10-19: +3 (`502`-`504`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **382** | +2 el 2026-10-23 (NYX1046); +1 el 2026-10-22 (NYX1010 sobre una casilla); +2 el 2026-10-20 (NYX1017 método); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **12** + verificación externa de zip | math + array + integración + template + multipart + oauth2 (2026-10-16) + smtp ×6 (+alternative 10-18) (+1 el 2026-10-01: hilo; +XOAUTH2 2026-10-16) (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
-| Runtime C unit (B4) | `make test-runtime` | **38 suites / 2012 asserts** | corrida real 2026-10-25 (+2 suites: `test_float_parse.c`, 63; `test_csv.c`, 82). Antes: 2026-10-01. Antes: W4 Task 7 (`test_os_ev.c` de 9 a 11 casos) y Task 9 (`test_os_errno_canon.c`, 26); detalle en `CHANGELOG.md` |
+| Runtime C unit (B4) | `make test-runtime` | **39 suites / 2053 asserts** | 2026-10-25 (+3 suites: `test_float_parse.c` 63, `test_csv.c` 82, `test_int_parse.c` 41). Antes, en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **43 programas + 6 casos stdin (x2 targets) + 69 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (69: templates 2, tooling 17, coverage 9, build_manifest 20, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
 | Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** + autotest | `voseo_filter` (`lib_voseo.sh`: lista + regla general en -á) sobre `compiler/`, `runtime/`, `std/`, `scripts/`, `templates/gitignore` y `tests/**/*.sh` |
@@ -37,7 +37,7 @@
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
 | Recetas by-example | `make test-examples` | **148** (130 ejecutan, 18 solo compilan+enlazan) | +2 el 10-25 (145, 146); +2 el 10-19; +3 el 10-18 (140-142); antes, en `CHANGELOG.md`; compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
-| REPL / intérprete | `make test-repl` | **26 checks** | +1 el 2026-09-20 (NYX3007: `include_bytes` no existe al interpretar); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
+| REPL / intérprete | `make test-repl` | **28 checks** | +2 el 2026-10-25 (literales enteros en el borde de 64 bits); +1 el 2026-09-20 (NYX3007); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
 | PostgreSQL E2E | (dentro de `make test-integration`, enganchado el 2026-09-14) `run_postgres_tests.sh` | **9 programas** | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **15 sub-suites** (imap cliente 107 + imap TLS 1 + keep-alive 23 + plazos http_serve 8 + cas_extra 5 + WS 6 + FFI 3 + slots 9 + llm 3 + h2 1 + body cap 6 + contrato 10 + bind 6-9 + smoke 108 + serve+kv 10) | detalle de las altas en `CHANGELOG.md` |

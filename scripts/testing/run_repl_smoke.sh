@@ -506,6 +506,33 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# ── Caso 21: literales enteros en el borde de 64 bits ────────────────────
+# Antes el intérprete pasaba el literal a string_to_int, que lo saturaba:
+# -9223372036854775808 daba -9223372036854775807 y 99999999999999999999 daba
+# INT_MAX, en silencio. Ahora, como el compilador: INT_MIN exacto y NYX2015.
+run_case 21 <<'EOF'
+let a: int = -9223372036854775808
+print(a)
+let c: int = 99999999999999999999
+print("SESION-SIGUE-VIVA-21")
+:quit
+EOF
+
+if grep -qx -- "-9223372036854775808" <(sed 's/^nyx> //g; s/nyx> //g' "$TMP/out21.txt"); then
+    echo "  ✓ -9223372036854775808 es INT_MIN exacto en el intérprete"
+else
+    echo "  ✗ -9223372036854775808 no da INT_MIN en el intérprete"
+    sed 's/^/      /' "$TMP/out21.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+if grep -q "NYX2015" "$TMP/out21.txt" && grep -q "SESION-SIGUE-VIVA-21" "$TMP/out21.txt"; then
+    echo "  ✓ un literal que no entra en 64 bits da NYX2015 y la sesión sigue"
+else
+    echo "  ✗ el literal desbordado no da NYX2015 (o la sesión murió)"
+    sed 's/^/      /' "$TMP/out21.txt" | head -8
+    FAIL=$((FAIL + 1))
+fi
+
 echo ""
 if [ "$FAIL" -gt 0 ]; then
     echo "  smoke del REPL: FALLÓ ($FAIL check(s))"

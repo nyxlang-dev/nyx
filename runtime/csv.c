@@ -79,32 +79,9 @@ static void csv_mostrar(char* dst, size_t cap, const char* p, int64_t n) {
 
 // ===== Números =====
 
-// Entero con el contrato de string_to_int_or (strtoll base 10, todo el rango
-// consumido). Fast path para [+-]?dígitos de hasta 18 cifras, que no desborda.
-static int64_t csv_parse_int(const char* p, int64_t n, int* ok) {
-    *ok = 0;
-    if (n <= 0) return 0;
-    const char* q = p;
-    const char* e = p + n;
-    bool neg = false;
-    if (*q == '-' || *q == '+') { neg = (*q == '-'); q++; }
-    if (q < e && e - q <= 18) {
-        int64_t v = 0;
-        const char* r = q;
-        while (r < e && *r >= '0' && *r <= '9') { v = v * 10 + (*r - '0'); r++; }
-        if (r == e) { *ok = 1; return neg ? -v : v; }
-    }
-    char pila[64];
-    char* buf = pila;
-    if (n >= (int64_t)sizeof pila) buf = (char*)GC_malloc_atomic((size_t)n + 1);
-    memcpy(buf, p, (size_t)n);
-    buf[n] = '\0';
-    char* endptr;
-    long long v = strtoll(buf, &endptr, 10);
-    if (*endptr != '\0') return 0;
-    *ok = 1;
-    return (int64_t)v;
-}
+// Enteros: nyx_parse_int_bytes (runtime/strings.c), el mismo parseo que
+// string_to_int_or. Un entero que no entra en 64 bits es inválido, no se
+// satura (decisión de Ottavio, 2026-10-25).
 
 // ===== Campos =====
 
@@ -441,15 +418,15 @@ nyx_array_t* nyx_csv_read(nyx_string* texto, nyx_string* esquema, int64_t delim,
                 int ok = 1;
                 switch (col->tipo) {
                     case CSV_INT: {
-                        int64_t v = c.escapado ? (ok = 0, 0) : csv_parse_int(c.ini, n, &ok);
-                        if (ok) csv_poner(col->datos, filas, v, NYX_TAG_INT);
+                        int64_t v = c.escapado ? (ok = NYX_INT_INVALIDO, 0) : nyx_parse_int_bytes(c.ini, n, &ok);
+                        if (ok == NYX_INT_OK) csv_poner(col->datos, filas, v, NYX_TAG_INT);
                         break;
                     }
                     case CSV_FLOAT: {
                         double d = c.escapado ? (ok = 0, 0.0) : nyx_parse_float_bytes(c.ini, n, &ok);
                         int64_t bits;
                         memcpy(&bits, &d, sizeof bits);
-                        if (ok) csv_poner(col->datos, filas, bits, NYX_TAG_FLOAT);
+                        if (ok == 1) csv_poner(col->datos, filas, bits, NYX_TAG_FLOAT);
                         break;
                     }
                     case CSV_STR: {
@@ -467,12 +444,19 @@ nyx_array_t* nyx_csv_read(nyx_string* texto, nyx_string* esquema, int64_t delim,
                         break;
                     }
                 }
-                if (!ok) {
+                // ok vale 1 si salió bien (NYX_INT_OK == 1 y el ok de los floats);
+                // ojo: NYX_INT_DESBORDE es -1, que en C es «verdadero».
+                if (ok != 1) {
                     char mostrado[64];
                     csv_mostrar(mostrado, sizeof mostrado, c.ini, n);
-                    snprintf(err, sizeof err, "csv: fila %lld, columna '%.*s': %s no es %s",
-                             (long long)l.registro, (int)col->nlen, col->nombre, mostrado,
-                             csv_tipo_nombre(col->tipo));
+                    if (ok == NYX_INT_DESBORDE) {
+                        snprintf(err, sizeof err, "csv: fila %lld, columna '%.*s': %s no entra en un int (64 bits)",
+                                 (long long)l.registro, (int)col->nlen, col->nombre, mostrado);
+                    } else {
+                        snprintf(err, sizeof err, "csv: fila %lld, columna '%.*s': %s no es %s",
+                                 (long long)l.registro, (int)col->nlen, col->nombre, mostrado,
+                                 csv_tipo_nombre(col->tipo));
+                    }
                     return csv_resultado_error(err);
                 }
             }
@@ -593,8 +577,8 @@ nyx_array_t* nyx_csv_guess_schema(nyx_string* texto, int64_t delim, int64_t head
                 const char* v = csv_valor(&c, &n, pila, sizeof pila);
                 int ok;
                 if (n == 0) hay_vacio[f] = true;
-                if (puede_int[f]) { csv_parse_int(v, n, &ok); puede_int[f] = ok; }
-                if (puede_float[f]) { nyx_parse_float_bytes(v, n, &ok); puede_float[f] = ok; }
+                if (puede_int[f]) { nyx_parse_int_bytes(v, n, &ok); puede_int[f] = (ok == NYX_INT_OK); }
+                if (puede_float[f]) { nyx_parse_float_bytes(v, n, &ok); puede_float[f] = (ok == 1); }
                 // Con muchos distintos ya es str: no hace falta seguir llenando el diccionario.
                 if (dicc[f].dicc->length <= CSV_GUESS_FILAS / 2) csv_dicc_codigo(&dicc[f], v, n);
             }

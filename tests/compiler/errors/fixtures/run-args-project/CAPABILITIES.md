@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.37.0 -->
-<!-- nyx-stdlib: 2873354303-2058380 -->
+<!-- nyx-version: 0.37.1 -->
+<!-- nyx-stdlib: 451172379-2071396 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -364,7 +364,7 @@ Tipos (1) y métodos (0):
 
 ### `std/serve`
 
-`import "std/serve"` — 37 funciones:
+`import "std/serve"` — 38 funciones:
 
 - `pub fn app_ws(pattern: String, handler: Fn(Array) -> int)`
 - `pub fn serve_ws(handler: Fn(Array) -> int)`
@@ -403,6 +403,7 @@ Tipos (1) y métodos (0):
 - `pub fn sse_wait_room(room: String, timeout_ms: int) -> bool`
 - `pub fn sse_open(req: Request, room: String) -> Response`
 - `pub fn sse_drain_close() -> int`
+- `pub fn sse_close_room(room: String) -> int`
 
 ### `std/router`
 
@@ -453,7 +454,7 @@ Tipos (1) y métodos (0):
 
 ### `std/postgres`
 
-`import "std/postgres"` — 45 funciones:
+`import "std/postgres"` — 46 funciones:
 
 - `pub fn pg_be32(n: int) -> String`
 - `pub fn pg_be16(n: int) -> String`
@@ -464,6 +465,7 @@ Tipos (1) y métodos (0):
 - `pub fn pg_scram_proof(password: String, salt_b64: String, iters: int, client_first_bare: String, server_first: String, client_final_bare: String) -> Array`
 - `pub fn pg_scram_attr(msg: String, attr: String) -> String`
 - `pub fn pg_conninfo_get(conninfo: String, clave: String, por_defecto: String) -> String`
+- `pub fn pg_pgpass_buscar(ruta: String, host: String, port: String, dbname: String, user: String) -> String`
 - `pub fn pg_read_message(fd: int, tls: int) -> Result<Array, Error>`
 - `pub fn pg_parse_error(payload: String) -> Error`
 - `pub fn pg_sqlstate(e: Error) -> String`
@@ -666,7 +668,7 @@ Tipos (4) y métodos (0):
 
 ### `std/csv`
 
-`import "std/csv"` — 14 funciones:
+`import "std/csv"` — 17 funciones:
 
 - `pub fn parse(text: String) -> CsvDoc` — Parse CSV text into a CsvDoc (auto-detect headers: first row is headers).
 - `pub fn parse_with_delimiter(text: String, delimiter: String, has_header: bool) -> CsvDoc` — Parse CSV text with custom delimiter and header setting.
@@ -682,10 +684,22 @@ Tipos (4) y métodos (0):
 - `pub fn stringify_with_delimiter(doc: CsvDoc, delimiter: String) -> String` — Serialize with custom delimiter.
 - `pub fn new_doc(header_names: Array) -> CsvDoc` — Create an empty CsvDoc with given headers.
 - `pub fn add_row(doc: CsvDoc, row: Array)` — Add a row to an existing CsvDoc.
+- `pub fn csv_opts() -> CsvOpts` — Opciones por omisión: coma, con cabecera, sin tope de filas.
+- `pub fn try_csv_read(texto: String, esquema: String, opts: CsvOpts) -> Result<CsvTable, Error>` — Lee `texto` a columnas según `esquema` ("nombre:tipo,..." con tipo int | float | str | cat). Con cabecera, las columnas se buscan por nombre y las que el esquema no nombra se saltan. Estricto: un número vacío o inválido, una fila con otra cantidad de campos o una comilla sin cerrar dan Err con la fila y la columna.
+- `pub fn try_csv_guess_schema(texto: String, opts: CsvOpts) -> Result<String, Error>` — Propone un esquema mirando las primeras 1000 filas: int si todo es entero, si no float, si no cat cuando los valores distintos son pocos, si no str. Es un punto de partida: imprimirlo, revisarlo y pegarlo en try_csv_read.
 
-Tipos (1) y métodos (0):
+Tipos (3) y métodos (7):
 
 - `pub struct CsvDoc` — CSV document: array of rows, each row is an Array of String fields.
+- `pub struct CsvOpts` — Opciones del lector columnar: delimitador de un byte, si la primera fila es cabecera, y un tope de filas (0 = todas).
+- `pub struct CsvTable` — Una tabla leída por columnas. Cada columna se pide por nombre y con su tipo del esquema: ints, floats, strs, o codes + dict para una `cat`.
+  - `fn rows(self) -> int` — Cantidad de filas de datos (sin la cabecera).
+  - `fn names(self) -> Array<String>` — Nombres de las columnas, en el orden del esquema.
+  - `fn ints(self, nombre: String) -> Array<int>` — Columna `int` por nombre.
+  - `fn floats(self, nombre: String) -> Array<float>` — Columna `float` por nombre.
+  - `fn strs(self, nombre: String) -> Array<String>` — Columna `str` por nombre (un String por fila).
+  - `fn codes(self, nombre: String) -> Array<int>` — Códigos de una columna `cat`: el valor de la fila i es dict(nombre)[codes(nombre)[i]].
+  - `fn dict(self, nombre: String) -> Array<String>` — Diccionario de una columna `cat`: cada valor distinto una vez, en orden de aparición.
 
 ### `std/base64`
 
@@ -1419,8 +1433,10 @@ Tipos (1) y métodos (0):
 - `string_from_cstr` (1 arg)
 - `string_to_float` (1 arg) — **abortan el proceso (exit 1)** si `s` es vacío o no numérico
 - `string_to_float_or` (2 args) — variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
+- `string_to_float_range` (4 args) — parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto).
 - `string_to_int` (1 arg) — **abortan el proceso (exit 1)** si `s` es vacío o no numérico
 - `string_to_int_or` (2 args) — variantes SEGURAS: devuelven `def` en vez de abortar (usar para datos de red/usuario no confiables)
+- `string_to_int_range` (4 args) — parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto).
 
 ## Matemática
 

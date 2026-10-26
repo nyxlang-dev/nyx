@@ -104,6 +104,11 @@ int64_t nyx_string_to_int_or(nyx_string* str, int64_t def);
 double nyx_string_to_float_or(nyx_string* str, double def);
 // Parseo de float sobre n bytes (fast path de Clinger + strtod); *ok = 0 si inválido.
 double nyx_parse_float_bytes(const char* p, int64_t n, int* ok);
+// Parseo de entero base 10 sobre n bytes; *ok es uno de estos. El desborde es inválido.
+#define NYX_INT_OK        1
+#define NYX_INT_INVALIDO  0
+#define NYX_INT_DESBORDE  (-1)
+int64_t nyx_parse_int_bytes(const char* p, int64_t n, int* ok);
 int64_t nyx_string_to_int_range(nyx_string* str, int64_t ini, int64_t fin, int64_t def);
 double nyx_string_to_float_range(nyx_string* str, int64_t ini, int64_t fin, double def);
 

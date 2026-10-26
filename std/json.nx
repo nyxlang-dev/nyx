@@ -651,7 +651,18 @@ fn parse_number(input: String, pos: Array) -> Array {
         let farr: Array = ["float", text]
         return farr
     }
-    return json_number(string_to_int(text))
+    // Un entero que no entra en 64 bits es JSON válido (la norma no pone tope)
+    // pero no es un `int`: string_to_int lo rechaza desde el 2026-10-25 (antes
+    // lo saturaba en silencio a INT64_MAX), y abortar el proceso por un número
+    // que llega de afuera dejaría tumbar a un servidor con un solo pedido. Va
+    // como "float" con su TEXTO, igual que un número con decimales: stringify
+    // lo reemite exacto y json_as_float da el double más cercano.
+    let n: int = string_to_int_or(text, 0)
+    if n != string_to_int_or(text, 1) {
+        let grande: Array = ["float", text]
+        return grande
+    }
+    return json_number(n)
 }
 
 fn parse_array(input: String, pos: Array) -> Array {

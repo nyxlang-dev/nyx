@@ -12,6 +12,7 @@
 #include <inttypes.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <errno.h>  // ERANGE: un entero que desborda es inválido (nyx_parse_int_bytes)
 #include <gc.h>  // Boehm GC
 #include "strings.h"
 
@@ -690,21 +691,68 @@ nyx_string* nyx_string_from_float(double value) {
     return nyx_string_from_cstr(buffer);
 }
 
+// Parseo de entero base 10 sobre n bytes (sin NUL final obligatorio). Lo usan
+// string_to_int, _or, _range y runtime/csv.c. *ok:
+//   NYX_INT_OK        válido
+//   NYX_INT_INVALIDO  vacío, o los bytes no son enteros un número para strtoll
+//   NYX_INT_DESBORDE  un número que no entra en 64 bits
+// El desborde es INVÁLIDO (decisión de Ottavio, 2026-10-25): strtoll lo
+// satura a INT64_MAX/MIN con ERANGE y deja endptr al final, y nadie miraba
+// errno, así que string_to_int_or("99999999999999999999", 0) daba
+// 9223372036854775807 — un valor incorrecto en silencio, y en un lector de
+// datos que se promete estricto. -9223372036854775808 sí es válido.
+// Fast path: [+-]?dígitos con a lo sumo 18 dígitos, que no puede desbordar.
+// EN: base-10 int parse; overflow is invalid, never saturated.
+#define NYX_INT_STACK_BUF 64
+
+int64_t nyx_parse_int_bytes(const char* p, int64_t n, int* ok) {
+    *ok = NYX_INT_INVALIDO;
+    if (!p || n <= 0) return 0;
+    const char* q = p;
+    const char* e = p + n;
+    int neg = 0;
+    if (*q == '-' || *q == '+') { neg = (*q == '-'); q++; }
+    if (q < e && e - q <= 18) {
+        int64_t v = 0;
+        const char* r = q;
+        while (r < e && *r >= '0' && *r <= '9') { v = v * 10 + (*r - '0'); r++; }
+        if (r == e) { *ok = NYX_INT_OK; return neg ? -v : v; }
+    }
+    // Fuera del fast path: strtoll sobre una copia NUL-terminada, con el chequeo
+    // de siempre (*endptr == '\0') más ERANGE.
+    char pila[NYX_INT_STACK_BUF];
+    char* buf = pila;
+    if (n >= NYX_INT_STACK_BUF) buf = (char*)GC_malloc_atomic((size_t)n + 1);
+    memcpy(buf, p, (size_t)n);
+    buf[n] = '\0';
+    char* endptr;
+    errno = 0;
+    long long v = strtoll(buf, &endptr, 10);
+    if (*endptr != '\0' || endptr == buf) return 0;
+    if (errno == ERANGE) { *ok = NYX_INT_DESBORDE; return 0; }
+    *ok = NYX_INT_OK;
+    return (int64_t)v;
+}
+
 // Convertir string a entero
 int64_t nyx_string_to_int(nyx_string* str) {
     if (!str || str->length == 0) {
         fprintf(stderr, "💥 Runtime Error: No se puede convertir string vacío a int\n");
         exit(1);
     }
-    
-    char* endptr;
-    int64_t result = strtoll(str->data, &endptr, 10);
-    
-    if (*endptr != '\0') {
+
+    int ok;
+    int64_t result = nyx_parse_int_bytes(str->data, str->length, &ok);
+
+    if (ok == NYX_INT_DESBORDE) {
+        fprintf(stderr, "💥 Runtime Error: '%s' no entra en un int (64 bits: -9223372036854775808 a 9223372036854775807)\n", str->data);
+        exit(1);
+    }
+    if (ok != NYX_INT_OK) {
         fprintf(stderr, "💥 Runtime Error: String '%s' no es un número válido\n", str->data);
         exit(1);
     }
-    
+
     return result;
 }
 
@@ -787,10 +835,9 @@ double nyx_string_to_float(nyx_string* str) {
 // nyx-venezuelainfo incident: chunk framing reached string_to_float → exit 1).
 int64_t nyx_string_to_int_or(nyx_string* str, int64_t def) {
     if (!str || str->length == 0) return def;
-    char* endptr;
-    int64_t result = strtoll(str->data, &endptr, 10);
-    if (*endptr != '\0') return def;
-    return result;
+    int ok;
+    int64_t result = nyx_parse_int_bytes(str->data, str->length, &ok);
+    return ok == NYX_INT_OK ? result : def;
 }
 
 double nyx_string_to_float_or(nyx_string* str, double def) {
@@ -805,50 +852,30 @@ double nyx_string_to_float_or(nyx_string* str, double def) {
 // substring y mismo parseo estricto— pero sin alocar el String intermedio.
 // Motivo: parsear un CSV grande con split()+string_to_float hace ~11
 // asignaciones GC por fila de 4 campos y eso domina el tiempo (bench
-// 2026-10-25: 5M filas, ~50% del total en split). strtod/strtoll exigen NUL
-// final, así que el rango se copia a un buffer en la PILA; solo un número de
-// más de 63 bytes (raro, pero válido: "0.000…1") cae al GC.
+// 2026-10-25: 5M filas, ~50% del total en split). Los dos parseos trabajan
+// sobre el rango de bytes, sin copia salvo el fallback a strtod/strtoll.
 // EN: range variants — same result as _or over substring(ini, fin), no alloc.
-#define NYX_RANGE_STACK_BUF 64
 
-// Deja en *out un char* NUL-terminado con los bytes [ini, fin) de str (clamp
-// idéntico a nyx_string_substring). Devuelve la longitud; 0 = rango vacío.
-static int64_t nyx_range_cbuf(nyx_string* str, int64_t ini, int64_t fin,
-                              char* stack_buf, char** out) {
-    if (!str) return 0;
-    if (ini < 0) ini = 0;
-    if (fin < 0) fin = 0;
-    if (ini > str->length) ini = str->length;
-    if (fin > str->length) fin = str->length;
-    if (ini > fin) ini = fin;
-    int64_t len = fin - ini;
-    if (len == 0) return 0;
-    char* buf = stack_buf;
-    if (len >= NYX_RANGE_STACK_BUF) buf = (char*)GC_malloc_atomic((size_t)len + 1);
-    memcpy(buf, str->data + ini, (size_t)len);
-    buf[len] = '\0';
-    *out = buf;
-    return len;
+// Clamp idéntico a nyx_string_substring.
+static void nyx_range_clamp(nyx_string* str, int64_t* ini, int64_t* fin) {
+    if (*ini < 0) *ini = 0;
+    if (*fin < 0) *fin = 0;
+    if (*ini > str->length) *ini = str->length;
+    if (*fin > str->length) *fin = str->length;
+    if (*ini > *fin) *ini = *fin;
 }
 
 int64_t nyx_string_to_int_range(nyx_string* str, int64_t ini, int64_t fin, int64_t def) {
-    char stack_buf[NYX_RANGE_STACK_BUF];
-    char* buf;
-    if (nyx_range_cbuf(str, ini, fin, stack_buf, &buf) == 0) return def;
-    char* endptr;
-    int64_t result = strtoll(buf, &endptr, 10);
-    if (*endptr != '\0') return def;
-    return result;
+    if (!str) return def;
+    nyx_range_clamp(str, &ini, &fin);
+    int ok;
+    int64_t result = nyx_parse_int_bytes(str->data + ini, fin - ini, &ok);
+    return ok == NYX_INT_OK ? result : def;
 }
 
 double nyx_string_to_float_range(nyx_string* str, int64_t ini, int64_t fin, double def) {
     if (!str) return def;
-    // Mismos clamps que substring (ver nyx_range_cbuf); el parseo no necesita copia.
-    if (ini < 0) ini = 0;
-    if (fin < 0) fin = 0;
-    if (ini > str->length) ini = str->length;
-    if (fin > str->length) fin = str->length;
-    if (ini > fin) ini = fin;
+    nyx_range_clamp(str, &ini, &fin);
     int ok;
     double result = nyx_parse_float_bytes(str->data + ini, fin - ini, &ok);
     return ok ? result : def;
