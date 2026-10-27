@@ -6,7 +6,7 @@
 // y vuelta en MICROSEGUNDOS (en la red local un ping tarda menos de 1 ms).
 //
 // Sin privilegios donde el sistema lo permite (Linux con
-// net.ipv4.ping_group_range abierto, como Debian y Ubuntu; macOS; Windows). Si
+// net.ipv4.ping_group_range abierto, como Debian y Ubuntu). Si
 // no, Err "permission". Ojo: que un host no conteste ping no significa que esté
 // caído — muchos firewalls descartan ICMP.
 
