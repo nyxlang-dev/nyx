@@ -103,6 +103,21 @@ if [ ! -f "./nyx_bootstrap" ]; then
     exit 1
 fi
 
+# Sonda de entorno (una vez): ¿un puerto CERRADO de loopback rechaza la conexión
+# al instante? En Linux nativo sí (RST → ECONNREFUSED). En WSL2 con
+# networkingMode=mirrored no: el connect queda en EINPROGRESS hasta el plazo, y los
+# tests que verifican la clasificación de «conexión rechazada» darían un rojo que
+# no es del compilador (spike de W5, 2026-10-26). Esos tests llevan la marca
+# `// requiere-entorno: loopback-rechaza` y se saltan con aviso, no en silencio.
+NYX_LOOPBACK_RECHAZA=1
+if timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/1' 2>/dev/null; then
+    :  # alguien escucha en :1 (raro): no dice nada del rechazo, se asume que rechaza
+elif [ $? -eq 124 ]; then
+    NYX_LOOPBACK_RECHAZA=0
+    echo -e "${YELLOW}⚠ Entorno: un puerto cerrado de loopback NO rechaza la conexión (¿WSL2 en modo mirrored?); los tests marcados «loopback-rechaza» se saltan.${NC}"
+fi
+TESTS_SKIPPED_ENV=0
+
 # Función para ejecutar un test
 run_test() {
     local test_file=$1
@@ -120,6 +135,15 @@ run_test() {
         echo -e "${YELLOW}⏭️  SKIPPED (x86_64 asm on ARM64)${NC}"
         echo ""
         TESTS_TOTAL=$((TESTS_TOTAL - 1))
+        return
+    fi
+
+    if [[ "$NYX_LOOPBACK_RECHAZA" == "0" ]] && grep -q '^// requiere-entorno: loopback-rechaza' "$test_file" 2>/dev/null; then
+        echo -e "${CYAN}🧪 Test #${TESTS_TOTAL}: ${test_name}${NC}"
+        echo -e "${YELLOW}⏭️  SKIPPED (entorno: el loopback no rechaza conexiones a un puerto cerrado)${NC}"
+        echo ""
+        TESTS_TOTAL=$((TESTS_TOTAL - 1))
+        TESTS_SKIPPED_ENV=$((TESTS_SKIPPED_ENV + 1))
         return
     fi
 
@@ -338,6 +362,9 @@ echo -e "${GREEN}Tests Pasados:   ${NC} $TESTS_PASSED"
 echo -e "${RED}Tests Fallidos:  ${NC} $TESTS_FAILED"
 if [ "$TESTS_RETRIED" -gt 0 ]; then
     echo -e "${YELLOW}Tests con retry: ${NC} $TESTS_RETRIED (pasaron tras reintentar)"
+fi
+if [ "$TESTS_SKIPPED_ENV" -gt 0 ]; then
+    echo -e "${YELLOW}Saltados por el entorno: ${NC} $TESTS_SKIPPED_ENV (loopback que no rechaza conexiones; ver la sonda al principio)"
 fi
 
 echo -e "${CYAN}Salida comparada:${NC} $COMPARED_OK ok, $COMPARED_DIFF distinta (FALLO), $COMPARED_KNOWN fallo conocido, $NO_EXPECTED sin expected/"

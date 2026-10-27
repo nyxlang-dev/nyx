@@ -1009,6 +1009,11 @@ single `Error` struct.
   Does not crash regardless of exit code.
 - `exec_code(cmd)` → int — run shell command, return its exit code (-1 on
   error/signal). Does not capture stdout (goes to the terminal).
+- **All three at once**: `import "std/exec"`; `try_exec_full(cmd) -> Result<ExecResult, Error>` with
+  `ExecResult { stdout, stderr, code }`. Drains both pipes concurrently (no deadlock on big output),
+  binary-safe, bytes as-is (no `\n` strip). `code` = 128+signal if killed (137 = KILL); missing command →
+  code 127 + message on stderr (not an Err). Err only if it could not launch, or on wasm (95). `cmd` goes
+  to the shell: never concatenate unsanitized input. Recipe 148.
 - `getenv(name)` → String
 - `getenv_default(name, default)` → String
 - `setenv(name, val)`
@@ -1379,7 +1384,12 @@ match try_pg_connect("host=127.0.0.1 port=5432 dbname=d user=u password=p") {
   `pg_pool_close`. **Safe to share between threads** (e.g. the workers of `std/serve`) since
   2026-09-27 — before, two threads could take the SAME connection and interleave the protocol
   (hangs, or «Índice 0 fuera de rango»). `try_pg_pool_get` never waits: `Err(kind: "in_use")`
-  when all are busy, so a server retries or answers 503.
+  when all are busy, so a server retries or answers 503. `pg_pool_put` runs ROLLBACK + `DISCARD ALL`
+  (a `SET`, temp tables, LISTEN do not leak to the next borrower) and, if either fails, closes the
+  connection and empties the slot so the next get reconnects — a backend killed by the server is not
+  handed out again. `pg_pool_discard(pool, conn)` drops a connection you know is bad. Never
+  `try_pg_close` a pooled connection and then `pg_pool_put` it: the fd number may already belong to
+  another socket.
 - **Autenticación SCRAM-SHA-256** (lo que exige cualquier PostgreSQL moderno), con
   la firma del servidor verificada en tiempo constante y el nonce sacado de
   `csprng_bytes`.
@@ -1697,9 +1707,10 @@ SIGSEGV. Converting to `dyn` changes the REPRESENTATION (a pointer to the struct
 element is an indistinguishable `i64`, and the reader cannot tell a struct from a fat pointer. With
 `Array<dyn Trait>` each element is upcast to its own vtable as it goes in, which is what makes a
 heterogeneous list — several impls in the same collection — work. Annotating the value first
-(`let d: dyn Trait = x` and pushing `d`) works too. What does NOT work, and crashes at runtime rather
-than failing to compile, is pushing the concrete struct into an untyped `Array` and reading it as
-`dyn`. [test: compiler/language/test-391-dyn-trait-array]
+(`let d: dyn Trait = x` and pushing `d`) works too. What does NOT work is pushing the concrete struct into an untyped `Array` (or declaring
+`Array<A>`) and reading it as `dyn`, with `for x: dyn Trait in arr` or `let y: dyn Trait = arr[0]`:
+since 0.38.1 that is a compile error, **NYX1047**, that asks for `Array<dyn Trait>`; before it
+compiled clean and crashed at runtime. [test: compiler/language/test-391-dyn-trait-array]
 
 13. **A field can only be read from a name or a chain of fields: `f().x`, `a[0].x` and `T{...}.x` are an error (NYX2003; writing them is NYX2006).**
 Bind first: `let p: Punto = f()` then `p.x`; with an index, `let e: Punto = a[0]` then `e.x`; to write,
@@ -3521,6 +3532,29 @@ Recipes: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro
   max, window_secs)` → 429 with `Retry-After`. Origin = socket IP (`req_remote_addr(req)`); behind a
   proxy use `app_rate_limit_key(app, fn)` with `rate_key_forwarded_for` (empty key = exempt). A fixed
   window allows up to 2x max across a boundary; counts are per process.
+- **UDP for the local network (`std/net`)**: `try_udp_recvfrom_from(fd, max)` →
+  `Result<UdpDatagram, Error>` with `{ data, ip, port }` of the sender; `try_udp_recvfrom_from_timed(fd, max,
+  timeout_ms)` (ms deadline via poll; `Err(timeout 110)` without consuming); `try_udp_bind_shared(host,
+  port)` (SO_REUSEADDR+SO_REUSEPORT; plain `try_udp_bind` keeps failing with EADDRINUSE);
+  `try_udp_join/leave(fd, group, iface)` (`iface` "" = any), `try_udp_set_multicast_ttl/loop/iface`,
+  `try_udp_set_broadcast`. Gotchas: join and send multicast through the SAME interface; on Linux every
+  socket bound to the port receives any group joined in the system (`IP_MULTICAST_ALL`), so leave with
+  all of them; a blocking read with a deadline inside `spawn {}` holds a scheduler worker — run the
+  reader in `thread_spawn`. `std/mdns` is so far only the DNS codec (`mdns_message_decode/encode`,
+  `mdns_query_encode`): no browse/announce yet, and nothing of this works from a browser.
+- **Ping without `exec("ping")`**: `try_ping(host, timeout_ms) -> Result<PingReply, Error>` with
+  `{ ip, rtt_us }` (MICROseconds). Unprivileged where the OS allows it (Linux `net.ipv4.ping_group_range`,
+  macOS, Windows `IcmpSendEcho`), raw socket fallback; `Err(permission)` otherwise, `timeout` 110,
+  `not_found`. A host that does not answer ping is not necessarily down (firewalls drop ICMP).
+- **`std/crypto`: authenticated encryption, both ways (AES-GCM)**. To store a secret you must reuse
+  in clear: `try_aes256gcm_seal(key32, plaintext, aad)` → nonce(12) ‖ ciphertext ‖ tag(16) with a random
+  nonce; `try_aes256gcm_open(key32, sealed, aad)`. Explicit-nonce variants: `try_aes256gcm_encrypt/
+  decrypt(key, nonce12, data, aad)` and `try_aes128gcm_*` (16-byte key; also opens `aes128gcm_encrypt`
+  output). Errors: `invalid 22` wrong key/nonce length, `invalid 74` tag does not verify (tampered,
+  truncated, wrong key/nonce/aad — the message never includes plaintext or key), `invalid 95` on
+  wasm32-wasi. Key = raw bytes (`csprng_bytes(32)`, or derive with `pbkdf2_hmac_sha256`), not a
+  password. Bind `aad` to the owner ("smtp:client-42") so a sealed value copied to another row fails.
+  Never reuse a nonce with the same key in the explicit-nonce variants.
 - **`std/rsa`: verify RSA-SHA256 signatures** with a PEM public key (SPKI or PKCS#1, not an X.509
   cert): `rsa_sha256_verify(pem, data, sig_raw)` (PKCS#1 v1.5), `rsa_sha256_verify_b64(pem, data,
   sig_b64)` (the usual webhook shape), `rsa_pss_sha256_verify(pem, data, sig_raw)`. `Ok(false)` =

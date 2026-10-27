@@ -41,6 +41,8 @@ int  os_thread_timedjoin(os_thread_t* t, int64_t ms);
 int  os_thread_detach(os_thread_t* t);
 // Cancelación asíncrona best-effort (posix: pthread_cancel). Contrato: el thread puede NO
 // terminar de inmediato; nunca usar sobre threads que tengan locks del runtime.
+// win32 (desde 2026-10-26) y Android: NO detiene el hilo (TerminateThread podía dejar
+// tomado el lock del GC); la cancelación cooperativa es la Task 6 de W5.
 int  os_thread_cancel(os_thread_t* t);
 
 // cede el resto del quantum al SO / yields the rest of the time slice;
@@ -278,6 +280,32 @@ int     os_sock_peer(int64_t fd, os_addr_t* out);  // getpeername
 int     os_sock_local(int64_t fd, os_addr_t* out); // getsockname (puerto que asignó el kernel a un bind/listen en 0)
 int     os_sock_set_reuseaddr(int64_t fd);
 int     os_sock_set_nodelay(int64_t fd);
+// --- UDP multicast / broadcast (arco red-local, D-4). Todas: 0 / -errno. IPv4.
+// `group` e `iface_ip` son IPv4 numéricas en texto; iface_ip NULL o "" = INADDR_ANY
+// (el kernel elige la interfaz). Unir y ENVIAR por la MISMA interfaz: la sonda
+// (tests/support/sonda-red-local) midió que unir por una y enviar por otra no entrega.
+// EN: IPv4 UDP multicast/broadcast; group/iface_ip are numeric text; NULL/"" iface = ANY.
+int     os_sock_udp_join(int64_t fd, const char* group, const char* iface_ip);   // IP_ADD_MEMBERSHIP
+int     os_sock_udp_leave(int64_t fd, const char* group, const char* iface_ip);  // IP_DROP_MEMBERSHIP
+int     os_sock_set_multicast_ttl(int64_t fd, int ttl);        // IP_MULTICAST_TTL (0..255)
+int     os_sock_set_multicast_loop(int64_t fd, int on);        // IP_MULTICAST_LOOP (el emisor recibe lo propio)
+int     os_sock_set_multicast_iface(int64_t fd, const char* iface_ip);  // IP_MULTICAST_IF (interfaz de salida)
+int     os_sock_set_broadcast(int64_t fd, int on);             // SO_BROADCAST
+// Permite que varios sockets UDP compartan el puerto (multicast: todos reciben).
+// posix: SO_REUSEPORT (no-op, 0, donde la plataforma no lo define). win32: no existe
+// SO_REUSEPORT; el equivalente es SO_REUSEADDR de Winsock (que os_sock_set_reuseaddr
+// deja a propósito en no-op para no robar puertos TCP). wasm: -ENOSYS.
+// EN: lets several UDP sockets share the port. posix SO_REUSEPORT (0/no-op if missing);
+// win32 maps to Winsock's SO_REUSEADDR; wasm -ENOSYS.
+int     os_sock_set_reuseport(int64_t fd);
+// Ping IPv4 (ICMP echo) a `ip` (dotted, ya resuelta) con plazo en ms. 0 y *rtt_ns
+// = ida y vuelta medida con os_monotonic_ns; -ETIMEDOUT sin respuesta; -EACCES/-EPERM
+// si el sistema no deja abrir un socket ICMP. posix: socket DATAGRAMA ICMP (sin
+// privilegios en Linux si net.ipv4.ping_group_range incluye al grupo; macOS siempre)
+// y, si no se puede, RAW (root o CAP_NET_RAW). win32: IcmpSendEcho (sin privilegios).
+// wasm: -ENOSYS.
+// EN: IPv4 ICMP echo; unprivileged datagram socket, raw fallback; win32 IcmpSendEcho.
+int     os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns);
 int     os_sock_set_timeout(int64_t fd, int64_t seconds); // RCVTIMEO+SNDTIMEO; <=0 desactiva; si el 1ro falla reporta ESE -errno
 int     os_sock_set_send_timeout(int64_t fd, int64_t seconds); // SOLO SNDTIMEO; <=0 desactiva
 int     os_sock_set_nonblocking(int64_t fd, int on);      // fcntl O_NONBLOCK / ioctlsocket FIONBIO
@@ -356,6 +384,29 @@ int os_proc_run_capture(const char* cmd,
 // por señal). EN: runs cmd via the shell; returns the command's exit code
 // (platform WIFEXITED decode) or -1 (system() failure or killed by signal).
 int64_t os_proc_run_status(const char* cmd);
+
+// ES: ejecuta cmd vía el shell capturando stdout Y stderr POR SEPARADO y el
+// código de salida. Ambos flujos se leen a la vez (posix: poll() sobre los dos
+// fds; win32: un hilo por flujo), así que un comando que llene el pipe de uno
+// mientras el otro espera NO se cuelga (leer uno y luego el otro sí lo haría:
+// con ~64 KiB de pipe, el hijo se bloquea escribiendo a stderr mientras el
+// padre espera EOF de stdout). Binary-safe. cb(stream, chunk, len, ud) se llama
+// 0+ veces con stream 1 = stdout, 2 = stderr; nunca concurrentemente (win32
+// serializa con una sección crítica). *code = código de salida del comando; si
+// lo mató una señal, 128+señal (convención de shell; solo posix: en win32 no hay
+// señales y es el código crudo). Devuelve 0 si el comando corrió (aunque *code
+// != 0), o -errno si no se pudo lanzar (pipe/fork/CreateProcess); wasm: -ENOSYS.
+// EN: runs cmd via the shell capturing stdout AND stderr SEPARATELY plus the
+// exit code. Both streams are drained concurrently (posix: poll() on both fds;
+// win32: one thread per stream) so a command filling one pipe while the other
+// is idle cannot deadlock. Binary-safe. cb(stream, chunk, len, ud): stream 1 =
+// stdout, 2 = stderr; never called concurrently. *code = exit code, or
+// 128+signal when killed by a signal (posix only). Returns 0 if the command
+// ran, -errno if it could not be launched; wasm: -ENOSYS.
+int os_proc_run_full(const char* cmd,
+                     void (*cb)(int stream, const void* chunk, size_t len, void* ud),
+                     void* ud,
+                     int64_t* code);
 
 // ES: variable de entorno del PROPIO proceso, con overwrite (único caller
 // medido: nyx_setenv en runtime.c). posix: setenv(name, value, 1); win32:

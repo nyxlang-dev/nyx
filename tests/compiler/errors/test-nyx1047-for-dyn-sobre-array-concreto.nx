@@ -1,0 +1,13 @@
+// NYX1047: `for x: dyn Trait in arr` sobre un Array al que se le pusheó un struct
+// CONCRETO. Antes pasaba `nyx check` y moría con SIGSEGV (fricción anónima
+// 2026-09-08, reverificada con 0.38.0). La vía correcta: `Array<dyn Saluda>`
+// (tests/compiler/language/test-391-dyn-trait-array.nx).
+trait Saluda { fn hola(self) -> String }
+struct A { v: int }
+impl Saluda for A { fn hola(self) -> String { return "hola" } }
+fn main() -> int {
+    var r: Array = []
+    r.push(A { v: 1 })
+    for x: dyn Saluda in r { print(x.hola()) }
+    return 0
+}

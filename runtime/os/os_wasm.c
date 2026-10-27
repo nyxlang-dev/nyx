@@ -156,6 +156,14 @@ int     os_sock_peer(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return -
 int     os_sock_local(int64_t fd, os_addr_t* out) { (void)fd; (void)out; return -ENOSYS; }
 int     os_sock_set_reuseaddr(int64_t fd) { (void)fd; return -ENOSYS; }
 int     os_sock_set_nodelay(int64_t fd) { (void)fd; return -ENOSYS; }
+int     os_sock_udp_join(int64_t fd, const char* group, const char* iface_ip) { (void)fd; (void)group; (void)iface_ip; return -ENOSYS; }
+int     os_sock_udp_leave(int64_t fd, const char* group, const char* iface_ip) { (void)fd; (void)group; (void)iface_ip; return -ENOSYS; }
+int     os_sock_set_multicast_ttl(int64_t fd, int ttl) { (void)fd; (void)ttl; return -ENOSYS; }
+int     os_sock_set_multicast_loop(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
+int     os_sock_set_multicast_iface(int64_t fd, const char* iface_ip) { (void)fd; (void)iface_ip; return -ENOSYS; }
+int     os_sock_set_broadcast(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
+int     os_sock_set_reuseport(int64_t fd) { (void)fd; return -ENOSYS; }
+int     os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns) { (void)ip; (void)timeout_ms; (void)rtt_ns; return -ENOSYS; }
 int     os_sock_set_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
 int     os_sock_set_send_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
 int     os_sock_set_nonblocking(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
@@ -179,6 +187,7 @@ int     os_errno_canon(int e) { return e <= 0 ? e : nyx_errno_canon_table(e); }
 // to "" — "could not launch"); run_status returns -1.
 int     os_proc_run_capture(const char* cmd, void (*cb)(const void* chunk, size_t len, void* ud), void* ud) { (void)cmd; (void)cb; (void)ud; return -1; }
 int64_t os_proc_run_status(const char* cmd) { (void)cmd; return -1; }
+int     os_proc_run_full(const char* cmd, void (*cb)(int, const void*, size_t, void*), void* ud, int64_t* code) { (void)cmd; (void)cb; (void)ud; if (code) *code = -1; return -ENOSYS; }
 
 // --- dl: wasi no tiene dlopen/dlsym (linkeo estático) -- stubs por simetría
 // del header, mismo espíritu que los bloques de arriba. os_dl_error NULL:

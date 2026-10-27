@@ -1,0 +1,130 @@
+// std/crypto.nx — cifrado autenticado AES-GCM, en las dos direcciones.
+//
+// Para guardar secretos que hay que volver a usar en claro (la contraseña del
+// servidor de correo de un cliente, la clave de una API de terceros) sin
+// dejarlos legibles en la base ni en sus respaldos (fricción de nyxerp,
+// 2026-10-25). GCM cifra y además autentica: si alguien altera un solo byte, o
+// se usa otra llave, otro nonce u otro `aad`, el descifrado da Err y no
+// devuelve nada.
+//
+// Lo recomendado, sin pensar en nonces:
+//
+//     let llave: String = csprng_bytes(32)                // guardarla fuera de la base
+//     let sellado: Result<String, Error> = try_aes256gcm_seal(llave, "secreto", "smtp:cliente-42")
+//     let abierto: Result<String, Error> = try_aes256gcm_open(llave, sellado_ok, "smtp:cliente-42")
+//
+// seal elige un nonce al azar de 12 bytes y lo pone delante: el resultado es
+// nonce ‖ cifrado ‖ etiqueta (28 bytes más que el texto). Con nonces al azar,
+// una misma llave sirve para unos 2^32 mensajes (NIST SP 800-38D §8.3); para
+// guardar secretos de una instalación es más que de sobra.
+//
+// `aad` (datos asociados) no se cifra pero queda autenticado: sirve para atar el
+// secreto a su dueño (el id del registro), de modo que copiar el valor cifrado
+// de un cliente a otro no descifra. Puede ser "".
+//
+// Las funciones con nonce explícito (try_aes256gcm_encrypt/decrypt y las de
+// 128 bits) son para protocolos que fijan el nonce. NUNCA repetir un nonce con
+// la misma llave: en GCM eso revela el XOR de los dos textos y permite falsificar.
+//
+// Errores (std/error):
+//   kind "invalid", code 22 — llave que no es de 32 bytes (16 en las de 128),
+//                             o nonce que no es de 12.
+//   kind "invalid", code 74 — (EBADMSG) la etiqueta no verifica: dato alterado,
+//                             truncado, o llave/nonce/aad equivocados. No se
+//                             distingue cuál a propósito, y el mensaje nunca
+//                             incluye el texto ni la llave.
+//   kind "invalid", code 95 — en wasm32-wasi no hay OpenSSL.
+//
+// La llave son BYTES crudos, no una contraseña: de una contraseña se deriva con
+// pbkdf2_hmac_sha256 (o hkdf_sha256 desde otro secreto). csprng_bytes viene de
+// std/webpushcrypto (importarlo evita declarar dos veces el mismo símbolo C).
+// AES-128-GCM sin la inversa ya existía ahí como aes128gcm_encrypt (Web Push).
+//
+// Se expone por `extern "C"` (runtime/crypto.c, EVP de OpenSSL), sin tocar el
+// compilador, igual que std/rsa.nx.
+
+import "std/error"
+import "std/webpushcrypto"
+
+extern "C" fn nyx_aes_gcm_seal(key: String, nonce: String, pt: String, aad: String) -> String
+extern "C" fn nyx_aes_gcm_open(key: String, nonce: String, sealed: String, aad: String) -> String
+
+// El C devuelve un byte de estado delante: 'O' bien, 'T' etiqueta, 'P'
+// parámetros, 'W' wasm (ver runtime/crypto.c).
+fn __aes_gcm_result(r: String, que: String) -> Result<String, Error> {
+    if r.length() == 0 { return Result.Err(err_new(22, "invalid", que + ": parámetros inválidos")) }
+    let st: String = r.substring(0, 1)
+    if st == "O" { return Result.Ok(r.substring(1, r.length())) }
+    if st == "T" { return Result.Err(err_new(74, "invalid", que + ": el dato no se autentica (alterado, o llave, nonce o aad equivocados)")) }
+    if st == "W" { return Result.Err(err_new(95, "invalid", que + ": no disponible en wasm32-wasi (sin OpenSSL)")) }
+    return Result.Err(err_new(22, "invalid", que + ": la llave o el nonce no tienen el largo correcto"))
+}
+
+fn __aes_gcm_check(key: String, bytes: int, nonce: String, que: String) -> String {
+    if key.length() != bytes {
+        return que + ": la llave debe tener " + int_to_string(bytes) + " bytes, tiene " + int_to_string(key.length())
+    }
+    if nonce.length() != 12 {
+        return que + ": el nonce debe tener 12 bytes, tiene " + int_to_string(nonce.length())
+    }
+    return ""
+}
+
+fn __aes_gcm_encrypt(key: String, bytes: int, nonce: String, plaintext: String, aad: String, que: String) -> Result<String, Error> {
+    let e: String = __aes_gcm_check(key, bytes, nonce, que)
+    if e.length() > 0 { return Result.Err(err_new(22, "invalid", e)) }
+    return __aes_gcm_result(nyx_aes_gcm_seal(key, nonce, plaintext, aad), que)
+}
+
+fn __aes_gcm_decrypt(key: String, bytes: int, nonce: String, sealed: String, aad: String, que: String) -> Result<String, Error> {
+    let e: String = __aes_gcm_check(key, bytes, nonce, que)
+    if e.length() > 0 { return Result.Err(err_new(22, "invalid", e)) }
+    return __aes_gcm_result(nyx_aes_gcm_open(key, nonce, sealed, aad), que)
+}
+
+// AES-256-GCM con nonce explícito: devuelve cifrado ‖ etiqueta(16).
+pub fn try_aes256gcm_encrypt(key: String, nonce: String, plaintext: String, aad: String) -> Result<String, Error> {
+    return __aes_gcm_encrypt(key, 32, nonce, plaintext, aad, "aes256gcm")
+}
+
+// La inversa: `sealed` es cifrado ‖ etiqueta, tal como lo da encrypt.
+pub fn try_aes256gcm_decrypt(key: String, nonce: String, sealed: String, aad: String) -> Result<String, Error> {
+    return __aes_gcm_decrypt(key, 32, nonce, sealed, aad, "aes256gcm")
+}
+
+// AES-128-GCM, mismas reglas con llave de 16 bytes. try_aes128gcm_decrypt abre
+// también lo que produce aes128gcm_encrypt de std/webpushcrypto.
+pub fn try_aes128gcm_encrypt(key: String, nonce: String, plaintext: String, aad: String) -> Result<String, Error> {
+    return __aes_gcm_encrypt(key, 16, nonce, plaintext, aad, "aes128gcm")
+}
+
+pub fn try_aes128gcm_decrypt(key: String, nonce: String, sealed: String, aad: String) -> Result<String, Error> {
+    return __aes_gcm_decrypt(key, 16, nonce, sealed, aad, "aes128gcm")
+}
+
+// Sellar con nonce al azar: nonce(12) ‖ cifrado ‖ etiqueta(16). Es la forma de
+// guardar un secreto en una columna (en base64 si la columna es texto).
+pub fn try_aes256gcm_seal(key: String, plaintext: String, aad: String) -> Result<String, Error> {
+    if key.length() != 32 {
+        return Result.Err(err_new(22, "invalid", "aes256gcm: la llave debe tener 32 bytes, tiene " + int_to_string(key.length())))
+    }
+    let nonce: String = csprng_bytes(12)
+    if nonce.length() != 12 {
+        return Result.Err(err_new(95, "invalid", "aes256gcm: no hay generador seguro de números al azar"))
+    }
+    match __aes_gcm_encrypt(key, 32, nonce, plaintext, aad, "aes256gcm") {
+        Result.Ok(c) => { return Result.Ok(nonce + c) }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+}
+
+// Abrir lo que selló try_aes256gcm_seal.
+pub fn try_aes256gcm_open(key: String, sealed: String, aad: String) -> Result<String, Error> {
+    if sealed.length() < 28 {
+        // Truncado: para quien lo lee es lo mismo que alterado (code 74).
+        return Result.Err(err_new(74, "invalid", "aes256gcm: el dato no se autentica (más corto que nonce y etiqueta)"))
+    }
+    let nonce: String = sealed.substring(0, 12)
+    let resto: String = sealed.substring(12, sealed.length())
+    return __aes_gcm_decrypt(key, 32, nonce, resto, aad, "aes256gcm")
+}

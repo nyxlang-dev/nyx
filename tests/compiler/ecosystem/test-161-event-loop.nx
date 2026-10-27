@@ -5,6 +5,7 @@ extern "C" fn nyx_create_event_loop() -> *int
 extern "C" fn nyx_destroy_event_loop(loop: *int)
 extern "C" fn nyx_event_loop_wait(loop: *int, timeout_ms: int) -> int
 extern "C" fn nyx_ev_create_pipe() -> int
+extern "C" fn nyx_ev_pipe_write_fd() -> int
 extern "C" fn nyx_ev_write_pipe(write_fd: int, msg: String)
 extern "C" fn nyx_ev_read_pipe(read_fd: int) -> String
 extern "C" fn nyx_ev_close_pipe(fd: int)
@@ -21,9 +22,10 @@ fn main() -> int {
     let loop = nyx_create_event_loop()
     print("loop created")
 
-    // Create a pipe (returns read_fd; write_fd = read_fd + 1 stored internally)
+    // Create a pipe: devuelve read_fd; el de escritura se pide aparte (no es
+    // read_fd + 1: con un fd heredado en el medio, pipe() da otros números)
     let read_fd = nyx_ev_create_pipe()
-    let write_fd = read_fd + 1
+    let write_fd = nyx_ev_pipe_write_fd()
     print("pipe created")
 
     // Register read end for read events

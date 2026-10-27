@@ -747,6 +747,104 @@ nyx_string* nyx_aes128gcm_encrypt(nyx_string* key, nyx_string* iv,
     if (!ok) return nyx_string_from_cstr("");
     return nyx_string_from_ptr((const char*)out, (int64_t)total + 16);
 }
+
+// ------------------------------------------------------------
+//  AES-GCM con las dos direcciones (std/crypto). Fricción de nyxerp
+//  2026-10-25: guardar secretos que hay que volver a usar en claro (la
+//  contraseña SMTP de un cliente) y aes128gcm_encrypt no tenía inversa.
+//
+//  La llave elige la variante: 16 bytes = AES-128, 32 = AES-256. Nonce de 12
+//  bytes (el largo que NIST SP 800-38D recomienda; otros largos pasan por
+//  GHASH y no los necesita nadie). Etiqueta de 16 bytes al final del cifrado.
+//
+//  Devuelven un byte de estado delante del resultado, porque un String vacío
+//  no distingue «texto vacío» de «falló»: 'O' + datos = bien, 'T' = la
+//  etiqueta no verifica (datos alterados, llave/nonce/aad equivocados), 'P' =
+//  parámetros inválidos, 'W' = wasm sin OpenSSL. std/crypto lo traduce a Err.
+// ------------------------------------------------------------
+
+static const EVP_CIPHER* aes_gcm_cipher(nyx_string* key) {
+    if (!key) return NULL;
+    if (key->length == 16) return EVP_aes_128_gcm();
+    if (key->length == 32) return EVP_aes_256_gcm();
+    return NULL;
+}
+
+static nyx_string* aes_gcm_status(char st) {
+    return nyx_string_from_ptr(&st, 1);
+}
+
+nyx_string* nyx_aes_gcm_seal(nyx_string* key, nyx_string* nonce, nyx_string* pt, nyx_string* aad) {
+    const EVP_CIPHER* cipher = aes_gcm_cipher(key);
+    if (!cipher || !nonce || nonce->length != 12 || !pt || pt->length > INT32_MAX - 32
+        || (aad && aad->length > INT32_MAX))
+        return aes_gcm_status('P');
+    int ptlen = (int)pt->length;
+    // [estado][cifrado][etiqueta]: el estado se escribe en out[0] y el cifrado
+    // directamente detrás, sin copiar.
+    unsigned char* out = (unsigned char*)GC_MALLOC_ATOMIC((size_t)ptlen + 17);
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    int outl = 0, total = 0, ok = 0;
+    if (ctx
+        && EVP_EncryptInit_ex(ctx, cipher, NULL, NULL, NULL) == 1
+        && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) == 1
+        && EVP_EncryptInit_ex(ctx, NULL, NULL,
+             (const unsigned char*)key->data, (const unsigned char*)nonce->data) == 1
+        && (!aad || aad->length == 0
+            || EVP_EncryptUpdate(ctx, NULL, &outl, (const unsigned char*)aad->data, (int)aad->length) == 1)
+        && EVP_EncryptUpdate(ctx, out + 1, &outl, (const unsigned char*)pt->data, ptlen) == 1) {
+        total = outl;
+        if (EVP_EncryptFinal_ex(ctx, out + 1 + total, &outl) == 1) {
+            total += outl;
+            ok = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, out + 1 + total) == 1;
+        }
+    }
+    if (ctx) EVP_CIPHER_CTX_free(ctx);
+    ERR_clear_error();
+    if (!ok) return aes_gcm_status('P');
+    out[0] = 'O';
+    return nyx_string_from_ptr((const char*)out, (int64_t)total + 17);
+}
+
+nyx_string* nyx_aes_gcm_open(nyx_string* key, nyx_string* nonce, nyx_string* sealed, nyx_string* aad) {
+    const EVP_CIPHER* cipher = aes_gcm_cipher(key);
+    if (!cipher || !nonce || nonce->length != 12 || !sealed || sealed->length > INT32_MAX
+        || (aad && aad->length > INT32_MAX))
+        return aes_gcm_status('P');
+    // Más corto que la etiqueta: no puede venir de seal. Es un dato alterado
+    // (truncado), no un error del llamador.
+    if (sealed->length < 16) return aes_gcm_status('T');
+    int ctlen = (int)sealed->length - 16;
+    const unsigned char* tag = (const unsigned char*)sealed->data + ctlen;
+    unsigned char* out = (unsigned char*)GC_MALLOC_ATOMIC((size_t)ctlen + 1);
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    int outl = 0, total = 0, setup = 0, ok = 0;
+    if (ctx
+        && EVP_DecryptInit_ex(ctx, cipher, NULL, NULL, NULL) == 1
+        && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, NULL) == 1
+        && EVP_DecryptInit_ex(ctx, NULL, NULL,
+             (const unsigned char*)key->data, (const unsigned char*)nonce->data) == 1
+        && (!aad || aad->length == 0
+            || EVP_DecryptUpdate(ctx, NULL, &outl, (const unsigned char*)aad->data, (int)aad->length) == 1)
+        && EVP_DecryptUpdate(ctx, out + 1, &outl, (const unsigned char*)sealed->data, ctlen) == 1
+        && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, (void*)tag) == 1) {
+        setup = 1;
+        total = outl;
+        // DecryptFinal compara la etiqueta en tiempo constante (CRYPTO_memcmp).
+        if (EVP_DecryptFinal_ex(ctx, out + 1 + total, &outl) == 1) {
+            total += outl;
+            ok = 1;
+        }
+    }
+    if (ctx) EVP_CIPHER_CTX_free(ctx);
+    ERR_clear_error();
+    if (!setup) return aes_gcm_status('P');
+    // Con la etiqueta mala, el texto descifrado en `out` NO se devuelve: es lo
+    // que exige GCM (no soltar nada sin autenticar).
+    if (!ok) return aes_gcm_status('T');
+    out[0] = 'O';
+    return nyx_string_from_ptr((const char*)out, (int64_t)total + 1);
+}
 // ------------------------------------------------------------
 //  Verificación de firmas RSA-SHA256 (fricción de nyxerp 2026-09-29: las
 //  pasarelas de pago firman sus avisos con RSA y HMAC no alcanza).
@@ -807,5 +905,32 @@ int64_t nyx_rsa_sha256_verify(nyx_string* pem, nyx_string* data, nyx_string* sig
 int64_t nyx_rsa_sha256_verify(nyx_string* pem, nyx_string* data, nyx_string* sig, int64_t pss) {
     (void)pem; (void)data; (void)sig; (void)pss;
     return -2;
+}
+// csprng_bytes en wasm: getentropy de wasi-libc es random_get de WASI, que el
+// anfitrión (wasmtime, o crypto.getRandomValues en el navegador) llena con
+// entropía del sistema. Antes no había versión wasm y cualquier programa que
+// importara std/webpushcrypto (std/oauth2, std/crypto) no enlazaba. Se declara
+// acá en vez de incluir <unistd.h>, que la capa os restringe fuera de runtime/os.
+// getentropy acepta a lo sumo 256 bytes por llamada.
+extern int getentropy(void* buf, size_t len);
+nyx_string* nyx_csprng_bytes(int64_t n) {
+    if (n <= 0) return nyx_string_from_cstr("");
+    unsigned char* buf = (unsigned char*)GC_MALLOC_ATOMIC((size_t)n);
+    int64_t hecho = 0;
+    while (hecho < n) {
+        size_t tramo = (size_t)(n - hecho > 256 ? 256 : n - hecho);
+        if (getentropy(buf + hecho, tramo) != 0) return nyx_string_from_cstr("");
+        hecho += (int64_t)tramo;
+    }
+    return nyx_string_from_ptr((const char*)buf, n);
+}
+// AES-GCM tampoco: estado 'W', std/crypto lo traduce a un Err claro.
+nyx_string* nyx_aes_gcm_seal(nyx_string* key, nyx_string* nonce, nyx_string* pt, nyx_string* aad) {
+    (void)key; (void)nonce; (void)pt; (void)aad;
+    return nyx_string_from_ptr("W", 1);
+}
+nyx_string* nyx_aes_gcm_open(nyx_string* key, nyx_string* nonce, nyx_string* sealed, nyx_string* aad) {
+    (void)key; (void)nonce; (void)sealed; (void)aad;
+    return nyx_string_from_ptr("W", 1);
 }
 #endif  // __wasi__

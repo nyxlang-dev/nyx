@@ -1,3 +1,4 @@
+// requiere-entorno: loopback-rechaza (conexión a un puerto cerrado → ECONNREFUSED al instante; WSL2 mirrored no lo cumple)
 // test-377 (E5.3): try_http_get/post/request — la causa real del fallo de
 // TRANSPORTE, con la regla de dos niveles bien aplicada: cualquier
 // respuesta HTTP bien formada es `Ok`, sea cual sea su status (200, 404

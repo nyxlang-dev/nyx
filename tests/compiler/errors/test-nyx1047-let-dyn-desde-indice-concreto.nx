@@ -1,0 +1,12 @@
+// NYX1047, variante por índice: `let y: dyn T = arr[0]` sobre un Array al que se
+// le pusheó un struct concreto. Compilaba y moría con SIGSEGV al llamar y.hola().
+trait Saluda { fn hola(self) -> String }
+struct A { v: int }
+impl Saluda for A { fn hola(self) -> String { return "hola" } }
+fn main() -> int {
+    var r: Array = []
+    r.push(A { v: 1 })
+    let y: dyn Saluda = r[0]
+    print(y.hola())
+    return 0
+}

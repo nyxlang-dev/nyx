@@ -1,0 +1,21 @@
+Sonda del arco red-local (Task 2), servidor AWS aarch64, 2026-10-26. Manual, no es parte de ninguna suite.
+
+1) mc.c (clang mc.c -o mc && ./mc) -- multicast 239.255.77.77:45877 entre sockets de la misma maquina.
+   Interfaces: lo (127.0.0.1, SIN flag MULTICAST) y ens5 (172.31.17.109, la VPC; sin multicast entre hosts).
+   - join en ens5 + IP_MULTICAST_IF=ens5 + MULTICAST_LOOP=1 -> LLEGA a los dos receptores (remitente 172.31.17.109).
+   - join en lo (127.0.0.1) + IP_MULTICAST_IF=lo -> LLEGA tambien, aunque lo no tenga el flag MULTICAST.
+   - join en una interfaz y envio por la otra -> NO llega (hay que enviar por la misma interfaz donde se une).
+   - join con 0.0.0.0 (INADDR_ANY) + envio por ens5 -> llega.
+   - Dos sockets en el mismo puerto: con SO_REUSEADDR basta para que ambos reciban el multicast; con
+     SO_REUSEPORT tambien.
+   Camino para las pruebas automaticas: unir y enviar por la MISMA interfaz; preferir la no-loopback
+   si net_interfaces() la da y caer a 127.0.0.1; si ninguna entrega, SKIP.
+
+2) goroutines.nx / hilos.nx -- 5 lectores UDP (try_tcp_set_timeout 2 s + try_udp_recvfrom) y una
+   goroutina libre que mide cuando corre (el scheduler tiene 4 trabajadores):
+   - 3 lectores en goroutinas: la libre corre de inmediato (~0 ms).
+   - 5 lectores en goroutinas (spawn {}): la libre corre a los 2032 ms, es decir al vencer el plazo.
+     CONCLUSION: una lectura bloqueante (SO_RCVTIMEO o poll) dentro de una goroutina OCUPA un trabajador;
+     net.c no usa nyx_goroutine_block_on_fd, asi que no coopera con el scheduler.
+   - 5 lectores en hilos propios (thread_spawn): la libre corre de inmediato (~1 ms).
+     DECISION: el lector de red-local va en un hilo propio (thread_spawn), nunca en spawn {}.

@@ -44,7 +44,8 @@ int nyx_event_loop_add_timer(NyxEventLoop* loop, int delay_ms, nyx_ev_callback c
 void* nyx_create_event_loop(void);
 void  nyx_destroy_event_loop(void* loop);
 int   nyx_event_loop_wait(void* loop, int timeout_ms);
-int   nyx_ev_create_pipe(void);   // returns read_fd; write_fd = read_fd + 1 (stored internally)
+int   nyx_ev_create_pipe(void);   // devuelve read_fd; el extremo de escritura, con nyx_ev_pipe_write_fd()
+int   nyx_ev_pipe_write_fd(void); // write_fd del último nyx_ev_create_pipe (NO es read_fd + 1)
 void       nyx_ev_write_pipe(int write_fd, nyx_string* msg);
 nyx_string* nyx_ev_read_pipe(int read_fd);
 void  nyx_ev_close_pipe(int fd);

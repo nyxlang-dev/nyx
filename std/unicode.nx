@@ -60,24 +60,56 @@ fn __ucs_zero_width(cp: int) -> bool {
     return false
 }
 
-// East Asian Wide/Fullwidth + emoji: 2 terminal columns. Kuhn's classic ranges
-// plus the main emoji blocks (modern terminals render them double-width).
+// East Asian Wide/Fullwidth + Emoji_Presentation: 2 terminal columns.
 fn __ucs_wide(cp: int) -> bool {
-    if cp >= 0x1100 and cp <= 0x115F { return true }    // hangul jamo initial
-    if cp >= 0x2E80 and cp <= 0xA4CF and cp != 0x303F { return true }  // CJK ... yi
-    if cp >= 0xA960 and cp <= 0xA97F { return true }    // hangul jamo extended-A
-    if cp >= 0xAC00 and cp <= 0xD7A3 { return true }    // hangul syllables
-    if cp >= 0xF900 and cp <= 0xFAFF { return true }    // CJK compat ideographs
-    if cp >= 0xFE10 and cp <= 0xFE19 { return true }    // vertical forms
-    if cp >= 0xFE30 and cp <= 0xFE6F { return true }    // CJK compat forms
-    if cp >= 0xFF00 and cp <= 0xFF60 { return true }    // fullwidth forms
-    if cp >= 0xFFE0 and cp <= 0xFFE6 { return true }    // fullwidth signs
-    if cp >= 0x1F300 and cp <= 0x1F64F { return true }  // emoji: misc + emoticons
-    if cp >= 0x1F680 and cp <= 0x1F6FF { return true }  // emoji: transport
-    if cp >= 0x1F900 and cp <= 0x1F9FF { return true }  // emoji: supplemental
-    if cp >= 0x1FA70 and cp <= 0x1FAFF { return true }  // emoji: extended-A
-    if cp >= 0x20000 and cp <= 0x2FFFD { return true }  // CJK ext B..F
-    if cp >= 0x30000 and cp <= 0x3FFFD { return true }  // CJK ext G+
+    // Unicode 15.1 EastAsianWidth W/F (generado de unicodedata). Rangos contiguos
+    // agrupados; los cortes tempranos por plano mantienen barato el caso común.
+    if cp < 0x1100 { return false }
+    if cp < 0x10000 {
+        if (cp >= 0x1100 and cp <= 0x115F) or (cp >= 0x231A and cp <= 0x231B) or (cp >= 0x2329 and cp <= 0x232A) { return true }
+        if (cp >= 0x23E9 and cp <= 0x23EC) or cp == 0x23F0 or cp == 0x23F3 { return true }
+        if (cp >= 0x25FD and cp <= 0x25FE) or (cp >= 0x2614 and cp <= 0x2615) or (cp >= 0x2648 and cp <= 0x2653) { return true }
+        if cp == 0x267F or cp == 0x2693 or cp == 0x26A1 { return true }
+        if (cp >= 0x26AA and cp <= 0x26AB) or (cp >= 0x26BD and cp <= 0x26BE) or (cp >= 0x26C4 and cp <= 0x26C5) { return true }
+        if cp == 0x26CE or cp == 0x26D4 or cp == 0x26EA { return true }
+        if (cp >= 0x26F2 and cp <= 0x26F3) or cp == 0x26F5 or cp == 0x26FA { return true }
+        if cp == 0x26FD or cp == 0x2705 or (cp >= 0x270A and cp <= 0x270B) { return true }
+        if cp == 0x2728 or cp == 0x274C or cp == 0x274E { return true }
+        if (cp >= 0x2753 and cp <= 0x2755) or cp == 0x2757 or (cp >= 0x2795 and cp <= 0x2797) { return true }
+        if cp == 0x27B0 or cp == 0x27BF or (cp >= 0x2B1B and cp <= 0x2B1C) { return true }
+        if cp == 0x2B50 or cp == 0x2B55 or (cp >= 0x2E80 and cp <= 0x2E99) { return true }
+        if (cp >= 0x2E9B and cp <= 0x2EF3) or (cp >= 0x2F00 and cp <= 0x2FD5) or (cp >= 0x2FF0 and cp <= 0x303E) { return true }
+        if (cp >= 0x3041 and cp <= 0x3096) or (cp >= 0x3099 and cp <= 0x30FF) or (cp >= 0x3105 and cp <= 0x312F) { return true }
+        if (cp >= 0x3131 and cp <= 0x318E) or (cp >= 0x3190 and cp <= 0x31E3) or (cp >= 0x31EF and cp <= 0x321E) { return true }
+        if (cp >= 0x3220 and cp <= 0x3247) or (cp >= 0x3250 and cp <= 0x4DBF) or (cp >= 0x4E00 and cp <= 0xA48C) { return true }
+        if (cp >= 0xA490 and cp <= 0xA4C6) or (cp >= 0xA960 and cp <= 0xA97C) or (cp >= 0xAC00 and cp <= 0xD7A3) { return true }
+        if (cp >= 0xF900 and cp <= 0xFAFF) or (cp >= 0xFE10 and cp <= 0xFE19) or (cp >= 0xFE30 and cp <= 0xFE52) { return true }
+        if (cp >= 0xFE54 and cp <= 0xFE66) or (cp >= 0xFE68 and cp <= 0xFE6B) or (cp >= 0xFF01 and cp <= 0xFF60) { return true }
+        if (cp >= 0xFFE0 and cp <= 0xFFE6) { return true }
+        return false
+    }
+    if cp < 0x16FE0 { return false }
+    if (cp >= 0x16FE0 and cp <= 0x16FE4) or (cp >= 0x16FF0 and cp <= 0x16FF1) or (cp >= 0x17000 and cp <= 0x187F7) { return true }
+    if (cp >= 0x18800 and cp <= 0x18CD5) or (cp >= 0x18D00 and cp <= 0x18D08) or (cp >= 0x1AFF0 and cp <= 0x1AFF3) { return true }
+    if (cp >= 0x1AFF5 and cp <= 0x1AFFB) or (cp >= 0x1AFFD and cp <= 0x1AFFE) or (cp >= 0x1B000 and cp <= 0x1B122) { return true }
+    if cp == 0x1B132 or (cp >= 0x1B150 and cp <= 0x1B152) or cp == 0x1B155 { return true }
+    if (cp >= 0x1B164 and cp <= 0x1B167) or (cp >= 0x1B170 and cp <= 0x1B2FB) or cp == 0x1F004 { return true }
+    if cp == 0x1F0CF or cp == 0x1F18E or (cp >= 0x1F191 and cp <= 0x1F19A) { return true }
+    if (cp >= 0x1F200 and cp <= 0x1F202) or (cp >= 0x1F210 and cp <= 0x1F23B) or (cp >= 0x1F240 and cp <= 0x1F248) { return true }
+    if (cp >= 0x1F250 and cp <= 0x1F251) or (cp >= 0x1F260 and cp <= 0x1F265) or (cp >= 0x1F300 and cp <= 0x1F320) { return true }
+    if (cp >= 0x1F32D and cp <= 0x1F335) or (cp >= 0x1F337 and cp <= 0x1F37C) or (cp >= 0x1F37E and cp <= 0x1F393) { return true }
+    if (cp >= 0x1F3A0 and cp <= 0x1F3CA) or (cp >= 0x1F3CF and cp <= 0x1F3D3) or (cp >= 0x1F3E0 and cp <= 0x1F3F0) { return true }
+    if cp == 0x1F3F4 or (cp >= 0x1F3F8 and cp <= 0x1F43E) or cp == 0x1F440 { return true }
+    if (cp >= 0x1F442 and cp <= 0x1F4FC) or (cp >= 0x1F4FF and cp <= 0x1F53D) or (cp >= 0x1F54B and cp <= 0x1F54E) { return true }
+    if (cp >= 0x1F550 and cp <= 0x1F567) or cp == 0x1F57A or (cp >= 0x1F595 and cp <= 0x1F596) { return true }
+    if cp == 0x1F5A4 or (cp >= 0x1F5FB and cp <= 0x1F64F) or (cp >= 0x1F680 and cp <= 0x1F6C5) { return true }
+    if cp == 0x1F6CC or (cp >= 0x1F6D0 and cp <= 0x1F6D2) or (cp >= 0x1F6D5 and cp <= 0x1F6D7) { return true }
+    if (cp >= 0x1F6DC and cp <= 0x1F6DF) or (cp >= 0x1F6EB and cp <= 0x1F6EC) or (cp >= 0x1F6F4 and cp <= 0x1F6FC) { return true }
+    if (cp >= 0x1F7E0 and cp <= 0x1F7EB) or cp == 0x1F7F0 or (cp >= 0x1F90C and cp <= 0x1F93A) { return true }
+    if (cp >= 0x1F93C and cp <= 0x1F945) or (cp >= 0x1F947 and cp <= 0x1F9FF) or (cp >= 0x1FA70 and cp <= 0x1FA7C) { return true }
+    if (cp >= 0x1FA80 and cp <= 0x1FA88) or (cp >= 0x1FA90 and cp <= 0x1FABD) or (cp >= 0x1FABF and cp <= 0x1FAC5) { return true }
+    if (cp >= 0x1FACE and cp <= 0x1FADB) or (cp >= 0x1FAE0 and cp <= 0x1FAE8) or (cp >= 0x1FAF0 and cp <= 0x1FAF8) { return true }
+    if (cp >= 0x20000 and cp <= 0x2FFFD) or (cp >= 0x30000 and cp <= 0x3FFFD) { return true }
     return false
 }
 

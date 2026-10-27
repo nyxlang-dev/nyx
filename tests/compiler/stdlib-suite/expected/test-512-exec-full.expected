@@ -1,0 +1,7 @@
+1 stdout=[hola|] stderr=[mal|] code=3
+2 stdout=1048576 solo_a=1 stderr=1048576 solo_b=1 code=0
+3 stdout=1048576 stderr=1048576 code=7
+4 stdout=3 stderr=4 nul_out=0 nul_err=0 code=0
+5 code=127 stdout=0 stderr_no_vacio=si
+6 code=137
+7 stdout=0 stderr=0 code=0

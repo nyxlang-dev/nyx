@@ -53,6 +53,7 @@
 #include <mstcpip.h>   // SIO_TCP_INITIAL_RTO (connect a loopback, ver os_sock_connect)
 #include <iphlpapi.h>
 #include <windows.h>
+#include <icmpapi.h>   // IcmpCreateFile/IcmpSendEcho (os_icmp_echo4): después de iphlpapi.h y windows.h
 // Link: ws2_32 (sockets, WSAPoll, getaddrinfo) e iphlpapi
 // (GetAdaptersAddresses) vía /DEFAULTLIB embebido — así las recetas de link
 // (CI, scripts, nyx build) no tienen que enumerarlas.
@@ -327,22 +328,24 @@ int os_thread_cancel(os_thread_t* t) {
     if (!t) return -EINVAL;
     HANDLE h = TH(t);
     if (!h) return -EINVAL;
-    // ⚠️ TerminateThread es la ÚNICA cancelación asíncrona de win32 y es MÁS
-    // brutal que pthread_cancel: mata en un punto arbitrario, sin cleanup
-    // handlers, sin liberar el bloque per-thread de la CRT, y sin que Boehm
-    // llegue a des-registrar el thread (GC_endthreadex nunca corre). Se
-    // implementa igual porque el contrato de nyx_os.h ya declara esta
-    // primitiva "best-effort" y "nunca usar sobre threads que tengan locks del
-    // runtime" — pero en win32 el riesgo extra (tabla de threads de Boehm con
-    // una entrada muerta) es REAL. Follow-up W3: reemplazar el thread_kill
-    // Nyx-facing por una cancelación cooperativa con flag.
-    // EN: TerminateThread is win32's only async cancellation and is harsher
-    // than pthread_cancel: arbitrary kill point, no cleanup, no CRT per-thread
-    // teardown, and Boehm never unregisters the thread. Implemented because
-    // the contract already declares this primitive best-effort and unsafe on
-    // lock-holding threads — but the extra win32 hazard (a dead entry in
-    // Boehm's thread table) is REAL. W3 follow-up: cooperative flag instead.
-    return TerminateThread(h, 0) ? 0 : win_last_errno();
+    // NO se llama a TerminateThread (parche C del spike de W5, §5, 2026-10-26).
+    // Mataba al hilo en un punto arbitrario, y si en ese instante tenía tomado
+    // el lock de asignación de Boehm (o estaba registrando un objeto), nadie lo
+    // soltaba y el próximo GC_malloc de main esperaba para siempre: medido en
+    // win32, una tarea que aloca + task_cancel + main que aloca después cuelga 4
+    // de cada 5 veces sin consumir CPU. task_cancel no está en el gate de win32,
+    // así que se alcanzaba desde cualquier programa que compilara.
+    // Ahora la cancelación no detiene el hilo: la tarea sigue hasta que su
+    // función retorna, igual que en Linux con una tarea que no pasa por ningún
+    // punto de cancelación de pthread. El contrato de nyx_os.h ya la declara
+    // «best-effort». La cancelación de verdad (cooperativa, revisada en los
+    // puntos seguros del runtime) es la Task 6 de W5 y espera decisión de
+    // Ottavio sobre la semántica de task_cancel.
+    // EN: no TerminateThread (W5 spike §5): it could kill the thread while it
+    // held Boehm's allocation lock, hanging the next GC_malloc (4/5 measured).
+    // Cancel no longer stops the thread; cooperative cancellation is W5 Task 6.
+    (void)h;
+    return 0;
 }
 
 // SwitchToThread cede el resto del quantum a otro thread LISTO del mismo
@@ -1343,6 +1346,83 @@ int os_sock_set_nodelay(int64_t fd) {
     BOOL opt = TRUE;
     return setsockopt(WSOCK(fd), IPPROTO_TCP, TCP_NODELAY, (const char*)&opt, sizeof(opt)) == 0 ? 0 : wsa_last();
 }
+// --- UDP multicast / broadcast (arco red-local, D-4). IPv4. Sin compilar en CI
+// local: escrito contra la API de Winsock (mismos nombres de opcion que POSIX;
+// ttl/loop toman DWORD o char -- Winsock acepta ambos, se usa DWORD). ---
+static int wmc_ip4(const char* s, struct in_addr* out) {
+    if (!s || !*s) { out->s_addr = htonl(INADDR_ANY); return 0; }
+    return inet_pton(AF_INET, s, out) == 1 ? 0 : -EINVAL;
+}
+static int wmc_membership(int64_t fd, int opt, const char* group, const char* iface_ip) {
+    struct ip_mreq m;
+    memset(&m, 0, sizeof(m));
+    if (!group || inet_pton(AF_INET, group, &m.imr_multiaddr) != 1) return -EINVAL;
+    int rc = wmc_ip4(iface_ip, &m.imr_interface);
+    if (rc < 0) return rc;
+    return setsockopt(WSOCK(fd), IPPROTO_IP, opt, (const char*)&m, sizeof(m)) == 0 ? 0 : wsa_last();
+}
+int os_sock_udp_join(int64_t fd, const char* group, const char* iface_ip) {
+    return wmc_membership(fd, IP_ADD_MEMBERSHIP, group, iface_ip);
+}
+int os_sock_udp_leave(int64_t fd, const char* group, const char* iface_ip) {
+    return wmc_membership(fd, IP_DROP_MEMBERSHIP, group, iface_ip);
+}
+int os_sock_set_multicast_ttl(int64_t fd, int ttl) {
+    if (ttl < 0 || ttl > 255) return -EINVAL;
+    DWORD v = (DWORD)ttl;
+    return setsockopt(WSOCK(fd), IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&v, sizeof(v)) == 0 ? 0 : wsa_last();
+}
+int os_sock_set_multicast_loop(int64_t fd, int on) {
+    DWORD v = on ? 1 : 0;
+    return setsockopt(WSOCK(fd), IPPROTO_IP, IP_MULTICAST_LOOP, (const char*)&v, sizeof(v)) == 0 ? 0 : wsa_last();
+}
+int os_sock_set_multicast_iface(int64_t fd, const char* iface_ip) {
+    struct in_addr a;
+    int rc = wmc_ip4(iface_ip, &a);
+    if (rc < 0) return rc;
+    return setsockopt(WSOCK(fd), IPPROTO_IP, IP_MULTICAST_IF, (const char*)&a, sizeof(a)) == 0 ? 0 : wsa_last();
+}
+int os_sock_set_broadcast(int64_t fd, int on) {
+    BOOL v = on ? TRUE : FALSE;
+    return setsockopt(WSOCK(fd), SOL_SOCKET, SO_BROADCAST, (const char*)&v, sizeof(v)) == 0 ? 0 : wsa_last();
+}
+int os_sock_set_reuseport(int64_t fd) {
+    // Winsock no tiene SO_REUSEPORT: compartir el puerto UDP (multicast) es su
+    // SO_REUSEADDR. os_sock_set_reuseaddr es no-op a proposito (ver arriba) y
+    // esto solo lo llama bind_shared, nunca un listen TCP.
+    BOOL v = TRUE;
+    return setsockopt(WSOCK(fd), SOL_SOCKET, SO_REUSEADDR, (const char*)&v, sizeof(v)) == 0 ? 0 : wsa_last();
+}
+// Ping: IcmpSendEcho (iphlpapi, ya enlazada) no pide privilegios, a diferencia
+// de un raw socket. El RTT se mide con os_monotonic_ns: RoundTripTime viene en ms
+// enteros y en la LAN casi siempre da 0. Escrita sin compilar (2026-10-26).
+int os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns) {
+    IN_ADDR a;
+    if (!ip || inet_pton(AF_INET, ip, &a) != 1) return -EINVAL;
+    if (timeout_ms < 0) timeout_ms = 0;
+    HANDLE h = IcmpCreateFile();
+    if (h == INVALID_HANDLE_VALUE) return -EACCES;
+    char payload[16] = "nyx-ping-nyx-pi";
+    DWORD rsz = (DWORD)(sizeof(ICMP_ECHO_REPLY) + sizeof(payload) + 8);
+    void* reply = HeapAlloc(GetProcessHeap(), 0, rsz);
+    if (!reply) { IcmpCloseHandle(h); return -ENOMEM; }
+    int64_t t0 = os_monotonic_ns();
+    DWORD n = IcmpSendEcho(h, a.S_un.S_addr, payload, (WORD)sizeof(payload), NULL, reply, rsz, (DWORD)timeout_ms);
+    int64_t t1 = os_monotonic_ns();
+    int rc;
+    if (n == 0) {
+        DWORD e = GetLastError();
+        rc = (e == IP_REQ_TIMED_OUT || e == WAIT_TIMEOUT) ? -ETIMEDOUT : -EHOSTUNREACH;
+    } else {
+        PICMP_ECHO_REPLY r = (PICMP_ECHO_REPLY)reply;
+        if (r->Status == IP_SUCCESS) { rc = 0; if (rtt_ns) *rtt_ns = t1 - t0; }
+        else if (r->Status == IP_REQ_TIMED_OUT) rc = -ETIMEDOUT;
+        else rc = -EHOSTUNREACH;
+    }
+    HeapFree(GetProcessHeap(), 0, reply);
+    IcmpCloseHandle(h);
+    return rc;
+}
 static DWORD wsec_to_ms(int64_t seconds) {
     if (seconds <= 0) return 0;                        // 0 = sin timeout, igual que POSIX
     if (seconds > 0x7FFFFFFF / 1000) return 0x7FFFFFFF;
@@ -1932,6 +2012,112 @@ int64_t os_proc_run_status(const char* cmd) {
     // means "could not launch the command interpreter", as on posix.
     int status = system(cmd);
     return status == -1 ? -1 : (int64_t)status;
+}
+
+// os_proc_run_full: ver contrato en nyx_os.h. CreateProcess de
+// `cmd.exe /d /s /c "<cmd>"` con stdout/stderr en dos pipes anónimos; un hilo
+// lee stderr y el hilo llamador lee stdout, así ninguno bloquea al otro; el cb
+// se serializa con una sección crítica.
+// ⚠️ NO verificado en Windows real (escrito sin poder compilar aquí).
+// EN: CreateProcess of `cmd.exe /d /s /c "<cmd>"` with stdout/stderr on two
+// anonymous pipes; a thread drains stderr while the caller drains stdout; the
+// cb is serialized by a critical section. NOT verified on real Windows.
+typedef struct {
+    HANDLE h;
+    int stream;
+    void (*cb)(int, const void*, size_t, void*);
+    void* ud;
+    CRITICAL_SECTION* cs;
+} os_proc_drain_t;
+
+static void os_proc_drain(os_proc_drain_t* d) {
+    char buf[65536];
+    DWORD got;
+    while (ReadFile(d->h, buf, (DWORD)sizeof(buf), &got, NULL) && got > 0) {
+        EnterCriticalSection(d->cs);
+        if (d->cb) d->cb(d->stream, buf, (size_t)got, d->ud);
+        LeaveCriticalSection(d->cs);
+    }
+}
+
+static DWORD WINAPI os_proc_drain_thread(LPVOID p) {
+    os_proc_drain((os_proc_drain_t*)p);
+    return 0;
+}
+
+int os_proc_run_full(const char* cmd,
+                     void (*cb)(int stream, const void* chunk, size_t len, void* ud),
+                     void* ud,
+                     int64_t* code) {
+    if (code) *code = -1;
+    if (!cmd) return -EINVAL;
+    SECURITY_ATTRIBUTES sa;
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
+    HANDLE or_ = NULL, ow = NULL, er = NULL, ew = NULL;
+    if (!CreatePipe(&or_, &ow, &sa, 0)) return -EMFILE;
+    if (!CreatePipe(&er, &ew, &sa, 0)) {
+        CloseHandle(or_); CloseHandle(ow);
+        return -EMFILE;
+    }
+    // Los extremos de lectura del padre NO se heredan.
+    SetHandleInformation(or_, HANDLE_FLAG_INHERIT, 0);
+    SetHandleInformation(er, HANDLE_FLAG_INHERIT, 0);
+
+    size_t n = strlen(cmd);
+    char* line = (char*)malloc(n + 32);
+    if (!line) {
+        CloseHandle(or_); CloseHandle(ow); CloseHandle(er); CloseHandle(ew);
+        return -ENOMEM;
+    }
+    snprintf(line, n + 32, "cmd.exe /d /s /c \"%s\"", cmd);
+
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    memset(&pi, 0, sizeof(pi));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = ow;
+    si.hStdError = ew;
+    BOOL ok = CreateProcessA(NULL, line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+    free(line);
+    // El padre cierra SUS copias de los extremos de escritura: sin esto no
+    // llega nunca el EOF.
+    CloseHandle(ow);
+    CloseHandle(ew);
+    if (!ok) {
+        CloseHandle(or_); CloseHandle(er);
+        return -ENOENT;
+    }
+
+    CRITICAL_SECTION cs;
+    InitializeCriticalSection(&cs);
+    os_proc_drain_t derr = { er, 2, cb, ud, &cs };
+    os_proc_drain_t dout = { or_, 1, cb, ud, &cs };
+    HANDLE th = CreateThread(NULL, 0, os_proc_drain_thread, &derr, 0, NULL);
+    if (th) {
+        os_proc_drain(&dout);
+        WaitForSingleObject(th, INFINITE);
+        CloseHandle(th);
+    } else {
+        // Sin hilo no hay lectura concurrente segura: se degrada a secuencial
+        // (puede bloquear con salida enorme en stderr; agotamiento de
+        // recursos, no el camino normal).
+        os_proc_drain(&dout);
+        os_proc_drain(&derr);
+    }
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD ec = 0;
+    if (GetExitCodeProcess(pi.hProcess, &ec) && code) *code = (int64_t)ec;
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    CloseHandle(or_);
+    CloseHandle(er);
+    DeleteCriticalSection(&cs);
+    return 0;
 }
 
 // ===========================================================================

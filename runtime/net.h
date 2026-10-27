@@ -93,6 +93,16 @@ nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes);
 int64_t nyx_tcp_write_result(int64_t fd, nyx_string* data);
 int64_t nyx_udp_sendto_result(int64_t fd, nyx_string* data, nyx_string* host, int64_t port);
 nyx_array_t* nyx_udp_recvfrom_result(int64_t fd, int64_t max_bytes);
+// red-local (D-4): multicast, remitente y bind compartido.
+int64_t nyx_udp_bind_shared_result(nyx_string* host, int64_t port);
+nyx_array_t* nyx_udp_recvfrom_from_result(int64_t fd, int64_t max_bytes, int64_t timeout_ms); // [code, data, ip, port]
+int64_t nyx_udp_join_result(int64_t fd, nyx_string* group, nyx_string* iface);
+int64_t nyx_udp_leave_result(int64_t fd, nyx_string* group, nyx_string* iface);
+int64_t nyx_udp_set_multicast_ttl_result(int64_t fd, int64_t ttl);
+int64_t nyx_udp_set_multicast_loop_result(int64_t fd, int64_t on);
+int64_t nyx_udp_set_multicast_iface_result(int64_t fd, nyx_string* iface);
+int64_t nyx_udp_set_broadcast_result(int64_t fd, int64_t on);
+nyx_array_t* nyx_ping_result(nyx_string* ip, int64_t timeout_ms);
 nyx_array_t* nyx_resolve_result(nyx_string* host);
 
 // EOF limpio en las centinelas [code, payload] que necesitan distinguirlo de

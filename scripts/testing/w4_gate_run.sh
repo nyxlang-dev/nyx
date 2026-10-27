@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/testing/w4_gate_run.sh — parte 2 del gate local de concurrencia
-# W3/W4 en Windows x64 (Git Bash + clang con triple MSVC). Compila los 12 TUs
+# W3/W4 en Windows x64 (Git Bash + clang con triple MSVC). Compila los 13 TUs
 # del subset del runtime con los flags EXACTOS del job w2-subset, linkea cada
 # .win.ll que emitió w4_gate_emit_ir.sh contra el gc.lib dado y corre cada
 # test N veces, con gc.dll al lado del .exe (como se midió el 36/36).
@@ -15,7 +15,7 @@
 #
 # Uso / usage:
 #   w4_gate_run.sh build <runtime_root> <workdir>
-#       compila los 12 TUs de <runtime_root>/runtime a <workdir>/objs y
+#       compila los 13 TUs de <runtime_root>/runtime a <workdir>/objs y
 #       linkea <workdir>/ir/*.win.ll a <workdir>/bin/*.exe
 #   w4_gate_run.sh run <workdir> <N> [test-name ...]
 #       corre cada test N veces (default: todos los .exe de <workdir>/bin)
@@ -32,8 +32,10 @@ GC_LIBDIR="${NYX_GC_LIBDIR:-/c/nyx/bdwgc-patched/build/Release}"
 GC_DLL="${NYX_GC_DLL:-$GC_LIBDIR/gc.dll}"
 TMO="${NYX_GATE_TIMEOUT:-30}"
 
-# Mismos 12 TUs y mismo orden que el job w2-subset.
-TUS="strings.c runtime-arrays.c maps.c time.c iterators.c sqlite_adapter.c
+# Mismos 13 TUs y mismo orden que el job w2-subset. csv.c entró en W5: desde
+# e0a02263 std/csv llama a nyx_csv_read/nyx_csv_guess_schema y test-141 dejó
+# de enlazar con los 12 de antes.
+TUS="strings.c runtime-arrays.c maps.c time.c iterators.c sqlite_adapter.c csv.c
 file-io.c runtime.c thread.c scheduler.c os/event_loop_win32.c os/os_win32.c"
 
 # Expected por test (el resto: gate por rc, como NONE en el manifiesto).

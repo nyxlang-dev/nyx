@@ -1,0 +1,68 @@
+// test-512 — std/exec: try_exec_full separa stdout, stderr y código de salida.
+//
+// El caso central es el 2: 1 MiB a stderr y luego 1 MiB a stdout. Un lector
+// ingenuo (popen + leer stdout hasta EOF, y recién después stderr) se CUELGA:
+// el hijo se bloquea escribiendo a stderr con el pipe lleno (~64 KiB) y nunca
+// cierra stdout. Aquí el runtime lee los dos flujos con poll(), así que termina.
+// (Verificado a mano contra una implementación secuencial: queda colgada y el
+// timeout del runner la mata.) Se prueba también el orden inverso.
+
+import "std/error"
+import "std/exec"
+
+fn uno(cmd: String) -> ExecResult {
+    match try_exec_full(cmd) {
+        Result.Ok(r) => { return r }
+        Result.Err(e) => {
+            println("ERR inesperado: " + e.msg)
+            return ExecResult { stdout: "", stderr: "", code: -999 }
+        }
+    }
+}
+
+fn solo_de(s: String, c: int) -> int {
+    var i: int = 0
+    while i < s.length() {
+        if (s.charAt(i) as int) != c { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+fn vacio_o_no(s: String) -> String {
+    if s.length() > 0 { return "si" }
+    return "no"
+}
+
+fn main() -> int {
+    // 1. stdout y stderr distintos a la vez + código distinto de 0. Los '\n'
+    // finales NO se quitan (a diferencia de exec).
+    let a: ExecResult = uno("echo hola; echo mal >&2; exit 3")
+    println("1 stdout=[" + a.stdout.replace("\n", "|") + "] stderr=[" + a.stderr.replace("\n", "|") + "] code=" + int_to_string(a.code))
+
+    // 2. 1 MiB a stderr y luego 1 MiB a stdout (cuelga a un lector stdout-primero).
+    let b: ExecResult = uno("head -c 1048576 /dev/zero | tr '\\0' b >&2; head -c 1048576 /dev/zero | tr '\\0' a")
+    println("2 stdout=" + int_to_string(b.stdout.length()) + " solo_a=" + int_to_string(solo_de(b.stdout, 97)) + " stderr=" + int_to_string(b.stderr.length()) + " solo_b=" + int_to_string(solo_de(b.stderr, 98)) + " code=" + int_to_string(b.code))
+
+    // 3. Orden inverso: 1 MiB a stdout y luego 1 MiB a stderr (cuelga a un
+    // lector stderr-primero).
+    let c: ExecResult = uno("head -c 1048576 /dev/zero | tr '\\0' a; head -c 1048576 /dev/zero | tr '\\0' b >&2; exit 7")
+    println("3 stdout=" + int_to_string(c.stdout.length()) + " stderr=" + int_to_string(c.stderr.length()) + " code=" + int_to_string(c.code))
+
+    // 4. Bytes NUL en los dos flujos (binary-safe).
+    let d: ExecResult = uno("printf 'a\\0b'; printf 'c\\0d\\0' >&2")
+    println("4 stdout=" + int_to_string(d.stdout.length()) + " stderr=" + int_to_string(d.stderr.length()) + " nul_out=" + int_to_string(d.stdout.charAt(1) as int) + " nul_err=" + int_to_string(d.stderr.charAt(3) as int) + " code=" + int_to_string(d.code))
+
+    // 5. Comando inexistente: no es Err, el shell sale con 127 y avisa por stderr.
+    let e: ExecResult = uno("nyx_comando_que_no_existe_512")
+    println("5 code=" + int_to_string(e.code) + " stdout=" + int_to_string(e.stdout.length()) + " stderr_no_vacio=" + vacio_o_no(e.stderr))
+
+    // 6. Muerto por señal: 128 + señal.
+    let f: ExecResult = uno("kill -9 $$")
+    println("6 code=" + int_to_string(f.code))
+
+    // 7. Sin salida y éxito.
+    let g: ExecResult = uno("true")
+    println("7 stdout=" + int_to_string(g.stdout.length()) + " stderr=" + int_to_string(g.stderr.length()) + " code=" + int_to_string(g.code))
+    return 0
+}

@@ -1512,6 +1512,96 @@ static nyx_array_t* nyx_udp_recvfrom_result_native(int64_t fd, int64_t max_bytes
     return out;
 }
 
+// ===== red-local (D-4, 2026-10): UDP multicast, remitente y bind compartido =====
+//
+// Todo lo de abajo son `*_result` en la misma convención de arriba: entero ->
+// fd/0 o -errno; Array -> [code(+), payload...] con code = errno POSITIVO.
+//
+//   - bind_shared: SO_REUSEADDR + SO_REUSEPORT (os_sock_set_reuseport; en win32
+//     es el SO_REUSEADDR de Winsock). Es una función APARTE y no un cambio de
+//     nyx_udp_bind a propósito: con bind() normal un segundo proceso en el mismo
+//     puerto falla con EADDRINUSE, y los programas existentes dependen de eso.
+//     Con un puerto compartido el multicast llega a TODOS los sockets (medido
+//     en tests/support/sonda-red-local); el unicast lo recibe uno solo.
+//   - recvfrom_from: [code, data, ip, port]. Se devuelve un Array de 4 y no un
+//     struct porque un extern "C" no puede entregar un struct Nyx; la forma
+//     espeja el [code, payload] de recvfrom_result y std/net.nx lo envuelve en
+//     el struct UdpDatagram. timeout_ms >= 0 espera con poll() ese plazo
+//     (ms, a diferencia de SO_RCVTIMEO que es en segundos) y da ETIMEDOUT (110)
+//     SIN consumir nada; timeout_ms < 0 es un recvfrom bloqueante normal
+//     (respeta un SO_RCVTIMEO previo). OJO (sonda): ambos bloquean el hilo del
+//     SO — dentro de una goroutina ocupan un trabajador del scheduler; el
+//     lector va en un hilo propio (thread_spawn).
+static int64_t nyx_udp_bind_shared_result_native(nyx_string* host, int64_t port) {
+    if (!host) return -22;
+    int64_t fd = os_sock_udp4();
+    if (fd < 0) return fd;
+    int rc = os_sock_set_reuseaddr(fd);
+    if (rc < 0) { os_sock_close(fd); return rc; }
+    rc = os_sock_set_reuseport(fd);
+    if (rc < 0) { os_sock_close(fd); return rc; }
+    os_addr_t addr;
+    const char* h = (host->data && host->length > 0) ? host->data : "0.0.0.0";
+    if (os_addr_from_ip4(&addr, h, (int)port) != 0) { os_sock_close(fd); return -22; }
+    rc = os_sock_bind(fd, &addr);
+    if (rc < 0) { os_sock_close(fd); return rc; }
+    return fd;
+}
+
+static nyx_array_t* nyx_udp_recvfrom_from_result_native(int64_t fd, int64_t max_bytes, int64_t timeout_ms) {
+    nyx_array_t* out = nyx_array_new(4);
+    int64_t code = 0;
+    nyx_string* data = NULL;
+    char ip[NYX_NET_IP_STRLEN] = "";
+    int64_t port = 0;
+    char* buf = NULL;
+    if (fd < 0) code = 9; // EBADF
+    if (code == 0) {
+        if (max_bytes <= 0) max_bytes = 4096;
+        buf = (char*)GC_MALLOC_ATOMIC((size_t)max_bytes + 1);
+        if (!buf) code = 12; // ENOMEM
+    }
+    if (code == 0 && timeout_ms >= 0) {
+        int64_t deadline = os_monotonic_ns() + timeout_ms * 1000000LL;
+        for (;;) {
+            int64_t rem = (deadline - os_monotonic_ns() + 999999) / 1000000;
+            if (rem < 0) rem = 0;
+            int ms = rem > 0x7fffffff ? 0x7fffffff : (int)rem;
+            int pr = os_sock_poll1(fd, OS_POLLIN, ms);
+            if (pr == -EINTR) continue;
+            if (pr < 0) { code = -pr; break; }
+            if (pr == 0) { code = ETIMEDOUT; break; }
+            break;
+        }
+    }
+    if (code == 0) {
+        os_addr_t from;
+        memset(&from, 0, sizeof(from));
+        int64_t n = os_sock_recvfrom(fd, buf, (size_t)max_bytes, &from);
+        if (n < 0) {
+            code = -n;
+        } else {
+            // n == 0 es un datagrama vacio legitimo (como recvfrom_result).
+            data = nyx_string_from_ptr(buf, n);
+            if (os_addr_ip(&from, ip, sizeof(ip)) != 0) ip[0] = '\0';
+            port = os_addr_port(&from);
+        }
+    }
+    nyx_array_push_tagged(out, code, NYX_TAG_INT);
+    nyx_array_push_tagged(out, (int64_t)(data ? data : nyx_string_from_cstr("")), NYX_TAG_STRING);
+    nyx_array_push_tagged(out, (int64_t)nyx_string_from_cstr(ip), NYX_TAG_STRING);
+    nyx_array_push_tagged(out, port, NYX_TAG_INT);
+    return out;
+}
+
+// group/iface llegan como nyx_string (iface "" = INADDR_ANY, el kernel elige).
+static int64_t nyx_udp_membership_native(int64_t fd, nyx_string* group, nyx_string* iface, int join) {
+    if (fd < 0) return -9;
+    if (!group || !group->data) return -22;
+    const char* ifc = (iface && iface->data) ? iface->data : "";
+    return join ? os_sock_udp_join(fd, group->data, ifc) : os_sock_udp_leave(fd, group->data, ifc);
+}
+
 static nyx_array_t* nyx_resolve_result_native(nyx_string* host) {
     nyx_array_t* out = nyx_array_new(2);
     if (!host || !host->data) {
@@ -1910,6 +2000,27 @@ int64_t nyx_local_port_result(int64_t fd) { return net_code(nyx_local_port_resul
 nyx_array_t* nyx_tcp_read_timed_result(int64_t fd, int64_t max_bytes, int64_t timeout_ms) { return net_code_arr(nyx_tcp_read_timed_result_native(fd, max_bytes, timeout_ms)); }
 nyx_array_t* nyx_tcp_read_result(int64_t fd, int64_t max_bytes) { return net_code_arr(nyx_tcp_read_result_native(fd, max_bytes)); }
 nyx_array_t* nyx_udp_recvfrom_result(int64_t fd, int64_t max_bytes) { return net_code_arr(nyx_udp_recvfrom_result_native(fd, max_bytes)); }
+int64_t nyx_udp_bind_shared_result(nyx_string* host, int64_t port) { return net_code(nyx_udp_bind_shared_result_native(host, port)); }
+nyx_array_t* nyx_udp_recvfrom_from_result(int64_t fd, int64_t max_bytes, int64_t timeout_ms) { return net_code_arr(nyx_udp_recvfrom_from_result_native(fd, max_bytes, timeout_ms)); }
+int64_t nyx_udp_join_result(int64_t fd, nyx_string* group, nyx_string* iface) { return net_code(nyx_udp_membership_native(fd, group, iface, 1)); }
+int64_t nyx_udp_leave_result(int64_t fd, nyx_string* group, nyx_string* iface) { return net_code(nyx_udp_membership_native(fd, group, iface, 0)); }
+int64_t nyx_udp_set_multicast_ttl_result(int64_t fd, int64_t ttl) { return net_code(fd < 0 ? -9 : os_sock_set_multicast_ttl(fd, (int)ttl)); }
+int64_t nyx_udp_set_multicast_loop_result(int64_t fd, int64_t on) { return net_code(fd < 0 ? -9 : os_sock_set_multicast_loop(fd, on != 0)); }
+int64_t nyx_udp_set_multicast_iface_result(int64_t fd, nyx_string* iface) {
+    if (fd < 0) return net_code(-9);
+    return net_code(os_sock_set_multicast_iface(fd, (iface && iface->data) ? iface->data : ""));
+}
+int64_t nyx_udp_set_broadcast_result(int64_t fd, int64_t on) { return net_code(fd < 0 ? -9 : os_sock_set_broadcast(fd, on != 0)); }
+// Ping: [code, rtt_us]. code = errno POSITIVO canónico (0 = respondió). `ip` ya
+// viene resuelta por std/net (try_resolve), así el C no repite getaddrinfo.
+nyx_array_t* nyx_ping_result(nyx_string* ip, int64_t timeout_ms) {
+    nyx_array_t* out = nyx_array_new(2);
+    int64_t rtt_ns = 0;
+    int rc = (ip && ip->data) ? os_icmp_echo4(ip->data, (int)(timeout_ms > 0x7fffffff ? 0x7fffffff : timeout_ms), &rtt_ns) : -22;
+    nyx_array_push_tagged(out, rc < 0 ? -(int64_t)rc : 0, NYX_TAG_INT);
+    nyx_array_push_tagged(out, rtt_ns / 1000, NYX_TAG_INT);
+    return net_code_arr(out);
+}
 nyx_array_t* nyx_resolve_result(nyx_string* host) { return net_code_arr(nyx_resolve_result_native(host)); }
 nyx_array_t* nyx_tcp_read_line_result(int64_t fd) { return net_code_arr(nyx_tcp_read_line_result_native(fd)); }
 nyx_array_t* nyx_tcp_read_partial_result(int64_t fd, int64_t max_bytes) { return net_code_arr(nyx_tcp_read_partial_result_native(fd, max_bytes)); }

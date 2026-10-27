@@ -1,0 +1,603 @@
+// std/mdns.nx — codec de mensajes DNS multicast (mDNS, RFC 6762/6763).
+//
+// Esta es la BASE de std/mdns (arco red-local, spec 2026-09-29, D-3/D-6/D-7):
+// solo el codec, función pura sobre Strings de bytes, SIN sockets. El buscador
+// (mdns_browse / mdns_resolve_host) y el respondedor se montan encima en tareas
+// posteriores, sobre las primitivas UDP multicast de std/net.
+//
+// Qué NO hace: no descubre nada por sí solo ni habla por la red; y, sobre todo,
+// no resuelve el descubrimiento DESDE EL NAVEGADOR: una página web no puede
+// abrir sockets UDP ni unirse a un grupo multicast (ver «Lo que el pedido no
+// resuelve» de la spec). Tampoco implementa: compresión al CODIFICAR (es válida
+// sin ella), AAAA decodificado (se conserva crudo en `raw`), NSEC, EDNS,
+// DNS-SD de unicast clásico, ni nombres con un punto DENTRO de una etiqueta
+// (un nombre es el texto con etiquetas separadas por «.»; una instancia como
+// «Sala 1.5» quedaría partida en dos etiquetas).
+//
+// ---------------------------------------------------------------- forma
+//
+//   MdnsMessage { id, flags, response, authoritative, truncated,
+//                 questions:  Array<MdnsQuestion>,
+//                 answers, authority, additional: Array<MdnsRecord> }
+//   MdnsQuestion { name, qtype, qclass, unicast }
+//        unicast = bit alto de la clase (QU, RFC 6762 §5.4); qclass SIN el bit.
+//   MdnsRecord  { name, rtype, rclass, cache_flush, ttl,
+//                 target, port, priority, weight, addr, txt, raw }
+//        cache_flush = bit alto de la clase (RFC 6762 §10.2); rclass SIN el bit.
+//        Según rtype se llenan unos campos y el resto queda vacío/0:
+//          A    (1)  addr = "192.168.1.5"
+//          PTR  (12) target = nombre apuntado
+//          TXT  (16) txt = Array<String> de "clave=valor" (o "clave" sola);
+//                    las cadenas vacías se descartan; un TXT vacío (un solo
+//                    byte 0, RFC 6763 §6.1, o RDLENGTH 0 que se tolera) da []
+//          SRV  (33) target, port, priority, weight
+//          otro      raw = el RDATA tal cual (AAAA incluido)
+//        `raw` se llena SIEMPRE con el RDATA original, de cualquier tipo.
+//   Los nombres van sin punto final y conservan las mayúsculas del paquete.
+//
+// ---------------------------------------------------------------- API
+//
+//   mdns_query_encode(name, qtype, unicast_response) -> Result<String, Error>
+//        una consulta mDNS (id 0, un QD). Se arma con mdns_question(...) +
+//        mdns_message_encode para consultas con varias preguntas.
+//   mdns_message_encode(msg) -> Result<String, Error>
+//        serializa un mensaje (sin compresión). Err "invalid" (code 22) si un
+//        nombre no cabe (etiqueta vacía o > 63 bytes, nombre > 255 en el cable),
+//        una IPv4 no es válida o un valor se sale de su campo.
+//   mdns_message_decode(pkt) -> Result<MdnsMessage, Error>
+//        decodifica un paquete. Paquete malformado -> Err kind "parse" (code 0;
+//        el vocabulario de std/error es cerrado, por eso «parse» y no
+//        «malformed»); NUNCA aborta ni lee fuera de rango.
+//   Constructores para armar mensajes: mdns_message(response), mdns_question,
+//   mdns_record_a / _ptr / _srv / _txt. Ayudante: mdns_txt_get(rec, clave).
+//   Constantes: MDNS_A=1, MDNS_PTR=12, MDNS_TXT=16, MDNS_AAAA=28, MDNS_SRV=33,
+//   MDNS_ANY=255, MDNS_CLASS_IN=1.
+//
+// ---------------------------------------------------------------- defensas
+//
+// Entrada hostil (la red local no es de fiar): un puntero de compresión debe
+// apuntar ESTRICTAMENTE hacia atrás de sí mismo y dentro del paquete, no a la
+// cabecera (esto elimina los bucles; además hay tope de 16 saltos), etiquetas
+// de 0..63 bytes (los tipos 01/10 reservados se rechazan), nombre de a lo más
+// 255 bytes en el cable, a lo más 512 registros+preguntas por mensaje, y los
+// conteos de la cabecera se contrastan con los bytes que quedan (un conteo
+// mentiroso falla antes de reservar nada). El RDATA de A/PTR/SRV/TXT debe
+// medir justo lo que declara su RDLENGTH.
+
+import "std/error"
+
+const MDNS_A: int = 1
+const MDNS_PTR: int = 12
+const MDNS_TXT: int = 16
+const MDNS_AAAA: int = 28
+const MDNS_SRV: int = 33
+const MDNS_ANY: int = 255
+const MDNS_CLASS_IN: int = 1
+
+const __MDNS_MAX_RECORDS: int = 512
+const __MDNS_MAX_JUMPS: int = 16
+
+pub struct MdnsQuestion {
+    name: String,
+    qtype: int,
+    qclass: int,
+    unicast: bool,
+}
+
+pub struct MdnsRecord {
+    name: String,
+    rtype: int,
+    rclass: int,
+    cache_flush: bool,
+    ttl: int,
+    target: String,
+    port: int,
+    priority: int,
+    weight: int,
+    addr: String,
+    txt: Array<String>,
+    raw: String,
+}
+
+pub struct MdnsMessage {
+    id: int,
+    flags: int,
+    response: bool,
+    authoritative: bool,
+    truncated: bool,
+    questions: Array<MdnsQuestion>,
+    answers: Array<MdnsRecord>,
+    authority: Array<MdnsRecord>,
+    additional: Array<MdnsRecord>,
+}
+
+// ---------------------------------------------------------------- errores
+
+fn __mdns_err_malformed(msg: String) -> Error { return err_new(0, "parse", "mdns: " + msg) }
+fn __mdns_err_invalid(msg: String) -> Error { return err_new(22, "invalid", "mdns: " + msg) }
+
+// ---------------------------------------------------------------- constructores
+
+/// Mensaje vacío. response=true arma una respuesta autoritativa (flags 0x8400,
+/// RFC 6762 §18.2/§18.4); false, una consulta (flags 0).
+pub fn mdns_message(response: bool) -> MdnsMessage {
+    var flags: int = 0
+    if response { flags = 33792 }
+    return MdnsMessage {
+        id: 0, flags: flags, response: response, authoritative: response, truncated: false,
+        questions: [], answers: [], authority: [], additional: []
+    }
+}
+
+/// Una pregunta de clase IN. unicast=true pide respuesta unicast (bit QU).
+pub fn mdns_question(name: String, qtype: int, unicast: bool) -> MdnsQuestion {
+    return MdnsQuestion { name: name, qtype: qtype, qclass: MDNS_CLASS_IN, unicast: unicast }
+}
+
+fn __mdns_record(name: String, rtype: int, ttl: int, cache_flush: bool) -> MdnsRecord {
+    return MdnsRecord {
+        name: name, rtype: rtype, rclass: MDNS_CLASS_IN, cache_flush: cache_flush, ttl: ttl,
+        target: "", port: 0, priority: 0, weight: 0, addr: "", txt: [], raw: ""
+    }
+}
+
+/// Registro A (addr = "a.b.c.d").
+pub fn mdns_record_a(name: String, addr: String, ttl: int, cache_flush: bool) -> MdnsRecord {
+    var r: MdnsRecord = __mdns_record(name, MDNS_A, ttl, cache_flush)
+    r.addr = addr
+    return r
+}
+
+/// Registro PTR: `name` -> `target`.
+pub fn mdns_record_ptr(name: String, target: String, ttl: int, cache_flush: bool) -> MdnsRecord {
+    var r: MdnsRecord = __mdns_record(name, MDNS_PTR, ttl, cache_flush)
+    r.target = target
+    return r
+}
+
+/// Registro SRV: instancia -> host:puerto.
+pub fn mdns_record_srv(name: String, target: String, port: int, priority: int, weight: int, ttl: int, cache_flush: bool) -> MdnsRecord {
+    var r: MdnsRecord = __mdns_record(name, MDNS_SRV, ttl, cache_flush)
+    r.target = target
+    r.port = port
+    r.priority = priority
+    r.weight = weight
+    return r
+}
+
+/// Registro TXT con una lista de "clave=valor".
+pub fn mdns_record_txt(name: String, txt: Array<String>, ttl: int, cache_flush: bool) -> MdnsRecord {
+    var r: MdnsRecord = __mdns_record(name, MDNS_TXT, ttl, cache_flush)
+    r.txt = txt
+    return r
+}
+
+/// Valor de `clave` en un TXT ("clave=valor" -> Some("valor"); "clave" sola ->
+/// Some("")); None si no está. La clave se compara sin distinguir mayúsculas
+/// (RFC 6763 §6.4).
+pub fn mdns_txt_get(rec: MdnsRecord, key: String) -> Option<String> {
+    let k: String = key.to_lower()
+    var i: int = 0
+    while i < rec.txt.length() {
+        let s: String = rec.txt[i]
+        var eq: int = -1
+        var j: int = 0
+        while j < s.length() {
+            if s.charAt(j) == 61 {
+                eq = j
+                j = s.length()
+            } else {
+                j = j + 1
+            }
+        }
+        if eq < 0 {
+            if s.to_lower() == k { return Option.Some("") }
+        } else if s.substring(0, eq).to_lower() == k {
+            return Option.Some(s.substring(eq + 1, s.length()))
+        }
+        i = i + 1
+    }
+    return Option.None
+}
+
+// ---------------------------------------------------------------- codificar
+
+fn __mdns_u16(p: String, i: int) -> int {
+    return p.charAt(i) * 256 + p.charAt(i + 1)
+}
+
+fn __mdns_u32(p: String, i: int) -> int {
+    return ((p.charAt(i) * 256 + p.charAt(i + 1)) * 256 + p.charAt(i + 2)) * 256 + p.charAt(i + 3)
+}
+
+fn __mdns_push16(out: Array<int>, v: int) {
+    out.push((v / 256) % 256)
+    out.push(v % 256)
+}
+
+fn __mdns_push32(out: Array<int>, v: int) {
+    out.push((v / 16777216) % 256)
+    out.push((v / 65536) % 256)
+    out.push((v / 256) % 256)
+    out.push(v % 256)
+}
+
+// Nombre -> etiquetas con prefijo de largo y el 0 final, sin compresión.
+fn __mdns_push_name(out: Array<int>, name: String) -> Result<int, Error> {
+    var n: String = name
+    if n.length() > 0 and n.charAt(n.length() - 1) == 46 {
+        n = n.substring(0, n.length() - 1)
+    }
+    if n.length() == 0 {
+        out.push(0)
+        return Result.Ok(0)
+    }
+    if n.length() > 253 { return Result.Err(__mdns_err_invalid("nombre de más de 255 bytes en el cable")) }
+    var start: int = 0
+    var i: int = 0
+    while i <= n.length() {
+        if i == n.length() or n.charAt(i) == 46 {
+            let l: int = i - start
+            if l == 0 { return Result.Err(__mdns_err_invalid("etiqueta vacía en '" + name + "'")) }
+            if l > 63 { return Result.Err(__mdns_err_invalid("etiqueta de más de 63 bytes")) }
+            out.push(l)
+            var k: int = start
+            while k < i {
+                out.push(n.charAt(k))
+                k = k + 1
+            }
+            start = i + 1
+        }
+        i = i + 1
+    }
+    out.push(0)
+    return Result.Ok(0)
+}
+
+// "a.b.c.d" -> 4 bytes; Err si no es una IPv4 decimal válida.
+fn __mdns_push_ipv4(out: Array<int>, s: String) -> Result<int, Error> {
+    var parts: Array<int> = []
+    var cur: int = 0
+    var digits: int = 0
+    var i: int = 0
+    while i <= s.length() {
+        if i == s.length() or s.charAt(i) == 46 {
+            if digits == 0 { return Result.Err(__mdns_err_invalid("IPv4 inválida: '" + s + "'")) }
+            parts.push(cur)
+            cur = 0
+            digits = 0
+        } else {
+            let c: int = s.charAt(i)
+            if c < 48 or c > 57 { return Result.Err(__mdns_err_invalid("IPv4 inválida: '" + s + "'")) }
+            cur = cur * 10 + (c - 48)
+            digits = digits + 1
+            if digits > 3 or cur > 255 { return Result.Err(__mdns_err_invalid("IPv4 inválida: '" + s + "'")) }
+        }
+        i = i + 1
+    }
+    if parts.length() != 4 { return Result.Err(__mdns_err_invalid("IPv4 inválida: '" + s + "'")) }
+    var k: int = 0
+    while k < 4 {
+        out.push(parts[k])
+        k = k + 1
+    }
+    return Result.Ok(0)
+}
+
+fn __mdns_check_range(v: int, max: int, what: String) -> Result<int, Error> {
+    if v < 0 or v > max { return Result.Err(__mdns_err_invalid(what + " fuera de rango")) }
+    return Result.Ok(0)
+}
+
+fn __mdns_push_question(out: Array<int>, q: MdnsQuestion) -> Result<int, Error> {
+    let r1: Result<int, Error> = __mdns_check_range(q.qtype, 65535, "tipo")
+    if r1.is_err() { return r1 }
+    let r2: Result<int, Error> = __mdns_check_range(q.qclass, 32767, "clase")
+    if r2.is_err() { return r2 }
+    let rn: Result<int, Error> = __mdns_push_name(out, q.name)
+    if rn.is_err() { return rn }
+    __mdns_push16(out, q.qtype)
+    var c: int = q.qclass
+    if q.unicast { c = c + 32768 }
+    __mdns_push16(out, c)
+    return Result.Ok(0)
+}
+
+fn __mdns_push_rdata(rd: Array<int>, r: MdnsRecord) -> Result<int, Error> {
+    if r.rtype == MDNS_A {
+        return __mdns_push_ipv4(rd, r.addr)
+    }
+    if r.rtype == MDNS_PTR {
+        return __mdns_push_name(rd, r.target)
+    }
+    if r.rtype == MDNS_SRV {
+        let a: Result<int, Error> = __mdns_check_range(r.priority, 65535, "prioridad")
+        if a.is_err() { return a }
+        let b: Result<int, Error> = __mdns_check_range(r.weight, 65535, "peso")
+        if b.is_err() { return b }
+        let c: Result<int, Error> = __mdns_check_range(r.port, 65535, "puerto")
+        if c.is_err() { return c }
+        __mdns_push16(rd, r.priority)
+        __mdns_push16(rd, r.weight)
+        __mdns_push16(rd, r.port)
+        return __mdns_push_name(rd, r.target)
+    }
+    if r.rtype == MDNS_TXT {
+        if r.txt.length() == 0 {
+            rd.push(0)                         // TXT vacío: un solo byte 0 (RFC 6763 §6.1)
+            return Result.Ok(0)
+        }
+        var i: int = 0
+        while i < r.txt.length() {
+            let s: String = r.txt[i]
+            if s.length() > 255 { return Result.Err(__mdns_err_invalid("cadena TXT de más de 255 bytes")) }
+            rd.push(s.length())
+            var k: int = 0
+            while k < s.length() {
+                rd.push(s.charAt(k))
+                k = k + 1
+            }
+            i = i + 1
+        }
+        return Result.Ok(0)
+    }
+    var k2: int = 0
+    while k2 < r.raw.length() {
+        rd.push(r.raw.charAt(k2))
+        k2 = k2 + 1
+    }
+    return Result.Ok(0)
+}
+
+fn __mdns_push_record(out: Array<int>, r: MdnsRecord) -> Result<int, Error> {
+    let r1: Result<int, Error> = __mdns_check_range(r.rtype, 65535, "tipo")
+    if r1.is_err() { return r1 }
+    let r2: Result<int, Error> = __mdns_check_range(r.rclass, 32767, "clase")
+    if r2.is_err() { return r2 }
+    let r3: Result<int, Error> = __mdns_check_range(r.ttl, 4294967295, "ttl")
+    if r3.is_err() { return r3 }
+    let rn: Result<int, Error> = __mdns_push_name(out, r.name)
+    if rn.is_err() { return rn }
+    __mdns_push16(out, r.rtype)
+    var c: int = r.rclass
+    if r.cache_flush { c = c + 32768 }
+    __mdns_push16(out, c)
+    __mdns_push32(out, r.ttl)
+    var rd: Array<int> = []
+    let rr: Result<int, Error> = __mdns_push_rdata(rd, r)
+    if rr.is_err() { return rr }
+    if rd.length() > 65535 { return Result.Err(__mdns_err_invalid("RDATA de más de 65535 bytes")) }
+    __mdns_push16(out, rd.length())
+    var i: int = 0
+    while i < rd.length() {
+        out.push(rd[i])
+        i = i + 1
+    }
+    return Result.Ok(0)
+}
+
+fn __mdns_push_records(out: Array<int>, rs: Array<MdnsRecord>) -> Result<int, Error> {
+    var i: int = 0
+    while i < rs.length() {
+        let r: Result<int, Error> = __mdns_push_record(out, rs[i])
+        if r.is_err() { return r }
+        i = i + 1
+    }
+    return Result.Ok(0)
+}
+
+/// Serializa un mensaje, sin compresión de nombres. Los bits response /
+/// authoritative / truncated del struct mandan sobre los de `flags`.
+pub fn mdns_message_encode(msg: MdnsMessage) -> Result<String, Error> {
+    let r0: Result<int, Error> = __mdns_check_range(msg.id, 65535, "id")
+    if r0.is_err() { return Result.Err(r0.unwrap_err()) }
+    if msg.questions.length() > 65535 or msg.answers.length() > 65535 or msg.authority.length() > 65535 or msg.additional.length() > 65535 {
+        return Result.Err(__mdns_err_invalid("demasiados registros"))
+    }
+    var fl: int = msg.flags % 32768                 // sin el bit QR (lo pone `response`)
+    if fl >= 1024 { fl = fl - ((fl / 1024) % 2) * 1024 }   // sin AA
+    if fl >= 512 { fl = fl - ((fl / 512) % 2) * 512 }      // sin TC
+    if msg.response { fl = fl + 32768 }
+    if msg.authoritative { fl = fl + 1024 }
+    if msg.truncated { fl = fl + 512 }
+    var out: Array<int> = []
+    __mdns_push16(out, msg.id)
+    __mdns_push16(out, fl)
+    __mdns_push16(out, msg.questions.length())
+    __mdns_push16(out, msg.answers.length())
+    __mdns_push16(out, msg.authority.length())
+    __mdns_push16(out, msg.additional.length())
+    var i: int = 0
+    while i < msg.questions.length() {
+        let r: Result<int, Error> = __mdns_push_question(out, msg.questions[i])
+        if r.is_err() { return Result.Err(r.unwrap_err()) }
+        i = i + 1
+    }
+    let ra: Result<int, Error> = __mdns_push_records(out, msg.answers)
+    if ra.is_err() { return Result.Err(ra.unwrap_err()) }
+    let rb: Result<int, Error> = __mdns_push_records(out, msg.authority)
+    if rb.is_err() { return Result.Err(rb.unwrap_err()) }
+    let rc: Result<int, Error> = __mdns_push_records(out, msg.additional)
+    if rc.is_err() { return Result.Err(rc.unwrap_err()) }
+    return Result.Ok(string_from_bytes(out, 0, out.length()))
+}
+
+/// Consulta mDNS de una pregunta (id 0, flags 0, clase IN). unicast_response
+/// pone el bit QU: pide que respondan por unicast (RFC 6762 §5.4).
+pub fn mdns_query_encode(name: String, qtype: int, unicast_response: bool) -> Result<String, Error> {
+    var m: MdnsMessage = mdns_message(false)
+    m.questions.push(mdns_question(name, qtype, unicast_response))
+    return mdns_message_encode(m)
+}
+
+// ---------------------------------------------------------------- decodificar
+
+// Lee un nombre (con compresión) en `start`. Devuelve [nombre, siguiente] o
+// ["", -1] si es inválido. Un puntero debe caer estrictamente antes de su
+// propia posición y no dentro de la cabecera.
+fn __mdns_read_name(p: String, start: int) -> Array {
+    let len: int = p.length()
+    var pos: int = start
+    var next: int = -1
+    var jumps: int = 0
+    var total: int = 1                      // el 0 final
+    var out: String = ""
+    var done: bool = false
+    while not done {
+        if pos < 0 or pos >= len { return ["", -1] }
+        let c: int = p.charAt(pos)
+        if c == 0 {
+            if next < 0 { next = pos + 1 }
+            done = true
+        } else if c >= 192 {
+            if pos + 1 >= len { return ["", -1] }
+            if next < 0 { next = pos + 2 }
+            jumps = jumps + 1
+            if jumps > __MDNS_MAX_JUMPS { return ["", -1] }
+            let target: int = (c - 192) * 256 + p.charAt(pos + 1)
+            if target >= pos or target < 12 { return ["", -1] }
+            pos = target
+        } else if c >= 64 {
+            return ["", -1]                 // tipos de etiqueta reservados (01/10)
+        } else {
+            if pos + 1 + c > len { return ["", -1] }
+            total = total + c + 1
+            if total > 255 { return ["", -1] }
+            if out.length() > 0 { out = out + "." }
+            out = out + p.substring(pos + 1, pos + 1 + c)
+            pos = pos + 1 + c
+        }
+    }
+    return [out, next]
+}
+
+fn __mdns_ipv4_text(p: String, i: int) -> String {
+    return p.charAt(i).to_string() + "." + p.charAt(i + 1).to_string() + "." + p.charAt(i + 2).to_string() + "." + p.charAt(i + 3).to_string()
+}
+
+// Decodifica el registro que empieza en `pos`. Devuelve Ok([registro, siguiente]).
+fn __mdns_read_record(p: String, pos: int) -> Result<Array, Error> {
+    let len: int = p.length()
+    let nm: Array = __mdns_read_name(p, pos)
+    let nx: int = nm[1]
+    if nx < 0 { return Result.Err(__mdns_err_malformed("nombre de registro inválido")) }
+    if nx + 10 > len { return Result.Err(__mdns_err_malformed("registro truncado")) }
+    let rtype: int = __mdns_u16(p, nx)
+    let cls: int = __mdns_u16(p, nx + 2)
+    let ttl: int = __mdns_u32(p, nx + 4)
+    let rdlen: int = __mdns_u16(p, nx + 8)
+    let rs: int = nx + 10
+    let re: int = rs + rdlen
+    if re > len { return Result.Err(__mdns_err_malformed("RDATA se sale del paquete")) }
+    var cf: bool = false
+    var rclass: int = cls
+    if cls >= 32768 {
+        cf = true
+        rclass = cls - 32768
+    }
+    var r: MdnsRecord = __mdns_record(nm[0], rtype, ttl, cf)
+    r.rclass = rclass
+    r.raw = p.substring(rs, re)
+    if rtype == MDNS_A {
+        if rdlen != 4 { return Result.Err(__mdns_err_malformed("registro A que no mide 4 bytes")) }
+        r.addr = __mdns_ipv4_text(p, rs)
+    } else if rtype == MDNS_PTR {
+        let t: Array = __mdns_read_name(p, rs)
+        if t[1] != re { return Result.Err(__mdns_err_malformed("PTR inválido")) }
+        r.target = t[0]
+    } else if rtype == MDNS_SRV {
+        if rdlen < 7 { return Result.Err(__mdns_err_malformed("SRV demasiado corto")) }
+        r.priority = __mdns_u16(p, rs)
+        r.weight = __mdns_u16(p, rs + 2)
+        r.port = __mdns_u16(p, rs + 4)
+        let t: Array = __mdns_read_name(p, rs + 6)
+        if t[1] != re { return Result.Err(__mdns_err_malformed("SRV inválido")) }
+        r.target = t[0]
+    } else if rtype == MDNS_TXT {
+        // rdlen 0 se tolera (dnslib y algunos equipos lo mandan): TXT vacío.
+        var i: int = rs
+        while i < re {
+            let l: int = p.charAt(i)
+            if i + 1 + l > re { return Result.Err(__mdns_err_malformed("cadena TXT que se sale del registro")) }
+            if l > 0 { r.txt.push(p.substring(i + 1, i + 1 + l)) }
+            i = i + 1 + l
+        }
+    }
+    return Result.Ok([r, re])
+}
+
+// Lee `count` registros desde `pos` y los agrega a `out`. Ok(siguiente).
+fn __mdns_read_records(p: String, pos: int, count: int, out: Array<MdnsRecord>) -> Result<int, Error> {
+    var cur: int = pos
+    var n: int = 0
+    while n < count {
+        let rr: Result<Array, Error> = __mdns_read_record(p, cur)
+        match rr {
+            Result.Err(e) => { return Result.Err(e) }
+            Result.Ok(pair) => {
+                out.push(pair[0])
+                cur = pair[1]
+            }
+        }
+        n = n + 1
+    }
+    return Result.Ok(cur)
+}
+
+/// Decodifica un paquete mDNS/DNS. Cualquier defecto -> Err kind "parse".
+pub fn mdns_message_decode(pkt: String) -> Result<MdnsMessage, Error> {
+    let len: int = pkt.length()
+    if len < 12 { return Result.Err(__mdns_err_malformed("paquete de menos de 12 bytes")) }
+    let qd: int = __mdns_u16(pkt, 4)
+    let an: int = __mdns_u16(pkt, 6)
+    let ns: int = __mdns_u16(pkt, 8)
+    let ar: int = __mdns_u16(pkt, 10)
+    if qd + an + ns + ar > __MDNS_MAX_RECORDS {
+        return Result.Err(__mdns_err_malformed("demasiados registros declarados"))
+    }
+    // Una pregunta mide >= 5 bytes y un registro >= 11: un conteo que no cabe miente.
+    if qd * 5 + (an + ns + ar) * 11 > len - 12 {
+        return Result.Err(__mdns_err_malformed("los conteos de la cabecera no caben en el paquete"))
+    }
+    let flags: int = __mdns_u16(pkt, 2)
+    var m: MdnsMessage = mdns_message(false)
+    m.id = __mdns_u16(pkt, 0)
+    m.flags = flags
+    m.response = flags >= 32768
+    m.authoritative = (flags / 1024) % 2 == 1
+    m.truncated = (flags / 512) % 2 == 1
+    var pos: int = 12
+    var i: int = 0
+    while i < qd {
+        let nm: Array = __mdns_read_name(pkt, pos)
+        let nx: int = nm[1]
+        if nx < 0 { return Result.Err(__mdns_err_malformed("nombre de pregunta inválido")) }
+        if nx + 4 > len { return Result.Err(__mdns_err_malformed("pregunta truncada")) }
+        let cls: int = __mdns_u16(pkt, nx + 2)
+        var q: MdnsQuestion = mdns_question(nm[0], __mdns_u16(pkt, nx), false)
+        q.qclass = cls
+        if cls >= 32768 {
+            q.unicast = true
+            q.qclass = cls - 32768
+        }
+        m.questions.push(q)
+        pos = nx + 4
+        i = i + 1
+    }
+    let r1: Result<int, Error> = __mdns_read_records(pkt, pos, an, m.answers)
+    match r1 {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(p1) => { pos = p1 }
+    }
+    let r2: Result<int, Error> = __mdns_read_records(pkt, pos, ns, m.authority)
+    match r2 {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(p2) => { pos = p2 }
+    }
+    let r3: Result<int, Error> = __mdns_read_records(pkt, pos, ar, m.additional)
+    match r3 {
+        Result.Err(e) => { return Result.Err(e) }
+        Result.Ok(p3) => { pos = p3 }
+    }
+    return Result.Ok(m)
+}

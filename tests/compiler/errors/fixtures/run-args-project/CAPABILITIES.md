@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.37.1 -->
-<!-- nyx-stdlib: 451172379-2071396 -->
+<!-- nyx-version: 0.38.0 -->
+<!-- nyx-stdlib: 1843321045-2124287 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -454,7 +454,7 @@ Tipos (1) y métodos (0):
 
 ### `std/postgres`
 
-`import "std/postgres"` — 46 funciones:
+`import "std/postgres"` — 47 funciones:
 
 - `pub fn pg_be32(n: int) -> String`
 - `pub fn pg_be16(n: int) -> String`
@@ -501,6 +501,7 @@ Tipos (1) y métodos (0):
 - `pub fn pg_pool_new(conninfo: String, size: int) -> PgPool`
 - `pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error>`
 - `pub fn pg_pool_put(pool: PgPool, conn: PgConn)`
+- `pub fn pg_pool_discard(pool: PgPool, conn: PgConn)`
 - `pub fn pg_pool_close(pool: PgPool)`
 
 Tipos (2) y métodos (0):
@@ -1053,7 +1054,7 @@ Tipos (6) y métodos (0):
 
 ### `std/net`
 
-`import "std/net"` — 18 funciones:
+`import "std/net"` — 28 funciones:
 
 - `pub fn try_tcp_connect(host: String, port: int) -> Result<int, Error>`
 - `pub fn try_tcp_listen(host: String, port: int) -> Result<int, Error>`
@@ -1073,6 +1074,21 @@ Tipos (6) y métodos (0):
 - `pub fn try_getpeername(fd: int) -> Result<String, Error>`
 - `pub fn try_local_port(fd: int) -> Result<int, Error>`
 - `pub fn try_resolve_ptr(ip: String) -> Result<String, Error>`
+- `pub fn try_udp_bind_shared(host: String, port: int) -> Result<int, Error>` — Como try_udp_bind pero el puerto se puede COMPARTIR: SO_REUSEADDR (+ SO_REUSEPORT donde existe), así que otro socket (de este u otro proceso) puede bindear el mismo puerto y los dos reciben el multicast. El unicast lo recibe solo uno de ellos. try_udp_bind no cambia: sigue dando EADDRINUSE con el puerto tomado.
+- `pub fn try_udp_recvfrom_from(fd: int, max: int) -> Result<UdpDatagram, Error>`
+- `pub fn try_udp_recvfrom_from_timed(fd: int, max: int, timeout_ms: int) -> Result<UdpDatagram, Error>` — Como try_udp_recvfrom_from pero con plazo en MILISEGUNDOS (try_tcp_set_timeout es en segundos y queda puesto en el socket). Vencido el plazo da Err kind "timeout" code 110 sin consumir nada: el socket queda intacto y se puede volver a esperar. timeout_ms 0 solo mira si ya hay algo; negativo espera sin límite.
+- `pub fn try_udp_join(fd: int, group: String, iface: String) -> Result<int, Error>` — Une el socket al grupo multicast IPv4 `group` ("224.0.0.251") por la interfaz de IP `iface` (de net_interfaces); "" deja elegir al kernel. El socket debe estar bindeado al puerto del grupo (try_udp_bind_shared en 0.0.0.0). Una interfaz por llamada: en un equipo con Ethernet y Wi-Fi, una unión por cada una.
+- `pub fn try_udp_leave(fd: int, group: String, iface: String) -> Result<int, Error>` — Sale del grupo multicast que try_udp_join había unido (mismos `group` e `iface`).
+- `pub fn try_udp_set_multicast_ttl(fd: int, ttl: int) -> Result<int, Error>` — TTL de los datagramas multicast que ENVÍA el socket (0..255; 1 = no sale de la red local, el valor de mDNS es 255).
+- `pub fn try_udp_set_multicast_loop(fd: int, on: bool) -> Result<int, Error>` — Si el socket recibe también lo multicast que él mismo envía (`on` = true, el valor por omisión del sistema). Hace falta true para hablar con otro proceso de la MISMA máquina.
+- `pub fn try_udp_set_multicast_iface(fd: int, iface: String) -> Result<int, Error>` — Interfaz (por su IP) por la que SALEN los datagramas multicast del socket; "" = la elige el kernel. Debe ser la misma por la que se unió el grupo.
+- `pub fn try_udp_set_broadcast(fd: int, on: bool) -> Result<int, Error>` — Permite enviar a direcciones de broadcast (255.255.255.255 o la de la subred) con try_udp_sendto; sin esto el envío da EACCES.
+- `pub fn try_ping(host: String, timeout_ms: int) -> Result<PingReply, Error>` — Un ping a `host` (nombre o IPv4) con plazo `timeout_ms`. Ok con la IP y el RTT en µs; Err "timeout" (110) si nadie contestó a tiempo, "permission" (13/1) si el sistema no deja abrir un socket ICMP (ver `net.ipv4.ping_group_range`), "not_found" si el nombre no resuelve. Un host que no responde ping no es necesariamente un host caído: muchos firewalls descartan ICMP.
+
+Tipos (2) y métodos (0):
+
+- `pub struct UdpDatagram`
+- `pub struct PingReply`
 
 ### `std/url`
 
@@ -1083,6 +1099,27 @@ Tipos (6) y métodos (0):
 - `pub fn html_escape(s: String) -> String`
 - `pub fn html_unescape(s: String) -> String`
 - `pub fn render_template(tmpl: String, data: Map<String>) -> String`
+
+### `std/mdns`
+
+`import "std/mdns"` — 10 funciones:
+
+- `pub fn mdns_message(response: bool) -> MdnsMessage` — Mensaje vacío. response=true arma una respuesta autoritativa (flags 0x8400, RFC 6762 §18.2/§18.4); false, una consulta (flags 0).
+- `pub fn mdns_question(name: String, qtype: int, unicast: bool) -> MdnsQuestion` — Una pregunta de clase IN. unicast=true pide respuesta unicast (bit QU).
+- `pub fn mdns_record_a(name: String, addr: String, ttl: int, cache_flush: bool) -> MdnsRecord` — Registro A (addr = "a.b.c.d").
+- `pub fn mdns_record_ptr(name: String, target: String, ttl: int, cache_flush: bool) -> MdnsRecord` — Registro PTR: `name` -> `target`.
+- `pub fn mdns_record_srv(name: String, target: String, port: int, priority: int, weight: int, ttl: int, cache_flush: bool) -> MdnsRecord` — Registro SRV: instancia -> host:puerto.
+- `pub fn mdns_record_txt(name: String, txt: Array<String>, ttl: int, cache_flush: bool) -> MdnsRecord` — Registro TXT con una lista de "clave=valor".
+- `pub fn mdns_txt_get(rec: MdnsRecord, key: String) -> Option<String>` — Valor de `clave` en un TXT ("clave=valor" -> Some("valor"); "clave" sola -> Some("")); None si no está. La clave se compara sin distinguir mayúsculas (RFC 6763 §6.4).
+- `pub fn mdns_message_encode(msg: MdnsMessage) -> Result<String, Error>` — Serializa un mensaje, sin compresión de nombres. Los bits response / authoritative / truncated del struct mandan sobre los de `flags`.
+- `pub fn mdns_query_encode(name: String, qtype: int, unicast_response: bool) -> Result<String, Error>` — Consulta mDNS de una pregunta (id 0, flags 0, clase IN). unicast_response pone el bit QU: pide que respondan por unicast (RFC 6762 §5.4).
+- `pub fn mdns_message_decode(pkt: String) -> Result<MdnsMessage, Error>` — Decodifica un paquete mDNS/DNS. Cualquier defecto -> Err kind "parse".
+
+Tipos (3) y métodos (0):
+
+- `pub struct MdnsQuestion`
+- `pub struct MdnsRecord`
+- `pub struct MdnsMessage`
 
 ### Builtins globales (sin `import`)
 
@@ -1323,6 +1360,17 @@ Tipos (4) y métodos (0):
 - `pub fn ecdsa_p256_verify(pubkey: String, hash: String, sig: String) -> int`
 - `pub fn hkdf_sha256(salt: String, ikm: String, info: String, len: int) -> String`
 - `pub fn aes128gcm_encrypt(key: String, iv: String, pt: String, aad: String) -> String`
+
+### `std/crypto`
+
+`import "std/crypto"` — 6 funciones:
+
+- `pub fn try_aes256gcm_encrypt(key: String, nonce: String, plaintext: String, aad: String) -> Result<String, Error>`
+- `pub fn try_aes256gcm_decrypt(key: String, nonce: String, sealed: String, aad: String) -> Result<String, Error>`
+- `pub fn try_aes128gcm_encrypt(key: String, nonce: String, plaintext: String, aad: String) -> Result<String, Error>`
+- `pub fn try_aes128gcm_decrypt(key: String, nonce: String, sealed: String, aad: String) -> Result<String, Error>`
+- `pub fn try_aes256gcm_seal(key: String, plaintext: String, aad: String) -> Result<String, Error>`
+- `pub fn try_aes256gcm_open(key: String, sealed: String, aad: String) -> Result<String, Error>`
 
 ### Builtins globales (sin `import`)
 
@@ -1778,6 +1826,16 @@ Tipos (1) y métodos (1):
   - `fn drop(self)`
 
 ## Tooling & CLI
+
+### `std/exec`
+
+`import "std/exec"` — 1 funciones:
+
+- `pub fn try_exec_full(cmd: String) -> Result<ExecResult, Error>`
+
+Tipos (1) y métodos (0):
+
+- `pub struct ExecResult`
 
 ### `std/semver`
 

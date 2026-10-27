@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <errno.h>
 #ifndef __wasi__
 // WASI: sin setjmp/longjmp (sjlj no estándar). Señales, terminal y fd crudos
 // (self-pipe, read_byte, raw mode, winsize): la capa nyx_os_*
@@ -686,6 +687,54 @@ nyx_string* nyx_exec(const char* cmd) {
 int64_t nyx_exec_code(const char* cmd) {
     if (!cmd) return -1;
     return os_proc_run_status(cmd);
+}
+
+// exec_full: stdout, stderr y código por separado (std/process_exec.nx).
+// Devuelve UN string empaquetado para no necesitar structs por el FFI:
+//   4 campos de 20 bytes ("%20lld": rc, code, len_stdout, len_stderr)
+//   seguidos de los bytes de stdout y los de stderr (binary-safe).
+// rc = 0 si el comando corrió, o -errno (ver os_proc_run_full). Sin strip de
+// '\n' finales: a diferencia de exec(), los bytes llegan tal cual.
+// EN: packed result string (4 x 20-byte decimal header fields + stdout bytes +
+// stderr bytes); no trailing-newline strip, unlike exec().
+typedef struct {
+    nyx_exec_acc_t out;
+    nyx_exec_acc_t err;
+} nyx_exec_full_acc_t;
+
+static void nyx_exec_full_cb(int stream, const void* chunk, size_t len, void* ud) {
+    nyx_exec_full_acc_t* a = (nyx_exec_full_acc_t*)ud;
+    nyx_exec_acc_cb(chunk, len, stream == 2 ? &a->err : &a->out);
+}
+
+static nyx_string* nyx_exec_full_fail(int64_t rc) {
+    char hdr[81];
+    snprintf(hdr, sizeof(hdr), "%20lld%20lld%20lld%20lld", (long long)rc, -1LL, 0LL, 0LL);
+    return nyx_string_from_ptr(hdr, 80);
+}
+
+nyx_string* nyx_exec_full(nyx_string* cmd_s) {
+    nyx_exec_full_acc_t a;
+    a.out.cap = a.err.cap = 4096;
+    a.out.len = a.err.len = 0;
+    a.out.buf = (char*)GC_MALLOC(a.out.cap);
+    a.err.buf = (char*)GC_MALLOC(a.err.cap);
+    if (!a.out.buf || !a.err.buf) return nyx_exec_full_fail(-ENOMEM);
+    int64_t code = -1;
+    char* cmd = nyx_string_to_cstr(cmd_s);
+    if (!cmd) return nyx_exec_full_fail(-EINVAL);
+    int rc = os_proc_run_full(cmd, nyx_exec_full_cb, &a, &code);
+    if (rc != 0) return nyx_exec_full_fail(rc);
+    if (!a.out.buf || !a.err.buf) return nyx_exec_full_fail(-ENOMEM); // GC_MALLOC falló a mitad
+    char hdr[81];
+    snprintf(hdr, sizeof(hdr), "%20lld%20lld%20lld%20lld", 0LL, (long long)code,
+             (long long)a.out.len, (long long)a.err.len);
+    char* all = (char*)GC_MALLOC_ATOMIC(80 + a.out.len + a.err.len + 1);
+    if (!all) return nyx_exec_full_fail(-ENOMEM);
+    memcpy(all, hdr, 80);
+    memcpy(all + 80, a.out.buf, a.out.len);
+    memcpy(all + 80 + a.out.len, a.err.buf, a.err.len);
+    return nyx_string_from_ptr(all, (int64_t)(80 + a.out.len + a.err.len));
 }
 
 // Get environment variable. Returns nyx_string* or empty string if not found.

@@ -89,6 +89,26 @@ OPERANDOS=250
 #   2026-10-09 alcance-de-bloque-codegen: 1968 → 2000 (+32, el campo `alcances`; ver arriba).
 TECHO_NIVEL_SROA=2000
 
+# x86_64 (2026-10-26, medido en la laptop con clang 19 sobre main@4c09dc7c; codegen no
+# cambió desde entonces). Los techos de arriba son de aarch64: en x86_64 los marcos -O0
+# salen entre un 9 y un 23 % más grandes, y SROA casi no baja el costo por nivel (23.920
+# contra ~2.000 en aarch64) — probablemente porque el ABI de x86_64 pasa los structs
+# grandes byval por puntero y SROA no los separa (ficha en TASKS.md). Mismo ratchet: el
+# techo es el valor medido; si un cambio de codegen lo mueve, se re-mide en las DOS
+# arquitecturas. Sin esta rama la guarda era roja en x86_64 y cortaba los scripts que
+# siguen en `make test-ai-first` (spike de W5).
+if [ "$(uname -m)" = "x86_64" ]; then
+    TECHO=(
+        [codegen_expr]=18168
+        [codegen_binop]=10184
+        [codegen_binop_logico]=23992
+        [codegen_call_expr]=544232
+        [codegen_method_call]=541592
+    )
+    TECHO_NIVEL=28352
+    TECHO_NIVEL_SROA=23920
+fi
+
 fallos=0
 
 auditar_su() {  # auditar_su <archivo .su>

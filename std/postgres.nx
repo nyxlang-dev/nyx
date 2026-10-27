@@ -1700,18 +1700,68 @@ pub fn try_pg_pool_get(pool: PgPool) -> Result<PgConn, Error> {
     return Result.Err(err_new(0, "io", "inalcanzable"))
 }
 
-// Devuelve la conexión al pool. Hace ROLLBACK por las dudas: una conexión
-// devuelta con una transacción abierta contaminaría al próximo que la tome —
-// vería datos a medias y su primer BEGIN fallaría.
+// Devuelve la conexión al pool y la deja como nueva para el próximo pedido.
+//
+// ROLLBACK: una transacción que quedó abierta contaminaría al próximo que la
+// tome (vería datos a medias y su primer BEGIN fallaría). DISCARD ALL: deshace
+// lo que vive en la SESIÓN y no en la transacción —un `SET application_name`,
+// tablas temporales, cursores con hold, LISTEN—, que antes pasaba de un pedido
+// a otro (fricción de nyxerp, 2026-09-27, punto 4). Son dos viajes porque
+// DISCARD ALL no puede correr dentro de un bloque de transacción; la
+// biblioteca solo usa statements SIN nombre, así que no le rompe nada.
+//
+// Si cualquiera de los dos falla, la conexión está muerta (el servidor cortó el
+// backend, se cayó la red): se cierra y el slot queda VACÍO, de modo que el
+// próximo try_pg_pool_get abre una nueva y el pool no pierde tamaño (punto 3).
+// Antes volvía al pool y se entregaba rota una y otra vez. Una conexión que muere
+// mientras espera en el pool falla en su primer uso; al devolverla se repone.
 pub fn pg_pool_put(pool: PgPool, conn: PgConn) {
-    // El ROLLBACK es E/S: antes del lock, con la conexión todavía reservada.
-    let _r = try_pg_rollback(conn)
+    // E/S antes del lock, con la conexión todavía reservada.
+    var viva: bool = false
+    match try_pg_rollback(conn) {
+        Result.Ok(_r) => {
+            match try_pg_exec(conn, "DISCARD ALL") {
+                Result.Ok(_d) => { viva = true }
+                Result.Err(_e) => {}
+            }
+        }
+        Result.Err(_e) => {}
+    }
+    if viva {
+        // DISCARD ALL hizo UNLISTEN *: lo que quedó en el buzón de este fd era
+        // del pedido anterior y no le toca al próximo.
+        pg_buzon_limpiar(conn.fd)
+        __pg_pool_liberar(pool, conn.fd, false)
+    } else {
+        pg_pool_discard(pool, conn)
+    }
+}
+
+// Saca una conexión del pool cerrándola: el slot queda vacío y se reabre en el
+// próximo try_pg_pool_get. Para cuando el llamador sabe que la conexión no sirve.
+// NO cerrarla con try_pg_close y después devolverla con pg_pool_put: entre medio
+// el número de socket puede pasar a otra conexión del proceso, y el ROLLBACK de
+// pg_pool_put iría a parar a ella.
+pub fn pg_pool_discard(pool: PgPool, conn: PgConn) {
+    // Primero se vacía el slot (bajo el lock) y después se cierra: si se cerrara
+    // antes, otro hilo podría abrir un socket con el mismo número y el slot lo
+    // confundiría con el suyo.
+    __pg_pool_liberar(pool, conn.fd, true)
+    let _c = try_pg_close(conn)
+}
+
+// Marca libre el slot de `fd`; con `vaciar`, además lo deja sin conexión.
+fn __pg_pool_liberar(pool: PgPool, fd: int, vaciar: bool) {
     mutex_lock(pool.mu)
     var i: int = 0
     while i < pool.conns.length() {
         let fd_guardado: int = pool.conns[i]
-        if fd_guardado == conn.fd {
+        if fd_guardado == fd {
             pool.en_uso[i] = 0
+            if vaciar {
+                pool.conns[i] = 0
+                pool.tls[i] = 0
+            }
             i = pool.conns.length()
         } else {
             i = i + 1

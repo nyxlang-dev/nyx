@@ -1,3 +1,4 @@
+// requiere-entorno: loopback-rechaza (conexión a un puerto cerrado → ECONNREFUSED al instante; WSL2 mirrored no lo cumple)
 // test-425-http-plazos-y-causa — try_http_request_opts: plazos configurables y el
 // kind/code de lo que realmente pasó, en https:// y en http://. Arco
 // http-tls-cliente (2026-09-14), fricción de nyxerp 20260914-000000.

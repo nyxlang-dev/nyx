@@ -483,3 +483,176 @@ pub fn try_resolve_ptr(ip: String) -> Result<String, Error> {
     }
     return Result.Err(err_new(code, errno_to_kind(code), "resolve_ptr '" + ip + "'"))
 }
+
+// ===== UDP multicast, remitente y bind compartido (arco red-local, D-4) =====
+//
+// Primitivas de datagramas para descubrimiento en la red local (mDNS, SSDP, un
+// protocolo propio de dispositivos). IPv4 solo. try_udp_bind, try_udp_sendto y
+// try_udp_recvfrom NO cambian. Para enviar al grupo: try_udp_set_multicast_iface
+// (+ ttl/loop) sobre el socket y try_udp_sendto(fd, datos, "224.0.0.251", 5353).
+//
+// ⚠️ UNIR Y ENVIAR POR LA MISMA INTERFAZ: unir el grupo en la interfaz A y enviar
+// por la B no entrega (medido en tests/support/sonda-red-local). Una IP de
+// interfaz de try_net_interfaces / net_interfaces; "" deja que el kernel elija.
+//
+// ⚠️ BLOQUEO: toda lectura bloquea el HILO del SO. Dentro de una goroutina
+// (spawn { }) ocupa un trabajador del scheduler M:N (4 por omisión): 5 lectores
+// con plazo dejaron sin correr a otra goroutina hasta que vencieron (sonda).
+// Un lector de red va en un hilo propio (thread_spawn), nunca en spawn { }.
+//
+// ⚠️ Un descubrimiento NO autentica: lo que llega por multicast puede venir de
+// cualquiera en la red. Autenticar al par antes de confiarle algo.
+//
+// Windows: la unión por interfaz depende de net_interfaces (hoy -ENOSYS allí).
+
+extern "C" fn nyx_udp_bind_shared_result(host: String, port: int) -> int
+extern "C" fn nyx_udp_recvfrom_from_result(fd: int, max_bytes: int, timeout_ms: int) -> Array
+extern "C" fn nyx_udp_join_result(fd: int, group: String, iface: String) -> int
+extern "C" fn nyx_udp_leave_result(fd: int, group: String, iface: String) -> int
+extern "C" fn nyx_udp_set_multicast_ttl_result(fd: int, ttl: int) -> int
+extern "C" fn nyx_udp_set_multicast_loop_result(fd: int, on: int) -> int
+extern "C" fn nyx_udp_set_multicast_iface_result(fd: int, iface: String) -> int
+extern "C" fn nyx_udp_set_broadcast_result(fd: int, on: int) -> int
+
+/// Un datagrama UDP recibido y quién lo mandó: `data` (bytes exactos del datagrama, puede ser vacío), `ip` (IPv4 del remitente en texto) y `port` (su puerto).
+// Struct y no Array [data, ip, port]: los tres campos tienen tipos distintos y
+// `d.ip` se lee mejor que `r[1]`; el runtime entrega un Array [code, data, ip,
+// port] (el idioma de recvfrom_result) y try_udp_recvfrom_from lo desempaqueta.
+pub struct UdpDatagram {
+    data: String,
+    ip: String,
+    port: int,
+}
+
+/// Como try_udp_bind pero el puerto se puede COMPARTIR: SO_REUSEADDR (+ SO_REUSEPORT donde existe), así que otro socket (de este u otro proceso) puede bindear el mismo puerto y los dos reciben el multicast. El unicast lo recibe solo uno de ellos. try_udp_bind no cambia: sigue dando EADDRINUSE con el puerto tomado.
+pub fn try_udp_bind_shared(host: String, port: int) -> Result<int, Error> {
+    let h: int = nyx_udp_bind_shared_result(host, port)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_bind_shared " + host + ":" + int_to_string(port)))
+}
+
+// Lectura de UN datagrama con su remitente. Mismo contrato que try_udp_recvfrom
+// (un recvfrom, devuelve lo que haya en ESE datagrama aunque sea menos que `max`;
+// un datagrama vacío es Ok con data "", no EOF) y bloquea hasta que llegue uno,
+// salvo que el fd tenga un try_tcp_set_timeout (entonces Err code 11 "io").
+// `max` por debajo del tamaño del datagrama TRUNCA en silencio (semántica UDP).
+pub fn try_udp_recvfrom_from(fd: int, max: int) -> Result<UdpDatagram, Error> {
+    return udp_recv_from_impl(fd, max, 0 - 1)
+}
+
+/// Como try_udp_recvfrom_from pero con plazo en MILISEGUNDOS (try_tcp_set_timeout es en segundos y queda puesto en el socket). Vencido el plazo da Err kind "timeout" code 110 sin consumir nada: el socket queda intacto y se puede volver a esperar. timeout_ms 0 solo mira si ya hay algo; negativo espera sin límite.
+pub fn try_udp_recvfrom_from_timed(fd: int, max: int, timeout_ms: int) -> Result<UdpDatagram, Error> {
+    return udp_recv_from_impl(fd, max, timeout_ms)
+}
+
+fn udp_recv_from_impl(fd: int, max: int, timeout_ms: int) -> Result<UdpDatagram, Error> {
+    let r: Array = nyx_udp_recvfrom_from_result(fd, max, timeout_ms)
+    let code: int = r[0]
+    if code == 0 {
+        let datos: String = r[1]
+        let ip: String = r[2]
+        let port: int = r[3]
+        return Result.Ok(UdpDatagram { data: datos, ip: ip, port: port })
+    }
+    if code == 110 {
+        return Result.Err(err_new(110, "timeout", "udp_recvfrom_from: no llegó ningún datagrama dentro del plazo"))
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_recvfrom_from"))
+}
+
+/// Une el socket al grupo multicast IPv4 `group` ("224.0.0.251") por la interfaz de IP `iface` (de net_interfaces); "" deja elegir al kernel. El socket debe estar bindeado al puerto del grupo (try_udp_bind_shared en 0.0.0.0). Una interfaz por llamada: en un equipo con Ethernet y Wi-Fi, una unión por cada una.
+pub fn try_udp_join(fd: int, group: String, iface: String) -> Result<int, Error> {
+    let h: int = nyx_udp_join_result(fd, group, iface)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_join " + group))
+}
+
+/// Sale del grupo multicast que try_udp_join había unido (mismos `group` e `iface`).
+pub fn try_udp_leave(fd: int, group: String, iface: String) -> Result<int, Error> {
+    let h: int = nyx_udp_leave_result(fd, group, iface)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_leave " + group))
+}
+
+/// TTL de los datagramas multicast que ENVÍA el socket (0..255; 1 = no sale de la red local, el valor de mDNS es 255).
+pub fn try_udp_set_multicast_ttl(fd: int, ttl: int) -> Result<int, Error> {
+    let h: int = nyx_udp_set_multicast_ttl_result(fd, ttl)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_set_multicast_ttl"))
+}
+
+/// Si el socket recibe también lo multicast que él mismo envía (`on` = true, el valor por omisión del sistema). Hace falta true para hablar con otro proceso de la MISMA máquina.
+pub fn try_udp_set_multicast_loop(fd: int, on: bool) -> Result<int, Error> {
+    var v: int = 0
+    if on { v = 1 }
+    let h: int = nyx_udp_set_multicast_loop_result(fd, v)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_set_multicast_loop"))
+}
+
+/// Interfaz (por su IP) por la que SALEN los datagramas multicast del socket; "" = la elige el kernel. Debe ser la misma por la que se unió el grupo.
+pub fn try_udp_set_multicast_iface(fd: int, iface: String) -> Result<int, Error> {
+    let h: int = nyx_udp_set_multicast_iface_result(fd, iface)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_set_multicast_iface " + iface))
+}
+
+/// Permite enviar a direcciones de broadcast (255.255.255.255 o la de la subred) con try_udp_sendto; sin esto el envío da EACCES.
+pub fn try_udp_set_broadcast(fd: int, on: bool) -> Result<int, Error> {
+    var v: int = 0
+    if on { v = 1 }
+    let h: int = nyx_udp_set_broadcast_result(fd, v)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "udp_set_broadcast"))
+}
+
+// ── Ping (ICMP echo IPv4) ──────────────────────────────────────────────
+// Pedido anónimo del 2026-08-05 (un monitor de red que hacía exec("ping")).
+// Sin privilegios donde el sistema lo permite: en Linux, un socket ICMP de
+// datagrama si `net.ipv4.ping_group_range` incluye al grupo del proceso (Debian
+// y Ubuntu lo traen abierto a todos); si no, cae a un socket raw, que pide root
+// o CAP_NET_RAW. macOS lo permite siempre; Windows usa IcmpSendEcho. En wasm no.
+extern "C" fn nyx_ping_result(ip: String, timeout_ms: int) -> Array
+
+// La respuesta: quién contestó (la IP resuelta) y el tiempo de ida y vuelta en
+// MICROSEGUNDOS — en una red local un ping tarda menos de 1 ms, y en ms casi todo
+// saldría 0.
+pub struct PingReply {
+    ip: String,
+    rtt_us: int
+}
+
+/// Un ping a `host` (nombre o IPv4) con plazo `timeout_ms`. Ok con la IP y el RTT en µs; Err "timeout" (110) si nadie contestó a tiempo, "permission" (13/1) si el sistema no deja abrir un socket ICMP (ver `net.ipv4.ping_group_range`), "not_found" si el nombre no resuelve. Un host que no responde ping no es necesariamente un host caído: muchos firewalls descartan ICMP.
+pub fn try_ping(host: String, timeout_ms: int) -> Result<PingReply, Error> {
+    var ip: String = ""
+    match try_resolve(host) {
+        Result.Ok(a) => { ip = a }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    let r: Array = nyx_ping_result(ip, timeout_ms)
+    let code: int = r[0]
+    if code == 0 {
+        let rtt: int = r[1]
+        return Result.Ok(PingReply { ip: ip, rtt_us: rtt })
+    }
+    if code == 110 {
+        return Result.Err(err_new(110, "timeout", "ping " + host + " (" + ip + "): sin respuesta en " + int_to_string(timeout_ms) + " ms"))
+    }
+    if code == 13 || code == 1 {
+        return Result.Err(err_new(code, "permission", "ping: el sistema no deja abrir un socket ICMP sin privilegios (net.ipv4.ping_group_range) ni raw (root o CAP_NET_RAW)"))
+    }
+    if code == 38 || code == 95 {
+        return Result.Err(err_new(95, "invalid", "ping: no disponible en esta plataforma"))
+    }
+    if code == 22 {
+        return Result.Err(err_new(22, "invalid", "ping: " + ip + " no es una IPv4 (solo IPv4 por ahora)"))
+    }
+    return Result.Err(err_new(code, errno_to_kind(code), "ping " + host + " (" + ip + ")"))
+}

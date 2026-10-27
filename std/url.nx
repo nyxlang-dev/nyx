@@ -46,62 +46,47 @@ pub fn html_escape(s: String) -> String {
     return s5
 }
 
-// Named-entity table (curated common set). "" = unknown -> caller leaves literal.
+// Tabla de entidades con nombre: HTML 4.01 completa (latin1, símbolos, griegas,
+// flechas, matemáticas, tipográficas: 253) + apos. Formato ";nombre=valor" con
+// ";" final; la búsqueda es UN indexOf sobre la constante (memmem en C) en vez de
+// una cadena de ~250 comparaciones de String por entidad. Ningún valor contiene
+// ";" ni ningún nombre "=" ni ";", así que el delimitador es inequívoco. nbsp
+// sigue mapeando a un espacio ASCII (contrato previo de test-302).
+fn __html_entity_table() -> String {
+    return ";quot=\";amp=&;apos=';lt=<;gt=>;nbsp= ;iexcl=¡;cent=¢;pound=£;curren=¤;yen=¥;brvbar=¦;sect=§;uml=¨" +
+    ";copy=©;ordf=ª;laquo=«;not=¬;shy=­;reg=®;macr=¯;deg=°;plusmn=±;sup2=²;sup3=³;acute=´;micro=µ;para=¶" +
+    ";middot=·;cedil=¸;sup1=¹;ordm=º;raquo=»;frac14=¼;frac12=½;frac34=¾;iquest=¿;Agrave=À;Aacute=Á" +
+    ";Acirc=Â;Atilde=Ã;Auml=Ä;Aring=Å;AElig=Æ;Ccedil=Ç;Egrave=È;Eacute=É;Ecirc=Ê;Euml=Ë;Igrave=Ì;Iacute=Í" +
+    ";Icirc=Î;Iuml=Ï;ETH=Ð;Ntilde=Ñ;Ograve=Ò;Oacute=Ó;Ocirc=Ô;Otilde=Õ;Ouml=Ö;times=×;Oslash=Ø;Ugrave=Ù" +
+    ";Uacute=Ú;Ucirc=Û;Uuml=Ü;Yacute=Ý;THORN=Þ;szlig=ß;agrave=à;aacute=á;acirc=â;atilde=ã;auml=ä;aring=å" +
+    ";aelig=æ;ccedil=ç;egrave=è;eacute=é;ecirc=ê;euml=ë;igrave=ì;iacute=í;icirc=î;iuml=ï;eth=ð;ntilde=ñ" +
+    ";ograve=ò;oacute=ó;ocirc=ô;otilde=õ;ouml=ö;divide=÷;oslash=ø;ugrave=ù;uacute=ú;ucirc=û;uuml=ü" +
+    ";yacute=ý;thorn=þ;yuml=ÿ;OElig=Œ;oelig=œ;Scaron=Š;scaron=š;Yuml=Ÿ;fnof=ƒ;circ=ˆ;tilde=˜;Alpha=Α" +
+    ";Beta=Β;Gamma=Γ;Delta=Δ;Epsilon=Ε;Zeta=Ζ;Eta=Η;Theta=Θ;Iota=Ι;Kappa=Κ;Lambda=Λ;Mu=Μ;Nu=Ν;Xi=Ξ" +
+    ";Omicron=Ο;Pi=Π;Rho=Ρ;Sigma=Σ;Tau=Τ;Upsilon=Υ;Phi=Φ;Chi=Χ;Psi=Ψ;Omega=Ω;alpha=α;beta=β;gamma=γ" +
+    ";delta=δ;epsilon=ε;zeta=ζ;eta=η;theta=θ;iota=ι;kappa=κ;lambda=λ;mu=μ;nu=ν;xi=ξ;omicron=ο;pi=π;rho=ρ" +
+    ";sigmaf=ς;sigma=σ;tau=τ;upsilon=υ;phi=φ;chi=χ;psi=ψ;omega=ω;thetasym=ϑ;upsih=ϒ;piv=ϖ;ensp= ;emsp= " +
+    ";thinsp= ;zwnj=‌;zwj=‍;lrm=‎;rlm=‏;ndash=–;mdash=—;lsquo=‘;rsquo=’;sbquo=‚;ldquo=“;rdquo=”;bdquo=„" +
+    ";dagger=†;Dagger=‡;bull=•;hellip=…;permil=‰;prime=′;Prime=″;lsaquo=‹;rsaquo=›;oline=‾;frasl=⁄;euro=€" +
+    ";image=ℑ;weierp=℘;real=ℜ;trade=™;alefsym=ℵ;larr=←;uarr=↑;rarr=→;darr=↓;harr=↔;crarr=↵;lArr=⇐;uArr=⇑" +
+    ";rArr=⇒;dArr=⇓;hArr=⇔;forall=∀;part=∂;exist=∃;empty=∅;nabla=∇;isin=∈;notin=∉;ni=∋;prod=∏;sum=∑" +
+    ";minus=−;lowast=∗;radic=√;prop=∝;infin=∞;ang=∠;and=∧;or=∨;cap=∩;cup=∪;int=∫;there4=∴;sim=∼;cong=≅" +
+    ";asymp=≈;ne=≠;equiv=≡;le=≤;ge=≥;sub=⊂;sup=⊃;nsub=⊄;sube=⊆;supe=⊇;oplus=⊕;otimes=⊗;perp=⊥;sdot=⋅" +
+    ";lceil=⌈;rceil=⌉;lfloor=⌊;rfloor=⌋;lang=〈;rang=〉;loz=◊;spades=♠;clubs=♣;hearts=♥;diams=♦;"
+}
+
+// Named-entity lookup. "" = unknown -> caller leaves literal.
 fn __html_named_entity(name: String) -> String {
-    if name == "amp"    { return "&" }
-    if name == "lt"     { return "<" }
-    if name == "gt"     { return ">" }
-    if name == "quot"   { return "\"" }
-    if name == "apos"   { return "'" }
-    if name == "nbsp"   { return " " }
-    if name == "copy"   { return "©" }
-    if name == "reg"    { return "®" }
-    if name == "trade"  { return "™" }
-    if name == "deg"    { return "°" }
-    if name == "middot" { return "·" }
-    if name == "sect"   { return "§" }
-    if name == "para"   { return "¶" }
-    if name == "bull"   { return "•" }
-    if name == "hellip" { return "…" }
-    if name == "mdash"  { return "—" }
-    if name == "ndash"  { return "–" }
-    if name == "lsquo"  { return "‘" }
-    if name == "rsquo"  { return "’" }
-    if name == "ldquo"  { return "“" }
-    if name == "rdquo"  { return "”" }
-    if name == "laquo"  { return "«" }
-    if name == "raquo"  { return "»" }
-    if name == "times"  { return "×" }
-    if name == "divide" { return "÷" }
-    if name == "plusmn" { return "±" }
-    if name == "euro"   { return "€" }
-    if name == "pound"  { return "£" }
-    if name == "yen"    { return "¥" }
-    if name == "cent"   { return "¢" }
-    if name == "iexcl"  { return "¡" }
-    if name == "iquest" { return "¿" }
-    if name == "aacute" { return "á" }
-    if name == "agrave" { return "à" }
-    if name == "acirc"  { return "â" }
-    if name == "auml"   { return "ä" }
-    if name == "atilde" { return "ã" }
-    if name == "ccedil" { return "ç" }
-    if name == "eacute" { return "é" }
-    if name == "egrave" { return "è" }
-    if name == "ecirc"  { return "ê" }
-    if name == "euml"   { return "ë" }
-    if name == "iacute" { return "í" }
-    if name == "ntilde" { return "ñ" }
-    if name == "oacute" { return "ó" }
-    if name == "ograve" { return "ò" }
-    if name == "ocirc"  { return "ô" }
-    if name == "ouml"   { return "ö" }
-    if name == "otilde" { return "õ" }
-    if name == "oslash" { return "ø" }
-    if name == "szlig"  { return "ß" }
-    if name == "uacute" { return "ú" }
-    if name == "uuml"   { return "ü" }
-    return ""
+    if name.length() == 0 { return "" }
+    let table: String = __html_entity_table()
+    let key: String = ";" + name + "="
+    let at: int = table.indexOf(key)
+    if at < 0 { return "" }
+    let start: int = at + key.length()
+    var end: int = start
+    let tn: int = table.length()
+    while end < tn and table.charAt(end) != 59 { end = end + 1 }
+    return table.substring(start, end)
 }
 
 // Numeric reference body ("#233", "#xE9") -> codepoint; -1 = malformed.
@@ -137,7 +122,7 @@ fn __html_numeric_cp(body: String) -> int {
 // Unescape HTML entities — single left-to-right pass (decoded output is never
 // re-scanned, so "&amp;lt;" yields "&lt;", not "<"). Numeric references
 // (&#233; / &#xE9;) go through utf8_encode (invalid -> U+FFFD, HTML semantics);
-// named entities come from the curated table above; anything malformed or
+// named entities come from the HTML 4.01 table above; anything malformed or
 // unknown (including a bare "&" or a missing ";") stays literal, like browsers
 // treat unknown named references.
 pub fn html_unescape(s: String) -> String {
@@ -167,8 +152,13 @@ pub fn html_unescape(s: String) -> String {
         let body: String = s.substring(i + 1, semi)
         var decoded: String = ""
         if body.length() > 0 and body.charAt(0) == 35 {   // '#'
-            let cp: int = __html_numeric_cp(body)
-            if cp >= 0 { decoded = utf8_encode(cp) }
+            var cp: int = __html_numeric_cp(body)
+            if cp >= 0 {
+                // HTML5 §13.2.5.80: referencia a NUL -> U+FFFD (los sustitutos y
+                // > 10FFFF ya los resuelve utf8_encode).
+                if cp == 0 { cp = 0xFFFD }
+                decoded = utf8_encode(cp)
+            }
         } else {
             decoded = __html_named_entity(body)
         }

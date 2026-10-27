@@ -177,6 +177,7 @@ jobs:
                      runtime/time.c \
                      runtime/iterators.c \
                      runtime/sqlite_adapter.c \
+                     runtime/csv.c \
                      runtime/file-io.c \
                      runtime/runtime.c \
                      runtime/thread.c \
@@ -445,6 +446,7 @@ jobs:
                      runtime/time.c \
                      runtime/iterators.c \
                      runtime/sqlite_adapter.c \
+                     runtime/csv.c \
                      runtime/file-io.c \
                      runtime/runtime.c \
                      runtime/thread.c \
@@ -468,7 +470,7 @@ jobs:
             clang $CFLAGS $EXTRA "$src" -o "objs/$base.obj" || FAIL=1
           done
           [ "$FAIL" -eq 0 ] || { echo "w2-subset: el subset del runtime no compila"; exit 1; }
-          echo "9 TUs del subset compilados a .obj"
+          echo "13 TUs del subset compilados a .obj"
 
       - name: Link + RUN + diff each test
         shell: bash
@@ -670,7 +672,7 @@ jobs:
   # comportamiento del GC de Boehm compilado PARA arm64 (escaneo de registros
   # y de stack son código ensamblador por arquitectura).
   #
-  # Espejo deliberado de w2-subset: mismos 9 TUs, mismos flags (+ -Werror
+  # Espejo deliberado de w2-subset: mismos 13 TUs, mismos flags (+ -Werror
   # sobre os_win32.c), mismo link/run/diff con el rc gateando, mismo FLOOR.
   # Las ÚNICAS diferencias son el triple, el triplet de vcpkg y el arch de
   # vcvarsall. La duplicación es a propósito: si los dos jobs divergieran en
@@ -785,6 +787,7 @@ jobs:
                      runtime/time.c \
                      runtime/iterators.c \
                      runtime/sqlite_adapter.c \
+                     runtime/csv.c \
                      runtime/file-io.c \
                      runtime/runtime.c \
                      runtime/thread.c \
@@ -806,7 +809,7 @@ jobs:
             cat "objs/$base.diag"
           done
           [ "$FAIL" -eq 0 ] || { echo "w2-subset-arm64: el subset del runtime no compila para aarch64"; exit 1; }
-          echo "9 TUs del subset compilados a .obj (aarch64-pc-windows-msvc)"
+          echo "13 TUs del subset compilados a .obj (aarch64-pc-windows-msvc)"
 
       - name: Link + RUN + diff each test (ARM64 nativo)
         shell: bash

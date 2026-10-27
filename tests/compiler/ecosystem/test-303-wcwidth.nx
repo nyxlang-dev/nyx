@@ -60,6 +60,25 @@ fn test_wcwidth_emoji() {
     print("emoji 2 columnas ok")
 }
 
+fn test_wcwidth_emoji_bmp_y_no_anchos() {
+    // Emoji_Presentation fuera de los bloques 1F3xx+ (EastAsianWidth W, Unicode 15)
+    assert(wcwidth(0x270A) == 2)      // ✊
+    assert(wcwidth(0x231A) == 2)      // ⌚
+    assert(wcwidth(0x2705) == 2)      // ✅
+    assert(wcwidth(0x2B50) == 2)      // ⭐
+    assert(wcwidth(0x1F004) == 2)     // 🀄
+    assert(wcwidth(0x1F947) == 2)     // 🥇
+    // Neutral/ambiguo (texto por defecto): 1 columna
+    assert(wcwidth(0x2600) == 1)      // ☀ (N)
+    assert(wcwidth(0x2764) == 1)      // ❤ (N)
+    assert(wcwidth(0x2329 - 1) == 1)
+    assert(wcwidth(0x2329) == 2)      // 〈 (W)
+    // combinantes siguen en 0
+    assert(wcwidth(0x0301) == 0)
+    assert(wcwidth(0x200D) == 0)
+    print("emoji bmp y no anchos ok")
+}
+
 fn test_display_width_basico() {
     assert(display_width("") == 0)
     assert(display_width("hola") == 4)
@@ -98,6 +117,7 @@ fn main() {
     test_wcwidth_zero_width()
     test_wcwidth_wide_2col()
     test_wcwidth_emoji()
+    test_wcwidth_emoji_bmp_y_no_anchos()
     test_display_width_basico()
     test_display_width_compuesto()
     test_display_width_malformado()

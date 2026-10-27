@@ -939,6 +939,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1044 | a closure (lambda or named `fn`) uses a BLOCK variable it cannot capture: its name is declared more than once in the function (shadowing another, or in a sibling block), or it is not a `let`/`var` (a `for` variable, a `match` binding). Closures capture by name, so the capture would be ambiguous. Rename it, or copy it into a `let` with its own name right before the closure |
 | NYX1045 | invalid string or char escape. A malformed `\xNN` (not two hex digits) or `\u{…}` (no braces, empty, more than 6 digits, above `10FFFF`, a surrogate, or above `7F` in a `char`) is a lexer error with line and column. Any other unknown escape (`\q`, `\e`) is an error since 0.37.0 (a warning in 0.36.x): it used to compile dropping the backslash |
 | NYX1046 | an enum pattern (`Result.Ok(v)`, `Option.None`) in a `match` whose subject is a primitive (`int`, `float`, `bool`, `String`) — with a number or a bool it reached codegen and clang failed with invalid IR; with a String it compiled and no arm ever matched. The usual cause is a builtin that aborts instead of returning `Result` (`string_to_int`): use its `try_`/`_or` sibling, e.g. `string_to_int_or(s, 0)` (0.37.1) |
+| NYX1047 | `for x: dyn Trait in arr` or `let y: dyn Trait = arr[0]` over an `Array` that holds CONCRETE structs (declared `Array<A>`, or a `push` of a struct in the same function). The conversion to `dyn` (struct pointer to fat pointer `{ data, vtable }`) happens when the element is WRITTEN, never when it is read, so this used to pass `nyx check` and die with SIGSEGV. Declare the collection `Array<dyn Trait>` (each `push` converts) or convert before pushing (`let d: dyn Trait = x; arr.push(d)`); an untyped `Array` filled with already-`dyn` values keeps working (0.38.1) |
 | NYX1033 | `include_bytes` with a path that is not a String literal — the file is read when COMPILING, so a variable or an interpolation cannot be known |
 | NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
@@ -3017,6 +3018,30 @@ let data: String = udp_recvfrom(sock, 1024)
 tcp_close(sock)
 ```
 
+Red local (`std/net`, arco `red-local`, 2026-10-26): el remitente de cada datagrama, puerto
+compartido y multicast IPv4.
+
+```nyx
+try_udp_bind_shared(host, port) -> Result<int, Error>          // SO_REUSEADDR (+SO_REUSEPORT en Linux)
+try_udp_recvfrom_from(fd, max) -> Result<UdpDatagram, Error>   // UdpDatagram { data, ip, port }
+try_udp_recvfrom_from_timed(fd, max, timeout_ms)               // plazo en ms; Err(timeout 110) sin consumir
+try_udp_join(fd, grupo, iface) / try_udp_leave(fd, grupo, iface)   // iface "" = la que elija el kernel
+try_udp_set_multicast_ttl(fd, ttl) / _loop(fd, on) / _iface(fd, iface), try_udp_set_broadcast(fd, on)
+```
+
+Una lectura con plazo dentro de `spawn {}` ocupa un trabajador del scheduler: el lector va en
+`thread_spawn`. `try_udp_bind` sigue fallando con EADDRINUSE sobre un puerto tomado.
+
+### Ping (ICMP echo IPv4)
+```nyx
+try_ping(host, timeout_ms) -> Result<PingReply, Error>   // PingReply { ip, rtt_us }
+```
+
+RTT en microsegundos. Sin privilegios donde el sistema lo permite (Linux: socket ICMP de
+datagrama si `net.ipv4.ping_group_range` incluye al grupo; si no, raw con root o `CAP_NET_RAW`;
+macOS; Windows con `IcmpSendEcho`). Errores: `timeout` 110, `permission` 13/1, `not_found` si el
+nombre no resuelve, `invalid` 95 en wasm. Un host que no contesta no está necesariamente caído.
+
 ### DNS
 ```nyx
 let ip: String = resolve("example.com")    // "93.184.216.34" (solo IPv4, vía getaddrinfo)
@@ -3093,6 +3118,15 @@ print(output)  // "hello"
 
 // Exit code del comando (no captura stdout)
 let code: int = exec_code("some_cmd")
+
+// stdout, stderr y código POR SEPARADO (std/exec): ambos flujos se leen a la
+// vez, así que una salida enorme en cualquiera de los dos no cuelga. Binary-safe,
+// sin strip de '\n'. code = 128+señal si lo mató una señal; 127 si el comando
+// no existe (lo dice el shell por stderr). Err solo si no se pudo lanzar
+// (y siempre en wasm32-wasi: kind "invalid", code 95).
+import "std/exec"
+let r: Result<ExecResult, Error> = try_exec_full("make 2>&1")
+// ExecResult { stdout: String, stderr: String, code: int }
 
 // Variables de entorno
 setenv("MY_VAR", "hello")
@@ -3345,7 +3379,35 @@ de sesion, firma de webhook).
 > El material aleatorio de estas primitivas (salts, nonces) sale de `csprng_bytes`
 > (`std/webpushcrypto`, envoltorio sobre `RAND_bytes` de OpenSSL), NO de `random_bytes`
 > (`std/random`), que es un PRNG `xorshift64` de 64 bits de estado y no resiste la
-> reconstruccion del estado a partir de unas pocas salidas observadas.
+> reconstruccion del estado a partir de unas pocas salidas observadas. En wasm32-wasi
+> sale de `getentropy` (`random_get` de WASI; en el navegador, `crypto.getRandomValues`):
+> sin esa fuente devuelve `""`, nunca bytes predecibles.
+
+### Cifrado autenticado AES-GCM (`std/crypto`)
+
+Cifra **y** autentica: un byte alterado, otra llave, otro nonce u otro `aad` dan `Err`
+y no devuelven nada. Para guardar secretos que hay que volver a usar en claro.
+
+```nyx
+import "std/crypto"
+
+try_aes256gcm_seal(key32, plaintext, aad) -> Result<String, Error>   // nonce(12) ‖ cifrado ‖ tag(16), nonce al azar
+try_aes256gcm_open(key32, sealed, aad) -> Result<String, Error>
+try_aes256gcm_encrypt(key32, nonce12, plaintext, aad) -> Result<String, Error>  // cifrado ‖ tag(16)
+try_aes256gcm_decrypt(key32, nonce12, sealed, aad) -> Result<String, Error>
+try_aes128gcm_encrypt / try_aes128gcm_decrypt                         // llave de 16 bytes
+```
+
+- **Errores**: `invalid` 22 = llave o nonce de largo incorrecto; `invalid` 74 (EBADMSG) =
+  la etiqueta no verifica (alterado, truncado, o llave/nonce/aad equivocados; no dice
+  cual, y el mensaje nunca lleva el texto ni la llave); `invalid` 95 = wasm32-wasi (sin OpenSSL).
+- **Nonce**: `seal` lo elige al azar (unos 2^32 mensajes por llave, NIST SP 800-38D 8.3).
+  Con las variantes de nonce explicito, **nunca** repetir un nonce con la misma llave.
+- **`aad`**: no se cifra, pero queda autenticado; atarlo al dueno (`"smtp:cliente-42"`)
+  impide que el valor cifrado de un registro descifre copiado a otro.
+- **La llave son bytes**, no una contrasena: `csprng_bytes(32)`, o derivarla con
+  `pbkdf2_hmac_sha256` / `hkdf_sha256`. `try_aes128gcm_decrypt` abre tambien lo que
+  produce `aes128gcm_encrypt` de `std/webpushcrypto`.
 
 ---
 
@@ -4433,6 +4495,8 @@ pg_migrate_init(conn), pg_migrate_version(conn), pg_migrate(conn, version, name,
 
 // Pool de conexiones — seguro entre hilos (desde 2026-09-27); sin espera: Err(kind "in_use")
 pg_pool_new(conninfo, size), try_pg_pool_get(pool), pg_pool_put(pool, conn), pg_pool_close(pool)
+// pg_pool_put: ROLLBACK + DISCARD ALL; si falla, cierra la conexión y el próximo get abre otra
+pg_pool_discard(pool, conn)                                // sacar una conexión que no sirve
 
 // LISTEN/NOTIFY: el canal es un identificador CITADO (mayusculas y tildes cuentan)
 try_pg_listen(conn, canal) -> Result<int, Error>

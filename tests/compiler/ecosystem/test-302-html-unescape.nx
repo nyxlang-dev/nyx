@@ -89,6 +89,33 @@ fn test_mezcla_realista() {
     print("mezcla realista ok")
 }
 
+fn test_tabla_html4_completa() {
+    assert(html_unescape("&frac12;") == "½")
+    assert(html_unescape("&alpha;&Omega;") == "αΩ")
+    assert(html_unescape("&sum;&infin;") == "∑∞")
+    assert(html_unescape("&rarr;&hearts;") == "→♥")
+    assert(html_unescape("&eacute;&Eacute;&szlig;&yuml;") == "éÉßÿ")
+    assert(html_unescape("&euro;&hellip;&permil;") == "€…‰")
+    assert(html_unescape("a &lt; b &le; c &ne; d") == "a < b ≤ c ≠ d")
+    // sensible a mayúsculas y nombres desconocidos / prefijos quedan literales
+    assert(html_unescape("&Alpha;&alpha;") == "Αα")
+    assert(html_unescape("&ALPHA;") == "&ALPHA;")
+    assert(html_unescape("&alph;") == "&alph;")
+    assert(html_unescape("&alphax;") == "&alphax;")
+    assert(html_unescape("&;") == "&;")
+    print("tabla html4 completa ok")
+}
+
+fn test_numerica_nul() {
+    // HTML5 §13.2.5.80: referencia a 0 -> U+FFFD, nunca un byte 0
+    let fffd: String = utf8_encode(0xFFFD)
+    assert(html_unescape("&#0;") == fffd)
+    assert(html_unescape("&#x0;") == fffd)
+    assert(html_unescape("a&#0;b") == "a" + fffd + "b")
+    assert(html_unescape("&#0;").length() == 3)
+    print("numerica NUL -> U+FFFD ok")
+}
+
 fn main() {
     test_named_basicas()
     test_no_doble_decode()
@@ -98,5 +125,7 @@ fn main() {
     test_malformadas_quedan_literales()
     test_named_extendidas()
     test_mezcla_realista()
+    test_tabla_html4_completa()
+    test_numerica_nul()
     print("test-302-html-unescape ok")
 }

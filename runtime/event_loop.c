@@ -444,6 +444,14 @@ int nyx_ev_create_pipe(void) {
     return r;
 }
 
+// El extremo de escritura del último pipe. Antes los llamadores lo suponían
+// read_fd + 1, y pipe() no lo garantiza: con un fd heredado en el medio (el 5
+// que wsl.exe le deja abierto al proceso) se escribía a otro descriptor y
+// test-161 no veía ningún evento (spike de W5, 2026-10-26).
+int nyx_ev_pipe_write_fd(void) {
+    return g_pipe_write;
+}
+
 // NOTA: el pipe transporta bytes crudos SIN encuadre (sin length-prefix ni
 // delimitador) -- un mensaje con NUL embebido solo es seguro de punta a punta
 // si el protocolo de más arriba ya conoce el largo exacto a leer (el buffer

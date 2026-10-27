@@ -1,0 +1,36 @@
+// Nyx by Example: ping (ICMP echo) sin exec("ping").
+//
+// Un monitor de red pregunta «¿responde este equipo, y en cuánto?». Antes había
+// que correr `ping -c 1` con exec() y parsear su salida, que cambia de un
+// sistema a otro. try_ping de std/net manda el eco y devuelve el tiempo de ida
+// y vuelta en MICROSEGUNDOS (en la red local un ping tarda menos de 1 ms).
+//
+// Sin privilegios donde el sistema lo permite (Linux con
+// net.ipv4.ping_group_range abierto, como Debian y Ubuntu; macOS; Windows). Si
+// no, Err "permission". Ojo: que un host no conteste ping no significa que esté
+// caído — muchos firewalls descartan ICMP.
+
+import "std/net"
+import "std/error"
+
+fn main() -> int {
+    let equipos: Array = ["127.0.0.1", "localhost"]
+    var i: int = 0
+    while i < equipos.length() {
+        let h: String = equipos[i]
+        match try_ping(h, 1000) {
+            Result.Ok(r) => {
+                println(h + " (" + r.ip + "): responde en " + int_to_string(r.rtt_us) + " µs")
+            }
+            Result.Err(e) => {
+                if e.kind == "permission" {
+                    println("este sistema no permite ping sin privilegios: " + e.msg)
+                    return 0
+                }
+                println(h + ": " + error_to_string(e))
+            }
+        }
+        i = i + 1
+    }
+    return 0
+}

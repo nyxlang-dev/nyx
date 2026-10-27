@@ -817,6 +817,131 @@ int os_sock_set_reuseaddr(int64_t fd) {
     int rc = setsockopt((int)fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     return rc < 0 ? -errno : rc;
 }
+// --- UDP multicast / broadcast (arco red-local, D-4). IPv4. ---
+static int mc_ip4(const char* s, struct in_addr* out) {
+    if (!s || !*s) { out->s_addr = htonl(INADDR_ANY); return 0; }
+    return inet_pton(AF_INET, s, out) == 1 ? 0 : -EINVAL;
+}
+static int mc_membership(int64_t fd, int opt, const char* group, const char* iface_ip) {
+    struct ip_mreq m;
+    memset(&m, 0, sizeof(m));
+    if (!group || inet_pton(AF_INET, group, &m.imr_multiaddr) != 1) return -EINVAL;
+    int rc = mc_ip4(iface_ip, &m.imr_interface);
+    if (rc < 0) return rc;
+    rc = setsockopt((int)fd, IPPROTO_IP, opt, &m, sizeof(m));
+    return rc < 0 ? -errno : 0;
+}
+int os_sock_udp_join(int64_t fd, const char* group, const char* iface_ip) {
+    return mc_membership(fd, IP_ADD_MEMBERSHIP, group, iface_ip);
+}
+int os_sock_udp_leave(int64_t fd, const char* group, const char* iface_ip) {
+    return mc_membership(fd, IP_DROP_MEMBERSHIP, group, iface_ip);
+}
+int os_sock_set_multicast_ttl(int64_t fd, int ttl) {
+    if (ttl < 0 || ttl > 255) return -EINVAL;
+    unsigned char v = (unsigned char)ttl;
+    return setsockopt((int)fd, IPPROTO_IP, IP_MULTICAST_TTL, &v, sizeof(v)) < 0 ? -errno : 0;
+}
+int os_sock_set_multicast_loop(int64_t fd, int on) {
+    unsigned char v = on ? 1 : 0;
+    return setsockopt((int)fd, IPPROTO_IP, IP_MULTICAST_LOOP, &v, sizeof(v)) < 0 ? -errno : 0;
+}
+int os_sock_set_multicast_iface(int64_t fd, const char* iface_ip) {
+    struct in_addr a;
+    int rc = mc_ip4(iface_ip, &a);
+    if (rc < 0) return rc;
+    return setsockopt((int)fd, IPPROTO_IP, IP_MULTICAST_IF, &a, sizeof(a)) < 0 ? -errno : 0;
+}
+int os_sock_set_broadcast(int64_t fd, int on) {
+    int v = on ? 1 : 0;
+    return setsockopt((int)fd, SOL_SOCKET, SO_BROADCAST, &v, sizeof(v)) < 0 ? -errno : 0;
+}
+int os_sock_set_reuseport(int64_t fd) {
+#ifdef SO_REUSEPORT
+    int v = 1;
+    return setsockopt((int)fd, SOL_SOCKET, SO_REUSEPORT, &v, sizeof(v)) < 0 ? -errno : 0;
+#else
+    (void)fd;
+    return 0;
+#endif
+}
+// --- Ping (ICMP echo IPv4) ---
+// Checksum de Internet (RFC 1071). Con el socket datagrama el kernel lo recalcula,
+// pero el raw no: se calcula siempre y sirve para los dos.
+static uint16_t icmp_cksum(const unsigned char* p, size_t n) {
+    uint32_t sum = 0;
+    while (n > 1) { sum += (uint32_t)((p[0] << 8) | p[1]); p += 2; n -= 2; }
+    if (n) sum += (uint32_t)(p[0] << 8);
+    while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+    return (uint16_t)(~sum & 0xffff);
+}
+#ifdef SOCK_CLOEXEC
+#define NYX_ICMP_CLOEXEC SOCK_CLOEXEC
+#else
+#define NYX_ICMP_CLOEXEC 0  // macOS: socket() no acepta el flag
+#endif
+int os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns) {
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    if (!ip || inet_pton(AF_INET, ip, &dst.sin_addr) != 1) return -EINVAL;
+    if (timeout_ms < 0) timeout_ms = 0;
+    int raw = 0;
+    int fd = socket(AF_INET, SOCK_DGRAM | NYX_ICMP_CLOEXEC, IPPROTO_ICMP);
+    if (fd < 0) {
+        int e = errno;
+        fd = socket(AF_INET, SOCK_RAW | NYX_ICMP_CLOEXEC, IPPROTO_ICMP);
+        if (fd < 0) return -(e == EACCES || e == EPERM ? e : errno);
+        raw = 1;
+    }
+    // id y secuencia + 8 bytes de marca al azar en la carga: con el socket raw se
+    // reciben TODAS las respuestas ICMP de la máquina, y con el datagrama el
+    // kernel reescribe el id (lo empareja por puerto), así que lo que identifica
+    // la respuesta propia es la marca, no el id.
+    unsigned char pkt[24];
+    memset(pkt, 0, sizeof(pkt));
+    uint16_t id = (uint16_t)(getpid() & 0xffff);
+    static uint16_t seq_global = 0;
+    uint16_t seq = __atomic_add_fetch(&seq_global, 1, __ATOMIC_RELAXED);
+    int64_t marca = os_monotonic_ns() ^ ((int64_t)(uintptr_t)&dst << 16);
+    pkt[0] = 8;  // echo request
+    pkt[4] = (unsigned char)(id >> 8); pkt[5] = (unsigned char)id;
+    pkt[6] = (unsigned char)(seq >> 8); pkt[7] = (unsigned char)seq;
+    for (int i = 0; i < 8; i++) pkt[8 + i] = (unsigned char)(marca >> (8 * i));
+    memcpy(pkt + 16, "nyx-ping", 8);
+    uint16_t ck = icmp_cksum(pkt, sizeof(pkt));
+    pkt[2] = (unsigned char)(ck >> 8); pkt[3] = (unsigned char)ck;
+    int64_t t0 = os_monotonic_ns();
+    if (sendto(fd, pkt, sizeof(pkt), 0, (struct sockaddr*)&dst, sizeof(dst)) < 0) {
+        int e = errno; close(fd); return -e;
+    }
+    int64_t deadline = t0 + (int64_t)timeout_ms * 1000000LL;
+    unsigned char buf[1500];
+    for (;;) {
+        int64_t rem = (deadline - os_monotonic_ns() + 999999) / 1000000;
+        if (rem <= 0) { close(fd); return -ETIMEDOUT; }
+        struct pollfd pf = { fd, POLLIN, 0 };
+        int pr = poll(&pf, 1, (int)rem);
+        if (pr < 0) { if (errno == EINTR) continue; int e = errno; close(fd); return -e; }
+        if (pr == 0) { close(fd); return -ETIMEDOUT; }
+        ssize_t n = recv(fd, buf, sizeof(buf), 0);
+        if (n < 0) { if (errno == EINTR) continue; int e = errno; close(fd); return -e; }
+        const unsigned char* ic = buf;
+        ssize_t len = n;
+        if (raw) {  // el raw trae la cabecera IP delante
+            if (n < 20) continue;
+            size_t ihl = (size_t)(buf[0] & 0x0f) * 4;
+            if ((ssize_t)ihl > n) continue;
+            ic = buf + ihl; len = n - (ssize_t)ihl;
+        }
+        if (len < (ssize_t)sizeof(pkt)) continue;
+        if (ic[0] != 0) continue;  // solo echo reply
+        if (memcmp(ic + 8, pkt + 8, 16) != 0) continue;  // marca propia
+        if (rtt_ns) *rtt_ns = os_monotonic_ns() - t0;
+        close(fd);
+        return 0;
+    }
+}
 int os_sock_set_nodelay(int64_t fd) {
     int opt = 1;
     int rc = setsockopt((int)fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
@@ -1398,6 +1523,87 @@ int64_t os_proc_run_status(const char* cmd) {
     int status = system(cmd);
     if (status == -1) return -1;
     return (int64_t)(WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+}
+
+// os_proc_run_full: ver contrato en nyx_os.h. Diseño: dos pipes (stdout y
+// stderr del hijo), fork + `sh -c`, y un bucle poll() sobre AMBOS fds del
+// padre hasta EOF en los dos; recién entonces waitpid. Todos los extremos son
+// CLOEXEC, así un fork/exec concurrente de otro hilo no hereda un write-end y
+// retrasa el EOF para siempre.
+// EN: see contract in nyx_os.h. Two pipes, fork + `sh -c`, poll() loop on BOTH
+// parent fds until both hit EOF, then waitpid. All pipe ends are CLOEXEC so a
+// concurrent fork/exec in another thread cannot inherit a write-end and delay
+// EOF forever.
+static int os_proc_pipe_cloexec(int fds[2]) {
+    if (pipe(fds) != 0) return -errno;
+    for (int i = 0; i < 2; i++) fcntl(fds[i], F_SETFD, FD_CLOEXEC);
+    return 0;
+}
+
+int os_proc_run_full(const char* cmd,
+                     void (*cb)(int stream, const void* chunk, size_t len, void* ud),
+                     void* ud,
+                     int64_t* code) {
+    if (code) *code = -1;
+    if (!cmd) return -EINVAL;
+    int po[2], pe[2];
+    int rc = os_proc_pipe_cloexec(po);
+    if (rc != 0) return rc;
+    rc = os_proc_pipe_cloexec(pe);
+    if (rc != 0) { close(po[0]); close(po[1]); return rc; }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        int e = errno;
+        close(po[0]); close(po[1]); close(pe[0]); close(pe[1]);
+        return -e;
+    }
+    if (pid == 0) {
+        // Hijo: solo funciones async-signal-safe hasta el exec. dup2 limpia
+        // CLOEXEC en el fd destino (1 y 2); los originales se cierran al exec.
+        if (dup2(po[1], 1) < 0 || dup2(pe[1], 2) < 0) _exit(127);
+        execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
+        _exit(127);
+    }
+    close(po[1]);
+    close(pe[1]);
+
+    struct pollfd fds[2] = {{ po[0], POLLIN, 0 }, { pe[0], POLLIN, 0 }};
+    int open_n = 2;
+    char buf[65536];
+    while (open_n > 0) {
+        int pr = poll(fds, 2, -1);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        for (int i = 0; i < 2; i++) {
+            if (fds[i].fd < 0) continue;
+            if (!(fds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            ssize_t n = read(fds[i].fd, buf, sizeof(buf));
+            if (n > 0) {
+                if (cb) cb(i == 0 ? 1 : 2, buf, (size_t)n, ud);
+            } else if (n < 0 && (errno == EINTR || errno == EAGAIN)) {
+                continue;
+            } else {
+                close(fds[i].fd);
+                fds[i].fd = -1;   // poll ignora fds negativos
+                open_n--;
+            }
+        }
+    }
+    for (int i = 0; i < 2; i++) if (fds[i].fd >= 0) close(fds[i].fd);
+
+    int status = 0;
+    pid_t w;
+    do { w = waitpid(pid, &status, 0); } while (w < 0 && errno == EINTR);
+    if (w < 0) return -errno;
+    if (code) {
+        if (WIFEXITED(status)) *code = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status)) *code = 128 + WTERMSIG(status);
+        else *code = -1;
+    }
+    return 0;
 }
 
 // Entorno / Environment (W2 fase C, residuo de link de MSVC): setenv no

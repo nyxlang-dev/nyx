@@ -1,0 +1,10 @@
+// NYX1047, variante: el Array declarado con el struct concreto como elemento.
+trait Saluda { fn hola(self) -> String }
+struct A { v: int }
+impl Saluda for A { fn hola(self) -> String { return "hola" } }
+fn main() -> int {
+    var r: Array<A> = []
+    r.push(A { v: 1 })
+    for x: dyn Saluda in r { print(x.hola()) }
+    return 0
+}

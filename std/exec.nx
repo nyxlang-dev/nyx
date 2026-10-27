@@ -1,0 +1,62 @@
+// std/exec.nx — correr un comando de shell y obtener stdout, stderr y código
+// de salida POR SEPARADO.
+//
+//     import "std/exec"
+//     match try_exec_full("ls /no_existe") {
+//         Result.Ok(r) => { print(r.stdout); print(r.stderr); print(r.code) }
+//         Result.Err(e) => { print(e.msg) }
+//     }
+//
+// Los builtins `exec` (solo stdout, sin '\n' finales) y `exec_code` (solo el
+// código) no alcanzan para mostrar POR QUÉ falló una herramienta externa.
+//
+// Contrato:
+//   - `cmd` va al shell tal cual (`/bin/sh -c`; `cmd.exe /c` en Windows):
+//     NUNCA le pases entrada sin sanear (inyección de comandos). Para
+//     argumentos no confiables usa fork/execvp (sin shell).
+//   - stdout y stderr se leen A LA VEZ (poll en posix, un hilo por flujo en
+//     Windows): un comando que escribe mucho a cualquiera de los dos no se
+//     cuelga. Binary-safe (bytes NUL incluidos). Se devuelven los bytes tal
+//     cual: a diferencia de `exec`, NO se quitan los '\n' finales.
+//   - La entrada estándar del comando es la del proceso.
+//   - `code` es el código de salida del comando. Si lo mató una señal, es
+//     128 + número de señal (convención de shell; 137 = SIGKILL, 139 = SEGV).
+//     En Windows no hay señales: es el código crudo del proceso. Un comando
+//     inexistente no es un Err: el shell sale con 127 y avisa por stderr.
+//   - Err solo si no se pudo lanzar nada: pipe/fork fallido (kind según
+//     errno, p. ej. "oom") o wasm32-wasi (no hay procesos; kind "invalid",
+//     code 95, igual que std/rsa).
+//
+// Se expone por `extern "C"` (runtime/runtime.c → os_proc_run_full de la capa
+// runtime/os/), sin tocar el compilador.
+
+import "std/error"
+
+extern "C" fn nyx_exec_full(cmd: String) -> String
+
+pub struct ExecResult {
+    stdout: String,
+    stderr: String,
+    code: int,
+}
+
+// El resultado del runtime viene empaquetado: 4 campos de 20 bytes (rc, code,
+// largo de stdout, largo de stderr; decimal con espacios a la izquierda) y
+// luego los bytes de stdout y de stderr.
+pub fn try_exec_full(cmd: String) -> Result<ExecResult, Error> {
+    let raw: String = nyx_exec_full(cmd)
+    let rc: int = string_to_int_or(raw.substring(0, 20).trim(), -22)
+    if rc != 0 {
+        if rc == -38 {
+            return Result.Err(err_new(95, "invalid", "exec_full: no hay procesos en wasm32-wasi"))
+        }
+        let ecode: int = 0 - rc
+        return Result.Err(err_new(ecode, errno_to_kind(ecode), "exec_full: no se pudo lanzar el comando (errno " + int_to_string(ecode) + ")"))
+    }
+    let code: int = string_to_int_or(raw.substring(20, 40).trim(), -1)
+    let nout: int = string_to_int_or(raw.substring(40, 60).trim(), 0)
+    let nerr: int = string_to_int_or(raw.substring(60, 80).trim(), 0)
+    let out: String = raw.substring(80, 80 + nout)
+    let err: String = raw.substring(80 + nout, 80 + nout + nerr)
+    return Result.Ok(ExecResult { stdout: out, stderr: err, code: code })
+}

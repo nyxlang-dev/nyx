@@ -14,6 +14,7 @@
 
 const ERRNO_SUCCESS = 0;
 const ERRNO_BADF = 8;
+const ERRNO_NOSYS = 52;
 
 class NyxExit {
     constructor(code) { this.code = code; }
@@ -95,10 +96,13 @@ export function makeWasiImports(state) {
                     for (let off = 0; off < view.length; off += 65536) {
                         globalThis.crypto.getRandomValues(view.subarray(off, Math.min(off + 65536, view.length)));
                     }
-                } else {
-                    for (let i = 0; i < view.length; i++) view[i] = (Math.random() * 256) | 0;
+                    return ERRNO_SUCCESS;
                 }
-                return ERRNO_SUCCESS;
+                // Sin crypto.getRandomValues NO se cae a Math.random: random_get es
+                // la fuente de csprng_bytes (llaves, nonces, PKCE), y bytes
+                // predecibles que «funcionan» son peores que un error. NOSYS hace
+                // que csprng_bytes devuelva "" y std/crypto dé Err.
+                return ERRNO_NOSYS;
             },
             clock_time_get(id, precision, timePtr) {
                 mem().setBigUint64(timePtr, BigInt(Date.now()) * 1000000n, true);

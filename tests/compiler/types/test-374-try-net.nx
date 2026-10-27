@@ -1,3 +1,4 @@
+// requiere-entorno: loopback-rechaza (conexión a un puerto cerrado → ECONNREFUSED al instante; WSL2 mirrored no lo cumple)
 // test-374 (E5.1): las hermanas try_ de red — try_tcp_connect/
 // try_tcp_listen/try_udp_bind devuelven Result<int, Error> en vez de
 // abortar/loggear por stderr como las centinelas viejas

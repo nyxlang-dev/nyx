@@ -1,0 +1,57 @@
+// Nyx by Example: correr una herramienta externa y mostrar POR QUÉ falló.
+//
+// `exec(cmd)` da solo stdout y `exec_code(cmd)` solo el código; con eso un
+// programa que llama a `tar`, `git` o `pg_dump` no puede decirle al usuario
+// qué salió mal (el motivo viaja por stderr). std/exec lo da todo junto:
+//
+//     try_exec_full(cmd) -> Result<ExecResult, Error>
+//     ExecResult { stdout: String, stderr: String, code: int }
+//
+//   - stdout y stderr se leen A LA VEZ: una herramienta que escribe mucho a
+//     cualquiera de los dos no cuelga al programa (una lectura "stdout hasta
+//     EOF, luego stderr" sí se cuelga cuando el pipe de stderr se llena).
+//   - Binary-safe; los bytes llegan tal cual (sin quitar '\n' finales).
+//   - `code`: código de salida; si lo mató una señal, 128 + señal (137 = KILL).
+//     Comando inexistente: code 127 y el aviso del shell en stderr.
+//   - Err solo si no se pudo lanzar nada (o en wasm32-wasi, sin procesos).
+//
+// `cmd` pasa por el shell: no le concatenes entrada del usuario sin sanear.
+
+import "std/exec"
+import "std/error"
+
+// Corre `cmd`; si sale con código distinto de 0 devuelve Err con el stderr.
+fn correr(cmd: String) -> Result<String, String> {
+    match try_exec_full(cmd) {
+        Result.Ok(r) => {
+            if r.code != 0 {
+                return Result.Err("falló con código " + int_to_string(r.code) + ": " + r.stderr.trim())
+            }
+            return Result.Ok(r.stdout)
+        }
+        Result.Err(e) => { return Result.Err("no se pudo lanzar: " + e.msg) }
+    }
+}
+
+fn main() -> int {
+    // Éxito: stdout, y el stderr (aquí vacío) queda aparte.
+    match correr("echo hola desde el shell") {
+        Result.Ok(s) => { print("ok: " + s.trim()) }
+        Result.Err(m) => { print("error: " + m) }
+    }
+
+    // Fallo: el motivo está en stderr, no en stdout.
+    match correr("ls /esta_ruta_no_existe_148") {
+        Result.Ok(s) => { print("ok: " + s) }
+        Result.Err(m) => { print("error: se muestra el motivo real -> " + m.substring(0, 30) + "...") }
+    }
+
+    // Los tres a la vez, sin mezclar.
+    match try_exec_full("echo datos; echo aviso >&2; exit 2") {
+        Result.Ok(r) => {
+            print("stdout=" + r.stdout.trim() + " stderr=" + r.stderr.trim() + " code=" + int_to_string(r.code))
+        }
+        Result.Err(e) => { print("no se pudo lanzar: " + e.msg) }
+    }
+    return 0
+}
