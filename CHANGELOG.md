@@ -9,6 +9,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-10-27
+
+> **MINOR**: API nueva — `std/crypto` (AES-GCM), `std/exec` (`try_exec_full`), `try_ping`, las primitivas UDP
+  de red local y `std/mdns` (codec) [arco: red-local] — y dos cambios de conducta: `task_cancel` pasa a ser
+  cooperativo y NYX1047 rechaza código que antes compilaba.
+>
+> **Migración**: (1) `task_cancel(t)` ya NO detiene la tarea: una tarea que corre en un bucle tiene que
+> consultar `task_cancelled()` y retornar (un `sleep` dentro de ella vuelve solo al cancelarla). Una tarea que
+> ni consulta ni duerme sigue corriendo. (2) NYX1047 sale directo como error, sin el aviso previo que pide la
+> regla 7 de `docs/VERSIONING.md` (excepción aprobada por Ottavio): lo que rechaza —`for x: dyn T in arr` o
+> `let y: dyn T = arr[0]` sobre un Array de structs concretos— moría con SIGSEGV en cuanto se ejecutaba, y la
+> búsqueda en los consumidores dio cero casos. La salida es declarar el Array como `Array<dyn T>`.
+
 ### Agregado
 - **`std/crypto`: cifrado autenticado AES-GCM en las dos direcciones** [dogfooding:nyxerp]: para guardar
   secretos que hay que volver a usar en claro (la contraseña SMTP de cada cliente) sin dejarlos legibles en
@@ -39,6 +52,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   socket ICMP de datagrama sin privilegios donde el sistema lo permite (Linux con `ping_group_range`
   abierto, macOS), raw como respaldo; `IcmpSendEcho` en Windows (escrita sin compilar). Pedido anónimo del
   2026-08-05, archivado sin ficha. `test-stdlib-17-ping` (SKIP si el sistema no permite ICMP), receta 149.
+- **TLS y cliente HTTP en Windows, primera parte** `[arco: w5-windows]` (decisión de Ottavio: OpenSSL
+  estático + CAs del almacén de Windows): `os_sys_root_certs` lee el almacén «ROOT» y `tls.c` suma esas CAs a
+  OpenSSL; `tls_*`, `https_*` y `http_get/post/request` salen del gate de win32. Escrito sin compilar: el
+  enlace con OpenSSL de vcpkg y la verificación son la Task 4 de W5, en la laptop. En Linux no cambia nada.
 - **`CHANGELOG.en.md`, el CHANGELOG en inglés** desde 0.33.0 (decisión de Ottavio): lo publica
   nyxlang.com/changelog/. Cada release traduce su entrada: `release-check.sh` no deja cortar sin ella y el
   nuevo check 13 de `make docs-health` exige los mismos encabezados, subtítulos e ítems por versión.
@@ -57,10 +74,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `dyn` cambia la representación al ESCRIBIR el elemento, y leer un struct como fat pointer revienta. Ahora
   es error y pide `Array<dyn Trait>`; un `Array` sin tipo lleno de valores ya `dyn` sigue andando (test-391).
   Residuo: un Array que llega lleno desde otra función no se detecta. 3 casos en `test-errors`.
-- **win32: `task_cancel` ya no usa `TerminateThread`** `[arco: w5-windows]`, que podía matar al hilo con el
-  lock de asignación de Boehm tomado y colgar el próximo `GC_malloc` (4 de 5 en el spike de W5). Ahora la
-  cancelación no detiene el hilo, como en Linux con una tarea que no bloquea; la cooperativa es la Task 6 de
-  W5. Y `runtime/csv.c` entra al subset de win32 (test-141 no enlazaba desde `e0a02263`).
+- **win32: `runtime/csv.c` entra al subset** `[arco: w5-windows]` (test-141 no enlazaba desde `e0a02263`;
+  parche de la laptop). `TerminateThread` salió de `os_thread_cancel` (podía colgar el GC, 4 de 5) y quedó
+  superado el mismo día por la cancelación cooperativa (ver «Cambiado»).
 - **x86_64 en WSL2** (spike de W5): `nyx_ev_pipe_write_fd` (test-161 suponía fds consecutivos de `pipe()` y
   WSL hereda un fd 5), los tests de «conexión rechazada» se saltan con aviso cuando el loopback no rechaza
   (modo mirrored), y `run_stack_frame_audit.sh` tiene techos por arquitectura.

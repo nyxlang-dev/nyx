@@ -12,6 +12,94 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.39.0] — 2026-10-27
+
+> **MINOR**: new API — `std/crypto` (AES-GCM), `std/exec` (`try_exec_full`), `try_ping`, the local-network UDP
+  primitives and `std/mdns` (codec) [arco: red-local] — and two behavior changes: `task_cancel` becomes
+  cooperative and NYX1047 rejects code that used to compile.
+>
+> **Migration**: (1) `task_cancel(t)` NO LONGER stops the task: a task running a loop has to check
+> `task_cancelled()` and return (a `sleep` inside it returns on its own when cancelled). A task that neither
+> checks nor sleeps keeps running. (2) NYX1047 ships straight as an error, without the prior warning that rule
+> 7 of `docs/VERSIONING.md` asks for (exception approved by Ottavio): what it rejects —`for x: dyn T in arr` or
+> `let y: dyn T = arr[0]` over an Array of concrete structs— died with SIGSEGV as soon as it ran, and a search
+> of the consumers found zero cases. The way out is declaring the Array as `Array<dyn T>`.
+
+### Added
+- **`std/crypto`: authenticated AES-GCM encryption, both directions** [dogfooding:nyxerp]: to store secrets
+  that must be reused in clear (each customer's SMTP password) without leaving them readable in the database.
+  `try_aes256gcm_seal`/`try_aes256gcm_open` pick a random nonce (nonce ‖ ciphertext ‖ tag);
+  `try_aes256gcm_encrypt`/`decrypt` and `try_aes128gcm_*` take an explicit nonce (`try_aes128gcm_decrypt` opens
+  what Web Push's `aes128gcm_encrypt` produces, which had no inverse). A bad tag = `Err(invalid 74)` without
+  releasing the text. GCM specification vectors in `test-stdlib-14-aes-gcm`; recipe 147.
+- **`csprng_bytes` on wasm32-wasi** (via `getentropy`/`random_get`): it did not exist before, and every program
+  importing `std/webpushcrypto` or `std/oauth2` failed to link on wasm. The browser shim no longer falls back to
+  `Math.random` without `crypto.getRandomValues`: it returns NOSYS and `csprng_bytes` gives `""`.
+- **`std/exec`: `try_exec_full(cmd) -> Result<ExecResult, Error>`** — stdout, stderr and exit code separately
+  (`ExecResult { stdout, stderr, code }`); before, `exec` gave only stdout and `exec_code` only the code
+  (anonymous request of 2026-07-23, archived without a task). Reads both streams at once (poll on posix, one
+  thread per stream on Windows), so it does not hang when one fills its pipe; binary-safe, no `\n` stripping;
+  `code` = 128+signal if a signal killed it, 127 if the command does not exist; Err only if it could not
+  launch (and 95 on wasm). New `os_proc_run_full` layer (win32 written, not compiled). `test-512`, 3 cases in
+  `test_os_proc.c`, recipe 148.
+- **Local network, first batch** `[arco: red-local]`: `std/net` gains `try_udp_recvfrom_from` /
+  `try_udp_recvfrom_from_timed` (the datagram with the sender's IP and port; ms deadline via `poll`),
+  `try_udp_bind_shared` (shared port; `try_udp_bind` is unchanged), `try_udp_join`/`leave`,
+  `try_udp_set_multicast_ttl`/`loop`/`iface` and `try_udp_set_broadcast`, on new os-layer primitives (win32
+  written, not compiled). And `std/mdns`, the base of the module: a pure codec for mDNS messages (RFC
+  6762/6763) with A/PTR/SRV/TXT records and defensive name decompression (backward pointers only, caps on
+  jumps, label, name and records) that returns `Err("parse")` instead of aborting; verified against dnslib and
+  python-zeroconf packets and over 1000 mutations. The probe measured that a network read with a deadline
+  inside `spawn {}` holds a scheduler worker: the reader goes in `thread_spawn` (HIGH task for the I/O
+  primitive). Tests `test-stdlib-15-net-multicast` (SKIP if the environment does not deliver multicast) and
+  `-16-mdns-codec`.
+- **`std/net`: `try_ping(host, timeout_ms) -> Result<PingReply, Error>`** (ICMP echo IPv4, `{ ip, rtt_us }`):
+  an unprivileged datagram ICMP socket where the system allows it (Linux with an open `ping_group_range`,
+  macOS), raw as a fallback; `IcmpSendEcho` on Windows (written, not compiled). Anonymous request of
+  2026-08-05, archived without a task. `test-stdlib-17-ping` (SKIP if the system forbids ICMP), recipe 149.
+- **TLS and the HTTP client on Windows, first part** `[arco: w5-windows]` (Ottavio's decision: static OpenSSL
+  + the Windows certificate store's CAs): `os_sys_root_certs` reads the «ROOT» store and `tls.c` adds those CAs
+  to OpenSSL; `tls_*`, `https_*` and `http_get/post/request` leave the win32 gate. Written, not compiled:
+  linking vcpkg's OpenSSL and verifying it are W5 Task 4, on the laptop. Nothing changes on Linux.
+- **`CHANGELOG.en.md`, the English CHANGELOG** from 0.33.0 (Ottavio's decision): published at
+  nyxlang.com/changelog/. Each release translates its entry: `release-check.sh` refuses to cut without it and
+  the new check 13 of `make docs-health` requires the same headings, subsections and items per version.
+
+### Changed
+- **`task_cancel` is cooperative** (Ottavio's decision; W5 spike §5): it requests cancellation and the task
+  checks it with the new builtin **`task_cancelled() -> bool`** (Go's `ctx.Done()`); `sleep()` inside a
+  cancelled task returns at once. Before, it was `pthread_cancel` on Linux (a task that only allocates kept
+  running forever; 200 of them brought WSL down) and `TerminateThread` on Windows (it could leave the GC lock
+  held and hang the process, 4 out of 5); both skipped `defer`. **Behavior change**: a task that neither checks
+  nor sleeps is no longer stopped. `test-513` with the spike's scenarios.
+
+### Fixed
+- **NYX1047: `for x: dyn Trait in arr` and `let y: dyn Trait = arr[0]` over an Array of concrete structs**
+  passed `nyx check` and died with SIGSEGV (anonymous report of 2026-09-08, archived without a task): turning
+  into `dyn` changes the representation when the element is WRITTEN, and reading a struct as a fat pointer
+  crashes. It is now an error asking for `Array<dyn Trait>`; an untyped `Array` full of already-`dyn` values
+  keeps working (test-391). Residue: an Array that arrives filled from another function is not detected. 3
+  cases in `test-errors`.
+- **win32: `runtime/csv.c` joins the subset** `[arco: w5-windows]` (test-141 had not linked since `e0a02263`;
+  the laptop's patch). `TerminateThread` left `os_thread_cancel` (it could hang the GC, 4 out of 5) and was
+  superseded the same day by cooperative cancellation (see «Changed»).
+- **x86_64 on WSL2** (W5 spike): `nyx_ev_pipe_write_fd` (test-161 assumed `pipe()` gives consecutive fds and
+  WSL inherits an fd 5), the «connection refused» tests are skipped with a notice when loopback does not
+  refuse (mirrored mode), and `run_stack_frame_audit.sh` has per-architecture ceilings.
+- **`std/smtp` with a «Name <address>» sender or recipients** [dogfooding:nyxerp]: the envelope went out as
+  `MAIL FROM:<Shop <sales@x.com>>` (a real server rejects it), the Message-ID took `x.com>` as its domain and an
+  accented name traveled as raw UTF-8 in `From`. Now `MAIL FROM` and `RCPT TO` carry only the address, the
+  Message-ID uses its domain and the display name of `From`/`To` goes out in RFC 2047 when it is not ASCII
+  (without the quotes around it). New test `test-stdlib-13-smtp-remitente-nombre`.
+- **The `std/postgres` pool cleans the session and replaces dead connections** [dogfooding:nyxerp]:
+  `pg_pool_put` only did ROLLBACK, so a `SET`, a temp table or a LISTEN leaked to the next request, and a
+  connection cut by the server went back to the pool and was handed out broken again and again. It now does
+  ROLLBACK + `DISCARD ALL` and, if that fails, closes the connection and empties the slot (the next get
+  reconnects). New `pg_pool_discard`. Points 3 and 4 of the 2026-09-27 request. `tests/postgres/10-pool-sanea.nx`.
+- **`wcwidth` gives 2 for wide emoji** (U+270A, U+231A...): `__ucs_wide` is now exactly Unicode 15's East Asian
+  Width W/F. **`html_unescape` knows the 253 HTML 4.01 entities** (before, ~50) and `&#0;` gives U+FFFD instead
+  of a 0 byte. Anonymous requests of 2026-07-31, archived without a task. New cases in `test-302`/`test-303`.
+
 ## [0.38.0] — 2026-10-26
 
 > **MINOR**: new API for processing tabular data: the columnar reader `try_csv_read` in `std/csv`
