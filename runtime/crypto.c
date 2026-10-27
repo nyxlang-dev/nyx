@@ -526,26 +526,45 @@ nyx_string* nyx_hmac_sha256_raw(nyx_string* key, nyx_string* data) {
 // RFC 7914 y dos casos fijados con OpenSSL antes del cambio viven en
 // tests/runtime-unit/test_crypto.c.
 //
-// La clave del HMAC se prepara UNA vez (hmac_sha256_digest la recalcula en cada
-// llamada) y cada vuelta usa buffers de PILA: con 80.000 iteraciones, un
-// GC_MALLOC por vuelta en wasm —donde sin arena nada se libera— eran varios MB
-// por derivación.
-static void hmac_sha256_k64(const uint8_t k[64], const uint8_t* msg, size_t len,
-                            uint8_t out[32]) {
-    uint8_t buf[64 + 256];
-    uint8_t* inner = (len <= 256) ? buf : (uint8_t*)GC_MALLOC_ATOMIC(64 + len);
-    for (int i = 0; i < 64; i++) inner[i] = k[i] ^ 0x36;
-    memcpy(inner + 64, msg, len);          // msg puede ser `out`: se copia antes
-    uint8_t ih[32];
-    sha256_raw(inner, 64 + len, ih);
-    uint8_t outer[96];
-    for (int i = 0; i < 64; i++) outer[i] = k[i] ^ 0x5c;
-    memcpy(outer + 64, ih, 32);
-    sha256_raw(outer, 96, out);
+// Rendimiento (fricción nyxerp, 2026-10-27): el HMAC por vuelta rehacía los
+// pads y hasheaba ipad||msg y opad||hash enteros (4 compresiones). Ahora los
+// estados SHA-256 tras comprimir k^ipad y k^opad se calculan UNA vez por
+// llamada y cada vuelta solo continúa desde ellos: 2 compresiones. Aun así,
+// donde hay OpenSSL (nativo) se usa PKCS5_PBKDF2_HMAC, que es asm por CPU
+// (SHA2 de ARMv8 / SHA-NI); la implementación propia queda para wasm32-wasi.
+// `nyx_pbkdf2_hmac_sha256_propio` se exporta para que tests/runtime-unit
+// verifique que ambas rutas dan lo mismo byte a byte.
+
+// HMAC desde los estados precalculados istate/ostate (tras k^ipad / k^opad),
+// para un mensaje de largo arbitrario. msg puede solaparse con out.
+static void hmac_from_states(const uint32_t istate[8], const uint32_t ostate[8],
+                             const uint8_t* msg, size_t len, uint8_t out[32]) {
+    uint32_t h[8];
+    memcpy(h, istate, 32);
+    size_t full = len / 64;
+    for (size_t b = 0; b < full; b++) sha256_process_block(h, msg + b * 64);
+    size_t tail = len - full * 64;
+    uint8_t pad[128];
+    memset(pad, 0, sizeof(pad));
+    if (tail) memcpy(pad, msg + full * 64, tail);
+    pad[tail] = 0x80;
+    uint64_t bits = (uint64_t)(64 + len) * 8u;      // el bloque ipad cuenta
+    size_t nb = (tail + 1 + 8 <= 64) ? 1 : 2;
+    write_be64(pad + nb * 64 - 8, bits);
+    for (size_t b = 0; b < nb; b++) sha256_process_block(h, pad + b * 64);
+
+    uint8_t blk[64];
+    for (int i = 0; i < 8; i++) write_be32(blk + i * 4, h[i]);
+    blk[32] = 0x80;
+    memset(blk + 33, 0, 31);
+    write_be64(blk + 56, (uint64_t)(64 + 32) * 8u);
+    memcpy(h, ostate, 32);
+    sha256_process_block(h, blk);
+    for (int i = 0; i < 8; i++) write_be32(out + i * 4, h[i]);
 }
 
-nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
-                                   int64_t iters, int64_t dklen) {
+nyx_string* nyx_pbkdf2_hmac_sha256_propio(nyx_string* pw, nyx_string* salt,
+                                          int64_t iters, int64_t dklen) {
     if (!pw || !salt) return nyx_string_from_cstr("");
     if (iters <= 0 || dklen <= 0) return nyx_string_from_cstr("");
     if (dklen > (1 << 20)) return nyx_string_from_cstr("");  // techo sano: 1 MiB
@@ -554,6 +573,15 @@ nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
     memset(k, 0, 64);
     if ((size_t)pw->length > 64) sha256_raw((const uint8_t*)pw->data, (size_t)pw->length, k);
     else memcpy(k, pw->data, (size_t)pw->length);
+
+    uint32_t istate[8], ostate[8];
+    uint8_t pad[64];
+    memcpy(istate, SHA256_H0, 32);
+    memcpy(ostate, SHA256_H0, 32);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x36;
+    sha256_process_block(istate, pad);
+    for (int i = 0; i < 64; i++) pad[i] = k[i] ^ 0x5c;
+    sha256_process_block(ostate, pad);
 
     size_t sl = (size_t)salt->length;
     uint8_t* s1 = (uint8_t*)GC_MALLOC_ATOMIC(sl + 4);   // salt || INT(i), una vez
@@ -564,10 +592,10 @@ nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
     for (uint32_t bloque = 1; hecho < dklen; bloque++) {
         write_be32(s1 + sl, bloque);
         uint8_t u[32], t[32];
-        hmac_sha256_k64(k, s1, sl + 4, u);
+        hmac_from_states(istate, ostate, s1, sl + 4, u);
         memcpy(t, u, 32);
         for (int64_t it = 1; it < iters; it++) {
-            hmac_sha256_k64(k, u, 32, u);
+            hmac_from_states(istate, ostate, u, 32, u);
             for (int j = 0; j < 32; j++) t[j] ^= u[j];
         }
         int64_t n = dklen - hecho < 32 ? dklen - hecho : 32;
@@ -575,6 +603,25 @@ nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
         hecho += n;
     }
     return nyx_string_from_ptr((const char*)out, (size_t)dklen);
+}
+
+nyx_string* nyx_pbkdf2_hmac_sha256(nyx_string* pw, nyx_string* salt,
+                                   int64_t iters, int64_t dklen) {
+#ifndef __wasi__
+    if (!pw || !salt) return nyx_string_from_cstr("");
+    if (iters <= 0 || dklen <= 0) return nyx_string_from_cstr("");
+    if (dklen > (1 << 20)) return nyx_string_from_cstr("");
+    if (iters > INT32_MAX) return nyx_pbkdf2_hmac_sha256_propio(pw, salt, iters, dklen);
+    unsigned char* out = (unsigned char*)GC_MALLOC_ATOMIC((size_t)dklen);
+    // ->length, no strlen: contraseña y sal pueden llevar NUL.
+    if (PKCS5_PBKDF2_HMAC(pw->data, (int)pw->length,
+                          (const unsigned char*)salt->data, (int)salt->length,
+                          (int)iters, EVP_sha256(), (int)dklen, out) != 1)
+        return nyx_pbkdf2_hmac_sha256_propio(pw, salt, iters, dklen);
+    return nyx_string_from_ptr((const char*)out, (size_t)dklen);
+#else
+    return nyx_pbkdf2_hmac_sha256_propio(pw, salt, iters, dklen);
+#endif
 }
 
 // nyx_constant_time_eq vive en strings.c (portable: también en wasm).

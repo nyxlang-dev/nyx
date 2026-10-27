@@ -9,6 +9,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Cambiado
+- **`pbkdf2_hmac_sha256` unas 5 veces más rápido** [dogfooding:nyxerp]: en nativo usa `PKCS5_PBKDF2_HMAC` de
+  OpenSSL (600.000 iteraciones: 872 → 166 ms en aarch64 con `--release`); la implementación propia, que queda
+  para wasm32-wasi, precalcula una vez por llamada los estados SHA-256 de `k^ipad` y `k^opad` (2 compresiones
+  por iteración en vez de 4; wasm 1.276 → 620 ms). Mismo resultado byte a byte (vectores de RFC 7914 en
+  `test_crypto.c`, por las dos rutas). Lo que nyxerp midió (6,2 s) era además el runtime sin optimizar fuera de
+  `--release`: fichado aparte.
+
 ## [0.39.0] — 2026-10-27
 
 > **MINOR**: API nueva — `std/crypto` (AES-GCM), `std/exec` (`try_exec_full`), `try_ping`, las primitivas UDP
