@@ -942,6 +942,10 @@ int os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns) {
         return 0;
     }
 }
+int os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud), void* ud) {
+    (void)cb; (void)ud;
+    return -ENOSYS;  // OpenSSL ya lee /etc/ssl/certs (set_default_verify_paths)
+}
 int os_sock_set_nodelay(int64_t fd) {
     int opt = 1;
     int rc = setsockopt((int)fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));

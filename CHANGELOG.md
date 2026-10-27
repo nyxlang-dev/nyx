@@ -43,6 +43,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   nyxlang.com/changelog/. Cada release traduce su entrada: `release-check.sh` no deja cortar sin ella y el
   nuevo check 13 de `make docs-health` exige los mismos encabezados, subtítulos e ítems por versión.
 
+### Cambiado
+- **`task_cancel` es cooperativo** (decisión de Ottavio; spike de W5 §5): pide la cancelación y la tarea la
+  consulta con el builtin nuevo **`task_cancelled() -> bool`** (el `ctx.Done()` de Go); `sleep()` dentro de una
+  tarea cancelada vuelve de inmediato. Antes era `pthread_cancel` en Linux (una tarea que solo aloca seguía
+  corriendo para siempre; 200 de ellas tumbaron WSL) y `TerminateThread` en Windows (podía dejar tomado el lock
+  del GC y colgar el proceso, 4 de 5); las dos se saltaban los `defer`. **Cambio de conducta**: una tarea que
+  ni consulta ni duerme ya no se detiene. `test-513` con los escenarios del spike.
+
 ### Arreglado
 - **NYX1047: `for x: dyn Trait in arr` y `let y: dyn Trait = arr[0]` sobre un Array de structs concretos**
   pasaban `nyx check` y morían con SIGSEGV (reporte anónimo del 2026-09-08, archivado sin ficha): pasar a

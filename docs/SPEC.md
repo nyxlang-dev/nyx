@@ -3866,8 +3866,24 @@ the patched one aborts with a message.
 ```nyx
 let task: int = spawn_task(fn() { return work() })   // → nyx_thread_spawn
 let result: int = task_await(task)                   // → nyx_thread_join
-task_cancel(other)                                   // → nyx_task_cancel
+task_cancel(other)                                   // → nyx_task_cancel (pide; no detiene)
 let first: int = task_race(t1, t2)                   // → nyx_task_race (first to finish)
+```
+
+**Cancelación cooperativa** (decisión de Ottavio, 2026-10-27; spike de W5 §5): `task_cancel(t)` solo marca
+un pedido. La tarea lo consulta con `task_cancelled() -> bool` y termina sola, como con `ctx.Done()` en Go;
+un `sleep()` dentro de una tarea cancelada vuelve de inmediato. Un bucle que ni consulta ni duerme no se puede
+cancelar. Fuera de una tarea (`main`, una goroutina de `spawn {}`) da `false`. Nunca se mata el hilo: así se
+ejecutan los `defer` de la tarea y no queda tomado ningún lock del runtime (con `TerminateThread`, el del GC).
+
+```nyx
+let t: int = spawn_task(fn() -> int {
+    var n: int = 0
+    while not task_cancelled() { n = n + 1; procesar_lote() }
+    return n                                 // task_await(t) recibe esto
+})
+task_cancel(t)
+let hechos: int = task_await(t)
 ```
 
 Use `spawn` / `await` for lightweight concurrency (thousands of goroutines on

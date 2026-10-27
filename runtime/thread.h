@@ -10,6 +10,9 @@
 // Thread functions
 int64_t nyx_thread_spawn(void* closure_pair);
 int64_t nyx_thread_join(int64_t handle);
+// Cancelación cooperativa (2026-10-27): task_cancel marca, la tarea consulta.
+int64_t nyx_task_cancelled(void);   // 1 si la tarea en curso tiene pedido de cancelación
+int     nyx_in_task(void);          // 1 si el llamador corre dentro de spawn_task/thread_spawn
 
 // Mutex functions
 void* nyx_mutex_new(void);

@@ -1,0 +1,82 @@
+// Test 513: task_cancel cooperativo + task_cancelled() (decisión de Ottavio, 2026-10-27).
+//
+// Antes task_cancel era pthread_cancel / TerminateThread (spike de W5, §5): en
+// Linux una tarea que solo aloca seguía corriendo para siempre (200 de ellas
+// tumbaron WSL) y en Windows la muerte a mitad de un GC_malloc colgaba el
+// proceso 4 de cada 5 veces. Ahora task_cancel solo pide: la tarea consulta
+// task_cancelled() y sleep() vuelve de inmediato dentro de una tarea cancelada.
+
+async fn aloca_hasta_cancelar(x: int) -> int {
+    var n: int = 0
+    var basura: Array = []
+    while not task_cancelled() {
+        basura.push("pieza " + int_to_string(n))
+        if basura.length() > 1000 { basura = [] }
+        n = n + 1
+    }
+    return n
+}
+
+async fn duerme_mucho(x: int) -> int {
+    sleep(5000)
+    if task_cancelled() { return 1 }
+    return 0
+}
+
+async fn instantanea(x: int) -> int {
+    return x * 2
+}
+
+fn main() {
+    // Fuera de una tarea, nunca hay pedido de cancelación.
+    assert(task_cancelled() == false)
+
+    // (1) Una tarea que aloca sin bloquear se detiene cuando consulta.
+    let t1 = spawn_task(aloca_hasta_cancelar(0))
+    sleep(50)
+    task_cancel(t1)
+    let n1: int = task_await(t1)
+    assert(n1 > 0)
+    println("aloca: se detuvo")
+
+    // (2) Una tarea dormida se despierta al cancelarla, sin esperar los 5 s.
+    let t0: int = time_ms()
+    let t2 = spawn_task(duerme_mucho(0))
+    sleep(30)
+    task_cancel(t2)
+    let r2: int = task_await(t2)
+    assert(r2 == 1)
+    assert(time_ms() - t0 < 2000)
+    println("duerme: despertó al cancelar")
+
+    // (3) El caso que colgaba el GC en win32 (s5e): cancelar una tarea que aloca
+    // y después alocar mucho desde main.
+    let t3 = spawn_task(aloca_hasta_cancelar(0))
+    sleep(50)
+    task_cancel(t3)
+    var acumulado: Array = []
+    var i: int = 0
+    while i < 300000 {
+        acumulado.push("s" + int_to_string(i))
+        if acumulado.length() > 5000 { acumulado = [] }
+        i = i + 1
+    }
+    let _n3: int = task_await(t3)
+    println("main aloca después de cancelar: ok")
+
+    // (4) 200 ciclos (s5b): ninguna tarea queda viva ni zombi.
+    var c: int = 0
+    while c < 200 {
+        let t = spawn_task(aloca_hasta_cancelar(c))
+        task_cancel(t)
+        let _n: int = task_await(t)
+        c = c + 1
+    }
+    println("200 ciclos: ok")
+
+    // (5) Cancelar una tarea ya terminada no hace nada.
+    let t5 = spawn_task(instantanea(21))
+    assert(task_await(t5) == 42)
+    task_cancel(t5)
+    println("cancelar terminada: no-op")
+}

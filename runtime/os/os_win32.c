@@ -53,6 +53,7 @@
 #include <mstcpip.h>   // SIO_TCP_INITIAL_RTO (connect a loopback, ver os_sock_connect)
 #include <iphlpapi.h>
 #include <windows.h>
+#include <wincrypt.h>   // CertOpenSystemStoreW/CertEnumCertificatesInStore (os_sys_root_certs)
 #include <icmpapi.h>   // IcmpCreateFile/IcmpSendEcho (os_icmp_echo4): después de iphlpapi.h y windows.h
 // Link: ws2_32 (sockets, WSAPoll, getaddrinfo) e iphlpapi
 // (GetAdaptersAddresses) vía /DEFAULTLIB embebido — así las recetas de link
@@ -60,6 +61,7 @@
 // EN: link ws2_32 + iphlpapi via embedded /DEFAULTLIB.
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "crypt32.lib")   // CertOpenSystemStore (os_sys_root_certs)
 
 #include "nyx_os.h"
 #include "nyx_os_win32.h"  // declaración compartida del corrector (fix round 1 M4)
@@ -1393,6 +1395,27 @@ int os_sock_set_reuseport(int64_t fd) {
     BOOL v = TRUE;
     return setsockopt(WSOCK(fd), SOL_SOCKET, SO_REUSEADDR, (const char*)&v, sizeof(v)) == 0 ? 0 : wsa_last();
 }
+// Las CAs raíz que confía Windows (las mismas que usa el navegador y que
+// actualiza Windows Update), en DER. tls.c las suma al X509_STORE de OpenSSL:
+// sin esto el OpenSSL estático solo conoce su directorio compilado, que en
+// Windows no existe, y toda verificación contra un sitio real falla. Escrita sin
+// compilar (2026-10-27); la verifica la laptop.
+int os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud), void* ud) {
+    if (!cb) return -EINVAL;
+    HCERTSTORE st = CertOpenSystemStoreW(0, L"ROOT");
+    if (!st) return -EACCES;
+    int n = 0;
+    PCCERT_CONTEXT c = NULL;
+    while ((c = CertEnumCertificatesInStore(st, c)) != NULL) {
+        if (c->dwCertEncodingType & X509_ASN_ENCODING) {
+            cb(c->pbCertEncoded, (size_t)c->cbCertEncoded, ud);
+            n++;
+        }
+    }
+    CertCloseStore(st, 0);
+    return n;
+}
+
 // Ping: IcmpSendEcho (iphlpapi, ya enlazada) no pide privilegios, a diferencia
 // de un raw socket. El RTT se mide con os_monotonic_ns: RoundTripTime viene en ms
 // enteros y en la LAN casi siempre da 0. Escrita sin compilar (2026-10-26).

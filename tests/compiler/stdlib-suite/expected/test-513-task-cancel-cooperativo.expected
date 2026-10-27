@@ -1,0 +1,5 @@
+aloca: se detuvo
+duerme: despertó al cancelar
+main aloca después de cancelar: ok
+200 ciclos: ok
+cancelar terminada: no-op

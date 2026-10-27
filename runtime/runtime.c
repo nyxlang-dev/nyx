@@ -811,8 +811,27 @@ nyx_array_t* nyx_get_args(void) {
 // ===== TIME/SLEEP FUNCTIONS (v6.0) =====
 
 // Sleep for given milliseconds
+#ifndef __wasi__
+// Cancelación cooperativa (thread.c): dentro de una tarea, sleep es un punto de
+// cancelación — vuelve apenas llega task_cancel, en tramos de a lo sumo 10 ms,
+// para que una tarea dormida se entere sin esperar el plazo entero. Fuera de una
+// tarea (main, goroutinas) es el sleep de siempre, sin tramos.
+int64_t nyx_task_cancelled(void);
+int     nyx_in_task(void);
+#endif
 void nyx_sleep(int64_t ms) {
     if (ms <= 0) return;
+#ifndef __wasi__
+    if (nyx_in_task()) {
+        int64_t fin = os_monotonic_ns() + ms * 1000000LL;
+        while (!nyx_task_cancelled()) {
+            int64_t resto = (fin - os_monotonic_ns()) / 1000000LL;
+            if (resto <= 0) return;
+            os_sleep_ms(resto < 10 ? resto : 10);
+        }
+        return;
+    }
+#endif
     os_sleep_ms(ms);
 }
 

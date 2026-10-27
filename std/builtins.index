@@ -157,6 +157,7 @@ builtin	string_to_int_or	2	Strings & texto	variantes SEGURAS: devuelven `def` en
 builtin	string_to_int_range	4	Strings & texto	parsean el número de los bytes `[ini, fin)` de `s` SIN crear el substring: dan siempre lo mismo que `string_to_X_or(s.substring(ini, fin), def)` (mismos clamps de offsets, mismo parseo estricto).	
 builtin	task_await	1	Concurrencia		no-wasm
 builtin	task_cancel	1	Concurrencia		no-wasm
+builtin	task_cancelled	0	Concurrencia	bool — **cancellation is cooperative** (since 2026-10-27, like Go's `ctx.Done()`): `task_cancel(t)` only REQUESTS it;	no-wasm
 builtin	task_race	2	Concurrencia		no-wasm
 builtin	tcp_accept	1	Red		no-wasm
 builtin	tcp_close	1	Red		no-wasm

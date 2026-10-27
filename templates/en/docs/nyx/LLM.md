@@ -1166,6 +1166,11 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
 - `channel_new(size)` → Map (NOT int!)
 - `channel_send(ch, val)`, `channel_recv(ch)`, `channel_destroy(ch)`
 - `spawn_task(fn)`, `task_await(t)`, `task_cancel(t)`, `task_race(t1, t2)`
+- `task_cancelled()` → bool — **cancellation is cooperative** (since 2026-10-27, like Go's `ctx.Done()`):
+  `task_cancel(t)` only REQUESTS it; the task checks `task_cancelled()` in its loops and returns on its own,
+  and `sleep()` inside a cancelled task returns at once. A loop that neither checks nor sleeps keeps running.
+  Outside a task (main, `spawn {}`) it is always false. Before, Linux used `pthread_cancel` (a task that only
+  allocates never stopped) and Windows `TerminateThread` (could hang the GC); both also skipped `defer`.
 
 ### Time
 **Two clocks, and the name says which** (see gotcha `time-clock-names-deprecated`):

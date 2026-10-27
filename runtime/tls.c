@@ -63,6 +63,26 @@
 #include "strings.h"
 #include "tls.h"
 
+// CAs del almacén del SISTEMA operativo además de las que encuentra OpenSSL
+// (decisión de Ottavio 2026-10-27: TLS en Windows = OpenSSL estático + CAs del
+// almacén de Windows). En posix os_sys_root_certs da -ENOSYS y no suma nada:
+// set_default_verify_paths ya leyó /etc/ssl/certs. En Windows es lo ÚNICO que
+// carga CAs, porque el directorio compilado dentro del OpenSSL estático no
+// existe en la máquina del usuario.
+static void tls_sys_root_cb(const unsigned char* der, size_t len, void* ud) {
+    X509_STORE* st = (X509_STORE*)ud;
+    const unsigned char* p = der;
+    X509* c = d2i_X509(NULL, &p, (long)len);
+    if (!c) return;
+    X509_STORE_add_cert(st, c);  // un duplicado da error y se ignora
+    X509_free(c);
+}
+static void tls_add_sys_roots(X509_STORE* st) {
+    if (!st) return;
+    (void)os_sys_root_certs(tls_sys_root_cb, st);
+    ERR_clear_error();  // los duplicados dejan errores en la cola de OpenSSL
+}
+
 // ===== SSL context (lazy-initialised, shared across calls) =====
 
 // The context is intentionally file-static so it is created at most once
@@ -109,6 +129,7 @@ static void ssl_ctx_init(void) {
     // g_ssl_verify_ctx): la confianza del sistema y la explícita del usuario no
     // se mezclan en ninguna dirección.
     SSL_CTX_set_default_verify_paths(ctx);
+    tls_add_sys_roots(SSL_CTX_get_cert_store(ctx));
 
     g_ssl_ctx = ctx;  // se publica recién configurado
 }
@@ -147,15 +168,13 @@ static SSL_CTX* get_ssl_ctx(void) {
 // ignoring the signal process-wide, which would change the semantics of every
 // program linking this runtime.
 //
-// DEPENDENCIA NUEVA PARA WINDOWS (leer antes de W4/W5): a partir de acá la capa
-// TLS pasa por os_sock_send / os_sock_recv / os_sock_close en vez de por el BIO
-// de socket de OpenSSL. En win32 esos tres son stubs `-ENOSYS` hasta que W4/W5
-// implementen la capa de sockets, así que ahí TLS no anda — pero tampoco andaba
-// antes, porque sin os_sock_* no hay forma de conectar el fd que se le pasaría a
-// SSL_set_fd. Cuando W4/W5 los implementen, este BIO queda cubierto SOLO: no hay
-// nada TLS-específico que portar. Si alguna vez hiciera falta TLS en win32 antes
-// de esa capa, la salida es un fallback a SSL_set_fd cuando os_sock_send devuelve
-// -ENOSYS, no duplicar la lógica del BIO.
+// WINDOWS: este BIO pasa por os_sock_send / os_sock_recv / os_sock_close, que
+// desde W4 son Winsock de verdad en os_win32.c, así que no hay nada TLS-específico
+// que portar. Lo que faltaba en win32 era el enlace (OpenSSL estático de vcpkg) y
+// las CAs (tls_add_sys_roots, almacén de Windows): decisión de Ottavio 2026-10-27.
+// El fd viaja como int por la API de BIO de OpenSSL (BIO_C_SET_FD usa int*); un
+// SOCKET de Win64 es UINT_PTR, pero sus valores caben en 32 bits (los handles del
+// kernel son de 32 bits significativos, por compatibilidad con procesos de 32).
 
 static BIO_METHOD* g_nosig_bio_method = NULL;
 static os_once_t   g_nosig_bio_once   = OS_ONCE_STATIC_INIT;
@@ -1124,7 +1143,9 @@ int64_t nyx_tls_set_ca_file(nyx_string* path) {
 
     // path vacío/NULL -> almacén del sistema (/etc/ssl/certs y compañía).
     if (!path || !path->data || path->length == 0) {
-        return SSL_CTX_set_default_verify_paths(ctx) == 1 ? 0 : -1;
+        int ok = SSL_CTX_set_default_verify_paths(ctx) == 1;
+        tls_add_sys_roots(SSL_CTX_get_cert_store(ctx));
+        return ok ? 0 : -1;
     }
     const char* p = nyx_string_to_cstr(path);
     if (!p || p[0] == '\0') return -1;
@@ -1248,6 +1269,7 @@ static X509_STORE* tls_store_con_extra(const nyx_string* pem, int* n_leidos) {
     X509_STORE* st = X509_STORE_new();
     if (!st) return NULL;
     X509_STORE_set_default_paths(st);
+    tls_add_sys_roots(st);
     BIO* bio = BIO_new_mem_buf(pem->data, (int)pem->length);
     if (!bio) { X509_STORE_free(st); return NULL; }
     for (;;) {

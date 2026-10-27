@@ -163,6 +163,7 @@ int     os_sock_set_multicast_loop(int64_t fd, int on) { (void)fd; (void)on; ret
 int     os_sock_set_multicast_iface(int64_t fd, const char* iface_ip) { (void)fd; (void)iface_ip; return -ENOSYS; }
 int     os_sock_set_broadcast(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
 int     os_sock_set_reuseport(int64_t fd) { (void)fd; return -ENOSYS; }
+int     os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud), void* ud) { (void)cb; (void)ud; return -ENOSYS; }
 int     os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns) { (void)ip; (void)timeout_ms; (void)rtt_ns; return -ENOSYS; }
 int     os_sock_set_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
 int     os_sock_set_send_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }

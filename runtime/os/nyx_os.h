@@ -298,6 +298,13 @@ int     os_sock_set_broadcast(int64_t fd, int on);             // SO_BROADCAST
 // EN: lets several UDP sockets share the port. posix SO_REUSEPORT (0/no-op if missing);
 // win32 maps to Winsock's SO_REUSEADDR; wasm -ENOSYS.
 int     os_sock_set_reuseport(int64_t fd);
+// Certificados raíz del almacén del SISTEMA, uno por llamada a `cb` en DER. Para
+// que TLS confíe en lo mismo que el sistema donde OpenSSL no trae un directorio de
+// CAs propio (Windows). Devuelve cuántos entregó, o -ENOSYS donde no hace falta:
+// en posix las CAs ya las encuentra OpenSSL (set_default_verify_paths).
+// win32: almacén "ROOT" (CertOpenSystemStore). Decisión de Ottavio 2026-10-27 (TLS A).
+// EN: system root certs as DER via cb; win32 ROOT store; posix/wasm -ENOSYS.
+int     os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud), void* ud);
 // Ping IPv4 (ICMP echo) a `ip` (dotted, ya resuelta) con plazo en ms. 0 y *rtt_ns
 // = ida y vuelta medida con os_monotonic_ns; -ETIMEDOUT sin respuesta; -EACCES/-EPERM
 // si el sistema no deja abrir un socket ICMP. posix: socket DATAGRAMA ICMP (sin

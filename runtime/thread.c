@@ -28,6 +28,9 @@ typedef struct {
 typedef struct {
     nyx_closure_pair_t closure;
     int64_t result;
+    // Pedido de cancelación (task_cancel). Lo escribe otro hilo y lo lee la
+    // tarea: acceso atómico, sin lock.
+    int cancel_req;
 } nyx_thread_ctx_t;
 
 typedef struct {
@@ -35,8 +38,46 @@ typedef struct {
     os_thread_t thread;
 } nyx_thread_handle_t;
 
+// ===== CANCELACIÓN COOPERATIVA (decisión de Ottavio, 2026-10-27) =====
+//
+// task_cancel(t) NO detiene el hilo: marca un pedido que la tarea consulta con
+// task_cancelled() —el ctx.Done() de Go— y que hace volver de inmediato a un
+// sleep() dentro de esa tarea. Antes era pthread_cancel/TerminateThread, y las
+// dos estaban mal (spike de W5, §5): en Linux pthread_cancel es diferido y una
+// tarea que solo aloca seguía corriendo para siempre (200 de ellas tumbaron
+// WSL); en Windows TerminateThread la mataba con el lock del GC tomado y el
+// próximo GC_malloc se colgaba (4 de 5). Una salida forzada, además, se salta
+// los `defer` de la tarea. Cooperativo es la única forma segura en las dos
+// plataformas; el costo honesto es que un bucle que no consulta ni duerme no
+// se puede cancelar (igual que en Go).
+//
+// El contexto de la tarea actual va en TLS (os_tls): task_cancelled() fuera de
+// una tarea (main, una goroutina de spawn {}) da false.
+static os_tls_key_t g_task_ctx_key;
+static os_once_t g_task_ctx_once;
+static void task_ctx_key_init(void) { os_tls_key_create(&g_task_ctx_key); }
+
+static nyx_thread_ctx_t* current_task_ctx(void) {
+    os_once(&g_task_ctx_once, task_ctx_key_init);
+    return (nyx_thread_ctx_t*)os_tls_get(&g_task_ctx_key);
+}
+
+// 1 si la tarea en curso tiene un pedido de cancelación; 0 fuera de una tarea.
+int64_t nyx_task_cancelled(void) {
+    nyx_thread_ctx_t* ctx = current_task_ctx();
+    if (!ctx) return 0;
+    return __atomic_load_n(&ctx->cancel_req, __ATOMIC_ACQUIRE) ? 1 : 0;
+}
+
+// ¿Corre el llamador dentro de una tarea? (para el sleep interrumpible)
+int nyx_in_task(void) {
+    return current_task_ctx() != NULL;
+}
+
 static void* thread_entry(void* arg) {
     nyx_thread_ctx_t* ctx = (nyx_thread_ctx_t*)arg;
+    os_once(&g_task_ctx_once, task_ctx_key_init);
+    os_tls_set(&g_task_ctx_key, ctx);
     // The closure function takes env_ptr as first arg, returns i64
     typedef int64_t (*closure_fn_t)(void*);
     closure_fn_t fn = (closure_fn_t)ctx->closure.fn_ptr;
@@ -57,6 +98,7 @@ int64_t nyx_thread_spawn(void* closure_pair) {
     ctx->closure.fn_ptr = pair[0];
     ctx->closure.env_ptr = pair[1];
     ctx->result = 0;
+    ctx->cancel_req = 0;
 
     nyx_thread_handle_t* handle = (nyx_thread_handle_t*)GC_MALLOC(sizeof(nyx_thread_handle_t));
     handle->ctx = ctx;
@@ -74,11 +116,12 @@ int64_t nyx_thread_join(int64_t handle_i64) {
     return handle->ctx->result;
 }
 
-// Cancel a task (async, no join). v7.4
+// Pide cancelar una tarea (no espera ni la detiene; ver CANCELACIÓN COOPERATIVA).
+// Cancelar una tarea ya terminada no hace nada.
 void nyx_task_cancel(int64_t handle_i64) {
     nyx_thread_handle_t* handle = (nyx_thread_handle_t*)(intptr_t)handle_i64;
-    if (!handle) return;
-    os_thread_cancel(&handle->thread);
+    if (!handle || !handle->ctx) return;
+    __atomic_store_n(&handle->ctx->cancel_req, 1, __ATOMIC_RELEASE);
 }
 
 // Race two tasks: return result of whichever finishes first. v7.4

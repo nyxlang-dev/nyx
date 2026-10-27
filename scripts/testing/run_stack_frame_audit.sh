@@ -67,12 +67,17 @@ cd "$ROOT" || exit 1
 #     fijar y restaurar ctx.expected_type en línea en cada builtin— subía +80/+96 y esta guarda
 #     la paró. Los dos cuerpos salieron a codegen_conversion_numerica (+ el helper
 #     codegen_expr_con_hint): seis sitios de llamada con ctx adentro quedaron en uno.
+#   2026-10-27 task_cancelled() (cancelación cooperativa, decisión de Ottavio):
+#     codegen_call_expr 474448 → 474480 (+32, SUBE). Un bloque propio sumaba +2.608 y uno
+#     con helper +928; compartir el bloque de stdin_eof (misma forma: sin argumentos,
+#     i64 → i1, `@nyx_<nombre>`) lo deja en una comparación más. Llevarlo al prelude no
+#     cabía: el prelude se genera de 5 módulos std/ y ninguno es de concurrencia.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14736
     [codegen_binop]=8672
     [codegen_binop_logico]=21984
-    [codegen_call_expr]=474464
+    [codegen_call_expr]=474480
     [codegen_method_call]=480592
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
@@ -102,7 +107,7 @@ if [ "$(uname -m)" = "x86_64" ]; then
         [codegen_expr]=18168
         [codegen_binop]=10184
         [codegen_binop_logico]=23992
-        [codegen_call_expr]=544232
+        [codegen_call_expr]=544264  # +32 del 2026-10-27 estimado igual que en aarch64: re-medir (W5 Task 3)
         [codegen_method_call]=541592
     )
     TECHO_NIVEL=28352

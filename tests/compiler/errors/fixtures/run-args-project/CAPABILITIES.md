@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.38.0 -->
-<!-- nyx-stdlib: 1843321045-2124287 -->
+<!-- nyx-stdlib: 685678664-2124453 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1248,6 +1248,7 @@ Tipos (5) y métodos (0):
 - `spawn_task` (1 arg) · *no existe en wasm32-wasi*
 - `task_await` (1 arg) · *no existe en wasm32-wasi*
 - `task_cancel` (1 arg) · *no existe en wasm32-wasi*
+- `task_cancelled` (0 args) — bool — **cancellation is cooperative** (since 2026-10-27, like Go's `ctx.Done()`): `task_cancel(t)` only REQUESTS it; · *no existe en wasm32-wasi*
 - `task_race` (2 args) · *no existe en wasm32-wasi*
 - `thread_join` (1 arg) · *no existe en wasm32-wasi*
 - `thread_spawn` (1 arg) · *no existe en wasm32-wasi*
