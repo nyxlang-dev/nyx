@@ -71,7 +71,8 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <io.h>       // _isatty/_pipe/_read/_write/_close/_commit (CRT)
-#include <fcntl.h>    // _O_BINARY/_O_NOINHERIT para _pipe
+#include <fcntl.h>    // _O_BINARY/_O_NOINHERIT para _pipe y os_fd_open
+#include <sys/stat.h> // _S_IREAD/_S_IWRITE (os_fd_open)
 #include <process.h>  // _beginthreadex (redirigido a GC_beginthreadex por gc.h)
 
 // GC_THREADS ANTES de gc.h: en Windows expande a GC_WIN32_THREADS
@@ -2013,13 +2014,105 @@ int os_proc_run_capture(const char* cmd,
     // the bytes verbatim, like posix.
     FILE* p = _popen(cmd, "rb");
     if (!p) return -1;
+    // W5 Procesos A: cmd.exe y casi todo programa de consola emiten "\r\n";
+    // exec() debe devolver lo mismo que en posix ("\n"). Se normaliza CADA
+    // "\r\n" -> "\n" aquí, con estado entre chunks (un '\r' al final de un
+    // fread puede ser la mitad de un par). Un '\r' suelto, o uno al final del
+    // flujo, se conserva. COSTE asumido: la salida capturada por exec() deja
+    // de ser binary-safe para el par literal 0D 0A (exec_full NO lo toca).
+    // EN: cmd.exe and most console programs emit "\r\n"; exec() must return
+    // what posix returns ("\n"). Every "\r\n" becomes "\n", stateful across
+    // chunks. A lone '\r' (or one at EOF) is kept. Accepted cost: exec()'s
+    // captured output is no longer binary-safe for the literal 0D 0A pair.
     char buf[4096];
+    char outb[4096 + 1];
+    int pend = 0;
     size_t got;
     while ((got = fread(buf, 1, sizeof(buf), p)) > 0) {
-        if (cb) cb(buf, got, ud);
+        size_t o = 0;
+        for (size_t i = 0; i < got; i++) {
+            char c = buf[i];
+            if (pend) {
+                pend = 0;
+                if (c != '\n') outb[o++] = '\r';
+            }
+            if (c == '\r') pend = 1;
+            else outb[o++] = c;
+        }
+        if (o > 0 && cb) cb(outb, o, ud);
     }
+    if (pend && cb) cb("\r", 1, ud);
     _pclose(p);
     return 0;
+}
+
+// ¿El primer token de `cmd` es un comando que cmd.exe NO podría encontrar?
+// Solo se llama cuando system() devolvió 1 o 9009, que son ambiguos (también
+// los devuelve un programa que existe y falla). Devuelve 1 SOLO si estamos
+// seguros: línea "simple" (sin & | < > ^ %, que cambiarían qué se ejecuta), el
+// token no es un comando interno de cmd, y no existe ni tal cual ni con
+// .exe/.com/.bat/.cmd en el cwd, system dirs ni PATH. Ante la duda, 0.
+// EN: is cmd's first token a command cmd.exe cannot find? Only consulted when
+// system() returned 1 or 9009 (ambiguous: an existing program may also fail
+// with those). Returns 1 only when sure: "simple" line, not a cmd internal,
+// and not found as-is nor with .exe/.com/.bat/.cmd. When in doubt, 0.
+static int win_cmd_not_found(const char* cmd) {
+    const char* p = cmd;
+    while (*p == ' ' || *p == '\t') p++;
+    if (!*p) return 0;
+    char tok[MAX_PATH];
+    size_t n = 0;
+    const char* rest;
+    if (*p == '"') {
+        p++;
+        while (*p && *p != '"') { if (n + 1 >= sizeof(tok)) return 0; tok[n++] = *p++; }
+        if (*p != '"') return 0;   // comillas desbalanceadas
+        rest = p + 1;
+    } else {
+        while (*p && *p != ' ' && *p != '\t') { if (n + 1 >= sizeof(tok)) return 0; tok[n++] = *p++; }
+        rest = p;
+    }
+    tok[n] = 0;
+    if (n == 0) return 0;
+    if (strpbrk(tok, "&|<>()^%!\"") != NULL) return 0;
+    if (strpbrk(rest, "&|<>^%") != NULL) return 0;
+
+    // Comandos internos de cmd.exe: se compara el prefijo alfabético
+    // ("echo.", "cd..", "dir/w" son internos).
+    static const char* const internals[] = {
+        "assoc","break","call","cd","chdir","cls","color","copy","date","del",
+        "dir","echo","endlocal","erase","exit","for","ftype","goto","if","md",
+        "mkdir","mklink","move","path","pause","popd","prompt","pushd","rd",
+        "rem","ren","rename","rmdir","set","setlocal","shift","start","time",
+        "title","type","ver","verify","vol", NULL
+    };
+    char pre[16];
+    size_t k = 0;
+    while (tok[k] && k + 1 < sizeof(pre) &&
+           ((tok[k] >= 'a' && tok[k] <= 'z') || (tok[k] >= 'A' && tok[k] <= 'Z'))) {
+        pre[k] = (char)((tok[k] >= 'A' && tok[k] <= 'Z') ? tok[k] + 32 : tok[k]);
+        k++;
+    }
+    pre[k] = 0;
+    for (int i = 0; internals[i]; i++) {
+        if (strcmp(pre, internals[i]) == 0) return 0;
+    }
+
+    static const char* const exts[] = { "", ".exe", ".com", ".bat", ".cmd" };
+    int has_sep = strpbrk(tok, "\\/:") != NULL;
+    for (int i = 0; i < 5; i++) {
+        char cand[MAX_PATH];
+        if (snprintf(cand, sizeof(cand), "%s%s", tok, exts[i]) >= (int)sizeof(cand)) return 0;
+        if (has_sep) {
+            DWORD at = GetFileAttributesA(cand);
+            if (at != INVALID_FILE_ATTRIBUTES && !(at & FILE_ATTRIBUTE_DIRECTORY)) return 0;
+        } else {
+            char found[MAX_PATH];
+            DWORD r = SearchPathA(NULL, cand, NULL, (DWORD)sizeof(found), found, NULL);
+            if (r > 0 && r < sizeof(found)) return 0;
+        }
+    }
+    return 1;
 }
 
 int64_t os_proc_run_status(const char* cmd) {
@@ -2033,8 +2126,17 @@ int64_t os_proc_run_status(const char* cmd) {
     // command's exit code DIRECTLY, with no wait(2) encoding — there is no
     // WIFEXITED/WEXITSTATUS to apply (they do not exist in the CRT). -1 still
     // means "could not launch the command interpreter", as on posix.
+    // W5 Procesos A: un comando inexistente da 1 (o 9009) aquí y 127 en posix.
+    // cmd.exe ya imprimió su aviso por stderr; si el código es ambiguo se
+    // confirma con win_cmd_not_found y se normaliza a 127. Si la línea no es
+    // "simple" (pipes, redirecciones, %VAR%) se devuelve el código crudo.
+    // EN: W5: a missing command gives 1 (or 9009) here and 127 on posix;
+    // ambiguous codes are confirmed with win_cmd_not_found and normalized to
+    // 127; non-simple lines keep the raw code.
     int status = system(cmd);
-    return status == -1 ? -1 : (int64_t)status;
+    if (status == -1) return -1;
+    if ((status == 1 || status == 9009) && win_cmd_not_found(cmd)) return 127;
+    return (int64_t)status;
 }
 
 // os_proc_run_full: ver contrato en nyx_os.h. CreateProcess de
@@ -2230,6 +2332,89 @@ int os_dl_close(os_dl_t h) {
 // EN: the OS_SIG* values match the CRT's numerically, so no translation is
 // needed — but validation is an EXPLICIT whitelist so -EINVAL is uniform.
 // ===========================================================================
+// ---------------------------------------------------------------------------
+// W5 (2026-10-28): OS_SIGINT y OS_SIGTERM NO van por signal() del CRT sino por
+// SetConsoleCtrlHandler, con este mapeo (medido en el spike
+// 2026-10-21-w5-windows-linea-de-base.md §4):
+//   CTRL_C_EVENT        -> OS_SIGINT   (Ctrl+C del usuario, como el CRT)
+//   CTRL_BREAK_EVENT    -> OS_SIGTERM  (la vía de un supervisor: es lo único
+//                          que un tercero puede ENTREGAR y probar a un proceso
+//                          de consola, con CREATE_NEW_PROCESS_GROUP)
+//   CTRL_CLOSE_EVENT    -> OS_SIGTERM  (cierran la consola / logoff / apagado:
+//   CTRL_LOGOFF_EVENT      Windows mata el proceso apenas el handler vuelve o a
+//   CTRL_SHUTDOWN_EVENT    los ~5 s, lo que ocurra primero)
+// `taskkill` sin /F no llega a un proceso de consola y /F o TerminateProcess
+// matan sin avisar: ahí NO hay flush posible y no se promete nada.
+// El handler del sistema corre en OTRO hilo que crea Windows (no registrado en
+// Boehm): el os_sig_fn registrado debe ser async-signal-safe-like (el
+// trampolín de runtime.c hace un solo _write), y NO debe tocar el GC.
+// Para los tres eventos "terminales" el handler ESPERA, con tope, a que el
+// consumer avise con os_sig_handled(): sin la espera, Windows terminaría el
+// proceso en cuanto el handler vuelve y el flush de persist quedaría cortado.
+// EN: INT/TERM go through SetConsoleCtrlHandler (mapping above); terminal
+// events (CLOSE/LOGOFF/SHUTDOWN) block the system's handler thread, capped,
+// until the consumer calls os_sig_handled().
+// ---------------------------------------------------------------------------
+#define OS_WIN32_SIG_IGNORED ((PVOID)(uintptr_t)1)
+// Ranura 0 = OS_SIGINT, 1 = OS_SIGTERM. NULL = disposición por defecto,
+// IGNORED = ignorar, otro = os_sig_fn registrada.
+static volatile PVOID g_ctrl_slot[2];
+static volatile LONG g_ctrl_registered;     // SetConsoleCtrlHandler ya instalado
+static HANDLE volatile g_ctrl_done_ev;      // manual-reset: "el consumer terminó"
+// Tope de espera de los eventos terminales: Windows da ~5 s (CLOSE/LOGOFF/
+// SHUTDOWN); 4,5 s deja margen para que el handler vuelva antes del corte.
+#define OS_WIN32_CTRL_WAIT_MS 4500
+
+static int os_win32_ctrl_slot(int signum) {
+    return signum == OS_SIGINT ? 0 : (signum == OS_SIGTERM ? 1 : -1);
+}
+
+static BOOL WINAPI os_win32_ctrl_handler(DWORD ev) {
+    int sig, terminal = 0;
+    switch (ev) {
+        case CTRL_C_EVENT:        sig = OS_SIGINT;  break;
+        case CTRL_BREAK_EVENT:    sig = OS_SIGTERM; break;
+        case CTRL_CLOSE_EVENT:
+        case CTRL_LOGOFF_EVENT:
+        case CTRL_SHUTDOWN_EVENT: sig = OS_SIGTERM; terminal = 1; break;
+        default: return FALSE;
+    }
+    PVOID p = g_ctrl_slot[os_win32_ctrl_slot(sig)];
+    if (p == NULL) return FALSE;                 // default: sigue la cadena (termina)
+    if (p == OS_WIN32_SIG_IGNORED) return TRUE;  // ignorada
+    HANDLE done = g_ctrl_done_ev;
+    if (terminal && done) ResetEvent(done);
+    ((os_sig_fn)p)(sig);
+    if (terminal && done) WaitForSingleObject(done, OS_WIN32_CTRL_WAIT_MS);
+    return TRUE;
+}
+
+// Instala (una vez) el evento y el handler de consola. 0 / -errno REAL.
+static int os_win32_ctrl_ensure(void) {
+    if (g_ctrl_registered) return 0;
+    if (!g_ctrl_done_ev) {
+        HANDLE ev = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (!ev) return win_last_errno();
+        if (InterlockedCompareExchangePointer((PVOID volatile*)&g_ctrl_done_ev, ev, NULL) != NULL)
+            CloseHandle(ev);
+    }
+    if (!SetConsoleCtrlHandler(os_win32_ctrl_handler, TRUE)) return win_last_errno();
+    InterlockedExchange(&g_ctrl_registered, 1);
+    return 0;
+}
+
+void os_sig_handled(int signum) {
+    if (os_win32_ctrl_slot(signum) < 0) return;
+    HANDLE done = g_ctrl_done_ev;
+    if (done) SetEvent(done);
+}
+
+// El CRT implementa signal() para SEIS señales; las demás dan EINVAL.
+// OS_SIGWINCH (28) NO EXISTE en Windows (el resize de consola llega como
+// WINDOW_BUFFER_SIZE_EVENT en el input handle, otro camino) -> -EINVAL.
+// Validación EXPLÍCITA (lista blanca) para que -EINVAL sea siempre el mismo.
+// EN: the CRT implements signal() for SIX signals; OS_SIGWINCH does not exist
+// on Windows -> clean -EINVAL. Explicit whitelist so -EINVAL is uniform.
 static int os_win32_sig_supported(int signum) {
     switch (signum) {
         case SIGINT: case SIGILL: case SIGFPE:
@@ -2240,73 +2425,69 @@ static int os_win32_sig_supported(int signum) {
 
 int os_sig_install(int signum, os_sig_fn fn) {
     if (!os_win32_sig_supported(signum)) return -EINVAL;
-    // I2 (review ronda 1, silently-wrong): el CRT ACEPTA signal(SIGTERM, fn)
-    // y devuelve éxito, pero Windows **NUNCA GENERA SIGTERM**: las
-    // terminaciones reales (Ctrl+Break, cierre de consola, logoff, shutdown)
-    // llegan por SetConsoleCtrlHandler, y TerminateProcess no avisa nada. Un 0
-    // acá le prometería a persist.c que su shutdown-flush quedó armado — y ese
-    // handler no dispararía JAMÁS: datos perdidos en silencio, con todos los
-    // gates verdes. -ENOSYS es la única respuesta honesta hasta que W5 traduzca
-    // los eventos de SetConsoleCtrlHandler a estos números.
-    // SIGINT SÍ se queda: el CRT lo levanta de verdad con Ctrl+C (corre el
-    // handler en un thread aparte, pero corre).
-    // EN: I2 (review round 1, silently-wrong): the CRT ACCEPTS
-    // signal(SIGTERM, fn) and reports success, but Windows NEVER RAISES
-    // SIGTERM — real terminations arrive through SetConsoleCtrlHandler, and
-    // TerminateProcess gives no notice at all. Returning 0 would promise
-    // persist.c that its shutdown-flush is armed while that handler can never
-    // fire: silent data loss with every gate green. -ENOSYS is the only honest
-    // answer until W5 translates SetConsoleCtrlHandler events into these
-    // numbers. SIGINT stays: the CRT really does raise it on Ctrl+C.
-    if (signum == OS_SIGTERM) return -ENOSYS;
+    if (!fn) return -EINVAL;
+    int s = os_win32_ctrl_slot(signum);
+    if (s >= 0) {
+        int rc = os_win32_ctrl_ensure();
+        if (rc != 0) return rc;                 // error real, nunca un 0 falso
+        InterlockedExchangePointer((PVOID volatile*)&g_ctrl_slot[s], (PVOID)fn);
+        return 0;
+    }
     return signal(signum, fn) == SIG_ERR ? crt_last_errno() : 0;
 }
 
-// ⚠️ En win32 NO hay SA_RESTART ni sigaction: signal() del CRT es la única
-// forma de registrar, y las llamadas bloqueantes de Windows NO se reinician
-// solas (no hay EINTR en el modelo win32 — no existe la entrega asíncrona de
-// señales sobre un syscall en vuelo). Es decir: la distinción restart /
-// no-restart que en posix es observable, en win32 NO existe, y esta variante
-// es idéntica a os_sig_install a propósito. El caller que la usa por el EINTR
-// (el no-op de SIGWINCH en runtime.c) apunta a una señal que en win32 ya da
-// -EINVAL antes de llegar acá.
-// EN: win32 has no SA_RESTART and no sigaction — the CRT's signal() is the
-// only registration path, and Windows blocking calls do not auto-restart
-// (there is no EINTR model at all). The restart/no-restart distinction is
-// observable on posix but does NOT exist here, so this variant is
-// deliberately identical. Its EINTR-motivated caller (runtime.c's SIGWINCH
-// no-op) targets a signal that already returns -EINVAL above.
+// ⚠️ En win32 NO hay SA_RESTART ni sigaction: las llamadas bloqueantes de
+// Windows no se reinician solas (no hay EINTR), así que la distinción
+// restart/no-restart no existe y esta variante es idéntica a os_sig_install.
+// EN: no SA_RESTART/EINTR model on win32; deliberately identical.
 int os_sig_install_no_restart(int signum, os_sig_fn fn) {
     return os_sig_install(signum, fn);
 }
 
 int os_sig_reset(int signum) {
     if (!os_win32_sig_supported(signum)) return -EINVAL;
+    int s = os_win32_ctrl_slot(signum);
+    if (s >= 0) {
+        InterlockedExchangePointer((PVOID volatile*)&g_ctrl_slot[s], NULL);
+        return 0;
+    }
     return signal(signum, SIG_DFL) == SIG_ERR ? crt_last_errno() : 0;
 }
 
 int os_sig_ignore(int signum) {
     if (!os_win32_sig_supported(signum)) return -EINVAL;
+    int s = os_win32_ctrl_slot(signum);
+    if (s >= 0) {
+        int rc = os_win32_ctrl_ensure();
+        if (rc != 0) return rc;
+        InterlockedExchangePointer((PVOID volatile*)&g_ctrl_slot[s], OS_WIN32_SIG_IGNORED);
+        return 0;
+    }
     return signal(signum, SIG_IGN) == SIG_ERR ? crt_last_errno() : 0;
 }
 
 int os_sig_is_default(int signum) {
-    // El CRT NO expone consulta de disposición (no hay sigaction con act=NULL)
-    // y "consultar" con signal() la MODIFICARÍA — inaceptable para una función
-    // que el contrato define como "NO modifica nada". Se devuelve 1
-    // ("es la default") para las señales soportadas, que es la respuesta
-    // conservadora del único caller: nyx_raw_mode_enter instala su no-op de
-    // SIGWINCH solo si is_default()==1 — y OS_SIGWINCH NO está soportada acá,
-    // así que devuelve -EINVAL y ese caller NUNCA instala nada en Windows. El
-    // flujo del caller queda correcto por ese camino, no por este valor.
-    // EN: the CRT exposes no disposition query, and "querying" via signal()
-    // would MODIFY it — unacceptable for a function contracted not to change
-    // anything. Returns 1 for supported signals. The only caller
-    // (nyx_raw_mode_enter) asks about OS_SIGWINCH, which is unsupported here
-    // and returns -EINVAL, so that caller installs nothing on Windows — its
-    // flow is correct through that branch, not through this value.
+    // INT/TERM: se consulta la tabla propia (no modifica nada). El resto: el
+    // CRT no expone consulta de disposición ("consultar" con signal() la
+    // MODIFICARÍA), se devuelve 1 (conservador). OS_SIGWINCH da -EINVAL, así
+    // que el único caller (nyx_raw_mode_enter) nunca instala nada en Windows.
+    // EN: INT/TERM read our own table; others: conservative 1.
     if (!os_win32_sig_supported(signum)) return -EINVAL;
+    int s = os_win32_ctrl_slot(signum);
+    if (s >= 0) return g_ctrl_slot[s] == NULL ? 1 : 0;
     return 1;
+}
+
+// PIPE_NOWAIT sobre el handle del _pipe: el extremo de escritura del
+// self-pipe de señales no debe bloquear (si se llena, el trampolín descarta).
+// os_sock_set_nonblocking (ioctlsocket) NO sirve acá: un fd del CRT no es un
+// SOCKET. EN: PIPE_NOWAIT on the _pipe handle (ioctlsocket is for sockets).
+int os_fd_set_nonblocking(int fd, int on) {
+    intptr_t h = _get_osfhandle(fd);
+    if (h == -1) return -EBADF;
+    DWORD mode = on ? PIPE_NOWAIT : PIPE_WAIT;
+    if (!SetNamedPipeHandleState((HANDLE)h, &mode, NULL, NULL)) return win_last_errno();
+    return 0;
 }
 
 // ===========================================================================
@@ -2665,3 +2846,72 @@ int os_fd_close(int fd) {
 // never weaker.
 int os_fd_sync(int fd)     { return _commit(fd) == 0 ? 0 : crt_last_errno(); }
 int os_fd_datasync(int fd) { return _commit(fd) == 0 ? 0 : crt_last_errno(); }
+
+// ---------------------------------------------------------------------------
+// Estado de proceso y fds crudos (W5 Procesos A). NO verificado en Windows
+// real (escrito sin poder compilar aquí).
+// EN: process state / raw fds (W5 Procesos A). NOT verified on real Windows.
+// ---------------------------------------------------------------------------
+int64_t os_proc_getpid(void) {
+    return (int64_t)GetCurrentProcessId();
+}
+
+int os_fs_getcwd(char* buf, size_t cap) {
+    if (!buf || cap == 0) return -EINVAL;
+    DWORD r = GetCurrentDirectoryA((DWORD)cap, buf);
+    if (r == 0) return win_last_errno();
+    if (r >= cap) return -ERANGE;   // r = tamaño requerido incluyendo el NUL
+    return 0;
+}
+
+int os_fs_chdir(const char* path) {
+    if (!path) return -EINVAL;
+    return SetCurrentDirectoryA(path) ? 0 : win_last_errno();
+}
+
+int os_fs_stat_full(const char* path, os_fs_stat_t* out) {
+    if (!out) return -EINVAL;
+    memset(out, 0, sizeof(*out));
+    if (!path) return -EINVAL;
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &d)) {
+        DWORD e = GetLastError();
+        // Mismo criterio de "no existe" que os_fs_stat.
+        if (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ||
+            e == ERROR_INVALID_NAME   || e == ERROR_BAD_NETPATH) {
+            return 0;
+        }
+        return win_last_errno();
+    }
+    out->exists = 1;
+    out->is_dir = (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
+    out->is_file = out->is_dir ? 0 : 1;
+    out->size = out->is_dir ? 0
+              : (int64_t)(((unsigned long long)d.nFileSizeHigh << 32) | d.nFileSizeLow);
+    // Windows no tiene bits de modo: se sintetizan al estilo POSIX.
+    // EN: Windows has no mode bits: POSIX-style bits are synthesized.
+    if (out->is_dir) out->mode = 040755;
+    else out->mode = (d.dwFileAttributes & FILE_ATTRIBUTE_READONLY) ? 0100444 : 0100644;
+    // FILETIME (100 ns desde 1601) -> segundos Unix.
+    unsigned long long ft = ((unsigned long long)d.ftLastWriteTime.dwHighDateTime << 32)
+                          | d.ftLastWriteTime.dwLowDateTime;
+    out->mtime = (int64_t)(ft / 10000000ULL) - 11644473600LL;
+    return 0;
+}
+
+int os_fd_open(const char* path, int mode) {
+    if (!path) return -EINVAL;
+    int flags;
+    if (mode == 0)      flags = _O_RDONLY;
+    else if (mode == 1) flags = _O_WRONLY | _O_CREAT | _O_TRUNC;
+    else if (mode == 2) flags = _O_WRONLY | _O_CREAT | _O_APPEND;
+    else return -EINVAL;
+    // _O_BINARY: sin traducción CRLF. _O_NOINHERIT: no se filtra a los hijos.
+    int fd = _open(path, flags | _O_BINARY | _O_NOINHERIT, _S_IREAD | _S_IWRITE);
+    return fd >= 0 ? fd : crt_last_errno();
+}
+
+int os_fd_dup2(int oldfd, int newfd) {
+    // _dup2 devuelve 0 (no newfd) en éxito: se normaliza al contrato de posix.
+    return _dup2(oldfd, newfd) == 0 ? newfd : crt_last_errno();
+}

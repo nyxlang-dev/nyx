@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <unistd.h>
 #include <gc.h>
 #include "runtime-arrays.h"
 #include "strings.h"
@@ -38,7 +37,7 @@ static void* shutdown_env_ptr = NULL;
 
 // Declarada en runtime.c (self-pipe S2): registra un closure Nyx para una señal
 // y lo ejecuta en el thread drenador, no en contexto de señal.
-void nyx_signal_handle(int64_t signum, void* handler);
+int nyx_signal_handle_checked(int64_t signum, void* handler);
 
 static int64_t nyx_shutdown_drain_cb(int64_t sig) {
     (void)sig;
@@ -47,11 +46,12 @@ static int64_t nyx_shutdown_drain_cb(int64_t sig) {
         closure_fn_t fn = (closure_fn_t)shutdown_fn_ptr;
         fn(shutdown_env_ptr);
     }
-    // _exit(0) y no exit(0): igual que antes, no se corren atexit handlers ni
+    // _Exit(0) (C99, <stdlib.h>) == _exit(0) de POSIX sin necesitar unistd.h
+    // (W5: persist.c también compila para win32). Igual que antes, no se corren atexit handlers ni
     // se vacían buffers de otros threads. El contrato observable —el proceso
     // termina con 0 después del closure— no cambia; lo que cambia es DÓNDE
     // corre el closure.
-    _exit(0);
+    _Exit(0);
     return 0;
 }
 
@@ -74,7 +74,14 @@ void nyx_setup_shutdown_handler(void* closure_pair) {
     static void* shutdown_cb_pair[2];
     shutdown_cb_pair[0] = (void*)nyx_shutdown_drain_cb;
     shutdown_cb_pair[1] = NULL;
-    nyx_signal_handle(OS_SIGTERM, (void*)shutdown_cb_pair);
-    nyx_signal_handle(OS_SIGINT, (void*)shutdown_cb_pair);
+    // W5: se mira el resultado. En win32 SIGTERM = CTRL_BREAK/CLOSE/SHUTDOWN
+    // (SetConsoleCtrlHandler); si la plataforma no puede entregarlo, un flush
+    // que "quedó armado" sin estarlo perdería datos en silencio.
+    int rt = nyx_signal_handle_checked(OS_SIGTERM, (void*)shutdown_cb_pair);
+    if (rt != 0)
+        fprintf(stderr, "[nyx] setup_shutdown_handler: no se pudo armar el apagado (SIGTERM, error %d); el flush NO correrá al terminar\n", -rt);
+    int ri = nyx_signal_handle_checked(OS_SIGINT, (void*)shutdown_cb_pair);
+    if (ri != 0)
+        fprintf(stderr, "[nyx] setup_shutdown_handler: no se pudo armar el apagado (SIGINT, error %d)\n", -ri);
 }
 

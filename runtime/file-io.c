@@ -416,3 +416,63 @@ int64_t nyx_rename_file(const char* old_path, const char* new_path) {
     if (!old_path || !new_path) return -1;
     return (int64_t)rename(old_path, new_path);
 }
+
+// ===== Estado de proceso y fds crudos (W5 Procesos A) =====
+// Antes vivían en process.c (posix-only). Ahora van por la capa os_* para que
+// getpid/getcwd/chdir/stat/isatty/open_fd/close_fd/dup2 compilen en win32;
+// fork/execvp/waitpid/pipe_new/kill_process siguen en process.c.
+// Contratos Nyx-facing idénticos a los de siempre (0/-1, "" o [] en fallo).
+// EN: process state / raw fds moved here from process.c, on top of os_*.
+#include "process.h"
+
+int64_t nyx_dup2(int64_t oldfd, int64_t newfd) {
+    int r = os_fd_dup2((int)oldfd, (int)newfd);
+    return r >= 0 ? (int64_t)r : -1;
+}
+
+int64_t nyx_chdir(nyx_string* path) {
+    if (!path) return -1;
+    return os_fs_chdir(nyx_string_to_cstr(path)) == 0 ? 0 : -1;
+}
+
+nyx_string* nyx_getcwd(void) {
+    char buf[4096];
+    if (os_fs_getcwd(buf, sizeof(buf)) == 0) {
+        return nyx_string_from_cstr(buf);
+    }
+    return nyx_string_from_cstr("");
+}
+
+nyx_array_t* nyx_stat(nyx_string* path) {
+    nyx_array_t* arr = nyx_array_new(8);
+    if (!path) return arr;
+
+    os_fs_stat_t st;
+    if (os_fs_stat_full(nyx_string_to_cstr(path), &st) != 0 || !st.exists) return arr;
+
+    nyx_array_push_tagged(arr, st.size, NYX_TAG_INT);
+    nyx_array_push_tagged(arr, st.mode, NYX_TAG_INT);
+    nyx_array_push_tagged(arr, st.mtime, NYX_TAG_INT);
+    nyx_array_push_tagged(arr, (int64_t)st.is_dir, NYX_TAG_BOOL);
+    nyx_array_push_tagged(arr, (int64_t)st.is_file, NYX_TAG_BOOL);
+    return arr;
+}
+
+int64_t nyx_isatty(int64_t fd) {
+    return (int64_t)os_term_isatty((int)fd);
+}
+
+int64_t nyx_close_fd(int64_t fd) {
+    return os_fd_close((int)fd) == 0 ? 0 : -1;
+}
+
+int64_t nyx_getpid(void) {
+    return os_proc_getpid();
+}
+
+// Open file returning raw fd. mode: 0=read, 1=write(trunc), 2=append
+int64_t nyx_open_fd(nyx_string* path, int64_t mode) {
+    if (!path) return -1;
+    int fd = os_fd_open(nyx_string_to_cstr(path), (int)mode);
+    return fd >= 0 ? (int64_t)fd : -1;
+}

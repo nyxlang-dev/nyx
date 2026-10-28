@@ -415,6 +415,38 @@ int os_proc_run_full(const char* cmd,
                      void* ud,
                      int64_t* code);
 
+// ES: ESTADO del proceso y de los fds crudos (W5 Procesos A) -- lo "trivial"
+// de process.c (getpid/getcwd/chdir/stat/open_fd/dup2) que ya no usa
+// headers posix directos, para que los builtins correspondientes compilen
+// también en win32. fork/execvp/waitpid/kill_process/pipe_new NO pasan por
+// aquí: no tienen equivalente Win32 con la misma semántica (Procesos B).
+// EN: process state and raw-fd helpers (W5 Procesos A): the "trivial" part
+// of process.c, now free of direct posix headers so the builtins compile on
+// win32 too. fork/execvp/waitpid/kill_process/pipe_new stay out of the layer.
+int64_t os_proc_getpid(void);                       // id del proceso actual (siempre > 0)
+// cwd en buf (NUL-terminado, UTF-8/ANSI crudo). 0 / -errno (-ERANGE si no cabe).
+// win32: separadores tal cual los da GetCurrentDirectoryA (con '\\').
+int os_fs_getcwd(char* buf, size_t cap);
+int os_fs_chdir(const char* path);                  // 0 / -errno
+// Metadatos de path (siguiendo enlaces). exists=0 y 0 de retorno si no existe
+// (mismo criterio que os_fs_stat); -errno en fallo real. mode es POSIX
+// (S_IFDIR=0040000, S_IFREG=0100000 + permisos): en win32 se SINTETIZA
+// (dir -> 040755; archivo -> 0100644, o 0100444 si es de solo lectura) porque
+// Windows no tiene bits de modo. mtime en segundos Unix (epoch 1970).
+// EN: path metadata (follows links). Returns 0 with exists=0 when missing;
+// -errno on a real failure. mode is POSIX-style; on win32 it is SYNTHESIZED.
+typedef struct { int exists; int64_t size; int64_t mode; int64_t mtime; int is_dir; int is_file; } os_fs_stat_t;
+int os_fs_stat_full(const char* path, os_fs_stat_t* out);
+// Abre un fd crudo. mode: 0 = leer, 1 = escribir (crea/trunca), 2 = añadir
+// (crea). Devuelve fd >= 0 o -errno. win32: fd de la CRT en modo binario y SIN
+// herencia (un fd de la CRT no es un SOCKET: no sirve para tcp_*).
+// EN: opens a raw fd. mode 0=read 1=write(trunc) 2=append. fd >= 0 or -errno.
+int os_fd_open(const char* path, int mode);
+// dup2: hace que newfd sea copia de oldfd. Devuelve newfd o -errno
+// (win32: _dup2 devuelve 0, la capa normaliza a newfd).
+// EN: dup2; returns newfd or -errno (win32 _dup2 returns 0; normalized).
+int os_fd_dup2(int oldfd, int newfd);
+
 // ES: variable de entorno del PROPIO proceso, con overwrite (único caller
 // medido: nyx_setenv en runtime.c). posix: setenv(name, value, 1); win32:
 // _putenv_s (la CRT de MSVC no tiene setenv; _putenv_s SÍ sobreescribe y
@@ -545,6 +577,9 @@ int   os_ev_run_once(os_ev_loop_t* l, int timeout_ms);
 // impl win32 traduce. Los consumers de ALTO nivel (self-pipe S2 de
 // runtime.c, shutdown de persist.c) conservan su lógica y solo registran
 // por acá.
+// win32 (W5): OS_SIGINT <- CTRL_C_EVENT; OS_SIGTERM <- CTRL_BREAK_EVENT,
+// CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT y CTRL_SHUTDOWN_EVENT. Registrar una
+// señal que la plataforma no puede entregar devuelve el error REAL (nunca 0).
 // EN: raw signal-handler registration. The handler runs in signal context
 // (async-signal-safe only). posix: signal(2); win32 (W5): console signals
 // arrive via SetConsoleCtrlHandler translated to these numbers.
@@ -572,6 +607,19 @@ int   os_ev_run_once(os_ev_loop_t* l, int timeout_ms);
 #define OS_SIGFPE   8
 #define OS_SIGSEGV  11
 typedef void (*os_sig_fn)(int signum);
+// ES: aviso del consumer de que YA terminó de atender `signum` (su closure
+// volvió). posix: no-op. win32: los eventos de consola CLOSE/LOGOFF/SHUTDOWN
+// terminan el proceso apenas vuelve el handler del sistema, así que ese
+// handler espera (con tope, ~4,5 s) a este aviso antes de volver; sin él, el
+// flush de persist/setup_shutdown_handler quedaría cortado a mitad. Se puede
+// llamar siempre: sin una espera en curso no hace nada.
+// EN: the consumer's notice that it has FINISHED handling `signum` (its
+// closure returned). posix: no-op. win32: console CLOSE/LOGOFF/SHUTDOWN events
+// terminate the process as soon as the system's handler returns, so that
+// handler waits (capped, ~4.5 s) for this notice before returning; without it
+// persist's / setup_shutdown_handler's flush would be cut mid-way. Always safe
+// to call: with no wait in progress it does nothing.
+void os_sig_handled(int signum);
 // signum fuera del rango que la plataforma soporta -> -EINVAL (la
 // plataforma es quien valida, esta capa no reimplementa el rango).
 // EN: signum outside the range the platform supports -> -EINVAL (the
@@ -774,6 +822,16 @@ int64_t os_fd_read(int fd, void* buf, int64_t n);        // n leidos (0 = EOF) /
 // errno are the only extra work, both async-signal-safe.
 int64_t os_fd_write(int fd, const void* buf, int64_t n); // n escritos / -errno
 int     os_fd_close(int fd);                             // 0 / -errno
+// ES: pone/quita el modo no bloqueante de un fd CRUDO (los del self-pipe de
+// señales). Distinto de os_sock_set_nonblocking, que en win32 es ioctlsocket y
+// solo vale para SOCKETs: sobre un fd del CRT falla. posix: fcntl O_NONBLOCK;
+// win32: SetNamedPipeHandleState(PIPE_NOWAIT) sobre el handle del _pipe.
+// 0 / -errno.
+// EN: sets/clears non-blocking mode on a RAW fd (the signal self-pipe's).
+// Unlike os_sock_set_nonblocking (win32: ioctlsocket, SOCKETs only — it fails
+// on a CRT fd). posix: fcntl O_NONBLOCK; win32: SetNamedPipeHandleState
+// (PIPE_NOWAIT) on the _pipe handle. 0 / -errno.
+int     os_fd_set_nonblocking(int fd, int on);
 
 // ES: CARRY de Task 1 (file-io.c) -- nyx_fsync/nyx_fdatasync migran acá,
 // unistd.h muere de file-io.c. win32: _commit para AMBAS (la CRT de Windows

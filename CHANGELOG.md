@@ -23,6 +23,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `test_crypto.c`, por las dos rutas). Lo que nyxerp midió (6,2 s) era además el runtime sin optimizar fuera de
   `--release` (ver el ítem anterior).
 
+### Agregado
+- **W5: procesos, señales y adapters `dl` compilan para Windows** [arco: w5-windows]: salen del gate de win32
+  `exec`, `exec_code`, `getpid`, `getcwd`, `chdir`, `stat`, `isatty`, `open_fd`, `close_fd`, `dup2`, `fsync`,
+  `fdatasync`, `signal_*` y `setup_shutdown_handler`. En Windows, `exec()` normaliza `\r\n` a `\n` y `exec_code()`
+  da 127 para un comando inexistente cuando la línea es simple. SIGINT y SIGTERM llegan por
+  `SetConsoleCtrlHandler`: Ctrl+C da SIGINT, y Ctrl+Break, cierre de consola, logoff y apagado dan SIGTERM, con
+  hasta 4,5 s para que el closure (el flush de `persist`) termine. `taskkill /F` y `TerminateProcess` no avisan.
+  Los adapters de sqlite, zlib y llama prueban también los nombres `.dll`, y `compress.c` carga zlib entero por
+  `dl` (sin `<zlib.h>` ni enlace obligatorio). Siguen solo-posix `fork`, `execvp`, `waitpid`, `kill_process` y
+  `pipe_new`, hasta el arco `procesos-spawn`. Sin cambios en Linux. **Nada verificado todavía en Windows real.**
+
+### Arreglado
+- **sqlite: un símbolo faltante es «biblioteca ausente», no un crash**: antes la biblioteca cargaba con un puntero
+  nulo que reventaba en la primera llamada. Ahora `try_sqlite_open` devuelve la causa con el nombre del símbolo y de
+  la biblioteca, y `sqlite_open` la avisa una vez por stderr. Variable nueva `NYX_SQLITE_SO`, que fija la biblioteca.
+
 ## [0.39.0] — 2026-10-27
 
 > **MINOR**: API nueva — `std/crypto` (AES-GCM), `std/exec` (`try_exec_full`), `try_ping`, las primitivas UDP

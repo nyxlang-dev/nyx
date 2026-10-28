@@ -55,9 +55,26 @@ static int llm_load_lib(void) {
     if (g_loaded == 1) return 0;
     if (g_loaded == 2) return -1;
     const char* env = getenv("NYX_LLAMA_SO");
-    const char* path = (env && env[0]) ? env : "libllama.so";
+#ifdef _WIN32
+    // Windows (W5, sin compilar aún): las distribuciones oficiales de
+    // llama.cpp (releases de GitHub, build shared) dejan llama.dll junto a
+    // ggml*.dll; algunos builds de MinGW lo llaman libllama.dll. Solo se
+    // prueban si NYX_LLAMA_SO no está fijada. Linux conserva "libllama.so".
+    // EN: win32 default chain; Linux keeps "libllama.so" unchanged.
+    static const char* const defaults[] = { "llama.dll", "libllama.dll", NULL };
+#else
+    static const char* const defaults[] = { "libllama.so", NULL };
+#endif
+    const char* path = (env && env[0]) ? env : defaults[0];
     snprintf(g_libpath, sizeof(g_libpath), "%s", path);
     g_lib = os_dl_open(path, 1);
+    if (!g_lib && !(env && env[0])) {
+        for (int i = 1; defaults[i] && !g_lib; i++) {
+            snprintf(g_libpath, sizeof(g_libpath), "%s", defaults[i]);
+            g_lib = os_dl_open(defaults[i], 1);
+        }
+        if (!g_lib) snprintf(g_libpath, sizeof(g_libpath), "%s", path);
+    }
     if (!g_lib) {
         snprintf(g_err, sizeof(g_err),
                  "llama adapter: cannot dlopen '%s' (%s) — set NYX_LLAMA_SO or install libllama",

@@ -84,46 +84,129 @@ static fn_changes g_changes = NULL;
 
 static int g_loaded = 0;  // 0=unloaded, 1=ok, 2=failed
 
+// Mensaje del último fallo de carga (biblioteca ausente o símbolo faltante).
+// Vacío mientras no haya fallado. Lo lee nyx_sqlite_load_error() para que
+// try_sqlite_open diga POR QUÉ no abrió, con el nombre del símbolo.
+// EN: message of the last load failure (missing library or missing symbol).
+static char g_load_err[512] = "";
+
+// Tabla símbolo -> puntero. Un símbolo que falta NO deja un puntero nulo para
+// que reviente en la primera llamada: es «biblioteca ausente» con el nombre
+// del símbolo (mismo criterio que llm_sym en llama_adapter.c).
+// EN: symbol table; any missing symbol fails the whole load, by name.
+typedef struct { const char* name; void** slot; } sqlite_sym_t;
+static const sqlite_sym_t g_sqlite_syms[] = {
+    { "sqlite3_open",              (void**)&g_open    },
+    { "sqlite3_close",             (void**)&g_close   },
+    { "sqlite3_exec",              (void**)&g_exec    },
+    { "sqlite3_free",              (void**)&g_free    },
+    { "sqlite3_prepare_v2",        (void**)&g_prepare },
+    { "sqlite3_step",              (void**)&g_step    },
+    { "sqlite3_finalize",          (void**)&g_fin     },
+    { "sqlite3_column_count",      (void**)&g_ncols   },
+    { "sqlite3_column_text",       (void**)&g_ctext   },
+    { "sqlite3_column_name",       (void**)&g_cname   },
+    { "sqlite3_column_int",        (void**)&g_cint    },
+    { "sqlite3_column_int64",      (void**)&g_cint64  },
+    { "sqlite3_column_type",       (void**)&g_ctype   },
+    { "sqlite3_column_double",     (void**)&g_cdbl    },
+    { "sqlite3_errmsg",            (void**)&g_errmsg  },
+    { "sqlite3_bind_text",         (void**)&g_btxt    },
+    { "sqlite3_bind_int",          (void**)&g_bint    },
+    { "sqlite3_bind_int64",        (void**)&g_bint64  },
+    { "sqlite3_bind_null",         (void**)&g_bnull   },
+    { "sqlite3_bind_double",       (void**)&g_bdbl    },
+    { "sqlite3_last_insert_rowid", (void**)&g_lastid  },
+    { "sqlite3_changes",           (void**)&g_changes },
+};
+
+static void sqlite_reset_syms(void) {
+    for (size_t i = 0; i < sizeof g_sqlite_syms / sizeof g_sqlite_syms[0]; i++)
+        *g_sqlite_syms[i].slot = NULL;
+}
+
+static os_dl_t sqlite_try_open(const char* name) {
+    return os_dl_open(name, 1);
+}
+
 static int sqlite_load(void) {
     if (g_loaded == 1) return 0;
     if (g_loaded == 2) return -1;
 
-    g_lib = os_dl_open("libsqlite3.so.0", 1);
-    if (!g_lib) g_lib = os_dl_open("libsqlite3.so", 1);
-    if (!g_lib) { g_loaded = 2; return -1; }
+    // NYX_SQLITE_SO: ruta o nombre explícito (mismo contrato que
+    // NYX_LLAMA_SO). Si está, es la ÚNICA candidata. Sirve también de
+    // costura de test: apuntarla a una biblioteca que no es sqlite prueba el
+    // camino «símbolo faltante» sin un .so roto en disco.
+    // EN: explicit override; the only candidate when set (also a test seam).
+    const char* env = getenv("NYX_SQLITE_SO");
+    const char* tried = NULL;
+    if (env && env[0]) {
+        tried = env;
+        g_lib = sqlite_try_open(env);
+    } else {
+        // Orden Linux INTACTO; los nombres de Windows van detrás y solo en
+        // win32 (spike W5 §3). sqlite3.dll es el de sqlite.org y el que deja
+        // vcpkg (port sqlite3); winsqlite3.dll es la copia del sistema
+        // (System32, Windows 10+): último recurso, sin instalar nada.
+        // EN: Linux order untouched; Windows names appended, win32 only.
+        static const char* const names[] = {
+#ifdef _WIN32
+            "sqlite3.dll", "winsqlite3.dll",
+#else
+            "libsqlite3.so.0", "libsqlite3.so",
+#endif
+            NULL
+        };
+        for (int i = 0; names[i] && !g_lib; i++) {
+            tried = names[i];
+            g_lib = sqlite_try_open(names[i]);
+        }
+    }
+    if (!g_lib) {
+        const char* why = os_dl_error();
+        snprintf(g_load_err, sizeof g_load_err,
+                 "sqlite: biblioteca ausente (no se pudo cargar '%s'%s%s)",
+                 tried ? tried : "?", why ? ": " : "", why ? why : "");
+        g_loaded = 2;
+        return -1;
+    }
 
-    g_open    = (fn_open)   os_dl_sym(g_lib, "sqlite3_open");
-    g_close   = (fn_close)  os_dl_sym(g_lib, "sqlite3_close");
-    g_exec    = (fn_exec)   os_dl_sym(g_lib, "sqlite3_exec");
-    g_free    = (fn_free)   os_dl_sym(g_lib, "sqlite3_free");
-    g_prepare = (fn_prepare)os_dl_sym(g_lib, "sqlite3_prepare_v2");
-    g_step    = (fn_step)   os_dl_sym(g_lib, "sqlite3_step");
-    g_fin     = (fn_fin)    os_dl_sym(g_lib, "sqlite3_finalize");
-    g_ncols   = (fn_ncols)  os_dl_sym(g_lib, "sqlite3_column_count");
-    g_ctext   = (fn_ctext)  os_dl_sym(g_lib, "sqlite3_column_text");
-    g_cname   = (fn_cname)  os_dl_sym(g_lib, "sqlite3_column_name");
-    g_cint    = (fn_cint)   os_dl_sym(g_lib, "sqlite3_column_int");
-    g_cint64  = (fn_cint64) os_dl_sym(g_lib, "sqlite3_column_int64");
-    g_ctype   = (fn_ctype)  os_dl_sym(g_lib, "sqlite3_column_type");
-    g_cdbl    = (fn_cdbl)   os_dl_sym(g_lib, "sqlite3_column_double");
-    g_errmsg  = (fn_errmsg) os_dl_sym(g_lib, "sqlite3_errmsg");
-    g_btxt    = (fn_btxt)   os_dl_sym(g_lib, "sqlite3_bind_text");
-    g_bint    = (fn_bint)   os_dl_sym(g_lib, "sqlite3_bind_int");
-    g_bint64  = (fn_bint64) os_dl_sym(g_lib, "sqlite3_bind_int64");
-    g_bnull   = (fn_bnull)  os_dl_sym(g_lib, "sqlite3_bind_null");
-    g_bdbl    = (fn_bdbl)   os_dl_sym(g_lib, "sqlite3_bind_double");
-    g_lastid  = (fn_lastid) os_dl_sym(g_lib, "sqlite3_last_insert_rowid");
-    g_changes = (fn_changes)os_dl_sym(g_lib, "sqlite3_changes");
+    for (size_t i = 0; i < sizeof g_sqlite_syms / sizeof g_sqlite_syms[0]; i++) {
+        void* p = os_dl_sym(g_lib, g_sqlite_syms[i].name);
+        if (!p) {
+            snprintf(g_load_err, sizeof g_load_err,
+                     "sqlite: biblioteca ausente o incompatible (falta el simbolo '%s' en '%s')",
+                     g_sqlite_syms[i].name, tried ? tried : "?");
+            sqlite_reset_syms();
+            g_loaded = 2;
+            return -1;
+        }
+        *g_sqlite_syms[i].slot = p;
+    }
 
     g_loaded = 1;
     return 0;
+}
+
+// Mensaje del fallo de carga ("" si cargó bien o aún no se intentó).
+// EN: load-failure message ("" if loaded OK / not attempted yet).
+nyx_string* nyx_sqlite_load_error(void) {
+    sqlite_load();
+    return nyx_string_from_cstr(g_load_err);
 }
 
 // === Nyx bridge functions (String params = nyx_string* from Nyx ABI) ===
 
 // nyx_sqlite_open(path: String) -> *int
 void* nyx_sqlite_open(nyx_string* path) {
-    if (sqlite_load() < 0) return NULL;
+    if (sqlite_load() < 0) {
+        // sqlite_open (sin try) devuelve NULL y quien sigue de largo muere
+        // lejos de la causa: se avisa UNA vez por stderr, con la causa.
+        // EN: warn once on stderr so the plain sqlite_open path fails clean.
+        static int warned = 0;
+        if (!warned) { warned = 1; fprintf(stderr, "%s\n", g_load_err); }
+        return NULL;
+    }
     nyx_db3* db = NULL;
     int rc = g_open(ns_cstr(path), &db);
     if (rc != SQLITE_OK) return NULL;

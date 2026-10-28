@@ -209,6 +209,8 @@ int         os_dl_close(os_dl_t h) { (void)h; return -ENOSYS; }
 // ever executes this path.
 int os_sig_install(int signum, os_sig_fn fn) { (void)signum; (void)fn; return -ENOSYS; }
 int os_sig_install_no_restart(int signum, os_sig_fn fn) { (void)signum; (void)fn; return -ENOSYS; }
+void os_sig_handled(int signum) { (void)signum; }
+int os_fd_set_nonblocking(int fd, int on) { (void)fd; (void)on; return -ENOSYS; }
 int os_sig_reset(int signum) { (void)signum; return -ENOSYS; }
 int os_sig_ignore(int signum) { (void)signum; return -ENOSYS; }
 int os_sig_is_default(int signum) { (void)signum; return -ENOSYS; }
@@ -324,3 +326,14 @@ int os_fd_close(int fd) { return close(fd) == 0 ? 0 : -errno; }
 
 int os_fd_sync(int fd) { return fsync(fd) == 0 ? 0 : -errno; }
 int os_fd_datasync(int fd) { return fdatasync(fd) == 0 ? 0 : -errno; }
+
+// W5 Procesos A: wasm no tiene procesos ni cwd propio utilizable por Nyx
+// (los builtins correspondientes están en wasm_forbidden_builtin); estos stubs
+// solo mantienen el link de file-io.c.
+// EN: stubs only to keep file-io.c linking; the builtins are wasm-forbidden.
+int64_t os_proc_getpid(void) { return 1; }
+int os_fs_getcwd(char* buf, size_t cap) { (void)buf; (void)cap; return -ENOSYS; }
+int os_fs_chdir(const char* path) { (void)path; return -ENOSYS; }
+int os_fs_stat_full(const char* path, os_fs_stat_t* out) { (void)path; (void)out; return -ENOSYS; }
+int os_fd_open(const char* path, int mode) { (void)path; (void)mode; return -ENOSYS; }
+int os_fd_dup2(int oldfd, int newfd) { (void)oldfd; (void)newfd; return -ENOSYS; }

@@ -21,6 +21,7 @@ import "std/error"
 
 // FFI declarations — sqlite adapter bridge
 extern "C" fn nyx_sqlite_open(path: String) -> *int
+extern "C" fn nyx_sqlite_load_error() -> String
 extern "C" fn nyx_sqlite_close(db: *int)
 extern "C" fn nyx_sqlite_exec(db: *int, sql: String) -> int
 extern "C" fn nyx_sqlite_prepare(db: *int, sql: String) -> *int
@@ -229,6 +230,12 @@ pub fn sqlite_error(db: *int) -> String {
 pub fn try_sqlite_open(path: String) -> Result<*int, Error> {
     let db: *int = nyx_sqlite_open(path)
     if db == 0 {
+        // Si la biblioteca no cargó (o le falta un símbolo) la causa es esa,
+        // con el nombre del símbolo; si cargó, es el fallback de siempre.
+        let why: String = nyx_sqlite_load_error()
+        if why.byte_length() > 0 {
+            return Result.Err(err_new(0, "db", why))
+        }
         return Result.Err(err_new(0, "db", "no se pudo abrir " + path))
     }
     return Result.Ok(db)

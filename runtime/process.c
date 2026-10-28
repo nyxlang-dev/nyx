@@ -1,20 +1,22 @@
 // ============================================
 // PROCESS.C — POSIX process control for Nyx
 // ============================================
-// Provides fork/exec/wait/pipe/dup2 and other POSIX primitives
-// needed for building a shell and general process management.
+// Provides fork/exec/wait/pipe/kill: the part of process control with NO Win32
+// equivalent (Procesos B, con spec aparte). Este archivo NO se compila en
+// Windows. Lo "trivial" (getpid/getcwd/chdir/stat/isatty/open_fd/close_fd/
+// dup2) vive en file-io.c sobre la capa os_* desde W5 (Procesos A).
+// EN: fork/exec/wait/pipe/kill only; not built on Windows. The portable
+// process-state builtins moved to file-io.c on top of os_* (W5 Procesos A).
 
 #include "process.h"
 
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/stat.h>
 #include <signal.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
 
 // NOTE on GC safety after fork():
 // Boehm GC state may be inconsistent in the child after fork().
@@ -72,50 +74,6 @@ int64_t nyx_waitpid(int64_t pid, int64_t options) {
     return -1;
 }
 
-int64_t nyx_dup2(int64_t oldfd, int64_t newfd) {
-    int result = dup2((int)oldfd, (int)newfd);
-    return (int64_t)result;
-}
-
-int64_t nyx_chdir(nyx_string* path) {
-    if (!path) return -1;
-    const char* p = nyx_string_to_cstr(path);
-    return (int64_t)chdir(p);
-}
-
-nyx_string* nyx_getcwd(void) {
-    char buf[4096];
-    if (getcwd(buf, sizeof(buf)) != NULL) {
-        return nyx_string_from_cstr(buf);
-    }
-    return nyx_string_from_cstr("");
-}
-
-nyx_array_t* nyx_stat(nyx_string* path) {
-    nyx_array_t* arr = nyx_array_new(8);
-    if (!path) return arr;
-
-    const char* p = nyx_string_to_cstr(path);
-    struct stat st;
-    if (stat(p, &st) != 0) return arr;
-
-    nyx_array_push_tagged(arr, (int64_t)st.st_size, NYX_TAG_INT);
-    nyx_array_push_tagged(arr, (int64_t)st.st_mode, NYX_TAG_INT);
-    nyx_array_push_tagged(arr, (int64_t)st.st_mtime, NYX_TAG_INT);
-    nyx_array_push_tagged(arr, (int64_t)S_ISDIR(st.st_mode), NYX_TAG_BOOL);
-    nyx_array_push_tagged(arr, (int64_t)S_ISREG(st.st_mode), NYX_TAG_BOOL);
-
-    return arr;
-}
-
-int64_t nyx_isatty(int64_t fd) {
-    return (int64_t)isatty((int)fd);
-}
-
-int64_t nyx_close_fd(int64_t fd) {
-    return (int64_t)close((int)fd);
-}
-
 nyx_array_t* nyx_pipe(void) {
     nyx_array_t* arr = nyx_array_new(2);
     int fds[2];
@@ -126,27 +84,6 @@ nyx_array_t* nyx_pipe(void) {
     return arr;
 }
 
-int64_t nyx_getpid(void) {
-    return (int64_t)getpid();
-}
-
 int64_t nyx_kill(int64_t pid, int64_t sig) {
     return (int64_t)kill((pid_t)pid, (int)sig);
-}
-
-// Open file returning raw fd. mode: 0=read, 1=write(trunc), 2=append
-int64_t nyx_open_fd(nyx_string* path, int64_t mode) {
-    if (!path) return -1;
-    const char* p = nyx_string_to_cstr(path);
-    int fd;
-    if (mode == 0) {
-        fd = open(p, O_RDONLY);
-    } else if (mode == 1) {
-        fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    } else if (mode == 2) {
-        fd = open(p, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    } else {
-        return -1;
-    }
-    return (int64_t)fd;
 }

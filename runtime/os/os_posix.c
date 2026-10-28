@@ -1698,6 +1698,10 @@ int os_sig_install_no_restart(int signum, os_sig_fn fn) {
     return sigaction(signum, &sa, NULL) != 0 ? -errno : 0;
 }
 
+// posix: la señal ya se entregó en el contexto del proceso; no hay nada que
+// esperar. EN: posix: nothing to wait on.
+void os_sig_handled(int signum) { (void)signum; }
+
 int os_sig_reset(int signum) {
     return signal(signum, SIG_DFL) == SIG_ERR ? -errno : 0;
 }
@@ -2282,6 +2286,18 @@ int os_fd_close(int fd) {
     return close(fd) == 0 ? 0 : -errno;
 }
 
+// fcntl O_NONBLOCK sobre un fd crudo (lo que runtime.c hacía vía
+// os_sock_set_nonblocking, que en posix es exactamente esto).
+// EN: fcntl O_NONBLOCK on a raw fd (what runtime.c did through
+// os_sock_set_nonblocking, which on posix is exactly this).
+int os_fd_set_nonblocking(int fd, int on) {
+    int fl = fcntl(fd, F_GETFL, 0);
+    if (fl < 0) return -errno;
+    int want = on ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK);
+    if (want == fl) return 0;
+    return fcntl(fd, F_SETFL, want) == 0 ? 0 : -errno;
+}
+
 // CARRY de Task 1 (file-io.c): fsync/fdatasync -- mecánica VERBATIM de
 // nyx_fsync/nyx_fdatasync (file-io.c), que migran a llamar acá.
 // EN: Task 1 carry (file-io.c): fsync/fdatasync -- VERBATIM mechanics of
@@ -2292,4 +2308,59 @@ int os_fd_sync(int fd) {
 
 int os_fd_datasync(int fd) {
     return fdatasync(fd) == 0 ? 0 : -errno;
+}
+
+// ---------------------------------------------------------------------------
+// Estado de proceso y fds crudos (W5 Procesos A) -- mecánica VERBATIM de
+// lo que process.c hacía inline (getpid/getcwd/chdir/stat/open/dup2); solo
+// se movió para que los builtins compilen también en win32.
+// EN: process state / raw fds (W5 Procesos A) -- VERBATIM mechanics of what
+// process.c did inline; moved only so the builtins also compile on win32.
+// ---------------------------------------------------------------------------
+int64_t os_proc_getpid(void) {
+    return (int64_t)getpid();
+}
+
+int os_fs_getcwd(char* buf, size_t cap) {
+    if (!buf || cap == 0) return -EINVAL;
+    return getcwd(buf, cap) != NULL ? 0 : -errno;
+}
+
+int os_fs_chdir(const char* path) {
+    if (!path) return -EINVAL;
+    return chdir(path) == 0 ? 0 : -errno;
+}
+
+int os_fs_stat_full(const char* path, os_fs_stat_t* out) {
+    if (!out) return -EINVAL;
+    memset(out, 0, sizeof(*out));
+    if (!path) return -EINVAL;
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        // Igual que os_fs_stat: "no existe" no es error de la capa.
+        if (errno == ENOENT || errno == ENOTDIR) return 0;
+        return -errno;
+    }
+    out->exists = 1;
+    out->size = (int64_t)st.st_size;
+    out->mode = (int64_t)st.st_mode;
+    out->mtime = (int64_t)st.st_mtime;
+    out->is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
+    out->is_file = S_ISREG(st.st_mode) ? 1 : 0;
+    return 0;
+}
+
+int os_fd_open(const char* path, int mode) {
+    if (!path) return -EINVAL;
+    int fd;
+    if (mode == 0)      fd = open(path, O_RDONLY);
+    else if (mode == 1) fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    else if (mode == 2) fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    else return -EINVAL;
+    return fd >= 0 ? fd : -errno;
+}
+
+int os_fd_dup2(int oldfd, int newfd) {
+    int r = dup2(oldfd, newfd);
+    return r >= 0 ? r : -errno;
 }

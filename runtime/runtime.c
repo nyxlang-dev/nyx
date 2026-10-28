@@ -1070,6 +1070,10 @@ static void* nyx_signal_drain_thread(void* arg) {
         // Carrera benigna con signal_reset: un byte de una señal ya
         // des-registrada simplemente se ignora.
         if (h) nyx_call_closure_i64(h, (int64_t)sig);
+        // win32: avisa al handler de consola que el closure ya volvió (los
+        // eventos CLOSE/SHUTDOWN esperan este aviso antes de dejar morir el
+        // proceso). posix: no-op.
+        os_sig_handled(sig);
     }
     return NULL;
 }
@@ -1096,16 +1100,19 @@ static int nyx_signal_is_sync(int64_t s) {
 // handler_fn receives the signal number as argument.
 // El closure corre en el THREAD DRENADOR (contexto normal), no en el thread
 // interrumpido — cambio de semántica documentado en CHANGELOG v0.24.32.
-void nyx_signal_handle(int64_t signum, void* handler) {
-    if (signum < 0 || signum >= 64) return;
+//
+// nyx_signal_handle_checked devuelve 0 / -errno (EINVAL: señal inválida o
+// síncrona; el error REAL de la plataforma si no se pudo armar) para que
+// quien necesita saber si quedó armado (persist.c) no falle en silencio.
+// nyx_signal_handle (builtin, void) lo envuelve y reporta a stderr.
+int nyx_signal_handle_checked(int64_t signum, void* handler) {
+    if (signum < 0 || signum >= 64) return -EINVAL;
     // Señales SINCRÓNICAS jamás van por el pipe: un fault no es diferible.
     // Reservadas para el handler de guard-page del arco de stacks (S4).
-    if (nyx_signal_is_sync(signum)) {
-        fprintf(stderr, "[nyx] signal_handle: la señal síncrona %lld no se puede manejar con un closure Nyx\n", (long long)signum);
-        return;
-    }
+    if (nyx_signal_is_sync(signum)) return -EINVAL;
     if (!nyx_sig_thread_started) {
-        if (os_fd_pipe(nyx_sig_pipe) != 0) return;
+        int prc = os_fd_pipe(nyx_sig_pipe);
+        if (prc != 0) return prc < 0 ? prc : -EIO;
         // Escritura non-blocking: si el pipe se llena (ráfaga de 64K
         // señales), el trampolín descarta en vez de bloquear en contexto
         // de señal. os_sock_set_nonblocking sirve para CUALQUIER fd (fcntl
@@ -1116,20 +1123,43 @@ void nyx_signal_handle(int64_t signum, void* handler) {
         // context. os_sock_set_nonblocking works on ANY fd (fcntl
         // O_NONBLOCK), not just sockets -- reused here instead of a
         // dedicated os_fd_set_nonblocking (Step Zero, W2 phase A term+fd).
-        os_sock_set_nonblocking(nyx_sig_pipe[1], 1);
+        // (W5: os_fd_set_nonblocking, no os_sock_set_nonblocking: en win32 ese
+        // es ioctlsocket y falla en silencio sobre un fd del CRT.) Si no se
+        // puede, el trampolín podría bloquear con el pipe lleno: se reporta.
+        // EN: (W5: os_fd_set_nonblocking — ioctlsocket silently fails on a CRT fd.)
+        int nrc = os_fd_set_nonblocking(nyx_sig_pipe[1], 1);
+        if (nrc != 0) {
+            fprintf(stderr, "[nyx] signal_handle: no se pudo poner el self-pipe en modo no bloqueante (%d); un pipe lleno bloquearía al emisor\n", nrc);
+        }
         os_thread_t t;
         if (os_thread_create(&t, nyx_signal_drain_thread, NULL) != 0) {
             os_fd_close(nyx_sig_pipe[0]);
             os_fd_close(nyx_sig_pipe[1]);
             nyx_sig_pipe[0] = -1;
             nyx_sig_pipe[1] = -1;
-            return;
+            return -EAGAIN;
         }
         os_thread_detach(&t);
         nyx_sig_thread_started = 1;
     }
+    void* prev = nyx_signal_handlers[signum];
     nyx_signal_handlers[signum] = handler;
-    os_sig_install((int)signum, nyx_signal_trampoline);
+    int rc = os_sig_install((int)signum, nyx_signal_trampoline);
+    if (rc != 0) {
+        nyx_signal_handlers[signum] = prev;   // no quedó armado: no fingirlo
+        return rc < 0 ? rc : -EIO;
+    }
+    return 0;
+}
+
+void nyx_signal_handle(int64_t signum, void* handler) {
+    int rc = nyx_signal_handle_checked(signum, handler);
+    if (rc == 0) return;
+    if (signum >= 0 && signum < 64 && nyx_signal_is_sync(signum)) {
+        fprintf(stderr, "[nyx] signal_handle: la señal síncrona %lld no se puede manejar con un closure Nyx\n", (long long)signum);
+    } else {
+        fprintf(stderr, "[nyx] signal_handle: no se pudo registrar la señal %lld (error %d)\n", (long long)signum, -rc);
+    }
 }
 
 // Reset signal to default handler

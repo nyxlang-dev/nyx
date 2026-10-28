@@ -3192,6 +3192,8 @@ kill_process(pid, 15)  // send signal (15=SIGTERM)
 
 > **GC Safety**: After `fork()`, the child must call `execvp()` immediately without allocating GC memory. The fork+exec pattern is safe.
 
+> **Windows (W5, Procesos A)**: `exec`, `exec_code`, `getpid`, `getcwd`, `chdir`, `stat`, `isatty`, `open_fd`, `close_fd`, `dup2`, `fsync` y `fdatasync` compilan para `x86_64-pc-windows-msvc`. `fork`, `execvp`, `waitpid`, `kill_process` y `pipe_new` siguen siendo solo-posix (error de compilación claro en el target Windows; el reemplazo portable es el `spawn` de Procesos B). Diferencias en Windows: `exec()` normaliza `\r\n` a `\n`; `exec_code()` devuelve 127 para un comando inexistente cuando la línea es simple (sin `& | < > ^ %`), y el código crudo del shell en otro caso; `stat` sintetiza el modo (directorio `040755`, archivo `0100644`, o `0100444` si es de solo lectura); los fds de `open_fd` son fds de la CRT (binarios, no heredables), no sockets.
+
 ---
 
 ## JSON
@@ -3682,6 +3684,19 @@ signal_handle(2, my_handler)  // SIGINT
 signal_reset(2)               // resetear a default
 signal_ignore(2)              // ignorar signal
 ```
+
+**Windows.** `signal_handle`, `signal_reset`, `signal_ignore` y `setup_shutdown_handler`
+funcionan solo con `2` (SIGINT) y `15` (SIGTERM); Windows no tiene las demás señales
+POSIX (`28`/SIGWINCH da error). Llegan por eventos de consola
+(`SetConsoleCtrlHandler`): `CTRL_C_EVENT` entrega SIGINT; `CTRL_BREAK_EVENT`,
+`CTRL_CLOSE_EVENT`, `CTRL_LOGOFF_EVENT` y `CTRL_SHUTDOWN_EVENT` entregan SIGTERM. Un
+supervisor entrega SIGTERM a un proceso de consola lanzado con
+`CREATE_NEW_PROCESS_GROUP` mediante `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)`.
+`taskkill` sin `/F` no llega a un proceso de consola, y `/F` o `TerminateProcess` matan
+sin avisar: en esos casos no corre ningún closure ni flush. En CLOSE/LOGOFF/SHUTDOWN
+Windows termina el proceso a los ~5 s; el runtime espera hasta 4,5 s a que el closure
+vuelva. Si la plataforma no puede registrar la señal, `signal_handle` y
+`setup_shutdown_handler` lo avisan por stderr (no fallan en silencio).
 
 ---
 

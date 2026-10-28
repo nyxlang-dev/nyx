@@ -1,5 +1,6 @@
 // runtime/compress.c — Compression bindings for Nyx (v4.4.0)
-// Provides gzip/zlib compress/decompress via direct zlib linkage
+// Provides gzip/zlib compress/decompress; zlib se carga por os_dl_* (ni se
+// enlaza ni se incluye <zlib.h>) / zlib is loaded via os_dl_*, not linked
 // Also provides base64 encode/decode (pure C, no external dep)
 
 #include "strings.h"
@@ -8,7 +9,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <zlib.h>
 #include <gc/gc.h>
 
 // ── zlib's `inflate` symbol vs Nyx's `pub fn inflate` — dlopen workaround ───
@@ -31,14 +31,65 @@
 // executable-wide collision), os_dl_sym on a specific os_dl_open() handle
 // resolves within that library's own symbol table, bypassing the collision.
 // Same pattern as runtime/sqlite_adapter.c's os_dl_open of libsqlite3.
-typedef int (*fn_inflateInit2_)(z_streamp strm, int windowBits, const char* version, int stream_size);
-typedef int (*fn_inflate_call)(z_streamp strm, int flush);
-typedef int (*fn_inflateEnd_call)(z_streamp strm);
+// ── Tipos de zlib declarados acá (sin <zlib.h>) ─────────────────────────────
+//
+// W5: <zlib.h> no existe en el entorno win32 y, con todo cargado por dl, ya no
+// hace falta enlazar contra zlib NI tener sus headers para compilar. Se
+// declara lo mínimo. El layout de z_stream es ABI público y estable de zlib
+// 1.x (uLong = unsigned long: 32 bits en LLP64/Windows, 64 en LP64, igual que
+// en la zlib de cada plataforma). inflateInit2_ solo verifica que version[0]
+// == '1' y que stream_size == sizeof(z_stream); por eso ZLIB_VERSION fijo.
+// EN: minimal local declarations; z_stream layout is zlib 1.x's stable public
+// ABI. inflateInit2_ only checks version[0]=='1' and stream_size.
+typedef unsigned char  Bytef;
+typedef unsigned int   uInt;
+typedef unsigned long  uLong;
+typedef struct z_stream_s {
+    const Bytef* next_in;  uInt avail_in;  uLong total_in;
+    Bytef*       next_out; uInt avail_out; uLong total_out;
+    const char*  msg;
+    void*        state;
+    void* (*zalloc)(void*, uInt, uInt);
+    void  (*zfree)(void*, void*);
+    void*        opaque;
+    int          data_type;
+    uLong        adler;
+    uLong        reserved;
+} z_stream;
+typedef z_stream* z_streamp;
+#define Z_OK            0
+#define Z_STREAM_END    1
+#define Z_NEED_DICT     2
+#define Z_DATA_ERROR   (-3)
+#define Z_MEM_ERROR    (-4)
+#define Z_BUF_ERROR    (-5)
+#define Z_NO_FLUSH      0
+#define Z_DEFAULT_COMPRESSION (-1)
+#define Z_NULL          0
+#define ZLIB_VERSION   "1.2.11"
 
-static fn_inflateInit2_   g_zlib_inflateInit2_ = NULL;
-static fn_inflate_call    g_zlib_inflate       = NULL;
-static fn_inflateEnd_call g_zlib_inflateEnd    = NULL;
+typedef int   (*fn_inflateInit2_)(z_streamp strm, int windowBits, const char* version, int stream_size);
+typedef int   (*fn_inflate_call)(z_streamp strm, int flush);
+typedef int   (*fn_inflateEnd_call)(z_streamp strm);
+typedef int   (*fn_compress2_call)(Bytef* dest, uLong* destLen, const Bytef* source, uLong sourceLen, int level);
+typedef uLong (*fn_compressBound_call)(uLong sourceLen);
+
+static fn_inflateInit2_      g_zlib_inflateInit2_ = NULL;
+static fn_inflate_call       g_zlib_inflate       = NULL;
+static fn_inflateEnd_call    g_zlib_inflateEnd    = NULL;
+static fn_compress2_call     g_zlib_compress2     = NULL;
+static fn_compressBound_call g_zlib_compressBound = NULL;
 static int g_zlib_loaded = 0; // 0=unloaded, 1=ok, 2=failed
+
+// Avisa UNA vez, por stderr, por qué no hay zlib (antes: "" mudo).
+// EN: warn once on stderr why zlib is unavailable (was a silent "").
+static void zlib_warn(const char* what, const char* detail) {
+    static int warned = 0;
+    if (warned) return;
+    warned = 1;
+    fprintf(stderr, "compress: zlib no disponible (%s%s%s)\n",
+            what, detail ? ": " : "", detail ? detail : "");
+}
 
 static int zlib_inflate_load(void) {
 #ifdef __wasi__
@@ -47,24 +98,51 @@ static int zlib_inflate_load(void) {
     if (g_zlib_loaded == 1) return 0;
     if (g_zlib_loaded == 2) return -1;
 
-    // libz is already a DT_NEEDED of this binary (-lz), so os_dl_open just
-    // bumps its refcount and returns the existing link map — no double
-    // load. global=0 (RTLD_LOCAL default): we look symbols up via this
-    // specific handle, not via the global scope, so we never re-collide with
-    // our own executable's `inflate`.
-    os_dl_t lib = os_dl_open("libz.so.1", 0);
-    if (!lib) lib = os_dl_open("libz.so", 0);
-    if (!lib) { g_zlib_loaded = 2; return -1; }
+    // En Linux libz sigue siendo DT_NEEDED del binario (-lz sigue en los
+    // enlaces), así que os_dl_open solo sube el refcount y devuelve el link
+    // map existente — mismo comportamiento de siempre, orden intacto.
+    // global=0 (RTLD_LOCAL): los símbolos se piden por ESTE handle, nunca por
+    // el ámbito global, para no chocar con el `inflate` del ejecutable.
+    // Nombres de Windows (solo win32, detrás): zlib1.dll es el de vcpkg/zlib
+    // oficial; z.dll lo deja algún build de vcpkg/CMake; libz.dll, MinGW.
+    // EN: Linux order untouched; Windows names appended on win32 only.
+    static const char* const names[] = {
+#ifdef _WIN32
+        "zlib1.dll", "z.dll", "libz.dll",
+#else
+        "libz.so.1", "libz.so",
+#endif
+        NULL
+    };
+    os_dl_t lib = NULL;
+    const char* last = NULL;
+    for (int i = 0; names[i] && !lib; i++) { last = names[i]; lib = os_dl_open(names[i], 0); }
+    if (!lib) {
+        zlib_warn(last ? last : "?", os_dl_error());
+        g_zlib_loaded = 2;
+        return -1;
+    }
 
     // inflateInit2() is a macro around the real exported symbol
     // inflateInit2_(strm, windowBits, ZLIB_VERSION, sizeof(z_stream)).
-    g_zlib_inflateInit2_ = (fn_inflateInit2_)os_dl_sym(lib, "inflateInit2_");
-    g_zlib_inflate        = (fn_inflate_call)os_dl_sym(lib, "inflate");
-    g_zlib_inflateEnd     = (fn_inflateEnd_call)os_dl_sym(lib, "inflateEnd");
-
-    if (!g_zlib_inflateInit2_ || !g_zlib_inflate || !g_zlib_inflateEnd) {
-        g_zlib_loaded = 2;
-        return -1;
+    static const struct { const char* name; void** slot; } syms[] = {
+        { "inflateInit2_",  (void**)&g_zlib_inflateInit2_ },
+        { "inflate",        (void**)&g_zlib_inflate },
+        { "inflateEnd",     (void**)&g_zlib_inflateEnd },
+        { "compress2",      (void**)&g_zlib_compress2 },
+        { "compressBound",  (void**)&g_zlib_compressBound },
+    };
+    for (size_t i = 0; i < sizeof syms / sizeof syms[0]; i++) {
+        void* p = os_dl_sym(lib, syms[i].name);
+        if (!p) {
+            for (size_t j = 0; j < sizeof syms / sizeof syms[0]; j++) *syms[j].slot = NULL;
+            char msg[160];
+            snprintf(msg, sizeof msg, "falta el simbolo '%s' en '%s'", syms[i].name, last);
+            zlib_warn("biblioteca incompatible", msg);
+            g_zlib_loaded = 2;
+            return -1;
+        }
+        *syms[i].slot = p;
     }
 
     g_zlib_loaded = 1;
@@ -81,12 +159,14 @@ nyx_string* nyx_compress(nyx_string* src) {
         return nyx_string_from_cstr("");
     }
 
-    uLongf src_len = (uLongf)src->length;
-    uLongf dest_len = compressBound(src_len);
+    if (zlib_inflate_load() != 0) return nyx_string_from_cstr("");
+
+    uLong src_len = (uLong)src->length;
+    uLong dest_len = g_zlib_compressBound(src_len);
     Bytef* dest = (Bytef*)GC_malloc(dest_len + 1);
     if (!dest) return nyx_string_from_cstr("");
 
-    int rc = compress2(dest, &dest_len, (const Bytef*)src->data, src_len, Z_DEFAULT_COMPRESSION);
+    int rc = g_zlib_compress2(dest, &dest_len, (const Bytef*)src->data, src_len, Z_DEFAULT_COMPRESSION);
     if (rc != Z_OK) {
         return nyx_string_from_cstr("");
     }
