@@ -10,12 +10,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Cambiado
+- **El runtime C va siempre con `-O2`**, también sin `--release`, en `nyx run`, `nyx build` y `nyx test`: a `-O0`
+  todo lo que vive en C corría unas 7 veces más lento (`sha256` de 120 MB: 4.858 → 741 ms con `nyx run`), y
+  nyxerp lo reportó como lentitud de PBKDF2. Se compila una sola vez a la caché `~/.cache/nyx/rt/` (la que ya
+  usaban build y test; `nyx run` la estrena: antes recompilaba el runtime en cada corrida), con a lo sumo tantos
+  `clang` a la vez como núcleos. El código Nyx del usuario sigue sin optimizar fuera de `--release`. Guarda en
+  `run_toolchain_recipe_audit.sh`.
 - **`pbkdf2_hmac_sha256` unas 5 veces más rápido** [dogfooding:nyxerp]: en nativo usa `PKCS5_PBKDF2_HMAC` de
   OpenSSL (600.000 iteraciones: 872 → 166 ms en aarch64 con `--release`); la implementación propia, que queda
   para wasm32-wasi, precalcula una vez por llamada los estados SHA-256 de `k^ipad` y `k^opad` (2 compresiones
   por iteración en vez de 4; wasm 1.276 → 620 ms). Mismo resultado byte a byte (vectores de RFC 7914 en
   `test_crypto.c`, por las dos rutas). Lo que nyxerp midió (6,2 s) era además el runtime sin optimizar fuera de
-  `--release`: fichado aparte.
+  `--release` (ver el ítem anterior).
 
 ## [0.39.0] — 2026-10-27
 

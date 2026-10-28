@@ -978,6 +978,34 @@ RUNTIME_SRCS="$NYX_HOME/runtime/runtime.c $NYX_HOME/runtime/strings.c \
   $NYX_HOME/runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
 
+# El runtime de `nyx run` va precompilado con -O2 a la misma caché que usan
+# `nyx build` y `nyx test` (rt_cache_sh de compiler/build.nx; misma clave: flags,
+# fuentes, versión de clang y contenido). Antes se compilaba en cada corrida y a
+# -O0, junto con el programa: todo lo que vive en C corría ~7 veces más lento
+# (nyxerp midió PBKDF2 así, 2026-10-27). NYX_NO_RT_CACHE=1 vuelve al camino viejo.
+nyx_rt_auto() {
+  [ -n "$NYX_NO_RT_CACHE" ] && return 1
+  local fl="$1"; shift
+  local base="$XDG_CACHE_HOME"; [ -n "$base" ] || base="$HOME/.cache"; base="$base/nyx/rt"
+  local key; key=$( { printf '%s\n' "$fl" "$*"; clang --version 2>/dev/null | head -1; cat "$@" runtime/*.h runtime/os/*.h 2>/dev/null; } | sha256sum | cut -c1-16) || return 1
+  local a="$base/$key/libnyxrt.a"
+  if [ -f "$a" ]; then touch "$base/$key" 2>/dev/null; RT_AUTO="$a"; return 0; fi
+  mkdir -p "$base/$key" 2>/dev/null || return 1
+  find "$base" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null
+  local tmp; tmp=$(mktemp -d "$base/$key/.tmp.XXXXXX") || return 1
+  local f n=0 par; par=$(nproc 2>/dev/null || echo 4)
+  for f in "$@"; do
+    n=$((n+1))
+    while [ "$(jobs -rp | wc -l)" -ge "$par" ]; do wait -n 2>/dev/null || true; done
+    clang $fl -Wno-deprecated-declarations -c "$f" -o "$tmp/$n.o" 2>/dev/null &
+  done
+  wait
+  if [ "$(ls "$tmp" | grep -c '\.o$')" = "$n" ] && ar rcs "$tmp/libnyxrt.a" "$tmp"/*.o 2>/dev/null && mv -f "$tmp/libnyxrt.a" "$a"; then
+    rm -rf "$tmp"; RT_AUTO="$a"; return 0
+  fi
+  rm -rf "$tmp"; return 1
+}
+
 # Use a temp directory to avoid polluting CWD
 TMPDIR_NYX="$(mktemp -d /tmp/nyx_run_XXXXXX)"
 trap 'rm -rf "$TMPDIR_NYX"' EXIT
@@ -1025,7 +1053,8 @@ _toolchain_lock s "compilar $INPUT_FILE"
   { _c=$(ulimit -s 2>/dev/null) || _c=unlimited; \
     if [ "$_c" != unlimited ] && [ "$_c" -lt 65536 ] 2>/dev/null; then ulimit -s 65536 2>/dev/null || true; fi; } && \
   NYX_SRC="$TMPDIR_NYX/script.nx" "$NYX_BOOTSTRAP" && \
-  clang "$TMPDIR_NYX/script.ll" $RUNTIME_SRCS $LIBS -o "$TMPDIR_NYX/prog") > "$BUILD_LOG" 2>&1 || _nyx_rc=$?
+  { RT_IN=($RUNTIME_SRCS); if nyx_rt_auto "-O2" $RUNTIME_SRCS; then RT_IN=("$RT_AUTO"); fi; } && \
+  clang "$TMPDIR_NYX/script.ll" "${RT_IN[@]}" $LIBS -o "$TMPDIR_NYX/prog") > "$BUILD_LOG" 2>&1 || _nyx_rc=$?
 exec 9>&-
 if [ "$_nyx_rc" -ne 0 ]; then
     cat "$BUILD_LOG" >&2

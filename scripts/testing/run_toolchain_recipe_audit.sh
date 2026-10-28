@@ -325,6 +325,17 @@ case "$(rule_prereqs install-local)" in *" nyx_bootstrap "*) ;; *)
 esac
 rm -f "$MAKE_DB"
 
+# El runtime C de los programas de usuario va SIEMPRE con -O2 (2026-10-27): a -O0,
+# fuera de --release, todo lo que vive en C corría ~7 veces más lento y nyxerp lo
+# reportó como lentitud de PBKDF2. Los tres caminos (nyx run, nyx build, nyx test)
+# piden la caché del runtime con "-O2" literal, no con los flags del usuario.
+for f in scripts/nyx compiler/build.nx compiler/test.nx; do
+    if ! grep -qE 'nyx_rt_auto (\\)?"-O2' "$f"; then
+        echo "  ✗ $f: el runtime no se pide con -O2 a la caché (nyx_rt_auto \"-O2\" …) — volvería a -O0 fuera de --release"
+        FAIL=$((FAIL + 1))
+    fi
+done
+
 echo "  recetas Linux descubiertas: ${#LINUX_RECIPES[@]} (+ 2 canónicas: scripts/nyx, compiler/build.nx) — recetas WASM descubiertas: ${#WASM_RECIPES[@]} — consumidores del glob runtime/*.c: ${#GLOB_RECIPES[@]}"
 
 if [ "$FAIL" -gt 0 ]; then

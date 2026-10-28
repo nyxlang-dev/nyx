@@ -151,6 +151,10 @@ blame the wrong part of your build:
   (it used to follow `readdir`, so two runs could differ — which made any
   interference between tests sharing an external resource, say one database,
   look intermittent, and read like the runner was concurrent).
+- **The C runtime is ALWAYS built with `-O2`** (since 2026-10-27) in `nyx run`, `nyx build` and `nyx test`,
+  cached once under `~/.cache/nyx/rt/`: what lives in C (crypto, JSON, strings, net) runs at full speed even
+  without `--release`. `--release` only changes how YOUR Nyx code (and `std/` written in Nyx) is compiled.
+  `NYX_NO_RT_CACHE=1` disables the cache (then the runtime goes in with your flags).
 - **Tests compile WITHOUT optimization by default**, same as `nyx build`. Pass
   `--release` to get `-O2`, which only pays off if a test measures real
   performance — these binaries live seconds and are deleted. The default matters

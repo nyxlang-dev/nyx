@@ -2161,7 +2161,12 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // dentro del candado compartido, así que las fuentes no cambian mientras
     // se calcula la clave. RT_IN es un array de bash: el .a vive bajo $HOME.
     var rt_sh: String = rt_cache_sh() + "RT_IN=(" + rt_fuentes + ")\n"
-    rt_sh = rt_sh + "if nyx_rt_auto \"" + opt_flags + "\" " + rt_fuentes + "; then RT_IN=(\"$RT_AUTO\"); fi\n"
+    // El runtime va SIEMPRE con -O2, también sin --release (2026-10-27): es código
+    // nuestro que nadie depura desde un programa Nyx, y a -O0 todo lo que vive en
+    // C (cripto, JSON, strings, red) corría ~7 veces más lento —nyxerp midió
+    // PBKDF2 así y lo reportó como lentitud de la función—. Va a la caché, así
+    // que se compila una sola vez; el código del usuario sigue con opt_flags.
+    rt_sh = rt_sh + "if nyx_rt_auto \"-O2\" " + rt_fuentes + "; then RT_IN=(\"$RT_AUTO\"); fi\n"
     if rt_archive != "" and file_exists(rt_archive) {
         // Absoluta: el script hace `cd` a NYX_HOME antes de enlazar.
         if not rt_archive.startsWith("/") { rt_archive = getcwd() + "/" + rt_archive }
@@ -2494,7 +2499,10 @@ fn rt_cache_sh() -> String {
     s = s + "  find \"$base\" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null\n"
     s = s + "  local tmp; tmp=$(mktemp -d \"$base/$key/.tmp.XXXXXX\") || return 1\n"
     s = s + "  local f n=0\n"
-    s = s + "  for f in \"$@\"; do n=$((n+1)); clang $fl -Wno-deprecated-declarations -c \"$f\" -o \"$tmp/$n.o\" 2>/dev/null & done\n"
+    // Con un tope de trabajos = núcleos: con -O2 cada clang pesa varias veces más
+    // que en -O0, y los 26 a la vez pedían memoria de más en una máquina chica.
+    s = s + "  local par; par=$(nproc 2>/dev/null || echo 4)\n"
+    s = s + "  for f in \"$@\"; do n=$((n+1)); while [ \"$(jobs -rp | wc -l)\" -ge \"$par\" ]; do wait -n 2>/dev/null || true; done; clang $fl -Wno-deprecated-declarations -c \"$f\" -o \"$tmp/$n.o\" 2>/dev/null & done\n"
     s = s + "  wait\n"
     s = s + "  if [ \"$(ls \"$tmp\" | grep -c '\\.o$')\" = \"$n\" ] && ar rcs \"$tmp/libnyxrt.a\" \"$tmp\"/*.o 2>/dev/null && mv -f \"$tmp/libnyxrt.a\" \"$a\"; then\n"
     s = s + "    rm -rf \"$tmp\"; RT_AUTO=\"$a\"; return 0\n"

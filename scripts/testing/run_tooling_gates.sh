@@ -554,9 +554,13 @@ fi
 # no era el tiempo sino la MEMORIA: midieron 1.357 MB de pico por compilación,
 # y en 3,8 GB dos no entran a la vez, así que corrían la suite de a una con un
 # núcleo ocioso el 42% del tiempo. Ahora el default es sin -O, como `nyx build`.
-if grep -q '^CLANGCALL:.*-O2' "$GATE_TMP/clang-calls.log"; then
+# Desde 2026-10-28 el runtime C SÍ se arma a -O2, una vez por clave en el caché
+# (nyx_rt_auto): son TUs de C chicas, con a lo sumo nproc en paralelo, no el
+# .ll de la prueba que costaba el 1,3 GB. Por eso la guarda mira solo la línea
+# que compila el .ll de la prueba (el scratch nyx_test_src_*), no las del caché.
+if grep -E '^CLANGCALL:.*nyx_test_src_[A-Za-z0-9]+\.ll' "$GATE_TMP/clang-calls.log" | grep -q -- '-O2'; then
     bad "test-sin-O2 — las pruebas se siguen compilando con -O2 por omisión" "test-sin-O2"
-    grep '^CLANGCALL:' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
+    grep -E '^CLANGCALL:.*nyx_test_src_' "$GATE_TMP/clang-calls.log" | head -2 | sed 's/^/      /'
 else
     ok "test-sin-O2 — sin --release, nyx test no optimiza (pico de memoria más bajo)"
 fi
