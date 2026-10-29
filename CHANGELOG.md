@@ -46,6 +46,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **sqlite: un símbolo faltante es «biblioteca ausente», no un crash**: antes la biblioteca cargaba con un puntero
   nulo que reventaba en la primera llamada. Ahora `try_sqlite_open` devuelve la causa con el nombre del símbolo y de
   la biblioteca, y `sqlite_open` la avisa una vez por stderr. Variable nueva `NYX_SQLITE_SO`, que fija la biblioteca.
+- **El parser ya no corta en silencio los programas de más de 100000 sentencias** [dogfooding:nyxerp]: el
+  bucle principal tenía un tope fijo; al pasarlo imprimía «demasiadas iteraciones» y seguía con el programa a
+  medias. Un proyecto con muchos imports perdía su `main.nx` entero: `nyx check` salía con 0 y el build fallaba
+  con «undefined reference to main». Ahora la cota es el número de tokens, y pasarla es un error interno duro.
+  Guarda `parser-sin-tope` en `make test-ai-first`.
+- **Una cadena de más de 50 operaciones postfijas ya compila**: `a.b().c()…` tenía un tope de 50 vueltas en el
+  parser, y la operación número 51 daba NYX0107 sobre código válido. Ahora el bucle termina cuando una vuelta no
+  consume ningún token. Regression +1 (`test-515`, 532 archivos).
 
 ## [0.39.0] — 2026-10-27
 

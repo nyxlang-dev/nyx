@@ -1,0 +1,15 @@
+// test-515 — cadenas de más de 50 llamadas encadenadas compilan y corren.
+// Hasta el 2026-10-29 parse_postfix cortaba a las 50 operaciones y el '.'
+// número 51 daba NYX0107 (unexpected token): código válido rechazado. Ahora
+// el bucle termina por progreso, no por cuenta.
+// (Con métodos de usuario que devuelven un struct la cadena choca antes con
+// otro bug, NYX2002 sobre «%Cuenta»: fichado aparte en TASKS.md.)
+
+fn main() -> int {
+    let s: String = "  x  "
+    let t: String = s.trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim()
+    println("[" + t + "]")
+    let u: String = "a".replace("a", "aa").replace("a", "aa").replace("a", "aa").replace("a", "aa").trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim().trim()
+    println(int_to_string(u.length()))
+    return 0
+}

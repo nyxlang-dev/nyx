@@ -1383,6 +1383,37 @@ else
 fi
 
 
+# ------------------------------------------------------------------
+# Check: parser-sin-tope — 2026-10-29, fricción de nyxerp (20261029-013742-team-1).
+# El bucle principal del parser cortaba a las 100000 sentencias con un aviso
+# («demasiadas iteraciones») y SEGUÍA con el programa a medias: con ~16.000
+# imports alcanzables nyxerp perdía su main.nx entero, `nyx check` salía con 0
+# y el link fallaba con «undefined reference to main». Un archivo con 100100
+# imports repetidos y un nombre sin declarar en main: tiene que dar rc 1 con
+# NYX1002 (el parser llegó al main). Con el tope viejo daba rc 0. Una sola
+# corrida (~20 s en aarch64): la variante sana sería otros 20 s sin probar nada
+# que esta no pruebe.
+# ------------------------------------------------------------------
+if [ ! -x ./nyx_check ]; then
+    echo "  ⚠️  nyx_check no existe (se salta parser-sin-tope)"
+else
+    name="parser-sin-tope"
+    REPO_ROOT="$(pwd)"
+    PT="$TMPDIR/parser_sin_tope.nx"
+    { i=0; while [ $i -lt 100100 ]; do echo 'import "std/error"'; i=$((i+1)); done
+      printf 'fn main() -> int {\n    println(nombre_sin_declarar_pst)\n    return 0\n}\n'; } > "$PT"
+    out=$(NYX_HOME="$REPO_ROOT" bash "$REPO_ROOT/scripts/nyx" check "$PT" 2>&1); rc=$?
+    if [ "$rc" = "1" ] && printf '%s' "$out" | grep -q 'NYX1002' && printf '%s' "$out" | grep -q 'nombre_sin_declarar_pst'; then
+        echo "  ✓ $name — 100100 sentencias: el parser llega al main y check falla con NYX1002"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $name — rc=$rc; el main después de 100000 sentencias no se chequeó"
+        printf '%s\n' "$out" | tail -3 | sed 's/^/      /'
+        FAIL=$((FAIL+1))
+        FAILED+=("$name")
+    fi
+fi
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 
