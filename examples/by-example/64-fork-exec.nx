@@ -1,25 +1,38 @@
-// Fork and exec — running external commands
-// Fork y exec — ejecutar comandos externos
+// Lanzar un programa externo — std/process
+// Run an external program — std/process
+//
+// try_spawn lanza el hijo SIN fork, así que el mismo código es portable.
+// argv es un Array (sin shell: nada de comillas ni `*`), y si el
+// programa no existe el lanzamiento da Err(not_found) en vez de un hijo que
+// sale con 127.
+//
+// Nota: los builtins crudos fork/execvp/waitpid/dup2/pipe_new/kill_process
+// siguen disponibles en posix tal como siempre; donde no hay fork, el
+// compilador los rechaza y apunta a std/process. Esta receta usaba fork +
+// execvp + waitpid.
+// EN: raw fork/execvp/waitpid remain available on posix; std/process is the
+// portable replacement.
+
+import "std/process"
 
 fn main() -> int {
-    let pid: int = fork()
-
-    if pid == 0 {
-        // Child process: exec immediately (GC requirement)
-        let args: Array = ["echo", "hello from child"]
-        execvp("echo", args)
-        // execvp replaces the process — this line never runs
-        return 1
+    // Todo heredado: el hijo escribe en la misma terminal que el padre.
+    let opts: SpawnOpts = spawn_opts()
+    match try_spawn(["echo", "hello from child"], opts) {
+        Result.Ok(c) => {
+            if child_pid(c) > 0 { print("parent: spawned child") }
+            match try_child_wait(c) {
+                Result.Ok(code) => { print("parent: child exited with " + int_to_string(code)) }
+                Result.Err(e) => { print("wait failed: " + e.msg) }
+            }
+        }
+        Result.Err(e) => { print("spawn failed: " + e.msg) }
     }
 
-    if pid > 0 {
-        // Parent: wait for child to finish
-        print("parent: spawned child " + int_to_string(pid))
-        let status: int = waitpid(pid, 0)
-        print("parent: child exited with " + int_to_string(status))
-    } else {
-        print("fork failed")
+    // Un programa inexistente falla al lanzar.
+    match try_spawn(["nyx-no-such-program-xyz"], opts) {
+        Result.Ok(_c) => { print("unexpected: it ran") }
+        Result.Err(e) => { print("not found: " + e.kind) }
     }
-
     return 0
 }

@@ -136,5 +136,34 @@ fn main() -> int {
         Result.Ok(_c) => { println("inesperado") }
         Result.Err(e) => { println(e.kind + " " + e.msg) }
     }
+
+    // e.stage: en qué paso falló, sin mirar msg (nyx-shell: 127 contra «Cannot open»).
+    var etapas: Array = []
+    var se = spawn_opts()
+    se.stdout = Stdio.File("/nyx/t518/no/existe/out", "w")
+    etapas.push(["programa", ["nyx_t518_no_existe"], spawn_opts()])
+    etapas.push(["sin permiso", ["/etc/passwd"], spawn_opts()])
+    etapas.push(["stdin", ["cat"], of])
+    etapas.push(["stdout", ["true"], se])
+    var sr = spawn_opts()
+    sr.stderr = Stdio.File("/nyx/t518/no/existe/err", "a")
+    etapas.push(["stderr", ["true"], sr])
+    etapas.push(["cwd", ["true"], oc])
+    etapas.push(["validación", [], spawn_opts()])
+    for caso: Array in etapas {
+        let nombre: String = caso[0]
+        let argv: Array = caso[1]
+        let o: SpawnOpts = caso[2]
+        match try_spawn(argv, o) {
+            Result.Ok(_c) => { println(nombre + ": inesperado") }
+            Result.Err(e) => { println(nombre + ": " + e.kind + " stage='" + e.stage + "'") }
+        }
+    }
+    match try_spawn_pipeline([["echo", "x"], ["nyx_t518_no_existe"]], spawn_opts()) {
+        Result.Ok(_h) => { println("pipeline: inesperado") }
+        Result.Err(e) => { println("pipeline: " + e.kind + " stage='" + e.stage + "'") }
+    }
+    let sin: Error = err_new(5, "io", "x")
+    println("err_new sin etapa: '" + sin.stage + "'")
     return 0
 }

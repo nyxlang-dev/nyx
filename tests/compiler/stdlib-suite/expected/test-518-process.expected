@@ -11,3 +11,12 @@ invalid 22
 not_found spawn 'cat': no se pudo preparar stdin '/nyx/t518/no/existe'
 invalid 22
 not_found spawn 'true': cwd '/nyx/t518/no/existe'
+programa: not_found stage='exec'
+sin permiso: permission stage='exec'
+stdin: not_found stage='stdin'
+stdout: not_found stage='stdout'
+stderr: not_found stage='stderr'
+cwd: not_found stage='cwd'
+validación: invalid stage=''
+pipeline: not_found stage='exec'
+err_new sin etapa: ''

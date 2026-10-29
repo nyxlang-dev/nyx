@@ -461,8 +461,10 @@ degradation — see NYX1028 in §Option/Result below.
 
 **Errors = the two-tier rule (E4, `std/error`)**: if the caller can
 reasonably do something other than log-and-die → `Result<T, Error>`; if
-not → panic (`unwrap()`, an aborting builtin). `Error { code, kind, msg }`
-(`import "std/error"`) is the ONE shape for every fallible stdlib
+not → panic (`unwrap()`, an aborting builtin). `Error { code, kind, msg, stage }`
+(`import "std/error"`; `stage` = which step of a multi-step operation failed, `""`
+when it has none — today only `std/process` fills it; build with `err_new` or
+`err_stage(code, kind, msg, stage)`) is the ONE shape for every fallible stdlib
 function going forward — `kind` is a closed vocabulary (`not_found`,
 `permission`, `connection`, `parse`, `timeout`, `in_use`, `io`, `invalid`,
 `oom`, `eof`, `db`), built from errno via `errno_to_kind(code)` — except `eof`
@@ -1018,6 +1020,31 @@ single `Error` struct.
   binary-safe, bytes as-is (no `\n` strip). `code` = 128+signal if killed (137 = KILL); missing command →
   code 127 + message on stderr (not an Err). Err only if it could not launch, or on wasm (95). `cmd` goes
   to the shell: never concatenate unsanitized input. Recipe 148.
+- **Spawn child processes without a shell or `fork`** (Linux, macOS, Windows): `import "std/process"`.
+  `var o = spawn_opts()` (everything inherited) then set `o.stdin/stdout/stderr` to `Stdio.Inherit | Stdio.Null |
+  Stdio.Pipe | Stdio.File(path, "r"|"w"|"a") | Stdio.Fd(fd)`, plus `o.cwd` (`""` = parent's) and `o.env`
+  (`[["KEY","value"], ...]`, added over the parent's). `try_spawn(argv, o) -> Result<Child, Error>`,
+  `try_spawn_pipeline([argv1, argv2, ...], o) -> Result<Array, Error>` (`a | b | c`; `o.stdin` feeds the first,
+  `o.stdout` is the last's, `o.stderr` is shared), `try_child_wait(c) -> Result<int, Error>`,
+  `try_child_try_wait(c) -> Result<Option<int>, Error>` (`None` = still running), `try_child_kill(c)`,
+  `try_child_signal(c, sig)`, `try_child_read/read_err(c, max)` (`Ok("")` = EOF), `try_child_write(c, s)`,
+  `try_child_close_stdin(c)`, `try_child_collect(c) -> Result<ChildOutput, Error>` (`{stdout, stderr, code}`,
+  drains both pipes at once and waits), `child_pid(c)`. `argv` is an Array: no shell, so no quotes, `*` or
+  `$VAR` (for a shell line use `std/exec`). Gotchas: (1) **blocking** — `wait` and `read` block the OS thread;
+  with many children use one `spawn` per child. (2) **Contract change vs raw `fork`/`execvp`**: a program that
+  does not exist is now `Err(not_found)` AT LAUNCH (also `permission` if not executable, `invalid` for an empty
+  argv or a bad `Stdio.File` mode); with `fork`+`execvp` the parent saw nothing and the child exited 127 —
+  map `not_found` to your own "command not found" / 127 if you relied on that. **Tell the step apart with
+  `e.stage`, never with `e.msg`**: `"exec"` (the program itself), `"stdin"`/`"stdout"`/`"stderr"` (that stream's
+  `Stdio.File` did not open — also `not_found` for a missing directory), `"cwd"`, and `""` for argument
+  validation before launching. (3) **Windows rejects `.bat` and
+  `.cmd`** with `invalid` (cmd.exe has different quoting rules, CVE-2024-24576): use `std/exec`. (4)
+  **`try_child_signal` is posix only** (Windows: `Err` `invalid`); `try_child_kill` is forced termination
+  everywhere (posix 137; Windows leaves exit code 1). (5) With both streams on `Stdio.Pipe`, read them with
+  `try_child_collect`, not "stdout to EOF, then stderr" (deadlocks if the child fills the stderr pipe). (6) exit
+  code is `128 + signal` on posix when a signal killed the child. (7) wasm32-wasi: every call gives `Err`
+  `invalid` (95). The raw `fork`/`execvp`/`waitpid`/`pipe_new`/`kill_process` builtins stay on posix and are
+  rejected on Windows with a message pointing here. Recipes 64, 65, 151.
 - **Serial port** (Linux, Windows; macOS without VID/PID): `import "std/serial"`.
   `try_serial_open(path, baud, data_bits, parity, stop_bits) -> Result<SerialPort, Error>` (parity
   `"none"|"odd"|"even"`; `"/dev/ttyUSB0"` or `"COM3"`), `try_serial_write(p, s) -> Result<int, Error>`,
@@ -2744,10 +2771,13 @@ fn main() -> int {
   `tcp_listen`/`try_tcp_listen` (`std/net.nx`): `""` or `"0.0.0.0"` = all
   interfaces, a numeric IP (`"127.0.0.1"`) = only that one — never a
   hostname (it is not resolved).
-- **Windows**: the network builtins `std/serve` depends on (`tcp_listen`,
-  `tcp_accept`, ...) don't exist yet on that target (arc W in progress) —
-  importing `std/serve` on Windows fails loud at the existing builtin
-  guard, not silently.
+- **Windows**: the network builtins (`tcp_listen`, `tcp_accept`, ... on Winsock/IOCP)
+  exist since W4, so they are not what blocks `std/serve`. What still fails
+  is `std/serve` itself: it uses `try/catch` (e.g. `__error_response`,
+  `__serve_ka_worker`), which the windows target rejects at compile time
+  (`'try/catch' is not supported on target ...`), loud, not silent. `http_serve*`
+  (std/http's own server), `ws_*`, `h2_*` and `dns_*` builtins also stay
+  gated on win32.
 
 ### std/smtp — sending mail
 
@@ -2824,8 +2854,9 @@ match smtp_connect_plain("smtp.provider.com", 587, "mine.com") {
 - Error `kind`s are `connection`, `protocol`, `auth`, `sender`, `recipient`, `header` —
   `code -1` on a `protocol` error means "no readable reply" (the peer went
   away), as opposed to a real SMTP code.
-- **Windows**: same caveat as `std/serve` — the network builtins it needs are
-  not there yet (arc W in progress).
+- **Windows**: `std/smtp` compiles for the windows target (it only needs the
+  network builtins, which exist since W4, plus TLS); the `std/serve` caveat
+  does not apply to it.
 
 **Message-ID, extra headers and threading** (a reply must land in the customer's
 thread):
@@ -3687,6 +3718,8 @@ match parse_age("42") {
 ```
 
 ### Process: fork + exec
+
+Portable alternative (Linux, macOS, Windows): `std/process` (`try_spawn`, `try_spawn_pipeline`, see the std/process entry above; recipes 64, 65, 151). The raw builtins below are posix only.
 
 ```nyx
 let pid: int = fork()

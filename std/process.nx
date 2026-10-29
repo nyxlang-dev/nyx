@@ -99,11 +99,16 @@ fn __proc_err(code: int, que: String) -> Error {
     return err_new(code, errno_to_kind(code), que)
 }
 
+// La etapa de C (OS_SPAWN_FAIL_*) viaja en `e.stage` (ver std/error): "exec" el
+// programa, "stdin"/"stdout"/"stderr" el Stdio.File de ese flujo y "cwd". Así el
+// caller distingue «no existe el programa» de «no abre la redirección», que dan
+// el mismo kind not_found, sin mirar `msg`. Los errores de validación de antes
+// de lanzar (argv vacío, env, modo de Stdio.File) llevan stage "".
 fn __proc_stage_err(code: int, stage: int, program: String, opts: SpawnOpts) -> Error {
     let que: String = "spawn '" + program + "'"
     if stage == 4 {
-        if code == 20 { return err_new(20, "invalid", que + ": cwd '" + opts.cwd + "' no es un directorio") }
-        return err_new(code, errno_to_kind(code), que + ": cwd '" + opts.cwd + "'")
+        if code == 20 { return err_stage(20, "invalid", que + ": cwd '" + opts.cwd + "' no es un directorio", "cwd") }
+        return err_stage(code, errno_to_kind(code), que + ": cwd '" + opts.cwd + "'", "cwd")
     }
     if stage >= 1 and stage <= 3 {
         var cual: String = "stdin"
@@ -117,18 +122,19 @@ fn __proc_stage_err(code: int, stage: int, program: String, opts: SpawnOpts) -> 
             Stdio.File(p, _m) => { ruta = " '" + p + "'" }
             _ => { ruta = "" }
         }
-        return err_new(code, errno_to_kind(code), que + ": no se pudo preparar " + cual + ruta)
+        return err_stage(code, errno_to_kind(code), que + ": no se pudo preparar " + cual + ruta, cual)
     }
-    if code == 2 { return err_new(2, "not_found", que + ": el programa no existe (ni en PATH)") }
-    if code == 13 { return err_new(13, "permission", que + ": sin permiso de ejecución") }
+    if code == 2 { return err_stage(2, "not_found", que + ": el programa no existe (ni en PATH)", "exec") }
+    if code == 13 { return err_stage(13, "permission", que + ": sin permiso de ejecución", "exec") }
     if code == 22 {
         let pl: String = program.toLower()
         if pl.endsWith(".bat") or pl.endsWith(".cmd") {
-            return err_new(22, "invalid", que + ": los .bat/.cmd no se lanzan sin shell (cmd.exe usa otras reglas de comillas); usar exec")
+            return err_stage(22, "invalid", que + ": los .bat/.cmd no se lanzan sin shell (cmd.exe usa otras reglas de comillas); usar exec", "exec")
         }
-        return err_new(22, "invalid", que + ": argumentos inválidos")
+        return err_stage(22, "invalid", que + ": argumentos inválidos", "exec")
     }
-    return __proc_err(code, que)
+    let e: Error = __proc_err(code, que)
+    return err_stage(e.code, e.kind, e.msg, "exec")
 }
 
 // kind/path/mode/raw para la frontera C. -1 en kind = Stdio inválido.

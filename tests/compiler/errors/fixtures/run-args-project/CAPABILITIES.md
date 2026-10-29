@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.39.0 -->
-<!-- nyx-stdlib: 1084441822-2152148 -->
+<!-- nyx-stdlib: 971628235-2154494 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -10,7 +10,7 @@
 
 ### `std/prelude`
 
-`import "std/prelude"` — 37 funciones:
+`import "std/prelude"` — 38 funciones:
 
 - `pub fn println(s: String)`
 - `pub fn read_stdin_all() -> String`
@@ -46,6 +46,7 @@
 - `pub fn map_get_int(m: Map, k: String) -> int`
 - `pub fn map_has(m: Map, k: String) -> bool`
 - `pub fn err_new(code: int, kind: String, msg: String) -> Error`
+- `pub fn err_stage(code: int, kind: String, msg: String, stage: String) -> Error`
 - `pub fn errno_to_kind(code: int) -> String`
 - `pub fn error_to_string(e: Error) -> String`
 - `pub fn is_eof(e: Error) -> bool`
@@ -57,9 +58,10 @@ Tipos (2) y métodos (0):
 
 ### `std/error`
 
-`import "std/error"` — 4 funciones:
+`import "std/error"` — 5 funciones:
 
 - `pub fn err_new(code: int, kind: String, msg: String) -> Error`
+- `pub fn err_stage(code: int, kind: String, msg: String, stage: String) -> Error`
 - `pub fn errno_to_kind(code: int) -> String`
 - `pub fn error_to_string(e: Error) -> String`
 - `pub fn is_eof(e: Error) -> bool`

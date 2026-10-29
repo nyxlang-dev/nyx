@@ -572,14 +572,29 @@ fn map_size(m: Map) -> int {
 //                  `msg` es SIEMPRE el errmsg real de sqlite3_errmsg(db)
 //                  cuando hay un db handle vivo para consultarlo.
 
+// `stage` (2026-10-29, decisión de Ottavio): EN QUÉ PASO de una operación de
+// varios pasos ocurrió el fallo, para que el caller lo distinga sin leer `msg`
+// (que es texto humano y puede cambiar de redacción o de idioma). "" = la
+// operación no tiene etapas, que es el caso de casi toda la std. Como `kind`,
+// cada módulo que lo use documenta su vocabulario cerrado; el primero es
+// std/process: "exec" (el programa), "stdin"/"stdout"/"stderr" (el Stdio.File
+// de ese flujo no se pudo abrir) y "cwd". Lo pidió nyx-shell: «el programa no
+// existe» (127) y «no se pudo abrir la redirección» (1) llegaban los dos como
+// not_found.
 pub struct Error {
     code: int,
     kind: String,
     msg: String,
+    stage: String,
 }
 
 pub fn err_new(code: int, kind: String, msg: String) -> Error {
-    return Error { code: code, kind: kind, msg: msg }
+    return Error { code: code, kind: kind, msg: msg, stage: "" }
+}
+
+// Igual que err_new, con la etapa en que falló la operación (ver `stage`).
+pub fn err_stage(code: int, kind: String, msg: String, stage: String) -> Error {
+    return Error { code: code, kind: kind, msg: msg, stage: stage }
 }
 
 // errno → kind. Los números son los de Linux (el único target nativo hoy);

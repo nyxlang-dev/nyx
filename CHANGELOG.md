@@ -28,6 +28,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `--release` (ver el ítem anterior).
 
 ### Agregado
+- **`Error.stage`: en qué paso falló una operación de varios pasos** [arco: procesos-spawn] [dogfooding:nyx-shell]:
+  `Error` (`std/error`) gana el campo `stage: String`, `""` cuando la operación no tiene etapas. `err_new` no
+  cambia y `err_stage(code, kind, msg, stage)` lo pone. `std/process` lo llena con `exec`, `stdin`, `stdout`,
+  `stderr` o `cwd`: una redirección que no abre y un programa inexistente dan los dos `not_found`, y nyx-shell los
+  distinguía buscando un texto en `msg`. Un literal `Error { code, kind, msg }` escrito a mano ahora necesita
+  `stage` (no había ninguno fuera de la std). `test-518` cubre cada etapa.
 - **`std/serial`: puerto serie nativo para programas de servidor** [arco: serial-nativo] [dogfooding:nyxerp]:
   `try_serial_open(path, baud, data_bits, paridad, stop_bits)`, `try_serial_write`, `try_serial_read(p, max, plazo_ms)`
   (`Ok("")` = venció el plazo sin datos), `try_serial_read_until(p, fin, max, plazo_ms)` para tramas STX…ETX (no se
@@ -44,6 +50,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   Errores `not_found`, `permission` e `invalid` con la etapa en el mensaje; escribir a un hijo que cerró su stdin da
   `EPIPE`, no mata por SIGPIPE. Regression +1 (`test-518`); runtime C +2 suites (`test_os_proc_spawn.c`,
   `test_os_win_cmdline.c`).
+- **Recetas 64 y 65 con `std/process`, receta 151 nueva y el error de win32 que apunta a él** [arco: procesos-spawn]:
+  la 64 (lanzar un programa) y la 65 (pipes) pasan de `fork`/`execvp`/`pipe_new` a `try_spawn` y
+  `try_spawn_pipeline`, con la nota de que los builtins crudos siguen en posix; la 151 captura stdout y stderr con
+  `try_child_collect`. Bajo win32, `fork`, `execvp`, `waitpid`, `pipe_new` y `kill_process` siguen prohibidos, pero
+  el mensaje ahora dice «usar std/process». Recetas by-example 151 (`make test-examples`: 158 con los 7 de la raíz).
+  Documentado en `LLM.md` (bloqueante, programa inexistente = `not_found` al lanzar, `.bat`/`.cmd` rechazados en
+  Windows, `signal` solo posix) y en `docs/SPEC.md`.
 - **TLS en Windows: una raíz que el sistema todavía no bajó ya no rompe la conexión** [arco: w5-windows]: Windows
   trae pocas raíces instaladas y descarga las demás al armar una cadena, así que un sitio cualquiera fallaba con X509
   20 en una máquina nueva. Ante ese error, con el almacén del sistema, se pide la cadena a `CertGetCertificateChain`,

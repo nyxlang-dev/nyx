@@ -92,17 +92,17 @@ con self-hosting verificado en la propia plataforma.
 fixed point EN Windows + binarios ARM64 generados y verificados con smoke manual + `make test`
 Linux intacto + los 6 stacks verdes.
 Diseño: `docs/design/specs/2026-08-19-windows-nativo-design.md` ·
-plan de la etapa actual: `docs/design/plans/2026-08-27-w3-threads-scheduler-windows.md`.
+plan de la etapa actual (W5): `docs/design/plans/2026-10-21-w5-windows.md`.
 
 | Etapa | Alcance | Estado |
 |---|---|---|
 | **W0** | Triples `*-pc-windows-msvc`, auditoría ABI Win64 medida, `\r\n` y paths, hello world que linkea y corre | ✅ mergeado (interno, en v0.31.0) |
 | **W1** | Capa `nyx_os_*` con impl POSIX — 7 dominios, header único sin `#ifdef`, ratchet de includes prohibidos | ✅ completo (2026-08-26, 8 incrementos) |
 | **W2** | `os_win32.c` (vm/tiempo/dl) + GC Boehm win32 + file-io + build con clang-cl | ✅ completo — 26 programas corriendo en Windows x64 **y ARM64 real** |
-| **W3** | Threads + scheduler M:N sobre Fibers + guard pages VEH | 🔄 **en curso**: Tasks 1-3 ✅ mergeadas (el bloqueante GC+Fibers RESUELTO: roots por rango COMITEADO + parche de ~10 líneas a bdwgc 8.2.12; ablación 5/~140 muertes sin parche vs **0/120** con parche). Task 4 (linkear `thread.c`+`scheduler.c`, primer spawn, ablación n=50) corriendo en la laptop Windows. Tasks 5 (13 tests de concurrencia + CI) y 6 (fichar la cosecha GC-Windows) pendientes |
-| **W4** | Red e IOCP; la familia `try_` de E5 con errno mapeados desde `WSA*` | ⬜ pendiente — **riesgo técnico #1** |
-| **W5** | TLS, procesos, señales; se vacían los guards temporales | ⬜ pendiente |
-| **W6** | Toolchain nativa, seeds `.ll` x64+ARM64, `install.ps1`, CI completo, **anuncio** | ⬜ pendiente |
+| **W3** | Threads + scheduler M:N sobre Fibers + guard pages VEH | ✅ completo (2026-09-11): threads y scheduler M:N nativos en Windows, gate de concurrencia 36/36 local; el bloqueante GC+Fibers se resolvió con roots por rango COMITEADO + un parche de ~10 líneas a bdwgc |
+| **W4** | Red e IOCP; la familia `try_` de E5 con errno mapeados desde `WSA*` | ✅ completo (2026-09-30): lectura y escritura de sockets sobre IOCP, timers sobre IOCP, `e.code` con la numeración de errno de Linux |
+| **W5** | TLS, procesos, señales; se vacían los guards temporales | 🔄 **en curso**: Tasks 1-6 entregadas; falta la Task 7 (en la laptop): verificar la opción (a) de TLS (raíz faltante → `CertGetCertificateChain` + reintento) y el puerto serie con com0com |
+| **W6** | Toolchain nativa, seeds `.ll` x64+ARM64, `install.ps1`, CI completo, **anuncio** | ⬜ pendiente — el anuncio lo decide Ottavio |
 
 ### Restricciones vivas del arco
 
@@ -118,13 +118,13 @@ plan de la etapa actual: `docs/design/plans/2026-08-27-w3-threads-scheduler-wind
 
 ### Sub-decisiones abiertas dentro del arco
 
-- **W4 — el destino del API readiness.** IOCP invierte el modelo (readiness → completion) y es
+- **W4 — el destino del API readiness** (W4 cerró el 2026-09-30; el detalle de lo que se hizo está en `CHANGELOG.md` bajo `[arco: w4-windows]`). Planteo original: IOCP invierte el modelo (readiness → completion) y es
   el riesgo técnico #1 del arco. **Converge con una ficha del core descubierta el 30-ago**: el
   netpoller del scheduler **nunca se cableó** — `nyx_goroutine_block_on_fd` existe en
   `runtime/scheduler.c` y no tiene ningún llamador, así que hoy una goroutine que hace I/O de
   red **bloquea su worker entero** (ficha ALTA, sección «Runtime, concurrencia y red» de
   `TASKS.md`). Los dos problemas se resuelven juntos o se resuelven dos veces.
-- **W5 — TLS: SChannel.** **[DECIDIDO 2026-08-31]** SChannel, por coherencia con la decisión MSVC-puro (cero
+- **W5 — TLS.** **[REVISADO 2026-10-27, decisión de Ottavio]** OpenSSL estático de vcpkg + las CAs del almacén de Windows (no SChannel); lo de abajo es la decisión original del 2026-08-31, ya superada. Original: SChannel, por coherencia con la decisión MSVC-puro (cero
   deps). La spec ya lo recomendaba por coherencia con la decisión MSVC-puro (cero deps), con el costo dicho:
   reescribe `tls.c` entero y cambia la introspección de certificados de `std/tls`. OpenSSL-MSVC
   conserva `tls.c` casi intacto pero agrega la dependencia que el purismo quería evitar.

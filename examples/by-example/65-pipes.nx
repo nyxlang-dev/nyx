@@ -1,37 +1,39 @@
-// Pipes — connecting two processes via pipe
-// Pipes — conectar dos procesos via pipe
+// Pipes — conectar procesos con std/process
+// Pipes — connect processes with std/process
+//
+// `printf 'c\\nb\\na\\n' | sort | head -n 2` sin shell: try_spawn_pipeline crea los pipes
+// intermedios y cierra los extremos del padre a tiempo (si no, el EOF nunca
+// llega al siguiente de la cadena). opts.stdout es el del ÚLTIMO comando.
+//
+// Nota: pipe_new + fork + dup2 + execvp (lo que hacía esta receta) siguen
+// disponibles en posix; donde no hay fork se usa std/process.
+// EN: pipe_new/fork/dup2/execvp remain on posix; std/process is portable.
+
+import "std/process"
 
 fn main() -> int {
-    // pipe_new() returns [read_fd, write_fd]
-    let fds: Array = pipe_new()
-    let read_fd: int = fds[0]
-    let write_fd: int = fds[1]
-
-    let pid: int = fork()
-
-    if pid == 0 {
-        // Child: redirect stdout to write end of pipe
-        close_fd(read_fd)
-        dup2(write_fd, 1)
-        close_fd(write_fd)
-        // exec ls — output goes into pipe
-        let args: Array = ["ls", "/tmp"]
-        execvp("ls", args)
-        return 1
+    var opts: SpawnOpts = spawn_opts()
+    opts.stdout = Stdio.Pipe
+    match try_spawn_pipeline([["printf", "c\\nb\\na\\n"], ["sort"], ["head", "-n", "2"]], opts) {
+        Result.Ok(hijos) => {
+            // collect lee el stdout del último hasta EOF y lo espera.
+            let ultimo: Child = hijos[hijos.length() - 1]
+            match try_child_collect(ultimo) {
+                Result.Ok(r) => {
+                    print("exit code: " + int_to_string(r.code))
+                    print("lines: " + int_to_string(r.stdout.trim().split("\n").length()))
+                }
+                Result.Err(e) => { print("collect failed: " + e.msg) }
+            }
+            // Los demás de la cadena también se esperan (no quedan zombis).
+            var i: int = 0
+            while i < hijos.length() - 1 {
+                let c: Child = hijos[i]
+                let _r = try_child_wait(c)
+                i = i + 1
+            }
+        }
+        Result.Err(e) => { print("pipeline failed: " + e.msg) }
     }
-
-    // Parent: read from pipe
-    close_fd(write_fd)
-    let output: String = tcp_read(read_fd, 4096)
-    close_fd(read_fd)
-
-    waitpid(pid, 0)
-    print("ls output (first 200 chars):")
-    if output.length() > 200 {
-        print(output.substring(0, 200))
-    } else {
-        print(output)
-    }
-
     return 0
 }

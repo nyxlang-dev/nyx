@@ -978,7 +978,7 @@ output=$(NYX_TARGET=x86_64-pc-windows-msvc timeout 15 ./nyx_bootstrap 2>&1)
 rc=$?
 native_rc=1
 if timeout 15 ./nyx_bootstrap > /dev/null 2>&1; then native_rc=0; fi
-if [ "$rc" -ne 0 ] && echo "$output" | grep -qF "is not ported to Windows yet" && [ "$native_rc" -eq 0 ]; then
+if [ "$rc" -ne 0 ] && echo "$output" | grep -qF "is not ported to Windows yet" && echo "$output" | grep -qF "use std/process" && [ "$native_rc" -eq 0 ]; then
   printf "  ✓ %s\n" "$name"
   PASS=$((PASS + 1))
 else

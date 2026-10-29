@@ -1597,9 +1597,12 @@ equivalentes (`read_file`, `tcp_connect`, `http_get`, etc.) siguen existiendo
 por compatibilidad hacia atrás — no tienen `try_*` retirado, conviven.
 
 **`std/error`** provee el shape único para todo error de la stdlib:
-`Error { code, kind, msg }`, con `kind` de vocabulario cerrado (`not_found`,
+`Error { code, kind, msg, stage }`, con `kind` de vocabulario cerrado (`not_found`,
 `permission`, `connection`, `parse`, `timeout`, `in_use`, `io`, `invalid`,
-`oom`, `eof`, `db`) y `error_to_string(e)` como formato humano.
+`oom`, `eof`, `db`) y `error_to_string(e)` como formato humano. `stage` dice en qué
+paso de una operación de varios pasos ocurrió el fallo (`""` si no tiene etapas;
+cada módulo documenta su vocabulario: hoy solo `std/process`). Se construye con
+`err_new(code, kind, msg)` (etapa vacía) o `err_stage(code, kind, msg, stage)`.
 
 **La regla de dos niveles**: si quien llama puede razonablemente hacer algo
 distinto de loguear y morir, la función devuelve `Result<T, Error>`; si no,
@@ -3127,6 +3130,34 @@ let code: int = exec_code("some_cmd")
 import "std/exec"
 let r: Result<ExecResult, Error> = try_exec_full("make 2>&1")
 // ExecResult { stdout: String, stderr: String, code: int }
+
+// Lanzar procesos hijos SIN shell y SIN fork (std/process; Linux, macOS y
+// Windows). argv es un Array: no hay comillas ni `*` ni `$VAR`; argv[0] se
+// busca en PATH (en Windows también PATHEXT).
+import "std/process"
+// spawn_opts() -> SpawnOpts   // todo heredado; campos: stdin, stdout, stderr
+//     (Stdio.Inherit | Stdio.Null | Stdio.Pipe | Stdio.File(ruta, "r"|"w"|"a")
+//     | Stdio.Fd(fd)), cwd ("" = el del padre) y env ([["K","V"], ...], se
+//     agrega o pisa sobre el del padre).
+// try_spawn(argv, opts) -> Result<Child, Error>
+// try_spawn_pipeline([argv1, argv2, ...], opts) -> Result<Array, Error>
+//     `a | b | c`: opts.stdin es del primero, opts.stdout del último.
+// try_child_wait(c) -> Result<int, Error>       // 128+señal si lo mató una señal (posix)
+// try_child_try_wait(c) -> Result<Option<int>, Error>   // None = sigue corriendo
+// try_child_kill(c) / try_child_signal(c, sig)  // kill forzado; signal solo en posix
+// try_child_read(c, max) / try_child_read_err(c, max) -> Result<String, Error>   // Ok("") = EOF
+// try_child_write(c, datos) / try_child_close_stdin(c)
+// try_child_collect(c) -> Result<ChildOutput, Error>
+//     ChildOutput { stdout: String, stderr: String, code: int }; lee stdout y
+//     stderr A LA VEZ hasta EOF y espera al hijo.
+// child_pid(c) -> int
+// Errores: not_found (programa inexistente, AL LANZAR: con fork/execvp era un
+// hijo que salía con 127), permission, invalid (argv vacío, modo de Stdio.File
+// inválido, .bat/.cmd en Windows, y code 95 en wasm32-wasi) e io. La etapa va en
+// e.stage, no en e.msg: "exec" (el programa), "stdin"/"stdout"/"stderr" (el
+// Stdio.File de ese flujo no abrió), "cwd", y "" en la validación previa.
+// Bloqueante: wait y read frenan el hilo; con muchos hijos, un `spawn` por hijo.
+// Los builtins crudos fork/execvp/waitpid/pipe_new/kill_process siguen en posix.
 
 // Puerto serie nativo (std/serial; Linux y Windows, macOS sin VID/PID). Los
 // bytes son String (binary-safe; `s.charAt(i)` da el valor del byte).

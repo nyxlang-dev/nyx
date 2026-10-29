@@ -1,0 +1,60 @@
+// Nyx by Example: capturar stdout y stderr de un hijo con std/process.
+//
+// std/exec pasa el comando por el shell; std/process lo lanza sin shell
+// (argv es un Array: nada de comillas, `*` ni `$VAR`, así que no hay nada que
+// inyectar) y con la misma API en todas las plataformas.
+//
+//     o.stdout = Stdio.Pipe;  o.stderr = Stdio.Pipe
+//     try_spawn(argv, o) -> Result<Child, Error>
+//     try_child_collect(c) -> Result<ChildOutput, Error>
+//     ChildOutput { stdout: String, stderr: String, code: int }
+//
+//   - collect lee stdout y stderr A LA VEZ hasta EOF y espera al hijo: leer
+//     "stdout entero y luego stderr" se cuelga si el hijo llena el pipe de
+//     stderr mientras tanto.
+//   - Un programa que no existe falla AL LANZAR con Err(not_found): no hay un
+//     hijo que salga con 127.
+//   - Bloqueante: con muchos hijos, un `spawn` por hijo.
+
+import "std/process"
+import "std/error"
+
+// Corre argv; si sale con código distinto de 0 devuelve Err con su stderr.
+fn correr(argv: Array) -> Result<String, String> {
+    var o = spawn_opts()
+    o.stdout = Stdio.Pipe
+    o.stderr = Stdio.Pipe
+    match try_spawn(argv, o) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => {
+                    if r.code != 0 {
+                        return Result.Err("falló con código " + int_to_string(r.code) + ": " + r.stderr.trim())
+                    }
+                    return Result.Ok(r.stdout)
+                }
+                Result.Err(e) => { return Result.Err("collect: " + e.msg) }
+            }
+        }
+        Result.Err(e) => { return Result.Err("no se pudo lanzar (" + e.kind + ")") }
+    }
+    return Result.Err("inalcanzable")
+}
+
+fn main() -> int {
+    match correr(["echo", "hola desde std/process"]) {
+        Result.Ok(s) => { print("ok: " + s.trim()) }
+        Result.Err(m) => { print("error: " + m) }
+    }
+    // Falla con código y motivo en stderr.
+    match correr(["sh", "-c", "echo motivo >&2; exit 3"]) {
+        Result.Ok(s) => { print("ok: " + s) }
+        Result.Err(m) => { print("error: " + m) }
+    }
+    // Programa inexistente.
+    match correr(["nyx-no-such-program-xyz"]) {
+        Result.Ok(s) => { print("ok: " + s) }
+        Result.Err(m) => { print("error: " + m) }
+    }
+    return 0
+}
