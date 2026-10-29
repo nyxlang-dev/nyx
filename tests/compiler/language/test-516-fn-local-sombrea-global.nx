@@ -1,0 +1,59 @@
+// test-516 — una variable o parámetro Fn sombrea a la fn global homónima
+// también para el TIPO del resultado (nyxerp, 2026-10-29). La llamada ya iba al
+// closure, pero `let f = armar(5)` sin anotar tomaba el retorno de la global
+// (int) y `f.total` daba NYX2007 con `nyx check` en verde. Con una lambda en la
+// función (locals en el env), el campo del env salía i64 y el struct devuelto
+// por valor no cabía: IR inválido, aun sin global homónima. Lo mismo con
+// `match f(41)` y `f(41)?` (el caso del reporte, con Result).
+
+import "std/error"
+
+struct Fila { total: int }
+
+fn armar(n: int) -> int { return n + 1000 }
+
+fn por_parametro(armar: Fn(int) -> Fila) -> int {
+    let f = armar(5)
+    return f.total
+}
+
+fn sin_global() -> int {
+    let hacer: Fn(int) -> Fila = fn(n: int) -> Fila { return Fila { total: n * 4 } }
+    let f = hacer(5)
+    return f.total
+}
+
+fn mas_uno(x: int) -> Result<int, Error> { return Result.Ok(x + 1) }
+fn fallar(x: int) -> Result<int, Error> { return Result.Err(err_new(5, "io", "falló " + int_to_string(x))) }
+
+fn por_match(armar: Fn(int) -> Result<int, Error>) -> int {
+    match armar(41) {
+        Result.Ok(v) => { return v }
+        Result.Err(e) => { println(e.msg)
+            return -1 }
+    }
+    return -2
+}
+
+fn por_pregunta(armar: Fn(int) -> Result<int, Error>) -> Result<int, Error> {
+    let v = armar(41)?
+    return Result.Ok(v + 1)
+}
+
+fn main() -> int {
+    let armar: Fn(int) -> Fila = fn(n: int) -> Fila { return Fila { total: n * 3 } }
+    let f = armar(5)
+    println(int_to_string(f.total))
+    println(int_to_string(por_parametro(fn(n: int) -> Fila { return Fila { total: n * 2 } })))
+    println(int_to_string(sin_global()))
+    let g: Fn(int) -> int = fn(n: int) -> int { return n + 1 }
+    let x = g(41)
+    println(int_to_string(x))
+    println(int_to_string(por_match(mas_uno)))
+    println(int_to_string(por_match(fallar)))
+    match por_pregunta(mas_uno) {
+        Result.Ok(v) => { println(int_to_string(v)) }
+        Result.Err(e) => { println(e.msg) }
+    }
+    return 0
+}

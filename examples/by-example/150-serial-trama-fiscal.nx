@@ -6,7 +6,7 @@
 // La impresora contesta a un ENQ con una trama STX datos ETX LRC, donde el LRC es
 // el XOR de todos los bytes después del STX hasta el ETX inclusive.
 //
-// std/serial (Linux y Windows; macOS sin VID/PID):
+// std/serial: puerto serie nativo para programas de servidor:
 //   - Los bytes viajan como String, binary-safe. `s.charAt(i)` da el valor del byte.
 //   - try_serial_read_until(p, fin, max, plazo_ms) junta hasta incluir el byte `fin`
 //     y NO se come lo que llega después: por eso el LRC se lee aparte con

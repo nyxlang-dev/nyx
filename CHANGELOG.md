@@ -54,6 +54,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **Una cadena de más de 50 operaciones postfijas ya compila**: `a.b().c()…` tenía un tope de 50 vueltas en el
   parser, y la operación número 51 daba NYX0107 sobre código válido. Ahora el bucle termina cuando una vuelta no
   consume ningún token. Regression +1 (`test-515`, 532 archivos).
+- **Una variable o parámetro `Fn` tapa a la `fn` global del mismo nombre también en el TIPO del resultado**
+  [dogfooding:nyxerp]: la llamada ya iba al closure, pero `let r = f(41)`, `match f(41)` y `f(41)?` tomaban
+  el tipo de retorno de la `fn f` global (aunque estuviera en otro módulo). `nyx check` pasaba y el build
+  fallaba lejos de la causa (NYX2007 sobre un campo, o IR inválido). Con una lambda en la misma función, un
+  closure local que devuelve un struct por valor daba IR inválido aun sin global homónima. Regression +1
+  (`test-516`, 533 archivos).
 
 ## [0.39.0] — 2026-10-27
 
