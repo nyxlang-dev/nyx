@@ -1,0 +1,10 @@
+invalid 22
+invalid 22
+invalid 22
+invalid 22
+not_found 2
+invalid 22
+not_found: serial_open '/dev/ttyUSB-no-existe': el puerto no existe (code 2)
+serial_ports bien formada: 1
+5 bytes, primero 2, último 255
+ida y vuelta igual

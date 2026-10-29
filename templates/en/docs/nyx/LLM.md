@@ -1018,6 +1018,31 @@ single `Error` struct.
   binary-safe, bytes as-is (no `\n` strip). `code` = 128+signal if killed (137 = KILL); missing command →
   code 127 + message on stderr (not an Err). Err only if it could not launch, or on wasm (95). `cmd` goes
   to the shell: never concatenate unsanitized input. Recipe 148.
+- **Serial port** (Linux, Windows; macOS without VID/PID): `import "std/serial"`.
+  `try_serial_open(path, baud, data_bits, parity, stop_bits) -> Result<SerialPort, Error>` (parity
+  `"none"|"odd"|"even"`; `"/dev/ttyUSB0"` or `"COM3"`), `try_serial_write(p, s) -> Result<int, Error>`,
+  `try_serial_read(p, max, timeout_ms) -> Result<String, Error>`,
+  `try_serial_read_until(p, fin_byte, max, timeout_ms) -> Result<String, Error>`, `try_serial_close(p)`,
+  `serial_ports() -> Array` of `[name, "vvvv:pppp" or "", description]`. Contract: bytes are `String`
+  (binary-safe; `s.charAt(i)` is the byte value); `read` waits for AT LEAST one byte and returns what is
+  there up to `max`, and **`Ok("")` = deadline expired, not an error**; `read_until` has a TOTAL deadline and
+  does NOT eat the byte after `fin` (STX..ETX+LRC: `read_until(p, 3, ...)`, then `read(p, 1, ...)` for the
+  LRC); `Err` "timeout" (110) / "parse" (90, `max` bytes without `fin`). Open is EXCLUSIVE: another
+  program holding it gives `"in_use"` (16); also `"not_found"` (2), `"permission"` (13; on Linux the user must
+  be in group `dialout`), `"invalid"` (22), `"io"` (5, device unplugged), `"invalid"` (95) on wasm. Raw mode,
+  no flow control, DTR on, standard baud rates only. **Synchronous**: each call blocks its thread, so use one
+  `spawn` per port next to a server. Recipe 150.
+  ```nyx
+  import "std/serial"
+  match try_serial_open("/dev/ttyUSB0", 9600, 8, "even", 1) {
+      Result.Ok(p) => {
+          let _w = try_serial_write(p, "\x05")
+          match try_serial_read_until(p, 3, 256, 1000) { Result.Ok(t) => { print(t) } Result.Err(e) => { print(e.msg) } }
+          let _c = try_serial_close(p)
+      }
+      Result.Err(e) => { print(e.msg) }
+  }
+  ```
 - `getenv(name)` → String
 - `getenv_default(name, default)` → String
 - `setenv(name, val)`

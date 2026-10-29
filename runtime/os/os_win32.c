@@ -55,6 +55,7 @@
 #include <windows.h>
 #include <wincrypt.h>   // CertOpenSystemStoreW/CertEnumCertificatesInStore (os_sys_root_certs)
 #include <icmpapi.h>   // IcmpCreateFile/IcmpSendEcho (os_icmp_echo4): después de iphlpapi.h y windows.h
+#include <setupapi.h>   // SetupDiGetClassDevsW/SetupDiOpenDevRegKey (os_serial_list)
 // Link: ws2_32 (sockets, WSAPoll, getaddrinfo) e iphlpapi
 // (GetAdaptersAddresses) vía /DEFAULTLIB embebido — así las recetas de link
 // (CI, scripts, nyx build) no tienen que enumerarlas.
@@ -62,6 +63,8 @@
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "crypt32.lib")   // CertOpenSystemStore (os_sys_root_certs)
+#pragma comment(lib, "setupapi.lib")  // SetupDi* (os_serial_list)
+#pragma comment(lib, "advapi32.lib")  // RegQueryValueExW (os_serial_list: PortName)
 
 #include "nyx_os.h"
 #include "nyx_os_win32.h"  // declaración compartida del corrector (fix round 1 M4)
@@ -69,6 +72,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <wctype.h>   // towlower (os_serial_list: VID/PID de HardwareID)
 #include <signal.h>
 #include <io.h>       // _isatty/_pipe/_read/_write/_close/_commit (CRT)
 #include <fcntl.h>    // _O_BINARY/_O_NOINHERIT para _pipe y os_fd_open
@@ -2914,4 +2918,175 @@ int os_fd_open(const char* path, int mode) {
 int os_fd_dup2(int oldfd, int newfd) {
     // _dup2 devuelve 0 (no newfd) en éxito: se normaliza al contrato de posix.
     return _dup2(oldfd, newfd) == 0 ? newfd : crt_last_errno();
+}
+
+// ===========================================================================
+// Puerto serie / Serial port (arco serial-nativo, 2026-10-28) -- contrato en nyx_os.h.
+// ES: CreateFileW sobre \\.\COMn (el prefijo es obligatorio desde COM10 y
+// inofensivo antes), E/S sincrónica, DCB sin control de flujo y con DTR/RTS
+// activos. Windows ya abre un COM en exclusiva: el segundo CreateFileW da
+// ERROR_ACCESS_DENIED, que acá significa «otro lo tiene abierto» y se
+// devuelve como -EBUSY (en win_errno general es EACCES). La lectura con plazo
+// usa la combinación documentada de COMMTIMEOUTS «MAXDWORD/MAXDWORD/T»:
+// vuelve en cuanto hay al menos un byte, o a los T ms con 0.
+// EN: \\.\COMn, synchronous I/O, no flow control, DTR/RTS on. A second open
+// gives ERROR_ACCESS_DENIED -> -EBUSY. Timed read via the documented
+// MAXDWORD/MAXDWORD/T COMMTIMEOUTS: returns on the first byte or after T ms.
+// ===========================================================================
+static int serial_to_wide(const char* s, wchar_t* out, int cap) {
+    return MultiByteToWideChar(CP_UTF8, 0, s, -1, out, cap) > 0 ? 0 : -EINVAL;
+}
+
+int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, int stop_bits) {
+    if (!path || !*path || baud <= 0) return -EINVAL;
+    if (data_bits < 5 || data_bits > 8 || parity < 0 || parity > 2 || (stop_bits != 1 && stop_bits != 2))
+        return -EINVAL;
+    char full[300];
+    if (strncmp(path, "\\\\.\\", 4) == 0) snprintf(full, sizeof full, "%s", path);
+    else snprintf(full, sizeof full, "\\\\.\\%s", path);
+    wchar_t wpath[300];
+    if (serial_to_wide(full, wpath, 300) != 0) return -EINVAL;
+    HANDLE h = CreateFileW(wpath, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD e = GetLastError();
+        if (e == ERROR_ACCESS_DENIED || e == ERROR_SHARING_VIOLATION) return -EBUSY;
+        return win_last_errno();
+    }
+    DCB dcb;
+    memset(&dcb, 0, sizeof dcb);
+    dcb.DCBlength = sizeof dcb;
+    if (!GetCommState(h, &dcb)) { int e = win_last_errno(); CloseHandle(h); return e; }
+    dcb.BaudRate = (DWORD)baud;
+    dcb.ByteSize = (BYTE)data_bits;
+    dcb.Parity = parity == 0 ? NOPARITY : (parity == 1 ? ODDPARITY : EVENPARITY);
+    dcb.StopBits = stop_bits == 2 ? TWOSTOPBITS : ONESTOPBIT;
+    dcb.fBinary = TRUE;
+    dcb.fParity = parity != 0 ? TRUE : FALSE;
+    dcb.fOutxCtsFlow = FALSE;
+    dcb.fOutxDsrFlow = FALSE;
+    dcb.fDsrSensitivity = FALSE;
+    dcb.fDtrControl = DTR_CONTROL_ENABLE;
+    dcb.fRtsControl = RTS_CONTROL_ENABLE;
+    dcb.fOutX = FALSE;
+    dcb.fInX = FALSE;
+    dcb.fErrorChar = FALSE;
+    dcb.fNull = FALSE;
+    dcb.fAbortOnError = FALSE;
+    // SetCommState rechaza con ERROR_INVALID_PARAMETER lo que el driver no
+    // soporta (p. ej. una velocidad): eso es -EINVAL, como en posix.
+    if (!SetCommState(h, &dcb)) { CloseHandle(h); return -EINVAL; }
+    PurgeComm(h, PURGE_RXCLEAR | PURGE_TXCLEAR);
+    return (int64_t)(intptr_t)h;
+}
+
+int64_t os_serial_read(int64_t hh, void* buf, int64_t n, int timeout_ms) {
+    if (hh <= 0 || !buf || n <= 0) return -EINVAL;
+    HANDLE h = (HANDLE)(intptr_t)hh;
+    COMMTIMEOUTS to;
+    memset(&to, 0, sizeof to);
+    if (timeout_ms < 0) {
+        // Sin plazo: bloquear hasta el primer byte. Con Interval=MAXDWORD y
+        // Multiplier=MAXDWORD el Constant no puede ser 0 (sería «no esperar»),
+        // así que se usa el máximo y se reintenta.
+        to.ReadIntervalTimeout = MAXDWORD;
+        to.ReadTotalTimeoutMultiplier = MAXDWORD;
+        to.ReadTotalTimeoutConstant = MAXDWORD - 1;
+    } else if (timeout_ms == 0) {
+        to.ReadIntervalTimeout = MAXDWORD;   // 0/0: devolver lo que haya ya
+    } else {
+        to.ReadIntervalTimeout = MAXDWORD;
+        to.ReadTotalTimeoutMultiplier = MAXDWORD;
+        to.ReadTotalTimeoutConstant = (DWORD)timeout_ms;
+    }
+    if (!SetCommTimeouts(h, &to)) return win_last_errno();
+    DWORD want = n > 0x7fffffff ? 0x7fffffff : (DWORD)n;
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(h, buf, want, &got, NULL)) {
+            DWORD e = GetLastError();
+            // Un adaptador USB desenchufado da ERROR_GEN_FAILURE / ERROR_DEVICE_NOT_CONNECTED
+            // / ERROR_BAD_COMMAND según el driver: todos son «el equipo se fue».
+            if (e == ERROR_GEN_FAILURE || e == ERROR_DEVICE_NOT_CONNECTED || e == ERROR_BAD_COMMAND
+                || e == ERROR_OPERATION_ABORTED) return -EIO;
+            return win_last_errno();
+        }
+        if (got > 0 || timeout_ms >= 0) return (int64_t)got;
+    }
+}
+
+int64_t os_serial_write(int64_t hh, const void* buf, int64_t n) {
+    if (hh <= 0 || (!buf && n > 0) || n < 0) return -EINVAL;
+    HANDLE h = (HANDLE)(intptr_t)hh;
+    const char* b = (const char*)buf;
+    int64_t done = 0;
+    while (done < n) {
+        int64_t rest = n - done;
+        DWORD chunk = rest > 0x7fffffff ? 0x7fffffff : (DWORD)rest;
+        DWORD w = 0;
+        if (!WriteFile(h, b + done, chunk, &w, NULL)) {
+            DWORD e = GetLastError();
+            if (e == ERROR_GEN_FAILURE || e == ERROR_DEVICE_NOT_CONNECTED || e == ERROR_BAD_COMMAND) return -EIO;
+            return win_last_errno();
+        }
+        if (w == 0) return -EIO;
+        done += (int64_t)w;
+    }
+    return done;
+}
+
+int os_serial_close(int64_t hh) {
+    if (hh <= 0) return -EINVAL;
+    return CloseHandle((HANDLE)(intptr_t)hh) ? 0 : win_last_errno();
+}
+
+int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud) {
+    if (!cb) return -EINVAL;
+    // Clase «Ports (COM & LPT)», {4d36e978-e325-11ce-bfc1-08002be10318}: es la
+    // que usa el Administrador de dispositivos y cubre usbser/CDC, FTDI, CH340,
+    // Prolific y los COM integrados (la interfaz GUID_DEVINTERFACE_COMPORT no
+    // la registran todos los drivers). Definido a mano para no depender de
+    // initguid.h/devguid.h.
+    static const GUID ports = { 0x4d36e978, 0xe325, 0x11ce, { 0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18 } };
+    HDEVINFO set = SetupDiGetClassDevsW(&ports, NULL, NULL, DIGCF_PRESENT);
+    if (set == INVALID_HANDLE_VALUE) return win_last_errno();
+    SP_DEVINFO_DATA dev;
+    for (DWORD i = 0; ; i++) {
+        memset(&dev, 0, sizeof dev);
+        dev.cbSize = sizeof dev;
+        if (!SetupDiEnumDeviceInfo(set, i, &dev)) break;
+        HKEY key = SetupDiOpenDevRegKey(set, &dev, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
+        if (key == INVALID_HANDLE_VALUE) continue;
+        wchar_t wport[64];
+        DWORD sz = sizeof wport, type = 0;
+        LONG r = RegQueryValueExW(key, L"PortName", NULL, &type, (LPBYTE)wport, &sz);
+        RegCloseKey(key);
+        if (r != ERROR_SUCCESS || type != REG_SZ) continue;
+        wport[63] = 0;
+        if (wcsncmp(wport, L"COM", 3) != 0) continue;   // LPT1 y similares no son serie
+        char name[64], vidpid[16] = "", desc[256] = "";
+        WideCharToMultiByte(CP_UTF8, 0, wport, -1, name, (int)sizeof name, NULL, NULL);
+        // HardwareID es REG_MULTI_SZ: «USB\VID_0483&PID_5740&REV_0200\0USB\VID_0483&PID_5740\0\0».
+        // El primero alcanza para el VID/PID; los que no son USB no lo tienen.
+        wchar_t hw[512];
+        if (SetupDiGetDeviceRegistryPropertyW(set, &dev, SPDRP_HARDWAREID, NULL, (PBYTE)hw, sizeof hw - sizeof(wchar_t), NULL)) {
+            hw[511] = 0;
+            const wchar_t* v = wcsstr(hw, L"VID_");
+            const wchar_t* p = wcsstr(hw, L"PID_");
+            if (v && p) {
+                char vv[5] = {0}, pp[5] = {0};
+                for (int k = 0; k < 4 && v[4 + k]; k++) vv[k] = (char)towlower(v[4 + k]);
+                for (int k = 0; k < 4 && p[4 + k]; k++) pp[k] = (char)towlower(p[4 + k]);
+                snprintf(vidpid, sizeof vidpid, "%s:%s", vv, pp);
+            }
+        }
+        wchar_t fr[256];
+        if (SetupDiGetDeviceRegistryPropertyW(set, &dev, SPDRP_FRIENDLYNAME, NULL, (PBYTE)fr, sizeof fr - sizeof(wchar_t), NULL)
+            || SetupDiGetDeviceRegistryPropertyW(set, &dev, SPDRP_DEVICEDESC, NULL, (PBYTE)fr, sizeof fr - sizeof(wchar_t), NULL)) {
+            fr[255] = 0;
+            WideCharToMultiByte(CP_UTF8, 0, fr, -1, desc, (int)sizeof desc, NULL, NULL);
+        }
+        cb(name, vidpid, desc, ud);
+    }
+    SetupDiDestroyDeviceInfoList(set);
+    return 0;
 }

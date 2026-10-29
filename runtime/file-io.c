@@ -476,3 +476,100 @@ int64_t nyx_open_fd(nyx_string* path, int64_t mode) {
     int fd = os_fd_open(nyx_string_to_cstr(path), (int)mode);
     return fd >= 0 ? (int64_t)fd : -1;
 }
+
+// ===========================================================================
+// Puerto serie: frontera con Nyx de std/serial (arco serial-nativo, 2026-10-28).
+// ES: la lógica de plataforma vive en os_serial_* (runtime/os/); acá solo se
+// convierte a valores Nyx. Los resultados falibles son [code, valor] con
+// code = errno canónico (numeración de Linux, os_errno_canon) o 0, el mismo
+// formato que nyx_file_read_result, para que std/serial arme el Error.
+// EN: Nyx boundary for std/serial; fallible results are [code, value] with a
+// canonical (Linux-numbered) errno, like nyx_file_read_result.
+// ===========================================================================
+static nyx_array_t* serial_pair(int64_t code, int64_t val, int64_t tag) {
+    nyx_array_t* out = nyx_array_new(2);
+    nyx_array_push_tagged(out, code, NYX_TAG_INT);
+    nyx_array_push_tagged(out, val, tag);
+    return out;
+}
+
+static int64_t serial_canon(int64_t neg) { return (int64_t)os_errno_canon((int)-neg); }
+
+nyx_array_t* nyx_serial_open(nyx_string* path, int64_t baud, int64_t bits, int64_t parity, int64_t stop) {
+    if (!path || !path->data) return serial_pair(22, 0, NYX_TAG_INT);
+    int64_t h = os_serial_open(path->data, (int)baud, (int)bits, (int)parity, (int)stop);
+    if (h < 0) return serial_pair(serial_canon(h), 0, NYX_TAG_INT);
+    return serial_pair(0, h, NYX_TAG_INT);
+}
+
+nyx_array_t* nyx_serial_read(int64_t h, int64_t max, int64_t timeout_ms) {
+    if (max <= 0) return serial_pair(22, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    char* buf = (char*)GC_MALLOC_ATOMIC((size_t)max + 1);
+    if (!buf) return serial_pair(12, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    int64_t got = os_serial_read(h, buf, max, (int)timeout_ms);
+    if (got < 0) return serial_pair(serial_canon(got), (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    buf[got] = 0;
+    return serial_pair(0, (int64_t)nyx_string_from_ptr(buf, got), NYX_TAG_STRING);
+}
+
+// ES: lee byte a byte hasta incluir `fin`, con un plazo TOTAL. Byte a byte a
+// propósito: leer de a bloques se comería lo que llega después del fin en la
+// misma tanda (el LRC que sigue al ETX en las impresoras fiscales), y a las
+// velocidades de un puerto serie una syscall por byte no se nota.
+// code: 0 = encontrado (el valor termina en fin); 110 = plazo vencido (el
+// valor es lo parcial); 90 (EMSGSIZE) = se juntaron max bytes sin el fin.
+// EN: byte-by-byte up to and including `fin` with a TOTAL deadline, so bytes
+// after the terminator (the LRC after ETX) are never swallowed.
+nyx_array_t* nyx_serial_read_until(int64_t h, int64_t fin, int64_t max, int64_t timeout_ms) {
+    if (max <= 0 || fin < 0 || fin > 255) return serial_pair(22, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    char* buf = (char*)GC_MALLOC_ATOMIC((size_t)max + 1);
+    if (!buf) return serial_pair(12, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    int64_t deadline = timeout_ms >= 0 ? os_monotonic_ns() + timeout_ms * 1000000 : -1;
+    int64_t n = 0;
+    while (n < max) {
+        int wait = -1;
+        if (deadline >= 0) {
+            int64_t left = deadline - os_monotonic_ns();
+            if (left <= 0) break;
+            wait = (int)((left + 999999) / 1000000);
+        }
+        int64_t got = os_serial_read(h, buf + n, 1, wait);
+        if (got < 0) { buf[n] = 0; return serial_pair(serial_canon(got), (int64_t)nyx_string_from_ptr(buf, n), NYX_TAG_STRING); }
+        if (got == 0) break;   // venció el plazo
+        n++;
+        if ((unsigned char)buf[n - 1] == (unsigned char)fin) {
+            buf[n] = 0;
+            return serial_pair(0, (int64_t)nyx_string_from_ptr(buf, n), NYX_TAG_STRING);
+        }
+    }
+    buf[n] = 0;
+    return serial_pair(n >= max ? 90 : 110, (int64_t)nyx_string_from_ptr(buf, n), NYX_TAG_STRING);
+}
+
+int64_t nyx_serial_write(int64_t h, nyx_string* data) {
+    if (!data) return -22;
+    int64_t w = os_serial_write(h, data->data, data->length);
+    return w < 0 ? -serial_canon(w) : w;
+}
+
+int64_t nyx_serial_close(int64_t h) {
+    int r = os_serial_close(h);
+    return r < 0 ? -serial_canon(r) : 0;
+}
+
+static void serial_list_cb(const char* name, const char* vidpid, const char* desc, void* ud) {
+    nyx_array_t* all = (nyx_array_t*)ud;
+    nyx_array_t* row = nyx_array_new(3);
+    nyx_array_push_tagged(row, (int64_t)nyx_string_from_cstr(name), NYX_TAG_STRING);
+    nyx_array_push_tagged(row, (int64_t)nyx_string_from_cstr(vidpid), NYX_TAG_STRING);
+    nyx_array_push_tagged(row, (int64_t)nyx_string_from_cstr(desc), NYX_TAG_STRING);
+    nyx_array_push_tagged(all, (int64_t)row, NYX_TAG_ARRAY);
+}
+
+// [code, Array de [nombre, vidpid, desc]]
+nyx_array_t* nyx_serial_list(void) {
+    nyx_array_t* all = nyx_array_new(4);
+    int r = os_serial_list(serial_list_cb, all);
+    if (r < 0) return serial_pair(serial_canon(r), (int64_t)nyx_array_new(0), NYX_TAG_ARRAY);
+    return serial_pair(0, (int64_t)all, NYX_TAG_ARRAY);
+}

@@ -107,7 +107,7 @@ if [ "$(uname -m)" = "x86_64" ]; then
         [codegen_expr]=18168
         [codegen_binop]=10184
         [codegen_binop_logico]=23992
-        [codegen_call_expr]=544264  # +32 del 2026-10-27 estimado igual que en aarch64: re-medir (W5 Task 3)
+        [codegen_call_expr]=544264  # +32 del 2026-10-27; medido exacto en WSL x86_64 (W5 Task 3, 2026-10-28)
         [codegen_method_call]=541592
     )
     TECHO_NIVEL=28352

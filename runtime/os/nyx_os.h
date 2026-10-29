@@ -842,4 +842,36 @@ int     os_fd_set_nonblocking(int fd, int on);
 int os_fd_sync(int fd);       // 0 / -errno
 int os_fd_datasync(int fd);   // 0 / -errno
 
+// --- Puerto serie / Serial port (arco serial-nativo, 2026-10-28) -----------
+// ES: único caller: std/serial (vía nyx_serial_* de file-io.c). El handle es
+// opaco: posix = fd, win32 = HANDLE de CreateFileW (siempre > 0). Apertura
+// EXCLUSIVA en las dos plataformas: posix con TIOCEXCL (un segundo open da
+// -EBUSY, igual que Windows, que no comparte un COM), y DTR activo al abrir
+// (algunos puentes USB-serie lo esperan; posix lo baja al cerrar por HUPCL).
+// Sin control de flujo (ni RTS/CTS ni XON/XOFF) y en modo crudo: los bytes
+// pasan tal cual. parity: 0 = ninguna, 1 = impar, 2 = par.
+// EN: only caller is std/serial. Opaque handle (posix fd / win32 HANDLE).
+// EXCLUSIVE open on both platforms (posix TIOCEXCL -> second open -EBUSY),
+// DTR raised on open, no flow control, raw mode. parity 0 none, 1 odd, 2 even.
+//
+// open: handle (> 0) / -errno: -ENOENT (no existe), -EBUSY (otro lo tiene
+//   abierto), -EACCES (sin permiso: en Linux, el grupo dialout), -EINVAL
+//   (velocidad que no está en la tabla, o línea que el driver rechaza).
+// read: espera hasta timeout_ms a que llegue AL MENOS un byte y devuelve lo
+//   que haya disponible, hasta n (no espera a juntar n). 0 = venció el plazo
+//   sin datos; -errno (-EIO si se desconectó el equipo). timeout_ms < 0 =
+//   espera sin plazo.
+// write: escribe los n bytes (bloquea hasta entregarlos al driver); n / -errno.
+// list: llama cb una vez por puerto presente: name ("/dev/ttyUSB0", "COM3"),
+//   vidpid ("0483:5740" en hex minúscula, o "" si no es USB o el sistema no lo
+//   da: macOS siempre ""), desc (producto o driver; puede ser ""). 0 / -errno.
+// EN: read waits up to timeout_ms for AT LEAST one byte, returns what is
+// available up to n; 0 = timed out. write writes all n bytes. list calls cb
+// once per present port (vidpid "vvvv:pppp" lowercase hex, or "").
+int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, int stop_bits);
+int64_t os_serial_read(int64_t h, void* buf, int64_t n, int timeout_ms);
+int64_t os_serial_write(int64_t h, const void* buf, int64_t n);
+int     os_serial_close(int64_t h);
+int     os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud);
+
 #endif

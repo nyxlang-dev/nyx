@@ -1,0 +1,103 @@
+// Nyx by Example: read a fiscal-printer frame (STX...ETX+LRC) from a serial port.
+// Nyx por ejemplo: leer la trama de una impresora fiscal (STX...ETX+LRC) por puerto serie.
+//
+// El caso real: un «puente de tienda» de un ERP habla por RS232 con una impresora
+// fiscal (9600 baudios, 8 bits, paridad par, 1 stop) y con balanzas (9600 8N1).
+// La impresora contesta a un ENQ con una trama STX datos ETX LRC, donde el LRC es
+// el XOR de todos los bytes después del STX hasta el ETX inclusive.
+//
+// std/serial (Linux y Windows; macOS sin VID/PID):
+//   - Los bytes viajan como String, binary-safe. `s.charAt(i)` da el valor del byte.
+//   - try_serial_read_until(p, fin, max, plazo_ms) junta hasta incluir el byte `fin`
+//     y NO se come lo que llega después: por eso el LRC se lee aparte con
+//     try_serial_read(p, 1, plazo_ms).
+//   - Ok("") en try_serial_read = venció el plazo sin datos (no es un error).
+//   - Apertura exclusiva: si otro programa tiene el puerto, Err kind "in_use".
+//   - Es síncrono: con varios puertos, un `spawn` por puerto.
+//
+// Sin hardware: el puerto sale de NYX_SERIAL_PORT (ej. /dev/ttyUSB0 o COM3). Si
+// está vacío, el programa solo lista los puertos presentes y termina con 0.
+
+import "std/serial"
+import "std/error"
+
+fn lrc_de(cuerpo: String) -> int {
+    var x: int = 0
+    var i: int = 0
+    while i < cuerpo.length() {
+        let b: int = cuerpo.charAt(i)
+        x = x ^ b
+        i = i + 1
+    }
+    return x
+}
+
+fn listar_puertos() {
+    let ps: Array = serial_ports()
+    println("puertos serie: " + int_to_string(ps.length()))
+    for x: Array in ps {
+        var vp: String = x[1]
+        if vp.length() == 0 { vp = "sin VID:PID" }
+        println("  " + x[0] + " (" + vp + ")")
+    }
+}
+
+fn consultar(path: String) -> int {
+    match try_serial_open(path, 9600, 8, "even", 1) {
+        Result.Err(e) => {
+            println("no se pudo abrir: " + error_to_string(e))
+            return 1
+        }
+        Result.Ok(p) => {
+            let _w = try_serial_write(p, "\x05")             // ENQ
+            var codigo: int = 0
+            // Hasta el ETX (3), 256 bytes como máximo, 1 s en total
+            match try_serial_read_until(p, 3, 256, 1000) {
+                Result.Err(e) => {
+                    println("sin trama: " + error_to_string(e))
+                    codigo = 1
+                }
+                Result.Ok(trama) => {
+                    // El LRC es el byte siguiente al ETX
+                    match try_serial_read(p, 1, 500) {
+                        Result.Err(e) => {
+                            println("error leyendo el LRC: " + error_to_string(e))
+                            codigo = 1
+                        }
+                        Result.Ok(lrc) => {
+                            if lrc.length() == 0 {
+                                println("la trama llegó sin LRC")
+                                codigo = 1
+                            } else if trama.length() < 2 or trama.charAt(0) != 2 {
+                                println("la trama no empieza con STX")
+                                codigo = 1
+                            } else {
+                                // XOR de lo que va después del STX, ETX incluido
+                                let esperado: int = lrc_de(trama.substring(1, trama.length()))
+                                let recibido: int = lrc.charAt(0)
+                                if esperado == recibido {
+                                    println("trama válida: " + trama.substring(1, trama.length() - 1))
+                                } else {
+                                    println("LRC distinto: esperado " + int_to_string(esperado) + ", recibido " + int_to_string(recibido))
+                                    codigo = 1
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let _c = try_serial_close(p)
+            return codigo
+        }
+    }
+}
+
+fn main() -> int {
+    let path: String = getenv("NYX_SERIAL_PORT")
+    if path.length() == 0 {
+        println("NYX_SERIAL_PORT vacío: solo se listan los puertos")
+        listar_puertos()
+        return 0
+    }
+    return consultar(path)
+}

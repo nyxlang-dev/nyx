@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.38.0 -->
-<!-- nyx-stdlib: 685678664-2124453 -->
+<!-- nyx-version: 0.39.0 -->
+<!-- nyx-stdlib: 2010627490-2133386 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1935,6 +1935,23 @@ Tipos (3) y métodos (0):
 - `waitpid` (2 args) · *no existe en wasm32-wasi*
 
 ## Otros
+
+### `std/serial`
+
+`import "std/serial"` — 8 funciones:
+
+- `pub fn try_serial_open(path: String, baud: int, data_bits: int, parity: String, stop_bits: int) -> Result<SerialPort, Error>`
+- `pub fn try_serial_write(p: SerialPort, datos: String) -> Result<int, Error>`
+- `pub fn try_serial_read(p: SerialPort, max: int, timeout_ms: int) -> Result<String, Error>`
+- `pub fn try_serial_read_until(p: SerialPort, fin: int, max: int, timeout_ms: int) -> Result<String, Error>`
+- `pub fn try_serial_close(p: SerialPort) -> Result<int, Error>`
+- `pub fn serial_ports() -> Array`
+- `pub fn serial_bytes_to_array(s: String) -> Array`
+- `pub fn serial_array_to_bytes(a: Array) -> String`
+
+Tipos (1) y métodos (0):
+
+- `pub struct SerialPort`
 
 ### Builtins globales (sin `import`)
 

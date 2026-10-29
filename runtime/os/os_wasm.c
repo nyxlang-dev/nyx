@@ -337,3 +337,17 @@ int os_fs_chdir(const char* path) { (void)path; return -ENOSYS; }
 int os_fs_stat_full(const char* path, os_fs_stat_t* out) { (void)path; (void)out; return -ENOSYS; }
 int os_fd_open(const char* path, int mode) { (void)path; (void)mode; return -ENOSYS; }
 int os_fd_dup2(int oldfd, int newfd) { (void)oldfd; (void)newfd; return -ENOSYS; }
+
+// Puerto serie (arco serial-nativo): WASI no tiene dispositivos. En el
+// navegador el camino es std/browser_serial (Web Serial). -ENOSYS, que
+// std/serial convierte en kind "invalid", code 95 (igual que try_exec_full).
+// EN: no devices under WASI; the browser path is std/browser_serial.
+int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, int stop_bits) {
+    (void)path; (void)baud; (void)data_bits; (void)parity; (void)stop_bits; return -ENOSYS;
+}
+int64_t os_serial_read(int64_t h, void* buf, int64_t n, int timeout_ms) { (void)h; (void)buf; (void)n; (void)timeout_ms; return -ENOSYS; }
+int64_t os_serial_write(int64_t h, const void* buf, int64_t n) { (void)h; (void)buf; (void)n; return -ENOSYS; }
+int os_serial_close(int64_t h) { (void)h; return -ENOSYS; }
+int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud) {
+    (void)cb; (void)ud; return -ENOSYS;
+}

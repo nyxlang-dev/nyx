@@ -1,0 +1,162 @@
+// std/serial.nx — puerto serie nativo para programas de servidor (Linux,
+// Windows; macOS sin VID/PID). Arco serial-nativo, pedido de nyxerp
+// (2026-10-28): el «puente de la tienda» habla con impresoras fiscales
+// (STX…ETX+LRC a 9600 8E1) y balanzas (9600 8N1). Spec:
+// docs/design/specs/2026-10-28-serial-nativo-design.md.
+//
+//     import "std/serial"
+//     match try_serial_open("COM3", 9600, 8, "even", 1) {          // "/dev/ttyUSB0" en Linux
+//         Result.Ok(p) => {
+//             let _w = try_serial_write(p, "\x05")                  // ENQ
+//             match try_serial_read(p, 64, 500) {                   // hasta 64 bytes, 500 ms
+//                 Result.Ok(b) => { print("leídos: " + int_to_string(b.length())) }   // "" = no llegó nada
+//                 Result.Err(e) => { print(e.msg) }
+//             }
+//             let _c = try_serial_close(p)
+//         }
+//         Result.Err(e) => { print(e.msg) }
+//     }
+//     for x: Array in serial_ports() { print(x[0] + " " + x[1]) }   // nombre y "vvvv:pppp" (o "")
+//
+// Contrato:
+//   - Los bytes son String (como net, file y crypto): binary-safe, NUL incluido.
+//     Para compartir código con la PWA (std/browser_serial usa Array de enteros)
+//     están serial_bytes_to_array / serial_array_to_bytes.
+//   - Síncrono: cada llamada bloquea el hilo hasta su plazo. Con varios puertos o
+//     junto a un servidor HTTP, usar un `spawn` por puerto.
+//   - Apertura EXCLUSIVA en las dos plataformas: si otro programa tiene el
+//     puerto abierto, Err kind "in_use" (code 16).
+//   - Modo crudo, sin control de flujo (ni RTS/CTS ni XON/XOFF), DTR activo al
+//     abrir. Solo velocidades estándar (50…230400 siempre; 460800…2000000 si el
+//     sistema las define); otra da Err "invalid".
+//   - try_serial_read(p, max, plazo_ms) espera hasta plazo_ms a que llegue AL
+//     MENOS un byte y devuelve lo que haya, hasta max: no espera a juntar max.
+//     Ok("") = venció el plazo sin datos (no es un error: una balanza a petición
+//     que no contestó). plazo_ms < 0 = sin plazo.
+//   - try_serial_read_until(p, fin, max, plazo_ms) junta bytes hasta incluir el
+//     byte `fin` (0-255), con plazo TOTAL. No se come lo que llega después del
+//     fin: en una trama STX…ETX+LRC, leer hasta ETX y luego try_serial_read(p, 1, …)
+//     para el LRC. Err "timeout" (110) si vence el plazo, "parse" (90) si junta
+//     max bytes sin el fin; en los dos el msg dice cuántos bytes llegaron.
+//   - Errores: "not_found" (2) el puerto no existe; "permission" (13) sin
+//     permiso (Linux: el usuario tiene que estar en el grupo dialout); "in_use"
+//     (16); "invalid" (22) parámetros; "io" (5) el equipo se desconectó;
+//     "invalid" (95) en wasm32-wasi (en el navegador: std/browser_serial).
+//
+// Se expone por `extern "C"` (runtime/file-io.c → os_serial_* de runtime/os/),
+// sin tocar el compilador.
+
+import "std/error"
+
+extern "C" fn nyx_serial_open(path: String, baud: int, bits: int, parity: int, stop: int) -> Array
+extern "C" fn nyx_serial_read(h: int, max: int, timeout_ms: int) -> Array
+extern "C" fn nyx_serial_read_until(h: int, fin: int, max: int, timeout_ms: int) -> Array
+extern "C" fn nyx_serial_write(h: int, data: String) -> int
+extern "C" fn nyx_serial_close(h: int) -> int
+extern "C" fn nyx_serial_list() -> Array
+
+pub struct SerialPort {
+    handle: int,
+    path: String,
+}
+
+// errno canónico (numeración de Linux) → Error, con los casos propios del
+// puerto serie antes que el mapeo general de std/error.
+fn __serial_err(code: int, que: String, path: String) -> Error {
+    if code == 16 { return err_new(16, "in_use", que + " '" + path + "': otro programa tiene el puerto abierto") }
+    if code == 13 {
+        if path.startsWith("/dev/") {
+            return err_new(13, "permission", que + " '" + path + "': sin permiso (en Linux, el usuario tiene que estar en el grupo dialout)")
+        }
+        return err_new(13, "permission", que + " '" + path + "': sin permiso")
+    }
+    if code == 2 { return err_new(2, "not_found", que + " '" + path + "': el puerto no existe") }
+    if code == 22 { return err_new(22, "invalid", que + " '" + path + "': parámetros inválidos (velocidad no estándar o línea que el driver rechaza)") }
+    if code == 38 { return err_new(95, "invalid", que + ": no hay puerto serie en wasm32-wasi (en el navegador: std/browser_serial)") }
+    if code == 5 { return err_new(5, "io", que + " '" + path + "': error de E/S (¿se desconectó el equipo?)") }
+    return err_new(code, errno_to_kind(code), que + " '" + path + "'")
+}
+
+fn __serial_parity(parity: String) -> int {
+    if parity == "none" { return 0 }
+    if parity == "odd" { return 1 }
+    if parity == "even" { return 2 }
+    return -1
+}
+
+// parity: "none", "odd" o "even". data_bits 5-8, stop_bits 1 o 2.
+pub fn try_serial_open(path: String, baud: int, data_bits: int, parity: String, stop_bits: int) -> Result<SerialPort, Error> {
+    let par: int = __serial_parity(parity)
+    if par < 0 { return Result.Err(err_new(22, "invalid", "serial_open '" + path + "': paridad '" + parity + "' (usar none, odd o even)")) }
+    if data_bits < 5 or data_bits > 8 { return Result.Err(err_new(22, "invalid", "serial_open '" + path + "': data_bits " + int_to_string(data_bits) + " (5 a 8)")) }
+    if stop_bits != 1 and stop_bits != 2 { return Result.Err(err_new(22, "invalid", "serial_open '" + path + "': stop_bits " + int_to_string(stop_bits) + " (1 o 2)")) }
+    if baud <= 0 { return Result.Err(err_new(22, "invalid", "serial_open '" + path + "': velocidad " + int_to_string(baud))) }
+    let r: Array = nyx_serial_open(path, baud, data_bits, par, stop_bits)
+    let code: int = r[0]
+    if code != 0 { return Result.Err(__serial_err(code, "serial_open", path)) }
+    let h: int = r[1]
+    return Result.Ok(SerialPort { handle: h, path: path })
+}
+
+pub fn try_serial_write(p: SerialPort, datos: String) -> Result<int, Error> {
+    let n: int = nyx_serial_write(p.handle, datos)
+    if n < 0 { return Result.Err(__serial_err(0 - n, "serial_write", p.path)) }
+    return Result.Ok(n)
+}
+
+pub fn try_serial_read(p: SerialPort, max: int, timeout_ms: int) -> Result<String, Error> {
+    if max <= 0 { return Result.Err(err_new(22, "invalid", "serial_read '" + p.path + "': max " + int_to_string(max))) }
+    let r: Array = nyx_serial_read(p.handle, max, timeout_ms)
+    let code: int = r[0]
+    if code != 0 { return Result.Err(__serial_err(code, "serial_read", p.path)) }
+    let datos: String = r[1]
+    return Result.Ok(datos)
+}
+
+pub fn try_serial_read_until(p: SerialPort, fin: int, max: int, timeout_ms: int) -> Result<String, Error> {
+    if fin < 0 or fin > 255 { return Result.Err(err_new(22, "invalid", "serial_read_until '" + p.path + "': fin " + int_to_string(fin) + " (0 a 255)")) }
+    if max <= 0 { return Result.Err(err_new(22, "invalid", "serial_read_until '" + p.path + "': max " + int_to_string(max))) }
+    let r: Array = nyx_serial_read_until(p.handle, fin, max, timeout_ms)
+    let code: int = r[0]
+    let datos: String = r[1]
+    if code == 0 { return Result.Ok(datos) }
+    if code == 110 {
+        return Result.Err(err_new(110, "timeout", "serial_read_until '" + p.path + "': venció el plazo sin el byte de fin (llegaron " + int_to_string(datos.length()) + " bytes)"))
+    }
+    if code == 90 {
+        return Result.Err(err_new(90, "parse", "serial_read_until '" + p.path + "': " + int_to_string(datos.length()) + " bytes sin el byte de fin"))
+    }
+    return Result.Err(__serial_err(code, "serial_read_until", p.path))
+}
+
+pub fn try_serial_close(p: SerialPort) -> Result<int, Error> {
+    let r: int = nyx_serial_close(p.handle)
+    if r < 0 { return Result.Err(__serial_err(0 - r, "serial_close", p.path)) }
+    return Result.Ok(0)
+}
+
+// Puertos presentes: [[nombre, "vvvv:pppp" o "", descripción], ...]. Los
+// números de COM cambian al reconectar: identificar el equipo por VID:PID.
+// Un puerto RS232 integrado (COM1, /dev/ttyS0) no tiene VID:PID. Vacío si no
+// hay puertos o el sistema no los lista (wasm).
+pub fn serial_ports() -> Array {
+    let r: Array = nyx_serial_list()
+    let lista: Array = r[1]
+    return lista
+}
+
+// Adaptadores para compartir código con std/browser_serial (Array de enteros 0-255).
+pub fn serial_bytes_to_array(s: String) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i < s.length() {
+        let b: int = s.charAt(i)
+        out.push(b)
+        i = i + 1
+    }
+    return out
+}
+
+pub fn serial_array_to_bytes(a: Array) -> String {
+    return string_from_bytes(a, 0, a.length())
+}

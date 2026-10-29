@@ -24,6 +24,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `--release` (ver el ítem anterior).
 
 ### Agregado
+- **`std/serial`: puerto serie nativo para programas de servidor** [arco: serial-nativo] [dogfooding:nyxerp]:
+  `try_serial_open(path, baud, data_bits, paridad, stop_bits)`, `try_serial_write`, `try_serial_read(p, max, plazo_ms)`
+  (`Ok("")` = venció el plazo sin datos), `try_serial_read_until(p, fin, max, plazo_ms)` para tramas STX…ETX (no se
+  come el byte que sigue al fin, p. ej. el LRC), `try_serial_close` y `serial_ports()` con VID:PID USB. Linux
+  (termios, `/sys/class/tty`) y Windows (`\\.\COMn`, DCB, SetupAPI; sin verificar todavía en Windows real); macOS
+  abre y lista sin VID/PID. Apertura exclusiva (`in_use`), DTR activo, modo crudo sin control de flujo, solo
+  velocidades estándar. Bytes como `String`, con adaptadores para el `Array` de `std/browser_serial`. Por `extern "C"`,
+  sin tocar el compilador. Pedido para el puente de tienda de nyxerp (impresora fiscal y balanzas).
 - **W5: procesos, señales y adapters `dl` compilan para Windows** [arco: w5-windows]: salen del gate de win32
   `exec`, `exec_code`, `getpid`, `getcwd`, `chdir`, `stat`, `isatty`, `open_fd`, `close_fd`, `dup2`, `fsync`,
   `fdatasync`, `signal_*` y `setup_shutdown_handler`. En Windows, `exec()` normaliza `\r\n` a `\n` y `exec_code()`

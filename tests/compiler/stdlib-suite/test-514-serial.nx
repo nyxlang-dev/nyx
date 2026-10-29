@@ -1,0 +1,52 @@
+// test-514 — std/serial: la capa Nyx (validación, mapeo de errores, lista de
+// puertos y adaptadores de bytes). La E/S real sobre un pty la cubre
+// tests/runtime-unit/test_os_serial.c, que pasa por las mismas funciones
+// nyx_serial_* de file-io.c: desde Nyx no hay forma de crear un par pty, y un
+// test que dependa de hardware o de socat no corre en cualquier máquina.
+
+import "std/error"
+import "std/serial"
+
+fn abrir(path: String, baud: int, bits: int, par: String, stop: int) -> String {
+    match try_serial_open(path, baud, bits, par, stop) {
+        Result.Ok(p) => {
+            let _c = try_serial_close(p)
+            return "ok"
+        }
+        Result.Err(e) => { return e.kind + " " + int_to_string(e.code) }
+    }
+}
+
+fn main() -> int {
+    // Validación antes de tocar el sistema
+    println(abrir("/dev/ttyUSB-no-existe", 9600, 8, "mark", 1))
+    println(abrir("/dev/ttyUSB-no-existe", 9600, 9, "none", 1))
+    println(abrir("/dev/ttyUSB-no-existe", 9600, 8, "none", 3))
+    println(abrir("/dev/ttyUSB-no-existe", 0, 8, "none", 1))
+    // Errores del sistema con su kind
+    println(abrir("/dev/ttyUSB-no-existe", 9600, 8, "even", 1))
+    println(abrir("/dev/null", 9600, 8, "none", 1))          // no es una terminal
+    match try_serial_open("/dev/ttyUSB-no-existe", 9600, 8, "none", 1) {
+        Result.Ok(_p) => { println("inesperado") }
+        Result.Err(e) => { println(error_to_string(e)) }
+    }
+
+    // La lista nunca falla; cada fila es [nombre, vidpid, desc]
+    var bien: int = 1
+    for x: Array in serial_ports() {
+        if x.length() != 3 { bien = 0 }
+        let nombre: String = x[0]
+        if not nombre.startsWith("/dev/") { bien = 0 }
+        let vp: String = x[1]
+        if vp.length() != 0 and vp.length() != 9 { bien = 0 }
+    }
+    println("serial_ports bien formada: " + int_to_string(bien))
+
+    // Adaptadores con std/browser_serial: ida y vuelta, NUL incluido
+    let trama: String = string_from_bytes([2, 0, 65, 3, 255], 0, 5)
+    let arr: Array = serial_bytes_to_array(trama)
+    println(int_to_string(arr.length()) + " bytes, primero " + int_to_string(arr[0]) + ", último " + int_to_string(arr[4]))
+    let vuelta: String = serial_array_to_bytes(arr)
+    if vuelta == trama { println("ida y vuelta igual") } else { println("ida y vuelta DISTINTA") }
+    return 0
+}

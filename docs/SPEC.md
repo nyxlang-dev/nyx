@@ -3128,6 +3128,30 @@ import "std/exec"
 let r: Result<ExecResult, Error> = try_exec_full("make 2>&1")
 // ExecResult { stdout: String, stderr: String, code: int }
 
+// Puerto serie nativo (std/serial; Linux y Windows, macOS sin VID/PID). Los
+// bytes son String (binary-safe; `s.charAt(i)` da el valor del byte).
+import "std/serial"
+// try_serial_open(path, baud, data_bits, parity, stop_bits) -> Result<SerialPort, Error>
+//     parity: "none" | "odd" | "even"; data_bits 5-8; stop_bits 1 o 2.
+//     Modo crudo, sin control de flujo, DTR activo, solo velocidades estándar.
+// try_serial_write(p, datos) -> Result<int, Error>
+// try_serial_read(p, max, plazo_ms) -> Result<String, Error>
+//     Espera al menos un byte y devuelve lo que haya hasta `max`.
+//     Ok("") = venció el plazo sin datos (no es un error). plazo_ms < 0 = sin plazo.
+// try_serial_read_until(p, fin, max, plazo_ms) -> Result<String, Error>
+//     Junta hasta incluir el byte `fin`, con plazo TOTAL; no se come el byte
+//     que sigue al fin (trama STX...ETX+LRC: leer hasta ETX y luego 1 byte).
+// try_serial_close(p) -> Result<int, Error>
+// serial_ports() -> Array   // [[nombre, "vvvv:pppp" o "", descripción], ...]
+//
+// Errores (kind, code): not_found 2 (el puerto no existe), permission 13
+// (en Linux, el usuario tiene que estar en el grupo dialout), in_use 16
+// (la apertura es EXCLUSIVA: otro programa tiene el puerto), invalid 22
+// (parámetros o velocidad no estándar), io 5 (el equipo se desconectó),
+// timeout 110 y parse 90 (solo read_until: venció el plazo sin el byte de
+// fin / `max` bytes sin él), invalid 95 en wasm32-wasi (en el navegador:
+// std/browser_serial). Es síncrono: un `spawn` por puerto. Receta 150.
+
 // Variables de entorno
 setenv("MY_VAR", "hello")
 let val: String = getenv("MY_VAR")  // "hello"

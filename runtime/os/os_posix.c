@@ -52,6 +52,7 @@
 #include <signal.h>           // signal/sigaction/sigaltstack (os_sig_*/os_fault_guard_*, W1 inc 7)
 #include <sys/stat.h>         // stat/mkdir (os_fs_stat/os_fs_mkdir, W2 fase A)
 #include <dirent.h>           // opendir/readdir/closedir (os_fs_listdir, W2 fase A)
+#include <limits.h>           // PATH_MAX (os_serial_list: realpath de sysfs)
 #include <termios.h>          // tcgetattr/tcsetattr/cfmakeraw (os_term_raw_*, W2 fase A term+fd)
 #include <sys/ioctl.h>        // ioctl TIOCGWINSZ (os_term_winsize, W2 fase A term+fd)
 #include <sys/resource.h>     // getrlimit RLIMIT_STACK (os_main_stack_guard_install, D-3)
@@ -2363,4 +2364,230 @@ int os_fd_open(const char* path, int mode) {
 int os_fd_dup2(int oldfd, int newfd) {
     int r = dup2(oldfd, newfd);
     return r >= 0 ? r : -errno;
+}
+
+// ===========================================================================
+// Puerto serie / Serial port (arco serial-nativo, 2026-10-28) -- contrato en nyx_os.h.
+// ES: termios en modo crudo (cfmakeraw), sin control de flujo, CLOCAL para que
+// un puerto sin DCD (casi todos los puentes USB) no bloquee el open, y
+// O_NONBLOCK SOLO durante el open por la misma razón; después el fd queda
+// bloqueante y la lectura con plazo es poll + read. TIOCEXCL da la apertura
+// exclusiva que Windows da sola.
+// EN: raw termios, no flow control, CLOCAL so a DCD-less port does not block,
+// O_NONBLOCK only while opening; reads are poll + read. TIOCEXCL = exclusive.
+// ===========================================================================
+static speed_t serial_speed(int baud) {
+    switch (baud) {
+        case 50: return B50;         case 75: return B75;         case 110: return B110;
+        case 134: return B134;       case 150: return B150;       case 200: return B200;
+        case 300: return B300;       case 600: return B600;       case 1200: return B1200;
+        case 1800: return B1800;     case 2400: return B2400;     case 4800: return B4800;
+        case 9600: return B9600;     case 19200: return B19200;   case 38400: return B38400;
+        case 57600: return B57600;   case 115200: return B115200; case 230400: return B230400;
+#ifdef B460800
+        case 460800: return B460800;
+#endif
+#ifdef B500000
+        case 500000: return B500000;
+#endif
+#ifdef B576000
+        case 576000: return B576000;
+#endif
+#ifdef B921600
+        case 921600: return B921600;
+#endif
+#ifdef B1000000
+        case 1000000: return B1000000;
+#endif
+#ifdef B1500000
+        case 1500000: return B1500000;
+#endif
+#ifdef B2000000
+        case 2000000: return B2000000;
+#endif
+        default: return (speed_t)0;   // B0 = colgar la línea: nunca es una velocidad pedida
+    }
+}
+
+int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, int stop_bits) {
+    if (!path || !*path) return -EINVAL;
+    speed_t sp = serial_speed(baud);
+    if (sp == (speed_t)0) return -EINVAL;
+    if (data_bits < 5 || data_bits > 8 || parity < 0 || parity > 2 || (stop_bits != 1 && stop_bits != 2))
+        return -EINVAL;
+    int fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return -errno;
+    // TIOCEXCL: un segundo open (que no sea de root) da EBUSY. En un archivo
+    // que no es terminal falla con ENOTTY: ahí no es un puerto serie.
+    if (ioctl(fd, TIOCEXCL) != 0) { int e = errno; close(fd); return e == ENOTTY ? -EINVAL : -e; }
+    struct termios t;
+    if (tcgetattr(fd, &t) != 0) { int e = errno; close(fd); return e == ENOTTY ? -EINVAL : -e; }
+    cfmakeraw(&t);
+    t.c_cflag &= ~(tcflag_t)(CSIZE | PARENB | PARODD | CSTOPB);
+#ifdef CRTSCTS
+    t.c_cflag &= ~(tcflag_t)CRTSCTS;
+#endif
+    t.c_cflag |= CLOCAL | CREAD | HUPCL;
+    switch (data_bits) {
+        case 5: t.c_cflag |= CS5; break;
+        case 6: t.c_cflag |= CS6; break;
+        case 7: t.c_cflag |= CS7; break;
+        default: t.c_cflag |= CS8; break;
+    }
+    if (parity != 0) t.c_cflag |= PARENB;
+    if (parity == 1) t.c_cflag |= PARODD;
+    if (stop_bits == 2) t.c_cflag |= CSTOPB;
+    t.c_iflag &= ~(tcflag_t)(IXON | IXOFF | IXANY);
+    t.c_cc[VMIN] = 0;    // read() devuelve lo que haya; el plazo lo pone poll()
+    t.c_cc[VTIME] = 0;
+    if (cfsetispeed(&t, sp) != 0 || cfsetospeed(&t, sp) != 0 || tcsetattr(fd, TCSANOW, &t) != 0) {
+        int e = errno; close(fd); return -e;
+    }
+    // DTR arriba (open ya lo sube en casi todos los drivers; un pty no tiene
+    // líneas de módem y da error: se ignora a propósito).
+    int bits = TIOCM_DTR;
+    (void)ioctl(fd, TIOCMBIS, &bits);
+    int fl = fcntl(fd, F_GETFL);
+    if (fl >= 0) (void)fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
+    tcflush(fd, TCIOFLUSH);   // lo que el driver tuviera de antes no es de este programa
+    return (int64_t)fd;
+}
+
+int64_t os_serial_read(int64_t h, void* buf, int64_t n, int timeout_ms) {
+    if (h < 0 || !buf || n <= 0) return -EINVAL;
+    int fd = (int)h;
+    int64_t deadline = timeout_ms >= 0 ? os_monotonic_ns() + (int64_t)timeout_ms * 1000000 : -1;
+    for (;;) {
+        int wait_ms = -1;
+        if (deadline >= 0) {
+            int64_t left = deadline - os_monotonic_ns();
+            if (left <= 0) return 0;
+            wait_ms = (int)((left + 999999) / 1000000);
+        }
+        struct pollfd p = { .fd = fd, .events = POLLIN, .revents = 0 };
+        int r = poll(&p, 1, wait_ms);
+        if (r < 0) { if (errno == EINTR) continue; return -errno; }
+        if (r == 0) return 0;
+        if (p.revents & POLLNVAL) return -EBADF;
+        ssize_t got = read(fd, buf, (size_t)n);
+        if (got > 0) return (int64_t)got;
+        if (got < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+        // POLLHUP/POLLERR o read 0 con datos «disponibles»: el equipo se fue.
+        if (got == 0 || (p.revents & (POLLHUP | POLLERR))) return -EIO;
+        return -errno;
+    }
+}
+
+int64_t os_serial_write(int64_t h, const void* buf, int64_t n) {
+    if (h < 0 || (!buf && n > 0) || n < 0) return -EINVAL;
+    const char* b = (const char*)buf;
+    int64_t done = 0;
+    while (done < n) {
+        ssize_t w = write((int)h, b + done, (size_t)(n - done));
+        if (w < 0) { if (errno == EINTR) continue; return -errno; }
+        done += (int64_t)w;
+    }
+    return done;
+}
+
+int os_serial_close(int64_t h) {
+    if (h < 0) return -EINVAL;
+    return close((int)h) == 0 ? 0 : -errno;
+}
+
+#if defined(__linux__)
+// Lee la primera línea de un archivo de sysfs, sin el '\n'. "" si no existe.
+static void serial_sys_read(const char* path, char* out, size_t cap) {
+    out[0] = 0;
+    FILE* f = fopen(path, "r");
+    if (!f) return;
+    if (fgets(out, (int)cap, f)) { size_t l = strlen(out); while (l && (out[l-1] == '\n' || out[l-1] == '\r')) out[--l] = 0; }
+    fclose(f);
+}
+#endif
+
+int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud) {
+    if (!cb) return -EINVAL;
+#if defined(__linux__)
+    // Un tty con `device` en sysfs es hardware (los pty y las consolas virtuales
+    // no lo tienen). Los ttyS* son la excepción: el driver 8250 registra siempre
+    // varios, haya UART o no, y el único indicador confiable es `type` (0 =
+    // PORT_UNKNOWN, sin UART detrás). No alcanza con mirar el subsystem: desde
+    // Linux 6.5 el `device` de un ttyS es el puerto de serial-base, no la
+    // plataforma (medido 2026-10-28 en el servidor: ttyS0 type 4, PCI real;
+    // ttyS1-3 type 0, fantasmas).
+    DIR* d = opendir("/sys/class/tty");
+    if (!d) return -errno;
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        char p[512], real[PATH_MAX], sub[PATH_MAX];
+        snprintf(p, sizeof p, "/sys/class/tty/%s/device", e->d_name);
+        if (!realpath(p, real)) continue;
+        if (strncmp(e->d_name, "ttyS", 4) == 0) {
+            char ty[32];
+            snprintf(p, sizeof p, "/sys/class/tty/%s/type", e->d_name);
+            serial_sys_read(p, ty, sizeof ty);
+            if (ty[0] == 0 || strcmp(ty, "0") == 0) continue;
+        }
+        // Descripción para lo que no es USB: el subsystem del dispositivo,
+        // salteando las capas de serial-base («pci», «platform», «pnp», «amba»).
+        const char* subsys = "";
+        char up_dir[PATH_MAX];
+        snprintf(up_dir, sizeof up_dir, "%s", real);
+        for (int k = 0; k < 4; k++) {
+            snprintf(p, sizeof p, "%s/subsystem", up_dir);
+            if (!realpath(p, sub)) break;
+            const char* sl = strrchr(sub, '/');
+            subsys = sl ? sl + 1 : sub;
+            if (strcmp(subsys, "serial-base") != 0) break;
+            char* cut = strrchr(up_dir, '/');
+            if (!cut || cut == up_dir) break;
+            *cut = 0;
+        }
+        char name[300], vidpid[16] = "", desc[256] = "";
+        snprintf(name, sizeof name, "/dev/%s", e->d_name);
+        // Subir desde el dispositivo hasta el nodo USB (el que tiene idVendor).
+        char dir[PATH_MAX];
+        snprintf(dir, sizeof dir, "%s", real);
+        for (int up = 0; up < 6 && dir[0]; up++) {
+            char vid[16], pid[16];
+            snprintf(p, sizeof p, "%s/idVendor", dir);
+            serial_sys_read(p, vid, sizeof vid);
+            if (vid[0]) {
+                snprintf(p, sizeof p, "%s/idProduct", dir);
+                serial_sys_read(p, pid, sizeof pid);
+                snprintf(vidpid, sizeof vidpid, "%.4s:%.4s", vid, pid);
+                for (char* c = vidpid; *c; c++) if (*c >= 'A' && *c <= 'F') *c = (char)(*c - 'A' + 'a');
+                snprintf(p, sizeof p, "%s/product", dir);
+                serial_sys_read(p, desc, sizeof desc);
+                break;
+            }
+            char* slash = strrchr(dir, '/');
+            if (!slash || slash == dir) break;
+            *slash = 0;
+        }
+        if (!desc[0]) snprintf(desc, sizeof desc, "%s", subsys);
+        cb(name, vidpid, desc, ud);
+    }
+    closedir(d);
+    return 0;
+#elif defined(__APPLE__)
+    // macOS: los dispositivos de llamada saliente /dev/cu.* (los tty.* esperan
+    // DCD). VID/PID exige IOKit: fuera de alcance (decisión 3 del spec).
+    DIR* d = opendir("/dev");
+    if (!d) return -errno;
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) {
+        if (strncmp(e->d_name, "cu.", 3) != 0) continue;
+        char name[300];
+        snprintf(name, sizeof name, "/dev/%s", e->d_name);
+        cb(name, "", "", ud);
+    }
+    closedir(d);
+    return 0;
+#else
+    (void)ud;
+    return -ENOSYS;
+#endif
 }
