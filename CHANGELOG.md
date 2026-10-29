@@ -74,6 +74,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `dl`, Ctrl+C real y el drenado de `persist`; `std/serial` solo en errores sin puerto (falta hardware).
 
 ### Arreglado
+- **`nyx build --target x86_64-pc-windows-msvc` ya no arma nativo en silencio** [dogfooding:nyxerp]: los triples
+  de Windows pasaban la validación (el codegen los conoce), pero `nyx build` no enlaza para Windows: imprimía «build
+  complete», salía 0 y dejaba un ejecutable de la plataforma actual. Ahora falla con el motivo, igual que un triple
+  desconocido, y la ayuda de `nyx` ya no anuncia «Windows (cross)». Caso nuevo en `run_build_manifest.sh`.
 - **HTTP: el cuerpo de un pedido ya no se pierde si la cabecera llega como `content-length`** [dogfooding:nyxerp]:
   el parser de C (el de `http_serve` y `std/serve`) exigía `": "` como separador y comparaba `Content-Length` con
   mayúsculas exactas, así que `content-length: 5` o `Content-Length:5` llegaban al manejador con el cuerpo VACÍO y

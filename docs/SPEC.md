@@ -2142,8 +2142,9 @@ nyx-db = "*"
 ```
 
 Claves de `[build]`: `main` (punto de entrada; también se acepta en `[package]`) y `target`
-(`wasm32-wasi`, `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`; también se acepta en
-`[package]`). Una clave desconocida en `[build]` es un error con su nombre, y declarar `main` o
+(`wasm32-wasi`; también se acepta en `[package]`). Los triples de Windows
+(`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`) los reconoce el compilador, pero `nyx build`
+todavía no enlaza para Windows y los rechaza con ese motivo, en vez de armar nativo. Una clave desconocida en `[build]` es un error con su nombre, y declarar `main` o
 `target` en las dos secciones con valores distintos también: el manifiesto nunca se ignora en
 silencio. `nyx info` muestra el `main` y el `target` efectivos.
 

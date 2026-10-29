@@ -95,6 +95,19 @@ else
     bad "build-target — rc $RC sin «target desconocido»: [build] target se ignoró" "build-target"; muestra
 fi
 
+# Un triple de Windows lo conoce el codegen, pero `nyx build` no enlaza para
+# Windows: armaba NATIVO, decía «build complete» y salía 0 (fricción nyxerp
+# 2026-10-29: un ELF de aarch64 donde se pidió un .exe). Tiene que fallar,
+# decir por qué y no dejar ningún binario.
+mk_proj "$P" "$PKG"
+rm -f "$P/manif"
+nb "$P" build --target x86_64-pc-windows-msvc
+if [ "$RC" -ne 0 ] && grep -q "todavía no arma ejecutables para x86_64-pc-windows-msvc" "$GATE_TMP/out" && [ ! -e "$P/manif" ]; then
+    ok "build-target-windows — un triple de Windows se rechaza con su motivo, sin dejar un binario nativo"
+else
+    bad "build-target-windows — rc $RC: un triple de Windows armó nativo o no dijo por qué" "build-target-windows"; muestra
+fi
+
 # CONTROL POSITIVO: un target válido en [build] se refleja en `nyx info`.
 mk_proj "$P" "$PKG
 

@@ -2227,10 +2227,18 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     if eff_target != "" and eff_target != "wasm32-wasi" {
         if eff_target != "x86_64-pc-windows-msvc" and eff_target != "aarch64-pc-windows-msvc" {
             print("error: target desconocido: " + eff_target)
-            print("  targets soportados: wasm32-wasi, x86_64-pc-windows-msvc, aarch64-pc-windows-msvc")
-            print("  sin --target se compila para la plataforma actual")
+            print("  targets soportados: wasm32-wasi (sin --target se compila para la plataforma actual)")
             return false
         }
+        // Los triples de Windows los conoce el codegen, pero esta receta no
+        // enlaza para Windows: caían al build NATIVO, imprimían «build
+        // complete» y salían 0 con un ELF donde se pidió un .exe (fricción
+        // nyxerp 2026-10-29). Hasta que el arco Windows traiga ese camino
+        // (W6), se rechazan con su motivo, igual que un triple desconocido.
+        print("error: nyx build todavía no arma ejecutables para " + eff_target)
+        print("  el soporte de Windows está en desarrollo y todavía no se publicó; hoy solo hay")
+        print("  builds nativos (sin --target) y wasm32-wasi")
+        return false
     }
 
     var final_script: String = build_script
