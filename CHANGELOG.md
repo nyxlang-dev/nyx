@@ -10,6 +10,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ## [Unreleased]
 
 ### Cambiado
+- **`sort_int`, `sort_str` y `sort_by` ordenan en O(n log n)** [dogfooding:nyxerp]: eran burbuja e inserción,
+  O(n²); con 32.000 elementos `sort_by` tardaba 15 s y ahora 11 ms. Ordenación por mezcla sin recursión,
+  **estable** (los iguales conservan su orden) y con el mismo contrato: ordenan el arreglo in situ y lo
+  devuelven. Regression +1 (`test-517`, 534 archivos).
 - **El runtime C va siempre con `-O2`**, también sin `--release`, en `nyx run`, `nyx build` y `nyx test`: a `-O0`
   todo lo que vive en C corría unas 7 veces más lento (`sha256` de 120 MB: 4.858 → 741 ms con `nyx run`), y
   nyxerp lo reportó como lentitud de PBKDF2. Se compila una sola vez a la caché `~/.cache/nyx/rt/` (la que ya

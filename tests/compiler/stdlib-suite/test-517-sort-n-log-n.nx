@@ -1,0 +1,65 @@
+// test-517 — sort_int, sort_str y sort_by ordenan en O(n log n), estables e
+// in situ (nyxerp, 2026-10-29). Eran burbuja e inserción: 32.000 elementos
+// con sort_by tardaban 15 s. Acá 20.000 por función: con el algoritmo viejo
+// este test tardaría minutos; con la mezcla, menos de un segundo.
+
+// Clave = valor / 100000, índice original = valor % 100000.
+fn por_clave(a: int, b: int) -> int { return (a / 100000) - (b / 100000) }
+
+fn main() -> int {
+    let n = 20000
+    var xs: Array = []
+    var ys: Array = []
+    var zs: Array = []
+    var s: int = 12345
+    var i = 0
+    while i < n {
+        s = (s * 1103515245 + 12345) % 2147483647
+        xs.push(s)
+        ys.push("k" + int_to_string(s % 5000))
+        zs.push((s % 50) * 100000 + i)
+        i = i + 1
+    }
+    let a: Array = sort_int(xs)
+    let b: Array = sort_str(ys)
+    let c: Array = sort_by(zs, por_clave)
+
+    var bien_int = 1
+    var bien_str = 1
+    var bien_by = 1
+    var estable = 1
+    i = 1
+    while i < n {
+        if a[i - 1] > a[i] { bien_int = 0 }
+        let p: String = b[i - 1]
+        let q: String = b[i]
+        if str_compare(p, q) > 0 { bien_str = 0 }
+        let r: int = por_clave(c[i - 1], c[i])
+        if r > 0 { bien_by = 0 }
+        // Iguales en clave: el índice original tiene que seguir creciendo.
+        if r == 0 {
+            let ia: int = c[i - 1] % 100000
+            let ib: int = c[i] % 100000
+            if ia > ib { estable = 0 }
+        }
+        i = i + 1
+    }
+    println("sort_int ordenado: " + int_to_string(bien_int))
+    println("sort_str ordenado: " + int_to_string(bien_str))
+    println("sort_by ordenado: " + int_to_string(bien_by))
+    println("sort_by estable: " + int_to_string(estable))
+
+    // In situ: devuelve el MISMO arreglo, ya ordenado.
+    var chico: Array = [5, 3, 9, 1, 3]
+    let _r: Array = sort_int(chico)
+    println(int_to_string(chico[0]) + " " + int_to_string(chico[1]) + " " + int_to_string(chico[2]) + " " + int_to_string(chico[3]) + " " + int_to_string(chico[4]))
+
+    // Bordes: vacío, uno, ya ordenado, al revés, todos iguales.
+    let v: Array = sort_int([])
+    let u: Array = sort_int([7])
+    let o: Array = sort_int([1, 2, 3])
+    let rv: Array = sort_int([3, 2, 1])
+    let eq: Array = sort_str(["b", "b", "b"])
+    println(int_to_string(v.length()) + " " + int_to_string(u[0]) + " " + int_to_string(o[2]) + " " + int_to_string(rv[0]) + " " + int_to_string(eq.length()))
+    return 0
+}

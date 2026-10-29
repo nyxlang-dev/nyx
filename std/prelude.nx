@@ -337,51 +337,13 @@ pub fn array_index_of(arr: Array, val: int) -> int {
     return -1
 }
 
-// sort_int: ordena arr in-place (bubble sort) y lo retorna
-pub fn sort_int(arr: Array) -> Array {
-    let n = arr.length()
-    var swapped = true
-    while swapped == true {
-        swapped = false
-        var j = 0
-        while j < n - 1 {
-            if arr[j] > arr[j + 1] {
-                let temp = arr[j]
-                arr[j] = arr[j + 1]
-                arr[j + 1] = temp
-                swapped = true
-            }
-            j = j + 1
-        }
-    }
-    return arr
-}
+// sort_int: ordena arr in-place (mezcla, O(n log n), estable) y lo retorna
+pub fn sort_int(arr: Array) -> Array { return __sort_merge(arr, 0, __sort_sin_cmp) }
 
-// sort_by: ordena arr in-place usando comparator fn
+// sort_by: ordena arr in-place usando comparator fn (mezcla, O(n log n),
+// estable) y lo retorna
 // cmp(a, b) debe retornar int: negativo si a < b, 0 si a == b, positivo si a > b
-pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array {
-    let n = arr.length()
-    if n <= 1 { return arr }
-    // Insertion sort — estable, simple, eficiente para arrays pequenos
-    var i = 1
-    while i < n {
-        let key = arr[i]
-        var j = i - 1
-        var done = false
-        while j >= 0 and not done {
-            let c: int = cmp(arr[j], key)
-            if c > 0 {
-                arr[j + 1] = arr[j]
-                j = j - 1
-            } else {
-                done = true
-            }
-        }
-        arr[j + 1] = key
-        i = i + 1
-    }
-    return arr
-}
+pub fn sort_by(arr: Array, cmp: Fn(int, int) -> int) -> Array { return __sort_merge(arr, 2, cmp) }
 
 // str_compare: compara dos strings lexicograficamente
 // retorna negativo si a < b, 0 si iguales, positivo si a > b
@@ -403,29 +365,123 @@ pub fn str_compare(a: String, b: String) -> int {
     return 0
 }
 
-// sort_str: ordena array de strings in-place
-pub fn sort_str(arr: Array) -> Array {
+// Ordenacion por mezcla de abajo hacia arriba: O(n log n) y estable. Primero
+// ordena tramos de 32 elementos (run = 32) por insercion (en tramos chicos es
+// mas rapida que mezclar), despues mezcla tramos de ancho 32, 64, ... alternando
+// entre arr y un buffer. Sin recursion: la profundidad no depende de n.
+// Es la base de sort_int, sort_str y sort_by (antes burbuja/insercion, O(n^2):
+// 32.000 elementos tardaban 15 s en sort_by).
+// modo: 0 = enteros, 1 = String (str_compare), 2 = cmp del usuario.
+// Compara x[i] con y[j] (negativo, 0, positivo) leyendo cada elemento con el
+// tipo de su modo.
+fn __sort_cmp(x: Array, i: int, y: Array, j: int, modo: int, cmp: Fn(int, int) -> int) -> int {
+    if modo == 0 {
+        let a: int = x[i]
+        let b: int = y[j]
+        if a < b { return -1 }
+        if a > b { return 1 }
+        return 0
+    }
+    if modo == 1 {
+        let sa: String = x[i]
+        let sb: String = y[j]
+        return str_compare(sa, sb)
+    }
+    return cmp(x[i], y[j])
+}
+
+fn __sort_merge(arr: Array, modo: int, cmp: Fn(int, int) -> int) -> Array {
     let n = arr.length()
     if n <= 1 { return arr }
-    var i = 1
-    while i < n {
-        let key: String = arr[i]
-        var j = i - 1
-        var done = false
-        while j >= 0 and not done {
-            let cur: String = arr[j]
-            if str_compare(cur, key) > 0 {
-                arr[j + 1] = cur
+    let run = 32
+    // 1. Inserción por tramos (estable: solo corre lo estrictamente mayor).
+    var lo = 0
+    while lo < n {
+        var hi = lo + run
+        if hi > n { hi = n }
+        // Inserción por intercambios adyacentes: solo cruza lo estrictamente
+        // mayor, así que los iguales conservan su orden.
+        var i = lo + 1
+        while i < hi {
+            var j = i
+            while j > lo and __sort_cmp(arr, j - 1, arr, j, modo, cmp) > 0 {
+                let t = arr[j - 1]
+                arr[j - 1] = arr[j]
+                arr[j] = t
                 j = j - 1
-            } else {
-                done = true
             }
+            i = i + 1
         }
-        arr[j + 1] = key
-        i = i + 1
+        lo = hi
+    }
+    if n <= run { return arr }
+    // 2. Mezclas de ancho creciente entre src y dst.
+    var buf: Array = []
+    var k = 0
+    while k < n {
+        buf.push(arr[k])
+        k = k + 1
+    }
+    var src: Array = arr
+    var dst: Array = buf
+    var en_arr = true
+    var w = run
+    while w < n {
+        var a = 0
+        while a < n {
+            var m = a + w
+            if m > n { m = n }
+            var b = a + 2 * w
+            if b > n { b = n }
+            var i = a
+            var j = m
+            var o = a
+            while i < m and j < b {
+                // <= 0 toma primero el de la izquierda: estable.
+                if __sort_cmp(src, i, src, j, modo, cmp) <= 0 {
+                    dst[o] = src[i]
+                    i = i + 1
+                } else {
+                    dst[o] = src[j]
+                    j = j + 1
+                }
+                o = o + 1
+            }
+            while i < m {
+                dst[o] = src[i]
+                i = i + 1
+                o = o + 1
+            }
+            while j < b {
+                dst[o] = src[j]
+                j = j + 1
+                o = o + 1
+            }
+            a = b
+        }
+        let t = src
+        src = dst
+        dst = t
+        en_arr = not en_arr
+        w = w * 2
+    }
+    // El resultado quedó en src; si src es el buffer, se copia a arr (el
+    // contrato es ordenar arr in situ y devolverlo).
+    if not en_arr {
+        var c = 0
+        while c < n {
+            arr[c] = src[c]
+            c = c + 1
+        }
     }
     return arr
 }
+
+fn __sort_sin_cmp(a: int, b: int) -> int { return 0 }
+
+// sort_str: ordena array de strings in-place (mezcla, O(n log n), estable)
+// y lo retorna
+pub fn sort_str(arr: Array) -> Array { return __sort_merge(arr, 1, __sort_sin_cmp) }
 
 // std/file.nx — Funciones de archivo de la Standard Library v0.21
 
