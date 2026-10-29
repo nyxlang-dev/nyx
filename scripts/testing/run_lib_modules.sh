@@ -367,6 +367,21 @@ if echo "$out" | grep -q "compiling src/datos (lib)" && [ "$run" = "dos-y" ]; th
 else mal "recurso de un módulo inlineado: '$run' $(echo "$out" | grep -E 'reusing|compiling' | tr '\n' ' ')"; fi
 cd "$P" || exit 1
 
+echo "── [lib] modules: un ciclo de imports entre bibliotecas (nyxerp, 2026-10-29) ──"
+# a importa b y b importa a, las dos en [lib]. La unidad de `a` inlineaba otra
+# copia de `a` al volver por el import de b, y su struct salía dos veces en el IR
+# («redefinition of type» en clang). Lo destapó run_lib_real sobre
+# formatos ↔ formatos_lienzo de nyxerp.
+Y="$T/ciclo"; mkdir -p "$Y/src"; cd "$Y" || exit 1
+printf '[package]\nname = "ci"\nversion = "0.1.0"\n\n[lib]\nmodules = ["src/a", "src/b"]\n' > nyx.toml
+printf 'import "src/b"\npub struct Par {\n    x: int\n    y: int\n}\npub fn nota(p: Par) -> int { return p.x * 10 + p.y }\npub fn total() -> int { return doble(Par { x: 2, y: 3 }) }\n' > src/a.nx
+printf 'import "src/a"\npub fn doble(p: Par) -> int { return nota(p) * 2 }\n' > src/b.nx
+printf 'import "src/a"\nfn main() -> int {\n    println(int_to_string(total()))\n    return 0\n}\n' > src/main.nx
+out=$("$NB" build 2>&1); run=$(./ci 2>&1)
+if [ "$run" = "46" ]; then ok "dos bibliotecas que se importan entre sí compilan y enlazan (46)"
+else mal "ciclo entre bibliotecas: '$run' $(echo "$out" | grep -E 'error|redefinition' | head -2 | tr '\n' ' ')"; fi
+cd "$P" || exit 1
+
 echo "── [lib] modules: errores del manifiesto ──"
 cp nyx.toml nyx.toml.bien
 printf '[package]\nname = "libp"\nversion = "0.1.0"\n\n[lib]\nmodulos = ["src/util"]\n' > nyx.toml

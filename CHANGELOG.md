@@ -61,6 +61,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `dl`, Ctrl+C real y el drenado de `persist`; `std/serial` solo en errores sin puerto (falta hardware).
 
 ### Arreglado
+- **`[lib] modules`: dos bibliotecas que se importan entre sí ya compilan** [dogfooding:nyxerp]: la unidad de `a`
+  no se contaba como importada, así que al volver por el import de `b` se inlineaba otra copia de `a` y sus structs
+  salían dos veces en el IR («redefinition of type» en clang). Lo destapó `run_lib_real` sobre `formatos ↔
+  formatos_lienzo` de nyxerp. Caso nuevo en `run_lib_modules.sh`.
 - **win32: `try_exec_full` ya no se cuelga sin consola** [arco: w5-windows]: desde un servicio el hijo leía de una
   consola nueva y no volvía nunca; ahora recibe stdin `NUL` y se crea con `CREATE_NO_WINDOW`.
 - **win32: un fd inválido da `EBADF`, no `__fastfail`** [arco: w5-windows]: handler de parámetro inválido de la
