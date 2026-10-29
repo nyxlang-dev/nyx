@@ -1,0 +1,358 @@
+// std/process.nx — lanzar procesos hijos sin fork, con la misma API en Linux,
+// macOS y Windows (arco procesos-spawn). Spec:
+// docs/design/specs/2026-10-28-procesos-spawn-design.md.
+//
+//     import "std/process"
+//     var o = spawn_opts()                       // todo heredado, cwd y env del padre
+//     o.stdout = Stdio.Pipe
+//     o.stderr = Stdio.Pipe
+//     match try_spawn(["ls", "-la", "/tmp"], o) {
+//         Result.Ok(c) => {
+//             match try_child_collect(c) {          // drena stdout y stderr y espera
+//                 Result.Ok(r) => { print(r.stdout); print("código " + int_to_string(r.code)) }
+//                 Result.Err(e) => { print(e.msg) }
+//             }
+//         }
+//         Result.Err(e) => { print(e.msg) }        // not_found si "ls" no está en PATH
+//     }
+//
+// Contrato:
+//   - argv es un Array de String, sin shell: nada de comillas, `*` ni `$VAR`.
+//     argv[0] se busca en PATH (Windows: también PATHEXT). Para una línea de
+//     shell, `exec`/`try_exec_full` de std/exec.
+//   - Cada flujo es Stdio.Inherit (el del padre), Stdio.Null, Stdio.Pipe (el
+//     padre lee/escribe con try_child_read/write), Stdio.File(ruta, modo) con
+//     modo "r" (stdin), "w" (trunca) o "a" (agrega), o Stdio.Fd(fd).
+//   - El lanzamiento falla con Err si el programa no existe (not_found), no es
+//     ejecutable (permission), un archivo de Stdio.File no se puede abrir, o
+//     cwd no existe. El msg dice cuál de todos. (Con fork/execvp eso no daba
+//     error: el hijo salía con 127.)
+//   - Windows: un .bat/.cmd da Err invalid (cmd.exe tiene otras reglas de
+//     comillas, CVE-2024-24576): para eso, exec.
+//   - Bloqueante: wait y read bloquean el hilo. Con muchos hijos, un `spawn`
+//     por hijo.
+//   - Leer stdout hasta EOF y después stderr se puede colgar si el hijo llena
+//     el pipe de stderr mientras tanto: con los dos en Pipe, usar
+//     try_child_collect, que los lee a la vez.
+//   - El código de salida en posix es 128+señal si lo mató una señal (un
+//     try_child_kill da 137). En Windows, try_child_kill deja el código 1.
+//   - Errores: "not_found" (2), "permission" (13), "invalid" (22), "io" (5);
+//     "invalid" (95) en wasm32-wasi.
+//
+// Los builtins crudos (fork, execvp, waitpid, dup2, pipe_new, kill_process)
+// siguen existiendo en posix, sin cambios.
+//
+// Se expone por `extern "C"` (runtime/file-io.c → os_proc_* de runtime/os/),
+// sin tocar el compilador.
+
+import "std/error"
+
+extern "C" fn nyx_proc_spawn(argv: Array, kinds: Array, paths: Array, modes: Array, raws: Array, cwd: String, env: Array) -> Array
+extern "C" fn nyx_proc_wait(h: int, nohang: int) -> Array
+extern "C" fn nyx_proc_kill(h: int) -> int
+extern "C" fn nyx_proc_signal(h: int, sig: int) -> int
+extern "C" fn nyx_proc_pid(h: int) -> int
+extern "C" fn nyx_proc_read(h: int, stream: int, max: int) -> Array
+extern "C" fn nyx_proc_write(h: int, data: String) -> int
+extern "C" fn nyx_proc_close_stdin(h: int) -> int
+extern "C" fn nyx_proc_drain(h: int) -> Array
+extern "C" fn nyx_proc_pipe() -> Array
+extern "C" fn nyx_proc_raw_close(raw: int) -> int
+
+pub enum Stdio {
+    Inherit,
+    Null,
+    Pipe,
+    File(String, String),   // ruta, modo "r" | "w" | "a"
+    Fd(int),
+}
+
+// env: [["CLAVE", "valor"], ...] que se agregan o pisan sobre el entorno del
+// padre; [] = lo hereda tal cual. cwd "" = el del padre.
+pub struct SpawnOpts {
+    stdin: Stdio,
+    stdout: Stdio,
+    stderr: Stdio,
+    cwd: String,
+    env: Array,
+}
+
+pub struct Child {
+    handle: int,
+    program: String,
+}
+
+pub struct ChildOutput {
+    stdout: String,
+    stderr: String,
+    code: int,
+}
+
+// Todo heredado: el hijo escribe en la misma terminal que el padre.
+pub fn spawn_opts() -> SpawnOpts {
+    return SpawnOpts { stdin: Stdio.Inherit, stdout: Stdio.Inherit, stderr: Stdio.Inherit, cwd: "", env: [] }
+}
+
+fn __proc_err(code: int, que: String) -> Error {
+    if code == 38 { return err_new(95, "invalid", que + ": no hay procesos hijos en wasm32-wasi") }
+    if code == 9 { return err_new(9, "invalid", que + ": el hijo ya no existe (¿ya se esperó y se cerraron sus pipes?)") }
+    return err_new(code, errno_to_kind(code), que)
+}
+
+fn __proc_stage_err(code: int, stage: int, program: String, opts: SpawnOpts) -> Error {
+    let que: String = "spawn '" + program + "'"
+    if stage == 4 {
+        if code == 20 { return err_new(20, "invalid", que + ": cwd '" + opts.cwd + "' no es un directorio") }
+        return err_new(code, errno_to_kind(code), que + ": cwd '" + opts.cwd + "'")
+    }
+    if stage >= 1 and stage <= 3 {
+        var cual: String = "stdin"
+        var st: Stdio = opts.stdin
+        if stage == 2 { cual = "stdout"
+            st = opts.stdout }
+        if stage == 3 { cual = "stderr"
+            st = opts.stderr }
+        var ruta: String = ""
+        match st {
+            Stdio.File(p, _m) => { ruta = " '" + p + "'" }
+            _ => { ruta = "" }
+        }
+        return err_new(code, errno_to_kind(code), que + ": no se pudo preparar " + cual + ruta)
+    }
+    if code == 2 { return err_new(2, "not_found", que + ": el programa no existe (ni en PATH)") }
+    if code == 13 { return err_new(13, "permission", que + ": sin permiso de ejecución") }
+    if code == 22 {
+        let pl: String = program.toLower()
+        if pl.endsWith(".bat") or pl.endsWith(".cmd") {
+            return err_new(22, "invalid", que + ": los .bat/.cmd no se lanzan sin shell (cmd.exe usa otras reglas de comillas); usar exec")
+        }
+        return err_new(22, "invalid", que + ": argumentos inválidos")
+    }
+    return __proc_err(code, que)
+}
+
+// kind/path/mode/raw para la frontera C. -1 en kind = Stdio inválido.
+fn __stdio_encode(s: Stdio, idx: int) -> Array {
+    match s {
+        Stdio.Inherit => { return [0, "", 0, -1] }
+        Stdio.Null => { return [1, "", 0, -1] }
+        Stdio.Pipe => { return [2, "", 0, -1] }
+        Stdio.File(p, m) => {
+            if m == "r" { return [3, p, 114, -1] }
+            if m == "w" { return [3, p, 119, -1] }
+            if m == "a" { return [3, p, 97, -1] }
+            return [-1, m, 0, -1]
+        }
+        Stdio.Fd(fd) => { return [5, "", 0, fd] }
+    }
+    return [-1, "", 0, -1]
+}
+
+fn __env_encode(env: Array) -> Array {
+    var out: Array = []
+    for kv: Array in env {
+        if kv.length() != 2 { return [] }
+        let k: String = kv[0]
+        let v: String = kv[1]
+        if k.length() == 0 or k.indexOf("=") >= 0 { return [] }
+        out.push(k + "=" + v)
+    }
+    return out
+}
+
+// kinds/paths/modes/raws de los 3 flujos; raw_in/raw_out >= 0 reemplazan
+// stdin/stdout por un extremo de pipe crudo (pipeline).
+fn __spawn_raw(argv: Array, opts: SpawnOpts, raw_in: int, raw_out: int) -> Result<Child, Error> {
+    if argv.length() == 0 { return Result.Err(err_new(22, "invalid", "spawn: argv vacío")) }
+    let program: String = argv[0]
+    if program.length() == 0 { return Result.Err(err_new(22, "invalid", "spawn: argv[0] vacío")) }
+    let env: Array = __env_encode(opts.env)
+    if env.length() != opts.env.length() {
+        return Result.Err(err_new(22, "invalid", "spawn '" + program + "': env tiene que ser [[\"CLAVE\", \"valor\"], ...], con la clave sin '='"))
+    }
+    var kinds: Array = []
+    var paths: Array = []
+    var modes: Array = []
+    var raws: Array = []
+    let sts: Array = [opts.stdin, opts.stdout, opts.stderr]
+    var i: int = 0
+    while i < 3 {
+        var e: Array = []
+        if i == 0 and raw_in >= 0 {
+            e = [4, "", 0, raw_in]
+        } else if i == 1 and raw_out >= 0 {
+            e = [4, "", 0, raw_out]
+        } else {
+            let st: Stdio = sts[i]
+            e = __stdio_encode(st, i)
+        }
+        let k: int = e[0]
+        if k < 0 {
+            let m: String = e[1]
+            return Result.Err(err_new(22, "invalid", "spawn '" + program + "': modo de Stdio.File '" + m + "' (usar \"r\", \"w\" o \"a\")"))
+        }
+        kinds.push(k)
+        let p: String = e[1]
+        paths.push(p)
+        let md: int = e[2]
+        modes.push(md)
+        let rw: int = e[3]
+        raws.push(rw)
+        i = i + 1
+    }
+    let r: Array = nyx_proc_spawn(argv, kinds, paths, modes, raws, opts.cwd, env)
+    let code: int = r[0]
+    if code != 0 {
+        let stage: int = r[2]
+        return Result.Err(__proc_stage_err(code, stage, program, opts))
+    }
+    let h: int = r[1]
+    return Result.Ok(Child { handle: h, program: program })
+}
+
+pub fn try_spawn(argv: Array, opts: SpawnOpts) -> Result<Child, Error> {
+    return __spawn_raw(argv, opts, -1, -1)
+}
+
+// `a | b | c`: cmds es un Array de argv. opts.stdin es el del primero,
+// opts.stdout el del último y opts.stderr el de todos. Devuelve los hijos en
+// orden; si uno no se puede lanzar, los ya lanzados se matan y esperan.
+pub fn try_spawn_pipeline(cmds: Array, opts: SpawnOpts) -> Result<Array, Error> {
+    if cmds.length() == 0 { return Result.Err(err_new(22, "invalid", "spawn_pipeline: sin comandos")) }
+    var hijos: Array = []
+    var prev_rd: int = -1
+    var i: int = 0
+    while i < cmds.length() {
+        let argv: Array = cmds[i]
+        var rd: int = -1
+        var wr: int = -1
+        if i < cmds.length() - 1 {
+            let p: Array = nyx_proc_pipe()
+            let pc: int = p[0]
+            if pc != 0 {
+                if prev_rd >= 0 { let _c = nyx_proc_raw_close(prev_rd) }
+                __pipeline_abort(hijos)
+                return Result.Err(__proc_err(pc, "spawn_pipeline: pipe"))
+            }
+            rd = p[1]
+            wr = p[2]
+        }
+        let r = __spawn_raw(argv, opts, prev_rd, wr)
+        // Los extremos crudos ya los heredó el hijo (o falló): el padre los
+        // cierra YA, o el EOF nunca llega al siguiente de la cadena.
+        if prev_rd >= 0 { let _c1 = nyx_proc_raw_close(prev_rd) }
+        if wr >= 0 { let _c2 = nyx_proc_raw_close(wr) }
+        match r {
+            Result.Ok(c) => { hijos.push(c) }
+            Result.Err(e) => {
+                if rd >= 0 { let _c3 = nyx_proc_raw_close(rd) }
+                __pipeline_abort(hijos)
+                return Result.Err(e)
+            }
+        }
+        prev_rd = rd
+        i = i + 1
+    }
+    return Result.Ok(hijos)
+}
+
+fn __pipeline_abort(hijos: Array) {
+    for c: Child in hijos {
+        let _k = nyx_proc_kill(c.handle)
+        let _w = nyx_proc_wait(c.handle, 0)
+        let _d = nyx_proc_drain(c.handle)
+    }
+}
+
+pub fn try_child_wait(c: Child) -> Result<int, Error> {
+    let r: Array = nyx_proc_wait(c.handle, 0)
+    let code: int = r[0]
+    if code != 0 { return Result.Err(__proc_err(code, "child_wait '" + c.program + "'")) }
+    let cd: int = r[2]
+    return Result.Ok(cd)
+}
+
+// None = sigue corriendo.
+pub fn try_child_try_wait(c: Child) -> Result<Option<int>, Error> {
+    let r: Array = nyx_proc_wait(c.handle, 1)
+    let code: int = r[0]
+    if code != 0 { return Result.Err(__proc_err(code, "child_try_wait '" + c.program + "'")) }
+    let fin: int = r[1]
+    if fin == 0 { return Result.Ok(Option.None) }
+    let cd: int = r[2]
+    return Result.Ok(Option.Some(cd))
+}
+
+// Terminación forzada (posix SIGKILL, Windows TerminateProcess). No espera:
+// después, try_child_wait. Sobre un hijo que ya terminó no hace nada.
+pub fn try_child_kill(c: Child) -> Result<int, Error> {
+    let r: int = nyx_proc_kill(c.handle)
+    if r < 0 { return Result.Err(__proc_err(0 - r, "child_kill '" + c.program + "'")) }
+    return Result.Ok(0)
+}
+
+// Solo posix (en Windows: Err invalid). sig con la numeración de Linux
+// (2 = SIGINT, 15 = SIGTERM).
+pub fn try_child_signal(c: Child, sig: int) -> Result<int, Error> {
+    let r: int = nyx_proc_signal(c.handle, sig)
+    if r == -38 { return Result.Err(err_new(95, "invalid", "child_signal '" + c.program + "': no hay señales en esta plataforma (usar try_child_kill)")) }
+    if r < 0 { return Result.Err(__proc_err(0 - r, "child_signal '" + c.program + "'")) }
+    return Result.Ok(0)
+}
+
+// Hasta max bytes de stdout (Stdio.Pipe). Ok("") = EOF.
+pub fn try_child_read(c: Child, max: int) -> Result<String, Error> {
+    return __child_read(c, 1, max, "child_read")
+}
+
+pub fn try_child_read_err(c: Child, max: int) -> Result<String, Error> {
+    return __child_read(c, 2, max, "child_read_err")
+}
+
+fn __child_read(c: Child, stream: int, max: int, que: String) -> Result<String, Error> {
+    if max <= 0 { return Result.Err(err_new(22, "invalid", que + " '" + c.program + "': max " + int_to_string(max))) }
+    let r: Array = nyx_proc_read(c.handle, stream, max)
+    let code: int = r[0]
+    if code != 0 { return Result.Err(__proc_err(code, que + " '" + c.program + "'")) }
+    let datos: String = r[1]
+    return Result.Ok(datos)
+}
+
+// Escribe todo `datos` al stdin del hijo (Stdio.Pipe). Err io (32) si el hijo
+// ya cerró su stdin (no mata al padre con SIGPIPE).
+pub fn try_child_write(c: Child, datos: String) -> Result<int, Error> {
+    let n: int = nyx_proc_write(c.handle, datos)
+    if n == -32 { return Result.Err(err_new(32, "io", "child_write '" + c.program + "': el hijo ya no lee su stdin")) }
+    if n < 0 { return Result.Err(__proc_err(0 - n, "child_write '" + c.program + "'")) }
+    return Result.Ok(n)
+}
+
+// Cierra el stdin del hijo: muchos programas (sort, wc, cat) esperan el EOF
+// para terminar.
+pub fn try_child_close_stdin(c: Child) -> Result<int, Error> {
+    let r: int = nyx_proc_close_stdin(c.handle)
+    if r < 0 { return Result.Err(__proc_err(0 - r, "child_close_stdin '" + c.program + "'")) }
+    return Result.Ok(0)
+}
+
+// Cierra stdin, lee stdout y stderr A LA VEZ hasta EOF y espera al hijo. Un
+// flujo que no es Stdio.Pipe vuelve "".
+pub fn try_child_collect(c: Child) -> Result<ChildOutput, Error> {
+    let d: Array = nyx_proc_drain(c.handle)
+    let dc: int = d[0]
+    if dc != 0 { return Result.Err(__proc_err(dc, "child_collect '" + c.program + "'")) }
+    let out: String = d[1]
+    let err: String = d[2]
+    match try_child_wait(c) {
+        Result.Ok(code) => { return Result.Ok(ChildOutput { stdout: out, stderr: err, code: code }) }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    return Result.Err(err_new(5, "io", "child_collect"))
+}
+
+// -1 si el hijo ya se liberó.
+pub fn child_pid(c: Child) -> int {
+    let p: int = nyx_proc_pid(c.handle)
+    if p < 0 { return -1 }
+    return p
+}

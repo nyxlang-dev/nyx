@@ -2560,7 +2560,7 @@ fn module_category(name: String) -> String {
     if name == "statemachine" or name == "events" { return "Colecciones & estructuras" }
     if name == "arena" or name == "box" or name == "rc" or name == "ownership" or name == "owned" or name == "wasm_mem" { return "Memoria" }
     if name == "llm" { return "IA & LLM" }
-    if name == "args" or name == "cli" or name == "log" or name == "logging" or name == "semver" or name == "testing" or name == "quickcheck" or name == "proptest" or name == "exec" { return "Tooling & CLI" }
+    if name == "args" or name == "cli" or name == "log" or name == "logging" or name == "semver" or name == "testing" or name == "quickcheck" or name == "proptest" or name == "exec" or name == "process" { return "Tooling & CLI" }
     return ""
 }
 

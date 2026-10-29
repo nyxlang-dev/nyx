@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.39.0 -->
-<!-- nyx-stdlib: 2010627490-2133386 -->
+<!-- nyx-stdlib: 1084441822-2152148 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -869,6 +869,23 @@ Tipos (4) y métodos (1):
 - `resp_write_bulk` (2 args) · *no existe en wasm32-wasi*
 
 ## Archivos & I/O
+
+### `std/serial`
+
+`import "std/serial"` — 8 funciones:
+
+- `pub fn try_serial_open(path: String, baud: int, data_bits: int, parity: String, stop_bits: int) -> Result<SerialPort, Error>`
+- `pub fn try_serial_write(p: SerialPort, datos: String) -> Result<int, Error>`
+- `pub fn try_serial_read(p: SerialPort, max: int, timeout_ms: int) -> Result<String, Error>`
+- `pub fn try_serial_read_until(p: SerialPort, fin: int, max: int, timeout_ms: int) -> Result<String, Error>`
+- `pub fn try_serial_close(p: SerialPort) -> Result<int, Error>`
+- `pub fn serial_ports() -> Array`
+- `pub fn serial_bytes_to_array(s: String) -> Array`
+- `pub fn serial_array_to_bytes(a: Array) -> String`
+
+Tipos (1) y métodos (0):
+
+- `pub struct SerialPort`
 
 ### `std/io`
 
@@ -1838,6 +1855,31 @@ Tipos (1) y métodos (0):
 
 - `pub struct ExecResult`
 
+### `std/process`
+
+`import "std/process"` — 13 funciones:
+
+- `pub fn spawn_opts() -> SpawnOpts`
+- `pub fn try_spawn(argv: Array, opts: SpawnOpts) -> Result<Child, Error>`
+- `pub fn try_spawn_pipeline(cmds: Array, opts: SpawnOpts) -> Result<Array, Error>`
+- `pub fn try_child_wait(c: Child) -> Result<int, Error>`
+- `pub fn try_child_try_wait(c: Child) -> Result<Option<int>, Error>`
+- `pub fn try_child_kill(c: Child) -> Result<int, Error>`
+- `pub fn try_child_signal(c: Child, sig: int) -> Result<int, Error>`
+- `pub fn try_child_read(c: Child, max: int) -> Result<String, Error>`
+- `pub fn try_child_read_err(c: Child, max: int) -> Result<String, Error>`
+- `pub fn try_child_write(c: Child, datos: String) -> Result<int, Error>`
+- `pub fn try_child_close_stdin(c: Child) -> Result<int, Error>`
+- `pub fn try_child_collect(c: Child) -> Result<ChildOutput, Error>`
+- `pub fn child_pid(c: Child) -> int`
+
+Tipos (4) y métodos (0):
+
+- `pub enum Stdio`
+- `pub struct SpawnOpts`
+- `pub struct Child`
+- `pub struct ChildOutput`
+
 ### `std/semver`
 
 `import "std/semver"` — 6 funciones:
@@ -1935,23 +1977,6 @@ Tipos (3) y métodos (0):
 - `waitpid` (2 args) · *no existe en wasm32-wasi*
 
 ## Otros
-
-### `std/serial`
-
-`import "std/serial"` — 8 funciones:
-
-- `pub fn try_serial_open(path: String, baud: int, data_bits: int, parity: String, stop_bits: int) -> Result<SerialPort, Error>`
-- `pub fn try_serial_write(p: SerialPort, datos: String) -> Result<int, Error>`
-- `pub fn try_serial_read(p: SerialPort, max: int, timeout_ms: int) -> Result<String, Error>`
-- `pub fn try_serial_read_until(p: SerialPort, fin: int, max: int, timeout_ms: int) -> Result<String, Error>`
-- `pub fn try_serial_close(p: SerialPort) -> Result<int, Error>`
-- `pub fn serial_ports() -> Array`
-- `pub fn serial_bytes_to_array(s: String) -> Array`
-- `pub fn serial_array_to_bytes(a: Array) -> String`
-
-Tipos (1) y métodos (0):
-
-- `pub struct SerialPort`
 
 ### Builtins globales (sin `import`)
 

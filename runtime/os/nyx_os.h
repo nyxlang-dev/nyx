@@ -305,6 +305,15 @@ int     os_sock_set_reuseport(int64_t fd);
 // win32: almacén "ROOT" (CertOpenSystemStore). Decisión de Ottavio 2026-10-27 (TLS A).
 // EN: system root certs as DER via cb; win32 ROOT store; posix/wasm -ENOSYS.
 int     os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud), void* ud);
+// Raíz que el sistema todavía no tiene instalada: le pide al sistema la cadena
+// del certificado del servidor (ders[0] = hoja, después los intermedios que
+// mandó), lo que en Windows dispara la descarga de la raíz («Automatic Root
+// Certificates Update»). tls.c recarga el almacén y reintenta una vez.
+// Decisión de Ottavio 2026-10-29 (opción (a) del reporte de la Task 4 de W5).
+// 1 = la cadena llegó a una raíz confiable, 0 = no, -errno; posix/wasm -ENOSYS.
+// EN: asks the system to build the peer chain so a missing root gets fetched
+// (win32 AutoRoot); 1 / 0 / -errno; posix/wasm -ENOSYS.
+int     os_sys_root_fetch(const unsigned char* const* ders, const size_t* lens, int n);
 // Ping IPv4 (ICMP echo) a `ip` (dotted, ya resuelta) con plazo en ms. 0 y *rtt_ns
 // = ida y vuelta medida con os_monotonic_ns; -ETIMEDOUT sin respuesta; -EACCES/-EPERM
 // si el sistema no deja abrir un socket ICMP. posix: socket DATAGRAMA ICMP (sin
@@ -364,8 +373,8 @@ int     os_errno_canon(int e);
 // --- Procesos / Processes (dominio 5, spec §3.5).
 // ES: SOLO lo que los callers internos medidos usan — exec()/exec_code()
 // de runtime.c (popen/system). La forma spawn-style completa
-// (os_proc_spawn/wait/kill, CreateProcess+pipes) llega en W5 con su
-// caller; los builtins posix crudos de process.c (fork/execvp/...) son
+// (os_proc_spawn/wait/kill, CreateProcess+pipes) es la de más abajo (arco
+// procesos-spawn); los builtins posix crudos de process.c (fork/execvp/...) son
 // superficie Nyx pineada y NO pasan por la capa (destino Windows:
 // win_forbidden_builtin). El caller acumula los chunks en SU memoria
 // (GC o no) — esta capa no aloca para el caller.
@@ -414,6 +423,85 @@ int os_proc_run_full(const char* cmd,
                      void (*cb)(int stream, const void* chunk, size_t len, void* ud),
                      void* ud,
                      int64_t* code);
+
+// --- Procesos hijos con spawn (arco procesos-spawn) / spawned child processes.
+// ES: lanzar un programa con sus tres flujos resueltos de antemano, sin fork
+// visible para Nyx: posix_spawnp en posix (no corre código Nyx entre el fork
+// interno y el exec, así el GC de Boehm del hijo nunca se toca) y
+// CreateProcessW + STARTUPINFOEXW en win32. Spec:
+// docs/design/specs/2026-10-28-procesos-spawn-design.md.
+//   - Un hijo es un HANDLE opaco > 0 (slot + generación: un handle viejo de un
+//     hijo ya liberado da -EBADF, nunca toca a otro hijo que reusó el slot).
+//   - Bloqueante: wait/read/write bloquean el hilo del SO (como run_full).
+//   - Los pipes del lado del padre nunca se heredan a otros hijos (posix:
+//     O_CLOEXEC; win32: no heredables + PROC_THREAD_ATTRIBUTE_HANDLE_LIST).
+//   - El slot se libera solo cuando el hijo fue esperado Y sus pipes llegaron
+//     a EOF o se cerraron; leer un flujo ya cerrado da 0 (EOF) mientras viva.
+// EN: launch a program with its three streams resolved up front, no fork
+// visible to Nyx (posix_spawnp / CreateProcessW). Children are opaque handles
+// (slot + generation). Blocking. Parent pipe ends are never inherited. The
+// slot is freed once the child is reaped and all its pipes are closed.
+#define OS_STDIO_INHERIT 0
+#define OS_STDIO_NULL    1
+#define OS_STDIO_PIPE    2
+#define OS_STDIO_FILE    3   // path + mode 'r' (lectura), 'w' (trunca), 'a' (append)
+#define OS_STDIO_RAW     4   // handle crudo de la plataforma (posix: fd; win32: HANDLE), de os_proc_pipe
+#define OS_STDIO_FD      5   // fd de la CRT (posix: el mismo fd; win32: _get_osfhandle)
+typedef struct {
+    int         kind;
+    const char* path;        // OS_STDIO_FILE
+    char        mode;        // OS_STDIO_FILE
+    int64_t     raw;         // OS_STDIO_RAW / OS_STDIO_FD
+} os_stdio_t;
+
+// Etapa que falló en os_proc_spawn (*fail_stage). / failing stage.
+#define OS_SPAWN_FAIL_PROGRAM 0
+#define OS_SPAWN_FAIL_STDIN   1
+#define OS_SPAWN_FAIL_STDOUT  2
+#define OS_SPAWN_FAIL_STDERR  3
+#define OS_SPAWN_FAIL_CWD     4
+
+// argv[0] se busca en PATH (win32: SearchPathW + PATHEXT; .bat/.cmd -> -EINVAL).
+// cwd "" o NULL = el del padre. env_kv = n_env pares "K=V" que se agregan o
+// pisan sobre el entorno del padre (n_env 0 = hereda tal cual). Devuelve el
+// handle (> 0) o -errno, con *fail_stage = qué falló (programa, un flujo o cwd).
+// EN: argv[0] searched in PATH. cwd "" = parent's. env_kv: "K=V" overrides on
+// top of the parent's environment. Returns handle > 0 or -errno (+ stage).
+int64_t os_proc_spawn(const char* const* argv, int argc, const os_stdio_t stdio[3],
+                      const char* cwd, const char* const* env_kv, int n_env, int* fail_stage);
+// nohang=0: espera. Devuelve 1 si terminó (*code = código; posix: 128+señal si
+// lo mató una señal), 0 si sigue corriendo (solo nohang=1), -errno. Esperar
+// otra vez a un hijo ya esperado devuelve 1 con el mismo código.
+// EN: 1 = exited (*code), 0 = still running (nohang only), -errno. Idempotent.
+int     os_proc_wait(int64_t h, int nohang, int64_t* code);
+// Terminación forzada (posix SIGKILL; win32 TerminateProcess con código 1).
+// Sobre un hijo que ya terminó: 0 (no-op). / forced kill; no-op if exited.
+int     os_proc_kill(int64_t h);
+// posix: kill(pid, sig) con la numeración de Linux (OS_SIGINT/OS_SIGTERM…);
+// win32: -ENOSYS. / posix only.
+int     os_proc_signal(int64_t h, int sig);
+int64_t os_proc_pid(int64_t h);                          // pid / -EBADF
+// stream 1 = stdout, 2 = stderr del hijo (Stdio.Pipe). n leídos, 0 = EOF (o el
+// flujo no es un pipe / ya se cerró), -errno. Al llegar a EOF cierra su extremo.
+// EN: stream 1/2. Bytes read, 0 = EOF (closes that end), -errno.
+int64_t os_proc_read(int64_t h, int stream, void* buf, int64_t n);
+// Escribe TODO buf al stdin del hijo (Stdio.Pipe). n / -EPIPE si el hijo ya no
+// lee (sin SIGPIPE: la señal se bloquea y se consume en este hilo) / -EBADF.
+// EN: writes all of buf to the child's stdin pipe; -EPIPE without SIGPIPE.
+int64_t os_proc_write(int64_t h, const void* buf, int64_t n);
+int     os_proc_close_stdin(int64_t h);                  // 0 / -EBADF (idempotente)
+// Cierra stdin y drena stdout y stderr A LA VEZ hasta EOF (posix: poll; win32:
+// un hilo por flujo), así un hijo que llena un pipe mientras el padre lee el
+// otro no se cuelga. cb como os_proc_run_full. No espera al hijo. 0 / -errno.
+// EN: closes stdin and drains stdout+stderr concurrently to EOF. No wait.
+int     os_proc_drain(int64_t h, void (*cb)(int stream, const void* chunk, size_t len, void* ud), void* ud);
+// Pipe para conectar dos hijos (pipeline): extremos crudos NO heredables, para
+// pasar como OS_STDIO_RAW. El padre los cierra con os_proc_raw_close apenas
+// lanzó a los dos hijos (si no, el EOF no llega). 0 / -errno.
+// EN: pipe for pipelines; non-inheritable raw ends for OS_STDIO_RAW. Close
+// them in the parent right after spawning both children.
+int     os_proc_pipe(int64_t* rd, int64_t* wr);
+int     os_proc_raw_close(int64_t raw);
 
 // ES: ESTADO del proceso y de los fds crudos (W5 Procesos A) -- lo "trivial"
 // de process.c (getpid/getcwd/chdir/stat/open_fd/dup2) que ya no usa

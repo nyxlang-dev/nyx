@@ -947,6 +947,10 @@ int os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud)
     (void)cb; (void)ud;
     return -ENOSYS;  // OpenSSL ya lee /etc/ssl/certs (set_default_verify_paths)
 }
+int os_sys_root_fetch(const unsigned char* const* ders, const size_t* lens, int n) {
+    (void)ders; (void)lens; (void)n;
+    return -ENOSYS;  // el almacén de /etc/ssl/certs no se completa solo
+}
 int os_sock_set_nodelay(int64_t fd) {
     int opt = 1;
     int rc = setsockopt((int)fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
@@ -2590,4 +2594,446 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
     (void)ud;
     return -ENOSYS;
 #endif
+}
+
+// ============================================================================
+// Procesos hijos con spawn (arco procesos-spawn): ver contrato en nyx_os.h.
+// posix_spawnp con file_actions: entre el fork interno (glibc: clone con
+// CLONE_VM|CLONE_VFORK) y el exec no corre código Nyx, así el hijo nunca toca
+// el GC. Los archivos de Stdio.File/Null se abren en el PADRE (con O_CLOEXEC)
+// para atribuir el error al flujo exacto, no al programa; el hijo los recibe
+// por adddup2, que limpia CLOEXEC en el fd destino.
+// EN: see contract in nyx_os.h. posix_spawnp + file_actions; Stdio files are
+// opened in the parent (O_CLOEXEC) so errors name the exact stream.
+// ============================================================================
+#include <spawn.h>            // posix_spawnp/file_actions (os_proc_spawn, arco procesos-spawn)
+
+#if defined(__APPLE__) || (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 29)))
+#define NYX_HAVE_SPAWN_ADDCHDIR 1
+#endif
+
+typedef struct {
+    pid_t   pid;
+    int     fd[3];            // extremos del padre: 0 = stdin (escribe), 1/2 = stdout/stderr (lee); -1 = no hay
+    int     reaped;
+    int64_t code;
+    uint32_t gen;
+    int     used;
+} os_child_t;
+
+#define OS_CHILD_MAX 4096
+static os_child_t   os_children[OS_CHILD_MAX];
+static pthread_mutex_t os_children_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int64_t os_child_handle(int slot) { return ((int64_t)os_children[slot].gen << 16) | (int64_t)(slot + 1); }
+
+// Toma el lock y devuelve el slot del handle, o -1 (lock suelto) si no es válido.
+static int os_child_lock(int64_t h) {
+    if (h <= 0) return -1;
+    int slot = (int)(h & 0xFFFF) - 1;
+    uint32_t gen = (uint32_t)(h >> 16);
+    if (slot < 0 || slot >= OS_CHILD_MAX) return -1;
+    pthread_mutex_lock(&os_children_mu);
+    if (!os_children[slot].used || os_children[slot].gen != gen) {
+        pthread_mutex_unlock(&os_children_mu);
+        return -1;
+    }
+    return slot;
+}
+
+// Con el lock tomado: libera el slot si ya no queda nada vivo.
+static void os_child_maybe_free(int slot) {
+    os_child_t* c = &os_children[slot];
+    if (c->reaped && c->fd[0] < 0 && c->fd[1] < 0 && c->fd[2] < 0) c->used = 0;
+}
+
+static int os_pipe_cloexec2(int fds[2]) {
+#if defined(__linux__)
+    if (pipe2(fds, O_CLOEXEC) != 0) return -errno;
+#else
+    if (pipe(fds) != 0) return -errno;
+    for (int i = 0; i < 2; i++) fcntl(fds[i], F_SETFD, FD_CLOEXEC);
+#endif
+    return 0;
+}
+
+// envp = environ con las claves de env_kv agregadas o pisadas. malloc (no GC:
+// el hijo lo recibe por puntero y el padre lo libera al volver de spawn).
+static char** os_build_envp(const char* const* env_kv, int n_env) {
+    int n_base = 0;
+    if (environ) while (environ[n_base]) n_base++;
+    char** envp = (char**)calloc((size_t)(n_base + n_env + 1), sizeof(char*));
+    if (!envp) return NULL;
+    int k = 0;
+    for (int i = 0; i < n_base; i++) {
+        const char* eq = strchr(environ[i], '=');
+        size_t klen = eq ? (size_t)(eq - environ[i]) : strlen(environ[i]);
+        int pisada = 0;
+        for (int j = 0; j < n_env; j++) {
+            const char* jeq = strchr(env_kv[j], '=');
+            size_t jlen = jeq ? (size_t)(jeq - env_kv[j]) : strlen(env_kv[j]);
+            if (jlen == klen && strncmp(env_kv[j], environ[i], klen) == 0) { pisada = 1; break; }
+        }
+        if (!pisada) envp[k++] = environ[i];
+    }
+    for (int j = 0; j < n_env; j++) envp[k++] = (char*)env_kv[j];
+    envp[k] = NULL;
+    return envp;
+}
+
+// Ruta ejecutable de argv0 según PATH (para el camino sin addchdir_np, donde
+// el hijo hace execve y no puede buscar sin alocar). 0 / -errno.
+static int os_find_exe(const char* argv0, char* out, size_t cap) {
+    if (strchr(argv0, '/')) {
+        if (access(argv0, X_OK) != 0) return -errno;
+        if (strlen(argv0) + 1 > cap) return -ENAMETOOLONG;
+        strcpy(out, argv0);
+        return 0;
+    }
+    const char* path = getenv("PATH");
+    if (!path || !*path) path = "/usr/bin:/bin";
+    int last = -ENOENT;
+    while (*path) {
+        const char* end = strchr(path, ':');
+        size_t dlen = end ? (size_t)(end - path) : strlen(path);
+        if (dlen == 0) { path = end ? end + 1 : path + dlen; continue; }
+        if (dlen + 1 + strlen(argv0) + 1 <= cap) {
+            memcpy(out, path, dlen);
+            out[dlen] = '/';
+            strcpy(out + dlen + 1, argv0);
+            if (access(out, X_OK) == 0) return 0;
+            if (errno == EACCES) last = -EACCES;
+        }
+        if (!end) break;
+        path = end + 1;
+    }
+    return last;
+}
+
+int64_t os_proc_spawn(const char* const* argv, int argc, const os_stdio_t stdio[3],
+                      const char* cwd, const char* const* env_kv, int n_env, int* fail_stage) {
+    if (fail_stage) *fail_stage = OS_SPAWN_FAIL_PROGRAM;
+    if (!argv || argc < 1 || !argv[0] || !argv[0][0]) return -EINVAL;
+    if (cwd && *cwd) {
+        struct stat st;
+        if (stat(cwd, &st) != 0) { if (fail_stage) *fail_stage = OS_SPAWN_FAIL_CWD; return -errno; }
+        if (!S_ISDIR(st.st_mode)) { if (fail_stage) *fail_stage = OS_SPAWN_FAIL_CWD; return -ENOTDIR; }
+    }
+
+    int child_fd[3] = { -1, -1, -1 };    // lo que recibe el hijo en 0/1/2 (-1 = hereda)
+    int close_after[3] = { -1, -1, -1 }; // fds del padre que se cierran al volver de spawn
+    int parent_fd[3] = { -1, -1, -1 };   // extremos de Stdio.Pipe que se queda el padre
+    int rc = 0;
+    for (int i = 0; i < 3 && rc == 0; i++) {
+        const os_stdio_t* s = &stdio[i];
+        if (s->kind == OS_STDIO_INHERIT) continue;
+        if (s->kind == OS_STDIO_NULL) {
+            int fd = open("/dev/null", (i == 0 ? O_RDONLY : O_WRONLY) | O_CLOEXEC);
+            if (fd < 0) rc = -errno; else { child_fd[i] = fd; close_after[i] = fd; }
+        } else if (s->kind == OS_STDIO_FILE) {
+            int fl = -1;
+            if (s->mode == 'r') fl = O_RDONLY;
+            else if (s->mode == 'w') fl = O_WRONLY | O_CREAT | O_TRUNC;
+            else if (s->mode == 'a') fl = O_WRONLY | O_CREAT | O_APPEND;
+            if (fl < 0 || !s->path || !*s->path) {
+                rc = -EINVAL;   // sin break: la etapa se anota abajo
+            } else {
+                int fd = open(s->path, fl | O_CLOEXEC, 0644);
+                if (fd < 0) rc = -errno; else { child_fd[i] = fd; close_after[i] = fd; }
+            }
+        } else if (s->kind == OS_STDIO_PIPE) {
+            int p[2];
+            rc = os_pipe_cloexec2(p);
+            if (rc == 0) {
+                if (i == 0) { child_fd[0] = p[0]; close_after[0] = p[0]; parent_fd[0] = p[1]; }
+                else        { child_fd[i] = p[1]; close_after[i] = p[1]; parent_fd[i] = p[0]; }
+            }
+        } else if (s->kind == OS_STDIO_RAW || s->kind == OS_STDIO_FD) {
+            if (s->raw < 0) rc = -EBADF; else child_fd[i] = (int)s->raw;   // el caller lo cierra
+        } else {
+            rc = -EINVAL;
+        }
+        if (rc != 0 && fail_stage) *fail_stage = OS_SPAWN_FAIL_STDIN + i;
+    }
+
+    char** envp = NULL;
+    if (rc == 0) {
+        envp = n_env > 0 ? os_build_envp(env_kv, n_env) : environ;
+        if (!envp) rc = -ENOMEM;
+    }
+
+    pid_t pid = -1;
+    if (rc == 0) {
+#if defined(NYX_HAVE_SPAWN_ADDCHDIR)
+        posix_spawn_file_actions_t fa;
+        posix_spawn_file_actions_init(&fa);
+        for (int i = 0; i < 3; i++) {
+            if (child_fd[i] >= 0) posix_spawn_file_actions_adddup2(&fa, child_fd[i], i);
+        }
+        if (cwd && *cwd) posix_spawn_file_actions_addchdir_np(&fa, cwd);
+        // El hijo arranca con las señales por defecto: el runtime instala
+        // handlers propios (SIGSEGV del GC, SIGINT/SIGTERM de persist) que no
+        // tienen sentido en otro programa. Lo ignorado se hereda por exec.
+        posix_spawnattr_t at;
+        posix_spawnattr_init(&at);
+        sigset_t def, none;
+        sigemptyset(&def);
+        sigaddset(&def, SIGPIPE);
+        sigaddset(&def, SIGINT);
+        sigaddset(&def, SIGTERM);
+        sigaddset(&def, SIGCHLD);
+        sigemptyset(&none);
+        posix_spawnattr_setsigdefault(&at, &def);
+        posix_spawnattr_setsigmask(&at, &none);
+        posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
+        int e = posix_spawnp(&pid, argv[0], &fa, &at, (char* const*)argv, envp);
+        posix_spawnattr_destroy(&at);
+        posix_spawn_file_actions_destroy(&fa);
+        if (e != 0) { rc = -e; pid = -1; }
+#else
+        // Sin addchdir_np: fork + chdir + execve en C, con la ruta y el envp
+        // resueltos ANTES del fork. Entre fork y exec solo syscalls
+        // async-signal-safe (dup2, chdir, execve, _exit); un fallo del exec se
+        // reporta por un pipe CLOEXEC (si el exec funciona, se cierra solo).
+        char exe[4096];
+        rc = os_find_exe(argv[0], exe, sizeof(exe));
+        int ep[2] = { -1, -1 };
+        if (rc == 0) rc = os_pipe_cloexec2(ep);
+        if (rc == 0) {
+            pid = fork();
+            if (pid < 0) { rc = -errno; }
+            else if (pid == 0) {
+                int err = 0;
+                for (int i = 0; i < 3 && !err; i++) if (child_fd[i] >= 0 && dup2(child_fd[i], i) < 0) err = errno;
+                if (!err && cwd && *cwd && chdir(cwd) != 0) err = errno;
+                if (!err) { execve(exe, (char* const*)argv, envp); err = errno; }
+                ssize_t wr = write(ep[1], &err, sizeof(err));
+                (void)wr;
+                _exit(127);
+            } else {
+                close(ep[1]);
+                int err = 0;
+                ssize_t got;
+                do { got = read(ep[0], &err, sizeof(err)); } while (got < 0 && errno == EINTR);
+                close(ep[0]);
+                if (got == (ssize_t)sizeof(err) && err != 0) {
+                    int st;
+                    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+                    rc = -err; pid = -1;
+                }
+            }
+        }
+#endif
+    }
+    if (envp && envp != environ) free(envp);
+    for (int i = 0; i < 3; i++) if (close_after[i] >= 0) close(close_after[i]);
+    if (rc != 0) {
+        for (int i = 0; i < 3; i++) if (parent_fd[i] >= 0) close(parent_fd[i]);
+        return rc;
+    }
+
+    pthread_mutex_lock(&os_children_mu);
+    int slot = -1;
+    for (int i = 0; i < OS_CHILD_MAX; i++) if (!os_children[i].used) { slot = i; break; }
+    if (slot < 0) {
+        pthread_mutex_unlock(&os_children_mu);
+        // Sin slot: el hijo ya corre; se lo mata y espera para no dejar un
+        // zombi ni un proceso huérfano que nadie puede controlar.
+        kill(pid, SIGKILL);
+        int st;
+        while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+        for (int i = 0; i < 3; i++) if (parent_fd[i] >= 0) close(parent_fd[i]);
+        return -EMFILE;
+    }
+    os_child_t* c = &os_children[slot];
+    c->used = 1;
+    c->gen = (c->gen + 1) & 0x7FFFFFFF;
+    if (c->gen == 0) c->gen = 1;
+    c->pid = pid;
+    c->reaped = 0;
+    c->code = -1;
+    for (int i = 0; i < 3; i++) c->fd[i] = parent_fd[i];
+    int64_t h = os_child_handle(slot);
+    pthread_mutex_unlock(&os_children_mu);
+    return h;
+}
+
+int os_proc_wait(int64_t h, int nohang, int64_t* code) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    os_child_t* c = &os_children[slot];
+    if (c->reaped) {
+        if (code) *code = c->code;
+        pthread_mutex_unlock(&os_children_mu);
+        return 1;
+    }
+    pid_t pid = c->pid;
+    pthread_mutex_unlock(&os_children_mu);
+    // waitpid SIN el lock: bloquea, y otro hilo puede querer leer los pipes
+    // de este mismo hijo mientras tanto.
+    int status = 0;
+    pid_t w;
+    do { w = waitpid(pid, &status, nohang ? WNOHANG : 0); } while (w < 0 && errno == EINTR);
+    if (w < 0) return -errno;
+    if (w == 0) return 0;
+    int64_t cd = -1;
+    if (WIFEXITED(status)) cd = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) cd = 128 + WTERMSIG(status);
+    slot = os_child_lock(h);
+    if (slot < 0) { if (code) *code = cd; return 1; }
+    c = &os_children[slot];
+    c->reaped = 1;
+    c->code = cd;
+    if (c->fd[0] >= 0) { close(c->fd[0]); c->fd[0] = -1; }
+    if (code) *code = cd;
+    os_child_maybe_free(slot);
+    pthread_mutex_unlock(&os_children_mu);
+    return 1;
+}
+
+int os_proc_signal(int64_t h, int sig) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    os_child_t* c = &os_children[slot];
+    int rc = 0;
+    // Sobre un hijo ya esperado el pid puede ser de otro proceso: no-op.
+    if (!c->reaped && kill(c->pid, sig) != 0 && errno != ESRCH) rc = -errno;
+    pthread_mutex_unlock(&os_children_mu);
+    return rc;
+}
+
+int os_proc_kill(int64_t h) { return os_proc_signal(h, SIGKILL); }
+
+int64_t os_proc_pid(int64_t h) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    int64_t pid = (int64_t)os_children[slot].pid;
+    pthread_mutex_unlock(&os_children_mu);
+    return pid;
+}
+
+int64_t os_proc_read(int64_t h, int stream, void* buf, int64_t n) {
+    if (stream != 1 && stream != 2) return -EINVAL;
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    int fd = os_children[slot].fd[stream];
+    pthread_mutex_unlock(&os_children_mu);
+    if (fd < 0) return 0;
+    ssize_t got;
+    do { got = read(fd, buf, (size_t)n); } while (got < 0 && errno == EINTR);
+    if (got < 0) return -errno;
+    if (got == 0) {
+        slot = os_child_lock(h);
+        if (slot >= 0) {
+            if (os_children[slot].fd[stream] == fd) { close(fd); os_children[slot].fd[stream] = -1; }
+            os_child_maybe_free(slot);
+            pthread_mutex_unlock(&os_children_mu);
+        }
+    }
+    return (int64_t)got;
+}
+
+int64_t os_proc_write(int64_t h, const void* buf, int64_t n) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    int fd = os_children[slot].fd[0];
+    pthread_mutex_unlock(&os_children_mu);
+    if (fd < 0) return -EBADF;
+    // SIGPIPE bloqueada en ESTE hilo durante el write: si el hijo cerró su
+    // stdin, write da EPIPE y la señal pendiente se consume acá, en vez de
+    // matar a todo el proceso Nyx (el runtime no ignora SIGPIPE globalmente,
+    // ver tls.c).
+    sigset_t pipe_set, old;
+    sigemptyset(&pipe_set);
+    sigaddset(&pipe_set, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &pipe_set, &old);
+    const char* p = (const char*)buf;
+    int64_t done = 0;
+    int rc = 0;
+    while (done < n) {
+        ssize_t w = write(fd, p + done, (size_t)(n - done));
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            rc = -errno;
+            break;
+        }
+        done += w;
+    }
+    if (rc == -EPIPE) {
+        sigset_t pend;
+        sigpending(&pend);
+        if (sigismember(&pend, SIGPIPE)) {
+#if defined(__APPLE__)
+            int sig;
+            sigwait(&pipe_set, &sig);
+#else
+            struct timespec cero = { 0, 0 };
+            sigtimedwait(&pipe_set, NULL, &cero);
+#endif
+        }
+    }
+    pthread_sigmask(SIG_SETMASK, &old, NULL);
+    return rc != 0 ? rc : done;
+}
+
+int os_proc_close_stdin(int64_t h) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    os_child_t* c = &os_children[slot];
+    if (c->fd[0] >= 0) { close(c->fd[0]); c->fd[0] = -1; }
+    os_child_maybe_free(slot);
+    pthread_mutex_unlock(&os_children_mu);
+    return 0;
+}
+
+int os_proc_drain(int64_t h, void (*cb)(int stream, const void* chunk, size_t len, void* ud), void* ud) {
+    int rc = os_proc_close_stdin(h);
+    if (rc != 0) return rc;
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    struct pollfd fds[2] = {{ os_children[slot].fd[1], POLLIN, 0 }, { os_children[slot].fd[2], POLLIN, 0 }};
+    pthread_mutex_unlock(&os_children_mu);
+    int open_n = (fds[0].fd >= 0) + (fds[1].fd >= 0);
+    char buf[65536];
+    while (open_n > 0) {
+        int pr = poll(fds, 2, -1);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            return -errno;
+        }
+        for (int i = 0; i < 2; i++) {
+            if (fds[i].fd < 0) continue;
+            if (!(fds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            ssize_t n = read(fds[i].fd, buf, sizeof(buf));
+            if (n > 0) {
+                if (cb) cb(i + 1, buf, (size_t)n, ud);
+            } else if (n < 0 && (errno == EINTR || errno == EAGAIN)) {
+                continue;
+            } else {
+                slot = os_child_lock(h);
+                if (slot >= 0) {
+                    if (os_children[slot].fd[i + 1] == fds[i].fd) { close(fds[i].fd); os_children[slot].fd[i + 1] = -1; }
+                    os_child_maybe_free(slot);
+                    pthread_mutex_unlock(&os_children_mu);
+                }
+                fds[i].fd = -1;
+                open_n--;
+            }
+        }
+    }
+    return 0;
+}
+
+int os_proc_pipe(int64_t* rd, int64_t* wr) {
+    int p[2];
+    int rc = os_pipe_cloexec2(p);
+    if (rc != 0) return rc;
+    *rd = p[0];
+    *wr = p[1];
+    return 0;
+}
+
+int os_proc_raw_close(int64_t raw) {
+    if (raw < 0) return -EBADF;
+    return close((int)raw) == 0 ? 0 : -errno;
 }

@@ -1,0 +1,13 @@
+hola|mal|3
+literal: $HOME
+cat: eco
+pipeline: a,b,
+env/cwd: ok /
+try_wait: corriendo
+pid > 0
+kill: 137
+not_found 2
+invalid 22
+not_found spawn 'cat': no se pudo preparar stdin '/nyx/t518/no/existe'
+invalid 22
+not_found spawn 'true': cwd '/nyx/t518/no/existe'

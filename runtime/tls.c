@@ -139,6 +139,34 @@ static SSL_CTX* get_ssl_ctx(void) {
     return g_ssl_ctx;
 }
 
+// Raíz faltante en el almacén de Windows (decisión de Ottavio 2026-10-29, (a)):
+// con el error 20 en el modo 4 (almacén del SISTEMA), se le pasa la cadena del
+// servidor a os_sys_root_fetch, que hace que Windows baje la raíz si la
+// conoce, y se recarga el almacén de g_ssl_ctx. Devuelve 1 si vale la pena
+// reintentar. En posix os_sys_root_fetch da -ENOSYS: nunca reintenta.
+// EN: on X509 error 20 in system-store mode, let Windows fetch the missing
+// root from the peer chain, reload g_ssl_ctx's store; 1 = retry once.
+static int tls_fetch_missing_root(SSL* ssl) {
+    STACK_OF(X509)* ch = SSL_get_peer_cert_chain(ssl);
+    int n = ch ? sk_X509_num(ch) : 0;
+    if (n <= 0) return 0;
+    if (n > 16) n = 16;
+    unsigned char* ders[16];
+    size_t lens[16];
+    int k = 0;
+    for (int i = 0; i < n; i++) {
+        unsigned char* d = NULL;
+        int l = i2d_X509(sk_X509_value(ch, i), &d);
+        if (l > 0 && d) { ders[k] = d; lens[k] = (size_t)l; k++; }
+    }
+    int r = k > 0 ? os_sys_root_fetch((const unsigned char* const*)ders, lens, k) : 0;
+    for (int i = 0; i < k; i++) OPENSSL_free(ders[i]);
+    if (r != 1) return 0;
+    SSL_CTX* ctx = get_ssl_ctx();
+    if (ctx) tls_add_sys_roots(SSL_CTX_get_cert_store(ctx));
+    return 1;
+}
+
 // ===== BIO de socket que NO genera SIGPIPE =====
 //
 // POR QUÉ EXISTE (hallazgo del arco serve-sse, report de nyx-proxy del
@@ -1368,10 +1396,11 @@ static int tls_client_id_apply(SSL* ssl, tls_client_id* id) {
     return 0;
 }
 
-static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
+static int64_t tls_connect_once(const char* host, int port, int64_t verify_mode,
                                 int64_t connect_ms, const nyx_string* cas_extra,
                                 const nyx_string* cli_cert, const nyx_string* cli_key,
-                                int* status, int* vcode, char* detail, size_t dlen) {
+                                int* status, int* vcode, char* detail, size_t dlen,
+                                int* retry_root) {
     *status = 0;
     *vcode = 0;
     if (dlen > 0) detail[0] = '\0';
@@ -1509,6 +1538,12 @@ static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
         long vr = SSL_get_verify_result(ssl);
         unsigned long ec = ERR_peek_error();
         if (verify_mode >= 2 && vr != X509_V_OK) {
+            // Solo el modo 4 (almacén del SISTEMA): el 2 verifica contra lo
+            // que el usuario cargó con tls_set_ca_file, y esos almacenes no se
+            // mezclan con el del sistema en ninguna dirección.
+            if (retry_root && verify_mode == 4 && vr == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY) {
+                *retry_root = tls_fetch_missing_root(ssl);
+            }
             *status = NYX_TLS_STATUS_TLS;
             *vcode = (int)vr;
             snprintf(detail, dlen, "el certificado de %s no verifica: %s",
@@ -1551,6 +1586,23 @@ static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
     h->ssl = ssl;
     h->fd  = fd;
     return (int64_t)(uintptr_t)h;
+}
+
+// Un reintento si la verificación de sistema falló por una raíz que Windows
+// todavía no había bajado y tls_fetch_missing_root la trajo (opción (a), ver
+// arriba). El plazo vale por intento: en el peor caso el total es el doble.
+// EN: one retry when the system-store verification failed on a root that
+// Windows had not fetched yet and tls_fetch_missing_root got it.
+static int64_t tls_connect_core(const char* host, int port, int64_t verify_mode,
+                                int64_t connect_ms, const nyx_string* cas_extra,
+                                const nyx_string* cli_cert, const nyx_string* cli_key,
+                                int* status, int* vcode, char* detail, size_t dlen) {
+    int retry_root = 0;
+    int64_t h = tls_connect_once(host, port, verify_mode, connect_ms, cas_extra, cli_cert, cli_key,
+                                 status, vcode, detail, dlen, &retry_root);
+    if (h != 0 || !retry_root) return h;
+    return tls_connect_once(host, port, verify_mode, connect_ms, cas_extra, cli_cert, cli_key,
+                            status, vcode, detail, dlen, NULL);
 }
 
 nyx_array_t* nyx_tls_connect_result(nyx_string* host, int64_t port,

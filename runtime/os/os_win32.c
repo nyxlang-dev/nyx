@@ -1445,6 +1445,52 @@ int os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud)
     return n;
 }
 
+// Raíz que todavía no bajó Windows (decisión de Ottavio 2026-10-29, opción (a)
+// del reporte de la Task 4 de W5). Windows trae pocas raíces instaladas y baja
+// las demás recién cuando CryptoAPI arma una cadena que las necesita
+// («Automatic Root Certificates Update»): enumerar "ROOT" ve solo las que ya
+// bajó, y un sitio cualquiera fallaba con X509 20 mientras el navegador lo
+// abría. Esto le pide a CryptoAPI la cadena del certificado del servidor (con
+// los intermedios que mandó como almacén adicional), lo que dispara la
+// descarga; tls.c recarga el almacén y reintenta UNA vez. La verificación
+// sigue siendo la de OpenSSL: CryptoAPI solo sirve para traer la raíz.
+// Devuelve 1 si la cadena llegó a una raíz confiable, 0 si no, -errno.
+// ⚠️ Escrita sin compilar; la verifica la laptop.
+// EN: asks CryptoAPI to build the peer's chain so Windows fetches a missing
+// root; tls.c then reloads the store and retries once. 1 / 0 / -errno.
+int os_sys_root_fetch(const unsigned char* const* ders, const size_t* lens, int n) {
+    if (!ders || !lens || n < 1) return -EINVAL;
+    HCERTSTORE mem = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL);
+    if (!mem) return win_last_errno();
+    PCCERT_CONTEXT leaf = NULL;
+    for (int i = 0; i < n; i++) {
+        PCCERT_CONTEXT added = NULL;
+        if (CertAddEncodedCertificateToStore(mem, X509_ASN_ENCODING, ders[i], (DWORD)lens[i],
+                                             CERT_STORE_ADD_ALWAYS, i == 0 ? &added : NULL) && i == 0) {
+            leaf = added;
+        }
+    }
+    if (!leaf) { CertCloseStore(mem, 0); return -EINVAL; }
+    CERT_CHAIN_PARA para;
+    memset(&para, 0, sizeof(para));
+    para.cbSize = sizeof(para);
+    PCCERT_CHAIN_CONTEXT chain = NULL;
+    // Sin CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL: se permite la red, que es justo
+    // lo que trae la raíz (y los intermedios por AIA si el servidor no los mandó).
+    BOOL ok = CertGetCertificateChain(NULL, leaf, NULL, mem, &para, 0, NULL, &chain);
+    int rc = 0;
+    if (ok && chain) {
+        DWORD st = chain->TrustStatus.dwErrorStatus;
+        if (!(st & (CERT_TRUST_IS_UNTRUSTED_ROOT | CERT_TRUST_IS_PARTIAL_CHAIN))) rc = 1;
+        CertFreeCertificateChain(chain);
+    } else if (!ok) {
+        rc = win_last_errno();
+    }
+    CertFreeCertificateContext(leaf);
+    CertCloseStore(mem, 0);
+    return rc;
+}
+
 // Ping: IcmpSendEcho (iphlpapi, ya enlazada) no pide privilegios, a diferencia
 // de un raw socket. El RTT se mide con os_monotonic_ns: RoundTripTime viene en ms
 // enteros y en la LAN casi siempre da 0. Escrita sin compilar (2026-10-26).
@@ -2182,9 +2228,9 @@ typedef struct {
     void (*cb)(int, const void*, size_t, void*);
     void* ud;
     CRITICAL_SECTION* cs;
-} os_proc_drain_t;
+} os_proc_pipe_drain_t;
 
-static void os_proc_drain(os_proc_drain_t* d) {
+static void os_proc_pipe_drain(os_proc_pipe_drain_t* d) {
     char buf[65536];
     DWORD got;
     while (ReadFile(d->h, buf, (DWORD)sizeof(buf), &got, NULL) && got > 0) {
@@ -2194,8 +2240,8 @@ static void os_proc_drain(os_proc_drain_t* d) {
     }
 }
 
-static DWORD WINAPI os_proc_drain_thread(LPVOID p) {
-    os_proc_drain((os_proc_drain_t*)p);
+static DWORD WINAPI os_proc_pipe_drain_thread(LPVOID p) {
+    os_proc_pipe_drain((os_proc_pipe_drain_t*)p);
     return 0;
 }
 
@@ -2266,19 +2312,19 @@ int os_proc_run_full(const char* cmd,
 
     CRITICAL_SECTION cs;
     InitializeCriticalSection(&cs);
-    os_proc_drain_t derr = { er, 2, cb, ud, &cs };
-    os_proc_drain_t dout = { or_, 1, cb, ud, &cs };
-    HANDLE th = CreateThread(NULL, 0, os_proc_drain_thread, &derr, 0, NULL);
+    os_proc_pipe_drain_t derr = { er, 2, cb, ud, &cs };
+    os_proc_pipe_drain_t dout = { or_, 1, cb, ud, &cs };
+    HANDLE th = CreateThread(NULL, 0, os_proc_pipe_drain_thread, &derr, 0, NULL);
     if (th) {
-        os_proc_drain(&dout);
+        os_proc_pipe_drain(&dout);
         WaitForSingleObject(th, INFINITE);
         CloseHandle(th);
     } else {
         // Sin hilo no hay lectura concurrente segura: se degrada a secuencial
         // (puede bloquear con salida enorme en stderr; agotamiento de
         // recursos, no el camino normal).
-        os_proc_drain(&dout);
-        os_proc_drain(&derr);
+        os_proc_pipe_drain(&dout);
+        os_proc_pipe_drain(&derr);
     }
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD ec = 0;
@@ -2289,6 +2335,516 @@ int os_proc_run_full(const char* cmd,
     CloseHandle(er);
     DeleteCriticalSection(&cs);
     return 0;
+}
+
+// ============================================================================
+// Procesos hijos con spawn (arco procesos-spawn): ver contrato en nyx_os.h.
+// CreateProcessW + STARTUPINFOEXW. Cada handle que recibe el hijo es un
+// DUPLICADO heredable hecho para este lanzamiento, y la lista
+// PROC_THREAD_ATTRIBUTE_HANDLE_LIST lo restringe a esos tres: sin la lista,
+// bInheritHandles=TRUE heredaría TODO lo heredable del padre (los pipes de
+// otro hijo lanzado en paralelo incluidos, y su EOF no llegaría nunca).
+// Los originales del padre nunca se tocan (ni su flag de herencia).
+// ⚠️ Escrito en el servidor sin compilar: lo verifica la Task 6 en la laptop.
+// EN: CreateProcessW + STARTUPINFOEXW; the child gets per-launch inheritable
+// duplicates restricted by HANDLE_LIST. NOT verified on real Windows yet.
+// ============================================================================
+#include "os_win_cmdline.h"
+
+typedef struct {
+    HANDLE   proc;
+    DWORD    pid;
+    HANDLE   pipe[3];         // extremos del padre: 0 = stdin, 1/2 = stdout/stderr; NULL = no hay
+    int      reaped;
+    int64_t  code;
+    uint32_t gen;
+    int      used;
+} os_child_t;
+
+#define OS_CHILD_MAX 4096
+static os_child_t os_children[OS_CHILD_MAX];
+static SRWLOCK    os_children_mu = SRWLOCK_INIT;
+
+static int64_t os_child_handle(int slot) { return ((int64_t)os_children[slot].gen << 16) | (int64_t)(slot + 1); }
+
+static int os_child_lock(int64_t h) {
+    if (h <= 0) return -1;
+    int slot = (int)(h & 0xFFFF) - 1;
+    uint32_t gen = (uint32_t)(h >> 16);
+    if (slot < 0 || slot >= OS_CHILD_MAX) return -1;
+    AcquireSRWLockExclusive(&os_children_mu);
+    if (!os_children[slot].used || os_children[slot].gen != gen) {
+        ReleaseSRWLockExclusive(&os_children_mu);
+        return -1;
+    }
+    return slot;
+}
+static void os_child_unlock(void) { ReleaseSRWLockExclusive(&os_children_mu); }
+
+static void os_child_maybe_free(int slot) {
+    os_child_t* c = &os_children[slot];
+    if (c->reaped && !c->pipe[0] && !c->pipe[1] && !c->pipe[2]) {
+        if (c->proc) { CloseHandle(c->proc); c->proc = NULL; }
+        c->used = 0;
+    }
+}
+
+static wchar_t* os_utf8_to_wide_dup(const char* s) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, NULL, 0);
+    if (n <= 0) return NULL;
+    wchar_t* w = (wchar_t*)malloc((size_t)n * sizeof(wchar_t));
+    if (!w) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, s, -1, w, n) <= 0) { free(w); return NULL; }
+    return w;
+}
+
+static int os_wide_is_batch(const wchar_t* p) {
+    char tmp[16];
+    size_t n = wcslen(p);
+    if (n < 4) return 0;
+    // Basta mirar la cola ASCII para el sufijo (.bat/.cmd + puntos/espacios).
+    size_t from = n > 12 ? n - 12 : 0;
+    size_t k = 0;
+    for (size_t i = from; i < n && k + 1 < sizeof(tmp); i++) tmp[k++] = p[i] < 128 ? (char)p[i] : '_';
+    tmp[k] = 0;
+    return os_win_is_batch(tmp);
+}
+
+// Ruta del ejecutable: con separador se usa tal cual (+PATHEXT si no existe);
+// sin separador se busca SOLO en PATH (SearchPathW con lpPath: nunca en el
+// directorio actual, que es el agujero clásico de CreateProcess con nombre
+// pelado). 0 / -ENOENT / -EINVAL (batch).
+static int os_resolve_exe(const wchar_t* argv0, wchar_t* out, DWORD cap) {
+    wchar_t exts_buf[512];
+    DWORD el = GetEnvironmentVariableW(L"PATHEXT", exts_buf, 512);
+    if (el == 0 || el >= 512) wcscpy(exts_buf, L".COM;.EXE;.BAT;.CMD");
+    int has_sep = wcschr(argv0, L'\\') || wcschr(argv0, L'/');
+    const wchar_t* dot = wcsrchr(argv0, L'.');
+    const wchar_t* last_sep = wcsrchr(argv0, L'\\');
+    const wchar_t* last_sl = wcsrchr(argv0, L'/');
+    if (last_sl && (!last_sep || last_sl > last_sep)) last_sep = last_sl;
+    int has_ext = dot && (!last_sep || dot > last_sep);
+
+    wchar_t* path = NULL;
+    if (!has_sep) {
+        DWORD pl = GetEnvironmentVariableW(L"PATH", NULL, 0);
+        if (pl == 0) return -ENOENT;
+        path = (wchar_t*)malloc((size_t)pl * sizeof(wchar_t));
+        if (!path) return -ENOMEM;
+        GetEnvironmentVariableW(L"PATH", path, pl);
+    }
+    int found_batch = 0;
+    int rc = -ENOENT;
+    // Primero el nombre tal cual si ya trae extensión, después cada PATHEXT.
+    for (int pass = 0; pass < 2 && rc != 0; pass++) {
+        if (pass == 0 && !has_ext) continue;
+        wchar_t* ctx = NULL;
+        wchar_t exts[512];
+        wcscpy(exts, exts_buf);
+        wchar_t* ext = pass == 0 ? NULL : wcstok(exts, L";", &ctx);
+        do {
+            DWORD got;
+            if (has_sep) {
+                wchar_t cand[MAX_PATH * 2];
+                if (wcslen(argv0) + (ext ? wcslen(ext) : 0) + 1 > MAX_PATH * 2) { rc = -ENAMETOOLONG; break; }
+                wcscpy(cand, argv0);
+                if (ext) wcscat(cand, ext);
+                DWORD at = GetFileAttributesW(cand);
+                got = (at != INVALID_FILE_ATTRIBUTES && !(at & FILE_ATTRIBUTE_DIRECTORY)) ? GetFullPathNameW(cand, cap, out, NULL) : 0;
+            } else {
+                got = SearchPathW(path, argv0, ext, cap, out, NULL);
+            }
+            if (got > 0 && got < cap) {
+                if (os_wide_is_batch(out)) { found_batch = 1; }
+                else { rc = 0; break; }
+            }
+            ext = pass == 0 ? NULL : wcstok(NULL, L";", &ctx);
+        } while (ext);
+    }
+    free(path);
+    if (rc != 0 && found_batch) return -EINVAL;
+    return rc;
+}
+
+// Duplicado heredable de h para el hijo (NULL si h no sirve).
+static HANDLE os_dup_inheritable(HANDLE h) {
+    if (!h || h == INVALID_HANDLE_VALUE) return NULL;
+    HANDLE d = NULL;
+    if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &d, 0, TRUE, DUPLICATE_SAME_ACCESS)) return NULL;
+    return d;
+}
+
+static int os_env_cmp(const void* a, const void* b) {
+    const wchar_t* x = *(const wchar_t* const*)a;
+    const wchar_t* y = *(const wchar_t* const*)b;
+    // Las entradas "=C:=C:\dir" (cwd por unidad) van primero, como las deja
+    // el propio sistema.
+    if (x[0] == L'=' && y[0] != L'=') return -1;
+    if (y[0] == L'=' && x[0] != L'=') return 1;
+    return _wcsicmp(x, y);
+}
+
+static size_t os_env_keylen(const wchar_t* e) {
+    const wchar_t* eq = wcschr(e + (e[0] == L'=' ? 1 : 0), L'=');
+    return eq ? (size_t)(eq - e) : wcslen(e);
+}
+
+// Bloque de entorno UTF-16 (CREATE_UNICODE_ENVIRONMENT): el del padre con las
+// claves de env_kv pisadas (sin distinguir mayúsculas, como Windows), ordenado.
+static wchar_t* os_build_env_block(const char* const* env_kv, int n_env) {
+    wchar_t* base = GetEnvironmentStringsW();
+    if (!base) return NULL;
+    int n_base = 0;
+    for (wchar_t* p = base; *p; p += wcslen(p) + 1) n_base++;
+    wchar_t** kv = (wchar_t**)calloc((size_t)n_env + 1, sizeof(wchar_t*));
+    const wchar_t** all = (const wchar_t**)calloc((size_t)(n_base + n_env) + 1, sizeof(wchar_t*));
+    wchar_t* block = NULL;
+    if (!kv || !all) goto out;
+    for (int j = 0; j < n_env; j++) { kv[j] = os_utf8_to_wide_dup(env_kv[j]); if (!kv[j]) goto out; }
+    int k = 0;
+    for (wchar_t* p = base; *p; p += wcslen(p) + 1) {
+        size_t kl = os_env_keylen(p);
+        int pisada = 0;
+        for (int j = 0; j < n_env; j++) {
+            if (os_env_keylen(kv[j]) == kl && _wcsnicmp(kv[j], p, kl) == 0) { pisada = 1; break; }
+        }
+        if (!pisada) all[k++] = p;
+    }
+    for (int j = 0; j < n_env; j++) all[k++] = kv[j];
+    qsort(all, (size_t)k, sizeof(wchar_t*), os_env_cmp);
+    size_t total = 1;
+    for (int i = 0; i < k; i++) total += wcslen(all[i]) + 1;
+    block = (wchar_t*)malloc(total * sizeof(wchar_t));
+    if (block) {
+        wchar_t* w = block;
+        for (int i = 0; i < k; i++) { size_t l = wcslen(all[i]); memcpy(w, all[i], (l + 1) * sizeof(wchar_t)); w += l + 1; }
+        *w = 0;
+    }
+out:
+    if (kv) { for (int j = 0; j < n_env; j++) free(kv[j]); free(kv); }
+    free(all);
+    FreeEnvironmentStringsW(base);
+    return block;
+}
+
+int64_t os_proc_spawn(const char* const* argv, int argc, const os_stdio_t stdio[3],
+                      const char* cwd, const char* const* env_kv, int n_env, int* fail_stage) {
+    if (fail_stage) *fail_stage = OS_SPAWN_FAIL_PROGRAM;
+    if (!argv || argc < 1 || !argv[0] || !argv[0][0]) return -EINVAL;
+
+    int rc = 0;
+    wchar_t* wargv0 = NULL;
+    wchar_t* wcmd = NULL;
+    wchar_t* wcwd = NULL;
+    wchar_t* envb = NULL;
+    char* cmd8 = NULL;
+    wchar_t exe[32768];
+    HANDLE child_h[3] = { NULL, NULL, NULL };   // duplicados heredables para el hijo
+    HANDLE own_h[3] = { NULL, NULL, NULL };     // abiertos acá (NUL, archivos, extremo hijo de un Pipe)
+    HANDLE parent_h[3] = { NULL, NULL, NULL };  // extremos de Pipe que se queda el padre
+    LPPROC_THREAD_ATTRIBUTE_LIST attrs = NULL;
+    PROCESS_INFORMATION pi;
+    memset(&pi, 0, sizeof(pi));
+
+    wargv0 = os_utf8_to_wide_dup(argv[0]);
+    if (!wargv0) { rc = -EINVAL; goto fail; }
+    rc = os_resolve_exe(wargv0, exe, 32768);
+    if (rc != 0) goto fail;
+
+    {
+        size_t cap = 64;
+        for (int i = 0; i < argc; i++) cap += strlen(argv[i]) * 2 + 3;
+        cmd8 = (char*)malloc(cap);
+        if (!cmd8) { rc = -ENOMEM; goto fail; }
+        int64_t cl = os_win_build_cmdline(argv, argc, cmd8, cap);
+        if (cl < 0) { rc = (int)cl; goto fail; }
+        // CreateProcessW pide hasta 32767 caracteres de línea de comando.
+        wcmd = os_utf8_to_wide_dup(cmd8);
+        if (!wcmd) { rc = -EINVAL; goto fail; }
+        if (wcslen(wcmd) >= 32767) { rc = -E2BIG; goto fail; }
+    }
+
+    if (cwd && *cwd) {
+        wcwd = os_utf8_to_wide_dup(cwd);
+        if (!wcwd) { rc = -EINVAL; if (fail_stage) *fail_stage = OS_SPAWN_FAIL_CWD; goto fail; }
+        DWORD at = GetFileAttributesW(wcwd);
+        if (at == INVALID_FILE_ATTRIBUTES) { rc = win_last_errno(); if (fail_stage) *fail_stage = OS_SPAWN_FAIL_CWD; goto fail; }
+        if (!(at & FILE_ATTRIBUTE_DIRECTORY)) { rc = -ENOTDIR; if (fail_stage) *fail_stage = OS_SPAWN_FAIL_CWD; goto fail; }
+    }
+
+    for (int i = 0; i < 3; i++) {
+        const os_stdio_t* s = &stdio[i];
+        HANDLE src = NULL;
+        if (s->kind == OS_STDIO_INHERIT) {
+            src = GetStdHandle(i == 0 ? STD_INPUT_HANDLE : (i == 1 ? STD_OUTPUT_HANDLE : STD_ERROR_HANDLE));
+            if (!src || src == INVALID_HANDLE_VALUE) {
+                // Un servicio no tiene flujos estándar: NUL, para que la
+                // HANDLE_LIST no lleve un handle inválido (CreateProcess falla).
+                own_h[i] = CreateFileW(L"NUL", i == 0 ? GENERIC_READ : GENERIC_WRITE,
+                                       FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+                if (own_h[i] == INVALID_HANDLE_VALUE) { own_h[i] = NULL; rc = win_last_errno(); }
+                src = own_h[i];
+            }
+        } else if (s->kind == OS_STDIO_NULL) {
+            own_h[i] = CreateFileW(L"NUL", i == 0 ? GENERIC_READ : GENERIC_WRITE,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+            if (own_h[i] == INVALID_HANDLE_VALUE) { own_h[i] = NULL; rc = win_last_errno(); }
+            src = own_h[i];
+        } else if (s->kind == OS_STDIO_FILE) {
+            wchar_t* wp = (s->path && *s->path) ? os_utf8_to_wide_dup(s->path) : NULL;
+            if (!wp) { rc = -EINVAL; }
+            else {
+                DWORD acc, disp;
+                if (s->mode == 'r') { acc = GENERIC_READ; disp = OPEN_EXISTING; }
+                else if (s->mode == 'w') { acc = GENERIC_WRITE; disp = CREATE_ALWAYS; }
+                else if (s->mode == 'a') { acc = FILE_APPEND_DATA | SYNCHRONIZE; disp = OPEN_ALWAYS; }
+                else { acc = 0; disp = 0; rc = -EINVAL; }
+                if (rc == 0) {
+                    own_h[i] = CreateFileW(wp, acc, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                           NULL, disp, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (own_h[i] == INVALID_HANDLE_VALUE) { own_h[i] = NULL; rc = win_last_errno(); }
+                }
+                free(wp);
+            }
+            src = own_h[i];
+        } else if (s->kind == OS_STDIO_PIPE) {
+            HANDLE r = NULL, w = NULL;
+            if (!CreatePipe(&r, &w, NULL, 0)) { rc = win_last_errno(); }
+            else if (i == 0) { own_h[0] = r; parent_h[0] = w; src = r; }
+            else { own_h[i] = w; parent_h[i] = r; src = w; }
+        } else if (s->kind == OS_STDIO_RAW) {
+            src = (HANDLE)(intptr_t)s->raw;
+        } else if (s->kind == OS_STDIO_FD) {
+            src = (HANDLE)_get_osfhandle((int)s->raw);   // con el handler de parámetro inválido de Task 5
+            if (src == INVALID_HANDLE_VALUE) rc = -EBADF;
+        } else {
+            rc = -EINVAL;
+        }
+        if (rc == 0) {
+            child_h[i] = os_dup_inheritable(src);
+            if (!child_h[i]) rc = win_last_errno();
+        }
+        if (rc != 0) { if (fail_stage) *fail_stage = OS_SPAWN_FAIL_STDIN + i; goto fail; }
+    }
+
+    if (n_env > 0) {
+        envb = os_build_env_block(env_kv, n_env);
+        if (!envb) { rc = -ENOMEM; goto fail; }
+    }
+
+    {
+        SIZE_T asz = 0;
+        InitializeProcThreadAttributeList(NULL, 1, 0, &asz);
+        attrs = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(asz);
+        if (!attrs || !InitializeProcThreadAttributeList(attrs, 1, 0, &asz)) { free(attrs); attrs = NULL; rc = -ENOMEM; goto fail; }
+        if (!UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, child_h, sizeof(child_h), NULL, NULL)) {
+            rc = win_last_errno(); goto fail;
+        }
+        STARTUPINFOEXW si;
+        memset(&si, 0, sizeof(si));
+        si.StartupInfo.cb = sizeof(si);
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdInput = child_h[0];
+        si.StartupInfo.hStdOutput = child_h[1];
+        si.StartupInfo.hStdError = child_h[2];
+        si.lpAttributeList = attrs;
+        // Sin consola propia (un servicio): CREATE_NO_WINDOW evita que el hijo
+        // de consola abra una nueva y quede leyendo de ella (cuelgue que halló
+        // la Task 2 de W5 en try_exec_full).
+        DWORD flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
+        if (!GetConsoleWindow()) flags |= CREATE_NO_WINDOW;
+        if (!CreateProcessW(exe, wcmd, NULL, NULL, TRUE, flags, envb, wcwd, &si.StartupInfo, &pi)) {
+            rc = win_last_errno(); goto fail;
+        }
+    }
+    CloseHandle(pi.hThread);
+
+    AcquireSRWLockExclusive(&os_children_mu);
+    int slot = -1;
+    for (int i = 0; i < OS_CHILD_MAX; i++) if (!os_children[i].used) { slot = i; break; }
+    if (slot < 0) {
+        ReleaseSRWLockExclusive(&os_children_mu);
+        TerminateProcess(pi.hProcess, 1);
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        CloseHandle(pi.hProcess);
+        pi.hProcess = NULL;
+        rc = -EMFILE;
+        goto fail;
+    }
+    os_child_t* c = &os_children[slot];
+    c->used = 1;
+    c->gen = (c->gen + 1) & 0x7FFFFFFF;
+    if (c->gen == 0) c->gen = 1;
+    c->proc = pi.hProcess;
+    c->pid = pi.dwProcessId;
+    c->reaped = 0;
+    c->code = -1;
+    for (int i = 0; i < 3; i++) { c->pipe[i] = parent_h[i]; parent_h[i] = NULL; }
+    int64_t h = os_child_handle(slot);
+    ReleaseSRWLockExclusive(&os_children_mu);
+    rc = 0;
+    // Éxito: se cae al mismo cierre que el error, sin los extremos del padre.
+    for (int i = 0; i < 3; i++) { if (child_h[i]) CloseHandle(child_h[i]); if (own_h[i]) CloseHandle(own_h[i]); }
+    if (attrs) { DeleteProcThreadAttributeList(attrs); free(attrs); }
+    free(wargv0); free(wcmd); free(wcwd); free(envb); free(cmd8);
+    return h;
+
+fail:
+    for (int i = 0; i < 3; i++) {
+        if (child_h[i]) CloseHandle(child_h[i]);
+        if (own_h[i]) CloseHandle(own_h[i]);
+        if (parent_h[i]) CloseHandle(parent_h[i]);
+    }
+    if (attrs) { DeleteProcThreadAttributeList(attrs); free(attrs); }
+    free(wargv0); free(wcmd); free(wcwd); free(envb); free(cmd8);
+    return rc < 0 ? rc : -EIO;
+}
+
+int os_proc_wait(int64_t h, int nohang, int64_t* code) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    os_child_t* c = &os_children[slot];
+    if (c->reaped) { if (code) *code = c->code; os_child_unlock(); return 1; }
+    HANDLE p = c->proc;
+    os_child_unlock();
+    DWORD w = WaitForSingleObject(p, nohang ? 0 : INFINITE);
+    if (w == WAIT_TIMEOUT) return 0;
+    if (w != WAIT_OBJECT_0) return win_last_errno();
+    DWORD ec = 0;
+    if (!GetExitCodeProcess(p, &ec)) return win_last_errno();
+    slot = os_child_lock(h);
+    if (slot < 0) { if (code) *code = (int64_t)ec; return 1; }
+    c = &os_children[slot];
+    c->reaped = 1;
+    c->code = (int64_t)ec;
+    if (c->pipe[0]) { CloseHandle(c->pipe[0]); c->pipe[0] = NULL; }
+    if (code) *code = c->code;
+    os_child_maybe_free(slot);
+    os_child_unlock();
+    return 1;
+}
+
+int os_proc_kill(int64_t h) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    os_child_t* c = &os_children[slot];
+    int rc = 0;
+    // TerminateProcess sobre un hijo es seguro (el problema de W5 era
+    // TerminateThread dentro del propio proceso). Si ya terminó, ACCESS_DENIED:
+    // no es un error para el caller.
+    if (!c->reaped && !TerminateProcess(c->proc, 1)) {
+        DWORD ec = 0;
+        if (!(GetExitCodeProcess(c->proc, &ec) && ec != STILL_ACTIVE)) rc = win_last_errno();
+    }
+    os_child_unlock();
+    return rc;
+}
+
+int os_proc_signal(int64_t h, int sig) { (void)h; (void)sig; return -ENOSYS; }
+
+int64_t os_proc_pid(int64_t h) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    int64_t pid = (int64_t)os_children[slot].pid;
+    os_child_unlock();
+    return pid;
+}
+
+int64_t os_proc_read(int64_t h, int stream, void* buf, int64_t n) {
+    if (stream != 1 && stream != 2) return -EINVAL;
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    HANDLE p = os_children[slot].pipe[stream];
+    os_child_unlock();
+    if (!p) return 0;
+    DWORD got = 0;
+    DWORD want = n > 0x40000000 ? 0x40000000 : (DWORD)n;
+    if (!ReadFile(p, buf, want, &got, NULL)) {
+        DWORD e = GetLastError();
+        if (e != ERROR_BROKEN_PIPE) return -(win_errno(e) ? win_errno(e) : EIO);
+        got = 0;
+    }
+    if (got == 0) {
+        slot = os_child_lock(h);
+        if (slot >= 0) {
+            if (os_children[slot].pipe[stream] == p) { CloseHandle(p); os_children[slot].pipe[stream] = NULL; }
+            os_child_maybe_free(slot);
+            os_child_unlock();
+        }
+    }
+    return (int64_t)got;
+}
+
+int64_t os_proc_write(int64_t h, const void* buf, int64_t n) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    HANDLE p = os_children[slot].pipe[0];
+    os_child_unlock();
+    if (!p) return -EBADF;
+    const char* b = (const char*)buf;
+    int64_t done = 0;
+    while (done < n) {
+        DWORD w = 0;
+        DWORD want = (n - done) > 0x40000000 ? 0x40000000 : (DWORD)(n - done);
+        if (!WriteFile(p, b + done, want, &w, NULL)) {
+            DWORD e = GetLastError();
+            if (e == ERROR_NO_DATA || e == ERROR_BROKEN_PIPE) return -EPIPE;
+            return -(win_errno(e) ? win_errno(e) : EIO);
+        }
+        done += w;
+    }
+    return done;
+}
+
+int os_proc_close_stdin(int64_t h) {
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    os_child_t* c = &os_children[slot];
+    if (c->pipe[0]) { CloseHandle(c->pipe[0]); c->pipe[0] = NULL; }
+    os_child_maybe_free(slot);
+    os_child_unlock();
+    return 0;
+}
+
+int os_proc_drain(int64_t h, void (*cb)(int stream, const void* chunk, size_t len, void* ud), void* ud) {
+    int rc = os_proc_close_stdin(h);
+    if (rc != 0) return rc;
+    int slot = os_child_lock(h);
+    if (slot < 0) return -EBADF;
+    HANDLE po = os_children[slot].pipe[1];
+    HANDLE pe = os_children[slot].pipe[2];
+    os_child_unlock();
+    CRITICAL_SECTION cs;
+    InitializeCriticalSection(&cs);
+    os_proc_pipe_drain_t derr = { pe, 2, cb, ud, &cs };
+    os_proc_pipe_drain_t dout = { po, 1, cb, ud, &cs };
+    HANDLE th = pe ? CreateThread(NULL, 0, os_proc_pipe_drain_thread, &derr, 0, NULL) : NULL;
+    if (po) os_proc_pipe_drain(&dout);
+    if (th) { WaitForSingleObject(th, INFINITE); CloseHandle(th); }
+    else if (pe) os_proc_pipe_drain(&derr);
+    DeleteCriticalSection(&cs);
+    slot = os_child_lock(h);
+    if (slot >= 0) {
+        os_child_t* c = &os_children[slot];
+        if (c->pipe[1] == po && po) { CloseHandle(po); c->pipe[1] = NULL; }
+        if (c->pipe[2] == pe && pe) { CloseHandle(pe); c->pipe[2] = NULL; }
+        os_child_maybe_free(slot);
+        os_child_unlock();
+    }
+    return 0;
+}
+
+int os_proc_pipe(int64_t* rd, int64_t* wr) {
+    HANDLE r = NULL, w = NULL;
+    if (!CreatePipe(&r, &w, NULL, 0)) return win_last_errno();   // no heredables
+    *rd = (int64_t)(intptr_t)r;
+    *wr = (int64_t)(intptr_t)w;
+    return 0;
+}
+
+int os_proc_raw_close(int64_t raw) {
+    if (raw == -1 || raw == 0) return -EBADF;
+    return CloseHandle((HANDLE)(intptr_t)raw) ? 0 : win_last_errno();
 }
 
 // ===========================================================================

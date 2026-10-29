@@ -164,6 +164,7 @@ int     os_sock_set_multicast_iface(int64_t fd, const char* iface_ip) { (void)fd
 int     os_sock_set_broadcast(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
 int     os_sock_set_reuseport(int64_t fd) { (void)fd; return -ENOSYS; }
 int     os_sys_root_certs(void (*cb)(const unsigned char* der, size_t len, void* ud), void* ud) { (void)cb; (void)ud; return -ENOSYS; }
+int     os_sys_root_fetch(const unsigned char* const* ders, const size_t* lens, int n) { (void)ders; (void)lens; (void)n; return -ENOSYS; }
 int     os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns) { (void)ip; (void)timeout_ms; (void)rtt_ns; return -ENOSYS; }
 int     os_sock_set_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
 int     os_sock_set_send_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)seconds; return -ENOSYS; }
@@ -351,3 +352,21 @@ int os_serial_close(int64_t h) { (void)h; return -ENOSYS; }
 int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud) {
     (void)cb; (void)ud; return -ENOSYS;
 }
+
+// Procesos hijos (arco procesos-spawn): no hay procesos en wasm32-wasi.
+int64_t os_proc_spawn(const char* const* argv, int argc, const os_stdio_t stdio[3],
+                      const char* cwd, const char* const* env_kv, int n_env, int* fail_stage) {
+    (void)argv; (void)argc; (void)stdio; (void)cwd; (void)env_kv; (void)n_env;
+    if (fail_stage) *fail_stage = OS_SPAWN_FAIL_PROGRAM;
+    return -ENOSYS;
+}
+int     os_proc_wait(int64_t h, int nohang, int64_t* code) { (void)h; (void)nohang; (void)code; return -ENOSYS; }
+int     os_proc_kill(int64_t h) { (void)h; return -ENOSYS; }
+int     os_proc_signal(int64_t h, int sig) { (void)h; (void)sig; return -ENOSYS; }
+int64_t os_proc_pid(int64_t h) { (void)h; return -ENOSYS; }
+int64_t os_proc_read(int64_t h, int stream, void* buf, int64_t n) { (void)h; (void)stream; (void)buf; (void)n; return -ENOSYS; }
+int64_t os_proc_write(int64_t h, const void* buf, int64_t n) { (void)h; (void)buf; (void)n; return -ENOSYS; }
+int     os_proc_close_stdin(int64_t h) { (void)h; return -ENOSYS; }
+int     os_proc_drain(int64_t h, void (*cb)(int stream, const void* chunk, size_t len, void* ud), void* ud) { (void)h; (void)cb; (void)ud; return -ENOSYS; }
+int     os_proc_pipe(int64_t* rd, int64_t* wr) { (void)rd; (void)wr; return -ENOSYS; }
+int     os_proc_raw_close(int64_t raw) { (void)raw; return -ENOSYS; }

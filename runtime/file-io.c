@@ -573,3 +573,158 @@ nyx_array_t* nyx_serial_list(void) {
     if (r < 0) return serial_pair(serial_canon(r), (int64_t)nyx_array_new(0), NYX_TAG_ARRAY);
     return serial_pair(0, (int64_t)all, NYX_TAG_ARRAY);
 }
+
+// ============================================================================
+// std/process (arco procesos-spawn): frontera Nyx <-> os_proc_spawn y familia.
+// Mismo molde que nyx_serial_*: lo que puede fallar devuelve [code, valor] con
+// code = errno canónico (0 = bien). Spec:
+// docs/design/specs/2026-10-28-procesos-spawn-design.md.
+// EN: Nyx boundary for os_proc_*; fallible calls return [code, value].
+// ============================================================================
+
+static int64_t proc_canon(int64_t neg) { return (int64_t)os_errno_canon((int)-neg); }
+
+static nyx_array_t* proc_triple(int64_t code, int64_t val, int64_t stage) {
+    nyx_array_t* out = nyx_array_new(3);
+    nyx_array_push_tagged(out, code, NYX_TAG_INT);
+    nyx_array_push_tagged(out, val, NYX_TAG_INT);
+    nyx_array_push_tagged(out, stage, NYX_TAG_INT);
+    return out;
+}
+
+// argv: Array de String. st_kind/st_raw: Array de 3 int; st_path: 3 String;
+// st_mode: 3 int ('r'/'w'/'a' como código). env: Array de "K=V".
+// Devuelve [code, handle, etapa] (etapa: OS_SPAWN_FAIL_*).
+nyx_array_t* nyx_proc_spawn(nyx_array_t* argv, nyx_array_t* st_kind, nyx_array_t* st_path,
+                            nyx_array_t* st_mode, nyx_array_t* st_raw, nyx_string* cwd, nyx_array_t* env) {
+    int argc = argv ? (int)argv->length : 0;
+    if (argc < 1 || !st_kind || st_kind->length != 3 || !st_path || st_path->length != 3 ||
+        !st_mode || st_mode->length != 3 || !st_raw || st_raw->length != 3) {
+        return proc_triple(22, 0, OS_SPAWN_FAIL_PROGRAM);
+    }
+    int n_env = env ? (int)env->length : 0;
+    // Punteros a los datos de los nyx_string (GC): viven mientras viven los
+    // Arrays del caller, que están en su pila durante toda la llamada.
+    const char** args = (const char**)GC_MALLOC((size_t)(argc + 1) * sizeof(char*));
+    const char** envs = (const char**)GC_MALLOC((size_t)(n_env + 1) * sizeof(char*));
+    if (!args || !envs) return proc_triple(12, 0, OS_SPAWN_FAIL_PROGRAM);
+    for (int i = 0; i < argc; i++) {
+        nyx_string* s = (nyx_string*)(argv->data[i]);
+        args[i] = s ? nyx_string_to_cstr(s) : "";
+    }
+    args[argc] = NULL;
+    for (int i = 0; i < n_env; i++) {
+        nyx_string* s = (nyx_string*)(env->data[i]);
+        envs[i] = s ? nyx_string_to_cstr(s) : "";
+    }
+    envs[n_env] = NULL;
+    os_stdio_t st[3];
+    for (int i = 0; i < 3; i++) {
+        nyx_string* p = (nyx_string*)(st_path->data[i]);
+        st[i].kind = (int)st_kind->data[i];
+        st[i].path = p ? nyx_string_to_cstr(p) : "";
+        st[i].mode = (char)st_mode->data[i];
+        st[i].raw = st_raw->data[i];
+    }
+    const char* dir = (cwd && cwd->length > 0) ? nyx_string_to_cstr(cwd) : NULL;
+    int stage = OS_SPAWN_FAIL_PROGRAM;
+    int64_t h = os_proc_spawn(args, argc, st, dir, envs, n_env, &stage);
+    if (h < 0) return proc_triple(proc_canon(h), 0, stage);
+    return proc_triple(0, h, 0);
+}
+
+// [code, terminó (0/1), código de salida]
+nyx_array_t* nyx_proc_wait(int64_t h, int64_t nohang) {
+    int64_t cd = -1;
+    int r = os_proc_wait(h, (int)nohang, &cd);
+    if (r < 0) return proc_triple(proc_canon(r), 0, 0);
+    return proc_triple(0, r, cd);
+}
+
+int64_t nyx_proc_kill(int64_t h) {
+    int r = os_proc_kill(h);
+    return r < 0 ? -proc_canon(r) : 0;
+}
+
+int64_t nyx_proc_signal(int64_t h, int64_t sig) {
+    int r = os_proc_signal(h, (int)sig);
+    return r < 0 ? -proc_canon(r) : 0;
+}
+
+int64_t nyx_proc_pid(int64_t h) {
+    int64_t r = os_proc_pid(h);
+    return r < 0 ? -proc_canon(r) : r;
+}
+
+// [code, bytes] ("" = EOF)
+nyx_array_t* nyx_proc_read(int64_t h, int64_t stream, int64_t max) {
+    if (max <= 0) return serial_pair(22, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    char* buf = (char*)GC_MALLOC_ATOMIC((size_t)max + 1);
+    if (!buf) return serial_pair(12, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    int64_t got = os_proc_read(h, (int)stream, buf, max);
+    if (got < 0) return serial_pair(proc_canon(got), (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    buf[got] = 0;
+    return serial_pair(0, (int64_t)nyx_string_from_ptr(buf, got), NYX_TAG_STRING);
+}
+
+int64_t nyx_proc_write(int64_t h, nyx_string* data) {
+    if (!data) return 0;
+    int64_t r = os_proc_write(h, data->data, data->length);
+    return r < 0 ? -proc_canon(r) : r;
+}
+
+int64_t nyx_proc_close_stdin(int64_t h) {
+    int r = os_proc_close_stdin(h);
+    return r < 0 ? -proc_canon(r) : 0;
+}
+
+typedef struct { char* buf; size_t len, cap; int oom; } nyx_proc_acc_t;
+
+static void nyx_proc_acc_add(nyx_proc_acc_t* a, const void* chunk, size_t len) {
+    if (a->oom) return;
+    if (a->len + len + 1 > a->cap) {
+        size_t nc = a->cap ? a->cap : 4096;
+        while (a->len + len + 1 > nc) nc *= 2;
+        char* nb = (char*)GC_MALLOC_ATOMIC(nc);
+        if (!nb) { a->oom = 1; return; }
+        if (a->len) memcpy(nb, a->buf, a->len);
+        a->buf = nb;
+        a->cap = nc;
+    }
+    memcpy(a->buf + a->len, chunk, len);
+    a->len += len;
+}
+
+typedef struct { nyx_proc_acc_t out, err; } nyx_proc_drain_acc_t;
+
+static void nyx_proc_drain_cb(int stream, const void* chunk, size_t len, void* ud) {
+    nyx_proc_drain_acc_t* a = (nyx_proc_drain_acc_t*)ud;
+    nyx_proc_acc_add(stream == 1 ? &a->out : &a->err, chunk, len);
+}
+
+// [code, stdout, stderr]: cierra stdin y drena los dos flujos a la vez.
+nyx_array_t* nyx_proc_drain(int64_t h) {
+    nyx_proc_drain_acc_t a;
+    memset(&a, 0, sizeof(a));
+    int r = os_proc_drain(h, nyx_proc_drain_cb, &a);
+    int64_t code = r < 0 ? proc_canon(r) : 0;
+    if (code == 0 && (a.out.oom || a.err.oom)) code = 12;
+    nyx_array_t* out = nyx_array_new(3);
+    nyx_array_push_tagged(out, code, NYX_TAG_INT);
+    nyx_array_push_tagged(out, (int64_t)nyx_string_from_ptr(a.out.buf ? a.out.buf : "", (int64_t)a.out.len), NYX_TAG_STRING);
+    nyx_array_push_tagged(out, (int64_t)nyx_string_from_ptr(a.err.buf ? a.err.buf : "", (int64_t)a.err.len), NYX_TAG_STRING);
+    return out;
+}
+
+// [code, lectura, escritura]: pipe para conectar dos hijos (pipeline).
+nyx_array_t* nyx_proc_pipe(void) {
+    int64_t rd = -1, wr = -1;
+    int r = os_proc_pipe(&rd, &wr);
+    if (r < 0) return proc_triple(proc_canon(r), -1, -1);
+    return proc_triple(0, rd, wr);
+}
+
+int64_t nyx_proc_raw_close(int64_t raw) {
+    int r = os_proc_raw_close(raw);
+    return r < 0 ? -proc_canon(r) : 0;
+}

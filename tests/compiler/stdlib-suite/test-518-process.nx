@@ -1,0 +1,140 @@
+// test-518 — std/process (arco procesos-spawn): la capa Nyx sobre os_proc_*.
+// La E/S fina (EPIPE sin SIGPIPE, salida mayor que el pipe, fugas entre
+// hijos, etapas de error) la cubre tests/runtime-unit/test_os_proc_spawn.c;
+// acá va el contrato que ve un programa: argv sin shell, Stdio, collect,
+// pipeline, kill, try_wait, env/cwd y los kinds de error.
+
+import "std/error"
+import "std/process"
+
+fn main() -> int {
+    // stdout y stderr por pipe, leídos a la vez, con el código de salida.
+    var o = spawn_opts()
+    o.stdout = Stdio.Pipe
+    o.stderr = Stdio.Pipe
+    match try_spawn(["sh", "-c", "printf hola; printf mal >&2; exit 3"], o) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => { println(r.stdout + "|" + r.stderr + "|" + int_to_string(r.code)) }
+                Result.Err(e) => { println("collect: " + e.msg) }
+            }
+        }
+        Result.Err(e) => { println("spawn: " + e.msg) }
+    }
+
+    // argv sin shell: el `$HOME` llega literal.
+    var o2 = spawn_opts()
+    o2.stdout = Stdio.Pipe
+    match try_spawn(["printf", "%s", "$HOME"], o2) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => { println("literal: " + r.stdout) }
+                Result.Err(e) => { println(e.msg) }
+            }
+        }
+        Result.Err(e) => { println(e.msg) }
+    }
+
+    // stdin por pipe: escribir, cerrar y leer lo que devuelve cat.
+    var o3 = spawn_opts()
+    o3.stdin = Stdio.Pipe
+    o3.stdout = Stdio.Pipe
+    match try_spawn(["cat"], o3) {
+        Result.Ok(c) => {
+            let _w = try_child_write(c, "eco")
+            let _c = try_child_close_stdin(c)
+            match try_child_read(c, 64) {
+                Result.Ok(s) => { println("cat: " + s) }
+                Result.Err(e) => { println(e.msg) }
+            }
+            let _x = try_child_wait(c)
+        }
+        Result.Err(e) => { println(e.msg) }
+    }
+
+    // Pipeline de 3 etapas con EOF correcto.
+    var op = spawn_opts()
+    op.stdout = Stdio.Pipe
+    match try_spawn_pipeline([["printf", "c\\nb\\na\\n"], ["sort"], ["head", "-n", "2"]], op) {
+        Result.Ok(hs) => {
+            let ultimo: Child = hs[2]
+            match try_child_collect(ultimo) {
+                Result.Ok(r) => { println("pipeline: " + r.stdout.replace("\n", ",")) }
+                Result.Err(e) => { println(e.msg) }
+            }
+            let primero: Child = hs[0]
+            let segundo: Child = hs[1]
+            let _a = try_child_wait(primero)
+            let _b = try_child_wait(segundo)
+        }
+        Result.Err(e) => { println(e.msg) }
+    }
+
+    // env y cwd.
+    var oe = spawn_opts()
+    oe.stdout = Stdio.Pipe
+    oe.cwd = "/"
+    oe.env = [["NYX_T518", "ok"]]
+    match try_spawn(["sh", "-c", "printf '%s %s' \"$NYX_T518\" \"$(pwd)\""], oe) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => { println("env/cwd: " + r.stdout) }
+                Result.Err(e) => { println(e.msg) }
+            }
+        }
+        Result.Err(e) => { println(e.msg) }
+    }
+
+    // try_wait mientras corre, kill y 137.
+    var on = spawn_opts()
+    on.stdin = Stdio.Null
+    match try_spawn(["sleep", "30"], on) {
+        Result.Ok(c) => {
+            match try_child_try_wait(c) {
+                Result.Ok(op2) => {
+                    match op2 {
+                        Option.None => { println("try_wait: corriendo") }
+                        Option.Some(_v) => { println("try_wait: ya terminó") }
+                    }
+                }
+                Result.Err(e) => { println(e.msg) }
+            }
+            if child_pid(c) > 0 { println("pid > 0") }
+            let _k = try_child_kill(c)
+            match try_child_wait(c) {
+                Result.Ok(code) => { println("kill: " + int_to_string(code)) }
+                Result.Err(e) => { println(e.msg) }
+            }
+        }
+        Result.Err(e) => { println(e.msg) }
+    }
+
+    // Errores con su kind.
+    match try_spawn(["nyx_t518_no_existe"], spawn_opts()) {
+        Result.Ok(_c) => { println("inesperado") }
+        Result.Err(e) => { println(e.kind + " " + int_to_string(e.code)) }
+    }
+    match try_spawn([], spawn_opts()) {
+        Result.Ok(_c) => { println("inesperado") }
+        Result.Err(e) => { println(e.kind + " " + int_to_string(e.code)) }
+    }
+    var of = spawn_opts()
+    of.stdin = Stdio.File("/nyx/t518/no/existe", "r")
+    match try_spawn(["cat"], of) {
+        Result.Ok(_c) => { println("inesperado") }
+        Result.Err(e) => { println(e.kind + " " + e.msg) }
+    }
+    var om = spawn_opts()
+    om.stdout = Stdio.File("/tmp/x", "rw")
+    match try_spawn(["true"], om) {
+        Result.Ok(_c) => { println("inesperado") }
+        Result.Err(e) => { println(e.kind + " " + int_to_string(e.code)) }
+    }
+    var oc = spawn_opts()
+    oc.cwd = "/nyx/t518/no/existe"
+    match try_spawn(["true"], oc) {
+        Result.Ok(_c) => { println("inesperado") }
+        Result.Err(e) => { println(e.kind + " " + e.msg) }
+    }
+    return 0
+}

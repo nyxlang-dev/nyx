@@ -36,6 +36,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   abre y lista sin VID/PID. Apertura exclusiva (`in_use`), DTR activo, modo crudo sin control de flujo, solo
   velocidades estándar. Bytes como `String`, con adaptadores para el `Array` de `std/browser_serial`. Por `extern "C"`,
   sin tocar el compilador. Pedido para el puente de tienda de nyxerp (impresora fiscal y balanzas).
+- **`std/process`: lanzar procesos hijos sin fork** [arco: procesos-spawn]: `try_spawn(argv, SpawnOpts)` con cada
+  flujo como `Stdio` (heredado, nulo, pipe o archivo), `cwd` y `env`; `try_spawn_pipeline` para `a | b | c`;
+  `wait`/`try_wait`, `kill`, `signal` (solo posix), `read`/`read_err`/`write`/`close_stdin` y `collect`, que drena
+  stdout y stderr a la vez (leerlos uno tras otro se cuelga con salida grande). posix sobre `posix_spawnp`; Windows
+  sobre `CreateProcessW` con la línea de comando armada desde argv (escrito, sin verificar todavía en Windows real).
+  Errores `not_found`, `permission` e `invalid` con la etapa en el mensaje; escribir a un hijo que cerró su stdin da
+  `EPIPE`, no mata por SIGPIPE. Regression +1 (`test-518`); runtime C +2 suites (`test_os_proc_spawn.c`,
+  `test_os_win_cmdline.c`).
+- **TLS en Windows: una raíz que el sistema todavía no bajó ya no rompe la conexión** [arco: w5-windows]: Windows
+  trae pocas raíces instaladas y descarga las demás al armar una cadena, así que un sitio cualquiera fallaba con X509
+  20 en una máquina nueva. Ante ese error, con el almacén del sistema, se pide la cadena a `CertGetCertificateChain`,
+  se recarga el almacén y se reintenta una vez; la verificación sigue siendo la de OpenSSL. Sin cambios en posix ni
+  wasm (escrito, sin verificar todavía en Windows real).
 - **W5: procesos, señales y adapters `dl` compilan para Windows** [arco: w5-windows]: salen del gate de win32
   `exec`, `exec_code`, `getpid`, `getcwd`, `chdir`, `stat`, `isatty`, `open_fd`, `close_fd`, `dup2`, `fsync`,
   `fdatasync`, `signal_*` y `setup_shutdown_handler`. En Windows, `exec()` normaliza `\r\n` a `\n` y `exec_code()`
