@@ -1,0 +1,8 @@
+C   [Content-Length: 5] 'hola!' host='a'
+Nyx [Content-Length: 5] 'hola!' host='a'
+C   [content-length: 5] 'hola!' host='a'
+Nyx [content-length: 5] 'hola!' host='a'
+C   [Content-Length:5] 'hola!' host='a'
+Nyx [Content-Length:5] 'hola!' host='a'
+C   [CONTENT-LENGTH:  5  ] 'hola!' host='a'
+Nyx [CONTENT-LENGTH:  5  ] 'hola!' host='a'

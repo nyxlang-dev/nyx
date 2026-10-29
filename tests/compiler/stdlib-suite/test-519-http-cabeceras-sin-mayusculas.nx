@@ -1,0 +1,44 @@
+// Nombres de cabecera sin distinguir mayúsculas y `:` con espacios opcionales
+// (RFC 9110 §5.1 y §5.6.3), en los dos parsers de pedidos: el de C
+// (nyx_http_parse_request_deadline, el de http_serve y std/serve) y el de Nyx
+// (http_parse_request). Antes `content-length: 5` o `Content-Length:5` dejaban
+// el cuerpo VACÍO sin error (fricción nyxerp 2026-10-29).
+import "std/http"
+import "std/net"
+
+extern "C" fn nyx_http_parse_request_deadline(fd: int, header_ms: int) -> Array
+
+fn probar(srv: int, port: int, raw: String, por_c: bool) -> String {
+    let c: int = tcp_connect("127.0.0.1", port)
+    tcp_write(c, raw)
+    let fd: int = tcp_accept(srv)
+    var req: Array = []
+    if por_c { req = nyx_http_parse_request_deadline(fd, 2000) } else { req = http_parse_request(fd) }
+    let body: String = req[4]
+    let hs: Array = req[3]
+    tcp_close(fd)
+    tcp_close(c)
+    let hosts: Array = http_find_headers(hs, "host")
+    let host: String = hosts[0]
+    return "'" + body + "' host='" + host + "'"
+}
+
+fn main() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let pr: Result<int, Error> = try_local_port(srv)
+    let port: int = pr.unwrap()
+    let casos: Array = [
+        ["Content-Length: 5", "POST /x HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhola!"],
+        ["content-length: 5", "POST /x HTTP/1.1\r\nHost: a\r\ncontent-length: 5\r\n\r\nhola!"],
+        ["Content-Length:5", "POST /x HTTP/1.1\r\nHost:a\r\nContent-Length:5\r\n\r\nhola!"],
+        ["CONTENT-LENGTH:  5  ", "POST /x HTTP/1.1\r\nHost:   a  \r\nCONTENT-LENGTH:  5  \r\n\r\nhola!"]
+    ]
+    for caso: Array in casos {
+        let nombre: String = caso[0]
+        let raw: String = caso[1]
+        println("C   [" + nombre + "] " + probar(srv, port, raw, true))
+        println("Nyx [" + nombre + "] " + probar(srv, port, raw, false))
+    }
+    tcp_close(srv)
+    return 0
+}

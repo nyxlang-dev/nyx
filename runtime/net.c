@@ -600,6 +600,19 @@ static nyx_array_t* http_empty_request(int64_t err) {
     return empty;
 }
 
+// ¿`a` (de largo n) es `b` sin distinguir mayúsculas ASCII? Propia y no
+// strncasecmp: la CRT de MSVC no la trae y net.c también se arma para win32.
+static int http_name_ieq(const char* a, size_t n, const char* b) {
+    size_t i = 0;
+    for (; i < n && b[i]; i++) {
+        char x = a[i], y = b[i];
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+        if (x != y) return 0;
+    }
+    return i == n && b[i] == '\0';
+}
+
 // Parser común. header_ms <= 0 = sin plazo (el builtin de siempre). Con
 // header_ms > 0:
 //   - la línea de pedido y TODAS las cabeceras tienen que llegar dentro de
@@ -649,17 +662,24 @@ static nyx_array_t* http_parse_request_impl(int64_t fd, int64_t header_ms) {
         if (timed_out) return http_empty_request(408);
         if (hlen == 0) break; // empty line = end of headers
 
-        // Find ": " separator
-        char* colon = strstr(hdr, ": ");
-        if (colon) {
+        // `nombre:valor` con espacios opcionales (OWS = SP / HTAB) a los dos
+        // lados del valor, y el nombre sin distinguir mayúsculas (RFC 9110
+        // §5.1, §5.6.3). Antes se exigía ": " y "Content-Length" exacto:
+        // `content-length: 5` o `Content-Length:5` dejaban el body vacío SIN
+        // error (fricción nyxerp 2026-10-29). El nombre se guarda tal cual.
+        char* colon = memchr(hdr, ':', (size_t)hlen);
+        if (colon && colon > hdr) {
+            const char* v = colon + 1;
+            const char* fin = hdr + hlen;
+            while (v < fin && (*v == ' ' || *v == '\t')) v++;
+            while (fin > v && (fin[-1] == ' ' || fin[-1] == '\t')) fin--;
             nyx_string* key = nyx_string_from_ptr(hdr, colon - hdr);
-            nyx_string* val = nyx_string_from_ptr(colon + 2, hlen - (colon + 2 - hdr));
+            nyx_string* val = nyx_string_from_ptr(v, fin - v);
             nyx_array_push_tagged(headers, (int64_t)key, NYX_TAG_STRING);
             nyx_array_push_tagged(headers, (int64_t)val, NYX_TAG_STRING);
 
-            // Check Content-Length
-            if (colon - hdr == 14 && strncmp(hdr, "Content-Length", 14) == 0) {
-                content_length = atoll(colon + 2);
+            if (http_name_ieq(hdr, (size_t)(colon - hdr), "content-length")) {
+                content_length = atoll(v);
             }
         }
     }

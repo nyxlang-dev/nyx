@@ -138,13 +138,16 @@ fn forward_request(method: String, path: String, headers: Array, body: String, b
             // End of headers (empty line)
             break
         }
-        let colon_idx: int = line.indexOf(": ")
-        if colon_idx >= 0 {
+        // `nombre:valor` con espacios opcionales y nombre sin distinguir
+        // mayúsculas (RFC 9110): un upstream que manda `content-length` caía
+        // al «leer lo que haya» y podía cortar el cuerpo (2026-10-29).
+        let colon_idx: int = line.indexOf(":")
+        if colon_idx > 0 {
             let key: String = line.substring(0, colon_idx)
-            let val: String = line.substring(colon_idx + 2, line.length())
+            let val: String = line.substring(colon_idx + 1, line.length()).trim()
             resp_headers.push(key)
             resp_headers.push(val)
-            if key == "Content-Length" {
+            if key.to_lower() == "content-length" {
                 content_length = parse_content_length(val)
             }
         }

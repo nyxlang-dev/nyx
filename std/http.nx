@@ -322,8 +322,8 @@ fn http_read_response(fd: int) -> Array {
     let headers: Array = parse_headers(fd)
     // Read body — Transfer-Encoding: chunked tiene prioridad sobre Content-Length
     var body: String = ""
-    let te_str: String = http_find_header(headers, "Transfer-Encoding")
-    let cl_str: String = http_find_header(headers, "Content-Length")
+    let te_str: String = http_header_ci(headers, "Transfer-Encoding")
+    let cl_str: String = http_header_ci(headers, "Content-Length")
     if te_str.indexOf("chunked") >= 0 {
         body = http_read_chunked_fd(fd)
     } else if cl_str.length() > 0 {
@@ -364,17 +364,11 @@ fn http_parse_raw_response(raw: String) -> Array {
     var li: int = 1
     while li < lines.length() {
         let line: String = lines[li]
-        let colon_idx: int = line.indexOf(": ")
-        if colon_idx >= 0 {
-            let key: String = line.substring(0, colon_idx)
-            let val: String = line.substring(colon_idx + 2, line.length())
-            headers.push(key)
-            headers.push(val)
-        }
+        let _h = http_header_line(line, headers)
         li = li + 1
     }
     // Transfer-Encoding: chunked → de-chunk el body (el status/headers ya están)
-    let te: String = http_find_header(headers, "Transfer-Encoding")
+    let te: String = http_header_ci(headers, "Transfer-Encoding")
     if te.indexOf("chunked") >= 0 {
         body = http_dechunk_str(body)
     }
@@ -1420,6 +1414,22 @@ fn parse_request_line(line: String) -> Array {
     return empty
 }
 
+// Una línea `nombre:valor` al arreglo plano [k, v, ...]: separa en el PRIMER
+// `:` y recorta los espacios opcionales del valor (RFC 9110 §5.6.3). Antes se
+// exigía ": " y una línea `Content-Length:5` se descartaba entera; con el
+// nombre buscado exacto, `content-length: 5` dejaba el cuerpo vacío sin error
+// (fricción nyxerp 2026-10-29). El nombre se guarda tal cual: quien busca usa
+// http_header_ci / http_find_headers, que no distinguen mayúsculas.
+fn http_header_line(line: String, headers: Array) -> int {
+    let colon_idx: int = line.indexOf(":")
+    if colon_idx <= 0 { return 0 }
+    let key: String = line.substring(0, colon_idx)
+    let val: String = line.substring(colon_idx + 1, line.length()).trim()
+    headers.push(key)
+    headers.push(val)
+    return 1
+}
+
 fn parse_headers(client_fd: int) -> Array {
     // Returns flat array [key1, val1, key2, val2, ...]
     let headers: Array = []
@@ -1428,13 +1438,7 @@ fn parse_headers(client_fd: int) -> Array {
         if line.length() == 0 {
             return headers
         }
-        let colon_idx: int = line.indexOf(": ")
-        if colon_idx >= 0 {
-            let key: String = line.substring(0, colon_idx)
-            let val: String = line.substring(colon_idx + 2, line.length())
-            headers.push(key)
-            headers.push(val)
-        }
+        let _h = http_header_line(line, headers)
     }
     return headers
 }
@@ -1499,7 +1503,7 @@ pub fn http_parse_request(client_fd: int) -> Array {
     // allocación: misma clase que el RESP_MAX_BULK del daemon kv)
     var body: String = ""
     var req_err: int = 0
-    let cl_str: String = http_find_header(headers, "Content-Length")
+    let cl_str: String = http_header_ci(headers, "Content-Length")
     if cl_str.length() > 0 {
         let cl: int = http_parse_int(cl_str)
         if cl > nyx_http_max_body() {

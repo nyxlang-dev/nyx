@@ -74,6 +74,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `dl`, Ctrl+C real y el drenado de `persist`; `std/serial` solo en errores sin puerto (falta hardware).
 
 ### Arreglado
+- **HTTP: el cuerpo de un pedido ya no se pierde si la cabecera llega como `content-length`** [dogfooding:nyxerp]:
+  el parser de C (el de `http_serve` y `std/serve`) exigía `": "` como separador y comparaba `Content-Length` con
+  mayúsculas exactas, así que `content-length: 5` o `Content-Length:5` llegaban al manejador con el cuerpo VACÍO y
+  sin error. Ahora los nombres de cabecera no distinguen mayúsculas y el `:` admite espacios opcionales a los dos
+  lados del valor (RFC 9110 §5.1 y §5.6.3), también en los parsers Nyx de `std/http` (pedidos, respuestas por fd y
+  por TLS) y en la respuesta del upstream de `std/proxy`. El valor de cada cabecera llega sin esos espacios.
+  Regression +1 (`test-519`, los dos parsers); `test_net.c` +15 asserts.
 - **`[lib] modules`: dos bibliotecas que se importan entre sí ya compilan** [dogfooding:nyxerp]: la unidad de `a`
   no se contaba como importada, así que al volver por el import de `b` se inlineaba otra copia de `a` y sus structs
   salían dos veces en el IR («redefinition of type» en clang). Lo destapó `run_lib_real` sobre `formatos ↔
