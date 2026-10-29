@@ -8,7 +8,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <gc/gc.h>
+#include <gc.h>
 
 // Base64 encode (needed for Sec-WebSocket-Accept)
 static const char B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

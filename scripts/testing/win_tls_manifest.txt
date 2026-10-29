@@ -1,0 +1,12 @@
+# scripts/testing/win_tls_manifest.txt — los tests que piden TLS/crypto (tls.c +
+# crypto.c contra el OpenSSL ESTÁTICO de vcpkg) y corren en el job w5-tls de
+# .github/workflows/windows.yml (W5 Task 4). Mismo formato que
+# win_subset_manifest.txt: <test.nx>TAB<expected o NONE>. Van aparte porque el
+# subset general (x64 + arm64) no enlaza OpenSSL.
+# EN: TLS/crypto tests for the w5-tls job; same format as win_subset_manifest.txt.
+#
+# Fuera, medido el 2026-10-28: test-425 (genera sus certificados con exec/sh y
+# usa signal_ignore, vetados en win32 — su variante con certificados
+# pregenerados pasa, ver task-4-report.md) y todo lo que salga a la red externa.
+tests/compiler/ecosystem/test-200-tls-server.nx	tests/compiler/ecosystem/expected/test-200-tls-server.expected
+tests/stdlib-unit/test-stdlib-14-aes-gcm.nx	NONE

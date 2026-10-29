@@ -1050,6 +1050,9 @@ single `Error` struct.
 - Process control: `fork()`, `execvp(prog, args)`, `waitpid(pid, opts)`,
   `dup2(old, new)`, `pipe_new()`, `close_fd(fd)`, `open_fd(path, mode)`,
   `getcwd()`, `chdir(path)`, `stat(path)`, `isatty(fd)`, `getpid()`, `kill_process(pid, sig)`
+- **Windows traps**: `isatty(0)` is 1 only on a real console; `NUL`, pipes and files give 0 (so a CI run with
+  `< NUL` is not a TTY). vcpkg's zlib DLL is named `z.dll`, not `zlib1.dll`: `std/compress` loads it through `dl`
+  and tries `z.dll`, `zlib1.dll` and `libz.dll`, so ship whichever one sits next to the `.exe`.
 
 ### Networking
 - `tcp_listen(host, port)`, `tcp_accept(fd)`, `tcp_connect(host, port)`

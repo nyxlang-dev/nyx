@@ -40,9 +40,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   hasta 4,5 s para que el closure (el flush de `persist`) termine. `taskkill /F` y `TerminateProcess` no avisan.
   Los adapters de sqlite, zlib y llama prueban también los nombres `.dll`, y `compress.c` carga zlib entero por
   `dl` (sin `<zlib.h>` ni enlace obligatorio). Siguen solo-posix `fork`, `execvp`, `waitpid`, `kill_process` y
-  `pipe_new`, hasta el arco `procesos-spawn`. Sin cambios en Linux. **Nada verificado todavía en Windows real.**
+  `pipe_new`, hasta el arco `procesos-spawn`. Sin cambios en Linux. Verificado en Windows 11 x64 (laptop): procesos,
+  `dl`, Ctrl+C real y el drenado de `persist`; `std/serial` solo en errores sin puerto (falta hardware).
 
 ### Arreglado
+- **win32: `try_exec_full` ya no se cuelga sin consola** [arco: w5-windows]: desde un servicio el hijo leía de una
+  consola nueva y no volvía nunca; ahora recibe stdin `NUL` y se crea con `CREATE_NO_WINDOW`.
+- **win32: un fd inválido da `EBADF`, no `__fastfail`** [arco: w5-windows]: handler de parámetro inválido de la
+  CRT; y `isatty` da 0 para `NUL` (se confirma con `GetConsoleMode`).
+- **win32: `tls.c` compila con la CRT de MSVC y su `e.code` es canónico** [arco: w5-windows]: OpenSSL estático de
+  vcpkg en el gate (job `w5-tls`); `persist.c` y `compress.c` entran al subset, y `<gc.h>` en los cuatro `.c` que
+  seguían con `<gc/gc.h>`.
 - **sqlite: un símbolo faltante es «biblioteca ausente», no un crash**: antes la biblioteca cargaba con un puntero
   nulo que reventaba en la primera llamada. Ahora `try_sqlite_open` devuelve la causa con el nombre del símbolo y de
   la biblioteca, y `sqlite_open` la avisa una vez por stderr. Variable nueva `NYX_SQLITE_SO`, que fija la biblioteca.

@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <gc/gc.h>
+#include <gc.h>
 
 static const char HEX[] = "0123456789ABCDEF";
 

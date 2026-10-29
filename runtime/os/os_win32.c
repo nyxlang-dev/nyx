@@ -88,6 +88,30 @@
 #include <gc.h>
 
 // ===========================================================================
+// Parámetro inválido de la CRT -> errno, no abort. La UCRT trata un fd fuera
+// de rango en _isatty/_close/_write/_read/_commit/_lseek como «parámetro
+// inválido», y su handler por defecto mata el proceso con __fastfail
+// (0xC0000409, sin mensaje). En posix esas mismas llamadas devuelven -1/EBADF,
+// y los builtins de Nyx reciben fds del programa: un `isatty(99)` no puede
+// tumbar el proceso. Con un handler que no hace nada, la CRT sigue su camino
+// documentado (-1 y errno = EBADF/EINVAL). Medido en la laptop (W5 Task 5):
+// os_term_isatty(99) mataba test_os_proc_win32.exe antes del resumen.
+// Se instala desde un constructor (.CRT$XCU, antes de main) para no sumar una
+// función de init al contrato de nyx_os.h; es global al proceso, como el que
+// instala Python (que además lo suprime por hilo alrededor de cada llamada).
+// EN: CRT invalid-parameter -> errno instead of __fastfail, installed from a
+// static constructor so bad fds give -1/EBADF like posix.
+// ===========================================================================
+static void __cdecl os_win32_crt_iph_noop(const wchar_t* expr, const wchar_t* fn,
+                                          const wchar_t* file, unsigned int line,
+                                          uintptr_t reserved) {
+    (void)expr; (void)fn; (void)file; (void)line; (void)reserved;
+}
+__attribute__((constructor)) static void os_win32_crt_iph_install(void) {
+    _set_invalid_parameter_handler(os_win32_crt_iph_noop);
+}
+
+// ===========================================================================
 // GetLastError -> errno. El CRT trae `_dosmaperr`, pero NO es API pública
 // documentada (no está declarada en ningún header del UCRT), así que el mapeo
 // va explícito acá: sabemos exactamente qué devuelve cada camino y el review
@@ -2147,10 +2171,11 @@ int64_t os_proc_run_status(const char* cmd) {
 // `cmd.exe /d /s /c "<cmd>"` con stdout/stderr en dos pipes anónimos; un hilo
 // lee stderr y el hilo llamador lee stdout, así ninguno bloquea al otro; el cb
 // se serializa con una sección crítica.
-// ⚠️ NO verificado en Windows real (escrito sin poder compilar aquí).
+// Verificado en Windows x64 el 2026-10-28 (W5 Task 2): 1 MiB por cada flujo en
+// los dos órdenes, NUL binario, 300 llamadas sin perder handles, sin consola.
 // EN: CreateProcess of `cmd.exe /d /s /c "<cmd>"` with stdout/stderr on two
 // anonymous pipes; a thread drains stderr while the caller drains stdout; the
-// cb is serialized by a critical section. NOT verified on real Windows.
+// cb is serialized by a critical section. Verified on Windows x64 2026-10-28.
 typedef struct {
     HANDLE h;
     int stream;
@@ -2208,11 +2233,28 @@ int os_proc_run_full(const char* cmd,
     memset(&pi, 0, sizeof(pi));
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    // Sin stdin propio (proceso sin consola: servicio, GUI, DETACHED_PROCESS)
+    // GetStdHandle da NULL; pasarlo tal cual deja al hijo leyendo de la consola
+    // NUEVA que Windows le crea, y un `findstr`/`sort` se cuelga para siempre.
+    // Se le da NUL (EOF inmediato), lo que en posix es heredar un fd 0 cerrado.
+    // EN: no stdin of our own -> give the child NUL instead of a NULL handle.
+    HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE nul_in = NULL;
+    if (in == NULL || in == INVALID_HANDLE_VALUE) {
+        nul_in = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                             &sa, OPEN_EXISTING, 0, NULL);
+        in = nul_in == INVALID_HANDLE_VALUE ? NULL : nul_in;
+    }
+    si.hStdInput = in;
     si.hStdOutput = ow;
     si.hStdError = ew;
-    BOOL ok = CreateProcessA(NULL, line, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+    // CREATE_NO_WINDOW: sin consola en el padre, cmd.exe abriría una ventana
+    // visible por cada llamada. Con consola no cambia nada (la hereda igual).
+    BOOL ok = CreateProcessA(NULL, line, NULL, NULL, TRUE,
+                             GetConsoleWindow() ? 0 : CREATE_NO_WINDOW,
+                             NULL, NULL, &si, &pi);
     free(line);
+    if (nul_in && nul_in != INVALID_HANDLE_VALUE) CloseHandle(nul_in);
     // El padre cierra SUS copias de los extremos de escritura: sin esto no
     // llega nunca el EOF.
     CloseHandle(ow);
@@ -2732,7 +2774,16 @@ static int   g_term_raw_active = 0;
 int os_term_isatty(int fd) {
     // Predicado 1/0 (contrato del header): _isatty devuelve "no-cero", no
     // necesariamente 1.
-    return _isatty(fd) ? 1 : 0;
+    // _isatty solo mira si el handle es un DISPOSITIVO de caracteres, y NUL lo
+    // es: con stdin en NUL (servicios, CI, `< NUL`) daba 1, donde posix da 0
+    // para /dev/null (medido en la laptop, W5 Task 5). GetConsoleMode responde
+    // solo para una consola de verdad (entrada o pantalla).
+    // EN: _isatty is true for any char device, NUL included; confirm with
+    // GetConsoleMode so only a real console counts.
+    if (!_isatty(fd)) return 0;
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    DWORD mode;
+    return (h != INVALID_HANDLE_VALUE && GetConsoleMode(h, &mode)) ? 1 : 0;
 }
 
 int os_term_raw_enter(void) {

@@ -9,7 +9,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <gc/gc.h>
+#include <gc.h>
 
 // ── zlib's `inflate` symbol vs Nyx's `pub fn inflate` — dlopen workaround ───
 //

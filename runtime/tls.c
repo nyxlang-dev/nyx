@@ -1222,8 +1222,10 @@ static int tcp_connect_deadline(const char* host, int port, int64_t deadline_ns,
     os_addr_t addrs[8];
     int n = os_addr_resolve_any(host, port, addrs, 8, NULL);
     if (n < 1) {
-        // Mismo código que try_tcp_connect para «no resuelve» (runtime/net.c).
-        *status = -113;
+        // Mismo código que try_tcp_connect para «no resuelve» (runtime/net.c), y
+        // NATIVO como allá: la frontera lo pasa a 113. Un 113 literal sería el
+        // EISCONN de MSVC (salía como 106 en win32, W5 Task 4).
+        *status = -EHOSTUNREACH;
         snprintf(detail, dlen, "no se pudo resolver el host '%s'", host);
         return -1;
     }
@@ -1586,6 +1588,13 @@ nyx_array_t* nyx_tls_connect_result_mtls(nyx_string* host, int64_t port,
         handle = tls_connect_core(host_cstr, (int)port, verify_mode, connect_ms, cas_extra,
                                   cli_cert, cli_key, &status, &vcode, detail, sizeof(detail));
     }
+    // Frontera con Nyx: e.code es el errno de LINUX en todas las plataformas
+    // (W4 Task 9, mismo criterio que net_code en net.c). Adentro el status es
+    // -errno NATIVO; en la CRT de MSVC ETIMEDOUT es 138 y EHOSTUNREACH es 110,
+    // así que sin esto un handshake vencido salía como kind "io" en win32 (W5
+    // Task 4). Las otras dos variantes delegan acá: se convierte una sola vez.
+    // EN: Nyx boundary — canonical (Linux) errno, converted exactly once.
+    if (status < 0) status = -os_errno_canon(-status);
     nyx_array_push_tagged(out, (int64_t)status, NYX_TAG_INT);
     nyx_array_push_tagged(out, handle, NYX_TAG_INT);
     nyx_array_push_tagged(out, (int64_t)vcode, NYX_TAG_INT);
@@ -1953,8 +1962,8 @@ int64_t nyx_tls_wait_readable(int64_t handle, int64_t timeout_ms) {
     int fd = SSL_get_fd(h->ssl);
     if (fd < 0) return -1;
 
-    struct timespec start;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    // os_monotonic_ns y no clock_gettime: la CRT de MSVC no lo tiene (W5 Task 4).
+    int64_t start_ns = os_monotonic_ns();
     int64_t remaining_ms = timeout_ms;
 
     for (;;) {
@@ -1975,10 +1984,7 @@ int64_t nyx_tls_wait_readable(int64_t handle, int64_t timeout_ms) {
         if (rc < 0) {
             if (rc == -EINTR) {
                 if (timeout_ms < 0) continue; // no deadline, just retry
-                struct timespec now;
-                clock_gettime(CLOCK_MONOTONIC, &now);
-                int64_t elapsed_ms = (now.tv_sec - start.tv_sec) * 1000
-                                    + (now.tv_nsec - start.tv_nsec) / 1000000;
+                int64_t elapsed_ms = (os_monotonic_ns() - start_ns) / 1000000;
                 remaining_ms = timeout_ms - elapsed_ms;
                 if (remaining_ms <= 0) return 0;
                 continue;
@@ -2196,14 +2202,18 @@ static nyx_string* name_to_rfc2253(X509_NAME* n) {
 
 // ASN1_TIME → epoch unix. 0 si no se puede parsear (nunca un número inventado:
 // el caller necesita poder distinguir "desconocido" de un timestamp real).
+// ASN1_TIME_diff contra la época y no ASN1_TIME_to_tm + timegm: timegm no existe
+// en la CRT de MSVC (W5 Task 4), y así no hay código de plataforma.
+// EN: diff against the epoch instead of timegm, which the MSVC CRT lacks.
 static int64_t asn1_time_to_epoch(const ASN1_TIME* t) {
     if (!t) return 0;
-    struct tm tm;
-    memset(&tm, 0, sizeof(tm));
-    if (ASN1_TIME_to_tm(t, &tm) != 1) return 0;
-    time_t e = timegm(&tm);
-    if (e == (time_t)-1) return 0;
-    return (int64_t)e;
+    ASN1_TIME* epoch = ASN1_TIME_set(NULL, 0);
+    if (!epoch) return 0;
+    int days = 0, secs = 0;
+    int ok = ASN1_TIME_diff(&days, &secs, epoch, t);
+    ASN1_TIME_free(epoch);
+    if (ok != 1) return 0;
+    return (int64_t)days * 86400 + secs;
 }
 
 static void hex_encode(const unsigned char* in, size_t n, char* out, int upper) {

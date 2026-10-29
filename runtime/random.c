@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
-#include <gc/gc.h>
+#include <gc.h>
 
 // ── xorshift64 PRNG ──────────────────────────────────────────────────────────
 

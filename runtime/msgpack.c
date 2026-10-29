@@ -7,7 +7,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <gc/gc.h>
+#include <gc.h>
 
 // ── Encoder ─────────────────────────────────────────────────────────────────
 

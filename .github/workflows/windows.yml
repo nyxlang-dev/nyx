@@ -182,6 +182,10 @@ jobs:
                      runtime/runtime.c \
                      runtime/thread.c \
                      runtime/scheduler.c \
+                     runtime/net.c \
+                     runtime/random.c \
+                     runtime/persist.c \
+                     runtime/compress.c \
                      runtime/os/event_loop_win32.c \
                      tests/runtime-unit/win/test_w3_task4_load.c \
                      runtime/os/os_win32.c ; do
@@ -395,6 +399,35 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # W5 Task 4: el IR x64 de los tests de TLS/crypto (win_tls_manifest.txt),
+      # para el job w5-tls. Solo x64: el OpenSSL estático es de x64-windows-static.
+      # EN: x64 IR of the TLS/crypto tests, consumed by the w5-tls job.
+      - name: Emit windows IR for the TLS list (x64)
+        run: |
+          set -u
+          mkdir -p win_tls_ir
+          tr -d '\r' < scripts/testing/win_tls_manifest.txt > /tmp/tls_manifest.clean
+          FAIL=0
+          while IFS="$(printf '\t')" read -r test exp; do
+            case "$test" in ''|'#'*) continue ;; esac
+            base=$(basename "$test" .nx)
+            if ! make win-compile FILE="$test" ARCH=x64 > "win_tls_ir/$base.compile.log" 2>&1; then
+              echo "✗ $test — no compila para x86_64-pc-windows-msvc"
+              tail -20 "win_tls_ir/$base.compile.log"
+              FAIL=$((FAIL + 1))
+              continue
+            fi
+            mv "${test%.nx}.win.ll" "win_tls_ir/$base.ll"
+          done < /tmp/tls_manifest.clean
+          [ "$FAIL" -eq 0 ] || exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: w5-tls-ir
+          path: win_tls_ir/*.ll
+          if-no-files-found: error
+          retention-days: 3
+
   w2-subset:
     name: Subset de regresion — LINK + RUN real (windows-latest)
     runs-on: windows-latest
@@ -451,6 +484,10 @@ jobs:
                      runtime/runtime.c \
                      runtime/thread.c \
                      runtime/scheduler.c \
+                     runtime/net.c \
+                     runtime/random.c \
+                     runtime/persist.c \
+                     runtime/compress.c \
                      runtime/os/event_loop_win32.c \
                      runtime/os/os_win32.c ; do
             base=$(basename "$src" .c)
@@ -470,7 +507,7 @@ jobs:
             clang $CFLAGS $EXTRA "$src" -o "objs/$base.obj" || FAIL=1
           done
           [ "$FAIL" -eq 0 ] || { echo "w2-subset: el subset del runtime no compila"; exit 1; }
-          echo "13 TUs del subset compilados a .obj"
+          echo "17 TUs del subset compilados a .obj"
 
       - name: Link + RUN + diff each test
         shell: bash
@@ -672,7 +709,7 @@ jobs:
   # comportamiento del GC de Boehm compilado PARA arm64 (escaneo de registros
   # y de stack son código ensamblador por arquitectura).
   #
-  # Espejo deliberado de w2-subset: mismos 13 TUs, mismos flags (+ -Werror
+  # Espejo deliberado de w2-subset: mismos 17 TUs, mismos flags (+ -Werror
   # sobre os_win32.c), mismo link/run/diff con el rc gateando, mismo FLOOR.
   # Las ÚNICAS diferencias son el triple, el triplet de vcpkg y el arch de
   # vcvarsall. La duplicación es a propósito: si los dos jobs divergieran en
@@ -792,6 +829,10 @@ jobs:
                      runtime/runtime.c \
                      runtime/thread.c \
                      runtime/scheduler.c \
+                     runtime/net.c \
+                     runtime/random.c \
+                     runtime/persist.c \
+                     runtime/compress.c \
                      runtime/os/event_loop_win32.c \
                      runtime/os/os_win32.c ; do
             base=$(basename "$src" .c)
@@ -809,7 +850,7 @@ jobs:
             cat "objs/$base.diag"
           done
           [ "$FAIL" -eq 0 ] || { echo "w2-subset-arm64: el subset del runtime no compila para aarch64"; exit 1; }
-          echo "13 TUs del subset compilados a .obj (aarch64-pc-windows-msvc)"
+          echo "17 TUs del subset compilados a .obj (aarch64-pc-windows-msvc)"
 
       - name: Link + RUN + diff each test (ARM64 nativo)
         shell: bash
@@ -951,6 +992,101 @@ jobs:
             echo "   EN EL MISMO COMMIT y decí por qué)"
             exit 1
           fi
+
+  # ==========================================================================
+  # w5-tls — TLS y crypto en win32 (W5 Task 4, opción A de Ottavio 2026-10-27):
+  # el subset de w2-subset + tls.c + crypto.c, enlazado contra el OpenSSL
+  # ESTÁTICO de vcpkg (openssl:x64-windows-static: el .exe no lleva DLLs de
+  # OpenSSL) y las libs de sistema que pide (crypt32 para el almacén "ROOT" de
+  # Windows, ws2_32, user32, advapi32). Corre win_tls_manifest.txt. Solo x64.
+  # El build de OpenSSL desde fuente tarda ~10 min: se cachea el binario de vcpkg.
+  # EN: w2-subset's runtime + tls.c + crypto.c linked against vcpkg's static
+  # OpenSSL; runs win_tls_manifest.txt. x64 only. vcpkg's binary cache is kept.
+  # ==========================================================================
+  w5-tls:
+    name: TLS + crypto win32 — OpenSSL estático (windows-latest)
+    runs-on: windows-latest
+    needs: w2-subset-ir
+    timeout-minutes: 40
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-bincache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: MSVC environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-bincache
+          key: vcpkg-w5-tls-${{ runner.os }}-openssl-static-v1
+
+      - name: Install Boehm GC + OpenSSL estático (vcpkg)
+        shell: bash
+        run: |
+          mkdir -p vcpkg-bincache
+          vcpkg install bdwgc:x64-windows openssl:x64-windows-static
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: w5-tls-ir
+          path: ir
+
+      - name: Build + link + run
+        shell: bash
+        run: |
+          set -u
+          GC_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          SSL_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows-static"
+          mkdir -p objs bin out
+          # Mismos 17 TUs y flags que w2-subset, más los dos de TLS.
+          FAIL=0
+          for src in runtime/strings.c runtime/runtime-arrays.c runtime/maps.c \
+                     runtime/time.c runtime/iterators.c runtime/sqlite_adapter.c \
+                     runtime/csv.c runtime/file-io.c runtime/runtime.c \
+                     runtime/thread.c runtime/scheduler.c runtime/net.c \
+                     runtime/random.c runtime/persist.c runtime/compress.c \
+                     runtime/os/event_loop_win32.c \
+                     runtime/os/os_win32.c runtime/tls.c runtime/crypto.c ; do
+            base=$(basename "$src" .c)
+            EXTRA=""
+            if [ "$src" = "runtime/os/os_win32.c" ]; then EXTRA="-Werror"; fi
+            clang --target=x86_64-pc-windows-msvc -c -O1 -Wall -D_CRT_SECURE_NO_WARNINGS \
+              -I"$GC_DIR/include" -I"$SSL_DIR/include" $EXTRA "$src" \
+              -o "objs/$base.obj" || FAIL=1
+          done
+          [ "$FAIL" -eq 0 ] || { echo "w5-tls: el runtime no compila"; exit 1; }
+          cp "$GC_DIR/bin/gc.dll" bin/
+
+          tr -d '\r' < scripts/testing/win_tls_manifest.txt > /tmp/tls_manifest.clean
+          BAD=""
+          while IFS="$(printf '\t')" read -r test exp; do
+            case "$test" in ''|'#'*) continue ;; esac
+            base=$(basename "$test" .nx)
+            echo "=== $base"
+            if ! clang --target=x86_64-pc-windows-msvc -fuse-ld=lld-link -O1 \
+                 "ir/$base.ll" objs/*.obj -L"$GC_DIR/lib" -lgc \
+                 -L"$SSL_DIR/lib" -llibssl -llibcrypto \
+                 -lcrypt32 -lws2_32 -luser32 -ladvapi32 \
+                 -o "bin/$base.exe" > "out/$base.link" 2>&1; then
+              echo "  ✗ LINK"; cat "out/$base.link"; BAD="$BAD $base"; continue
+            fi
+            # Mismo `if` que w2-subset: GitHub corre bash con -e.
+            if ( cd bin && timeout 30 "./$base.exe" ) > "out/$base.raw" 2>&1; then rc=0; else rc=$?; fi
+            tr -d '\r' < "out/$base.raw" > "out/$base.txt"
+            if [ "$rc" -ne 0 ]; then
+              echo "  ✗ rc=$rc"; cat "out/$base.txt"; BAD="$BAD $base"; continue
+            fi
+            if [ "$exp" != "NONE" ] && ! diff <(tr -d '\r' < "$exp") "out/$base.txt"; then
+              echo "  ✗ DIFF"; BAD="$BAD $base"; continue
+            fi
+            echo "  ✓ ($(stat -c %s "bin/$base.exe") bytes)"
+          done < /tmp/tls_manifest.clean
+          [ -z "$BAD" ] || { echo "w5-tls: fallan:$BAD"; exit 1; }
+          echo "w5-tls: verde"
 
   # ==========================================================================
   # w3-spike / w3-spike-arm64 — spike de CI (NO gate de merge): valida S1-S6
