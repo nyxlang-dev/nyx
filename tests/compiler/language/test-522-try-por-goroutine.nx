@@ -1,0 +1,34 @@
+// test-522: el estado de try es de la GOROUTINE, no del OS thread (fix del
+// spike W6 Task 1, laptop, y repro del servidor 2026-10-30). Con la pila de
+// try _Thread_local, 200 goroutines que se suspenden dentro de un try apilaban
+// su marco en el mismo worker antes de dormirse —«panic: try-catch nesting too
+// deep»— y una que volvía en otro worker no encontraba su marco («uncaught»).
+// Correcto: las 200 atrapan su propia excepción.
+
+fn main() -> int {
+    let ch: Map = channel_new(256)
+    var i = 0
+    while i < 200 {
+        spawn {
+            var r = 0
+            try {
+                go_sleep(5)
+                throw("x")
+            } catch(e: String) {
+                if e == "x" { r = 1 }
+            }
+            channel_send(ch, r)
+        }
+        i = i + 1
+    }
+    var ok = 0
+    var k = 0
+    while k < 200 {
+        let v: int = channel_recv(ch)
+        ok = ok + v
+        k = k + 1
+    }
+    print("atraparon " + ok + "/200")
+    if ok == 200 { return 0 }
+    return 1
+}

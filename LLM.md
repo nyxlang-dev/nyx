@@ -1939,7 +1939,7 @@ Not Nyx bugs: these come from POSIX, from the Boehm GC, or from codegen
 internals you never touch directly.
 
 <!-- gen:gotchas kinds=limit lang=en form=long -->
-<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack -->
+<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack,cross-compile-arch -->
 
 1. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is
 inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC interacts with POSIX
@@ -2009,6 +2009,8 @@ pile up and fire together. A `#[suspends]` import reached from a nested synchron
 (JS→wasm→JS→wasm, e.g. a handler triggered synchronously from inside another call) is a loud
 runtime error, never a corrupted stack. `spawn`, channels and goroutines do not exist in wasm; to
 wait for several things, `await` them one after another. [test: wasm/test-wasm-31-asyncify-shim] [test: wasm/test-wasm-33-await-fetch]
+
+8. **Cross-compiling Linux x86_64 <-> aarch64 (`nyx build --target <triple>`) needs the target's dev libraries installed (multiarch), and the result cannot run on the building machine.** Output goes to `target/<triple>/<name>`. Missing packages are reported before compiling, with the exact command. There is no emulation: `nyx run --target` for another architecture fails; copy the binary to a machine of that architecture (or use `docker run --platform linux/amd64`). Single-letter x86 `asm` constraints (`a b c d S D`) are rejected for an aarch64 target; the `asm` template is never interpreted, so it must already match the target architecture. The binary is dynamic: the target needs libgc, libssl3, libcrypto, libz and glibc (a portable static binary is not available yet). [test: compiler/errors/test-linux-cross-asm-x86]
 
 <!-- /gen:gotchas -->
 

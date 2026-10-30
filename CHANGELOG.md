@@ -19,6 +19,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Added
 
+- **Compilación cruzada entre Linux x86_64 y aarch64**: `nyx build --target x86_64-unknown-linux-gnu` (o
+  `aarch64-unknown-linux-gnu`, o `[build] target`) arma el binario de la otra arquitectura desde la misma máquina, en
+  `target/<triple>/<name>`; el triple del host compila nativo. Necesita las bibliotecas multiarch del destino y `lld`,
+  y si faltan lo dice antes de compilar con el comando `apt`. `nyx run` corre el triple del host y explica por qué no
+  el otro; un `asm` con restricciones de registros x86 da un error con su línea si el destino es aarch64 (`e513b498`,
+  `e327192a`, `0135e801`). Receta 153, gotcha `cross-compile-arch`, `docs/DEPLOYMENT.md` [arco: compilacion-cruzada-linux]
+  [dogfooding:nyxerp].
 - **Tests de `std/process` en Windows** (`tests/runtime-unit/win/test_os_proc_spawn_win32.c`, 92 asserts, gate win):
   verificado en la laptop el 2026-10-29 (`9fcf1faf`) [arco: procesos-spawn].
 

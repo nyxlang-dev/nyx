@@ -362,6 +362,115 @@ else
     sed 's/^/      git: /' "$GATE_TMP/gst"
 fi
 
+# ── Linux cruzado (arco compilacion-cruzada-linux) ───────────
+# `--target <x86_64|aarch64>-unknown-linux-gnu`: el triple del host compila
+# nativo; el otro pasa --target a clang y enlaza con lld. Hasta el 2026-10-30 los
+# dos daban «target desconocido». Los casos que necesitan las bibliotecas del
+# otro destino (multiarch de Debian) hacen SKIP limpio si no están: sin ellas
+# el build falla por el sistema, no por nyx, y contarlo como fallo manda a
+# investigar al lugar equivocado.
+HOST_ARCH="$(uname -m)"
+case "$HOST_ARCH" in
+    x86_64)  OTRO_ARCH=aarch64; OTRO_FILE='ARM aarch64' ;;
+    aarch64) OTRO_ARCH=x86_64;  OTRO_FILE='x86-64' ;;
+    *)       OTRO_ARCH="" ;;
+esac
+HOST_TRIPLE="$HOST_ARCH-unknown-linux-gnu"
+P="$GATE_TMP/cruzado"
+
+# Un triple Linux mal escrito se rechaza y el mensaje lista los válidos.
+mk_proj "$P" "$PKG"
+nb "$P" build --target x86_64-unknown-linux-gnux
+if [ "$RC" -ne 0 ] && grep -q "target desconocido: x86_64-unknown-linux-gnux" "$GATE_TMP/out" \
+   && grep -q "x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu y wasm32-wasi" "$GATE_TMP/out"; then
+    ok "cruzado-desconocido — un triple Linux con typo se rechaza y se listan los válidos"
+else
+    bad "cruzado-desconocido — rc $RC sin «target desconocido» ni la lista de triples" "cruzado-desconocido"; muestra
+fi
+
+# CONTROL POSITIVO: el triple del host construye, va a target/<triple>/, corre,
+# y no deja ./manif (no pisa el binario nativo).
+if [ "$HOST_ARCH" != x86_64 ] && [ "$HOST_ARCH" != aarch64 ]; then
+    echo "  ⏭️  cruzado-nativo-explicito — SKIP: host $HOST_ARCH sin triple Linux soportado"
+else
+    mk_proj "$P" "$PKG"
+    rm -f "$P/manif"
+    nb "$P" build --target "$HOST_TRIPLE"
+    if [ "$RC" -eq 0 ] && [ -x "$P/target/$HOST_TRIPLE/manif" ] && [ ! -e "$P/manif" ] \
+       && [ "$("$P/target/$HOST_TRIPLE/manif")" = "soy main" ]; then
+        ok "cruzado-nativo-explicito — --target $HOST_TRIPLE construye en target/$HOST_TRIPLE/ y corre"
+    else
+        bad "cruzado-nativo-explicito — rc $RC o el binario no está en target/$HOST_TRIPLE/ o no corre" "cruzado-nativo-explicito"; muestra
+    fi
+    nb "$P" run --target "$HOST_TRIPLE"
+    if [ "$RC" -eq 0 ] && grep -q "^soy main$" "$GATE_TMP/out"; then
+        ok "cruzado-run-nativo — nyx run --target $HOST_TRIPLE ejecuta el artefacto de target/<triple>/"
+    else
+        bad "cruzado-run-nativo — rc $RC sin «soy main»" "cruzado-run-nativo"; muestra
+    fi
+fi
+
+# Sin lld (o sin las bibliotecas del destino), el build cruzado dice qué falta y
+# el comando apt ANTES de compilar, en vez de un error de enlace de clang. Se
+# simula con un PATH que tiene todo /usr/bin menos ld.lld: el diagnóstico lo
+# busca con `command -v`, así que corta ahí aunque el sistema sí lo tenga.
+if [ -n "$OTRO_ARCH" ]; then
+    FAKEBIN="$GATE_TMP/fakebin"; mkdir -p "$FAKEBIN"
+    for b in /usr/bin/*; do
+        case "$(basename "$b")" in ld.lld*|lld*) continue ;; esac
+        ln -sf "$b" "$FAKEBIN/" 2>/dev/null
+    done
+    mk_proj "$P" "$PKG"
+    ( cd "$P" && PATH="$FAKEBIN" NYX_HOME="$ROOT" timeout 300 "$ROOT/nyx_build" build --target "$OTRO_ARCH-unknown-linux-gnu" ) > "$GATE_TMP/out" 2>&1
+    RC=$?
+    if [ "$RC" -ne 0 ] && grep -q "faltan:.*lld" "$GATE_TMP/out" && grep -q "dpkg --add-architecture" "$GATE_TMP/out" \
+       && ! grep -q "clang link failed" "$GATE_TMP/out" && [ ! -e "$P/target/$OTRO_ARCH-unknown-linux-gnu/manif" ]; then
+        ok "cruzado-falta-multiarch — sin lld se dice qué falta y el comando apt, sin llegar a clang"
+    else
+        bad "cruzado-falta-multiarch — rc $RC sin el diagnóstico (o llegó al enlace)" "cruzado-falta-multiarch"; muestra
+    fi
+fi
+
+# El otro destino de verdad: solo con sus bibliotecas y lld instalados.
+OTRO_TRIPLE="$OTRO_ARCH-unknown-linux-gnu"
+otro_listo() {
+    [ -n "$OTRO_ARCH" ] && command -v ld.lld > /dev/null 2>&1 || return 1
+    local l p
+    for l in libc.so libgc.so libssl.so libcrypto.so libz.so crtbeginS.o; do
+        p="$(clang --target="$OTRO_TRIPLE" -print-file-name="$l" 2>/dev/null)"
+        case "$p" in /*) [ -e "$p" ] || return 1 ;; *) return 1 ;; esac
+    done
+}
+if ! otro_listo; then
+    echo "  ⏭️  cruzado-otro-arch — SKIP: faltan lld o las bibliotecas multiarch de $OTRO_TRIPLE"
+else
+    mk_proj "$P" "$PKG"
+    rm -f "$P/manif"
+    nb "$P" build --target "$OTRO_TRIPLE"
+    if [ "$RC" -eq 0 ] && file -b "$P/target/$OTRO_TRIPLE/manif" | grep -q "$OTRO_FILE" && [ ! -e "$P/manif" ]; then
+        ok "cruzado-otro-arch — --target $OTRO_TRIPLE da un ELF $OTRO_FILE en target/$OTRO_TRIPLE/"
+    else
+        bad "cruzado-otro-arch — rc $RC o el binario no es $OTRO_FILE" "cruzado-otro-arch"; muestra
+        file "$P/target/$OTRO_TRIPLE/manif" 2>&1 | sed 's/^/      /'
+    fi
+    # Ejecutarlo solo con un emulador a mano; si no, alcanza con `file`.
+    QEMU="$(command -v "qemu-$OTRO_ARCH" 2>/dev/null || true)"
+    if [ -n "$QEMU" ] && [ -x "$P/target/$OTRO_TRIPLE/manif" ]; then
+        if [ "$("$QEMU" "$P/target/$OTRO_TRIPLE/manif" 2>/dev/null)" = "soy main" ]; then
+            ok "cruzado-otro-arch-corre — el binario $OTRO_ARCH corre bajo qemu"
+        else
+            bad "cruzado-otro-arch-corre — bajo qemu no imprimió «soy main»" "cruzado-otro-arch-corre"
+        fi
+    fi
+    # `nyx run` con el triple de otra arquitectura no ejecuta nada: dice por qué.
+    nb "$P" run --target "$OTRO_TRIPLE"
+    if [ "$RC" -ne 0 ] && grep -q "esta máquina no lo puede ejecutar" "$GATE_TMP/out"; then
+        ok "cruzado-run-otro — nyx run --target $OTRO_TRIPLE dice que aquí no se ejecuta"
+    else
+        bad "cruzado-run-otro — rc $RC sin el motivo" "cruzado-run-otro"; muestra
+    fi
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  BUILD MANIFEST: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

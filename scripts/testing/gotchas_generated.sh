@@ -52,6 +52,7 @@ GOTCHA_IDS=(
   "hkt-gats-parse-only"
   "wasm-arena-closure-env"
   "wasm-await-one-suspended-stack"
+  "cross-compile-arch"
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"
