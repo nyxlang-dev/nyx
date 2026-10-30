@@ -1,0 +1,15 @@
+// Linux cruzado a aarch64 (arco compilacion-cruzada-linux, D3): la restricción
+// "D" es Nyx traduciéndola a {rdi}, un registro de x86_64. Con destino aarch64
+// clang fallaba en el ensamblador sin decir qué línea del .nx; ahora es un
+// error del compilador con archivo:línea y la función.
+// EN: constraint "D" is Nyx mapping it to {rdi}, an x86_64 register; with an
+// aarch64 target it must be a compiler error that names the .nx location.
+
+fn main() {
+    let x: int = 42
+    var result: int = 0
+    unsafe {
+        asm("mov %rdi, $0" : "=r"(result) : "D"(x) :)
+    }
+    print(int_to_string(result))
+}

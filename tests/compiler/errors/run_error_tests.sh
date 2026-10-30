@@ -1036,6 +1036,51 @@ fi
 rm -f script.ll
 
 # ==============================================================
+# Linux cruzado (arco compilacion-cruzada-linux, Task 2). Tres casos:
+# (1) cada triple Linux se emite tal cual en el .ll y NO dispara la guarda de
+#     target: un try/catch compila (en Linux sí existe; ctx.target[0] vacío);
+# (2) asm con la restricción x86 "D" y destino aarch64 = error con ubicación;
+# (3) el mismo asm con destino x86_64 compila (la guarda mira el destino).
+# ==============================================================
+name="test-linux-triple-emitted"
+printf 'fn main() {\n    try {\n        throw("x")\n    } catch (e) {\n        print("ok")\n    }\n}\n' > script.nx
+ok=1
+for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+  if ! NYX_TARGET="$t" timeout 15 ./nyx_bootstrap > /dev/null 2>&1; then ok=0; fi
+  if ! grep -qF "target triple = \"$t\"" script.ll; then ok=0; fi
+  rm -f script.ll
+done
+if [ "$ok" -eq 1 ]; then
+  printf "  ✓ %s\n" "$name"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (algún triple Linux no compiló, disparó la guarda o no quedó en el .ll)\n" "$name"
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("$name")
+fi
+rm -f script.ll
+
+name="test-linux-cross-asm-x86"
+cp "tests/compiler/errors/$name.nx" script.nx
+output=$(NYX_TARGET=aarch64-unknown-linux-gnu timeout 15 ./nyx_bootstrap 2>&1)
+rc=$?
+output_x86=$(NYX_TARGET=x86_64-unknown-linux-gnu timeout 15 ./nyx_bootstrap 2>&1)
+rc_x86=$?
+if [ "$rc" -ne 0 ] && echo "$output" | grep -qF 'asm constraint "D" is an x86_64 register' \
+   && echo "$output" | grep -qF "$name.nx:12" && [ "$rc_x86" -eq 0 ]; then
+  printf "  ✓ %s\n" "$name"
+  PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"
+  printf "    aarch64 rc=%d (esperado != 0), x86_64 rc=%d (esperado 0)\n" "$rc" "$rc_x86"
+  echo "$output" | sed 's/^/      /'
+  echo "$output_x86" | sed 's/^/      /'
+  FAIL=$((FAIL + 1))
+  FAILED_TESTS+=("$name")
+fi
+rm -f script.ll
+
+# ==============================================================
 # Camino B fuera de scope v1: un método '&mut self' despachado vía
 # dyn Trait debe fallar con error bilingüe en codegen (el thunk de la
 # vtable carga self by-value → la mutación se perdería en silencio).

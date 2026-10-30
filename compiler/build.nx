@@ -2125,6 +2125,10 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
             tgt_cc = " --target=" + eff_target
             tgt_ld = tgt_cc + " -fuse-ld=lld"
             tgt_diag_sh = cruzado_diag_sh(eff_target, linux_arch)
+            // El compilador también lo sabe: triple del módulo y guarda de asm.
+            // Va con gc_flag, que es prefijo de entorno del compilador y entra
+            // en la huella de [lib] modules.
+            gc_flag = gc_flag + "NYX_TARGET=" + eff_target + " "
         }
     }
     let link_flags: String = opt_flags + tgt_ld
@@ -2531,19 +2535,24 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
 // esto el usuario veía un error de enlace de clang sobre `-lgc`; ahora ve qué
 // falta y el comando que lo instala. No instala nada solo. `-print-file-name`
 // devuelve una ruta absoluta si encuentra la biblioteca y el nombre pelado si no.
+// crtbeginS.o es la señal de libgcc-N-dev del destino: sin él lld falla con
+// «cannot open crtendS.o» y «-lgcc_s» (medido en el servidor el 2026-10-30, con
+// las otras cinco ya instaladas). N es la versión del gcc del host, que es la
+// que la distro trae para las dos arquitecturas.
 fn cruzado_diag_sh(triple: String, arch: String) -> String {
     var deb: String = "amd64"
     if arch == "aarch64" { deb = "arm64" }
     var s: String = "NYX_FALTA=\"\"\n"
     s = s + "command -v ld.lld >/dev/null 2>&1 || NYX_FALTA=\"$NYX_FALTA lld\"\n"
-    s = s + "for l in libc.so libgc.so libssl.so libcrypto.so libz.so; do\n"
+    s = s + "for l in libc.so libgc.so libssl.so libcrypto.so libz.so crtbeginS.o; do\n"
     s = s + "  p=$(clang --target=" + triple + " -print-file-name=$l 2>/dev/null)\n"
     s = s + "  case \"$p\" in /*) [ -e \"$p\" ] || NYX_FALTA=\"$NYX_FALTA $l\" ;; *) NYX_FALTA=\"$NYX_FALTA $l\" ;; esac\n"
     s = s + "done\n"
     s = s + "if [ -n \"$NYX_FALTA\" ]; then\n"
+    s = s + "  NYX_GCCV=$(gcc -dumpversion 2>/dev/null | cut -d. -f1); [ -n \"$NYX_GCCV\" ] || NYX_GCCV=14\n"
     s = s + "  echo \"error: para compilar en cruzado a " + triple + " faltan:$NYX_FALTA\" >&2\n"
     s = s + "  echo \"  instálalas con: sudo dpkg --add-architecture " + deb + " && sudo apt update && \\\\\" >&2\n"
-    s = s + "  echo \"    sudo apt install libc6-dev:" + deb + " libgc-dev:" + deb + " libssl-dev:" + deb + " zlib1g-dev:" + deb + " lld\" >&2\n"
+    s = s + "  echo \"    sudo apt install libc6-dev:" + deb + " libgc-dev:" + deb + " libssl-dev:" + deb + " zlib1g-dev:" + deb + " libgcc-$NYX_GCCV-dev:" + deb + " lld\" >&2\n"
     s = s + "  exit 1\n"
     s = s + "fi\n"
     return s
