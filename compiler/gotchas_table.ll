@@ -1687,7 +1687,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str841.c = internal global %nyx_string* null
 @.str842 = private unnamed_addr constant [1 x i8] c"\00"
 @.str842.c = internal global %nyx_string* null
-@.str843 = private unnamed_addr constant [168 x i8] c"tests/ai-first/36-closure-captura-bloque.nx,tests/compiler/errors/test-nyx1044-captura-nombre-repetido.nx,tests/compiler/errors/test-nyx1044-captura-variable-de-for.nx\00"
+@.str843 = private unnamed_addr constant [223 x i8] c"tests/ai-first/36-closure-captura-bloque.nx,tests/compiler/errors/test-nyx1044-captura-nombre-repetido.nx,tests/compiler/errors/test-nyx1044-captura-variable-de-for.nx,tests/compiler/errors/test-nyx1044-captura-en-bucle.nx\00"
 @.str843.c = internal global %nyx_string* null
 @.str844 = private unnamed_addr constant [176 x i8] c"A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.36.0, as long as the name is unique in the function (NYX1044 otherwise).\00"
 @.str844.c = internal global %nyx_string* null
@@ -6152,8 +6152,8 @@ define { i64, i8* }* @gotchas_table(
   %2806 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str842.c, i8* %2805, i64 0)
   %2807 = ptrtoint %nyx_string* %2806 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2780, i64 %2807, i64 2)
-  %2808 = getelementptr [168 x i8], [168 x i8]* @.str843, i32 0, i32 0
-  %2809 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str843.c, i8* %2808, i64 167)
+  %2808 = getelementptr [223 x i8], [223 x i8]* @.str843, i32 0, i32 0
+  %2809 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str843.c, i8* %2808, i64 222)
   %2810 = ptrtoint %nyx_string* %2809 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %2780, i64 %2810, i64 2)
   %2811 = getelementptr [176 x i8], [176 x i8]* @.str844, i32 0, i32 0

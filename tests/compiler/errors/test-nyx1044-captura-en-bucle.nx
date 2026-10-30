@@ -1,0 +1,15 @@
+// NYX1044: una goroutine de `spawn` (una closure) usa un `let` declarado dentro
+// de un `while`. El SharedEnv le da UN campo que comparten todas las
+// iteraciones: hasta el 2026-10-30 compilaba y las 4 goroutines recibían
+// «1 3 3 3» en vez de 0, 1, 2 y 3. Lanzar desde una función que reciba el valor
+// como parámetro lo resuelve (ver la pista del error).
+fn main() -> int {
+    let ch: Map = channel_new(16)
+    var i = 0
+    while i < 4 {
+        let n: int = i
+        spawn { channel_send(ch, n) }
+        i = i + 1
+    }
+    return 0
+}

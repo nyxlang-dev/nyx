@@ -11,6 +11,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Un `spawn` dentro de un bucle ya no captura en silencio la variable de la última iteración**: un `let`/`var`
+  declarado dentro de un `while`/`for` tiene UN campo en el entorno compartido de la función, así que 4 goroutines
+  lanzadas en el bucle recibían «1 3 3 3» en vez de 0..3. Ahora es NYX1044 con el motivo y la salida (lanzar desde una
+  función que reciba el valor). Una lambda llamada en la misma iteración sigue andando; una guardada y llamada
+  después todavía ve el último valor (fichado ALTA). `test-nyx1044-captura-en-bucle`.
+
 - **`try`/`catch` dentro de goroutines**: la pila de `try` era del hilo del sistema y las goroutines migran de worker.
   Una que se suspendía dentro de un `try` (`go_sleep`, `channel_recv`) perdía su `catch` al volver en otro worker
   («uncaught»), un `throw` sin `try` podía saltar al `catch` de OTRA goroutine, y 200 goroutines dormidas en un `try`

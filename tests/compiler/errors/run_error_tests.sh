@@ -37,6 +37,7 @@ TESTS=(
   "tests/compiler/errors/test-nyx1041-lambda-captura-de-bloque.nx|a closure uses 'q', a block variable it cannot capture: its name is declared 2 times in the function"
   "tests/compiler/errors/test-nyx1044-captura-nombre-repetido.nx|a closure uses 'z', a block variable it cannot capture: its name is declared 2 times in the function"
   "tests/compiler/errors/test-nyx1044-captura-variable-de-for.nx|a closure uses 'x', a block variable it cannot capture: it is not a"
+  "tests/compiler/errors/test-nyx1044-captura-en-bucle.nx|a closure uses 'n', a block variable it cannot capture: it is declared inside a loop"
   "tests/compiler/errors/test-nyx1046-match-result-sobre-int.nx|belongs to an enum, but the match subject is int — the function returns int"
   "tests/compiler/errors/test-nyx1046-match-option-sobre-string.nx|belongs to an enum, but the match subject is String"
   "tests/compiler/errors/test-nyx1047-for-dyn-sobre-array-concreto.nx|iterates an Array that holds concrete structs, not 'dyn Saluda'"

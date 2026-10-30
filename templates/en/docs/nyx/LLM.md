@@ -2260,7 +2260,12 @@ Until 0.35.0 closures only existed at a function's top level: a lambda inside an
 (`use of undefined value '@name'` from clang, no line). Closures capture by NAME, so a block variable
 whose name is declared more than once in the function (shadowing an outer one, or in a sibling block),
 a `for` loop variable or a `match` binding cannot be captured: that is NYX1044, never a wrong value.
-Rename the variable, or copy it into a `let` with its own name right before the closure. [test: 36-closure-captura-bloque] [test: compiler/errors/test-nyx1044-captura-nombre-repetido] [test: compiler/errors/test-nyx1044-captura-variable-de-for]
+Rename the variable, or copy it into a `let` with its own name right before the closure.
+**A `spawn` inside a loop cannot capture a variable declared in that loop (NYX1044, since 2026-10-30)**:
+every iteration shares it, so the goroutine saw the LAST iteration's value (4 goroutines got «1 3 3 3»).
+Launch it from a separate function that takes the value as a parameter, or pass it through a channel. A
+lambda called in the same iteration still works; one STORED and called later (e.g. pushed into an Array)
+still sees the last iteration's value — use the same function workaround. [test: 36-closure-captura-bloque] [test: compiler/errors/test-nyx1044-captura-nombre-repetido] [test: compiler/errors/test-nyx1044-captura-variable-de-for] [test: compiler/errors/test-nyx1044-captura-en-bucle]
 
 27. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.36.0 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
 Until 0.35.0 a `defer` inside an `if`, `else`, `while`, `for`, `match` arm, `try`, `catch` or
