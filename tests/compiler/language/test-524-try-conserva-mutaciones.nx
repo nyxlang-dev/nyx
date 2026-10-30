@@ -1,0 +1,34 @@
+// test-524: lo que se asigna dentro de un try llega al catch. Hasta 2026-10-30
+// anclar_variables_vivas solo fijaba en memoria los escalares antes del
+// setjmp: con -O2 un String o un Array reasignado en el try quedaba en un
+// registro, y el longjmp del throw lo devolvía al valor de ANTES del try
+// («s=inicio» en vez de «s=en try»), sin ningún aviso. Hallado al armar el
+// caso de la W6 Task 3.
+
+fn anidado() -> String {
+    var r = "inicio"
+    try {
+        try { throw("a") } catch(e: String) { r = "interno"; throw("b") }
+    } catch(e2: String) {
+        r = r + " / externo"
+    }
+    return r
+}
+
+fn main() {
+    var n = 1
+    var a: Array = [1]
+    var s = "inicio"
+    var m: Map = {"k": 1}
+    try {
+        n = 2
+        a = [1, 2]
+        s = "en try"
+        m = {"k": 2}
+        throw("x")
+    } catch(e: String) {
+        let mk: int = m.get("k")
+        print("n=" + n + " a=" + a.length() + " s=" + s + " m=" + mk)
+    }
+    print(anidado())
+}

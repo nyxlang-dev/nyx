@@ -1,0 +1,49 @@
+// test-523: los tres casos de try/catch que la W6 Task 3 verifica en Windows
+// (x86_64-pc-windows-msvc, donde el codegen emite _setjmp(buf, NULL)): un
+// throw/catch simple, uno anidado que relanza al try de afuera y uno dentro de
+// una goroutine que se suspende antes del throw. En Linux corre igual; su
+// .win.ll vive en tests/win-fixtures/.
+
+fn simple() -> String {
+    var r = "sin catch"
+    try {
+        throw("uno")
+    } catch(e: String) {
+        r = "atrapé " + e
+    }
+    return r
+}
+
+fn anidado() -> String {
+    var r = ""
+    try {
+        try {
+            throw("adentro")
+        } catch(e: String) {
+            r = "interno " + e
+            throw("afuera")
+        }
+    } catch(e2: String) {
+        r = r + ", externo " + e2
+    }
+    return r
+}
+
+fn main() -> int {
+    print(simple())
+    print(anidado())
+    let ch: Map = channel_new(1)
+    spawn {
+        var g = "goroutine sin catch"
+        try {
+            go_sleep(5)
+            throw("tres")
+        } catch(e: String) {
+            g = "goroutine atrapó " + e
+        }
+        channel_send(ch, g)
+    }
+    let v: String = channel_recv(ch)
+    print(v)
+    return 0
+}

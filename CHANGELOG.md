@@ -11,6 +11,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Lo que se asigna dentro de un `try` llega al `catch`**: antes del `setjmp` el codegen fijaba en memoria solo las
+  variables escalares, así que con `-O2` un `String`, `Array` o `Map` reasignado dentro del `try` volvía en el `catch`
+  con su valor de ANTES (`s = "en try"` y el `catch` veía `"inicio"`), y lo que asignaba un `catch` interno antes de
+  relanzar se perdía. Ahora ancla todas las variables vivas, con el tipo de cada `alloca` leído del IR. Hallado al
+  armar el caso de la W6 Task 3; `test-524` [arco: w6-windows].
 - **Un `spawn` dentro de un bucle ya no captura en silencio la variable de la última iteración**: un `let`/`var`
   declarado dentro de un `while`/`for` tiene UN campo en el entorno compartido de la función, así que 4 goroutines
   lanzadas en el bucle recibían «1 3 3 3» en vez de 0..3. Ahora es NYX1044 con el motivo y la salida (lanzar desde una
