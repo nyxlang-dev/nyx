@@ -2103,6 +2103,32 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     var opt_flags = ""
     if release { opt_flags = "-O2" }
 
+    // Destino Linux explícito (arco compilacion-cruzada-linux): el IR no depende
+    // de la arquitectura y el runtime se compila de fuentes en cada build, así
+    // que cruzar es pasarle `--target` a los tres clang del script (enlace,
+    // [lib] modules y la caché del runtime) y enlazar con lld, que conoce los
+    // dos destinos. El artefacto va a target/<triple>/ como el de wasm, para no
+    // pisar el binario nativo. El triple del propio host vale también: compila
+    // nativo, sin banderas de más. El host se mira con `uname -m`, no se asume.
+    var linux_arch: String = ""
+    if eff_target == "x86_64-unknown-linux-gnu" { linux_arch = "x86_64" }
+    if eff_target == "aarch64-unknown-linux-gnu" { linux_arch = "aarch64" }
+    // Con un espacio adelante, o vacías: el build nativo arma exactamente las
+    // mismas líneas que antes y sus cachés (runtime y [lib]) no cambian de clave.
+    var tgt_cc: String = ""
+    var tgt_ld: String = ""
+    var tgt_diag_sh: String = ""
+    if linux_arch != "" {
+        native_out = "target/" + eff_target + "/" + output_name
+        mkdir_native = "mkdir -p \"$ORIG_DIR/target/" + eff_target + "\"\n"
+        if exec_code("[ \"$(uname -m)\" = " + linux_arch + " ]") != 0 {
+            tgt_cc = " --target=" + eff_target
+            tgt_ld = tgt_cc + " -fuse-ld=lld"
+            tgt_diag_sh = cruzado_diag_sh(eff_target, linux_arch)
+        }
+    }
+    let link_flags: String = opt_flags + tgt_ld
+
     // Use NYX_HOME for absolute paths so the build works from any directory.
     // Search order: NYX_HOME env → ~/.nyx/ → CWD (monorepo fallback)
     var nyx_home: String = getenv("NYX_HOME")
@@ -2166,7 +2192,9 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // C (cripto, JSON, strings, red) corría ~7 veces más lento —nyxerp midió
     // PBKDF2 así y lo reportó como lentitud de la función—. Va a la caché, así
     // que se compila una sola vez; el código del usuario sigue con opt_flags.
-    rt_sh = rt_sh + "if nyx_rt_auto \"-O2\" " + rt_fuentes + "; then RT_IN=(\"$RT_AUTO\"); fi\n"
+    // Las banderas del destino entran en la clave de la caché: sin eso un
+    // libnyxrt.a de x86_64 se enlazaría en un build de aarch64, o al revés.
+    rt_sh = rt_sh + "if nyx_rt_auto \"-O2" + tgt_cc + "\" " + rt_fuentes + "; then RT_IN=(\"$RT_AUTO\"); fi\n"
     if rt_archive != "" and file_exists(rt_archive) {
         // Absoluta: el script hace `cd` a NYX_HOME antes de enlazar.
         if not rt_archive.startsWith("/") { rt_archive = getcwd() + "/" + rt_archive }
@@ -2179,10 +2207,12 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     var lib_sh: String = ""
     var lib_env: String = ""
     if config.lib_modules.length() > 0 and eff_target != "wasm32-wasi" {
-        lib_sh = lib_objetos_sh(config, nyx_home, nyx_bin, opt_flags, gc_flag)
+        // tgt_cc va con opt_flags: entra en la huella de la caché de
+        // bibliotecas y en su `clang -c`.
+        lib_sh = lib_objetos_sh(config, nyx_home, nyx_bin, opt_flags + tgt_cc, gc_flag)
         lib_env = "NYX_LIB_MODULES=\"" + config.lib_modules.join(",") + "\" "
     }
-    lib_sh = rt_sh + lib_sh
+    lib_sh = tgt_diag_sh + rt_sh + lib_sh
     let compilador_env: String = "( nyx_pila; " + gc_flag + lib_env
     let build_script = pila_sh +
         "ORIG_DIR=\"$(pwd)\"\n" +
@@ -2206,7 +2236,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // task-5-report de compilacion-separada: «el compilador lo DICE».
         "grep -F '⚠' \"$LOG\" >&2 || true\n" +
         mkdir_native +
-        "clang " + opt_flags + " \"$SRC.ll\" $LIB_OBJS " + rt_fuentes +
+        "clang " + link_flags + " \"$SRC.ll\" $LIB_OBJS " + rt_fuentes +
         "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz " +
         "-o \"$ORIG_DIR/" + native_out + "\" 2> \"$LOG\" " +
         "|| { echo \"error: clang link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
@@ -2224,10 +2254,11 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // Pedir wasm y recibir nativo sin una palabra es la misma familia que la
     // flag desconocida que se arregló hoy, un nivel más adentro: en el VALOR.
     // (fricción nyxerp 2026-09-10)
-    if eff_target != "" and eff_target != "wasm32-wasi" {
+    if eff_target != "" and eff_target != "wasm32-wasi" and linux_arch == "" {
         if eff_target != "x86_64-pc-windows-msvc" and eff_target != "aarch64-pc-windows-msvc" {
             print("error: target desconocido: " + eff_target)
-            print("  targets soportados: wasm32-wasi (sin --target se compila para la plataforma actual)")
+            print("  targets soportados: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu y wasm32-wasi")
+            print("  (sin --target se compila para la plataforma actual)")
             return false
         }
         // Los triples de Windows los conoce el codegen, pero esta receta no
@@ -2237,7 +2268,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // (W6), se rechazan con su motivo, igual que un triple desconocido.
         print("error: nyx build todavía no arma ejecutables para " + eff_target)
         print("  el soporte de Windows está en desarrollo y todavía no se publicó; hoy solo hay")
-        print("  builds nativos (sin --target) y wasm32-wasi")
+        print("  builds para Linux (x86_64, aarch64) y wasm32-wasi")
         return false
     }
 
@@ -2495,6 +2526,29 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
 // siempre. NYX_NO_RT_CACHE=1 lo apaga; un NYX_RT_ARCHIVE explícito manda.
 // Directorios sin usar en 14 días se podan. (La misma función vive en test.nx:
 // build.nx y test.nx son programas aparte, sin módulo común.)
+// Antes de compilar en cruzado: que estén lld y las bibliotecas del destino
+// (multiarch de Debian/Ubuntu, D2a del spec compilacion-cruzada-linux). Sin
+// esto el usuario veía un error de enlace de clang sobre `-lgc`; ahora ve qué
+// falta y el comando que lo instala. No instala nada solo. `-print-file-name`
+// devuelve una ruta absoluta si encuentra la biblioteca y el nombre pelado si no.
+fn cruzado_diag_sh(triple: String, arch: String) -> String {
+    var deb: String = "amd64"
+    if arch == "aarch64" { deb = "arm64" }
+    var s: String = "NYX_FALTA=\"\"\n"
+    s = s + "command -v ld.lld >/dev/null 2>&1 || NYX_FALTA=\"$NYX_FALTA lld\"\n"
+    s = s + "for l in libc.so libgc.so libssl.so libcrypto.so libz.so; do\n"
+    s = s + "  p=$(clang --target=" + triple + " -print-file-name=$l 2>/dev/null)\n"
+    s = s + "  case \"$p\" in /*) [ -e \"$p\" ] || NYX_FALTA=\"$NYX_FALTA $l\" ;; *) NYX_FALTA=\"$NYX_FALTA $l\" ;; esac\n"
+    s = s + "done\n"
+    s = s + "if [ -n \"$NYX_FALTA\" ]; then\n"
+    s = s + "  echo \"error: para compilar en cruzado a " + triple + " faltan:$NYX_FALTA\" >&2\n"
+    s = s + "  echo \"  instálalas con: sudo dpkg --add-architecture " + deb + " && sudo apt update && \\\\\" >&2\n"
+    s = s + "  echo \"    sudo apt install libc6-dev:" + deb + " libgc-dev:" + deb + " libssl-dev:" + deb + " zlib1g-dev:" + deb + " lld\" >&2\n"
+    s = s + "  exit 1\n"
+    s = s + "fi\n"
+    return s
+}
+
 fn rt_cache_sh() -> String {
     var s: String = "nyx_rt_auto() {\n"
     s = s + "  [ -n \"$NYX_NO_RT_CACHE\" ] && return 1\n"
@@ -3320,6 +3374,23 @@ fn shell_quote_arg(s: String) -> String {
                 }
                 return exec_code(wcmd)
             }
+            var run_arch: String = ""
+            var run_en_target: bool = false
+            if eff_run_target == "x86_64-unknown-linux-gnu" { run_arch = "x86_64" }
+            if eff_run_target == "aarch64-unknown-linux-gnu" { run_arch = "aarch64" }
+            if run_arch != "" {
+                // El triple del host corre el artefacto de target/<triple>/ con
+                // los args de siempre (más abajo); uno de otra arquitectura daría
+                // «exec format error», así que se dice antes qué pasa.
+                if exec_code("[ \"$(uname -m)\" = " + run_arch + " ]") != 0 {
+                    print("error: target/" + eff_run_target + "/" + run_bin + " es un binario " + run_arch + " y esta máquina no lo puede ejecutar")
+                    print("  cópialo a una máquina " + run_arch + " y córrelo ahí")
+                    return 1
+                }
+                run_bin = eff_run_target + "/" + run_bin
+                run_en_target = true
+                eff_run_target = ""
+            }
             if eff_run_target != "" {
                 print("error: `nyx run` no sabe ejecutar un artefacto de " + eff_run_target)
                 print("  usa `nyx build --target " + eff_run_target + "` y ejecútalo con el runner de esa plataforma")
@@ -3327,7 +3398,7 @@ fn shell_quote_arg(s: String) -> String {
             }
 
             var cmd_line: String = "./" + run_bin
-            if config.bin_name != "" { cmd_line = "./target/" + run_bin }
+            if config.bin_name != "" or run_en_target { cmd_line = "./target/" + run_bin }
             var pi: int = 2
             var after_dashdash: bool = false
             while pi < args.length() {
