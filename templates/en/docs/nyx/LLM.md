@@ -496,7 +496,9 @@ generic `Result<T,E>` (opaque `i8*` to the checker) — `w.unwrap()` then
 fails with "method 'unwrap' is not available on a receiver of type
 'i8*'"; annotate `let w: Result<int, Error> = try_write_file(...)`. For
 sockets (E5.1+E5.2+E5.2b, `import "std/net"`), `try_tcp_connect(host,
-port)` / `try_tcp_listen(host, port)` / `try_udp_bind(host, port)` /
+port)` (3000 ms to connect) / `try_tcp_connect_ms(host, port, ms)` (your own
+connect deadline: `Err` kind `timeout`, code 110, if it does not connect in
+`ms`; `ms <= 0` = no deadline) / `try_tcp_listen(host, port)` / `try_udp_bind(host, port)` /
 `try_tcp_accept(listen_fd)` / `try_tcp_read(fd, max)` /
 `try_tcp_write(fd, data)` / `try_udp_sendto(fd, data, host, port)` /
 `try_udp_recvfrom(fd, max)` / `try_resolve(host)` / `try_tcp_read_line(fd)`
@@ -795,6 +797,10 @@ the `catch` (not on wasm32-wasi, which has no `try`).
 | `contains(val)` | 1 | bool | String needle matches by CONTENT on tagged slots (v0.22.16 slots-tag); ints by value |
 | `join(sep)` | 1 | String | — |
 | `iter()` | 0 | Iterator | for chainable ops |
+
+**Sorting** (prelude, no import): `sort_int(xs)`, `sort_str(xs)` and `sort_by(xs, cmp: Fn(int, int) -> int)` sort
+**the array you pass, in place**, and return that same array (stable, O(n log n)). To keep the original, sort a
+copy: `sort_str(xs.slice(0, xs.length()))` — `Array` has no `clone()`. Gotcha `sort-in-place`.
 
 ### String
 
@@ -1553,7 +1559,7 @@ These are the ones that can hurt you without saying so. Everything else in
 this section is either a language rule or an external limitation.
 
 <!-- gen:gotchas kinds=trap lang=en form=long -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`** over bare `Fn`. A fully typed callback parameter — a named
 function, a `let`-bound lambda, or an inline lambda literal — lets the checker validate the arity and
@@ -1688,6 +1694,11 @@ type IP — which the default snakeoil certificate does not — and that is the 
 bug. The two libpq modes that fall back to plaintext when the server refuses TLS (`prefer`, `allow`)
 are **rejected** in Nyx: with SCRAM, silently downgrading means sending the password in clear while
 believing it is encrypted. [test: postgres/06-tls]
+
+8. **`sort_int`, `sort_str` and `sort_by` sort THE ARRAY YOU PASS, in place, and return that same array — not a
+copy.** `let order = sort_str(keys)` also reorders `keys`; if `keys` was paired by position with another array
+(`values`), the pairs silently fall apart. To keep the original, sort a copy:
+`sort_str(keys.slice(0, keys.length()))` (`Array` has no `clone()`). The sort is stable and O(n log n). [test: 44-sort-ordena-en-el-lugar]
 
 <!-- /gen:gotchas -->
 

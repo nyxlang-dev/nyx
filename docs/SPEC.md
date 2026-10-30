@@ -3022,6 +3022,11 @@ let data: String = udp_recvfrom(sock, 1024)
 tcp_close(sock)
 ```
 
+Conexión TCP con plazo propio (`std/net`, 2026-10-29): `try_tcp_connect` espera hasta 3000 ms;
+`try_tcp_connect_ms(host, port, ms) -> Result<int, Error>` usa el plazo que se le pase y da `Err` de kind
+`timeout` (code 110) si no conecta a tiempo, para no colgarse con un equipo apagado de la red local.
+`ms <= 0` = sin plazo propio.
+
 Red local (`std/net`, arco `red-local`, 2026-10-26): el remitente de cada datagrama, puerto
 compartido y multicast IPv4.
 

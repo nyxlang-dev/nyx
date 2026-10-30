@@ -28,6 +28,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `--release` (ver el ítem anterior).
 
 ### Agregado
+- **`try_tcp_connect_ms(host, port, ms)` en `std/net`: conectar con un plazo propio** [dogfooding:nyxerp]:
+  `try_tcp_connect` espera hasta 3000 ms; con un equipo apagado de la red local (las tickeras del puente de la
+  tienda, por TCP 9100) eso frenaba el estado de todos. Da `Err` de kind `timeout` (code 110) si no conecta a
+  tiempo; `ms <= 0` = sin plazo propio. `std/http` ya lo usaba por dentro y nyxerp lo declaraba como `extern`
+  propio. Receta 152; regression +1 (`test-520`); el plazo vencido sigue cubierto en C por `test_net_result.c`.
 - **`Error.stage`: en qué paso falló una operación de varios pasos** [arco: procesos-spawn] [dogfooding:nyx-shell]:
   `Error` (`std/error`) gana el campo `stage: String`, `""` cuando la operación no tiene etapas. `err_new` no
   cambia y `err_stage(code, kind, msg, stage)` lo pone. `std/process` lo llena con `exec`, `stdin`, `stdout`,
@@ -74,6 +79,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `dl`, Ctrl+C real y el drenado de `persist`; `std/serial` solo en errores sin puerto (falta hardware).
 
 ### Arreglado
+- **Docs: `sort_int`, `sort_str` y `sort_by` ordenan el arreglo que reciben** [dogfooding:nyxerp]: `LLM.md` no los
+  documentaba y nada avisaba que ordenan en el lugar y devuelven el mismo arreglo; `let orden = sort_str(claves)`
+  desarmó en nyxerp los pares de `claves` con `valores`, sin error. Entrada nueva en `LLM.md` §Array y trampa
+  `sort-in-place` (AGENTS.md en los dos idiomas), con la forma de ordenar una copia:
+  `sort_str(xs.slice(0, xs.length()))`. AI-first +1 (`44-sort-ordena-en-el-lugar`); `build_manifest` +1 (el caso
+  de Windows de la entrada siguiente).
 - **`nyx build --target x86_64-pc-windows-msvc` ya no arma nativo en silencio** [dogfooding:nyxerp]: los triples
   de Windows pasaban la validación (el codegen los conoce), pero `nyx build` no enlaza para Windows: imprimía «build
   complete», salía 0 y dejaba un ejecutable de la plataforma actual. Ahora falla con el motivo, igual que un triple

@@ -1,0 +1,37 @@
+// try_tcp_connect_ms: connect con plazo propio (pedido de nyxerp 2026-10-29).
+// El plazo vencido (kind timeout, 110) lo prueba test_net_result.c en C con una
+// cola de accept llena, que Nyx no puede armar; acá, la superficie Nyx.
+import "std/net"
+
+fn main() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let pr: Result<int, Error> = try_local_port(srv)
+    let port: int = pr.unwrap()
+
+    match try_tcp_connect_ms("127.0.0.1", port, 800) {
+        Result.Ok(fd) => {
+            println("conecta con plazo: ok")
+            tcp_close(fd)
+        }
+        Result.Err(e) => { println("inesperado: " + error_to_string(e)) }
+    }
+    match try_tcp_connect_ms("127.0.0.1", port, 0) {
+        Result.Ok(fd) => {
+            println("sin plazo (0): ok")
+            tcp_close(fd)
+        }
+        Result.Err(e) => { println("inesperado: " + error_to_string(e)) }
+    }
+
+    // Un puerto sin nadie escuchando: rechazo inmediato, no se espera el plazo.
+    let tmp: int = tcp_listen("127.0.0.1", 0)
+    let cr: Result<int, Error> = try_local_port(tmp)
+    let cerrado: int = cr.unwrap()
+    tcp_close(tmp)
+    match try_tcp_connect_ms("127.0.0.1", cerrado, 800) {
+        Result.Ok(_fd) => { println("inesperado: conectó") }
+        Result.Err(e) => { println("cerrado: " + e.kind + " " + int_to_string(e.code)) }
+    }
+    tcp_close(srv)
+    return 0
+}

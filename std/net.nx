@@ -31,6 +31,7 @@
 import "std/error"
 
 extern "C" fn nyx_tcp_connect_result(host: String, port: int) -> int
+extern "C" fn nyx_tcp_connect_ms_result(host: String, port: int, timeout_ms: int) -> int
 extern "C" fn nyx_tcp_listen_result(host: String, port: int) -> int
 extern "C" fn nyx_udp_bind_result(host: String, port: int) -> int
 
@@ -42,6 +43,19 @@ pub fn try_tcp_connect(host: String, port: int) -> Result<int, Error> {
     if h >= 0 { return Result.Ok(h) }
     let code: int = 0 - h
     return Result.Err(err_new(code, errno_to_kind(code), "tcp_connect " + host + ":" + int_to_string(port)))
+}
+
+// try_tcp_connect con plazo propio para establecer la conexión (try_tcp_connect
+// usa 3000 ms fijos). Para no colgarse con un equipo apagado de la red local: si
+// no conecta en `timeout_ms`, Err con kind "timeout" (code 110). timeout_ms <= 0
+// = sin plazo (espera lo que decida el sistema operativo). Pedido de nyxerp
+// 2026-10-29 (tickeras por TCP 9100): std/http ya lo usaba por dentro y ellos
+// tenían que declararse el extern a mano.
+pub fn try_tcp_connect_ms(host: String, port: int, timeout_ms: int) -> Result<int, Error> {
+    let h: int = nyx_tcp_connect_ms_result(host, port, timeout_ms)
+    if h >= 0 { return Result.Ok(h) }
+    let code: int = 0 - h
+    return Result.Err(err_new(code, errno_to_kind(code), "tcp_connect " + host + ":" + int_to_string(port) + " (plazo " + int_to_string(timeout_ms) + " ms)"))
 }
 
 // E5.1: hermana Result de tcp_listen. Éxito = fd de un socket TCP en

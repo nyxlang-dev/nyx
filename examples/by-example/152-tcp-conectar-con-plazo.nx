@@ -1,0 +1,45 @@
+// Nyx by Example: conectar por TCP con un plazo propio.
+//
+// Un puente de tienda pregunta cada pocos segundos «¿está encendida la
+// tickera?» abriendo una conexión a su puerto (9100 en las impresoras de red).
+// Si el equipo está apagado, try_tcp_connect espera hasta 3000 ms, y el
+// sistema operativo puede tardar todavía más sin plazo. try_tcp_connect_ms
+// usa el plazo que se le pase: si no conecta a tiempo, Err con kind "timeout"
+// (code 110). Un puerto sin nadie escuchando se rechaza enseguida
+// ("connection", 111), sin esperar el plazo.
+//
+// Acá los "equipos" son locales para que corra en cualquier lado: uno que
+// escucha y otro que no.
+
+import "std/net"
+import "std/error"
+
+fn estado(host: String, port: int, plazo_ms: int) -> String {
+    match try_tcp_connect_ms(host, port, plazo_ms) {
+        Result.Ok(fd) => {
+            tcp_close(fd)
+            return "encendido"
+        }
+        Result.Err(e) => {
+            if e.kind == "timeout" { return "no responde en " + int_to_string(plazo_ms) + " ms" }
+            if e.kind == "connection" { return "rechaza la conexión" }
+            return error_to_string(e)
+        }
+    }
+}
+
+fn main() -> int {
+    let srv: int = tcp_listen("127.0.0.1", 0)
+    let pr: Result<int, Error> = try_local_port(srv)
+    let abierto: int = pr.unwrap()
+
+    let tmp: int = tcp_listen("127.0.0.1", 0)
+    let cr: Result<int, Error> = try_local_port(tmp)
+    let cerrado: int = cr.unwrap()
+    tcp_close(tmp)
+
+    println("tickera 1: " + estado("127.0.0.1", abierto, 800))
+    println("tickera 2: " + estado("127.0.0.1", cerrado, 800))
+    tcp_close(srv)
+    return 0
+}
