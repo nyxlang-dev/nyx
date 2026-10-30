@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **540 archivos / 539 ARM64** | +3 el 10-30 (`521`, `522` try por goroutine, `524` lo asignado en un try llega al catch), +6 el 10-29 (`515`-`520`), +1 el 10-28 (`514`, std/serial), +1 el 10-27 (`513`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **541 archivos / 540 ARM64** | +4 el 10-30 (`521`, `522` try por goroutine, `523` try en tres casos, `524` lo asignado en un try llega al catch), +6 el 10-29 (`515`-`520`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **388** | +3 el 2026-10-30 (triples Linux, asm x86 en aarch64, NYX1044 en un bucle); +3 el 2026-10-26 (NYX1047); +2 el 2026-10-23 (NYX1046); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
