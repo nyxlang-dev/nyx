@@ -79,6 +79,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `dl`, Ctrl+C real y el drenado de `persist`; `std/serial` solo en errores sin puerto (falta hardware).
 
 ### Arreglado
+- **`try_read_file` y `read_file` leen los archivos de `/proc`** [dogfooding:nyxerp]: el runtime dimensionaba el
+  buffer con el tamaño del archivo, y `/proc` informa 0; `/proc/self/status` daba `Ok("")` sin error (`cat`: 1.184
+  bytes). Ahora lee hasta EOF y usa el tamaño solo como pista para el primer buffer; un stream sin posición
+  (FIFO) sigue dando `ESPIPE`. Runtime C +7 asserts (`test_file_result.c`).
 - **`contains` e `indexOf` vuelven a encontrar textos después de `sort_str`** [dogfooding:nyxerp]: la ordenación por
   mezcla movía elementos con `dst[i] = src[j]`, y esa copia de slot a slot dejaba la etiqueta en 0 (desconocido);
   `contains` y `indexOf` solo comparan por contenido en slots etiquetados como String, así que daban `false` y `-1`

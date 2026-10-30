@@ -12,6 +12,38 @@
 
 // ===== FILE I/O FUNCTIONS =====
 
+// Lee `file` hasta EOF. El tamaño de `ftell` es solo una pista para el primer
+// buffer: los archivos de /proc (y otros pseudo-archivos del kernel) informan
+// tamaño 0 y tienen contenido, así que dimensionar por el tamaño devolvía ""
+// sin error (fricción nyxerp 2026-10-29: /proc/self/status daba 0 bytes y
+// `cat` 1184). Crece al doble cuando se llena. Devuelve NULL sin memoria; el
+// llamador mira ferror() para los errores de lectura.
+static char* nyx_fio_read_all(FILE* file, long hint, size_t* out_len) {
+    size_t cap = (hint > 0) ? (size_t)hint + 1 : 4096;
+    char* buffer = (char*)GC_MALLOC_ATOMIC(cap);
+    if (buffer == NULL) return NULL;
+    size_t len = 0;
+    for (;;) {
+        size_t n = fread(buffer + len, 1, cap - 1 - len, file);
+        len += n;
+        if (len < cap - 1) break;   // EOF o error: fread no llenó el hueco
+        // Lleno justo: en un archivo normal la pista era exacta y lo que sigue
+        // es EOF. Mirar un byte antes de crecer evita duplicar el buffer de
+        // cada lectura solo para descubrirlo.
+        int c = fgetc(file);
+        if (c == EOF) break;
+        size_t ncap = cap * 2;
+        char* nb = (char*)GC_REALLOC(buffer, ncap);
+        if (nb == NULL) return NULL;
+        buffer = nb;
+        cap = ncap;
+        buffer[len++] = (char)c;
+    }
+    buffer[len] = '\0';
+    *out_len = len;
+    return buffer;
+}
+
 nyx_string* nyx_read_file(char* path) {
     if (path == NULL) {
         return nyx_string_from_cstr("");
@@ -26,15 +58,12 @@ nyx_string* nyx_read_file(char* path) {
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
 
-    char* buffer = (char*)GC_MALLOC(file_size + 1);
+    size_t bytes_read = 0;
+    char* buffer = nyx_fio_read_all(file, file_size, &bytes_read);
+    fclose(file);
     if (buffer == NULL) {
-        fclose(file);
         return nyx_string_from_cstr("");
     }
-
-    size_t bytes_read = fread(buffer, 1, file_size, file);
-    buffer[bytes_read] = '\0';
-    fclose(file);
 
     return nyx_string_from_ptr(buffer, bytes_read);
 }
@@ -369,7 +398,8 @@ nyx_array_t* nyx_file_read_result(nyx_string* path) {
         return out;
     }
 
-    char* buffer = (char*)GC_MALLOC(file_size + 1);
+    size_t bytes_read = 0;
+    char* buffer = nyx_fio_read_all(file, file_size, &bytes_read);
     if (buffer == NULL) {
         fclose(file);
         nyx_array_push_tagged(out, 12 /* ENOMEM */, NYX_TAG_INT);
@@ -377,7 +407,6 @@ nyx_array_t* nyx_file_read_result(nyx_string* path) {
         return out;
     }
 
-    size_t bytes_read = fread(buffer, 1, file_size, file);
     int rerr = ferror(file) ? (errno ? errno : 5 /* EIO */) : 0;
     fclose(file);
 
