@@ -12,6 +12,147 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.40.0] — 2026-10-30
+
+> **MINOR**: new API — `std/process` (child processes without `fork`, with the same API on every platform)
+  [arco: procesos-spawn], `std/serial` [arco: serial-nativo], `Error.stage` and `try_tcp_connect_ms` — and Windows
+  W5 [arco: w5-windows]. Sorting becomes O(n log n), and correctness fixes arrive that nyxerp found in real use:
+  HTTP with lowercase headers, `[lib]` with cycles, `contains` after `sort_str` and `/proc`.
+>
+> **Migration**: (1) `Error` has a fourth field, `stage`: an `Error { code, kind, msg }` literal no longer compiles
+  (NYX1032); use `err_new(code, kind, msg)`, or add `stage: ""`. (2) `nyx build --target` with a Windows triple
+  now fails with the reason, instead of building a native executable and exiting 0.
+
+### Changed
+- **`sort_int`, `sort_str` and `sort_by` sort in O(n log n)** [dogfooding:nyxerp]: they were bubble and insertion
+  sort, O(n²); with 32,000 elements `sort_by` took 15 s and now takes 11 ms. Non-recursive merge sort,
+  **stable** (equal elements keep their order) and with the same contract: they sort the array in place and
+  return it. Regression +1 (`test-517`, 534 files).
+- **The C runtime is always built with `-O2`**, also without `--release`, in `nyx run`, `nyx build` and `nyx test`:
+  at `-O0` everything living in C ran about 7 times slower (`sha256` of 120 MB: 4,858 → 741 ms with `nyx run`), and
+  nyxerp reported it as PBKDF2 slowness. It is compiled once into the `~/.cache/nyx/rt/` cache (the one build and
+  test already used; `nyx run` starts using it: before, it recompiled the runtime on every run), with at most as
+  many `clang` processes at once as there are cores. The user's Nyx code is still not optimized outside
+  `--release`. Guard in `run_toolchain_recipe_audit.sh`.
+- **`pbkdf2_hmac_sha256` about 5 times faster** [dogfooding:nyxerp]: natively it uses OpenSSL's
+  `PKCS5_PBKDF2_HMAC` (600,000 iterations: 872 → 166 ms on aarch64 with `--release`); the in-house implementation,
+  kept for wasm32-wasi, precomputes the SHA-256 states of `k^ipad` and `k^opad` once per call (2 compressions per
+  iteration instead of 4; wasm 1,276 → 620 ms). Same result byte for byte (RFC 7914 vectors in `test_crypto.c`,
+  through both paths). What nyxerp measured (6.2 s) was also the unoptimized runtime outside `--release` (see the
+  previous item).
+
+### Added
+- **`try_tcp_connect_ms(host, port, ms)` in `std/net`: connect with a deadline of your own** [dogfooding:nyxerp]:
+  `try_tcp_connect` waits up to 3000 ms; with a powered-off device on the local network (the store bridge's ticket
+  printers, over TCP 9100) that stalled everyone's status. It returns `Err` of kind `timeout` (code 110) if it does
+  not connect in time; `ms <= 0` = no deadline of its own. `std/http` already used it internally and nyxerp
+  declared it as its own `extern`. Recipe 152; regression +1 (`test-520`); the expired deadline is still covered
+  in C by `test_net_result.c`.
+- **`Error.stage`: at which step a multi-step operation failed** [arco: procesos-spawn] [dogfooding:nyx-shell]:
+  `Error` (`std/error`) gains the field `stage: String`, `""` when the operation has no stages. `err_new` does not
+  change and `err_stage(code, kind, msg, stage)` sets it. `std/process` fills it with `exec`, `stdin`, `stdout`,
+  `stderr` or `cwd`: a redirection that fails to open and a nonexistent program both give `not_found`, and
+  nyx-shell told them apart by searching for text in `msg`. A hand-written `Error { code, kind, msg }` literal now
+  needs `stage` (there was none outside the std). `test-518` covers each stage.
+- **`std/serial`: native serial port for server programs** [arco: serial-nativo] [dogfooding:nyxerp]:
+  `try_serial_open(path, baud, data_bits, parity, stop_bits)`, `try_serial_write`, `try_serial_read(p, max, deadline_ms)`
+  (`Ok("")` = the deadline expired with no data), `try_serial_read_until(p, end, max, deadline_ms)` for STX…ETX
+  frames (it does not consume the byte after the end, e.g. the LRC), `try_serial_close` and `serial_ports()` with USB
+  VID:PID. Linux (termios, `/sys/class/tty`) and Windows (`\\.\COMn`, DCB, SetupAPI; not yet verified on real
+  Windows); macOS opens and lists without VID/PID. Exclusive open (`in_use`), DTR active, raw mode without flow
+  control, standard speeds only. Bytes as `String`, with adapters for the `Array` of `std/browser_serial`. Through
+  `extern "C"`, without touching the compiler. Requested for nyxerp's store bridge (fiscal printer and scales).
+- **`std/process`: launch child processes without fork** [arco: procesos-spawn]: `try_spawn(argv, SpawnOpts)` with
+  each stream as `Stdio` (inherited, null, pipe or file), `cwd` and `env`; `try_spawn_pipeline` for `a | b | c`;
+  `wait`/`try_wait`, `kill`, `signal` (posix only), `read`/`read_err`/`write`/`close_stdin` and `collect`, which
+  drains stdout and stderr at the same time (reading them one after the other hangs on large output). posix on top
+  of `posix_spawnp`; Windows on top of `CreateProcessW` with the command line built from argv (written, not yet
+  verified on real Windows). Errors `not_found`, `permission` and `invalid` with the stage in the message; writing to
+  a child that closed its stdin gives `EPIPE`, it does not kill via SIGPIPE. Regression +1 (`test-518`); C runtime
+  +2 suites (`test_os_proc_spawn.c`, `test_os_win_cmdline.c`).
+- **Recipes 64 and 65 with `std/process`, new recipe 151 and the win32 error that points to it**
+  [arco: procesos-spawn]: 64 (launch a program) and 65 (pipes) move from `fork`/`execvp`/`pipe_new` to `try_spawn`
+  and `try_spawn_pipeline`, with a note that the raw builtins remain posix; 151 captures stdout and stderr with
+  `try_child_collect`. Under win32, `fork`, `execvp`, `waitpid`, `pipe_new` and `kill_process` are still
+  forbidden, but the message now says "use std/process". By-example recipes 151 (`make test-examples`: 158 with the
+  7 at the root). Documented in `LLM.md` (blocking, nonexistent program = `not_found` at launch, `.bat`/`.cmd`
+  rejected on Windows, `signal` posix only) and in `docs/SPEC.md`.
+- **TLS on Windows: a root the system has not downloaded yet no longer breaks the connection** [arco: w5-windows]:
+  Windows ships few roots installed and downloads the rest when building a chain, so an arbitrary site failed with
+  X509 20 on a new machine. On that error, with the system store, the chain is requested from
+  `CertGetCertificateChain`, the store is reloaded and it retries once; verification is still OpenSSL's. No changes
+  on posix or wasm (written, not yet verified on real Windows).
+- **W5: processes, signals and `dl` adapters compile for Windows** [arco: w5-windows]: `exec`, `exec_code`,
+  `getpid`, `getcwd`, `chdir`, `stat`, `isatty`, `open_fd`, `close_fd`, `dup2`, `fsync`, `fdatasync`, `signal_*` and
+  `setup_shutdown_handler` leave the win32 gate. On Windows, `exec()` normalizes `\r\n` to `\n` and `exec_code()`
+  gives 127 for a nonexistent command when the line is simple. SIGINT and SIGTERM arrive through
+  `SetConsoleCtrlHandler`: Ctrl+C gives SIGINT, and Ctrl+Break, console close, logoff and shutdown give SIGTERM,
+  with up to 4.5 s for the closure (the `persist` flush) to finish. `taskkill /F` and `TerminateProcess` give no
+  notice. The sqlite, zlib and llama adapters also try the `.dll` names, and `compress.c` loads zlib entirely
+  through `dl` (no `<zlib.h>` and no mandatory link). `fork`, `execvp`, `waitpid`, `kill_process` and `pipe_new`
+  stay posix-only, until the `procesos-spawn` arc. No changes on Linux. Verified on Windows 11 x64 (laptop):
+  processes, `dl`, real Ctrl+C and the `persist` drain; `std/serial` only on no-port errors (no hardware).
+
+### Fixed
+- **`try_read_file` and `read_file` read `/proc` files** [dogfooding:nyxerp]: the runtime sized the buffer with the
+  file size, and `/proc` reports 0; `/proc/self/status` gave `Ok("")` with no error (`cat`: 1,184 bytes). Now it
+  reads until EOF and uses the size only as a hint for the first buffer; a stream with no position (FIFO) still
+  gives `ESPIPE`. C runtime +7 asserts (`test_file_result.c`).
+- **`contains` and `indexOf` find texts again after `sort_str`** [dogfooding:nyxerp]: merge sort moved elements with
+  `dst[i] = src[j]`, and that slot-to-slot copy left the tag at 0 (unknown); `contains` and `indexOf` only compare by
+  content in slots tagged as String, so they returned `false` and `-1` on an array that did have the text, with no
+  error. Codegen now propagates the source tag in an indexed assignment whose value comes from another slot, and the
+  insertion swap uses a temporary slot. The case of an untyped intermediate variable
+  (`let t = a[i]; b[k] = t`) stays filed in `TASKS.md`. Regression +1 (`test-521-sort-conserva-tags`, also
+  `sort_by` and `sort_int`); `codegen_call_expr` grows 16 B in the stack guard.
+- **Docs: `sort_int`, `sort_str` and `sort_by` sort the array they receive** [dogfooding:nyxerp]: `LLM.md` did not
+  document them and nothing warned that they sort in place and return the same array; `let sorted = sort_str(keys)`
+  broke nyxerp's pairing of `keys` with `values`, with no error. New entry in `LLM.md` §Array and the
+  `sort-in-place` trap (AGENTS.md in both languages), with the way to sort a copy:
+  `sort_str(xs.slice(0, xs.length()))`. AI-first +1 (`44-sort-ordena-en-el-lugar`); `build_manifest` +1 (the Windows
+  case from the next entry).
+- **`nyx build --target x86_64-pc-windows-msvc` no longer builds native silently** [dogfooding:nyxerp]: the Windows
+  triples passed validation (codegen knows them), but `nyx build` does not link for Windows: it printed "build
+  complete", exited 0 and left an executable for the current platform. Now it fails with the reason, like an unknown
+  triple, and the `nyx` help no longer advertises "Windows (cross)". New case in `run_build_manifest.sh`.
+- **HTTP: a request body is no longer lost if the header arrives as `content-length`** [dogfooding:nyxerp]: the C
+  parser (the one in `http_serve` and `std/serve`) required `": "` as the separator and compared `Content-Length`
+  with exact capitalization, so `content-length: 5` or `Content-Length:5` reached the handler with an EMPTY body and
+  no error. Now header names are case-insensitive and the `:` allows optional spaces on both sides of the value
+  (RFC 9110 §5.1 and §5.6.3), also in the Nyx parsers of `std/http` (requests, responses by fd and over TLS) and in
+  the upstream response of `std/proxy`. Each header's value arrives without those spaces. Regression +1
+  (`test-519`, both parsers); `test_net.c` +15 asserts.
+- **`[lib] modules`: two libraries that import each other now compile** [dogfooding:nyxerp]: `a`'s unit was not
+  counted as imported, so when coming back through `b`'s import another copy of `a` was inlined and its structs
+  appeared twice in the IR ("redefinition of type" in clang). Uncovered by `run_lib_real` on nyxerp's
+  `formatos ↔ formatos_lienzo`. New case in `run_lib_modules.sh`.
+- **win32: `try_exec_full` no longer hangs without a console** [arco: w5-windows]: from a service the child read from
+  a new console and never returned; now it gets stdin `NUL` and is created with `CREATE_NO_WINDOW`.
+- **win32: an invalid fd gives `EBADF`, not `__fastfail`** [arco: w5-windows]: CRT invalid-parameter handler; and
+  `isatty` gives 0 for `NUL` (confirmed with `GetConsoleMode`).
+- **win32: `tls.c` compiles with the MSVC CRT and its `e.code` is canonical** [arco: w5-windows]: static OpenSSL
+  from vcpkg in the gate (job `w5-tls`); `persist.c` and `compress.c` enter the subset, and `<gc.h>` in the four
+  `.c` files that still used `<gc/gc.h>`.
+- **sqlite: a missing symbol is "library absent", not a crash**: before, the library loaded with a null pointer that
+  blew up on the first call. Now `try_sqlite_open` returns the cause with the symbol and library name, and
+  `sqlite_open` reports it once on stderr. New variable `NYX_SQLITE_SO`, which pins the library.
+- **The parser no longer silently cuts off programs of more than 100000 statements** [dogfooding:nyxerp]: the main
+  loop had a fixed limit; on exceeding it, it printed "too many iterations" and went on with the program half
+  parsed. A project with many imports lost its whole `main.nx`: `nyx check` exited 0 and the build failed with
+  "undefined reference to main". Now the bound is the number of tokens, and exceeding it is a hard internal error.
+  `parser-sin-tope` guard in `make test-ai-first`.
+- **A chain of more than 50 postfix operations now compiles**: `a.b().c()…` had a 50-round limit in the parser, and
+  operation number 51 gave NYX0107 on valid code. Now the loop ends when a round consumes no token. Regression +1
+  (`test-515`, 532 files).
+- **An `Fn` variable or parameter shadows the global `fn` of the same name in the result TYPE too**
+  [dogfooding:nyxerp]: the call already went to the closure, but `let r = f(41)`, `match f(41)` and `f(41)?` took
+  the return type of the global `fn f` (even if it was in another module). `nyx check` passed and the build failed
+  far from the cause (NYX2007 on a field, or invalid IR). With a lambda in the same function, a local closure
+  returning a struct by value gave invalid IR even without a same-named global. Regression +1 (`test-516`,
+  533 files).
+
+---
+
 ## [0.39.0] — 2026-10-27
 
 > **MINOR**: new API — `std/crypto` (AES-GCM), `std/exec` (`try_exec_full`), `try_ping`, the local-network UDP
