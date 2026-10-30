@@ -1773,8 +1773,11 @@ de error diverge del `Error` único.
 
 ### Implementacion
 
-- Via `setjmp`/`longjmp` en el runtime C (no disponible en wasm32-wasi, ver arriba)
-- Los bloques `try` crean un try-catch frame en una pila `_Thread_local` de 64 niveles
+- Via `setjmp`/`longjmp` en el runtime C (no disponible en wasm32-wasi, ver arriba). En
+  `*-pc-windows-msvc` el codegen llama a `_setjmp(buf, NULL)`: la CRT de MSVC no tiene `setjmp`, y con
+  NULL `longjmp` salta directo, sin desenrollar por SEH
+- Los bloques `try` crean un try-catch frame en una pila de 64 niveles que es de cada goroutine
+  (fuera de una goroutine, del hilo)
 - `throw()`/`panic()` catcheado ejecutan `longjmp` al frame mas cercano — LIFO ordering: bloques
   anidados funcionan como se espera
 - `catch (e)` bindea siempre un `String` (`nyx_get_exception()`)

@@ -86,8 +86,10 @@
 # referenced anyway — import granularity debt, not a real dependency.
 # * test-295-chr-nul-safe: LINK-FAIL medido — `nyx_string_from_bytes` vive en
 #   runtime/persist.c, que no está en el subset.
-# * test-112-try-catch / test-335-try-catch-return-path: try/catch está
-#   gateado para el triple windows (codegen_target_guard, no es residuo).
+# * test-112-try-catch / test-335-try-catch-return-path: try/catch estuvo
+#   gateado para el triple windows hasta 2026-10-30; desde entonces el codegen
+#   emite _setjmp(buf, NULL). Entran al subset con la W6 Task 3, al verificarse
+#   en Windows.
 # * test-123-full-asm: inline asm, gateado igual.
 # * test-144-sync: mutex_new → win_forbidden_builtin.
 # * test-137-bench: su salida incluye tiempos — no determinista ni en Linux.
@@ -181,8 +183,8 @@ tests/compiler/types/test-372-std-error.nx	tests/compiler/types/expected/test-37
 #   (hallazgo H1 de docs/design/reviews/2026-09-10-w3-rama-pre-merge.md).
 #   OJO al re-correr el gate local: esos 4 .win.ll cambiaron DESPUES de
 #   medirse el 36/36, asi que hay que regenerarlos y re-correrlos.
-# - EXCLUIDO test-333-try-catch-mt: try/catch NO soportado en el target
-#   windows (guard del codegen; unwinding = deuda fichada aparte).
+# - EXCLUIDO test-333-try-catch-mt: try/catch no estaba soportado en el target
+#   windows; desde 2026-10-30 va por _setjmp(buf, NULL) y entra con la W6 Task 3.
 # - EXCLUIDO test-352 (señales): W5 (SetConsoleCtrlHandler), exclusion
 #   heredada del plan W3 (misma clase que sqlite en W2).
 # ============================================================================
