@@ -85,6 +85,31 @@ se drenan de a uno). Retry-on-stale: roadmap nyx-proxy v0.4.
 Claude Code no tiene acceso SSH al servidor — el deploy y el chequeo de
 salud de abajo los ejecuta el usuario manualmente.
 
+## Compilación cruzada (Linux x86_64 ↔ aarch64)
+
+Para armar el binario de otra arquitectura sin salir de tu máquina:
+
+```bash
+nyx build --target x86_64-unknown-linux-gnu     # o aarch64-unknown-linux-gnu; también [build] target en nyx.toml
+# salida: target/<triple>/<name>  (no pisa ./<name>)
+```
+
+Receta multiarch en Debian/Ubuntu (ejemplo aarch64 -> x86_64; al revés, usa `:arm64`):
+
+```bash
+sudo dpkg --add-architecture amd64 && sudo apt update
+sudo apt install libc6-dev:amd64 libgc-dev:amd64 libssl-dev:amd64 zlib1g-dev:amd64 libgcc-14-dev:amd64 lld
+```
+
+`libgcc-N-dev` lleva la versión de gcc de la distro. Si falta algo, `nyx build` lo dice antes de compilar, con el comando exacto.
+
+- No hay emulación: el binario no corre en la máquina que lo arma. Cópialo a una máquina de la arquitectura destino, o pruébalo en un contenedor: `docker run --platform linux/amd64 ...` (lento, por emulación).
+- El binario es dinámico: el destino necesita libgc, libssl3, libcrypto, libz y glibc.
+- Futuro, no implementado: un sysroot propio de Nyx descargable, para no depender de multiarch; y un binario portable/estático (arco aparte).
+- Receta: `examples/by-example/153-compilacion-cruzada.nx`.
+
+---
+
 ## Post-deploy health check
 
 Tras un deploy (propio o de gateway/sites/kv), verificar de punta a punta:

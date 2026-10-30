@@ -1,0 +1,56 @@
+// Nyx by Example: compilación cruzada entre Linux x86_64 y aarch64.
+//
+// Un mismo programa se arma para la otra arquitectura sin tocar el código:
+//
+//     nyx build --target x86_64-unknown-linux-gnu      # desde aarch64
+//     nyx build --target aarch64-unknown-linux-gnu     # desde x86_64
+//
+// (o `[build] target = "..."` en nyx.toml). La salida va a target/<triple>/<name>
+// y no pisa el binario nativo. El triple del propio host compila nativo; el de la
+// otra arquitectura usa clang con --target=<triple> y lld, y el runtime de C se
+// compila para el destino (cacheado por destino).
+//
+// Requisitos (Debian/Ubuntu, multiarch; ejemplo aarch64 -> x86_64):
+//     sudo dpkg --add-architecture amd64 && sudo apt update
+//     sudo apt install libc6-dev:amd64 libgc-dev:amd64 libssl-dev:amd64 \
+//         zlib1g-dev:amd64 libgcc-14-dev:amd64 lld
+//   (libgcc-N-dev: N es la versión de gcc de la distro; al revés, usa :arm64.)
+// Si falta algo, `nyx build` lo dice antes de compilar, con el comando exacto.
+//
+// Límites:
+//   - No hay emulación: el binario cruzado no se ejecuta en la máquina que lo arma
+//     (`nyx run --target <otra arquitectura>` falla); cópialo a una máquina de esa
+//     arquitectura, o pruébalo en un contenedor `docker run --platform linux/amd64`.
+//   - El binario es dinámico: la máquina destino necesita libgc, libssl3, libcrypto,
+//     libz y glibc.
+//   - `asm` con restricciones de una letra x86 (a b c d S D) se rechaza con destino
+//     aarch64; la plantilla de ensamblador siempre es del usuario.
+//
+// Este programa imprime la arquitectura en la que corre: compílalo para cada destino
+// y comprueba la salida en la máquina correspondiente.
+
+import "std/process"
+
+fn arquitectura() -> String {
+    var o = spawn_opts()
+    o.stdout = Stdio.Pipe
+    match try_spawn(["uname", "-m"], o) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => { return r.stdout.trim() }
+                Result.Err(_) => { return "desconocida" }
+            }
+        }
+        Result.Err(_) => { return "desconocida" }
+    }
+    return "desconocida"
+}
+
+fn main() -> int {
+    let a = arquitectura()
+    print("corriendo en: " + a)
+    if a == "x86_64" || a == "aarch64" {
+        print("ok: arquitectura Linux soportada como destino")
+    }
+    return 0
+}

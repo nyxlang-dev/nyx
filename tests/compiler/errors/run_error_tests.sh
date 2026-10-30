@@ -1067,7 +1067,7 @@ rc=$?
 output_x86=$(NYX_TARGET=x86_64-unknown-linux-gnu timeout 15 ./nyx_bootstrap 2>&1)
 rc_x86=$?
 if [ "$rc" -ne 0 ] && echo "$output" | grep -qF 'asm constraint "D" is an x86_64 register' \
-   && echo "$output" | grep -qF "$name.nx:12" && [ "$rc_x86" -eq 0 ]; then
+   && echo "$output" | grep -qF "script.nx:12" && [ "$rc_x86" -eq 0 ]; then
   printf "  ✓ %s\n" "$name"
   PASS=$((PASS + 1))
 else
