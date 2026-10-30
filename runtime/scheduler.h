@@ -135,6 +135,10 @@ typedef struct NyxGoroutine {
     int            parked;
     // Reserved for Track 5a.2c (detached goroutines + reaper). Unused here.
     int            detached;
+    // Pila de try de ESTA goroutine (NyxTryState de runtime.c), GC_MALLOC
+    // perezoso en el primer try: NULL si nunca abrió uno.
+    // EN: this goroutine's try stack, allocated lazily on its first try.
+    void*          try_state;
 } NyxGoroutine;
 
 // Per-worker run queue (simple FIFO for now)

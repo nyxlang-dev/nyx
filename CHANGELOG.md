@@ -11,6 +11,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`try`/`catch` dentro de goroutines**: la pila de `try` era del hilo del sistema y las goroutines migran de worker.
+  Una que se suspendía dentro de un `try` (`go_sleep`, `channel_recv`) perdía su `catch` al volver en otro worker
+  («uncaught»), un `throw` sin `try` podía saltar al `catch` de OTRA goroutine, y 200 goroutines dormidas en un `try`
+  daban «try-catch nesting too deep». Ahora el estado es de cada goroutine (reservado en su primer `try`, reciclado al
+  morir), con el del hilo como respaldo fuera de ellas. Hallazgo y parche de la laptop en el spike de W6; `test-522`
+  [arco: w6-windows].
+
 - **`write_file`, `write_file_safe` y `file_open` abren en binario**: en Windows cada `\n` ya no sale como `\r\n`;
   en Linux y macOS no cambia nada (`158944eb`) [arco: procesos-spawn].
 - **win32: lanzar algo que no es un ejecutable da `EACCES`**, no `EIO`, como en posix (`11faa9d6`) [arco: procesos-spawn].

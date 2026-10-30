@@ -230,6 +230,32 @@ static int ctx_pool_put(os_ctx_t* c) {
     return ok;
 }
 
+// Pool del estado de try de las goroutines (NyxTryState de runtime.c, con sus
+// marcos). Mismo patrón que el de contextos: el array estático es raíz del GC,
+// así que un estado reciclado sigue vivo, y reap lo devuelve acá. Sin él cada
+// goroutine que abría un try pagaba una reserva del GC, y eso disparaba
+// recolecciones: 20 000 goroutines con try, 155 ms contra 31 (spike W6 Task 1).
+// EN: pool of goroutine try states; the static array is a GC root.
+#define NYX_TRY_POOL_MAX 256
+static void* g_try_pool[NYX_TRY_POOL_MAX];
+static int g_try_pool_count = 0;     // bajo g_guard_lock
+void nyx_try_state_reset(void* p);   // runtime.c
+
+static void* try_pool_get(void) {
+    void* s = NULL;
+    os_mutex_lock(&g_guard_lock);
+    if (g_try_pool_count > 0) s = g_try_pool[--g_try_pool_count];
+    os_mutex_unlock(&g_guard_lock);
+    return s;
+}
+
+static void try_pool_put(void* s) {
+    nyx_try_state_reset(s);
+    os_mutex_lock(&g_guard_lock);
+    if (g_try_pool_count < NYX_TRY_POOL_MAX) g_try_pool[g_try_pool_count++] = s;
+    os_mutex_unlock(&g_guard_lock);
+}
+
 static void guard_unregister(char* lo) {
     os_mutex_lock(&g_guard_lock);
     int n = g_guard_count;
@@ -554,6 +580,11 @@ static void reap(NyxGoroutine* g) {
     if (g->context) {
         if (!ctx_pool_put(g->context)) os_ctx_free(g->context);
         g->context = NULL;
+    }
+    // El estado de try vuelve al pool (con el pool lleno, lo recupera el GC).
+    if (g->try_state) {
+        try_pool_put(g->try_state);
+        g->try_state = NULL;
     }
 }
 
@@ -1327,7 +1358,24 @@ static void nyx_gc_sp_corrector_install(void) {
 // Public API
 // ============================================================
 
+// Gancho de runtime.c: el estado de try de la goroutine en curso, o NULL fuera
+// de una (main, thread_spawn) y runtime.c usa el del hilo. Se reserva (o se
+// saca del pool) en el PRIMER try: un spawn sin try no cambia.
+// EN: runtime.c hook — current goroutine's try state, NULL outside one.
+extern void* (*nyx_try_state_hook)(size_t size);
+static void* goroutine_try_state(size_t size) {
+    NyxWorker* w = current_worker();
+    if (!w || !w->current) return NULL;
+    NyxGoroutine* g = w->current;
+    if (!g->try_state) {
+        void* s = try_pool_get();
+        g->try_state = s ? s : GC_MALLOC(size);
+    }
+    return g->try_state;
+}
+
 void nyx_scheduler_init(int num_workers) {
+    nyx_try_state_hook = goroutine_try_state;
     // F4 (review S4): resolver tamaño de stack + page size ACÁ, donde el
     // proceso es single-thread — así el handler de señal nunca cae en el
     // camino frío (getenv/strtol/sysconf no son async-signal-safe).

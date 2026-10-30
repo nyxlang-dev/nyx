@@ -443,37 +443,109 @@ void nyx_var_anchor(void* p) { (void)p; }
 
 #define NYX_TRY_STACK_MAX 64
 
-static _Thread_local int __nyx_try_depth = 0;
-static _Thread_local nyx_string* __nyx_exception_msg = NULL;
-
 #ifndef __wasi__
-static _Thread_local jmp_buf __nyx_try_stack[NYX_TRY_STACK_MAX];
+// El estado de try (profundidad, marcos y mensaje) es de la GOROUTINE, no del
+// hilo: una goroutine que se suspende dentro de un try (go_sleep,
+// channel_recv) puede volver en OTRO worker, y mientras tanto otra goroutine
+// corre en el suyo. Con el estado _Thread_local, la primera perdía su marco
+// (su throw salía «uncaught»), la segunda, si lanzaba sin try propio, saltaba
+// al jmp_buf de la primera desde su propia pila, y 200 goroutines dormidas en
+// un try llenaban los 64 niveles del worker («nesting too deep») — spike W6
+// Task 1 (sj1, sj2) y la repro del servidor. Fuera de una goroutine (main,
+// thread_spawn) se usa el del hilo. scheduler.c instala el gancho al
+// inicializarse; sin scheduler enlazado queda NULL.
+// EN: try state (depth, frames, message) belongs to the goroutine, not the OS
+// thread; the thread's is the fallback outside goroutines.
+//
+// Los marcos de una goroutine se reservan en su PRIMER try y CRECEN (4, 8, …
+// hasta 64): un jmp_buf son 256 bytes en Win64 y 200 en glibc. Moverlos es
+// seguro: el IR usa el puntero de nyx_try_push SOLO en la llamada a setjmp que
+// le sigue; después el marco se lee por índice desde acá. Al morir la
+// goroutine, scheduler.c recicla el estado entero (nyx_try_state_reset): sin
+// eso cada goroutine con try pagaba una reserva del GC, y eso dispara
+// recolecciones (155 ms contra 31 en 20 000 goroutines, medido).
+// EN: frames are allocated on the first try and grow; the whole state is
+// recycled by scheduler.c when the goroutine dies.
+typedef struct NyxTryState {
+    int         depth;
+    int         cap;
+    jmp_buf*    stack;
+    nyx_string* msg;    // la excepción en vuelo (la lee nyx_get_exception)
+} NyxTryState;
+
+void* (*nyx_try_state_hook)(size_t size) = NULL;
+static _Thread_local NyxTryState __nyx_try_thread;
+static _Thread_local jmp_buf __nyx_try_thread_bufs[NYX_TRY_STACK_MAX];
+
+// noinline: la dirección del TLS se calcula en cada llamada, en el hilo que
+// la hace. Si se inlinea, clang puede cachearla a través del os_ctx_swap de una
+// goroutine que migró de worker (el bug de W4 Task 3; ver current_worker en
+// scheduler.c).
+// EN: noinline so the TLS address is recomputed per call on the calling thread.
+static __attribute__((noinline)) NyxTryState* try_state(void) {
+    if (nyx_try_state_hook) {
+        NyxTryState* s = (NyxTryState*)nyx_try_state_hook(sizeof(NyxTryState));
+        if (s) return s;
+    }
+    NyxTryState* t = &__nyx_try_thread;
+    if (t->cap == 0) { t->stack = __nyx_try_thread_bufs; t->cap = NYX_TRY_STACK_MAX; }
+    return t;
+}
+
+// Deja un estado reciclado como recién reservado, pero conserva sus marcos
+// (la reserva es lo caro). Lo llama scheduler.c al devolverlo a su pool.
+// EN: reset a recycled state, keeping its frame buffer.
+void nyx_try_state_reset(void* p) {
+    NyxTryState* s = (NyxTryState*)p;
+    s->depth = 0;
+    s->msg = NULL;
+}
 
 // Push a jmp_buf onto the try stack, return pointer for setjmp
 void* nyx_try_push() {
-    if (__nyx_try_depth >= NYX_TRY_STACK_MAX) {
+    NyxTryState* s = try_state();
+    if (s->depth >= NYX_TRY_STACK_MAX) {
         fprintf(stderr, "panic: try-catch nesting too deep\n");
         exit(1);
     }
-    return (void*)&__nyx_try_stack[__nyx_try_depth++];
+    if (s->depth >= s->cap) {
+        int cap = s->cap ? s->cap * 2 : 4;
+        if (cap > NYX_TRY_STACK_MAX) cap = NYX_TRY_STACK_MAX;
+        jmp_buf* nuevo = (jmp_buf*)GC_MALLOC((size_t)cap * sizeof(jmp_buf));
+        if (!nuevo) { fprintf(stderr, "panic: out of memory (try stack)\n"); exit(1); }
+        if (s->depth > 0) memcpy(nuevo, s->stack, (size_t)s->depth * sizeof(jmp_buf));
+        s->stack = nuevo;
+        s->cap = cap;
+    }
+    return (void*)&s->stack[s->depth++];
 }
 
 // Pop the try stack after successful try block completion
 void nyx_try_pop() {
-    if (__nyx_try_depth > 0) {
-        __nyx_try_depth--;
+    NyxTryState* s = try_state();
+    if (s->depth > 0) {
+        s->depth--;
     }
 }
 
+static int try_depth(void) { return try_state()->depth; }
+
 // Throw an exception (longjmp to nearest try block)
 void nyx_throw(nyx_string* msg) {
-    if (__nyx_try_depth > 0) {
-        __nyx_exception_msg = msg;
-        longjmp(__nyx_try_stack[--__nyx_try_depth], 1);
+    NyxTryState* s = try_state();
+    if (s->depth > 0) {
+        s->msg = msg;
+        longjmp(s->stack[--s->depth], 1);
     } else {
         fprintf(stderr, "uncaught exception: %.*s\n", (int)msg->length, msg->data);
         exit(1);
     }
+}
+
+// Get the exception message after catching. El catch corre en la misma
+// goroutine que lanzó y sin suspenderse en el medio: el estado es el mismo.
+nyx_string* nyx_get_exception() {
+    return try_state()->msg;
 }
 #else
 // WASI: sin setjmp/longjmp → try/catch no soportado; fail-fast con mensaje claro.
@@ -489,17 +561,18 @@ void nyx_throw(nyx_string* msg) {
     fprintf(stderr, "uncaught exception: %.*s\n", (int)msg->length, msg->data);
     exit(1);
 }
-#endif
 
-// Get the exception message after catching
+static int try_depth(void) { return 0; }
+
 nyx_string* nyx_get_exception() {
-    return __nyx_exception_msg;
+    return NULL;
 }
+#endif
 
 // ===== PANIC =====
 
 void nyx_panic(nyx_string* msg) {
-    if (__nyx_try_depth > 0) {
+    if (try_depth() > 0) {
         // Inside a try block: throw instead of abort
         nyx_throw(msg);
     } else {
