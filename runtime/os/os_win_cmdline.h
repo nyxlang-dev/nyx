@@ -37,8 +37,15 @@ static int64_t os_win_build_cmdline(const char* const* argv, int n, char* out, s
             if (*p == ' ' || *p == '\t' || *p == '\v' || *p == '"') quote = 1;
         }
         if (i > 0) OWC_PUT(' ');
+        // argv[0] sale con '\' en vez de '/': cmd.exe busca la PRIMERA «/c» de
+        // toda su línea, y en «C:/Windows/System32/cmd.exe /c x» la halla dentro
+        // de «/cmd.exe» (falla con «The system cannot find the path specified»);
+        // las comillas no lo evitan. Para Windows los dos son separador, y el
+        // ejecutable ya va resuelto aparte en lpApplicationName.
+        // EN: argv[0] is written with '\' — cmd.exe finds "/c" inside "/cmd.exe".
+#define OWC_CH(c) ((i == 0 && (c) == '/') ? '\\' : (c))
         if (!quote) {
-            for (const char* p = a; *p; p++) OWC_PUT(*p);
+            for (const char* p = a; *p; p++) OWC_PUT(OWC_CH(*p));
             continue;
         }
         OWC_PUT('"');
@@ -55,12 +62,13 @@ static int64_t os_win_build_cmdline(const char* const* argv, int n, char* out, s
                 OWC_PUT('"');
             } else {
                 for (size_t k = 0; k < slashes; k++) OWC_PUT('\\');
-                OWC_PUT(*p);
+                OWC_PUT(OWC_CH(*p));
             }
         }
         OWC_PUT('"');
     }
 #undef OWC_PUT
+#undef OWC_CH
     if (!ok || cap == 0 || w >= cap) return -ENOSPC;
     out[w] = 0;
     return (int64_t)w;

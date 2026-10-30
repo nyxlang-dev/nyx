@@ -9,6 +9,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`write_file`, `write_file_safe` y `file_open` abren en binario**: en Windows cada `\n` ya no sale como `\r\n`;
+  en Linux y macOS no cambia nada (`158944eb`) [arco: procesos-spawn].
+- **win32: lanzar algo que no es un ejecutable da `EACCES`**, no `EIO`, como en posix (`11faa9d6`) [arco: procesos-spawn].
+- **win32: `argv[0]` con `/` se pasa con `\`** en la línea de comando, y `cmd.exe` ya no toma `/cmd.exe` por la
+  opción `/c` (`a941706e`) [arco: procesos-spawn].
+
+### Added
+
+- **Tests de `std/process` en Windows** (`tests/runtime-unit/win/test_os_proc_spawn_win32.c`, 92 asserts, gate win):
+  verificado en la laptop el 2026-10-29 (`9fcf1faf`) [arco: procesos-spawn].
+
 ---
 
 ## [0.40.0] — 2026-10-30

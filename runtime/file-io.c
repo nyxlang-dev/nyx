@@ -94,7 +94,7 @@ int nyx_write_file(char* path, char* content) {
         exit(1);
     }
 
-    FILE* file = fopen(path, "w");
+    FILE* file = fopen(path, "wb");   // binario: ver nyx_file_open
     if (file == NULL) {
         fprintf(stderr, "💥 Runtime Error: No se pudo escribir archivo '%s'\n", path);
         fprintf(stderr, "   %s\n", strerror(errno));
@@ -133,7 +133,7 @@ int nyx_write_file_safe(char* path, nyx_string* content) {
         exit(1);
     }
 
-    FILE* file = fopen(path, "w");
+    FILE* file = fopen(path, "wb");
     if (file == NULL) {
         fprintf(stderr, "💥 Runtime Error: No se pudo escribir archivo '%s'\n", path);
         fprintf(stderr, "   %s\n", strerror(errno));
@@ -200,7 +200,16 @@ void nyx_fileio_test(void) {
 // Returns FILE* as i8*, or NULL on error.
 void* nyx_file_open(const char* path, const char* mode) {
     if (!path || !mode) return NULL;
-    FILE* f = fopen(path, mode);
+    // Siempre en binario: los String de Nyx son bytes. Sin la 'b', la CRT de
+    // Windows abre en modo texto y convierte cada \n escrito en \r\n (y al
+    // leer, \r\n en \n y ^Z en fin de archivo). En posix la 'b' no cambia nada.
+    // EN: always binary — Nyx strings are bytes; text mode rewrites \n on Windows.
+    char m[8];
+    size_t ml = strlen(mode);
+    if (ml > 4) return NULL;
+    memcpy(m, mode, ml + 1);
+    if (!strchr(m, 'b')) { m[ml] = 'b'; m[ml + 1] = 0; }
+    FILE* f = fopen(path, m);
     return (void*)f;
 }
 

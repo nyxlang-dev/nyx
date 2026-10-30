@@ -136,7 +136,15 @@ static int win_errno(DWORD e) {
         case ERROR_SHARING_VIOLATION:
         case ERROR_LOCK_VIOLATION:
         case ERROR_NETWORK_ACCESS_DENIED:
-        case ERROR_WRITE_PROTECT:         return EACCES;
+        case ERROR_WRITE_PROTECT:
+        // Lanzar algo que no es un ejecutable (un .ini, un .exe de otra
+        // arquitectura): EACCES, como execve sobre un archivo sin permiso de
+        // ejecución, para que std/process dé el mismo kind en las dos
+        // plataformas. Antes caía en EIO, «error de E/S», que engaña.
+        // EN: not-an-executable maps to EACCES, matching posix execve.
+        case ERROR_BAD_EXE_FORMAT:
+        case ERROR_EXE_MACHINE_TYPE_MISMATCH:
+        case ERROR_INVALID_EXE_SIGNATURE: return EACCES;
         case ERROR_DIRECTORY:             return ENOTDIR;
         case ERROR_ALREADY_EXISTS:
         case ERROR_FILE_EXISTS:           return EEXIST;
