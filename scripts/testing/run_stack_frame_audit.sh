@@ -72,12 +72,17 @@ cd "$ROOT" || exit 1
 #     con helper +928; compartir el bloque de stdin_eof (misma forma: sin argumentos,
 #     i64 → i1, `@nyx_<nombre>`) lo deja en una comparación más. Llevarlo al prelude no
 #     cabía: el prelude se genera de 5 módulos std/ y ninguno es de concurrencia.
+#   2026-10-30 fricción nyxerp (sort_str y contains): codegen_call_expr 474480 → 474496 (+16,
+#     SUBE). `dst[i] = src[j]` ahora copia el tag del slot de origen (emit_propagated_tag en
+#     codegen_index_assign, lo mismo que ya hacía push), y el propio codegen_call_expr tiene
+#     copias así: es el arreglo aplicado al código del compilador, no un campo nuevo. x86_64:
+#     +16 provisorio, a re-medir exacto en la laptop.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14736
     [codegen_binop]=8672
     [codegen_binop_logico]=21984
-    [codegen_call_expr]=474480
+    [codegen_call_expr]=474496
     [codegen_method_call]=480592
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
@@ -107,7 +112,7 @@ if [ "$(uname -m)" = "x86_64" ]; then
         [codegen_expr]=18168
         [codegen_binop]=10184
         [codegen_binop_logico]=23992
-        [codegen_call_expr]=544264  # +32 del 2026-10-27; medido exacto en WSL x86_64 (W5 Task 3, 2026-10-28)
+        [codegen_call_expr]=544280  # +16 provisorio del 2026-10-30 (tag en dst[i] = src[j]), a re-medir en la laptop
         [codegen_method_call]=541592
     )
     TECHO_NIVEL=28352

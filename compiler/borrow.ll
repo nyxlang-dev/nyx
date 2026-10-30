@@ -8240,16 +8240,22 @@ while_body1028:
   %4086 = load { i64, i8* }*, { i64, i8* }** %4071
   %4087 = load i64, i64* %4079
   %4088 = call i64 @nyx_array_get({ i64, i8* }* %4086, i64 %4087)
-  call void @nyx_array_set({ i64, i8* }* %4084, i64 %4085, i64 %4088)
-  %4089 = load { i64, i8* }*, { i64, i8* }** %4067
+  %4089 = load { i64, i8* }*, { i64, i8* }** %4071
   %4090 = load i64, i64* %4079
-  %4091 = load { i64, i8* }*, { i64, i8* }** %4075
-  %4092 = load i64, i64* %4079
-  %4093 = call i64 @nyx_array_get({ i64, i8* }* %4091, i64 %4092)
-  call void @nyx_array_set({ i64, i8* }* %4089, i64 %4090, i64 %4093)
-  %4094 = load i64, i64* %4079
-  %4095 = add i64 %4094, 1
-  store i64 %4095, i64* %4079
+  %4091 = call i64 @nyx_array_get_tag({ i64, i8* }* %4089, i64 %4090)
+  call void @nyx_array_set_tagged({ i64, i8* }* %4084, i64 %4085, i64 %4088, i64 %4091)
+  %4092 = load { i64, i8* }*, { i64, i8* }** %4067
+  %4093 = load i64, i64* %4079
+  %4094 = load { i64, i8* }*, { i64, i8* }** %4075
+  %4095 = load i64, i64* %4079
+  %4096 = call i64 @nyx_array_get({ i64, i8* }* %4094, i64 %4095)
+  %4097 = load { i64, i8* }*, { i64, i8* }** %4075
+  %4098 = load i64, i64* %4079
+  %4099 = call i64 @nyx_array_get_tag({ i64, i8* }* %4097, i64 %4098)
+  call void @nyx_array_set_tagged({ i64, i8* }* %4092, i64 %4093, i64 %4096, i64 %4099)
+  %4100 = load i64, i64* %4079
+  %4101 = add i64 %4100, 1
+  store i64 %4101, i64* %4079
   br label %while_cond1027
 while_end1029:
   ret i64 0

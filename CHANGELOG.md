@@ -79,6 +79,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `dl`, Ctrl+C real y el drenado de `persist`; `std/serial` solo en errores sin puerto (falta hardware).
 
 ### Arreglado
+- **`contains` e `indexOf` vuelven a encontrar textos después de `sort_str`** [dogfooding:nyxerp]: la ordenación por
+  mezcla movía elementos con `dst[i] = src[j]`, y esa copia de slot a slot dejaba la etiqueta en 0 (desconocido);
+  `contains` y `indexOf` solo comparan por contenido en slots etiquetados como String, así que daban `false` y `-1`
+  sobre un arreglo que sí tenía el texto, sin error. El codegen ahora propaga la etiqueta del origen en una
+  asignación indexada cuyo valor viene de otro slot, y el intercambio de la inserción usa un slot temporal. Queda
+  fichado en `TASKS.md` el caso de una variable sin tipo intermedia (`let t = a[i]; b[k] = t`). Regression +1
+  (`test-521-sort-conserva-tags`, también `sort_by` y `sort_int`); `codegen_call_expr` crece 16 B en la guarda de pila.
 - **Docs: `sort_int`, `sort_str` y `sort_by` ordenan el arreglo que reciben** [dogfooding:nyxerp]: `LLM.md` no los
   documentaba y nada avisaba que ordenan en el lugar y devuelven el mismo arreglo; `let orden = sort_str(claves)`
   desarmó en nyxerp los pares de `claves` con `valores`, sin error. Entrada nueva en `LLM.md` §Array y trampa

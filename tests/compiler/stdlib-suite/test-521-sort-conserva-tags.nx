@@ -1,0 +1,55 @@
+// Después de ordenar, contains/indexOf siguen encontrando los textos
+// (fricción nyxerp 2026-10-29). El sort n·log n movía elementos con
+// `arr[i] = arr[j]` y un temporal sin tipo, y la escritura perdía el tag
+// String del slot: contains comparaba por puntero y daba «no está».
+// Arreglo: dst[i] = src[j] copia el tag del slot de origen (codegen) y el
+// swap del sort usa un slot como temporal (std/array).
+
+fn letras(n: int) -> Array {
+    // n textos en orden inverso, para que el sort mueva todos.
+    var xs: Array = []
+    var i: int = n - 1
+    while i >= 0 {
+        xs.push("k" + int_to_string(1000 + i))
+        i = i - 1
+    }
+    return xs
+}
+
+fn por_texto(a: String, b: String) -> int {
+    return str_compare(a, b)
+}
+
+fn sn(b: bool) -> String {
+    if b { return "sí" }
+    return "no"
+}
+
+fn copia_en_funcion(arr: Array) -> Array {
+    arr[0] = arr[1]
+    return arr
+}
+
+fn main() -> int {
+    var d: Array = ["b", "a"]
+    let _x: Array = sort_str(d)
+    println("chico: " + d.join(",") + " contains=" + sn(d.contains("a")) + " indexOf=" + int_to_string(d.indexOf("a")))
+
+    // Más de 32 elementos: pasa por la fase de mezcla con buffer.
+    var g: Array = letras(80)
+    let _y: Array = sort_str(g)
+    println("grande: " + sn(g.contains("k1000")) + " " + int_to_string(g.indexOf("k1000")) + " " + int_to_string(g.indexOf("k1079")))
+
+    var h: Array = letras(40)
+    let _z: Array = sort_by(h, por_texto)
+    println("sort_by: " + sn(h.contains("k1039")) + " " + int_to_string(h.indexOf("k1000")))
+
+    var n: Array = [3, 1, 2]
+    let _w: Array = sort_int(n)
+    println("sort_int: " + int_to_string(n.indexOf(1)) + " " + sn(n.contains(3)))
+
+    var c: Array = ["b", "a"]
+    let _v: Array = copia_en_funcion(c)
+    println("copia de slot en una fn: " + int_to_string(c.indexOf("a")))
+    return 0
+}
