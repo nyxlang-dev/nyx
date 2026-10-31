@@ -11,6 +11,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Un `let` local ya no es visible antes de su línea**: el pre-pass de declaraciones registraba los `let` de todo
+  bloque, no solo las globales del top-level para las que existe, así que `print(x); let x = 1` y `let args: Array =
+  args()` (la builtin es `get_args()`) pasaban `nyx check` y el build caía en clang con «use of undefined value». Ahora
+  los dos son NYX1002 en el check. Una lambda local que se llama por su nombre, que ya no compilaba, también da
+  NYX1002 (fichado). Reporte de nyxerp; `test-nyx1002-let-local-antes-de-declarar` y `-en-su-propio-valor`.
 - **Lo que se asigna dentro de un `try` llega al `catch`**: antes del `setjmp` el codegen fijaba en memoria solo las
   variables escalares, así que con `-O2` un `String`, `Array` o `Map` reasignado dentro del `try` volvía en el `catch`
   con su valor de ANTES (`s = "en try"` y el `catch` veía `"inicio"`), y lo que asignaba un `catch` interno antes de

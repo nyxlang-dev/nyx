@@ -1708,7 +1708,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1930,6 +1930,14 @@ Before 0.37.0 every other escape silently dropped the backslash: `"\x41"` was `x
 (a warning in 0.36.x). There is no `\e`/`\a`/`\v`/`\f` and no 4-digit
 `\uNNNN`: write `\x1b` and `\u{…}`. In a `char`, `\u{…}` only goes up to `\u{7F}`. Raw `r"…"` and
 multiline `"""…"""` strings process no escapes. [test: compiler/language/test-494-escapes-hex-unicode]
+
+29. **A local `let` is visible from its own line on, not in its own value: a local lambda cannot call itself by name — write a nested `fn`.**
+`let fact = fn(n: int) -> int { ... fact(n - 1) }` inside a function is NYX1002 ('fact' not declared),
+and so is `let args: Array = args()` (the builtin is `get_args()`) or `print(x); let x = 1`. Until 0.40.0
+the checker let all three through and the build failed later in clang with «use of undefined value».
+For recursion, declare `fn fact(n: int) -> int { ... }` inside the function (nested fns see
+themselves and capture like a lambda). Top-level globals are the exception: they are visible to the
+whole module, including functions written above them. [test: compiler/errors/test-nyx1002-let-local-en-su-propio-valor]
 
 <!-- /gen:gotchas -->
 

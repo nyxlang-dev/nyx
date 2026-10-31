@@ -100,7 +100,9 @@ make test               # regression suite, 100% (ARM64) — counts in docs/TEST
 
 > **libgc/bdwgc >= 8.2 required for healthy concurrency under load.** Older versions lack `GC_set_sp_corrector`; the runtime still builds and runs, but the M:N scheduler's collector can crash under concurrent goroutines (it warns loudly on stderr at startup when this happens — it never fails silently).
 
-Linux (x86_64 / ARM64) is fully supported. macOS and Windows are not supported.
+Linux (x86_64 / ARM64) is fully supported, and `nyx build --target x86_64-unknown-linux-gnu` / `aarch64-unknown-linux-gnu` cross-compiles to the other architecture from either one (needs the target's multiarch libraries and `lld`; no emulation, so the result runs on a machine of that architecture).
+
+Windows is **in progress, not supported yet**. Today the compiler can generate IR for `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`; `try`/`catch` (including per goroutine), `std/process`, `std/serve` and TLS work in that target, and a native static `.exe` (the nyxerp bridge) has been built and run on a real PC and over a local network. But that `.exe` is assembled from IR generated on Linux and linked on Windows with a script: `nyx build --target windows` does not exist yet and there is no native Windows toolchain. Windows ARM64 compiles but has not been executed. macOS is not supported.
 
 ## License
 

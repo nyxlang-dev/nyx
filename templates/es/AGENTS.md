@@ -69,7 +69,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name -->
 
 1. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
 2. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
@@ -129,6 +129,7 @@ nombre que dice CUÁL reloj es.**
 35. **Los operadores entre primitivos de clases distintas son NYX1010**
 36. **Escapes de String: `\xNN` y `\u{…}` existen desde 0.37.0; cualquier otro escape desconocido es
 NYX1045.**
+37. **Un `let` local es visible desde su línea, no en su propio valor: una lambda local no puede llamarse por su nombre — escribe una `fn` anidada.**
 
 <!-- /gen:gotchas -->
 

@@ -45,6 +45,7 @@ GOTCHA_IDS=(
   "http-serve-all-interfaces"
   "mixed-primitive-operators"
   "string-escapes"
+  "local-lambda-no-self-name"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
   "prelude-frozen-snapshot"
@@ -131,6 +132,7 @@ ANCLAS=(
   "http_serve_en|http-serve-all-interfaces"
   "NYX1010|mixed-primitive-operators"
   "NYX1045|string-escapes"
+  "closures|local-lambda-no-self-name"
 )
 
 MENTIRAS=(

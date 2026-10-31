@@ -206,6 +206,10 @@ TESTS=(
   # NYX1036 CLÁSICO (sin import transitivo): la transición del resolvedor
   # (fricción nyxerp 20260924-010014-team-1) lo deja como ERROR, no aviso.
   "tests/compiler/errors/test-module-private-classic.nx|error [NYX1036]"
+  # Un `let` local entra al scope en su línea, no antes (el pre-pass de
+  # declaraciones lo pre-registraba como si fuera global). Reporte de nyxerp.
+  "tests/compiler/errors/test-nyx1002-let-local-antes-de-declarar.nx|'x' not declared"
+  "tests/compiler/errors/test-nyx1002-let-local-en-su-propio-valor.nx|'args' not declared"
 )
 
 for entry in "${TESTS[@]}"; do

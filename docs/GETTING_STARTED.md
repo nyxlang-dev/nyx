@@ -31,7 +31,7 @@ with `--sdd` (or, on an existing project, `nyx sdd init`).
 ## Building from source
 
 > This section is for compiler developers who want to build Nyx from the monorepo.
-> Linux only — `install.sh` does not support macOS or Windows.
+> Linux only — `install.sh` does not support macOS or Windows (Windows is in progress; see the README).
 
 ### Install dependencies
 

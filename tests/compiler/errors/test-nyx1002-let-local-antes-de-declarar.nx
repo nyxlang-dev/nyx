@@ -1,0 +1,11 @@
+// Un `let` local no existe antes de su línea. El pre-pass de declaraciones
+// pre-registraba los `let` de TODO bloque (era solo para las globales), así que
+// esto pasaba `nyx check` y el build caía en clang con «use of undefined value
+// '@x'». Reporte de nyxerp (2026-10-30). Tiene que ser NYX1002.
+// EN: a local `let` does not exist before its line; this must be NYX1002.
+fn main() {
+    print(x)
+    let x = 1
+}
+
+main()

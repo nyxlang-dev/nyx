@@ -1,0 +1,11 @@
+// El valor de un `let` local no ve la variable que declara: `args()` acá es una
+// función que no existe (la builtin es `get_args()`), y con el pre-registro
+// resolvía a la propia variable, pasaba `nyx check` y caía en clang («use of
+// undefined value '@args'»). Mismo reporte de nyxerp que el test hermano.
+// EN: a local `let`'s value does not see the variable it declares.
+fn main() {
+    let args: Array = args()
+    print(args.length())
+}
+
+main()

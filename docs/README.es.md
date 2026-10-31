@@ -101,7 +101,9 @@ make test               # suite de regresión, 100% (ARM64) — conteos en TESTS
 
 > **Se requiere libgc/bdwgc >= 8.2 para concurrencia sana bajo carga.** Con versiones anteriores falta `GC_set_sp_corrector`; el runtime igual compila y corre, pero el colector del scheduler M:N puede crashear bajo goroutines concurrentes (avisa fuerte por stderr al arrancar cuando esto pasa — nunca degrada en silencio).
 
-Linux (x86_64 / ARM64) tiene soporte completo. macOS y Windows no están soportados.
+Linux (x86_64 / ARM64) tiene soporte completo, y `nyx build --target x86_64-unknown-linux-gnu` / `aarch64-unknown-linux-gnu` compila de forma cruzada a la otra arquitectura desde cualquiera de las dos (necesita las bibliotecas multiarch del destino y `lld`; no hay emulación, así que el resultado corre en una máquina de esa arquitectura).
+
+Windows está **en curso, todavía sin soporte**. Hoy el compilador genera IR para `x86_64-pc-windows-msvc` y `aarch64-pc-windows-msvc`; `try`/`catch` (también por goroutine), `std/process`, `std/serve` y TLS funcionan en ese target, y un `.exe` nativo estático (el puente de nyxerp) se armó y corrió en una PC real y por la red local. Pero ese `.exe` se arma con IR generado en Linux y se enlaza en Windows con un script: `nyx build --target windows` todavía no existe y no hay toolchain nativa en Windows. Windows ARM64 compila pero no se ha ejecutado. macOS no está soportado.
 
 ## Licencia
 

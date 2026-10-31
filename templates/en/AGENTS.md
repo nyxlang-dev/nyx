@@ -64,7 +64,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`**
 2. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
@@ -122,6 +122,7 @@ WHICH clock.**
 34. **`http_serve`/`http_serve_mt` listen on ALL interfaces (`0.0.0.0`); behind a proxy use `http_serve_en("127.0.0.1", port, handler)`.**
 35. **Operators between primitives of different kinds are NYX1010**
 36. **String escapes: `\xNN` and `\u{…}` exist since 0.37.0; any other unknown escape is NYX1045.**
+37. **A local `let` is visible from its own line on, not in its own value: a local lambda cannot call itself by name — write a nested `fn`.**
 
 <!-- /gen:gotchas -->
 
