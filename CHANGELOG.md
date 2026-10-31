@@ -29,6 +29,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   descubría al fallar el primer `nyx_event_loop_add`, con una línea en stderr por proceso que rompía la salida de
   `test-463`/`464`. Ahora pregunta antes (`nyx_event_loop_has_fd_readiness`) y en win32 arranca con los workers
   leyendo bloqueando; en Linux no cambia nada. Parche de la laptop en W6 Task 3 [arco: w6-windows].
+- **Primer `.exe` nativo de Windows de un programa real**: el caso mínimo del puente de nyxerp (HTTP+TLS, servidor
+  TCP con hilos, mDNS, RSA, Web Push, JSON, archivos y listado de puertos serie) se armó estático —solo DLLs del
+  sistema— y pasó sus 8 pasos en la laptop y en una PC de taller, también atendiendo desde otro equipo de la red
+  local. Todavía se arma con IR generado en Linux y un script de enlace en Windows (W6 Tasks 2 y 4). README y la página
+  de instalación dicen ahora «Windows: en curso, sin soporte» [arco: w6-windows].
 - **El subset de Windows suma los tres tests de `try`/`catch`** (`test-112`, `test-335`, `test-333-try-catch-mt`; 41
   en el manifiesto) y `url.c` y `websocket.c` entran a los TUs del gate local y de los cuatro jobs de
   `windows.yml`, que `std/serve` necesita. El piso del CI sigue en 38 hasta medirlos en aarch64. Gate de la laptop en
