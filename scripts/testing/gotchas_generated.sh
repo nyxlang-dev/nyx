@@ -60,6 +60,7 @@ GOTCHA_IDS=(
   "map-remove-on-field"
   "gc-exhaustion-ordered-error"
   "chr-zero-nul-byte"
+  "contains-direct-slot"
   "array-elem-method-chaining"
   "closure-capture-works"
   "tcp-write-loops-until-sent"

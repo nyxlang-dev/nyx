@@ -3938,6 +3938,7 @@ i64 %handle.param, i1 %is_tls.param) {
   %is_tls.ptr = alloca i1
   store i1 %is_tls.param, i1* %is_tls.ptr
   %62 = call { i64, i8* }* @nyx_array_new_ptr()
+  call void @nyx_array_retag_unknown({ i64, i8* }* %62, i64 2)
   %63 = alloca { i64, i8* }*
   store { i64, i8* }* %62, { i64, i8* }** %63
   %64 = load i64, i64* %handle.ptr
@@ -4836,6 +4837,7 @@ i64 %h.param, { i64, i8* }* %parts.param) {
   %512 = alloca %nyx_string*
   store %nyx_string* %511, %nyx_string** %512
   %513 = call { i64, i8* }* @nyx_array_new_ptr()
+  call void @nyx_array_retag_unknown({ i64, i8* }* %513, i64 2)
   %514 = alloca { i64, i8* }*
   store { i64, i8* }* %513, { i64, i8* }** %514
   %515 = load %nyx_string*, %nyx_string** %512

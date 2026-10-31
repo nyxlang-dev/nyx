@@ -77,13 +77,17 @@ cd "$ROOT" || exit 1
 #     codegen_index_assign, lo mismo que ya hacía push), y el propio codegen_call_expr tiene
 #     copias así: es el arreglo aplicado al código del compilador, no un campo nuevo. x86_64:
 #     +16 provisorio, a re-medir exacto en la laptop.
+#   2026-10-31 fricción nyxerp (contains/indexOf con la casilla de aguja): codegen_method_call
+#     480592 → 475232 (-5360, BAJA). Los cuatro caminos de contains/indexOf sobre Array emiten
+#     por emit_array_search (fresh_temp + dos emit con ctx fuera del marco). La primera versión,
+#     con el tag en línea, la subía +2048 y esta guarda la paró. x86_64: a re-medir en la laptop.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14736
     [codegen_binop]=8672
     [codegen_binop_logico]=21984
     [codegen_call_expr]=474496
-    [codegen_method_call]=480592
+    [codegen_method_call]=475232
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
 TECHO_NIVEL=23408

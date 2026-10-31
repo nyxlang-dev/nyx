@@ -26,6 +26,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`xs.contains(ys[i])` / `xs.indexOf(ys[i])` comparan por contenido cuando la aguja es una casilla de otro `Array`
+  sin `<T>`**: la casilla llegaba como `i64` crudo y se comparaba el puntero, así que con textos armados en ejecución
+  daba `false` / `-1` sin error (fricción de nyxerp). Ahora la búsqueda pasa el tag que la casilla trae en ejecución
+  (`needle_tag_for` en codegen, los cuatro caminos de `contains`/`indexOf`). `tests/ai-first/45-contains-elemento-directo`.
 - **Una llamada calificada `alias.f(...)` a un módulo importado toma el tipo de retorno de la firma de `f`**: antes daba
   tipo desconocido, así que `let campo: String = csv.data_rows(doc)[0]` compilaba y en ejecución daba bytes sin sentido
   (el elemento es la fila, no el campo). Además, `std/csv` tipa sus accesores (`headers`/`get_row` → `Array<String>`,
