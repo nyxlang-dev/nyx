@@ -35,6 +35,9 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   → `Array<Array<int>>`, `sqlite_tables` → `Array<String>`. Antes `let n: int = rows[0][0]` sobre una celda de texto
   compilaba y daba un puntero leído como entero; ahora es NYX1003 (no hay conversión implícita).
   `test-nyx1003-sqlite-celda-como-int`.
+- **`std/multipart` tipa sus partes**: `multipart_parse` → `Array<Array<String>>`; `multipart_field`/`multipart_file` →
+  `Array<String>`. Anotar una parte como `String` es NYX1003; `for parte: Array in multipart_parse(...)` sigue compilando.
+  `test-nyx1003-multipart-parte-como-string`.
 - **`let pn: String = serial_ports()[k]` es NYX1003 en vez de compilar y dar bytes sin sentido**: cada elemento es la
   fila `[nombre, vid:pid, descripción]`, no el nombre, y los arrays no llevan etiqueta de tipo para chequearlo en
   ejecución. Ahora `serial_ports()` declara `Array<Array<String>>` y una anotación `Array` pelada (`let ps: Array =

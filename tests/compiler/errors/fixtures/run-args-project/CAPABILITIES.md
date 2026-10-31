@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 2010324527-2161438 -->
+<!-- nyx-stdlib: 1050520496-2161539 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -124,13 +124,13 @@ Tipos (2) y métodos (0):
 
 `import "std/multipart"` — 8 funciones:
 
-- `pub fn multipart_parse(body: String, content_type: String) -> Array`
+- `pub fn multipart_parse(body: String, content_type: String) -> Array<Array<String>>`
 - `pub fn part_name(p: Array) -> String`
 - `pub fn part_filename(p: Array) -> String`
 - `pub fn part_ctype(p: Array) -> String`
 - `pub fn part_value(p: Array) -> String`
-- `pub fn multipart_field(name: String, value: String) -> Array` — Parte de texto: campo `name` con valor `value`.
-- `pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array` — Parte de archivo: campo `name`, nombre de archivo `filename`, content-type `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
+- `pub fn multipart_field(name: String, value: String) -> Array<String>` — Parte de texto: campo `name` con valor `value`.
+- `pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array<String>` — Parte de archivo: campo `name`, nombre de archivo `filename`, content-type `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
 - `pub fn multipart_build(parts: Array) -> Result<Multipart, Error>`
 
 Tipos (1) y métodos (0):

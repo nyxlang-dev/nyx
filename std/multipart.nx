@@ -99,13 +99,13 @@ const MP_MAX_PARTS: int = 256
 
 // Parses `body` (raw bytes as a String) against the boundary declared in
 // `content_type` (e.g. "multipart/form-data; boundary=X" or
-// 'boundary="X"'). Returns an Array of "part" Arrays — use part_name/
+// 'boundary="X"'). Returns an Array<Array<String>> of "part" Arrays — use part_name/
 // part_filename/part_ctype/part_value to read them (do NOT index a part
 // Array directly outside this module; the 4-slot layout is an
 // implementation detail). Returns an empty Array if `content_type` has no
 // boundary, or if the leading boundary marker never appears in `body`.
-pub fn multipart_parse(body: String, content_type: String) -> Array {
-    var parts: Array = []
+pub fn multipart_parse(body: String, content_type: String) -> Array<Array<String>> {
+    var parts: Array<Array<String>> = []
     let boundary: String = mp_extract_param(content_type, "boundary")
     if boundary.length() == 0 {
         return parts
@@ -142,7 +142,7 @@ pub fn multipart_parse(body: String, content_type: String) -> Array {
             }
 
             let part_data: String = body.substring(pos, part_end)
-            let part: Array = mp_parse_part(part_data)
+            let part: Array<String> = mp_parse_part(part_data)
             if part.length() > 0 {
                 parts.push(part)
             }
@@ -188,8 +188,8 @@ pub fn part_value(p: Array) -> String {
 // [name, filename, part_ctype, value]. Returns an empty Array if the part
 // is malformed (no header/body separator, or no `name` param) — the caller
 // skips it rather than crashing or emitting a garbage part.
-fn mp_parse_part(data: String) -> Array {
-    var result: Array = []
+fn mp_parse_part(data: String) -> Array<String> {
+    var result: Array<String> = []
     let sep_idx: int = mp_index_from(data, "\r\n\r\n", 0)
     if sep_idx < 0 {
         return result
@@ -382,8 +382,8 @@ pub struct Multipart {
 }
 
 /// Parte de texto: campo `name` con valor `value`.
-pub fn multipart_field(name: String, value: String) -> Array {
-    var p: Array = []
+pub fn multipart_field(name: String, value: String) -> Array<String> {
+    var p: Array<String> = []
     p.push(name)
     p.push("")
     p.push("")
@@ -393,8 +393,8 @@ pub fn multipart_field(name: String, value: String) -> Array {
 
 /// Parte de archivo: campo `name`, nombre de archivo `filename`, content-type
 /// `ctype` ("" = application/octet-stream) y los bytes `data` (binario, con NUL).
-pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array {
-    var p: Array = []
+pub fn multipart_file(name: String, filename: String, ctype: String, data: String) -> Array<String> {
+    var p: Array<String> = []
     p.push(name)
     p.push(filename)
     if ctype.length() == 0 {

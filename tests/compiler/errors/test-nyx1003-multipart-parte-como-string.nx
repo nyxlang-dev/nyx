@@ -1,0 +1,12 @@
+// multipart_parse devuelve Array<Array<String>>: cada elemento es la parte
+// (un Array), no un String. Con la firma tipada, anotar la parte como String
+// es NYX1003; antes compilaba y leía el puntero del Array como texto.
+import "std/multipart"
+
+fn main() {
+    let partes = multipart_parse("", "multipart/form-data; boundary=X")
+    let parte: String = partes[0]
+    print(parte)
+}
+
+main()
