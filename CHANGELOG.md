@@ -11,6 +11,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Una llamada calificada `alias.f(...)` a un módulo importado toma el tipo de retorno de la firma de `f`**: antes daba
+  tipo desconocido, así que `let campo: String = csv.data_rows(doc)[0]` compilaba y en ejecución daba bytes sin sentido
+  (el elemento es la fila, no el campo). Además, `std/csv` tipa sus accesores (`headers`/`get_row` → `Array<String>`,
+  `get_all_rows`/`data_rows` → `Array<Array<String>>`); primera familia de la ficha de las funciones de `std/` con
+  `Array` pelado. `test-nyx1003-csv-fila-como-string`.
 - **`let pn: String = serial_ports()[k]` es NYX1003 en vez de compilar y dar bytes sin sentido**: cada elemento es la
   fila `[nombre, vid:pid, descripción]`, no el nombre, y los arrays no llevan etiqueta de tipo para chequearlo en
   ejecución. Ahora `serial_ports()` declara `Array<Array<String>>` y una anotación `Array` pelada (`let ps: Array =

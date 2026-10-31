@@ -27,6 +27,9 @@ import "std/error"
 // ===== TYPES =====
 
 /// CSV document: array of rows, each row is an Array of String fields.
+// Los accesores declaran `Array<Array<String>>`/`Array<String>` aunque el campo
+// sea `Array`: el elemento es fijo, y sin la firma `let s: String = filas[k]`
+// compilaba mudo (2026-10-31). El campo no se toca: es parte del struct público.
 pub struct CsvDoc {
     rows: Array,      // Array of Array (each row = Array of String fields)
     has_header: bool  // true if first row is a header
@@ -115,26 +118,26 @@ pub fn parse_with_delimiter(text: String, delimiter: String, has_header: bool) -
 // ===== ACCESSORS =====
 
 /// Get all rows (including header if present).
-pub fn get_all_rows(doc: CsvDoc) -> Array {
+pub fn get_all_rows(doc: CsvDoc) -> Array<Array<String>> {
     return doc.rows
 }
 
 /// Get header row (first row). Returns empty Array if no header.
-pub fn headers(doc: CsvDoc) -> Array {
+pub fn headers(doc: CsvDoc) -> Array<String> {
     if not doc.has_header { return [] }
     if doc.rows.length() == 0 { return [] }
-    let r: Array = doc.rows[0]
+    let r: Array<String> = doc.rows[0]
     return r
 }
 
 /// Get data rows (skip header if present).
-pub fn data_rows(doc: CsvDoc) -> Array {
-    var result: Array = []
+pub fn data_rows(doc: CsvDoc) -> Array<Array<String>> {
+    var result: Array<Array<String>> = []
     var start = 0
     if doc.has_header { start = 1 }
     var i = start
     while i < doc.rows.length() {
-        let row: Array = doc.rows[i]
+        let row: Array<String> = doc.rows[i]
         result.push(row)
         i = i + 1
     }
@@ -142,9 +145,9 @@ pub fn data_rows(doc: CsvDoc) -> Array {
 }
 
 /// Get a specific row by index (0-based, counting from header if present).
-pub fn get_row(doc: CsvDoc, idx: int) -> Array {
+pub fn get_row(doc: CsvDoc, idx: int) -> Array<String> {
     if idx < 0 or idx >= doc.rows.length() { return [] }
-    let r: Array = doc.rows[idx]
+    let r: Array<String> = doc.rows[idx]
     return r
 }
 

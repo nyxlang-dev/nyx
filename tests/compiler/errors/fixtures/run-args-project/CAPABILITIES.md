@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 3005144519-2156825 -->
+<!-- nyx-stdlib: 142339063-2157153 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -675,10 +675,10 @@ Tipos (4) y métodos (0):
 
 - `pub fn parse(text: String) -> CsvDoc` — Parse CSV text into a CsvDoc (auto-detect headers: first row is headers).
 - `pub fn parse_with_delimiter(text: String, delimiter: String, has_header: bool) -> CsvDoc` — Parse CSV text with custom delimiter and header setting.
-- `pub fn get_all_rows(doc: CsvDoc) -> Array` — Get all rows (including header if present).
-- `pub fn headers(doc: CsvDoc) -> Array` — Get header row (first row). Returns empty Array if no header.
-- `pub fn data_rows(doc: CsvDoc) -> Array` — Get data rows (skip header if present).
-- `pub fn get_row(doc: CsvDoc, idx: int) -> Array` — Get a specific row by index (0-based, counting from header if present).
+- `pub fn get_all_rows(doc: CsvDoc) -> Array<Array<String>>` — Get all rows (including header if present).
+- `pub fn headers(doc: CsvDoc) -> Array<String>` — Get header row (first row). Returns empty Array if no header.
+- `pub fn data_rows(doc: CsvDoc) -> Array<Array<String>>` — Get data rows (skip header if present).
+- `pub fn get_row(doc: CsvDoc, idx: int) -> Array<String>` — Get a specific row by index (0-based, counting from header if present).
 - `pub fn get_field(row: Array, col: int) -> String` — Get a field value from a row by column index.
 - `pub fn get_by_name(doc: CsvDoc, row: Array, col_name: String) -> String` — Get a field value from a data row by column name (using header).
 - `pub fn row_count(doc: CsvDoc) -> int` — Get number of rows (including header if present).
@@ -693,7 +693,7 @@ Tipos (4) y métodos (0):
 
 Tipos (3) y métodos (7):
 
-- `pub struct CsvDoc` — CSV document: array of rows, each row is an Array of String fields.
+- `pub struct CsvDoc`
 - `pub struct CsvOpts` — Opciones del lector columnar: delimitador de un byte, si la primera fila es cabecera, y un tope de filas (0 = todas).
 - `pub struct CsvTable` — Una tabla leída por columnas. Cada columna se pide por nombre y con su tipo del esquema: ints, floats, strs, o codes + dict para una `cat`.
   - `fn rows(self) -> int` — Cantidad de filas de datos (sin la cabecera).

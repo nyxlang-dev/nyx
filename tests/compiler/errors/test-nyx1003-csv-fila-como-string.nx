@@ -1,0 +1,13 @@
+// Cada elemento de csv.data_rows() es una fila (Array<String>), no un campo.
+// La firma lo declara y el check lo rechaza aunque la variable esté anotada
+// como Array pelado; antes compilaba y en ejecución daba bytes sin sentido.
+import "std/csv" as csv
+
+fn main() {
+    let doc = csv.parse("a,b\n1,2\n")
+    let filas: Array = csv.data_rows(doc)
+    let campo: String = filas[0]
+    print(campo)
+}
+
+main()
