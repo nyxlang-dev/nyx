@@ -119,11 +119,11 @@ pub fn kv_cmd(h: int, parts: Array) -> String {
 }
 
 // Send a command expecting a RESP array reply ('*'). Returns the elements as
-// an Array of String. Empty array on error/null.
-pub fn kv_cmd_array(h: int, parts: Array) -> Array {
+// an Array<String> (every element is a String, also integers/simple replies). Empty array on error/null.
+pub fn kv_cmd_array(h: int, parts: Array) -> Array<String> {
     send_cmd(h, parts)
     let header: String = tls_read_line_local(h)
-    var out: Array = []
+    var out: Array<String> = []
     if header.length() == 0 { return out }
     let first: int = header.charAt(0)
     if first != 42 { return out }   // not '*'
@@ -182,7 +182,7 @@ pub fn kv_rpush(h: int, key: String, value: String) -> int {
     return string_to_int(kv_cmd(h, parts))
 }
 
-pub fn kv_lrange(h: int, key: String, start: int, stop: int) -> Array {
+pub fn kv_lrange(h: int, key: String, start: int, stop: int) -> Array<String> {
     let parts: Array = ["LRANGE", key, int_to_string(start), int_to_string(stop)]
     return kv_cmd_array(h, parts)
 }
@@ -199,7 +199,7 @@ pub fn kv_sadd(h: int, key: String, member: String) -> int {
     return string_to_int(kv_cmd(h, parts))
 }
 
-pub fn kv_smembers(h: int, key: String) -> Array {
+pub fn kv_smembers(h: int, key: String) -> Array<String> {
     let parts: Array = ["SMEMBERS", key]
     return kv_cmd_array(h, parts)
 }
@@ -232,7 +232,7 @@ pub fn kv_srem(h: int, key: String, member: String) -> int {
 // TOKEN_LIST — admin only. Returns a FLAT array de pares intercalados:
 // [token1, info1, token2, info2, ...], donde info = "user_id:plan:expires_at:status".
 // (Los consumidores iteran de a 2: el elemento par es el token, el impar su metadata.)
-pub fn kv_token_list(h: int) -> Array {
+pub fn kv_token_list(h: int) -> Array<String> {
     let parts: Array = ["TOKEN_LIST"]
     return kv_cmd_array(h, parts)
 }

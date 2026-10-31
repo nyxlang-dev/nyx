@@ -1,0 +1,12 @@
+// resp_read_command devuelve Array<String>: los argumentos del comando RESP
+// son texto, también los numéricos. Anotar un argumento como int es NYX1003;
+// antes compilaba y leía el puntero del String como entero.
+import "std/resp"
+
+fn main() {
+    let cmd = resp_read_command(0)
+    let n: int = cmd[1]
+    print(n)
+}
+
+main()

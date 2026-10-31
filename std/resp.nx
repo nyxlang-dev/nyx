@@ -55,15 +55,15 @@ fn resp_rx(handle: int, is_tls: bool, n: int) -> String {
 // Reemplaza la duplicación entre resp_read_command y el resp_read_tls del daemon.
 // (n<=0 nunca ocurre: read_exact solo se llama con dlen>0 guardado o 2.)
 //
-// Contrato: devuelve un Array de Strings con el comando y sus argumentos.
+// Contrato: devuelve un Array<String> con el comando y sus argumentos.
 // Devuelve un Array vacío ante cierre de conexión, frame malformado, o
 // short-read/EOF (nunca un valor parcial). Un comando inline (no empieza con
 // '*') se parte por espacios.
 // Contract: returns an Array of Strings (command + args). Returns an empty
 // Array on connection close, malformed frame, or short-read/EOF (never a
 // partial value). An inline command (not starting with '*') is split on spaces.
-pub fn resp_read_framed(handle: int, is_tls: bool) -> Array {
-    let result: Array = []
+pub fn resp_read_framed(handle: int, is_tls: bool) -> Array<String> {
+    let result: Array<String> = []
 
     let header: String = resp_rl(handle, is_tls)
     if header.length() == 0 {
@@ -109,7 +109,7 @@ pub fn resp_read_framed(handle: int, is_tls: bool) -> Array {
 }
 
 // Wrapper TCP (compat: firma pública sin cambios; el loop vive en resp_read_framed).
-pub fn resp_read_command(fd: int) -> Array {
+pub fn resp_read_command(fd: int) -> Array<String> {
     return resp_read_framed(fd, false)
 }
 

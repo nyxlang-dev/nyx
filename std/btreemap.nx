@@ -48,13 +48,13 @@ pub fn btree_remove(bt: Map<String>, key: String) {
 }
 
 // Internal: get all live keys (unordered)
-fn btree_live_keys(bt: Map<String>) -> Array {
+fn btree_live_keys(bt: Map<String>) -> Array<String> {
     return bt.keys()
 }
 
-// Get all keys in sorted order (ascending)
-pub fn btree_keys_sorted(bt: Map<String>) -> Array {
-    let keys: Array = btree_live_keys(bt)
+// Get all keys in sorted order (ascending). Array<String>: las claves son String.
+pub fn btree_keys_sorted(bt: Map<String>) -> Array<String> {
+    let keys: Array<String> = btree_live_keys(bt)
     let n = keys.length()
     // Insertion sort
     var si = 1
@@ -105,10 +105,10 @@ pub fn btree_size(bt: Map<String>) -> int {
     return keys.length()
 }
 
-// Entries in sorted order as "key=value" strings
-pub fn btree_entries(bt: Map<String>) -> Array {
-    let sorted: Array = btree_keys_sorted(bt)
-    var result = []
+// Entries in sorted order as "key=value" strings (Array<String>)
+pub fn btree_entries(bt: Map<String>) -> Array<String> {
+    let sorted: Array<String> = btree_keys_sorted(bt)
+    var result: Array<String> = []
     var i = 0
     while i < sorted.length() {
         let k: String = sorted[i]
@@ -120,9 +120,9 @@ pub fn btree_entries(bt: Map<String>) -> Array {
 }
 
 // Range query: keys >= lo and <= hi (sorted)
-pub fn btree_range(bt: Map<String>, lo: String, hi: String) -> Array {
-    let sorted: Array = btree_keys_sorted(bt)
-    var result = []
+pub fn btree_range(bt: Map<String>, lo: String, hi: String) -> Array<String> {
+    let sorted: Array<String> = btree_keys_sorted(bt)
+    var result: Array<String> = []
     var i = 0
     while i < sorted.length() {
         let k: String = sorted[i]

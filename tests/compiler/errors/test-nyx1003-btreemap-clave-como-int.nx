@@ -1,0 +1,13 @@
+// btree_keys_sorted devuelve Array<String>: las claves del árbol son texto.
+// Anotar una clave como int es NYX1003; antes compilaba y leía el puntero
+// del String como entero.
+import "std/btreemap"
+
+fn main() {
+    let bt: Map<String> = btree_new()
+    let claves = btree_keys_sorted(bt)
+    let n: int = claves[0]
+    print(n)
+}
+
+main()

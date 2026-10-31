@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 1050520496-2161539 -->
+<!-- nyx-stdlib: 44078797-2161797 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -437,21 +437,21 @@ Tipos (1) y métodos (0):
 - `pub fn kv_close(h: int)`
 - `pub fn read_bulk(h: int, header: String) -> String`
 - `pub fn kv_cmd(h: int, parts: Array) -> String`
-- `pub fn kv_cmd_array(h: int, parts: Array) -> Array`
+- `pub fn kv_cmd_array(h: int, parts: Array) -> Array<String>`
 - `pub fn kv_set(h: int, key: String, value: String) -> bool`
 - `pub fn kv_setex(h: int, key: String, ttl: int, value: String) -> bool`
 - `pub fn kv_get(h: int, key: String) -> String`
 - `pub fn kv_del(h: int, key: String) -> int`
 - `pub fn kv_rpush(h: int, key: String, value: String) -> int`
-- `pub fn kv_lrange(h: int, key: String, start: int, stop: int) -> Array`
+- `pub fn kv_lrange(h: int, key: String, start: int, stop: int) -> Array<String>`
 - `pub fn kv_llen(h: int, key: String) -> int`
 - `pub fn kv_sadd(h: int, key: String, member: String) -> int`
-- `pub fn kv_smembers(h: int, key: String) -> Array`
+- `pub fn kv_smembers(h: int, key: String) -> Array<String>`
 - `pub fn kv_whoami(h: int) -> String`
 - `pub fn kv_token_create(h: int, user_id: String, plan: String, ttl: int) -> String`
 - `pub fn kv_exists(h: int, key: String) -> bool`
 - `pub fn kv_srem(h: int, key: String, member: String) -> int`
-- `pub fn kv_token_list(h: int) -> Array`
+- `pub fn kv_token_list(h: int) -> Array<String>`
 - `pub fn kv_token_revoke(h: int, token: String) -> bool`
 
 ### `std/postgres`
@@ -516,8 +516,8 @@ Tipos (2) y métodos (0):
 `import "std/resp"` — 11 funciones:
 
 - `pub fn resp_parse_len(s: String) -> int`
-- `pub fn resp_read_framed(handle: int, is_tls: bool) -> Array`
-- `pub fn resp_read_command(fd: int) -> Array`
+- `pub fn resp_read_framed(handle: int, is_tls: bool) -> Array<String>`
+- `pub fn resp_read_command(fd: int) -> Array<String>`
 - `pub fn resp_simple_string(s: String) -> String`
 - `pub fn resp_error(msg: String) -> String`
 - `pub fn resp_integer(n: int) -> String`
@@ -1762,12 +1762,12 @@ Tipos (1) y métodos (5):
 - `pub fn btree_get_int(bt: Map<String>, key: String) -> int`
 - `pub fn btree_has(bt: Map<String>, key: String) -> bool`
 - `pub fn btree_remove(bt: Map<String>, key: String)`
-- `pub fn btree_keys_sorted(bt: Map<String>) -> Array`
+- `pub fn btree_keys_sorted(bt: Map<String>) -> Array<String>`
 - `pub fn btree_min_key(bt: Map<String>) -> String`
 - `pub fn btree_max_key(bt: Map<String>) -> String`
 - `pub fn btree_size(bt: Map<String>) -> int`
-- `pub fn btree_entries(bt: Map<String>) -> Array`
-- `pub fn btree_range(bt: Map<String>, lo: String, hi: String) -> Array`
+- `pub fn btree_entries(bt: Map<String>) -> Array<String>`
+- `pub fn btree_range(bt: Map<String>, lo: String, hi: String) -> Array<String>`
 
 ### `std/graph`
 

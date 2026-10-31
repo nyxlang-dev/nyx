@@ -38,6 +38,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **`std/multipart` tipa sus partes**: `multipart_parse` → `Array<Array<String>>`; `multipart_field`/`multipart_file` →
   `Array<String>`. Anotar una parte como `String` es NYX1003; `for parte: Array in multipart_parse(...)` sigue compilando.
   `test-nyx1003-multipart-parte-como-string`.
+- **`std/kvclient` tipa sus listas**: `kv_cmd_array`, `kv_lrange`, `kv_smembers` y `kv_token_list` → `Array<String>` (todo
+  elemento RESP llega como texto, también los enteros). Anotar un miembro como `int` es NYX1003; `let m: Array = kv_smembers(...)`
+  sigue compilando. `test-nyx1003-kvclient-miembro-como-int`.
+- **`std/resp` tipa los comandos leídos**: `resp_read_framed` y `resp_read_command` → `Array<String>` (el comando y sus
+  argumentos son texto, también los numéricos). Anotar un argumento como `int` es NYX1003; `let cmd: Array = resp_read_command(fd)`
+  sigue compilando. `test-nyx1003-resp-argumento-como-int`.
+- **`std/btreemap` tipa sus listas**: `btree_keys_sorted`, `btree_entries` y `btree_range` → `Array<String>` (las claves y
+  las entradas `clave=valor` son texto). Anotar una clave como `int` es NYX1003; `let ks: Array = btree_keys_sorted(bt)`
+  sigue compilando. `test-nyx1003-btreemap-clave-como-int`.
 - **`let pn: String = serial_ports()[k]` es NYX1003 en vez de compilar y dar bytes sin sentido**: cada elemento es la
   fila `[nombre, vid:pid, descripción]`, no el nombre, y los arrays no llevan etiqueta de tipo para chequearlo en
   ejecución. Ahora `serial_ports()` declara `Array<Array<String>>` y una anotación `Array` pelada (`let ps: Array =
