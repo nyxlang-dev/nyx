@@ -88,8 +88,7 @@
 #   runtime/persist.c, que no está en el subset.
 # * test-112-try-catch / test-335-try-catch-return-path: try/catch estuvo
 #   gateado para el triple windows hasta 2026-10-30; desde entonces el codegen
-#   emite _setjmp(buf, NULL). Entran al subset con la W6 Task 3, al verificarse
-#   en Windows.
+#   emite _setjmp(buf, NULL). ENTRARON con la W6 Task 3 (5/5 en la laptop).
 # * test-123-full-asm: inline asm, gateado igual.
 # * test-144-sync: mutex_new → win_forbidden_builtin.
 # * test-137-bench: su salida incluye tiempos — no determinista ni en Linux.
@@ -166,6 +165,8 @@ tests/compiler/stdlib-suite/test-130-if-let.nx	tests/compiler/stdlib-suite/expec
 tests/compiler/types/test-355-result-struct-payload.nx	tests/compiler/types/expected/test-355-result-struct-payload.expected
 tests/compiler/types/test-360-unwrap-familia.nx	tests/compiler/types/expected/test-360-unwrap-familia.expected
 tests/compiler/types/test-372-std-error.nx	tests/compiler/types/expected/test-372-std-error.expected
+tests/compiler/stdlib-suite/test-112-try-catch.nx	tests/compiler/stdlib-suite/expected/test-112-try-catch.expected
+tests/compiler/language/test-335-try-catch-return-path.nx	tests/compiler/language/expected/test-335-try-catch-return-path.expected
 
 # ============================================================================
 # W3 Task 5 — CONCURRENCIA (12 de los 13 tests del inventario del plan W3).
@@ -183,8 +184,10 @@ tests/compiler/types/test-372-std-error.nx	tests/compiler/types/expected/test-37
 #   (hallazgo H1 de docs/design/reviews/2026-09-10-w3-rama-pre-merge.md).
 #   OJO al re-correr el gate local: esos 4 .win.ll cambiaron DESPUES de
 #   medirse el 36/36, asi que hay que regenerarlos y re-correrlos.
-# - EXCLUIDO test-333-try-catch-mt: try/catch no estaba soportado en el target
-#   windows; desde 2026-10-30 va por _setjmp(buf, NULL) y entra con la W6 Task 3.
+# - test-333-try-catch-mt: excluido mientras try/catch no estaba soportado en el
+#   target windows; ENTRÓ con la W6 Task 3 (_setjmp(buf, NULL), 5/5 en la laptop).
+#   test-522-try-por-goroutine NO entra todavía: no tiene expected ni assert
+#   propio (imprime «atraparon 200/200»), y NONE exige assert (regla de arriba).
 # - EXCLUIDO test-352 (señales): W5 (SetConsoleCtrlHandler), exclusion
 #   heredada del plan W3 (misma clase que sqlite en W2).
 # ============================================================================
@@ -200,3 +203,4 @@ tests/compiler/language/test-243-spawn-goroutines.nx	NONE
 tests/compiler/language/test-257-spawn-capture.nx	NONE
 tests/compiler/language/test-277-fn-run-name.nx	NONE
 tests/compiler/language/test-380-wg-wait-timeout.nx	tests/compiler/language/expected/test-380-wg-wait-timeout.expected
+tests/compiler/language/test-333-try-catch-mt.nx	tests/compiler/language/expected/test-333-try-catch-mt.expected

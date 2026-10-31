@@ -19,6 +19,11 @@ typedef void (*nyx_ev_callback)(int fd, int events, void* userdata);
 NyxEventLoop* nyx_event_loop_create(void);
 void          nyx_event_loop_destroy(NyxEventLoop* loop);
 
+// ¿El loop avisa readiness de fds? 1 en posix (epoll/poll), 0 en win32
+// (IOCP, solo timers). Para preguntarlo ANTES de registrar un fd, sin el -1
+// ruidoso de add. / Does the loop support fd readiness? 1 posix, 0 win32.
+int nyx_event_loop_has_fd_readiness(void);
+
 // Add/modify/remove fd
 int nyx_event_loop_add(NyxEventLoop* loop, int fd, int events, nyx_ev_callback cb, void* userdata);
 int nyx_event_loop_modify(NyxEventLoop* loop, int fd, int events);

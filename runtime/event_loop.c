@@ -145,6 +145,8 @@ static int ev_claim_slot(NyxEventLoop* loop) {
     return loop->fd_count++;
 }
 
+int nyx_event_loop_has_fd_readiness(void) { return 1; }
+
 int nyx_event_loop_add(NyxEventLoop* loop, int fd, int events,
                         nyx_ev_callback cb, void* userdata) {
     if (!loop || fd < 0) return -1;

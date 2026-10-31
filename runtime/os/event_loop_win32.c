@@ -62,6 +62,10 @@ void nyx_event_loop_destroy(NyxEventLoop* loop) {
     free(loop);
 }
 
+// Sin readiness: quien estaciona fds (nyx_http_park) lo pregunta antes y no
+// llega al -1 ruidoso de add. / No fd readiness; callers ask first.
+int nyx_event_loop_has_fd_readiness(void) { return 0; }
+
 // fd events: la readiness no se emula sobre IOCP (Task 2). -1 ruidoso.
 int nyx_event_loop_add(NyxEventLoop* loop, int fd, int events, nyx_ev_callback cb, void* userdata) {
     (void)loop; (void)events; (void)cb; (void)userdata;

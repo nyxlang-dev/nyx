@@ -39,10 +39,11 @@ TMO="${NYX_GATE_TIMEOUT:-30}"
 # red (UDP, ping, http://) lo piden y no depende de OpenSSL; random.c, porque
 # std/http lo arrastra (boundary de multipart). persist.c y compress.c entraron
 # en la Task 5: persist (apagado por SetConsoleCtrlHandler) y zlib por dl, sin
-# zlib.h ni enlace.
+# zlib.h ni enlace. url.c y websocket.c entraron en la Task 3 de W6: std/serve
+# (test-463/464/505) y std/web los piden (nyx_url_decode, el handshake de WS).
 TUS="strings.c runtime-arrays.c maps.c time.c iterators.c sqlite_adapter.c csv.c
 file-io.c runtime.c thread.c scheduler.c net.c random.c persist.c compress.c
-os/event_loop_win32.c os/os_win32.c"
+os/event_loop_win32.c os/os_win32.c url.c websocket.c"
 
 # TLS (W5 Task 4, opción A de Ottavio): net.c no depende de OpenSSL, pero tls.c
 # (https_*/http_* y tls_*) y crypto.c sí, y se enlazan contra el OpenSSL

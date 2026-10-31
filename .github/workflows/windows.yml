@@ -188,7 +188,9 @@ jobs:
                      runtime/compress.c \
                      runtime/os/event_loop_win32.c \
                      tests/runtime-unit/win/test_w3_task4_load.c \
-                     runtime/os/os_win32.c ; do
+                     runtime/os/os_win32.c \
+                     runtime/url.c \
+                     runtime/websocket.c ; do
             base=$(basename "$src" .c)
             # M12 (review ronda 1): -Werror SOLO sobre os_win32.c — el archivo
             # que esta task escribe. Compiló con 0 warnings desde la iteración
@@ -489,7 +491,9 @@ jobs:
                      runtime/persist.c \
                      runtime/compress.c \
                      runtime/os/event_loop_win32.c \
-                     runtime/os/os_win32.c ; do
+                     runtime/os/os_win32.c \
+                     runtime/url.c \
+                     runtime/websocket.c ; do
             base=$(basename "$src" .c)
             # -Werror sobre os_win32.c, igual que en w2-compile (review de
             # rama W2, M4). Es el MISMO archivo compilado dos veces en el mismo
@@ -507,7 +511,7 @@ jobs:
             clang $CFLAGS $EXTRA "$src" -o "objs/$base.obj" || FAIL=1
           done
           [ "$FAIL" -eq 0 ] || { echo "w2-subset: el subset del runtime no compila"; exit 1; }
-          echo "17 TUs del subset compilados a .obj"
+          echo "19 TUs del subset compilados a .obj"
 
       - name: Link + RUN + diff each test
         shell: bash
@@ -709,7 +713,7 @@ jobs:
   # comportamiento del GC de Boehm compilado PARA arm64 (escaneo de registros
   # y de stack son código ensamblador por arquitectura).
   #
-  # Espejo deliberado de w2-subset: mismos 17 TUs, mismos flags (+ -Werror
+  # Espejo deliberado de w2-subset: mismos 19 TUs, mismos flags (+ -Werror
   # sobre os_win32.c), mismo link/run/diff con el rc gateando, mismo FLOOR.
   # Las ÚNICAS diferencias son el triple, el triplet de vcpkg y el arch de
   # vcvarsall. La duplicación es a propósito: si los dos jobs divergieran en
@@ -834,7 +838,9 @@ jobs:
                      runtime/persist.c \
                      runtime/compress.c \
                      runtime/os/event_loop_win32.c \
-                     runtime/os/os_win32.c ; do
+                     runtime/os/os_win32.c \
+                     runtime/url.c \
+                     runtime/websocket.c ; do
             base=$(basename "$src" .c)
             # -Werror sobre os_win32.c igual que en los otros dos jobs (M12/M4):
             # el ARM64 es donde un warning nuevo sería MÁS informativo
@@ -850,7 +856,7 @@ jobs:
             cat "objs/$base.diag"
           done
           [ "$FAIL" -eq 0 ] || { echo "w2-subset-arm64: el subset del runtime no compila para aarch64"; exit 1; }
-          echo "17 TUs del subset compilados a .obj (aarch64-pc-windows-msvc)"
+          echo "19 TUs del subset compilados a .obj (aarch64-pc-windows-msvc)"
 
       - name: Link + RUN + diff each test (ARM64 nativo)
         shell: bash
@@ -1042,7 +1048,7 @@ jobs:
           GC_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows"
           SSL_DIR="$VCPKG_INSTALLATION_ROOT/installed/x64-windows-static"
           mkdir -p objs bin out
-          # Mismos 17 TUs y flags que w2-subset, más los dos de TLS.
+          # Mismos 19 TUs y flags que w2-subset, más los dos de TLS.
           FAIL=0
           for src in runtime/strings.c runtime/runtime-arrays.c runtime/maps.c \
                      runtime/time.c runtime/iterators.c runtime/sqlite_adapter.c \
@@ -1050,7 +1056,8 @@ jobs:
                      runtime/thread.c runtime/scheduler.c runtime/net.c \
                      runtime/random.c runtime/persist.c runtime/compress.c \
                      runtime/os/event_loop_win32.c \
-                     runtime/os/os_win32.c runtime/tls.c runtime/crypto.c ; do
+                     runtime/os/os_win32.c runtime/url.c runtime/websocket.c \
+                     runtime/tls.c runtime/crypto.c ; do
             base=$(basename "$src" .c)
             EXTRA=""
             if [ "$src" = "runtime/os/os_win32.c" ]; then EXTRA="-Werror"; fi

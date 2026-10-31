@@ -933,6 +933,11 @@ static void park_init_once(void) {
     // Capacidad = todos los fds posibles: el estacionamiento casi nunca
     // espera por cola llena.
     g_park.ch = nyx_channel_new(NYX_MAX_CONN_BUFS);
+    // Sin readiness de fds (win32) no hay nada que estacionar: los workers
+    // leen bloqueando, como antes. Preguntarlo acá evita el aviso de
+    // nyx_event_loop_add en la primera conexión de cada proceso.
+    // EN: no fd readiness (win32) -> no parking, workers read blocking.
+    if (!nyx_event_loop_has_fd_readiness()) { g_park.disabled = 1; g_park.started = 1; return; }
     g_park.loop = nyx_event_loop_create();
     if (!g_park.loop) { g_park.disabled = 1; g_park.started = 1; return; }
     if (os_thread_create(&g_park.th, park_thread_main, NULL) != 0) {

@@ -20,6 +20,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   resolver el host, y en Windows la primera consulta en frío tarda ~11 s, así que salía `timeout` 110 sin haber
   intentado conectar. Ahora el plazo arranca después de resolver, como en `tcp_connect_ms`. Hallazgo y parche de la
   laptop en W6 Task 3 [arco: w6-windows].
+- **`std/serve` ya no avisa «readiness de fds no soportada» en Windows**: el estacionamiento de conexiones lo
+  descubría al fallar el primer `nyx_event_loop_add`, con una línea en stderr por proceso que rompía la salida de
+  `test-463`/`464`. Ahora pregunta antes (`nyx_event_loop_has_fd_readiness`) y en win32 arranca con los workers
+  leyendo bloqueando; en Linux no cambia nada. Parche de la laptop en W6 Task 3 [arco: w6-windows].
+- **El subset de Windows suma los tres tests de `try`/`catch`** (`test-112`, `test-335`, `test-333-try-catch-mt`; 41
+  en el manifiesto) y `url.c` y `websocket.c` entran a los TUs del gate local y de los cuatro jobs de
+  `windows.yml`, que `std/serve` necesita. El piso del CI sigue en 38 hasta medirlos en aarch64. Gate de la laptop en
+  W6 Task 3 [arco: w6-windows].
 - **`test-523-try-catch-tres-casos`**: `try` simple, anidado que relanza y dentro de una goroutine que se suspende,
   con su IR para Windows en `tests/win-fixtures/` para que la laptop lo corra nativo [arco: w6-windows].
 - **Un `spawn` dentro de un bucle ya no captura en silencio la variable de la última iteración**: un `let`/`var`
