@@ -1,0 +1,14 @@
+// El caso real: cada elemento de serial_ports() es la fila [nombre, vid:pid,
+// descripción], no el nombre. La firma lo dice (Array<Array<String>>) y el
+// check lo rechaza aunque la variable esté anotada como Array pelado.
+import "std/serial"
+
+fn main() {
+    let ps: Array = serial_ports()
+    if ps.length() > 0 {
+        let pn: String = ps[0]
+        print(pn)
+    }
+}
+
+main()

@@ -1,0 +1,17 @@
+// `let ps: Array = f()` no borra el tipo de elemento que declara la firma de
+// `f`: con `-> Array<Array<String>>`, tomar `ps[k]` como String es NYX1003.
+// Antes la anotación pelada lo tapaba, compilaba sin aviso y en ejecución el
+// String apuntaba al array interno (bytes sin sentido; kit de la W6 Task 3).
+// EN: a bare `Array` annotation keeps the element type of the callee's signature.
+fn filas() -> Array<Array<String>> {
+    let r: Array<Array<String>> = [["COM1", "", "puerto"]]
+    return r
+}
+
+fn main() {
+    let ps: Array = filas()
+    let nombre: String = ps[0]
+    print(nombre)
+}
+
+main()

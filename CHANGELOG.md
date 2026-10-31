@@ -11,6 +11,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`let pn: String = serial_ports()[k]` es NYX1003 en vez de compilar y dar bytes sin sentido**: cada elemento es la
+  fila `[nombre, vid:pid, descripción]`, no el nombre, y los arrays no llevan etiqueta de tipo para chequearlo en
+  ejecución. Ahora `serial_ports()` declara `Array<Array<String>>` y una anotación `Array` pelada (`let ps: Array =
+  f()`) conserva el tipo de elemento que declara la firma de `f`, en vez de borrarlo. Las otras 119 funciones de `std/`
+  que devuelven `Array` sin elemento quedan fichadas. Hallado en el kit de la W6 Task 3;
+  `test-nyx1003-array-anotado-conserva-elemento` y `-serial-ports-fila-como-string` [arco: w6-windows].
 - **Un `let` local ya no es visible antes de su línea**: el pre-pass de declaraciones registraba los `let` de todo
   bloque, no solo las globales del top-level para las que existe, así que `print(x); let x = 1` y `let args: Array =
   args()` (la builtin es `get_args()`) pasaban `nyx check` y el build caía en clang con «use of undefined value». Ahora

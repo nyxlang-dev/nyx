@@ -210,6 +210,10 @@ TESTS=(
   # declaraciones lo pre-registraba como si fuera global). Reporte de nyxerp.
   "tests/compiler/errors/test-nyx1002-let-local-antes-de-declarar.nx|'x' not declared"
   "tests/compiler/errors/test-nyx1002-let-local-en-su-propio-valor.nx|'args' not declared"
+  # Una anotación `Array` pelada conserva el elemento de la firma de la fn
+  # llamada (kit de la W6 Task 3: `let pn: String = serial_ports()[k]`).
+  "tests/compiler/errors/test-nyx1003-array-anotado-conserva-elemento.nx|type mismatch in 'nombre': expected String, got Array<String>"
+  "tests/compiler/errors/test-nyx1003-serial-ports-fila-como-string.nx|type mismatch in 'pn': expected String, got Array<String>"
 )
 
 for entry in "${TESTS[@]}"; do

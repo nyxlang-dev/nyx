@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 704747730-2156647 -->
+<!-- nyx-stdlib: 3005144519-2156825 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -881,7 +881,7 @@ Tipos (4) y métodos (1):
 - `pub fn try_serial_read(p: SerialPort, max: int, timeout_ms: int) -> Result<String, Error>`
 - `pub fn try_serial_read_until(p: SerialPort, fin: int, max: int, timeout_ms: int) -> Result<String, Error>`
 - `pub fn try_serial_close(p: SerialPort) -> Result<int, Error>`
-- `pub fn serial_ports() -> Array`
+- `pub fn serial_ports() -> Array<Array<String>>`
 - `pub fn serial_bytes_to_array(s: String) -> Array`
 - `pub fn serial_array_to_bytes(a: Array) -> String`
 
