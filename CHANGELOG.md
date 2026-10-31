@@ -16,6 +16,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   con su valor de ANTES (`s = "en try"` y el `catch` veía `"inicio"`), y lo que asignaba un `catch` interno antes de
   relanzar se perdía. Ahora ancla todas las variables vivas, con el tipo de cada `alloca` leído del IR. Hallado al
   armar el caso de la W6 Task 3; `test-524` [arco: w6-windows].
+- **La primera conexión HTTPS ya no falla por un DNS lento**: `tls_connect` arrancaba su plazo de 10 s ANTES de
+  resolver el host, y en Windows la primera consulta en frío tarda ~11 s, así que salía `timeout` 110 sin haber
+  intentado conectar. Ahora el plazo arranca después de resolver, como en `tcp_connect_ms`. Hallazgo y parche de la
+  laptop en W6 Task 3 [arco: w6-windows].
 - **`test-523-try-catch-tres-casos`**: `try` simple, anidado que relanza y dentro de una goroutine que se suspende,
   con su IR para Windows en `tests/win-fixtures/` para que la laptop lo corra nativo [arco: w6-windows].
 - **Un `spawn` dentro de un bucle ya no captura en silencio la variable de la última iteración**: un `let`/`var`

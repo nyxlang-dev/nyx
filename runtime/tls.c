@@ -1242,10 +1242,15 @@ static int tls_wait_fd(int fd, int events, int64_t deadline_ns) {
     }
 }
 
-// Connect TCP con plazo total sobre todas las direcciones del host. Devuelve el
-// fd conectado y todavía NO bloqueante (el handshake sigue con el mismo plazo),
-// o -1 con *status = -errno y el detalle escrito.
-static int tcp_connect_deadline(const char* host, int port, int64_t deadline_ns,
+// Connect TCP con plazo total sobre todas las direcciones del host. El plazo
+// (connect_ms; <= 0 = sin plazo) arranca DESPUÉS de resolver, como dice el
+// bloque de arriba, y se devuelve en *deadline_out para que el handshake siga
+// con el mismo. Antes arrancaba antes del getaddrinfo: un DNS lento (11 s la
+// primera consulta en frío, medido en win32 en W6 Task 3) se comía el plazo
+// y salía como «el connect no respondió» (110) sin haber intentado conectar.
+// Devuelve el fd conectado y todavía NO bloqueante, o -1 con *status = -errno
+// y el detalle escrito.
+static int tcp_connect_deadline(const char* host, int port, int64_t connect_ms, int64_t* deadline_out,
                                 int* status, char* detail, size_t dlen) {
     os_addr_t addrs[8];
     int n = os_addr_resolve_any(host, port, addrs, 8, NULL);
@@ -1257,6 +1262,8 @@ static int tcp_connect_deadline(const char* host, int port, int64_t deadline_ns,
         snprintf(detail, dlen, "no se pudo resolver el host '%s'", host);
         return -1;
     }
+    int64_t deadline_ns = connect_ms > 0 ? os_monotonic_ns() + connect_ms * 1000000LL : 0;
+    *deadline_out = deadline_ns;
     int last = -ECONNREFUSED;
     for (int i = 0; i < n; i++) {
         int64_t s = os_sock_stream_for(&addrs[i]);
@@ -1427,8 +1434,8 @@ static int64_t tls_connect_once(const char* host, int port, int64_t verify_mode,
         return 0;
     }
 
-    int64_t deadline = connect_ms > 0 ? os_monotonic_ns() + connect_ms * 1000000LL : 0;
-    int fd = tcp_connect_deadline(host, port, deadline, status, detail, dlen);
+    int64_t deadline = 0;
+    int fd = tcp_connect_deadline(host, port, connect_ms, &deadline, status, detail, dlen);
     if (fd < 0) { tls_client_id_free(&cid); return 0; }
 
     SSL* ssl = SSL_new(ctx);
