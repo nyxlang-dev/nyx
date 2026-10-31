@@ -108,16 +108,16 @@ pub fn sqlite_exec(db: *int, sql: String) -> bool {
 }
 
 // Query: returns Array of rows, each row is an Array of String values
-/// Array de filas; cada fila es Array y TODA celda es String, incluidas las columnas INTEGER: convertir con string_to_int(), o pedir la columna por la vía tipada sqlite_query_int/sqlite_query_one_int (int de 64 bits reales). Anotar la celda como `int` NO la convierte: lee los bits del String. Una celda SQL NULL vuelve como sqlite_null() — preguntar con sqlite_is_null(), nunca con `== ""`.
-pub fn sqlite_query(db: *int, sql: String) -> Array {
+/// Array de filas; cada fila es Array y TODA celda es String, incluidas las columnas INTEGER: convertir con string_to_int(), o pedir la columna por la vía tipada sqlite_query_int/sqlite_query_one_int (int de 64 bits reales). Anotar la celda como `int` es NYX1003 (la firma declara `Array<Array<String>>`): no hay conversión implícita. Una celda SQL NULL vuelve como sqlite_null() — preguntar con sqlite_is_null(), nunca con `== ""`.
+pub fn sqlite_query(db: *int, sql: String) -> Array<Array<String>> {
     let stmt = nyx_sqlite_prepare(db, sql)
-    var rows = []
+    var rows: Array<Array<String>> = []
     var done = false
     while not done {
         let rc = nyx_sqlite_step(stmt)
         if rc == 1 {
             let ncols = nyx_sqlite_column_count(stmt)
-            var row = []
+            var row: Array<String> = []
             var c = 0
             while c < ncols {
                 let val: String = sqlite_cell(stmt, c)
@@ -135,14 +135,14 @@ pub fn sqlite_query(db: *int, sql: String) -> Array {
 
 // Query returning column names (first call) then rows
 /// Como sqlite_query pero ANTEPONE una fila de headers: N+1 elementos, la fila 0 son los nombres de columna. Mismas reglas de celda: String siempre, NULL vía sqlite_is_null().
-pub fn sqlite_query_named(db: *int, sql: String) -> Array {
+pub fn sqlite_query_named(db: *int, sql: String) -> Array<Array<String>> {
     let stmt = nyx_sqlite_prepare(db, sql)
-    var result = []
+    var result: Array<Array<String>> = []
 
     // Get column names first
     // We need at least one step to know col count... actually col count available before step
     let ncols = nyx_sqlite_column_count(stmt)
-    var headers = []
+    var headers: Array<String> = []
     var ci = 0
     while ci < ncols {
         let name: String = nyx_sqlite_column_name(stmt, ci)
@@ -155,7 +155,7 @@ pub fn sqlite_query_named(db: *int, sql: String) -> Array {
     while not done {
         let rc = nyx_sqlite_step(stmt)
         if rc == 1 {
-            var row = []
+            var row: Array<String> = []
             var c = 0
             while c < ncols {
                 let val: String = sqlite_cell(stmt, c)
@@ -388,15 +388,15 @@ pub fn sqlite_rollback(db: *int) -> bool {
 
 // Query returning rows of int values
 /// Filas de int REALES de 64 bits (sqlite3_column_int64) — la vía tipada para columnas numéricas, sin string_to_int. Una columna no numérica da 0, y un NULL también: si hay que distinguirlos, leer esa columna con sqlite_query y sqlite_is_null().
-pub fn sqlite_query_int(db: *int, sql: String) -> Array {
+pub fn sqlite_query_int(db: *int, sql: String) -> Array<Array<int>> {
     let stmt = nyx_sqlite_prepare(db, sql)
-    var rows = []
+    var rows: Array<Array<int>> = []
     var done = false
     while not done {
         let rc = nyx_sqlite_step(stmt)
         if rc == 1 {
             let ncols = nyx_sqlite_column_count(stmt)
-            var row = []
+            var row: Array<int> = []
             var c = 0
             while c < ncols {
                 let val: int = nyx_sqlite_column_int(stmt, c)
@@ -458,7 +458,7 @@ pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool {
 
 // Query with string parameters
 /// Query con params (todos String, binding textual; sqlite_null() para pasar un SQL NULL). Celdas del resultado: String, como sqlite_query — NULL vía sqlite_is_null().
-pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array {
+pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array<Array<String>> {
     let stmt = nyx_sqlite_prepare(db, sql)
     var i: int = 0
     while i < params.length() {
@@ -466,13 +466,13 @@ pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array {
         sqlite_bind_cell(stmt, i + 1, val)
         i = i + 1
     }
-    var rows = []
+    var rows: Array<Array<String>> = []
     var done = false
     while not done {
         let rc = nyx_sqlite_step(stmt)
         if rc == 1 {
             let ncols = nyx_sqlite_column_count(stmt)
-            var row = []
+            var row: Array<String> = []
             var c = 0
             while c < ncols {
                 let val: String = sqlite_cell(stmt, c)
@@ -524,12 +524,12 @@ pub fn sqlite_migrate(db: *int, version: int, name: String, sql: String) -> bool
 // === Table introspection ===
 
 // List all tables in the database
-pub fn sqlite_tables(db: *int) -> Array {
+pub fn sqlite_tables(db: *int) -> Array<String> {
     let rows = sqlite_query(db, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
-    var names = []
+    var names: Array<String> = []
     var i = 0
     while i < rows.length() {
-        let row: Array = rows[i]
+        let row: Array<String> = rows[i]
         let name: String = row[0]
         names.push(name)
         i = i + 1

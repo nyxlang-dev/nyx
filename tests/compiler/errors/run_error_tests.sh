@@ -215,6 +215,7 @@ TESTS=(
   "tests/compiler/errors/test-nyx1003-array-anotado-conserva-elemento.nx|type mismatch in 'nombre': expected String, got Array<String>"
   "tests/compiler/errors/test-nyx1003-serial-ports-fila-como-string.nx|type mismatch in 'pn': expected String, got Array<String>"
   "tests/compiler/errors/test-nyx1003-csv-fila-como-string.nx|type mismatch in 'campo': expected String, got Array<String>"
+  "tests/compiler/errors/test-nyx1003-sqlite-celda-como-int.nx|type mismatch in 'n': expected int, got String"
 )
 
 for entry in "${TESTS[@]}"; do

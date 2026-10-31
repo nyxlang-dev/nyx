@@ -1,0 +1,13 @@
+// Toda celda de sqlite_query es String, incluidas las columnas INTEGER. Con la
+// firma tipada (Array<Array<String>>), anotar una celda como int es NYX1003;
+// antes compilaba y leía los bits del String como número.
+import "std/sqlite"
+
+fn main() {
+    let db = sqlite_open(":memory:")
+    let rows = sqlite_query(db, "SELECT 1")
+    let n: int = rows[0][0]
+    print(int_to_string(n))
+}
+
+main()

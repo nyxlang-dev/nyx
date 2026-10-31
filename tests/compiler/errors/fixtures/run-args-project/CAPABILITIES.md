@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 2142615624-2161150 -->
+<!-- nyx-stdlib: 2010324527-2161438 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -536,8 +536,8 @@ Tipos (2) y métodos (0):
 - `pub fn sqlite_open(path: String) -> *int` — Abre (o crea) el archivo. Devuelve el handle *int — capturable en closures sin drama (fn de std con retorno declarado).
 - `pub fn sqlite_close(db: *int)`
 - `pub fn sqlite_exec(db: *int, sql: String) -> bool` — DDL/DML sin resultado; true en éxito. Para SQL con valores usar sqlite_exec_params (params String).
-- `pub fn sqlite_query(db: *int, sql: String) -> Array` — Array de filas; cada fila es Array y TODA celda es String, incluidas las columnas INTEGER: convertir con string_to_int(), o pedir la columna por la vía tipada sqlite_query_int/sqlite_query_one_int (int de 64 bits reales). Anotar la celda como `int` NO la convierte: lee los bits del String. Una celda SQL NULL vuelve como sqlite_null() — preguntar con sqlite_is_null(), nunca con `== ""`.
-- `pub fn sqlite_query_named(db: *int, sql: String) -> Array` — Como sqlite_query pero ANTEPONE una fila de headers: N+1 elementos, la fila 0 son los nombres de columna. Mismas reglas de celda: String siempre, NULL vía sqlite_is_null().
+- `pub fn sqlite_query(db: *int, sql: String) -> Array<Array<String>>` — Array de filas; cada fila es Array y TODA celda es String, incluidas las columnas INTEGER: convertir con string_to_int(), o pedir la columna por la vía tipada sqlite_query_int/sqlite_query_one_int (int de 64 bits reales). Anotar la celda como `int` es NYX1003 (la firma declara `Array<Array<String>>`): no hay conversión implícita. Una celda SQL NULL vuelve como sqlite_null() — preguntar con sqlite_is_null(), nunca con `== ""`.
+- `pub fn sqlite_query_named(db: *int, sql: String) -> Array<Array<String>>` — Como sqlite_query pero ANTEPONE una fila de headers: N+1 elementos, la fila 0 son los nombres de columna. Mismas reglas de celda: String siempre, NULL vía sqlite_is_null().
 - `pub fn sqlite_exec_int(db: *int, sql: String, val: int) -> bool`
 - `pub fn sqlite_exec_str(db: *int, sql: String, val: String) -> bool`
 - `pub fn sqlite_last_id(db: *int) -> int` — last_insert_rowid del handle.
@@ -550,15 +550,15 @@ Tipos (2) y métodos (0):
 - `pub fn sqlite_begin(db: *int) -> bool`
 - `pub fn sqlite_commit(db: *int) -> bool`
 - `pub fn sqlite_rollback(db: *int) -> bool`
-- `pub fn sqlite_query_int(db: *int, sql: String) -> Array` — Filas de int REALES de 64 bits (sqlite3_column_int64) — la vía tipada para columnas numéricas, sin string_to_int. Una columna no numérica da 0, y un NULL también: si hay que distinguirlos, leer esa columna con sqlite_query y sqlite_is_null().
+- `pub fn sqlite_query_int(db: *int, sql: String) -> Array<Array<int>>` — Filas de int REALES de 64 bits (sqlite3_column_int64) — la vía tipada para columnas numéricas, sin string_to_int. Una columna no numérica da 0, y un NULL también: si hay que distinguirlos, leer esa columna con sqlite_query y sqlite_is_null().
 - `pub fn sqlite_query_one_int(db: *int, sql: String) -> int` — Primera columna de la primera fila como int real de 64 bits; 0 si no hay filas (y 0 también si la celda es NULL — para distinguirlos, sqlite_query_one_str + sqlite_is_null()).
 - `pub fn sqlite_query_one_str(db: *int, sql: String) -> String` — Primera columna de la primera fila como String; "" si no hay filas. Una celda SQL NULL vuelve como sqlite_null() — preguntar con sqlite_is_null().
 - `pub fn sqlite_exec_params(db: *int, sql: String, params: Array) -> bool` — TODOS los params como String (binding textual), también los numéricos: ["7", "ana"] y no [7, "ana"]. Para pasar un SQL NULL, sqlite_null() en esa posición.
-- `pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array` — Query con params (todos String, binding textual; sqlite_null() para pasar un SQL NULL). Celdas del resultado: String, como sqlite_query — NULL vía sqlite_is_null().
+- `pub fn sqlite_query_params(db: *int, sql: String, params: Array) -> Array<Array<String>>` — Query con params (todos String, binding textual; sqlite_null() para pasar un SQL NULL). Celdas del resultado: String, como sqlite_query — NULL vía sqlite_is_null().
 - `pub fn sqlite_migrate_init(db: *int) -> bool`
 - `pub fn sqlite_migrate_version(db: *int) -> int`
 - `pub fn sqlite_migrate(db: *int, version: int, name: String, sql: String) -> bool`
-- `pub fn sqlite_tables(db: *int) -> Array`
+- `pub fn sqlite_tables(db: *int) -> Array<String>`
 - `pub fn sqlite_table_exists(db: *int, name: String) -> bool`
 - `pub fn sqlite_count(db: *int, table: String) -> int` — SELECT COUNT(*) de la tabla, como int real.
 
