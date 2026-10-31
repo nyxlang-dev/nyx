@@ -469,6 +469,33 @@ typedef struct {
 // top of the parent's environment. Returns handle > 0 or -errno (+ stage).
 int64_t os_proc_spawn(const char* const* argv, int argc, const os_stdio_t stdio[3],
                       const char* cwd, const char* const* env_kv, int n_env, int* fail_stage);
+// El ejecutable que os_proc_spawn lanzaría para `name`, con el MISMO criterio
+// (W6 Task 2, D1a): con separador, la ruta tal cual; sin él, solo PATH (win32:
+// también PATHEXT y nunca el directorio actual; un .bat/.cmd da -EINVAL, como
+// en spawn). Lo usa `nyx build` en vez de `command -v`. 0 (ruta en out) / -errno.
+// EN: the executable os_proc_spawn would run for `name`; same lookup rules.
+int     os_find_program(const char* name, char* out, size_t cap);
+// Núcleos en línea, lo que contesta `nproc` (W6 Task 2: cuántos `clang -c` y
+// unidades [lib] a la vez): posix sysconf(_SC_NPROCESSORS_ONLN); win32
+// GetActiveProcessorCount de todos los grupos. Siempre >= 1.
+// EN: online CPUs (`nproc`), always >= 1.
+int     os_cpu_count(void);
+// La arquitectura de la máquina tal como la ve este proceso, lo que contesta
+// `uname -m` (W6 Task 2, D1a): posix, el `machine` de uname(2) sin tocar
+// ("x86_64", "aarch64"; macOS en Apple Silicon dice "arm64"); win32, la de
+// GetSystemInfo normalizada a esos nombres ("x86_64", "aarch64", "x86", "arm"),
+// así que un .exe x64 emulado en ARM64 ve "x86_64", como uname bajo Rosetta.
+// 0 / -errno. EN: the machine as this process sees it (`uname -m`).
+int     os_host_arch(char* out, size_t cap);
+// Límite BLANDO de pila (RLIMIT_STACK) que heredan los hijos que se lancen
+// después (W6 Task 2, D1a: el `ulimit -s 65536` del script de `nyx build`). La
+// pila del hilo principal del propio proceso ya está ubicada y no cambia.
+// get: bytes, -1 = ilimitado, o -errno. set: bytes (-1 = ilimitado), recortado
+// al límite duro; 0 / -errno. win32: -ENOSYS en los dos — en Windows la pila
+// del hilo principal la fija el .exe al enlazarse (/STACK), no el padre.
+// EN: soft stack rlimit inherited by children spawned afterwards; win32 ENOSYS.
+int64_t os_proc_stack_limit_get(void);
+int     os_proc_stack_limit_set(int64_t bytes);
 // nohang=0: espera. Devuelve 1 si terminó (*code = código; posix: 128+señal si
 // lo mató una señal), 0 si sigue corriendo (solo nohang=1), -errno. Esperar
 // otra vez a un hijo ya esperado devuelve 1 con el mismo código.
@@ -516,6 +543,21 @@ int64_t os_proc_getpid(void);                       // id del proceso actual (si
 // win32: separadores tal cual los da GetCurrentDirectoryA (con '\\').
 int os_fs_getcwd(char* buf, size_t cap);
 int os_fs_chdir(const char* path);                  // 0 / -errno
+// Directorio temporal del usuario, sin separador al final (W6 Task 2, D7):
+// posix, $TMPDIR si no está vacío y si no "/tmp"; win32, GetTempPathA (TMP,
+// TEMP, USERPROFILE o el de Windows), en la codificación de os_fs_getcwd. No
+// lo crea ni mira si existe.
+// 0 / -errno (-ERANGE si no cabe). EN: user temp dir, no trailing separator.
+int os_fs_temp_dir(char* buf, size_t cap);
+// Candado de archivo compartido o exclusivo (W6 Task 2, D1a: el `flock` del
+// script de `nyx build`). Abre `path` (lo crea si no existe, sin truncarlo) y
+// lo bloquea entero: posix flock(2), así que convive con el `flock(1)` de
+// scripts/nyx_toolchain.sh y `make install-local`; win32 LockFileEx. nonblock=1:
+// si otro lo tiene, -EAGAIN sin esperar. Devuelve un handle >= 0 que se suelta
+// con os_fs_unlock (o al terminar el proceso), o -errno. El handle no se hereda
+// a los hijos. EN: whole-file shared/exclusive lock; -EAGAIN if nonblock & busy.
+int64_t os_fs_lock(const char* path, int exclusive, int nonblock);
+int     os_fs_unlock(int64_t h);                    // suelta y cierra; 0 / -errno
 // Metadatos de path (siguiendo enlaces). exists=0 y 0 de retorno si no existe
 // (mismo criterio que os_fs_stat); -errno en fallo real. mode es POSIX
 // (S_IFDIR=0040000, S_IFREG=0100000 + permisos): en win32 se SINTETIZA

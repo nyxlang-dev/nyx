@@ -51,6 +51,8 @@
 #include <dlfcn.h>            // dlopen/dlsym/dlerror/dlclose (os_dl_*, W1 inc 6)
 #include <signal.h>           // signal/sigaction/sigaltstack (os_sig_*/os_fault_guard_*, W1 inc 7)
 #include <sys/stat.h>         // stat/mkdir (os_fs_stat/os_fs_mkdir, W2 fase A)
+#include <sys/utsname.h>      // uname (os_host_arch, W6 Task 2)
+#include <sys/file.h>         // flock (os_fs_lock, W6 Task 2)
 #include <dirent.h>           // opendir/readdir/closedir (os_fs_listdir, W2 fase A)
 #include <limits.h>           // PATH_MAX (os_serial_list: realpath de sysfs)
 #include <termios.h>          // tcgetattr/tcsetattr/cfmakeraw (os_term_raw_*, W2 fase A term+fd)
@@ -2336,6 +2338,39 @@ int os_fs_chdir(const char* path) {
     return chdir(path) == 0 ? 0 : -errno;
 }
 
+int os_fs_temp_dir(char* buf, size_t cap) {
+    if (!buf || cap == 0) return -EINVAL;
+    const char* t = getenv("TMPDIR");
+    if (!t || !*t) t = "/tmp";
+    size_t n = strlen(t);
+    while (n > 1 && t[n - 1] == '/') n--;   // "/tmp/" -> "/tmp"; "/" se queda
+    if (n + 1 > cap) return -ERANGE;
+    memcpy(buf, t, n);
+    buf[n] = 0;
+    return 0;
+}
+
+int64_t os_fs_lock(const char* path, int exclusive, int nonblock) {
+    if (!path || !*path) return -EINVAL;
+    int fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    if (fd < 0) return -errno;
+    int op = (exclusive ? LOCK_EX : LOCK_SH) | (nonblock ? LOCK_NB : 0);
+    int r;
+    do { r = flock(fd, op); } while (r != 0 && errno == EINTR);
+    if (r != 0) {
+        int e = errno == EWOULDBLOCK ? EAGAIN : errno;
+        close(fd);
+        return -e;
+    }
+    return fd;
+}
+
+int os_fs_unlock(int64_t h) {
+    if (h < 0) return -EBADF;
+    flock((int)h, LOCK_UN);
+    return close((int)h) == 0 ? 0 : -errno;
+}
+
 int os_fs_stat_full(const char* path, os_fs_stat_t* out) {
     if (!out) return -EINVAL;
     memset(out, 0, sizeof(*out));
@@ -2708,6 +2743,51 @@ static int os_find_exe(const char* argv0, char* out, size_t cap) {
         path = end + 1;
     }
     return last;
+}
+
+// os_find_exe más una sola condición: que sea un archivo. access(X_OK) también
+// acepta un directorio (el bit x de un directorio es «se puede entrar»), y un
+// directorio en PATH con el nombre del programa haría que esto contestara una
+// ruta que execve después rechaza. `command -v` tampoco lo devuelve.
+int os_find_program(const char* name, char* out, size_t cap) {
+    if (!name || !*name || !out || cap == 0) return -EINVAL;
+    int rc = os_find_exe(name, out, cap);
+    if (rc != 0) return rc;
+    struct stat st;
+    if (stat(out, &st) != 0) return -errno;
+    if (!S_ISREG(st.st_mode)) return -ENOENT;
+    return 0;
+}
+
+int64_t os_proc_stack_limit_get(void) {
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_STACK, &rl) != 0) return -errno;
+    if (rl.rlim_cur == RLIM_INFINITY) return -1;
+    return (int64_t)rl.rlim_cur;
+}
+
+int os_proc_stack_limit_set(int64_t bytes) {
+    struct rlimit rl;
+    if (bytes < -1 || bytes == 0) return -EINVAL;
+    if (getrlimit(RLIMIT_STACK, &rl) != 0) return -errno;
+    rlim_t want = bytes == -1 ? RLIM_INFINITY : (rlim_t)bytes;
+    if (rl.rlim_max != RLIM_INFINITY && (want == RLIM_INFINITY || want > rl.rlim_max)) want = rl.rlim_max;
+    rl.rlim_cur = want;
+    return setrlimit(RLIMIT_STACK, &rl) == 0 ? 0 : -errno;
+}
+
+int os_host_arch(char* out, size_t cap) {
+    struct utsname u;
+    if (!out || cap == 0) return -EINVAL;
+    if (uname(&u) != 0) return -errno;
+    if (strlen(u.machine) + 1 > cap) return -ENAMETOOLONG;
+    strcpy(out, u.machine);
+    return 0;
+}
+
+int os_cpu_count(void) {
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n >= 1 ? (int)n : 1;
 }
 
 int64_t os_proc_spawn(const char* const* argv, int argc, const os_stdio_t stdio[3],

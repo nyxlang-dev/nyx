@@ -864,7 +864,9 @@ fi
 LK_FAIL=""
 grep -q 'flock -x -w "$$NYX_LOCK_WAIT" 9' Makefile || LK_FAIL="install-local no toma el candado EXCLUSIVO"
 grep -q 'flock -s 9' compiler/test.nx || LK_FAIL="nyx test no toma el candado COMPARTIDO"
-grep -q 'flock -s 9' compiler/build.nx || LK_FAIL="nyx build no toma el candado COMPARTIDO"
+# nyx build ya no arma un script (W6 Task 2): toma el candado con try_lock_file
+# de std/fs, que en posix es flock(2) y choca con el `flock -x` del install.
+grep -qF 'try_lock_file(nyx_home + "/.toolchain.lock", false)' compiler/build.nx || LK_FAIL="nyx build no toma el candado COMPARTIDO"
 if [ -z "$LK_FAIL" ]; then
     ok "candado-toolchain: install-local exclusivo + nyx test/build compartido"
 else

@@ -1051,6 +1051,8 @@ single `Error` struct.
   code is `128 + signal` on posix when a signal killed the child. (7) wasm32-wasi: every call gives `Err`
   `invalid` (95). The raw `fork`/`execvp`/`waitpid`/`pipe_new`/`kill_process` builtins stay on posix and are
   rejected on Windows with a message pointing here. Recipes 64, 65, 151.
+  Also in `std/process`: `find_program(name) -> Option<String>` (the path `try_spawn` would run, searched the same way: PATH only, Windows also PATHEXT; `command -v` without a shell), `host_arch() -> String` (`"x86_64"`, `"aarch64"`, ... like `uname -m`; `""` if unknown) and `cpu_count() -> int` (online cores like `nproc`, always >= 1). `nyx build` itself launches the compiler and clang through `std/process`: it no longer writes or runs a bash script.
+- **Temp dir and file locks** (`import "std/fs"`): `temp_dir() -> String` (`$TMPDIR` or `/tmp`; Windows `GetTempPath`; no trailing separator, not created; `""` on wasm), `try_lock_file(path, exclusive) -> Result<FileLock, Error>` (waits; shared when `exclusive` is false; creates the file if missing), `try_lock_file_nowait(path, exclusive) -> Result<Option<FileLock>, Error>` (`Ok(None)` = another holder conflicts), `unlock_file(l)`. POSIX uses `flock(2)` (coexists with `flock(1)`), Windows `LockFileEx`; released by `unlock_file` or at process exit, children do not inherit it.
 - **Serial port** (Linux, Windows; macOS without VID/PID): `import "std/serial"`.
   `try_serial_open(path, baud, data_bits, parity, stop_bits) -> Result<SerialPort, Error>` (parity
   `"none"|"odd"|"even"`; `"/dev/ttyUSB0"` or `"COM3"`), `try_serial_write(p, s) -> Result<int, Error>`,
@@ -2021,6 +2023,8 @@ wait for several things, `await` them one after another. [test: wasm/test-wasm-3
 8. **Cross-compiling Linux x86_64 <-> aarch64 (`nyx build --target <triple>`) needs the target's dev libraries installed (multiarch), and the result cannot run on the building machine.** Output goes to `target/<triple>/<name>`. Missing packages are reported before compiling, with the exact command. There is no emulation: `nyx run --target` for another architecture fails; copy the binary to a machine of that architecture (or use `docker run --platform linux/amd64`). Single-letter x86 `asm` constraints (`a b c d S D`) are rejected for an aarch64 target; the `asm` template is never interpreted, so it must already match the target architecture. The binary is dynamic: the target needs libgc, libssl3, libcrypto, libz and glibc (a portable static binary is not available yet). [test: compiler/errors/test-linux-cross-asm-x86]
 
 <!-- /gen:gotchas -->
+
+- `find_program` searches like `try_spawn`: on Windows never in the cwd, and a `.bat`/`.cmd` gives `None`.
 
 ### 5.4 Already fixed — you can use these
 

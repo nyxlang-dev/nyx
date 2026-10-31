@@ -26,6 +26,25 @@
 // Represents a parsed nyx.toml file
 import "std/kvclient"
 import "std/base64"
+// La receta sin shell (W6 Task 2): lanzar el compilador y clang, el candado,
+// el directorio temporal y lo que se sabe del host.
+import "std/error"
+import "std/process"
+import "std/fs"
+// build.nx es un módulo del compilador (importa compiler/gotchas_table), y a esos
+// no se les carga el prelude (resolve.nx, es_modulo_del_compilador). std/error,
+// std/process y std/fs usan los dos enums genéricos del prelude: se declaran
+// acá, iguales a los de std/prelude.nx. Sin esto, `Result.Err(...)` de std/process
+// compila como un método sobre una global y aborta con NYX2002.
+enum Option<T> {
+    Some(T),
+    None
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E)
+}
 // Declaration-only, igual que en vet.nx: gotchas_table.nx se compila aparte y
 // se linkea (ver build-nyx-build en el Makefile). El andamiaje SDD genera la
 // evidencia y el test de constitución DESDE esta tabla — la misma fuente que
@@ -302,8 +321,7 @@ fn run_add(pkg_name: String, pkg_url: String, config: ProjectConfig) -> bool {
     } else {
         // Try git clone
         print("  Fetching: " + url)
-        let clone_cmd = "GIT_TERMINAL_PROMPT=0 git clone --depth 1 " + url + " " + pkg_dir + " 2>/dev/null"
-        let result: int = exec_code(clone_cmd)
+        let result: int = git_clone(url, pkg_dir)
 
         if result != 0 {
             print("  error: could not fetch " + pkg_name + " from " + url)
@@ -770,7 +788,7 @@ fn seed_adapters(dir: String, lang: String, agents: String) {
                     seed_file(dir + "/.cursorrules", body, lang)
                 }
                 if name == "copilot" {
-                    exec("mkdir -p '" + dir + "/.github'")
+                    mkdir_p(dir + "/.github")
                     seed_file(dir + "/.github/copilot-instructions.md", body, lang)
                 }
             } else {
@@ -813,7 +831,7 @@ fn scaffold_project_files(dir: String, lang: String, agents: String) {
     let cok: bool = run_capabilities(dir + "/CAPABILITIES.md")
 
     // docs/nyx/ — la referencia densa + las tres guías neutrales.
-    exec("mkdir -p '" + dir + "/docs/nyx/guides'")
+    mkdir_p(dir + "/docs/nyx/guides")
     let llm_tpl: String = tpl + "/en/docs/nyx/LLM.md"
     if file_exists(llm_tpl) {
         let llm_md: String = read_file(llm_tpl)
@@ -1185,7 +1203,7 @@ fn add_agents_triggers(dir: String, lang: String) -> bool {
 // gotcha se arregló, la evidencia lo manda a «Retirados» y el test deja de
 // buscarlo. No siembra ni pisa ninguna de las 5 plantillas.
 fn run_sdd_evidence(dir: String, lang: String) -> bool {
-    exec("mkdir -p '" + dir + "/docs/evidence'")
+    mkdir_p(dir + "/docs/evidence")
     let ev: int = write_evidence(dir, lang)
     if ev == 2 {
         print(sdd_msg(lang, "  skipped (yours, no GENERATED header): docs/evidence/nyx-" + toolchain_version() + ".md",
@@ -1233,7 +1251,11 @@ fn run_sdd_init(dir: String, lang: String) -> bool {
             "  Reinstala con install.sh (o corre `make install-local` desde el monorepo) e intenta de nuevo: nyx sdd init"))
         return false
     }
-    exec("mkdir -p '" + dir + "/docs/adr' '" + dir + "/docs/sdd' '" + dir + "/docs/evidence' '" + dir + "/specs' '" + dir + "/tests'")
+    mkdir_p(dir + "/docs/adr")
+    mkdir_p(dir + "/docs/sdd")
+    mkdir_p(dir + "/docs/evidence")
+    mkdir_p(dir + "/specs")
+    mkdir_p(dir + "/tests")
 
     print(sdd_msg(lang, "SDD scaffolding (optional, reversible):",
                         "Andamiaje SDD (opcional, reversible):"))
@@ -1293,7 +1315,7 @@ fn run_init(name_arg: String, lang: String, agents: String) -> bool {
             print("error: directory '" + project_name + "' already exists")
             return false
         }
-        exec("mkdir -p " + project_name + "/src")
+        mkdir_p(project_name + "/src")
 
         let content: String = "[package]\nname = \"" + project_name + "\"\nversion = \"0.1.0\"\nmain = \"src/main.nx\"\n\n[dependencies]\n"
         write_file(project_name + "/nyx.toml", content)
@@ -1329,7 +1351,7 @@ fn run_init(name_arg: String, lang: String, agents: String) -> bool {
 
     let content: String = "[package]\nname = \"" + project_name + "\"\nversion = \"0.1.0\"\nmain = \"src/main.nx\"\n\n[dependencies]\n"
     write_file("nyx.toml", content)
-    exec("mkdir -p src")
+    mkdir_p("src")
     if file_exists("src/main.nx") == false {
         write_file("src/main.nx", "fn main() {\n    print(\"Hello from " + project_name + "!\")\n}\n")
     }
@@ -1364,8 +1386,7 @@ fn resolve_deps(config: ProjectConfig) -> bool {
                 url = "https://github.com/nyxlang-dev/" + dep_name
             }
 
-            let clone_cmd: String = "GIT_TERMINAL_PROMPT=0 git clone --depth 1 " + url + " " + pkg_dir + " 2>/dev/null"
-            let result: int = exec_code(clone_cmd)
+            let result: int = git_clone(url, pkg_dir)
             if result != 0 {
                 print("  error: failed to fetch " + dep_name + " from " + url)
                 return false
@@ -1378,6 +1399,267 @@ fn resolve_deps(config: ProjectConfig) -> bool {
 }
 
 // ===== BUILD SYSTEM =====
+//
+// LA RECETA SIN SHELL (W6 Task 2, 2026-10-31). Hasta acá run_build y run_libs
+// ARMABAN un script de bash en /tmp y lo corrían con `bash`: en Windows no hay
+// bash, y la receta vivía en strings con comillas escapadas. Ahora cada paso es
+// un hijo lanzado con std/process (argv armado acá, sin shell, sin comillas), y
+// lo que el script hacía con utilidades lo hacen piezas de std/ de la misma
+// Task: mktemp → temp_dir + mkdir (que falla si el directorio ya existe, así
+// que el nombre es exclusivo como el de mktemp), flock → try_lock_file,
+// `ulimit -s` → el límite de pila de los hijos, `command -v` → find_program,
+// `uname -m` → host_arch, nproc → cpu_count, grep/sha256sum/cat → contains,
+// sha256 y read_file. La salida, los códigos de salida, las rutas y los
+// mensajes son los de antes: los cubre scripts/testing/run_build_manifest.sh,
+// que además corre el build con un PATH sin sh ni bash.
+
+extern "C" fn nyx_eprint(s: String)
+extern "C" fn nyx_proc_stack_limit_get() -> int
+extern "C" fn nyx_proc_stack_limit_set(bytes: int) -> int
+
+// Lo que el script mandaba con `>&2`.
+fn err_print(s: String) { nyx_eprint(s) }
+fn err_line(s: String) { nyx_eprint(s + "\n") }
+
+// Absoluta: los hijos corren con cwd = NYX_HOME (el `cd "$NYX_HOME"` del
+// script), así que una ruta relativa al proyecto dejaría de valer allá.
+fn es_absoluta(p: String) -> bool {
+    if p.startsWith("/") or p.startsWith("\\") { return true }
+    if p.length() < 3 { return false }
+    let c1: int = p.charAt(1)
+    let c2: int = p.charAt(2)
+    // C:\x o C:/x (92 es la barra invertida).
+    return c1 == ':' and (c2 == '/' or c2 == 92)
+}
+
+fn absoluta(p: String) -> String {
+    if es_absoluta(p) { return p }
+    if p == "." { return getcwd() }
+    if p.startsWith("./") { return getcwd() + "/" + p.substring(2, p.length()) }
+    return getcwd() + "/" + p
+}
+
+// `mkdir -p`: el builtin mkdir crea un nivel. Acepta '/' y '\' (Windows).
+fn mkdir_p(p: String) {
+    var i: int = 1
+    while i <= p.length() {
+        var corte: bool = i == p.length()
+        if not corte {
+            let c: int = p.charAt(i)
+            corte = c == '/' or c == 92
+        }
+        if corte {
+            let parcial: String = p.substring(0, i)
+            if parcial != "" and not file_exists(parcial) { let _r: int = mkdir(parcial) }
+        }
+        i = i + 1
+    }
+}
+
+// `rm -rf` de lo que el build creó (sus temporales y la caché del runtime). No
+// sigue más de 4 niveles: nada de lo suyo es más hondo.
+fn borrar_arbol(p: String, nivel: int) {
+    let st: Array = stat(p)
+    if st.length() < 4 { return 0 }
+    let es_dir: bool = st[3]
+    if es_dir and nivel < 4 {
+        let hijos: Array = readdir(p)
+        var i: int = 0
+        while i < hijos.length() {
+            let h: String = hijos[i]
+            borrar_arbol(p + "/" + h, nivel + 1)
+            i = i + 1
+        }
+    }
+    let _r: int = remove_file(p)
+    return 0
+}
+
+// Directorio temporal propio, el `mktemp -d` del script: mkdir falla si ya
+// existe, así que nadie más puede haberlo creado antes (ni plantar un enlace
+// adentro, porque es 0755 y de quien corre el build). "" si no se pudo.
+var g_tmp_n: int = 0
+fn tmp_dir_propio(prefijo: String) -> String {
+    var base: String = temp_dir()
+    if base == "" { base = "/tmp" }
+    var intento: int = 0
+    while intento < 50 {
+        g_tmp_n = g_tmp_n + 1
+        let d: String = base + "/" + prefijo + int_to_string(getpid()) + "_" + int_to_string(time_us()) + "_" + int_to_string(g_tmp_n)
+        if mkdir(d) == 0 { return d }
+        intento = intento + 1
+    }
+    return ""
+}
+
+// `GIT_TERMINAL_PROMPT=0 git clone --depth 1 <url> <dir> 2>/dev/null`, sin
+// shell: la url y el destino llegan como un argumento cada uno.
+fn git_clone(url: String, dest: String) -> int {
+    var o = spawn_opts()
+    o.stdin = Stdio.Null
+    o.stderr = Stdio.Null
+    o.env = [["GIT_TERMINAL_PROMPT", "0"]]
+    term_flush()
+    match try_spawn(["git", "clone", "--depth", "1", url, dest], o) {
+        Result.Ok(c) => {
+            match try_child_wait(c) {
+                Result.Ok(rc) => { return rc }
+                Result.Err(_e) => { return 1 }
+            }
+        }
+        Result.Err(_e) => { return 127 }
+    }
+}
+
+// `nyx run`: el programa en primer plano con la terminal heredada, y su código
+// de salida. Mientras corre, nyx_build no muere por Ctrl+C (SIGINT) ni SIGQUIT,
+// como el padre de system(): la señal le llega al programa —que puede tener su
+// propio apagado ordenado— y nyx_build devuelve lo que el programa devuelva.
+fn ignorar_senal(_s: int) {}
+
+fn correr_programa(argv: Array) -> int {
+    signal_handle(2, ignorar_senal)
+    signal_handle(3, ignorar_senal)
+    term_flush()
+    match try_spawn(argv, spawn_opts()) {
+        Result.Ok(c) => {
+            match try_child_wait(c) {
+                Result.Ok(rc) => { return rc }
+                Result.Err(e) => { err_line("error: " + e.msg); return 1 }
+            }
+        }
+        Result.Err(e) => {
+            let p: String = argv[0]
+            err_line(p + ": " + e.msg)
+            return 127
+        }
+    }
+}
+
+// Orden por bytes (inserción: las listas son cortas, unos pocos nombres o
+// archivos). sort_str es del prelude, que este módulo no carga.
+fn texto_menor(a: String, b: String) -> bool {
+    var i: int = 0
+    while i < a.length() and i < b.length() {
+        let ca: int = a.charAt(i)
+        let cb: int = b.charAt(i)
+        if ca != cb { return ca < cb }
+        i = i + 1
+    }
+    return a.length() < b.length()
+}
+
+fn ordenar_texto(xs: Array) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i < xs.length() {
+        let x: String = xs[i]
+        out.push(x)
+        var j: int = out.length() - 1
+        while j > 0 {
+            let prev: String = out[j - 1]
+            if texto_menor(x, prev) { out[j] = prev; out[j - 1] = x; j = j - 1 } else { j = 0 }
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Las líneas con '⚠' (avisos del compilador), lo que hacía `grep -F '⚠'`.
+fn avisos_de(log: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    let lineas: Array = log.split("\n")
+    var i: int = 0
+    while i < lineas.length() {
+        let l: String = lineas[i]
+        if l.contains("⚠") { sb.append(l + "\n") }
+        i = i + 1
+    }
+    return sb.to_string()
+}
+
+// "-O2 --target=x" → ["-O2", "--target=x"]: las banderas se arman como string
+// porque así entran en la huella de [lib] y en la clave de la caché del runtime.
+fn palabras(s: String) -> Array {
+    var out: Array = []
+    let partes: Array = s.split(" ")
+    var i: int = 0
+    while i < partes.length() {
+        let p: String = partes[i]
+        if p != "" { out.push(p) }
+        i = i + 1
+    }
+    return out
+}
+
+fn concat(a: Array, b: Array) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i < a.length() { let x: String = a[i]; out.push(x); i = i + 1 }
+    i = 0
+    while i < b.length() { let y: String = b[i]; out.push(y); i = i + 1 }
+    return out
+}
+
+// La salida estándar de un programa corto (clang -print-file-name, gcc
+// -dumpversion, clang --version): "" si no está o falla, como el `2>/dev/null`.
+fn salida_de(argv: Array) -> String {
+    var o = spawn_opts()
+    o.stdin = Stdio.Null
+    o.stdout = Stdio.Pipe
+    o.stderr = Stdio.Null
+    match try_spawn(argv, o) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => { return r.stdout }
+                Result.Err(_e) => { return "" }
+            }
+        }
+        Result.Err(_e) => { return "" }
+    }
+}
+
+// Corre argv hasta que termine, con stdout y stderr al log (los dos en modo
+// agregar, así el orden entre ellos es el del programa: el `> "$LOG" 2>&1`).
+// Devuelve el código de salida; si no se pudo lanzar, escribe el motivo en el
+// log y devuelve 127, como un shell que no encuentra el programa.
+fn correr_a_log(argv: Array, cwd: String, env: Array, log: String) -> int {
+    write_file(log, "")
+    var o = spawn_opts()
+    o.stdin = Stdio.Null
+    o.stdout = Stdio.File(log, "a")
+    o.stderr = Stdio.File(log, "a")
+    o.cwd = cwd
+    o.env = env
+    term_flush()
+    match try_spawn(argv, o) {
+        Result.Ok(c) => {
+            match try_child_wait(c) {
+                Result.Ok(rc) => { return rc }
+                Result.Err(e) => { write_file(log, e.msg + "\n"); return 127 }
+            }
+        }
+        Result.Err(e) => { write_file(log, e.msg + "\n"); return 127 }
+    }
+}
+
+// Corre argv con stdout heredado y stderr a `log` (el `2> "$LOG"` de clang).
+fn correr_err_a(argv: Array, cwd: String, log: String) -> int {
+    var o = spawn_opts()
+    o.stdin = Stdio.Null
+    o.stderr = Stdio.File(log, "w")
+    o.cwd = cwd
+    term_flush()
+    match try_spawn(argv, o) {
+        Result.Ok(c) => {
+            match try_child_wait(c) {
+                Result.Ok(rc) => { return rc }
+                Result.Err(e) => { write_file(log, e.msg + "\n"); return 127 }
+            }
+        }
+        Result.Err(e) => { write_file(log, e.msg + "\n"); return 127 }
+    }
+}
 
 // Task 10 (Fase 4, campaña "Primer intento verde"): cuando clang falla al
 // linkear, el script volcaba el log crudo de LLVM (`use of undefined value
@@ -1386,79 +1668,198 @@ fn resolve_deps(config: ProjectConfig) -> bool {
 // azar (≥4 incidentes históricos, ver PROJECT_STATE.md/TASKS.md; el repro
 // del banco: `Option<Item>` con struct de 3 campos como payload produce
 // `'%NNN' defined with type '%Item = type {...}' but expected 'i64'`).
-// Esta función arma el fragmento bash de atribución (dos clases, por grep
-// sobre $LOG) que se inserta ANTES del `cat "$LOG"` — el log completo se
-// sigue mostrando siempre, esto solo agrega contexto arriba. Bilingüe vía
-// NYX_LANG (mismo criterio que nyx_msg en nyx.nx), sin backticks/comillas
-// dobles adentro del echo para no pelear con el quoting del bash generado.
-// Reusada tal cual en el script nativo y el de WASM (ambos comparten el
-// patrón "clang ... 2> $LOG || { ...; cat $LOG; exit 1; }").
-fn clang_failure_attribution_bash(main_file: String) -> String {
-    // Clase (a): IR inválido — patrones vistos en incidentes reales
-    // (grep "use of undefined value"/"defined with type" en
-    // PROJECT_STATE.md/TASKS.md) + el del banco. 5 patrones alcanzan.
-    let ir_patterns: String = "use of undefined value|defined with type .* but expected|expected instruction|invalid redefinition of|invalid forward reference"
-    // Clase (b): símbolo indefinido de linker — puede ser un extern "C"
-    // del usuario mal declarado O un builtin de la stdlib sin runtime
-    // detrás; mensaje neutro (no asumimos de quién es la culpa).
-    let link_patterns: String = "undefined reference|undefined symbol"
-
-    return "if grep -qE '" + ir_patterns + "' \"$LOG\"; then " +
-        "if [ \"$NYX_LANG\" = \"es\" ]; then " +
-        "echo \"  -> esto es casi seguro un BUG del compilador Nyx (IR invalido), no de tu codigo (archivo: " + main_file + "). Repórtalo con 'nyx report' (el reporte incluye contexto util).\" >&2; " +
-        "else " +
-        "echo \"  -> this is almost certainly a Nyx compiler BUG (invalid IR), not your code (file: " + main_file + "). Report it with 'nyx report' (the report includes useful context).\" >&2; " +
-        "fi; " +
-        "elif grep -qE '" + link_patterns + "' \"$LOG\"; then " +
-        "if [ \"$NYX_LANG\" = \"es\" ]; then " +
-        "echo \"  -> simbolo no encontrado al linkear: si es una funcion extern C tuya, revisa el nombre/lib; si es de la stdlib de Nyx, es un bug -- repórtalo con 'nyx report'.\" >&2; " +
-        "else " +
-        "echo \"  -> symbol not found at link time: if this is your own extern C function, check the name/lib; if it is a stdlib function, it is a Nyx bug -- report it with 'nyx report'.\" >&2; " +
-        "fi; " +
-        "else " +
-        "if [ \"$NYX_LANG\" = \"es\" ]; then " +
-        "echo \"  -> fallo de link sin patron reconocido; si sospechas que es un bug del compilador, repórtalo con 'nyx report'.\" >&2; " +
-        "else " +
-        "echo \"  -> link failure with no recognized pattern; if you suspect a compiler bug, report it with 'nyx report'.\" >&2; " +
-        "fi; " +
-        "fi\n"
+// Esta función imprime la atribución (dos clases, por línea del log, como
+// el `grep -qE` de antes) ANTES del log — el log completo se sigue mostrando
+// siempre, esto solo agrega contexto arriba. Bilingüe vía NYX_LANG (mismo
+// criterio que nyx_msg en nyx.nx). La usan el enlace nativo y el de WASM.
+fn clang_failure_attribution(log: String, main_file: String) {
+    var ir: bool = false
+    var simbolo: bool = false
+    let lineas: Array = log.split("\n")
+    var i: int = 0
+    while i < lineas.length() {
+        let l: String = lineas[i]
+        // Clase (a): IR inválido — patrones vistos en incidentes reales
+        // (grep "use of undefined value"/"defined with type" en
+        // PROJECT_STATE.md/TASKS.md) + el del banco. 5 patrones alcanzan.
+        if l.contains("use of undefined value") or l.contains("expected instruction") or l.contains("invalid redefinition of") or l.contains("invalid forward reference") { ir = true }
+        let dt: int = l.indexOf("defined with type ")
+        if dt >= 0 and l.substring(dt + 18, l.length()).contains(" but expected") { ir = true }
+        // Clase (b): símbolo indefinido de linker — puede ser un extern "C"
+        // del usuario mal declarado O un builtin de la stdlib sin runtime
+        // detrás; mensaje neutro (no asumimos de quién es la culpa).
+        if l.contains("undefined reference") or l.contains("undefined symbol") { simbolo = true }
+        i = i + 1
+    }
+    let es: bool = getenv("NYX_LANG") == "es"
+    if ir {
+        if es { err_line("  -> esto es casi seguro un BUG del compilador Nyx (IR invalido), no de tu codigo (archivo: " + main_file + "). Repórtalo con 'nyx report' (el reporte incluye contexto util).") }
+        else { err_line("  -> this is almost certainly a Nyx compiler BUG (invalid IR), not your code (file: " + main_file + "). Report it with 'nyx report' (the report includes useful context).") }
+    } else if simbolo {
+        if es { err_line("  -> simbolo no encontrado al linkear: si es una funcion extern C tuya, revisa el nombre/lib; si es de la stdlib de Nyx, es un bug -- repórtalo con 'nyx report'.") }
+        else { err_line("  -> symbol not found at link time: if this is your own extern C function, check the name/lib; if it is a stdlib function, it is a Nyx bug -- report it with 'nyx report'.") }
+    } else {
+        if es { err_line("  -> fallo de link sin patron reconocido; si sospechas que es un bug del compilador, repórtalo con 'nyx report'.") }
+        else { err_line("  -> link failure with no recognized pattern; if you suspect a compiler bug, report it with 'nyx report'.") }
+    }
 }
 
 // Pila del compilador (fricción nyxerp 20260920-200024, spec
 // docs/design/specs/2026-09-23-pila-del-compilador-design.md): nyx_bootstrap se
 // enlaza en -O0 y cada nivel de una expresión binaria apila ~151 KB de marcos de
 // codegen, así que 53 operandos `+` agotaban los 8 MB por omisión y el
-// compilador moría con SIGSEGV mudo. Se sube a 64 MB SOLO en el subshell del
-// compilador —el binario del usuario conserva su pila de siempre— y nunca se
-// BAJA una pila más grande. Mismo criterio que scripts/lib_stack.sh.
-fn pila_compilador_sh() -> String {
-    return "nyx_pila() { local c; c=$(ulimit -s 2>/dev/null) || return 0; [ \"$c\" = unlimited ] && return 0; [ \"$c\" -ge 65536 ] 2>/dev/null && return 0; ulimit -s 65536 2>/dev/null || true; }\n"
+// compilador moría con SIGSEGV mudo. Se sube a 64 MB el límite BLANDO que
+// heredan los hijos —el compilador y los clang que lanza el build—, nunca se
+// BAJA uno más grande, y se restaura al terminar: el binario que corre `nyx run`
+// conserva su pila de siempre. Mismo criterio que scripts/lib_stack.sh. Antes
+// era `ulimit -s 65536` en el subshell del compilador. En Windows no hace nada:
+// la pila la fija /STACK:67108864 al enlazar nyx_bootstrap.exe.
+var g_pila_previa: int = 0
+var g_pila_subida: bool = false
+fn pila_compilador_subir() {
+    let c: int = nyx_proc_stack_limit_get()
+    // -1 = ilimitada; menor que -1, sin rlimit (Windows) o error.
+    if c < 0 or c >= 67108864 { return 0 }
+    if nyx_proc_stack_limit_set(67108864) == 0 {
+        g_pila_previa = c
+        g_pila_subida = true
+    }
+    return 0
+}
+
+fn pila_compilador_restaurar() {
+    if g_pila_subida {
+        let _r: int = nyx_proc_stack_limit_set(g_pila_previa)
+        g_pila_subida = false
+    }
+    return 0
 }
 
 // Si el compilador murió por señal (rc >= 128), decir la causa conocida en vez
-// de dejar solo el «Segmentation fault» del shell. `$1` = rc del subshell.
-fn pila_compilador_pista_sh() -> String {
-    return "nyx_pista() { [ \"$1\" -ge 128 ] 2>/dev/null && echo \"nota: el compilador murio por una senal (rc=$1). La causa conocida es quedarse sin pila con una expresion muy larga o muy anidada (cientos de operandos en una sola expresion): conviene partirla en varias. Si no es eso, se puede reportar con 'nyx report'.\" >&2; return 0; }\n"
+// de dejar solo el «Segmentation fault». En Windows un desborde de pila es
+// 0xC00000FD, que también es >= 128.
+fn nyx_pista(rc: int) {
+    if rc >= 128 {
+        err_line("nota: el compilador murio por una senal (rc=" + int_to_string(rc) + "). La causa conocida es quedarse sin pila con una expresion muy larga o muy anidada (cientos de operandos en una sola expresion): conviene partirla en varias. Si no es eso, se puede reportar con 'nyx report'.")
+    }
+    return 0
 }
 
 // Pista para un NYX1002 de una unidad [lib] (2026-09-24, nyxerp con [lib]): un
 // módulo que usa una fn de otro SIN importarlo compilaba inlineado —el programa
 // entero comparte un espacio de nombres— y como biblioteca, que se compila sola,
 // da «'x' not declared» sin decir por qué. Se busca la fn en src/ y se dice
-// dónde está, si es privada, y qué import falta. Sin `$` + `{` seguidos: en un
-// string de Nyx eso es interpolación.
-fn lib_pista_import_sh() -> String {
-    var s: String = "nyx_pista_import() {\n"
-    s = s + "  for n in $(grep -oE \"'[A-Za-z_][A-Za-z0-9_]*' not declared\" \"$1\" | cut -d\"'\" -f2 | sort -u); do\n"
-    s = s + "    def=$(grep -rlE \"^(pub |export )?(async )?fn $n\\(\" \"$ORIG_DIR/src\" 2>/dev/null | head -1)\n"
-    s = s + "    [ -n \"$def\" ] || continue\n"
-    s = s + "    rel=$(echo \"$def\" | sed \"s|^$ORIG_DIR/||; s|\\.nx$||\")\n"
-    s = s + "    priv=''; grep -qE \"^fn $n\\(\" \"$def\" && priv=' (y es privada: le falta pub)'\n"
-    s = s + "    echo \"nota: '$n' está en $rel$priv y este módulo no lo importa. Sin [lib] compilaba porque el programa inlineado comparte un solo espacio de nombres; una biblioteca se compila sola y ve solo lo que importa: agrega  import \\\"$rel\\\"\" >&2\n"
-    s = s + "  done\n"
-    s = s + "  return 0\n"
-    s = s + "}\n"
-    return s
+// dónde está, si es privada, y qué import falta. Los archivos de src/ se miran
+// en orden alfabético (el `grep -rl | head -1` de antes seguía el orden del
+// disco).
+fn es_ident_pista(c: int, primero: bool) -> bool {
+    if (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_' { return true }
+    return not primero and c >= '0' and c <= '9'
+}
+
+fn nombres_no_declarados(log: String) -> Array {
+    var vistos: Map = Map.new()
+    var out: Array = []
+    let marca: String = "' not declared"
+    var desde: int = 0
+    while desde < log.length() {
+        let resto: String = log.substring(desde, log.length())
+        let j: int = resto.indexOf(marca)
+        if j < 0 { break }
+        let fin: int = desde + j
+        var ini: int = fin
+        var sigue: bool = true
+        while ini > 0 and sigue {
+            let c: int = log.charAt(ini - 1)
+            if es_ident_pista(c, false) { ini = ini - 1 } else { sigue = false }
+        }
+        var abre: bool = false
+        if ini > 0 and ini < fin {
+            let q: int = log.charAt(ini - 1)
+            let c0: int = log.charAt(ini)
+            abre = q == 39 and es_ident_pista(c0, true)
+        }
+        if abre {
+            let n: String = log.substring(ini, fin)
+            if not vistos.contains(n) { vistos.insert(n, 1); out.push(n) }
+        }
+        desde = fin + marca.length()
+    }
+    return ordenar_texto(out)
+}
+
+fn archivos_de(dir: String, out: Array) {
+    let hijos: Array = ordenar_texto(readdir(dir))
+    var i: int = 0
+    while i < hijos.length() {
+        let h: String = hijos[i]
+        let p: String = dir + "/" + h
+        let st: Array = stat(p)
+        if st.length() >= 5 {
+            let es_dir: bool = st[3]
+            let es_arch: bool = st[4]
+            if es_dir { archivos_de(p, out) } else if es_arch { out.push(p) }
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+// La línea declara `fn n(` (con pub/export y async opcionales): el
+// ^(pub |export )?(async )?fn n\( de antes. Devuelve 0 si no, 1 si es pública,
+// 2 si es privada.
+fn declara_fn(linea: String, n: String) -> int {
+    var l: String = linea
+    var vis: bool = false
+    if l.startsWith("pub ") { l = l.substring(4, l.length()); vis = true }
+    else if l.startsWith("export ") { l = l.substring(7, l.length()); vis = true }
+    if l.startsWith("async ") { l = l.substring(6, l.length()) }
+    if not l.startsWith("fn " + n + "(") { return 0 }
+    if vis or linea.startsWith("async ") { return 1 }
+    return 2
+}
+
+fn nyx_pista_import(log: String, orig: String) {
+    let nombres: Array = nombres_no_declarados(log)
+    if nombres.length() == 0 { return 0 }
+    var archivos: Array = []
+    if file_exists(orig + "/src") { archivos_de(orig + "/src", archivos) }
+    var k: int = 0
+    while k < nombres.length() {
+        let n: String = nombres[k]
+        var def: String = ""
+        var privada: bool = false
+        var a: int = 0
+        while a < archivos.length() and def == "" {
+            let f: String = archivos[a]
+            let lineas: Array = read_file(f).split("\n")
+            var li: int = 0
+            while li < lineas.length() and def == "" {
+                let l: String = lineas[li]
+                if declara_fn(l, n) > 0 { def = f }
+                li = li + 1
+            }
+            a = a + 1
+        }
+        if def != "" {
+            // priv: hay un `fn n(` sin pub en ese archivo (el grep de antes).
+            let lineas2: Array = read_file(def).split("\n")
+            var lj: int = 0
+            while lj < lineas2.length() {
+                let l2: String = lineas2[lj]
+                if l2.startsWith("fn " + n + "(") { privada = true }
+                lj = lj + 1
+            }
+            var rel: String = def
+            if rel.startsWith(orig + "/") { rel = rel.substring(orig.length() + 1, rel.length()) }
+            if rel.endsWith(".nx") { rel = rel.substring(0, rel.length() - 3) }
+            var priv: String = ""
+            if privada { priv = " (y es privada: le falta pub)" }
+            err_line("nota: '" + n + "' está en " + rel + priv + " y este módulo no lo importa. Sin [lib] compilaba porque el programa inlineado comparte un solo espacio de nombres; una biblioteca se compila sola y ve solo lo que importa: agrega  import \"" + rel + "\"")
+        }
+        k = k + 1
+    }
+    return 0
 }
 
 // ===== COMPILACIÓN SEPARADA: [lib] modules (arco compilacion-separada, Task 6) =====
@@ -1887,13 +2288,225 @@ fn lib_identidad_compilador(nyx_bin: String) -> String {
     return "c:" + h
 }
 
-// Bash que deja en $LIB_OBJS los .o de las bibliotecas: reutiliza el de huella
-// vigente, o compila la unidad y la guarda. Corre DESPUÉS del `cd` a nyx_home y
-// con $ORIG_DIR y $LOG definidos.
-fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_flags: String, gc_flag: String) -> String {
-    if config.lib_modules.length() == 0 { return "" }
+// Los .o de las bibliotecas: reutiliza el de huella vigente, o compila la
+// unidad y la guarda. Devuelve los objetos y el mapa en el orden del manifiesto.
+struct LibRes {
+    ok: bool,
+    objs: Array,
+    mapa: String,
+}
+
+// El build paralelo de [lib] (arco build-lib-paralelo, 2026-10-17). Las
+// unidades no dependen unas de otras para compilar —una biblioteca que importa
+// otra lee su TEXTO y solo emite `declare`—, así que no hay grafo que ordenar:
+// solo el enlace necesita todos los objetos. Cada unidad pasa por dos hijos, el
+// compilador y `clang -c`; el estado de la unidad k vive en los arrays de
+// LibJobs (etapa: 0 sin lanzar, 1 compilador, 2 clang, 9 terminada). El .o se
+// escribe a un temporal y se publica con rename: un objeto a medio escribir
+// nunca tiene el nombre que la huella reutiliza.
+struct LibJobs {
+    mods: Array,
+    objs: Array,
+    inls: Array,
+    seguros: Array,
+    etapa: Array,
+    hijo: Array,
+    rc: Array,
+    fallo: Array,
+    avisos: Array,
+    // [siguiente unidad cuyos avisos imprimir, unidades lanzadas]
+    cuenta: Array,
+}
+
+fn lib_corriendo(j: LibJobs) -> int {
+    var n: int = 0
+    var k: int = 0
+    while k < j.etapa.length() {
+        let e: int = j.etapa[k]
+        if e == 1 or e == 2 { n = n + 1 }
+        k = k + 1
+    }
+    return n
+}
+
+// Imprime los avisos (⚠) de las unidades terminadas, en orden, sin saltear una
+// que siga corriendo.
+fn lib_vaciar(j: LibJobs) {
+    var sig: int = j.cuenta[0]
+    while sig < j.etapa.length() {
+        let e: int = j.etapa[sig]
+        if e != 9 { break }
+        let w: String = j.avisos[sig]
+        if w != "" { err_print(w) }
+        sig = sig + 1
+    }
+    j.cuenta[0] = sig
+    return 0
+}
+
+fn lib_fallo_alguna(j: LibJobs) -> bool {
+    var k: int = 0
+    while k < j.fallo.length() {
+        let f: String = j.fallo[k]
+        if f != "" { return true }
+        k = k + 1
+    }
+    return false
+}
+
+// Lanza la unidad k: borra sus objetos viejos, copia el fuente al temporal y
+// arranca el compilador (stdout y stderr a <k>.log).
+fn lib_lanzar(j: LibJobs, k: int, nyx_bin: String, nyx_home: String, env_base: Array, lista: String, orig: String, tmpd: String) {
+    let m: String = j.mods[k]
+    let seguro: String = j.seguros[k]
+    let dir: String = orig + "/target/nyx-lib"
+    let viejos: Array = readdir(dir)
+    var i: int = 0
+    while i < viejos.length() {
+        let v: String = viejos[i]
+        if v.startsWith(seguro + "-") { let _r: int = remove_file(dir + "/" + v) }
+        i = i + 1
+    }
+    let ks: String = int_to_string(k)
+    let lsrc: String = tmpd + "/lib_" + ks + ".nx"
+    write_file(lsrc, read_file(orig + "/" + m + ".nx"))
+    var env: Array = []
+    var e: int = 0
+    while e < env_base.length() { let par: Array = env_base[e]; env.push(par); e = e + 1 }
+    env.push(["NYX_LIB_UNIT", "1"])
+    env.push(["NYX_LIB_SELF", m])
+    env.push(["NYX_LIB_MODULES", lista])
+    env.push(["NYX_SRC", lsrc])
+    env.push(["NYX_SRC_DISPLAY", m + ".nx"])
+    env.push(["NYX_PROJECT_DIR", orig])
+    let log: String = tmpd + "/" + ks + ".log"
+    write_file(log, "")
+    var o = spawn_opts()
+    o.stdin = Stdio.Null
+    o.stdout = Stdio.File(log, "a")
+    o.stderr = Stdio.File(log, "a")
+    o.cwd = nyx_home
+    o.env = env
+    term_flush()
+    match try_spawn([nyx_bin], o) {
+        Result.Ok(c) => {
+            j.hijo[k] = c.handle
+            j.etapa[k] = 1
+        }
+        Result.Err(er) => {
+            write_file(log, er.msg + "\n")
+            j.fallo[k] = "127"
+            j.etapa[k] = 9
+        }
+    }
+    let lanzadas: int = j.cuenta[1]
+    j.cuenta[1] = lanzadas + 1
+    return 0
+}
+
+// Un paso de las unidades que corren: la que terminó el compilador pasa a clang
+// (o termina, con rc 3 = cae al inlining, NYX0302), la que terminó clang
+// publica su objeto.
+fn lib_avanzar(j: LibJobs, opt_flags: String, tmpd: String) {
+    var k: int = 0
+    while k < j.etapa.length() {
+        let e: int = j.etapa[k]
+        if e == 1 or e == 2 {
+            let hh: int = j.hijo[k]
+            let c: Child = Child { handle: hh, program: "nyx" }
+            var termino: bool = false
+            var rc: int = 0
+            match try_child_try_wait(c) {
+                Result.Ok(op) => {
+                    match op {
+                        Option.Some(x) => { termino = true; rc = x }
+                        Option.None => {}
+                    }
+                }
+                Result.Err(_er) => { termino = true; rc = 1 }
+            }
+            if termino {
+                let ks: String = int_to_string(k)
+                let log: String = tmpd + "/" + ks + ".log"
+                let lsrc_ll: String = tmpd + "/lib_" + ks + ".ll"
+                let obj: String = j.objs[k]
+                if e == 1 {
+                    if rc == 3 {
+                        j.avisos[k] = avisos_de(read_file(log))
+                        let inl: String = j.inls[k]
+                        write_file(inl, "")
+                        j.etapa[k] = 9
+                    } else if rc != 0 {
+                        j.rc[k] = rc
+                        j.fallo[k] = int_to_string(rc)
+                        j.etapa[k] = 9
+                    } else {
+                        j.avisos[k] = avisos_de(read_file(log))
+                        let argv: Array = concat(concat(["clang", "-c"], palabras(opt_flags)), ["-Wno-override-module", lsrc_ll, "-o", obj + ".tmp" + ks])
+                        var o = spawn_opts()
+                        o.stdin = Stdio.Null
+                        o.stderr = Stdio.File(tmpd + "/" + ks + ".clang", "w")
+                        term_flush()
+                        match try_spawn(argv, o) {
+                            Result.Ok(c2) => { j.hijo[k] = c2.handle; j.etapa[k] = 2 }
+                            Result.Err(er) => {
+                                write_file(tmpd + "/" + ks + ".clang", er.msg + "\n")
+                                j.fallo[k] = "clang"
+                                j.etapa[k] = 9
+                            }
+                        }
+                    }
+                } else {
+                    if rc == 0 {
+                        let _m: int = rename_file(obj + ".tmp" + ks, obj)
+                    } else {
+                        let _r: int = remove_file(obj + ".tmp" + ks)
+                        j.fallo[k] = "clang"
+                    }
+                    j.etapa[k] = 9
+                }
+                let e2: int = j.etapa[k]
+                if e2 == 9 {
+                    let _a: int = remove_file(tmpd + "/lib_" + ks + ".nx")
+                    let _b: int = remove_file(lsrc_ll)
+                }
+            }
+        }
+        k = k + 1
+    }
+    return 0
+}
+
+// nyx_lib_turno: espera un lugar libre (hasta `par` a la vez), vacía los
+// avisos ya listos y dice si alguna unidad falló (entonces no se lanzan más).
+// Camino rápido: sin ninguna unidad lanzada no hay nada que esperar (es el caso
+// de `nyx test`, que pasa por acá en CADA archivo con todo reutilizado).
+fn lib_turno(j: LibJobs, par: int, opt_flags: String, tmpd: String) -> bool {
+    let lanzadas: int = j.cuenta[1]
+    if lanzadas == 0 { return true }
+    lib_avanzar(j, opt_flags, tmpd)
+    while lib_corriendo(j) >= par {
+        sleep(10)
+        lib_avanzar(j, opt_flags, tmpd)
+    }
+    lib_vaciar(j)
+    return not lib_fallo_alguna(j)
+}
+
+// NYX_J: trabajos a la vez — NYX_JOBS (lo pone `-j`), o los núcleos.
+fn lib_trabajos() -> int {
+    let v: String = getenv("NYX_JOBS")
+    if jobs_valido(v) { return string_to_int_or(v, 1) }
+    if v != "" { return 1 }
+    return cpu_count()
+}
+
+fn lib_objetos(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_flags: String, gc_flag: String, gc_env: Array, orig: String, tmpd: String) -> LibRes {
+    if config.lib_modules.length() == 0 { return LibRes { ok: true, objs: [], mapa: "" } }
     let lista: String = config.lib_modules.join(",")
     let ident: String = lib_identidad_compilador(nyx_bin)
+    // La huella usa las banderas y el entorno del compilador COMO TEXTO, igual
+    // que cuando eran parte del script: los objetos ya guardados siguen valiendo.
     let base: String = ident + "|" + opt_flags + "|" + gc_flag + "|" + lista
     var hashes: Map = Map.new()
     var imports_de: Map = Map.new()
@@ -1905,64 +2518,110 @@ fn lib_objetos_sh(config: ProjectConfig, nyx_home: String, nyx_bin: String, opt_
         libs_set.insert(lsm, 1)
         lsi = lsi + 1
     }
-    // StringBuilder y no `sh = sh + …`: el script crece con cada módulo y la
-    // concatenación recopia el acumulado entero (cuadrático). Con 250 módulos
-    // eran ~10 s de nyx_build por build SIN cambios, medido 2026-09-23 — la
-    // misma lección que `emit` (codegen) y el body del resolvedor.
-    var sh: StringBuilder = StringBuilder.new()
-    sh.append(lib_pista_import_sh())
-    sh.append(lib_paralelo_sh(nyx_bin, lista, opt_flags, gc_flag))
-    sh.append("LIB_OBJS=\"\"\nLIB_MAP=\"\"\nmkdir -p \"$ORIG_DIR/target/nyx-lib\"\n")
-    // Candado del PROYECTO sobre target/nyx-lib, exclusivo y hasta el final del
-    // script (se suelta al salir). Dos builds del mismo proyecto a la vez —nyxerp
-    // corre cuatro `nyx test` en paralelo y cada uno pasa por `nyx_build libs`—
-    // se borraban y pisaban los objetos: el `rm -f <módulo>-*` de una unidad se
+    mkdir_p(orig + "/target/nyx-lib")
+    // Candado del PROYECTO sobre target/nyx-lib, exclusivo y hasta que termina
+    // esta función. Dos builds del mismo proyecto a la vez —nyxerp corre cuatro
+    // `nyx test` en paralelo y cada uno pasa por `nyx_build libs`— se borraban y
+    // pisaban los objetos: el borrado de los objetos viejos de una unidad se
     // llevaba el temporal que el otro build estaba escribiendo (visto el
     // 2026-10-17 en la verificación del arco build-lib-paralelo: «clang: unable to
     // rename temporary»). Con el candado, el segundo espera y después reutiliza lo
-    // que el primero dejó. Sin flock (macOS sin util-linux) se sigue como antes.
-    // FD 8: el 9 es el candado compartido del toolchain.
-    sh.append("if command -v flock >/dev/null 2>&1; then exec 8>\"$ORIG_DIR/target/nyx-lib/.lock\"\n")
-    sh.append("  flock -n 8 || { echo '   esperando a otro build del mismo proyecto (target/nyx-lib)'; flock 8; }\nfi\n")
-    // Primera pasada, en el orden del manifiesto: cada unidad reutiliza su objeto o
-    // se lanza en segundo plano (hasta NYX_J a la vez). Las líneas `reusing` y
-    // `compiling` salen en ese orden; los avisos de cada unidad, en cuanto ella y
-    // todas las anteriores terminaron (nyx_lib_vaciar). Con NYX_J=1 eso es
-    // exactamente la salida de antes del arco.
-    var mods: StringBuilder = StringBuilder.new()
+    // que el primero dejó. Si el candado no se puede tomar, se sigue sin él.
+    let candado_p: String = orig + "/target/nyx-lib/.lock"
+    var candado: FileLock = FileLock { handle: -1, path: "" }
+    match try_lock_file_nowait(candado_p, true) {
+        Result.Ok(op) => {
+            match op {
+                Option.Some(l) => { candado = l }
+                Option.None => {
+                    print("   esperando a otro build del mismo proyecto (target/nyx-lib)")
+                    match try_lock_file(candado_p, true) {
+                        Result.Ok(l2) => { candado = l2 }
+                        Result.Err(_e) => {}
+                    }
+                }
+            }
+        }
+        Result.Err(_e) => {}
+    }
+    let n: int = config.lib_modules.length()
+    var j: LibJobs = LibJobs { mods: [], objs: [], inls: [], seguros: [], etapa: [], hijo: [], rc: [], fallo: [], avisos: [], cuenta: [0, 0] }
     var i: int = 0
-    while i < config.lib_modules.length() {
+    while i < n {
         let m: String = config.lib_modules[i]
         let seguro: String = m.replace("/", "_")
         let h: String = lib_huella(m, base, nyx_home + "/std", hashes, imports_de, libs_set).substring(0, 16)
-        let obj: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".o"
-        let inl: String = "$ORIG_DIR/target/nyx-lib/" + seguro + "-" + h + ".inline"
-        let k: String = int_to_string(i)
-        sh.append("nyx_lib_turno || NYX_PARAR=1\n")
-        sh.append("if [ -z \"$NYX_PARAR\" ]; then\n")
-        sh.append("  if [ -f \"" + obj + "\" ]; then echo '   reusing " + m + " (lib, sin cambios)'; : > \"$LIBJ/" + k + ".done\"\n")
-        sh.append("  elif [ -f \"" + inl + "\" ]; then : > \"$LIBJ/" + k + ".done\"\n")
-        sh.append("  else echo '   compiling " + m + " (lib)'; NYX_LANZADAS=$((NYX_LANZADAS + 1)); nyx_lib_unidad " + k + " \"" + m + "\" \"" + obj + "\" \"" + inl + "\" \"" + seguro + "\" &\n  fi\n")
-        sh.append("else : > \"$LIBJ/" + k + ".done\"; fi\n")
-        mods.append(k + " " + m + " " + obj + "\n")
+        j.mods.push(m)
+        j.seguros.push(seguro)
+        j.objs.push(orig + "/target/nyx-lib/" + seguro + "-" + h + ".o")
+        j.inls.push(orig + "/target/nyx-lib/" + seguro + "-" + h + ".inline")
+        j.etapa.push(0)
+        j.hijo.push(0)
+        j.rc.push(0)
+        j.fallo.push("")
+        j.avisos.push("")
         i = i + 1
     }
-    sh.append("wait\nnyx_lib_vaciar\n")
+    // Primera pasada, en el orden del manifiesto: cada unidad reutiliza su objeto o
+    // se lanza (hasta NYX_J a la vez). Las líneas `reusing` y `compiling` salen en
+    // ese orden; los avisos de cada unidad, en cuanto ella y todas las anteriores
+    // terminaron. Con NYX_J=1 eso es exactamente la salida de antes del arco.
+    let par: int = lib_trabajos()
+    var parar: bool = false
+    i = 0
+    while i < n {
+        if not parar and not lib_turno(j, par, opt_flags, tmpd) { parar = true }
+        let m: String = j.mods[i]
+        let obj: String = j.objs[i]
+        let inl: String = j.inls[i]
+        if not parar {
+            if file_exists(obj) { print("   reusing " + m + " (lib, sin cambios)"); j.etapa[i] = 9 }
+            else if file_exists(inl) { j.etapa[i] = 9 }
+            else {
+                print("   compiling " + m + " (lib)")
+                lib_lanzar(j, i, nyx_bin, nyx_home, gc_env, lista, orig, tmpd)
+            }
+        } else { j.etapa[i] = 9 }
+        i = i + 1
+    }
+    while lib_corriendo(j) > 0 {
+        lib_avanzar(j, opt_flags, tmpd)
+        if lib_corriendo(j) > 0 { sleep(10) }
+    }
+    lib_vaciar(j)
     // Segunda pasada: los errores de TODAS las unidades que fallaron, en orden, y
-    // recién después LIB_OBJS/LIB_MAP en el orden del manifiesto (enlace
+    // recién después los objetos y el mapa en el orden del manifiesto (enlace
     // determinista). Una unidad que no llegó a correr (por un error anterior) no
     // tiene objeto y no se enlaza: el build sale con error igual.
-    sh.append("NYX_FALLO=0\n")
-    sh.append("while read -r k m obj; do\n")
-    sh.append("  if [ -f \"$LIBJ/$k.fail\" ]; then NYX_FALLO=1; frc=$(cat \"$LIBJ/$k.fail\")\n")
-    sh.append("    if [ \"$frc\" = clang ]; then echo \"error: clang failed ($m):\" >&2; cat \"$LIBJ/$k.clang\" >&2\n")
-    sh.append("    else echo \"error: nyx compile failed ($m):\" >&2; cat \"$LIBJ/$k.log\" >&2; nyx_pista \"$frc\"; nyx_pista_import \"$LIBJ/$k.log\"; fi\n")
-    sh.append("  elif [ -f \"$obj\" ]; then LIB_OBJS=\"$LIB_OBJS $obj\"; LIB_MAP=\"$LIB_MAP $m=$obj\"; fi\n")
-    sh.append("done <<NYX_LIB_MODS\n")
-    sh.append(mods.to_string())
-    sh.append("NYX_LIB_MODS\n")
-    sh.append("rm -rf \"$LIBJ\"\n[ \"$NYX_FALLO\" = 0 ] || exit 1\n")
-    return sh.to_string()
+    var res: LibRes = LibRes { ok: true, objs: [], mapa: "" }
+    var mapa: StringBuilder = StringBuilder.new()
+    i = 0
+    while i < n {
+        let m: String = j.mods[i]
+        let obj: String = j.objs[i]
+        let f: String = j.fallo[i]
+        let ks: String = int_to_string(i)
+        if f != "" {
+            res.ok = false
+            if f == "clang" {
+                err_line("error: clang failed (" + m + "):")
+                err_print(read_file(tmpd + "/" + ks + ".clang"))
+            } else {
+                err_line("error: nyx compile failed (" + m + "):")
+                let log: String = read_file(tmpd + "/" + ks + ".log")
+                err_print(log)
+                nyx_pista(string_to_int_or(f, 1))
+                nyx_pista_import(log, orig)
+            }
+        } else if file_exists(obj) {
+            res.objs.push(obj)
+            mapa.append(" " + m + "=" + obj)
+        }
+        i = i + 1
+    }
+    res.mapa = mapa.to_string()
+    if candado.handle >= 0 { unlock_file(candado) }
+    return res
 }
 
 // `-j` / NYX_JOBS: un entero positivo escrito solo con dígitos.
@@ -1977,52 +2636,249 @@ fn jobs_valido(v: String) -> bool {
     return string_to_int_or(v, 0) > 0
 }
 
-// Las funciones bash del build paralelo de [lib] (arco build-lib-paralelo,
-// 2026-10-17). Las unidades no dependen unas de otras para compilar —una
-// biblioteca que importa otra lee su TEXTO y solo emite `declare`—, así que no
-// hay grafo que ordenar: solo el enlace necesita todos los objetos.
-//   NYX_J            trabajos a la vez: NYX_JOBS, o los núcleos (nproc / getconf).
-//   nyx_lib_turno    espera un lugar libre, vacía los avisos ya listos y devuelve
-//                    1 si alguna unidad falló (no se lanzan más).
-//   nyx_lib_unidad   compila UNA unidad en segundo plano con su propio temporal,
-//                    log y marcadores ($LIBJ/<k>.log/.warn/.fail/.clang/.done). El
-//                    .o se escribe a un temporal y se publica con `mv`: un objeto a
-//                    medio escribir nunca tiene el nombre que la huella reutiliza.
-//   nyx_lib_vaciar   imprime los avisos (⚠) de las unidades terminadas, en orden,
-//                    sin saltear una que siga corriendo.
-// `jobs -rp` y un sleep corto en vez de `wait -n`, que bash 3.2 (macOS) no tiene.
-fn lib_paralelo_sh(nyx_bin: String, lista: String, opt_flags: String, gc_flag: String) -> String {
-    var s: StringBuilder = StringBuilder.new()
-    s.append("NYX_J=\"$NYX_JOBS\"\n")
-    s.append("[ -n \"$NYX_J\" ] || NYX_J=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)\n")
-    s.append("case \"$NYX_J\" in ''|*[!0-9]*|0) NYX_J=1 ;; esac\n")
-    s.append("LIBJ=\"$(mktemp -d /tmp/nyx_libj.XXXXXX)\"\nNYX_PARAR=\"\"\nNYX_SIG=0\nNYX_LANZADAS=0\n")
-    s.append("nyx_lib_vaciar() {\n")
-    s.append("  while [ -f \"$LIBJ/$NYX_SIG.done\" ]; do\n")
-    s.append("    [ -s \"$LIBJ/$NYX_SIG.warn\" ] && cat \"$LIBJ/$NYX_SIG.warn\" >&2\n")
-    s.append("    NYX_SIG=$((NYX_SIG + 1))\n  done\n  return 0\n}\n")
-    // Camino rápido: sin ninguna unidad lanzada no hay trabajos que esperar ni
-    // fallas que buscar. Es el caso de `nyx test`, que pasa por acá en CADA
-    // archivo con todo reutilizado: contar trabajos (`jobs | wc`) y buscar
-    // fallas (`ls`) por módulo eran ~600 procesos y ~6 s por archivo con los 300
-    // módulos de nyxerp (medido 2026-10-17).
-    s.append("nyx_lib_turno() {\n")
-    s.append("  [ \"$NYX_LANZADAS\" = 0 ] && return 0\n")
-    s.append("  while [ \"$(jobs -rp | wc -l)\" -ge \"$NYX_J\" ]; do sleep 0.1; done\n")
-    s.append("  nyx_lib_vaciar\n")
-    s.append("  ls \"$LIBJ\"/*.fail >/dev/null 2>&1 && return 1\n  return 0\n}\n")
-    s.append("nyx_lib_unidad() {\n  set +e\n")
-    s.append("  local k=\"$LIBJ/$1\" lrc=0 LSRC\n")
-    s.append("  rm -f \"$ORIG_DIR/target/nyx-lib/$5-\"*\n")
-    s.append("  LSRC=\"$(mktemp /tmp/nyx_lib_XXXXXX)\"; cp \"$ORIG_DIR/$2.nx\" \"$LSRC.nx\"\n")
-    s.append("  ( nyx_pila; " + gc_flag + "NYX_LIB_UNIT=1 NYX_LIB_SELF=\"$2\" NYX_LIB_MODULES=\"" + lista + "\" NYX_SRC=\"$LSRC.nx\" NYX_SRC_DISPLAY=\"$2.nx\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" ) > \"$k.log\" 2>&1 || lrc=$?\n")
-    s.append("  if [ $lrc -eq 3 ]; then grep -F '⚠' \"$k.log\" > \"$k.warn\"; : > \"$4\"\n")
-    s.append("  elif [ $lrc -ne 0 ]; then echo \"$lrc\" > \"$k.fail\"\n")
-    s.append("  else grep -F '⚠' \"$k.log\" > \"$k.warn\"\n")
-    s.append("    if clang -c " + opt_flags + " -Wno-override-module \"$LSRC.ll\" -o \"$3.tmp$1\" 2> \"$k.clang\"; then mv -f \"$3.tmp$1\" \"$3\"\n")
-    s.append("    else rm -f \"$3.tmp$1\"; echo clang > \"$k.fail\"; fi\n  fi\n")
-    s.append("  rm -f \"$LSRC\" \"$LSRC.nx\" \"$LSRC.ll\"; : > \"$k.done\"\n}\n")
-    return s.to_string()
+// Runtime precompilado AUTOMÁTICO (fricción de nyxerp, 2026-09-24): el
+// runtime (~24 .c) es idéntico en cada compilación y compilarlo domina el
+// costo de un build o de cada archivo de `nyx test`; NYX_RT_ARCHIVE lo
+// evitaba, pero había que saber que existía y armar el .a a mano. El build lo
+// arma solo, una vez, en ~/.cache/nyx/rt/<clave>/, con clave = sha256 de las
+// banderas + la lista de fuentes + `clang --version` + el CONTENIDO de los
+// .c/.h: un install nuevo del runtime es otra clave, así que nunca se enlaza un
+// .a viejo. Se arma en un temporal y se publica con rename (atómico): dos
+// compilaciones a la vez no se pisan. Cualquier falla (sin HOME escribible, sin
+// ar) devuelve "" y se compilan las fuentes como siempre. NYX_NO_RT_CACHE=1 lo
+// apaga; un NYX_RT_ARCHIVE explícito manda. Directorios sin usar en 14 días se
+// podan. Corre dentro del candado compartido del toolchain, así que las fuentes
+// no cambian mientras se calcula la clave. (test.nx tiene su propia copia, en
+// bash todavía: build.nx y test.nx son programas aparte, sin módulo común. Desde
+// que esta salió del script la clave no coincide con la de test.nx byte a byte
+// —el orden de los .h era el del glob de bash—, así que cada uno arma su .a.)
+fn h_de(dir: String) -> Array {
+    var out: Array = []
+    let nombres: Array = ordenar_texto(readdir(dir))
+    var i: int = 0
+    while i < nombres.length() {
+        let n: String = nombres[i]
+        if n.endsWith(".h") { out.push(dir + "/" + n) }
+        i = i + 1
+    }
+    return out
+}
+
+fn rt_auto(fl: String, fuentes: Array, rt: String) -> String {
+    if getenv("NYX_NO_RT_CACHE") != "" { return "" }
+    var base: String = getenv("XDG_CACHE_HOME")
+    if base == "" {
+        let home: String = getenv("HOME")
+        if home == "" { return "" }
+        base = home + "/.cache"
+    }
+    base = base + "/nyx/rt"
+    var clave: StringBuilder = StringBuilder.new()
+    clave.append(fl + "\n" + fuentes.join(" ") + "\n")
+    let ver: Array = salida_de(["clang", "--version"]).split("\n")
+    if ver.length() > 0 { let v0: String = ver[0]; clave.append(v0 + "\n") }
+    let todo: Array = concat(concat(fuentes, h_de(rt)), h_de(rt + "/os"))
+    var i: int = 0
+    while i < todo.length() {
+        let f: String = todo[i]
+        if file_exists(f) { clave.append(read_file(f)) }
+        i = i + 1
+    }
+    let key: String = sha256(clave.to_string()).substring(0, 16)
+    let dir: String = base + "/" + key
+    let a: String = dir + "/libnyxrt.a"
+    if file_exists(a) {
+        // Marca de uso para la poda: crear un archivo cambia el mtime del directorio.
+        let _r: int = remove_file(dir + "/.usado")
+        write_file(dir + "/.usado", "")
+        return a
+    }
+    mkdir_p(dir)
+    if not file_exists(dir) { return "" }
+    // Poda: directorios de clave sin usar en 14 días.
+    let ahora: int = time_epoch()
+    let claves: Array = readdir(base)
+    i = 0
+    while i < claves.length() {
+        let c: String = claves[i]
+        let st: Array = stat(base + "/" + c)
+        if st.length() >= 4 {
+            let mt: int = st[2]
+            let es_dir: bool = st[3]
+            if es_dir and c != key and ahora - mt > 14 * 86400 { borrar_arbol(base + "/" + c, 0) }
+        }
+        i = i + 1
+    }
+    var tmp: String = ""
+    var intento: int = 0
+    while tmp == "" and intento < 50 {
+        g_tmp_n = g_tmp_n + 1
+        let t: String = dir + "/.tmp." + int_to_string(getpid()) + "_" + int_to_string(g_tmp_n)
+        if mkdir(t) == 0 { tmp = t }
+        intento = intento + 1
+    }
+    if tmp == "" { return "" }
+    // Con un tope de trabajos = núcleos: con -O2 cada clang pesa varias veces más
+    // que en -O0, y los 26 a la vez pedían memoria de más en una máquina chica.
+    let par: int = cpu_count()
+    let flags: Array = palabras(fl)
+    var hijos: Array = []
+    var objs: Array = []
+    var ok: bool = true
+    var n: int = 0
+    while n < fuentes.length() {
+        while hijos.length() >= par { hijos = rt_esperar_uno(hijos) }
+        let f: String = fuentes[n]
+        let o_path: String = tmp + "/" + int_to_string(n + 1) + ".o"
+        objs.push(o_path)
+        var o = spawn_opts()
+        o.stdin = Stdio.Null
+        o.stdout = Stdio.Null
+        o.stderr = Stdio.Null
+        o.cwd = rt + "/.."
+        match try_spawn(concat(concat(["clang"], flags), ["-Wno-deprecated-declarations", "-c", f, "-o", o_path]), o) {
+            Result.Ok(c) => { hijos.push(c.handle) }
+            Result.Err(_e) => { ok = false }
+        }
+        n = n + 1
+    }
+    while hijos.length() > 0 { hijos = rt_esperar_uno(hijos) }
+    var todos: bool = ok
+    i = 0
+    while i < objs.length() {
+        let op: String = objs[i]
+        if not file_exists(op) { todos = false }
+        i = i + 1
+    }
+    if todos {
+        var o2 = spawn_opts()
+        o2.stdin = Stdio.Null
+        o2.stdout = Stdio.Null
+        o2.stderr = Stdio.Null
+        var arc: bool = false
+        match try_spawn(concat(["ar", "rcs", tmp + "/libnyxrt.a"], objs), o2) {
+            Result.Ok(c) => {
+                match try_child_wait(c) {
+                    Result.Ok(rc) => { arc = rc == 0 }
+                    Result.Err(_e) => {}
+                }
+            }
+            Result.Err(_e) => {}
+        }
+        if arc and rename_file(tmp + "/libnyxrt.a", a) == 0 {
+            borrar_arbol(tmp, 0)
+            return a
+        }
+    }
+    borrar_arbol(tmp, 0)
+    return ""
+}
+
+// Espera a que termine alguno de los clang del runtime (sondeo cada 10 ms) y
+// devuelve los que siguen corriendo. El resultado de cada uno se ve después en
+// si dejó su .o.
+fn rt_esperar_uno(hijos: Array) -> Array {
+    while true {
+        var siguen: Array = []
+        var i: int = 0
+        while i < hijos.length() {
+            let h: int = hijos[i]
+            match try_child_try_wait(Child { handle: h, program: "clang" }) {
+                Result.Ok(op) => {
+                    match op {
+                        Option.Some(_rc) => {}
+                        Option.None => { siguen.push(h) }
+                    }
+                }
+                Result.Err(_e) => {}
+            }
+            i = i + 1
+        }
+        if siguen.length() < hijos.length() { return siguen }
+        sleep(10)
+    }
+    return hijos
+}
+
+// Antes de compilar en cruzado: que estén lld y las bibliotecas del destino
+// (multiarch de Debian/Ubuntu, D2a del spec compilacion-cruzada-linux). Sin
+// esto el usuario veía un error de enlace de clang sobre `-lgc`; ahora ve qué
+// falta y el comando que lo instala. No instala nada solo. `-print-file-name`
+// devuelve una ruta absoluta si encuentra la biblioteca y el nombre pelado si no.
+// crtbeginS.o es la señal de libgcc-N-dev del destino: sin él lld falla con
+// «cannot open crtendS.o» y «-lgcc_s» (medido en el servidor el 2026-10-30, con
+// las otras cinco ya instaladas). N es la versión del gcc del host, que es la
+// que la distro trae para las dos arquitecturas.
+fn cruzado_diag(triple: String, arch: String) -> bool {
+    var deb: String = "amd64"
+    if arch == "aarch64" { deb = "arm64" }
+    var falta: String = ""
+    match find_program("ld.lld") {
+        Option.Some(_p) => {}
+        Option.None => { falta = falta + " lld" }
+    }
+    let libs: Array = ["libc.so", "libgc.so", "libssl.so", "libcrypto.so", "libz.so", "crtbeginS.o"]
+    var i: int = 0
+    while i < libs.length() {
+        let l: String = libs[i]
+        let p: String = salida_de(["clang", "--target=" + triple, "-print-file-name=" + l]).trim()
+        if not p.startsWith("/") or not file_exists(p) { falta = falta + " " + l }
+        i = i + 1
+    }
+    if falta == "" { return true }
+    var gccv: String = salida_de(["gcc", "-dumpversion"]).trim()
+    if gccv.contains(".") { gccv = gccv.substring(0, gccv.indexOf(".")) }
+    if gccv == "" { gccv = "14" }
+    err_line("error: para compilar en cruzado a " + triple + " faltan:" + falta)
+    err_line("  instálalas con: sudo dpkg --add-architecture " + deb + " && sudo apt update && \\")
+    err_line("    sudo apt install libc6-dev:" + deb + " libgc-dev:" + deb + " libssl-dev:" + deb + " zlib1g-dev:" + deb + " libgcc-" + gccv + "-dev:" + deb + " lld")
+    return false
+}
+
+// NYX_HOME → ~/.nyx → el directorio actual si tiene nyx_bootstrap (monorepo).
+// Absoluto: los hijos corren con cwd = NYX_HOME.
+fn build_nyx_home() -> String {
+    var nyx_home: String = getenv("NYX_HOME")
+    if nyx_home == "" {
+        let home_dir: String = getenv("HOME")
+        if home_dir != "" and file_exists(home_dir + "/.nyx/runtime/runtime.c") { nyx_home = home_dir + "/.nyx" }
+    }
+    if nyx_home == "" and file_exists("nyx_bootstrap") { nyx_home = "." }
+    if nyx_home == "" { return "" }
+    return absoluta(nyx_home)
+}
+
+// El compilador: nyx_bootstrap (monorepo) o bin/nyx (instalado).
+fn build_nyx_bin(nyx_home: String) -> String {
+    var nyx_bin: String = nyx_home + "/nyx_bootstrap"
+    if not file_exists(nyx_bin) { nyx_bin = nyx_home + "/bin/nyx" }
+    return nyx_bin
+}
+
+// Candado del toolchain, COMPARTIDO: un `make install-local` lo toma
+// EXCLUSIVO, así que no puede cambiar el compilador ni la stdlib a mitad de
+// esta compilación (contrato en CLAUDE.md §Sesiones paralelas, 2026-09-20). Si
+// no se puede tomar no se bloquea nada, como sin flock en la máquina.
+fn candado_toolchain(nyx_home: String) -> FileLock {
+    match try_lock_file(nyx_home + "/.toolchain.lock", false) {
+        Result.Ok(l) => { return l }
+        Result.Err(_e) => { return FileLock { handle: -1, path: "" } }
+    }
+}
+
+// `NYX_NO_GC=1 NYX_TARGET=x ` (el prefijo de entorno del script, que sigue
+// entrando así en la huella de [lib]) como pares para SpawnOpts.env.
+fn env_de_prefijo(prefijo: String) -> Array {
+    var out: Array = []
+    let partes: Array = palabras(prefijo)
+    var i: int = 0
+    while i < partes.length() {
+        let p: String = partes[i]
+        let eq: int = p.indexOf("=")
+        if eq > 0 { out.push([p.substring(0, eq), p.substring(eq + 1, p.length())]) }
+        i = i + 1
+    }
+    return out
 }
 
 // `nyx_build libs [--release]` — interno, lo llama `nyx test`. Construye (o
@@ -2033,32 +2889,31 @@ fn lib_paralelo_sh(nyx_bin: String, lista: String, opt_flags: String, gc_flag: S
 // aparece). Así una suite de pruebas compila cada biblioteca UNA vez y cada
 // archivo de prueba solo la enlaza — donde nyxerp paga el costo de hoy.
 fn run_libs(config: ProjectConfig, release: bool) -> bool {
-    var nyx_home: String = getenv("NYX_HOME")
-    if nyx_home == "" {
-        let home_dir: String = getenv("HOME")
-        if home_dir != "" and file_exists(home_dir + "/.nyx/runtime/runtime.c") { nyx_home = home_dir + "/.nyx" }
-    }
-    if nyx_home == "" and file_exists("nyx_bootstrap") { nyx_home = "." }
+    let nyx_home: String = build_nyx_home()
     if nyx_home == "" {
         print("error: NYX_HOME not set and nyx not installed (~/.nyx/)")
         return false
     }
-    var nyx_bin: String = nyx_home + "/nyx_bootstrap"
-    if not file_exists(nyx_bin) { nyx_bin = nyx_home + "/bin/nyx" }
+    let nyx_bin: String = build_nyx_bin(nyx_home)
     var opt_flags: String = ""
     if release { opt_flags = "-O2" }
     var gc_flag: String = ""
     if config.no_gc { gc_flag = "NYX_NO_GC=1 " }
-    var sh: String = "#!/bin/bash\nset -e\n" + pila_compilador_sh() + pila_compilador_pista_sh()
-    sh = sh + "ORIG_DIR=\"$(pwd)\"\nLOG=\"$(mktemp /tmp/nyx_build_log.XXXXXX)\"\ntrap 'rm -f \"$LOG\"' EXIT\n"
-    sh = sh + "cd \"" + nyx_home + "\"\n"
-    sh = sh + "if command -v flock >/dev/null 2>&1; then exec 9>\"" + nyx_home + "/.toolchain.lock\"; flock -s 9; fi\n"
-    sh = sh + lib_objetos_sh(config, nyx_home, nyx_bin, opt_flags, gc_flag)
-    sh = sh + "echo \"NYX_LIB_MAP:$LIB_MAP\"\n"
-    let tmp_script: String = "/tmp/nyx_libs_" + int_to_string(getpid()) + ".sh"
-    write_file(tmp_script, sh)
-    let result: int = exec_code("bash \"" + tmp_script + "\"; NYX_RC=$?; rm -f \"" + tmp_script + "\"; exit $NYX_RC")
-    return result == 0
+    let orig: String = getcwd()
+    let tmpd: String = tmp_dir_propio("nyx_libs_")
+    if tmpd == "" {
+        err_line("error: no se pudo crear un directorio temporal en " + temp_dir())
+        return false
+    }
+    let candado: FileLock = candado_toolchain(nyx_home)
+    pila_compilador_subir()
+    let r: LibRes = lib_objetos(config, nyx_home, nyx_bin, opt_flags, gc_flag, env_de_prefijo(gc_flag), orig, tmpd)
+    pila_compilador_restaurar()
+    if candado.handle >= 0 { unlock_file(candado) }
+    borrar_arbol(tmpd, 0)
+    if not r.ok { return false }
+    print("NYX_LIB_MAP:" + r.mapa)
+    return true
 }
 
 fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool {
@@ -2085,7 +2940,6 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
 
     print("   compiling " + config.main_file)
 
-    // Write build script
     var output_name: String = config.name
     if config.bin_name != "" { output_name = config.bin_name }
     // El binario de un `--main` va a target/, no a la raíz. En la raíz, el
@@ -2095,36 +2949,36 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // ignorado y es donde wasm deja sus artefactos. El binario principal no se
     // mueve: `./<name>` es contrato de `nyx run` y de los deploys.
     var native_out: String = output_name
-    var mkdir_native: String = ""
+    var native_dir: String = ""
     if config.bin_name != "" {
         native_out = "target/" + output_name
-        mkdir_native = "mkdir -p \"$ORIG_DIR/target\"\n"
+        native_dir = "target"
     }
     var opt_flags = ""
     if release { opt_flags = "-O2" }
 
     // Destino Linux explícito (arco compilacion-cruzada-linux): el IR no depende
     // de la arquitectura y el runtime se compila de fuentes en cada build, así
-    // que cruzar es pasarle `--target` a los tres clang del script (enlace,
-    // [lib] modules y la caché del runtime) y enlazar con lld, que conoce los
-    // dos destinos. El artefacto va a target/<triple>/ como el de wasm, para no
-    // pisar el binario nativo. El triple del propio host vale también: compila
-    // nativo, sin banderas de más. El host se mira con `uname -m`, no se asume.
+    // que cruzar es pasarle `--target` a los tres clang (enlace, [lib] modules y
+    // la caché del runtime) y enlazar con lld, que conoce los dos destinos. El
+    // artefacto va a target/<triple>/ como el de wasm, para no pisar el binario
+    // nativo. El triple del propio host vale también: compila nativo, sin
+    // banderas de más. El host se mira con host_arch() (el `uname -m`).
     var linux_arch: String = ""
     if eff_target == "x86_64-unknown-linux-gnu" { linux_arch = "x86_64" }
     if eff_target == "aarch64-unknown-linux-gnu" { linux_arch = "aarch64" }
     // Con un espacio adelante, o vacías: el build nativo arma exactamente las
-    // mismas líneas que antes y sus cachés (runtime y [lib]) no cambian de clave.
+    // mismas banderas que antes y sus cachés (runtime y [lib]) no cambian de clave.
     var tgt_cc: String = ""
     var tgt_ld: String = ""
-    var tgt_diag_sh: String = ""
+    var cruzado: bool = false
     if linux_arch != "" {
         native_out = "target/" + eff_target + "/" + output_name
-        mkdir_native = "mkdir -p \"$ORIG_DIR/target/" + eff_target + "\"\n"
-        if exec_code("[ \"$(uname -m)\" = " + linux_arch + " ]") != 0 {
+        native_dir = "target/" + eff_target
+        if host_arch() != linux_arch {
             tgt_cc = " --target=" + eff_target
             tgt_ld = tgt_cc + " -fuse-ld=lld"
-            tgt_diag_sh = cruzado_diag_sh(eff_target, linux_arch)
+            cruzado = true
             // El compilador también lo sabe: triple del módulo y guarda de asm.
             // Va con gc_flag, que es prefijo de entorno del compilador y entra
             // en la huella de [lib] modules.
@@ -2133,124 +2987,11 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     }
     let link_flags: String = opt_flags + tgt_ld
 
-    // Use NYX_HOME for absolute paths so the build works from any directory.
-    // Search order: NYX_HOME env → ~/.nyx/ → CWD (monorepo fallback)
-    var nyx_home: String = getenv("NYX_HOME")
-    if nyx_home == "" {
-        let home_dir: String = getenv("HOME")
-        let candidate: String = home_dir + "/.nyx"
-        if home_dir != "" and file_exists(candidate + "/runtime/runtime.c") {
-            nyx_home = candidate
-        }
-    }
-    if nyx_home == "" {
-        if file_exists("nyx_bootstrap") {
-            nyx_home = "."
-        }
-    }
-    if nyx_home == "" {
-        print("error: NYX_HOME not set and nyx not installed (~/.nyx/)")
-        return false
-    }
-
-    // Determine compiler binary: nyx_bootstrap (monorepo) or bin/nyx (installed)
-    var nyx_bin: String = nyx_home + "/nyx_bootstrap"
-    if not file_exists(nyx_bin) {
-        nyx_bin = nyx_home + "/bin/nyx"
-    }
-
-    // Runtime path
-    let rt: String = nyx_home + "/runtime"
-
-    // Build script uses $RT variable for shorter lines.
-    // Output goes to a temp log: silent on success, dumped to stderr on
-    // failure — a failed build must show its cause, not just exit=1.
-    // SRC/SRCNX/*.ll: scratch único por proceso (mktemp), no el script.nx/
-    // script.ll compartido de NYX_HOME — dos `nyx build` concurrentes
-    // pisaban el .nx/.ll ajeno (carrera real, ver TASKS.md). El driver
-    // deriva el .ll a partir de NYX_SRC.
-    // Fuera de la cadena de abajo A PROPÓSITO: esa concatenación ya está al
-    // borde del techo de pila que este mismo cambio mitiga (spec
-    // pila-del-compilador), y cada operando más la acerca.
-    // El runtime: sus 24 fuentes, o un archivo precompilado si NYX_RT_ARCHIVE
-    // apunta a uno que EXISTE — el mismo contrato que `nyx test` (test.nx) y los
-    // scripts internos. Pedido de nyxerp (fricción 20260917-234222-team-1: «que
-    // `nyx test` y `nyx build` honren NYX_RT_ARCHIVE»); build faltaba. Compilar
-    // el runtime domina el costo de un build chico: sin esto, la compilación
-    // separada ([lib] modules) no se podía medir.
-    var rt_fuentes: String = "$RT/runtime.c $RT/strings.c $RT/runtime-arrays.c " +
-        "$RT/maps.c $RT/file-io.c $RT/iterators.c $RT/net.c $RT/thread.c $RT/regex.c " +
-        "$RT/time.c $RT/crypto.c $RT/tls.c $RT/scheduler.c $RT/event_loop.c $RT/sqlite_adapter.c " +
-        "$RT/compress.c $RT/random.c $RT/url.c $RT/msgpack.c $RT/csv.c $RT/websocket.c $RT/persist.c " +
-        // llama_adapter va SIEMPRE: es dlopen-lazy (cero dependencia dura de
-        // libllama) y sin él todo import de std/llm muere en el LINK con
-        // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31).
-        "$RT/http2.c $RT/process.c $RT/llama_adapter.c $RT/os/os_posix.c "
-    var rt_archive: String = getenv("NYX_RT_ARCHIVE")
-    // Sin archivo explícito: el caché automático (rt_cache_sh), que corre YA
-    // dentro del candado compartido, así que las fuentes no cambian mientras
-    // se calcula la clave. RT_IN es un array de bash: el .a vive bajo $HOME.
-    var rt_sh: String = rt_cache_sh() + "RT_IN=(" + rt_fuentes + ")\n"
-    // El runtime va SIEMPRE con -O2, también sin --release (2026-10-27): es código
-    // nuestro que nadie depura desde un programa Nyx, y a -O0 todo lo que vive en
-    // C (cripto, JSON, strings, red) corría ~7 veces más lento —nyxerp midió
-    // PBKDF2 así y lo reportó como lentitud de la función—. Va a la caché, así
-    // que se compila una sola vez; el código del usuario sigue con opt_flags.
-    // Las banderas del destino entran en la clave de la caché: sin eso un
-    // libnyxrt.a de x86_64 se enlazaría en un build de aarch64, o al revés.
-    rt_sh = rt_sh + "if nyx_rt_auto \"-O2" + tgt_cc + "\" " + rt_fuentes + "; then RT_IN=(\"$RT_AUTO\"); fi\n"
-    if rt_archive != "" and file_exists(rt_archive) {
-        // Absoluta: el script hace `cd` a NYX_HOME antes de enlazar.
-        if not rt_archive.startsWith("/") { rt_archive = getcwd() + "/" + rt_archive }
-        rt_sh = "RT_IN=(\"" + rt_archive + "\")\n"
-    }
-    rt_fuentes = "\"$" + "{RT_IN[@]}\" "
-    let pila_sh: String = "#!/bin/bash\nset -e\n" + pila_compilador_sh() + pila_compilador_pista_sh()
-    // [lib] modules: bibliotecas compiladas aparte y reutilizadas (Task 6 de
-    // compilacion-separada). Solo nativo: en wasm se inlinean como siempre.
-    var lib_sh: String = ""
-    var lib_env: String = ""
-    if config.lib_modules.length() > 0 and eff_target != "wasm32-wasi" {
-        // tgt_cc va con opt_flags: entra en la huella de la caché de
-        // bibliotecas y en su `clang -c`.
-        lib_sh = lib_objetos_sh(config, nyx_home, nyx_bin, opt_flags + tgt_cc, gc_flag)
-        lib_env = "NYX_LIB_MODULES=\"" + config.lib_modules.join(",") + "\" "
-    }
-    lib_sh = tgt_diag_sh + rt_sh + lib_sh
-    let compilador_env: String = "( nyx_pila; " + gc_flag + lib_env
-    let build_script = pila_sh +
-        "ORIG_DIR=\"$(pwd)\"\n" +
-        "RT=\"" + rt + "\"\n" +
-        "LOG=\"$(mktemp /tmp/nyx_build_log.XXXXXX)\"\n" +
-        "SRC=\"$(mktemp /tmp/nyx_src_XXXXXX)\"\n" +
-        "SRCNX=\"$SRC.nx\"\n" +
-        "trap 'rm -f \"$LOG\" \"$SRC\" \"$SRCNX\" \"$" + "{SRC}.ll\"' EXIT\n" +
-        "cp \"$ORIG_DIR/" + config.main_file + "\" \"$SRCNX\"\n" +
-        "cd \"" + nyx_home + "\"\n" +
-        // Candado del toolchain, COMPARTIDO: un `make install-local` lo toma
-        // EXCLUSIVO, así que no puede cambiar el compilador ni la stdlib a
-        // mitad de esta compilación (contrato en CLAUDE.md §Sesiones paralelas,
-        // 2026-09-20). Sin flock en la máquina no se bloquea nada.
-        "if command -v flock >/dev/null 2>&1; then exec 9>\"" + nyx_home + "/.toolchain.lock\"; flock -s 9; fi\n" +
-        lib_sh +
-        compilador_env + "NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" ) > \"$LOG\" 2>&1 " +
-        "|| { rc=$?; echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; nyx_pista $rc; exit 1; }\n" +
-        // Los avisos (⚠, NYX0302, W1xx) se mostraban SOLO si la compilación
-        // fallaba: con éxito el log se tiraba entero. Requisito del
-        // task-5-report de compilacion-separada: «el compilador lo DICE».
-        "grep -F '⚠' \"$LOG\" >&2 || true\n" +
-        mkdir_native +
-        "clang " + link_flags + " \"$SRC.ll\" $LIB_OBJS " + rt_fuentes +
-        "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz " +
-        "-o \"$ORIG_DIR/" + native_out + "\" 2> \"$LOG\" " +
-        "|| { echo \"error: clang link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n" +
-        "echo '✓ Built: " + native_out + "'\n"
-
-    // Target WASM: script alternativo — subset portable del runtime, clang
-    // wasm32-wasi (paquetes Debian: wasi-libc + libclang-rt wasm32 + lld),
-    // NYX_NO_GC forzado (no hay Boehm en wasm) y salida <name>.wasm.
-    // Esto reemplaza el "exporta NYX_TARGET a mano": [build] target en
-    // nyx.toml o `nyx build --target wasm32-wasi` alcanzan.
+    // Target WASM: subset portable del runtime, clang wasm32-wasi (paquetes
+    // Debian: wasi-libc + libclang-rt wasm32 + lld), NYX_NO_GC forzado (no hay
+    // Boehm en wasm) y salida <name>.wasm. Esto reemplaza el "exporta
+    // NYX_TARGET a mano": [build] target en nyx.toml o `nyx build --target
+    // wasm32-wasi` alcanzan.
     // Un TRIPLE desconocido construía NATIVO y salía 0: `--target wasm32-wasy`
     // (con typo) producía un ELF aarch64 mientras el banner decía
     // «[wasm32-wasy]». El valor nunca llegaba al compilador —que sí lo habría
@@ -2276,68 +3017,208 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         return false
     }
 
-    var final_script: String = build_script
-    if eff_target == "wasm32-wasi" {
-        final_script = "#!/bin/bash\nset -e\n" +
-            "ORIG_DIR=\"$(pwd)\"\n" +
-            "RT=\"" + rt + "\"\n" +
-            "SYSROOT=\"$" + "{WASI_SYSROOT:-/usr}\"\n" +
-            "LOG=\"$(mktemp /tmp/nyx_build_log.XXXXXX)\"\n" +
-            "SRC=\"$(mktemp /tmp/nyx_src_XXXXXX)\"\n" +
-            "SRCNX=\"$SRC.nx\"\n" +
-            "trap 'rm -f \"$LOG\" \"$SRC\" \"$SRCNX\" \"$" + "{SRC}.ll\"' EXIT\n" +
-            "test -f \"$SYSROOT/lib/wasm32-wasi/libc.a\" || { echo \"error: wasi-libc no encontrado - sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19\" >&2; exit 1; }\n" +
-            "cp \"$ORIG_DIR/" + config.main_file + "\" \"$SRCNX\"\n" +
-            "cd \"" + nyx_home + "\"\n" +
-            "NYX_TARGET=wasm32-wasi NYX_NO_GC=1 NYX_SRC=\"$SRCNX\" NYX_SRC_DISPLAY=\"" + config.main_file + "\" NYX_PROJECT_DIR=\"$ORIG_DIR\" \"" + nyx_bin + "\" > \"$LOG\" 2>&1 " +
-            "|| { echo \"error: nyx compile failed:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
-            // La lista de fuentes sale de runtime/wasm.srcs, no de una copia
-            // acá: era la TERCERA (Makefile, run_wasm_tests.sh y esta), con un
-            // comentario que decía «mantener en sync» — o sea, a mano. Cuando
-            // W1 sumó os_wasm.c hubo que agregarlo a las tres, y olvidarse de
-            // una rompe el link con símbolos os_* indefinidos.
-            "WASM_SRCS=\"$(grep -v '^" + "#" + "' \"$RT/wasm.srcs\" | grep -v '^$' | sed \"s|^runtime/|$RT/|\" | tr '\\n' ' ')\"\n" +
-            "test -n \"$WASM_SRCS\" || { echo \"error: runtime/wasm.srcs vacío o ausente en $RT\" >&2; exit 1; }\n" +
-            "mkdir -p \"$ORIG_DIR/target/wasm32-wasi\"\n" +
-            "clang --target=wasm32-wasi --sysroot=\"$SYSROOT\" -O2 -I$RT/wasi " +
-            "-Wl,-z,stack-size=1048576 -Wl,--export-table \"$SRC.ll\" " +
-            "$WASM_SRCS " +
-            "-o \"$ORIG_DIR/target/wasm32-wasi/" + output_name + ".wasm\" 2> \"$LOG\" " +
-            "|| { echo \"error: clang wasm link failed:\" >&2; " + clang_failure_attribution_bash(config.main_file) + "cat \"$LOG\" >&2; exit 1; }\n"
-        // Asyncify (arco async-real-wasm, D-5): solo si el compilador dejó en
-        // el .ll la lista de imports que suspenden. Sin esa línea no se toca
-        // nada: el .wasm sale byte a byte como antes y binaryen no hace falta.
-        // Con la línea y sin wasm-opt, error con la receta — nunca un .wasm
-        // que trapea al primer await.
-        //
-        // Statement APARTE (no seguir el `+` de arriba): esa cadena de
-        // concatenación ya venía larga (script wasm completo en un solo
-        // literal) y sumarle estos 7 términos más hacía que compilar ESTE
-        // ARCHIVO con NYX_SKIP_SEMANTIC=1 (nyx_build/nyx_check) segfaulteara
-        // por profundidad de recursión del codegen sobre el árbol de binops
-        // `+` — reproducido aislado, cero relación con async/wasm en tiempo
-        // de ejecución. Partir la expresión en dos statements (acumulando
-        // en `final_script`) resuelve la causa raíz sin tocar el compilador:
-        // cada AST de concatenación queda con ~7-25 términos en vez de ~32.
-        // Ya estamos dentro del `if eff_target == "wasm32-wasi"` de arriba —
-        // sin repetir la condición.
-        final_script = final_script +
-            "ASY=\"$(grep -m1 '^; nyx-asyncify-imports: ' \"$SRC.ll\" | sed 's/^; nyx-asyncify-imports: //')\"\n" +
-            "if [ -n \"$ASY\" ]; then\n" +
-            "  WOPT=\"$" + "{NYX_WASM_OPT:-$(command -v wasm-opt || true)}\"\n" +
-            "  test -n \"$WOPT\" || { echo \"error: el programa usa imports que suspenden (await que espera al anfitrion: $ASY) y falta wasm-opt - sudo apt install binaryen, o NYX_WASM_OPT=/ruta/a/wasm-opt\" >&2; exit 1; }\n" +
-            "  \"$WOPT\" \"$ORIG_DIR/target/wasm32-wasi/" + output_name + ".wasm\" --asyncify --pass-arg=asyncify-imports@\"$ASY\" -O2 " +
-            "-o \"$ORIG_DIR/target/wasm32-wasi/" + output_name + ".wasm\" 2> \"$LOG\" " +
-            "|| { echo \"error: wasm-opt --asyncify fallo:\" >&2; cat \"$LOG\" >&2; exit 1; }\n" +
-            "fi\n" +
-            "echo 'built target/wasm32-wasi/" + output_name + ".wasm (run: wasmtime target/wasm32-wasi/" + output_name + ".wasm)'\n"
+    let nyx_home: String = build_nyx_home()
+    if nyx_home == "" {
+        print("error: NYX_HOME not set and nyx not installed (~/.nyx/)")
+        return false
     }
+    let nyx_bin: String = build_nyx_bin(nyx_home)
+    let rt: String = nyx_home + "/runtime"
+    let orig: String = getcwd()
 
-    // Path unico por proceso: el path fijo colisionaba en builds concurrentes
-    let tmp_script: String = "/tmp/nyx_build_" + int_to_string(getpid()) + ".sh"
-    write_file(tmp_script, final_script)
-    let result: int = exec_code("bash \"" + tmp_script + "\"; NYX_RC=$?; rm -f \"" + tmp_script + "\"; exit $NYX_RC")
-    return result == 0
+    // Scratch único por proceso (el mktemp de antes), no el script.nx/script.ll
+    // compartido de NYX_HOME — dos `nyx build` concurrentes pisaban el .nx/.ll
+    // ajeno (carrera real, ver TASKS.md). El driver deriva el .ll de NYX_SRC.
+    let tmpd: String = tmp_dir_propio("nyx_build_")
+    if tmpd == "" {
+        err_line("error: no se pudo crear un directorio temporal en " + temp_dir())
+        return false
+    }
+    let candado: FileLock = candado_toolchain(nyx_home)
+    pila_compilador_subir()
+    var ok: bool = false
+    if eff_target == "wasm32-wasi" {
+        ok = build_wasm(config, output_name, nyx_home, nyx_bin, rt, orig, tmpd)
+    } else {
+        ok = build_nativo(config, opt_flags, tgt_cc, link_flags, gc_flag, cruzado, eff_target, linux_arch, native_out, native_dir, nyx_home, nyx_bin, rt, orig, tmpd)
+    }
+    pila_compilador_restaurar()
+    if candado.handle >= 0 { unlock_file(candado) }
+    borrar_arbol(tmpd, 0)
+    return ok
+}
+
+fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_flags: String, gc_flag: String, cruzado: bool, eff_target: String, linux_arch: String, native_out: String, native_dir: String, nyx_home: String, nyx_bin: String, rt: String, orig: String, tmpd: String) -> bool {
+    if cruzado and not cruzado_diag(eff_target, linux_arch) { return false }
+    // El runtime: sus 24 fuentes, o un archivo precompilado si NYX_RT_ARCHIVE
+    // apunta a uno que EXISTE — el mismo contrato que `nyx test` (test.nx) y los
+    // scripts internos. Pedido de nyxerp (fricción 20260917-234222-team-1: «que
+    // `nyx test` y `nyx build` honren NYX_RT_ARCHIVE»); build faltaba. Compilar
+    // el runtime domina el costo de un build chico: sin esto, la compilación
+    // separada ([lib] modules) no se podía medir.
+    let nombres: Array = ["runtime.c", "strings.c", "runtime-arrays.c", "maps.c", "file-io.c", "iterators.c", "net.c", "thread.c", "regex.c",
+        "time.c", "crypto.c", "tls.c", "scheduler.c", "event_loop.c", "sqlite_adapter.c",
+        "compress.c", "random.c", "url.c", "msgpack.c", "csv.c", "websocket.c", "persist.c",
+        // llama_adapter va SIEMPRE: es dlopen-lazy (cero dependencia dura de
+        // libllama) y sin él todo import de std/llm muere en el LINK con
+        // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31).
+        "http2.c", "process.c", "llama_adapter.c", "os/os_posix.c"]
+    var fuentes: Array = []
+    var i: int = 0
+    while i < nombres.length() { let nm: String = nombres[i]; fuentes.push(rt + "/" + nm); i = i + 1 }
+    var rt_in: Array = fuentes
+    var rt_archive: String = getenv("NYX_RT_ARCHIVE")
+    if rt_archive != "" and file_exists(rt_archive) {
+        rt_in = [absoluta(rt_archive)]
+    } else {
+        // El runtime va SIEMPRE con -O2, también sin --release (2026-10-27): es
+        // código nuestro que nadie depura desde un programa Nyx, y a -O0 todo lo
+        // que vive en C (cripto, JSON, strings, red) corría ~7 veces más lento
+        // —nyxerp midió PBKDF2 así y lo reportó como lentitud de la función—. Va
+        // a la caché, así que se compila una sola vez; el código del usuario sigue
+        // con opt_flags. Las banderas del destino entran en la clave de la caché:
+        // sin eso un libnyxrt.a de x86_64 se enlazaría en un build de aarch64.
+        let a: String = rt_auto("-O2" + tgt_cc, fuentes, rt)
+        if a != "" { rt_in = [a] }
+    }
+    // [lib] modules: bibliotecas compiladas aparte y reutilizadas (Task 6 de
+    // compilacion-separada). Solo nativo: en wasm se inlinean como siempre.
+    // tgt_cc va con opt_flags: entra en la huella de la caché de bibliotecas y
+    // en su `clang -c`.
+    let gc_env: Array = env_de_prefijo(gc_flag)
+    var lib_objs: Array = []
+    var env: Array = gc_env
+    if config.lib_modules.length() > 0 {
+        let r: LibRes = lib_objetos(config, nyx_home, nyx_bin, opt_flags + tgt_cc, gc_flag, gc_env, orig, tmpd)
+        if not r.ok { return false }
+        lib_objs = r.objs
+        env = concat_env(gc_env, [["NYX_LIB_MODULES", config.lib_modules.join(",")]])
+    }
+    let srcnx: String = tmpd + "/src.nx"
+    let srcll: String = tmpd + "/src.ll"
+    write_file(srcnx, read_file(orig + "/" + config.main_file))
+    env = concat_env(env, [["NYX_SRC", srcnx], ["NYX_SRC_DISPLAY", config.main_file], ["NYX_PROJECT_DIR", orig]])
+    let log: String = tmpd + "/log"
+    let rc: int = correr_a_log([nyx_bin], nyx_home, env, log)
+    if rc != 0 {
+        err_line("error: nyx compile failed:")
+        err_print(read_file(log))
+        nyx_pista(rc)
+        return false
+    }
+    // Los avisos (⚠, NYX0302, W1xx) se mostraban SOLO si la compilación
+    // fallaba: con éxito el log se tiraba entero. Requisito del
+    // task-5-report de compilacion-separada: «el compilador lo DICE».
+    err_print(avisos_de(read_file(log)))
+    if native_dir != "" { mkdir_p(orig + "/" + native_dir) }
+    var argv: Array = concat(concat(["clang"], palabras(link_flags)), [srcll])
+    argv = concat(concat(argv, lib_objs), rt_in)
+    argv = concat(argv, ["-lgc", "-lpthread", "-ldl", "-lm", "-lssl", "-lcrypto", "-lz", "-o", orig + "/" + native_out])
+    let lrc: int = correr_err_a(argv, nyx_home, log)
+    if lrc != 0 {
+        let txt: String = read_file(log)
+        err_line("error: clang link failed:")
+        clang_failure_attribution(txt, config.main_file)
+        err_print(txt)
+        return false
+    }
+    print("✓ Built: " + native_out)
+    return true
+}
+
+fn concat_env(a: Array, b: Array) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i < a.length() { let x: Array = a[i]; out.push(x); i = i + 1 }
+    i = 0
+    while i < b.length() { let y: Array = b[i]; out.push(y); i = i + 1 }
+    return out
+}
+
+fn build_wasm(config: ProjectConfig, output_name: String, nyx_home: String, nyx_bin: String, rt: String, orig: String, tmpd: String) -> bool {
+    var sysroot: String = getenv("WASI_SYSROOT")
+    if sysroot == "" { sysroot = "/usr" }
+    if not file_exists(sysroot + "/lib/wasm32-wasi/libc.a") {
+        err_line("error: wasi-libc no encontrado - sudo apt install wasi-libc libclang-rt-19-dev-wasm32 lld-19")
+        return false
+    }
+    let srcnx: String = tmpd + "/src.nx"
+    let srcll: String = tmpd + "/src.ll"
+    write_file(srcnx, read_file(orig + "/" + config.main_file))
+    let log: String = tmpd + "/log"
+    let env: Array = [["NYX_TARGET", "wasm32-wasi"], ["NYX_NO_GC", "1"], ["NYX_SRC", srcnx], ["NYX_SRC_DISPLAY", config.main_file], ["NYX_PROJECT_DIR", orig]]
+    if correr_a_log([nyx_bin], nyx_home, env, log) != 0 {
+        err_line("error: nyx compile failed:")
+        err_print(read_file(log))
+        return false
+    }
+    // La lista de fuentes sale de runtime/wasm.srcs, no de una copia acá: era
+    // la TERCERA (Makefile, run_wasm_tests.sh y esta), con un comentario que
+    // decía «mantener en sync» — o sea, a mano. Cuando W1 sumó os_wasm.c hubo
+    // que agregarlo a las tres, y olvidarse de una rompe el link con símbolos
+    // os_* indefinidos.
+    var wasm_srcs: Array = []
+    if file_exists(rt + "/wasm.srcs") {
+        let lineas: Array = read_file(rt + "/wasm.srcs").split("\n")
+        var i: int = 0
+        while i < lineas.length() {
+            let l0: String = lineas[i]
+            let l: String = l0.trim()
+            if l != "" and not l.startsWith("#") {
+                if l.startsWith("runtime/") { wasm_srcs.push(rt + "/" + l.substring(8, l.length())) } else { wasm_srcs.push(l) }
+            }
+            i = i + 1
+        }
+    }
+    if wasm_srcs.length() == 0 {
+        err_line("error: runtime/wasm.srcs vacío o ausente en " + rt)
+        return false
+    }
+    mkdir_p(orig + "/target/wasm32-wasi")
+    let wasm: String = orig + "/target/wasm32-wasi/" + output_name + ".wasm"
+    var argv: Array = ["clang", "--target=wasm32-wasi", "--sysroot=" + sysroot, "-O2", "-I" + rt + "/wasi",
+        "-Wl,-z,stack-size=1048576", "-Wl,--export-table", srcll]
+    argv = concat(concat(argv, wasm_srcs), ["-o", wasm])
+    if correr_err_a(argv, nyx_home, log) != 0 {
+        let txt: String = read_file(log)
+        err_line("error: clang wasm link failed:")
+        clang_failure_attribution(txt, config.main_file)
+        err_print(txt)
+        return false
+    }
+    // Asyncify (arco async-real-wasm, D-5): solo si el compilador dejó en el .ll
+    // la lista de imports que suspenden. Sin esa línea no se toca nada: el .wasm
+    // sale byte a byte como antes y binaryen no hace falta. Con la línea y sin
+    // wasm-opt, error con la receta — nunca un .wasm que trapea al primer await.
+    var asy: String = ""
+    let marca: String = "; nyx-asyncify-imports: "
+    let ll_lineas: Array = read_file(srcll).split("\n")
+    var li: int = 0
+    while li < ll_lineas.length() and asy == "" {
+        let l: String = ll_lineas[li]
+        if l.startsWith(marca) { asy = l.substring(marca.length(), l.length()) }
+        li = li + 1
+    }
+    if asy != "" {
+        var wopt: String = getenv("NYX_WASM_OPT")
+        if wopt == "" {
+            match find_program("wasm-opt") {
+                Option.Some(p) => { wopt = p }
+                Option.None => {}
+            }
+        }
+        if wopt == "" {
+            err_line("error: el programa usa imports que suspenden (await que espera al anfitrion: " + asy + ") y falta wasm-opt - sudo apt install binaryen, o NYX_WASM_OPT=/ruta/a/wasm-opt")
+            return false
+        }
+        if correr_err_a([wopt, wasm, "--asyncify", "--pass-arg=asyncify-imports@" + asy, "-O2", "-o", wasm], nyx_home, log) != 0 {
+            err_line("error: wasm-opt --asyncify fallo:")
+            err_print(read_file(log))
+            return false
+        }
+    }
+    print("built target/wasm32-wasi/" + output_name + ".wasm (run: wasmtime target/wasm32-wasi/" + output_name + ".wasm)")
+    return true
 }
 
 fn print_info(config: ProjectConfig) {
@@ -2515,72 +3396,6 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
     }
     print("reporte enviado al equipo (cola q:friction, posición " + int_to_string(n) + ") — gracias!")
     return true
-}
-
-// Runtime precompilado AUTOMÁTICO (fricción de nyxerp, 2026-09-24): el
-// runtime (~24 .c) es idéntico en cada compilación y compilarlo domina el
-// costo de un build o de cada archivo de `nyx test`; NYX_RT_ARCHIVE lo
-// evitaba, pero había que saber que existía y armar el .a a mano. Ahora el
-// script generado lo arma solo, una vez, en ~/.cache/nyx/rt/<clave>/, con
-// clave = sha256 de las banderas + la lista de fuentes + `clang --version` +
-// el CONTENIDO de los .c/.h: un install nuevo del runtime es otra clave, así
-// que nunca se enlaza un .a viejo. Se arma en un temporal y se publica con
-// `mv` (atómico): dos compilaciones a la vez no se pisan. Cualquier falla
-// (sin HOME escribible, sin ar) devuelve 1 y se compilan las fuentes como
-// siempre. NYX_NO_RT_CACHE=1 lo apaga; un NYX_RT_ARCHIVE explícito manda.
-// Directorios sin usar en 14 días se podan. (La misma función vive en test.nx:
-// build.nx y test.nx son programas aparte, sin módulo común.)
-// Antes de compilar en cruzado: que estén lld y las bibliotecas del destino
-// (multiarch de Debian/Ubuntu, D2a del spec compilacion-cruzada-linux). Sin
-// esto el usuario veía un error de enlace de clang sobre `-lgc`; ahora ve qué
-// falta y el comando que lo instala. No instala nada solo. `-print-file-name`
-// devuelve una ruta absoluta si encuentra la biblioteca y el nombre pelado si no.
-// crtbeginS.o es la señal de libgcc-N-dev del destino: sin él lld falla con
-// «cannot open crtendS.o» y «-lgcc_s» (medido en el servidor el 2026-10-30, con
-// las otras cinco ya instaladas). N es la versión del gcc del host, que es la
-// que la distro trae para las dos arquitecturas.
-fn cruzado_diag_sh(triple: String, arch: String) -> String {
-    var deb: String = "amd64"
-    if arch == "aarch64" { deb = "arm64" }
-    var s: String = "NYX_FALTA=\"\"\n"
-    s = s + "command -v ld.lld >/dev/null 2>&1 || NYX_FALTA=\"$NYX_FALTA lld\"\n"
-    s = s + "for l in libc.so libgc.so libssl.so libcrypto.so libz.so crtbeginS.o; do\n"
-    s = s + "  p=$(clang --target=" + triple + " -print-file-name=$l 2>/dev/null)\n"
-    s = s + "  case \"$p\" in /*) [ -e \"$p\" ] || NYX_FALTA=\"$NYX_FALTA $l\" ;; *) NYX_FALTA=\"$NYX_FALTA $l\" ;; esac\n"
-    s = s + "done\n"
-    s = s + "if [ -n \"$NYX_FALTA\" ]; then\n"
-    s = s + "  NYX_GCCV=$(gcc -dumpversion 2>/dev/null | cut -d. -f1); [ -n \"$NYX_GCCV\" ] || NYX_GCCV=14\n"
-    s = s + "  echo \"error: para compilar en cruzado a " + triple + " faltan:$NYX_FALTA\" >&2\n"
-    s = s + "  echo \"  instálalas con: sudo dpkg --add-architecture " + deb + " && sudo apt update && \\\\\" >&2\n"
-    s = s + "  echo \"    sudo apt install libc6-dev:" + deb + " libgc-dev:" + deb + " libssl-dev:" + deb + " zlib1g-dev:" + deb + " libgcc-$NYX_GCCV-dev:" + deb + " lld\" >&2\n"
-    s = s + "  exit 1\n"
-    s = s + "fi\n"
-    return s
-}
-
-fn rt_cache_sh() -> String {
-    var s: String = "nyx_rt_auto() {\n"
-    s = s + "  [ -n \"$NYX_NO_RT_CACHE\" ] && return 1\n"
-    s = s + "  local fl=\"$1\"; shift\n"
-    s = s + "  local base=\"$XDG_CACHE_HOME\"; [ -n \"$base\" ] || base=\"$HOME/.cache\"; base=\"$base/nyx/rt\"\n"
-    s = s + "  local key; key=$( { printf '%s\\n' \"$fl\" \"$*\"; clang --version 2>/dev/null | head -1; cat \"$@\" runtime/*.h runtime/os/*.h 2>/dev/null; } | sha256sum | cut -c1-16) || return 1\n"
-    s = s + "  local a=\"$base/$key/libnyxrt.a\"\n"
-    s = s + "  if [ -f \"$a\" ]; then touch \"$base/$key\" 2>/dev/null; RT_AUTO=\"$a\"; return 0; fi\n"
-    s = s + "  mkdir -p \"$base/$key\" 2>/dev/null || return 1\n"
-    s = s + "  find \"$base\" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null\n"
-    s = s + "  local tmp; tmp=$(mktemp -d \"$base/$key/.tmp.XXXXXX\") || return 1\n"
-    s = s + "  local f n=0\n"
-    // Con un tope de trabajos = núcleos: con -O2 cada clang pesa varias veces más
-    // que en -O0, y los 26 a la vez pedían memoria de más en una máquina chica.
-    s = s + "  local par; par=$(nproc 2>/dev/null || echo 4)\n"
-    s = s + "  for f in \"$@\"; do n=$((n+1)); while [ \"$(jobs -rp | wc -l)\" -ge \"$par\" ]; do wait -n 2>/dev/null || true; done; clang $fl -Wno-deprecated-declarations -c \"$f\" -o \"$tmp/$n.o\" 2>/dev/null & done\n"
-    s = s + "  wait\n"
-    s = s + "  if [ \"$(ls \"$tmp\" | grep -c '\\.o$')\" = \"$n\" ] && ar rcs \"$tmp/libnyxrt.a\" \"$tmp\"/*.o 2>/dev/null && mv -f \"$tmp/libnyxrt.a\" \"$a\"; then\n"
-    s = s + "    rm -rf \"$tmp\"; RT_AUTO=\"$a\"; return 0\n"
-    s = s + "  fi\n"
-    s = s + "  rm -rf \"$tmp\"; return 1\n"
-    s = s + "}\n"
-    return s
 }
 
 // ===== CAPABILITIES INDEX (Fase 1 AI-first) =====
@@ -2914,26 +3729,6 @@ fn run_capabilities(out_arg: String) -> bool {
 fn main() -> int {
     let args: Array<String> = get_args()
 
-// P1 friction-portscan (2026-07-25): `exec_code` va por system(), o sea SHELL.
-// Un arg con espacios se partiría en dos y uno con `;`/`$(...)` se ejecutaría,
-// así que cada arg reenviado al binario se cita en comillas simples POSIX (una
-// comilla simple interna se cierra, se escapa y se reabre: '\'').
-fn shell_quote_arg(s: String) -> String {
-    let sq: String = "'"
-    var out: String = sq
-    var i: int = 0
-    while i < s.length() {
-        let c: String = s.substring(i, i + 1)
-        if c == sq {
-            out = out + sq + "\\" + sq + sq
-        } else {
-            out = out + c
-        }
-        i = i + 1
-    }
-    return out + sq
-}
-
     // Default command
     var command = "build"
     var release = false
@@ -2990,7 +3785,7 @@ fn shell_quote_arg(s: String) -> String {
         else if flag == "--help" or flag == "-h" { pide_ayuda = true }
         else if flag == "-j" or flag == "--jobs" or flag.startsWith("-j") or flag.startsWith("--jobs=") {
             // Trabajos a la vez para las unidades de [lib] (arco build-lib-paralelo).
-            // Viaja al script generado como NYX_JOBS, la misma variable que puede
+            // Viaja como NYX_JOBS (la lee lib_trabajos), la misma variable que puede
             // fijar quien llama (nyx test pasa por `nyx_build libs` sin flags).
             var jval: String = ""
             if flag == "-j" or flag == "--jobs" {
@@ -3364,24 +4159,29 @@ fn shell_quote_arg(s: String) -> String {
                 // El runner se busca igual que en run_wasm_tests.sh: si no
                 // está, se dice qué falta y cómo correrlo a mano, en vez de
                 // ejecutar otra cosa.
-                if exec_code("command -v wasmtime >/dev/null 2>&1") != 0 {
+                var wasmtime: String = ""
+                match find_program("wasmtime") {
+                    Option.Some(p) => { wasmtime = p }
+                    Option.None => {}
+                }
+                if wasmtime == "" {
                     print("error: el artefacto es " + artefacto + " pero no hay runtime de wasm para ejecutarlo")
                     print("  instala wasmtime, o ejecútalo tú mismo: wasmtime " + artefacto)
                     return 1
                 }
-                var wcmd: String = "wasmtime " + artefacto
+                var wargv: Array = [wasmtime, artefacto]
                 var wi: int = 2
                 var w_dash: bool = false
                 while wi < args.length() {
                     let wa: String = args[wi]
-                    if w_dash { wcmd = wcmd + " " + shell_quote_arg(wa) }
+                    if w_dash { wargv.push(wa) }
                     else {
                         if wa == "--" { w_dash = true }
                         else if wa == "--target" or wa == "--main" { wi = wi + 1 }
                     }
                     wi = wi + 1
                 }
-                return exec_code(wcmd)
+                return correr_programa(wargv)
             }
             var run_arch: String = ""
             var run_en_target: bool = false
@@ -3391,7 +4191,7 @@ fn shell_quote_arg(s: String) -> String {
                 // El triple del host corre el artefacto de target/<triple>/ con
                 // los args de siempre (más abajo); uno de otra arquitectura daría
                 // «exec format error», así que se dice antes qué pasa.
-                if exec_code("[ \"$(uname -m)\" = " + run_arch + " ]") != 0 {
+                if host_arch() != run_arch {
                     print("error: target/" + eff_run_target + "/" + run_bin + " es un binario " + run_arch + " y esta máquina no lo puede ejecutar")
                     print("  cópialo a una máquina " + run_arch + " y córrelo ahí")
                     return 1
@@ -3406,14 +4206,15 @@ fn shell_quote_arg(s: String) -> String {
                 return 1
             }
 
-            var cmd_line: String = "./" + run_bin
-            if config.bin_name != "" or run_en_target { cmd_line = "./target/" + run_bin }
+            var prog: String = "./" + run_bin
+            if config.bin_name != "" or run_en_target { prog = "./target/" + run_bin }
+            var run_argv: Array = [prog]
             var pi: int = 2
             var after_dashdash: bool = false
             while pi < args.length() {
                 let pa: String = args[pi]
                 if after_dashdash {
-                    cmd_line = cmd_line + " " + shell_quote_arg(pa)
+                    run_argv.push(pa)
                 } else {
                     if pa == "--" {
                         after_dashdash = true
@@ -3426,15 +4227,14 @@ fn shell_quote_arg(s: String) -> String {
                             if pa == "--target" or pa == "--main" {
                                 pi = pi + 1
                             } else {
-                                cmd_line = cmd_line + " " + shell_quote_arg(pa)
+                                run_argv.push(pa)
                             }
                         }
                     }
                 }
                 pi = pi + 1
             }
-            let run_result: int = exec_code(cmd_line)
-            return run_result
+            return correr_programa(run_argv)
         }
         return 1
     }

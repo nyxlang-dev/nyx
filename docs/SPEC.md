@@ -3162,6 +3162,11 @@ import "std/process"
 //     ChildOutput { stdout: String, stderr: String, code: int }; lee stdout y
 //     stderr A LA VEZ hasta EOF y espera al hijo.
 // child_pid(c) -> int
+// find_program(name) -> Option<String>   // la ruta que try_spawn ejecutaría, con la misma
+//     búsqueda (con separador: tal cual; sin él, PATH; Windows también PATHEXT y nunca el
+//     cwd). None si no está, no es ejecutable o es un .bat/.cmd en Windows. Un `command -v` sin shell.
+// host_arch() -> String   // "x86_64", "aarch64", "arm64" (macOS), "wasm32"; como `uname -m`; "" si no se sabe
+// cpu_count() -> int      // núcleos en línea, como `nproc`; siempre >= 1
 // Errores: not_found (programa inexistente, AL LANZAR: con fork/execvp era un
 // hijo que salía con 127), permission, invalid (argv vacío, modo de Stdio.File
 // inválido, .bat/.cmd en Windows, y code 95 en wasm32-wasi) e io. La etapa va en
@@ -3169,6 +3174,18 @@ import "std/process"
 // Stdio.File de ese flujo no abrió), "cwd", y "" en la validación previa.
 // Bloqueante: wait y read frenan el hilo; con muchos hijos, un `spawn` por hijo.
 // Los builtins crudos fork/execvp/waitpid/pipe_new/kill_process siguen en posix.
+
+// Directorio temporal y candados de archivo (std/fs; Linux, macOS y Windows).
+import "std/fs"
+// temp_dir() -> String   // $TMPDIR o "/tmp"; Windows GetTempPath; sin separador final,
+//     no lo crea; "" en wasm32-wasi. "/" también vale de separador en Windows.
+// try_lock_file(path, exclusive) -> Result<FileLock, Error>   // espera hasta tenerlo;
+//     compartido (exclusive=false) lo pueden tener varios, exclusivo uno solo; crea el
+//     archivo (vacío) si no existe y no lo borra
+// try_lock_file_nowait(path, exclusive) -> Result<Option<FileLock>, Error>   // sin esperar;
+//     Ok(None) = otro lo tiene de un modo que choca
+// unlock_file(l)   // también se suelta al terminar el proceso; los hijos no lo heredan.
+//     Posix: flock(2), convive con flock(1) sobre el mismo archivo; Windows: LockFileEx
 
 // Puerto serie nativo (std/serial; Linux y Windows, macOS sin VID/PID). Los
 // bytes son String (binary-safe; `s.charAt(i)` da el valor del byte).

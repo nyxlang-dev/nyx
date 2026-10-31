@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 142339063-2157153 -->
+<!-- nyx-stdlib: 2142615624-2161150 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -898,10 +898,18 @@ Tipos (1) y métodos (0):
 
 ### `std/fs`
 
-`import "std/fs"` — 2 funciones:
+`import "std/fs"` — 6 funciones:
 
 - `pub fn try_read_file(path: String) -> Result<String, Error>`
 - `pub fn try_write_file(path: String, content: String) -> Result<int, Error>`
+- `pub fn temp_dir() -> String`
+- `pub fn try_lock_file(path: String, exclusive: bool) -> Result<FileLock, Error>`
+- `pub fn try_lock_file_nowait(path: String, exclusive: bool) -> Result<Option<FileLock>, Error>`
+- `pub fn unlock_file(l: FileLock)`
+
+Tipos (1) y métodos (0):
+
+- `pub struct FileLock`
 
 ### `std/file`
 
@@ -1860,7 +1868,7 @@ Tipos (1) y métodos (0):
 
 ### `std/process`
 
-`import "std/process"` — 13 funciones:
+`import "std/process"` — 16 funciones:
 
 - `pub fn spawn_opts() -> SpawnOpts`
 - `pub fn try_spawn(argv: Array, opts: SpawnOpts) -> Result<Child, Error>`
@@ -1875,6 +1883,9 @@ Tipos (1) y métodos (0):
 - `pub fn try_child_close_stdin(c: Child) -> Result<int, Error>`
 - `pub fn try_child_collect(c: Child) -> Result<ChildOutput, Error>`
 - `pub fn child_pid(c: Child) -> int`
+- `pub fn find_program(name: String) -> Option<String>`
+- `pub fn host_arch() -> String`
+- `pub fn cpu_count() -> int`
 
 Tipos (4) y métodos (0):
 

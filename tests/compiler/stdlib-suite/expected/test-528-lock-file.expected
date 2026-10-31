@@ -1,0 +1,8 @@
+compartido: tomado
+otro compartido: libre
+exclusivo: tomado
+exclusivo tras soltar: libre
+exclusivo: tomado
+compartido con exclusivo: tomado
+el archivo del candado queda
+directorio inexistente: not_found

@@ -176,6 +176,18 @@ void nyx_term_flush(void) {
     fflush(stdout);
 }
 
+// Escribe `str` tal cual a stderr (bytes, sin newline agregado). Vacía stdout
+// antes: con los dos flujos en el mismo archivo (`nyx build > log 2>&1`) lo
+// impreso antes sale antes. Hoy lo usa compiler/build.nx por `extern "C"`
+// (W6 Task 2: los `>&2` del script de bash que reemplaza); no es un builtin.
+void nyx_eprint(nyx_string* str) {
+    fflush(stdout);
+    if (str && str->data && str->length > 0) {
+        fwrite(str->data, 1, (size_t)str->length, stderr);
+    }
+    fflush(stderr);
+}
+
 // Lee una línea de stdin; retorna ":EOF:" en EOF
 // stdin_eof() — la señal INEQUÍVOCA de fin de stdin (fricción MCP-stdio,
 // 2026-08-06): el sentinel ":EOF:" de read_line es ambiguo con una línea

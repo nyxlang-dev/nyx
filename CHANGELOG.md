@@ -9,6 +9,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Nuevas en la stdlib: `find_program`, `host_arch` y `cpu_count` (`std/process`); `temp_dir`, `try_lock_file`,
+  `try_lock_file_nowait` y `unlock_file` (`std/fs`)**: el `command -v`, `uname -m`, `nproc`, `mktemp` y `flock` sin
+  lanzar un shell, en Linux y en Windows (`PATHEXT`, `GetSystemInfo`, `GetTempPath`, `LockFileEx`). `find_program`
+  busca como `try_spawn`: en Windows nunca en el directorio actual, y un `.bat`/`.cmd` da `None`. test-525…528
+  (verificados también como `.exe` en Windows) [arco: w6-windows].
+
+### Changed
+
+- **`nyx build` ya no escribe ni corre un script de bash**: el compilador, clang y `ar` se lanzan con `std/process`, y
+  el `ulimit -s` del compilador es un límite de pila que heredan los hijos. Es el paso previo para `nyx build` en
+  Windows. La caché automática del runtime cambia de clave una vez: el primer `nyx build` después de actualizar arma
+  un `.a` nuevo [arco: w6-windows].
+
 ### Fixed
 
 - **Una llamada calificada `alias.f(...)` a un módulo importado toma el tipo de retorno de la firma de `f`**: antes daba

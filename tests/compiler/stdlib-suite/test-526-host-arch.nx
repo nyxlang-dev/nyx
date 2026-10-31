@@ -1,0 +1,27 @@
+// test-526 — host_arch de std/process (W6 Task 2, D1a): la arquitectura sin
+// lanzar `uname -m`. Tiene que contestar lo mismo que `uname -m`, que es lo que
+// `nyx build` usaba para decidir si un --target de Linux es cruzado.
+// Y cpu_count, el `nproc` con el que se reparte el trabajo en paralelo.
+
+import "std/error"
+import "std/process"
+
+fn main() -> int {
+    let a: String = host_arch()
+    if a == "" { println("host_arch: vacío") } else { println("host_arch: no vacío") }
+    var o = spawn_opts()
+    o.stdout = Stdio.Pipe
+    match try_spawn(["uname", "-m"], o) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => {
+                    if r.stdout.trim() == a { println("igual a uname -m") } else { println("distinto: " + a + " / " + r.stdout.trim()) }
+                }
+                Result.Err(e) => { println("collect: " + e.msg) }
+            }
+        }
+        Result.Err(e) => { println("uname: " + e.msg) }
+    }
+    if cpu_count() >= 1 { println("cpu_count: al menos 1") } else { println("cpu_count: " + int_to_string(cpu_count())) }
+    return 0
+}

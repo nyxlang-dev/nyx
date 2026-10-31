@@ -1,0 +1,49 @@
+// test-528 — try_lock_file de std/fs (W6 Task 2): el candado compartido o
+// exclusivo que `nyx build` toma sobre .toolchain.lock y target/nyx-lib/.lock,
+// sin `flock`. Dentro de un mismo proceso cada toma abre el archivo de nuevo,
+// así que dos tomas chocan igual que entre dos procesos. La convivencia con el
+// `flock` de la línea de comandos la cubre tests/runtime-unit/test_os_build_host.c.
+
+import "std/error"
+import "std/fs"
+
+fn estado(r: Result<Option<FileLock>, Error>) -> String {
+    match r {
+        Result.Ok(o) => {
+            match o {
+                Option.Some(l) => { unlock_file(l); return "libre" }
+                Option.None => { return "tomado" }
+            }
+        }
+        Result.Err(e) => { return "error " + e.kind }
+    }
+}
+
+fn main() -> int {
+    let p: String = temp_dir() + "/nyx-test-528-" + int_to_string(getpid()) + ".lock"
+    match try_lock_file(p, false) {
+        Result.Ok(a) => {
+            println("compartido: tomado")
+            println("otro compartido: " + estado(try_lock_file_nowait(p, false)))
+            println("exclusivo: " + estado(try_lock_file_nowait(p, true)))
+            unlock_file(a)
+            println("exclusivo tras soltar: " + estado(try_lock_file_nowait(p, true)))
+        }
+        Result.Err(e) => { println("compartido: " + e.msg) }
+    }
+    match try_lock_file(p, true) {
+        Result.Ok(x) => {
+            println("exclusivo: tomado")
+            println("compartido con exclusivo: " + estado(try_lock_file_nowait(p, false)))
+            unlock_file(x)
+        }
+        Result.Err(e) => { println("exclusivo: " + e.msg) }
+    }
+    if file_exists(p) { println("el archivo del candado queda") }
+    remove_file(p)
+    match try_lock_file(temp_dir() + "/nyx-no-existe-528/x.lock", true) {
+        Result.Ok(_l) => { println("directorio inexistente: Ok") }
+        Result.Err(e) => { println("directorio inexistente: " + e.kind) }
+    }
+    return 0
+}

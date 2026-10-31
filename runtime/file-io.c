@@ -694,6 +694,56 @@ int64_t nyx_proc_pid(int64_t h) {
     return r < 0 ? -proc_canon(r) : r;
 }
 
+// [code, ruta] (code 0 = encontrado). / [code, path]
+nyx_array_t* nyx_find_program(nyx_string* name) {
+    const char* n = name ? nyx_string_to_cstr(name) : "";
+    char out[4096];
+    int r = os_find_program(n, out, sizeof out);
+    if (r < 0) return serial_pair(proc_canon(r), (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    return serial_pair(0, (int64_t)nyx_string_from_cstr(out), NYX_TAG_STRING);
+}
+
+// [code, ruta] del directorio temporal (D7).
+nyx_array_t* nyx_fs_temp_dir(void) {
+    char out[4096];
+    int r = os_fs_temp_dir(out, sizeof out);
+    if (r < 0) return serial_pair(proc_canon(r), (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);
+    return serial_pair(0, (int64_t)nyx_string_from_cstr(out), NYX_TAG_STRING);
+}
+
+// [code, handle] del candado; code 11 (EAGAIN) = tomado, con nonblock.
+nyx_array_t* nyx_fs_lock(nyx_string* path, int64_t exclusive, int64_t nonblock) {
+    const char* p = path ? nyx_string_to_cstr(path) : "";
+    int64_t h = os_fs_lock(p, (int)exclusive, (int)nonblock);
+    if (h < 0) return serial_pair(proc_canon(h), 0, NYX_TAG_INT);
+    return serial_pair(0, h, NYX_TAG_INT);
+}
+
+int64_t nyx_fs_unlock(int64_t h) {
+    int r = os_fs_unlock(h);
+    return r < 0 ? proc_canon(r) : 0;
+}
+
+// Límite de pila para los hijos (bytes, -1 ilimitado, o -código canónico).
+int64_t nyx_proc_stack_limit_get(void) {
+    int64_t r = os_proc_stack_limit_get();
+    return r < -1 ? -proc_canon(r) : r;
+}
+
+int64_t nyx_proc_stack_limit_set(int64_t bytes) {
+    int r = os_proc_stack_limit_set(bytes);
+    return r < 0 ? proc_canon(r) : 0;
+}
+
+// "x86_64", "aarch64"… o "" si la capa no contesta.
+nyx_string* nyx_host_arch(void) {
+    char out[128];
+    if (os_host_arch(out, sizeof out) != 0) return nyx_string_from_cstr("");
+    return nyx_string_from_cstr(out);
+}
+
+int64_t nyx_cpu_count(void) { return (int64_t)os_cpu_count(); }
+
 // [code, bytes] ("" = EOF)
 nyx_array_t* nyx_proc_read(int64_t h, int64_t stream, int64_t max) {
     if (max <= 0) return serial_pair(22, (int64_t)nyx_string_from_cstr(""), NYX_TAG_STRING);

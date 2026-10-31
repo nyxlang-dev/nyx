@@ -1,0 +1,26 @@
+// test-527 — temp_dir de std/fs (W6 Task 2, D7): el directorio temporal sin
+// escribir "/tmp" a mano, que en Windows no existe. Sin separador al final, y
+// un archivo escrito ahí se lee de vuelta. Las reglas finas ($TMPDIR vacío o
+// con "/" de más) las cubre tests/runtime-unit/test_os_build_host.c.
+
+import "std/error"
+import "std/fs"
+
+fn main() -> int {
+    let d: String = temp_dir()
+    if d == "" { println("temp_dir: vacío") } else { println("temp_dir: no vacío") }
+    if d.endsWith("/") or d.endsWith("\\") { println("termina en separador: " + d) } else { println("sin separador al final") }
+    let f: String = d + "/nyx-test-527-" + int_to_string(getpid()) + ".txt"
+    match try_write_file(f, "hola 527") {
+        Result.Ok(_n) => {
+            match try_read_file(f) {
+                Result.Ok(s) => { println("leído: " + s) }
+                Result.Err(e) => { println("leer: " + e.msg) }
+            }
+            remove_file(f)
+        }
+        Result.Err(e) => { println("escribir: " + e.msg) }
+    }
+    if file_exists(f) { println("quedó el archivo") } else { println("borrado") }
+    return 0
+}

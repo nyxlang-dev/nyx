@@ -335,6 +335,9 @@ int os_fd_datasync(int fd) { return fdatasync(fd) == 0 ? 0 : -errno; }
 int64_t os_proc_getpid(void) { return 1; }
 int os_fs_getcwd(char* buf, size_t cap) { (void)buf; (void)cap; return -ENOSYS; }
 int os_fs_chdir(const char* path) { (void)path; return -ENOSYS; }
+int os_fs_temp_dir(char* buf, size_t cap) { (void)buf; (void)cap; return -ENOSYS; }
+int64_t os_fs_lock(const char* path, int exclusive, int nonblock) { (void)path; (void)exclusive; (void)nonblock; return -ENOSYS; }
+int os_fs_unlock(int64_t h) { (void)h; return -ENOSYS; }
 int os_fs_stat_full(const char* path, os_fs_stat_t* out) { (void)path; (void)out; return -ENOSYS; }
 int os_fd_open(const char* path, int mode) { (void)path; (void)mode; return -ENOSYS; }
 int os_fd_dup2(int oldfd, int newfd) { (void)oldfd; (void)newfd; return -ENOSYS; }
@@ -364,6 +367,15 @@ int     os_proc_wait(int64_t h, int nohang, int64_t* code) { (void)h; (void)noha
 int     os_proc_kill(int64_t h) { (void)h; return -ENOSYS; }
 int     os_proc_signal(int64_t h, int sig) { (void)h; (void)sig; return -ENOSYS; }
 int64_t os_proc_pid(int64_t h) { (void)h; return -ENOSYS; }
+int     os_find_program(const char* name, char* out, size_t cap) { (void)name; (void)out; (void)cap; return -ENOSYS; }
+int64_t os_proc_stack_limit_get(void) { return -ENOSYS; }
+int     os_proc_stack_limit_set(int64_t bytes) { (void)bytes; return -ENOSYS; }
+int     os_host_arch(char* out, size_t cap) {
+    if (!out || cap < sizeof "wasm32") return -EINVAL;
+    strcpy(out, "wasm32");
+    return 0;
+}
+int     os_cpu_count(void) { return 1; }
 int64_t os_proc_read(int64_t h, int stream, void* buf, int64_t n) { (void)h; (void)stream; (void)buf; (void)n; return -ENOSYS; }
 int64_t os_proc_write(int64_t h, const void* buf, int64_t n) { (void)h; (void)buf; (void)n; return -ENOSYS; }
 int     os_proc_close_stdin(int64_t h) { (void)h; return -ENOSYS; }

@@ -2474,6 +2474,49 @@ static int os_resolve_exe(const wchar_t* argv0, wchar_t* out, DWORD cap) {
     return rc;
 }
 
+// La misma resolución que os_proc_spawn (os_resolve_exe), de UTF-8 a UTF-8.
+int os_find_program(const char* name, char* out, size_t cap) {
+    if (!name || !*name || !out || cap == 0) return -EINVAL;
+    wchar_t* wname = os_utf8_to_wide_dup(name);
+    if (!wname) return -ENOMEM;
+    wchar_t wout[MAX_PATH * 2];
+    int rc = os_resolve_exe(wname, wout, MAX_PATH * 2);
+    free(wname);
+    if (rc != 0) return rc;
+    int n = WideCharToMultiByte(CP_UTF8, 0, wout, -1, out, (int)(cap > 0x7fffffff ? 0x7fffffff : cap), NULL, NULL);
+    if (n <= 0) return GetLastError() == ERROR_INSUFFICIENT_BUFFER ? -ENAMETOOLONG : -EINVAL;
+    return 0;
+}
+
+// La pila del hilo principal la reserva el propio .exe (/STACK del enlazador):
+// el padre no tiene cómo dársela. nyx_bootstrap.exe se enlaza con
+// /STACK:67108864 (W6 Task 2, pieza 5).
+int64_t os_proc_stack_limit_get(void) { return -ENOSYS; }
+int     os_proc_stack_limit_set(int64_t bytes) { (void)bytes; return -ENOSYS; }
+
+// GetSystemInfo y no GetNativeSystemInfo: la vista del proceso, como `uname -m`.
+int os_host_arch(char* out, size_t cap) {
+    if (!out || cap == 0) return -EINVAL;
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    const char* a;
+    switch (si.wProcessorArchitecture) {
+        case PROCESSOR_ARCHITECTURE_AMD64: a = "x86_64"; break;
+        case PROCESSOR_ARCHITECTURE_ARM64: a = "aarch64"; break;
+        case PROCESSOR_ARCHITECTURE_INTEL: a = "x86"; break;
+        case PROCESSOR_ARCHITECTURE_ARM:   a = "arm"; break;
+        default: a = "unknown"; break;
+    }
+    if (strlen(a) + 1 > cap) return -ENAMETOOLONG;
+    strcpy(out, a);
+    return 0;
+}
+
+int os_cpu_count(void) {
+    DWORD n = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    return n >= 1 ? (int)n : 1;
+}
+
 // Duplicado heredable de h para el hijo (NULL si h no sirve).
 static HANDLE os_dup_inheritable(HANDLE h) {
     if (!h || h == INVALID_HANDLE_VALUE) return NULL;
@@ -3486,6 +3529,51 @@ int os_fs_getcwd(char* buf, size_t cap) {
 int os_fs_chdir(const char* path) {
     if (!path) return -EINVAL;
     return SetCurrentDirectoryA(path) ? 0 : win_last_errno();
+}
+
+// GetTempPathA, como os_fs_getcwd usa GetCurrentDirectoryA: la ruta sale en la
+// misma codificación que aceptan las funciones de archivos del runtime.
+int os_fs_temp_dir(char* buf, size_t cap) {
+    if (!buf || cap == 0) return -EINVAL;
+    DWORD r = GetTempPathA((DWORD)(cap > 0x7fffffff ? 0x7fffffff : cap), buf);
+    if (r == 0) return win_last_errno();
+    if (r >= cap) return -ERANGE;
+    // Sale con '\' al final ("C:\Users\x\AppData\Local\Temp\"); "C:\" se queda.
+    while (r > 3 && (buf[r - 1] == '\\' || buf[r - 1] == '/')) buf[--r] = 0;
+    return 0;
+}
+
+// Un byte bloqueado en el offset 0 alcanza: los candados de LockFileEx son por
+// rango, y todos los que participan bloquean el mismo. FILE_SHARE_* en todo,
+// para que abrir el archivo no choque con el que ya lo tiene abierto (el
+// candado es el byte, no el modo de apertura). No heredable (sin
+// SECURITY_ATTRIBUTES): como O_CLOEXEC en posix.
+int64_t os_fs_lock(const char* path, int exclusive, int nonblock) {
+    if (!path || !*path) return -EINVAL;
+    HANDLE h = CreateFileA(path, GENERIC_READ | GENERIC_WRITE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return win_last_errno();
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof ov);
+    DWORD fl = (exclusive ? LOCKFILE_EXCLUSIVE_LOCK : 0) | (nonblock ? LOCKFILE_FAIL_IMMEDIATELY : 0);
+    if (!LockFileEx(h, fl, 0, 1, 0, &ov)) {
+        DWORD e = GetLastError();
+        CloseHandle(h);
+        if (e == ERROR_LOCK_VIOLATION || e == ERROR_IO_PENDING) return -EAGAIN;
+        SetLastError(e);
+        return win_last_errno();
+    }
+    return (int64_t)(intptr_t)h;
+}
+
+int os_fs_unlock(int64_t hv) {
+    HANDLE h = (HANDLE)(intptr_t)hv;
+    if (hv <= 0 || h == INVALID_HANDLE_VALUE) return -EBADF;
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof ov);
+    UnlockFileEx(h, 0, 1, 0, &ov);
+    return CloseHandle(h) ? 0 : win_last_errno();
 }
 
 int os_fs_stat_full(const char* path, os_fs_stat_t* out) {

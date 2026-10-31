@@ -471,6 +471,77 @@ else
     fi
 fi
 
+# ── `nyx build` sin bash (W6 Task 2) ────────────────────────
+# El build armaba un script de bash en /tmp y lo corría con `bash`; en Windows
+# no hay bash. Se corre con un PATH que SOLO tiene clang y el enlazador —ni sh
+# ni bash— y un TMPDIR propio: tiene que compilar, el binario tiene que correr,
+# y no puede aparecer un .sh de nyx ni en TMPDIR ni en /tmp (se mira DURANTE el
+# build: el script viejo se borraba solo al terminar). Las dos formas: un
+# programa suelto y uno con [lib] modules, que tenía su propio script.
+SINSH="$GATE_TMP/sinsh"
+rm -rf "$SINSH"; mkdir -p "$SINSH/bin" "$SINSH/tmp"
+for prog in clang ld; do
+    pth="$(command -v "$prog" 2>/dev/null || true)"
+    [ -n "$pth" ] && ln -s "$(readlink -f "$pth")" "$SINSH/bin/$prog"
+done
+# nb_sinsh DIR ARGS… — como nb, con PATH y TMPDIR recortados; vigila los .sh.
+nb_sinsh() {
+    local dir="$1"; shift
+    ( cd "$dir" && exec timeout 300 env -i HOME="$HOME" PATH="$SINSH/bin" TMPDIR="$SINSH/tmp" NYX_HOME="$ROOT" \
+        "$ROOT/nyx_build" "$@" ) > "$GATE_TMP/out" 2>&1 &
+    local pid=$!
+    # En /tmp cuentan solo los que aparecen durante ESTE build: uno viejo de otra
+    # corrida (un build que murió antes de su `rm`) no es de este.
+    ls /tmp 2>/dev/null | grep -E '^nyx_(build|libs)_.*\.sh$' | sort > "$GATE_TMP/antes"
+    : > "$GATE_TMP/vistos"
+    while kill -0 "$pid" 2>/dev/null; do
+        ls "$SINSH/tmp" 2>/dev/null | grep -E '\.sh$' >> "$GATE_TMP/vistos"
+        ls /tmp 2>/dev/null | grep -E '^nyx_(build|libs)_.*\.sh$' | sort | comm -13 "$GATE_TMP/antes" - >> "$GATE_TMP/vistos"
+        sleep 0.05
+    done
+    wait "$pid"; RC=$?
+    ls "$SINSH/tmp" 2>/dev/null | grep -E '\.sh$' >> "$GATE_TMP/vistos"
+}
+if [ ! -e "$SINSH/bin/clang" ] || [ ! -e "$SINSH/bin/ld" ]; then
+    echo "  ⏭️  sin-bash — SKIP: no encontré clang y ld para armar el PATH recortado"
+else
+    # CONTROL: el PATH recortado de verdad no tiene un shell.
+    if [ -e "$SINSH/bin/sh" ] || [ -e "$SINSH/bin/bash" ] || env -i PATH="$SINSH/bin" /usr/bin/env sh -c true 2>/dev/null; then
+        bad "sin-bash-control — el PATH recortado deja ver un shell" "sin-bash-control"
+    fi
+    P="$GATE_TMP/sinsh-prog"
+    mk_proj "$P" "$PKG"
+    nb_sinsh "$P" build
+    if [ "$RC" -eq 0 ] && [ -x "$P/manif" ] && [ "$( cd "$P" && ./manif )" = "soy main" ] && [ ! -s "$GATE_TMP/vistos" ] && [ -z "$(ls -A "$SINSH/tmp")" ]; then
+        ok "sin-bash — nyx build compila y enlaza con un PATH sin sh ni bash, sin scripts y sin dejar temporales"
+    else
+        bad "sin-bash — rc $RC; binario: $([ -x "$P/manif" ] && echo sí || echo no); scripts vistos: $(sort -u "$GATE_TMP/vistos" | tr '\n' ' ')" "sin-bash"; muestra
+    fi
+    P="$GATE_TMP/sinsh-lib"
+    mk_proj "$P" "$PKG
+
+[lib]
+modules = [\"src/util\"]"
+    cat > "$P/src/util.nx" <<'EOF'
+pub fn saludo() -> String { return "soy la lib" }
+EOF
+    cat > "$P/src/main.nx" <<'EOF'
+import "src/util"
+fn main() -> int {
+    print(saludo())
+    return 0
+}
+EOF
+    nb_sinsh "$P" build
+    if [ "$RC" -eq 0 ] && [ -x "$P/manif" ] && [ "$( cd "$P" && ./manif )" = "soy la lib" ] \
+       && ls "$P/target/nyx-lib/" 2>/dev/null | grep -q '^src_util-.*\.o$' && [ ! -s "$GATE_TMP/vistos" ]; then
+        ok "sin-bash-lib — con [lib] modules también: el objeto de la lib en target/nyx-lib/, sin scripts"
+    else
+        bad "sin-bash-lib — rc $RC; scripts vistos: $(sort -u "$GATE_TMP/vistos" | tr '\n' ' ')" "sin-bash-lib"; muestra
+        ls "$P/target/nyx-lib/" 2>&1 | sed 's/^/      lib: /' | head -3
+    fi
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  BUILD MANIFEST: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

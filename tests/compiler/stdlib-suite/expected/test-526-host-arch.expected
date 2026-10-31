@@ -1,0 +1,3 @@
+host_arch: no vacío
+igual a uname -m
+cpu_count: al menos 1

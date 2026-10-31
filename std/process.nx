@@ -58,6 +58,9 @@ extern "C" fn nyx_proc_close_stdin(h: int) -> int
 extern "C" fn nyx_proc_drain(h: int) -> Array
 extern "C" fn nyx_proc_pipe() -> Array
 extern "C" fn nyx_proc_raw_close(raw: int) -> int
+extern "C" fn nyx_find_program(name: String) -> Array
+extern "C" fn nyx_host_arch() -> String
+extern "C" fn nyx_cpu_count() -> int
 
 pub enum Stdio {
     Inherit,
@@ -361,4 +364,32 @@ pub fn child_pid(c: Child) -> int {
     let p: int = nyx_proc_pid(c.handle)
     if p < 0 { return -1 }
     return p
+}
+
+// El ejecutable que try_spawn lanzaría para `name`, buscado con el mismo
+// criterio: con separador, la ruta tal cual; sin él, solo en PATH (Windows:
+// también PATHEXT, nunca el directorio actual). None si no está, si no es un
+// archivo ejecutable o si es un .bat/.cmd en Windows (que try_spawn rechaza).
+// Es el `command -v` sin shell (W6 Task 2).
+//     match find_program("clang") { Option.Some(p) => { print(p) } Option.None => {} }
+pub fn find_program(name: String) -> Option<String> {
+    let r: Array = nyx_find_program(name)
+    let code: int = r[0]
+    if code != 0 { return Option.None }
+    let p: String = r[1]
+    return Option.Some(p)
+}
+
+// La arquitectura de la máquina como la ve este proceso: lo que contesta
+// `uname -m`, sin lanzarlo (W6 Task 2). Linux da "x86_64" o "aarch64"; macOS
+// en Apple Silicon, "arm64"; Windows, "x86_64" o "aarch64" (un .exe x64
+// emulado en ARM64 ve "x86_64"); wasm32-wasi, "wasm32". "" si no se pudo saber.
+pub fn host_arch() -> String {
+    return nyx_host_arch()
+}
+
+// Núcleos en línea, lo que contesta `nproc`: para decidir cuántos hijos lanzar
+// a la vez. Siempre >= 1 (1 en wasm32-wasi).
+pub fn cpu_count() -> int {
+    return nyx_cpu_count()
 }

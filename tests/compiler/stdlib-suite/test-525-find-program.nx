@@ -1,0 +1,56 @@
+// test-525 — find_program de std/process (W6 Task 2, D1a): el `command -v` sin
+// shell que usa `nyx build`. Busca con el criterio de try_spawn, así que lo que
+// encuentra se puede lanzar, y lo que no encuentra try_spawn tampoco lo lanza.
+// Los bordes de la capa (un directorio en PATH, PATHEXT, un .bat) los cubren
+// tests/runtime-unit/test_os_find_program.c y su par de Windows.
+
+import "std/error"
+import "std/process"
+
+fn main() -> int {
+    // Un programa que está en PATH en Linux, macOS y Git for Windows.
+    match find_program("sh") {
+        Option.Some(p) => {
+            // Windows devuelve la extensión como la escribe PATHEXT (".EXE").
+            let q: String = p.toLower()
+            let nombre_ok: bool = q.endsWith("/sh") or q.endsWith("\\sh.exe") or q.endsWith("/sh.exe")
+            if nombre_ok { println("sh: encontrado, nombre ok") } else { println("sh: encontrado con otro nombre: " + p) }
+            // La ruta que devuelve se puede lanzar tal cual.
+            var o = spawn_opts()
+            o.stdout = Stdio.Pipe
+            match try_spawn([p, "-c", "printf lanzado"], o) {
+                Result.Ok(c) => {
+                    match try_child_collect(c) {
+                        Result.Ok(r) => { println("sh por su ruta: " + r.stdout + " " + int_to_string(r.code)) }
+                        Result.Err(e) => { println("collect: " + e.msg) }
+                    }
+                }
+                Result.Err(e) => { println("spawn: " + e.msg) }
+            }
+        }
+        Option.None => { println("sh: no encontrado") }
+    }
+
+    // Lo que no existe da None, igual que try_spawn da not_found.
+    match find_program("nyx-programa-que-no-existe-525") {
+        Option.Some(p) => { println("inexistente: encontrado " + p) }
+        Option.None => { println("inexistente: None") }
+    }
+    match try_spawn(["nyx-programa-que-no-existe-525"], spawn_opts()) {
+        Result.Ok(_c) => { println("spawn inexistente: Ok") }
+        Result.Err(e) => { println("spawn inexistente: " + e.kind) }
+    }
+
+    // Con separador, la ruta tal cual: una que no existe no se busca en PATH.
+    match find_program("./no-existe/sh") {
+        Option.Some(p) => { println("ruta inexistente: encontrado " + p) }
+        Option.None => { println("ruta inexistente: None") }
+    }
+
+    // Nombre vacío.
+    match find_program("") {
+        Option.Some(p) => { println("vacio: encontrado " + p) }
+        Option.None => { println("vacio: None") }
+    }
+    return 0
+}

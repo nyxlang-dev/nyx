@@ -329,8 +329,9 @@ rm -f "$MAKE_DB"
 # fuera de --release, todo lo que vive en C corría ~7 veces más lento y nyxerp lo
 # reportó como lentitud de PBKDF2. Los tres caminos (nyx run, nyx build, nyx test)
 # piden la caché del runtime con "-O2" literal, no con los flags del usuario.
+# build.nx la pide sin bash desde la W6 Task 2: rt_auto("-O2" + tgt_cc, …).
 for f in scripts/nyx compiler/build.nx compiler/test.nx; do
-    if ! grep -qE 'nyx_rt_auto (\\)?"-O2' "$f"; then
+    if ! grep -qE 'nyx_rt_auto (\\)?"-O2|rt_auto\("-O2"' "$f"; then
         echo "  ✗ $f: el runtime no se pide con -O2 a la caché (nyx_rt_auto \"-O2\" …) — volvería a -O0 fuera de --release"
         FAIL=$((FAIL + 1))
     fi

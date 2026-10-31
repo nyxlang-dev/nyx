@@ -1,0 +1,34 @@
+// Nyx by Example: saber si un programa existe ANTES de lanzarlo, con std/process.
+//
+//     find_program(name) -> Option<String>
+//
+// Devuelve la ruta que try_spawn ejecutaría para `name`, con la MISMA búsqueda:
+// PATH (en Windows también PATHEXT, y nunca el directorio actual). Sirve para
+// avisar "falta git" con un mensaje propio, o para fijar la ruta una vez.
+//
+//   - None si no está, no es ejecutable, es un directorio o el nombre es vacío.
+//   - En Windows, un programa que solo existe como .bat/.cmd da None: try_spawn
+//     lo rechaza (usá std/exec para esos).
+//   - Un nombre con separador ("./tool", "/usr/bin/sh") se mira tal cual, sin PATH.
+
+import "std/process"
+
+fn main() -> int {
+    // `sh` existe en cualquier Linux. La ruta absoluta varía por máquina, así
+    // que solo se muestra si se encontró.
+    match find_program("sh") {
+        Option.Some(p) => { print("sh: encontrado") }
+        Option.None => { print("sh: no está") }
+    }
+    // Un programa inexistente da None: no hay error que atrapar.
+    match find_program("nyx-no-such-program-xyz") {
+        Option.Some(p) => { print("inexistente: " + p) }
+        Option.None => { print("inexistente: None") }
+    }
+    // Un directorio no es un programa.
+    match find_program("/") {
+        Option.Some(p) => { print("directorio: " + p) }
+        Option.None => { print("directorio: None") }
+    }
+    return 0
+}
