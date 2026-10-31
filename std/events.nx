@@ -84,9 +84,9 @@ pub fn event_off(bus: Array, event: String) {
     listeners.insert(event, "")
 }
 
-// Get event history
-pub fn event_history(bus: Array) -> Array {
-    let history: Array = bus[1]
+// Get event history (Array<String>: entradas "evento:valor")
+pub fn event_history(bus: Array) -> Array<String> {
+    let history: Array<String> = bus[1]
     return history
 }
 
@@ -143,8 +143,9 @@ pub fn observable_watch(obs: Array, handler: Fn(int) -> bool) {
     watchers.push(handler)
 }
 
-pub fn observable_history(obs: Array) -> Array {
-    let hist: Array = obs[2]
+// Historial de valores (Array<int>)
+pub fn observable_history(obs: Array) -> Array<int> {
+    let hist: Array<int> = obs[2]
     return hist
 }
 

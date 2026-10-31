@@ -4,12 +4,12 @@
 
 // ── Matrix creation ───────────────────────────────────────────────────────────
 
-// Create rows×cols matrix filled with 0
-pub fn mat_new(rows: int, cols: int) -> Array {
-    var mat: Array = []
+// Create rows×cols matrix filled with 0 (Array<Array<int>>: filas de enteros)
+pub fn mat_new(rows: int, cols: int) -> Array<Array<int>> {
+    var mat: Array<Array<int>> = []
     var r = 0
     while r < rows {
-        var row: Array = []
+        var row: Array<int> = []
         var c = 0
         while c < cols {
             row.push(0)
@@ -22,11 +22,11 @@ pub fn mat_new(rows: int, cols: int) -> Array {
 }
 
 // Create identity matrix n×n
-pub fn mat_identity(n: int) -> Array {
-    var mat = mat_new(n, n)
+pub fn mat_identity(n: int) -> Array<Array<int>> {
+    var mat: Array<Array<int>> = mat_new(n, n)
     var i = 0
     while i < n {
-        let row: Array = mat[i]
+        let row: Array<int> = mat[i]
         row[i] = 1
         i = i + 1
     }
@@ -58,7 +58,7 @@ pub fn mat_cols(mat: Array) -> int {
 
 // ── Matrix operations ─────────────────────────────────────────────────────────
 
-pub fn mat_add(a: Array, b: Array) -> Array {
+pub fn mat_add(a: Array, b: Array) -> Array<Array<int>> {
     let rows = mat_rows(a)
     let cols = mat_cols(a)
     var result = mat_new(rows, cols)
@@ -76,7 +76,7 @@ pub fn mat_add(a: Array, b: Array) -> Array {
     return result
 }
 
-pub fn mat_sub(a: Array, b: Array) -> Array {
+pub fn mat_sub(a: Array, b: Array) -> Array<Array<int>> {
     let rows = mat_rows(a)
     let cols = mat_cols(a)
     var result = mat_new(rows, cols)
@@ -95,7 +95,7 @@ pub fn mat_sub(a: Array, b: Array) -> Array {
 }
 
 // Matrix multiplication: A(m×k) × B(k×n) → C(m×n)
-pub fn mat_mul(a: Array, b: Array) -> Array {
+pub fn mat_mul(a: Array, b: Array) -> Array<Array<int>> {
     let m = mat_rows(a)
     let k = mat_cols(a)
     let n = mat_cols(b)
@@ -119,7 +119,7 @@ pub fn mat_mul(a: Array, b: Array) -> Array {
 }
 
 // Scalar multiplication
-pub fn mat_scale(m: Array, scalar: int) -> Array {
+pub fn mat_scale(m: Array, scalar: int) -> Array<Array<int>> {
     let rows = mat_rows(m)
     let cols = mat_cols(m)
     var result = mat_new(rows, cols)
@@ -137,7 +137,7 @@ pub fn mat_scale(m: Array, scalar: int) -> Array {
 }
 
 // Transpose
-pub fn mat_transpose(m: Array) -> Array {
+pub fn mat_transpose(m: Array) -> Array<Array<int>> {
     let rows = mat_rows(m)
     let cols = mat_cols(m)
     var result = mat_new(cols, rows)

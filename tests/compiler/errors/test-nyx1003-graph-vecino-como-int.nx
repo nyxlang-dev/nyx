@@ -1,0 +1,14 @@
+// graph_neighbors devuelve Array<Array<int>>: cada vecino es el par [to, weight].
+// Anotar un vecino como int es NYX1003; antes compilaba y leía el puntero del
+// par como entero.
+import "std/graph"
+
+fn main() {
+    let g = graph_new(2)
+    graph_add_edge(g, 0, 1, 5)
+    let vecinos = graph_neighbors(g, 0)
+    let n: int = vecinos[0]
+    print(n)
+}
+
+main()

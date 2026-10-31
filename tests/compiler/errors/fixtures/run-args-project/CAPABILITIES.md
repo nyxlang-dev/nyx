@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 44078797-2161797 -->
+<!-- nyx-stdlib: 1917295325-2162531 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -269,11 +269,11 @@ Tipos (1) y métodos (0):
 - `pub fn try_http_stream(method: String, url: String, headers: Array, body: String) -> Result<HttpStream, Error>` — try_http_stream_opts con http_stream_opts().
 - `pub fn http_status(resp: Array) -> int`
 - `pub fn http_body(resp: Array) -> String`
-- `pub fn http_headers(resp: Array) -> Array`
+- `pub fn http_headers(resp: Array) -> Array<String>`
 - `pub fn http_find_header(headers: Array, name: String) -> String`
-- `pub fn http_find_headers(headers: Array, name: String) -> Array`
+- `pub fn http_find_headers(headers: Array, name: String) -> Array<String>`
 - `pub fn http_parse_request(client_fd: int) -> Array`
-- `pub fn http_cors_headers(origin: String) -> Array`
+- `pub fn http_cors_headers(origin: String) -> Array<String>`
 - `pub fn http_cors_response(origin: String) -> String`
 - `pub fn http_serve(port: int, handler: Fn(Array) -> String) -> int`
 - `pub fn http_serve_en(host: String, port: int, handler: Fn(Array) -> String) -> int`
@@ -1032,11 +1032,11 @@ Tipos (8) y métodos (0):
 - `pub fn mime_charset_to_utf8(charset: String, bytes: String) -> Option<String>`
 - `pub fn mime_decode_words(s: String) -> String`
 - `pub fn mime_header(m: MimeMessage, name: String) -> String`
-- `pub fn mime_header_all(m: MimeMessage, name: String) -> Array`
+- `pub fn mime_header_all(m: MimeMessage, name: String) -> Array<String>`
 - `pub fn mime_header_text(m: MimeMessage, name: String) -> String`
 - `pub fn mime_parse_value(v: String) -> MimeValue`
 - `pub fn mime_param(v: MimeValue, name: String) -> String`
-- `pub fn mime_parse_addresses(s: String) -> Array`
+- `pub fn mime_parse_addresses(s: String) -> Array<MimeAddress>`
 - `pub fn mime_parse_date(s: String) -> int`
 - `pub fn mime_html_to_text(html: String) -> String`
 - `pub fn mime_safe_filename(name: String) -> String`
@@ -1061,7 +1061,7 @@ Tipos (6) y métodos (0):
 - `pub fn __dns_build_query(name: String, qtype: int, id: int) -> Result<String, Error>` — INTERNO (tests): arma el paquete de consulta; usa dns_query/dns_txt/dns_cname/dns_mx.
 - `pub fn __dns_read_name(p: String, start: int) -> Array` — INTERNO (tests): lee un nombre con compresión; usa dns_query/dns_txt/dns_cname/dns_mx.
 - `pub fn __dns_parse_response(p: String, id: int, qname: String) -> Result<Array, Error>` — INTERNO (tests): decodifica un paquete de respuesta; usa dns_query/dns_txt/dns_cname/dns_mx.
-- `pub fn __dns_parse_resolv(text: String) -> Array` — INTERNO (tests): extrae los nameserver de un resolv.conf; usa dns_query/dns_txt/dns_cname/dns_mx.
+- `pub fn __dns_parse_resolv(text: String) -> Array<String>` — INTERNO (tests): extrae los nameserver de un resolv.conf; usa dns_query/dns_txt/dns_cname/dns_mx.
 - `pub fn dns_set_server(ip: String) -> Result<int, Error>` — Fija el servidor DNS (IPv4 numérica); "" vuelve a /etc/resolv.conf. Obligatorio en Windows.
 - `pub fn dns_set_timeout(secs: int) -> Result<int, Error>` — Plazo por intento en segundos (1..30, por omisión 2); 2 intentos por servidor.
 - `pub fn dns_query(name: String, qtype: int) -> Result<Array, Error>` — Consulta cruda: devuelve la sección de respuesta como Array de [tipo, ttl, rdata].
@@ -1295,7 +1295,7 @@ Tipos (5) y métodos (0):
 - `pub fn random_bytes(n: int) -> String`
 - `pub fn random_pick_index(arr: Array) -> int`
 - `pub fn random_shuffle(arr: Array) -> Array`
-- `pub fn random_sample_indices(n: int, k: int) -> Array`
+- `pub fn random_sample_indices(n: int, k: int) -> Array<int>`
 
 ### `std/rsa`
 
@@ -1626,7 +1626,7 @@ Tipos (2) y métodos (4):
 
 `import "std/linkedlist"` — 27 funciones:
 
-- `pub fn deque_new() -> Array`
+- `pub fn deque_new() -> Array<String>`
 - `pub fn deque_push_back(d: Array, val: String)`
 - `pub fn deque_push_front(d: Array, val: String)`
 - `pub fn deque_pop_back(d: Array) -> String`
@@ -1646,7 +1646,7 @@ Tipos (2) y métodos (4):
 - `pub fn ll_peek_front(storage: Array) -> String`
 - `pub fn ll_size(storage: Array) -> int`
 - `pub fn ll_is_empty(storage: Array) -> bool`
-- `pub fn ll_to_array(storage: Array) -> Array`
+- `pub fn ll_to_array(storage: Array) -> Array<String>`
 - `pub fn pq_new() -> Array`
 - `pub fn pq_push(storage: Array, val: String, priority: int)`
 - `pub fn pq_pop(storage: Array) -> String`
@@ -1658,17 +1658,17 @@ Tipos (2) y métodos (4):
 
 `import "std/matrix"` — 14 funciones:
 
-- `pub fn mat_new(rows: int, cols: int) -> Array`
-- `pub fn mat_identity(n: int) -> Array`
+- `pub fn mat_new(rows: int, cols: int) -> Array<Array<int>>`
+- `pub fn mat_identity(n: int) -> Array<Array<int>>`
 - `pub fn mat_get(mat: Array, r: int, c: int) -> int`
 - `pub fn mat_set(mat: Array, r: int, c: int, val: int)`
 - `pub fn mat_rows(mat: Array) -> int`
 - `pub fn mat_cols(mat: Array) -> int`
-- `pub fn mat_add(a: Array, b: Array) -> Array`
-- `pub fn mat_sub(a: Array, b: Array) -> Array`
-- `pub fn mat_mul(a: Array, b: Array) -> Array`
-- `pub fn mat_scale(m: Array, scalar: int) -> Array`
-- `pub fn mat_transpose(m: Array) -> Array`
+- `pub fn mat_add(a: Array, b: Array) -> Array<Array<int>>`
+- `pub fn mat_sub(a: Array, b: Array) -> Array<Array<int>>`
+- `pub fn mat_mul(a: Array, b: Array) -> Array<Array<int>>`
+- `pub fn mat_scale(m: Array, scalar: int) -> Array<Array<int>>`
+- `pub fn mat_transpose(m: Array) -> Array<Array<int>>`
 - `pub fn mat_trace(m: Array) -> int`
 - `pub fn mat_frobenius_sq(m: Array) -> int`
 - `pub fn mat_print(m: Array)`
@@ -1681,14 +1681,14 @@ Tipos (2) y métodos (4):
 - `pub fn event_on(bus: Array, event: String, handler: Fn(String) -> bool) -> int`
 - `pub fn event_emit(bus: Array, event: String, payload: String) -> int`
 - `pub fn event_off(bus: Array, event: String)`
-- `pub fn event_history(bus: Array) -> Array`
+- `pub fn event_history(bus: Array) -> Array<String>`
 - `pub fn event_history_count(bus: Array) -> int`
 - `pub fn event_was_emitted(bus: Array, event: String) -> bool`
 - `pub fn observable_new(initial: int) -> Array`
 - `pub fn observable_get(obs: Array) -> int`
 - `pub fn observable_set(obs: Array, new_val: int)`
 - `pub fn observable_watch(obs: Array, handler: Fn(int) -> bool)`
-- `pub fn observable_history(obs: Array) -> Array`
+- `pub fn observable_history(obs: Array) -> Array<int>`
 - `pub fn observable_computed(source: Array, transform: Fn(int) -> int) -> int`
 
 ### `std/statemachine`
@@ -1778,13 +1778,13 @@ Tipos (1) y métodos (5):
 - `pub fn graph_edge_count(g: Array) -> int`
 - `pub fn graph_add_edge(g: Array, src: int, dst: int, weight: int)`
 - `pub fn graph_add_undirected(g: Array, a: int, b: int, weight: int)`
-- `pub fn graph_neighbors(g: Array, v: int) -> Array`
+- `pub fn graph_neighbors(g: Array, v: int) -> Array<Array<int>>`
 - `pub fn graph_has_edge(g: Array, src: int, dst: int) -> bool`
-- `pub fn graph_bfs(g: Array, start: int) -> Array`
-- `pub fn graph_bfs_path(g: Array, start: int, end_node: int) -> Array`
-- `pub fn graph_dfs(g: Array, start: int) -> Array`
+- `pub fn graph_bfs(g: Array, start: int) -> Array<int>`
+- `pub fn graph_bfs_path(g: Array, start: int, end_node: int) -> Array<int>`
+- `pub fn graph_dfs(g: Array, start: int) -> Array<int>`
 - `pub fn graph_has_cycle(g: Array) -> bool`
-- `pub fn graph_dijkstra(g: Array, start: int) -> Array`
+- `pub fn graph_dijkstra(g: Array, start: int) -> Array<int>`
 - `pub fn graph_dist(dijkstra_result: Array, end_node: int) -> int`
 
 ## Memoria

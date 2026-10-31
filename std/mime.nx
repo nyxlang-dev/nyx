@@ -605,9 +605,9 @@ pub fn mime_header(m: MimeMessage, name: String) -> String {
 }
 
 // Todos los valores de las cabeceras `name` (Received, por ejemplo), en orden.
-pub fn mime_header_all(m: MimeMessage, name: String) -> Array {
+pub fn mime_header_all(m: MimeMessage, name: String) -> Array<String> {
     let want: String = name.to_lower()
-    var out: Array = []
+    var out: Array<String> = []
     // Copia local del campo: indexar `m.headers[i]` para sacar un Array anidado se
     // cae (gotcha del compilador, ver LLM.md); con una variable local anda.
     let hs: Array = m.headers
@@ -938,8 +938,8 @@ fn __mime_addr_item(item: String) -> Array {
 // nombres entre comillas con comas o `@`, palabras codificadas, comentarios y grupos
 // (`Ventas: a@b, c@d;`; `undisclosed-recipients:;` da lista vacía). Devuelve
 // Array<MimeAddress>; una entrada sin dirección se omite.
-pub fn mime_parse_addresses(s: String) -> Array {
-    var out: Array = []
+pub fn mime_parse_addresses(s: String) -> Array<MimeAddress> {
+    var out: Array<MimeAddress> = []
     let n: int = s.length()
     var items: Array = []
     var q: bool = false

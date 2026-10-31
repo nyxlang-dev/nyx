@@ -65,8 +65,8 @@ pub fn random_shuffle(arr: Array) -> Array {
     return arr
 }
 
-// Sample k unique indices from [0, n)
-pub fn random_sample_indices(n: int, k: int) -> Array {
+// Sample k unique indices from [0, n) (Array<int>)
+pub fn random_sample_indices(n: int, k: int) -> Array<int> {
     var result: Array<int> = []
     if k <= 0 { return result }
     var count = 0

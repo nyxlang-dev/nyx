@@ -1,0 +1,13 @@
+// event_history devuelve Array<String>: cada entrada es el texto "evento:valor".
+// Anotar una entrada como int es NYX1003; antes compilaba y leía el puntero del
+// String como entero.
+import "std/events"
+
+fn main() {
+    let bus = event_bus_new()
+    let hist = event_history(bus)
+    let n: int = hist[0]
+    print(n)
+}
+
+main()

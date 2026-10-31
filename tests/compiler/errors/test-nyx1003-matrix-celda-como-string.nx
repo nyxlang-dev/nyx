@@ -1,0 +1,12 @@
+// mat_new devuelve Array<Array<int>>: cada fila es un array de enteros.
+// Anotar una fila como String es NYX1003; antes compilaba y leía el puntero
+// del array como texto.
+import "std/matrix"
+
+fn main() {
+    let m = mat_new(2, 2)
+    let fila: String = m[0]
+    print(fila)
+}
+
+main()

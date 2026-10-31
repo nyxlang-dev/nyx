@@ -1,0 +1,12 @@
+// random_sample_indices devuelve Array<int>: los índices son enteros.
+// Anotar un índice como String es NYX1003; antes compilaba y trataba el entero
+// como puntero a texto.
+import "std/random"
+
+fn main() {
+    let idx = random_sample_indices(10, 3)
+    let s: String = idx[0]
+    print(s)
+}
+
+main()

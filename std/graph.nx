@@ -35,10 +35,10 @@ pub fn graph_add_undirected(g: Array, a: int, b: int, weight: int) {
     graph_add_edge(g, b, a, weight)
 }
 
-// Get all neighbors of node v (returns Array of [to, weight] pairs)
-pub fn graph_neighbors(g: Array, v: int) -> Array {
+// Get all neighbors of node v (Array<Array<int>>: pares [to, weight])
+pub fn graph_neighbors(g: Array, v: int) -> Array<Array<int>> {
     let edges: Array = g[1]
-    var result: Array = []
+    var result: Array<Array<int>> = []
     var i = 0
     while i < edges.length() {
         let edge: Array = edges[i]
@@ -71,7 +71,7 @@ pub fn graph_has_edge(g: Array, src: int, dst: int) -> bool {
 // ── BFS ───────────────────────────────────────────────────────────────────────
 
 // BFS traversal from start node. Returns visited nodes in BFS order.
-pub fn graph_bfs(g: Array, start: int) -> Array {
+pub fn graph_bfs(g: Array, start: int) -> Array<int> {
     let n = graph_node_count(g)
     var visited: Array<int> = []
     var queue: Array<int> = [start]
@@ -103,7 +103,7 @@ pub fn graph_bfs(g: Array, start: int) -> Array {
 }
 
 // BFS shortest path (unweighted) from start to end. Returns path or [] if none.
-pub fn graph_bfs_path(g: Array, start: int, end_node: int) -> Array {
+pub fn graph_bfs_path(g: Array, start: int, end_node: int) -> Array<int> {
     let n = graph_node_count(g)
     var prev: Array<int> = []
     var i = 0
@@ -161,7 +161,7 @@ pub fn graph_bfs_path(g: Array, start: int, end_node: int) -> Array {
 // ── DFS ───────────────────────────────────────────────────────────────────────
 
 // DFS traversal from start. Returns visited nodes in DFS order.
-pub fn graph_dfs(g: Array, start: int) -> Array {
+pub fn graph_dfs(g: Array, start: int) -> Array<int> {
     let n = graph_node_count(g)
     var visited: Array<int> = []
     var seen: Array<int> = []
@@ -258,7 +258,7 @@ pub fn graph_has_cycle(g: Array) -> bool {
 
 // Dijkstra's shortest path from start to all nodes.
 // Returns Array<int> of distances (2^30 = infinity for unreachable nodes)
-pub fn graph_dijkstra(g: Array, start: int) -> Array {
+pub fn graph_dijkstra(g: Array, start: int) -> Array<int> {
     let n = graph_node_count(g)
     let INF = 1073741824  // 2^30
 

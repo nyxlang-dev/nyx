@@ -1394,8 +1394,9 @@ pub fn http_body(resp: Array) -> String {
     return b
 }
 
-pub fn http_headers(resp: Array) -> Array {
-    let h: Array = resp[2]
+// Cabeceras planas [nombre, valor, ...]: Array<String> (todo elemento es texto).
+pub fn http_headers(resp: Array) -> Array<String> {
+    let h: Array<String> = resp[2]
     return h
 }
 
@@ -1466,9 +1467,9 @@ pub fn http_find_header(headers: Array, name: String) -> String {
 // lowercase). The reason this exists: Set-Cookie legally repeats — the
 // singular http_find_header only ever returned the first cookie. A trailing
 // key with no value (malformed flat array) is ignored, never a crash.
-pub fn http_find_headers(headers: Array, name: String) -> Array {
+pub fn http_find_headers(headers: Array, name: String) -> Array<String> {
     let target: String = name.to_lower()
-    let result: Array = []
+    let result: Array<String> = []
     var i: int = 0
     let len: int = headers.length()
     while i + 1 < len {
@@ -1521,8 +1522,9 @@ pub fn http_parse_request(client_fd: int) -> Array {
 
 // === CORS ===
 
-pub fn http_cors_headers(origin: String) -> Array {
-    let headers: Array = [
+// Array<String>: cabeceras planas [nombre, valor, ...].
+pub fn http_cors_headers(origin: String) -> Array<String> {
+    let headers: Array<String> = [
         "Access-Control-Allow-Origin", origin,
         "Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS",
         "Access-Control-Allow-Headers", "Content-Type, Authorization",

@@ -1,0 +1,14 @@
+// ll_to_array devuelve Array<String>: los valores de la lista son texto.
+// Anotar un valor como int es NYX1003; antes compilaba y leía el puntero del
+// String como entero.
+import "std/linkedlist"
+
+fn main() {
+    let ll = ll_new()
+    ll_push_back(ll, "uno")
+    let items = ll_to_array(ll)
+    let n: int = items[0]
+    print(n)
+}
+
+main()

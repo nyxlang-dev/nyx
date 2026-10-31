@@ -1,0 +1,12 @@
+// mime_parse_addresses devuelve Array<MimeAddress>: cada entrada es un struct
+// con .name y .address, no el texto de la dirección. Anotarla como String es
+// NYX1003; antes compilaba y leía el puntero del struct como texto.
+import "std/mime"
+
+fn main() {
+    let dirs = mime_parse_addresses("Ana <ana@x.cl>")
+    let d: String = dirs[0]
+    print(d)
+}
+
+main()

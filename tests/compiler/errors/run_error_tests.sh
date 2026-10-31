@@ -220,6 +220,14 @@ TESTS=(
   "tests/compiler/errors/test-nyx1003-kvclient-miembro-como-int.nx|type mismatch in 'n': expected int, got String"
   "tests/compiler/errors/test-nyx1003-resp-argumento-como-int.nx|type mismatch in 'n': expected int, got String"
   "tests/compiler/errors/test-nyx1003-btreemap-clave-como-int.nx|type mismatch in 'n': expected int, got String"
+  "tests/compiler/errors/test-nyx1003-matrix-celda-como-string.nx|type mismatch in 'fila': expected String, got Array<int>"
+  "tests/compiler/errors/test-nyx1003-graph-vecino-como-int.nx|type mismatch in 'n': expected int, got Array<int>"
+  "tests/compiler/errors/test-nyx1003-http-cabecera-como-int.nx|type mismatch in 'n': expected int, got String"
+  "tests/compiler/errors/test-nyx1003-events-historial-como-int.nx|type mismatch in 'n': expected int, got String"
+  "tests/compiler/errors/test-nyx1003-linkedlist-valor-como-int.nx|type mismatch in 'n': expected int, got String"
+  "tests/compiler/errors/test-nyx1003-random-indice-como-string.nx|type mismatch in 's': expected String, got int"
+  "tests/compiler/errors/test-nyx1003-dns-servidor-como-int.nx|type mismatch in 'n': expected int, got String"
+  "tests/compiler/errors/test-nyx1003-mime-direccion-como-string.nx|type mismatch in 'd': expected String, got MimeAddress"
 )
 
 for entry in "${TESTS[@]}"; do

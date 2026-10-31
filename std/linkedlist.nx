@@ -7,8 +7,9 @@
 // Uses .pop() for O(1) pop_back; pop_front shifts elements
 // ============================================================
 
-pub fn deque_new() -> Array {
-    var d = []
+// Array<String>: los elementos del deque son texto.
+pub fn deque_new() -> Array<String> {
+    var d: Array<String> = []
     return d
 }
 
@@ -286,14 +287,14 @@ pub fn ll_is_empty(storage: Array) -> bool {
     return head == -1
 }
 
-// Convert to array (in order)
-pub fn ll_to_array(storage: Array) -> Array {
+// Convert to array (in order). Array<String>: los valores de la lista son texto.
+pub fn ll_to_array(storage: Array) -> Array<String> {
     let values: Array = storage[0]
     let nexts: Array = storage[1]
     let meta: Array = storage[2]
     let head: int = meta[0]
 
-    var result = []
+    var result: Array<String> = []
     var cur = head
     while cur != -1 {
         let v: String = values[cur]

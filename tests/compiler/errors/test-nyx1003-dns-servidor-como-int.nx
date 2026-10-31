@@ -1,0 +1,12 @@
+// __dns_parse_resolv devuelve Array<String>: los nameserver son texto (IPv4).
+// Anotar uno como int es NYX1003; antes compilaba y leía el puntero del String
+// como entero.
+import "std/dns"
+
+fn main() {
+    let ns = __dns_parse_resolv("nameserver 10.0.0.1\n")
+    let n: int = ns[0]
+    print(n)
+}
+
+main()

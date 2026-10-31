@@ -288,8 +288,8 @@ fn __dns_is_ipv4(s: String) -> bool {
 
 // Hasta 3 `nameserver` IPv4 de un texto estilo resolv.conf (los IPv6 se saltan).
 /// INTERNO (tests): extrae los nameserver de un resolv.conf; usa dns_query/dns_txt/dns_cname/dns_mx.
-pub fn __dns_parse_resolv(text: String) -> Array {
-    var out: Array = []
+pub fn __dns_parse_resolv(text: String) -> Array<String> {
+    var out: Array<String> = []
     let lines: Array = text.split("\n")
     var i: int = 0
     while i < lines.length() {
@@ -316,7 +316,7 @@ fn __dns_servers() -> Result<Array, Error> {
         Result.Ok(s) => { text = s }
         Result.Err(_e) => {}
     }
-    let list: Array = __dns_parse_resolv(text)
+    let list: Array<String> = __dns_parse_resolv(text)
     if list.length() == 0 {
         return Result.Err(err_new(2, "not_found", "dns: sin servidores: /etc/resolv.conf no tiene 'nameserver' IPv4 legible; usa dns_set_server(ip)"))
     }

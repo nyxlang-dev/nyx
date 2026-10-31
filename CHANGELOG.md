@@ -47,6 +47,29 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **`std/btreemap` tipa sus listas**: `btree_keys_sorted`, `btree_entries` y `btree_range` → `Array<String>` (las claves y
   las entradas `clave=valor` son texto). Anotar una clave como `int` es NYX1003; `let ks: Array = btree_keys_sorted(bt)`
   sigue compilando. `test-nyx1003-btreemap-clave-como-int`.
+- **`std/matrix` tipa sus matrices**: `mat_new`, `mat_identity`, `mat_add`, `mat_sub`, `mat_mul`, `mat_scale` y `mat_transpose` →
+  `Array<Array<int>>` (filas de enteros). Anotar una fila como `String` es NYX1003; `let m: Array = mat_new(2, 2)`
+  sigue compilando. `test-nyx1003-matrix-celda-como-string`.
+- **`std/graph` tipa sus recorridos**: `graph_neighbors` → `Array<Array<int>>` (pares `[to, weight]`); `graph_bfs`,
+  `graph_bfs_path`, `graph_dfs` y `graph_dijkstra` → `Array<int>`. Anotar un vecino como `int` es NYX1003; `let r: Array =
+  graph_bfs(g, 0)` sigue compilando. `graph_new` queda pelado (`[n, aristas]` es heterogéneo). `test-nyx1003-graph-vecino-como-int`.
+- **`std/http` tipa sus cabeceras**: `http_headers`, `http_find_headers` y `http_cors_headers` → `Array<String>` (el plano
+  `[nombre, valor, ...]` es todo texto). Anotar un valor como `int` es NYX1003; `let hs: Array = http_headers(resp)` (el uso de
+  `examples/`, nyxerp y los productos) sigue compilando. `test-nyx1003-http-cabecera-como-int`.
+- **`std/events` tipa sus historiales**: `event_history` → `Array<String>` (entradas `evento:valor`) y `observable_history` →
+  `Array<int>`. Anotar una entrada como `int` es NYX1003; `let h: Array = event_history(bus)` sigue compilando.
+  `test-nyx1003-events-historial-como-int`.
+- **`std/linkedlist` tipa sus listas de texto**: `deque_new` y `ll_to_array` → `Array<String>` (los elementos son `String`). Anotar un
+  valor como `int` es NYX1003; `let items: Array = ll_to_array(ll)` sigue compilando. `ll_new`/`pq_new`/`dq_new` quedan pelados
+  (almacenamiento mixto). `test-nyx1003-linkedlist-valor-como-int`.
+- **`std/random` tipa los índices**: `random_sample_indices` → `Array<int>`. Anotar un índice como `String` es NYX1003;
+  `let idx: Array = random_sample_indices(n, k)` sigue compilando. `random_shuffle` queda pelado (genérico sobre su argumento).
+  `test-nyx1003-random-indice-como-string`.
+- **`std/dns` tipa los nameserver**: `__dns_parse_resolv` (interna, pero `pub` para los tests) → `Array<String>` (IPv4 en texto).
+  Anotar uno como `int` es NYX1003; `let rc: Array = __dns_parse_resolv(t)` sigue compilando. `test-nyx1003-dns-servidor-como-int`.
+- **`std/mime` tipa sus listas**: `mime_header_all` → `Array<String>` y `mime_parse_addresses` → `Array<MimeAddress>`. Anotar una
+  dirección como `String` es NYX1003; `let l: Array = mime_parse_addresses(s)` sigue compilando. Los helpers privados (`__mime_*`)
+  quedan pelados (filas mixtas). `test-nyx1003-mime-direccion-como-string`.
 - **`let pn: String = serial_ports()[k]` es NYX1003 en vez de compilar y dar bytes sin sentido**: cada elemento es la
   fila `[nombre, vid:pid, descripción]`, no el nombre, y los arrays no llevan etiqueta de tipo para chequearlo en
   ejecución. Ahora `serial_ports()` declara `Array<Array<String>>` y una anotación `Array` pelada (`let ps: Array =
