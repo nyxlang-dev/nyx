@@ -91,6 +91,7 @@ GOTCHA_IDS=(
   "float-slot-assign"
   "http-header-one-element"
   "http-response-streaming"
+  "map-insert-slot-string"
   "pdf-page-to-image"
   "untyped-slot-as-argument"
   "wasm-method-slot-arg"
