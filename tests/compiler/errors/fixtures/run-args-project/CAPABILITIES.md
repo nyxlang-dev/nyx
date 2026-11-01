@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 1917295325-2162531 -->
+<!-- nyx-stdlib: 2354469347-2162255 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1930,7 +1930,7 @@ Tipos (1) y métodos (0):
 - `pub fn parse(parser: ArgParser, argv: Array) -> ParsedArgs` — Parse command-line arguments from get_args() result. Returns ParsedArgs with values, positional args, and any error.
 - `pub fn get_flag(parsed: ParsedArgs, name: String) -> bool` — Get a boolean flag value. Returns false if not set.
 - `pub fn get_option(parsed: ParsedArgs, name: String) -> String` — Get a string option value. Returns "" if not set.
-- `pub fn get_positional(parsed: ParsedArgs) -> Array` — Get positional arguments (non-flag args).
+- `pub fn get_positional(parsed: ParsedArgs) -> Array<String>` — Get positional arguments (non-flag args).
 - `pub fn has_error(parsed: ParsedArgs) -> bool` — Check if parsing had an error.
 - `pub fn print_help(parser: ArgParser)` — Print usage/help text.
 

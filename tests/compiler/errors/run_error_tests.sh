@@ -228,6 +228,7 @@ TESTS=(
   "tests/compiler/errors/test-nyx1003-random-indice-como-string.nx|type mismatch in 's': expected String, got int"
   "tests/compiler/errors/test-nyx1003-dns-servidor-como-int.nx|type mismatch in 'n': expected int, got String"
   "tests/compiler/errors/test-nyx1003-mime-direccion-como-string.nx|type mismatch in 'd': expected String, got MimeAddress"
+  "tests/compiler/errors/test-nyx1003-args-posicional-como-int.nx|type mismatch in 'n': expected int, got String"
 )
 
 for entry in "${TESTS[@]}"; do

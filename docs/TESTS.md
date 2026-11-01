@@ -13,7 +13,7 @@
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
 | Regression | `make test` | **545 archivos / 544 ARM64** | +4 el 10-31 (`525`-`528`, piezas de `nyx build` sin bash), +4 el 10-30 (`521`-`524`, try), +6 el 10-29 (`515`-`520`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **406** | +16 el 10-31 (`Array` anotado conserva el elemento; módulos de std tipados); +5 el 10-30; altas anteriores en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **407** | +17 el 10-31 (`Array` anotado conserva el elemento; módulos de std tipados); +5 el 10-30; altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |

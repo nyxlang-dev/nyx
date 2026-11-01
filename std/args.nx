@@ -29,7 +29,7 @@ pub struct ArgDef {
 /// Result of parsing command-line arguments.
 pub struct ParsedArgs {
     values: Map<String>,  // name -> value string
-    positional: Array,    // non-flag arguments
+    positional: Array<String>,  // non-flag arguments
     program: String,      // argv[0]
     error: String         // "" if no error
 }
@@ -104,7 +104,7 @@ fn find_def_by_short(defs: Array, short: String) -> int {
 /// Returns ParsedArgs with values, positional args, and any error.
 pub fn parse(parser: ArgParser, argv: Array) -> ParsedArgs {
     var values: Map<String> = map_new()
-    var positional: Array = []
+    var positional: Array<String> = []
     var prog_name = parser.program
     var error_msg = ""
 
@@ -230,7 +230,7 @@ pub fn get_option(parsed: ParsedArgs, name: String) -> String {
 }
 
 /// Get positional arguments (non-flag args).
-pub fn get_positional(parsed: ParsedArgs) -> Array {
+pub fn get_positional(parsed: ParsedArgs) -> Array<String> {
     return parsed.positional
 }
 

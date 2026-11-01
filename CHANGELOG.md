@@ -78,6 +78,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **`std/mime` tipa sus listas**: `mime_header_all` → `Array<String>` y `mime_parse_addresses` → `Array<MimeAddress>`. Anotar una
   dirección como `String` es NYX1003; `let l: Array = mime_parse_addresses(s)` sigue compilando. Los helpers privados (`__mime_*`)
   quedan pelados (filas mixtas). `test-nyx1003-mime-direccion-como-string`.
+- **`std/args` tipa los posicionales**: el campo público `ParsedArgs.positional` y `get_positional` → `Array<String>`
+  (decisión de Ottavio). Anotar un posicional como `int` es NYX1003; se convierte con `string_to_int`. Cierra la ficha
+  de las funciones de `std/` con `Array` pelado: lo que queda sin tipar son filas heterogéneas a propósito (`std/json`,
+  `graph_new`, `ll_new`…). `test-nyx1003-args-posicional-como-int`.
 - **`let pn: String = serial_ports()[k]` es NYX1003 en vez de compilar y dar bytes sin sentido**: cada elemento es la
   fila `[nombre, vid:pid, descripción]`, no el nombre, y los arrays no llevan etiqueta de tipo para chequearlo en
   ejecución. Ahora `serial_ports()` declara `Array<Array<String>>` y una anotación `Array` pelada (`let ps: Array =

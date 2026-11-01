@@ -1,0 +1,17 @@
+// get_positional devuelve Array<String> (y el campo ParsedArgs.positional es
+// Array<String>): cada posicional es el texto tal cual vino en la línea de
+// comandos. Anotarlo como int es NYX1003; antes compilaba y leía el puntero
+// del texto como número. Para convertir: string_to_int.
+import "std/args" as args
+
+fn main() {
+    var argv: Array = []
+    argv.push("prog")
+    argv.push("42")
+    let parsed = args.parse(args.new_parser("prog", ""), argv)
+    let pos = args.get_positional(parsed)
+    let n: int = pos[0]
+    print(n)
+}
+
+main()
