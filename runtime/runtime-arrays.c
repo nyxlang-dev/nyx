@@ -797,6 +797,25 @@ void nyx_array_retag_unknown(nyx_array_t* arr, int64_t tag) {
     }
 }
 
+// `a[i] == b[j]` con a y b Arrays SIN tipo: ningún lado aporta tipo estático,
+// así que el codegen comparaba los i64 crudos — dos Strings con el mismo
+// contenido en arrays distintos daban false. Decide por TAGS: igualdad cruda
+// primero (mismo puntero, ints, bools); si los DOS slots son TAG_STRING,
+// contenido. Cualquier otra combinación conserva la comparación cruda: un slot
+// UNKNOWN jamás se dereferencia, y `5` vs `"5"` sigue siendo false (convertir
+// los dos lados a texto daría true, una regresión de corrección).
+// Los índices pasan por nyx_array_get: mismo chequeo de límites que `a[i]`.
+int64_t nyx_slot_eq(nyx_array_t* a, int64_t i, nyx_array_t* b, int64_t j) {
+    int64_t va = nyx_array_get(a, i);
+    int64_t vb = nyx_array_get(b, j);
+    if (va == vb) return 1;
+    if (a->tags && b->tags && a->tags[i] == NYX_TAG_STRING && b->tags[j] == NYX_TAG_STRING
+        && va != 0 && vb != 0) {
+        return nyx_string_equals((nyx_string*)(intptr_t)va, (nyx_string*)(intptr_t)vb) ? 1 : 0;
+    }
+    return 0;
+}
+
 int64_t nyx_array_contains_tagged(nyx_array_t* arr, int64_t value, int64_t needle_tag) {
     if (!arr) {
         // espeja el manejo de NULL de nyx_array_contains

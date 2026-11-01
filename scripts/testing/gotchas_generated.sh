@@ -61,6 +61,7 @@ GOTCHA_IDS=(
   "gc-exhaustion-ordered-error"
   "chr-zero-nul-byte"
   "contains-direct-slot"
+  "slot-eq-slot"
   "array-elem-method-chaining"
   "closure-capture-works"
   "tcp-write-loops-until-sent"

@@ -63,6 +63,8 @@ int64_t nyx_array_get_tag(nyx_array_t* arr, int64_t index);
 // dereferencia un slot cuyo tipo no está garantizado por su tag.
 int64_t nyx_array_contains_tagged(nyx_array_t* arr, int64_t value, int64_t needle_tag);
 int64_t nyx_array_index_of_tagged(nyx_array_t* arr, int64_t value, int64_t needle_tag);
+// `a[i] == b[j]` entre dos Arrays sin tipo: contenido solo si los DOS slots son TAG_STRING.
+int64_t nyx_slot_eq(nyx_array_t* a, int64_t i, nyx_array_t* b, int64_t j);
 
 // Lectura tipada chequeada (residuo post-Etapa 4): como nyx_array_get, pero si
 // el tag del slot y el tipo esperado son AMBOS definidos (int/String/float/bool)

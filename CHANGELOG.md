@@ -26,6 +26,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`a[i] == b[j]` entre dos `Array` sin tipo compara los Strings por contenido**: ningún lado aportaba tipo y se
+  comparaban las casillas crudas, así que el mismo texto en dos arrays distintos daba `false` sin error. `nyx_slot_eq`
+  (runtime) decide por los tags: dos casillas String por contenido, el resto crudo (`5` contra `"5"` sigue `false`). Con
+  `Array<T>` decide el tipo estático, como antes. `tests/ai-first/47-casilla-igual-casilla`.
 - **`m.insert(a[0], a[1])` en un `Map<String>` con `a: Array` sin tipo guarda el valor como String**: la casilla llegaba
   como `i64` crudo, el Map se re-registraba como `Map<int>` y `print(m.get(k))` imprimía el puntero sin error (fricción
   de nyxerp). `emit_map_insert_i64` respeta el tipo de valor ya registrado. Un `var m: Map` sin anotar sigue fichado.
