@@ -34,15 +34,11 @@
 // compilador). El cutover a Result como firma única sigue siendo decisión
 // MAJOR (1.0.0); hoy conviven.
 //
-// ⚠️ Límite conocido heredado (M1, review final E4, 2026-08-14): archivos
-// que REPORTAN tamaño 0 pero SÍ tienen contenido (ej. /proc/*, que no
-// implementa stat de tamaño real) devuelven `Ok("")` en try_read_file —
-// no un error. El mecanismo de lectura de nyx_file_read_result usa el
-// tamaño reportado por ftell/SEEK_END para dimensionar el buffer; un
-// tamaño 0 nunca entra al fread. No confundir con el guard de ESPIPE
-// (stream directamente no-seekable, ej. FIFO/pipe) — ese sí devuelve
-// error. Para /proc y similares, hoy NO hay forma de distinguir
-// "vacío real" de "tamaño mal reportado" desde esta API.
+// Archivos que REPORTAN tamaño 0 pero tienen contenido (/proc/*) se leen
+// enteros: read_file y try_read_file leen hasta EOF, no hasta el tamaño de
+// ftell (3120b9d7). Hasta entonces devolvían `Ok("")` (límite M1 de la
+// review final de E4, 2026-08-14).
+// Un stream no-seekable (FIFO/pipe) es otra cosa: el guard de ESPIPE da error.
 
 import "std/error"
 
