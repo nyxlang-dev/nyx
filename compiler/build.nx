@@ -359,7 +359,7 @@ fn run_add(pkg_name: String, pkg_url: String, config: ProjectConfig) -> bool {
 fn resolve_seed_home() -> String {
     var nyx_home: String = getenv("NYX_HOME")
     if nyx_home != "" { return nyx_home }
-    let home_dir: String = getenv("HOME")
+    let home_dir: String = dir_usuario()
     if home_dir != "" {
         let candidate: String = home_dir + "/.nyx"
         if file_exists(candidate + "/templates") { return candidate }
@@ -2844,12 +2844,15 @@ fn triple_win() -> String { return "x86_64-pc-windows-msvc" }
 fn host_es_windows() -> bool { return host_os() == "windows" }
 fn es_triple_windows(t: String) -> bool { return t == triple_win() or t == "aarch64-pc-windows-msvc" }
 
-// El HOME de posix; en Windows, sin MSYS, solo está USERPROFILE.
+// Directorio del usuario: en Windows es USERPROFILE (HOME solo existe bajo Git Bash/MSYS y
+// allí es una ruta /c/Users/... que las herramientas nativas no entienden), con HOME de
+// respaldo; en el resto, HOME. Mismo criterio en resolve/codegen/nyx (dir_usuario_*).
 fn dir_usuario() -> String {
-    let h: String = getenv("HOME")
-    if h != "" { return h }
-    if host_es_windows() { return getenv("USERPROFILE") }
-    return ""
+    if host_es_windows() {
+        let up: String = getenv("USERPROFILE")
+        if up != "" { return up }
+    }
+    return getenv("HOME")
 }
 
 struct RecetaWin {
@@ -3418,7 +3421,7 @@ fn bin_name_for_main(config: ProjectConfig, main_flag: String) -> String {
 fn toolchain_version() -> String {
     var vh: String = getenv("NYX_HOME")
     if vh == "" {
-        let hd: String = getenv("HOME")
+        let hd: String = dir_usuario()
         if hd != "" { vh = hd + "/.nyx" }
     }
     if vh != "" {
@@ -3496,7 +3499,7 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
 
     // token opcional
     var token = ""
-    let home: String = getenv("HOME")
+    let home: String = dir_usuario()
     if home != "" {
         if file_exists(home + "/.nyx-kv-token") {
             let raw: String = read_file(home + "/.nyx-kv-token")
@@ -3535,7 +3538,7 @@ fn run_report(file_arg: String, do_send: bool) -> bool {
 fn capabilities_std_dir() -> String {
     var nyx_home: String = getenv("NYX_HOME")
     if nyx_home == "" {
-        let home_dir: String = getenv("HOME")
+        let home_dir: String = dir_usuario()
         let candidate: String = home_dir + "/.nyx"
         if home_dir != "" and file_exists(candidate + "/std") {
             nyx_home = candidate

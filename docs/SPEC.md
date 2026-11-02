@@ -3788,6 +3788,28 @@ Windows termina el proceso a los ~5 s; el runtime espera hasta 4,5 s a que el cl
 vuelva. Si la plataforma no puede registrar la señal, `signal_handle` y
 `setup_shutdown_handler` lo avisan por stderr (no fallan en silencio).
 
+**Servicio de Windows.** El mismo `.exe` corre en consola o como servicio, sin API nueva:
+si lo lanzó el administrador de servicios (su padre es `services.exe`), el runtime se
+registra solo, reporta `RUNNING` y entrega `SERVICE_CONTROL_STOP`, `SHUTDOWN` y
+`PRESHUTDOWN` como SIGTERM, por la misma vía que `signal_handle(15, ...)` y
+`setup_shutdown_handler` en consola. Al salir reporta `STOPPED`. Instalación (como
+administrador; receta 155):
+
+```powershell
+New-Service -Name MiPuente -StartupType Automatic `
+  -BinaryPathName '"C:\Program Files\MiPuente\puente.exe" --config "C:\ProgramData\MiPuente\conf.toml"'
+sc.exe failure MiPuente reset= 86400 actions= restart/1000   # reiniciar si muere
+sc.exe start MiPuente      # sc.exe stop MiPuente   ·   sc.exe delete MiPuente
+```
+
+Desde PowerShell, `New-Service` y no `sc.exe create`: PowerShell 5.1 quita las comillas
+internas de un argumento para un programa nativo, y una ruta con espacios se rompe. Límites:
+el directorio de trabajo del servicio es `System32`, así que las rutas tienen que ser
+absolutas (pasarlas por argumento); el servicio corre como `LocalSystem` salvo que se
+indique otra cuenta; y al SCM se le reporta siempre salida limpia (`NO_ERROR`), aunque el
+programa salga con otro código, así que `sc failure` solo actúa si el proceso muere sin
+salir (crash o `taskkill /F`). Un `std/serve` como servicio no está verificado todavía.
+
 ---
 
 ## Defer Statement

@@ -1,0 +1,53 @@
+// Nyx by Example: un programa que corre como servicio de Windows.
+//
+// No hay API nueva: el MISMO .exe corre en consola o como servicio. Si lo lanzó
+// el administrador de servicios, el runtime lo detecta solo y le entrega la
+// parada (`sc stop`, apagar el equipo) como SIGTERM, igual que Ctrl+Break en
+// consola o `kill` en Linux. El programa solo tiene que manejar la señal 15 y
+// terminar lo que está haciendo.
+//
+// Instalar (PowerShell como administrador; New-Service y no `sc.exe create`,
+// que en PowerShell 5.1 rompe las rutas con espacios):
+//
+//     New-Service -Name MiTrabajo -StartupType Automatic `
+//       -BinaryPathName '"C:\Program Files\MiTrabajo\trabajo.exe" "C:\ProgramData\MiTrabajo\estado.txt"'
+//     sc.exe failure MiTrabajo reset= 86400 actions= restart/1000
+//     sc.exe start MiTrabajo
+//
+//   - El directorio de trabajo de un servicio es System32: las rutas van
+//     absolutas, por argumento.
+//   - Al SCM siempre se le informa salida limpia; `sc failure` actúa solo si el
+//     proceso muere sin salir (crash, taskkill /F).
+
+import "std/fs"
+
+var parar: int = 0
+
+fn al_parar(sig: int) -> int {
+    parar = 1
+    return 0
+}
+
+fn main() -> int {
+    let args: Array = get_args()
+    // Sin argumentos es una demo que termina sola (3 vueltas), para probar la
+    // receta sin instalar nada. Como servicio recibe la ruta del estado y corre
+    // hasta que lo paren.
+    var estado: String = temp_dir() + "/nyx-servicio-demo.txt"
+    var max_vueltas: int = 3
+    if args.length() > 1 {
+        estado = args[1]
+        max_vueltas = -1
+    }
+
+    signal_handle(15, al_parar)
+
+    var vueltas: int = 0
+    while parar == 0 and (max_vueltas < 0 or vueltas < max_vueltas) {
+        sleep(100)          // una unidad de trabajo; la señal no la corta a la mitad
+        vueltas = vueltas + 1
+    }
+    write_file(estado, "vueltas=" + int_to_string(vueltas))
+    print("listo: " + int_to_string(vueltas) + " vueltas")
+    return 0
+}

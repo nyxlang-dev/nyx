@@ -15,7 +15,8 @@
 #
 # Uso (PowerShell como administrador, desde la raiz del repo):
 #   1. Construir el programa:  cd tests\build-win\servicio ; nyx build
-#      (o bash scripts/testing/w6_build_win.sh test, que lo deja en target\)
+#      (con nyx_build.exe build; w6_build_win.sh test NO lo arma, porque el
+#      programa no termina solo)
 #   2. .\scripts\testing\w6_service_win.ps1 -Exe C:\ruta\servicio.exe
 #
 # Pasa si: todos los pasos dicen OK y el script termina con rc 0.
@@ -92,10 +93,12 @@ try {
     }
 
     Write-Host '== 1. crear (start= auto) y configurar el reinicio'
-    # sc.exe exige el espacio DESPUES del signo igual: "binPath= "..."".
+    # New-Service y no `sc.exe create`: PowerShell 5.1 quita las comillas internas
+    # de un argumento para un programa nativo (medido en la Step 3), y un binPath
+    # con espacios (Program Files) se rompia. New-Service recibe el string tal cual.
     $bin = "`"$Exe`" `"$mark`" `"$start`""
-    & sc.exe create $Name binPath= $bin start= auto DisplayName= 'Nyx W6 servicio de prueba' | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "sc create fallo (rc $LASTEXITCODE)" }
+    New-Service -Name $Name -BinaryPathName $bin -StartupType Automatic -DisplayName 'Nyx W6 servicio de prueba' -ErrorAction Stop | Out-Null
+    & sc.exe qc $Name | Out-Host
     # reset= 0: el contador de fallas no se reinicia, asi cada kill cuenta como
     # una falla nueva; restart/1000: reiniciar al segundo.
     & sc.exe failure $Name reset= 0 actions= restart/1000/restart/1000/restart/1000 | Out-Host
