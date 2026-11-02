@@ -1105,6 +1105,7 @@ single `Error` struct.
   it from a scratch dir); the `.exe` is reproducible (`/Brepro`, `-ffile-prefix-map` of the toolchain home) but only
   same machine/sysroot/clang guarantee identical bytes; the runtime cache key includes the target and the sysroot paths;
   nothing here can be run on Linux — the `.exe` is checked for imports and host paths only. `aarch64-pc-windows-msvc` is rejected.
+  More gotchas: `xwin` leaves a ~1 GB `.xwin-cache` in the cwd unless you pass `--cache-dir`; clang's driver has no `-imsvc` (use `-isystem`); the sysroot requires accepting Microsoft's license; the cross-built `.exe` is not byte-identical to the native one (same DLLs and behavior).
 
 ### Networking
 - `tcp_listen(host, port)`, `tcp_accept(fd)`, `tcp_connect(host, port)`
