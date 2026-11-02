@@ -28,6 +28,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`m.get_or(f[0], d)` con `f` variable de bucle anotada `Array` ya no produce IR inválido**: el i64 de la casilla entraba a `nyx_string_to_cstr` sin `inttoptr` (error de clang `defined with type 'i64' but expected 'ptr'`, reporte de nyxerp). `get_or` y el `remove` sobre campo Map ahora usan `codegen_map_key`, igual que `insert`/`get`/`contains`. Test `ai-first/49`.
 - **`remove_file` borra un directorio vacío también en Windows**, como en posix [arco: w6-windows].
 - **El compilador encuentra `~/.nyx` también en Windows**: `build`, `resolve`, `codegen` y el driver miraban solo
   `HOME`, que en Windows no existe (y bajo Git Bash es una ruta `/c/Users/...` que las herramientas nativas no leen).

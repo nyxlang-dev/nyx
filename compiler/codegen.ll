@@ -73571,7 +73571,7 @@ define internal %nyx_string* @emit_map_get_or(
   store %ASTNode %36163, %ASTNode* %36164
   %36165 = load %ASTNode, %ASTNode* %36148
   %36166 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %36167 = call %nyx_string* @codegen_expr(%ASTNode %36165, %CodegenContext %36166)
+  %36167 = call %nyx_string* @codegen_map_key(%ASTNode %36165, %CodegenContext %36166)
   %36168 = alloca %nyx_string*
   store %nyx_string* %36167, %nyx_string** %36168
   %36169 = load %nyx_string*, %nyx_string** %36168
@@ -85734,7 +85734,7 @@ then5505:
   store %ASTNode %45687, %ASTNode* %45688
   %45689 = load %ASTNode, %ASTNode* %45688
   %45690 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %45691 = call %nyx_string* @codegen_expr(%ASTNode %45689, %CodegenContext %45690)
+  %45691 = call %nyx_string* @codegen_map_key(%ASTNode %45689, %CodegenContext %45690)
   %45692 = alloca %nyx_string*
   store %nyx_string* %45691, %nyx_string** %45692
   %45693 = load %nyx_string*, %nyx_string** %45692
@@ -86533,7 +86533,7 @@ then5572:
   store %ASTNode %46277, %ASTNode* %46278
   %46279 = load %ASTNode, %ASTNode* %46278
   %46280 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %46281 = call %nyx_string* @codegen_expr(%ASTNode %46279, %CodegenContext %46280)
+  %46281 = call %nyx_string* @codegen_map_key(%ASTNode %46279, %CodegenContext %46280)
   %46282 = alloca %nyx_string*
   store %nyx_string* %46281, %nyx_string** %46282
   %46283 = load %nyx_string*, %nyx_string** %46282

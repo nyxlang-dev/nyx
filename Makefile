@@ -111,6 +111,16 @@ bootstrap: $(STD_PRELUDE)
 seeds-check:
 	@bash scripts/testing/run_seeds_check.sh
 
+## Las semillas de Windows se derivan de compiler/*.ll (D6 de W6, no trackeadas):
+## `make win-seeds OUT=dir [ARCH=x64|arm64]` las escribe; win-seeds-check prueba
+## que la derivación da lo mismo que emitir con NYX_TARGET de Windows.
+win-seeds:
+	@test -n "$(OUT)" || (echo "Uso: make win-seeds OUT=<dir> [ARCH=x64|arm64]"; exit 1)
+	@bash scripts/win_seeds.sh derive $(OUT) $(or $(ARCH),x64)
+
+win-seeds-check:
+	@bash scripts/win_seeds.sh check x64 && bash scripts/win_seeds.sh check arm64
+
 ## Regenerar std/builtins.index (catálogo de builtins globales para CAPABILITIES.md)
 ## Correr tras agregar o sacar un `scope_declare_fn(..., "builtin", N)` de semantic.nx.
 ## La guarda que lo vigila es run_capabilities_test.sh (dentro de make test-ai-first).
@@ -792,4 +802,4 @@ bench-test-cache:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check bench-test-cache
+.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples build-repl repl release-check bench-test-cache

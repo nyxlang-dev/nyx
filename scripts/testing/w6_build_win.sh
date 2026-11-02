@@ -4,7 +4,8 @@
 # mano desde IR emitido en Linux (D6: semillas derivadas, no trackeadas).
 #
 # Uso:
-#   w6_build_win.sh emit  <dir_ir>           (en Linux/WSL, con ./nyx_bootstrap armado)
+#   w6_build_win.sh emit  <dir_ir>           (en Linux/WSL, con ./nyx_bootstrap armado;
+#                                             o sin compilador: scripts/win_seeds.sh derive <dir_ir>)
 #   w6_build_win.sh tools <dir_ir>           deja nyx_bootstrap.exe y nyx_build.exe en la raíz
 #   w6_build_win.sh test                     construye los proyectos de tests/build-win
 #

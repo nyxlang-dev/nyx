@@ -2047,7 +2047,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str1021.c = internal global %nyx_string* null
 @.str1022 = private unnamed_addr constant [1 x i8] c"\00"
 @.str1022.c = internal global %nyx_string* null
-@.str1023 = private unnamed_addr constant [47 x i8] c"tests/ai-first/46-map-insert-casilla-string.nx\00"
+@.str1023 = private unnamed_addr constant [90 x i8] c"tests/ai-first/46-map-insert-casilla-string.nx,tests/ai-first/49-map-clave-casilla-for.nx\00"
 @.str1023.c = internal global %nyx_string* null
 @.str1024 = private unnamed_addr constant [128 x i8] c"`m.insert(a[0], a[1])` into a `Map<String>`, with `a` an `Array` without `<T>` filled at run time, stores the value as a String\00"
 @.str1024.c = internal global %nyx_string* null
@@ -7053,8 +7053,8 @@ define { i64, i8* }* @gotchas_table(
   %3391 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str1022.c, i8* %3390, i64 0)
   %3392 = ptrtoint %nyx_string* %3391 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3365, i64 %3392, i64 2)
-  %3393 = getelementptr [47 x i8], [47 x i8]* @.str1023, i32 0, i32 0
-  %3394 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str1023.c, i8* %3393, i64 46)
+  %3393 = getelementptr [90 x i8], [90 x i8]* @.str1023, i32 0, i32 0
+  %3394 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str1023.c, i8* %3393, i64 89)
   %3395 = ptrtoint %nyx_string* %3394 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3365, i64 %3395, i64 2)
   %3396 = getelementptr [128 x i8], [128 x i8]* @.str1024, i32 0, i32 0

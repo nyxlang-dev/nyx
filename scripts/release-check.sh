@@ -133,5 +133,10 @@ else
     if ! bash scripts/testing/run_seeds_check.sh; then
         exit 1
     fi
+    # Las de Windows no se publican: install.ps1 las deriva de estas (D6 de W6).
+    # Esto prueba que derivarlas sigue dando lo que el compilador emitiría.
+    if ! bash scripts/win_seeds.sh check x64 || ! bash scripts/win_seeds.sh check arm64; then
+        exit 1
+    fi
 fi
 exit 0

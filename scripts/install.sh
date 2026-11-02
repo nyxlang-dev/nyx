@@ -77,7 +77,7 @@ detect_platform() {
     case "$OS" in
         Linux)  ;;
         Darwin) err "macOS is not supported yet. Coming soon." ;;
-        MINGW*|MSYS*|CYGWIN*) err "Windows is not supported yet. Coming soon." ;;
+        MINGW*|MSYS*|CYGWIN*) err "On Windows use PowerShell: scripts/install.ps1 (see docs)." ;;
         *)      err "Unsupported operating system: $OS" ;;
     esac
 
