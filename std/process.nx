@@ -60,6 +60,7 @@ extern "C" fn nyx_proc_pipe() -> Array
 extern "C" fn nyx_proc_raw_close(raw: int) -> int
 extern "C" fn nyx_find_program(name: String) -> Array
 extern "C" fn nyx_host_arch() -> String
+extern "C" fn nyx_host_os() -> String
 extern "C" fn nyx_cpu_count() -> int
 
 pub enum Stdio {
@@ -386,6 +387,13 @@ pub fn find_program(name: String) -> Option<String> {
 // emulado en ARM64 ve "x86_64"); wasm32-wasi, "wasm32". "" si no se pudo saber.
 pub fn host_arch() -> String {
     return nyx_host_arch()
+}
+
+// El sistema en el que corre este proceso, en minúsculas: "linux", "darwin",
+// "windows" o "wasi". Es del proceso, no del triple con que se compiló el código
+// que pregunta. "" si no se pudo saber.
+pub fn host_os() -> String {
+    return nyx_host_os()
 }
 
 // Núcleos en línea, lo que contesta `nproc`: para decidir cuántos hijos lanzar

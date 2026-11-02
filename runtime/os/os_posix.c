@@ -51,6 +51,7 @@
 #include <dlfcn.h>            // dlopen/dlsym/dlerror/dlclose (os_dl_*, W1 inc 6)
 #include <signal.h>           // signal/sigaction/sigaltstack (os_sig_*/os_fault_guard_*, W1 inc 7)
 #include <sys/stat.h>         // stat/mkdir (os_fs_stat/os_fs_mkdir, W2 fase A)
+#include <ctype.h>            // tolower (os_host_os, W6 Task 4)
 #include <sys/utsname.h>      // uname (os_host_arch, W6 Task 2)
 #include <sys/file.h>         // flock (os_fs_lock, W6 Task 2)
 #include <dirent.h>           // opendir/readdir/closedir (os_fs_listdir, W2 fase A)
@@ -2182,6 +2183,11 @@ int os_fs_stat(const char* path, os_fs_info_t* out) {
     return -errno;
 }
 
+int os_fs_remove(const char* path) {
+    if (!path) return -EINVAL;
+    return remove(path) == 0 ? 0 : -errno;
+}
+
 int os_fs_mkdir(const char* path) {
     if (!path) return -EINVAL;
     return mkdir(path, 0755) == 0 ? 0 : -errno;
@@ -2782,6 +2788,16 @@ int os_host_arch(char* out, size_t cap) {
     if (uname(&u) != 0) return -errno;
     if (strlen(u.machine) + 1 > cap) return -ENAMETOOLONG;
     strcpy(out, u.machine);
+    return 0;
+}
+
+int os_host_os(char* out, size_t cap) {
+    struct utsname u;
+    if (!out || cap == 0) return -EINVAL;
+    if (uname(&u) != 0) return -errno;
+    size_t n = strlen(u.sysname);
+    if (n + 1 > cap) return -ENAMETOOLONG;
+    for (size_t i = 0; i <= n; i++) out[i] = (char)tolower((unsigned char)u.sysname[i]);
     return 0;
 }
 

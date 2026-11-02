@@ -487,6 +487,9 @@ int     os_cpu_count(void);
 // así que un .exe x64 emulado en ARM64 ve "x86_64", como uname bajo Rosetta.
 // 0 / -errno. EN: the machine as this process sees it (`uname -m`).
 int     os_host_arch(char* out, size_t cap);
+// El sistema de la máquina, en minúsculas: "windows", "wasi" o, en posix, el
+// sysname de uname(2) ("linux", "darwin"). 0 / -errno.
+int     os_host_os(char* out, size_t cap);
 // Límite BLANDO de pila (RLIMIT_STACK) que heredan los hijos que se lancen
 // después (W6 Task 2, D1a: el `ulimit -s 65536` del script de `nyx build`). La
 // pila del hilo principal del propio proceso ya está ubicada y no cambia.
@@ -851,6 +854,9 @@ typedef struct { int exists; } os_fs_info_t;
 // EN: 0 with out->exists=0/1 (ENOENT included: "doesn't exist" is NOT an
 // error at this layer); -errno for a real failure (EACCES, ENOTDIR, etc).
 int os_fs_stat(const char* path, os_fs_info_t* out);
+// remove(3): archivo o directorio vacío. 0 / -errno. El remove() de la UCRT no
+// borra directorios; por eso pasa por la capa.
+int os_fs_remove(const char* path);
 int os_fs_mkdir(const char* path);   // 0 / -errno (EEXIST pasa como -EEXIST)
 // cb(name, ud) por entrada, SIN "." ni ".." -- n entradas (>=0) o -errno si
 // no se pudo abrir el directorio (opendir/FindFirstFileA).

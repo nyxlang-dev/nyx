@@ -17,6 +17,7 @@
 #include "nyx_os.h"
 #include <errno.h>
 #include <time.h>
+#include <stdio.h>             // remove (os_fs_remove)
 #include <string.h>
 #include <stdlib.h>     // setenv (os_env_set) -- wasi-libc lo soporta real (W2 fase C)
 #include <sys/stat.h>   // stat/mkdir (os_fs_stat/os_fs_mkdir) -- wasi-libc los soporta real
@@ -266,6 +267,11 @@ int os_fs_stat(const char* path, os_fs_info_t* out) {
     return -errno;
 }
 
+int os_fs_remove(const char* path) {
+    if (!path) return -EINVAL;
+    return remove(path) == 0 ? 0 : -errno;
+}
+
 int os_fs_mkdir(const char* path) {
     if (!path) return -EINVAL;
     return mkdir(path, 0755) == 0 ? 0 : -errno;
@@ -373,6 +379,11 @@ int     os_proc_stack_limit_set(int64_t bytes) { (void)bytes; return -ENOSYS; }
 int     os_host_arch(char* out, size_t cap) {
     if (!out || cap < sizeof "wasm32") return -EINVAL;
     strcpy(out, "wasm32");
+    return 0;
+}
+int     os_host_os(char* out, size_t cap) {
+    if (!out || cap < sizeof "wasi") return -EINVAL;
+    strcpy(out, "wasi");
     return 0;
 }
 int     os_cpu_count(void) { return 1; }

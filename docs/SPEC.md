@@ -3167,6 +3167,8 @@ import "std/process"
 //     cwd). None si no está, no es ejecutable o es un .bat/.cmd en Windows. Un `command -v` sin shell.
 // host_arch() -> String   // "x86_64", "aarch64", "arm64" (macOS), "wasm32"; como `uname -m`; "" si no se sabe
 // cpu_count() -> int      // núcleos en línea, como `nproc`; siempre >= 1
+// host_os() -> String    // "linux", "darwin", "windows", "wasi": el `uname -s` en minúsculas, por la capa
+//     os_*; no mira `%OS%`, que se puede falsear
 // Errores: not_found (programa inexistente, AL LANZAR: con fork/execvp era un
 // hijo que salía con 127), permission, invalid (argv vacío, modo de Stdio.File
 // inválido, .bat/.cmd en Windows, y code 95 en wasm32-wasi) e io. La etapa va en

@@ -9,6 +9,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`nyx build` arma `target/<nombre>.exe` en Windows x86_64**, con bdwgc y OpenSSL estáticos. Necesita `clang`,
+  `llvm-ar`, `lld-link` y las variables `NYX_GC_INCLUDE`, `NYX_GC_LIBDIR` y `VCPKG_ROOT`; si falta algo, el error
+  nombra todo lo que falta antes de compilar. `std/regex` todavía no enlaza en Windows, y el build lo dice en claro
+  en vez de volcar solo los `undefined symbol` de `lld-link`. `std/process` suma `host_os()` (`"linux"`, `"darwin"`,
+  `"windows"`, `"wasi"`) [arco: w6-windows].
+
+### Fixed
+
+- **`remove_file` borra un directorio vacío también en Windows**, como en posix [arco: w6-windows].
+
+### Tests
+
+- `make test-runtime`: 2339 → 2342 asserts, por los tres casos de `host_os` en `test_os_build_host.c` [arco: w6-windows].
+
 ---
 
 ## [0.41.0] — 2026-11-02

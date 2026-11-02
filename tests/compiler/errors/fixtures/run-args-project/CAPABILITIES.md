@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.40.0 -->
-<!-- nyx-stdlib: 2354469347-2162255 -->
+<!-- nyx-version: 0.41.0 -->
+<!-- nyx-stdlib: 3775771249-2162554 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1868,7 +1868,7 @@ Tipos (1) y métodos (0):
 
 ### `std/process`
 
-`import "std/process"` — 16 funciones:
+`import "std/process"` — 17 funciones:
 
 - `pub fn spawn_opts() -> SpawnOpts`
 - `pub fn try_spawn(argv: Array, opts: SpawnOpts) -> Result<Child, Error>`
@@ -1885,6 +1885,7 @@ Tipos (1) y métodos (0):
 - `pub fn child_pid(c: Child) -> int`
 - `pub fn find_program(name: String) -> Option<String>`
 - `pub fn host_arch() -> String`
+- `pub fn host_os() -> String`
 - `pub fn cpu_count() -> int`
 
 Tipos (4) y métodos (0):

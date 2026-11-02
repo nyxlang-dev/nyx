@@ -1051,7 +1051,7 @@ single `Error` struct.
   code is `128 + signal` on posix when a signal killed the child. (7) wasm32-wasi: every call gives `Err`
   `invalid` (95). The raw `fork`/`execvp`/`waitpid`/`pipe_new`/`kill_process` builtins stay on posix and are
   rejected on Windows with a message pointing here. Recipes 64, 65, 151.
-  Also in `std/process`: `find_program(name) -> Option<String>` (the path `try_spawn` would run, searched the same way: PATH only, Windows also PATHEXT; `command -v` without a shell), `host_arch() -> String` (`"x86_64"`, `"aarch64"`, ... like `uname -m`; `""` if unknown) and `cpu_count() -> int` (online cores like `nproc`, always >= 1). `nyx build` itself launches the compiler and clang through `std/process`: it no longer writes or runs a bash script.
+  Also in `std/process`: `find_program(name) -> Option<String>` (the path `try_spawn` would run, searched the same way: PATH only, Windows also PATHEXT; `command -v` without a shell), `host_arch() -> String` (`"x86_64"`, `"aarch64"`, ... like `uname -m`; `""` if unknown), `host_os() -> String` (`"linux"`, `"darwin"`, `"windows"`, `"wasi"`: lowercase `uname -s`, from the OS layer, not from `%OS%`) and `cpu_count() -> int` (online cores like `nproc`, always >= 1). `nyx build` itself launches the compiler and clang through `std/process`: it no longer writes or runs a bash script.
 - **Temp dir and file locks** (`import "std/fs"`): `temp_dir() -> String` (`$TMPDIR` or `/tmp`; Windows `GetTempPath`; no trailing separator, not created; `""` on wasm), `try_lock_file(path, exclusive) -> Result<FileLock, Error>` (waits; shared when `exclusive` is false; creates the file if missing), `try_lock_file_nowait(path, exclusive) -> Result<Option<FileLock>, Error>` (`Ok(None)` = another holder conflicts), `unlock_file(l)`. POSIX uses `flock(2)` (coexists with `flock(1)`), Windows `LockFileEx`; released by `unlock_file` or at process exit, children do not inherit it.
 - **Serial port** (Linux, Windows; macOS without VID/PID): `import "std/serial"`.
   `try_serial_open(path, baud, data_bits, parity, stop_bits) -> Result<SerialPort, Error>` (parity
@@ -1088,6 +1088,13 @@ single `Error` struct.
 - **Windows traps**: `isatty(0)` is 1 only on a real console; `NUL`, pipes and files give 0 (so a CI run with
   `< NUL` is not a TTY). vcpkg's zlib DLL is named `z.dll`, not `zlib1.dll`: `std/compress` loads it through `dl`
   and tries `z.dll`, `zlib1.dll` and `libz.dll`, so ship whichever one sits next to the `.exe`.
+- **`nyx build` on Windows x86_64** produces `target/<name>.exe` with bdwgc and OpenSSL linked statically. It needs
+  `clang`, `llvm-ar`, `lld-link` and three variables: `NYX_GC_INCLUDE`, `NYX_GC_LIBDIR` (bdwgc headers and `.lib`) and
+  `VCPKG_ROOT` (OpenSSL, zlib); if any is missing the error names all of them, before compiling. Limits today:
+  **`std/regex` does not link on Windows** (no regex engine in the MSVC runtime; the build says so in plain words,
+  also when the import comes through another module); a user program's main stack is **1 MB** (Windows default) vs
+  8 MB on Linux, so deep recursion overflows sooner; and Smart App Control may block a freshly linked, unsigned `.exe`
+  (rc 126) — a program you distribute needs to be signed. `nyx test` does not run on Windows yet.
 
 ### Networking
 - `tcp_listen(host, port)`, `tcp_accept(fd)`, `tcp_connect(host, port)`

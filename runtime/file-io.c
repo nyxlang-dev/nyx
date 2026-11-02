@@ -322,7 +322,7 @@ nyx_array_t* nyx_readdir(const char* path) {
 // Remove file or empty directory. Returns 0 on success, -1 on error.
 int64_t nyx_remove(const char* path) {
     if (!path) return -1;
-    return (int64_t)remove(path);
+    return os_fs_remove(path) == 0 ? 0 : -1;
 }
 
 // Flush file data to disk. Returns 0 on success, -1 on error.
@@ -739,6 +739,13 @@ int64_t nyx_proc_stack_limit_set(int64_t bytes) {
 nyx_string* nyx_host_arch(void) {
     char out[128];
     if (os_host_arch(out, sizeof out) != 0) return nyx_string_from_cstr("");
+    return nyx_string_from_cstr(out);
+}
+
+// "windows", "linux", "darwin", "wasi"… o "" si la capa no contesta.
+nyx_string* nyx_host_os(void) {
+    char out[128];
+    if (os_host_os(out, sizeof out) != 0) return nyx_string_from_cstr("");
     return nyx_string_from_cstr(out);
 }
 

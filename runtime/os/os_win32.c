@@ -2512,6 +2512,12 @@ int os_host_arch(char* out, size_t cap) {
     return 0;
 }
 
+int os_host_os(char* out, size_t cap) {
+    if (!out || cap < sizeof "windows") return -EINVAL;
+    strcpy(out, "windows");
+    return 0;
+}
+
 int os_cpu_count(void) {
     DWORD n = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
     return n >= 1 ? (int)n : 1;
@@ -3296,6 +3302,23 @@ int os_fs_mkdir(const char* path) {
     // EN: NULL security attributes == inherit from parent, the practical
     // equivalent of posix's 0755. ERROR_ALREADY_EXISTS maps to -EEXIST.
     return CreateDirectoryA(path, NULL) ? 0 : win_last_errno();
+}
+
+int os_fs_remove(const char* path) {
+    if (!path) return -EINVAL;
+    DWORD attr = GetFileAttributesA(path);
+    BOOL ok = (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
+                  ? RemoveDirectoryA(path)
+                  : DeleteFileA(path);
+    if (ok) return 0;
+    switch (GetLastError()) {
+        case ERROR_FILE_NOT_FOUND:
+        case ERROR_PATH_NOT_FOUND: return -ENOENT;
+        case ERROR_DIR_NOT_EMPTY:  return -ENOTEMPTY;
+        case ERROR_ACCESS_DENIED:
+        case ERROR_SHARING_VIOLATION: return -EACCES;
+        default: return -EIO;
+    }
 }
 
 int64_t os_fs_listdir(const char* path,

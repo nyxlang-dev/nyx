@@ -6,6 +6,15 @@
 import "std/error"
 import "std/fs"
 
+// remove_file borra también un directorio vacío, como remove(3): en Windows el
+// remove() de la UCRT no lo hacía y nyx build dejaba temporales (W6 Task 4).
+fn prueba_remove_dir(base: String) {
+    let d: String = base + "/nyx_t527_" + int_to_string(getpid())
+    if mkdir(d) != 0 { println("mkdir falló"); return 0 }
+    if remove_file(d) == 0 and not file_exists(d) { println("remove_file borra un directorio vacío") } else { println("remove_file no borró el directorio") }
+    return 0
+}
+
 fn main() -> int {
     let d: String = temp_dir()
     if d == "" { println("temp_dir: vacío") } else { println("temp_dir: no vacío") }
@@ -22,5 +31,6 @@ fn main() -> int {
         Result.Err(e) => { println("escribir: " + e.msg) }
     }
     if file_exists(f) { println("quedó el archivo") } else { println("borrado") }
+    prueba_remove_dir(d)
     return 0
 }
