@@ -87,6 +87,7 @@ GOTCHA_IDS=(
   "for-in-element-type"
   "local-fn-var-shadows-global-fn"
   "string-index-byte"
+  "closure-per-iteration"
   "defer-not-on-throw"
   "builtin-conversion-untyped-slot"
   "float-slot-assign"

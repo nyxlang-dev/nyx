@@ -26,6 +26,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Una closure creada en un bucle ve la variable de SU iteración (semántica de Go 1.22)**: un `let`/`var` del cuerpo
+  tenía UN campo en el entorno compartido, así que cuatro closures guardadas en un Array y llamadas después del bucle
+  leían las cuatro la última (`3 3 3 3` en vez de `0 1 2 3`), sin error. Ahora cada iteración tiene su instancia
+  (un box GC por iteración, solo en funciones con una fn anidada dentro de un bucle) y cada lambda/`spawn` recibe un
+  marco con los boxes de esa vuelta; el cuerpo y las closures de la iteración comparten la instancia (un `var`
+  mutado después de crear la closure lo ve ella) y las variables de afuera del bucle siguen compartidas. Con eso
+  `spawn` dentro de un bucle y la variable de un `for` dejan de ser NYX1044; siguen siéndolo el nombre repetido y los
+  bindings de `match`. Observable: un programa que daba `3 3 3 3` pasa a dar `0 1 2 3`.
+  `tests/ai-first/48-closure-por-iteracion` [arco: closure-por-iteracion].
 - **`a[i] == b[j]` entre dos `Array` sin tipo compara los Strings por contenido**: ningún lado aportaba tipo y se
   comparaban las casillas crudas, así que el mismo texto en dos arrays distintos daba `false` sin error. `nyx_slot_eq`
   (runtime) decide por los tags: dos casillas String por contenido, el resto crudo (`5` contra `"5"` sigue `false`). Con
@@ -121,12 +130,6 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   W6 Task 3 [arco: w6-windows].
 - **`test-523-try-catch-tres-casos`**: `try` simple, anidado que relanza y dentro de una goroutine que se suspende,
   con su IR para Windows en `tests/win-fixtures/` para que la laptop lo corra nativo [arco: w6-windows].
-- **Un `spawn` dentro de un bucle ya no captura en silencio la variable de la última iteración**: un `let`/`var`
-  declarado dentro de un `while`/`for` tiene UN campo en el entorno compartido de la función, así que 4 goroutines
-  lanzadas en el bucle recibían «1 3 3 3» en vez de 0..3. Ahora es NYX1044 con el motivo y la salida (lanzar desde una
-  función que reciba el valor). Una lambda llamada en la misma iteración sigue andando; una guardada y llamada
-  después todavía ve el último valor (fichado ALTA). `test-nyx1044-captura-en-bucle`.
-
 - **`try`/`catch` dentro de goroutines**: la pila de `try` era del hilo del sistema y las goroutines migran de worker.
   Una que se suspendía dentro de un `try` (`go_sleep`, `channel_recv`) perdía su `catch` al volver en otro worker
   («uncaught»), un `throw` sin `try` podía saltar al `catch` de OTRA goroutine, y 200 goroutines dormidas en un `try`

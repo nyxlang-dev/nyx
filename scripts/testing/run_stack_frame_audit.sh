@@ -81,13 +81,17 @@ cd "$ROOT" || exit 1
 #     480592 → 475232 (-5360, BAJA). Los cuatro caminos de contains/indexOf sobre Array emiten
 #     por emit_array_search (fresh_temp + dos emit con ctx fuera del marco). La primera versión,
 #     con el tag en línea, la subía +2048 y esta guarda la paró. x86_64: a re-medir en la laptop.
+#   2026-11-02 closure-por-iteracion: codegen_call_expr 474496 → 473136 (-1360, BAJA). La
+#     emisión de la llamada directa pasó a emit_llamada_directa (un solo sitio con ctx); en
+#     línea, el marco de la closure la subía +416. codegen_method_call 475232 → 474560 (-672,
+#     BAJA): es lo que ya medía desde slot-eq. x86_64: a re-medir en la laptop.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14736
     [codegen_binop]=8672
     [codegen_binop_logico]=21984
-    [codegen_call_expr]=474496
-    [codegen_method_call]=475232
+    [codegen_call_expr]=473136
+    [codegen_method_call]=474560
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
 TECHO_NIVEL=23408
