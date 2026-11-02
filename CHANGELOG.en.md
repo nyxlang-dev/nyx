@@ -12,6 +12,177 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.41.0] — 2026-11-02
+
+> **MINOR**: changes observable semantics — a closure created in a loop sees the variable of ITS iteration, as in
+  Go 1.22 [arco: closure-por-iteracion]: a program that printed `3 3 3 3` now prints `0 1 2 3`, and `spawn` in a
+  loop or a `for` variable inside a closure are no longer NYX1044. Also arriving: cross-compilation between Linux
+  x86_64 and aarch64, `try`/`catch` on Windows, `nyx build` without bash, typing of the stdlib (`Array<String>` and
+  friends in sqlite, multipart, kvclient, resp, http, args and eight other modules) and fixes for untyped `Array`
+  slots that nyxerp found in real use.
+>
+> **Migration**: (1) where the stdlib now declares `Array<String>` (or `Array<int>`), annotating an element with
+  another type is NYX1003 instead of compiling and producing garbage: fix the annotation. (2) A local `let` is no
+  longer visible before its line. (3) Code that relied on the closures of a loop seeing the last iteration must save
+  that value outside the loop.
+
+### Added
+
+- **New in the stdlib: `find_program`, `host_arch` and `cpu_count` (`std/process`); `temp_dir`, `try_lock_file`,
+  `try_lock_file_nowait` and `unlock_file` (`std/fs`)**: `command -v`, `uname -m`, `nproc`, `mktemp` and `flock`
+  without launching a shell, on Linux and on Windows (`PATHEXT`, `GetSystemInfo`, `GetTempPath`, `LockFileEx`).
+  `find_program` searches like `try_spawn`: on Windows never in the current directory, and a `.bat`/`.cmd` gives
+  `None`. test-525…528 (also verified as `.exe` on Windows) [arco: w6-windows].
+
+- **Cross-compilation between Linux x86_64 and aarch64**: `nyx build --target x86_64-unknown-linux-gnu` (or
+  `aarch64-unknown-linux-gnu`, or `[build] target`) builds the binary for the other architecture from the same
+  machine, in `target/<triple>/<name>`; the host triple compiles natively. It needs the target's multiarch libraries
+  and `lld`, and if they are missing it says so before compiling, with the `apt` command. `nyx run` runs the host
+  triple and explains why not the other; an `asm` with x86 register constraints gives an error with its line if the
+  target is aarch64 (`e513b498`, `e327192a`, `0135e801`). Recipe 153, gotcha `cross-compile-arch`,
+  `docs/DEPLOYMENT.md` [arco: compilacion-cruzada-linux] [dogfooding:nyxerp].
+- **`try`/`catch` on the Windows target** (`x86_64`/`aarch64-pc-windows-msvc`): the codegen calls `_setjmp(buf, NULL)`,
+  because the MSVC CRT has no `setjmp`, and stops rejecting `try` on that target (on `wasm32-wasi` it is still
+  rejected). With NULL, `longjmp` jumps directly as in glibc, without unwinding through SEH: measured in the spike,
+  `throw` costs 0.02 µs instead of 0.8. It also fixes `defer` and drops, which already emitted `setjmp` on Windows
+  and did not link. Patch from the laptop; it joins the Windows gate with W6 Task 3 [arco: w6-windows].
+- **`std/process` tests on Windows** (`tests/runtime-unit/win/test_os_proc_spawn_win32.c`, 92 asserts, win gate):
+  verified on the laptop on 2026-10-29 (`9fcf1faf`) [arco: procesos-spawn].
+
+### Changed
+
+- **`nyx build` no longer writes or runs a bash script**: the compiler, clang and `ar` are launched with
+  `std/process`, and the compiler's `ulimit -s` is a stack limit inherited by the children. It is the preliminary
+  step for `nyx build` on Windows. The automatic runtime cache changes its key once: the first `nyx build` after
+  updating builds a new `.a` [arco: w6-windows].
+
+### Fixed
+
+- **A closure created in a loop sees the variable of ITS iteration (Go 1.22 semantics)**: a body `let`/`var` had ONE
+  field in the shared environment, so four closures stored in an Array and called after the loop all read the last
+  one (`3 3 3 3` instead of `0 1 2 3`), with no error. Now each iteration has its own instance (one GC box per
+  iteration, only in functions with a nested fn inside a loop) and each lambda/`spawn` receives a frame with the
+  boxes of that iteration; the body and the iteration's closures share the instance (a `var` mutated after the
+  closure is created is seen by it) and variables outside the loop remain shared. As a result `spawn` inside a loop
+  and a `for` variable are no longer NYX1044; a repeated name and `match` bindings still are. Observable: a program
+  that printed `3 3 3 3` now prints `0 1 2 3`. `tests/ai-first/48-closure-por-iteracion`
+  [arco: closure-por-iteracion].
+- **`a[i] == b[j]` between two untyped `Array`s compares Strings by content**: neither side contributed a type and
+  the raw slots were compared, so the same text in two different arrays gave `false` with no error. `nyx_slot_eq`
+  (runtime) decides by the tags: two String slots by content, anything else raw (`5` against `"5"` is still
+  `false`). With `Array<T>` the static type decides, as before. `tests/ai-first/47-casilla-igual-casilla`.
+- **`m.insert(a[0], a[1])` into a `Map<String>` with an untyped `a: Array` stores the value as a String**: the slot
+  arrived as a raw `i64`, the Map was re-registered as `Map<int>` and `print(m.get(k))` printed the pointer with no
+  error (nyxerp friction). `emit_map_insert_i64` respects the already registered value type. An unannotated
+  `var m: Map` is still on file as pending. `tests/ai-first/46-map-insert-casilla-string`.
+- **`xs.contains(ys[i])` / `xs.indexOf(ys[i])` compare by content when the needle is a slot of another `Array`
+  without `<T>`**: the slot arrived as a raw `i64` and the pointer was compared, so with texts built at run time it
+  gave `false` / `-1` with no error (nyxerp friction). Now the search passes the tag that the slot carries at run
+  time (`needle_tag_for` in codegen, the four paths of `contains`/`indexOf`).
+  `tests/ai-first/45-contains-elemento-directo`.
+- **A qualified call `alias.f(...)` to an imported module takes the return type from `f`'s signature**: before, it
+  gave an unknown type, so `let campo: String = csv.data_rows(doc)[0]` compiled and at run time gave meaningless
+  bytes (the element is the row, not the field). Also, `std/csv` types its accessors (`headers`/`get_row` →
+  `Array<String>`, `get_all_rows`/`data_rows` → `Array<Array<String>>`); first family of the list of `std/`
+  functions with a bare `Array`. `test-nyx1003-csv-fila-como-string`.
+- **`std/sqlite` types its queries**: `sqlite_query`/`_named`/`_params` → `Array<Array<String>>`, `sqlite_query_int`
+  → `Array<Array<int>>`, `sqlite_tables` → `Array<String>`. Before, `let n: int = rows[0][0]` on a text cell
+  compiled and gave a pointer read as an integer; now it is NYX1003 (there is no implicit conversion).
+  `test-nyx1003-sqlite-celda-como-int`.
+- **`std/multipart` types its parts**: `multipart_parse` → `Array<Array<String>>`; `multipart_field`/`multipart_file`
+  → `Array<String>`. Annotating a part as `String` is NYX1003; `for parte: Array in multipart_parse(...)` still
+  compiles. `test-nyx1003-multipart-parte-como-string`.
+- **`std/kvclient` types its lists**: `kv_cmd_array`, `kv_lrange`, `kv_smembers` and `kv_token_list` →
+  `Array<String>` (every RESP element arrives as text, integers too). Annotating a member as `int` is NYX1003;
+  `let m: Array = kv_smembers(...)` still compiles. `test-nyx1003-kvclient-miembro-como-int`.
+- **`std/resp` types the commands it reads**: `resp_read_framed` and `resp_read_command` → `Array<String>` (the
+  command and its arguments are text, numeric ones too). Annotating an argument as `int` is NYX1003;
+  `let cmd: Array = resp_read_command(fd)` still compiles. `test-nyx1003-resp-argumento-como-int`.
+- **`std/btreemap` types its lists**: `btree_keys_sorted`, `btree_entries` and `btree_range` → `Array<String>` (keys
+  and `key=value` entries are text). Annotating a key as `int` is NYX1003; `let ks: Array = btree_keys_sorted(bt)`
+  still compiles. `test-nyx1003-btreemap-clave-como-int`.
+- **`std/matrix` types its matrices**: `mat_new`, `mat_identity`, `mat_add`, `mat_sub`, `mat_mul`, `mat_scale` and
+  `mat_transpose` → `Array<Array<int>>` (rows of integers). Annotating a row as `String` is NYX1003;
+  `let m: Array = mat_new(2, 2)` still compiles. `test-nyx1003-matrix-celda-como-string`.
+- **`std/graph` types its traversals**: `graph_neighbors` → `Array<Array<int>>` (`[to, weight]` pairs); `graph_bfs`,
+  `graph_bfs_path`, `graph_dfs` and `graph_dijkstra` → `Array<int>`. Annotating a neighbor as `int` is NYX1003;
+  `let r: Array = graph_bfs(g, 0)` still compiles. `graph_new` stays bare (`[n, edges]` is heterogeneous).
+  `test-nyx1003-graph-vecino-como-int`.
+- **`std/http` types its headers**: `http_headers`, `http_find_headers` and `http_cors_headers` → `Array<String>`
+  (the flat `[name, value, ...]` is all text). Annotating a value as `int` is NYX1003;
+  `let hs: Array = http_headers(resp)` (what `examples/`, nyxerp and the products use) still compiles.
+  `test-nyx1003-http-cabecera-como-int`.
+- **`std/events` types its histories**: `event_history` → `Array<String>` (`event:value` entries) and
+  `observable_history` → `Array<int>`. Annotating an entry as `int` is NYX1003; `let h: Array = event_history(bus)`
+  still compiles. `test-nyx1003-events-historial-como-int`.
+- **`std/linkedlist` types its text lists**: `deque_new` and `ll_to_array` → `Array<String>` (the elements are
+  `String`). Annotating a value as `int` is NYX1003; `let items: Array = ll_to_array(ll)` still compiles.
+  `ll_new`/`pq_new`/`dq_new` stay bare (mixed storage). `test-nyx1003-linkedlist-valor-como-int`.
+- **`std/random` types the indices**: `random_sample_indices` → `Array<int>`. Annotating an index as `String` is
+  NYX1003; `let idx: Array = random_sample_indices(n, k)` still compiles. `random_shuffle` stays bare (generic over
+  its argument). `test-nyx1003-random-indice-como-string`.
+- **`std/dns` types the nameservers**: `__dns_parse_resolv` (internal, but `pub` for the tests) → `Array<String>`
+  (IPv4 as text). Annotating one as `int` is NYX1003; `let rc: Array = __dns_parse_resolv(t)` still compiles.
+  `test-nyx1003-dns-servidor-como-int`.
+- **`std/mime` types its lists**: `mime_header_all` → `Array<String>` and `mime_parse_addresses` →
+  `Array<MimeAddress>`. Annotating an address as `String` is NYX1003; `let l: Array = mime_parse_addresses(s)` still
+  compiles. The private helpers (`__mime_*`) stay bare (mixed rows). `test-nyx1003-mime-direccion-como-string`.
+- **`std/args` types the positionals**: the public field `ParsedArgs.positional` and `get_positional` →
+  `Array<String>` (Ottavio's decision). Annotating a positional as `int` is NYX1003; convert with `string_to_int`.
+  It closes the list of `std/` functions with a bare `Array`: what remains untyped are rows that are deliberately
+  heterogeneous (`std/json`, `graph_new`, `ll_new`…). `test-nyx1003-args-posicional-como-int`.
+- **`let pn: String = serial_ports()[k]` is NYX1003 instead of compiling and giving meaningless bytes**: each
+  element is the row `[name, vid:pid, description]`, not the name, and arrays carry no type tag to check it at run
+  time. Now `serial_ports()` declares `Array<Array<String>>` and a bare `Array` annotation (`let ps: Array = f()`)
+  keeps the element type declared by `f`'s signature, instead of erasing it. The other 119 `std/` functions that
+  return `Array` without an element type remain on file. Found in the W6 Task 3 kit;
+  `test-nyx1003-array-anotado-conserva-elemento` and `-serial-ports-fila-como-string` [arco: w6-windows].
+- **A local `let` is no longer visible before its line**: the declaration pre-pass registered the `let`s of every
+  block, not just the top-level globals it exists for, so `print(x); let x = 1` and `let args: Array = args()` (the
+  builtin is `get_args()`) passed `nyx check` and the build fell into clang with "use of undefined value". Now both
+  are NYX1002 in the check. A local lambda called by its name, which already did not compile, also gives NYX1002
+  (on file). nyxerp report; `test-nyx1002-let-local-antes-de-declarar` and `-en-su-propio-valor`.
+- **What is assigned inside a `try` reaches the `catch`**: before the `setjmp` the codegen pinned only scalar
+  variables in memory, so with `-O2` a `String`, `Array` or `Map` reassigned inside the `try` came back in the
+  `catch` with its value from BEFORE (`s = "en try"` and the `catch` saw `"inicio"`), and what an inner `catch`
+  assigned before rethrowing was lost. Now it anchors all live variables, with the type of each `alloca` read from
+  the IR. Found while building the W6 Task 3 case; `test-524` [arco: w6-windows].
+- **The first HTTPS connection no longer fails because of slow DNS**: `tls_connect` started its 10 s deadline BEFORE
+  resolving the host, and on Windows the first cold query takes ~11 s, so it returned `timeout` 110 without having
+  tried to connect. Now the deadline starts after resolving, as in `tcp_connect_ms`. Finding and patch from the
+  laptop in W6 Task 3 [arco: w6-windows].
+- **`std/serve` no longer warns "fd readiness not supported" on Windows**: connection parking discovered it when
+  the first `nyx_event_loop_add` failed, with one line on stderr per process that broke the output of
+  `test-463`/`464`. Now it asks first (`nyx_event_loop_has_fd_readiness`) and on win32 starts with the workers
+  reading in blocking mode; on Linux nothing changes. Patch from the laptop in W6 Task 3 [arco: w6-windows].
+- **First native Windows `.exe` of a real program**: nyxerp's minimal bridge case (HTTP+TLS, threaded TCP server,
+  mDNS, RSA, Web Push, JSON, files and serial port listing) was built statically —system DLLs only— and passed its
+  8 steps on the laptop and on a workshop PC, also serving from another machine on the local network. It is still
+  built with IR generated on Linux and a link script on Windows (W6 Tasks 2 and 4). The README and the install page
+  now say "Windows: in progress, unsupported" [arco: w6-windows].
+- **The Windows subset adds the three `try`/`catch` tests** (`test-112`, `test-335`, `test-333-try-catch-mt`; 41 in
+  the manifest) and `url.c` and `websocket.c` join the TUs of the local gate and of the four jobs of `windows.yml`,
+  which `std/serve` needs. The CI floor stays at 38 until they are measured on aarch64. Laptop gate in W6 Task 3
+  [arco: w6-windows].
+- **`test-523-try-catch-tres-casos`**: simple `try`, nested one that rethrows, and one inside a goroutine that
+  suspends, with its IR for Windows in `tests/win-fixtures/` so the laptop can run it natively
+  [arco: w6-windows].
+- **`try`/`catch` inside goroutines**: the `try` stack belonged to the system thread and goroutines migrate between
+  workers. One that suspended inside a `try` (`go_sleep`, `channel_recv`) lost its `catch` on resuming in another
+  worker ("uncaught"), a `throw` without `try` could jump to the `catch` of ANOTHER goroutine, and 200 goroutines
+  sleeping in a `try` gave "try-catch nesting too deep". Now the state belongs to each goroutine (reserved at its
+  first `try`, recycled when it dies), with the thread's as a fallback outside them. Finding and patch from the
+  laptop in the W6 spike; `test-522` [arco: w6-windows].
+
+- **`write_file`, `write_file_safe` and `file_open` open in binary mode**: on Windows each `\n` no longer comes out
+  as `\r\n`; on Linux and macOS nothing changes (`158944eb`) [arco: procesos-spawn].
+- **win32: launching something that is not an executable gives `EACCES`**, not `EIO`, as on posix (`11faa9d6`)
+  [arco: procesos-spawn].
+- **win32: `argv[0]` with `/` is passed with `\`** in the command line, and `cmd.exe` no longer takes `/cmd.exe` for
+  the `/c` option (`a941706e`) [arco: procesos-spawn].
+
+---
+
 ## [0.40.0] — 2026-10-30
 
 > **MINOR**: new API — `std/process` (child processes without `fork`, with the same API on every platform)

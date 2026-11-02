@@ -9,6 +9,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.41.0] — 2026-11-02
+
+> **MINOR**: cambia una semántica observable — una closure creada en un bucle ve la variable de SU iteración, como
+  en Go 1.22 [arco: closure-por-iteracion]: un programa que daba `3 3 3 3` pasa a dar `0 1 2 3`, y `spawn` en un
+  bucle o la variable de un `for` dentro de una closure dejan de ser NYX1044. Llegan además la compilación cruzada
+  entre Linux x86_64 y aarch64, `try`/`catch` en Windows, `nyx build` sin bash, el tipado de la stdlib
+  (`Array<String>` y compañía en sqlite, multipart, kvclient, resp, http, args y otros ocho módulos) y los
+  arreglos de casillas de `Array` sin tipo que nyxerp encontró en uso real.
+>
+> **Migración**: (1) donde la stdlib ahora declara `Array<String>` (o `Array<int>`), anotar un elemento con otro
+  tipo es NYX1003 en vez de compilar y dar basura: corregir la anotación. (2) Un `let` local ya no es visible antes
+  de su línea. (3) Quien dependía de que las closures de un bucle vieran la última vuelta tiene que guardar ese
+  valor afuera del bucle.
+
 ### Added
 
 - **Nuevas en la stdlib: `find_program`, `host_arch` y `cpu_count` (`std/process`); `temp_dir`, `try_lock_file`,
@@ -16,6 +32,21 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   lanzar un shell, en Linux y en Windows (`PATHEXT`, `GetSystemInfo`, `GetTempPath`, `LockFileEx`). `find_program`
   busca como `try_spawn`: en Windows nunca en el directorio actual, y un `.bat`/`.cmd` da `None`. test-525…528
   (verificados también como `.exe` en Windows) [arco: w6-windows].
+
+- **Compilación cruzada entre Linux x86_64 y aarch64**: `nyx build --target x86_64-unknown-linux-gnu` (o
+  `aarch64-unknown-linux-gnu`, o `[build] target`) arma el binario de la otra arquitectura desde la misma máquina, en
+  `target/<triple>/<name>`; el triple del host compila nativo. Necesita las bibliotecas multiarch del destino y `lld`,
+  y si faltan lo dice antes de compilar con el comando `apt`. `nyx run` corre el triple del host y explica por qué no
+  el otro; un `asm` con restricciones de registros x86 da un error con su línea si el destino es aarch64 (`e513b498`,
+  `e327192a`, `0135e801`). Receta 153, gotcha `cross-compile-arch`, `docs/DEPLOYMENT.md` [arco: compilacion-cruzada-linux]
+  [dogfooding:nyxerp].
+- **`try`/`catch` en el target Windows** (`x86_64`/`aarch64-pc-windows-msvc`): el codegen llama a `_setjmp(buf, NULL)`,
+  porque la CRT de MSVC no tiene `setjmp`, y deja de rechazar `try` en ese target (en `wasm32-wasi` sigue rechazado).
+  Con NULL, `longjmp` salta directo como en glibc, sin desenrollar por SEH: medido en el spike, el `throw` cuesta
+  0,02 µs en vez de 0,8. Arregla también `defer` y los drops, que ya emitían `setjmp` en Windows y no enlazaban.
+  Parche de la laptop; entra al gate de Windows con la W6 Task 3 [arco: w6-windows].
+- **Tests de `std/process` en Windows** (`tests/runtime-unit/win/test_os_proc_spawn_win32.c`, 92 asserts, gate win):
+  verificado en la laptop el 2026-10-29 (`9fcf1faf`) [arco: procesos-spawn].
 
 ### Changed
 
@@ -142,23 +173,6 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **win32: lanzar algo que no es un ejecutable da `EACCES`**, no `EIO`, como en posix (`11faa9d6`) [arco: procesos-spawn].
 - **win32: `argv[0]` con `/` se pasa con `\`** en la línea de comando, y `cmd.exe` ya no toma `/cmd.exe` por la
   opción `/c` (`a941706e`) [arco: procesos-spawn].
-
-### Added
-
-- **Compilación cruzada entre Linux x86_64 y aarch64**: `nyx build --target x86_64-unknown-linux-gnu` (o
-  `aarch64-unknown-linux-gnu`, o `[build] target`) arma el binario de la otra arquitectura desde la misma máquina, en
-  `target/<triple>/<name>`; el triple del host compila nativo. Necesita las bibliotecas multiarch del destino y `lld`,
-  y si faltan lo dice antes de compilar con el comando `apt`. `nyx run` corre el triple del host y explica por qué no
-  el otro; un `asm` con restricciones de registros x86 da un error con su línea si el destino es aarch64 (`e513b498`,
-  `e327192a`, `0135e801`). Receta 153, gotcha `cross-compile-arch`, `docs/DEPLOYMENT.md` [arco: compilacion-cruzada-linux]
-  [dogfooding:nyxerp].
-- **`try`/`catch` en el target Windows** (`x86_64`/`aarch64-pc-windows-msvc`): el codegen llama a `_setjmp(buf, NULL)`,
-  porque la CRT de MSVC no tiene `setjmp`, y deja de rechazar `try` en ese target (en `wasm32-wasi` sigue rechazado).
-  Con NULL, `longjmp` salta directo como en glibc, sin desenrollar por SEH: medido en el spike, el `throw` cuesta
-  0,02 µs en vez de 0,8. Arregla también `defer` y los drops, que ya emitían `setjmp` en Windows y no enlazaban.
-  Parche de la laptop; entra al gate de Windows con la W6 Task 3 [arco: w6-windows].
-- **Tests de `std/process` en Windows** (`tests/runtime-unit/win/test_os_proc_spawn_win32.c`, 92 asserts, gate win):
-  verificado en la laptop el 2026-10-29 (`9fcf1faf`) [arco: procesos-spawn].
 
 ---
 
