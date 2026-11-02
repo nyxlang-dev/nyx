@@ -517,7 +517,10 @@ pub fn try_resolve_ptr(ip: String) -> Result<String, Error> {
 // ⚠️ Un descubrimiento NO autentica: lo que llega por multicast puede venir de
 // cualquiera en la red. Autenticar al par antes de confiarle algo.
 //
-// Windows: la unión por interfaz depende de net_interfaces (hoy -ENOSYS allí).
+// Windows: la unión por interfaz anda (net_interfaces devuelve las interfaces y la unión por IP
+// funciona; medido en una laptop con 7 interfaces). Diferencia de portabilidad: set_multicast_loop
+// actúa del lado RECEPTOR en Windows y del lado EMISOR en Linux; para hablar con otro proceso de
+// la misma máquina, ponlo en true en ambos sockets.
 
 extern "C" fn nyx_udp_bind_shared_result(host: String, port: int) -> int
 extern "C" fn nyx_udp_recvfrom_from_result(fd: int, max_bytes: int, timeout_ms: int) -> Array
@@ -599,7 +602,7 @@ pub fn try_udp_set_multicast_ttl(fd: int, ttl: int) -> Result<int, Error> {
     return Result.Err(err_new(code, errno_to_kind(code), "udp_set_multicast_ttl"))
 }
 
-/// Si el socket recibe también lo multicast que él mismo envía (`on` = true, el valor por omisión del sistema). Hace falta true para hablar con otro proceso de la MISMA máquina.
+/// Si el socket recibe también lo multicast que él mismo envía (`on` = true, el valor por omisión del sistema). Hace falta true para hablar con otro proceso de la MISMA máquina. Portabilidad (medido): en Windows actúa del lado receptor; en Linux, del emisor.
 pub fn try_udp_set_multicast_loop(fd: int, on: bool) -> Result<int, Error> {
     var v: int = 0
     if on { v = 1 }

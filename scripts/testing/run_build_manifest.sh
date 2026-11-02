@@ -95,17 +95,28 @@ else
     bad "build-target — rc $RC sin «target desconocido»: [build] target se ignoró" "build-target"; muestra
 fi
 
-# Un triple de Windows lo conoce el codegen, pero `nyx build` no enlaza para
-# Windows: armaba NATIVO, decía «build complete» y salía 0 (fricción nyxerp
-# 2026-10-29: un ELF de aarch64 donde se pidió un .exe). Tiene que fallar,
-# decir por qué y no dejar ningún binario.
+# Un triple de Windows fuera de lo soportado armaba NATIVO, decía «build complete»
+# y salía 0 (fricción nyxerp 2026-10-29: un ELF de aarch64 donde se pidió un .exe).
+# Tiene que fallar, decir por qué y no dejar ningún binario. x86_64-pc-windows-msvc
+# SÍ se arma desde Linux (arco win-cross, run_build_win_cross.sh); aarch64 no (D6).
 mk_proj "$P" "$PKG"
 rm -f "$P/manif"
-nb "$P" build --target x86_64-pc-windows-msvc
-if [ "$RC" -ne 0 ] && grep -q "todavía no arma ejecutables para x86_64-pc-windows-msvc" "$GATE_TMP/out" && [ ! -e "$P/manif" ]; then
-    ok "build-target-windows — un triple de Windows se rechaza con su motivo, sin dejar un binario nativo"
+nb "$P" build --target aarch64-pc-windows-msvc
+if [ "$RC" -ne 0 ] && grep -q "todavía no arma ejecutables para aarch64-pc-windows-msvc" "$GATE_TMP/out" && [ ! -e "$P/manif" ]; then
+    ok "build-target-windows — aarch64-pc-windows-msvc se rechaza con su motivo, sin dejar un binario nativo"
 else
     bad "build-target-windows — rc $RC: un triple de Windows armó nativo o no dijo por qué" "build-target-windows"; muestra
+fi
+
+# El triple x86_64 de Windows, sin sysroot ni deps, dice QUÉ falta (y tampoco deja binario).
+mk_proj "$P" "$PKG"
+rm -f "$P/manif" "$P/manif.exe" "$P/target/manif.exe"
+( cd "$P" && NYX_WIN_SYSROOT="" NYX_WIN_DEPS="" NYX_HOME="$ROOT" timeout 300 "$ROOT/nyx_build" build --target x86_64-pc-windows-msvc ) > "$GATE_TMP/out" 2>&1
+RC=$?
+if [ "$RC" -ne 0 ] && grep -q "para armar un .exe falta" "$GATE_TMP/out" && grep -q "NYX_WIN_SYSROOT" "$GATE_TMP/out" && [ ! -e "$P/manif" ]; then
+    ok "build-target-windows-falta — sin NYX_WIN_SYSROOT/NYX_WIN_DEPS el cruzado dice qué falta"
+else
+    bad "build-target-windows-falta — rc $RC: no dijo qué falta para el .exe" "build-target-windows-falta"; muestra
 fi
 
 # CONTROL POSITIVO: un target válido en [build] se refleja en `nyx info`.
@@ -382,7 +393,7 @@ P="$GATE_TMP/cruzado"
 mk_proj "$P" "$PKG"
 nb "$P" build --target x86_64-unknown-linux-gnux
 if [ "$RC" -ne 0 ] && grep -q "target desconocido: x86_64-unknown-linux-gnux" "$GATE_TMP/out" \
-   && grep -q "x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu y wasm32-wasi" "$GATE_TMP/out"; then
+   && grep -q "x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc y wasm32-wasi" "$GATE_TMP/out"; then
     ok "cruzado-desconocido — un triple Linux con typo se rechaza y se listan los válidos"
 else
     bad "cruzado-desconocido — rc $RC sin «target desconocido» ni la lista de triples" "cruzado-desconocido"; muestra

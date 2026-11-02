@@ -1098,6 +1098,13 @@ single `Error` struct.
   also when the import comes through another module); a user program's main stack is **1 MB** (Windows default) vs
   8 MB on Linux, so deep recursion overflows sooner; and Smart App Control may block a freshly linked, unsigned `.exe`
   (rc 126) — a program you distribute needs to be signed. `nyx test` does not run on Windows yet.
+- **`nyx build --target x86_64-pc-windows-msvc` from Linux** (arco win-cross) builds the same `.exe` with clang + `lld-link`.
+  It needs `NYX_WIN_SYSROOT` (dir with `crt/` and `sdk/` from `xwin --accept-license splat --output <dir>`; running it
+  accepts Microsoft's license) and `NYX_WIN_DEPS` (`include/`, `lib/{gc,libssl,libcrypto}.lib` built by
+  `scripts/build_win_deps.sh`). Gotchas: `xwin` also drops a `.xwin-cache/` in the **current directory** (delete it or run
+  it from a scratch dir); the `.exe` is reproducible (`/Brepro`, `-ffile-prefix-map` of the toolchain home) but only
+  same machine/sysroot/clang guarantee identical bytes; the runtime cache key includes the target and the sysroot paths;
+  nothing here can be run on Linux — the `.exe` is checked for imports and host paths only. `aarch64-pc-windows-msvc` is rejected.
 
 ### Networking
 - `tcp_listen(host, port)`, `tcp_accept(fd)`, `tcp_connect(host, port)`
@@ -3649,7 +3656,7 @@ Recipes: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro
   `Result<UdpDatagram, Error>` with `{ data, ip, port }` of the sender; `try_udp_recvfrom_from_timed(fd, max,
   timeout_ms)` (ms deadline via poll; `Err(timeout 110)` without consuming); `try_udp_bind_shared(host,
   port)` (SO_REUSEADDR+SO_REUSEPORT; plain `try_udp_bind` keeps failing with EADDRINUSE);
-  `try_udp_join/leave(fd, group, iface)` (`iface` "" = any), `try_udp_set_multicast_ttl/loop/iface`,
+  `try_udp_join/leave(fd, group, iface)` (`iface` "" = any), `try_udp_set_multicast_ttl/loop/iface` (`loop` acts on the sender side on Linux and on the receiver side on Windows; per-interface join works on both),
   `try_udp_set_broadcast`. Gotchas: join and send multicast through the SAME interface; on Linux every
   socket bound to the port receives any group joined in the system (`IP_MULTICAST_ALL`), so leave with
   all of them; a blocking read with a deadline inside `spawn {}` holds a scheduler worker — run the

@@ -2148,8 +2148,14 @@ Claves de `[build]`: `main` (punto de entrada; también se acepta en `[package]`
 (`wasm32-wasi`, `x86_64-unknown-linux-gnu` o `aarch64-unknown-linux-gnu`; también se acepta en `[package]`). Un triple desconocido da «target desconocido» y la lista de los válidos.
 
 **Compilación cruzada Linux x86_64 ↔ aarch64.** `nyx build --target <triple>` deja el binario en `target/<triple>/<name>` (no pisa `./<name>`). El triple del propio host compila nativo, sin banderas extra; el de la otra arquitectura pasa `--target=<triple>` a clang, enlaza con `-fuse-ld=lld` y compila el runtime de C de fuentes para el destino (cacheado por destino). Requiere en el host las bibliotecas de desarrollo del destino (multiarch en Debian/Ubuntu: `libc6-dev`, `libgc-dev`, `libssl-dev`, `zlib1g-dev`, `libgcc-N-dev` con el sufijo `:amd64`/`:arm64`, y `lld`); si falta algo, `nyx build` lo informa antes de compilar con el comando exacto y sale con 1. No hay emulación: `nyx run --target <triple de otra arquitectura>` falla con «esta máquina no lo puede ejecutar» (con el triple del host sí ejecuta `target/<triple>/<name>`). En `asm` el compilador no interpreta la plantilla (la escribe el usuario); solo las restricciones de una letra `a b c d S D` son de x86 y con destino aarch64 dan un error con archivo:línea, mientras que las genéricas (`"r"`, `"m"`, `"memory"`) pasan tal cual. El binario es dinámico: la máquina destino necesita libgc, libssl3, libcrypto, libz y glibc. Los triples de Windows
-(`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`) los reconoce el compilador, pero `nyx build`
-todavía no enlaza para Windows y los rechaza con ese motivo, en vez de armar nativo. Una clave desconocida en `[build]` es un error con su nombre, y declarar `main` o
+los reconoce el compilador. `nyx build --target x86_64-pc-windows-msvc` arma `target/<nombre>.exe` también **desde
+Linux** (arco win-cross): clang + `lld-link` contra un sysroot de Windows y bdwgc/OpenSSL estáticos, y necesita dos
+variables, `NYX_WIN_SYSROOT` (el directorio con `crt/` y `sdk/` que deja `xwin --accept-license splat --output <dir>`;
+aceptar la licencia de Microsoft es cosa de quien lo ejecuta) y `NYX_WIN_DEPS` (`include/` y `lib/{gc,libssl,libcrypto}.lib`,
+que arma `scripts/build_win_deps.sh`); si falta algo, el error nombra todo lo que falta antes de compilar. Promesa (D5):
+el `.exe` importa solo DLL de Windows (KERNEL32, WS2_32, ...; sin `gc.dll` ni runtime de VC), no lleva rutas de la máquina
+que lo armó y dos builds del mismo proyecto dan el mismo binario (`/Brepro`), pero no se promete que sea idéntico byte a
+byte al armado en Windows. `aarch64-pc-windows-msvc` se rechaza con su motivo, en vez de armar nativo. Una clave desconocida en `[build]` es un error con su nombre, y declarar `main` o
 `target` en las dos secciones con valores distintos también: el manifiesto nunca se ignora en
 silencio. `nyx info` muestra el `main` y el `target` efectivos.
 

@@ -1519,7 +1519,9 @@ fn ignorar_senal(_s: int) {}
 
 fn correr_programa(argv: Array) -> int {
     signal_handle(2, ignorar_senal)
-    signal_handle(3, ignorar_senal)
+    // SIGQUIT (3) no existe en Windows: registrarlo imprimía «no se pudo registrar
+    // la señal 3 (error 22)» en cada `nyx run`.
+    if not host_es_windows() { signal_handle(3, ignorar_senal) }
     term_flush()
     match try_spawn(argv, spawn_opts()) {
         Result.Ok(c) => {
@@ -2838,8 +2840,8 @@ fn cruzado_diag(triple: String, arch: String) -> bool {
 }
 
 // ===== Windows (W6 Task 4) =====
-// El compilador y el enlace corren EN Windows (D1 = (a)); desde otro sistema el
-// triple de Windows se rechaza, porque el cruzado no está aprobado (D1 (b)).
+// El compilador y el enlace corren EN Windows (D1 = (a)); desde Linux x86_64-pc-windows-msvc
+// también se arma cruzado (arco win-cross); aarch64-pc-windows-msvc se rechaza (D6).
 fn triple_win() -> String { return "x86_64-pc-windows-msvc" }
 fn host_es_windows() -> bool { return host_os() == "windows" }
 fn es_triple_windows(t: String) -> bool { return t == triple_win() or t == "aarch64-pc-windows-msvc" }
@@ -2858,7 +2860,33 @@ fn dir_usuario() -> String {
 struct RecetaWin {
     ok: bool,
     cflags: Array,    // para compilar el runtime
-    ldflags: Array    // lo que va al final del enlace
+    ldflags: Array,   // lo que va al final del enlace
+    ar: String        // archivador del runtime (llvm-ar, o llvm-ar-<N> si solo hay el sufijado)
+}
+
+// Primer nombre de `nombres` que está en PATH, o "".
+fn primer_programa(nombres: Array) -> String {
+    var i: int = 0
+    while i < nombres.length() {
+        let p: String = nombres[i]
+        match find_program(p) {
+            Option.Some(_r) => { return p }
+            Option.None => {}
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// Archivo que puede estar con otra capitalización (xwin deja LIBCMT.lib y libcmt.lib).
+fn existe_alguno(dir: String, nombres: Array) -> bool {
+    var i: int = 0
+    while i < nombres.length() {
+        let n: String = nombres[i]
+        if file_exists(dir + "/" + n) { return true }
+        i = i + 1
+    }
+    return false
 }
 
 // Comprueba TODO lo que el enlace necesita ANTES de compilar: sin esto el usuario
@@ -2869,45 +2897,91 @@ struct RecetaWin {
 // - OpenSSL: openssl:x64-windows-static de vcpkg. Se pide siempre, porque el
 //   runtime se arma una sola vez en la caché, con tls.c y crypto.c adentro; como
 //   va en un archivador, solo el programa que los usa arrastra OpenSSL al .exe.
-fn receta_windows() -> RecetaWin {
+// Fuera de Windows (arco win-cross) las piezas vienen de dos directorios:
+// NYX_WIN_SYSROOT (xwin splat: crt/ y sdk/) y NYX_WIN_DEPS (scripts/build_win_deps.sh).
+fn receta_windows(nyx_home: String) -> RecetaWin {
     var falta: Array = []
-    var i: int = 0
-    let progs: Array = ["clang", "llvm-ar", "lld-link"]
-    while i < progs.length() {
-        let p: String = progs[i]
-        match find_program(p) {
+    var ar: String = ""
+    let cruzado: bool = not host_es_windows()
+    match find_program("clang") {
+        Option.Some(_r) => {}
+        Option.None => { falta.push("clang no está en PATH (viene con LLVM)") }
+    }
+    match find_program("lld-link") {
+        Option.Some(_r) => {}
+        Option.None => { falta.push("lld-link no está en PATH (viene con LLVM; en Debian: apt install lld)") }
+    }
+    if cruzado {
+        ar = primer_programa(["llvm-ar", "llvm-ar-21", "llvm-ar-20", "llvm-ar-19", "llvm-ar-18", "llvm-ar-17", "llvm-ar-16", "llvm-ar-15"])
+        if ar == "" { falta.push("llvm-ar no está en PATH (viene con LLVM; en Debian: apt install llvm)") }
+    } else {
+        ar = "llvm-ar"
+        match find_program(ar) {
             Option.Some(_r) => {}
-            Option.None => { falta.push(p + " no está en PATH (viene con LLVM)") }
+            Option.None => { falta.push("llvm-ar no está en PATH (viene con LLVM)") }
         }
-        i = i + 1
     }
-    let gc_inc: String = getenv("NYX_GC_INCLUDE")
-    let gc_lib: String = getenv("NYX_GC_LIBDIR")
-    if gc_inc == "" or not file_exists(gc_inc + "/gc.h") {
-        falta.push("NYX_GC_INCLUDE: el directorio con gc.h de bdwgc")
-    }
-    if gc_lib == "" or not file_exists(gc_lib + "/gc.lib") {
-        falta.push("NYX_GC_LIBDIR: el directorio con el gc.lib ESTÁTICO de bdwgc (/MT, enable_large_config=ON)")
-    } else if file_exists(gc_lib + "/gc.dll") {
-        falta.push("NYX_GC_LIBDIR apunta a un bdwgc dinámico (hay un gc.dll en " + gc_lib + "): el .exe pediría gc.dll; hace falta el estático")
-    }
-    let vcpkg: String = getenv("VCPKG_ROOT")
-    let ossl: String = vcpkg + "/installed/x64-windows-static"
-    if vcpkg == "" or not file_exists(ossl + "/lib/libssl.lib") or not file_exists(ossl + "/include/openssl/ssl.h") {
-        falta.push("VCPKG_ROOT: un vcpkg con OpenSSL estático (vcpkg install openssl:x64-windows-static)")
+    var cflags: Array = ["-D_CRT_SECURE_NO_WARNINGS"]
+    var ldflags: Array = []
+    if cruzado {
+        let sysroot: String = getenv("NYX_WIN_SYSROOT")
+        let deps: String = getenv("NYX_WIN_DEPS")
+        var sys_ok: bool = sysroot != ""
+        if sys_ok and (not file_exists(sysroot + "/crt/include/vcruntime.h") or not existe_alguno(sysroot + "/crt/lib/x86_64", ["libcmt.lib", "LIBCMT.lib"])
+                or not file_exists(sysroot + "/sdk/include/ucrt") or not file_exists(sysroot + "/sdk/include/um") or not file_exists(sysroot + "/sdk/include/shared")) {
+            sys_ok = false
+        }
+        if not sys_ok {
+            falta.push("NYX_WIN_SYSROOT: el sysroot de Windows (crt/ y sdk/) armado con `xwin --accept-license splat --output <dir>` (acepta la licencia de Microsoft)")
+        }
+        var deps_ok: bool = deps != ""
+        if deps_ok and (not file_exists(deps + "/include/gc.h") or not file_exists(deps + "/include/openssl/ssl.h") or not file_exists(deps + "/lib/gc.lib")
+                or not file_exists(deps + "/lib/libssl.lib") or not file_exists(deps + "/lib/libcrypto.lib")) {
+            deps_ok = false
+        }
+        if not deps_ok {
+            falta.push("NYX_WIN_DEPS: bdwgc y OpenSSL estáticos para Windows (include/ y lib/{gc,libssl,libcrypto}.lib); se arman con scripts/build_win_deps.sh")
+        }
+        if falta.length() == 0 {
+            // -ffile-prefix-map: que el .exe no lleve rutas de esta máquina (__FILE__ del runtime).
+            // -mno-incremental-linker-compatible: sin fecha en el .obj (reproducible).
+            cflags = ["-D_CRT_SECURE_NO_WARNINGS", "-D_MT", "-mno-incremental-linker-compatible",
+                "-isystem", sysroot + "/crt/include", "-isystem", sysroot + "/sdk/include/ucrt",
+                "-isystem", sysroot + "/sdk/include/um", "-isystem", sysroot + "/sdk/include/shared",
+                "-I" + deps + "/include", "-ffile-prefix-map=" + nyx_home + "=/nyx"]
+            ldflags = ["-Wl,/libpath:" + sysroot + "/crt/lib/x86_64", "-Wl,/libpath:" + sysroot + "/sdk/lib/um/x86_64",
+                "-Wl,/libpath:" + sysroot + "/sdk/lib/ucrt/x86_64", "-L" + deps + "/lib", "-lgc", "-llibssl", "-llibcrypto",
+                "-lcrypt32", "-lws2_32", "-luser32", "-ladvapi32", "-liphlpapi", "-lsetupapi", "-Wl,/Brepro"]
+        }
+    } else {
+        let gc_inc: String = getenv("NYX_GC_INCLUDE")
+        let gc_lib: String = getenv("NYX_GC_LIBDIR")
+        if gc_inc == "" or not file_exists(gc_inc + "/gc.h") {
+            falta.push("NYX_GC_INCLUDE: el directorio con gc.h de bdwgc")
+        }
+        if gc_lib == "" or not file_exists(gc_lib + "/gc.lib") {
+            falta.push("NYX_GC_LIBDIR: el directorio con el gc.lib ESTÁTICO de bdwgc (/MT, enable_large_config=ON)")
+        } else if file_exists(gc_lib + "/gc.dll") {
+            falta.push("NYX_GC_LIBDIR apunta a un bdwgc dinámico (hay un gc.dll en " + gc_lib + "): el .exe pediría gc.dll; hace falta el estático")
+        }
+        let vcpkg: String = getenv("VCPKG_ROOT")
+        let ossl: String = vcpkg + "/installed/x64-windows-static"
+        if vcpkg == "" or not file_exists(ossl + "/lib/libssl.lib") or not file_exists(ossl + "/include/openssl/ssl.h") {
+            falta.push("VCPKG_ROOT: un vcpkg con OpenSSL estático (vcpkg install openssl:x64-windows-static)")
+        }
+        if falta.length() == 0 {
+            cflags = ["-D_CRT_SECURE_NO_WARNINGS", "-I" + gc_inc, "-I" + ossl + "/include"]
+            ldflags = ["-L" + gc_lib, "-lgc", "-L" + ossl + "/lib", "-llibssl", "-llibcrypto",
+                "-lcrypt32", "-lws2_32", "-luser32", "-ladvapi32"]
+        }
     }
     if falta.length() > 0 {
         err_line("error: para armar un .exe falta:")
-        i = 0
+        var i: int = 0
         while i < falta.length() { let m: String = falta[i]; err_line("  - " + m); i = i + 1 }
-        return RecetaWin { ok: false, cflags: [], ldflags: [] }
+        return RecetaWin { ok: false, cflags: [], ldflags: [], ar: "" }
     }
-    return RecetaWin {
-        ok: true,
-        cflags: ["-D_CRT_SECURE_NO_WARNINGS", "-I" + gc_inc, "-I" + ossl + "/include"],
-        ldflags: ["-L" + gc_lib, "-lgc", "-L" + ossl + "/lib", "-llibssl", "-llibcrypto",
-            "-lcrypt32", "-lws2_32", "-luser32", "-ladvapi32"]
-    }
+    return RecetaWin { ok: true, cflags: cflags, ldflags: ldflags, ar: ar }
 }
 
 // NYX_HOME → ~/.nyx → el directorio actual si tiene nyx_bootstrap (monorepo).
@@ -3073,7 +3147,9 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     }
     // En Windows el build nativo ES el de Windows, con o sin --target.
     if host_win and eff_target == "" { eff_target = triple_win() }
-    if host_win and eff_target == triple_win() and host_arch() == "x86_64" {
+    // Desde Linux (arco win-cross) el triple de Windows x86_64 también arma el .exe,
+    // con clang + lld-link y un sysroot de xwin (receta_windows).
+    if eff_target == triple_win() and (not host_win or host_arch() == "x86_64") {
         native_out = "target/" + output_name + ".exe"
         native_dir = "target"
         tgt_cc = " --target=" + eff_target
@@ -3097,7 +3173,7 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     if eff_target != "" and eff_target != "wasm32-wasi" and linux_arch == "" {
         if eff_target != "x86_64-pc-windows-msvc" and eff_target != "aarch64-pc-windows-msvc" {
             print("error: target desconocido: " + eff_target)
-            print("  targets soportados: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu y wasm32-wasi")
+            print("  targets soportados: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc y wasm32-wasi")
             print("  (sin --target se compila para la plataforma actual)")
             return false
         }
@@ -3105,9 +3181,9 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // «build complete» y salía 0 con un ELF donde se pidió un .exe (fricción
         // nyxerp 2026-10-29): se rechaza con su motivo. En Windows x86_64 sigue de
         // largo; ARM64 no está medido.
-        if not host_win or eff_target != triple_win() or host_arch() != "x86_64" {
+        if eff_target != triple_win() or (host_win and host_arch() != "x86_64") {
             print("error: nyx build todavía no arma ejecutables para " + eff_target + " desde esta máquina")
-            print("  un .exe se compila en Windows x86_64: no hay compilación cruzada a Windows, y")
+            print("  desde Linux se arma x86_64-pc-windows-msvc (cruzado) y en Windows x86_64 el nativo;")
             print("  ARM64 todavía no está medido")
             return false
         }
@@ -3166,9 +3242,11 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
     let win: bool = es_triple_windows(eff_target)
     var cc_win: Array = []
     var ld_win: Array = []
+    var win_ar: String = "llvm-ar"
     if win {
-        let rw: RecetaWin = receta_windows()
+        let rw: RecetaWin = receta_windows(nyx_home)
         if not rw.ok { return false }
+        win_ar = rw.ar
         cc_win = rw.cflags
         ld_win = rw.ldflags
         nombres = ["runtime.c", "strings.c", "runtime-arrays.c", "maps.c", "file-io.c", "iterators.c", "net.c", "thread.c",
@@ -3192,7 +3270,7 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
         // con opt_flags. Las banderas del destino entran en la clave de la caché:
         // sin eso un libnyxrt.a de x86_64 se enlazaría en un build de aarch64.
         var archivador: String = "ar"
-        if win { archivador = "llvm-ar" }
+        if win { archivador = win_ar }
         let a: String = rt_auto("-O2" + tgt_cc, cc_win, archivador, fuentes, rt)
         if a != "" { rt_in = [a] }
     }
@@ -3245,10 +3323,13 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
         // y acá ya sabemos que no lo es (hallazgo de la laptop, 2026-11-02).
         let falta_regex: bool = win and txt.contains("nyx_regex_")
         if falta_regex {
+            // Solo el aviso: el volcado crudo del enlazador va debajo de un mensaje
+            // que ya dice la causa y la desdibuja (hallazgo de la laptop, 2026-11-02).
             err_line("error: std/regex todavía no está disponible en Windows; este programa lo usa (directamente o a través de otro módulo)")
+            return false
         }
         err_line("error: clang link failed:")
-        if not falta_regex { clang_failure_attribution(txt, config.main_file) }
+        clang_failure_attribution(txt, config.main_file)
         err_print(txt)
         return false
     }
@@ -3869,6 +3950,51 @@ fn main() -> int {
         let cmd: String = args[1]
         command = cmd
     }
+    // `nyx --version` / `nyx -v` / `nyx version`: sin esto el driver (lo que corre en
+    // Windows, sin el wrapper bash) contestaba «unknown command». Lee <nyx_home>/VERSION;
+    // el wrapper de Linux imprime además las huellas del compilador y el prelude.
+    if command == "--version" or command == "-v" or command == "version" {
+        let vhome: String = build_nyx_home()
+        var vtxt: String = ""
+        if vhome != "" and file_exists(vhome + "/VERSION") { vtxt = read_file(vhome + "/VERSION").trim() }
+        if vtxt == "" {
+            print("nyx (versión desconocida)")
+        } else {
+            print("nyx " + vtxt)
+        }
+        return 0
+    }
+    // `nyx check|fmt|test`: herramientas compañeras (<nyx_home>/bin/nyx_<cmd>[.exe]). En Linux
+    // el wrapper bash las resuelve antes de llegar acá; en Windows no hay wrapper y las despacha
+    // el driver con los argumentos restantes. Va ANTES de validar flags: son de la herramienta.
+    if command == "check" or command == "fmt" or command == "test" {
+        let thome: String = build_nyx_home()
+        var tbin: String = ""
+        if thome != "" {
+            var cands: Array = [thome + "/bin/nyx_" + command + ".exe", thome + "/bin/nyx_" + command, thome + "/nyx_" + command]
+            if host_es_windows() { cands = [thome + "/bin/nyx_" + command + ".exe", thome + "/nyx_" + command + ".exe"] }
+            var ci: int = 0
+            while ci < cands.length() {
+                let cand: String = cands[ci]
+                if tbin == "" and file_exists(cand) { tbin = cand }
+                ci = ci + 1
+            }
+        }
+        if tbin == "" {
+            if command == "test" and host_es_windows() {
+                err_line("error: nyx test todavía no está disponible en Windows")
+                err_line("  (depende de reescribir compiler/test.nx sin bash; ver TASKS.md)")
+            } else {
+                err_line("error: nyx_" + command + " no está instalado en " + thome)
+                err_line("  instala el toolchain de nuevo, o compila la herramienta (make build-" + command + ")")
+            }
+            return 1
+        }
+        var targv: Array = [tbin]
+        var ti: int = 2
+        while ti < args.length() { targv.push(args[ti]); ti = ti + 1 }
+        return correr_programa(targv)
+    }
     // Flags: --release / --target <triple> (en cualquier orden tras el comando)
     //
     // Una flag DESCONOCIDA es un error, no silencio. Antes
@@ -4374,6 +4500,6 @@ fn main() -> int {
     }
 
     print("error: unknown command " + command)
-    print("hint: nyx [init|add|build|run|info|report|capabilities] [--release] [--target <triple>] [--main <archivo.nx>]")
+    print("hint: nyx [init|add|build|run|check|fmt|test|info|report|capabilities|version] [--release] [--target <triple>] [--main <archivo.nx>]")
     return 1
 }

@@ -11,6 +11,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Added
 
+- **El driver despacha `nyx check`, `nyx fmt` y `nyx test`** a `<nyx_home>/bin/nyx_<cmd>[.exe]` con los argumentos
+  restantes y devuelve su rc (en Windows `install.ps1` instala `nyx_check.exe` y `nyx_fmt.exe`; en Linux el wrapper
+  ya lo resolvía antes). `nyx test` en Windows dice «todavía no está disponible» en vez de «unknown command»
+  [arco: win-cross].
+- **`nyx --version`, `nyx -v` y `nyx version` en el driver** (el que corre en Windows, sin el wrapper bash): imprimen
+  `nyx <VERSION>` leyendo `<nyx_home>/VERSION`, o `nyx (versión desconocida)` si no está [arco: win-cross].
+- **`nyx build --target x86_64-pc-windows-msvc` desde Linux** (arco win-cross): arma `target/<nombre>.exe` con clang
+  + `lld-link` contra un sysroot de `xwin` (`NYX_WIN_SYSROOT`) y bdwgc/OpenSSL estáticos armados por
+  `scripts/build_win_deps.sh` (`NYX_WIN_DEPS`); si falta algo lo nombra todo antes de compilar. El `.exe` solo
+  importa DLL de Windows, no lleva rutas del host y es reproducible (`/Brepro`). `aarch64-pc-windows-msvc` sigue
+  rechazado. El mensaje de «target desconocido» ya lista el triple de Windows. Gate: `make test-build-win-cross`
+  (SKIP sin las dos variables) [arco: win-cross].
 - **`nyx build` arma `target/<nombre>.exe` en Windows x86_64**, con bdwgc y OpenSSL estáticos. Necesita `clang`,
   `llvm-ar`, `lld-link` y las variables `NYX_GC_INCLUDE`, `NYX_GC_LIBDIR` y `VCPKG_ROOT`; si falta algo, el error
   nombra todo lo que falta antes de compilar. `std/regex` todavía no enlaza en Windows, y el build lo dice en claro
@@ -28,6 +40,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`nyx_bootstrap.exe` sin `NYX_TARGET` ya no emite IR de Linux en Windows** (triple `x86_64-pc-linux-gnu` y
+  `setjmp` posix, sin aviso): el triple por omisión sale del host y en Windows es `x86_64-pc-windows-msvc`. En Linux
+  no cambia nada [arco: win-cross].
+- **Doc de `std/net` corregida: la unión multicast por interfaz SÍ anda en Windows** (el comentario decía que
+  `net_interfaces` daba `-ENOSYS`; la laptop midió las 7 interfaces y la unión por IP funciona). Se documenta la
+  diferencia medida de `set_multicast_loop`: del lado receptor en Windows, del emisor en Linux [arco: win-cross].
+- **`runtime/runtime.c` ya no emite el warning «discards qualifiers»** en `nyx_exec_full` (`cmd` es `const char*`,
+  como lo declara `os_proc_run_full`): era lo que veía quien instalaba en Windows [arco: win-cross].
+- **`nyx run` en Windows ya no imprime `[nyx] signal_handle: no se pudo registrar la señal 3 (error 22)`** en cada
+  corrida: SIGQUIT no existe ahí y ya no se registra [arco: win-cross].
+- **`nyx build` en Windows con `std/regex` imprime solo el aviso de que no está disponible**, sin el volcado crudo
+  del enlazador debajo [arco: win-cross].
 - **`m.get_or(f[0], d)` con `f` variable de bucle anotada `Array` ya no produce IR inválido**: el i64 de la casilla entraba a `nyx_string_to_cstr` sin `inttoptr` (error de clang `defined with type 'i64' but expected 'ptr'`, reporte de nyxerp). `get_or` y el `remove` sobre campo Map ahora usan `codegen_map_key`, igual que `insert`/`get`/`contains`. Test `ai-first/49`.
 - **`remove_file` borra un directorio vacío también en Windows**, como en posix [arco: w6-windows].
 - **El compilador encuentra `~/.nyx` también en Windows**: `build`, `resolve`, `codegen` y el driver miraban solo

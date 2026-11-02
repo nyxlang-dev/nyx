@@ -806,7 +806,7 @@ nyx_string* nyx_exec_full(nyx_string* cmd_s) {
     a.err.buf = (char*)GC_MALLOC(a.err.cap);
     if (!a.out.buf || !a.err.buf) return nyx_exec_full_fail(-ENOMEM);
     int64_t code = -1;
-    char* cmd = nyx_string_to_cstr(cmd_s);
+    const char* cmd = nyx_string_to_cstr(cmd_s);
     if (!cmd) return nyx_exec_full_fail(-EINVAL);
     int rc = os_proc_run_full(cmd, nyx_exec_full_cb, &a, &code);
     if (rc != 0) return nyx_exec_full_fail(rc);
