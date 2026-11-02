@@ -40,6 +40,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`rename_file` en Windows reemplaza el destino si existe, como en Linux** — llamaba al `rename()` de la UCRT,
+  que no pasa `MOVEFILE_REPLACE_EXISTING` y fallaba con EEXIST, así que el patrón «escribir `.tmp` y renombrar
+  encima» de la escritura atómica no andaba (nyxerp, 2026-11-02). Nuevo `os_fs_rename` en la capa `os_*`
+  (posix/wasm: `rename(2)`; win32: `MoveFileExA` con `REPLACE_EXISTING | COPY_ALLOWED`, atómico en el mismo
+  volumen); `nyx_rename_file` mantiene el contrato 0/-1. Runtime C unit +7 asserts (`test_os_fs.c`)
+  [arco: win-cross].
 - **`nyx_bootstrap.exe` sin `NYX_TARGET` ya no emite IR de Linux en Windows** (triple `x86_64-pc-linux-gnu` y
   `setjmp` posix, sin aviso): el triple por omisión sale del host y en Windows es `x86_64-pc-windows-msvc`. En Linux
   no cambia nada [arco: win-cross].

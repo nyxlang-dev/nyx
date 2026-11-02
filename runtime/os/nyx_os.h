@@ -857,6 +857,14 @@ int os_fs_stat(const char* path, os_fs_info_t* out);
 // remove(3): archivo o directorio vacío. 0 / -errno. El remove() de la UCRT no
 // borra directorios; por eso pasa por la capa.
 int os_fs_remove(const char* path);
+// rename(2): REEMPLAZA el destino si existe (atómico en el mismo volumen). 0 /
+// -errno. El rename() de la UCRT falla con EEXIST si el destino existe (no pasa
+// MOVEFILE_REPLACE_EXISTING), y eso rompía el patrón «.tmp + rename encima»
+// con el que nyxerp escribe JSON de forma atómica (2026-11-02); por eso pasa
+// por la capa.
+// EN: rename(2) semantics: REPLACES an existing destination (atomic on the
+// same volume). 0 / -errno. The UCRT rename() fails with EEXIST instead.
+int os_fs_rename(const char* old_path, const char* new_path);
 int os_fs_mkdir(const char* path);   // 0 / -errno (EEXIST pasa como -EEXIST)
 // cb(name, ud) por entrada, SIN "." ni ".." -- n entradas (>=0) o -errno si
 // no se pudo abrir el directorio (opendir/FindFirstFileA).

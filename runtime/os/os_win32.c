@@ -3508,6 +3508,29 @@ int os_fs_remove(const char* path) {
     }
 }
 
+// MoveFileExA y no el rename() de la UCRT: la UCRT no pasa
+// MOVEFILE_REPLACE_EXISTING, así que renombrar encima de un archivo que existe
+// falla con EEXIST, y el patrón «.tmp + rename encima» de la escritura atómica
+// (nyxerp, 2026-11-02) no andaba en Windows. Con REPLACE_EXISTING el renombre
+// es atómico dentro del mismo volumen, como rename(2); COPY_ALLOWED cubre el
+// cruce de volúmenes (copia + borrado, como hace también la UCRT).
+// EN: MoveFileExA instead of UCRT rename(): the UCRT omits
+// MOVEFILE_REPLACE_EXISTING, so renaming onto an existing file failed with
+// EEXIST and broke the atomic ".tmp + rename" write pattern.
+int os_fs_rename(const char* old_path, const char* new_path) {
+    if (!old_path || !new_path) return -EINVAL;
+    if (MoveFileExA(old_path, new_path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) return 0;
+    switch (GetLastError()) {
+        case ERROR_FILE_NOT_FOUND:
+        case ERROR_PATH_NOT_FOUND: return -ENOENT;
+        case ERROR_ALREADY_EXISTS:
+        case ERROR_FILE_EXISTS: return -EEXIST;
+        case ERROR_ACCESS_DENIED:
+        case ERROR_SHARING_VIOLATION: return -EACCES;
+        default: return -EIO;
+    }
+}
+
 int64_t os_fs_listdir(const char* path,
                       void (*cb)(const char* name, void* ud),
                       void* ud) {

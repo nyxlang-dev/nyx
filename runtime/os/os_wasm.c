@@ -272,6 +272,11 @@ int os_fs_remove(const char* path) {
     return remove(path) == 0 ? 0 : -errno;
 }
 
+int os_fs_rename(const char* old_path, const char* new_path) {
+    if (!old_path || !new_path) return -EINVAL;
+    return rename(old_path, new_path) == 0 ? 0 : -errno;
+}
+
 int os_fs_mkdir(const char* path) {
     if (!path) return -EINVAL;
     return mkdir(path, 0755) == 0 ? 0 : -errno;
