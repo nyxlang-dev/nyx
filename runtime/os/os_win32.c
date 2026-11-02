@@ -56,6 +56,7 @@
 #include <wincrypt.h>   // CertOpenSystemStoreW/CertEnumCertificatesInStore (os_sys_root_certs)
 #include <icmpapi.h>   // IcmpCreateFile/IcmpSendEcho (os_icmp_echo4): después de iphlpapi.h y windows.h
 #include <setupapi.h>   // SetupDiGetClassDevsW/SetupDiOpenDevRegKey (os_serial_list)
+#include <cfgmgr32.h>   // CM_Get_Parent/CM_Get_Device_IDW (os_serial_list: serie USB)
 // Link: ws2_32 (sockets, WSAPoll, getaddrinfo) e iphlpapi
 // (GetAdaptersAddresses) vía /DEFAULTLIB embebido — así las recetas de link
 // (CI, scripts, nyx build) no tienen que enumerarlas.
@@ -64,6 +65,7 @@
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "crypt32.lib")   // CertOpenSystemStore (os_sys_root_certs)
 #pragma comment(lib, "setupapi.lib")  // SetupDi* (os_serial_list)
+#pragma comment(lib, "cfgmgr32.lib")  // CM_Get_Parent (os_serial_list: serie USB)
 #pragma comment(lib, "advapi32.lib")  // RegQueryValueExW (os_serial_list: PortName)
 
 #include "nyx_os.h"
@@ -3950,7 +3952,7 @@ int os_serial_close(int64_t hh) {
     return CloseHandle((HANDLE)(intptr_t)hh) ? 0 : win_last_errno();
 }
 
-int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud) {
+int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, const char* serial, void* ud), void* ud) {
     if (!cb) return -EINVAL;
     // Clase «Ports (COM & LPT)», {4d36e978-e325-11ce-bfc1-08002be10318}: es la
     // que usa el Administrador de dispositivos y cubre usbser/CDC, FTDI, CH340,
@@ -3974,7 +3976,7 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
         if (r != ERROR_SUCCESS || type != REG_SZ) continue;
         wport[63] = 0;
         if (wcsncmp(wport, L"COM", 3) != 0) continue;   // LPT1 y similares no son serie
-        char name[64], vidpid[16] = "", desc[256] = "";
+        char name[64], vidpid[16] = "", desc[256] = "", serial[128] = "";
         WideCharToMultiByte(CP_UTF8, 0, wport, -1, name, (int)sizeof name, NULL, NULL);
         // HardwareID es REG_MULTI_SZ: «USB\VID_0483&PID_5740&REV_0200\0USB\VID_0483&PID_5740\0\0».
         // El primero alcanza para el VID/PID; los que no son USB no lo tienen.
@@ -3996,7 +3998,30 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
             fr[255] = 0;
             WideCharToMultiByte(CP_UTF8, 0, fr, -1, desc, (int)sizeof desc, NULL, NULL);
         }
-        cb(name, vidpid, desc, ud);
+        // Número de serie USB: es el último segmento del instance ID del dispositivo
+        // USB «USB\VID_xxxx&PID_yyyy\<serie>». El puerto puede ser el propio
+        // dispositivo (CDC de una interfaz), un hijo de la interfaz de un compuesto
+        // («USB\VID_..&MI_00\...») o un hijo de otro bus (FTDIBUS\...): se sube
+        // hasta 3 niveles buscando el primero que empiece por «USB\VID_» y no sea
+        // una interfaz (&MI_). Si Windows inventó el serie (el dispositivo no lo
+        // reporta), el segmento contiene '&' (p. ej. «6&2a3b4c5d&0&1»): se devuelve "".
+        if (vidpid[0]) {
+            DEVINST cur = dev.DevInst;
+            for (int up = 0; up < 4; up++) {
+                wchar_t id[MAX_DEVICE_ID_LEN];
+                if (CM_Get_Device_IDW(cur, id, MAX_DEVICE_ID_LEN, 0) != CR_SUCCESS) break;
+                if (_wcsnicmp(id, L"USB\\VID_", 8) == 0 && !wcsstr(id, L"&MI_") && !wcsstr(id, L"&mi_")) {
+                    const wchar_t* seg = wcsrchr(id, L'\\');
+                    if (seg && seg[1] && !wcschr(seg + 1, L'&'))
+                        WideCharToMultiByte(CP_UTF8, 0, seg + 1, -1, serial, (int)sizeof serial, NULL, NULL);
+                    break;
+                }
+                DEVINST parent;
+                if (CM_Get_Parent(&parent, cur, 0) != CR_SUCCESS) break;
+                cur = parent;
+            }
+        }
+        cb(name, vidpid, desc, serial, ud);
     }
     SetupDiDestroyDeviceInfoList(set);
     return 0;

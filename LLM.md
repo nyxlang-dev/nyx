@@ -1058,7 +1058,7 @@ single `Error` struct.
   `"none"|"odd"|"even"`; `"/dev/ttyUSB0"` or `"COM3"`), `try_serial_write(p, s) -> Result<int, Error>`,
   `try_serial_read(p, max, timeout_ms) -> Result<String, Error>`,
   `try_serial_read_until(p, fin_byte, max, timeout_ms) -> Result<String, Error>`, `try_serial_close(p)`,
-  `serial_ports() -> Array` of `[name, "vvvv:pppp" or "", description]`. Contract: bytes are `String`
+  `serial_ports() -> Array` of `[name, "vvvv:pppp" or "", description, serial]` (`serial` = USB serial number, `""` if not USB or the device reports none — some cheap CH340 adapters; a Windows-generated id with `&` gives `""`; always `""` on macOS). Two identical adapters are told apart by `serial`, never by `COMn`/`ttyUSBn`, which change on replug. Contract: bytes are `String`
   (binary-safe; `s.charAt(i)` is the byte value); `read` waits for AT LEAST one byte and returns what is
   there up to `max`, and **`Ok("")` = deadline expired, not an error**; `read_until` has a TOTAL deadline and
   does NOT eat the byte after `fin` (STX..ETX+LRC: `read_until(p, 3, ...)`, then `read(p, 1, ...)` for the
@@ -1085,7 +1085,10 @@ single `Error` struct.
 - Process control: `fork()`, `execvp(prog, args)`, `waitpid(pid, opts)`,
   `dup2(old, new)`, `pipe_new()`, `close_fd(fd)`, `open_fd(path, mode)`,
   `getcwd()`, `chdir(path)`, `stat(path)`, `isatty(fd)`, `getpid()`, `kill_process(pid, sig)`
-- **Windows traps**: `isatty(0)` is 1 only on a real console; `NUL`, pipes and files give 0 (so a CI run with
+- **Windows traps**: a posix path like `/tmp/x` is NOT absolute on Windows — it resolves against the current drive
+  (`C:\tmp\x` or `D:\tmp\x`), and a native `.exe` does not see Git Bash's or MSYS's `/tmp`. Paths are passed to the
+  OS as they are (Nyx does not translate them): build temp paths with `temp_dir()` from `std/fs`, and others from
+  `getenv("USERPROFILE")`/`getenv("LOCALAPPDATA")` or a path the user configures. `isatty(0)` is 1 only on a real console; `NUL`, pipes and files give 0 (so a CI run with
   `< NUL` is not a TTY). vcpkg's zlib DLL is named `z.dll`, not `zlib1.dll`: `std/compress` loads it through `dl`
   and tries `z.dll`, `zlib1.dll` and `libz.dll`, so ship whichever one sits next to the `.exe`.
 - **`nyx build` on Windows x86_64** produces `target/<name>.exe` with bdwgc and OpenSSL linked statically. It needs

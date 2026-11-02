@@ -16,6 +16,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   nombra todo lo que falta antes de compilar. `std/regex` todavía no enlaza en Windows, y el build lo dice en claro
   en vez de volcar solo los `undefined symbol` de `lld-link`. `std/process` suma `host_os()` (`"linux"`, `"darwin"`,
   `"windows"`, `"wasi"`) [arco: w6-windows].
+- **`serial_ports()` suma al final de cada fila el número de serie USB**: `[nombre, "vvvv:pppp", descripción,
+  serie]`, con `""` si el puerto no es USB o el dispositivo no lo reporta. Linux lo lee de sysfs (`serial`); Windows,
+  del instance ID del dispositivo USB padre (SetupAPI y cfgmgr32), y un serie inventado por el sistema da `""`. Los
+  tres primeros campos no cambian; dos adaptadores iguales ya se distinguen sin mirar el COM [arco: w6-windows].
 
 ### Fixed
 
@@ -23,7 +27,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Tests
 
-- `make test-runtime`: 2339 → 2342 asserts, por los tres casos de `host_os` en `test_os_build_host.c` [arco: w6-windows].
+- `make test-runtime`: 2339 → 2352 asserts: tres casos de `host_os` en `test_os_build_host.c` y diez del serie USB en `test_os_serial.c` (con un sysfs falso) [arco: w6-windows].
 
 ---
 

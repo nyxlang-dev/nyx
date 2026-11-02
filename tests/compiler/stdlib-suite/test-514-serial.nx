@@ -31,14 +31,16 @@ fn main() -> int {
         Result.Err(e) => { println(error_to_string(e)) }
     }
 
-    // La lista nunca falla; cada fila es [nombre, vidpid, desc]
+    // La lista nunca falla; cada fila es [nombre, vidpid, desc, serie]
     var bien: int = 1
     for x: Array in serial_ports() {
-        if x.length() != 3 { bien = 0 }
+        if x.length() != 4 { bien = 0 }
         let nombre: String = x[0]
         if not nombre.startsWith("/dev/") { bien = 0 }
         let vp: String = x[1]
         if vp.length() != 0 and vp.length() != 9 { bien = 0 }
+        let serie: String = x[3]   // "" si no es USB o no lo reporta (la lista puede ser vacía)
+        if serie.length() > 0 and vp.length() == 0 { bien = 0 }
     }
     println("serial_ports bien formada: " + int_to_string(bien))
 

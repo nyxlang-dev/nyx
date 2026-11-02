@@ -135,12 +135,16 @@ pub fn try_serial_close(p: SerialPort) -> Result<int, Error> {
     return Result.Ok(0)
 }
 
-// Puertos presentes: [[nombre, "vvvv:pppp" o "", descripción], ...]. Los
-// números de COM cambian al reconectar: identificar el equipo por VID:PID.
+// Puertos presentes: [[nombre, "vvvv:pppp" o "", descripción, serie], ...].
+// El 4.º campo es el número de serie USB del dispositivo, o "" si no es USB o
+// no lo reporta (en Windows, el serie que genera el sistema —con '&'— cuenta
+// como no reportado; en macOS siempre ""). Se agregó al final: quien lea solo
+// los tres primeros no cambia. Los números de COM cambian al reconectar:
+// identificar el equipo por VID:PID y, si hay varios iguales, por el serie.
 // Un puerto RS232 integrado (COM1, /dev/ttyS0) no tiene VID:PID. Vacío si no
 // hay puertos o el sistema no los lista (wasm). El tipo de elemento va en la
 // firma para que `nyx check` rechace `let s: String = serial_ports()[k]` (cada
-// elemento es la fila de tres String, no el nombre).
+// elemento es la fila de cuatro String, no el nombre).
 pub fn serial_ports() -> Array<Array<String>> {
     let r: Array = nyx_serial_list()
     let lista: Array = r[1]

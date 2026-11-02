@@ -3203,7 +3203,12 @@ import "std/serial"
 //     Junta hasta incluir el byte `fin`, con plazo TOTAL; no se come el byte
 //     que sigue al fin (trama STX...ETX+LRC: leer hasta ETX y luego 1 byte).
 // try_serial_close(p) -> Result<int, Error>
-// serial_ports() -> Array   // [[nombre, "vvvv:pppp" o "", descripción], ...]
+// serial_ports() -> Array   // [[nombre, "vvvv:pppp" o "", descripción, serie], ...]
+//     serie = número de serie USB, o "" si el puerto no es USB o el dispositivo no lo
+//     reporta (en Windows un serie que inventa el sistema, con '&', da ""; macOS
+//     siempre ""). El cuarto campo se agregó al final (2026-11-02): los tres primeros
+//     no cambian. El COMn/ttyUSBn cambia al reconectar: identificar el equipo por
+//     VID:PID y, si hay dos iguales, por el serie.
 //
 // Errores (kind, code): not_found 2 (el puerto no existe), permission 13
 // (en Linux, el usuario tiene que estar en el grupo dialout), in_use 16

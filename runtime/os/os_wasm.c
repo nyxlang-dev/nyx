@@ -358,7 +358,7 @@ int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, in
 int64_t os_serial_read(int64_t h, void* buf, int64_t n, int timeout_ms) { (void)h; (void)buf; (void)n; (void)timeout_ms; return -ENOSYS; }
 int64_t os_serial_write(int64_t h, const void* buf, int64_t n) { (void)h; (void)buf; (void)n; return -ENOSYS; }
 int os_serial_close(int64_t h) { (void)h; return -ENOSYS; }
-int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud) {
+int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, const char* serial, void* ud), void* ud) {
     (void)cb; (void)ud; return -ENOSYS;
 }
 

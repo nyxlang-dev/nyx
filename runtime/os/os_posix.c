@@ -2551,7 +2551,7 @@ static void serial_sys_read(const char* path, char* out, size_t cap) {
 }
 #endif
 
-int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud) {
+int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, const char* serial, void* ud), void* ud) {
     if (!cb) return -EINVAL;
 #if defined(__linux__)
     // Un tty con `device` en sysfs es hardware (los pty y las consolas virtuales
@@ -2561,17 +2561,23 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
     // Linux 6.5 el `device` de un ttyS es el puerto de serial-base, no la
     // plataforma (medido 2026-10-28 en el servidor: ttyS0 type 4, PCI real;
     // ttyS1-3 type 0, fantasmas).
-    DIR* d = opendir("/sys/class/tty");
+    // NYX_SERIAL_SYSFS_ROOT: raíz alternativa de sysfs, SOLO para tests con un
+    // árbol falso (tests/runtime-unit/test_os_serial.c); en producción no se define.
+    const char* root = getenv("NYX_SERIAL_SYSFS_ROOT");
+    if (!root || !root[0]) root = "/sys";
+    char tty_dir[PATH_MAX];
+    snprintf(tty_dir, sizeof tty_dir, "%s/class/tty", root);
+    DIR* d = opendir(tty_dir);
     if (!d) return -errno;
     struct dirent* e;
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.') continue;
         char p[512], real[PATH_MAX], sub[PATH_MAX];
-        snprintf(p, sizeof p, "/sys/class/tty/%s/device", e->d_name);
+        snprintf(p, sizeof p, "%s/%s/device", tty_dir, e->d_name);
         if (!realpath(p, real)) continue;
         if (strncmp(e->d_name, "ttyS", 4) == 0) {
             char ty[32];
-            snprintf(p, sizeof p, "/sys/class/tty/%s/type", e->d_name);
+            snprintf(p, sizeof p, "%s/%s/type", tty_dir, e->d_name);
             serial_sys_read(p, ty, sizeof ty);
             if (ty[0] == 0 || strcmp(ty, "0") == 0) continue;
         }
@@ -2590,7 +2596,7 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
             if (!cut || cut == up_dir) break;
             *cut = 0;
         }
-        char name[300], vidpid[16] = "", desc[256] = "";
+        char name[300], vidpid[16] = "", desc[256] = "", serial[128] = "";
         snprintf(name, sizeof name, "/dev/%s", e->d_name);
         // Subir desde el dispositivo hasta el nodo USB (el que tiene idVendor).
         char dir[PATH_MAX];
@@ -2606,6 +2612,9 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
                 for (char* c = vidpid; *c; c++) if (*c >= 'A' && *c <= 'F') *c = (char)(*c - 'A' + 'a');
                 snprintf(p, sizeof p, "%s/product", dir);
                 serial_sys_read(p, desc, sizeof desc);
+                // `serial` vive en el mismo nodo USB; falta si el dispositivo no lo reporta.
+                snprintf(p, sizeof p, "%s/serial", dir);
+                serial_sys_read(p, serial, sizeof serial);
                 break;
             }
             char* slash = strrchr(dir, '/');
@@ -2613,7 +2622,7 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
             *slash = 0;
         }
         if (!desc[0]) snprintf(desc, sizeof desc, "%s", subsys);
-        cb(name, vidpid, desc, ud);
+        cb(name, vidpid, desc, serial, ud);
     }
     closedir(d);
     return 0;
@@ -2627,7 +2636,7 @@ int os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* 
         if (strncmp(e->d_name, "cu.", 3) != 0) continue;
         char name[300];
         snprintf(name, sizeof name, "/dev/%s", e->d_name);
-        cb(name, "", "", ud);
+        cb(name, "", "", "", ud);   // el serie exigiría IOKit, igual que VID/PID
     }
     closedir(d);
     return 0;

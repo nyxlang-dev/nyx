@@ -1008,6 +1008,10 @@ int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, in
 int64_t os_serial_read(int64_t h, void* buf, int64_t n, int timeout_ms);
 int64_t os_serial_write(int64_t h, const void* buf, int64_t n);
 int     os_serial_close(int64_t h);
-int     os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, void* ud), void* ud);
+// os_serial_list: `serial` es el número de serie USB del dispositivo, o "" si no es
+// USB o no lo reporta (Windows: el que genera el sistema, con '&', cuenta como
+// «no lo reporta»). Linux lee la raíz de sysfs de NYX_SERIAL_SYSFS_ROOT si está
+// definida (SOLO para tests con un árbol falso; por defecto "/sys").
+int     os_serial_list(void (*cb)(const char* name, const char* vidpid, const char* desc, const char* serial, void* ud), void* ud);
 
 #endif

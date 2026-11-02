@@ -595,16 +595,17 @@ int64_t nyx_serial_close(int64_t h) {
     return r < 0 ? -serial_canon(r) : 0;
 }
 
-static void serial_list_cb(const char* name, const char* vidpid, const char* desc, void* ud) {
+static void serial_list_cb(const char* name, const char* vidpid, const char* desc, const char* serial, void* ud) {
     nyx_array_t* all = (nyx_array_t*)ud;
-    nyx_array_t* row = nyx_array_new(3);
+    nyx_array_t* row = nyx_array_new(4);
     nyx_array_push_tagged(row, (int64_t)nyx_string_from_cstr(name), NYX_TAG_STRING);
     nyx_array_push_tagged(row, (int64_t)nyx_string_from_cstr(vidpid), NYX_TAG_STRING);
     nyx_array_push_tagged(row, (int64_t)nyx_string_from_cstr(desc), NYX_TAG_STRING);
+    nyx_array_push_tagged(row, (int64_t)nyx_string_from_cstr(serial), NYX_TAG_STRING);
     nyx_array_push_tagged(all, (int64_t)row, NYX_TAG_ARRAY);
 }
 
-// [code, Array de [nombre, vidpid, desc]]
+// [code, Array de [nombre, vidpid, desc, serie]]
 nyx_array_t* nyx_serial_list(void) {
     nyx_array_t* all = nyx_array_new(4);
     int r = os_serial_list(serial_list_cb, all);
