@@ -3068,6 +3068,191 @@ void os_sig_handled(int signum) {
     if (done) SetEvent(done);
 }
 
+// ===========================================================================
+// Servicio de Windows (W6 Task 5, 2026-11-02; decisión D4, medido en el spike
+// 2026-10-30-w6-windows-spike.md §D4). Sin API nueva para el programa Nyx: el
+// MISMO .exe corre en consola o como servicio (sc.exe create ... binPath=).
+//
+// Detección: el padre es %SystemRoot%\System32\services.exe (el criterio de
+// golang.org/x/sys/windows/svc.IsWindowsService). «Sesión 0» o «sin consola»
+// solas NO sirven (medido: un proceso de consola bajo Git Bash también da «sin
+// consola»; una tarea programada como SYSTEM también está en la sesión 0). El
+// padre se lee con NtQueryInformationProcess y NO con CreateToolhelp32Snapshot:
+// con Smart App Control activo, un .exe sin firma que enumera procesos con
+// Toolhelp queda bloqueado al lanzarse (CodeIntegrity 3077, medido).
+//
+// Hilos (elección del spike, la más simple): StartServiceCtrlDispatcherW
+// BLOQUEA el hilo que lo llama hasta que el servicio para. Por eso corre en un
+// hilo propio que crea el constructor, y el hilo principal sigue hacia el
+// main de Nyx exactamente igual que en consola; el constructor espera (con
+// tope) a que ServiceMain reporte RUNNING, así el SCM ve «RUNNING» antes de
+// que el programa haga nada y el límite de 30 s del SCM no corre por nuestra
+// cuenta. ServiceMain registra el manejador, reporta RUNNING y VUELVE (el
+// servicio sigue vivo mientras no se reporte STOPPED).
+//
+// Parada: SERVICE_CONTROL_STOP/SHUTDOWN/PRESHUTDOWN -> STOP_PENDING y OS_SIGTERM
+// por la MISMA ranura que usa CTRL_BREAK en consola (g_ctrl_slot, la que llena
+// os_sig_install): signal_handle/setup_shutdown_handler no cambian. Como en
+// consola, ranura NULL = disposición por defecto = terminar el proceso (acá
+// reportando STOPPED antes) e IGNORED = ignorar (se vuelve a RUNNING, para
+// que el SCM no se quede esperando una parada que no va a ocurrir).
+// El manejador corre en el hilo del dispatcher (no registrado en Boehm): como
+// el de consola, solo llama al os_sig_fn registrado, que no toca el GC.
+//
+// STOPPED: lo reporta nyx_os_win32_svc_stopped(), que corre (a) por atexit
+// —salida normal, exit()— y (b) explícito desde persist.c antes de su
+// _Exit(0), que NO corre atexit. Si el proceso muere sin reportar (crash,
+// taskkill /F), el SCM lo trata como falla y aplica `sc failure ...
+// actions= restart/...` (medido: reinicio en ~1 s). Límite: por atexit no se
+// conoce el código de salida del programa; se reporta NO_ERROR.
+// EN: Windows service support, same .exe in console or service mode. Detected
+// by parent == services.exe (NtQueryInformationProcess, not Toolhelp: Smart
+// App Control blocks unsigned exes that enumerate processes). The blocking
+// dispatcher runs in its own thread; Nyx's main stays on the main thread.
+// STOP/SHUTDOWN/PRESHUTDOWN -> STOP_PENDING + OS_SIGTERM through the console
+// handler's slot; STOPPED is reported at exit (atexit, or explicit before
+// persist.c's _Exit).
+// ===========================================================================
+typedef struct {
+    LONG_PTR  ExitStatus;
+    PVOID     PebBaseAddress;
+    ULONG_PTR AffinityMask;
+    LONG_PTR  BasePriority;
+    ULONG_PTR UniqueProcessId;
+    ULONG_PTR InheritedFromUniqueProcessId;
+} os_win32_pbi;
+typedef LONG (NTAPI *os_win32_nt_qip_fn)(HANDLE, int, PVOID, ULONG, PULONG);
+
+// Tope de espera a que ServiceMain reporte RUNNING (el SCM da 30 s al
+// dispatcher; si no pasa, seguimos como proceso normal en vez de colgar).
+#define OS_WIN32_SVC_START_WAIT_MS 30000
+// Pista de espera al parar: el SCM la usa para saber cuánto puede tardar el
+// cierre (serve drena hasta NYX_SERVE_DRAIN_SECS); no mata al proceso por ella.
+#define OS_WIN32_SVC_STOP_HINT_MS 30000
+
+static SERVICE_STATUS_HANDLE g_svc_h;
+static SERVICE_STATUS g_svc_st;
+static SRWLOCK g_svc_lock = SRWLOCK_INIT;   // SetServiceStatus desde dispatcher y salida
+static HANDLE g_svc_running_ev;             // ServiceMain ya reportó RUNNING (o falló)
+static volatile LONG g_svc_active;          // este proceso ES un servicio
+static volatile LONG g_svc_stopped;         // STOPPED ya reportado (idempotente)
+static wchar_t g_svc_name[] = L"";          // OWN_PROCESS: el SCM ignora el nombre
+
+// Siempre bajo g_svc_lock. El checkpoint sube en los estados pendientes.
+static void os_win32_svc_report(DWORD state, DWORD exit_code, DWORD wait_hint) {
+    static DWORD check = 1;
+    if (!g_svc_h) return;
+    g_svc_st.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+    g_svc_st.dwCurrentState = state;
+    g_svc_st.dwWin32ExitCode = exit_code;
+    g_svc_st.dwWaitHint = wait_hint;
+    g_svc_st.dwControlsAccepted = state == SERVICE_RUNNING
+        ? (SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_PRESHUTDOWN) : 0;
+    g_svc_st.dwCheckPoint = (state == SERVICE_RUNNING || state == SERVICE_STOPPED) ? 0 : check++;
+    SetServiceStatus(g_svc_h, &g_svc_st);
+}
+
+// Pública (nyx_os_win32.h): la llama persist.c antes de _Exit(0); y atexit.
+void nyx_os_win32_svc_stopped(int code) {
+    if (!g_svc_active) return;
+    if (InterlockedCompareExchange(&g_svc_stopped, 1, 0) != 0) return;
+    AcquireSRWLockExclusive(&g_svc_lock);
+    if (code) g_svc_st.dwServiceSpecificExitCode = (DWORD)code;
+    os_win32_svc_report(SERVICE_STOPPED, code ? ERROR_SERVICE_SPECIFIC_ERROR : NO_ERROR, 0);
+    ReleaseSRWLockExclusive(&g_svc_lock);
+}
+static void __cdecl os_win32_svc_atexit(void) { nyx_os_win32_svc_stopped(0); }
+
+static DWORD WINAPI os_win32_svc_ctrl(DWORD ctrl, DWORD type, LPVOID data, LPVOID ctx) {
+    (void)type; (void)data; (void)ctx;
+    switch (ctrl) {
+        case SERVICE_CONTROL_STOP:
+        case SERVICE_CONTROL_SHUTDOWN:
+        case SERVICE_CONTROL_PRESHUTDOWN: {
+            AcquireSRWLockExclusive(&g_svc_lock);
+            os_win32_svc_report(SERVICE_STOP_PENDING, NO_ERROR, OS_WIN32_SVC_STOP_HINT_MS);
+            ReleaseSRWLockExclusive(&g_svc_lock);
+            PVOID p = g_ctrl_slot[os_win32_ctrl_slot(OS_SIGTERM)];
+            if (p == NULL) {
+                // Sin manejador: SIGTERM por defecto = terminar (como en consola).
+                nyx_os_win32_svc_stopped(0);
+                ExitProcess(0);
+            }
+            if (p == OS_WIN32_SIG_IGNORED) {
+                // Ignorada: el servicio sigue; no dejar al SCM en STOP_PENDING.
+                AcquireSRWLockExclusive(&g_svc_lock);
+                os_win32_svc_report(SERVICE_RUNNING, NO_ERROR, 0);
+                ReleaseSRWLockExclusive(&g_svc_lock);
+                return NO_ERROR;
+            }
+            ((os_sig_fn)p)(OS_SIGTERM);
+            return NO_ERROR;
+        }
+        case SERVICE_CONTROL_INTERROGATE:
+            return NO_ERROR;
+        default:
+            return ERROR_CALL_NOT_IMPLEMENTED;
+    }
+}
+
+static void WINAPI os_win32_svc_main(DWORD argc, LPWSTR* argv) {
+    (void)argc; (void)argv;
+    g_svc_h = RegisterServiceCtrlHandlerExW(g_svc_name, os_win32_svc_ctrl, NULL);
+    if (g_svc_h) {
+        AcquireSRWLockExclusive(&g_svc_lock);
+        os_win32_svc_report(SERVICE_RUNNING, NO_ERROR, 0);
+        ReleaseSRWLockExclusive(&g_svc_lock);
+    }
+    SetEvent(g_svc_running_ev);
+    // Vuelve: el servicio sigue RUNNING hasta que se reporte STOPPED.
+}
+
+static DWORD WINAPI os_win32_svc_dispatcher(LPVOID unused) {
+    (void)unused;
+    SERVICE_TABLE_ENTRYW table[] = { { g_svc_name, os_win32_svc_main }, { NULL, NULL } };
+    // Bloquea hasta que el servicio para. Falla (ERROR_FAILED_SERVICE_
+    // CONTROLLER_CONNECT) si no nos lanzó el SCM: despertar al constructor.
+    if (!StartServiceCtrlDispatcherW(table)) {
+        InterlockedExchange(&g_svc_active, 0);
+        SetEvent(g_svc_running_ev);
+    }
+    return 0;
+}
+
+static int os_win32_parent_is_services(void) {
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    if (!nt) return 0;
+    os_win32_nt_qip_fn q = (os_win32_nt_qip_fn)(void*)GetProcAddress(nt, "NtQueryInformationProcess");
+    if (!q) return 0;
+    os_win32_pbi pbi; ULONG len = 0;
+    if (q(GetCurrentProcess(), 0 /* ProcessBasicInformation */, &pbi, sizeof pbi, &len) != 0) return 0;
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pbi.InheritedFromUniqueProcessId);
+    if (!h) return 0;
+    wchar_t path[MAX_PATH], want[MAX_PATH + 16];
+    DWORD n = MAX_PATH;
+    int ok = 0;
+    if (QueryFullProcessImageNameW(h, 0, path, &n) && GetSystemDirectoryW(want, MAX_PATH) > 0) {
+        wcscat(want, L"\\services.exe");
+        ok = _wcsicmp(path, want) == 0;
+    }
+    CloseHandle(h);
+    return ok;
+}
+
+// Constructor (antes de main, como el del invalid-parameter handler): en
+// consola solo cuesta una consulta de padre y vuelve; no toca el GC.
+__attribute__((constructor)) static void os_win32_svc_init(void) {
+    if (!os_win32_parent_is_services()) return;
+    g_svc_running_ev = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!g_svc_running_ev) return;
+    InterlockedExchange(&g_svc_active, 1);
+    HANDLE th = CreateThread(NULL, 0, os_win32_svc_dispatcher, NULL, 0, NULL);
+    if (!th) { InterlockedExchange(&g_svc_active, 0); return; }
+    CloseHandle(th);
+    WaitForSingleObject(g_svc_running_ev, OS_WIN32_SVC_START_WAIT_MS);
+    if (g_svc_active) atexit(os_win32_svc_atexit);
+}
+
 // El CRT implementa signal() para SEIS señales; las demás dan EINVAL.
 // OS_SIGWINCH (28) NO EXISTE en Windows (el resize de consola llega como
 // WINDOW_BUFFER_SIZE_EVENT en el input handle, otro camino) -> -EINVAL.

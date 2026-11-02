@@ -10,6 +10,9 @@
 #include "runtime-arrays.h"
 #include "strings.h"
 #include "os/nyx_os.h"
+#ifdef _WIN32
+#include "os/nyx_os_win32.h"   // nyx_os_win32_svc_stopped (W6 Task 5)
+#endif
 
 // nyx_crc32_bytes, nyx_rename_file y nyx_string_from_bytes se mudaron a
 // strings.c y file-io.c (2026-09-24): son C puro sin señales ni procesos, y esta
@@ -51,6 +54,11 @@ static int64_t nyx_shutdown_drain_cb(int64_t sig) {
     // se vacían buffers de otros threads. El contrato observable —el proceso
     // termina con 0 después del closure— no cambia; lo que cambia es DÓNDE
     // corre el closure.
+#ifdef _WIN32
+    // W6 Task 5 (2026-11-02): _Exit no corre atexit, así que si somos un
+    // servicio de Windows se reporta STOPPED acá, antes de salir.
+    nyx_os_win32_svc_stopped(0);
+#endif
     _Exit(0);
     return 0;
 }

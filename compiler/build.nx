@@ -3238,11 +3238,14 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
         // Un símbolo nyx_regex_* sin resolver en Windows no es un bug del programa:
         // es el runtime que todavía no trae motor de regex ahí. Lo decimos en claro
         // (también cubre un import indirecto, vía otro módulo o [lib] modules).
-        if win and txt.contains("nyx_regex_") {
+        // Sin la atribución genérica: diría «si es de la stdlib, es un bug de Nyx»,
+        // y acá ya sabemos que no lo es (hallazgo de la laptop, 2026-11-02).
+        let falta_regex: bool = win and txt.contains("nyx_regex_")
+        if falta_regex {
             err_line("error: std/regex todavía no está disponible en Windows; este programa lo usa (directamente o a través de otro módulo)")
         }
         err_line("error: clang link failed:")
-        clang_failure_attribution(txt, config.main_file)
+        if not falta_regex { clang_failure_attribution(txt, config.main_file) }
         err_print(txt)
         return false
     }

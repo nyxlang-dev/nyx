@@ -26,4 +26,11 @@
 // => untouched. Runs world-stopped under the GC lock.
 void nyx_os_win32_sp_correct(void** sp_ptr, uint32_t tid);
 
+// Servicio de Windows (W6 Task 5, 2026-11-02): reporta SERVICE_STOPPED al
+// administrador de servicios. No-op si el proceso no corre como servicio e
+// idempotente. Lo llama persist.c antes de su _Exit(0) (que no corre atexit);
+// la salida normal (exit) la cubre un atexit que instala el propio os_win32.c.
+// EN: reports SERVICE_STOPPED to the SCM; no-op outside a service, idempotent.
+void nyx_os_win32_svc_stopped(int code);
+
 #endif // NYX_OS_WIN32_H
