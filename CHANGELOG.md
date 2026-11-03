@@ -48,7 +48,8 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   para la herramienta y el filtro del protocolo LSP salvo `--lsp` o `NYX_CHECK_PROTOCOL=1`. Guarda: +3 checks en
   `run_build_manifest.sh` (driver sin wrapper, como en Windows). Ronda 1 (laptop): el `END\r\n` de Windows se colaba
   por el filtro y cada línea salía con `\r\r\n`; el driver quita el `\r` final antes de comparar e imprimir, y un
-  archivo sano no imprime nada (+1 check) [arco: win-cross].
+  archivo sano no imprime nada (+1 check). Ronda 2 ratificada en Windows (Git Bash y PowerShell, por volcado de
+  bytes): sin `END`, sin `\r\r`, `--lsp` idéntico a `nyx_check` directo [arco: win-cross].
 
 - **`rename_file` en Windows reemplaza el destino si existe, como en Linux** — llamaba al `rename()` de la UCRT,
   que no pasa `MOVEFILE_REPLACE_EXISTING` y fallaba con EEXIST, así que el patrón «escribir `.tmp` y renombrar
