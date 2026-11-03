@@ -553,6 +553,33 @@ EOF
     fi
 fi
 
+# ── `nyx check|fmt` por el driver (Windows no tiene wrapper) ──
+# nyx_check y nyx_fmt leen NYX_SRC y NUNCA sus argumentos: el driver pasaba la
+# ruta como argumento y `nyx check roto.nx` daba rc 0 sobre un script.nx
+# inexistente (laptop, win-cross T5, 2026-11-03). En Linux el wrapper lo hace
+# bien; acá se prueba el DRIVER (nyx_build) con NYX_HOME=repo, como en Windows.
+P="$GATE_TMP/chk"; rm -rf "$P"; mkdir -p "$P"
+printf 'fn main() -> int {\n    let x: int = "hola"\n    return 0\n}\n' > "$P/roto.nx"
+printf 'fn main() -> int {\n  let   y:int=1\n    return y\n}\n' > "$P/feo.nx"
+nb "$P" check roto.nx
+if [ "$RC" -ne 0 ] && grep -q "NYX1003" "$GATE_TMP/out" && ! grep -qE '^(SYM|DEF|DIAG):|^END$' "$GATE_TMP/out"; then
+    ok "driver-check-roto — nyx check <archivo> revisa ESE archivo: rc $RC con el diagnóstico, sin protocolo LSP"
+else
+    bad "driver-check-roto — rc $RC: el driver no revisó roto.nx (falso verde) o dejó pasar el protocolo" "driver-check-roto"; muestra
+fi
+nb "$P" check no-existe.nx
+if [ "$RC" -ne 0 ] && grep -q "no existe el archivo" "$GATE_TMP/out"; then
+    ok "driver-check-inexistente — archivo inexistente: rc $RC y lo dice"
+else
+    bad "driver-check-inexistente — rc $RC sin «no existe el archivo»" "driver-check-inexistente"; muestra
+fi
+nb "$P" fmt feo.nx
+if [ "$RC" -eq 0 ] && grep -q "^    let y: int = 1$" "$GATE_TMP/out"; then
+    ok "driver-fmt — nyx fmt <archivo> imprime el código formateado"
+else
+    bad "driver-fmt — rc $RC: no imprimió el código formateado de feo.nx" "driver-fmt"; muestra
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  BUILD MANIFEST: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

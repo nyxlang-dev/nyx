@@ -1538,6 +1538,26 @@ fn correr_programa(argv: Array) -> int {
     }
 }
 
+// La raíz del proyecto que contiene a `dir`: el ancestro más cercano con nyx.toml,
+// o "" si no hay (la misma búsqueda hacia arriba de scripts/nyx). Acepta "/" y
+// "\" como separadores, porque en Windows getcwd() devuelve la forma nativa.
+fn raiz_del_proyecto(dir: String) -> String {
+    var d: String = dir
+    while d != "" {
+        if file_exists(d + "/nyx.toml") { return d }
+        var corte: int = -1
+        var i: int = 0
+        while i < d.length() {
+            let c: int = d.charAt(i)
+            if c == 47 or c == 92 { corte = i }
+            i = i + 1
+        }
+        if corte <= 0 { return "" }
+        d = d.substring(0, corte)
+    }
+    return ""
+}
+
 // Orden por bytes (inserción: las listas son cortas, unos pocos nombres o
 // archivos). sort_str es del prelude, que este módulo no carga.
 fn texto_menor(a: String, b: String) -> bool {
@@ -3990,10 +4010,68 @@ fn main() -> int {
             }
             return 1
         }
-        var targv: Array = [tbin]
+        if command == "test" {
+            var targv: Array = [tbin]
+            var ti: int = 2
+            while ti < args.length() { targv.push(args[ti]); ti = ti + 1 }
+            return correr_programa(targv)
+        }
+        // check|fmt: las herramientas leen NYX_SRC (con script.nx de respaldo) y NUNCA
+        // sus argumentos. Pasar la ruta como argumento era un falso verde: `nyx check
+        // roto.nx` daba rc 0 revisando un script.nx inexistente (laptop, win-cross T5,
+        // 2026-11-03). Misma lógica que la rama check|vet|fmt de scripts/nyx: destino,
+        // existencia, NYX_PROJECT_DIR y el filtro del protocolo LSP de nyx_check.
+        var proto: bool = getenv("NYX_CHECK_PROTOCOL") == "1"
+        var destino: String = ""
         var ti: int = 2
-        while ti < args.length() { targv.push(args[ti]); ti = ti + 1 }
-        return correr_programa(targv)
+        while ti < args.length() {
+            let a: String = args[ti]
+            if command == "check" and a == "--lsp" { proto = true }
+            else if destino == "" { destino = a }
+            ti = ti + 1
+        }
+        if destino == "" {
+            if file_exists("nyx.toml") and file_exists("src/main.nx") { destino = "src/main.nx" } else { destino = "script.nx" }
+        }
+        if not file_exists(destino) {
+            err_line("error: no existe el archivo '" + destino + "'")
+            err_line("  Uso: nyx " + command + " [archivo.nx]   (sin argumento usa src/main.nx)")
+            return 1
+        }
+        var tenv: Array = [["NYX_SRC", destino], ["NYX_HOME", thome]]
+        if getenv("NYX_PROJECT_DIR") == "" {
+            let pd: String = raiz_del_proyecto(getcwd())
+            if pd != "" { tenv.push(["NYX_PROJECT_DIR", pd]) }
+        }
+        var o = spawn_opts()
+        o.env = tenv
+        if command == "check" and not proto { o.stdout = Stdio.Pipe }
+        term_flush()
+        match try_spawn([tbin], o) {
+            Result.Ok(c) => {
+                if command == "check" and not proto {
+                    match try_child_collect(c) {
+                        Result.Ok(r) => {
+                            let ls: Array = r.stdout.split("\n")
+                            var li: int = 0
+                            while li < ls.length() {
+                                let l: String = ls[li]
+                                let es_proto: bool = l.startsWith("SYM:") or l.startsWith("DEF:") or l.startsWith("DIAG:") or l == "END"
+                                if not es_proto and not (li == ls.length() - 1 and l == "") { print(l) }
+                                li = li + 1
+                            }
+                            return r.code
+                        }
+                        Result.Err(e) => { err_line("error: " + e.msg); return 1 }
+                    }
+                }
+                match try_child_wait(c) {
+                    Result.Ok(rc) => { return rc }
+                    Result.Err(e) => { err_line("error: " + e.msg); return 1 }
+                }
+            }
+            Result.Err(e) => { err_line(tbin + ": " + e.msg); return 127 }
+        }
     }
     // Flags: --release / --target <triple> (en cualquier orden tras el comando)
     //

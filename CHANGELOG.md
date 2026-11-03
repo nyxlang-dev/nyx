@@ -40,6 +40,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`nyx check` y `nyx fmt` por el driver (Windows) revisan el archivo pedido** — el despacho de 1bff4bca pasaba la
+  ruta como argumento, pero `nyx_check` y `nyx_fmt` leen `NYX_SRC` (con `script.nx` de respaldo) y nunca sus
+  argumentos: `nyx check roto.nx` daba rc 0 sobre un `script.nx` inexistente y `nyx fmt` no imprimía nada (falso
+  verde; laptop, win-cross T5). El driver hace ahora lo mismo que la rama `check|vet|fmt` de `scripts/nyx`: destino
+  (argumento, `src/main.nx` en un proyecto, `script.nx`), rc 1 si no existe, `NYX_SRC`/`NYX_HOME`/`NYX_PROJECT_DIR`
+  para la herramienta y el filtro del protocolo LSP salvo `--lsp` o `NYX_CHECK_PROTOCOL=1`. Guarda: +3 checks en
+  `run_build_manifest.sh` (driver sin wrapper, como en Windows) [arco: win-cross].
+
 - **`rename_file` en Windows reemplaza el destino si existe, como en Linux** — llamaba al `rename()` de la UCRT,
   que no pasa `MOVEFILE_REPLACE_EXISTING` y fallaba con EEXIST, así que el patrón «escribir `.tmp` y renombrar
   encima» de la escritura atómica no andaba (nyxerp, 2026-11-02). Nuevo `os_fs_rename` en la capa `os_*`
