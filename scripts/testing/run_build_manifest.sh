@@ -573,6 +573,13 @@ if [ "$RC" -ne 0 ] && grep -q "no existe el archivo" "$GATE_TMP/out"; then
 else
     bad "driver-check-inexistente — rc $RC sin «no existe el archivo»" "driver-check-inexistente"; muestra
 fi
+printf 'fn main() -> int {\n    return 0\n}\n' > "$P/sano.nx"
+nb "$P" check sano.nx
+if [ "$RC" -eq 0 ] && [ ! -s "$GATE_TMP/out" ]; then
+    ok "driver-check-sano — archivo sin errores: rc 0 y NINGUNA salida (el END del protocolo tampoco)"
+else
+    bad "driver-check-sano — rc $RC o salida de más ($(wc -c < "$GATE_TMP/out") bytes): se cuela el protocolo" "driver-check-sano"; muestra
+fi
 nb "$P" fmt feo.nx
 if [ "$RC" -eq 0 ] && grep -q "^    let y: int = 1$" "$GATE_TMP/out"; then
     ok "driver-fmt — nyx fmt <archivo> imprime el código formateado"

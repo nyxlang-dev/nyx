@@ -4055,7 +4055,10 @@ fn main() -> int {
                             let ls: Array = r.stdout.split("\n")
                             var li: int = 0
                             while li < ls.length() {
-                                let l: String = ls[li]
+                                var l: String = ls[li]
+                                // En Windows nyx_check escribe END\r\n: tras partir por \n queda "END\r",
+                                // que no es "END", y print le sumaba otro \r\n (laptop, T5 ronda 1).
+                                if l.length() > 0 and l.charAt(l.length() - 1) == 13 { l = l.substring(0, l.length() - 1) }
                                 let es_proto: bool = l.startsWith("SYM:") or l.startsWith("DEF:") or l.startsWith("DIAG:") or l == "END"
                                 if not es_proto and not (li == ls.length() - 1 and l == "") { print(l) }
                                 li = li + 1
