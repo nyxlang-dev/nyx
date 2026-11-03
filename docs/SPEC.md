@@ -3284,11 +3284,11 @@ kill_process(pid, 15)  // send signal (15=SIGTERM)
 | `stat(path)` | `(String) -> Array` | [size, mode, mtime, is_dir, is_file] |
 | `isatty(fd)` | `(int) -> int` | 1 si es terminal, 0 si no |
 | `getpid()` | `-> int` | PID del proceso |
-| `kill_process(pid, sig)` | `(int, int) -> int` | Enviar signal |
+| `kill_process(pid, sig)` | `(int, int) -> int` | Enviar signal (0 / -1). Windows: solo `0` (¿existe?), `9` y `15` (TerminateProcess); otra señal da -1 |
 
 > **GC Safety**: After `fork()`, the child must call `execvp()` immediately without allocating GC memory. The fork+exec pattern is safe.
 
-> **Windows (W5, Procesos A)**: `exec`, `exec_code`, `getpid`, `getcwd`, `chdir`, `stat`, `isatty`, `open_fd`, `close_fd`, `dup2`, `fsync` y `fdatasync` compilan para `x86_64-pc-windows-msvc`. `fork`, `execvp`, `waitpid`, `kill_process` y `pipe_new` siguen siendo solo-posix (error de compilación claro en el target Windows; el reemplazo portable es el `spawn` de Procesos B). Diferencias en Windows: `exec()` normaliza `\r\n` a `\n`; `exec_code()` devuelve 127 para un comando inexistente cuando la línea es simple (sin `& | < > ^ %`), y el código crudo del shell en otro caso; `stat` sintetiza el modo (directorio `040755`, archivo `0100644`, o `0100444` si es de solo lectura); los fds de `open_fd` son fds de la CRT (binarios, no heredables), no sockets.
+> **Windows (W5, Procesos A)**: `exec`, `exec_code`, `getpid`, `getcwd`, `chdir`, `stat`, `isatty`, `open_fd`, `close_fd`, `dup2`, `fsync`, `fdatasync` y (desde W6 Task 7) `kill_process` compilan para `x86_64-pc-windows-msvc`. `fork`, `execvp`, `waitpid` y `pipe_new` siguen siendo solo-posix (error de compilación claro en el target Windows; el reemplazo portable es el `spawn` de Procesos B). `kill_process` en Windows honra solo `sig` 0 (existe: 0, no existe: -1), 9 y 15 (ambos `TerminateProcess`, sin aviso al proceso ni flush, como SIGKILL); cualquier otra señal devuelve -1 en ejecución en vez de fingir la entrega. Un proceso puede terminarse a sí mismo con `kill_process(getpid(), 9)`. Diferencias en Windows: `exec()` normaliza `\r\n` a `\n`; `exec_code()` devuelve 127 para un comando inexistente cuando la línea es simple (sin `& | < > ^ %`), y el código crudo del shell en otro caso; `stat` sintetiza el modo (directorio `040755`, archivo `0100644`, o `0100444` si es de solo lectura); los fds de `open_fd` son fds de la CRT (binarios, no heredables), no sockets.
 
 ---
 

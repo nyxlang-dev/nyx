@@ -3751,6 +3751,38 @@ int64_t os_proc_getpid(void) {
     return (int64_t)GetCurrentProcessId();
 }
 
+// Ver el contrato en nyx_os.h. sig 0 abre con QUERY_LIMITED (alcanza para
+// cualquier proceso visible); 9/15 con TERMINATE. Un pid inexistente da
+// ERROR_INVALID_PARAMETER -> -ESRCH; uno ajeno sin derechos, ACCESS_DENIED ->
+// -EPERM (existe, pero no es nuestro: igual que posix). El propio proceso
+// (pid == getpid) se termina a sí mismo: es el caso del puente (salir de golpe
+// para que la recuperación del servicio arranque la otra versión).
+// EN: see nyx_os.h. Nonexistent pid -> -ESRCH, foreign pid -> -EPERM; a
+// process may terminate itself (the nyxerp bridge's "exit hard" path).
+int os_proc_kill_pid(int64_t pid, int sig) {
+    if (pid <= 0 || pid > 0xFFFFFFFFLL) return -ESRCH;
+    if (sig != 0 && sig != 9 && sig != 15) return -EINVAL;
+    DWORD want = (sig == 0) ? PROCESS_QUERY_LIMITED_INFORMATION : PROCESS_TERMINATE;
+    HANDLE h = OpenProcess(want, FALSE, (DWORD)pid);
+    if (!h) {
+        DWORD e = GetLastError();
+        if (e == ERROR_INVALID_PARAMETER) return -ESRCH;
+        if (e == ERROR_ACCESS_DENIED) return -EPERM;
+        return win_last_errno();
+    }
+    int rc = 0;
+    if (sig == 0) {
+        // Abrir no basta: un proceso ya terminado sigue abriéndose mientras
+        // alguien tenga un handle. posix kill(pid, 0) dice ESRCH en ese caso.
+        DWORD code = 0;
+        if (GetExitCodeProcess(h, &code) && code != STILL_ACTIVE) rc = -ESRCH;
+    } else if (!TerminateProcess(h, 128 + sig)) {
+        rc = win_last_errno();
+    }
+    CloseHandle(h);
+    return rc;
+}
+
 int os_fs_getcwd(char* buf, size_t cap) {
     if (!buf || cap == 0) return -EINVAL;
     DWORD r = GetCurrentDirectoryA((DWORD)cap, buf);

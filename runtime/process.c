@@ -1,12 +1,13 @@
 // ============================================
 // PROCESS.C — POSIX process control for Nyx
 // ============================================
-// Provides fork/exec/wait/pipe/kill: the part of process control with NO Win32
+// Provides fork/exec/wait/pipe: the part of process control with NO Win32
 // equivalent (Procesos B, con spec aparte). Este archivo NO se compila en
 // Windows. Lo "trivial" (getpid/getcwd/chdir/stat/isatty/open_fd/close_fd/
-// dup2) vive en file-io.c sobre la capa os_* desde W5 (Procesos A).
-// EN: fork/exec/wait/pipe/kill only; not built on Windows. The portable
-// process-state builtins moved to file-io.c on top of os_* (W5 Procesos A).
+// dup2) vive en file-io.c sobre la capa os_* desde W5 (Procesos A), y
+// kill_process también desde W6 Task 7 (os_proc_kill_pid: win32 honra 0/9/15).
+// EN: fork/exec/wait/pipe only; not built on Windows. The portable
+// process-state builtins (and kill_process) live in file-io.c on top of os_*.
 
 #include "process.h"
 
@@ -84,6 +85,3 @@ nyx_array_t* nyx_pipe(void) {
     return arr;
 }
 
-int64_t nyx_kill(int64_t pid, int64_t sig) {
-    return (int64_t)kill((pid_t)pid, (int)sig);
-}

@@ -223,6 +223,18 @@ try {
     }
     Ok "Prerequisites found (target $Triple)"
 
+    # A leftover $OldDir from an earlier install has to go before the swap. If a
+    # process still runs from it, removing it fails: find that out NOW, not after
+    # a minute of compiling and linking (W6 Task 8 round 1).
+    if (Test-Path -LiteralPath $OldDir) {
+        try { Remove-Item -LiteralPath $OldDir -Recurse -Force }
+        catch {
+            Fail ("could not remove $OldDir, left by an earlier install: a nyx process is still running from it " +
+                "($($_.Exception.Message.TrimEnd('.'))). Close it and run the installer again. Nothing was built " +
+                "and your current install in $Prefix was not changed.")
+        }
+    }
+
     # ---- Source --------------------------------------------------------------
     if ($Source -ne '') {
         if (-not (Test-Path -LiteralPath $Source -PathType Container)) { Fail "-Source: no such directory: $Source" }
@@ -385,7 +397,7 @@ try {
         $swapped = $true
     }
     catch {
-        Fail "could not $step (is a nyx process still running from it?): $($_.Exception.Message). The previous install was left intact in $Prefix."
+        Fail "could not $step (is a nyx process still running from it?): $($_.Exception.Message.TrimEnd('.')). Your current install in $Prefix was not changed."
     }
     if (Test-Path -LiteralPath $OldDir) {
         try { Remove-Item -LiteralPath $OldDir -Recurse -Force }
@@ -433,6 +445,15 @@ $installed = (Get-Content -LiteralPath (Join-Path $Prefix 'VERSION') -Raw).Trim(
 Write-Host ''
 Write-Host "  Nyx $installed installed successfully!" -ForegroundColor Green
 if ($pathNote -ne '') { Write-Host "  $pathNote" -ForegroundColor Yellow }
+# nyx.exe finds its install through NYX_HOME or, without it, %USERPROFILE%\.nyx
+# only (compiler/build.nx build_nyx_home); with any other -Prefix every command
+# fails with "NYX_HOME not set" unless NYX_HOME points here (W6 Task 8 round 1).
+$defaultPrefix = ''
+if ($env:USERPROFILE) { $defaultPrefix = [IO.Path]::GetFullPath((Join-Path $env:USERPROFILE '.nyx')).TrimEnd('\') }
+if ($Prefix -ine $defaultPrefix -and $env:NYX_HOME -ine $Prefix) {
+    Write-Host "  This is not the default location ($defaultPrefix): set NYX_HOME=$Prefix" -ForegroundColor Yellow
+    Write-Host '  in every terminal where you run nyx, or nyx will not find this install.' -ForegroundColor Yellow
+}
 Write-Host ''
 Write-Host '  Next steps:'
 Write-Host '    nyx init hola'

@@ -536,12 +536,22 @@ int     os_proc_raw_close(int64_t raw);
 // ES: ESTADO del proceso y de los fds crudos (W5 Procesos A) -- lo "trivial"
 // de process.c (getpid/getcwd/chdir/stat/open_fd/dup2) que ya no usa
 // headers posix directos, para que los builtins correspondientes compilen
-// también en win32. fork/execvp/waitpid/kill_process/pipe_new NO pasan por
-// aquí: no tienen equivalente Win32 con la misma semántica (Procesos B).
+// también en win32. fork/execvp/waitpid/pipe_new NO pasan por aquí: no tienen
+// equivalente Win32 con la misma semántica (Procesos B).
 // EN: process state and raw-fd helpers (W5 Procesos A): the "trivial" part
 // of process.c, now free of direct posix headers so the builtins compile on
-// win32 too. fork/execvp/waitpid/kill_process/pipe_new stay out of the layer.
+// win32 too. fork/execvp/waitpid/pipe_new stay out of the layer.
 int64_t os_proc_getpid(void);                       // id del proceso actual (siempre > 0)
+// kill_process (W6 Task 7, 2026-11-03). posix: kill(2) tal cual. win32: el
+// SUBCONJUNTO que Windows puede honrar con la misma semántica — sig 0 (¿existe
+// el proceso?), y 9/15 (SIGKILL/SIGTERM: TerminateProcess, sin aviso ni flush,
+// como SIGKILL en posix). Cualquier otra señal da -EINVAL: no se finge una
+// entrega que Windows no hace. Por qué existe: el puente de nyxerp lo usa
+// detrás de un `if` de plataforma y una guarda de COMPILACIÓN no se esquiva
+// con un `if` de ejecución. 0 / -errno (-ESRCH, -EPERM, -EINVAL).
+// EN: posix kill(2); win32 honours sig 0 (exists?) and 9/15 (TerminateProcess)
+// and rejects everything else with -EINVAL instead of faking delivery.
+int os_proc_kill_pid(int64_t pid, int sig);
 // cwd en buf (NUL-terminado, UTF-8/ANSI crudo). 0 / -errno (-ERANGE si no cabe).
 // win32: separadores tal cual los da GetCurrentDirectoryA (con '\\').
 int os_fs_getcwd(char* buf, size_t cap);

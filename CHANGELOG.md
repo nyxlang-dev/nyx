@@ -9,7 +9,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.ps1` falla en el acto si un proceso retiene la instalación anterior** (`.nyx.old` en uso) en vez de
+  descubrirlo tras un minuto de compilar y enlazar; el mensaje nombra el paso que falló y «your current install was not
+  changed»; y **avisa de `NYX_HOME` cuando se instala con `-Prefix`** distinto de `%USERPROFILE%\.nyx`, porque el
+  driver no busca su instalación junto al ejecutable (ficha ALTA en `TASKS.md`). Parche de la laptop, W6 Task 8
+  ronda 1 [arco: w6-windows].
+
 ### Added
+
+- **`kill_process(pid, sig)` compila para Windows** (W6 Task 7, pedido del puente de nyxerp 0.3.8, que lo llama
+  detrás de un `if` de plataforma: una guarda de compilación no se esquiva con un `if` de ejecución). Va por la
+  capa os (`os_proc_kill_pid`; `os_proc_kill` ya era el del handle de spawn): en posix es `kill(2)` tal cual; en win32 honra solo `sig` 0 (¿existe el proceso?),
+  9 y 15 (`TerminateProcess`, sin aviso ni flush, como SIGKILL) y devuelve -1 para cualquier otra señal en vez de
+  fingir la entrega. `fork`/`execvp`/`waitpid`/`pipe_new` siguen solo-posix. Test: `test-530-kill-process-cero`
+  (Linux) y `kill_process(getpid(), 0)` dentro de `tests/build-win/red-min` (gate cruzado) [arco: w6-windows].
 
 - **`std/rsa` entiende certificados X.509**: `rsa_sha256_verify`, `rsa_sha256_verify_b64` y `rsa_pss_sha256_verify`
   aceptan ahora un PEM `BEGIN CERTIFICATE` (la clave sale del primer certificado; sin cambiar firmas), y la nueva

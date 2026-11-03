@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **546 archivos / 545 ARM64** | +1 el 11-03 (`529`, X.509), +4 el 10-31 (`525`-`528`), +4 el 10-30 (`521`-`524`), +6 el 10-29 (`515`-`520`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **547 archivos / 546 ARM64** | +1 el 11-03 (`530`, kill_process señal 0), +1 el 11-03 (`529`, X.509), +4 el 10-31 (`525`-`528`), +4 el 10-30 (`521`-`524`), +6 el 10-29 (`515`-`520`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **406** | +1 el 11-03; -2 el 11-01 (pasaron a ai-first 48); +17 el 10-31; +5 el 10-30; altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

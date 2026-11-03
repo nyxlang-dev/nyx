@@ -461,7 +461,7 @@ int64_t nyx_rename_file(const char* old_path, const char* new_path) {
 // ===== Estado de proceso y fds crudos (W5 Procesos A) =====
 // Antes vivían en process.c (posix-only). Ahora van por la capa os_* para que
 // getpid/getcwd/chdir/stat/isatty/open_fd/close_fd/dup2 compilen en win32;
-// fork/execvp/waitpid/pipe_new/kill_process siguen en process.c.
+// kill_process también (W6 Task 7); fork/execvp/waitpid/pipe_new siguen en process.c.
 // Contratos Nyx-facing idénticos a los de siempre (0/-1, "" o [] en fallo).
 // EN: process state / raw fds moved here from process.c, on top of os_*.
 #include "process.h"
@@ -509,6 +509,12 @@ int64_t nyx_close_fd(int64_t fd) {
 
 int64_t nyx_getpid(void) {
     return os_proc_getpid();
+}
+
+// kill_process(pid, sig): 0 / -1, como kill(2). En win32 solo 0, 9 y 15
+// (ver os_proc_kill_pid en nyx_os.h); el resto da -1 sin fingir la entrega.
+int64_t nyx_kill(int64_t pid, int64_t sig) {
+    return os_proc_kill_pid(pid, (int)sig) == 0 ? 0 : -1;
 }
 
 // Open file returning raw fd. mode: 0=read, 1=write(trunc), 2=append

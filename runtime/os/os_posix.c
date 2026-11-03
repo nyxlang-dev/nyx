@@ -2339,6 +2339,10 @@ int64_t os_proc_getpid(void) {
     return (int64_t)getpid();
 }
 
+int os_proc_kill_pid(int64_t pid, int sig) {
+    return kill((pid_t)pid, sig) == 0 ? 0 : -errno;
+}
+
 int os_fs_getcwd(char* buf, size_t cap) {
     if (!buf || cap == 0) return -EINVAL;
     return getcwd(buf, cap) != NULL ? 0 : -errno;

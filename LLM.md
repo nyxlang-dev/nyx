@@ -1049,8 +1049,10 @@ single `Error` struct.
   everywhere (posix 137; Windows leaves exit code 1). (5) With both streams on `Stdio.Pipe`, read them with
   `try_child_collect`, not "stdout to EOF, then stderr" (deadlocks if the child fills the stderr pipe). (6) exit
   code is `128 + signal` on posix when a signal killed the child. (7) wasm32-wasi: every call gives `Err`
-  `invalid` (95). The raw `fork`/`execvp`/`waitpid`/`pipe_new`/`kill_process` builtins stay on posix and are
-  rejected on Windows with a message pointing here. Recipes 64, 65, 151.
+  `invalid` (95). The raw `fork`/`execvp`/`waitpid`/`pipe_new` builtins stay on posix and are
+  rejected on Windows with a message pointing here. `kill_process(pid, sig)` DOES compile on Windows (W6 Task 7)
+  but only honours `sig` 0 (exists?), 9 and 15 (both `TerminateProcess`: no notice, no flush); any other signal
+  returns -1 at run time instead of pretending. Recipes 64, 65, 151.
   Also in `std/process`: `find_program(name) -> Option<String>` (the path `try_spawn` would run, searched the same way: PATH only, Windows also PATHEXT; `command -v` without a shell), `host_arch() -> String` (`"x86_64"`, `"aarch64"`, ... like `uname -m`; `""` if unknown), `host_os() -> String` (`"linux"`, `"darwin"`, `"windows"`, `"wasi"`: lowercase `uname -s`, from the OS layer, not from `%OS%`) and `cpu_count() -> int` (online cores like `nproc`, always >= 1). `nyx build` itself launches the compiler and clang through `std/process`: it no longer writes or runs a bash script.
 - **Temp dir and file locks** (`import "std/fs"`): `temp_dir() -> String` (`$TMPDIR` or `/tmp`; Windows `GetTempPath`; no trailing separator, not created; `""` on wasm), `try_lock_file(path, exclusive) -> Result<FileLock, Error>` (waits; shared when `exclusive` is false; creates the file if missing), `try_lock_file_nowait(path, exclusive) -> Result<Option<FileLock>, Error>` (`Ok(None)` = another holder conflicts), `unlock_file(l)`. POSIX uses `flock(2)` (coexists with `flock(1)`), Windows `LockFileEx`; released by `unlock_file` or at process exit, children do not inherit it.
 - **Serial port** (Linux, Windows; macOS without VID/PID): `import "std/serial"`.

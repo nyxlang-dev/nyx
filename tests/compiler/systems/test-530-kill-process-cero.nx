@@ -1,0 +1,15 @@
+// test-530 — kill_process con señal 0 pregunta si el proceso existe, sin
+// tocarlo: 0 para el propio proceso, -1 para un pid que no existe, -1 para una
+// señal inválida. Es el contrato que W6 Task 7 extendió a Windows (os_proc_kill_pid:
+// 0/9/15 honradas, el resto -1), así que el test fija la parte común.
+fn main() -> int {
+    let yo: int = getpid()
+    assert(yo > 0)
+    assert(kill_process(yo, 0) == 0)
+    // pid_max de Linux es 4194304 como mucho; 2000000000 no existe en ningún
+    // sistema real (y en Windows los pid caben en 32 bits igual).
+    assert(kill_process(2000000000, 0) == -1)
+    assert(kill_process(yo, 100000) == -1)
+    print("kill-process-cero OK")
+    return 0
+}
