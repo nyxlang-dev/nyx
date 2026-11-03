@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.41.0 -->
-<!-- nyx-stdlib: 3775771249-2162554 -->
+<!-- nyx-stdlib: 1408603158-2164490 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1108,7 +1108,7 @@ Tipos (6) y métodos (0):
 - `pub fn try_udp_join(fd: int, group: String, iface: String) -> Result<int, Error>` — Une el socket al grupo multicast IPv4 `group` ("224.0.0.251") por la interfaz de IP `iface` (de net_interfaces); "" deja elegir al kernel. El socket debe estar bindeado al puerto del grupo (try_udp_bind_shared en 0.0.0.0). Una interfaz por llamada: en un equipo con Ethernet y Wi-Fi, una unión por cada una.
 - `pub fn try_udp_leave(fd: int, group: String, iface: String) -> Result<int, Error>` — Sale del grupo multicast que try_udp_join había unido (mismos `group` e `iface`).
 - `pub fn try_udp_set_multicast_ttl(fd: int, ttl: int) -> Result<int, Error>` — TTL de los datagramas multicast que ENVÍA el socket (0..255; 1 = no sale de la red local, el valor de mDNS es 255).
-- `pub fn try_udp_set_multicast_loop(fd: int, on: bool) -> Result<int, Error>` — Si el socket recibe también lo multicast que él mismo envía (`on` = true, el valor por omisión del sistema). Hace falta true para hablar con otro proceso de la MISMA máquina.
+- `pub fn try_udp_set_multicast_loop(fd: int, on: bool) -> Result<int, Error>` — Si el socket recibe también lo multicast que él mismo envía (`on` = true, el valor por omisión del sistema). Hace falta true para hablar con otro proceso de la MISMA máquina. Portabilidad (medido): en Windows actúa del lado receptor; en Linux, del emisor.
 - `pub fn try_udp_set_multicast_iface(fd: int, iface: String) -> Result<int, Error>` — Interfaz (por su IP) por la que SALEN los datagramas multicast del socket; "" = la elige el kernel. Debe ser la misma por la que se unió el grupo.
 - `pub fn try_udp_set_broadcast(fd: int, on: bool) -> Result<int, Error>` — Permite enviar a direcciones de broadcast (255.255.255.255 o la de la subred) con try_udp_sendto; sin esto el envío da EACCES.
 - `pub fn try_ping(host: String, timeout_ms: int) -> Result<PingReply, Error>` — Un ping a `host` (nombre o IPv4) con plazo `timeout_ms`. Ok con la IP y el RTT en µs; Err "timeout" (110) si nadie contestó a tiempo, "permission" (13/1) si el sistema no deja abrir un socket ICMP (ver `net.ipv4.ping_group_range`), "not_found" si el nombre no resuelve. Un host que no responde ping no es necesariamente un host caído: muchos firewalls descartan ICMP.
@@ -1299,11 +1299,12 @@ Tipos (5) y métodos (0):
 
 ### `std/rsa`
 
-`import "std/rsa"` — 3 funciones:
+`import "std/rsa"` — 4 funciones:
 
 - `pub fn rsa_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
 - `pub fn rsa_sha256_verify_b64(public_key_pem: String, data: String, signature_b64: String) -> Result<bool, Error>`
 - `pub fn rsa_pss_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error>`
+- `pub fn x509_public_key_pem(cert_pem: String) -> Result<String, Error>`
 
 ### `std/uuid`
 

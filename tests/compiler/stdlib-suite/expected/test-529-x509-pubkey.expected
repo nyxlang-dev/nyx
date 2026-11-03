@@ -1,0 +1,21 @@
+cert v1.5: true
+cert b64: true
+cert pss: true
+cert datos cambiados: false
+cert firma de otra clave: false
+cert de otra clave: false
+cert vs firma de su clave: true
+cert ec: err invalid 22
+dos certs usa el primero: true
+dos certs no usa el segundo: false
+pubkey == publica.pem: ok igual
+pubkey otro == otra_publica.pem: ok igual
+pubkey ec == ec_publica.pem: ok igual
+pubkey de dos certs: ok igual
+verifica con la clave extraida: true
+pubkey de PUBLIC KEY: err invalid 22
+pubkey pem roto: err invalid 22
+pubkey vacio: err invalid 22
+pubkey cert truncado: err invalid 22
+verify pem roto: err invalid 22
+bucle: 30000

@@ -32,6 +32,10 @@ nyx_string* nyx_hmac_sha256(nyx_string* key, nyx_string* data);
 // (wasm). pss != 0: RSASSA-PSS; 0: PKCS#1 v1.5. Ver std/rsa.nx.
 int64_t nyx_rsa_sha256_verify(nyx_string* pem, nyx_string* data, nyx_string* sig, int64_t pss);
 
+// Clave pública del primer certificado X.509 de `pem`, en PEM SPKI. "" = PEM
+// ilegible / sin certificado; "W" = sin OpenSSL (wasm). Ver std/rsa.nx.
+nyx_string* nyx_x509_public_key_pem(nyx_string* pem);
+
 // Returns the MD5 hash of input as a lowercase hex string (32 chars).
 // NOTE: MD5 is cryptographically broken; use SHA-256 for security-sensitive
 // work. This function is provided for compatibility with existing protocols

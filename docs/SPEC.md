@@ -3507,6 +3507,30 @@ try_aes128gcm_encrypt / try_aes128gcm_decrypt                         // llave d
   `pbkdf2_hmac_sha256` / `hkdf_sha256`. `try_aes128gcm_decrypt` abre tambien lo que
   produce `aes128gcm_encrypt` de `std/webpushcrypto`.
 
+### Firmas RSA y certificados X.509 (`std/rsa`)
+
+Verificación (solo verificar, nunca firmar) de firmas RSA-SHA256 con una clave pública PEM:
+
+```nyx
+import "std/rsa"
+
+rsa_sha256_verify(pem, data, sig_cruda) -> Result<bool, Error>       // PKCS#1, versión 1.5
+rsa_sha256_verify_b64(pem, data, sig_base64) -> Result<bool, Error>  // lo común en webhooks
+rsa_pss_sha256_verify(pem, data, sig_cruda) -> Result<bool, Error>   // RSASSA-PSS, MGF1-SHA256
+x509_public_key_pem(cert_pem) -> Result<String, Error>               // clave pública del certificado, PEM SPKI
+```
+
+- **Qué acepta `pem`**: `BEGIN PUBLIC KEY` (SPKI), `BEGIN RSA PUBLIC KEY` (PKCS#1) o
+  `BEGIN CERTIFICATE` (X.509, lo que publica Amazon SNS). Con varios certificados en el PEM
+  se usa el **primero**.
+- **No valida el certificado**: ni cadena de confianza, ni vigencia (`notBefore`/`notAfter`),
+  ni uso de clave, ni nombre. La confianza viene de cómo se obtuvo el `.pem` (TLS verificado
+  contra el host esperado; en SNS, comprobar que `SigningCertURL` apunta a `sns.<región>.amazonaws.com`).
+- **Errores**: `Ok(false)` = la firma no corresponde (resultado normal ante un aviso falso);
+  `invalid` 22 = PEM ilegible o vacío, clave que no es RSA (en las tres `*_verify`), base64
+  inválido (`_b64`), o sin certificado legible (`x509_public_key_pem`); `invalid` 95 = wasm32-wasi.
+- **`x509_public_key_pem`** admite cualquier tipo de clave (RSA, EC); la verificación sigue exigiendo RSA.
+
 ---
 
 ## TLS/HTTPS

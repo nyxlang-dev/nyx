@@ -2050,7 +2050,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,array-row-read-as-string,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2218,7 +2218,9 @@ data race — see the Threading section of LLM.md for its three failure modes. T
 covers `sync.wg_wait_timeout(wg, ms)` (both outcomes: quiesced
 early-exit and timeout). [test: 23-sync-global-mutex-wg-timeout]
 
-21. **`continue` inside a `for … in` loop moves to the next iteration (fixed 2026-09-13)** — over an
+21. **`let pn: String = filas[1]`, with `filas` an `Array` of rows (Arrays), now aborts at run time naming both types.** Until 0.41.0 it compiled and ran with exit 0: the slot held a pointer to another Array, the `String` binding pointed at it, and `print(pn)` / `pn.length()` showed garbage bytes and a made-up length (reported by the W6 serial bridge). The run-time check only denounced the four value tags (int/String/float/bool); Array and Map slots passed through as "opaque". Go down in two steps: `let fila: Array = filas[1]` and then `let pn: String = fila[0]`. `NYX_SLOT_CHECK=off` disables the check. [test: 50-fila-array-luego-string]
+
+22. **`continue` inside a `for … in` loop moves to the next iteration (fixed 2026-09-13)** — over an
 array (`for x in arr`, `for x: T in arr`) and over a range (`for i in 0..n`, `0..=n`). Until then
 every such `continue` hung the program in an INFINITE loop: it jumped to the loop condition without
 incrementing the index, so the same element was revisited forever. It had nothing to do with
@@ -2227,14 +2229,14 @@ reporting `0 passed, 0 failed` with the output lost, far from the offending line
 `for … in` as a `while` with a manual index to avoid this, you can go back. `for x in arr.iter()`
 never had the bug. [test: compiler/language/test-416-continue-en-for-in]
 
-22. **The `std/http` client sends `Host` with the port when it is not the scheme default (fixed 2026-09-14)**
+23. **The `std/http` client sends `Host` with the port when it is not the scheme default (fixed 2026-09-14)**
 — `http://127.0.0.1:8124/x` now sends `Host: 127.0.0.1:8124`; the port is omitted only for 80 on
 `http://` and 443 on `https://` (RFC 9110 §7.2). Until then the port was always dropped. The bug was
 silent: the connection and the response were normal, only the header was wrong, which breaks any CSRF
 defense that compares `Origin` (sent by browsers WITH the port) against `Host`, and any virtual host
 keyed by port. If you worked around it by adding your own `Host` header, you can remove it. [test: 28-http-host-port]
 
-23. **A truncated JSON document is an `Err`, not a shorter `Ok` (fixed 2026-09-14)** — `try_json_parse` and
+24. **A truncated JSON document is an `Err`, not a shorter `Ok` (fixed 2026-09-14)** — `try_json_parse` and
 the `json_parse` sentinel now reject input that ends before an object, array or string closes, a key
 without a value, a trailing comma, a number or literal cut short (`"1."`, `"tru"`), and anything but
 whitespace after the root value (`"{} x"`). Until then `try_json_parse("{\"a\": [1, 2]")` returned
@@ -2243,7 +2245,7 @@ middle of a list parsed as a valid list with fewer records, and no error anywher
 gives `Err{5, "parse"}` with the byte offset; `json_parse` collapses to its usual `["null"]`. If you
 added your own "does it end in `}`" check before parsing, you no longer need it. [test: 27-json-truncado]
 
-24. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
+25. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
 trait methods, generic calls, constants, `extern`, `static`, `repr(C)` structs. Before the fix the
 codegen context of a nested function shared only part of the module's tables with its parent, and
 the symptom was misleading rather than clear: a trait method reported `method 'm' is not available
@@ -2251,7 +2253,7 @@ on a receiver of type '%T'` — **false**, the `impl` existed — and a generic 
 generation with exit 1 and **no message at all** (no Nyx error, no LLVM error, no `.ll`). If you
 learned to hoist such calls out of nested functions, you no longer need to. [test: compiler/language/test-413-fn-anidada-ve-traits-y-genericos]
 
-25. **Leaving a `try` early with `return`, `?`, `break` or `continue` no longer leaks a try level (fixed 2026-09-15)** — until then
+26. **Leaving a `try` early with `return`, `?`, `break` or `continue` no longer leaks a try level (fixed 2026-09-15)** — until then
 only the normal end of the `try` body and the `catch` released the level that entering the `try`
 took from a per-thread stack of 64. Each `return` from inside a `try` left one level behind, so a
 long-lived thread (a server loop) died on the 64th such call with `panic: try-catch nesting too
@@ -2261,7 +2263,7 @@ of the function's, `break`/`continue` only those opened inside the loop, a `retu
 `catch` releases nothing extra, and a lambda or nested function counts its own. If you moved a
 `return` out of a `try` (storing the result in a variable) to avoid the panic, you can put it back. [test: compiler/language/test-431-try-salida-temprana-pop]
 
-26. **A private function in a `std/` module with the same name as a builtin no longer hijacks your
+27. **A private function in a `std/` module with the same name as a builtin no longer hijacks your
 call.** In 0.32.0, when `pub` started protecting unqualified calls (NYX1036), importing two stdlib
 modules could stop compiling through no fault of your own: `std/toml` declares a private
 `fn string_to_int` (no `pub`), and the visibility check treated it as the owner of every
@@ -2272,7 +2274,7 @@ one. Resolution is unchanged — the call still reaches the BUILTIN, which matte
 behave differently on bad input (`string_to_int("4x2")` aborts in the builtin, while the `std/toml`
 one would skip the `x` and return 42). [test: 30-std-privada-homonima-de-builtin]
 
-27. **A name redeclared inside a block is another variable: when the block closes, the name is the outer variable again, with its value and its type (since 0.36.0).**
+28. **A name redeclared inside a block is another variable: when the block closes, the name is the outer variable again, with its value and its type (since 0.36.0).**
 Until 0.35.0 the codegen kept a function's variables in one flat map, so a `let q` inside an
 `if`/`else`/`while`/`for`/`match` arm/`try`/`catch`/`unsafe`, the variable of a `for q in ...`, or the
 binding of `Option.Some(q) =>` REPLACED the outer `q` until the end of the function. It compiled,
@@ -2288,7 +2290,7 @@ redeclares it), run `NYX_SCOPE_AUDIT=1 nyx check file.nx`: it reports every use 
 checker and the codegen saw different variables, with the prefix `scope-audit:`. Measured over 1286
 files (this repo, nyxerp, the stacks): zero real cases. [test: 33-sombreado-en-bloque] [test: compiler/language/test-486-defer-con-sombreado]
 
-28. **A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.36.0, as long as the name is unique in the function (NYX1044 otherwise).**
+29. **A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.36.0, as long as the name is unique in the function (NYX1044 otherwise).**
 Until 0.35.0 closures only existed at a function's top level: a lambda inside an `if` could not see the
 `if`'s variables (NYX1002 «not declared»), and a named `fn` inside a block did not even link
 (`use of undefined value '@name'` from clang, no line). Closures capture by NAME, so a block variable
@@ -2298,7 +2300,7 @@ Rename the variable, or copy it into a `let` with its own name right before the 
 Variables declared in a loop (and the `for` variable) ARE captured, one instance per iteration: see
 `closure-per-iteration`. [test: 36-closure-captura-bloque] [test: 48-closure-por-iteracion] [test: compiler/errors/test-nyx1044-captura-nombre-repetido]
 
-29. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.36.0 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
+30. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.36.0 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
 Until 0.35.0 a `defer` inside an `if`, `else`, `while`, `for`, `match` arm, `try`, `catch` or
 `unsafe` block, at the top level of a nested fn, or in a lambda was silently dropped: it compiled,
 `nyx check` was green and the cleanup never ran. A `return` inside a `defer` hung the program. Now
@@ -2307,7 +2309,7 @@ iteration; the `return` value is evaluated before the defers; the body sees the 
 at declaration (unlike Go). `return` (or a `break`/`continue` leaving the body) inside a `defer` is
 NYX1042, and a `defer` in an `async fn` is NYX1043. [test: 34-defer-al-cerrar-bloque] [test: compiler/language/test-489-defer-salida-normal]
 
-30. **An `#[affine]` value with `impl Drop` is dropped when its BLOCK closes, once per declaration — in a loop once per iteration, on a `throw` too — since 0.36.0.**
+31. **An `#[affine]` value with `impl Drop` is dropped when its BLOCK closes, once per declaration — in a loop once per iteration, on a `throw` too — since 0.36.0.**
 Until 0.35.0 deterministic drop worked by variable NAME and per FUNCTION: values were dropped only when
 the function returned, so inside a loop each iteration overwrote the same slot and only the LAST value
 was ever dropped (the rest leaked silently); a `throw` dropped nothing; and two affine variables with
@@ -2315,7 +2317,7 @@ the same name in one function were rejected (NYX2020, retired). Now each declara
 and its drop is an implicit `defer` of that declaration. A value moved out (returned, passed by value)
 is dropped by its new owner, not at the original block. [test: 38-drop-al-cerrar-bloque]
 
-31. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.36.0.**
+32. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.36.0.**
 Until 0.35.0, iterating a literal directly (`for q in ["x", "y"]`) typed `q` as `int`: `print(q)` and
 `"v=" + q` showed the String's ADDRESS, with no error. An element typed `Array<T>` (annotated, or
 inferred from an `Array<Array<int>>` variable) crashed with SIGSEGV on first use, and a `Map` element
@@ -2323,7 +2325,7 @@ silently reported `m.size() == 0`: both fell into the struct path, which loads o
 The literal now takes the type shared by ALL its elements (a mixed literal like `[1, "dos"]` stays
 untyped rather than inventing one); annotate the loop variable (`for q: String in ...`) to be explicit. [test: 35-for-sobre-literal]
 
-32. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.36.0 it is also what the type checker checks the call against.**
+33. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.36.0 it is also what the type checker checks the call against.**
 Until 0.35.0, `let leer: Fn(int) -> int = a.leer; leer(21)` failed with a false NYX1005 («argument 1
 of 'leer': expected String, got int») whenever any file of the program declared a
 `fn leer(s: String)`: the checker took the global signature while the binary called the local. With
@@ -2331,21 +2333,21 @@ identical signatures it compiled, and the arguments were checked against the wro
 Reported by a user on 2026-10-04. Now the most recent binding in scope wins in both layers, and a
 `Fn(..) -> R` variable contributes its own parameter and return types. [test: 32-variable-fn-homonima-de-fn-global] [test: compiler/errors/test-m08-arg-mismatch-fn-local-homonima]
 
-33. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
+34. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
 Until then it compiled as an Array read and fetched 8 bytes at position `i*8`: `"abcdefghijklmnopq"[1]`
 gave `i` instead of `b`, and `let c: int = "abc"[0]` gave 6513249 — silently, rc 0. On an older
 toolchain use `s.charAt(i)`, which always read the right byte. Out of range aborts, like `charAt`. [test: compiler/language/test-457-indexar-string]
 
-34. **A closure created inside a loop sees the variable of ITS iteration** (fixed 2026-11-01, Go 1.22 semantics). Until 0.40.0 a `let`/`var` declared in a loop body had ONE slot shared by every iteration, so four closures pushed into an Array and called after the loop all read the last value («3 3 3 3» instead of «0 1 2 3»), with no error; `spawn` in a loop and the `for` variable were rejected with NYX1044 for that reason. Now each iteration gets its own instance of every loop-body variable a closure can reach and of the `for` variable. The body and the closures of that iteration share the instance (a `var` mutated after the closure was created is seen by it, and the other way round); a variable declared OUTSIDE the loop stays shared by all (a counter the closures increment). Costs one GC allocation per iteration per such variable, only in functions with a closure inside a loop. Still NYX1044: a name declared more than once in the function, and `match`/`while let`/`select` bindings. [test: 48-closure-por-iteracion]
+35. **A closure created inside a loop sees the variable of ITS iteration** (fixed 2026-11-01, Go 1.22 semantics). Until 0.40.0 a `let`/`var` declared in a loop body had ONE slot shared by every iteration, so four closures pushed into an Array and called after the loop all read the last value («3 3 3 3» instead of «0 1 2 3»), with no error; `spawn` in a loop and the `for` variable were rejected with NYX1044 for that reason. Now each iteration gets its own instance of every loop-body variable a closure can reach and of the `for` variable. The body and the closures of that iteration share the instance (a `var` mutated after the closure was created is seen by it, and the other way round); a variable declared OUTSIDE the loop stays shared by all (a counter the closures increment). Costs one GC allocation per iteration per such variable, only in functions with a closure inside a loop. Still NYX1044: a name declared more than once in the function, and `match`/`while let`/`select` bindings. [test: 48-closure-por-iteracion]
 
-35. **A `throw` that leaves a block or a function runs the `defer`s it already reached — innermost first — before landing in the `catch`; and a `defer` the function never reached does not run.**
+36. **A `throw` that leaves a block or a function runs the `defer`s it already reached — innermost first — before landing in the `catch`; and a `defer` the function never reached does not run.**
 Before 0.36.0 the `throw` was a bare `longjmp` that skipped every cleanup, and a function-level `defer`
 ran on every exit even when the function returned BEFORE reaching it (`if b { return 1 } defer {...}`).
 Now each `defer` pushes its own implicit `try` frame when it executes; its catch runs that defer and
 re-throws, so only reached defers run, in LIFO order. A `throw` inside a defer does not run that same
 defer again. Not on wasm32-wasi, which has no `try`/`throw`. [test: 37-throw-corre-defer] [test: compiler/language/test-492-defer-no-alcanzado]
 
-36. **`int_to_float(arr[i])` and `float_to_int(arr[i])` on an `Array` without `<T>`, bound to a typed `let`, compile and convert** (fixed 2026-10-16, v0.36.1). Until 0.36.0
+37. **`int_to_float(arr[i])` and `float_to_int(arr[i])` on an `Array` without `<T>`, bound to a typed `let`, compile and convert** (fixed 2026-10-16, v0.36.1). Until 0.36.0
 the index read inherited the `let`'s expected type instead of the builtin's: `let f: float =
 int_to_float(cuentas[q])` read the slot as a double and fed it to `sitofp i64`; `let n: int =
 float_to_int(pesos[0])` read raw bits as an i64 and fed them to `fptosi double`. `nyx check` said
@@ -2353,17 +2355,17 @@ nothing and clang failed with «invalid IR» (reported by nyxerp). The old worka
 cuentas[q]` first, then convert) still works but is no longer needed: both builtins now fix the hint
 their argument must have (`int` / `float`) while it is generated, like `string_to_int` does with `String`. [test: 39-conversion-de-casilla-sin-tipo]
 
-37. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.37.0). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
+38. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.37.0). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
 
-38. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.37.0). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
+39. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.37.0). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
 
-39. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.37.0). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
+40. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.37.0). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
 
-40. **`m.insert(a[0], a[1])` into a `Map<String>`, with `a` an `Array` without `<T>` filled at run time, stores the value as a String** (fixed 2026-10-31). Until 0.40.0 the slot reached `insert` as a raw integer: the map was stored and re-registered as `Map<int>`, so `let v: String = m.get(k)` worked but `print(m.get(k))` printed the pointer as a number, with no error (reported by nyxerp). An unannotated `var m: Map` with values that come from untyped slots still has no element type to go by: annotate the map (`Map<String>`) or the value. [test: 46-map-insert-casilla-string] [test: 49-map-clave-casilla-for]
+41. **`m.insert(a[0], a[1])` into a `Map<String>`, with `a` an `Array` without `<T>` filled at run time, stores the value as a String** (fixed 2026-10-31). Until 0.40.0 the slot reached `insert` as a raw integer: the map was stored and re-registered as `Map<int>`, so `let v: String = m.get(k)` worked but `print(m.get(k))` printed the pointer as a number, with no error (reported by nyxerp). An unannotated `var m: Map` with values that come from untyped slots still has no element type to go by: annotate the map (`Map<String>`) or the value. [test: 46-map-insert-casilla-string] [test: 49-map-clave-casilla-for]
 
-41. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.37.0). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
+42. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.37.0). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
 
-42. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.37.0). Until 0.36.1
+43. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.37.0). Until 0.36.1
 `texto(hs[0])` (with `fn texto(h: Hoja)`) passed the slot's raw i64 where the function expected the
 struct by value: the program died with «GC heap exhausted» or, worse, the function silently received
 ANOTHER element. `m.insert(pares[0], pares[1])` used the raw i64 as the key pointer and clang rejected
@@ -2372,7 +2374,7 @@ hs[0]` first) still works but is no longer needed: the slot is converted to the 
 and a Map key that comes from a slot is read as the String it holds. Same family as
 `int_to_float(arr[i])`, fixed in 0.36.1. [test: 40-casilla-sin-tipo-como-argumento]
 
-43. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
+44. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
 
 <!-- /gen:gotchas -->
 
@@ -3676,12 +3678,14 @@ Recipes: `examples/by-example/123-zip-crear-y-leer.nx`, `124-xlsx-escribir-libro
   wasm32-wasi. Key = raw bytes (`csprng_bytes(32)`, or derive with `pbkdf2_hmac_sha256`), not a
   password. Bind `aad` to the owner ("smtp:client-42") so a sealed value copied to another row fails.
   Never reuse a nonce with the same key in the explicit-nonce variants.
-- **`std/rsa`: verify RSA-SHA256 signatures** with a PEM public key (SPKI or PKCS#1, not an X.509
-  cert): `rsa_sha256_verify(pem, data, sig_raw)` (PKCS#1 v1.5), `rsa_sha256_verify_b64(pem, data,
+- **`std/rsa`: verify RSA-SHA256 signatures** with a PEM public key (SPKI, PKCS#1 or an X.509
+  `BEGIN CERTIFICATE`, first cert wins; the cert is NOT validated: no chain, no expiry): `rsa_sha256_verify(pem, data, sig_raw)` (PKCS#1 v1.5), `rsa_sha256_verify_b64(pem, data,
   sig_b64)` (the usual webhook shape), `rsa_pss_sha256_verify(pem, data, sig_raw)`. `Ok(false)` =
   signature does not match (the normal answer to a forged notification); `Err(invalid 22)` = unreadable
   PEM / non-RSA key / bad base64; on wasm32-wasi `Err(invalid 95)`. Verify the exact raw body before
-  parsing it.
+  parsing it. `x509_public_key_pem(cert_pem)` returns the cert's public key as SPKI PEM (any key type).
+  Security: for Amazon SNS check that `SigningCertURL` is an `sns.<region>.amazonaws.com` host before
+  downloading the cert (trust comes from where the cert was fetched, not from the cert).
 - **Mutual TLS on the HTTPS client**: `HttpOpts.client_cert_pem` / `client_key_pem` (PEM contents, leaf
   first; key not password-protected) present a client certificate on that request only;
   `http_opts_client_cert(opts, cert, key)` returns a copy with both set. The pair is checked before the

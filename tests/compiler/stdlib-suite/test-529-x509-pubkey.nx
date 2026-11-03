@@ -1,0 +1,88 @@
+// test-529 — std/rsa con certificados X.509 (arco x509-pubkey): verificar contra
+// un "BEGIN CERTIFICATE" (el caso Amazon SNS) y x509_public_key_pem.
+//
+// Fixtures de tests/fixtures/rsa/generar.sh (certificados autofirmados de PRUEBA).
+
+import "std/error"
+import "std/rsa"
+
+fn estado(r: Result<bool, Error>) -> String {
+    match r {
+        Result.Ok(b) => {
+            if b { return "true" }
+            return "false"
+        }
+        Result.Err(e) => { return "err " + e.kind + " " + int_to_string(e.code) }
+    }
+}
+
+fn pem_estado(r: Result<String, Error>, esperado: String) -> String {
+    match r {
+        Result.Ok(p) => {
+            if p == esperado { return "ok igual" }
+            return "ok distinto"
+        }
+        Result.Err(e) => { return "err " + e.kind + " " + int_to_string(e.code) }
+    }
+}
+
+fn main() -> int {
+    let pub_spki: String = include_bytes("tests/fixtures/rsa/publica.pem")
+    let otra_pub: String = include_bytes("tests/fixtures/rsa/otra_publica.pem")
+    let ec_pub: String = include_bytes("tests/fixtures/rsa/ec_publica.pem")
+    let cert: String = include_bytes("tests/fixtures/rsa/cert.pem")
+    let otro_cert: String = include_bytes("tests/fixtures/rsa/otro_cert.pem")
+    let ec_cert: String = include_bytes("tests/fixtures/rsa/ec_cert.pem")
+    let cert_dos: String = include_bytes("tests/fixtures/rsa/cert_dos.pem")
+    let datos: String = include_bytes("tests/fixtures/rsa/datos.txt")
+    let firma: String = include_bytes("tests/fixtures/rsa/firma.bin")
+    let firma_b64: String = include_bytes("tests/fixtures/rsa/firma.b64")
+    let firma_pss: String = include_bytes("tests/fixtures/rsa/firma_pss.bin")
+    let firma_otra: String = include_bytes("tests/fixtures/rsa/firma_otra.bin")
+
+    println("cert v1.5: " + estado(rsa_sha256_verify(cert, datos, firma)))
+    println("cert b64: " + estado(rsa_sha256_verify_b64(cert, datos, firma_b64)))
+    println("cert pss: " + estado(rsa_pss_sha256_verify(cert, datos, firma_pss)))
+    println("cert datos cambiados: " + estado(rsa_sha256_verify(cert, datos + "x", firma)))
+    println("cert firma de otra clave: " + estado(rsa_sha256_verify(cert, datos, firma_otra)))
+    println("cert de otra clave: " + estado(rsa_sha256_verify(otro_cert, datos, firma)))
+    println("cert vs firma de su clave: " + estado(rsa_sha256_verify(otro_cert, datos, firma_otra)))
+    println("cert ec: " + estado(rsa_sha256_verify(ec_cert, datos, firma)))
+    println("dos certs usa el primero: " + estado(rsa_sha256_verify(cert_dos, datos, firma)))
+    println("dos certs no usa el segundo: " + estado(rsa_sha256_verify(cert_dos, datos, firma_otra)))
+
+    println("pubkey == publica.pem: " + pem_estado(x509_public_key_pem(cert), pub_spki))
+    println("pubkey otro == otra_publica.pem: " + pem_estado(x509_public_key_pem(otro_cert), otra_pub))
+    println("pubkey ec == ec_publica.pem: " + pem_estado(x509_public_key_pem(ec_cert), ec_pub))
+    println("pubkey de dos certs: " + pem_estado(x509_public_key_pem(cert_dos), pub_spki))
+    match x509_public_key_pem(cert) {
+        Result.Ok(p) => { println("verifica con la clave extraida: " + estado(rsa_sha256_verify(p, datos, firma))) }
+        Result.Err(e) => { println("err inesperado " + int_to_string(e.code)) }
+    }
+    println("pubkey de PUBLIC KEY: " + pem_estado(x509_public_key_pem(pub_spki), ""))
+    println("pubkey pem roto: " + pem_estado(x509_public_key_pem("no soy un pem"), ""))
+    println("pubkey vacio: " + pem_estado(x509_public_key_pem(""), ""))
+    println("pubkey cert truncado: " + pem_estado(x509_public_key_pem(cert.substring(0, 200)), ""))
+    println("verify pem roto: " + estado(rsa_sha256_verify("no soy un pem", datos, firma)))
+
+    // Sin fugas: 10 000 vueltas por cada camino (X509/EVP_PKEY/BIO se liberan siempre).
+    var i: int = 0
+    var buenas: int = 0
+    while i < 10000 {
+        match rsa_sha256_verify(cert, datos, firma) {
+            Result.Ok(b) => { if b { buenas = buenas + 1 } }
+            Result.Err(e) => { }
+        }
+        match x509_public_key_pem(cert_dos) {
+            Result.Ok(p) => { buenas = buenas + 1 }
+            Result.Err(e) => { }
+        }
+        match x509_public_key_pem("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n") {
+            Result.Ok(p) => { }
+            Result.Err(e) => { buenas = buenas + 1 }
+        }
+        i = i + 1
+    }
+    println("bucle: " + int_to_string(buenas))
+    return 0
+}

@@ -16,8 +16,13 @@
 //              (kind "invalid", code 22); en wasm32-wasi no hay OpenSSL
 //              (kind "invalid", code 95: el vocabulario de std/error es cerrado); base64 inválido en la variante b64
 //              (kind "invalid", code 22).
-// La clave: PEM "BEGIN PUBLIC KEY" (SubjectPublicKeyInfo) o "BEGIN RSA PUBLIC
-// KEY" (PKCS#1). Un certificado X.509 no vale: extraer antes la clave pública.
+// La clave: PEM "BEGIN PUBLIC KEY" (SubjectPublicKeyInfo), "BEGIN RSA PUBLIC
+// KEY" (PKCS#1) o "BEGIN CERTIFICATE" (X.509; lo que publica Amazon SNS): del
+// certificado se toma la clave pública (del PRIMERO si el PEM trae varios).
+// OJO, solo verificación de firma: NO se valida cadena de confianza, vigencia
+// (notBefore/notAfter), uso de clave ni nombre. La confianza viene de cómo se
+// obtuvo el certificado (p. ej. bajado por TLS verificado del host esperado).
+//   x509_public_key_pem(cert_pem)  -> la clave pública del certificado, en PEM SPKI
 // ECDSA P-256 sobre digest crudo ya existe en std/webpushcrypto
 // (ecdsa_p256_verify); ECDSA con clave PEM no está.
 //
@@ -28,13 +33,14 @@ import "std/error"
 import "std/base64"
 
 extern "C" fn nyx_rsa_sha256_verify(pem: String, data: String, sig: String, pss: int) -> int
+extern "C" fn nyx_x509_public_key_pem(pem: String) -> String
 
 fn rsa_verify_core(pem: String, data: String, sig: String, pss: int) -> Result<bool, Error> {
     let r: int = nyx_rsa_sha256_verify(pem, data, sig, pss)
     if r == 1 { return Result.Ok(true) }
     if r == 0 { return Result.Ok(false) }
     if r == -2 { return Result.Err(err_new(95, "invalid", "rsa: no disponible en wasm32-wasi (sin OpenSSL)")) }
-    return Result.Err(err_new(22, "invalid", "rsa: la clave pública PEM no se pudo leer o no es RSA"))
+    return Result.Err(err_new(22, "invalid", "rsa: la clave pública (o certificado) PEM no se pudo leer o no es RSA"))
 }
 
 // RSASSA-PKCS1-v1_5 con SHA-256; `signature` en bytes crudos.
@@ -55,4 +61,16 @@ pub fn rsa_sha256_verify_b64(public_key_pem: String, data: String, signature_b64
 // RSASSA-PSS con SHA-256 y MGF1-SHA256 (sal de cualquier largo); firma cruda.
 pub fn rsa_pss_sha256_verify(public_key_pem: String, data: String, signature: String) -> Result<bool, Error> {
     return rsa_verify_core(public_key_pem, data, signature, 1)
+}
+
+// Clave pública del primer certificado X.509 de `cert_pem` ("BEGIN CERTIFICATE"),
+// en PEM SPKI ("BEGIN PUBLIC KEY"); sirve para cachearla o pasarla a otra API.
+// Acepta cualquier tipo de clave (RSA, EC); la verificación de arriba sigue
+// exigiendo RSA. No valida el certificado (ver encabezado).
+// Err "invalid" code 22: PEM ilegible, vacío o sin certificado; code 95 en wasm32-wasi.
+pub fn x509_public_key_pem(cert_pem: String) -> Result<String, Error> {
+    let r: String = nyx_x509_public_key_pem(cert_pem)
+    if r == "W" { return Result.Err(err_new(95, "invalid", "rsa: no disponible en wasm32-wasi (sin OpenSSL)")) }
+    if r.length() == 0 { return Result.Err(err_new(22, "invalid", "rsa: el PEM no contiene un certificado X.509 legible")) }
+    return Result.Ok(r)
 }

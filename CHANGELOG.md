@@ -11,6 +11,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Added
 
+- **`std/rsa` entiende certificados X.509**: `rsa_sha256_verify`, `rsa_sha256_verify_b64` y `rsa_pss_sha256_verify`
+  aceptan ahora un PEM `BEGIN CERTIFICATE` (la clave sale del primer certificado; sin cambiar firmas), y la nueva
+  `x509_public_key_pem(cert_pem) -> Result<String, Error>` devuelve esa clave en PEM SPKI (cualquier tipo de clave).
+  No valida cadena ni vigencia. Pedido de nyxerp (avisos de Amazon SNS), que ya no necesita su parser ASN.1. Test
+  `test-529-x509-pubkey` (+1, con bucle de 10 000 vueltas contra fugas); receta 128 ampliada [arco: x509-pubkey].
 - **El driver despacha `nyx check`, `nyx fmt` y `nyx test`** a `<nyx_home>/bin/nyx_<cmd>[.exe]` con los argumentos
   restantes y devuelve su rc (en Windows `install.ps1` instala `nyx_check.exe` y `nyx_fmt.exe`; en Linux el wrapper
   ya lo resolvía antes). `nyx test` en Windows dice «todavía no está disponible» en vez de «unknown command»
@@ -40,6 +45,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`let pn: String = filas[1]` con una FILA (Array) en la casilla ya no es silencioso** — `nyx_array_get_checked`
+  solo denunciaba los cuatro tags de valor (int/String/float/bool); un slot `Array` o `Map` leído como String
+  pasaba como «opaco» y el binding apuntaba a la otra estructura: `print` mostraba bytes basura y `length()` un
+  largo inventado, con `nyx check` y exit en 0 (hallazgo del kit W6 T3, `puente.nx`). Ahora aborta en ejecución
+  nombrando el tipo real y el pedido, como el resto de la familia `*_checked`. Solo el caso String: `int` deja
+  pasar los opacos a propósito (`nyx_slot_as_int_checked`) y `float` ya los denunciaba. Gotcha
+  `array-row-read-as-string`; la lectura correcta es en dos pasos (`let fila: Array = filas[1]`, luego
+  `let pn: String = fila[0]`) [arco: w6-windows].
+- **`nyx vet` leía la lista de sentencias como un String** — `check_unused_imports`, `check_dead_code` y el chequeo de
+  variables sin usar hacían `stmts[0]` sobre el envoltorio de un elemento del parser: antes devolvía basura y esos tres
+  checks nunca disparaban; con el chequeo de arriba abortaba sobre cualquier archivo (lo cazó `run_vet_gotchas.sh`).
+  Se conserva la conducta de siempre (reciben una lista vacía); revivirlos sigue fichado [arco: w6-windows].
 - **`nyx check` y `nyx fmt` por el driver (Windows) revisan el archivo pedido** — el despacho de 1bff4bca pasaba la
   ruta como argumento, pero `nyx_check` y `nyx_fmt` leen `NYX_SRC` (con `script.nx` de respaldo) y nunca sus
   argumentos: `nyx check roto.nx` daba rc 0 sobre un `script.nx` inexistente y `nyx fmt` no imprimía nada (falso
@@ -77,6 +94,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Tests
 
+- `make test-errors`: 405 → 406 (`slot-array-leido-como-string-abort`) y `make test-ai-first`: 49 → 50 programas (`50-fila-array-luego-string`) [arco: w6-windows].
 - `make test-examples`: 153 → 155 recetas (la 154, que no se había contado, y la 155 del servicio de Windows) [arco: w6-windows].
 - `make test-runtime`: 2339 → 2352 asserts: tres casos de `host_os` en `test_os_build_host.c` y diez del serie USB en `test_os_serial.c` (con un sysfs falso) [arco: w6-windows].
 

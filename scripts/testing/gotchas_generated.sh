@@ -74,6 +74,7 @@ GOTCHA_IDS=(
   "file-api-names"
   "array-index-float-write"
   "sync-global-init-reliable"
+  "array-row-read-as-string"
   "continue-in-for-loop"
   "http-host-header-port"
   "json-truncated-rejected"

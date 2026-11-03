@@ -11,6 +11,12 @@
 // alterados o clave ajena); Err = no se pudo ni intentar (PEM ilegible).
 // Se verifica el cuerpo EXACTO recibido, byte a byte, antes de parsearlo.
 //
+// Amazon SNS (y otros) publican un CERTIFICADO X.509 (BEGIN CERTIFICATE) en vez de
+// la clave: las tres funciones lo aceptan tal cual (se usa el primer certificado),
+// y x509_public_key_pem(cert) da la clave en PEM SPKI si se quiere guardar. OJO: el
+// certificado NO se valida (ni cadena ni vigencia); la confianza viene de dónde se
+// bajó (TLS verificado, y host sns.<región>.amazonaws.com en SNS).
+//
 // Los datos de la receta son los fixtures de prueba del repo (openssl CLI). En un
 // programa real: la clave con read_file("proveedor.pem") y el cuerpo y la firma
 // de la petición entrante.
@@ -42,4 +48,13 @@ fn main() {
 
     // Una clave que no se puede leer se dice, no se toma por «firma falsa».
     assert(aviso_valido("no soy un pem", cuerpo, firma) == false, "PEM ilegible")
+
+    // Con un certificado X.509 en lugar de la clave pública.
+    let cert: String = include_bytes("tests/fixtures/rsa/cert.pem")
+    assert(aviso_valido(cert, cuerpo, firma), "el aviso verifica contra el certificado")
+    print("certificado X.509: aceptado")
+    match x509_public_key_pem(cert) {
+        Result.Ok(clave) => { assert(clave == pem, "la clave extraída es la pública") }
+        Result.Err(e) => { assert(false, e.msg) }
+    }
 }

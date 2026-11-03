@@ -653,7 +653,14 @@ int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_
                              || t == NYX_TAG_BOOL || t == NYX_TAG_STRING);
         int definite_want = (expected_tag == NYX_TAG_INT || expected_tag == NYX_TAG_FLOAT
                              || expected_tag == NYX_TAG_BOOL || expected_tag == NYX_TAG_STRING);
-        if (definite_slot && definite_want && t != expected_tag
+        // Un slot ARRAY/MAP leído como String: el i64 es un puntero a OTRA
+        // estructura, no a un nyx_string (`let pn: String = puertos[1]` con
+        // filas imprimía bytes basura y length 3, exit 0 — hallazgo W6 T3).
+        // Sólo se agrega para expected STRING: int deja pasar los opacos a
+        // propósito (ver nyx_slot_as_int_checked) y float ya los denuncia.
+        int opaque_as_string = (expected_tag == NYX_TAG_STRING
+                                && (t == NYX_TAG_ARRAY || t == NYX_TAG_MAP));
+        if (((definite_slot && definite_want && t != expected_tag) || opaque_as_string)
             && !nyx_slot_check_off()) {
             fprintf(stderr,
                 "💥 Runtime Error: el slot %" PRId64 " del Array contiene %s (valor %" PRId64 ")"

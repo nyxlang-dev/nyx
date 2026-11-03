@@ -2447,6 +2447,32 @@ else
   FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="slot-array-leido-como-string-abort"
+# Hallazgo kit W6 T3 (puente.nx:131): `let pn: String = puertos[1]` donde el
+# slot es una FILA (Array) compilaba y corría con exit 0 imprimiendo bytes
+# basura y length 3: nyx_array_get_checked solo denunciaba los cuatro tags de
+# valor, y ARRAY/MAP quedaban como «opacos» que pasan crudos. Ahora un slot
+# ARRAY/MAP leído como String aborta nombrando el tipo real. Controles: la
+# lectura correcta en dos pasos (fila: Array, luego String) y un slot String
+# directo siguen corriendo.
+sas_bad=$(mktemp /tmp/sas-XXXX.nx)
+printf 'fn main() {\n    let p: Array = [["COM1", "x"], ["COM3", "y"]]\n    let pn: String = p[1]\n    print(pn.length())\n}\n' > "$sas_bad"
+sas_out=$(bash "$(pwd)/scripts/nyx" run "$sas_bad" 2>&1); sas_rc=$?
+sas_ok=$(mktemp /tmp/sasok-XXXX.nx)
+printf 'fn main() {\n    let p: Array = [["COM1", "x"], ["COM3", "y"]]\n    let f: Array = p[1]\n    let pn: String = f[0]\n    let q: Array = ["ab", "cde"]\n    let s: String = q[1]\n    print(pn.length() + s.length())\n}\n' > "$sas_ok"
+sasok_out=$(bash "$(pwd)/scripts/nyx" run "$sas_ok" 2>&1); sasok_rc=$?
+rm -f "$sas_bad" "$sas_ok"
+if [ "$sas_rc" -ne 0 ] && [ "$sas_rc" -ne 139 ] && echo "$sas_out" | grep -qF "contiene Array" \
+   && echo "$sas_out" | grep -qF "como String" \
+   && [ "$sasok_rc" -eq 0 ] && echo "$sasok_out" | grep -qx "7"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (malo rc=%d, control rc=%d)\n" "$name" "$sas_rc" "$sasok_rc"
+  echo "$sas_out"   | tail -2 | sed 's/^/      malo:    /'
+  echo "$sasok_out" | tail -2 | sed 's/^/      control: /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="pila-compilador-200-operandos"
 # Fricción nyxerp 20260920-200024: 53 operandos `+` en una sola expresión
 # mataban a nyx_bootstrap con SIGSEGV mudo (codegen en -O0 apila ~151 KB por

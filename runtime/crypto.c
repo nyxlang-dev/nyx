@@ -897,9 +897,11 @@ nyx_string* nyx_aes_gcm_open(nyx_string* key, nyx_string* nonce, nyx_string* sea
 //  pasarelas de pago firman sus avisos con RSA y HMAC no alcanza).
 // ------------------------------------------------------------
 
-// Lee UNA clave pública RSA de un PEM: "PUBLIC KEY" (SubjectPublicKeyInfo) o
-// "RSA PUBLIC KEY" (PKCS#1). NULL si el PEM no se entiende o la clave no es RSA.
-static EVP_PKEY* rsa_pubkey_from_pem(nyx_string* pem) {
+// Lee la primera clave pública de un PEM: "PUBLIC KEY" (SubjectPublicKeyInfo),
+// "RSA PUBLIC KEY" (PKCS#1) o "CERTIFICATE" (X.509: se toma la clave del
+// certificado, SIN validar cadena, vigencia ni uso; arco x509-pubkey). Cualquier
+// tipo de clave; el caller decide si exige RSA. NULL si el PEM no se entiende.
+static EVP_PKEY* any_pubkey_from_pem(nyx_string* pem) {
     if (!pem || pem->length <= 0 || pem->length > (1 << 20)) return NULL;
     BIO* bio = BIO_new_mem_buf(pem->data, (int)pem->length);
     if (!bio) return NULL;
@@ -909,13 +911,64 @@ static EVP_PKEY* rsa_pubkey_from_pem(nyx_string* pem) {
         const unsigned char* p = der;
         if (strcmp(name, "PUBLIC KEY") == 0) pk = d2i_PUBKEY(NULL, &p, derlen);
         else if (strcmp(name, "RSA PUBLIC KEY") == 0) pk = d2i_PublicKey(EVP_PKEY_RSA, NULL, &p, derlen);
+        else if (strcmp(name, "CERTIFICATE") == 0) {
+            X509* x = d2i_X509(NULL, &p, derlen);
+            if (x) { pk = X509_get_pubkey(x); X509_free(x); }  // get_pubkey sube el refcount: el EVP_PKEY sobrevive
+        }
         OPENSSL_free(name); OPENSSL_free(hdr); OPENSSL_free(der);
         name = hdr = NULL; der = NULL;
     }
     BIO_free(bio);
     ERR_clear_error();
+    return pk;
+}
+
+// Igual, pero exige que la clave sea RSA (la verificación de firmas lo pide).
+static EVP_PKEY* rsa_pubkey_from_pem(nyx_string* pem) {
+    EVP_PKEY* pk = any_pubkey_from_pem(pem);
     if (pk && EVP_PKEY_base_id(pk) != EVP_PKEY_RSA) { EVP_PKEY_free(pk); pk = NULL; }
     return pk;
+}
+
+// Clave pública del PRIMER certificado de `pem` en PEM SPKI ("BEGIN PUBLIC
+// KEY"), de cualquier tipo. Cadena vacía = error (PEM ilegible, sin
+// certificado, o un bloque que no es CERTIFICATE). wasm: ver abajo.
+nyx_string* nyx_x509_public_key_pem(nyx_string* pem) {
+    if (!pem || pem->length <= 0 || pem->length > (1 << 20)) return nyx_string_from_cstr("");
+    BIO* bio = BIO_new_mem_buf(pem->data, (int)pem->length);
+    if (!bio) return nyx_string_from_cstr("");
+    char* name = NULL; char* hdr = NULL; unsigned char* der = NULL; long derlen = 0;
+    EVP_PKEY* pk = NULL;
+    while (!pk && PEM_read_bio(bio, &name, &hdr, &der, &derlen) == 1) {
+        if (strcmp(name, "CERTIFICATE") == 0) {
+            const unsigned char* p = der;
+            X509* x = d2i_X509(NULL, &p, derlen);
+            if (x) { pk = X509_get_pubkey(x); X509_free(x); }
+            if (!pk) {  // primer certificado ilegible: no se salta al siguiente
+                OPENSSL_free(name); OPENSSL_free(hdr); OPENSSL_free(der);
+                name = hdr = NULL; der = NULL;
+                break;
+            }
+        }
+        OPENSSL_free(name); OPENSSL_free(hdr); OPENSSL_free(der);
+        name = hdr = NULL; der = NULL;
+    }
+    BIO_free(bio);
+    nyx_string* out = nyx_string_from_cstr("");
+    if (pk) {
+        BIO* ob = BIO_new(BIO_s_mem());
+        if (ob) {
+            if (PEM_write_bio_PUBKEY(ob, pk) == 1) {
+                char* d = NULL;
+                long len = BIO_get_mem_data(ob, &d);
+                if (len > 0 && d) out = nyx_string_from_ptr(d, (int64_t)len);
+            }
+            BIO_free(ob);
+        }
+        EVP_PKEY_free(pk);
+    }
+    ERR_clear_error();
+    return out;
 }
 
 // 1 = firma válida, 0 = firma que no corresponde, -1 = PEM ilegible o clave que
@@ -952,6 +1005,12 @@ int64_t nyx_rsa_sha256_verify(nyx_string* pem, nyx_string* data, nyx_string* sig
 int64_t nyx_rsa_sha256_verify(nyx_string* pem, nyx_string* data, nyx_string* sig, int64_t pss) {
     (void)pem; (void)data; (void)sig; (void)pss;
     return -2;
+}
+// Sin OpenSSL no hay X.509: devuelve "W" (un PEM válido empieza por "-----"),
+// que std/rsa traduce a Err 95, igual que el estado 'W' de AES-GCM.
+nyx_string* nyx_x509_public_key_pem(nyx_string* pem) {
+    (void)pem;
+    return nyx_string_from_ptr("W", 1);
 }
 // csprng_bytes en wasm: getentropy de wasi-libc es random_get de WASI, que el
 // anfitrión (wasmtime, o crypto.getRandomValues en el navegador) llena con
