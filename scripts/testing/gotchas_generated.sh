@@ -57,6 +57,7 @@ GOTCHA_IDS=(
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"
+  "map-get-or-default-array"
   "map-remove-on-field"
   "gc-exhaustion-ordered-error"
   "chr-zero-nul-byte"

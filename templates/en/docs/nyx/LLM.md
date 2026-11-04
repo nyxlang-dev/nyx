@@ -2052,7 +2052,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,array-row-read-as-string,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,map-get-or-default-array,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,array-row-read-as-string,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2065,7 +2065,9 @@ evaluated when the left side decides the result.
 3. **Nested arrays `Array<Array<T>>` work** (`grid[0][0]`, extracted rows, rows as args). If you saw the
 old "'%N' i64 but expected ptr" error, update your toolchain (`nyx update`).
 
-4. **`obj.field.remove(k)` on a Map struct field DOES mutate the field (fixed 2026-07-21, test-274)** —
+4. **`m.get_or(k, [])` with an `Array` (or a `Map`, or a struct) stored as the Map value now compiles when the result is used without an annotation** (`for x in m.get_or(k, [])`, passing it as an argument, chaining `.length()`). Until 0.41.0 the result came out as a raw integer for every default that was not a String or a float, and only survived behind `let v: Array = …` (which converts by the declared type); without it clang rejected the IR («defined with type 'i64' but expected 'ptr'», reported by nyxerp). The result now has the default's type. The general rule for an `Array` without `<T>` still applies: the loop variable reads as an integer if nothing names its type, so write `for x: String in m.get_or(k, [])` or `let v: Array<String> = …`. [test: 51-map-get-or-default-array]
+
+5. **`obj.field.remove(k)` on a Map struct field DOES mutate the field (fixed 2026-07-21, test-274)** —
 method dispatch on a field-access receiver implemented `contains`/`get`/`insert`/`size` for Map but not
 `remove`, so `obj.the_map.remove(k)` used to compile as a silent no-op: the key looked untouched on the
 next `contains()` check. Fixed as part of the same codegen backlog that killed the mute
@@ -2073,7 +2075,7 @@ method-not-found fallback (v0.22.0). Binding the field to a local first (`let m 
 m.remove(k)`) still works too — Maps are references, so both paths mutate the same underlying Map —
 but it is no longer required. [test: compiler/language/test-274-map-remove-field-access]
 
-5. **GC exhaustion is now an ORDERED error, not a raw SEGV (fixed 2026-07-24)** — holding a very large
+6. **GC exhaustion is now an ORDERED error, not a raw SEGV (fixed 2026-07-24)** — holding a very large
 number of tiny allocations live at once (e.g. ~272k one-char Strings per round, repeated) used to
 exhaust the Boehm heap and SIGSEGV silently (the string runtime dereferenced a NULL from
 `GC_malloc`). Now any exhaustion aborts with `💥 Runtime Error: out of memory (GC heap exhausted)` and
@@ -2082,7 +2084,7 @@ objects reachable simultaneously; chunk the work (e.g. 4 KB blocks) so most beco
 round; (b) **`GC_MAXIMUM_HEAP_SIZE`** (Boehm env var, in bytes) caps/raises the heap and, with a small
 value, makes exhaustion deterministic for testing.
 
-6. **`chr(0)` builds the real NUL byte (v0.22.x+, fixed 2026-07-25)** — `chr(code)` is byte-level (not
+7. **`chr(0)` builds the real NUL byte (v0.22.x+, fixed 2026-07-25)** — `chr(code)` is byte-level (not
 UTF-8 — see the byte-based String API rule, `strings-are-bytes`) and now length-explicit end to end:
 `chr(65) + chr(0) + chr(66)` has `length() == 3`. Before
 this fix, `chr(0)` collapsed to the empty String (a C-string/`strlen` path truncated it), so binary
@@ -2107,11 +2109,11 @@ encodes any Unicode codepoint to its 1-4 UTF-8 bytes; invalid input (negative, >
 U+D800..U+DFFF) yields U+FFFD instead of aborting — HTML numeric-entity semantics, so it composes
 directly with entity decoding. [test: 29-read-file-nul-safe] [test: 11-chr-nul-safe]
 
-7. **`xs.contains(ys[i])` and `xs.indexOf(ys[i])` compare by CONTENT when the needle is a slot of another `Array` without `<T>`** (fixed 2026-10-31). Until 0.40.0 the slot reached the search as a raw integer and was compared as a pointer: with Strings built at run time (`"t-" + int_to_string(i)`), `lit.contains(arm[0])` gave `false` and `indexOf` gave `-1` although the text was there, with no error (reported by nyxerp). Binding first (`let x: String = arm[0]`) worked and is no longer needed: the search now uses the tag the slot carries. Ints still compare by value. [test: 45-contains-elemento-directo]
+8. **`xs.contains(ys[i])` and `xs.indexOf(ys[i])` compare by CONTENT when the needle is a slot of another `Array` without `<T>`** (fixed 2026-10-31). Until 0.40.0 the slot reached the search as a raw integer and was compared as a pointer: with Strings built at run time (`"t-" + int_to_string(i)`), `lit.contains(arm[0])` gave `false` and `indexOf` gave `-1` although the text was there, with no error (reported by nyxerp). Binding first (`let x: String = arm[0]`) worked and is no longer needed: the search now uses the tag the slot carries. Ints still compare by value. [test: 45-contains-elemento-directo]
 
-8. **`a[i] == b[j]` between two `Array`s without `<T>` compares Strings by CONTENT** (fixed 2026-11-01). Until 0.40.0 neither side gave a static type, so the raw slots were compared: two different arrays holding the same text at that position gave `false`, with no error, and the workaround was binding first (`let x: String = a[i]`). The comparison now goes by the tags the slots carry: two String slots compare by content, everything else as before, so `5` vs `"5"` is still `false`. With `Array<T>` the static type decides, as it always did. [test: 47-casilla-igual-casilla]
+9. **`a[i] == b[j]` between two `Array`s without `<T>` compares Strings by CONTENT** (fixed 2026-11-01). Until 0.40.0 neither side gave a static type, so the raw slots were compared: two different arrays holding the same text at that position gave `false`, with no error, and the workaround was binding first (`let x: String = a[i]`). The comparison now goes by the tags the slots carry: two String slots compare by content, everything else as before, so `5` vs `"5"` is still `false`. With `Array<T>` the static type decides, as it always did. [test: 47-casilla-igual-casilla]
 
-9. **Methods chained on a user function's `Array` return (FIXED v0.22.x+, 2026-07-26)** —
+10. **Methods chained on a user function's `Array` return (FIXED v0.22.x+, 2026-07-26)** —
 `f(args).length()` used to compile and silently return 0 (the expression-receiver path had no Array
 branches and fell through to a mute `return 0`). Now `length`, `indexOf`, `join`, `reverse`, `slice`,
 `push`, `pop`, `shift` and `unshift` all work chained, matching the bound form. Indexing (`f()[0]`) and
@@ -2120,7 +2122,7 @@ v0.22.14; and since the slots-tag work, `contains`/`indexOf` with a String needl
 on tagged slots, not by pointer). Chained `reverse`/`push` mutate in place and return void, same
 contract as on a variable, so on a temporary the effect is discarded.
 
-10. **Closure capture of locals WORKS — including a lambda and a nested fn in the same function** (fixed
+11. **Closure capture of locals WORKS — including a lambda and a nested fn in the same function** (fixed
 2026-07-27). Every form works: a lambda literal capturing a local passed inline
 (`ejecutar(fn() { c[0] = c[0]+1 })`), a lambda bound to a `let`, a named nested fn that mutates a local
 and is called through a `Fn` parameter, `thread_spawn` with capture, and — this is the part that was
@@ -2131,7 +2133,7 @@ is BROKEN outside the happy path", and that over-generalization cost a real user
 browser written without a single callback — which is why the whole section now demands an executable
 case per item. [test: 12-closure-capture-paths]
 
-11. **`tcp_write`/`tls_write` already loop until everything is sent** — `nyx_tcp_write` (`runtime/net.c`)
+12. **`tcp_write`/`tls_write` already loop until everything is sent** — `nyx_tcp_write` (`runtime/net.c`)
 and `nyx_tls_write_conn` (`runtime/tls.c`) both `while (total < len)` around `send()`/`SSL_write()`
 internally, retrying on a benign partial write. A single call returns the full length up to 512 MiB
 tested (SDD 2026-07-27 Task 2 report); you do NOT need an application-level retry loop for a normal
@@ -2139,7 +2141,7 @@ blocking socket. The one real exception: both loops `break` early if the underly
 `<= 0`, so on a **non-blocking fd** an `EAGAIN`/`EWOULDBLOCK` can still make the call return short —
 only non-blocking sockets need the caller to check the return value and retry.
 
-12. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct as the payload WORKS — return the
+13. **`Option<Struct>`/`Result<Struct, E>` with a 2+-field struct as the payload WORKS — return the
 struct directly, no Array packing needed.** Boxing used to assume a generic payload always fit in one
 `GC_malloc`ed word (`i64`), so a multi-field struct like `Item { id: int, name: String, price: Array }`
 produced a mismatched LLVM type at the boxing site (`%Item = type { i64, ptr, ptr }` where an `i64` was
@@ -2151,13 +2153,13 @@ predates both); confirmed on v0.31.0 with `Option<Item>` and `Result<Item, Strin
 toolchain (`nyx update`) first. The old workaround — repacking the struct's fields into
 `Option<Array>`/`Result<Array, E>` — is no longer needed; return the struct itself. [test: compiler/language/test-386-option-struct-multifield] [test: 15-http-items-api]
 
-13. **`udp_sendto`/`udp_recvfrom` carry binary payloads intact (fixed 2026-07-30)**. They used to truncate
+14. **`udp_sendto`/`udp_recvfrom` carry binary payloads intact (fixed 2026-07-30)**. They used to truncate
 at the first NUL byte (`strlen` on the way out, `from_cstr` on the way back), so `"AB" +
 char_to_string(0) + "CDE"` left as 2 bytes instead of 6 — which made DNS, NTP and SNMP probes
 impossible to write, since all three put NULs in their headers. Both now use the `String`'s real byte
 length. See the Networking section of LLM.md for the signatures. [test: 20-udp-binary-payload]
 
-14. **You CAN inspect the peer's TLS certificate — no C bindings needed (v0.23.1)**. `import "std/tls"`
+15. **You CAN inspect the peer's TLS certificate — no C bindings needed (v0.23.1)**. `import "std/tls"`
 gives `tls_peer_cert(h)` (subject, issuer, validity dates, serial, algorithm, SHA-256 fingerprint,
 SANs), the session accessors (`tls_version`, `tls_cipher`, `tls_cipher_bits`), and two one-line
 answers for scanners: **`cert_is_expired(cert)`** and **`tls_is_weak(h)`**. Certificate *verification*
@@ -2166,7 +2168,7 @@ the handshake and lets you ask whether it *would* have failed. That is the mode 
 needs to reach the broken machine and report it, not be protected from it. See the TLS/HTTPS section
 of LLM.md for the signatures. [test: 19-tls-introspection]
 
-15. **A method that doesn't exist for the receiver's type is now a compile error, not garbage
+16. **A method that doesn't exist for the receiver's type is now a compile error, not garbage
 (v0.24.0)**. `m.length()` on a `Map` used to print a pointer read as an integer (`281473395465504`),
 silently; `s.m.push(x)` on a `Map` field segfaulted; `s.f.contains(x)` on an `Array` field emitted
 invalid IR. All are now compile errors: **NYX1022** from semantic when the receiver's type is
@@ -2181,7 +2183,7 @@ e.g. an AST node kept as a plain Array): it used to print «campo no encontrado�
 write with rc=0 — the compiler's own parser had three such reads. Read such values by index or bind
 them with their struct type.
 
-16. **The REPL evaluates a declared SUBSET and says so loudly (v0.24.2-3)**. `make repl` runs a
+17. **The REPL evaluates a declared SUBSET and says so loudly (v0.24.2-3)**. `make repl` runs a
 tree-walking interpreter, NOT the compiler: it covers basic types, control flow, functions, arrays and
 15 builtin methods (12 String, 3 Array — no Map values, no structs-with-methods, no generics). Anything
 outside the subset raises a loud `NYX30xx` error and the session survives. Until v0.24.3 it was worse
@@ -2191,14 +2193,14 @@ function kept looping) and ranges, `break` and `continue` were rejected. All fix
 (`make test-repl`). Trust the compiled binary (`nyx build`/`nyx run`) as ground truth; use the REPL for
 quick arithmetic/string exploration only.
 
-17. **A failed bind is LOUD now (v0.24.4)**. `http_serve`/`tcp_listen`/`udp_bind` on a taken port used to
+18. **A failed bind is LOUD now (v0.24.4)**. `http_serve`/`tcp_listen`/`udp_bind` on a taken port used to
 fail in complete silence: return -1, no message — and since the old canonical example discarded the
 return, the program "started" with exit 0 and no server (a real user debugged against the unrelated
 process squatting their port). The runtime now prints `nyx: tcp_listen: cannot bind port N: <cause>`
 to stderr. Still CHECK the return (`if http_serve(...) < 0`) — the -1 contract is unchanged and the
 error stream may not be visible in every deployment. [test: 21-bind-failure-loud]
 
-18. **The real buffered file API is `file_open()`/`file_write_string()`/`file_close()` — not `open_file()`
+19. **The real buffered file API is `file_open()`/`file_write_string()`/`file_close()` — not `open_file()`
 or `close_file()` (invented names)**. The core `CHEATSHEET.md` taught the invented names until an
 audit caught the mismatch (2026-08-01, same audit that also killed the resurrected "capture is
 BROKEN" and "arr[i].method() causes SEGV" lies): `open_file()`/`close_file()` never existed in the
@@ -2206,13 +2208,13 @@ stdlib. If a doc, template or generated manual shows those names, it is teaching
 fail to compile — use `file_open`/`file_write_string`/`file_close` (see `chr-zero-nul-byte` for the
 binary-safety contract of this API).
 
-19. **`arr[i] = <float>` on an existing Array WORKS** (fixed 2026-08-03, static-tag spec, v0.24.10). The
+20. **`arr[i] = <float>` on an existing Array WORKS** (fixed 2026-08-03, static-tag spec, v0.24.10). The
 indexed write now tags the slot with the VALUE's type (a double is stored as bits + FLOAT tag), and an
 int written into an annotated `Array<float>` is promoted (sitofp) — the annotation wins. The old
 workaround (integer cents / append-only) is no longer needed. `push`/`unshift`/`insert` with an
 annotated receiver also inherit the static tag when the runtime tag is unreadable. [test: 17-csv-aggregator] [test: 18-http-client-filter]
 
-20. **Stateful handles (`mutex_new()`, `sem_new()`, `wg_new()`) are RELIABLE as global initializers
+21. **Stateful handles (`mutex_new()`, `sem_new()`, `wg_new()`) are RELIABLE as global initializers
 (since v0.24.27; measured 2026-08-21)**. `var MU: Map = mutex_new()` at global scope runs
 single-threaded before `main` — 4 threads × 10000 locked increments = 40000 exact, 5/5 runs. The old
 lazy-init placeholder pattern (`if READY == 0 { MU = mutex_new(); READY = 1 }`) is unnecessary and a
@@ -2220,9 +2222,9 @@ data race — see the Threading section of LLM.md for its three failure modes. T
 covers `sync.wg_wait_timeout(wg, ms)` (both outcomes: quiesced
 early-exit and timeout). [test: 23-sync-global-mutex-wg-timeout]
 
-21. **`let pn: String = filas[1]`, with `filas` an `Array` of rows (Arrays), now aborts at run time naming both types.** Until 0.41.0 it compiled and ran with exit 0: the slot held a pointer to another Array, the `String` binding pointed at it, and `print(pn)` / `pn.length()` showed garbage bytes and a made-up length (reported by the W6 serial bridge). The run-time check only denounced the four value tags (int/String/float/bool); Array and Map slots passed through as "opaque". Go down in two steps: `let fila: Array = filas[1]` and then `let pn: String = fila[0]`. `NYX_SLOT_CHECK=off` disables the check. [test: 50-fila-array-luego-string]
+22. **`let pn: String = filas[1]`, with `filas` an `Array` of rows (Arrays), now aborts at run time naming both types.** Until 0.41.0 it compiled and ran with exit 0: the slot held a pointer to another Array, the `String` binding pointed at it, and `print(pn)` / `pn.length()` showed garbage bytes and a made-up length (reported by the W6 serial bridge). The run-time check only denounced the four value tags (int/String/float/bool); Array and Map slots passed through as "opaque". Go down in two steps: `let fila: Array = filas[1]` and then `let pn: String = fila[0]`. `NYX_SLOT_CHECK=off` disables the check. [test: 50-fila-array-luego-string]
 
-22. **`continue` inside a `for … in` loop moves to the next iteration (fixed 2026-09-13)** — over an
+23. **`continue` inside a `for … in` loop moves to the next iteration (fixed 2026-09-13)** — over an
 array (`for x in arr`, `for x: T in arr`) and over a range (`for i in 0..n`, `0..=n`). Until then
 every such `continue` hung the program in an INFINITE loop: it jumped to the loop condition without
 incrementing the index, so the same element was revisited forever. It had nothing to do with
@@ -2231,14 +2233,14 @@ reporting `0 passed, 0 failed` with the output lost, far from the offending line
 `for … in` as a `while` with a manual index to avoid this, you can go back. `for x in arr.iter()`
 never had the bug. [test: compiler/language/test-416-continue-en-for-in]
 
-23. **The `std/http` client sends `Host` with the port when it is not the scheme default (fixed 2026-09-14)**
+24. **The `std/http` client sends `Host` with the port when it is not the scheme default (fixed 2026-09-14)**
 — `http://127.0.0.1:8124/x` now sends `Host: 127.0.0.1:8124`; the port is omitted only for 80 on
 `http://` and 443 on `https://` (RFC 9110 §7.2). Until then the port was always dropped. The bug was
 silent: the connection and the response were normal, only the header was wrong, which breaks any CSRF
 defense that compares `Origin` (sent by browsers WITH the port) against `Host`, and any virtual host
 keyed by port. If you worked around it by adding your own `Host` header, you can remove it. [test: 28-http-host-port]
 
-24. **A truncated JSON document is an `Err`, not a shorter `Ok` (fixed 2026-09-14)** — `try_json_parse` and
+25. **A truncated JSON document is an `Err`, not a shorter `Ok` (fixed 2026-09-14)** — `try_json_parse` and
 the `json_parse` sentinel now reject input that ends before an object, array or string closes, a key
 without a value, a trailing comma, a number or literal cut short (`"1."`, `"tru"`), and anything but
 whitespace after the root value (`"{} x"`). Until then `try_json_parse("{\"a\": [1, 2]")` returned
@@ -2247,7 +2249,7 @@ middle of a list parsed as a valid list with fewer records, and no error anywher
 gives `Err{5, "parse"}` with the byte offset; `json_parse` collapses to its usual `["null"]`. If you
 added your own "does it end in `}`" check before parsing, you no longer need it. [test: 27-json-truncado]
 
-25. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
+26. **A nested function — and an `async fn` body — sees everything its module sees (fixed 2026-09-11)**:
 trait methods, generic calls, constants, `extern`, `static`, `repr(C)` structs. Before the fix the
 codegen context of a nested function shared only part of the module's tables with its parent, and
 the symptom was misleading rather than clear: a trait method reported `method 'm' is not available
@@ -2255,7 +2257,7 @@ on a receiver of type '%T'` — **false**, the `impl` existed — and a generic 
 generation with exit 1 and **no message at all** (no Nyx error, no LLVM error, no `.ll`). If you
 learned to hoist such calls out of nested functions, you no longer need to. [test: compiler/language/test-413-fn-anidada-ve-traits-y-genericos]
 
-26. **Leaving a `try` early with `return`, `?`, `break` or `continue` no longer leaks a try level (fixed 2026-09-15)** — until then
+27. **Leaving a `try` early with `return`, `?`, `break` or `continue` no longer leaks a try level (fixed 2026-09-15)** — until then
 only the normal end of the `try` body and the `catch` released the level that entering the `try`
 took from a per-thread stack of 64. Each `return` from inside a `try` left one level behind, so a
 long-lived thread (a server loop) died on the 64th such call with `panic: try-catch nesting too
@@ -2265,7 +2267,7 @@ of the function's, `break`/`continue` only those opened inside the loop, a `retu
 `catch` releases nothing extra, and a lambda or nested function counts its own. If you moved a
 `return` out of a `try` (storing the result in a variable) to avoid the panic, you can put it back. [test: compiler/language/test-431-try-salida-temprana-pop]
 
-27. **A private function in a `std/` module with the same name as a builtin no longer hijacks your
+28. **A private function in a `std/` module with the same name as a builtin no longer hijacks your
 call.** In 0.32.0, when `pub` started protecting unqualified calls (NYX1036), importing two stdlib
 modules could stop compiling through no fault of your own: `std/toml` declares a private
 `fn string_to_int` (no `pub`), and the visibility check treated it as the owner of every
@@ -2276,7 +2278,7 @@ one. Resolution is unchanged — the call still reaches the BUILTIN, which matte
 behave differently on bad input (`string_to_int("4x2")` aborts in the builtin, while the `std/toml`
 one would skip the `x` and return 42). [test: 30-std-privada-homonima-de-builtin]
 
-28. **A name redeclared inside a block is another variable: when the block closes, the name is the outer variable again, with its value and its type (since 0.36.0).**
+29. **A name redeclared inside a block is another variable: when the block closes, the name is the outer variable again, with its value and its type (since 0.36.0).**
 Until 0.35.0 the codegen kept a function's variables in one flat map, so a `let q` inside an
 `if`/`else`/`while`/`for`/`match` arm/`try`/`catch`/`unsafe`, the variable of a `for q in ...`, or the
 binding of `Option.Some(q) =>` REPLACED the outer `q` until the end of the function. It compiled,
@@ -2292,7 +2294,7 @@ redeclares it), run `NYX_SCOPE_AUDIT=1 nyx check file.nx`: it reports every use 
 checker and the codegen saw different variables, with the prefix `scope-audit:`. Measured over 1286
 files (this repo, nyxerp, the stacks): zero real cases. [test: 33-sombreado-en-bloque] [test: compiler/language/test-486-defer-con-sombreado]
 
-29. **A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.36.0, as long as the name is unique in the function (NYX1044 otherwise).**
+30. **A lambda or a named `fn` written inside a block can use that block's `let`/`var` variables — since 0.36.0, as long as the name is unique in the function (NYX1044 otherwise).**
 Until 0.35.0 closures only existed at a function's top level: a lambda inside an `if` could not see the
 `if`'s variables (NYX1002 «not declared»), and a named `fn` inside a block did not even link
 (`use of undefined value '@name'` from clang, no line). Closures capture by NAME, so a block variable
@@ -2302,7 +2304,7 @@ Rename the variable, or copy it into a `let` with its own name right before the 
 Variables declared in a loop (and the `for` variable) ARE captured, one instance per iteration: see
 `closure-per-iteration`. [test: 36-closure-captura-bloque] [test: 48-closure-por-iteracion] [test: compiler/errors/test-nyx1044-captura-nombre-repetido]
 
-30. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.36.0 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
+31. **A `defer` runs when control leaves the block that contains it (fall-through, `return`, `?`, `break`, `continue`) — and since 0.36.0 that holds in every block, nested fn and lambda, not only at the top level of a top-level fn.**
 Until 0.35.0 a `defer` inside an `if`, `else`, `while`, `for`, `match` arm, `try`, `catch` or
 `unsafe` block, at the top level of a nested fn, or in a lambda was silently dropped: it compiled,
 `nyx check` was green and the cleanup never ran. A `return` inside a `defer` hung the program. Now
@@ -2311,7 +2313,7 @@ iteration; the `return` value is evaluated before the defers; the body sees the 
 at declaration (unlike Go). `return` (or a `break`/`continue` leaving the body) inside a `defer` is
 NYX1042, and a `defer` in an `async fn` is NYX1043. [test: 34-defer-al-cerrar-bloque] [test: compiler/language/test-489-defer-salida-normal]
 
-31. **An `#[affine]` value with `impl Drop` is dropped when its BLOCK closes, once per declaration — in a loop once per iteration, on a `throw` too — since 0.36.0.**
+32. **An `#[affine]` value with `impl Drop` is dropped when its BLOCK closes, once per declaration — in a loop once per iteration, on a `throw` too — since 0.36.0.**
 Until 0.35.0 deterministic drop worked by variable NAME and per FUNCTION: values were dropped only when
 the function returned, so inside a loop each iteration overwrote the same slot and only the LAST value
 was ever dropped (the rest leaked silently); a `throw` dropped nothing; and two affine variables with
@@ -2319,7 +2321,7 @@ the same name in one function were rejected (NYX2020, retired). Now each declara
 and its drop is an implicit `defer` of that declaration. A value moved out (returned, passed by value)
 is dropped by its new owner, not at the original block. [test: 38-drop-al-cerrar-bloque]
 
-32. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.36.0.**
+33. **`for x in [...]` over an array literal gives `x` the type of its elements, and an element of type `Array<T>` or `Map` works like any other — since 0.36.0.**
 Until 0.35.0, iterating a literal directly (`for q in ["x", "y"]`) typed `q` as `int`: `print(q)` and
 `"v=" + q` showed the String's ADDRESS, with no error. An element typed `Array<T>` (annotated, or
 inferred from an `Array<Array<int>>` variable) crashed with SIGSEGV on first use, and a `Map` element
@@ -2327,7 +2329,7 @@ silently reported `m.size() == 0`: both fell into the struct path, which loads o
 The literal now takes the type shared by ALL its elements (a mixed literal like `[1, "dos"]` stays
 untyped rather than inventing one); annotate the loop variable (`for q: String in ...`) to be explicit. [test: 35-for-sobre-literal]
 
-33. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.36.0 it is also what the type checker checks the call against.**
+34. **A local `Fn` variable (or parameter) with the same name as a top-level `fn` is what a call to that name reaches — and since 0.36.0 it is also what the type checker checks the call against.**
 Until 0.35.0, `let leer: Fn(int) -> int = a.leer; leer(21)` failed with a false NYX1005 («argument 1
 of 'leer': expected String, got int») whenever any file of the program declared a
 `fn leer(s: String)`: the checker took the global signature while the binary called the local. With
@@ -2335,21 +2337,21 @@ identical signatures it compiled, and the arguments were checked against the wro
 Reported by a user on 2026-10-04. Now the most recent binding in scope wins in both layers, and a
 `Fn(..) -> R` variable contributes its own parameter and return types. [test: 32-variable-fn-homonima-de-fn-global] [test: compiler/errors/test-m08-arg-mismatch-fn-local-homonima]
 
-34. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
+35. **`s[i]` on a `String` is the byte at `i` (a `char`), the same as `s.charAt(i)`** (fixed 2026-09-29).
 Until then it compiled as an Array read and fetched 8 bytes at position `i*8`: `"abcdefghijklmnopq"[1]`
 gave `i` instead of `b`, and `let c: int = "abc"[0]` gave 6513249 — silently, rc 0. On an older
 toolchain use `s.charAt(i)`, which always read the right byte. Out of range aborts, like `charAt`. [test: compiler/language/test-457-indexar-string]
 
-35. **A closure created inside a loop sees the variable of ITS iteration** (fixed 2026-11-01, Go 1.22 semantics). Until 0.40.0 a `let`/`var` declared in a loop body had ONE slot shared by every iteration, so four closures pushed into an Array and called after the loop all read the last value («3 3 3 3» instead of «0 1 2 3»), with no error; `spawn` in a loop and the `for` variable were rejected with NYX1044 for that reason. Now each iteration gets its own instance of every loop-body variable a closure can reach and of the `for` variable. The body and the closures of that iteration share the instance (a `var` mutated after the closure was created is seen by it, and the other way round); a variable declared OUTSIDE the loop stays shared by all (a counter the closures increment). Costs one GC allocation per iteration per such variable, only in functions with a closure inside a loop. Still NYX1044: a name declared more than once in the function, and `match`/`while let`/`select` bindings. [test: 48-closure-por-iteracion]
+36. **A closure created inside a loop sees the variable of ITS iteration** (fixed 2026-11-01, Go 1.22 semantics). Until 0.40.0 a `let`/`var` declared in a loop body had ONE slot shared by every iteration, so four closures pushed into an Array and called after the loop all read the last value («3 3 3 3» instead of «0 1 2 3»), with no error; `spawn` in a loop and the `for` variable were rejected with NYX1044 for that reason. Now each iteration gets its own instance of every loop-body variable a closure can reach and of the `for` variable. The body and the closures of that iteration share the instance (a `var` mutated after the closure was created is seen by it, and the other way round); a variable declared OUTSIDE the loop stays shared by all (a counter the closures increment). Costs one GC allocation per iteration per such variable, only in functions with a closure inside a loop. Still NYX1044: a name declared more than once in the function, and `match`/`while let`/`select` bindings. [test: 48-closure-por-iteracion]
 
-36. **A `throw` that leaves a block or a function runs the `defer`s it already reached — innermost first — before landing in the `catch`; and a `defer` the function never reached does not run.**
+37. **A `throw` that leaves a block or a function runs the `defer`s it already reached — innermost first — before landing in the `catch`; and a `defer` the function never reached does not run.**
 Before 0.36.0 the `throw` was a bare `longjmp` that skipped every cleanup, and a function-level `defer`
 ran on every exit even when the function returned BEFORE reaching it (`if b { return 1 } defer {...}`).
 Now each `defer` pushes its own implicit `try` frame when it executes; its catch runs that defer and
 re-throws, so only reached defers run, in LIFO order. A `throw` inside a defer does not run that same
 defer again. Not on wasm32-wasi, which has no `try`/`throw`. [test: 37-throw-corre-defer] [test: compiler/language/test-492-defer-no-alcanzado]
 
-37. **`int_to_float(arr[i])` and `float_to_int(arr[i])` on an `Array` without `<T>`, bound to a typed `let`, compile and convert** (fixed 2026-10-16, v0.36.1). Until 0.36.0
+38. **`int_to_float(arr[i])` and `float_to_int(arr[i])` on an `Array` without `<T>`, bound to a typed `let`, compile and convert** (fixed 2026-10-16, v0.36.1). Until 0.36.0
 the index read inherited the `let`'s expected type instead of the builtin's: `let f: float =
 int_to_float(cuentas[q])` read the slot as a double and fed it to `sitofp i64`; `let n: int =
 float_to_int(pesos[0])` read raw bits as an i64 and fed them to `fptosi double`. `nyx check` said
@@ -2357,17 +2359,17 @@ nothing and clang failed with «invalid IR» (reported by nyxerp). The old worka
 cuentas[q]` first, then convert) still works but is no longer needed: both builtins now fix the hint
 their argument must have (`int` / `float`) while it is generated, like `string_to_int` does with `String`. [test: 39-conversion-de-casilla-sin-tipo]
 
-38. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.37.0). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
+39. **A `float` read from an `Array` slot without `<T>` keeps its value when ASSIGNED (`x = d[i]`) or pushed with a computed index (`b.push(a[2 * i])`)** (fixed 2026-10-19, v0.37.0). Until 0.36.1 only `let x: float = d[i]` worked: the assignment read the slot as an integer and converted its bits (1.5 became 4.6e18), and the push lost the slot's float tag, with no error anywhere. The workaround (bind with `let v: float = ...` first) is no longer needed. [test: compiler/language/test-502-float-de-casilla-asignado]
 
-39. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.37.0). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
+40. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.37.0). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
 
-40. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.37.0). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
+41. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.37.0). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
 
-41. **`m.insert(a[0], a[1])` into a `Map<String>`, with `a` an `Array` without `<T>` filled at run time, stores the value as a String** (fixed 2026-10-31). Until 0.40.0 the slot reached `insert` as a raw integer: the map was stored and re-registered as `Map<int>`, so `let v: String = m.get(k)` worked but `print(m.get(k))` printed the pointer as a number, with no error (reported by nyxerp). An unannotated `var m: Map` with values that come from untyped slots still has no element type to go by: annotate the map (`Map<String>`) or the value. [test: 46-map-insert-casilla-string] [test: 49-map-clave-casilla-for]
+42. **`m.insert(a[0], a[1])` into a `Map<String>`, with `a` an `Array` without `<T>` filled at run time, stores the value as a String** (fixed 2026-10-31). Until 0.40.0 the slot reached `insert` as a raw integer: the map was stored and re-registered as `Map<int>`, so `let v: String = m.get(k)` worked but `print(m.get(k))` printed the pointer as a number, with no error (reported by nyxerp). An unannotated `var m: Map` with values that come from untyped slots still has no element type to go by: annotate the map (`Map<String>`) or the value. [test: 46-map-insert-casilla-string] [test: 49-map-clave-casilla-for]
 
-42. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.37.0). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
+43. **A page of a PDF can be drawn as an `Image`: `pdf_page_to_image(bytes, page, dpi)` in `std/pdf_render`** (2026-10-19, v0.37.0). Until then `std/pdf` only wrote PDF and there was no way to read one or rasterize a page (reported by nyxerp, which traces print-shop forms that arrive as PDF). The result is the same `Image` as `std/image`, so it resizes and encodes like any photo. Pure Nyx (same pixels in native and wasm32). Strict by default: what it does not draw (shadings, Type 1/3 fonts, JBIG2/JPX, encryption) is `Err(unsupported)` naming it, and `render_report` with `pdf_render_best_effort()` draws the rest and lists what it skipped; a broken or hostile PDF is `Err(invalid)`, never a hang. [test: 41-pdf-pagina-a-imagen]
 
-43. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.37.0). Until 0.36.1
+44. **A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works** (fixed 2026-10-18, v0.37.0). Until 0.36.1
 `texto(hs[0])` (with `fn texto(h: Hoja)`) passed the slot's raw i64 where the function expected the
 struct by value: the program died with «GC heap exhausted» or, worse, the function silently received
 ANOTHER element. `m.insert(pares[0], pares[1])` used the raw i64 as the key pointer and clang rejected
@@ -2376,7 +2378,7 @@ hs[0]` first) still works but is no longer needed: the slot is converted to the 
 and a Map key that comes from a slot is read as the String it holds. Same family as
 `int_to_float(arr[i])`, fixed in 0.36.1. [test: 40-casilla-sin-tipo-como-argumento]
 
-44. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
+45. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
 
 <!-- /gen:gotchas -->
 

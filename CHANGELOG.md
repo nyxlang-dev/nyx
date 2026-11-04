@@ -11,6 +11,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`m.get_or(k, [])` con un `Array` (o un `Map`, o un struct) guardado como valor ya no produce IR inválido cuando el
+  resultado se usa sin anotar** (`for x in m.get_or(k, [])`, pasarlo como argumento, encadenar `.length()`). El helper
+  de `get_or` devolvía `i64` para todo default que no fuera String ni float, y solo sobrevivía detrás de un
+  `let v: Array = …` (convierte por el tipo declarado); sin la anotación clang rechazaba el IR («defined with type 'i64'
+  but expected 'ptr'», reporte de nyxerp del 2026-11-04, variante del caso de `ai-first/49`). Ahora el resultado
+  tiene el tipo del default, igual que ya pasaba con float. Sigue vigente el gotcha general del `Array` sin `<T>`: el
+  elemento del `for` se lee como entero si nada dice su tipo, así que `for x: String in m.get_or(k, [])` o
+  `let v: Array<String> = …`. Test `ai-first/51`.
 - **`install.ps1` falla en el acto si un proceso retiene la instalación anterior** (`.nyx.old` en uso) en vez de
   descubrirlo tras un minuto de compilar y enlazar; el mensaje nombra el paso que falló y «your current install was not
   changed»; y **avisa de `NYX_HOME` cuando se instala con `-Prefix`** distinto de `%USERPROFILE%\.nyx`, porque el
