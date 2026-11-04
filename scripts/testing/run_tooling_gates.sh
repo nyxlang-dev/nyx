@@ -541,7 +541,7 @@ run_test_spy() {  # \$1=dir, resto=args → línea(s) de clang en \$GATE_TMP/cla
 run_test_spy "$GATE_TMP/sano"
 # (desde 2026-09-20 el .ll es el scratch propio de la compilación, no el
 #  script.ll compartido: ver nyx-test-scratch-propio, más abajo.)
-if [ -s "$GATE_TMP/clang-calls.log" ] && grep -qE "/tmp/nyx_test_src_[A-Za-z0-9]+\.ll" "$GATE_TMP/clang-calls.log"; then
+if [ -s "$GATE_TMP/clang-calls.log" ] && grep -qE "/nyx_test_src_[0-9]+_[A-Za-z0-9]+\.ll" "$GATE_TMP/clang-calls.log"; then
     ok "spy-clang — el instrumento registra la línea de clang que arma nyx test"
 else
     bad "spy-clang — el wrapper no registró ninguna llamada: los checks de abajo no prueban nada" "spy-clang"
@@ -840,14 +840,14 @@ if grep -qE '"/tmp/nyx_test_(out|bin|script)_" \+ int_to_string\(time_ms\(\)\)' 
     bad "nyx-test-scratch-propio — un temporal vuelve a nombrarse con time_ms()" "nyx-test-scratch"
 elif grep -qE '(cp .*" script\.nx|-Wno-deprecated-declarations script\.ll|rm -f script\.nx script\.ll)' compiler/test.nx; then
     bad "nyx-test-scratch-propio — vuelve el script.nx/script.ll compartido de NYX_HOME" "nyx-test-scratch"
-elif ! grep -q 'mktemp -d /tmp/nyx_test_XXXXXX' compiler/test.nx; then
+elif ! grep -q 'mktemp -d .*tmp_plantilla("test_")' compiler/test.nx; then
     bad "nyx-test-scratch-propio — falta el work_dir por compilación (mktemp)" "nyx-test-scratch"
 else
     ok "nyx-test-scratch-propio: cada compilación de \`nyx test\` usa su propio scratch"
 fi
 # CONTROL POSITIVO: sobre una copia con la forma VIEJA, el check tiene que gritar.
 NT_TMP="$GATE_TMP/test_nx_viejo"
-sed -E 's|let work_dir: String = exec\("mktemp -d /tmp/nyx_test_XXXXXX"\)\.trim\(\)|let out_file: String = "/tmp/nyx_test_out_" + int_to_string(time_ms()) + ".txt"|' \
+sed -E 's|let work_dir: String = exec\("mktemp -d .*tmp_plantilla\("test_"\).*\)\.trim\(\)|let out_file: String = "/tmp/nyx_test_out_" + int_to_string(time_ms()) + ".txt"|' \
     compiler/test.nx > "$NT_TMP" 2>/dev/null
 if grep -qE '"/tmp/nyx_test_(out|bin|script)_" \+ int_to_string\(time_ms\(\)\)' "$NT_TMP"; then
     ok "control positivo: la forma vieja (temporal por time_ms) se detecta"
@@ -901,6 +901,54 @@ if echo "$SA_ERR" | grep -qF "⚠"; then
 else
     ok "control positivo: un programa sin avisos no muestra ninguno"
 fi
+
+# ── Check H: `nyx test` escribe su scratch en $TMPDIR y barre los restos ──
+# Hasta el 2026-11-04 los mktemp de test.nx decían `/tmp` a secas: una suite
+# que exportaba TMPDIR para no llenar el tmpfs (nyxerp) seguía dejando el
+# binario de cada archivo en la RAM de la máquina, y si mataban `nyx test`
+# (KILL, timeout externo) el directorio quedaba para siempre. Ahora cada
+# temporal lleva el PID del dueño y la corrida siguiente borra los de PIDs
+# muertos; lo de un PID vivo y lo del formato viejo (sin PID) no se toca.
+TD="$GATE_TMP/td con espacio"
+mkdir -p "$TD"
+DEAD_PID=$(sh -c 'echo $$')
+sleep 300 & LIVE_PID=$!
+mkdir -p "$TD/nyx_test_${DEAD_PID}_MUERTO" "$TD/nyx_test_${LIVE_PID}_VIVO00" "$TD/nyx_test_VIEJOxx"
+: > "$TD/nyx_test_${DEAD_PID}_sqlite.db"
+: > "$TD/nyx_test_src_${DEAD_PID}_abc123.nx"; : > "$TD/nyx_test_libs_${DEAD_PID}_abc123"
+# El test duerme para que se vea el scratch a mitad de la corrida.
+printf 'test "lenta" {\n    let _s: String = exec("sleep 2")\n    assert(1 == 1)\n}\n' > "$GATE_TMP/sano/tests/lenta.nx"
+( cd "$GATE_TMP/sano" && TMPDIR="$TD" NYX_HOME="$ROOT" timeout 120 "$ROOT/nyx_test" ) > "$GATE_TMP/test.out" 2>&1 &
+TP=$!
+sleep 1
+SCRATCH=$(ls "$TD" | grep -E '^nyx_test_[0-9]+_' | grep -v "_${LIVE_PID}_" | head -3 | tr '\n' ' ')
+wait $TP; TEST_RC=$?
+rm -f "$GATE_TMP/sano/tests/lenta.nx"
+if [ "$TEST_RC" -eq 0 ] && [ -n "$SCRATCH" ]; then
+    ok "test-tmpdir — el scratch vive en \$TMPDIR (con espacio) y lleva el PID: $SCRATCH"
+else
+    bad "test-tmpdir — rc $TEST_RC o sin scratch en \$TMPDIR a mitad de la corrida (vi: '$SCRATCH')" "test-tmpdir"
+    head -5 "$GATE_TMP/test.out" | sed 's/^/      /'
+fi
+if [ ! -e "$TD/nyx_test_${DEAD_PID}_MUERTO" ] && [ ! -e "$TD/nyx_test_src_${DEAD_PID}_abc123.nx" ] && [ ! -e "$TD/nyx_test_libs_${DEAD_PID}_abc123" ]; then
+    ok "test-barrido-muerto — los restos de un PID muerto se borran al arrancar"
+else
+    bad "test-barrido-muerto — quedaron restos del PID muerto $DEAD_PID" "test-barrido-muerto"
+    ls "$TD" | sed 's/^/      /'
+fi
+if [ -d "$TD/nyx_test_${LIVE_PID}_VIVO00" ] && [ -d "$TD/nyx_test_VIEJOxx" ] && [ -e "$TD/nyx_test_${DEAD_PID}_sqlite.db" ]; then
+    ok "test-barrido-vivo — lo de un PID vivo, del formato viejo y de forma ajena (nyx_test_<n>_sqlite.db) no se toca"
+else
+    bad "test-barrido-vivo — el barrido borró algo en uso o de formato desconocido" "test-barrido-vivo"
+    ls "$TD" | sed 's/^/      /'
+fi
+RESTO=$(ls "$TD" | grep -E '^nyx_(test|cov)_[0-9]+_[A-Za-z0-9]{6}$|^nyx_test_(src|libs)_[0-9]+_' | grep -v "_${LIVE_PID}_" | tr '\n' ' ')
+if [ -z "$RESTO" ]; then
+    ok "test-tmpdir-limpio — al terminar no queda scratch de la corrida en \$TMPDIR"
+else
+    bad "test-tmpdir-limpio — quedó scratch tras una corrida normal: $RESTO" "test-tmpdir-limpio"
+fi
+kill $LIVE_PID 2>/dev/null; wait $LIVE_PID 2>/dev/null
 
 echo "────────────────────────────────────────────────"
 echo "  TOOLING GATES: $PASS pasados, $FAIL fallidos"

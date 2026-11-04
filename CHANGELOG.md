@@ -11,6 +11,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`nyx test` respeta `$TMPDIR` y barre sus propios huérfanos** (`compiler/test.nx`). Los cuatro `mktemp` decían
+  `/tmp` a secas: una suite que exportaba `TMPDIR` para no llenar el tmpfs (nyxerp) seguía dejando el binario de cada
+  archivo en la RAM de la máquina, y si mataban `nyx test` (KILL, timeout externo) el `trap` del `sh` por archivo no
+  alcanzaba y el directorio quedaba para siempre (el 2026-10-26: 30 restos y ~1,3 GB de swap en páginas de `/tmp`).
+  Ahora la base es `$TMPDIR` (o `/tmp`), cada temporal lleva el PID del dueño (`nyx_test_<pid>_XXXXXX`,
+  `nyx_test_src_`, `nyx_test_libs_`, `nyx_cov_`) y la corrida siguiente borra los de PIDs muertos; lo de un PID vivo y
+  los nombres del formato viejo no se tocan. Los paths del script generado van entre comillas (un `TMPDIR` con espacio
+  fallaba). Un `TMPDIR` inexistente da un error claro en vez de un FAIL mudo. Cuatro checks nuevos en
+  `run_tooling_gates.sh` (38). Cierra la ficha BAJA del 2026-10-26.
 - **`for x in xs` sobre un `Array` sin `<T>` lee cada casilla por su tag, como ya hacía `xs[i]`** (silently-wrong,
   reporte de nyxerp del 2026-11-04 al adoptar el fix de `get_or`). Cuando codegen no conocía el tipo del elemento
   (`Array` pelado, `m.get_or(k, [])`, literal mixto), `x` era int y `print(x)` / `"v=" + x` mostraban la dirección
