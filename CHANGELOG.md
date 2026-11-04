@@ -11,14 +11,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`for x in xs` sobre un `Array` sin `<T>` lee cada casilla por su tag, como ya hacía `xs[i]`** (silently-wrong,
+  reporte de nyxerp del 2026-11-04 al adoptar el fix de `get_or`). Cuando codegen no conocía el tipo del elemento
+  (`Array` pelado, `m.get_or(k, [])`, literal mixto), `x` era int y `print(x)` / `"v=" + x` mostraban la dirección
+  del String sin error. Ahora `codegen_for` reescribe el cuerpo para que cada `x` sea `__arr[__idx]` sobre dos
+  variables ocultas (walker de `licm.nx`, `for_sustituir_var`), y todos los consumidores pasan por
+  `codegen_index_access`, que consulta el tag. No aplica si el cuerpo re-liga `x`, muta el array recorrido o tiene
+  fns anidadas (queda el camino viejo); `NYX_FOR_SLOT=off` lo apaga. De paso, `let a: Array = [1, "dos"]` ya no se
+  infiere `Array<int>` por el primer elemento: usa el tipo común (`tipo_comun_de_literal`, como el `for` sobre
+  literal desde 0.36.0) y un literal mixto queda `Array` pelado (cierra la ficha BAJA del 2026-07-26). Test
+  `ai-first/52`, gotcha `for-untyped-slot-by-tag`.
 - **`m.get_or(k, [])` con un `Array` (o un `Map`, o un struct) guardado como valor ya no produce IR inválido cuando el
   resultado se usa sin anotar** (`for x in m.get_or(k, [])`, pasarlo como argumento, encadenar `.length()`). El helper
   de `get_or` devolvía `i64` para todo default que no fuera String ni float, y solo sobrevivía detrás de un
   `let v: Array = …` (convierte por el tipo declarado); sin la anotación clang rechazaba el IR («defined with type 'i64'
   but expected 'ptr'», reporte de nyxerp del 2026-11-04, variante del caso de `ai-first/49`). Ahora el resultado
-  tiene el tipo del default, igual que ya pasaba con float. Sigue vigente el gotcha general del `Array` sin `<T>`: el
-  elemento del `for` se lee como entero si nada dice su tipo, así que `for x: String in m.get_or(k, [])` o
-  `let v: Array<String> = …`. Test `ai-first/51`.
+  tiene el tipo del default, igual que ya pasaba con float (y el `for` sobre él lee por tag: bullet anterior). Test
+  `ai-first/51`.
 - **`install.ps1` falla en el acto si un proceso retiene la instalación anterior** (`.nyx.old` en uso) en vez de
   descubrirlo tras un minuto de compilar y enlazar; el mensaje nombra el paso que falló y «your current install was not
   changed»; y **avisa de `NYX_HOME` cuando se instala con `-Prefix`** distinto de `%USERPROFILE%\.nyx`, porque el
