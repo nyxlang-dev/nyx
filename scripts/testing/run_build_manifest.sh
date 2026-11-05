@@ -587,6 +587,39 @@ else
     bad "driver-fmt — rc $RC: no imprimió el código formateado de feo.nx" "driver-fmt"; muestra
 fi
 
+# ── Huérfanos de `nyx build` (2026-11-05) ────────────────────
+# Si matan un build (Ctrl+C, KILL, timeout) su `nyx_libs_<pid>_…`/`nyx_build_<pid>_…`
+# quedaba en $TMPDIR para siempre. Ahora el build siguiente borra los de PIDs
+# muertos; lo de un PID vivo, lo que no tiene la forma exacta y lo ajeno no se toca.
+TDB="$GATE_TMP/td barrido"
+mkdir -p "$TDB"
+DEAD_PID=$(sh -c 'echo $$')
+sleep 300 & LIVE_PID=$!
+mkdir -p "$TDB/nyx_libs_${DEAD_PID}_1000_1/sub" "$TDB/nyx_build_${DEAD_PID}_1000_2" \
+         "$TDB/nyx_build_${LIVE_PID}_1000_1" "$TDB/nyx_libs_${DEAD_PID}_x" "$TDB/nyx_build_${DEAD_PID}.sh"
+: > "$TDB/nyx_libs_${DEAD_PID}_1000_1/sub/lib_0.ll"
+P="$GATE_TMP/barrido-prog"
+mk_proj "$P" "$PKG"
+( cd "$P" && TMPDIR="$TDB" NYX_HOME="$ROOT" timeout 300 "$ROOT/nyx_build" build ) > "$GATE_TMP/out" 2>&1
+RC=$?
+if [ "$RC" -eq 0 ] && [ ! -e "$TDB/nyx_libs_${DEAD_PID}_1000_1" ] && [ ! -e "$TDB/nyx_build_${DEAD_PID}_1000_2" ]; then
+    ok "barrido-muertos — un build borra los nyx_libs_/nyx_build_ de PIDs muertos en \$TMPDIR"
+else
+    bad "barrido-muertos — rc $RC; quedó: $(ls "$TDB" | tr '\n' ' ')" "barrido-muertos"; muestra
+fi
+if [ -d "$TDB/nyx_build_${LIVE_PID}_1000_1" ] && [ -d "$TDB/nyx_libs_${DEAD_PID}_x" ] && [ -d "$TDB/nyx_build_${DEAD_PID}.sh" ]; then
+    ok "barrido-vivos — lo de un PID vivo y lo que no tiene la forma exacta no se toca"
+else
+    bad "barrido-vivos — el barrido borró algo en uso o de forma ajena: $(ls "$TDB" | tr '\n' ' ')" "barrido-vivos"
+fi
+RESTO=$(ls "$TDB" | grep -E "^nyx_(libs|build)_[0-9]+_[0-9]+_[0-9]+$" | grep -v "_${LIVE_PID}_")
+if [ -z "$RESTO" ]; then
+    ok "barrido-propio — el build no dejó su propio temporal en \$TMPDIR (con espacio)"
+else
+    bad "barrido-propio — quedó temporal del build: $RESTO" "barrido-propio"
+fi
+kill $LIVE_PID 2>/dev/null; wait $LIVE_PID 2>/dev/null
+
 echo "────────────────────────────────────────────────"
 echo "  BUILD MANIFEST: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

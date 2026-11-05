@@ -11,6 +11,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`nyx build` barre sus temporales huérfanos** (`compiler/build.nx`). Si mataban un build (Ctrl+C, KILL, timeout
+  externo) no se llegaba al `borrar_arbol` final y su `nyx_libs_<pid>_…`/`nyx_build_<pid>_…` quedaba en `$TMPDIR` para
+  siempre (48 MB en un caso medido el 2026-11-05; en el servidor `/tmp` es tmpfs). Ahora `tmp_dir_propio` borra antes
+  los directorios de esa forma exacta cuyo PID ya no existe (`kill_process(pid, 0)`, y `/proc` en Linux), en Nyx puro
+  para que valga en Windows; lo de un PID vivo y lo que no tiene la forma no se toca. Misma receta que `nyx test`. Tres
+  checks nuevos en `run_build_manifest.sh` (37). Cierra la ficha BAJA «`nyx build` interrumpido con Ctrl+C».
 - **`nyx test` respeta `$TMPDIR` y barre sus propios huérfanos** (`compiler/test.nx`). Los cuatro `mktemp` decían
   `/tmp` a secas: una suite que exportaba `TMPDIR` para no llenar el tmpfs (nyxerp) seguía dejando el binario de cada
   archivo en la RAM de la máquina, y si mataban `nyx test` (KILL, timeout externo) el `trap` del `sh` por archivo no

@@ -1475,13 +1475,71 @@ fn borrar_arbol(p: String, nivel: int) {
     return 0
 }
 
+fn solo_digitos(s: String) -> bool {
+    if s.length() == 0 { return false }
+    var i: int = 0
+    while i < s.length() {
+        let c: char = s.charAt(i)
+        if c < '0' or c > '9' { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// ¿Existe el proceso? kill(pid, 0) en posix; en win32 os_proc_kill_pid abre
+// el proceso y mira que no haya terminado. Si kill da EPERM (proceso de otro
+// usuario) el builtin devuelve -1 igual, así que en Linux se mira /proc
+// también: ante la duda, vivo.
+fn pid_vivo(pid: int) -> bool {
+    if kill_process(pid, 0) == 0 { return true }
+    return file_exists("/proc/" + int_to_string(pid))
+}
+
+// Barre, en la base de temporales, los directorios de builds MUERTOS.
+// `borrar_arbol(tmpd)` corre al final de run_build/build_libs, y a eso no se
+// llega si matan el proceso (Ctrl+C, SIGKILL, un timeout externo): cada
+// directorio —con los .ll de [lib] modules, 48 MB en un caso medido el
+// 2026-11-05— quedaba en /tmp para siempre, y en esta máquina /tmp es tmpfs
+// (RAM y después swap). Un manejador de señal no cubre KILL, así que la
+// limpieza la hace EL BUILD SIGUIENTE, igual que `nyx test` (test.nx,
+// barrer_huerfanos): el nombre lleva el PID del dueño y se borra lo de un PID
+// que ya no existe. Solo entra la forma exacta de tmp_dir_propio
+// (`nyx_libs_<pid>_<us>_<n>` / `nyx_build_<pid>_<us>_<n>`, tres tramos
+// numéricos): nada que se le parezca de otro programa. Lo de un PID vivo no se
+// toca; un PID reciclado solo deja el resto un build más.
+fn barrer_huerfanos_build(base: String) {
+    let hijos: Array = readdir(base)
+    let yo: int = getpid()
+    var i: int = 0
+    while i < hijos.length() {
+        let h: String = hijos[i]
+        i = i + 1
+        var resto: String = ""
+        if h.startsWith("nyx_libs_") {
+            resto = h.substring(9, h.length())
+        } else if h.startsWith("nyx_build_") {
+            resto = h.substring(10, h.length())
+        } else {
+            continue
+        }
+        let partes: Array<String> = resto.split("_")
+        if partes.length() != 3 { continue }
+        if not solo_digitos(partes[0]) or not solo_digitos(partes[1]) or not solo_digitos(partes[2]) { continue }
+        let pid: int = string_to_int(partes[0])
+        if pid <= 0 or pid == yo or pid_vivo(pid) { continue }
+        borrar_arbol(base + "/" + h, 0)
+    }
+}
+
 // Directorio temporal propio, el `mktemp -d` del script: mkdir falla si ya
 // existe, así que nadie más puede haberlo creado antes (ni plantar un enlace
 // adentro, porque es 0755 y de quien corre el build). "" si no se pudo.
+// Antes de crear el suyo barre los de builds muertos (barrer_huerfanos_build).
 var g_tmp_n: int = 0
 fn tmp_dir_propio(prefijo: String) -> String {
     var base: String = temp_dir()
     if base == "" { base = "/tmp" }
+    barrer_huerfanos_build(base)
     var intento: int = 0
     while intento < 50 {
         g_tmp_n = g_tmp_n + 1
