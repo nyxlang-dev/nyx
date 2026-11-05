@@ -2106,6 +2106,7 @@ embedded NULs (`"AB" + char_to_string(0) + "CDE"`) now round-trips intact throug
 `read_file`/`write_file`/`try_read_file`/`try_write_file`/`file_write_string`. To read a whole file
 through an open handle (no `file_read_all` — that function does not exist), size it first
 (`file_seek`/`file_tell`) then `file_read_bytes(handle, size)` + `string_from_bytes(bytes, 0, size)`.
+`crc32_bytes(x)` (IEEE CRC-32, `"123456789"` → 3421780262) takes a String or a byte Array; an int/float/bool is NYX1031 (0.41.1+; before, a String compiled and gave a different number per call).
 For codepoints beyond a byte, use `utf8_encode(codepoint)` from `import "std/unicode"` (v0.22.x+):
 encodes any Unicode codepoint to its 1-4 UTF-8 bytes; invalid input (negative, > 0x10FFFF, surrogates
 U+D800..U+DFFF) yields U+FFFD instead of aborting — HTML numeric-entity semantics, so it composes

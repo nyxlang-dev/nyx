@@ -1,0 +1,29 @@
+// test-531 — crc32_bytes acepta un String (el CRC-32 de sus bytes) además de
+// un Array de bytes, y es determinista. Hasta 0.41.0 el String pasaba el
+// checker y el runtime lo leía como si fuera un array: un número distinto en
+// cada llamada con la misma cadena (fricción nyxerp 2026-11-05, editor visual
+// del sitio). Valores fijos: "123456789" → 3421780262 es el vector de prueba
+// estándar del CRC-32 IEEE; la cadena larga se fija contra el mismo valor que
+// da su Array de bytes.
+fn main() -> int {
+    let s: String = "abcdef0123456789abcdef0123456789abcdef0123456789"
+    let a: int = crc32_bytes(s)
+    let b: int = crc32_bytes(s)
+    let c: int = crc32_bytes(s)
+    assert(a == b)
+    assert(b == c)
+    assert(crc32_bytes("123456789") == 3421780262)
+    let bytes: Array<int> = [49, 50, 51, 52, 53, 54, 55, 56, 57]
+    assert(crc32_bytes(bytes) == 3421780262)
+    // String y su Array de bytes dan lo mismo.
+    var sb: Array<int> = []
+    var i: int = 0
+    while i < s.length() {
+        sb.push(s.charAt(i))
+        i = i + 1
+    }
+    assert(crc32_bytes(sb) == a)
+    assert(crc32_bytes("") == 0)
+    print("crc32-string OK")
+    return 0
+}

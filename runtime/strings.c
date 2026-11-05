@@ -1401,6 +1401,23 @@ int64_t nyx_crc32_bytes(nyx_array_t* arr) {
     return (int64_t)(crc ^ 0xFFFFFFFF);
 }
 
+// crc32_bytes(s) con un String: el CRC-32 de sus bytes, misma tabla. Hasta
+// 0.41.0 el compilador dejaba pasar un String y lo entregaba como si fuera
+// un nyx_array_t: el runtime leía length/capacity/data del String como
+// length/capacity/data del array y recorría basura (nyxerp, 2026-11-05: un
+// número distinto por llamada con la misma cadena).
+int64_t nyx_crc32_string(nyx_string* s) {
+    if (!crc32_table_init) crc32_build_table();
+    if (!s || s->length <= 0) return 0;
+
+    uint32_t crc = 0xFFFFFFFF;
+    for (int64_t i = 0; i < s->length; i++) {
+        uint8_t byte = (uint8_t)s->data[i];
+        crc = (crc >> 8) ^ crc32_table[(crc ^ byte) & 0xFF];
+    }
+    return (int64_t)(crc ^ 0xFFFFFFFF);
+}
+
 // Create a nyx_string from a slice of a byte array.
 // Useful for deserializing binary formats.
 nyx_string* nyx_string_from_bytes(nyx_array_t* arr, int64_t offset, int64_t len) {

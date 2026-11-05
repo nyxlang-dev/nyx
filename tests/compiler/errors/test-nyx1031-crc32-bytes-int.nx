@@ -1,0 +1,10 @@
+// NYX1031: crc32_bytes recibe un Array de bytes o un String, nunca un int.
+// Hasta 0.41.0 cualquier argumento pasaba el checker; un String se leía como
+// array (CRC distinto por llamada, fricción nyxerp 2026-11-05) y un int se
+// usaba como puntero. El String ya se acepta de verdad; el int es error.
+fn main() -> int {
+    let n: int = 12345
+    let c: int = crc32_bytes(n)
+    print(int_to_string(c))
+    return 0
+}

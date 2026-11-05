@@ -162,6 +162,7 @@ void nyx_sb_clear(nyx_string_builder* sb);
 
 // Bytes ↔ String (portables: también en wasm32-wasi).
 int64_t nyx_crc32_bytes(nyx_array_t* arr);
+int64_t nyx_crc32_string(nyx_string* s);
 nyx_string* nyx_string_from_bytes(nyx_array_t* arr, int64_t offset, int64_t len);
 int64_t nyx_constant_time_eq(nyx_string* a, nyx_string* b);
 

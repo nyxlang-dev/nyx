@@ -11,6 +11,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`crc32_bytes(s)` con un String daba un número distinto por llamada** (silently-wrong, fricción nyxerp del
+  2026-11-05, editor visual del sitio). El builtin esperaba un Array de bytes, el checker no miraba el tipo y codegen
+  entregaba el `%nyx_string*` como si fuera un array: el runtime leía el struct del String como array y recorría
+  basura. Ahora un String va a `nyx_crc32_string` (el CRC-32 de sus bytes, misma tabla; `"123456789"` → 3421780262),
+  un Array sigue como antes, y un int/float/bool es NYX1031 con pista. Tests `531` y `test-nyx1031-crc32-bytes-int`;
+  línea en `LLM.md`.
 - **`nyx build` barre sus temporales huérfanos** (`compiler/build.nx`). Si mataban un build (Ctrl+C, KILL, timeout
   externo) no se llegaba al `borrar_arbol` final y su `nyx_libs_<pid>_…`/`nyx_build_<pid>_…` quedaba en `$TMPDIR` para
   siempre (48 MB en un caso medido el 2026-11-05; en el servidor `/tmp` es tmpfs). Ahora `tmp_dir_propio` borra antes

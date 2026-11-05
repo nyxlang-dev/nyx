@@ -34,6 +34,7 @@ TESTS=(
   "tests/compiler/errors/test-nyx1042-break-en-defer.nx|'break' cannot leave the body of a defer"
   "tests/compiler/errors/test-nyx1043-defer-en-async.nx|'defer' is not supported in an async function yet"
   "tests/compiler/errors/test-nyx1031-file-ruta-en-vez-de-handle.nx|'file_write_string' expects File for argument 1, got String"
+  "tests/compiler/errors/test-nyx1031-crc32-bytes-int.nx|'crc32_bytes' expects Bytes for argument 1, got int"
   "tests/compiler/errors/test-nyx1041-lambda-captura-de-bloque.nx|a closure uses 'q', a block variable it cannot capture: its name is declared 2 times in the function"
   "tests/compiler/errors/test-nyx1044-captura-nombre-repetido.nx|a closure uses 'z', a block variable it cannot capture: its name is declared 2 times in the function"
   "tests/compiler/errors/test-nyx1046-match-result-sobre-int.nx|belongs to an enum, but the match subject is int — the function returns int"
