@@ -77,9 +77,62 @@ static void tls_sys_root_cb(const unsigned char* der, size_t len, void* ud) {
     X509_STORE_add_cert(st, c);  // un duplicado da error y se ignora
     X509_free(c);
 }
+#if defined(__ANDROID__) || defined(NYX_TEST_ANDROID_CAS)
+// CAs en Android/Termux. OpenSSL compilado para Android no trae un directorio de
+// CAs que exista en el aparato, así que set_default_verify_paths no encuentra nada.
+// Orden: (1) SSL_CERT_FILE / SSL_CERT_DIR puestos -> los respeta default_verify_paths
+// y acá no se suma nada; (2) $PREFIX/etc/tls/cert.pem (Termux; PREFIX o
+// /data/data/com.termux/files/usr); (3) /system/etc/security/cacerts/. Los archivos de
+// ese directorio se llaman con el hash VIEJO de sujeto (subject_hash_old, «abcd1234.0»),
+// que el lookup por hash de OpenSSL 3 no encuentra: se lee cada archivo y se agrega al
+// X509_STORE (PEM_read_bio_X509 salta el texto previo al bloque PEM).
+// NYX_ANDROID_CACERTS_DIR reemplaza el paso 3 y fuerza este camino (costura de pruebas).
+// EN: Android has no usable default CA path; load Termux cert.pem or the system
+// cacerts dir file by file (old-style hash names are not found by hashed lookup).
+static int tls_android_load_file(X509_STORE* st, const char* path) {
+    BIO* b = BIO_new_file(path, "r");
+    if (!b) return 0;
+    int n = 0;
+    for (;;) {
+        X509* c = PEM_read_bio_X509(b, NULL, NULL, NULL);
+        if (!c) break;
+        if (X509_STORE_add_cert(st, c) == 1) n++;
+        X509_free(c);
+    }
+    BIO_free(b);
+    return n;
+}
+static void tls_android_dir_cb(const char* name, void* ud) {
+    // ud = {store, dir}
+    void** a = (void**)ud;
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s", (const char*)a[1], name);
+    tls_android_load_file((X509_STORE*)a[0], path);
+}
+static void tls_android_roots(X509_STORE* st) {
+    const char* dir = getenv("NYX_ANDROID_CACERTS_DIR");
+    if (!(dir && *dir)) {
+        const char* f = getenv("SSL_CERT_FILE");
+        const char* d = getenv("SSL_CERT_DIR");
+        if ((f && *f) || (d && *d)) return;
+        const char* prefix = getenv("PREFIX");
+        if (!prefix || !*prefix) prefix = "/data/data/com.termux/files/usr";
+        char pem[700];
+        snprintf(pem, sizeof pem, "%s/etc/tls/cert.pem", prefix);
+        if (tls_android_load_file(st, pem) > 0) return;
+        dir = "/system/etc/security/cacerts";
+    }
+    void* a[2] = { st, (void*)dir };
+    (void)os_fs_listdir(dir, tls_android_dir_cb, a);
+}
+#endif
+
 static void tls_add_sys_roots(X509_STORE* st) {
     if (!st) return;
     (void)os_sys_root_certs(tls_sys_root_cb, st);
+#if defined(__ANDROID__) || defined(NYX_TEST_ANDROID_CAS)
+    tls_android_roots(st);
+#endif
     ERR_clear_error();  // los duplicados dejan errores en la cola de OpenSSL
 }
 

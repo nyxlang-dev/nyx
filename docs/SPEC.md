@@ -2138,16 +2138,19 @@ version = "0.1.0"
 main = "src/main.nx"
 
 [build]                      # opcional
-target = "wasm32-wasi"       # destino por defecto de `nyx build`/`nyx run` (el flag --target gana); también x86_64-unknown-linux-gnu o aarch64-unknown-linux-gnu
+target = "wasm32-wasi"       # destino por defecto de `nyx build`/`nyx run` (el flag --target gana); también x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu o aarch64-linux-android
 
 [dependencies]
 nyx-db = "*"
 ```
 
 Claves de `[build]`: `main` (punto de entrada; también se acepta en `[package]`) y `target`
-(`wasm32-wasi`, `x86_64-unknown-linux-gnu` o `aarch64-unknown-linux-gnu`; también se acepta en `[package]`). Un triple desconocido da «target desconocido» y la lista de los válidos.
+(`wasm32-wasi`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` o `aarch64-linux-android`; también se acepta en `[package]`). Un triple desconocido da «target desconocido» y la lista de los válidos.
 
 **Compilación cruzada Linux x86_64 ↔ aarch64.** `nyx build --target <triple>` deja el binario en `target/<triple>/<name>` (no pisa `./<name>`). El triple del propio host compila nativo, sin banderas extra; el de la otra arquitectura pasa `--target=<triple>` a clang, enlaza con `-fuse-ld=lld` y compila el runtime de C de fuentes para el destino (cacheado por destino). Requiere en el host las bibliotecas de desarrollo del destino (multiarch en Debian/Ubuntu: `libc6-dev`, `libgc-dev`, `libssl-dev`, `zlib1g-dev`, `libgcc-N-dev` con el sufijo `:amd64`/`:arm64`, y `lld`); si falta algo, `nyx build` lo informa antes de compilar con el comando exacto y sale con 1. No hay emulación: `nyx run --target <triple de otra arquitectura>` falla con «esta máquina no lo puede ejecutar» (con el triple del host sí ejecuta `target/<triple>/<name>`). En `asm` el compilador no interpreta la plantilla (la escribe el usuario); solo las restricciones de una letra `a b c d S D` son de x86 y con destino aarch64 dan un error con archivo:línea, mientras que las genéricas (`"r"`, `"m"`, `"memory"`) pasan tal cual. El binario es dinámico: la máquina destino necesita libgc, libssl3, libcrypto, libz y glibc. Los triples de Windows
+
+**Android (Termux), `aarch64-linux-android`.** `nyx build --target aarch64-linux-android` deja en `target/aarch64-linux-android/<name>` un PIE de bionic (`linker64`, API 24) con libgc y OpenSSL estáticos, que corre en Termux sin proot. Se arma desde Linux con clang >= 19 y lld, sin herramientas del NDK, contra las deps que deja `scripts/build_android_deps.sh <dir>` (sysroot NDK r27c, bdwgc 8.2.12, OpenSSL 3.6.5) en `~/.cache/nyx-android-deps` o en `NYX_ANDROID_DEPS`; sin ellas el error dice cómo armarlas. `nyx run --target aarch64-linux-android` no ejecuta el artefacto (error claro: cópialo al aparato). `NYX_ANDROID_STATIC=1` lo arma estático **solo para probar en Linux arm64** (sin `dlopen`, así que no andan `std/sqlite` ni el inflate de zlib). En el runtime, TLS toma las CAs de `SSL_CERT_FILE`/`SSL_CERT_DIR`, si no de `$PREFIX/etc/tls/cert.pem` (Termux), si no de `/system/etc/security/cacerts/` archivo por archivo; SQLite se carga por `dlopen` desde `$PREFIX/lib/libsqlite3.so` (`pkg install libsqlite`); el directorio temporal es `$TMPDIR`, con respaldo `/data/local/tmp`; las goroutines cambian de contexto con asm aarch64 (bionic no tiene `ucontext`). Todavía sin verificar en un aparato real; no existe aún la biblioteca `.so` para JNI ni las CAs de usuario de Android. Receta: `examples/by-example/156-target-android.nx`.
+
 los reconoce el compilador. `nyx build --target x86_64-pc-windows-msvc` arma `target/<nombre>.exe` también **desde
 Linux** (arco win-cross): clang + `lld-link` contra un sysroot de Windows y bdwgc/OpenSSL estáticos, y necesita dos
 variables, `NYX_WIN_SYSROOT` (el directorio con `crt/` y `sdk/` que deja `xwin --accept-license splat --output <dir>`;

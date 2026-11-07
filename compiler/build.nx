@@ -2935,6 +2935,47 @@ fn dir_usuario() -> String {
     return getenv("HOME")
 }
 
+// Android arm64 / Termux (arco target-android). Las dependencias (sysroot de bionic,
+// compiler-rt, libunwind, bdwgc y OpenSSL estáticos) las arma
+// scripts/build_android_deps.sh del repo del lenguaje; viven en NYX_ANDROID_DEPS o,
+// por omisión, en ~/.cache/nyx-android-deps. El nivel de API sale del archivo API.
+fn triple_android() -> String { return "aarch64-linux-android" }
+
+fn android_deps_dir() -> String {
+    let d: String = getenv("NYX_ANDROID_DEPS")
+    if d != "" { return d }
+    return dir_usuario() + "/.cache/nyx-android-deps"
+}
+
+fn android_api(d: String) -> String {
+    if file_exists(d + "/API") { return read_file(d + "/API").trim() }
+    return "24"
+}
+
+// Comprueba que las dependencias estén ANTES de compilar: sin ellas el usuario
+// veía un error de clang sobre un header.
+fn android_deps_ok(d: String) -> bool {
+    var falta: bool = false
+    if not file_exists(d + "/sysroot") { falta = true }
+    if not file_exists(d + "/include/gc.h") { falta = true }
+    if not file_exists(d + "/lib/libgc.a") or not file_exists(d + "/lib/libssl.a") or not file_exists(d + "/lib/libcrypto.a") { falta = true }
+    if not file_exists(d + "/clang-rt/libclang_rt.builtins-aarch64-android.a") or not file_exists(d + "/clang-rt/libunwind.a") { falta = true }
+    if falta {
+        err_line("error: faltan las dependencias para Android arm64 en " + d)
+        err_line("  arma el sysroot y las bibliotecas con: scripts/build_android_deps.sh ~/.cache/nyx-android-deps")
+        err_line("  (el script vive en el repo del lenguaje; NYX_ANDROID_DEPS=<dir> apunta a otro lugar)")
+        return false
+    }
+    return true
+}
+
+// Banderas comunes de compilación (runtime, [lib] y src.ll). -fno-emulated-tls es
+// obligatorio: sin él los _Thread_local del runtime van por emutls. Nunca -I<runtime>
+// (eclipsaría time.h/strings.h del sistema) y no se pasa -D__ANDROID_API__.
+fn android_cflags(d: String) -> String {
+    return " --target=aarch64-linux-android" + android_api(d) + " --sysroot=" + d + "/sysroot -fno-emulated-tls -fPIC -Wno-override-module -I" + d + "/include"
+}
+
 struct RecetaWin {
     ok: bool,
     cflags: Array,    // para compilar el runtime
@@ -3218,7 +3259,22 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
             gc_flag = gc_flag + "NYX_TARGET=" + eff_target + " "
         }
     }
-    if host_win and linux_arch != "" {
+    // Android arm64 (arco target-android): clang + lld contra el sysroot de bionic de
+    // build_android_deps.sh. PIE dinámico (linker64) por omisión; NYX_ANDROID_STATIC=1
+    // lo arma estático, SOLO para probarlo en un Linux arm64 normal: sin dlopen no
+    // andan sqlite ni el inflate de zlib.
+    let android: bool = eff_target == triple_android()
+    if android and not host_win {
+        let ad: String = android_deps_dir()
+        if not android_deps_ok(ad) { return false }
+        native_out = "target/" + eff_target + "/" + output_name
+        native_dir = "target/" + eff_target
+        tgt_cc = android_cflags(ad)
+        tgt_ld = tgt_cc + " -fuse-ld=lld -nodefaultlibs"
+        if getenv("NYX_ANDROID_STATIC") == "1" { tgt_ld = tgt_ld + " -static" }
+        gc_flag = gc_flag + "NYX_TARGET=" + eff_target + " "
+    }
+    if host_win and (linux_arch != "" or android) {
         print("error: desde Windows no se compila para " + eff_target)
         print("  en Windows, nyx build arma el .exe de esta máquina; para Linux, compila en Linux")
         return false
@@ -3248,10 +3304,10 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
     // Pedir wasm y recibir nativo sin una palabra es la misma familia que la
     // flag desconocida que se arregló hoy, un nivel más adentro: en el VALOR.
     // (fricción nyxerp 2026-09-10)
-    if eff_target != "" and eff_target != "wasm32-wasi" and linux_arch == "" {
+    if eff_target != "" and eff_target != "wasm32-wasi" and linux_arch == "" and not android {
         if eff_target != "x86_64-pc-windows-msvc" and eff_target != "aarch64-pc-windows-msvc" {
             print("error: target desconocido: " + eff_target)
-            print("  targets soportados: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc y wasm32-wasi")
+            print("  targets soportados: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, aarch64-linux-android, x86_64-pc-windows-msvc y wasm32-wasi")
             print("  (sin --target se compila para la plataforma actual)")
             return false
         }
@@ -3388,6 +3444,12 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
     argv = concat(concat(argv, lib_objs), rt_in)
     if win {
         argv = concat(argv, concat(ld_win, ["-o", orig + "/" + native_out]))
+    } else if eff_target == triple_android() {
+        // bionic: pthread vive en libc (sin -lpthread); compiler-rt y libunwind
+        // vienen del directorio de deps porque se enlaza con -nodefaultlibs.
+        let ad: String = android_deps_dir()
+        argv = concat(argv, ["-L" + ad + "/lib", "-lgc", "-lz", "-lssl", "-lcrypto", "-lm", "-lc", "-ldl",
+            ad + "/clang-rt/libclang_rt.builtins-aarch64-android.a", ad + "/clang-rt/libunwind.a", "-o", orig + "/" + native_out])
     } else {
         argv = concat(argv, ["-lgc", "-lpthread", "-ldl", "-lm", "-lssl", "-lcrypto", "-lz", "-o", orig + "/" + native_out])
     }
@@ -4598,6 +4660,11 @@ fn main() -> int {
             // El .exe de esta máquina: run_build ya rechazó cualquier otro caso.
             let win_run: bool = host_es_windows() and (eff_run_target == "" or eff_run_target == triple_win())
             if win_run { eff_run_target = "" }
+            if eff_run_target == triple_android() {
+                print("error: `nyx run` no ejecuta un artefacto de Android en esta máquina (es un PIE de bionic, linker64)")
+                print("  cópialo a un teléfono con Termux y córrelo ahí: target/" + eff_run_target + "/" + run_bin)
+                return 1
+            }
             if eff_run_target != "" {
                 print("error: `nyx run` no sabe ejecutar un artefacto de " + eff_run_target)
                 print("  usa `nyx build --target " + eff_run_target + "` y ejecútalo con el runner de esa plataforma")

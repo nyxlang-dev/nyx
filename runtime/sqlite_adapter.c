@@ -157,6 +157,20 @@ static int sqlite_load(void) {
 #endif
             NULL
         };
+#ifdef __ANDROID__
+        // ES: en Termux libsqlite3.so vive en $PREFIX/lib y un binario ajeno no tiene ese
+        // RUNPATH ni LD_LIBRARY_PATH: se prueba primero la ruta absoluta.
+        // EN: Termux keeps libsqlite3.so in $PREFIX/lib, not on a foreign binary's search path.
+        static char cand[2][600];
+        const char* prefix = getenv("PREFIX");
+        if (!prefix || !*prefix) prefix = "/data/data/com.termux/files/usr";
+        snprintf(cand[0], sizeof cand[0], "%s/lib/libsqlite3.so", prefix);
+        snprintf(cand[1], sizeof cand[1], "/data/data/com.termux/files/usr/lib/libsqlite3.so");
+        for (int i = 0; i < 2 && !g_lib; i++) {
+            tried = cand[i];
+            g_lib = sqlite_try_open(cand[i]);
+        }
+#endif
         for (int i = 0; names[i] && !g_lib; i++) {
             tried = names[i];
             g_lib = sqlite_try_open(names[i]);
@@ -167,6 +181,13 @@ static int sqlite_load(void) {
         snprintf(g_load_err, sizeof g_load_err,
                  "sqlite: biblioteca ausente (no se pudo cargar '%s'%s%s)",
                  tried ? tried : "?", why ? ": " : "", why ? why : "");
+#ifdef __ANDROID__
+        {
+            size_t l = strlen(g_load_err);
+            snprintf(g_load_err + l, sizeof g_load_err - l,
+                     " (Termux: pkg install libsqlite)");
+        }
+#endif
         g_loaded = 2;
         return -1;
     }

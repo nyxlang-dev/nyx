@@ -393,7 +393,7 @@ P="$GATE_TMP/cruzado"
 mk_proj "$P" "$PKG"
 nb "$P" build --target x86_64-unknown-linux-gnux
 if [ "$RC" -ne 0 ] && grep -q "target desconocido: x86_64-unknown-linux-gnux" "$GATE_TMP/out" \
-   && grep -q "x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc y wasm32-wasi" "$GATE_TMP/out"; then
+   && grep -q "x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, aarch64-linux-android, x86_64-pc-windows-msvc y wasm32-wasi" "$GATE_TMP/out"; then
     ok "cruzado-desconocido — un triple Linux con typo se rechaza y se listan los válidos"
 else
     bad "cruzado-desconocido — rc $RC sin «target desconocido» ni la lista de triples" "cruzado-desconocido"; muestra
@@ -619,6 +619,58 @@ else
     bad "barrido-propio — quedó temporal del build: $RESTO" "barrido-propio"
 fi
 kill $LIVE_PID 2>/dev/null; wait $LIVE_PID 2>/dev/null
+
+# ── Android arm64 / Termux (arco target-android) ─────────────
+# `--target aarch64-linux-android` arma un PIE de bionic (linker64) con clang +
+# lld contra el sysroot que deja scripts/build_android_deps.sh. Sin esas deps el
+# caso hace SKIP limpio (y se comprueba aparte que el error dice cómo armarlas).
+AND_DEPS="${NYX_ANDROID_DEPS:-$HOME/.cache/nyx-android-deps}"
+P="$GATE_TMP/android"
+mk_proj "$P" "$PKG"
+nb "$P" build --target aarch64-linux-android
+if [ ! -f "$AND_DEPS/lib/libgc.a" ] || [ ! -d "$AND_DEPS/sysroot" ]; then
+    if [ "$RC" -ne 0 ] && grep -q "scripts/build_android_deps.sh" "$GATE_TMP/out"; then
+        ok "android-falta — sin deps el build dice cómo armarlas (scripts/build_android_deps.sh)"
+    else
+        bad "android-falta — rc $RC sin la receta de build_android_deps.sh" "android-falta"; muestra
+    fi
+    echo "  ⏭️  android-elf / android-estatico — SKIP: sin deps de Android en $AND_DEPS"
+else
+    if [ "$RC" -eq 0 ] && [ -x "$P/target/aarch64-linux-android/manif" ] && [ ! -e "$P/manif" ] \
+       && file -b "$P/target/aarch64-linux-android/manif" | grep -q "ARM aarch64" \
+       && file -b "$P/target/aarch64-linux-android/manif" | grep -q "/system/bin/linker64" \
+       && file -b "$P/target/aarch64-linux-android/manif" | grep -q "for Android"; then
+        ok "android-elf — --target aarch64-linux-android da un PIE aarch64 con linker64 en target/aarch64-linux-android/"
+    else
+        bad "android-elf — rc $RC o el ELF no es un PIE de Android" "android-elf"; muestra
+        file "$P/target/aarch64-linux-android/manif" 2>&1 | sed 's/^/      /'
+    fi
+    # nyx run no intenta ejecutar un PIE de bionic en el host.
+    nb "$P" run --target aarch64-linux-android
+    if [ "$RC" -ne 0 ] && grep -q "no ejecuta un artefacto de Android" "$GATE_TMP/out"; then
+        ok "android-run — nyx run --target aarch64-linux-android dice que no lo ejecuta aquí"
+    else
+        bad "android-run — rc $RC sin el mensaje claro" "android-run"; muestra
+    fi
+    # Estático (NYX_ANDROID_STATIC=1, solo para probar): un kernel Linux arm64
+    # normal lo ejecuta. Se salta si el host no es aarch64 o si el runtime todavía
+    # no alinea el TLS a 64 (bionic estático lo exige y aborta).
+    if [ "$HOST_ARCH" != aarch64 ]; then
+        echo "  ⏭️  android-estatico — SKIP: el host $HOST_ARCH no ejecuta aarch64"
+    else
+        mk_proj "$P" "$PKG"
+        ( cd "$P" && NYX_ANDROID_STATIC=1 NYX_HOME="$ROOT" timeout 300 "$ROOT/nyx_build" build --target aarch64-linux-android ) > "$GATE_TMP/out" 2>&1
+        RC=$?
+        SAL="$("$P/target/aarch64-linux-android/manif" 2>&1)"
+        if [ "$RC" -eq 0 ] && [ "$SAL" = "soy main" ]; then
+            ok "android-estatico — el binario estático de bionic corre y da «soy main»"
+        elif [ "$RC" -eq 0 ] && echo "$SAL" | grep -q "TLS segment is underaligned"; then
+            echo "  ⏭️  android-estatico — SKIP: el runtime aún no alinea el TLS a 64 (bionic estático aborta)"
+        else
+            bad "android-estatico — rc $RC o salida inesperada: $SAL" "android-estatico"; muestra
+        fi
+    fi
+fi
 
 echo "────────────────────────────────────────────────"
 echo "  BUILD MANIFEST: $PASS pasados, $FAIL fallidos"

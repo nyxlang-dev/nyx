@@ -1,0 +1,58 @@
+// Nyx by Example: un binario para Android (Termux) armado desde Linux.
+//
+// El mismo programa se arma para un teléfono o tablet aarch64 sin tocar el código:
+//
+//     # 1. Una sola vez: sysroot NDK r27c, Boehm GC 8.2.12 y OpenSSL 3.6.5 para bionic
+//     #    (~5 min, ~58 MB + 664 MB de caché del zip). Van a ~/.cache/nyx-android-deps,
+//     #    o a donde diga NYX_ANDROID_DEPS.
+//     bash scripts/build_android_deps.sh ~/.cache/nyx-android-deps
+//
+//     # 2. Armar (desde un proyecto con nyx.toml). Necesita clang >= 19 y lld; NO usa
+//     #    las herramientas del NDK. Salida: target/aarch64-linux-android/<name>
+//     nyx build --target aarch64-linux-android
+//
+//     # 3. Copiar al aparato y correr dentro de Termux (sin proot):
+//     scp target/aarch64-linux-android/<name> tablet:~/ && ssh tablet ./<name>
+//     # (o `adb push` a /data/local/tmp, o el almacenamiento compartido de Termux)
+//
+// Es un PIE de bionic (linker64), API 24, con libgc y OpenSSL estáticos.
+//
+// Límites:
+//   - `nyx run --target aarch64-linux-android` NO ejecuta: da un error claro. Cópialo al aparato.
+//   - TLS busca las CAs en SSL_CERT_FILE / SSL_CERT_DIR; si no, en $PREFIX/etc/tls/cert.pem
+//     (Termux); si no, en /system/etc/security/cacerts/ (archivo por archivo). Las CAs de
+//     usuario de Android todavía no se leen.
+//   - SQLite se carga por dlopen desde $PREFIX/lib/libsqlite3.so: en Termux, `pkg install libsqlite`.
+//   - Directorio temporal: $TMPDIR, con respaldo /data/local/tmp.
+//   - NYX_ANDROID_STATIC=1 arma un binario ESTÁTICO solo para probar en Linux arm64; sin dlopen,
+//     así que no anda std/sqlite ni el inflate de zlib. No es un artefacto de distribución.
+//   - Pendiente: biblioteca .so para JNI; verificación en un aparato real.
+//
+// Este programa corre igual en nativo: imprime la arquitectura y la suma de un cálculo.
+
+import "std/process"
+
+fn arquitectura() -> String {
+    var o = spawn_opts()
+    o.stdout = Stdio.Pipe
+    match try_spawn(["uname", "-m"], o) {
+        Result.Ok(c) => {
+            match try_child_collect(c) {
+                Result.Ok(r) => { return r.stdout.trim() }
+                Result.Err(_) => { return "desconocida" }
+            }
+        }
+        Result.Err(_) => { return "desconocida" }
+    }
+    return "desconocida"
+}
+
+fn main() -> int {
+    print("arquitectura: " + arquitectura())
+    var suma = 0
+    for i in 1..101 {
+        suma = suma + i
+    }
+    print("suma 1..100 = ${suma}")
+    return 0
+}

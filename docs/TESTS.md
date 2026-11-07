@@ -32,11 +32,12 @@
 | Lint de `nyx vet` (gotchas + W004) | (en `make test-ai-first`) `run_vet_gotchas.sh` | **9 casos + auditoría de 173 archivos** | código y línea exactos por `pattern:` vivo (W101–W104, W107–W110) y por W004 (`Fn` sin firma con resultado usado); 0 avisos en `clean.nx` y en by-example + std |
 | Puertas de tipos del tooling | (dentro de `make test-ai-first`) `run_tooling_gates.sh` | **38 checks** | check/test/build acusan el error de tipos; opción desconocida de `nyx test`; fns privadas homónimas por módulo; scratch de `nyx test` en `$TMPDIR` + barrido de huérfanos (4) |
 | Cobertura de `nyx test` | (dentro de `make test-ai-first`) `run_coverage_tests.sh` | **9 checks** | fixture `tests/tooling/coverage/`: tabla + IR idéntico, informe, lcov, sin llvm-profdata, `--target` (2), prueba colgada, sin `--coverage`; SKIP sin llvm-profdata |
-| Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **37 checks** | +3 el 11-05 (huérfanos por PID), +4 el 11-03 (`check`/`fmt` por el driver), +1 el 11-02, +2 el 10-31, +6 el 10-30 (`--target` Linux; SKIP sin multiarch), +6 el 09-15 (`nyx.lock` con `--main`) |
+| Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **40 checks** (38 sin deps de Android) | +3 el 11-07 (Android), +3 el 11-05, +4 el 11-03, +1 el 11-02, +2 el 10-31, +6 el 10-30 (`--target` Linux), +6 el 09-15; detalle en `CHANGELOG.md` |
 | Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
-| Recetas by-example | `make test-examples` | **155** (137 ejecutan, 18 solo compilan+enlazan) | +2 el 11-02 (154, que no se había contado, y 155); +1 el 10-30 (153); antes, en `CHANGELOG.md`; compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
+| Recetas by-example | `make test-examples` | **156** (138 ejecutan, 18 solo compilan+enlazan) | +1 el 11-07 (156, Android); +2 el 11-02 (154, que no se había contado, y 155); +1 el 10-30 (153); antes, en `CHANGELOG.md`; compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
 | .exe de Windows cruzado | `make test-build-win-cross` | **2 proyectos x 4 checks** | `nyx build --target x86_64-pc-windows-msvc` desde Linux: .exe existe, solo DLL de Windows, sin rutas del host, mismo sha256 en dos builds; SKIP sin `NYX_WIN_SYSROOT`/`NYX_WIN_DEPS`; no ejecuta nada |
+| CAs de TLS en Android | `make test-android` | **3 comprobaciones** | `run_android_cacerts_test.sh`: TLS del estático bionic alineado a 64, sin CA rechaza, con directorio de CAs estilo Android verifica contra `openssl s_server`; SKIP sin deps (`scripts/build_android_deps.sh`) o fuera de aarch64 |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **28 checks** | +2 el 2026-10-25 (literales enteros en el borde de 64 bits); +1 el 2026-09-20 (NYX3007); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
@@ -46,9 +47,9 @@
 | WASM (wasm32-wasi) | `make test-wasm` | **82** + guarda de builtins | recontado 2026-10-19 (+2: 58, 59); corrida real 2026-10-01 (+5 ese día: 54 mime, 55-56 image, 57 JPEG nativo y shim); SKIP sin toolchain (salvo guards); altas anteriores en `CHANGELOG.md` |
 | Verify + compiler-unit + fmt | `make test-unit` | **23** (13 verify + 5 compiler-unit + 5 fmt) | 5 de 7 compiler-unit activos (resto SKIP, ver abajo); la fila decía 4 hasta que la máquina B del reparto lo midió: `test-emit-bytes-global` ya corría en el runner |
 
-`make test-all` corre las 15 suites, en el orden del `Makefile`: regression +
+`make test-all` corre las 17 suites, en el orden del `Makefile`: regression +
 advanced + stdlib + errors + m08-types + runtime + unit + dispatch-matrix +
-integration + wasm + examples + load + ai-first + repl + stacks.
+integration + wasm + examples + win-cross + android + load + ai-first + repl + stacks.
 
 ## Compiler-unit — detalle (`tests/compiler-unit/`, 7 archivos)
 

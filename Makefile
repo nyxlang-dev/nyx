@@ -457,6 +457,8 @@ test-all:
 	@echo ""
 	$(MAKE) test-build-win-cross
 	@echo ""
+	$(MAKE) test-android
+	@echo ""
 	$(MAKE) test-load
 	@echo ""
 	$(MAKE) test-ai-first
@@ -523,6 +525,11 @@ test-examples:
 ## .exe de Windows armado desde Linux (arco win-cross); SKIP sin NYX_WIN_SYSROOT y NYX_WIN_DEPS
 test-build-win-cross:
 	bash scripts/testing/run_build_win_cross.sh
+
+## CAs de TLS del runtime en Android (arco target-android); SKIP limpio sin deps de Android o fuera de aarch64.
+## Los casos android de `nyx build --target` corren dentro de run_build_manifest.sh (make test-ai-first).
+test-android:
+	bash scripts/testing/run_android_cacerts_test.sh
 
 ## Tests unitarios de componentes — RUNNER RETIRADO (era racket pre-self-hosting)
 ## Los .nx en tests/compiler-unit/ y tests/verify/ son programas Nyx válidos pero
@@ -808,4 +815,4 @@ bench-test-cache:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross build-repl repl release-check bench-test-cache
+.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross test-android build-repl repl release-check bench-test-cache

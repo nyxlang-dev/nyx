@@ -80,6 +80,15 @@ _Static_assert(sizeof(pthread_key_t)    <= sizeof(os_tls_key_t),"os_tls_key_t st
 #define K(k) ((pthread_key_t*)(k)->storage)
 
 #ifdef __ANDROID__
+// ES: el cargador de bionic exige que el segmento PT_TLS de un ejecutable estático tenga
+// alineación >= 64 en ARM64 («executable's TLS segment is underaligned: alignment is 8, needs
+// to be at least 64 for ARM64 Bionic»); sin ningún __thread propio el binario aborta al
+// arrancar. Este centinela fuerza Align 0x40. Tiene que ir en .tdata (inicializado a != 0):
+// en .tbss no alcanzó. `used` evita que el enlazador lo descarte.
+// EN: bionic aborts static ARM64 executables whose PT_TLS alignment is < 64; this sentinel
+// (in .tdata, non-zero initialised, `used`) forces alignment 0x40.
+__thread char nyx_android_tls_align[64] __attribute__((aligned(64), used)) = {1};
+
 // ES: bionic NO trae pthread_timedjoin_np ni pthread_cancel (la cancelación de hilos no está
 // implementada en bionic). Alternativa cooperativa, solo Android: el storage de os_thread_t
 // (8 bytes) guarda un puntero a un registro `athr` con mutex+cond+bandera "terminó". El
@@ -2356,7 +2365,14 @@ int os_fs_chdir(const char* path) {
 int os_fs_temp_dir(char* buf, size_t cap) {
     if (!buf || cap == 0) return -EINVAL;
     const char* t = getenv("TMPDIR");
+#ifdef __ANDROID__
+    // ES: en Android /tmp no existe; Termux define TMPDIR y, sin él, el directorio
+    // escribible del shell de adb es /data/local/tmp.
+    // EN: no /tmp on Android; fall back to the adb-shell writable dir.
+    if (!t || !*t) t = "/data/local/tmp";
+#else
     if (!t || !*t) t = "/tmp";
+#endif
     size_t n = strlen(t);
     while (n > 1 && t[n - 1] == '/') n--;   // "/tmp/" -> "/tmp"; "/" se queda
     if (n + 1 > cap) return -ERANGE;

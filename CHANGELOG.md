@@ -57,6 +57,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Added
 
+- **`nyx build --target aarch64-linux-android`: binarios para Android/Termux armados desde Linux** (pedido de
+  nyxerp, tablets). `scripts/build_android_deps.sh <dir>` arma las deps una vez (sysroot del NDK r27c, bdwgc 8.2.12 y
+  OpenSSL 3.6.5; ~5 min, ~58 MB más la caché del zip de 664 MB) en `~/.cache/nyx-android-deps` o `NYX_ANDROID_DEPS`;
+  `nyx build --target aarch64-linux-android` deja en `target/aarch64-linux-android/<name>` un PIE de bionic
+  (`linker64`, API 24) con libgc y OpenSSL estáticos, que corre en Termux sin proot. Se arma con clang >= 19 y lld, sin
+  herramientas del NDK. `nyx run` no lo ejecuta (error claro). `NYX_ANDROID_STATIC=1` lo arma estático SOLO para probar
+  en Linux arm64 (sin `dlopen`: no andan `std/sqlite` ni el inflate de zlib). En el runtime: CAs de TLS de
+  `SSL_CERT_FILE`/`SSL_CERT_DIR`, si no `$PREFIX/etc/tls/cert.pem` (Termux), si no `/system/etc/security/cacerts/`
+  archivo por archivo; SQLite por `dlopen` desde `$PREFIX/lib/libsqlite3.so` (`pkg install libsqlite`); directorio
+  temporal `$TMPDIR` con respaldo `/data/local/tmp`; goroutines con cambio de contexto en asm aarch64 (bionic no tiene
+  `ucontext`). Verificado en el servidor con el binario estático: hello, hilos, canales, mutex, worker pool, eco TCP, 8
+  tests async/goroutine y TLS con una CA estilo Android. **No verificado en un aparato real** (paso EXTERNO). Pendiente:
+  biblioteca `.so` para JNI y `socket_from_fd`, y las CAs de usuario de Android. Receta
+  `examples/by-example/156-target-android.nx`; límites en `LLM.md` y `docs/gotchas/android-target-limites.md`
+  [arco: target-android].
+
 - **`kill_process(pid, sig)` compila para Windows** (W6 Task 7, pedido del puente de nyxerp 0.3.8, que lo llama
   detrás de un `if` de plataforma: una guarda de compilación no se esquiva con un `if` de ejecución). Va por la
   capa os (`os_proc_kill_pid`; `os_proc_kill` ya era el del handle de spawn): en posix es `kill(2)` tal cual; en win32 honra solo `sig` 0 (¿existe el proceso?),
@@ -147,6 +163,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Tests
 
+- `make test-examples`: 155 → 156 recetas (la 156, `target-android`) [arco: target-android].
+- `make test-android` (nuevo): `scripts/testing/run_android_cacerts_test.sh`, 3 comprobaciones (TLS alineado a 64, sin CA
+  rechaza, con directorio de CAs estilo Android verifica); SKIP limpio sin deps de Android o fuera de aarch64. El
+  manifiesto de `nyx build` suma 4 casos Android (`android-falta` sin deps; `android-elf`, `android-run` y `android-estatico` con ellas): 37 → 40 checks con deps, 38 sin ellas
+  [arco: target-android].
 - `make test-errors`: 405 → 406 (`slot-array-leido-como-string-abort`) y `make test-ai-first`: 49 → 50 programas (`50-fila-array-luego-string`) [arco: w6-windows].
 - `make test-examples`: 153 → 155 recetas (la 154, que no se había contado, y la 155 del servicio de Windows) [arco: w6-windows].
 - `make test-runtime`: 2339 → 2352 asserts: tres casos de `host_os` en `test_os_build_host.c` y diez del serie USB en `test_os_serial.c` (con un sysfs falso) [arco: w6-windows].
