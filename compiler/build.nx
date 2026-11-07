@@ -3269,7 +3269,9 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         if not android_deps_ok(ad) { return false }
         native_out = "target/" + eff_target + "/" + output_name
         native_dir = "target/" + eff_target
-        tgt_cc = android_cflags(ad)
+        // -ffile-prefix-map: que el binario no lleve rutas de esta máquina (__FILE__ de
+        // crypto.c/tls.c), igual que el .exe de win-cross (fricción nyxerp 2026-11-07).
+        tgt_cc = android_cflags(ad) + " -ffile-prefix-map=" + build_nyx_home() + "=/nyx -ffile-prefix-map=" + ad + "=/nyx-android-deps"
         tgt_ld = tgt_cc + " -fuse-ld=lld -nodefaultlibs"
         if getenv("NYX_ANDROID_STATIC") == "1" { tgt_ld = tgt_ld + " -static" }
         gc_flag = gc_flag + "NYX_TARGET=" + eff_target + " "

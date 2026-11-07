@@ -626,7 +626,21 @@ kill $LIVE_PID 2>/dev/null; wait $LIVE_PID 2>/dev/null
 # caso hace SKIP limpio (y se comprueba aparte que el error dice cómo armarlas).
 AND_DEPS="${NYX_ANDROID_DEPS:-$HOME/.cache/nyx-android-deps}"
 P="$GATE_TMP/android"
-mk_proj "$P" "$PKG"
+# main que ENLAZA crypto.c y tls.c (sus __FILE__ son los que dejaban rutas del host;
+# un hola mundo no los arrastra y la guarda android-sin-rutas pasaría en vacío).
+mk_proj_android() {
+    mk_proj "$1" "$PKG"
+    cat > "$1/src/main.nx" <<'NXEOF'
+import "std/tls"
+fn main() -> int {
+    let h: String = sha256("x")
+    if h == "nunca" { let _c = tls_connect_verified("localhost", 1) }
+    print("soy main")
+    return 0
+}
+NXEOF
+}
+mk_proj_android "$P"
 nb "$P" build --target aarch64-linux-android
 if [ ! -f "$AND_DEPS/lib/libgc.a" ] || [ ! -d "$AND_DEPS/sysroot" ]; then
     if [ "$RC" -ne 0 ] && grep -q "scripts/build_android_deps.sh" "$GATE_TMP/out"; then
@@ -645,6 +659,16 @@ else
         bad "android-elf — rc $RC o el ELF no es un PIE de Android" "android-elf"; muestra
         file "$P/target/aarch64-linux-android/manif" 2>&1 | sed 's/^/      /'
     fi
+    # Sin rutas de esta máquina en el binario (__FILE__ de crypto.c/tls.c): las
+    # tapa -ffile-prefix-map, como en el .exe de win-cross (fricción nyxerp 2026-11-07).
+    if [ -f "$P/target/aarch64-linux-android/manif" ] \
+       && ! grep -aqF "$ROOT/runtime" "$P/target/aarch64-linux-android/manif" \
+       && ! grep -aqF "$AND_DEPS" "$P/target/aarch64-linux-android/manif"; then
+        ok "android-sin-rutas — el binario no lleva rutas del runtime ni de las deps de esta máquina"
+    else
+        bad "android-sin-rutas — el binario lleva rutas del host" "android-sin-rutas"
+        grep -aoF "$ROOT/runtime" "$P/target/aarch64-linux-android/manif" 2>/dev/null | sort -u | sed 's/^/      /'
+    fi
     # nyx run no intenta ejecutar un PIE de bionic en el host.
     nb "$P" run --target aarch64-linux-android
     if [ "$RC" -ne 0 ] && grep -q "no ejecuta un artefacto de Android" "$GATE_TMP/out"; then
@@ -658,7 +682,7 @@ else
     if [ "$HOST_ARCH" != aarch64 ]; then
         echo "  ⏭️  android-estatico — SKIP: el host $HOST_ARCH no ejecuta aarch64"
     else
-        mk_proj "$P" "$PKG"
+        mk_proj_android "$P"
         ( cd "$P" && NYX_ANDROID_STATIC=1 NYX_HOME="$ROOT" timeout 300 "$ROOT/nyx_build" build --target aarch64-linux-android ) > "$GATE_TMP/out" 2>&1
         RC=$?
         SAL="$("$P/target/aarch64-linux-android/manif" 2>&1)"

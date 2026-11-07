@@ -67,10 +67,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `SSL_CERT_FILE`/`SSL_CERT_DIR`, si no `$PREFIX/etc/tls/cert.pem` (Termux), si no `/system/etc/security/cacerts/`
   archivo por archivo; SQLite por `dlopen` desde `$PREFIX/lib/libsqlite3.so` (`pkg install libsqlite`); directorio
   temporal `$TMPDIR` con respaldo `/data/local/tmp`; goroutines con cambio de contexto en asm aarch64 (bionic no tiene
-  `ucontext`). Verificado en el servidor con el binario estático: hello, hilos, canales, mutex, worker pool, eco TCP, 8
+  `ucontext`). El binario no lleva rutas de la máquina que lo armó (`-ffile-prefix-map`, como el `.exe` de
+  win-cross; lo notó nyxerp con el primer puente armado: `__FILE__` de `crypto.c`/`tls.c`; guarda `android-sin-rutas`
+  del manifiesto de build). Verificado en el servidor con el binario estático: hello, hilos, canales, mutex, worker pool, eco TCP, 8
   tests async/goroutine y TLS con una CA estilo Android. **No verificado en un aparato real** (paso EXTERNO). Pendiente:
   biblioteca `.so` para JNI y `socket_from_fd`, y las CAs de usuario de Android. Receta
-  `examples/by-example/156-target-android.nx`; límites en `LLM.md` y `docs/gotchas/android-target-limites.md`
+  `examples/by-example/156-target-android.nx`; límites en `LLM.md`
   [arco: target-android].
 
 - **`kill_process(pid, sig)` compila para Windows** (W6 Task 7, pedido del puente de nyxerp 0.3.8, que lo llama
