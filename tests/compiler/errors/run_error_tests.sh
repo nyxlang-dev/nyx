@@ -2474,6 +2474,48 @@ else
   FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="slot-sin-tipo-leido-como-struct-enum-abort"
+# Fricción nyxerp 20261108-100015-team-1 (silently-wrong): una casilla de un
+# Array SIN tipo que va a un struct o un enum compilaba y pasaba `nyx check`; en
+# ejecución, con struct era SIGSEGV (139) y con enum el `match` leía basura y
+# seguía (salida vacía, rc 0). Ahora la casilla se lee con
+# nyx_slot_as_value_checked y aborta NYX2022 nombrando el tipo esperado y el
+# tag encontrado. Cuatro formas del caso malo (enum como argumento, struct por
+# `for`, struct como argumento, `let` anotado sobre una casilla String) y el
+# control legítimo (push de structs/enums, test-541 tiene la batería completa).
+ssv_dir=$(mktemp -d /tmp/ssv-XXXX)
+ssv_pre='pub struct Caja { n: int, etiqueta: String }
+pub enum Valor { Texto(String), Numero(int) }
+fn leer(c: Caja) -> String { return c.etiqueta }
+fn describir(v: Valor) -> String { match v { Valor.Texto(s) => { return "t:" + s } Valor.Numero(n) => { return "n" } } }
+fn pares() -> Array { return [["clave", "valor"]] }'
+printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    println(describir(a[0]))\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/enum.nx"
+printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    for p in a { println(leer(p)) }\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/for.nx"
+printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    println(leer(a[0]))\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/arg.nx"
+printf '%s\nfn main() -> int {\n    var a: Array = []\n    a.push("hola")\n    let c: Caja = a[0]\n    println(c.etiqueta)\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/let.nx"
+printf '%s\nfn main() -> int {\n    var a: Array = []\n    a.push(Caja { n: 1, etiqueta: "uno" })\n    var b: Array = []\n    b.push(Valor.Texto("hola"))\n    for p in a { println(leer(p)) }\n    println(describir(b[0]))\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/ok.nx"
+ssv_fail=""
+for ssv_k in enum:Valor:Array for:Caja:Array arg:Caja:Array let:Caja:String; do
+  ssv_f="${ssv_k%%:*}"; ssv_r="${ssv_k#*:}"; ssv_t="${ssv_r%%:*}"; ssv_g="${ssv_r#*:}"
+  ssv_out=$(bash "$(pwd)/scripts/nyx" run "$ssv_dir/$ssv_f.nx" 2>&1); ssv_rc=$?
+  if [ "$ssv_rc" -eq 0 ] || [ "$ssv_rc" -eq 139 ] || ! echo "$ssv_out" | grep -qF "NYX2022" \
+     || ! echo "$ssv_out" | grep -qF "se esperaba un '$ssv_t'" \
+     || ! echo "$ssv_out" | grep -qF "contiene un $ssv_g"; then
+    ssv_fail="$ssv_fail $ssv_f(rc=$ssv_rc)"
+    echo "$ssv_out" | tail -2 | sed "s/^/      $ssv_f: /"
+  fi
+done
+ssvok_out=$(bash "$(pwd)/scripts/nyx" run "$ssv_dir/ok.nx" 2>&1); ssvok_rc=$?
+rm -rf "$ssv_dir"
+if [ -z "$ssv_fail" ] && [ "$ssvok_rc" -eq 0 ] \
+   && [ "$(echo "$ssvok_out" | grep -cx 'uno\|t:hola')" -eq 2 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (malos:%s, control rc=%d)\n" "$name" "${ssv_fail:- ok}" "$ssvok_rc"
+  echo "$ssvok_out" | tail -2 | sed 's/^/      control: /'
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="pila-compilador-200-operandos"
 # Fricción nyxerp 20260920-200024: 53 operandos `+` en una sola expresión
 # mataban a nyx_bootstrap con SIGSEGV mudo (codegen en -O0 apila ~151 KB por

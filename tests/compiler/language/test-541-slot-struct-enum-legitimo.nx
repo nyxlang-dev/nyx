@@ -1,0 +1,77 @@
+// NYX2022 (fricción nyxerp 20261108-100015-team-1): una casilla de un Array SIN
+// tipo que va a un struct o un enum se lee chequeando su tag. Este test es el
+// lado LEGÍTIMO, el que no puede romperse: structs y enums guardados con push()
+// (tag UNKNOWN) o en un literal (tag PTR) siguen leyéndose en todos los destinos
+// cubiertos —argumento, método, let, asignación, return, for— y un indexado
+// ANIDADO cuyo índice sale de una casilla INT no hereda el chequeo del destino.
+
+pub struct Caja { n: int, etiqueta: String }
+pub enum Valor { Texto(String), Numero(int) }
+pub enum Color { Rojo, Verde }
+
+impl Caja {
+    fn junto(self, otra: Caja) -> String { return self.etiqueta + "+" + otra.etiqueta }
+}
+
+fn leer(c: Caja) -> String { return c.etiqueta }
+
+fn describir(v: Valor) -> String {
+    match v {
+        Valor.Texto(s) => { return "t:" + s }
+        Valor.Numero(n) => { return "n:" + int_to_string(n) }
+    }
+}
+
+fn nombre(c: Color) -> String {
+    match c {
+        Color.Rojo => { return "rojo" }
+        Color.Verde => { return "verde" }
+    }
+}
+
+fn primera(a: Array) -> Caja { return a[0] }
+
+fn main() -> int {
+    var cajas: Array = []
+    cajas.push(Caja { n: 1, etiqueta: "uno" })
+    cajas.push(Caja { n: 2, etiqueta: "dos" })
+    var valores: Array = []
+    valores.push(Valor.Texto("hola"))
+    valores.push(Valor.Numero(3))
+    var colores: Array = []
+    colores.push(Color.Verde)
+    colores.push(Color.Rojo)
+
+    // Argumento de llamada libre.
+    println(leer(cajas[1]))
+    println(describir(valores[0]))
+    println(describir(valores[1]))
+    println(nombre(colores[0]))
+
+    // for sobre el Array sin tipo (el cuerpo se reescribe a `arr[idx]`).
+    for c in cajas { println(leer(c)) }
+    for v in valores { println(describir(v)) }
+
+    // let anotado, asignación, return.
+    let k: Caja = cajas[0]
+    println(k.etiqueta)
+    var m: Caja = Caja { n: 0, etiqueta: "cero" }
+    m = cajas[1]
+    println(m.etiqueta)
+    println(leer(primera(cajas)))
+    let w: Valor = valores[1]
+    println(describir(w))
+
+    // Argumento de método.
+    println(k.junto(cajas[1]))
+
+    // Literal: los structs del literal llevan tag PTR, y pasan.
+    let lit: Array = [Caja { n: 9, etiqueta: "lit" }]
+    println(leer(lit[0]))
+
+    // Indexado anidado: el índice sale de una casilla INT; el chequeo es solo
+    // del nodo que va al destino, no del índice.
+    let idx: Array = [1, 0]
+    println(leer(cajas[idx[0]]))
+    return 0
+}

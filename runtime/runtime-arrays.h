@@ -101,6 +101,13 @@ int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index);
 // 20260921-100001: un String dentro de un Array pelado mataba el bucle interior).
 int64_t nyx_slot_as_array_checked(nyx_array_t* arr, int64_t index);
 
+// Lectura como struct/enum de usuario chequeada (NYX2022): denuncia todo tag
+// conocido salvo PTR — ninguno es un puntero a un struct o un enum. UNKNOWN y
+// PTR devuelven el valor crudo (el push de un struct deja UNKNOWN; el literal
+// `[caja]`, PTR). La emite codegen_index cuando el `arr[i]` de un Array sin tipo
+// va DIRECTO a un destino struct/enum (argumento, let, return, asignación).
+int64_t nyx_slot_as_value_checked(nyx_array_t* arr, int64_t index, const char* type_name);
+
 // ===== TAG ESTÁTICO DE FALLBACK (spec 2026-08-03, "la anotación manda") =====
 // El tipo DECLARADO del receptor viaja como static_tag y SOLO gana cuando el
 // tag runtime es UNKNOWN — nunca pisa un tag conocido. Cierra la familia

@@ -18,7 +18,9 @@
 #   8. el contenido de los archivos de include_bytes entra en la huella;
 #   9. reinstalar el mismo compilador en otra carpeta no invalida los objetos;
 #  10. -j N / NYX_JOBS compila las unidades a la vez, con el mismo resultado, y
-#      reporta todos los errores sin dejar objetos.
+#      reporta todos los errores sin dejar objetos;
+#  11. los imports cíclicos (a ↔ b, y uno que vuelve al principal) compilan y corren,
+#      con [lib] e inlineados.
 # Usa el nyx_build del repo con NYX_HOME apuntando al repo.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -380,6 +382,26 @@ printf 'import "src/a"\nfn main() -> int {\n    println(int_to_string(total()))\
 out=$("$NB" build 2>&1); run=$(./ci 2>&1)
 if [ "$run" = "46" ]; then ok "dos bibliotecas que se importan entre sí compilan y enlazan (46)"
 else mal "ciclo entre bibliotecas: '$run' $(echo "$out" | grep -E 'error|redefinition' | head -2 | tr '\n' ' ')"; fi
+# El mismo ciclo con el struct en UNA línea (nyxerp 20261106-220008-team-1): el
+# escaneo de tipos del import que vuelve a `a` le inventaba un campo `pub` y
+# daba NYX1017/NYX1032. Inlineado y con [lib], el mismo resultado.
+printf 'import "src/b"\npub struct Par { x: int, y: int }\npub fn nota(p: Par) -> int { return p.x * 10 + p.y }\npub fn total() -> int { return doble(Par { x: 2, y: 3 }) }\n' > src/a.nx
+out=$("$NB" build 2>&1); run=$(./ci 2>&1)
+if [ "$run" = "46" ]; then ok "ciclo con un struct de una línea, en [lib]: compila y corre (46)"
+else mal "ciclo con struct de una línea en [lib]: '$run' $(echo "$out" | grep -E 'error' | head -2 | tr '\n' ' ')"; fi
+printf '[package]\nname = "ci"\nversion = "0.1.0"\n' > nyx.toml
+out=$("$NB" build 2>&1); run=$(./ci 2>&1)
+if [ "$run" = "46" ]; then ok "ciclo con un struct de una línea, inlineado: compila y corre (46)"
+else mal "ciclo con struct de una línea inlineado: '$run' $(echo "$out" | grep -E 'error' | head -2 | tr '\n' ' ')"; fi
+# El archivo PRINCIPAL dentro del ciclo: main importa h y h importa main. Antes
+# main.nx se volvía a inlinear dentro de h y su struct salía dos veces (NYX1040).
+Z="$T/ciclo_main"; mkdir -p "$Z/src"; cd "$Z" || exit 1
+printf '[package]\nname = "cm"\nversion = "0.1.0"\n' > nyx.toml
+printf 'import "src/h"\npub struct Punto { x: int, y: int }\npub fn doble(n: int) -> int { return n * 2 }\nfn main() -> int {\n    let p: Punto = h_punto()\n    println(int_to_string(p.x + p.y))\n    return 0\n}\n' > src/main.nx
+printf 'import "src/main"\npub fn h_punto() -> Punto { return Punto { x: doble(3), y: 1 } }\n' > src/h.nx
+out=$("$NB" build 2>&1); run=$(./cm 2>&1)
+if [ "$run" = "7" ]; then ok "un ciclo que vuelve al archivo principal compila y corre (7)"
+else mal "ciclo que vuelve al principal: '$run' $(echo "$out" | grep -E 'error' | head -2 | tr '\n' ' ')"; fi
 cd "$P" || exit 1
 
 echo "── [lib] modules: errores del manifiesto ──"

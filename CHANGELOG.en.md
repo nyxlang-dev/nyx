@@ -12,6 +12,217 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.42.0] — 2026-11-08
+
+> **MINOR**: new `nyx build` targets built from Linux — Android/Termux (`aarch64-linux-android`, a bionic PIE that
+  runs without proot) and the Windows x86_64 `.exe` (win-cross) —, native `nyx build` on Windows and an `.exe` that
+  runs as a service, `std/rsa` with X.509 certificates, cyclic imports that work in build, check and `[lib]`, and
+  the silently-wrong cases nyxerp found in real use: a slot of an untyped `Array` read as a struct/enum (NYX2022
+  instead of SIGSEGV or garbage), `crc32_bytes` of a String and `for x in xs` without `<T>`.
+>
+> **Migration**: a program that passed a slot of an untyped `Array` holding something else (a row, a String) to a
+  struct/enum parameter now aborts with NYX2022 instead of segfaulting or reading garbage: annotate `Array<T>` or
+  convert the slot before passing it. `NYX_SLOT_CHECK=off` turns the guard off while migrating.
+
+### Fixed
+
+- **`crc32_bytes(xs[i])` with a slot of an untyped `Array` emits valid IR** (the String crc32 fix of 11-05 numbered
+  the result temporary before the slot's `inttoptr`; caught by `run_builtin_arg_opaco.sh`). The crc32 branch moves
+  out of `codegen_call_expr` into `emit_crc32_bytes`: inline it had raised its -O0 frame 1760 B above the ceiling;
+  it now sits at 472064 B (ceiling lowered in `run_stack_frame_audit.sh`) [dogfooding:nyxerp].
+
+- **A slot of an untyped `Array` that goes to a `struct` or `enum` is read by its tag: NYX2022 instead of SIGSEGV or
+  garbage** (silently-wrong, nyxerp friction 20261108). Passing `a[0]` (or the variable of a `for` over `a`) to a
+  `Caja` or `Valor` parameter compiled and passed `nyx check`; at run time a struct gave SIGSEGV and an enum read the
+  discriminant of another structure and the `match` entered no arm (empty output, exit 0). Now, in the destinations
+  call or method argument, `let x: T`, `x = …`, `return` and `for p in a`, if the slot's tag proves it is not a
+  struct/enum (int, String, float, bool, Array, Map) the program aborts with NYX2022 naming the expected and the
+  found type (rc 1). UNKNOWN and PTR pass: the legitimate pattern `a.push(caja); leer(a[0])` does not change (the 5
+  stacks green). It is turned off with `NYX_SLOT_CHECK=off`. Not covered yet: the field of a struct literal
+  (`S { c: a[0] }`) and `for p: Caja in a` (ticket in `TASKS.md`). Tests: `test-541`, the error test
+  `slot-sin-tipo-leido-como-struct-enum-abort` and ai-first 53 [dogfooding:nyxerp].
+
+- **Cyclic imports: two modules that import each other (a ↔ b), or a module that imports the main one back, compile
+  and check just the same** in `nyx build`, in `nyx check` on either file and with `[lib] modules` (nyxerp friction
+  20261106). They were already valid by design (the resolver inlines each path only once), but there were two bugs
+  alongside: the type scan of an import read the fields of a ONE-line `struct` on the following lines, and with the
+  cycle it gave false NYX1017/NYX1032 («missing fields: pub»); and the main file did not count as already imported,
+  so `nyx check src/m/a.nx` re-inlined it and gave NYX1040. Along the way, `pub struct Id(int)` in an imported module
+  exported the name «Id(int)» and broke the parse (NYX0101). Guards: Check R of `run_tooling_gates.sh` (+5) and 3
+  cycle cases in `run_lib_modules.sh` [dogfooding:nyxerp].
+
+- **`crc32_bytes(s)` with a String gave a different number on each call** (silently-wrong, nyxerp friction of
+  2026-11-05, the site's visual editor). The builtin expected an Array of bytes, the checker did not look at the type
+  and codegen handed over the `%nyx_string*` as if it were an array: the runtime read the String's struct as an array
+  and walked over garbage. Now a String goes to `nyx_crc32_string` (the CRC-32 of its bytes, same table;
+  `"123456789"` → 3421780262), an Array continues as before, and an int/float/bool is NYX1031 with a hint. Tests
+  `531` and `test-nyx1031-crc32-bytes-int`; line in `LLM.md`.
+- **`nyx build` sweeps its orphaned temporaries** (`compiler/build.nx`). If a build was killed (Ctrl+C, KILL, external
+  timeout) the final `borrar_arbol` was never reached and its `nyx_libs_<pid>_…`/`nyx_build_<pid>_…` stayed in
+  `$TMPDIR` forever (48 MB in one case measured on 2026-11-05; on the server `/tmp` is tmpfs). Now `tmp_dir_propio`
+  first deletes the directories of that exact shape whose PID no longer exists (`kill_process(pid, 0)`, and `/proc`
+  on Linux), in pure Nyx so that it holds on Windows; what belongs to a live PID and what does not have the shape is
+  left alone. Same recipe as `nyx test`. Three new checks in `run_build_manifest.sh` (37). Closes the LOW backlog item
+  «`nyx build` interrupted with Ctrl+C».
+- **`nyx test` respects `$TMPDIR` and sweeps its own orphans** (`compiler/test.nx`). The four `mktemp` said plain
+  `/tmp`: a suite that exported `TMPDIR` to avoid filling the tmpfs (nyxerp) kept leaving each file's binary in the
+  machine's RAM, and if `nyx test` was killed (KILL, external timeout) the per-file `sh` `trap` did not suffice and
+  the directory stayed forever (on 2026-10-26: 30 leftovers and ~1.3 GB of swap in `/tmp` pages). Now the base is
+  `$TMPDIR` (or `/tmp`), each temporary carries its owner's PID (`nyx_test_<pid>_XXXXXX`, `nyx_test_src_`,
+  `nyx_test_libs_`, `nyx_cov_`) and the next run deletes those of dead PIDs; what belongs to a live PID and the names
+  of the old format are left alone. The paths of the generated script are now quoted (a `TMPDIR` with a space
+  failed). A nonexistent `TMPDIR` gives a clear error instead of a mute FAIL. Four new checks in
+  `run_tooling_gates.sh` (38). Closes the LOW backlog item of 2026-10-26.
+- **`for x in xs` over an `Array` without `<T>` reads each slot by its tag, as `xs[i]` already did** (silently-wrong,
+  nyxerp report of 2026-11-04 when adopting the `get_or` fix). When codegen did not know the element type (a bare
+  `Array`, `m.get_or(k, [])`, a mixed literal), `x` was an int and `print(x)` / `"v=" + x` showed the String's
+  address with no error. Now `codegen_for` rewrites the body so that each `x` is `__arr[__idx]` over two hidden
+  variables (`licm.nx` walker, `for_sustituir_var`), and all consumers go through `codegen_index_access`, which
+  consults the tag. It does not apply if the body rebinds `x`, mutates the traversed array or has nested fns (the old
+  path remains); `NYX_FOR_SLOT=off` turns it off. Along the way, `let a: Array = [1, "dos"]` is no longer inferred as
+  `Array<int>` from the first element: it uses the common type (`tipo_comun_de_literal`, like the `for` over a
+  literal since 0.36.0) and a mixed literal stays a bare `Array` (closes the LOW backlog item of 2026-07-26). Test
+  `ai-first/52`, gotcha `for-untyped-slot-by-tag`.
+- **`m.get_or(k, [])` with an `Array` (or a `Map`, or a struct) stored as a value no longer produces invalid IR when
+  the result is used unannotated** (`for x in m.get_or(k, [])`, passing it as an argument, chaining `.length()`). The
+  `get_or` helper returned `i64` for every default that was neither String nor float, and it only survived behind a
+  `let v: Array = …` (which converts by the declared type); without the annotation clang rejected the IR («defined
+  with type 'i64' but expected 'ptr'», nyxerp report of 2026-11-04, a variant of the `ai-first/49` case). Now the
+  result has the type of the default, as already happened with float (and the `for` over it reads by tag: previous
+  bullet). Test `ai-first/51`.
+- **`install.ps1` fails on the spot if a process holds the previous installation** (`.nyx.old` in use) instead of
+  finding out after a minute of compiling and linking; the message names the step that failed and «your current
+  install was not changed»; and **it warns about `NYX_HOME` when installing with a `-Prefix`** different from
+  `%USERPROFILE%\.nyx`, because the driver does not look for its installation next to the executable (HIGH backlog item in
+  `TASKS.md`). Patch from the laptop, W6 Task 8 round 1 [arco: w6-windows].
+
+### Added
+
+- **`nyx build --target aarch64-linux-android`: Android/Termux binaries built from Linux** (nyxerp request, tablets).
+  `scripts/build_android_deps.sh <dir>` builds the deps once (NDK r27c sysroot, bdwgc 8.2.12 and OpenSSL 3.6.5; ~5
+  min, ~58 MB plus the 664 MB zip cache) in `~/.cache/nyx-android-deps` or `NYX_ANDROID_DEPS`;
+  `nyx build --target aarch64-linux-android` leaves in `target/aarch64-linux-android/<name>` a bionic PIE (`linker64`,
+  API 24) with static libgc and OpenSSL, which runs in Termux without proot. It is built with clang >= 19 and lld,
+  without NDK tools. `nyx run` does not execute it (clear error). `NYX_ANDROID_STATIC=1` builds it static ONLY to
+  test on Linux arm64 (no `dlopen`: `std/sqlite` and zlib's inflate do not work). In the runtime: TLS CAs from
+  `SSL_CERT_FILE`/`SSL_CERT_DIR`, otherwise `$PREFIX/etc/tls/cert.pem` (Termux), otherwise
+  `/system/etc/security/cacerts/` file by file; SQLite via `dlopen` from `$PREFIX/lib/libsqlite3.so` (`pkg install
+  libsqlite`); temporary directory `$TMPDIR` with fallback `/data/local/tmp`; goroutines with aarch64 asm context
+  switching (bionic has no `ucontext`). The binary carries no paths of the machine that built it
+  (`-ffile-prefix-map`, like the win-cross `.exe`; nyxerp noticed it with the first bridge built: `__FILE__` of
+  `crypto.c`/`tls.c`; `android-sin-rutas` guard in the build manifest). Verified on the server with the static
+  binary: hello, threads, channels, mutex, worker pool, TCP echo, 8 async/goroutine tests and TLS with an
+  Android-style CA. **Not verified on a real device** (EXTERNAL step). Pending: `.so` library for JNI and
+  `socket_from_fd`, and Android's user CAs. Recipe `examples/by-example/156-target-android.nx`; limits in `LLM.md`
+  [arco: target-android].
+
+- **`kill_process(pid, sig)` compiles for Windows** (W6 Task 7, request from the nyxerp bridge 0.3.8, which calls it
+  behind a platform `if`: a compile-time guard is not dodged with a run-time `if`). It goes through the os layer
+  (`os_proc_kill_pid`; `os_proc_kill` was already the spawn handle's): on posix it is plain `kill(2)`; on win32 it
+  honors only `sig` 0 (does the process exist?), 9 and 15 (`TerminateProcess`, no warning or flush, like SIGKILL) and
+  returns -1 for any other signal instead of faking delivery. `fork`/`execvp`/`waitpid`/`pipe_new` remain posix-only.
+  Test: `test-530-kill-process-cero` (Linux) and `kill_process(getpid(), 0)` inside `tests/build-win/red-min`
+  (cross gate) [arco: w6-windows].
+
+- **`std/rsa` understands X.509 certificates**: `rsa_sha256_verify`, `rsa_sha256_verify_b64` and
+  `rsa_pss_sha256_verify` now accept a `BEGIN CERTIFICATE` PEM (the key comes from the first certificate; no
+  signature changes), and the new `x509_public_key_pem(cert_pem) -> Result<String, Error>` returns that key as an
+  SPKI PEM (any key type). It validates neither chain nor validity period. Request from nyxerp (Amazon SNS
+  notices), which no longer needs its ASN.1 parser. Test `test-529-x509-pubkey` (+1, with a 10,000-iteration loop
+  against leaks); recipe 128 extended [arco: x509-pubkey].
+- **The driver dispatches `nyx check`, `nyx fmt` and `nyx test`** to `<nyx_home>/bin/nyx_<cmd>[.exe]` with the
+  remaining arguments and returns its rc (on Windows `install.ps1` installs `nyx_check.exe` and `nyx_fmt.exe`; on
+  Linux the wrapper already resolved it before). `nyx test` on Windows says «not yet available» instead of «unknown
+  command» [arco: win-cross].
+- **`nyx --version`, `nyx -v` and `nyx version` in the driver** (the one that runs on Windows, without the bash
+  wrapper): they print `nyx <VERSION>` reading `<nyx_home>/VERSION`, or `nyx (versión desconocida)` if it is not there
+  [arco: win-cross].
+- **`nyx build --target x86_64-pc-windows-msvc` from Linux** (win-cross arc): builds `target/<name>.exe` with clang +
+  `lld-link` against an `xwin` sysroot (`NYX_WIN_SYSROOT`) and static bdwgc/OpenSSL built by
+  `scripts/build_win_deps.sh` (`NYX_WIN_DEPS`); if something is missing it names everything before compiling. The
+  `.exe` imports only Windows DLLs, carries no host paths and is reproducible (`/Brepro`).
+  `aarch64-pc-windows-msvc` is still rejected. The «unknown target» message now lists the Windows triple. Gate:
+  `make test-build-win-cross` (SKIP without the two variables) [arco: win-cross].
+- **`nyx build` builds `target/<name>.exe` on Windows x86_64**, with static bdwgc and OpenSSL. It needs `clang`,
+  `llvm-ar`, `lld-link` and the variables `NYX_GC_INCLUDE`, `NYX_GC_LIBDIR` and `VCPKG_ROOT`; if something is missing,
+  the error names everything that is missing before compiling. `std/regex` still does not link on Windows, and the
+  build says so plainly instead of dumping only `lld-link`'s `undefined symbol`s. `std/process` adds `host_os()`
+  (`"linux"`, `"darwin"`, `"windows"`, `"wasi"`) [arco: w6-windows].
+- **A Nyx `.exe` runs as a Windows service, with no new API**: if the service manager launched it, the runtime
+  registers itself and delivers `sc stop` and the machine's shutdown as SIGTERM, through the same path as
+  `signal_handle(15, ...)` on the console; on exit it reports `STOPPED`. Verified on Windows 11 with `sc.exe`:
+  startup, restart after `taskkill /F`, clean stop with the program's marker and the console as before. Installation
+  with `New-Service` in `docs/SPEC.md` and recipe 155 [arco: w6-windows].
+- **`serial_ports()` adds the USB serial number at the end of each row**: `[name, "vvvv:pppp", description,
+  serial]`, with `""` if the port is not USB or the device does not report it. Linux reads it from sysfs (`serial`);
+  Windows, from the instance ID of the parent USB device (SetupAPI and cfgmgr32), and a serial invented by the
+  system gives `""`. The first three fields do not change; two identical adapters can now be told apart without
+  looking at the COM [arco: w6-windows].
+
+### Fixed
+
+- **`let pn: String = filas[1]` with a ROW (Array) in the slot is no longer silent** — `nyx_array_get_checked` only
+  reported the four value tags (int/String/float/bool); an `Array` or `Map` slot read as String passed as «opaque»
+  and the binding pointed at the other structure: `print` showed garbage bytes and `length()` an invented length,
+  with `nyx check` and exit 0 (finding of the W6 T3 kit, `puente.nx`). Now it aborts at run time naming the real type
+  and the requested one, like the rest of the `*_checked` family. Only the String case: `int` lets opaques through
+  on purpose (`nyx_slot_as_int_checked`) and `float` already reported them. Gotcha `array-row-read-as-string`; the
+  correct read is in two steps (`let fila: Array = filas[1]`, then `let pn: String = fila[0]`) [arco: w6-windows].
+- **`nyx vet` read the statement list as a String** — `check_unused_imports`, `check_dead_code` and the unused
+  variables check did `stmts[0]` on a parser element's wrapper: before, it returned garbage and those three checks
+  never fired; with the check above it aborted on any file (caught by `run_vet_gotchas.sh`). The usual behavior is
+  kept (they receive an empty list); reviving them remains ticketed [arco: w6-windows].
+- **`nyx check` and `nyx fmt` through the driver (Windows) check the requested file** — the dispatch of 1bff4bca
+  passed the path as an argument, but `nyx_check` and `nyx_fmt` read `NYX_SRC` (with `script.nx` as fallback) and
+  never their arguments: `nyx check roto.nx` gave rc 0 on a nonexistent `script.nx` and `nyx fmt` printed nothing
+  (false green; laptop, win-cross T5). The driver now does the same as the `check|vet|fmt` branch of `scripts/nyx`:
+  target (argument, `src/main.nx` in a project, `script.nx`), rc 1 if it does not exist,
+  `NYX_SRC`/`NYX_HOME`/`NYX_PROJECT_DIR` for the tool and the LSP protocol filter except with `--lsp` or
+  `NYX_CHECK_PROTOCOL=1`. Guard: +3 checks in `run_build_manifest.sh` (driver without wrapper, as on Windows). Round
+  1 (laptop): Windows' `END\r\n` slipped through the filter and each line came out with `\r\r\n`; the driver strips
+  the trailing `\r` before comparing and printing, and a healthy file prints nothing (+1 check). Round 2 ratified on
+  Windows (Git Bash and PowerShell, by byte dump): no `END`, no `\r\r`, `--lsp` identical to `nyx_check` directly
+  [arco: win-cross].
+
+- **`rename_file` on Windows replaces the destination if it exists, as on Linux** — it called the UCRT's `rename()`,
+  which does not pass `MOVEFILE_REPLACE_EXISTING` and failed with EEXIST, so the «write `.tmp` and rename over it»
+  pattern of atomic writes did not work (nyxerp, 2026-11-02). New `os_fs_rename` in the `os_*` layer (posix/wasm:
+  `rename(2)`; win32: `MoveFileExA` with `REPLACE_EXISTING | COPY_ALLOWED`, atomic on the same volume);
+  `nyx_rename_file` keeps the 0/-1 contract. Runtime C unit +7 asserts (`test_os_fs.c`) [arco: win-cross].
+- **`nyx_bootstrap.exe` without `NYX_TARGET` no longer emits Linux IR on Windows** (triple `x86_64-pc-linux-gnu` and
+  posix `setjmp`, with no warning): the default triple now comes from the host and on Windows it is
+  `x86_64-pc-windows-msvc`. On Linux nothing changes [arco: win-cross].
+- **`std/net` doc corrected: per-interface multicast join DOES work on Windows** (the comment said `net_interfaces`
+  gave `-ENOSYS`; the laptop measured the 7 interfaces and the join by IP works). The measured difference of
+  `set_multicast_loop` is documented: on the receiver side on Windows, on the sender side on Linux [arco: win-cross].
+- **`runtime/runtime.c` no longer emits the «discards qualifiers» warning** in `nyx_exec_full` (`cmd` is
+  `const char*`, as `os_proc_run_full` declares it): it was what whoever installed on Windows saw [arco: win-cross].
+- **`nyx run` on Windows no longer prints `[nyx] signal_handle: no se pudo registrar la señal 3 (error 22)`** on every
+  run: SIGQUIT does not exist there and is no longer registered [arco: win-cross].
+- **`nyx build` on Windows with `std/regex` prints only the notice that it is not available**, without the raw linker
+  dump underneath [arco: win-cross].
+- **`m.get_or(f[0], d)` with `f` a loop variable annotated `Array` no longer produces invalid IR**: the slot's i64 went into `nyx_string_to_cstr` without `inttoptr` (clang error `defined with type 'i64' but expected 'ptr'`, nyxerp report). `get_or` and `remove` on a Map field now use `codegen_map_key`, like `insert`/`get`/`contains`. Test `ai-first/49`.
+- **`remove_file` deletes an empty directory on Windows too**, as on posix [arco: w6-windows].
+- **The compiler finds `~/.nyx` on Windows too**: `build`, `resolve`, `codegen` and the driver looked only at `HOME`,
+  which does not exist on Windows (and under Git Bash is a `/c/Users/...` path that native tools do not read). They
+  now use `USERPROFILE`, with `HOME` as fallback; no change on Linux and macOS [arco: w6-windows].
+
+### Tests
+
+- `make test-examples`: 155 → 156 recipes (the 156th, `target-android`) [arco: target-android].
+- `make test-android` (new): `scripts/testing/run_android_cacerts_test.sh`, 3 checks (TLS aligned to 64, no CA
+  rejects, with an Android-style CA directory verifies); clean SKIP without Android deps or outside aarch64. The
+  `nyx build` manifest adds 4 Android cases (`android-falta` without deps; `android-elf`, `android-run` and
+  `android-estatico` with them): 37 → 40 checks with deps, 38 without them [arco: target-android].
+- `make test-errors`: 405 → 406 (`slot-array-leido-como-string-abort`) and `make test-ai-first`: 49 → 50 programs
+  (`50-fila-array-luego-string`) [arco: w6-windows].
+- `make test-examples`: 153 → 155 recipes (the 154th, which had not been counted, and the 155th, the Windows service
+  one) [arco: w6-windows].
+- `make test-runtime`: 2339 → 2352 asserts: three `host_os` cases in `test_os_build_host.c` and ten for the USB serial
+  in `test_os_serial.c` (with a fake sysfs) [arco: w6-windows].
+
+---
+
 ## [0.41.0] — 2026-11-02
 
 > **MINOR**: changes observable semantics — a closure created in a loop sees the variable of ITS iteration, as in

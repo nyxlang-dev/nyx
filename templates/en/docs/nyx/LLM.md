@@ -2054,7 +2054,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,for-untyped-slot-by-tag,map-get-or-default-array,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,array-row-read-as-string,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,wasm-method-slot-arg -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,for-untyped-slot-by-tag,map-get-or-default-array,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,array-row-read-as-string,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,untyped-slot-to-struct-enum-checked,wasm-method-slot-arg -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2108,7 +2108,6 @@ embedded NULs (`"AB" + char_to_string(0) + "CDE"`) now round-trips intact throug
 `read_file`/`write_file`/`try_read_file`/`try_write_file`/`file_write_string`. To read a whole file
 through an open handle (no `file_read_all` — that function does not exist), size it first
 (`file_seek`/`file_tell`) then `file_read_bytes(handle, size)` + `string_from_bytes(bytes, 0, size)`.
-`crc32_bytes(x)` (IEEE CRC-32, `"123456789"` → 3421780262) takes a String or a byte Array; an int/float/bool is NYX1031 (0.41.1+; before, a String compiled and gave a different number per call).
 For codepoints beyond a byte, use `utf8_encode(codepoint)` from `import "std/unicode"` (v0.22.x+):
 encodes any Unicode codepoint to its 1-4 UTF-8 bytes; invalid input (negative, > 0x10FFFF, surrogates
 U+D800..U+DFFF) yields U+FFFD instead of aborting — HTML numeric-entity semantics, so it composes
@@ -2383,7 +2382,18 @@ hs[0]` first) still works but is no longer needed: the slot is converted to the 
 and a Map key that comes from a slot is read as the String it holds. Same family as
 `int_to_float(arr[i])`, fixed in 0.36.1. [test: 40-casilla-sin-tipo-como-argumento]
 
-46. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
+46. **A slot of an `Array` without `<T>` that goes to a struct or enum is checked by its tag** (NYX2022, fixed 2026-11-08, v0.41.1). Until 0.41.0
+`leer(a[0])` (with `fn leer(c: Caja)`) or `for p in a { leer(p) }` compiled and passed `nyx check`
+whatever the slot held: if it was a row (`[["k", "v"]]`) or a String the struct was read from foreign
+memory (SIGSEGV), and an enum made the `match` read its discriminant from another structure and match
+no arm (empty output, exit 0) — reported by nyxerp. Now the slot is read with its runtime tag and a tag
+that cannot be a struct/enum (`int`, `String`, `float`, `bool`, `Array`, `Map`) aborts with NYX2022,
+naming the expected type and what was found. The legitimate `var a: Array = []; a.push(caja);
+leer(a[0])` is untouched (a pushed struct has no tag; a literal one is tagged as a pointer). Covered:
+call and method arguments, `let x: T = a[i]`, `x = a[i]`, `return a[i]`. Not covered: a struct-literal
+field (`S { c: a[0] }`). Better still, annotate the Array (`Array<Caja>`). [test: 53-casilla-sin-tipo-a-struct-enum]
+
+47. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
 
 <!-- /gen:gotchas -->
 

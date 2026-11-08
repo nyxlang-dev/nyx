@@ -99,6 +99,7 @@ GOTCHA_IDS=(
   "map-insert-slot-string"
   "pdf-page-to-image"
   "untyped-slot-as-argument"
+  "untyped-slot-to-struct-enum-checked"
   "wasm-method-slot-arg"
 )
 

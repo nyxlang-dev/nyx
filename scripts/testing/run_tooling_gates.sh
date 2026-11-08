@@ -902,6 +902,89 @@ else
     ok "control positivo: un programa sin avisos no muestra ninguno"
 fi
 
+# ── Check R: imports cíclicos (a ↔ b) en `nyx check`, archivo por archivo ──
+# Fricción nyxerp 20261106-220008-team-1. `src/m/a.nx` declara un struct de UNA
+# línea e importa `src/m/b`; `src/m/b.nx` importa `src/m/a` y usa ese struct. El
+# programa es válido (el inlining corta el ciclo: cada path entra una vez), pero
+# daba NYX1017 «field 'extras' does not exist in struct 'Cosa'» y NYX1032
+# «missing fields: pub». Causa: el escaneo textual de tipos de un import
+# (scan_module_types, semantic.nx) leía los campos solo de las líneas SIGUIENTES
+# a `struct`, así que de un struct de una línea tomaba la fn de abajo (`pub` era
+# el nombre antes del primer `:`); y con el ciclo ese escaneo llega ANTES que la
+# declaración real y ganaba. Además `nyx check src/m/a.nx` —lo que hace un
+# editor— reinlineaba a.nx dentro de b y acusaba NYX1040. Se chequean los TRES
+# archivos como principal: el bug dependía de cuál fuera.
+mk_ciclo() {  # $1=dir, $2=1 → con un campo inexistente en b (negativo)
+    local dir="$1" roto="$2" campo="n"
+    [ "$roto" = "1" ] && campo="nn"
+    mkdir -p "$dir/src/m"
+    printf '[package]\nname = "ciclo"\nversion = "0.1.0"\n' > "$dir/nyx.toml"
+    cat > "$dir/src/m/a.nx" <<'EOF'
+import "src/m/b"
+pub struct Cosa { n: int, extras: Array }
+pub fn a_cosa() -> Cosa { return Cosa { n: 1, extras: b_extras() } }
+EOF
+    cat > "$dir/src/m/b.nx" <<EOF
+import "src/m/a"
+pub fn b_extras() -> Array { return [5, 7] }
+pub fn b_usa() -> int {
+    let c: Cosa = a_cosa()
+    return c.$campo
+}
+EOF
+    cat > "$dir/src/main.nx" <<'EOF'
+import "src/m/a"
+fn main() -> int {
+    let c: Cosa = a_cosa()
+    println(int_to_string(c.extras.length()))
+    return 0
+}
+EOF
+}
+run_check_de() {  # $1=dir, $2=archivo → salida a $GATE_TMP/check.out, rc a $CHECK_RC
+    ( cd "$1" && NYX_SRC="$2" NYX_PROJECT_DIR="$1" NYX_HOME="$ROOT" "$ROOT/nyx_check" ) \
+        > "$GATE_TMP/check.out" 2>&1
+    CHECK_RC=$?
+}
+CDIR="$GATE_TMP/ciclo"
+mk_ciclo "$CDIR" 0
+for f in src/main.nx src/m/a.nx src/m/b.nx; do
+    run_check_de "$CDIR" "$f"
+    if [ "$CHECK_RC" -eq 0 ] && ! grep -qE "NYX1017|NYX1032|NYX1040" "$GATE_TMP/check.out"; then
+        ok "check-ciclo $f — a ↔ b con un struct de una línea chequea limpio (rc 0)"
+    else
+        bad "check-ciclo $f — rc $CHECK_RC sobre un ciclo de imports válido" "check-ciclo-$f"
+        grep -E "error" "$GATE_TMP/check.out" | head -4 | sed 's/^/      /'
+    fi
+done
+# NEGATIVO (control del instrumento): con el ciclo, un campo que de verdad no
+# existe se sigue acusando, contra los campos REALES (did you mean 'n').
+CRDIR="$GATE_TMP/ciclo_roto"
+mk_ciclo "$CRDIR" 1
+run_check_de "$CRDIR" "src/main.nx"
+if [ "$CHECK_RC" -ne 0 ] && grep -q "field 'nn' does not exist in struct 'Cosa'" "$GATE_TMP/check.out" \
+   && ! grep -q "missing fields: pub" "$GATE_TMP/check.out"; then
+    ok "check-ciclo-roto — en el ciclo, un campo inexistente sigue siendo NYX1017 (y sin el campo fantasma 'pub')"
+else
+    bad "check-ciclo-roto — rc $CHECK_RC sin el NYX1017 esperado sobre 'nn'" "check-ciclo-roto"
+    grep -E "error" "$GATE_TMP/check.out" | head -4 | sed 's/^/      /'
+fi
+# Un tuple struct `pub` en un módulo importado: extract_exports (resolve.nx)
+# exportaba el nombre «Id(int)» y el `module … [ … ]` del encabezado no parseaba
+# (NYX0101 sobre una línea 1000000+). Lo destapó el mismo arreglo.
+TDIR="$GATE_TMP/tuple_pub"
+mkdir -p "$TDIR/src"
+printf '[package]\nname = "tup"\nversion = "0.1.0"\n' > "$TDIR/nyx.toml"
+printf 'pub struct Id(int)\npub fn id_de(n: int) -> Id { return Id { _0: n } }\n' > "$TDIR/src/ids.nx"
+printf 'import "src/ids"\nfn main() -> int {\n    let i: Id = id_de(4)\n    print(int_to_string(i._0))\n    return 0\n}\n' > "$TDIR/src/main.nx"
+run_check_de "$TDIR" "src/main.nx"
+if [ "$CHECK_RC" -eq 0 ] && ! grep -q "NYX0101" "$GATE_TMP/check.out"; then
+    ok "check-tuple-pub — importar un módulo con un tuple struct pub chequea limpio (rc 0)"
+else
+    bad "check-tuple-pub — rc $CHECK_RC al importar un tuple struct pub" "check-tuple-pub"
+    grep -E "error" "$GATE_TMP/check.out" | head -3 | sed 's/^/      /'
+fi
+
 # ── Check H: `nyx test` escribe su scratch en $TMPDIR y barre los restos ──
 # Hasta el 2026-11-04 los mktemp de test.nx decían `/tmp` a secas: una suite
 # que exportaba TMPDIR para no llenar el tmpfs (nyxerp) seguía dejando el

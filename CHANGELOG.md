@@ -9,7 +9,47 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.42.0] — 2026-11-08
+
+> **MINOR**: destinos nuevos de `nyx build` armados desde Linux — Android/Termux (`aarch64-linux-android`, PIE de
+  bionic que corre sin proot) y el `.exe` de Windows x86_64 (win-cross) —, `nyx build` nativo en Windows y un `.exe`
+  que corre como servicio, `std/rsa` con certificados X.509, imports cíclicos que funcionan en build, check y `[lib]`,
+  y los silently-wrong que nyxerp encontró en uso real: una casilla de un `Array` sin tipo leída como struct/enum
+  (NYX2022 en vez de SIGSEGV o basura), `crc32_bytes` de un String y `for x in xs` sin `<T>`.
+>
+> **Migración**: un programa que pasaba una casilla de un `Array` sin tipo con otra cosa adentro (una fila, un
+  String) a un parámetro struct/enum ahora aborta con NYX2022 en vez de dar SIGSEGV o leer basura: anotar
+  `Array<T>` o convertir la casilla antes de pasarla. `NYX_SLOT_CHECK=off` apaga la guarda mientras se migra.
+
 ### Fixed
+
+- **`crc32_bytes(xs[i])` con una casilla de un `Array` sin tipo emite IR válido** (el arreglo de crc32 de String del
+  11-05 numeraba el temporal del resultado antes que el `inttoptr` de la casilla; lo caza
+  `run_builtin_arg_opaco.sh`). La rama de crc32 sale de `codegen_call_expr` a `emit_crc32_bytes`: en línea había
+  subido su marco -O0 1760 B por encima del techo; ahora queda en 472064 B (techo bajado en
+  `run_stack_frame_audit.sh`) [dogfooding:nyxerp].
+
+- **Una casilla de un `Array` sin tipo que va a un `struct` o `enum` se lee por su tag: NYX2022 en vez de SIGSEGV o
+  basura** (silently-wrong, fricción nyxerp 20261108). Pasar `a[0]` (o la variable de un `for` sobre `a`) a un
+  parámetro `Caja` o `Valor` compilaba y pasaba `nyx check`; en ejecución un struct daba SIGSEGV y un enum leía el
+  discriminante de otra estructura y el `match` no entraba en ningún brazo (salida vacía, exit 0). Ahora, en los
+  destinos argumento de llamada o de método, `let x: T`, `x = …`, `return` y `for p in a`, si el tag de la casilla
+  prueba que no es un struct/enum (int, String, float, bool, Array, Map) el programa aborta con NYX2022 nombrando el
+  tipo esperado y el encontrado (rc 1). UNKNOWN y PTR pasan: el patrón legítimo `a.push(caja); leer(a[0])` no cambia
+  (los 5 stacks verdes). Se apaga con `NYX_SLOT_CHECK=off`. Sin cubrir todavía: el campo de un struct literal
+  (`S { c: a[0] }`) y `for p: Caja in a` (ficha en `TASKS.md`). Tests: `test-541`, el error test
+  `slot-sin-tipo-leido-como-struct-enum-abort` y ai-first 53 [dogfooding:nyxerp].
+
+- **Imports cíclicos: dos módulos que se importan entre sí (a ↔ b), o un módulo que importa de vuelta al principal,
+  compilan y se chequean igual** en `nyx build`, en `nyx check` sobre cualquiera de los archivos y con `[lib] modules`
+  (fricción nyxerp 20261106). Ya eran válidos por diseño (el resolver inlinea cada ruta una sola vez), pero había dos
+  bugs al costado: el escaneo de tipos de un import leía los campos de un `struct` de UNA línea en las líneas
+  siguientes, y con el ciclo daba NYX1017/NYX1032 falsos («missing fields: pub»); y el archivo principal no contaba
+  como ya importado, así que `nyx check src/m/a.nx` lo reinlineaba y daba NYX1040. De paso, `pub struct Id(int)` en
+  un módulo importado exportaba el nombre «Id(int)» y rompía el parse (NYX0101). Guardas: Check R de
+  `run_tooling_gates.sh` (+5) y 3 casos de ciclo en `run_lib_modules.sh` [dogfooding:nyxerp].
 
 - **`crc32_bytes(s)` con un String daba un número distinto por llamada** (silently-wrong, fricción nyxerp del
   2026-11-05, editor visual del sitio). El builtin esperaba un Array de bytes, el checker no miraba el tipo y codegen

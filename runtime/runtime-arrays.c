@@ -794,6 +794,40 @@ int64_t nyx_slot_as_array_checked(nyx_array_t* arr, int64_t index) {
     return arr->data[index];
 }
 
+// Lectura como STRUCT o ENUM de usuario, chequeada (fricción nyxerp
+// 20261108-100015-team-1). Un struct y un enum viven en el slot como un PUNTERO
+// a su memoria en el heap, y llegan ahí sin tag (`a.push(caja)` → UNKNOWN) o con
+// tag PTR (literal `[caja]`). Ningún otro tag puede ser uno de ellos: INT/FLOAT/
+// BOOL son valores, STRING es un nyx_string, ARRAY un nyx_array_t y MAP un mapa.
+// Leer cualquiera de esos como `%Caja*` era SIGSEGV en el primer campo (`leer(a[0])`
+// con a = [["clave","valor"]]); como enum, el discriminante salía de los bytes de
+// otra estructura y el `match` no casaba con ningún brazo: salida vacía, exit 0.
+//
+// Por eso la regla es la inversa de las otras lecturas chequeadas: acá se
+// denuncian TODOS los tags conocidos salvo PTR, y solo pasan UNKNOWN (no hay
+// información, el patrón legítimo `var a: Array = []; a.push(caja)`) y PTR.
+// `type_name` es el tipo que el destino esperaba, solo para el mensaje.
+int64_t nyx_slot_as_value_checked(nyx_array_t* arr, int64_t index, const char* type_name) {
+    if (!arr) {
+        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
+        exit(1);
+    }
+    nyx_array_bounds_check(arr, index);
+    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+    if (t != NYX_TAG_UNKNOWN && t != NYX_TAG_PTR && !nyx_slot_check_off()) {
+        const char* tn = type_name ? type_name : "?";
+        fprintf(stderr,
+            "💥 Runtime Error [NYX2022]: se esperaba un '%s' pero el slot %" PRId64
+            " del Array contiene un %s — el Array no tiene tipo de elemento: anótalo"
+            " (Array<%s>) o revisa qué se guardó en él; NYX_SLOT_CHECK=off lo desactiva\n"
+            "   (expected a '%s' but Array slot %" PRId64 " holds a value of type %s — the Array has"
+            " no element type: annotate it (Array<%s>) or check what was stored in it)\n",
+            tn, index, nyx_tag_name(t), tn, tn, index, nyx_tag_name(t), tn);
+        exit(1);
+    }
+    return arr->data[index];
+}
+
 void nyx_array_retag_unknown(nyx_array_t* arr, int64_t tag) {
     if (!arr || !arr->tags) return;
     if (tag <= NYX_TAG_UNKNOWN || tag > NYX_TAG_PTR) return;
