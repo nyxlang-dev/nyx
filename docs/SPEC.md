@@ -3697,6 +3697,12 @@ let replaced: String = regex_replace(text, "[0-9]+", "YYYY")  // "Hello YYYY Wor
 let all: String = regex_replace_all(text, "[a-z]", "X")  // "HeXXo 2026 WorXd"
 ```
 
+La sintaxis es POSIX ERE (`REG_EXTENDED`) con semántica leftmost-longest (`a|ab` sobre `"ab"` casa `"ab"`), sobre
+BYTES: `.` casa un byte y las clases (`[[:alpha:]]`…) son ASCII. El motor es el de la libc en Linux y Android; en
+Windows, cuya CRT no trae `<regex.h>`, es el TRE de musl vendorizado en modo bytes (`runtime/vendor/tre`, desde
+0.42.1). Los dos dan el mismo resultado para todo patrón que POSIX define (`make test-regex-diff`); las formas
+indefinidas que pueden diferir están en `docs/gotchas/regex-windows-motor.md`.
+
 ---
 
 ## Format String

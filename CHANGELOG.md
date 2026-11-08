@@ -9,6 +9,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`std/regex` enlaza en Windows** (`nyx build` nativo y `--target x86_64-pc-windows-msvc`): la CRT de MSVC no
+  trae `<regex.h>`, así que esos builds usan el motor TRE de musl 1.2.5 (más sus tres arreglos posteriores del
+  regex) vendorizado en `runtime/vendor/tre`, en modo bytes y con nombres `nyx_tre_*`; Linux y Android siguen con
+  la libc. `make test-regex-diff` lo corre contra glibc —casos fijos y 20 000 al azar, también bajo ASan/UBSan— y
+  exige el mismo veredicto, el mismo match y el mismo `replace_all`. El diferencial destapó tres bugs del motor,
+  arreglados en la copia: `^*`/`$+` compilaban (glibc da `REG_BADRPT`), `$|x*` corría el match vacío a la derecha y
+  `.{1,2}($)?` ataba el match a `$`. Quedan documentadas las formas indefinidas que pueden diferir
+  (`docs/gotchas/regex-windows-motor.md`). Fixture `tests/build-win/regex-min` en `make test-build-win-cross`.
+  Falta correr el `.exe` en la laptop [arco: regex-windows].
+
 ### Fixed
 
 - **NYX2022 cubre el campo de un struct literal y `for p: Caja in a`** (los dos huecos fichados al cortar 0.42.0):

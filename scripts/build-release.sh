@@ -60,6 +60,10 @@ cp Makefile "$DIST/$NAME/"
 cp runtime/*.c runtime/*.h "$DIST/$NAME/runtime/"
 mkdir -p "$DIST/$NAME/runtime/os"
 cp runtime/os/*.c runtime/os/*.h "$DIST/$NAME/runtime/os/"
+# runtime/vendor/tre: el motor regex de Windows (arco regex-windows); el glob
+# tampoco lo arrastra, y sin él std/regex no enlaza en un .exe armado desde acá.
+mkdir -p "$DIST/$NAME/runtime/vendor"
+cp -r runtime/vendor/tre "$DIST/$NAME/runtime/vendor/"
 
 # Stdlib
 cp std/*.nx "$DIST/$NAME/std/"

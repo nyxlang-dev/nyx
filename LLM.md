@@ -1096,8 +1096,8 @@ single `Error` struct.
 - **`nyx build` on Windows x86_64** produces `target/<name>.exe` with bdwgc and OpenSSL linked statically. It needs
   `clang`, `llvm-ar`, `lld-link` and three variables: `NYX_GC_INCLUDE`, `NYX_GC_LIBDIR` (bdwgc headers and `.lib`) and
   `VCPKG_ROOT` (OpenSSL, zlib); if any is missing the error names all of them, before compiling. Limits today:
-  **`std/regex` does not link on Windows** (no regex engine in the MSVC runtime; the build says so in plain words,
-  also when the import comes through another module); a user program's main stack is **1 MB** (Windows default) vs
+  `std/regex` links on Windows since 0.42.1 through a vendored engine (musl's TRE in byte mode, see
+  `regex-windows-motor` in §5.3: same results as Linux except a few POSIX-undefined forms); a user program's main stack is **1 MB** (Windows default) vs
   8 MB on Linux, so deep recursion overflows sooner; and Smart App Control may block a freshly linked, unsigned `.exe`
   (rc 126) — a program you distribute needs to be signed. `nyx test` does not run on Windows yet.
 - **`nyx build --target x86_64-pc-windows-msvc` from Linux** (arco win-cross) builds the same `.exe` with clang + `lld-link`.
@@ -1971,7 +1971,7 @@ Not Nyx bugs: these come from POSIX, from the Boehm GC, or from codegen
 internals you never touch directly.
 
 <!-- gen:gotchas kinds=limit lang=en form=long -->
-<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack,cross-compile-arch -->
+<!-- gen:ids fork-gc-child-exec,global-struct-zeroinitializer,prelude-frozen-snapshot,derive-fields-solo-primitivos,hkt-gats-parse-only,wasm-arena-closure-env,wasm-await-one-suspended-stack,cross-compile-arch,regex-windows-motor -->
 
 1. **`fork() + GC`** — the child MUST call `execvp()` immediately, cannot allocate GC memory (Boehm is
 inconsistent in child process). Not a Nyx bug: this comes from how the Boehm GC interacts with POSIX
@@ -2043,6 +2043,8 @@ runtime error, never a corrupted stack. `spawn`, channels and goroutines do not 
 wait for several things, `await` them one after another. [test: wasm/test-wasm-31-asyncify-shim] [test: wasm/test-wasm-33-await-fetch]
 
 8. **Cross-compiling Linux x86_64 <-> aarch64 (`nyx build --target <triple>`) needs the target's dev libraries installed (multiarch), and the result cannot run on the building machine.** Output goes to `target/<triple>/<name>`. Missing packages are reported before compiling, with the exact command. There is no emulation: `nyx run --target` for another architecture fails; copy the binary to a machine of that architecture (or use `docker run --platform linux/amd64`). Single-letter x86 `asm` constraints (`a b c d S D`) are rejected for an aarch64 target; the `asm` template is never interpreted, so it must already match the target architecture. The binary is dynamic: the target needs libgc, libssl3, libcrypto, libz and glibc (a portable static binary is not available yet). [test: compiler/errors/test-linux-cross-asm-x86]
+
+9. **On Windows `std/regex` runs on a vendored engine (musl's TRE in byte mode), not on the libc; for every ERE pattern POSIX defines it gives the same result as Linux, but a few undefined forms can differ.** The MSVC runtime has no `<regex.h>`, so since 0.42.1 `runtime/vendor/tre` is linked into Windows builds (native and `--target x86_64-pc-windows-msvc`); Linux and Android keep glibc/bionic. `make test-regex-diff` runs fixed and random patterns against both engines and requires the same compile verdict, the same whole match and the same `regex_replace_all` output. Both work on BYTES with ASCII classes: `.` matches one byte of a UTF-8 character and `é` is not `[[:alpha:]]`. What can differ: two alternatives that match empty under anchors that do not contain each other (`$|^`: on Windows the empty match goes to the end, on Linux to the start); an empty alternative (`|a`, `a||b`) and chained repetitions (`a**`, `a{1,2}*`), which POSIX leaves undefined. Avoid those forms in a pattern that must behave the same everywhere. [test: regex-diff/regex_diff_main.c]
 
 <!-- /gen:gotchas -->
 

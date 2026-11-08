@@ -166,7 +166,7 @@ builtins-index:
 # rearmaría de más. nyx_build y nyx_gendocs son opcionales en install-local
 # (se copian si existen): se exigen al día solo cuando existen.
 # Guarda: scripts/testing/run_toolchain_recipe_audit.sh (lee la base de reglas).
-RUNTIME_HDRS = $(wildcard runtime/*.h runtime/os/*.h)
+RUNTIME_HDRS = $(wildcard runtime/*.h runtime/os/*.h runtime/vendor/tre/*.h)
 RUNTIME_DEPS = $(RUNTIME_SRCS) $(RUNTIME_HDRS)
 BOOTSTRAP_RUNTIME_DEPS = $(filter-out runtime/http2.c runtime/llama_adapter.c runtime/http2.h runtime/llama_api.h,$(RUNTIME_DEPS))
 TOOL_CORE_LL = compiler/lexer.ll compiler/parser.ll
@@ -257,6 +257,7 @@ install-local: $(STD_PRELUDE) nyx_bootstrap nyx_check nyx_vet nyx_fmt nyx_test $
 	cp runtime/wasm.srcs "$$NYX_HOME_DIR/runtime/"; \
 	mkdir -p "$$NYX_HOME_DIR/runtime/wasi" && cp -r runtime/wasi/* "$$NYX_HOME_DIR/runtime/wasi/"; \
 	mkdir -p "$$NYX_HOME_DIR/runtime/os" && cp runtime/os/*.c runtime/os/*.h "$$NYX_HOME_DIR/runtime/os/"; \
+	rm -rf "$$NYX_HOME_DIR/runtime/vendor" && mkdir -p "$$NYX_HOME_DIR/runtime/vendor" && cp -r runtime/vendor/tre "$$NYX_HOME_DIR/runtime/vendor/"; \
 	cp VERSION "$$NYX_HOME_DIR/VERSION" 2>/dev/null || true; \
 	cp std/*.nx "$$NYX_HOME_DIR/std/"; \
 	cp std/builtins.index "$$NYX_HOME_DIR/std/"; \
@@ -459,6 +460,8 @@ test-all:
 	@echo ""
 	$(MAKE) test-android
 	@echo ""
+	$(MAKE) test-regex-diff
+	@echo ""
 	$(MAKE) test-load
 	@echo ""
 	$(MAKE) test-ai-first
@@ -530,6 +533,11 @@ test-build-win-cross:
 ## Los casos android de `nyx build --target` corren dentro de run_build_manifest.sh (make test-ai-first).
 test-android:
 	bash scripts/testing/run_android_cacerts_test.sh
+
+## Motor regex vendorizado (runtime/vendor/tre, el de Windows) contra la regex de la libc: mismo veredicto,
+## mismo match y mismo replace_all; también bajo ASan/UBSan (arco regex-windows).
+test-regex-diff:
+	bash scripts/testing/run_regex_diff.sh
 
 ## Tests unitarios de componentes — RUNNER RETIRADO (era racket pre-self-hosting)
 ## Los .nx en tests/compiler-unit/ y tests/verify/ son programas Nyx válidos pero
@@ -815,4 +823,4 @@ bench-test-cache:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross test-android build-repl repl release-check bench-test-cache
+.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross test-android test-regex-diff build-repl repl release-check bench-test-cache

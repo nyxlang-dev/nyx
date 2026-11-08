@@ -1,7 +1,7 @@
 // ============================================
 // REGEX.C - POSIX Regex support for Nyx
 // ============================================
-// Uses POSIX ERE (REG_EXTENDED) via <regex.h>.
+// Uses POSIX ERE (REG_EXTENDED) via <regex.h> (en Windows, runtime/vendor/tre).
 // All allocations go through Boehm GC — never call free().
 //
 // Design notes:
@@ -18,7 +18,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+// Motor: la libc donde trae <regex.h> (glibc, bionic); en Windows, cuya CRT no lo
+// trae, el TRE de musl vendorizado en modo bytes (runtime/vendor/tre, arco
+// regex-windows). Su cabecera expone los mismos nombres POSIX como macros, así que
+// el resto de este archivo no cambia. NYX_REGEX_TRE lo fuerza en cualquier
+// plataforma (lo usa el gate de win-cross). Paridad: make test-regex-diff.
+#if defined(_WIN32) || defined(NYX_REGEX_TRE)
+#include "vendor/tre/nyx_tre_regex.h"
+#else
 #include <regex.h>
+#endif
 #include <gc.h>
 #include "strings.h"
 #include "regex.h"

@@ -36,7 +36,7 @@ echo "╔═══════════════════════�
 echo "║   nyx build cruzado a Windows (desde Linux)     ║"
 echo "╚════════════════════════════════════════════════╝"
 
-for proj in red-min serve-serie; do
+for proj in red-min serve-serie regex-min; do
     src="$ROOT/tests/build-win/$proj"
     if [ ! -d "$src" ]; then bad "$proj — falta el fixture $src"; continue; fi
     P="$TMP/$proj"

@@ -2759,7 +2759,9 @@ fn rt_auto(fl: String, extra: Array, archivador: String, fuentes: Array, rt: Str
     clave.append(fl + extra.join(" ") + "\n" + fuentes.join(" ") + "\n")
     let ver: Array = salida_de(["clang", "--version"]).split("\n")
     if ver.length() > 0 { let v0: String = ver[0]; clave.append(v0 + "\n") }
-    let todo: Array = concat(concat(fuentes, h_de(rt)), h_de(rt + "/os"))
+    // Los .h del motor regex vendorizado también (arco regex-windows): sus .c van en
+    // `fuentes` solo en Windows, pero un cambio en tre.h tiene que invalidar la caché.
+    let todo: Array = concat(concat(concat(fuentes, h_de(rt)), h_de(rt + "/os")), h_de(rt + "/vendor/tre"))
     var i: int = 0
     while i < todo.length() {
         let f: String = todo[i]
@@ -3372,9 +3374,9 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
         // "undefined reference to nyx_llm_*" (friction A10, 2026-07-31).
         "http2.c", "process.c", "llama_adapter.c", "os/os_posix.c"]
     // Windows: sin los que son solo posix. process.c es fork/exec (std/process va
-    // por os_win32.c) y regex.c usa <regex.h>, que MSVC no trae: std/regex todavía
-    // no enlaza en Windows. Si el enlace falla por un nyx_regex_*, se dice eso
-    // antes del volcado de lld-link (más abajo).
+    // por os_win32.c). regex.c sí va: la CRT de MSVC no trae <regex.h>, así que en
+    // Windows usa el TRE de musl vendorizado en runtime/vendor/tre (arco
+    // regex-windows, 2026-11-08); hasta entonces std/regex no enlazaba ahí.
     let win: bool = es_triple_windows(eff_target)
     var cc_win: Array = []
     var ld_win: Array = []
@@ -3388,7 +3390,8 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
         nombres = ["runtime.c", "strings.c", "runtime-arrays.c", "maps.c", "file-io.c", "iterators.c", "net.c", "thread.c",
             "time.c", "crypto.c", "tls.c", "scheduler.c", "sqlite_adapter.c",
             "compress.c", "random.c", "url.c", "msgpack.c", "csv.c", "websocket.c", "persist.c",
-            "http2.c", "llama_adapter.c", "os/event_loop_win32.c", "os/os_win32.c"]
+            "http2.c", "llama_adapter.c", "os/event_loop_win32.c", "os/os_win32.c",
+            "regex.c", "vendor/tre/regcomp.c", "vendor/tre/regexec.c", "vendor/tre/tre-mem.c", "vendor/tre/regerror.c"]
     }
     var fuentes: Array = []
     var i: int = 0
@@ -3458,18 +3461,6 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
     let lrc: int = correr_err_a(argv, nyx_home, log)
     if lrc != 0 {
         let txt: String = read_file(log)
-        // Un símbolo nyx_regex_* sin resolver en Windows no es un bug del programa:
-        // es el runtime que todavía no trae motor de regex ahí. Lo decimos en claro
-        // (también cubre un import indirecto, vía otro módulo o [lib] modules).
-        // Sin la atribución genérica: diría «si es de la stdlib, es un bug de Nyx»,
-        // y acá ya sabemos que no lo es (hallazgo de la laptop, 2026-11-02).
-        let falta_regex: bool = win and txt.contains("nyx_regex_")
-        if falta_regex {
-            // Solo el aviso: el volcado crudo del enlazador va debajo de un mensaje
-            // que ya dice la causa y la desdibuja (hallazgo de la laptop, 2026-11-02).
-            err_line("error: std/regex todavía no está disponible en Windows; este programa lo usa (directamente o a través de otro módulo)")
-            return false
-        }
         err_line("error: clang link failed:")
         clang_failure_attribution(txt, config.main_file)
         err_print(txt)

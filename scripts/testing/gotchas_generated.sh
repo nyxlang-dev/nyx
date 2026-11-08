@@ -54,6 +54,7 @@ GOTCHA_IDS=(
   "wasm-arena-closure-env"
   "wasm-await-one-suspended-stack"
   "cross-compile-arch"
+  "regex-windows-motor"
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"
