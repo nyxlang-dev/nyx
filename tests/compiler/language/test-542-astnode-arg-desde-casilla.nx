@@ -1,0 +1,39 @@
+// `f(args[0])` con `f(n: ASTNode)` y `args: Array` de origen opaco: la casilla
+// guarda el Array [tipo, datos, línea, col] (contrato estable del ASTNode) y
+// tiene que desempacarse en %ASTNode igual que `let n: ASTNode = args[0]`.
+// Antes la llamada pasaba el i64 crudo (`call @f(i64 …)` contra un parámetro
+// %ASTNode): LLVM lo aceptaba y en ejecución daba SIGSEGV. Lo destapó el propio
+// compilador al compilar test-531 (2026-11-08).
+
+struct ASTNode {
+    node_type: String,
+    data: Array,
+    line: int,
+    column: int
+}
+
+struct Visor { prefijo: String }
+
+impl Visor {
+    fn ver(self, n: ASTNode) -> String { return self.prefijo + n.node_type }
+}
+
+fn tipo(n: ASTNode) -> String {
+    return n.node_type + "/" + int_to_string(n.data.length()) + "@" + int_to_string(n.line)
+}
+
+fn nodos() -> Array { return [["identifier", ["x"], 3, 4], ["literal", [1, 2], 5, 6], ["sintetico", []]] }
+
+fn main() -> int {
+    let args: Array = nodos()
+    let a0: ASTNode = args[0]
+    println(tipo(a0))
+    // Argumento de llamada libre, directo desde la casilla.
+    println(tipo(args[1]))
+    // Nodo sintético de 2 casillas: línea y columna caen a 0.
+    println(tipo(args[2]))
+    // Argumento de método.
+    let v = Visor { prefijo: "> " }
+    println(v.ver(args[1]))
+    return 0
+}

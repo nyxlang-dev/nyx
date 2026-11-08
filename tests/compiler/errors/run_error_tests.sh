@@ -2480,22 +2480,29 @@ name="slot-sin-tipo-leido-como-struct-enum-abort"
 # ejecución, con struct era SIGSEGV (139) y con enum el `match` leía basura y
 # seguía (salida vacía, rc 0). Ahora la casilla se lee con
 # nyx_slot_as_value_checked y aborta NYX2022 nombrando el tipo esperado y el
-# tag encontrado. Cuatro formas del caso malo (enum como argumento, struct por
-# `for`, struct como argumento, `let` anotado sobre una casilla String) y el
-# control legítimo (push de structs/enums, test-541 tiene la batería completa).
+# tag encontrado. Siete formas del caso malo (enum como argumento, struct por
+# `for`, struct como argumento, `let` anotado sobre una casilla String, campo
+# struct y campo enum de un struct literal, `for p: Caja in a`) y el control
+# legítimo (push de structs/enums, test-541 tiene la batería completa). Los tres
+# últimos se sumaron el 2026-11-08; el campo struct legítimo ni compilaba antes.
 ssv_dir=$(mktemp -d /tmp/ssv-XXXX)
 ssv_pre='pub struct Caja { n: int, etiqueta: String }
 pub enum Valor { Texto(String), Numero(int) }
 fn leer(c: Caja) -> String { return c.etiqueta }
 fn describir(v: Valor) -> String { match v { Valor.Texto(s) => { return "t:" + s } Valor.Numero(n) => { return "n" } } }
-fn pares() -> Array { return [["clave", "valor"]] }'
+fn pares() -> Array { return [["clave", "valor"]] }
+pub struct Envase { c: Caja }
+pub struct Envoltura { v: Valor }'
 printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    println(describir(a[0]))\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/enum.nx"
 printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    for p in a { println(leer(p)) }\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/for.nx"
 printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    println(leer(a[0]))\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/arg.nx"
 printf '%s\nfn main() -> int {\n    var a: Array = []\n    a.push("hola")\n    let c: Caja = a[0]\n    println(c.etiqueta)\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/let.nx"
-printf '%s\nfn main() -> int {\n    var a: Array = []\n    a.push(Caja { n: 1, etiqueta: "uno" })\n    var b: Array = []\n    b.push(Valor.Texto("hola"))\n    for p in a { println(leer(p)) }\n    println(describir(b[0]))\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/ok.nx"
+printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    let e = Envase { c: a[0] }\n    println(e.c.etiqueta)\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/lit.nx"
+printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    let w = Envoltura { v: a[0] }\n    println(describir(w.v))\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/litenum.nx"
+printf '%s\nfn main() -> int {\n    let a: Array = pares()\n    for p: Caja in a { println(p.etiqueta) }\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/forann.nx"
+printf '%s\nfn main() -> int {\n    var a: Array = []\n    a.push(Caja { n: 1, etiqueta: "uno" })\n    var b: Array = []\n    b.push(Valor.Texto("hola"))\n    for p in a { println(leer(p)) }\n    println(describir(b[0]))\n    let e = Envase { c: a[0] }\n    println(e.c.etiqueta)\n    let w = Envoltura { v: b[0] }\n    println(describir(w.v))\n    for q: Caja in a { println(q.etiqueta) }\n    return 0\n}\n' "$ssv_pre" > "$ssv_dir/ok.nx"
 ssv_fail=""
-for ssv_k in enum:Valor:Array for:Caja:Array arg:Caja:Array let:Caja:String; do
+for ssv_k in enum:Valor:Array for:Caja:Array arg:Caja:Array let:Caja:String lit:Caja:Array litenum:Valor:Array forann:Caja:Array; do
   ssv_f="${ssv_k%%:*}"; ssv_r="${ssv_k#*:}"; ssv_t="${ssv_r%%:*}"; ssv_g="${ssv_r#*:}"
   ssv_out=$(bash "$(pwd)/scripts/nyx" run "$ssv_dir/$ssv_f.nx" 2>&1); ssv_rc=$?
   if [ "$ssv_rc" -eq 0 ] || [ "$ssv_rc" -eq 139 ] || ! echo "$ssv_out" | grep -qF "NYX2022" \
@@ -2508,7 +2515,7 @@ done
 ssvok_out=$(bash "$(pwd)/scripts/nyx" run "$ssv_dir/ok.nx" 2>&1); ssvok_rc=$?
 rm -rf "$ssv_dir"
 if [ -z "$ssv_fail" ] && [ "$ssvok_rc" -eq 0 ] \
-   && [ "$(echo "$ssvok_out" | grep -cx 'uno\|t:hola')" -eq 2 ]; then
+   && [ "$(echo "$ssvok_out" | grep -cx 'uno\|t:hola')" -eq 5 ]; then
   printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
 else
   printf "  ✗ %s (malos:%s, control rc=%d)\n" "$name" "${ssv_fail:- ok}" "$ssvok_rc"

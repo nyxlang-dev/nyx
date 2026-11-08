@@ -2382,7 +2382,7 @@ hs[0]` first) still works but is no longer needed: the slot is converted to the 
 and a Map key that comes from a slot is read as the String it holds. Same family as
 `int_to_float(arr[i])`, fixed in 0.36.1. [test: 40-casilla-sin-tipo-como-argumento]
 
-46. **A slot of an `Array` without `<T>` that goes to a struct or enum is checked by its tag** (NYX2022, fixed 2026-11-08, v0.41.1). Until 0.41.0
+46. **A slot of an `Array` without `<T>` that goes to a struct or enum is checked by its tag** (NYX2022, fixed 2026-11-08, v0.42.0). Until 0.41.0
 `leer(a[0])` (with `fn leer(c: Caja)`) or `for p in a { leer(p) }` compiled and passed `nyx check`
 whatever the slot held: if it was a row (`[["k", "v"]]`) or a String the struct was read from foreign
 memory (SIGSEGV), and an enum made the `match` read its discriminant from another structure and match
@@ -2390,8 +2390,9 @@ no arm (empty output, exit 0) — reported by nyxerp. Now the slot is read with 
 that cannot be a struct/enum (`int`, `String`, `float`, `bool`, `Array`, `Map`) aborts with NYX2022,
 naming the expected type and what was found. The legitimate `var a: Array = []; a.push(caja);
 leer(a[0])` is untouched (a pushed struct has no tag; a literal one is tagged as a pointer). Covered:
-call and method arguments, `let x: T = a[i]`, `x = a[i]`, `return a[i]`. Not covered: a struct-literal
-field (`S { c: a[0] }`). Better still, annotate the Array (`Array<Caja>`). [test: 53-casilla-sin-tipo-a-struct-enum]
+call and method arguments, `let x: T = a[i]`, `x = a[i]`, `return a[i]`, a struct-literal field
+(`S { c: a[0] }`) and the annotated variable of `for p: Caja in a` (the last two since 0.42.1). Better
+still, annotate the Array (`Array<Caja>`). [test: 53-casilla-sin-tipo-a-struct-enum]
 
 47. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
 

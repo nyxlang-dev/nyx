@@ -9,6 +9,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **NYX2022 cubre el campo de un struct literal y `for p: Caja in a`** (los dos huecos fichados al cortar 0.42.0):
+  `S { c: a[0] }` y la variable anotada del `for` leen la casilla chequeada en vez de hacer `inttoptr` + `load` sin
+  mirar el tag. De paso, `Envase { c: a[0] }` con un campo struct POR VALOR desde una casilla opaca ni compilaba
+  (`inttoptr i64 to %Caja`, que clang rechaza): ahora hace `inttoptr` + `load`. Se amplió
+  `slot-sin-tipo-leido-como-struct-enum-abort` (siete formas malas) y `test-541` (el lado legítimo)
+  [dogfooding:nyxerp].
+- **`f(args[0])` con un parámetro `ASTNode` desempaca la casilla** como `let n: ASTNode = args[0]`: antes pasaba el
+  `i64` crudo (`call @f(i64 …)` contra `%ASTNode`), que LLVM acepta sin comparar con la definición, y daba SIGSEGV
+  al correr. Vale para llamadas libres y de método; lo destapó el propio compilador al compilar `test-531`.
+  `test-542` lo blinda (regresión 549 ARM64).
+
 ---
 
 ## [0.42.0] — 2026-11-08

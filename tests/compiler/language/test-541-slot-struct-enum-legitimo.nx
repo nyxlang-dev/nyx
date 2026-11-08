@@ -2,12 +2,15 @@
 // tipo que va a un struct o un enum se lee chequeando su tag. Este test es el
 // lado LEGÍTIMO, el que no puede romperse: structs y enums guardados con push()
 // (tag UNKNOWN) o en un literal (tag PTR) siguen leyéndose en todos los destinos
-// cubiertos —argumento, método, let, asignación, return, for— y un indexado
+// cubiertos —argumento, método, let, asignación, return, for, `for p: T`, campo
+// de un struct literal— y un indexado
 // ANIDADO cuyo índice sale de una casilla INT no hereda el chequeo del destino.
 
 pub struct Caja { n: int, etiqueta: String }
 pub enum Valor { Texto(String), Numero(int) }
 pub enum Color { Rojo, Verde }
+pub struct Envase { c: Caja }
+pub struct Envoltura { v: Valor }
 
 impl Caja {
     fn junto(self, otra: Caja) -> String { return self.etiqueta + "+" + otra.etiqueta }
@@ -73,5 +76,17 @@ fn main() -> int {
     // del nodo que va al destino, no del índice.
     let idx: Array = [1, 0]
     println(leer(cajas[idx[0]]))
+
+    // Campo struct y campo enum de un struct literal (el struct por valor no
+    // compilaba antes del 2026-11-08: `inttoptr i64 to %Caja`), y la variable
+    // anotada de un for, sobre casillas sin tipo y sobre el literal.
+    let e = Envase { c: cajas[0] }
+    println(e.c.etiqueta)
+    let el = Envase { c: lit[0] }
+    println(el.c.etiqueta)
+    let ev = Envoltura { v: valores[0] }
+    println(describir(ev.v))
+    for q: Caja in cajas { println(q.etiqueta) }
+    for r: Caja in lit { println(r.etiqueta) }
     return 0
 }
