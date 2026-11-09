@@ -9,6 +9,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.42.1] — 2026-11-09
+
+> **PATCH**: `std/regex` enlaza en Windows con un motor propio (el TRE de musl, verificado contra glibc), y dos
+  arreglos de casillas de un `Array` sin tipo que nyxerp necesita para probar: NYX2022 llega al campo de un struct
+  literal y al `for` anotado, y `f(args[0])` con un parámetro `ASTNode` deja de dar SIGSEGV.
+
 ### Added
 
 - **`std/regex` enlaza en Windows** (`nyx build` nativo y `--target x86_64-pc-windows-msvc`): la CRT de MSVC no

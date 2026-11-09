@@ -12,6 +12,39 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.42.1] — 2026-11-09
+
+> **PATCH**: `std/regex` links on Windows with its own engine (musl's TRE, checked against glibc), plus two fixes
+  for slots of an untyped `Array` that nyxerp needs in order to test: NYX2022 now reaches the field of a struct
+  literal and an annotated `for`, and `f(args[0])` with an `ASTNode` parameter no longer segfaults.
+
+### Added
+
+- **`std/regex` links on Windows** (native `nyx build` and `--target x86_64-pc-windows-msvc`): the MSVC CRT has no
+  `<regex.h>`, so those builds use musl 1.2.5's TRE engine (plus its three later regex fixes) vendored in
+  `runtime/vendor/tre`, in byte mode and with `nyx_tre_*` names; Linux and Android keep using the libc.
+  `make test-regex-diff` runs it against glibc —fixed cases and 20,000 random ones, also under ASan/UBSan— and
+  requires the same verdict, the same match and the same `replace_all`. The differential test uncovered three engine
+  bugs, fixed in the copy: `^*`/`$+` compiled (glibc gives `REG_BADRPT`), `$|x*` moved the empty match to the right
+  and `.{1,2}($)?` tied the match to `$`. The undefined forms that may differ are documented
+  (`docs/gotchas/regex-windows-motor.md`). Fixture `tests/build-win/regex-min` in `make test-build-win-cross`.
+  The `.exe` still has to be run on the laptop [arc: regex-windows].
+
+### Fixed
+
+- **NYX2022 covers the field of a struct literal and `for p: Caja in a`** (the two gaps logged when 0.42.0 was cut):
+  `S { c: a[0] }` and the annotated `for` variable read the checked slot instead of doing `inttoptr` + `load` without
+  looking at the tag. Along the way, `Envase { c: a[0] }` with a BY-VALUE struct field from an opaque slot did not
+  even compile (`inttoptr i64 to %Caja`, which clang rejects): it now does `inttoptr` + `load`.
+  `slot-sin-tipo-leido-como-struct-enum-abort` (seven bad forms) and `test-541` (the legitimate side) were extended
+  [dogfooding:nyxerp].
+- **`f(args[0])` with an `ASTNode` parameter unpacks the slot** like `let n: ASTNode = args[0]`: it used to pass the
+  raw `i64` (`call @f(i64 …)` against `%ASTNode`), which LLVM accepts without checking against the definition, and
+  crashed with SIGSEGV at run time. This applies to free calls and method calls; the compiler itself exposed it while
+  compiling `test-531`. `test-542` guards it (regression 549 ARM64).
+
+---
+
 ## [0.42.0] — 2026-11-08
 
 > **MINOR**: new `nyx build` targets built from Linux — Android/Termux (`aarch64-linux-android`, a bionic PIE that
