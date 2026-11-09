@@ -9,6 +9,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.43.0] — 2026-11-09
+
+> **MINOR**: `nyx build --shared` arma una biblioteca `.so` (Linux y Android) que una app carga por JNI o `dlopen`,
+  con hilos ajenos registrados en el GC y fatales que van a un handler en vez de matar en silencio; `std/net` y
+  `std/serial` adoptan un descriptor abierto por otro. Además, `#[export_name]` exporta de verdad fuera de wasm,
+  `nyx.exe` encuentra su instalación con `-Prefix` (`exe_path()` en `std/process`) y `nyx fmt` deja de sumar líneas
+  en blanco al final.
+
 ### Added
 
 - **`nyx build --shared` arma una biblioteca `lib<name>.so`** (también `[build] kind = "shared"`; Linux y

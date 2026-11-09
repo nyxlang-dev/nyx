@@ -12,6 +12,53 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.43.0] — 2026-11-09
+
+> **MINOR**: `nyx build --shared` builds a `.so` library (Linux and Android) that an app loads through JNI or
+  `dlopen`, with foreign threads registered with the GC and fatal errors going to a handler instead of killing the
+  process silently; `std/net` and `std/serial` adopt a descriptor opened by someone else. Also, `#[export_name]`
+  really exports outside wasm, `nyx.exe` finds its install when installed with `-Prefix` (`exe_path()` in
+  `std/process`) and `nyx fmt` no longer adds blank lines at the end.
+
+### Added
+
+- **`nyx build --shared` builds a `lib<name>.so` library** (also `[build] kind = "shared"`; Linux and
+  `aarch64-linux-android`) to be loaded from an app through JNI or from C with `dlopen`: no `fn main` (NYX1049), it
+  exports only the `#[export_name]` functions (version script; everything else, Boehm and OpenSSL included, stays
+  local) and runs an optional `fn init()` once from `nyx_lib_init`. A `String` comes in as `(ptr, len)` and goes out
+  as `nyx_buf *`, freed with `nyx_buf_free`; a type that cannot cross to C in that signature is NYX1048. Each
+  exported function registers the calling app thread with the GC (without that, a collection freed what its stack
+  pointed to); fatal errors —`assert`, `panic`, OOM, NYX2022 and runtime errors— go to the handler set with
+  `nyx_lib_set_fatal_handler` and end with `abort()`, and the `.so` uses 16 KB pages. `nyx run` refuses it.
+  `make test-build-shared` loads it with `dlopen` from 8 foreign threads under GC (and proves that with registration
+  turned off it fails) and checks the Android `.so` with `readelf`. JNI/Kotlin template in `templates/android/`,
+  gotcha `shared-lib-fatal-mata-app`, recipe 157 [arc: android-lib].
+- **`try_socket_from_fd` (`std/net`) and `try_serial_from_fd` (`std/serial`)** adopt a descriptor opened by someone
+  else (on Android, one end of a `socketpair` that Kotlin pumps from Bluetooth or USB): Nyx becomes its owner and
+  closes it. An fd that is not a socket is `Err`; a serial one that is not a tty is used without termios. On Windows
+  they return `Err` [arc: android-lib].
+
+### Fixed
+
+- **`#[export_name("x")]` with parentheses renames the function** like `#[export_name = "x"]`: the form shown in
+  `docs/SPEC.md` ended up as an attribute nobody recognized, and the function kept its internal name without warning
+  [arc: android-lib].
+- **`#[export_name]` outside wasm really exports and no longer breaks calls from Nyx**: it renamed the function and
+  left it `internal`, so the C name never left the object and calling it by its Nyx name did not link
+  (`call @echo` with no definition). It now keeps its name and the C one is an external alias; wasm is unchanged
+  (`wasm-export-name`) [arc: android-lib].
+- **`nyx fmt` no longer leaves two blank lines at the end of the file**: the line separating each top-level function
+  added up with the newline `print` emits, and the output ended in `}\n\n\n`, also on an already formatted file.
+  `run_fmt_tests.sh` requires a single final newline.
+- **`nyx.exe` finds its install even when installed with `install.ps1 -Prefix`**: without `NYX_HOME` and without a
+  valid `%USERPROFILE%\.nyx` there was nowhere to get it from, so `init` seeded halfway with rc 0, `--version` said
+  "unknown version" and build/run/check/fmt failed. The driver now takes the parent of its own executable's `bin\`
+  (if it has `runtime\runtime.c`) and exports it as `NYX_HOME` for subcommands and children. New primitive
+  `os_self_exe_path` (posix, win32, wasm) and `exe_path()` in `std/process`. Without a path, the check/fmt/test
+  message no longer stops at "is not installed in ".
+
+---
+
 ## [0.42.1] — 2026-11-09
 
 > **PATCH**: `std/regex` links on Windows with its own engine (musl's TRE, checked against glibc), plus two fixes
