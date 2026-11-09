@@ -9,6 +9,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sin prelude, el error sobre `Result`/`Option` nombra la causa**: un módulo del compilador (importa
+  `"compiler/..."` o lleva `// nyx:sin-prelude`) que importaba `std/process` daba «'Result' no declarado» (NYX1002)
+  o, sin semantic, «el método 'Err' no está disponible sobre el global 'Result'» (NYX2002), sin decir que falta el
+  prelude. Ahora los dos lo dicen y piden declarar el enum a mano, como `compiler/build.nx`. Dos casos en
+  `test-errors`.
+- **`make test` compila el runtime una sola vez**: `run_bootstrap_tests.sh` recompilaba los 25 `.c` del runtime en
+  cada test al enlazar; ahora los compila a `.o` al empezar y enlaza esos objetos (el mismo enlace, sin `-O`). En el servidor `make test`
+  bajó de más de 10 minutos a 3 min 39 s.
+
 ---
 
 ## [0.43.0] — 2026-11-09

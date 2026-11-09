@@ -88,6 +88,22 @@ declare -a FAILED_TESTS
 TEST_DIR="tests"
 RUNTIME_SRCS="runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/csv.c runtime/websocket.c runtime/persist.c runtime/http2.c runtime/process.c runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+
+# Runtime compilado UNA vez (ficha de TASKS.md, 2026-10-28): antes cada test
+# recompilaba los 25 .c del runtime al enlazar, y un `make test` en un worktree
+# retuvo el candado global de pruebas casi una hora. Se enlazan los .o sueltos y
+# NO un .a, a propósito: con .o el enlace es idéntico a pasar las fuentes (entra
+# todo objeto, también los que solo aportan constructores), con un .a el
+# enlazador descartaría los que ningún test referencia. Mismas banderas que
+# antes (ninguna): -O0, como el clang de cada test. Si algo falla al precompilar,
+# se vuelve a las fuentes y el resultado no cambia, solo el tiempo.
+RT_OBJ_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nyx-test-rt.XXXXXX")"
+trap 'rm -rf "$RT_OBJ_DIR"' EXIT
+RUNTIME_LINK="$RUNTIME_SRCS"
+if printf '%s\n' $RUNTIME_SRCS | xargs -P "$(nproc 2>/dev/null || echo 4)" -I{} \
+       sh -c 'clang -c "$1" -o "$2/$(echo "$1" | tr / _).o" 2>/dev/null' _ {} "$RT_OBJ_DIR"; then
+    RUNTIME_LINK="$(ls "$RT_OBJ_DIR"/*.o | tr '\n' ' ')"
+fi
 STD_PRELUDE="std/prelude.nx"
 
 # Verificar que existe el directorio
@@ -171,7 +187,7 @@ run_test() {
     # script) para no cambiar la resolución de imports de las otras 447 pruebas.
     _try_run_test() {
         NYX_PROJECT_DIR="$PWD" ./nyx_bootstrap > /dev/null 2>&1 && \
-        clang script.ll $RUNTIME_SRCS $LIBS -o script_bin 2>/dev/null && \
+        clang script.ll $RUNTIME_LINK $LIBS -o script_bin 2>/dev/null && \
         output=$(timeout 30 ./script_bin 2>&1)
     }
 
@@ -323,9 +339,9 @@ run_test() {
             if ! ./nyx_bootstrap > /dev/null 2>&1; then
                 echo "Compilation error (lexer/parser/semantic)"
                 ./nyx_bootstrap 2>&1 | head -20
-            elif ! clang script.ll $RUNTIME_SRCS $LIBS -o script_bin 2>/dev/null; then
+            elif ! clang script.ll $RUNTIME_LINK $LIBS -o script_bin 2>/dev/null; then
                 echo "LLVM compilation error"
-                clang script.ll $RUNTIME_SRCS $LIBS -o script_bin 2>&1 | head -20
+                clang script.ll $RUNTIME_LINK $LIBS -o script_bin 2>&1 | head -20
             else
                 echo "Runtime error"
                 ./script_bin 2>&1 | head -20

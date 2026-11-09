@@ -1,0 +1,7 @@
+// nyx:sin-prelude
+// Sin prelude, Result no existe: el diagnóstico tiene que decir que falta el
+// prelude y no solo «no declarado» (NYX1002) o «método no disponible» (NYX2002).
+fn main() -> int {
+    let r = Result.Err("x")
+    return 0
+}

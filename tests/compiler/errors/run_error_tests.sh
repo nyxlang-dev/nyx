@@ -2978,6 +2978,22 @@ for shc in "shared-firma-struct:1:NYX1048:c: Caja" "shared-retorno-array:1:NYX10
   fi
 done
 
+# Sin prelude (módulo del compilador o `// nyx:sin-prelude`), `Result` no existe.
+# El diagnóstico tiene que NOMBRAR esa causa, con semantic (NYX1002) y sin él
+# (NYX2002, como compila el compilador): antes decía solo «no declarado» o
+# «método no disponible sobre el global 'Result'».
+for spc in "sin-prelude-result-semantic::NYX1002" "sin-prelude-result-codegen:1:NYX2002"; do
+  IFS=: read -r name spskip spcode <<< "$spc"
+  sp_out=$(NYX_SKIP_SEMANTIC=$spskip NYX_LANG=en NYX_SRC=tests/compiler/errors/fixtures/sin-prelude-result.nx ./nyx_bootstrap 2>&1); sp_rc=$?
+  rm -f tests/compiler/errors/fixtures/sin-prelude-result.ll
+  if [ "$sp_rc" -ne 0 ] && echo "$sp_out" | grep -qF "error [$spcode]" && echo "$sp_out" | grep -qF -e "does not load the prelude" -e "does not load it"; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con %s y la causa del prelude)\n" "$sp_rc" "$spcode"
+    echo "$sp_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+done
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 

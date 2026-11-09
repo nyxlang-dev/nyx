@@ -8,7 +8,7 @@
 //
 //   - None si no está, no es ejecutable, es un directorio o el nombre es vacío.
 //   - En Windows, un programa que solo existe como .bat/.cmd da None: try_spawn
-//     lo rechaza (usá std/exec para esos).
+//     lo rechaza (usa std/exec para esos).
 //   - Un nombre con separador ("./tool", "/usr/bin/sh") se mira tal cual, sin PATH.
 
 import "std/process"

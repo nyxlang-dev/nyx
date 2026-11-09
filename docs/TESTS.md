@@ -13,7 +13,7 @@
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
 | Regression | `make test` | **552 archivos / 551 ARM64** | +2 el 11-09 (`stdlib-suite/test-532` adopción de fd, `533` `exe_path`), +2 el 11-08 (`541`-`542`), +1 el 11-05 (`531`), +2 el 11-03 (`529`-`530`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **412** | +4 el 11-09 (NYX1048 ×2, NYX1049, firma sin `--shared`); +1 el 11-08 (NYX2022 casilla sin tipo → struct/enum); +1 el 11-05 (NYX1031 crc32_bytes con int); altas anteriores en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **414** | +6 el 11-09 (NYX1048 ×2, NYX1049, firma sin `--shared`, `Result` sin prelude ×2); +1 el 11-08 (NYX2022 casilla sin tipo → struct/enum); +1 el 11-05 (NYX1031 crc32_bytes con int); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
