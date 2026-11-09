@@ -62,6 +62,7 @@ extern "C" fn nyx_find_program(name: String) -> Array
 extern "C" fn nyx_host_arch() -> String
 extern "C" fn nyx_host_os() -> String
 extern "C" fn nyx_cpu_count() -> int
+extern "C" fn nyx_exe_path() -> String
 
 pub enum Stdio {
     Inherit,
@@ -394,6 +395,14 @@ pub fn host_arch() -> String {
 // que pregunta. "" si no se pudo saber.
 pub fn host_os() -> String {
     return nyx_host_os()
+}
+
+// Ruta ABSOLUTA del ejecutable de este proceso (en Windows con '\\'), por la
+// capa de SO: /proc/self/exe, _NSGetExecutablePath o GetModuleFileNameW. Sirve
+// para que un binario encuentre lo que se instaló a su lado (<prefijo>/bin/nyx →
+// <prefijo>) sin depender de NYX_HOME ni de HOME. "" si no se pudo saber (wasm).
+pub fn exe_path() -> String {
+    return nyx_exe_path()
 }
 
 // Núcleos en línea, lo que contesta `nproc`: para decidir cuántos hijos lanzar

@@ -3223,6 +3223,10 @@ import "std/process"
 // cpu_count() -> int      // núcleos en línea, como `nproc`; siempre >= 1
 // host_os() -> String    // "linux", "darwin", "windows", "wasi": el `uname -s` en minúsculas, por la capa
 //     os_*; no mira `%OS%`, que se puede falsear
+// exe_path() -> String   // ruta ABSOLUTA del ejecutable de este proceso (/proc/self/exe,
+//     _NSGetExecutablePath, GetModuleFileNameW; en Windows con '\'); "" si no se sabe (wasm).
+//     Así el driver `nyx` encuentra su instalación: sin NYX_HOME ni ~/.nyx válido, el home es el
+//     padre de `bin/` del propio ejecutable si ahí hay `runtime/runtime.c` (instalar con `-Prefix`)
 // Errores: not_found (programa inexistente, AL LANZAR: con fork/execvp era un
 // hijo que salía con 127), permission, invalid (argv vacío, modo de Stdio.File
 // inválido, .bat/.cmd en Windows, y code 95 en wasm32-wasi) e io. La etapa va en

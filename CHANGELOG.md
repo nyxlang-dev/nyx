@@ -36,6 +36,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   dejaba `internal`, así que el nombre C no salía del objeto y llamarla por su nombre de Nyx no enlazaba
   (`call @echo` sin definición). Ahora conserva su nombre y el de C es un alias externo; wasm sigue igual
   (`wasm-export-name`) [arco: android-lib].
+- **`nyx fmt` ya no deja dos líneas en blanco al final del archivo**: el renglón que separa cada función de nivel
+  superior se sumaba al salto que pone `print`, y la salida terminaba en `}\n\n\n`, también sobre un archivo ya
+  formateado. `run_fmt_tests.sh` exige un solo salto final.
+- **`nyx.exe` encuentra su instalación aunque se haya instalado con `install.ps1 -Prefix`**: sin `NYX_HOME` y sin
+  un `%USERPROFILE%\.nyx` válido no había de dónde sacarla, así que `init` sembraba a medias con rc 0, `--version`
+  decía «versión desconocida» y build/run/check/fmt fallaban. Ahora el driver toma el padre de `bin\` de su propio
+  ejecutable (si tiene `runtime\runtime.c`) y lo exporta como `NYX_HOME` para los subcomandos y los hijos. Primitiva
+  nueva `os_self_exe_path` (posix, win32, wasm) y `exe_path()` en `std/process`. Sin ruta, el mensaje de
+  check/fmt/test ya no queda cortado en «no está instalado en ».
 
 ---
 

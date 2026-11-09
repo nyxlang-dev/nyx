@@ -3793,6 +3793,19 @@ int os_fs_getcwd(char* buf, size_t cap) {
     return 0;
 }
 
+int os_self_exe_path(char* buf, size_t cap) {
+    if (!buf || cap == 0) return -EINVAL;
+    // 4096 y no 32768 (el máximo de una ruta extendida): son 64 KB de pila y
+    // exe_path() puede llamarse desde una goroutina. Más largo da -ENAMETOOLONG.
+    wchar_t w[4096];
+    DWORD n = GetModuleFileNameW(NULL, w, (DWORD)(sizeof w / sizeof w[0]));
+    if (n == 0) return win_last_errno();
+    if (n >= sizeof w / sizeof w[0]) return -ENAMETOOLONG;
+    int m = WideCharToMultiByte(CP_UTF8, 0, w, -1, buf, (int)(cap > 0x7fffffff ? 0x7fffffff : cap), NULL, NULL);
+    if (m <= 0) return GetLastError() == ERROR_INSUFFICIENT_BUFFER ? -ERANGE : -EINVAL;
+    return 0;
+}
+
 int os_fs_chdir(const char* path) {
     if (!path) return -EINVAL;
     return SetCurrentDirectoryA(path) ? 0 : win_last_errno();

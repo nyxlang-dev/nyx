@@ -3115,7 +3115,30 @@ fn receta_windows(nyx_home: String) -> RecetaWin {
     return RecetaWin { ok: true, cflags: cflags, ldflags: ldflags, ar: ar }
 }
 
-// NYX_HOME → ~/.nyx → el directorio actual si tiene nyx_bootstrap (monorepo).
+// Prefijo de instalación deducido del PROPIO ejecutable: <prefijo>/bin/nyx[.exe] →
+// <prefijo>, si ahí hay runtime/runtime.c. "" si no se sabe o no es una instalación.
+// Es lo que hace andar a un `nyx.exe` instalado con `-Prefix` (install.ps1): sin
+// wrapper bash que exporte NYX_HOME y fuera de ~/.nyx, nada más lo encuentra.
+// Acepta '/' y '\' porque en Windows exe_path() devuelve la ruta con '\'.
+fn home_del_ejecutable() -> String {
+    let exe: String = exe_path()
+    var cortes: Array = []   // posiciones de los dos últimos separadores
+    var i: int = 0
+    while i < exe.length() {
+        let c: int = exe.charAt(i)
+        if c == '/' or c == 92 { cortes.push(i) }
+        i = i + 1
+    }
+    if cortes.length() < 2 { return "" }
+    let fin: int = cortes[cortes.length() - 2]
+    if fin <= 0 { return "" }
+    let home: String = exe.substring(0, fin)
+    if not file_exists(home + "/runtime/runtime.c") { return "" }
+    return home
+}
+
+// NYX_HOME → ~/.nyx → el directorio actual si tiene nyx_bootstrap (monorepo) →
+// el prefijo del propio ejecutable (home_del_ejecutable).
 // Absoluto: los hijos corren con cwd = NYX_HOME.
 fn build_nyx_home() -> String {
     var nyx_home: String = getenv("NYX_HOME")
@@ -3124,6 +3147,7 @@ fn build_nyx_home() -> String {
         if home_dir != "" and file_exists(home_dir + "/.nyx/runtime/runtime.c") { nyx_home = home_dir + "/.nyx" }
     }
     if nyx_home == "" and (file_exists("nyx_bootstrap") or file_exists("nyx_bootstrap.exe")) { nyx_home = "." }
+    if nyx_home == "" { nyx_home = home_del_ejecutable() }
     if nyx_home == "" { return "" }
     return absoluta(nyx_home)
 }
@@ -4123,6 +4147,19 @@ fn run_capabilities(out_arg: String) -> bool {
 fn main() -> int {
     let args: Array<String> = get_args()
 
+    // Instalación con prefijo propio (`install.ps1 -Prefix`): sin NYX_HOME y sin un
+    // ~/.nyx válido, el home es el padre de bin\ del propio ejecutable. Se exporta
+    // para que TODO lo que sigue (los demás subcomandos y los hijos: nyx_bootstrap,
+    // nyx_check, nyx_fmt…) lo herede. NYX_HOME explícito y ~/.nyx válido mandan; en
+    // Linux el wrapper ya exporta NYX_HOME, así que esto no cambia nada ahí.
+    if getenv("NYX_HOME") == "" {
+        let uh: String = dir_usuario()
+        if uh == "" or not file_exists(uh + "/.nyx/runtime/runtime.c") {
+            let eh: String = home_del_ejecutable()
+            if eh != "" { setenv("NYX_HOME", eh) }
+        }
+    }
+
     // Default command
     var command = "build"
     var release = false
@@ -4168,7 +4205,12 @@ fn main() -> int {
                 err_line("error: nyx test todavía no está disponible en Windows")
                 err_line("  (depende de reescribir compiler/test.nx sin bash; ver TASKS.md)")
             } else {
-                err_line("error: nyx_" + command + " no está instalado en " + thome)
+                if thome == "" {
+                    err_line("error: no encuentro la instalación de Nyx (nyx_" + command + " no está disponible)")
+                    err_line("  define NYX_HOME con el directorio de la instalación (el que tiene runtime/ y bin/)")
+                } else {
+                    err_line("error: nyx_" + command + " no está instalado en " + thome)
+                }
                 err_line("  instala el toolchain de nuevo, o compila la herramienta (make build-" + command + ")")
             }
             return 1

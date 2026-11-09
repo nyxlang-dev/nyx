@@ -76,6 +76,12 @@ check_fixture() {
         fi
     done
 
+    # Fin de archivo: exactamente un salto (antes salían `}\n\n\n`).
+    if [ "$(tail -c 2 "$out1" | od -An -c | tr -d ' ')" = '\n\n' ]; then
+        echo -e "${RED}x ${name}: el output termina con líneas en blanco de más${NC}"
+        ok=0
+    fi
+
     # Idempotencia: formatear el resultado de nuevo debe dar lo mismo.
     if ! fmt_one "$out1" "$out2"; then
         echo -e "${RED}x ${name}: nyx_fmt (pass 2, idempotencia) exit != 0${NC}"

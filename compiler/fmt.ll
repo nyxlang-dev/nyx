@@ -643,6 +643,8 @@ target triple = "x86_64-pc-linux-gnu"
 @.str319.c = internal global %nyx_string* null
 @.str320 = private unnamed_addr constant [10 x i8] c"script.nx\00"
 @.str320.c = internal global %nyx_string* null
+@.str321 = private unnamed_addr constant [2 x i8] c"\0a\00"
+@.str321.c = internal global %nyx_string* null
 @__nyx_test_failed = external global i64
 @__nyx_test_mode = external global i64
 @.str.init.0 = private unnamed_addr constant [1 x i8] c"\00"
@@ -5475,17 +5477,60 @@ while_body532:
   br label %while_cond531
 while_end533:
   %2767 = load %nyx_string*, %nyx_string** @g_output
-  %2768 = call i8* @nyx_string_to_cstr(%nyx_string* %2767)
-  call void @nyx_print_string(i8* %2768)
+  %2768 = call i64 @nyx_string_byte_length(%nyx_string* %2767)
+  %2769 = alloca i64
+  store i64 %2768, i64* %2769
+  %2770 = call i8* @llvm.stacksave()
+  br label %while_cond534
+while_cond534:
+  %2771 = alloca i1
+  store i1 false, i1* %2771
+  %2772 = load i64, i64* %2769
+  %2773 = icmp sgt i64 %2772, 0
+  br i1 %2773, label %sc_and_rhs537, label %sc_and_end538
+sc_and_rhs537:
+  %2774 = load %nyx_string*, %nyx_string** @g_output
+  %2775 = load i64, i64* %2769
+  %2776 = sub i64 %2775, 1
+  %2777 = load i64, i64* %2769
+  %2778 = call %nyx_string* @nyx_string_substring(%nyx_string* %2774, i64 %2776, i64 %2777)
+  %2779 = getelementptr [2 x i8], [2 x i8]* @.str321, i32 0, i32 0
+  %2780 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str321.c, i8* %2779, i64 1)
+  %2781 = call i1 @nyx_string_equals(%nyx_string* %2778, %nyx_string* %2780)
+  store i1 %2781, i1* %2771
+  br label %sc_and_end538
+sc_and_end538:
+  %2782 = load i1, i1* %2771
+  br i1 %2782, label %while_body535, label %while_end536
+while_body535:
+  call void @llvm.stackrestore(i8* %2770)
+  %2783 = load i64, i64* %2769
+  %2784 = sub i64 %2783, 1
+  store i64 %2784, i64* %2769
+  br label %while_cond534
+while_end536:
+  %2785 = load i64, i64* %2769
+  %2786 = icmp sgt i64 %2785, 0
+  br i1 %2786, label %then539, label %else540
+then539:
+  %2787 = load %nyx_string*, %nyx_string** @g_output
+  %2788 = load i64, i64* %2769
+  %2789 = call %nyx_string* @nyx_string_substring(%nyx_string* %2787, i64 0, i64 %2788)
+  %2790 = call i8* @nyx_string_to_cstr(%nyx_string* %2789)
+  call void @nyx_print_string(i8* %2790)
+  br label %merge541
+else540:
+  br label %merge541
+merge541:
   ret i64 0
 }
 
 ; Inicialización de variables globales (llamada automática vía ctor)
 define void @__nyx_init_globals() {
 entry:
-  %2769 = getelementptr [1 x i8], [1 x i8]* @.str.init.0, i32 0, i32 0
-  %2770 = call %nyx_string* @nyx_string_from_ptr(i8* %2769, i64 0)
-  store %nyx_string* %2770, %nyx_string** @g_output
+  %2791 = getelementptr [1 x i8], [1 x i8]* @.str.init.0, i32 0, i32 0
+  %2792 = call %nyx_string* @nyx_string_from_ptr(i8* %2791, i64 0)
+  store %nyx_string* %2792, %nyx_string** @g_output
   ret void
 }
 

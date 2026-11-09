@@ -565,6 +565,13 @@ int os_proc_kill_pid(int64_t pid, int sig);
 // win32: separadores tal cual los da GetCurrentDirectoryA (con '\\').
 int os_fs_getcwd(char* buf, size_t cap);
 int os_fs_chdir(const char* path);                  // 0 / -errno
+// Ruta ABSOLUTA del ejecutable del proceso, NUL-terminada y en UTF-8 (win32:
+// GetModuleFileNameW convertido; posix: /proc/self/exe, o _NSGetExecutablePath en
+// macOS). Sin resolver symlinks más allá de lo que haga el SO. 0 / -errno
+// (-ERANGE si no cabe, -ENOSYS en wasm). Para que un binario encuentre su
+// instalación (<prefijo>/bin/nyx → <prefijo>) sin depender de NYX_HOME ni de HOME.
+// EN: absolute path of the running executable, UTF-8; 0 / -errno.
+int os_self_exe_path(char* buf, size_t cap);
 // Directorio temporal del usuario, sin separador al final (W6 Task 2, D7):
 // posix, $TMPDIR si no está vacío y si no "/tmp"; win32, GetTempPathA (TMP,
 // TEMP, USERPROFILE o el de Windows), en la codificación de os_fs_getcwd. No

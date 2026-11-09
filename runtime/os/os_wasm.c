@@ -345,6 +345,7 @@ int os_fd_datasync(int fd) { return fdatasync(fd) == 0 ? 0 : -errno; }
 // EN: stubs only to keep file-io.c linking; the builtins are wasm-forbidden.
 int64_t os_proc_getpid(void) { return 1; }
 int os_fs_getcwd(char* buf, size_t cap) { (void)buf; (void)cap; return -ENOSYS; }
+int os_self_exe_path(char* buf, size_t cap) { (void)buf; (void)cap; return -ENOSYS; }
 int os_fs_chdir(const char* path) { (void)path; return -ENOSYS; }
 int os_fs_temp_dir(char* buf, size_t cap) { (void)buf; (void)cap; return -ENOSYS; }
 int64_t os_fs_lock(const char* path, int exclusive, int nonblock) { (void)path; (void)exclusive; (void)nonblock; return -ENOSYS; }

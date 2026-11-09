@@ -2365,6 +2365,23 @@ int os_fs_getcwd(char* buf, size_t cap) {
     return getcwd(buf, cap) != NULL ? 0 : -errno;
 }
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+int os_self_exe_path(char* buf, size_t cap) {
+    if (!buf || cap == 0) return -EINVAL;
+#ifdef __APPLE__
+    uint32_t n = (uint32_t)(cap > 0xffffffffu ? 0xffffffffu : cap);
+    return _NSGetExecutablePath(buf, &n) == 0 ? 0 : -ERANGE;
+#else
+    ssize_t r = readlink("/proc/self/exe", buf, cap);
+    if (r < 0) return -errno;
+    if ((size_t)r >= cap) return -ERANGE;
+    buf[r] = '\0';
+    return 0;
+#endif
+}
+
 int os_fs_chdir(const char* path) {
     if (!path) return -EINVAL;
     return chdir(path) == 0 ? 0 : -errno;

@@ -766,6 +766,13 @@ nyx_string* nyx_host_os(void) {
     return nyx_string_from_cstr(out);
 }
 
+// Ruta absoluta del ejecutable del proceso (UTF-8), o "" si la capa no contesta.
+nyx_string* nyx_exe_path(void) {
+    char out[4096];
+    if (os_self_exe_path(out, sizeof out) != 0) return nyx_string_from_cstr("");
+    return nyx_string_from_cstr(out);
+}
+
 int64_t nyx_cpu_count(void) { return (int64_t)os_cpu_count(); }
 
 // [code, bytes] ("" = EOF)

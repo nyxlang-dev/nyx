@@ -12,12 +12,12 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **551 archivos / 550 ARM64** | +1 el 11-09 (`stdlib-suite/test-532`, adopción de fd), +2 el 11-08 (`541`-`542`), +1 el 11-05 (`531`), +2 el 11-03 (`529`-`530`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **552 archivos / 551 ARM64** | +2 el 11-09 (`stdlib-suite/test-532` adopción de fd, `533` `exe_path`), +2 el 11-08 (`541`-`542`), +1 el 11-05 (`531`), +2 el 11-03 (`529`-`530`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **412** | +4 el 11-09 (NYX1048 ×2, NYX1049, firma sin `--shared`); +1 el 11-08 (NYX2022 casilla sin tipo → struct/enum); +1 el 11-05 (NYX1031 crc32_bytes con int); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
-| Runtime C unit (B4) | `make test-runtime` | **47 suites / 2409 asserts** | +2 suites/+50 el 11-09 (`test_lib_border.c` 12, `test_fd_adopt.c` 38: arco android-lib), +7 el 11-02 (`os_fs_rename`), +13 el 11-02 (serie USB, `host_os`; W6). Antes, en `CHANGELOG.md` |
+| Runtime C unit (B4) | `make test-runtime` | **48 suites / 2419 asserts** | +3 suites/+60 el 11-09 (`test_lib_border.c` 12, `test_fd_adopt.c` 38, `test_os_self_exe.c` 10), +7 el 11-02 (`os_fs_rename`), +13 el 11-02 (serie USB, `host_os`; W6). Antes, en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **53 programas + 6 casos stdin (x2 targets) + 78 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (78: templates 2, tooling 17, coverage 9, build_manifest 29, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
 | Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** + autotest | `voseo_filter` (`lib_voseo.sh`: lista + regla general en -á) sobre `compiler/`, `runtime/`, `std/`, `scripts/`, `templates/gitignore` y `tests/**/*.sh` |

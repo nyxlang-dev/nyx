@@ -1,0 +1,12 @@
+// test-533 — std/process exe_path(): ruta absoluta del ejecutable del proceso.
+// El driver `nyx` la usa para encontrar su instalación (<prefijo>/bin/nyx) sin NYX_HOME.
+import "std/process"
+
+fn main() -> int {
+    let p: String = exe_path()
+    assert(p != "")
+    assert(p.charAt(0) == '/' or p.charAt(1) == ':')
+    assert(file_exists(p))
+    println("exe_path ok")
+    return 0
+}
