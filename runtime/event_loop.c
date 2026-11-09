@@ -44,6 +44,9 @@ typedef struct {
     int active;
     int is_timer;
     long long timer_deadline_ms;
+    // Índice del siguiente slot libre, o -1. Solo significa algo mientras
+    // `active == 0` y el slot está en la free-list (ver ev_claim_slot).
+    int next_free;
 } FdEntry;
 
 struct NyxEventLoop {
@@ -53,6 +56,8 @@ struct NyxEventLoop {
     FdEntry* fds;      // fd_cap entradas; crece por demanda bajo `lock`
     int fd_cap;
     int fd_count;
+    // Cabeza de la free-list de slots inactivos en [0, fd_count), o -1.
+    int free_head;
     int last_event_fd;
     int last_events;
     // Guards fds[]/fd_count. The scheduler bridge (T5a.2b) will make the
@@ -82,6 +87,7 @@ NyxEventLoop* nyx_event_loop_create(void) {
     loop->fds = (FdEntry*)calloc(MAX_FDS, sizeof(FdEntry));
     if (!loop->fds) { free(loop); return NULL; }
     loop->fd_cap = MAX_FDS;
+    loop->free_head = -1;
 #if HAS_EPOLL
     loop->epfd = epoll_create1(EPOLL_CLOEXEC);
     if (loop->epfd < 0) { free(loop->fds); free(loop); return NULL; }
@@ -111,22 +117,23 @@ void nyx_event_loop_destroy(NyxEventLoop* loop) {
 // fd removido), y solo si no hay, crecer. Reusar antes de crecer es lo que hace
 // que una carga estable de N timers no infle la tabla.
 //
+// Los slots inactivos forman una free-list enhebrada por `next_free` (LIFO):
+// reservar y liberar son O(1). Hasta el 2026-11-09 el reuso barría la tabla
+// entera, y registrar N timers era O(N²) — irrelevante con el techo viejo de
+// 256, ~2e9 comparaciones para llenar los 65536 de hoy. Invariante: un slot de
+// [0, fd_count) está en la lista si y solo si `active == 0`, y lo único que
+// pasa un slot de activo a inactivo es ev_release_slot.
+//
 // Devuelve el índice, o -1 si se llegó a NYX_EV_MAX_SLOTS o falla el realloc.
 // El -1 NO es decorativo: hasta el 2026-09-10 `nyx_goroutine_sleep` lo ignoraba
 // y suspendía la goroutina igual, que es como se pierden goroutines para
 // siempre (W3 Task 6 M2: 7920 en una corrida).
 static int ev_claim_slot(NyxEventLoop* loop) {
-    // COSTO: el barrido de reuso es O(fd_count) por registro, así que registrar
-    // N timers es O(N²). Con el techo viejo de 256 eso era irrelevante (128
-    // comparaciones promedio); ahora que la tabla crece hasta 65536, NO lo es:
-    // llenarla entera sería del orden de 2e9 comparaciones.
-    // Medido en la práctica: 3000 timers (test_timer_burst_supera_el_buffer)
-    // y 700 goroutines dormidas (test-411) no lo notan. El arreglo de verdad
-    // es una free-list enhebrada por los slots inactivos —O(1) para reservar y
-    // liberar— y está fichado; no se hace acá porque toca los tres sitios que
-    // ponen `active = 0` y este archivo ya se llevó un bug mío hoy.
-    for (int i = 0; i < loop->fd_count; i++) {
-        if (!loop->fds[i].active) return i;
+    if (loop->free_head >= 0) {
+        int i = loop->free_head;
+        loop->free_head = loop->fds[i].next_free;
+        loop->fds[i].next_free = -1;
+        return i;
     }
     if (loop->fd_count >= loop->fd_cap) {
         if (loop->fd_cap >= NYX_EV_MAX_SLOTS) return -1;
@@ -143,6 +150,16 @@ static int ev_claim_slot(NyxEventLoop* loop) {
         loop->fd_cap = nueva;
     }
     return loop->fd_count++;
+}
+
+// Pasa un slot ACTIVO a inactivo y lo encadena en la free-list. Es el único
+// sitio que escribe `active = 0` (remove y el vencimiento de timers lo llaman):
+// así un slot no puede entrar dos veces a la lista ni quedar inactivo fuera de
+// ella. Se llama con `loop->lock` tomado.
+static void ev_release_slot(NyxEventLoop* loop, int i) {
+    loop->fds[i].active = 0;
+    loop->fds[i].next_free = loop->free_head;
+    loop->free_head = i;
 }
 
 int nyx_event_loop_has_fd_readiness(void) { return 1; }
@@ -226,7 +243,7 @@ int nyx_event_loop_remove(NyxEventLoop* loop, int fd) {
     int result = -1;
     for (int i = 0; i < loop->fd_count; i++) {
         if (loop->fds[i].fd == fd && loop->fds[i].active) {
-            loop->fds[i].active = 0;
+            ev_release_slot(loop, i);
 #if HAS_EPOLL
             epoll_ctl(loop->epfd, EPOLL_CTL_DEL, fd, NULL);
 #endif
@@ -375,7 +392,7 @@ int nyx_event_loop_run_once(NyxEventLoop* loop, int timeout_ms) {
             snapshot[snap_count].fd = -1;
             snapshot[snap_count].ev = 0;
             snap_count++;
-            loop->fds[i].active = 0;
+            ev_release_slot(loop, i);
         }
     }
 

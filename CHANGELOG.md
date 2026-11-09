@@ -19,6 +19,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **`make test` compila el runtime una sola vez**: `run_bootstrap_tests.sh` recompilaba los 25 `.c` del runtime en
   cada test al enlazar; ahora los compila a `.o` al empezar y enlaza esos objetos (el mismo enlace, sin `-O`). En el servidor `make test`
   bajó de más de 10 minutos a 3 min 39 s.
+- **El event loop reusa slots en O(1)**: registrar un fd o un timer barría la tabla entera buscando un slot libre, así
+  que registrar N timers era O(N²) — con la tabla que crece hasta 65536, llenarla eran ~2e9 comparaciones. Ahora los
+  slots libres forman una free-list y un solo sitio (`ev_release_slot`) los libera. Test nuevo en `test_event_loop.c`:
+  llena la tabla hasta el techo dos veces y comprueba que ningún slot se pierda ni se comparta.
 
 ---
 
