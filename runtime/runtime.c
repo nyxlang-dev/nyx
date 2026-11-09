@@ -30,8 +30,49 @@
 #include "os/nyx_os.h"
 #include <gc.h>  // Boehm GC (en wasm32-wasi: shim runtime/wasi/gc.h vía -Iruntime/wasi)
 #include "strings.h"
+#include "runtime.h"
+#include <stdatomic.h>
 
 // ===== INICIALIZACIÓN =====
+
+// ===== CAMINO FATAL UNIFICADO (D6) =====
+
+// ES: en modo biblioteca (.so) un error fatal entrega el mensaje al handler del
+// shim (logcat) y hace abort() (tombstone en Android) en vez de exit(1). Fuera
+// de ese modo conserva exactamente exit(1). Los mensajes a stderr los siguen
+// imprimiendo los llamadores, sin cambios.
+// EN: library mode -> handler + abort(); otherwise plain exit(1).
+int nyx_lib_mode = 0;
+static void (*_Atomic nyx_fatal_handler)(const char*) = NULL;
+
+NYX_EXPORT void nyx_lib_set_fatal_handler(void (*h)(const char*)) {
+    atomic_store(&nyx_fatal_handler, h);
+}
+
+NYX_EXPORT void nyx_fatal_exit(const char* msg) {
+    if (nyx_lib_mode) {
+        void (*h)(const char*) = atomic_load(&nyx_fatal_handler);
+        if (h) h(msg ? msg : "fatal error");
+        abort();
+    }
+    exit(1);
+}
+
+// Arma "prefijo + String Nyx" en un buffer de pila (truncado) y sale por el
+// camino fatal. Sin alocar en el GC: el estado puede ser el de un OOM.
+static void nyx_fatal_msg(const char* prefix, nyx_string* m) {
+    char buf[512];
+    int n = snprintf(buf, sizeof buf, "%s", prefix);
+    if (n < 0) n = 0;
+    buf[n] = 0;
+    if (m && m->data && (size_t)n < sizeof buf - 1) {
+        size_t room = sizeof buf - 1 - (size_t)n;
+        size_t l = (size_t)m->length < room ? (size_t)m->length : room;
+        memcpy(buf + n, m->data, l);
+        buf[n + l] = 0;
+    }
+    nyx_fatal_exit(buf);
+}
 
 // A6 (friction-browser): OOM ORDENADO en vez de SEGV bajo presión de allocación.
 // Boehm invoca GC_oom_fn cuando NO puede satisfacer una petición (heap agotado o
@@ -56,6 +97,12 @@ static void* nyx_gc_oom_handler(size_t bytes_requested) {
         "ajusta el tope con GC_MAXIMUM_HEAP_SIZE.\n",
         bytes_requested, bytes_requested);
     fflush(stderr);
+    // D6: en modo biblioteca el mensaje va al handler (logcat) y luego abort().
+    // Sin alocar: mensaje estático, handler leído de un puntero atómico (async-safe
+    // salvo lo que haga el handler del shim).
+    if (nyx_lib_mode) {
+        nyx_fatal_exit("out of memory (GC heap exhausted)");
+    }
     // _Exit (C99, <stdlib.h>) en vez de _exit (POSIX, <unistd.h>): mismo
     // efecto (termina sin atexit ni flush adicional -- glibc implementa
     // ambas como el mismo syscall exit_group), pero sin necesitar unistd.h
@@ -102,6 +149,98 @@ void nyx_runtime_init() {
     }
     // Incremental GC — shorter pauses for server workloads
     GC_enable_incremental();
+}
+
+// ===== BORDE DE BIBLIOTECA (D3-D5) =====
+
+extern void __nyx_module_init(void) __attribute__((weak));
+
+// wasm32-wasi no tiene Boehm ni hilos ajenos: el borde de biblioteca (--shared)
+// no existe ahí y este bloque queda fuera.
+#ifndef __wasi__
+// ES: gc.h declara el registro de hilos solo bajo GC_THREADS, que además
+// redirigiría pthread_create en este archivo (ver thread.c). Se declaran acá
+// las tres funciones de la API estable de Boehm que hacen falta.
+// EN: gc.h gates these behind GC_THREADS (which also redirects pthread_create);
+// declare the three stable Boehm entry points directly instead.
+void GC_allow_register_threads(void);
+int  GC_register_my_thread(const struct GC_stack_base*);
+int  GC_unregister_my_thread(void);
+
+static os_once_t nyx_lib_once = OS_ONCE_STATIC_INIT;
+static os_tls_key_t nyx_lib_key;
+static _Atomic int nyx_lib_inited = 0;
+static int nyx_lib_no_register = 0;
+static _Thread_local int nyx_tl_registered = 0;
+
+// Destructor de la clave: corre al morir un hilo que NOSOTROS registramos.
+static void nyx_lib_thread_dtor(void* p) {
+    (void)p;
+    GC_unregister_my_thread();
+}
+
+// Registra el hilo actual en Boehm (idempotente por hilo). Un hilo que Boehm ya
+// conoce (main, GC_pthread_create) devuelve GC_DUPLICATE: es ok, y NO armamos el
+// destructor porque no es nuestro desregistrarlo.
+static void nyx_lib_register_this_thread(void) {
+    if (nyx_tl_registered) return;
+    nyx_tl_registered = 1;
+    // ES: NYX_LIB_NO_REGISTER=1 (leído una vez en nyx_lib_init) desactiva el
+    // registro. Existe SOLO para el test rojo de la Task 4 (demostrar que sin
+    // registro un hilo foráneo corrompe/crashea bajo GC). No usar en producción.
+    // EN: test-only switch for Task 4's red test.
+    if (nyx_lib_no_register) return;
+    struct GC_stack_base sb;
+    if (GC_get_stack_base(&sb) != GC_SUCCESS) return;
+    int r = GC_register_my_thread(&sb);
+    if (r == GC_SUCCESS) os_tls_set(&nyx_lib_key, (void*)1);
+}
+
+NYX_EXPORT void nyx_lib_enter(void) {
+    if (!atomic_load_explicit(&nyx_lib_inited, memory_order_acquire)) nyx_lib_init();
+    nyx_lib_register_this_thread();
+}
+
+static void nyx_lib_init_once(void) {
+    // El constructor de arriba ya corrió GC_INIT (requisito de
+    // GC_allow_register_threads); nyx_runtime_init lo repite sin daño.
+    nyx_runtime_init();
+    GC_allow_register_threads();
+    os_tls_key_create_dtor(&nyx_lib_key, nyx_lib_thread_dtor);
+    const char* nr = getenv("NYX_LIB_NO_REGISTER");
+    nyx_lib_no_register = (nr && nr[0] == '1');
+    nyx_lib_mode = 1;
+    nyx_lib_register_this_thread();
+    // inited se publica DESPUÉS del init de módulo: un hilo que entre a una
+    // exportada mientras tanto ve 0, cae en os_once y espera a que termine.
+    if (__nyx_module_init) __nyx_module_init();
+    atomic_store_explicit(&nyx_lib_inited, 1, memory_order_release);
+}
+
+NYX_EXPORT void nyx_lib_init(void) {
+    os_once(&nyx_lib_once, nyx_lib_init_once);
+}
+#endif /* __wasi__ */
+
+// D3: copia a un buffer malloc de la libc (fuera del GC). NULL -> buffer vacío.
+NYX_EXPORT nyx_buf* nyx_buf_from_string(nyx_string* s) {
+    int64_t n = s ? s->length : 0;
+    nyx_buf* b = (nyx_buf*)malloc(sizeof(nyx_buf) + (size_t)n + 1);
+    if (!b) nyx_fatal_exit("out of memory (nyx_buf)");
+    b->len = n;
+    if (n > 0) memcpy(b->data, s->data, (size_t)n);
+    b->data[n] = 0;  // cortesía para llamadores C; len manda
+    return b;
+}
+
+NYX_EXPORT void nyx_buf_free(nyx_buf* b) { free(b); }
+
+// Bytes (NUL adentro permitido) -> String del GC. OJO: NO se llama
+// nyx_string_from_bytes (el plan) porque ese nombre ya es otra función de
+// strings.c (Array<u8>, offset, len) con call sites en el codegen.
+NYX_EXPORT nyx_string* nyx_lib_string_from_bytes(const uint8_t* p, int64_t len) {
+    if (!p || len < 0) len = 0;
+    return nyx_string_from_ptr((const char*)p, len);
 }
 
 // ===== FUNCIONES DE IMPRESIÓN =====
@@ -518,13 +657,13 @@ void* nyx_try_push() {
     NyxTryState* s = try_state();
     if (s->depth >= NYX_TRY_STACK_MAX) {
         fprintf(stderr, "panic: try-catch nesting too deep\n");
-        exit(1);
+        nyx_fatal_exit("panic: try-catch nesting too deep");
     }
     if (s->depth >= s->cap) {
         int cap = s->cap ? s->cap * 2 : 4;
         if (cap > NYX_TRY_STACK_MAX) cap = NYX_TRY_STACK_MAX;
         jmp_buf* nuevo = (jmp_buf*)GC_MALLOC((size_t)cap * sizeof(jmp_buf));
-        if (!nuevo) { fprintf(stderr, "panic: out of memory (try stack)\n"); exit(1); }
+        if (!nuevo) { fprintf(stderr, "panic: out of memory (try stack)\n"); nyx_fatal_exit("panic: out of memory (try stack)"); }
         if (s->depth > 0) memcpy(nuevo, s->stack, (size_t)s->depth * sizeof(jmp_buf));
         s->stack = nuevo;
         s->cap = cap;
@@ -550,7 +689,7 @@ void nyx_throw(nyx_string* msg) {
         longjmp(s->stack[--s->depth], 1);
     } else {
         fprintf(stderr, "uncaught exception: %.*s\n", (int)msg->length, msg->data);
-        exit(1);
+        nyx_fatal_msg("uncaught exception: ", msg);
     }
 }
 
@@ -564,14 +703,14 @@ nyx_string* nyx_get_exception() {
 // EN: no setjmp/longjmp on WASI → try/catch unsupported; fail fast with a clear message.
 void* nyx_try_push() {
     fprintf(stderr, "error: try/catch is not supported on wasm32-wasi\n");
-    exit(1);
+    nyx_fatal_exit("error: try/catch is not supported on wasm32-wasi");
 }
 
 void nyx_try_pop() {}
 
 void nyx_throw(nyx_string* msg) {
     fprintf(stderr, "uncaught exception: %.*s\n", (int)msg->length, msg->data);
-    exit(1);
+    nyx_fatal_msg("uncaught exception: ", msg);
 }
 
 static int try_depth(void) { return 0; }
@@ -589,7 +728,7 @@ void nyx_panic(nyx_string* msg) {
         nyx_throw(msg);
     } else {
         fprintf(stderr, "panic: %.*s\n", (int)msg->length, msg->data);
-        exit(1);
+        nyx_fatal_msg("panic: ", msg);
     }
 }
 
@@ -610,7 +749,7 @@ int64_t __nyx_test_mode = 0;
 void nyx_assert_fail(const char* msg) {
     fprintf(stderr, "  ASSERTION FAILED: %s\n", msg);
     __nyx_test_failed = 1;
-    if (!__nyx_test_mode) exit(1);
+    if (!__nyx_test_mode) nyx_fatal_exit(msg);
 }
 
 // assert_eq para enteros
@@ -618,7 +757,7 @@ void nyx_assert_eq_int(int64_t expected, int64_t actual, const char* msg) {
     if (expected != actual) {
         fprintf(stderr, "  ASSERTION FAILED: %s — expected %" PRId64 ", got %" PRId64 "\n", msg, expected, actual);
         __nyx_test_failed = 1;
-        if (!__nyx_test_mode) exit(1);
+        if (!__nyx_test_mode) nyx_fatal_exit(msg);
     }
 }
 
@@ -640,7 +779,7 @@ void nyx_assert_eq_str(nyx_string* expected, nyx_string* actual, const char* msg
     if (!eq) {
         fprintf(stderr, "  ASSERTION FAILED: %s — expected \"%s\", got \"%s\"\n", msg, e, a);
         __nyx_test_failed = 1;
-        if (!__nyx_test_mode) exit(1);
+        if (!__nyx_test_mode) nyx_fatal_exit(msg);
     }
 }
 

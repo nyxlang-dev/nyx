@@ -1,0 +1,34 @@
+// test-532 — android-lib D10: try_socket_from_fd / try_serial_from_fd compilan con
+// std y rechazan lo que no corresponde. Un socket real (listen en el puerto 0) se
+// adopta y devuelve el MISMO fd; un fd inválido es Err en las dos. El caso de
+// archivo regular / pipe / socketpair vive en tests/runtime-unit/test_fd_adopt.c
+// (std no crea socketpair ni pipe).
+import "std/net"
+import "std/serial"
+
+fn main() -> int {
+    match try_tcp_listen("127.0.0.1", 0) {
+        Result.Ok(fd) => {
+            match try_socket_from_fd(fd) {
+                Result.Ok(h) => { assert(h == fd) }
+                Result.Err(e) => { print(e); assert(false) }
+            }
+            tcp_close(fd)
+        }
+        Result.Err(e) => { print(e.msg); assert(false) }
+    }
+    match try_socket_from_fd(-1) {
+        Result.Ok(_h) => { assert(false) }
+        Result.Err(e) => { assert(e.length() > 0) }
+    }
+    match try_socket_from_fd(99999) {
+        Result.Ok(_h) => { assert(false) }
+        Result.Err(_e) => { }
+    }
+    match try_serial_from_fd(99999, "puente") {
+        Result.Ok(_p) => { assert(false) }
+        Result.Err(e) => { assert(e.contains("puente")) }
+    }
+    print("OK")
+    return 0
+}

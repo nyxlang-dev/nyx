@@ -3,6 +3,7 @@
 // ============================================
 
 #include <stdio.h>
+#include "runtime.h"
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -86,19 +87,19 @@ nyx_string* nyx_read_file(char* path) {
 int nyx_write_file(char* path, char* content) {
     if (path == NULL) {
         fprintf(stderr, "💥 Runtime Error: write_file() recibió path NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     if (content == NULL) {
         fprintf(stderr, "💥 Runtime Error: write_file() recibió content NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     FILE* file = fopen(path, "wb");   // binario: ver nyx_file_open
     if (file == NULL) {
         fprintf(stderr, "💥 Runtime Error: No se pudo escribir archivo '%s'\n", path);
         fprintf(stderr, "   %s\n", strerror(errno));
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     size_t content_len = strlen(content);
@@ -107,7 +108,7 @@ int nyx_write_file(char* path, char* content) {
 
     if (bytes_written != content_len) {
         fprintf(stderr, "💥 Runtime Error: Error escribiendo a archivo '%s'\n", path);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     return 1;
@@ -125,19 +126,19 @@ int nyx_write_file(char* path, char* content) {
 int nyx_write_file_safe(char* path, nyx_string* content) {
     if (path == NULL) {
         fprintf(stderr, "💥 Runtime Error: write_file() recibió path NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     if (content == NULL || content->data == NULL) {
         fprintf(stderr, "💥 Runtime Error: write_file() recibió content NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     FILE* file = fopen(path, "wb");
     if (file == NULL) {
         fprintf(stderr, "💥 Runtime Error: No se pudo escribir archivo '%s'\n", path);
         fprintf(stderr, "   %s\n", strerror(errno));
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     size_t content_len = (size_t)content->length;
@@ -146,7 +147,7 @@ int nyx_write_file_safe(char* path, nyx_string* content) {
 
     if (bytes_written != content_len) {
         fprintf(stderr, "💥 Runtime Error: Error escribiendo a archivo '%s'\n", path);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     return 1;
@@ -591,6 +592,12 @@ nyx_array_t* nyx_serial_read_until(int64_t h, int64_t fin, int64_t max, int64_t 
     }
     buf[n] = 0;
     return serial_pair(n >= max ? 90 : 110, (int64_t)nyx_string_from_ptr(buf, n), NYX_TAG_STRING);
+}
+
+// D10 (android-lib): adopta un fd ajeno como puerto serie. 0 / -errno canónico.
+int64_t nyx_serial_adopt_fd(int64_t fd) {
+    int64_t r = os_serial_adopt_fd(fd);
+    return r < 0 ? -serial_canon(r) : 0;
 }
 
 int64_t nyx_serial_write(int64_t h, nyx_string* data) {

@@ -1,0 +1,8 @@
+struct Caja {
+    n: int
+}
+
+#[export_name("lib_caja")]
+fn caja(c: Caja) -> int {
+    return c.n
+}

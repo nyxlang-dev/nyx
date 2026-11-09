@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.42.0 -->
-<!-- nyx-stdlib: 2181835813-2164490 -->
+<!-- nyx-version: 0.42.1 -->
+<!-- nyx-stdlib: 2628142948-2166457 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -874,9 +874,10 @@ Tipos (4) y métodos (1):
 
 ### `std/serial`
 
-`import "std/serial"` — 8 funciones:
+`import "std/serial"` — 9 funciones:
 
 - `pub fn try_serial_open(path: String, baud: int, data_bits: int, parity: String, stop_bits: int) -> Result<SerialPort, Error>`
+- `pub fn try_serial_from_fd(fd: int, label: String) -> Result<SerialPort, String>` — Adopta un fd que abrió otro como puerto serie (android-lib D10): si es un tty le aplica la configuración de serial_open (raw, 8N1, sin control de flujo, DTR; conserva la velocidad que ya tenía); si no lo es (pipe, socketpair, el puente de Bluetooth/USB de Kotlin) no toca termios. `label` queda como `path` en los mensajes de error. Nyx pasa a ser el dueño y lo cierra con try_serial_close; desde Kotlin pasarlo con ParcelFileDescriptor.detachFd(). En Windows siempre es Err.
 - `pub fn try_serial_write(p: SerialPort, datos: String) -> Result<int, Error>`
 - `pub fn try_serial_read(p: SerialPort, max: int, timeout_ms: int) -> Result<String, Error>`
 - `pub fn try_serial_read_until(p: SerialPort, fin: int, max: int, timeout_ms: int) -> Result<String, Error>`
@@ -1081,7 +1082,7 @@ Tipos (6) y métodos (0):
 
 ### `std/net`
 
-`import "std/net"` — 29 funciones:
+`import "std/net"` — 30 funciones:
 
 - `pub fn try_tcp_connect(host: String, port: int) -> Result<int, Error>`
 - `pub fn try_tcp_connect_ms(host: String, port: int, timeout_ms: int) -> Result<int, Error>`
@@ -1098,6 +1099,7 @@ Tipos (6) y métodos (0):
 - `pub fn try_tcp_read_exact(fd: int, n: int) -> Result<String, Error>`
 - `pub fn try_tcp_read_timed(fd: int, max_bytes: int, timeout_ms: int) -> Result<String, Error>`
 - `pub fn try_tcp_shutdown(fd: int, mode: int) -> Result<int, Error>` — La forma correcta de despertar un recv() bloqueado en OTRO thread — tcp_close NO lo despierta y el fd reciclado puede robarle bytes a una conexión nueva; patrón: el no-dueño hace shutdown, solo el reader dueño hace close.
+- `pub fn try_socket_from_fd(fd: int) -> Result<int, String>` — Adopta un fd de socket que abrió otro (android-lib D10): comprueba con fstat que sea un socket, lo deja no bloqueante y devuelve el MISMO fd, que ya sirve para tcp_read/tcp_write/tcp_close. Desde ahí Nyx es el dueño y lo cierra; desde Kotlin pasarlo con ParcelFileDescriptor.detachFd(). Err si no es un socket (archivo, pipe) o fd inválido. En Windows siempre es Err (un SOCKET no es un fd).
 - `pub fn try_tcp_set_timeout(fd: int, secs: int) -> Result<int, Error>`
 - `pub fn try_getpeername(fd: int) -> Result<String, Error>`
 - `pub fn try_local_port(fd: int) -> Result<int, Error>`

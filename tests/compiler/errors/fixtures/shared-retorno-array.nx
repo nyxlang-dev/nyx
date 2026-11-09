@@ -1,0 +1,4 @@
+#[export_name = "lib_lista"]
+fn lista(n: int) -> Array {
+    return [n]
+}

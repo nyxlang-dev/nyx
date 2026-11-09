@@ -4,6 +4,7 @@
 // ============================================
 
 #include <inttypes.h>
+#include "runtime.h"
 #include <gc.h>
 #include "maps.h"
 #include "strings.h"
@@ -25,7 +26,7 @@ static void nyx_map_missing_key_panic(const char* key_repr) {
              "Clave '%s' no encontrada en map — sugerencia: m.contains(k) antes de leer, o m.get_or(k, default)",
              key_repr);
     nyx_panic(nyx_string_from_cstr(buf));
-    exit(1);  // inalcanzable — satisface noreturn si nyx_panic cambiara
+    NYX_FATAL_EXIT();  // inalcanzable — satisface noreturn si nyx_panic cambiara
 }
 
 // ===== FUNCIONES DE HASH =====
@@ -131,7 +132,7 @@ void nyx_map_resize(nyx_map_t* map) {
 void nyx_map_insert(nyx_map_t* map, nyx_key_t key, int64_t value) {
     if (!map) {
         fprintf(stderr, "Runtime Error: Map es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     // Check load factor
@@ -203,7 +204,7 @@ static inline int64_t find_slot(nyx_map_t* map, nyx_key_t key, uint64_t h) {
 int64_t nyx_map_get(nyx_map_t* map, nyx_key_t key) {
     if (!map) {
         fprintf(stderr, "Runtime Error: Map es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     uint64_t h = compute_hash(key);
     int64_t idx = find_slot(map, key, h);
@@ -232,13 +233,13 @@ bool nyx_map_contains(nyx_map_t* map, nyx_key_t key) {
 int64_t nyx_map_remove(nyx_map_t* map, nyx_key_t key) {
     if (!map) {
         fprintf(stderr, "Runtime Error: Map es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     uint64_t h = compute_hash(key);
     int64_t idx = find_slot(map, key, h);
     if (idx < 0) {
         fprintf(stderr, "Runtime Error: Clave no encontrada en remove()\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     int64_t removed_value = map->entries[idx].value;
@@ -398,7 +399,7 @@ void nyx_map_insert_str(nyx_map_t* map, const char* key_str, const char* value_s
 char* nyx_map_get_str(nyx_map_t* map, const char* key_str) {
     if (!map) {
         fprintf(stderr, "Runtime Error: Map es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     // Avoid allocating a key — compute hash and search inline
     uint64_t h = nyx_hash_string(key_str);
@@ -520,7 +521,7 @@ int64_t nyx_map_get_int_or(nyx_map_t* map, const char* key_str, int64_t deflt) {
 int64_t nyx_map_get_int(nyx_map_t* map, const char* key_str) {
     if (!map) {
         fprintf(stderr, "Runtime Error: Map es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     uint64_t h = nyx_hash_string(key_str);
     int64_t idx = (int64_t)(h % (uint64_t)map->capacity);

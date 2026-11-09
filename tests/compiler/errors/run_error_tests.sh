@@ -2950,6 +2950,34 @@ for file in "${POSITIVE_TESTS[@]}"; do
   rm -f script.ll
 done
 
+# Arco android-lib: en `nyx build --shared` (NYX_SHARED=1) una #[export_name] solo
+# lleva tipos que cruzan a C (NYX1048) y `fn main` es error (NYX1049). Sin
+# --shared las dos cosas siguen valiendo (último caso). Las dos formas del
+# atributo —("x") y = "x"— se diagnostican igual.
+for shc in "shared-firma-struct:1:NYX1048:c: Caja" "shared-retorno-array:1:NYX1048:'Array'" "shared-con-main:1:NYX1049:--shared" "shared-firma-ok-sin-shared:0::"; do
+  IFS=: read -r shn shenv shcode shfrag <<< "$shc"
+  name="$shn"
+  if [ "$shenv" = "1" ]; then
+    sh_out=$(NYX_SHARED=1 NYX_LANG=en NYX_SRC=tests/compiler/errors/fixtures/$shn.nx ./nyx_bootstrap 2>&1); sh_rc=$?
+  else
+    sh_out=$(NYX_LANG=en NYX_SRC=tests/compiler/errors/fixtures/$shn.nx ./nyx_bootstrap 2>&1); sh_rc=$?
+  fi
+  rm -f tests/compiler/errors/fixtures/$shn.ll
+  if [ -n "$shcode" ]; then
+    if [ "$sh_rc" -ne 0 ] && echo "$sh_out" | grep -qF "error [$shcode]" && echo "$sh_out" | grep -qF -- "$shfrag"; then
+      printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+    else
+      printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con %s y «%s»)\n" "$sh_rc" "$shcode" "$shfrag"
+      echo "$sh_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+    fi
+  elif [ "$sh_rc" -eq 0 ]; then
+    printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+  else
+    printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado 0: sin --shared no hay restricción)\n" "$sh_rc"
+    echo "$sh_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+  fi
+done
+
 echo ""
 echo "  $PASS passed, $FAIL failed"
 

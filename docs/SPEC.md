@@ -940,6 +940,8 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1045 | invalid string or char escape. A malformed `\xNN` (not two hex digits) or `\u{…}` (no braces, empty, more than 6 digits, above `10FFFF`, a surrogate, or above `7F` in a `char`) is a lexer error with line and column. Any other unknown escape (`\q`, `\e`) is an error since 0.37.0 (a warning in 0.36.x): it used to compile dropping the backslash |
 | NYX1046 | an enum pattern (`Result.Ok(v)`, `Option.None`) in a `match` whose subject is a primitive (`int`, `float`, `bool`, `String`) — with a number or a bool it reached codegen and clang failed with invalid IR; with a String it compiled and no arm ever matched. The usual cause is a builtin that aborts instead of returning `Result` (`string_to_int`): use its `try_`/`_or` sibling, e.g. `string_to_int_or(s, 0)` (0.37.1) |
 | NYX1047 | `for x: dyn Trait in arr` or `let y: dyn Trait = arr[0]` over an `Array` that holds CONCRETE structs (declared `Array<A>`, or a `push` of a struct in the same function). The conversion to `dyn` (struct pointer to fat pointer `{ data, vtable }`) happens when the element is WRITTEN, never when it is read, so this used to pass `nyx check` and die with SIGSEGV. Declare the collection `Array<dyn Trait>` (each `push` converts) or convert before pushing (`let d: dyn Trait = x; arr.push(d)`); an untyped `Array` filled with already-`dyn` values keeps working (0.38.1) |
+| NYX1048 | in `nyx build --shared`, an `#[export_name]` function whose parameter or return type cannot cross into C. Allowed: `int` (`int64_t`), `float` (`double`), `bool`, raw pointers and `String` (in as `(const uint8_t*, int64_t)`, out as `nyx_buf*`). A struct, `Array`, `Map`, `Option`, `Result`, closure or `dyn` is rejected; long-lived state goes as an `int` that indexes a table on the Nyx side (0.42.2) |
+| NYX1049 | `fn main` in a `--shared` build. A `.so` has no entry point nobody calls; export functions with `#[export_name("...")]` and put start-up code in `fn init()` (0.42.2) |
 | NYX1033 | `include_bytes` with a path that is not a String literal — the file is read when COMPILING, so a variable or an interpolation cannot be known |
 | NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
@@ -2145,14 +2147,10 @@ target = "wasm32-wasi"       # destino por defecto de `nyx build`/`nyx run` (el 
 nyx-db = "*"
 ```
 
-Claves de `[build]`: `main` (punto de entrada; también se acepta en `[package]`) y `target`
-(`wasm32-wasi`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` o `aarch64-linux-android`; también se acepta en `[package]`). Un triple desconocido da «target desconocido» y la lista de los válidos.
+Claves de `[build]`: `main` (punto de entrada; también se acepta en `[package]`), `target`
+(`wasm32-wasi`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` o `aarch64-linux-android`; también se acepta en `[package]`) y `kind` (`"bin"` por defecto, o `"shared"`: la biblioteca de «Bibliotecas compartidas», más abajo). Un triple desconocido da «target desconocido» y la lista de los válidos.
 
-**Compilación cruzada Linux x86_64 ↔ aarch64.** `nyx build --target <triple>` deja el binario en `target/<triple>/<name>` (no pisa `./<name>`). El triple del propio host compila nativo, sin banderas extra; el de la otra arquitectura pasa `--target=<triple>` a clang, enlaza con `-fuse-ld=lld` y compila el runtime de C de fuentes para el destino (cacheado por destino). Requiere en el host las bibliotecas de desarrollo del destino (multiarch en Debian/Ubuntu: `libc6-dev`, `libgc-dev`, `libssl-dev`, `zlib1g-dev`, `libgcc-N-dev` con el sufijo `:amd64`/`:arm64`, y `lld`); si falta algo, `nyx build` lo informa antes de compilar con el comando exacto y sale con 1. No hay emulación: `nyx run --target <triple de otra arquitectura>` falla con «esta máquina no lo puede ejecutar» (con el triple del host sí ejecuta `target/<triple>/<name>`). En `asm` el compilador no interpreta la plantilla (la escribe el usuario); solo las restricciones de una letra `a b c d S D` son de x86 y con destino aarch64 dan un error con archivo:línea, mientras que las genéricas (`"r"`, `"m"`, `"memory"`) pasan tal cual. El binario es dinámico: la máquina destino necesita libgc, libssl3, libcrypto, libz y glibc. Los triples de Windows
-
-**Android (Termux), `aarch64-linux-android`.** `nyx build --target aarch64-linux-android` deja en `target/aarch64-linux-android/<name>` un PIE de bionic (`linker64`, API 24) con libgc y OpenSSL estáticos, que corre en Termux sin proot. Se arma desde Linux con clang >= 19 y lld, sin herramientas del NDK, contra las deps que deja `scripts/build_android_deps.sh <dir>` (sysroot NDK r27c, bdwgc 8.2.12, OpenSSL 3.6.5) en `~/.cache/nyx-android-deps` o en `NYX_ANDROID_DEPS`; sin ellas el error dice cómo armarlas. `nyx run --target aarch64-linux-android` no ejecuta el artefacto (error claro: cópialo al aparato). `NYX_ANDROID_STATIC=1` lo arma estático **solo para probar en Linux arm64** (sin `dlopen`, así que no andan `std/sqlite` ni el inflate de zlib). En el runtime, TLS toma las CAs de `SSL_CERT_FILE`/`SSL_CERT_DIR`, si no de `$PREFIX/etc/tls/cert.pem` (Termux), si no de `/system/etc/security/cacerts/` archivo por archivo; SQLite se carga por `dlopen` desde `$PREFIX/lib/libsqlite3.so` (`pkg install libsqlite`); el directorio temporal es `$TMPDIR`, con respaldo `/data/local/tmp`; las goroutines cambian de contexto con asm aarch64 (bionic no tiene `ucontext`). Todavía sin verificar en un aparato real; no existe aún la biblioteca `.so` para JNI ni las CAs de usuario de Android. Receta: `examples/by-example/156-target-android.nx`.
-
-los reconoce el compilador. `nyx build --target x86_64-pc-windows-msvc` arma `target/<nombre>.exe` también **desde
+**Compilación cruzada Linux x86_64 ↔ aarch64.** `nyx build --target <triple>` deja el binario en `target/<triple>/<name>` (no pisa `./<name>`). El triple del propio host compila nativo, sin banderas extra; el de la otra arquitectura pasa `--target=<triple>` a clang, enlaza con `-fuse-ld=lld` y compila el runtime de C de fuentes para el destino (cacheado por destino). Requiere en el host las bibliotecas de desarrollo del destino (multiarch en Debian/Ubuntu: `libc6-dev`, `libgc-dev`, `libssl-dev`, `zlib1g-dev`, `libgcc-N-dev` con el sufijo `:amd64`/`:arm64`, y `lld`); si falta algo, `nyx build` lo informa antes de compilar con el comando exacto y sale con 1. No hay emulación: `nyx run --target <triple de otra arquitectura>` falla con «esta máquina no lo puede ejecutar» (con el triple del host sí ejecuta `target/<triple>/<name>`). En `asm` el compilador no interpreta la plantilla (la escribe el usuario); solo las restricciones de una letra `a b c d S D` son de x86 y con destino aarch64 dan un error con archivo:línea, mientras que las genéricas (`"r"`, `"m"`, `"memory"`) pasan tal cual. El binario es dinámico: la máquina destino necesita libgc, libssl3, libcrypto, libz y glibc. Los triples de Windows los reconoce el compilador. `nyx build --target x86_64-pc-windows-msvc` arma `target/<nombre>.exe` también **desde
 Linux** (arco win-cross): clang + `lld-link` contra un sysroot de Windows y bdwgc/OpenSSL estáticos, y necesita dos
 variables, `NYX_WIN_SYSROOT` (el directorio con `crt/` y `sdk/` que deja `xwin --accept-license splat --output <dir>`;
 aceptar la licencia de Microsoft es cosa de quien lo ejecuta) y `NYX_WIN_DEPS` (`include/` y `lib/{gc,libssl,libcrypto}.lib`,
@@ -2162,6 +2160,46 @@ que lo armó y dos builds del mismo proyecto dan el mismo binario (`/Brepro`), p
 byte al armado en Windows. `aarch64-pc-windows-msvc` se rechaza con su motivo, en vez de armar nativo. Una clave desconocida en `[build]` es un error con su nombre, y declarar `main` o
 `target` en las dos secciones con valores distintos también: el manifiesto nunca se ignora en
 silencio. `nyx info` muestra el `main` y el `target` efectivos.
+
+**Android (Termux), `aarch64-linux-android`.** `nyx build --target aarch64-linux-android` deja en `target/aarch64-linux-android/<name>` un PIE de bionic (`linker64`, API 24) con libgc y OpenSSL estáticos, que corre en Termux sin proot. Se arma desde Linux con clang >= 19 y lld, sin herramientas del NDK, contra las deps que deja `scripts/build_android_deps.sh <dir>` (sysroot NDK r27c, bdwgc 8.2.12, OpenSSL 3.6.5) en `~/.cache/nyx-android-deps` o en `NYX_ANDROID_DEPS`; sin ellas el error dice cómo armarlas. `nyx run --target aarch64-linux-android` no ejecuta el artefacto (error claro: cópialo al aparato). `NYX_ANDROID_STATIC=1` lo arma estático **solo para probar en Linux arm64** (sin `dlopen`, así que no andan `std/sqlite` ni el inflate de zlib). En el runtime, TLS toma las CAs de `SSL_CERT_FILE`/`SSL_CERT_DIR`, si no de `$PREFIX/etc/tls/cert.pem` (Termux), si no de `/system/etc/security/cacerts/` archivo por archivo; SQLite se carga por `dlopen` desde `$PREFIX/lib/libsqlite3.so` (`pkg install libsqlite`); el directorio temporal es `$TMPDIR`, con respaldo `/data/local/tmp`; las goroutines cambian de contexto con asm aarch64 (bionic no tiene `ucontext`). Todavía sin verificar en un aparato real; la biblioteca `.so` para JNI es `nyx build --shared` (siguiente subsección); siguen sin existir las CAs de usuario de Android. Receta: `examples/by-example/156-target-android.nx`.
+
+### Bibliotecas compartidas (`nyx build --shared`)
+
+`nyx build --shared` arma una biblioteca `lib<name>.so` en vez de un ejecutable, para cargarla desde otro
+programa: una app Android por JNI, C con `dlopen`, Python con `ctypes`. Se puede fijar en el manifiesto
+con `[build] kind = "shared"` (`"bin"` es el valor por defecto; otro valor es un error del manifiesto).
+
+- **Salida**: `target/lib<name>.so`, o `target/<triple>/lib<name>.so` con `--target`. Destinos: Linux
+  (`x86_64`/`aarch64`) y `aarch64-linux-android`. Windows (`.dll`) y `wasm32-wasi` no tienen salida compartida:
+  `--shared` da un error claro.
+- **Qué se exporta**: solo las funciones con `#[export_name("x")]` (ver «Function Attributes»; la firma
+  restringida a `int`, `float`, `bool`, punteros crudos y `String`, NYX1048). Todo lo demás —los `pub`, el
+  runtime, Boehm, OpenSSL— queda local, así que dos `.so` de Nyx no se pisan los símbolos.
+- **Sin `fn main`** (NYX1049). Una `fn init()` opcional corre **una sola vez**, desde `nyx_lib_init`, junto con
+  los `let`/`var` globales que no son constantes; el llamador la dispara explícitamente (en JNI, desde
+  `JNI_OnLoad`) y, de todos modos, cada exportada la comprueba en su prólogo (una comprobación atómica).
+  No existe `nyx_lib_shutdown`: la biblioteca vive lo que el proceso.
+- **Hilos ajenos**: el prólogo de cada exportada llama `nyx_lib_enter()`, que registra en el GC el hilo que
+  llama (si no lo estaba) y lo desregistra cuando el hilo muere. La función corre en ese hilo; las llamadas
+  bloqueantes (`accept`, `read`) bloquean al llamador, así que nunca desde el hilo de UI.
+- **Errores fatales**: un `assert` fallido, `panic`, OOM o NYX2022 no se pueden recuperar. El mensaje se
+  entrega al handler registrado con `nyx_lib_set_fatal_handler(void (*)(const char *))` (en Android, el shim
+  lo conecta a `logcat`) y el proceso termina con `abort()`, no con `exit()`: mata la app entera. Los errores
+  esperables van por `Result` dentro de Nyx y salen como códigos `int` o buffers. Una sola `.so` de Nyx por
+  proceso (cada una traería su GC). Gotcha: `docs/gotchas/shared-lib-fatal-mata-app.md`.
+- **Enlace**: `-shared -fPIC`, `-Wl,-soname,lib<name>.so`, un version script que deja local todo lo no exportado, páginas de 16 KB
+  (`-Wl,-z,max-page-size=16384`, exigido por Google Play desde Android 15). Boehm y OpenSSL van estáticos dentro.
+- **`nyx run --shared` se niega**: una biblioteca no se ejecuta sola.
+
+```nyx
+#[export_name("app_echo")]
+fn echo(s: String) -> String { return s }
+
+fn init() { /* una vez, al cargar */ }
+```
+
+Plantilla de la app (shim JNI, `CMakeLists.txt`, puente Kotlin): `templates/android/`. Receta:
+`examples/by-example/157-biblioteca-compartida-para-una-app.nx`.
 
 Dependencies are cloned to `packages/` (project-local) from `github.com/nyxlang-dev/<name>` by default. Lock file `nyx.lock` is generated for reproducible builds.
 
@@ -3037,6 +3075,12 @@ let data: String = udp_recvfrom(sock, 1024)
 tcp_close(sock)
 ```
 
+Adopción de un descriptor ajeno (`std/net`, arco `android-lib`): `try_socket_from_fd(fd: int) ->
+Result<int, String>` toma un fd que abrió otro (en Android, uno que Kotlin entrega con
+`ParcelFileDescriptor.detachFd()`), comprueba con `fstat` que sea un socket, lo deja no bloqueante y devuelve
+el MISMO `int`, que ya sirve para `tcp_read`/`tcp_write`/`tcp_close`. Nyx pasa a ser su dueño y lo cierra;
+`Err` si no es un socket (archivo, pipe) o el fd no es válido, y siempre `Err` en Windows.
+
 Conexión TCP con plazo propio (`std/net`, 2026-10-29): `try_tcp_connect` espera hasta 3000 ms;
 `try_tcp_connect_ms(host, port, ms) -> Result<int, Error>` usa el plazo que se le pase y da `Err` de kind
 `timeout` (code 110) si no conecta a tiempo, para no colgarse con un equipo apagado de la red local.
@@ -3213,6 +3257,11 @@ import "std/serial"
 //     Junta hasta incluir el byte `fin`, con plazo TOTAL; no se come el byte
 //     que sigue al fin (trama STX...ETX+LRC: leer hasta ETX y luego 1 byte).
 // try_serial_close(p) -> Result<int, Error>
+// try_serial_from_fd(fd, label) -> Result<SerialPort, String>
+//     Adopta un fd que abrió otro (en Android, el extremo de un socketpair que Kotlin bombea desde
+//     Bluetooth/USB). Si es un tty aplica la configuración de serial_open (crudo, 8N1, DTR; conserva
+//     la velocidad que tenía); si no (pipe, socketpair) no toca termios. `label` queda como `path` en
+//     los errores. Nyx es el dueño: lo cierra try_serial_close. Siempre Err en Windows.
 // serial_ports() -> Array   // [[nombre, "vvvv:pppp" o "", descripción, serie], ...]
 //     serie = número de serie USB, o "" si el puerto no es USB o el dispositivo no lo
 //     reporta (en Windows un serie que inventa el sistema, con '&', da ""; macOS
@@ -4476,6 +4525,18 @@ fn boot_entry() { /* placed in specific section */ }
 #[export_name("my_entry")]
 fn entry_point() { /* exported with custom name */ }
 ```
+
+`#[export_name("x")]` (or `#[export_name = "x"]`, the same thing) gives the function the C symbol
+`x`. Outside wasm the function keeps its Nyx name (Nyx code calls it as usual) and `x` is an
+external alias; under wasm the function is renamed to `x` and exported from the module. In `nyx build --shared` it also decides what the
+library exports: the `.so` exports exactly those functions plus the runtime border (`nyx_lib_init`,
+`nyx_lib_enter`, `nyx_lib_set_fatal_handler`, `nyx_buf_free`); a version script keeps every other
+symbol local, `pub` ones included. The compiler emits a C wrapper per exported function
+with a C ABI: `int` is `int64_t`, `float` is `double`, `bool` is C `bool`, and a `String` parameter
+arrives as two arguments, `(const uint8_t *ptr, int64_t len)` (UTF-8 bytes, NUL allowed, copied into a
+GC `String`). A function returning `String` returns a `nyx_buf *` (`{ int64_t len; uint8_t data[]; }`,
+allocated with libc `malloc`, outside the GC) that the caller releases with `nyx_buf_free`. Any other
+type in the signature is NYX1048. See "Bibliotecas compartidas" below.
 
 ---
 

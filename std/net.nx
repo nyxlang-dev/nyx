@@ -258,6 +258,7 @@ extern "C" fn nyx_tcp_read_line_result(fd: int) -> Array
 extern "C" fn nyx_tcp_read_partial_result(fd: int, max_bytes: int) -> Array
 extern "C" fn nyx_tcp_read_exact_result(fd: int, n: int) -> Array
 extern "C" fn nyx_tcp_shutdown_result(fd: int, how: int) -> int
+extern "C" fn nyx_socket_adopt_fd_result(fd: int) -> int
 extern "C" fn nyx_tcp_set_timeout_result(fd: int, seconds: int) -> int
 extern "C" fn nyx_getpeername_result(fd: int) -> Array
 extern "C" fn nyx_local_port_result(fd: int) -> int
@@ -423,6 +424,16 @@ pub fn try_tcp_shutdown(fd: int, mode: int) -> Result<int, Error> {
     if h >= 0 { return Result.Ok(h) }
     let code: int = 0 - h
     return Result.Err(err_new(code, errno_to_kind(code), "tcp_shutdown"))
+}
+
+/// Adopta un fd de socket que abrió otro (android-lib D10): comprueba con fstat que sea un socket, lo deja no bloqueante y devuelve el MISMO fd, que ya sirve para tcp_read/tcp_write/tcp_close. Desde ahí Nyx es el dueño y lo cierra; desde Kotlin pasarlo con ParcelFileDescriptor.detachFd(). Err si no es un socket (archivo, pipe) o fd inválido. En Windows siempre es Err (un SOCKET no es un fd).
+pub fn try_socket_from_fd(fd: int) -> Result<int, String> {
+    let h: int = nyx_socket_adopt_fd_result(fd)
+    if h >= 0 { return Result.Ok(fd) }
+    let code: int = 0 - h
+    if code == 38 { return Result.Err("socket_from_fd: no soportado en este destino") }
+    if code == 88 { return Result.Err("socket_from_fd: el fd " + int_to_string(fd) + " no es un socket") }
+    return Result.Err("socket_from_fd: fd " + int_to_string(fd) + ": " + errno_to_kind(code) + " (" + int_to_string(code) + ")")
 }
 
 // E5.2b: hermana Result de tcp_set_timeout. Setea SO_RCVTIMEO y

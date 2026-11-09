@@ -12,12 +12,12 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **550 archivos / 549 ARM64** | +2 el 11-08 (`541`-`542`), +1 el 11-05 (`531`), +2 el 11-03 (`529`-`530`), +4 el 10-31 (`525`-`528`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **408** | +1 el 11-08 (NYX2022 casilla sin tipo → struct/enum); +1 el 11-05 (NYX1031 crc32_bytes con int); +1 el 11-03; -2 el 11-01 (pasaron a ai-first 48); +17 el 10-31; +5 el 10-30; altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **551 archivos / 550 ARM64** | +1 el 11-09 (`stdlib-suite/test-532`, adopción de fd), +2 el 11-08 (`541`-`542`), +1 el 11-05 (`531`), +2 el 11-03 (`529`-`530`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **412** | +4 el 11-09 (NYX1048 ×2, NYX1049, firma sin `--shared`); +1 el 11-08 (NYX2022 casilla sin tipo → struct/enum); +1 el 11-05 (NYX1031 crc32_bytes con int); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
-| Runtime C unit (B4) | `make test-runtime` | **45 suites / 2359 asserts** | +7 el 11-02 (`os_fs_rename`), +13 el 11-02 (serie USB, `host_os`; W6), +1 suite/+43 el 10-31 (`test_os_build_host.c`). Antes, en `CHANGELOG.md` |
+| Runtime C unit (B4) | `make test-runtime` | **47 suites / 2409 asserts** | +2 suites/+50 el 11-09 (`test_lib_border.c` 12, `test_fd_adopt.c` 38: arco android-lib), +7 el 11-02 (`os_fs_rename`), +13 el 11-02 (serie USB, `host_os`; W6). Antes, en `CHANGELOG.md` |
 | AI-first (objetivo) | `make test-ai-first` | **53 programas + 6 casos stdin (x2 targets) + 78 guardas** | 27 scripts: ai_first + stdin_io + 24 de guardas (78: templates 2, tooling 17, coverage 9, build_manifest 29, no_compiler_rt 2, voseo 1) + selftest |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |
 | Español neutro (mensajes del toolchain) | (dentro de `make test-ai-first`) `run_voseo_messages.sh` | **1 check** + autotest | `voseo_filter` (`lib_voseo.sh`: lista + regla general en -á) sobre `compiler/`, `runtime/`, `std/`, `scripts/`, `templates/gitignore` y `tests/**/*.sh` |
@@ -35,10 +35,11 @@
 | Manifiesto de `nyx build` | (dentro de `make test-ai-first`) `run_build_manifest.sh` | **41 checks** (38 sin deps de Android) | +4 el 11-07 (Android), +3 el 11-05, +4 el 11-03, +1 el 11-02, +2 el 10-31, +6 el 10-30 (`--target` Linux), +6 el 09-15; detalle en `CHANGELOG.md` |
 | Autochequeo del compilador | (dentro de `make test-ai-first`) `run_self_check.sh` | **20 módulos + control positivo** | cada `compiler/*.nx` pasa el checker del propio compilador; el bootstrap usa `NYX_SKIP_SEMANTIC=1`, así que sin esto un módulo deja de chequear sin que nadie lo note |
 | Semillas del bootstrap | `make seeds-check` (y dentro de `release-check`) | **9 módulos en punto fijo** | compila cada `compiler/*.nx` y exige reproducir su `.ll`; fuera de `test-all` a propósito: son 9 compilaciones del compilador |
-| Recetas by-example | `make test-examples` | **156** (138 ejecutan, 18 solo compilan+enlazan) | +1 el 11-07 (156, Android); +2 el 11-02 (154, que no se había contado, y 155); +1 el 10-30 (153); antes, en `CHANGELOG.md`; compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
+| Recetas by-example | `make test-examples` | **157** (139 ejecutan, 18 solo compilan+enlazan) | +1 el 11-09 (157, biblioteca compartida); +1 el 11-07 (156, Android); +2 el 11-02 (154-155); antes, en `CHANGELOG.md`; compila, ENLAZA y CORRE cada receta con exit 0; motivo en el script |
 | .exe de Windows cruzado | `make test-build-win-cross` | **3 proyectos x 4 checks** | `nyx build --target x86_64-pc-windows-msvc` desde Linux: .exe existe, solo DLL de Windows, sin rutas del host, mismo sha256 en dos builds; SKIP sin `NYX_WIN_SYSROOT`/`NYX_WIN_DEPS`; no ejecuta nada |
 | CAs de TLS en Android | `make test-android` | **3 comprobaciones** | `run_android_cacerts_test.sh`: TLS del estático bionic alineado a 64, sin CA rechaza, con directorio de CAs estilo Android verifica contra `openssl s_server`; SKIP sin deps (`scripts/build_android_deps.sh`) o fuera de aarch64 |
 | Regex vendorizada vs libc | `make test-regex-diff` | **22 436 casos x 2 modos** | `run_regex_diff.sh`: el TRE de `runtime/vendor/tre` (motor de Windows) contra glibc, 2 436 fijos + 20 000 al azar con semilla fija; mismo veredicto, match y `replace_all`; normal y ASan/UBSan |
+| Biblioteca `.so` (`--shared`) | `make test-build-shared` | **10 checks** (6 anfitrión + 4 Android) | `run_build_shared.sh`: `lib-min` por `dlopen` (tipos del borde, `fn init()`, 8 hilos ajenos bajo GC y su rojo, handler fatal, símbolos) y la `.so` de Android con `readelf` |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **28 checks** | +2 el 2026-10-25 (literales enteros en el borde de 64 bits); +1 el 2026-09-20 (NYX3007); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
 | Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 3) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
@@ -50,7 +51,7 @@
 
 `make test-all` corre las 17 suites, en el orden del `Makefile`: regression +
 advanced + stdlib + errors + m08-types + runtime + unit + dispatch-matrix +
-integration + wasm + examples + win-cross + android + regex-diff + load + ai-first + repl + stacks.
+integration + wasm + examples + win-cross + android + regex-diff + build-shared + load + ai-first + repl + stacks.
 
 ## Compiler-unit — detalle (`tests/compiler-unit/`, 7 archivos)
 

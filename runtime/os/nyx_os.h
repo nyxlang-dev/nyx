@@ -75,6 +75,10 @@ void os_rwlock_destroy(os_rwlock_t* r);
 void os_once(os_once_t* o, void (*fn)(void));
 
 int   os_tls_key_create(os_tls_key_t* k);
+// Igual, con un destructor que corre al morir el hilo si su valor no es NULL
+// (posix: pthread_key_create). En win32 el destructor se ignora: el modo
+// --shared (su único usuario) no existe allá. EN: TLS key with thread-exit dtor.
+int   os_tls_key_create_dtor(os_tls_key_t* k, void (*dtor)(void*));
 void* os_tls_get(os_tls_key_t* k);
 void  os_tls_set(os_tls_key_t* k, void* v);
 
@@ -325,6 +329,11 @@ int     os_icmp_echo4(const char* ip, int timeout_ms, int64_t* rtt_ns);
 int     os_sock_set_timeout(int64_t fd, int64_t seconds); // RCVTIMEO+SNDTIMEO; <=0 desactiva; si el 1ro falla reporta ESE -errno
 int     os_sock_set_send_timeout(int64_t fd, int64_t seconds); // SOLO SNDTIMEO; <=0 desactiva
 int     os_sock_set_nonblocking(int64_t fd, int on);      // fcntl O_NONBLOCK / ioctlsocket FIONBIO
+// os_sock_adopt_fd: adopta un fd que abrió otro (JNI/Android: ParcelFileDescriptor
+// .detachFd()). Verifica con fstat que sea un socket (si no: -ENOTSOCK; fd inválido:
+// -EBADF) y lo deja O_NONBLOCK como los sockets propios. 0 / -errno. win32: -ENOSYS
+// (allá un SOCKET no es un fd del CRT). EN: adopt a foreign fd; S_ISSOCK check + O_NONBLOCK.
+int     os_sock_adopt_fd(int64_t fd);
 int     os_sock_error(int64_t fd);                 // getsockopt SO_ERROR: errno pendiente (POSITIVO) o 0; -errno si el propio getsockopt falla / pending errno (POSITIVE) or 0; -errno if getsockopt itself fails
 
 #define OS_POLLIN  1
@@ -1026,6 +1035,13 @@ int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, in
 int64_t os_serial_read(int64_t h, void* buf, int64_t n, int timeout_ms);
 int64_t os_serial_write(int64_t h, const void* buf, int64_t n);
 int     os_serial_close(int64_t h);
+// os_serial_adopt_fd: adopta un fd ajeno como puerto serie. Si es un tty aplica la misma
+// configuración que os_serial_open (raw, 8N1, sin control de flujo, DTR, sin tocar la
+// velocidad que ya tenía) y lo deja bloqueante; si no (pipe, socketpair) salta termios y
+// lo deja bloqueante, que es como lo leen/escriben os_serial_read/write (poll + plazo).
+// 0 / -errno (-EBADF si el fd no es válido). win32: -ENOSYS.
+// EN: adopt a foreign fd; tty -> same config as open (speed kept); non-tty -> no termios.
+int     os_serial_adopt_fd(int64_t fd);
 // os_serial_list: `serial` es el número de serie USB del dispositivo, o "" si no es
 // USB o no lo reporta (Windows: el que genera el sistema, con '&', cuenta como
 // «no lo reporta»). Linux lee la raíz de sysfs de NYX_SERIAL_SYSFS_ROOT si está

@@ -1,0 +1,8 @@
+#[export_name("lib_ok")]
+fn ok(s: String, n: int, b: bool, x: float) -> String {
+    return s
+}
+
+fn main() {
+    print(ok("a", 1, true, 1.0))
+}

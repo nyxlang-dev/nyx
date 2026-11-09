@@ -513,6 +513,7 @@ void os_once(os_once_t* o, void (*fn)(void)) {
 // haya conviene tenerlo presente.
 // EN: Win32 TLS slots are not GC roots (neither is pthread_setspecific) — no
 // platform delta, noted because win32 has no caller yet.
+int   os_tls_key_create_dtor(os_tls_key_t* k, void (*dtor)(void*)) { (void)dtor; return os_tls_key_create(k); }
 int   os_tls_key_create(os_tls_key_t* k) {
     if (!k) return -EINVAL;
     DWORD idx = TlsAlloc();
@@ -1545,6 +1546,7 @@ int os_sock_set_send_timeout(int64_t fd, int64_t seconds) {
     DWORD ms = wsec_to_ms(seconds);
     return setsockopt(WSOCK(fd), SOL_SOCKET, SO_SNDTIMEO, (const char*)&ms, sizeof(ms)) == 0 ? 0 : wsa_last();
 }
+int os_sock_adopt_fd(int64_t fd) { (void)fd; return -ENOSYS; }
 int os_sock_set_nonblocking(int64_t fd, int on) {
     u_long mode = on ? 1 : 0;
     return ioctlsocket(WSOCK(fd), FIONBIO, &mode) == 0 ? 0 : wsa_last();
@@ -4001,6 +4003,8 @@ int64_t os_serial_write(int64_t hh, const void* buf, int64_t n) {
     }
     return done;
 }
+
+int os_serial_adopt_fd(int64_t fd) { (void)fd; return -ENOSYS; }
 
 int os_serial_close(int64_t hh) {
     if (hh <= 0) return -EINVAL;

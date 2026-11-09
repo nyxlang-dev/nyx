@@ -462,6 +462,8 @@ test-all:
 	@echo ""
 	$(MAKE) test-regex-diff
 	@echo ""
+	$(MAKE) test-build-shared
+	@echo ""
 	$(MAKE) test-load
 	@echo ""
 	$(MAKE) test-ai-first
@@ -536,6 +538,10 @@ test-android:
 
 ## Motor regex vendorizado (runtime/vendor/tre, el de Windows) contra la regex de la libc: mismo veredicto,
 ## mismo match y mismo replace_all; también bajo ASan/UBSan (arco regex-windows).
+## nyx build --shared: .so cargada con dlopen, hilos ajenos bajo GC, handler fatal, símbolos; y la .so de Android (arco android-lib)
+test-build-shared:
+	bash scripts/testing/run_build_shared.sh
+
 test-regex-diff:
 	bash scripts/testing/run_regex_diff.sh
 
@@ -823,4 +829,4 @@ bench-test-cache:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross test-android test-regex-diff build-repl repl release-check bench-test-cache
+.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross test-android test-regex-diff test-build-shared build-repl repl release-check bench-test-cache

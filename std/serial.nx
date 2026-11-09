@@ -53,6 +53,7 @@ extern "C" fn nyx_serial_read(h: int, max: int, timeout_ms: int) -> Array
 extern "C" fn nyx_serial_read_until(h: int, fin: int, max: int, timeout_ms: int) -> Array
 extern "C" fn nyx_serial_write(h: int, data: String) -> int
 extern "C" fn nyx_serial_close(h: int) -> int
+extern "C" fn nyx_serial_adopt_fd(fd: int) -> int
 extern "C" fn nyx_serial_list() -> Array
 
 pub struct SerialPort {
@@ -96,6 +97,15 @@ pub fn try_serial_open(path: String, baud: int, data_bits: int, parity: String, 
     if code != 0 { return Result.Err(__serial_err(code, "serial_open", path)) }
     let h: int = r[1]
     return Result.Ok(SerialPort { handle: h, path: path })
+}
+
+/// Adopta un fd que abrió otro como puerto serie (android-lib D10): si es un tty le aplica la configuración de serial_open (raw, 8N1, sin control de flujo, DTR; conserva la velocidad que ya tenía); si no lo es (pipe, socketpair, el puente de Bluetooth/USB de Kotlin) no toca termios. `label` queda como `path` en los mensajes de error. Nyx pasa a ser el dueño y lo cierra con try_serial_close; desde Kotlin pasarlo con ParcelFileDescriptor.detachFd(). En Windows siempre es Err.
+pub fn try_serial_from_fd(fd: int, label: String) -> Result<SerialPort, String> {
+    let r: int = nyx_serial_adopt_fd(fd)
+    if r == 0 { return Result.Ok(SerialPort { handle: fd, path: label }) }
+    let code: int = 0 - r
+    if code == 38 { return Result.Err("serial_from_fd '" + label + "': no soportado en este destino") }
+    return Result.Err("serial_from_fd '" + label + "': fd " + int_to_string(fd) + ": " + errno_to_kind(code) + " (" + int_to_string(code) + ")")
 }
 
 pub fn try_serial_write(p: SerialPort, datos: String) -> Result<int, Error> {

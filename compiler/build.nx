@@ -210,8 +210,14 @@ fn parse_toml(content: String) -> ProjectConfig {
                     // saldría 0, igual que la flag mal escrita que ya se rechaza.
                     if key == "main" { build_main = val }
                     else if key == "target" { build_target = val }
+                    else if key == "kind" {
+                        if val == "shared" { g_build_shared = true }
+                        else if val != "bin" and config.toml_error == "" {
+                            config.toml_error = "[build] kind = \"" + val + "\" no existe en nyx.toml (valores: \"bin\", el ejecutable, o \"shared\", la biblioteca lib<name>.so)"
+                        }
+                    }
                     else if config.toml_error == "" {
-                        config.toml_error = "clave desconocida en [build] de nyx.toml: '" + key + "' (claves válidas: main, target)"
+                        config.toml_error = "clave desconocida en [build] de nyx.toml: '" + key + "' (claves válidas: main, target, kind)"
                     }
                 }
                 if current_section == "lib" {
@@ -1536,6 +1542,10 @@ fn barrer_huerfanos_build(base: String) {
 // adentro, porque es 0755 y de quien corre el build). "" si no se pudo.
 // Antes de crear el suyo barre los de builds muertos (barrer_huerfanos_build).
 var g_tmp_n: int = 0
+// Arco android-lib (D1): `nyx build --shared` o `[build] kind = "shared"` arma
+// lib<name>.so en vez de un ejecutable. Global y no campo de ProjectConfig: lo lee
+// solo run_build/build_nativo, y un campo nuevo obliga a tocar cada literal.
+var g_build_shared: bool = false
 fn tmp_dir_propio(prefijo: String) -> String {
     var base: String = temp_dir()
     if base == "" { base = "/tmp" }
@@ -3294,6 +3304,27 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         tgt_ld = tgt_cc + " -fuse-ld=lld-link"
         gc_flag = gc_flag + "NYX_TARGET=" + eff_target + " "
     }
+    // Biblioteca compartida (arco android-lib, D1/D8): solo destinos ELF. -fPIC va en
+    // tgt_cc para que el runtime cacheado y los [lib] modules salgan con su propia
+    // clave (un objeto PIE no enlaza en un -shared); NYX_SHARED=1 le dice al
+    // compilador que no emita main y que envuelva las #[export_name].
+    if g_build_shared {
+        if eff_target == "wasm32-wasi" or es_triple_windows(eff_target) or host_win {
+            print("error: --shared arma bibliotecas .so de Linux y Android; para " + eff_target + " todavía no hay salida compartida")
+            return false
+        }
+        if native_dir == "" { native_dir = "target" }
+        native_out = native_dir + "/lib" + output_name + ".so"
+        if not android { tgt_cc = tgt_cc + " -fPIC" }
+        // Sin --exclude-libs: oculta TODO lo que viene de un .a, también el borde del
+        // runtime (nyx_lib_init), y le gana al version script; el `local: *` de ese
+        // script ya deja local a Boehm, OpenSSL y el resto (build_nativo).
+        tgt_ld = tgt_ld + " -shared -fPIC -Wl,-soname,lib" + output_name + ".so"
+        // Páginas de 16 KB: Play las exige desde Android 15, y una .so alineada a
+        // 4 KB no carga en esos dispositivos. En Linux no estorba.
+        tgt_ld = tgt_ld + " -Wl,-z,max-page-size=16384"
+        gc_flag = gc_flag + "NYX_SHARED=1 "
+    }
     let link_flags: String = opt_flags + tgt_ld
 
     // Target WASM: subset portable del runtime, clang wasm32-wasi (paquetes
@@ -3430,6 +3461,8 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
     let srcll: String = tmpd + "/src.ll"
     write_file(srcnx, read_file(orig + "/" + config.main_file))
     env = concat_env(env, [["NYX_SRC", srcnx], ["NYX_SRC_DISPLAY", config.main_file], ["NYX_PROJECT_DIR", orig]])
+    let exports_txt: String = tmpd + "/exports.txt"
+    if g_build_shared { env = concat_env(env, [["NYX_SHARED_EXPORTS", exports_txt]]) }
     let log: String = tmpd + "/log"
     let rc: int = correr_a_log([nyx_bin], nyx_home, env, log)
     if rc != 0 {
@@ -3447,6 +3480,23 @@ fn build_nativo(config: ProjectConfig, opt_flags: String, tgt_cc: String, link_f
     // Sin caché, el runtime entra en fuentes sueltas y necesita las -I acá.
     if win { argv = concat(argv, concat(["-Wno-unused-command-line-argument", "-Wno-deprecated-declarations"], cc_win)) }
     argv = concat(concat(argv, lib_objs), rt_in)
+    if g_build_shared {
+        // D2: la .so exporta SOLO las #[export_name] (la lista la escribe el
+        // compilador) y el borde del runtime; todo lo demás —los pub del
+        // programa, el runtime, Boehm, OpenSSL— queda local. Así dos .so no se
+        // pisan los símbolos y un pub interno no se vuelve ABI por accidente.
+        var vs: String = "{\n  global:\n    nyx_lib_init;\n    nyx_lib_enter;\n    nyx_lib_set_fatal_handler;\n    nyx_buf_free;\n"
+        let ex_lines: Array = read_file(exports_txt).split("\n")
+        var ei: int = 0
+        while ei < ex_lines.length() {
+            let ex: String = ex_lines[ei]
+            if ex.trim() != "" { vs = vs + "    " + ex.trim() + ";\n" }
+            ei = ei + 1
+        }
+        vs = vs + "  local: *;\n};\n"
+        write_file(tmpd + "/exports.map", vs)
+        argv.push("-Wl,--version-script=" + tmpd + "/exports.map")
+    }
     if win {
         argv = concat(argv, concat(ld_win, ["-o", orig + "/" + native_out]))
     } else if eff_target == triple_android() {
@@ -4217,6 +4267,12 @@ fn main() -> int {
             fi = args.length()
         }
         else if flag == "--release" { release = true }
+        else if flag == "--shared" and command == "build" { g_build_shared = true }
+        else if flag == "--shared" and command == "run" {
+            if flag_desconocida == "" {
+                flag_desconocida = "`nyx run --shared` no tiene sentido: una biblioteca .so no se ejecuta sola (usa `nyx build --shared` y cárgala desde la app)"
+            }
+        }
         else if flag == "--main" {
             var mval: String = ""
             if fi + 1 < args.length() {
@@ -4277,6 +4333,8 @@ fn main() -> int {
         print("nyx " + command + " — flags disponibles:")
         print("  --release            compila optimizado")
         print("  --target <triple>    destino de compilación (por defecto, el de [build] en nyx.toml)")
+        print("  --shared             arma la biblioteca target/[<triple>/]lib<nombre>.so (Linux y Android):")
+        print("                       sin main; exporta solo las fns #[export_name] (también [build] kind = \"shared\")")
         print("  --main <archivo.nx>  otro punto de entrada del proyecto (por defecto, el main de nyx.toml);")
         print("                       el artefacto va a target/<nombre>-<archivo> para no pisar el principal")
         print("  -j, --jobs <n>       unidades de [lib] que se compilan a la vez (por defecto, los núcleos;")
@@ -4579,6 +4637,13 @@ fn main() -> int {
                 }
                 hi = hi + 1
             }
+        }
+        // [build] kind = "shared" en el manifiesto: lo mismo que `nyx run --shared`
+        // (rechazado al parsear las flags) — una .so no se ejecuta sola.
+        if g_build_shared {
+            print("error: este proyecto es una biblioteca compartida ([build] kind = \"shared\"): `nyx run` no la ejecuta")
+            print("  ármala con `nyx build` y cárgala desde la app (o con dlopen)")
+            return 1
         }
         let ok: bool = run_build(config, false, target_flag)
         var run_bin: String = config.name

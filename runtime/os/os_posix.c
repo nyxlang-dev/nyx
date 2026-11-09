@@ -251,6 +251,7 @@ void os_rwlock_destroy(os_rwlock_t* r) { pthread_rwlock_destroy(R(r)); }
 void os_once(os_once_t* o, void (*fn)(void)) { pthread_once((pthread_once_t*)o->storage, fn); }
 
 int   os_tls_key_create(os_tls_key_t* k) { int rc = pthread_key_create(K(k), NULL); return rc ? -rc : 0; }
+int   os_tls_key_create_dtor(os_tls_key_t* k, void (*dtor)(void*)) { int rc = pthread_key_create(K(k), dtor); return rc ? -rc : 0; }
 void* os_tls_get(os_tls_key_t* k) { return pthread_getspecific(*K(k)); }
 void  os_tls_set(os_tls_key_t* k, void* v) { pthread_setspecific(*K(k), v); }
 
@@ -994,6 +995,13 @@ int os_sock_set_nonblocking(int64_t fd, int on) {
     if (flags < 0) return -errno;
     int rc = fcntl((int)fd, F_SETFL, on ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK));
     return rc < 0 ? -errno : rc;
+}
+int os_sock_adopt_fd(int64_t fd) {
+    if (fd < 0 || fd > INT_MAX) return -EBADF;
+    struct stat st;
+    if (fstat((int)fd, &st) != 0) return -errno;
+    if (!S_ISSOCK(st.st_mode)) return -ENOTSOCK;
+    return os_sock_set_nonblocking(fd, 1);   // igual que los sockets propios (net.c)
 }
 int os_sock_error(int64_t fd) {
     // SO_ERROR entrega un errno pendiente EN POSITIVO (0 si no hay error) --
@@ -2479,19 +2487,15 @@ static speed_t serial_speed(int baud) {
     }
 }
 
-int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, int stop_bits) {
-    if (!path || !*path) return -EINVAL;
-    speed_t sp = serial_speed(baud);
-    if (sp == (speed_t)0) return -EINVAL;
-    if (data_bits < 5 || data_bits > 8 || parity < 0 || parity > 2 || (stop_bits != 1 && stop_bits != 2))
-        return -EINVAL;
-    int fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
-    if (fd < 0) return -errno;
+// Configuración termios + DTR compartida por os_serial_open y os_serial_adopt_fd.
+// sp == 0 = conservar la velocidad que el tty ya tenga (adopt). 0 / -errno; NO cierra fd.
+// EN: shared termios+DTR setup; sp==0 keeps the current speed; never closes fd.
+static int serial_tty_configure(int fd, speed_t sp, int data_bits, int parity, int stop_bits) {
     // TIOCEXCL: un segundo open (que no sea de root) da EBUSY. En un archivo
     // que no es terminal falla con ENOTTY: ahí no es un puerto serie.
-    if (ioctl(fd, TIOCEXCL) != 0) { int e = errno; close(fd); return e == ENOTTY ? -EINVAL : -e; }
+    if (ioctl(fd, TIOCEXCL) != 0) { int e = errno; return e == ENOTTY ? -EINVAL : -e; }
     struct termios t;
-    if (tcgetattr(fd, &t) != 0) { int e = errno; close(fd); return e == ENOTTY ? -EINVAL : -e; }
+    if (tcgetattr(fd, &t) != 0) { int e = errno; return e == ENOTTY ? -EINVAL : -e; }
     cfmakeraw(&t);
     t.c_cflag &= ~(tcflag_t)(CSIZE | PARENB | PARODD | CSTOPB);
 #ifdef CRTSCTS
@@ -2510,13 +2514,26 @@ int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, in
     t.c_iflag &= ~(tcflag_t)(IXON | IXOFF | IXANY);
     t.c_cc[VMIN] = 0;    // read() devuelve lo que haya; el plazo lo pone poll()
     t.c_cc[VTIME] = 0;
-    if (cfsetispeed(&t, sp) != 0 || cfsetospeed(&t, sp) != 0 || tcsetattr(fd, TCSANOW, &t) != 0) {
-        int e = errno; close(fd); return -e;
+    if ((sp != (speed_t)0 && (cfsetispeed(&t, sp) != 0 || cfsetospeed(&t, sp) != 0)) || tcsetattr(fd, TCSANOW, &t) != 0) {
+        int e = errno; return -e;
     }
     // DTR arriba (open ya lo sube en casi todos los drivers; un pty no tiene
     // líneas de módem y da error: se ignora a propósito).
     int bits = TIOCM_DTR;
     (void)ioctl(fd, TIOCMBIS, &bits);
+    return 0;
+}
+
+int64_t os_serial_open(const char* path, int baud, int data_bits, int parity, int stop_bits) {
+    if (!path || !*path) return -EINVAL;
+    speed_t sp = serial_speed(baud);
+    if (sp == (speed_t)0) return -EINVAL;
+    if (data_bits < 5 || data_bits > 8 || parity < 0 || parity > 2 || (stop_bits != 1 && stop_bits != 2))
+        return -EINVAL;
+    int fd = open(path, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return -errno;
+    { int rc = serial_tty_configure(fd, sp, data_bits, parity, stop_bits);
+      if (rc < 0) { close(fd); return rc; } }
     int fl = fcntl(fd, F_GETFL);
     if (fl >= 0) (void)fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
     tcflush(fd, TCIOFLUSH);   // lo que el driver tuviera de antes no es de este programa
@@ -2558,6 +2575,19 @@ int64_t os_serial_write(int64_t h, const void* buf, int64_t n) {
         done += (int64_t)w;
     }
     return done;
+}
+
+int os_serial_adopt_fd(int64_t fd) {
+    if (fd < 0 || fd > INT_MAX) return -EBADF;
+    int f = (int)fd;
+    if (fcntl(f, F_GETFL) < 0) return -errno;
+    if (isatty(f)) {
+        int rc = serial_tty_configure(f, (speed_t)0, 8, 0, 1);
+        if (rc < 0) return rc;
+        tcflush(f, TCIOFLUSH);
+    }
+    // Bloqueante como el que deja os_serial_open: la espera la pone poll() en os_serial_read.
+    return os_fd_set_nonblocking(f, 0);
 }
 
 int os_serial_close(int64_t h) {

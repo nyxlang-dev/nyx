@@ -3,6 +3,7 @@
 // ============================================
 
 #include <stdio.h>
+#include "runtime.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -27,7 +28,7 @@
 nyx_array_t* nyx_array_new(int64_t capacity) {
     if (capacity < 0) {
         fprintf(stderr, "💥 Runtime Error: Capacidad negativa: %" PRId64 "\n", capacity);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     // Si capacidad es 0, usar capacidad inicial por defecto
@@ -39,7 +40,7 @@ nyx_array_t* nyx_array_new(int64_t capacity) {
     nyx_array_t* arr = (nyx_array_t*)GC_malloc(sizeof(nyx_array_t));
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: No se pudo allocar array\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     arr->length = 0;
@@ -49,7 +50,7 @@ nyx_array_t* nyx_array_new(int64_t capacity) {
     arr->data = (int64_t*)GC_malloc(sizeof(int64_t) * capacity);
     if (!arr->data) {
         fprintf(stderr, "💥 Runtime Error: No se pudo allocar datos de array\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     // Etapa 1 slots-tag: tags paralelos, en CERO (= NYX_TAG_UNKNOWN) → un array
@@ -57,7 +58,7 @@ nyx_array_t* nyx_array_new(int64_t capacity) {
     arr->tags = (uint8_t*)GC_malloc(sizeof(uint8_t) * capacity);
     if (!arr->tags) {
         fprintf(stderr, "💥 Runtime Error: No se pudo allocar tags de array\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     memset(arr->tags, NYX_TAG_UNKNOWN, sizeof(uint8_t) * capacity);
 
@@ -81,7 +82,7 @@ nyx_array_t* nyx_array_from_literal(int64_t* elements, int64_t length) {
 int64_t nyx_array_length(nyx_array_t* arr) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return arr->length;
 }
@@ -90,7 +91,7 @@ int64_t nyx_array_length(nyx_array_t* arr) {
 int64_t nyx_array_capacity(nyx_array_t* arr) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return arr->capacity;
 }
@@ -99,13 +100,13 @@ int64_t nyx_array_capacity(nyx_array_t* arr) {
 static void nyx_array_bounds_check(nyx_array_t* arr, int64_t index) {
     if (index < 0) {
         fprintf(stderr, "💥 Runtime Error: Índice negativo: %" PRId64 "\n", index);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     if (index >= arr->length) {
         fprintf(stderr, "💥 Runtime Error: Índice %" PRId64 " fuera de rango [0..%" PRId64 ")\n", 
                 index, arr->length);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 }
 
@@ -113,7 +114,7 @@ static void nyx_array_bounds_check(nyx_array_t* arr, int64_t index) {
 int64_t nyx_array_get(nyx_array_t* arr, int64_t index) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     nyx_array_bounds_check(arr, index);
@@ -132,7 +133,7 @@ int64_t nyx_array_get_or_zero(nyx_array_t* arr, int64_t index) {
 void nyx_array_set(nyx_array_t* arr, int64_t index, int64_t value) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     nyx_array_bounds_check(arr, index);
@@ -154,7 +155,7 @@ static void nyx_array_resize(nyx_array_t* arr, int64_t new_capacity) {
     arr->data = (int64_t*)GC_REALLOC(arr->data, sizeof(int64_t) * new_capacity);
     if (!arr->data) {
         fprintf(stderr, "💥 Runtime Error: No se pudo redimensionar array\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     // Etapa 1 slots-tag: los tags crecen en paralelo; lo nuevo arranca UNKNOWN.
@@ -162,7 +163,7 @@ static void nyx_array_resize(nyx_array_t* arr, int64_t new_capacity) {
     arr->tags = (uint8_t*)GC_REALLOC(arr->tags, sizeof(uint8_t) * new_capacity);
     if (!arr->tags) {
         fprintf(stderr, "💥 Runtime Error: No se pudo redimensionar tags de array\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     if (new_capacity > old_capacity) {
         memset(arr->tags + old_capacity, NYX_TAG_UNKNOWN,
@@ -176,7 +177,7 @@ static void nyx_array_resize(nyx_array_t* arr, int64_t new_capacity) {
 void nyx_array_push(nyx_array_t* arr, int64_t value) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     // Verificar si necesita resize
@@ -201,12 +202,12 @@ void nyx_array_push(nyx_array_t* arr, int64_t value) {
 int64_t nyx_array_pop(nyx_array_t* arr) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     if (arr->length == 0) {
         fprintf(stderr, "💥 Runtime Error: pop() en array vacío\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     arr->length--;
@@ -217,7 +218,7 @@ int64_t nyx_array_pop(nyx_array_t* arr) {
 void nyx_array_unshift(nyx_array_t* arr, int64_t value) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     if (arr->length >= arr->capacity) {
         int64_t new_capacity = arr->capacity * NYX_ARRAY_GROWTH_FACTOR;
@@ -237,7 +238,7 @@ void nyx_array_unshift(nyx_array_t* arr, int64_t value) {
 int64_t nyx_array_shift(nyx_array_t* arr) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     if (arr->length == 0) {
         return 0;
@@ -255,7 +256,7 @@ int64_t nyx_array_shift(nyx_array_t* arr) {
 void nyx_array_clear(nyx_array_t* arr) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     arr->length = 0;
@@ -265,7 +266,7 @@ void nyx_array_clear(nyx_array_t* arr) {
 int64_t nyx_array_contains(nyx_array_t* arr, int64_t value) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     for (int64_t i = 0; i < arr->length; i++) {
@@ -280,13 +281,13 @@ int64_t nyx_array_contains(nyx_array_t* arr, int64_t value) {
 void nyx_array_insert(nyx_array_t* arr, int64_t index, int64_t value) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     if (index < 0 || index > arr->length) {
         fprintf(stderr, "💥 Runtime Error: Índice de insert %" PRId64 " fuera de rango [0..%" PRId64 "]\n", 
                 index, arr->length);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     // Verificar si necesita resize
@@ -311,7 +312,7 @@ void nyx_array_insert(nyx_array_t* arr, int64_t index, int64_t value) {
 int64_t nyx_array_remove(nyx_array_t* arr, int64_t index) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     nyx_array_bounds_check(arr, index);
@@ -332,7 +333,7 @@ int64_t nyx_array_remove(nyx_array_t* arr, int64_t index) {
 nyx_array_t* nyx_array_slice(nyx_array_t* arr, int64_t start, int64_t end) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     // Validar rangos
@@ -406,13 +407,13 @@ int64_t nyx_array_index_of(nyx_array_t* arr, int64_t value) {
 void nyx_bounds_check(int64_t index, int64_t length) {
     if (index < 0) {
         fprintf(stderr, "💥 Runtime Error: Índice negativo: %" PRId64 "\n", index);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     if (index >= length) {
         fprintf(stderr, "💥 Runtime Error: Índice %" PRId64 " fuera de rango [0..%" PRId64 ")\n", 
                 index, length);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 }
 
@@ -437,7 +438,7 @@ void nyx_print_array(int64_t* arr, int64_t length) {
 void nyx_array_push_tagged(nyx_array_t* arr, int64_t value, int64_t tag) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     int64_t idx = arr->length;   // push escribe en la posición actual
     nyx_array_push(arr, value);  // reusa crecimiento/resize (que ya mueve tags)
@@ -449,7 +450,7 @@ void nyx_array_push_tagged(nyx_array_t* arr, int64_t value, int64_t tag) {
 void nyx_array_set_tagged(nyx_array_t* arr, int64_t index, int64_t value, int64_t tag) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     nyx_array_set(arr, index, value);   // valida bounds y aborta si corresponde
     if (arr->tags && index >= 0 && index < arr->capacity) {
@@ -626,7 +627,7 @@ int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
             "💥 Runtime Error: %s_desde_fila recibió una fila NULL"
             " (campo '%s', posición %" PRId64 ")\n",
             struct_name ? struct_name : "?", field_name ? field_name : "?", index);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     if (index < 0 || index >= fila->length) {
         fprintf(stderr,
@@ -636,7 +637,7 @@ int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
             " columnas, en el orden de los campos del struct.\n",
             struct_name ? struct_name : "?", fila->length, n_campos,
             field_name ? field_name : "?", index);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return nyx_array_get_checked(fila, index, expected_tag);
 }
@@ -644,7 +645,7 @@ int64_t nyx_row_cell(nyx_array_t* fila, int64_t index, int64_t expected_tag,
 int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_tag) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     nyx_array_bounds_check(arr, index);
     if (arr->tags) {
@@ -667,7 +668,7 @@ int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_
                 " pero se leyó como %s — anota el tipo real o convierte explícito"
                 " (string_to_int/float, from_int, ...); NYX_SLOT_CHECK=off lo desactiva\n",
                 index, nyx_tag_name(t), arr->data[index], nyx_tag_name(expected_tag));
-            exit(1);
+            NYX_FATAL_EXIT();
         }
     }
     return arr->data[index];
@@ -682,7 +683,7 @@ int64_t nyx_array_get_checked(nyx_array_t* arr, int64_t index, int64_t expected_
 double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     nyx_array_bounds_check(arr, index);
     int64_t v = arr->data[index];
@@ -696,7 +697,7 @@ double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index) {
         fprintf(stderr,
             "💥 Runtime Error: el slot %" PRId64 " del Array contiene String pero se leyó como float"
             " — usa string_to_float() para convertir; NYX_SLOT_CHECK=off lo desactiva\n", index);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return (double)v;
 }
@@ -707,7 +708,7 @@ double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index) {
 double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     nyx_array_bounds_check(arr, index);
     int64_t v = arr->data[index];
@@ -730,7 +731,7 @@ double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag)
             " pero se leyó como float — anota el tipo real o convierte explícito"
             " (string_to_float, ...); NYX_SLOT_CHECK=off lo desactiva\n",
             index, nyx_tag_name(t));
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     if (t == NYX_TAG_UNKNOWN && static_tag == NYX_TAG_FLOAT) {
         // La anotación manda: el receptor está DECLARADO Array<float>, el
@@ -756,7 +757,7 @@ double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag)
 int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     nyx_array_bounds_check(arr, index);
     int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
@@ -766,7 +767,7 @@ int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
             " pero se leyó como int — anota el tipo real o convierte explícito"
             " (string_to_int, float_to_int, ...); NYX_SLOT_CHECK=off lo desactiva\n",
             index, nyx_tag_name(t));
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return arr->data[index];
 }
@@ -778,7 +779,7 @@ int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
 int64_t nyx_slot_as_array_checked(nyx_array_t* arr, int64_t index) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     nyx_array_bounds_check(arr, index);
     int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
@@ -789,7 +790,7 @@ int64_t nyx_slot_as_array_checked(nyx_array_t* arr, int64_t index) {
             " pero se leyó como Array — anota el tipo real del elemento;"
             " NYX_SLOT_CHECK=off lo desactiva\n",
             index, nyx_tag_name(t));
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return arr->data[index];
 }
@@ -810,7 +811,7 @@ int64_t nyx_slot_as_array_checked(nyx_array_t* arr, int64_t index) {
 int64_t nyx_slot_as_value_checked(nyx_array_t* arr, int64_t index, const char* type_name) {
     if (!arr) {
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     nyx_array_bounds_check(arr, index);
     int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
@@ -823,7 +824,7 @@ int64_t nyx_slot_as_value_checked(nyx_array_t* arr, int64_t index, const char* t
             "   (expected a '%s' but Array slot %" PRId64 " holds a value of type %s — the Array has"
             " no element type: annotate it (Array<%s>) or check what was stored in it)\n",
             tn, index, nyx_tag_name(t), tn, tn, index, nyx_tag_name(t), tn);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return arr->data[index];
 }
@@ -861,7 +862,7 @@ int64_t nyx_array_contains_tagged(nyx_array_t* arr, int64_t value, int64_t needl
     if (!arr) {
         // espeja el manejo de NULL de nyx_array_contains
         fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return nyx_array_index_of_tagged(arr, value, needle_tag) >= 0 ? 1 : 0;
 }

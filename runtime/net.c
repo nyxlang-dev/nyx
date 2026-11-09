@@ -2018,6 +2018,8 @@ int64_t nyx_udp_bind_result(nyx_string* host, int64_t port) { return net_code(ny
 int64_t nyx_tcp_accept_result(int64_t listen_fd) { return net_code(nyx_tcp_accept_result_native(listen_fd)); }
 int64_t nyx_tcp_write_result(int64_t fd, nyx_string* data) { return net_code(nyx_tcp_write_result_native(fd, data)); }
 int64_t nyx_udp_sendto_result(int64_t fd, nyx_string* data, nyx_string* host, int64_t port) { return net_code(nyx_udp_sendto_result_native(fd, data, host, port)); }
+// D10 (android-lib): adopta un fd de socket ajeno. 0 / -errno canónico.
+int64_t nyx_socket_adopt_fd_result(int64_t fd) { return net_code(os_sock_adopt_fd(fd)); }
 int64_t nyx_tcp_shutdown_result(int64_t fd, int64_t how) { return net_code(nyx_tcp_shutdown_result_native(fd, how)); }
 int64_t nyx_tcp_set_timeout_result(int64_t fd, int64_t seconds) { return net_code(nyx_tcp_set_timeout_result_native(fd, seconds)); }
 int64_t nyx_local_port_result(int64_t fd) { return net_code(nyx_local_port_result_native(fd)); }

@@ -9,6 +9,34 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`nyx build --shared` arma una biblioteca `lib<name>.so`** (también `[build] kind = "shared"`; Linux y
+  `aarch64-linux-android`) para cargarla desde una app por JNI o desde C con `dlopen`: sin `fn main` (NYX1049),
+  exporta solo las `#[export_name]` (version script; todo lo demás, Boehm y OpenSSL incluidos, queda local) y corre
+  una `fn init()` opcional una vez desde `nyx_lib_init`. Un `String` entra como `(ptr, len)` y sale como `nyx_buf *`,
+  que se libera con `nyx_buf_free`; un tipo que no cruza a C en esa firma es NYX1048. Cada exportada registra en el GC
+  el hilo de la app que la llama (sin eso, una colección liberaba lo que su pila apuntaba); los fatales —`assert`,
+  `panic`, OOM, NYX2022 y los errores del runtime— van al handler de `nyx_lib_set_fatal_handler` y terminan con
+  `abort()`, y la `.so` queda con páginas de 16 KB. `nyx run` se niega. `make test-build-shared` la carga con
+  `dlopen` desde 8 hilos ajenos bajo GC (y prueba que con el registro apagado falla) y revisa la `.so` de Android
+  con `readelf`. Plantilla JNI/Kotlin en `templates/android/`, gotcha `shared-lib-fatal-mata-app`, receta 157
+  [arco: android-lib].
+- **`try_socket_from_fd` (`std/net`) y `try_serial_from_fd` (`std/serial`)** adoptan un descriptor que abrió otro
+  (en Android, la punta de un `socketpair` que Kotlin bombea desde Bluetooth o USB): Nyx pasa a ser su dueño y lo
+  cierra. Un fd que no es socket es `Err`; uno de serie que no es tty se usa sin termios. En Windows devuelven `Err`
+  [arco: android-lib].
+
+### Fixed
+
+- **`#[export_name("x")]` con paréntesis renombra la función** como `#[export_name = "x"]`: la forma que muestra
+  `docs/SPEC.md` quedaba como un atributo que nadie reconocía, y la función salía con su nombre interno sin aviso
+  [arco: android-lib].
+- **`#[export_name]` fuera de wasm exporta de verdad y no rompe las llamadas desde Nyx**: renombraba la función y la
+  dejaba `internal`, así que el nombre C no salía del objeto y llamarla por su nombre de Nyx no enlazaba
+  (`call @echo` sin definición). Ahora conserva su nombre y el de C es un alias externo; wasm sigue igual
+  (`wasm-export-name`) [arco: android-lib].
+
 ---
 
 ## [0.42.1] — 2026-11-09

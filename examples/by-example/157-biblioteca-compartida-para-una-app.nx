@@ -1,0 +1,51 @@
+// Nyx by Example: una biblioteca compartida (.so) para una app.
+//
+// Un programa Nyx puede armarse como `lib<nombre>.so` en vez de un ejecutable, para que
+// otra cosa lo cargue: una app Android por JNI, un programa en C con dlopen, Python con ctypes.
+//
+//   nyx build --shared                                  -> target/lib<nombre>.so
+//   nyx build --target aarch64-linux-android --shared   -> target/aarch64-linux-android/lib<nombre>.so
+//   # o fijarlo en nyx.toml:  [build]  kind = "shared"
+//
+// Reglas del modo --shared:
+//   1. Solo las funciones con #[export_name("x")] salen de la .so, con ese nombre C. Todo lo
+//      demás queda oculto (también los `pub`).
+//   2. Su firma usa solo int (int64_t), float (double), bool, punteros crudos y String.
+//      Un String ENTRA como (const uint8_t *ptr, int64_t len) —bytes UTF-8, puede traer NUL— y
+//      SALE como `nyx_buf *` (malloc fuera del GC); quien llama lo libera con nyx_buf_free.
+//      Cualquier otro tipo es NYX1048.
+//   3. `fn init()` es opcional y corre UNA vez, al cargar la biblioteca (nyx_lib_init).
+//   4. Una .so no tiene `fn main` (NYX1049): nadie la llamaría. El `main` de abajo existe solo
+//      para que esta receta se pueda ejecutar como programa normal; en --shared se BORRA.
+//   5. Un assert o un panic dentro de la .so mata la app entera (ver
+//      docs/gotchas/shared-lib-fatal-mata-app.md). Los errores esperables salen como códigos.
+//
+// El estado de larga vida (una conexión, un servidor) se guarda del lado de Nyx y se entrega
+// al llamador como un `int` opaco que él devuelve en cada llamada.
+
+var g_llamadas: int = 0
+
+// Corre una vez al cargar la .so (en este programa normal, la llama main).
+fn init() {
+    g_llamadas = 0
+}
+
+#[export_name("app_echo")]
+fn echo(s: String) -> String {
+    g_llamadas = g_llamadas + 1
+    return s
+}
+
+#[export_name("app_llamadas")]
+fn llamadas() -> int {
+    return g_llamadas
+}
+
+// Solo para el runner de las recetas: en `nyx build --shared` este main no va.
+fn main() {
+    init()
+    let r: String = echo("hola, app")
+    assert(r == "hola, app")
+    assert(llamadas() == 1)
+    print(r)
+}

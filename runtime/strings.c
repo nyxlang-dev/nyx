@@ -4,6 +4,7 @@
 // Strings inmutables con Boehm GC
 
 #include <stdio.h>
+#include "runtime.h"
 #include <stdlib.h>
 #include <math.h>   // isnan/isinf/signbit de nyx_float_format
 #include <float.h>  // DBL_MIN: subnormales al loop completo
@@ -738,7 +739,7 @@ int64_t nyx_parse_int_bytes(const char* p, int64_t n, int* ok) {
 int64_t nyx_string_to_int(nyx_string* str) {
     if (!str || str->length == 0) {
         fprintf(stderr, "💥 Runtime Error: No se puede convertir string vacío a int\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     int ok;
@@ -746,11 +747,11 @@ int64_t nyx_string_to_int(nyx_string* str) {
 
     if (ok == NYX_INT_DESBORDE) {
         fprintf(stderr, "💥 Runtime Error: '%s' no entra en un int (64 bits: -9223372036854775808 a 9223372036854775807)\n", str->data);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     if (ok != NYX_INT_OK) {
         fprintf(stderr, "💥 Runtime Error: String '%s' no es un número válido\n", str->data);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     return result;
@@ -815,7 +816,7 @@ double nyx_parse_float_bytes(const char* p, int64_t n, int* ok) {
 double nyx_string_to_float(nyx_string* str) {
     if (!str || str->length == 0) {
         fprintf(stderr, "💥 Runtime Error: No se puede convertir string vacío a float\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     int ok;
@@ -823,7 +824,7 @@ double nyx_string_to_float(nyx_string* str) {
 
     if (!ok) {
         fprintf(stderr, "💥 Runtime Error: String '%s' no es un número válido\n", str->data);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
 
     return result;
@@ -974,7 +975,7 @@ nyx_string* nyx_string_replace(nyx_string* str, nyx_string* old, nyx_string* new
 char nyx_string_char_at(nyx_string* str, int64_t index) {
     if (!str || index < 0 || index >= (int64_t)str->length) {
         fprintf(stderr, "💥 Runtime Error: charAt() índice fuera de rango\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     return str->data[index];
 }
@@ -1146,14 +1147,14 @@ int nyx_string_contains_cstr(const char* haystack, const char* needle) {
 char nyx_string_charat(const char* str, int64_t index) {
     if (!str) {
         fprintf(stderr, "💥 Runtime Error: charat() en string null\n");
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     size_t len = strlen(str);
     if (index < 0 || index >= (int64_t)len) {
         fprintf(stderr, "💥 Runtime Error: charat() índice %" PRId64 " fuera de rango [0..%zu)\n", 
                 index, len);
-        exit(1);
+        NYX_FATAL_EXIT();
     }
     
     return str[index];
