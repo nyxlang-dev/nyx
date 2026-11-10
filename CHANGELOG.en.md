@@ -12,6 +12,82 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.44.0] — 2026-11-10
+
+### Added
+
+- **`std/serve` responds in chunks: `response_chunks`, `response_chunks_len`, `response_from_stream` and
+  `response_file`**: a body of tens of MiB no longer has to exist whole in memory (the collector does not give it back
+  and the server stayed at its peak). `response_chunks(status, type, next)` calls `next()` until it returns `""`
+  (chunked; `_len` with `Content-Length`), `response_from_stream(s)` forwards an `HttpStream` without gathering it
+  (it copies the status, the `Content-Type` and the content and cache headers) and `response_file(path, type, name)`
+  serves a file in 16 KiB blocks. Static files over 1 MiB (`try_serve_static`, `app_static`, `app_static_cached`,
+  `try_serve_static_prefix`) go out in blocks with a weak ETag of size and mtime. Measured with 4 workers: the proxy
+  with 60 bodies of 24 MiB ends at ~22 MB of RSS (455 MB when gathering them); 20 downloads of 32 MiB with
+  `response_file`, 23 MiB; 70 responses of 24 MiB with `response_chunks`, +13 MiB. The source's resources are closed on
+  finish, on failure, when the client disconnects and when the response is discarded (`HEAD`, 304, an after-hook that
+  changes the status). Limits: a worker stays busy for as long as the response lasts, and an HTTP/1.0 client receives
+  chunked if there is no length. 88 checks in `test_serve_std_chunks.py`, recipe 160 and gotcha
+  `serve-large-body-memory` [arco: serve-respuesta-por-trozos].
+- **`std/gc`: `gc_collect`, `gc_release`, `gc_heap_bytes` and `gc_free_bytes`**: after a memory peak, `gc_release()`
+  collects and returns to the system the free pages the GC retains (`GC_gcollect_and_unmap` is called twice: the first
+  one collects but does not unmap what it has just freed). It stops all threads while it runs, and being conservative
+  it may need a second call; `std/gc` does not exist in wasm. Case `ai-first/54-gc-release` and recipe 159
+  [arco: serve-respuesta-por-trozos].
+- **`std/serve`: memory release when idle, opt-in** [dogfooding:nyxerp]: with `NYX_SERVE_IDLE_RELEASE_SECS=N`
+  (N > 0; off by default) a thread wakes up every N seconds and calls `gc_release()` if there are no requests in
+  flight, none arrived in the last N seconds, `gc_free_bytes()` exceeds `NYX_SERVE_IDLE_RELEASE_MB` (32), there has
+  been traffic since the last release and the server is not draining; at most two releases per idle stretch, separated
+  by N seconds. SSE/WebSocket connections do not count as requests. Each release prints
+  `nyx-serve idle release: heap <A> MB -> <B> MB in <T> ms`. Measured cost: each one stops all threads (58-94 ms
+  for the two together with little live heap, 330-440 ms each with ~270 MB live) and the first large request afterwards
+  takes 2-3 times longer (63-108 ms against 33-41 ms); with no traffic a floor remains per worker (80-170 MB with 4
+  workers). No new API. Test `tests/integration/test_serve_std_idle_release.py` (27 checks).
+
+### Fixed
+
+- **A large response is no longer truncated when the GC runs in the middle of the send** [dogfooding:nyxerp]: with two
+  clients at once against `std/serve`, 24 MiB bodies arrived cut off at 4-20 MiB, with no error. `send()` on a socket
+  with `SO_SNDTIMEO` returns with `EINTR` on any signal with a handler (even with `SA_RESTART`) and Boehm stops the
+  threads with a signal on every collection; `os_sock_send` took that `EINTR` for an error and left the response half
+  written. It now retries (each retry starts counting the deadline from zero again). Covered by the two simultaneous
+  clients check of `test_serve_std_chunks.py` [arco: serve-respuesta-por-trozos].
+- **`std/serve` writes a large body without copying it** [dogfooding:nyxerp]: to prepend the header, the server
+  glued header and body into a new `String`, and that was two copies of the body per response. Now a body of 64 KiB or
+  more is written after its header, as is. With 4 workers and 24 MiB bodies the process stays at 236 MB instead of
+  455 MB. What remained (memory does not go back to the system and there was no chunked response) is covered by the
+  three entries above. Five
+  new checks in `test_serve_std_keepalive.py`: the 32 MiB body arrives whole six times over the same connection, the
+  connection is left clean, the process does not grow and a `HEAD` brings the `Content-Length` without a body.
+- **Without the prelude, the error about `Result`/`Option` names the cause**: a compiler module (it imports
+  `"compiler/..."` or carries `// nyx:sin-prelude`) that imported `std/process` gave "'Result' not declared" (NYX1002)
+  or, without semantic, "method 'Err' is not available on the global 'Result'" (NYX2002), without saying that the
+  prelude is missing. Now both say so and ask to declare the enum by hand, as `compiler/build.nx` does. Two cases in
+  `test-errors`.
+- **`make test` compiles the runtime only once**: `run_bootstrap_tests.sh` recompiled the 25 `.c` files of the runtime
+  on every test when linking; now it compiles them to `.o` at the start and links those objects (the same link, without
+  `-O`). On the server `make test` went from over 10 minutes to 3 min 39 s.
+- **The event loop reuses slots in O(1)**: registering an fd or a timer swept the whole table looking for a free slot,
+  so registering N timers was O(N²) — with the table growing up to 65536, filling it took ~2e9 comparisons. Now the
+  free slots form a free-list and a single site (`ev_release_slot`) releases them. New test in `test_event_loop.c`:
+  it fills the table up to the ceiling twice and checks that no slot is lost or shared.
+- **`make test` gives the compiler the same stack as the launchers**: `run_bootstrap_tests.sh` was the only path that
+  called `nyx_bootstrap` with the default 8 MB, and on x86_64 `test-515` (56 chained methods) overflowed there and in
+  no real use. Now it raises the stack only for the compiler (the test binaries keep the normal limit); the deliberate
+  8 MB guard remains in `run_stack_frame_audit.sh`. Verified with a compiler built without SROA, which failed with
+  8 MB: 551/551.
+- **Raw pointers to scalars: indexing, dereferencing and widening** [dogfooding:std-image, std-pdf_render]:
+  - `p[i]` on a `*int`/`*u8`/`*float` fell into the Array path and aborted with "Index 1 out of range [0..0)"; now it
+    reads and writes element `i` (GEP on the pointee, with no bounds check, as in C).
+  - `*p as int` was parsed as `*(p as int)` (invalid IR with a `*u8`); now it is `(*p) as int`, as in Rust and C.
+    Nobody used the old form: sweep of compiler/, std/, products and nyxerp.
+  - An `as` that widens an unsigned integer (`u8`, `u16`, `u32`, `char`, `bool`) sign-extended: `(*q) as int` with
+    `q: *u8` read 250 as -6, silently. Now it uses `zext`.
+  - `*q = -6` with `q: *i8` and `-x` with `x: i8` emitted invalid IR (an i64 where an i8 belonged).
+  - `systems/test-543` and recipe 158 (byte buffer with a raw pointer).
+
+---
+
 ## [0.43.0] — 2026-11-09
 
 > **MINOR**: `nyx build --shared` builds a `.so` library (Linux and Android) that an app loads through JNI or

@@ -9,6 +9,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.44.0] — 2026-11-10
+
 ### Added
 
 - **`std/serve` responde por trozos: `response_chunks`, `response_chunks_len`, `response_from_stream` y
@@ -33,11 +37,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   (N > 0; apagado por omisión) un hilo despierta cada N segundos y llama a `gc_release()` si no hay pedidos en
   vuelo, no llegó ninguno en los últimos N segundos, `gc_free_bytes()` supera `NYX_SERVE_IDLE_RELEASE_MB` (32), hubo
   tráfico desde la última liberación y el servidor no drena; a lo sumo dos liberaciones por tramo de ocio, separadas
-  por N segundos. Las conexiones SSE/WebSocket no cuentan como pedidos.
-  Cada liberación imprime `nyx-serve idle release: heap <A> MB -> <B> MB in <T> ms`. Costo medido: cada una detiene todos los
-  hilos (58-94 ms entre las dos con poco heap vivo, 330-440 ms cada una con ~270 MB vivos) y el primer pedido grande posterior tarda 2-3
-  veces más (63-108 ms contra 33-41 ms); sin tráfico queda un piso por worker (80-170 MB con 4 workers). Sin API
-  nueva. Test `tests/integration/test_serve_std_idle_release.py`.
+  por N segundos. Las conexiones SSE/WebSocket no cuentan como pedidos. Cada liberación imprime
+  `nyx-serve idle release: heap <A> MB -> <B> MB in <T> ms`. Costo medido: cada una detiene todos los hilos (58-94 ms
+  entre las dos con poco heap vivo, 330-440 ms cada una con ~270 MB vivos) y el primer pedido grande posterior tarda
+  2-3 veces más (63-108 ms contra 33-41 ms); sin tráfico queda un piso por worker (80-170 MB con 4 workers). Sin API
+  nueva. Test `tests/integration/test_serve_std_idle_release.py` (27 checks).
 
 ### Fixed
 
@@ -50,8 +54,8 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 - **`std/serve` escribe un cuerpo grande sin copiarlo** [dogfooding:nyxerp]: para anteponer la cabecera, el
   servidor pegaba cabecera y cuerpo en un `String` nuevo, y eso eran dos copias del cuerpo por respuesta. Ahora un
   cuerpo de 64 KiB o más se escribe después de su cabecera, tal cual. Con 4 workers y cuerpos de 24 MiB el proceso
-  queda en 236 MB en vez de 455 MB. Lo que resta (la memoria no vuelve al sistema y no hay respuesta por trozos) está
-  en `docs/gotchas/serve-large-body-memory.md` y en el spec `serve-respuesta-por-trozos`, con GO pendiente. Cinco
+  queda en 236 MB en vez de 455 MB. Lo que restaba (la memoria no vuelve al sistema y no había respuesta por trozos) lo
+  cubren las tres entradas de arriba. Cinco
   checks nuevos en `test_serve_std_keepalive.py`: el cuerpo de 32 MiB llega entero seis veces por la misma conexión,
   la conexión queda limpia, el proceso no crece y un `HEAD` trae el `Content-Length` sin cuerpo.
 - **Sin prelude, el error sobre `Result`/`Option` nombra la causa**: un módulo del compilador (importa
