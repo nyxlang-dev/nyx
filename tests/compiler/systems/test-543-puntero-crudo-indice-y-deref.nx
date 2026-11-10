@@ -1,0 +1,39 @@
+// test-543 — punteros crudos a escalar: indexar, desreferenciar y ensanchar.
+// Hasta el 2026-11-10 (TASKS ALTA, arcos image-rapido y pdf-a-imagen):
+//   - `p[i]` sobre un `*int` caía al camino de Array: «Índice 1 fuera de rango».
+//   - `*p as int` se parseaba `*(p as int)`: IR inválido con un `*u8`.
+//   - `(*q) as int` con `q: *u8` extendía el signo: 250 se leía -6.
+//   - `*q = -6` con `q: *i8` guardaba un i64 en un i8* (IR inválido).
+
+fn main() -> int {
+    unsafe {
+        var p: *int = alloc<int>(3)
+        p[0] = 5
+        p[1] = 7
+        p[2] = p[0] + p[1]
+        println(int_to_string(p[2]))
+
+        let b: *u8 = alloc<u8>(4)
+        var i = 0
+        while i < 4 {
+            b[i] = 250 + i
+            i = i + 1
+        }
+        println(int_to_string(b[3] as int))
+        println(int_to_string(*b as int))
+        let q: *u8 = b
+        println(int_to_string((*q) as int))
+
+        let s: *i8 = alloc<i8>(1)
+        *s = -6
+        println(int_to_string(*s as int))
+
+        let f: *float = alloc<float>(2)
+        f[1] = 2.5
+        println(float_to_string(f[1]))
+
+        let u: u8 = 200
+        println(int_to_string(u as int))
+    }
+    return 0
+}

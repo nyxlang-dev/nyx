@@ -2427,6 +2427,11 @@ let g: f32 = f as f32         // fptrunc double -> float
 ```
 
 El compilador selecciona la instruccion LLVM correcta (trunc, zext, sext, fptrunc, fpext, sitofp, fptosi) segun los tipos de origen y destino.
+Al ensanchar un entero, la fuente sin signo (`u8`, `u16`, `u32`, `char`, `bool`) se extiende con ceros y la
+con signo (`i8`, `i16`, `i32`) con su signo: `(200 as u8) as int` es 200 y `(-6 as i8) as int` es -6. Vale
+también para lo leído por un puntero (`*p as int`, `p[i] as int` con `p: *u8`).
+
+`as` se aplica despues de los prefijos `*`: `*p as int` es `(*p) as int`, como en Rust y C.
 
 ---
 
@@ -2469,6 +2474,25 @@ unsafe {
 ```
 
 Las operaciones de raw pointer (`&x`, `*ptr`, `alloc`, `free`) requieren estar dentro de un bloque `unsafe`.
+
+### Indexar un puntero a escalar
+
+`p[i]` sobre un puntero a un escalar (`*int`, `*u8`, `*float`, …) lee y escribe el elemento `i`, a
+`i * sizeof(T)` bytes de `p`, sin chequeo de límites (como en C):
+
+```nyx
+unsafe {
+    var p: *int = alloc<int>(3)
+    p[0] = 5
+    p[1] = 7
+    p[2] = p[0] + p[1]          // 12
+    let b: *u8 = alloc<u8>(4)
+    b[0] = 250
+    let v: int = b[0] as int    // 250: un u8 se extiende sin signo
+}
+```
+
+Un puntero a struct (`*Point`) no se indexa así: sigue siendo `p.campo`.
 
 ---
 

@@ -2281,7 +2281,7 @@ sc_and_end219:
   br i1 %543, label %then220, label %else221
 then220:
   %544 = load i8, i8* %c.ptr
-  %545 = sext i8 %544 to i64
+  %545 = zext i8 %544 to i64
   %546 = sub i64 %545, 48
   ret i64 %546
 else221:
@@ -2310,7 +2310,7 @@ sc_and_end224:
   br i1 %560, label %then225, label %else226
 then225:
   %561 = load i8, i8* %c.ptr
-  %562 = sext i8 %561 to i64
+  %562 = zext i8 %561 to i64
   %563 = sub i64 %562, 87
   ret i64 %563
 else226:
@@ -2339,7 +2339,7 @@ sc_and_end229:
   br i1 %577, label %then230, label %else231
 then230:
   %578 = load i8, i8* %c.ptr
-  %579 = sext i8 %578 to i64
+  %579 = zext i8 %578 to i64
   %580 = sub i64 %579, 55
   ret i64 %580
 else231:

@@ -1,0 +1,45 @@
+// Nyx by Example: un buffer de bytes con un puntero crudo.
+//
+// Para recorrer muchos píxeles o bytes en un bucle caliente, un `Array`
+// paga una llamada al runtime por acceso. Un puntero crudo (`*u8`, `*int`)
+// indexa directo en memoria: `p[i]` lee o escribe el elemento i, a
+// i * sizeof(T) bytes del inicio, sin chequeo de límites (como en C). Por
+// eso vive dentro de `unsafe`.
+//
+// Un `u8` leído se ensancha SIN signo: 250 sigue siendo 250 al pasarlo a
+// int. Y `*p as int` es `(*p) as int`: el `as` se aplica al valor leído.
+
+fn main() -> int {
+    unsafe {
+        // Una fila de 6 píxeles en escala de grises.
+        let fila: *u8 = alloc<u8>(6)
+        var i = 0
+        while i < 6 {
+            fila[i] = 200 + i * 10    // 200, 210, ..., 250
+            i = i + 1
+        }
+
+        // Invertir cada píxel y sumar el brillo total.
+        var total = 0
+        i = 0
+        while i < 6 {
+            let v: int = fila[i] as int
+            fila[i] = 255 - v
+            total = total + v
+            i = i + 1
+        }
+        println("brillo original: " + int_to_string(total))
+        println("primer píxel invertido: " + int_to_string(*fila as int))
+
+        // Lo mismo con enteros de 64 bits.
+        var acum: *int = alloc<int>(3)
+        acum[0] = 1
+        acum[1] = 2
+        acum[2] = acum[0] + acum[1]
+        println("acum[2] = " + int_to_string(acum[2]))
+
+        free(fila)
+        free(acum)
+    }
+    return 0
+}
