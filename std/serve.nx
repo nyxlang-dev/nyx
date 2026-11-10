@@ -267,11 +267,25 @@ fn __collect_headers(dst: Array, src: Array) -> int {
 // worker buscara en el String ya formateado (parsear lo que uno mismo acaba de
 // formatear), o formatear afuera del try (un panic al formatear mataría al
 // worker en vez de volverse un 500).
+//
+// `cuerpo` va aparte cuando es grande (>= __SERVE_CUERPO_APARTE bytes): `wire`
+// trae entonces solo la cabecera y el worker escribe los dos, uno tras otro.
+// Pegarlos en un solo String costaba DOS copias del cuerpo por respuesta (el
+// buffer del StringBuilder y su to_string), y con un recolector que no
+// devuelve lo que pidió eso era la mitad del techo de memoria de un servidor
+// que responde decenas de MiB (fricción nyxerp 20261110-090954: 455 MB -> 236 MB
+// con 4 workers y cuerpos de 24 MiB). Bajo el umbral se sigue pegando: una sola
+// escritura por respuesta chica, sin un segmento TCP extra.
 struct ServeOutput {
     wire: String,
     sse: bool,
-    room: String
+    room: String,
+    cuerpo: String
 }
+
+// 64 KiB: muy por encima de un segmento TCP, así que partir la escritura no
+// agrega paquetes chicos, y por debajo de donde las copias empiezan a pesar.
+let __SERVE_CUERPO_APARTE: int = 65536
 
 // Single exit point for every response path: merge headers contributed by
 // before-hooks/middlewares that continued, run after-hooks so they can
@@ -307,12 +321,21 @@ fn __finalize(req: Request, resp: Response, extra_headers: Array) -> ServeOutput
         let hdrs: Array = r.headers_flat
         let room: String = hdrs[marca + 1]
         if r.status == 200 and !es_head {
-            return ServeOutput { wire: __format_sse_head(r), sse: true, room: room }
+            return ServeOutput { wire: __format_sse_head(r), sse: true, room: room, cuerpo: "" }
         }
         r.headers_flat = __sse_sin_marca(hdrs)
     }
     let rc: Response = __aplicar_gzip(req, r)
-    return ServeOutput { wire: __format_http_response_de(rc, !es_head), sse: false, room: "" }
+    // Un redirect queda afuera: ahí resp.body es la dirección de Location, no
+    // un cuerpo, y la respuesta sale con Content-Length: 0.
+    let st: int = rc.status
+    let es_redirect: bool = st == 301 or st == 302 or st == 303 or st == 307 or st == 308
+    if !es_head and !es_redirect and rc.body.length() >= __SERVE_CUERPO_APARTE {
+        // con_cuerpo=false: la cabecera sale con el Content-Length del cuerpo
+        // (igual que un HEAD) y el cuerpo viaja sin copiarse.
+        return ServeOutput { wire: __format_http_response_de(rc, false), sse: false, room: "", cuerpo: rc.body }
+    }
+    return ServeOutput { wire: __format_http_response_de(rc, !es_head), sse: false, room: "", cuerpo: "" }
 }
 
 // Nombre de la cabecera interna con la que sse_open marca su Response. Lleva
@@ -436,7 +459,7 @@ fn __serve_mt_dispatch(raw: Array, remote_ip: String) -> ServeOutput {
 
     // Empty method = client disconnected
     if method.length() == 0 {
-        return ServeOutput { wire: "", sse: false, room: "" }
+        return ServeOutput { wire: "", sse: false, room: "", cuerpo: "" }
     }
 
     // Clean path (strip query string for routing)
@@ -493,7 +516,7 @@ fn __serve_mt_dispatch(raw: Array, remote_ip: String) -> ServeOutput {
     }
     // Unreachable: both try/catch branches return above — the toolchain's
     // return-path checker doesn't (yet) treat a try/catch as exhaustive.
-    return ServeOutput { wire: "", sse: false, room: "" }
+    return ServeOutput { wire: "", sse: false, room: "", cuerpo: "" }
 }
 
 // Camino de error: handler registrable (app_error) con guard propio — si el
@@ -511,10 +534,10 @@ fn __error_response(req: Request, err: String) -> ServeOutput {
         // never user/handler code, so there's nothing left here that can
         // panic — this is the reliable bottom of the fallback chain.
         let con_cuerpo: bool = req.method != "HEAD"
-        return ServeOutput { wire: __format_http_response_de(default_error(req, e2), con_cuerpo), sse: false, room: "" }
+        return ServeOutput { wire: __format_http_response_de(default_error(req, e2), con_cuerpo), sse: false, room: "", cuerpo: "" }
     }
     // Unreachable: both try/catch branches return above — same checker gap.
-    return ServeOutput { wire: "", sse: false, room: "" }
+    return ServeOutput { wire: "", sse: false, room: "", cuerpo: "" }
 }
 
 // Motor de la cadena de wraps (contrato: Fn(Request, Fn) -> Response, con
@@ -923,6 +946,12 @@ fn __serve_ka_worker() -> int {
                     } else {
                     if response.length() > 0 {
                         tcp_write(client, response)
+                    }
+                    // Cuerpo grande: va después de su cabecera, sin copia
+                    // (ver ServeOutput).
+                    let cuerpo_ap: String = out.cuerpo
+                    if cuerpo_ap.length() > 0 {
+                        tcp_write(client, cuerpo_ap)
                     }
                     }
                     let conn: String = http_find_header(headers, "Connection")

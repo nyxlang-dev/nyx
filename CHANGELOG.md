@@ -11,6 +11,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`std/serve` escribe un cuerpo grande sin copiarlo** [dogfooding:nyxerp]: para anteponer la cabecera, el
+  servidor pegaba cabecera y cuerpo en un `String` nuevo, y eso eran dos copias del cuerpo por respuesta. Ahora un
+  cuerpo de 64 KiB o más se escribe después de su cabecera, tal cual. Con 4 workers y cuerpos de 24 MiB el proceso
+  queda en 236 MB en vez de 455 MB. Lo que resta (la memoria no vuelve al sistema y no hay respuesta por trozos) está
+  en `docs/gotchas/serve-large-body-memory.md` y en el spec `serve-respuesta-por-trozos`, con GO pendiente. Cinco
+  checks nuevos en `test_serve_std_keepalive.py`: el cuerpo de 32 MiB llega entero seis veces por la misma conexión,
+  la conexión queda limpia, el proceso no crece y un `HEAD` trae el `Content-Length` sin cuerpo.
 - **Sin prelude, el error sobre `Result`/`Option` nombra la causa**: un módulo del compilador (importa
   `"compiler/..."` o lleva `// nyx:sin-prelude`) que importaba `std/process` daba «'Result' no declarado» (NYX1002)
   o, sin semantic, «el método 'Err' no está disponible sobre el global 'Result'» (NYX2002), sin decir que falta el

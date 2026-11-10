@@ -56,6 +56,7 @@ GOTCHA_IDS=(
   "cross-compile-arch"
   "regex-windows-motor"
   "shared-lib-fatal-mata-app"
+  "serve-large-body-memory"
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"
