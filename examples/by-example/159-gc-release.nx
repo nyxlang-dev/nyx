@@ -8,6 +8,9 @@
 // El GC es conservador: si justo después del pico un puntero viejo sigue en la
 // pila, la primera llamada puede no soltarlo; la segunda sí (ver std/gc).
 //
+// En un servidor std/serve no hace falta llamarla a mano: NYX_SERVE_IDLE_RELEASE_SECS=30 la invoca solo
+// tras 30 s sin pedidos (apagado por omisión; ver docs/SPEC.md, «Respuesta por trozos»).
+//
 // gc_heap_bytes() = heap mapeado; gc_free_bytes() = libre dentro de él.
 import "std/gc"
 

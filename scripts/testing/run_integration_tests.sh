@@ -416,6 +416,35 @@ else
     fi
 fi
 
+# ── std/serve: liberación de memoria en ocio (opt-in) ────────────────────
+# Fixture server_idle_release.nx (4 workers): NYX_SERVE_IDLE_RELEASE_SECS
+# enciende el hilo de mantenimiento; el harness mide RSS (/proc) y las líneas
+# `idle release` del stdout del daemon. Puertos 13100-13107 (SERVE_IDLE_PORT).
+echo -e "\n${BOLD}-- std/serve: liberación de memoria en ocio --${NC}"
+SI_BIN="/tmp/nyx-serve-std-idle-release-server"
+if [ ! -x ./nyx_bootstrap ]; then
+    echo -e "  SKIP: falta ./nyx_bootstrap (make bootstrap)"
+else
+    echo -e "  Compiling tests/integration/serve_std/server_idle_release.nx..."
+    cp tests/integration/serve_std/server_idle_release.nx script.nx
+    if ./nyx_bootstrap >/dev/null 2>&1 && \
+       clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+           -o "$SI_BIN" 2>/dev/null; then
+        rm -f script.nx script.ll
+        if python3 tests/integration/test_serve_std_idle_release.py "$SI_BIN"; then
+            echo -e "  ${GREEN}std/serve liberación en ocio E2E passed${NC}"
+        else
+            echo -e "  ${RED}std/serve liberación en ocio E2E failed${NC}"
+            OVERALL=1
+        fi
+        rm -f "$SI_BIN"
+    else
+        rm -f script.nx script.ll
+        echo -e "  ${RED}std/serve liberación en ocio: no se pudo compilar el fixture${NC}"
+        OVERALL=1
+    fi
+fi
+
 # ── std/serve: smoke COMPLETO (los 64 checks de nyx-serve v0.7.1) ─────────
 # Fixture tests/integration/serve_std/standalone.nx = examples/standalone.nx
 # del producto con los imports en std/*; harness test_serve_std_smoke.py =

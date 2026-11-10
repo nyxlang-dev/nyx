@@ -1159,7 +1159,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str577.c = internal global %nyx_string* null
 @.str578 = private unnamed_addr constant [1 x i8] c"\00"
 @.str578.c = internal global %nyx_string* null
-@.str579 = private unnamed_addr constant [121 x i8] c"tests/integration/test_serve_std_keepalive.py,tests/integration/test_serve_std_chunks.py,tests/ai-first/54-gc-release.nx\00"
+@.str579 = private unnamed_addr constant [170 x i8] c"tests/integration/test_serve_std_keepalive.py,tests/integration/test_serve_std_chunks.py,tests/integration/test_serve_std_idle_release.py,tests/ai-first/54-gc-release.nx\00"
 @.str579.c = internal global %nyx_string* null
 @.str580 = private unnamed_addr constant [290 x i8] c"A `std/serve` handler that returns a large body as one `String` keeps all of it in memory, and the memory a large body needed does not go back to the system: a long-lived server stays at its peak. Answer big bodies with `response_from_stream`, `response_file` or `response_chunks` instead.\00"
 @.str580.c = internal global %nyx_string* null
@@ -5299,8 +5299,8 @@ define { i64, i8* }* @gotchas_table(
   %1948 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str578.c, i8* %1947, i64 0)
   %1949 = ptrtoint %nyx_string* %1948 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1922, i64 %1949, i64 2)
-  %1950 = getelementptr [121 x i8], [121 x i8]* @.str579, i32 0, i32 0
-  %1951 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str579.c, i8* %1950, i64 120)
+  %1950 = getelementptr [170 x i8], [170 x i8]* @.str579, i32 0, i32 0
+  %1951 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str579.c, i8* %1950, i64 169)
   %1952 = ptrtoint %nyx_string* %1951 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1922, i64 %1952, i64 2)
   %1953 = getelementptr [290 x i8], [290 x i8]* @.str580, i32 0, i32 0

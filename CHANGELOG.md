@@ -29,6 +29,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   primera colecta pero no desmapea lo que acaba de liberar). Detiene todos los hilos mientras corre, y por ser
   conservador puede necesitar una segunda llamada; `std/gc` no existe en wasm. Caso `ai-first/54-gc-release` y receta
   159 [arco: serve-respuesta-por-trozos].
+- **`std/serve`: liberación de memoria en ocio, opt-in** [dogfooding:nyxerp]: con `NYX_SERVE_IDLE_RELEASE_SECS=N`
+  (N > 0; apagado por omisión) un hilo despierta cada N segundos y llama a `gc_release()` si no hay pedidos en
+  vuelo, no llegó ninguno en los últimos N segundos, `gc_free_bytes()` supera `NYX_SERVE_IDLE_RELEASE_MB` (32), hubo
+  tráfico desde la última liberación y el servidor no drena; a lo sumo dos liberaciones por tramo de ocio, separadas
+  por N segundos. Las conexiones SSE/WebSocket no cuentan como pedidos.
+  Cada liberación imprime `nyx-serve idle release: heap <A> MB -> <B> MB in <T> ms`. Costo medido: cada una detiene todos los
+  hilos (58-94 ms entre las dos con poco heap vivo, 330-440 ms cada una con ~270 MB vivos) y el primer pedido grande posterior tarda 2-3
+  veces más (63-108 ms contra 33-41 ms); sin tráfico queda un piso por worker (80-170 MB con 4 workers). Sin API
+  nueva. Test `tests/integration/test_serve_std_idle_release.py`.
 
 ### Fixed
 

@@ -25,6 +25,7 @@ import "std/json"
 import "std/websocket"
 import "std/time"
 import "std/zip"
+import "std/gc"
 
 // ===== sección: dispatcher (ex server.nx) =====
 
@@ -1436,6 +1437,109 @@ fn __serve_responder(client: int, request: Array) -> int {
     return 0
 }
 
+// ── Liberación de memoria en ocio (opt-in) ──
+// NYX_SERVE_IDLE_RELEASE_SECS=N (N > 0; por omisión 0 = APAGADO, un valor
+// inválido o negativo también apaga) lanza UN hilo de mantenimiento que
+// despierta cada N segundos y, si el servidor lleva N segundos sin pedidos,
+// llama gc_release() para devolver al sistema el heap libre que dejó un pico
+// (sin esto el RSS de un proceso ocioso no baja nunca). NYX_SERVE_IDLE_RELEASE_MB
+// (32) es el umbral: no libera si gc_free_bytes() es menor o igual.
+// Apagado por omisión porque gc_release() DETIENE TODOS LOS HILOS: medido
+// (spike 2026-11-10-serve-liberacion-en-ocio) 58-94 ms con poco heap vivo y
+// 330-440 ms con 270 MB vivos, y el primer pedido posterior tarda 2-3 veces
+// más (hay que remapear y tocar páginas). Es decisión del operador.
+// Libera solo si: no hay pedidos HTTP en vuelo, ninguno llegó en los últimos N
+// segundos, hay libre sobre el umbral, hubo al menos un pedido desde la última
+// liberación y el servidor no drena. Son a lo sumo DOS liberaciones por tramo
+// de ocio, en despertares consecutivos: medido, la primera sola deja retenido
+// hasta ~290 MB de 310 en una de cada cuatro corridas (pila conservadora de
+// los workers) y con la segunda queda en 96-160 MB siempre; una tercera no
+// libera nada. La segunda no mira el umbral. Van separadas por N segundos y no pegadas para que cada pausa
+// sea la de UN gc_release(). «Pedido en vuelo» = desde que __serve_responder arranca
+// hasta que vuelve (incluye respuestas por trozos). Las conexiones SSE/WS
+// abiertas y los mensajes WS NO cuentan como pedidos: un servidor con solo
+// canales abiertos se considera ocioso. Cada liberación imprime una línea.
+// Sincronización: los workers son hilos del SO, así que el contador y los dos
+// campos viven bajo un mutex propio (init single-threaded en serve_app_en,
+// como __ch_mu). Se eligió mutex y no AtomicCounter porque son tres campos que
+// el hilo de mantenimiento debe leer juntos de forma consistente. Apagada, el
+// camino del pedido solo lee el entero __ir_on (fijado antes de lanzar hilos).
+var __ir_on: int = 0
+var __ir_mu: Map = Map.new()
+var __ir_inflight: int = 0
+var __ir_last_ms: int = 0
+var __ir_dirty: int = 0
+
+// Marca la llegada de un pedido parseado (cualquier método no vacío: incluye
+// el 413 y el upgrade WS, que no pasan por __serve_responder).
+fn __ir_touch() -> int {
+    mutex_lock(__ir_mu)
+    __ir_last_ms = monotonic_ms()
+    __ir_dirty = 2
+    mutex_unlock(__ir_mu)
+    return 0
+}
+
+fn __ir_leave() -> int {
+    mutex_lock(__ir_mu)
+    __ir_inflight = __ir_inflight - 1
+    __ir_last_ms = monotonic_ms()
+    mutex_unlock(__ir_mu)
+    return 0
+}
+
+// Envuelve __serve_responder con el conteo de pedidos en vuelo. Si el
+// responder lanza, el contador igual baja (si no, quedaría en 1 y la función
+// se apagaría para siempre).
+fn __ir_responder(client: int, request: Array) -> int {
+    mutex_lock(__ir_mu)
+    __ir_inflight = __ir_inflight + 1
+    __ir_last_ms = monotonic_ms()
+    __ir_dirty = 2
+    mutex_unlock(__ir_mu)
+    var rc: int = 0
+    try {
+        rc = __serve_responder(client, request)
+    } catch(e: String) {
+        __ir_leave()
+        panic(e)
+    }
+    __ir_leave()
+    return rc
+}
+
+fn __ir_loop() -> int {
+    let every_s: int = string_to_int_or(getenv("NYX_SERVE_IDLE_RELEASE_SECS"), 0)
+    let umbral: int = string_to_int_or(getenv("NYX_SERVE_IDLE_RELEASE_MB"), 32) * 1048576
+    while 1 > 0 {
+        sleep(every_s * 1000)
+        if __serve_draining == 1 { return 0 }
+        mutex_lock(__ir_mu)
+        let quieto: bool = __ir_inflight == 0 and monotonic_ms() - __ir_last_ms >= every_s * 1000
+        let sucio: int = __ir_dirty
+        mutex_unlock(__ir_mu)
+        // La segunda liberación del tramo (sucio == 1) completa la primera y no
+        // mira el umbral: lo que la primera no soltó sigue contando como vivo,
+        // no como libre, hasta que se vuelve a colectar.
+        if quieto and (sucio == 1 or (sucio == 2 and gc_free_bytes() > umbral)) {
+            // dirty se baja ANTES de liberar: un pedido que llegue durante la
+            // pausa lo vuelve a subir a 2 y no se pierde.
+            mutex_lock(__ir_mu)
+            if __ir_dirty > 0 { __ir_dirty = __ir_dirty - 1 }
+            mutex_unlock(__ir_mu)
+            let antes: int = gc_heap_bytes()
+            let t0: int = monotonic_ms()
+            gc_release()
+            let ms: int = monotonic_ms() - t0
+            print("nyx-serve idle release: heap " + int_to_string(antes / 1048576) + " MB -> " + int_to_string(gc_heap_bytes() / 1048576) + " MB in " + int_to_string(ms) + " ms")
+            // print no vacía stdout (con stdout a archivo o pipe queda en el
+            // buffer de libc, medido): sin esto la línea no sale hasta el exit.
+            term_flush()
+        }
+    }
+    return 0
+}
+
 // Keep-alive worker: serves multiple requests per connection
 fn __serve_ka_worker() -> int {
     while 1 > 0 {
@@ -1465,6 +1569,7 @@ fn __serve_ka_worker() -> int {
                 }
                 keep_alive = false
             } else {
+                if __ir_on == 1 { __ir_touch() }
                 // Body sobre el cap (NYX_HTTP_MAX_BODY): el fast parser lo
                 // señala en el slot 5 SIN drenar el body (drenarlo sería un
                 // vector DoS) → responder 413 y CERRAR la conexión (el
@@ -1530,7 +1635,12 @@ fn __serve_ka_worker() -> int {
                     // o un cuerpo de decenas de MiB declarado acá quedaba retenido
                     // hasta el pedido siguiente (spec serve-respuesta-por-trozos,
                     // D7.2). Aquí solo se interpreta el código.
-                    let rc: int = __serve_responder(client, request)
+                    var rc: int = 0
+                    if __ir_on == 1 {
+                        rc = __ir_responder(client, request)
+                    } else {
+                        rc = __serve_responder(client, request)
+                    }
                     if rc == 1 {
                         sse_owned = true
                     }
@@ -1649,11 +1759,19 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     __rl_ensure()
     __body_init()
 
+    // Liberación en ocio (opt-in, ver __ir_loop): init y bandera antes de lanzar hilos.
+    if string_to_int_or(getenv("NYX_SERVE_IDLE_RELEASE_SECS"), 0) > 0 {
+        __ir_mu = mutex_new()
+        __ir_last_ms = monotonic_ms()
+        __ir_on = 1
+    }
+
     var i: int = 0
     while i < workers {
         thread_spawn(__serve_ka_worker)
         i = i + 1
     }
+    if __ir_on == 1 { thread_spawn(__ir_loop) }
 
     while 1 > 0 {
         let client: int = tcp_accept(server)

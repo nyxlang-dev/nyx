@@ -2531,6 +2531,8 @@ grande ya enviada), no en cada pedido. Lo retenido por una variable viva o por l
 no se libera. El GC es conservador: un puntero viejo en un registro o en la pila de quien llama
 puede retener el pico, y `gc_release()` puede necesitar una segunda llamada (o hacerse desde un
 punto con la pila limpia). `std/gc` solo existe en los targets nativos: en `wasm32-wasi` no enlaza.
+`std/serve` puede llamarla por sí solo en ocio si se activa `NYX_SERVE_IDLE_RELEASE_SECS` (ver «Respuesta por
+trozos»); sin eso, nadie la llama.
 
 ### Static Variables
 ```nyx
@@ -5219,6 +5221,22 @@ Límites:
 - Si un after-hook lanza antes del final de la respuesta, la fuente se cierra recién por el barrido
   de 600 s.
 
+**Liberación en ocio (opt-in)**: por omisión el servidor no devuelve memoria al sistema cuando queda
+ocioso tras un pico. Con `NYX_SERVE_IDLE_RELEASE_SECS=N` (N > 0; `0` o un valor inválido lo apaga) lanza
+un hilo que despierta cada N segundos y llama a `gc_release()` (ver «Control del recolector») solo si
+no hay pedidos HTTP en vuelo, no llegó ningún pedido durante los últimos N segundos,
+`gc_free_bytes()` supera `NYX_SERVE_IDLE_RELEASE_MB` (32 por omisión), hubo al menos un pedido desde la
+última liberación y el servidor no está drenando. Son a lo sumo dos liberaciones por tramo de ocio, en
+despertares consecutivos (la segunda completa la primera y no mira el umbral; una tercera no libera nada). Las conexiones
+SSE/WebSocket abiertas y los mensajes WebSocket no cuentan como pedidos: no impiden ni retrasan la
+liberación. Cada liberación imprime por stdout `nyx-serve idle release: heap <A> MB -> <B> MB in <T> ms`.
+Costos medidos el 2026-11-10 (4 workers, cuerpos de 24 MiB): cada liberación detiene todos los hilos
+(58-94 ms entre las dos con poco heap vivo; 330-440 ms cada una con ~270 MB vivos), y el primer pedido grande posterior
+tarda 2-3 veces más (63-108 ms contra 33-41 ms). Sin tráfico queda un piso de un cuerpo por worker
+(80-170 MB con 4 workers) que solo baja, hasta ~6 MB, cuando cada worker atiende otro pedido. No
+medido: SSE/WebSocket con el hilo activo, heaps de 1 GB o más, más de 4 workers. Valor sugerido: 30.
+No hay API nueva, solo estas dos variables.
+
 ---
 
 ## Conexiones, workers y plazos (`std/serve`)
@@ -5244,6 +5262,8 @@ pedidos se procesan **a la vez**, no cuántas conexiones se sostienen.
 | `NYX_HTTP_SEND_SECS` | 30 | Cuánto puede quedar trabada la escritura de una respuesta sin avanzar un byte (desde 2026-09-26): un cliente que dejó de LEER se corta y su worker queda libre. Es POR escritura, no total: una descarga lenta que avanza no se corta (la semántica de `send_timeout` de nginx). También acota la escritura a un canal SSE que dejó de leer. |
 | `NYX_HTTP_MAX_BODY` | 1 MiB | Body mayor: `413` sin llamar al handler. |
 | `NYX_SERVE_DRAIN_SECS` | 10 | Plazo del drain de SIGTERM; al empezar, las conexiones estacionadas se cierran. |
+| `NYX_SERVE_IDLE_RELEASE_SECS` | 0 (apagado) | Con N > 0, un hilo despierta cada N segundos y libera memoria en ocio (ver «Liberación en ocio»). |
+| `NYX_SERVE_IDLE_RELEASE_MB` | 32 | No libera si `gc_free_bytes()` no supera esta cantidad de MB. |
 
 Se leen una vez al arrancar el servidor; un valor inválido o no positivo cae a la omisión.
 `serve_idle_connections() -> int` devuelve cuántas conexiones hay estacionadas en ese momento.
