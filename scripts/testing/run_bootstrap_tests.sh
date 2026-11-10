@@ -112,6 +112,18 @@ if [ ! -d "$TEST_DIR" ]; then
     exit 1
 fi
 
+# Pila del COMPILADOR: el mismo límite que le dan los lanzadores (scripts/nyx,
+# nyx build/test) y el resto de los runners (seeds-check, unit). Este runner
+# llamaba a ./nyx_bootstrap con los 8 MB por omisión y era el único: en x86_64
+# —marcos -O0 más grandes que en aarch64, y sin SROA si no hay `opt` de la
+# versión de clang— test-515 (56 métodos encadenados) desbordaba ahí y en
+# ningún uso real (TASKS 2026-11-02, laptop 535/536). Solo se sube para el
+# compilador, en un subshell: los binarios de test corren con el límite normal,
+# así un test que dependa de la pila sigue viendo la de un programa de verdad.
+# La guarda de 8 MB a propósito es run_stack_frame_audit.sh, no este runner.
+. "$(dirname "$0")/../lib_stack.sh"
+nyx_compile() { ( nyx_raise_stack; "$@" ); }
+
 # Verificar que existe nyx_bootstrap
 if [ ! -f "./nyx_bootstrap" ]; then
     echo -e "${RED}❌ ERROR: No se encuentra el compilador ./nyx_bootstrap${NC}"
@@ -186,7 +198,7 @@ run_test() {
     # este runner. Se pone SOLO en esta invocación (no exportada al resto del
     # script) para no cambiar la resolución de imports de las otras 447 pruebas.
     _try_run_test() {
-        NYX_PROJECT_DIR="$PWD" ./nyx_bootstrap > /dev/null 2>&1 && \
+        NYX_PROJECT_DIR="$PWD" nyx_compile ./nyx_bootstrap > /dev/null 2>&1 && \
         clang script.ll $RUNTIME_LINK $LIBS -o script_bin 2>/dev/null && \
         output=$(timeout 30 ./script_bin 2>&1)
     }
@@ -336,9 +348,9 @@ run_test() {
             # Mostrar error
             echo ""
             echo -e "${RED}Error:${NC}"
-            if ! ./nyx_bootstrap > /dev/null 2>&1; then
+            if ! nyx_compile ./nyx_bootstrap > /dev/null 2>&1; then
                 echo "Compilation error (lexer/parser/semantic)"
-                ./nyx_bootstrap 2>&1 | head -20
+                nyx_compile ./nyx_bootstrap 2>&1 | head -20
             elif ! clang script.ll $RUNTIME_LINK $LIBS -o script_bin 2>/dev/null; then
                 echo "LLVM compilation error"
                 clang script.ll $RUNTIME_LINK $LIBS -o script_bin 2>&1 | head -20

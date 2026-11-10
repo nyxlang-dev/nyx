@@ -23,6 +23,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   que registrar N timers era O(N²) — con la tabla que crece hasta 65536, llenarla eran ~2e9 comparaciones. Ahora los
   slots libres forman una free-list y un solo sitio (`ev_release_slot`) los libera. Test nuevo en `test_event_loop.c`:
   llena la tabla hasta el techo dos veces y comprueba que ningún slot se pierda ni se comparta.
+- **`make test` le da al compilador la misma pila que los lanzadores**: `run_bootstrap_tests.sh` era el único camino que
+  llamaba a `nyx_bootstrap` con los 8 MB por omisión, y en x86_64 `test-515` (56 métodos encadenados) desbordaba ahí
+  y en ningún uso real. Ahora sube la pila solo para el compilador (los binarios de test siguen con el límite
+  normal); la guarda de 8 MB a propósito sigue en `run_stack_frame_audit.sh`. Verificado con un compilador armado sin
+  SROA, que con 8 MB fallaba: 551/551.
 
 ---
 
