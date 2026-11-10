@@ -27,7 +27,6 @@ fn pico() -> int {
 fn main() -> int {
     gc_release()
     let antes: int = gc_heap_bytes()
-    println("antes del pico: heap > 0 = " + (antes > 0).to_string())
     let n: int = pico()
     let en_pico: int = gc_heap_bytes()
     println("trozos alocados: " + int_to_string(n))
