@@ -222,10 +222,14 @@ fn __format_http_response_de(resp: Response, con_cuerpo: bool) -> String {
     while i + 1 < headers.length() {
         let k: String = headers[i]
         let v: String = headers[i + 1]
-        sb.append(k)
-        sb.append(": ")
-        sb.append(v)
-        sb.append("\r\n")
+        // Las marcas internas (SSE, trozos) nunca salen al cliente, ni por este
+        // camino de último recurso (p. ej. un not_found que devolvió una).
+        if k != __CH_MARCA and k != __SSE_MARCA {
+            sb.append(k)
+            sb.append(": ")
+            sb.append(v)
+            sb.append("\r\n")
+        }
         if k == "Content-Type" { has_content_type = true }
         i = i + 2
     }
@@ -280,7 +284,18 @@ struct ServeOutput {
     wire: String,
     sse: bool,
     room: String,
-    cuerpo: String
+    cuerpo: String,
+    // Respuesta por trozos (response_chunks): `wire` trae solo la cabecera y el
+    // worker llama a `fuente` hasta que devuelva "". `largo` >= 0 = Content-Length
+    // conocido (trozos crudos); -1 = Transfer-Encoding: chunked. Con trozos=false
+    // los otros dos no significan nada (fuente es __ch_vacio).
+    trozos: bool,
+    fuente: Fn() -> String,
+    largo: int,
+    // Libera lo que la fuente retiene (un HttpStream, un archivo). Quien termine
+    // con la fuente por CUALQUIER camino lo llama: __escribir_trozos al acabar
+    // o cortar, __finalize al descartarla. Idempotente por contrato.
+    cierre: Fn() -> int
 }
 
 // 64 KiB: muy por encima de un segmento TCP, así que partir la escritura no
@@ -299,6 +314,11 @@ let __SERVE_CUERPO_APARTE: int = 65536
 // normal: quien cambió el status decidió no abrir el canal.
 fn __finalize(req: Request, resp: Response, extra_headers: Array) -> ServeOutput {
     __collect_headers(resp.headers_flat, extra_headers)
+    // El status con el que la Response llega acá, ANTES de los after-hooks:
+    // si alguno lo cambia, una fuente de trozos se descarta (ver más abajo). Se
+    // guarda ahora, por valor, porque un hook que muta `resp` en el lugar
+    // cambiaría también esta copia.
+    let status_entrada: int = resp.status
 
     var r: Response = resp
     let after_hooks: Array = __serve_app.after_hooks
@@ -321,9 +341,42 @@ fn __finalize(req: Request, resp: Response, extra_headers: Array) -> ServeOutput
         let hdrs: Array = r.headers_flat
         let room: String = hdrs[marca + 1]
         if r.status == 200 and !es_head {
-            return ServeOutput { wire: __format_sse_head(r), sse: true, room: room, cuerpo: "" }
+            return ServeOutput { wire: __format_sse_head(r), sse: true, room: room, cuerpo: "", trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
         }
         r.headers_flat = __sse_sin_marca(hdrs)
+    }
+    // Respuesta por trozos (response_chunks): la entrada del registro se retira
+    // SIEMPRE aquí, la use o no — si no, quedaría retenida. Se usa solo si el
+    // status no cambió en los after-hooks (misma regla que SSE: quien lo cambió
+    // decidió otra respuesta), el cuerpo sigue vacío (un hook que puso uno
+    // también decidió otra respuesta) y el status admite cuerpo. En cualquier
+    // otro caso sale la respuesta normal, sin la marca y sin cuerpo por trozos.
+    // gzip no actúa: se sale antes de __aplicar_gzip (el cuerpo no existe en
+    // memoria, y con largo declarado los bytes deben coincidir uno a uno).
+    let cm: int = __ch_marca_idx(r.headers_flat)
+    if cm >= 0 {
+        let chdrs: Array = r.headers_flat
+        let cid: String = chdrs[cm + 1]
+        let src: ChunkSrc = __ch_take(string_to_int_or(cid, 0))
+        r.headers_flat = __ch_sin_marca(chdrs)
+        let cst: int = r.status
+        let admite_cuerpo: bool = cst >= 200 and cst != 204 and cst != 205 and cst != 304 and !(cst >= 300 and cst < 400)
+        if src.hallada and cst == status_entrada and r.body.length() == 0 and admite_cuerpo {
+            let cabecera: String = __format_chunks_head(r, src.largo)
+            if es_head {
+                // HEAD: solo la cabecera; la fuente se descarta sin llamarla,
+                // pero lo que retiene (un stream de origen) se cierra ya.
+                let cierre_head: Fn() -> int = src.cierre
+                __ch_cerrar(cierre_head)
+                return ServeOutput { wire: cabecera, sse: false, room: "", cuerpo: "", trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
+            }
+            return ServeOutput { wire: cabecera, sse: false, room: "", cuerpo: "", trozos: true, fuente: src.siguiente, largo: src.largo, cierre: src.cierre }
+        }
+        // La fuente se descarta (status cambiado por un after-hook, cuerpo
+        // puesto por un hook, status sin cuerpo, entrada ya barrida): nadie la
+        // va a llamar, así que se cierra lo que retenga.
+        let cierre_desc: Fn() -> int = src.cierre
+        __ch_cerrar(cierre_desc)
     }
     let rc: Response = __aplicar_gzip(req, r)
     // Un redirect queda afuera: ahí resp.body es la dirección de Location, no
@@ -333,9 +386,9 @@ fn __finalize(req: Request, resp: Response, extra_headers: Array) -> ServeOutput
     if !es_head and !es_redirect and rc.body.length() >= __SERVE_CUERPO_APARTE {
         // con_cuerpo=false: la cabecera sale con el Content-Length del cuerpo
         // (igual que un HEAD) y el cuerpo viaja sin copiarse.
-        return ServeOutput { wire: __format_http_response_de(rc, false), sse: false, room: "", cuerpo: rc.body }
+        return ServeOutput { wire: __format_http_response_de(rc, false), sse: false, room: "", cuerpo: rc.body, trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
     }
-    return ServeOutput { wire: __format_http_response_de(rc, !es_head), sse: false, room: "", cuerpo: "" }
+    return ServeOutput { wire: __format_http_response_de(rc, !es_head), sse: false, room: "", cuerpo: "", trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
 }
 
 // Nombre de la cabecera interna con la que sse_open marca su Response. Lleva
@@ -370,6 +423,514 @@ fn __sse_sin_marca(headers: Array) -> Array {
         i = i + 2
     }
     return out
+}
+
+// ── Respuesta por trozos (response_chunks) ───────────────────────────────────
+//
+// Mecanismo igual al de SSE (D2 del spec serve-respuesta-por-trozos): el struct
+// Response no cambia (contrato estable); la fuente de trozos vive en un
+// registro global y la Response lleva solo una marca interna en headers_flat
+// con el id. __finalize retira la entrada SIEMPRE que ve la marca: o la pasa al
+// ServeOutput o la descarta, y la marca nunca sale al cliente.
+//
+// El nombre de la marca lleva un ESPACIO por la misma razón que __SSE_MARCA
+// (no es un token HTTP válido: ninguna cabecera real puede hacerse pasar por ella).
+var __CH_MARCA: String = "nyx chunks-id"
+
+// Una Response creada por response_chunks que NUNCA llega a __finalize (el
+// handler la crea y lanza antes de devolverla, la guarda y no la usa, un wrap
+// la tira) dejaría su entrada, y con ella la closure y todo lo que capture,
+// retenida para siempre. Mitigante: cada registro barre las entradas con más de
+// __CH_TTL_S segundos. Una Response legítima llega a __finalize apenas el
+// handler la devuelve, así que el barrido solo alcanza a las huérfanas; si un
+// handler tardara más que el TTL entre crearla y devolverla, __ch_take no
+// encuentra la entrada y sale la respuesta normal (vacía), nunca un cuelgue.
+let __CH_TTL_S: int = 600
+
+struct ChunkSrc {
+    siguiente: Fn() -> String,
+    largo: int,
+    cierre: Fn() -> int,
+    hallada: bool
+}
+
+fn __ch_vacio() -> String {
+    return ""
+}
+
+// Cierre de las fuentes que no retienen nada (response_chunks de un handler).
+fn __ch_nada() -> int {
+    return 0
+}
+
+// Llama al cierre de una fuente. Nunca lanza: se invoca desde caminos de
+// limpieza (cortes, descartes, barrido) donde una excepción mataría al worker
+// con la conexión a medias.
+fn __ch_cerrar(c: Fn() -> int) -> int {
+    try {
+        c()
+    } catch(e: String) {
+        print("[nyx-serve] el cierre de una respuesta por trozos lanzó: " + e)
+    }
+    return 0
+}
+
+var __ch_mu: Map = Map.new()
+var __ch_ready: int = 0
+// Tabla en arrays paralelos; un id 0 marca una ranura libre (se reutiliza).
+var __ch_ids: Array = []
+var __ch_fns: Array = []
+var __ch_cierres: Array = []
+var __ch_largos: Array = []
+var __ch_ts: Array = []
+var __ch_ultimo_id: int = 0
+
+// Misma regla que ws_init_registry/__sse_init_registry: serve_app_en la llama
+// single-threaded antes de lanzar los workers (pthread_create da el
+// happens-before); response_chunks la repite como red de seguridad.
+fn __ch_init_registry() -> int {
+    if __ch_ready == 0 {
+        __ch_mu = mutex_new()
+        __ch_ready = 1
+    }
+    return 0
+}
+
+fn __ch_register(f: Fn() -> String, largo: int, cierre: Fn() -> int) -> int {
+    __ch_init_registry()
+    let ahora: int = monotonic_us() / 1000000
+    // Cierres de las entradas barridas por el TTL: se llaman DESPUÉS de soltar
+    // el mutex (un cierre no debe correr con el registro tomado).
+    var barridos: Array = []
+    mutex_lock(__ch_mu)
+    var libre: int = 0 - 1
+    var i: int = 0
+    while i < __ch_ids.length() {
+        let id: int = __ch_ids[i]
+        if id != 0 {
+            let t: int = __ch_ts[i]
+            if ahora - t > __CH_TTL_S {
+                let cb: Fn() -> int = __ch_cierres[i]
+                barridos.push(cb)
+                __ch_ids[i] = 0
+                __ch_fns[i] = __ch_vacio
+                __ch_cierres[i] = __ch_nada
+            }
+        }
+        let id2: int = __ch_ids[i]
+        if id2 == 0 and libre < 0 { libre = i }
+        i = i + 1
+    }
+    __ch_ultimo_id = __ch_ultimo_id + 1
+    let nuevo: int = __ch_ultimo_id
+    if libre >= 0 {
+        __ch_ids[libre] = nuevo
+        __ch_fns[libre] = f
+        __ch_largos[libre] = largo
+        __ch_ts[libre] = ahora
+        __ch_cierres[libre] = cierre
+    } else {
+        __ch_ids.push(nuevo)
+        __ch_fns.push(f)
+        __ch_largos.push(largo)
+        __ch_ts.push(ahora)
+        __ch_cierres.push(cierre)
+    }
+    mutex_unlock(__ch_mu)
+    var bi: int = 0
+    while bi < barridos.length() {
+        let cb2: Fn() -> int = barridos[bi]
+        __ch_cerrar(cb2)
+        bi = bi + 1
+    }
+    return nuevo
+}
+
+// Retira la entrada `id` del registro (y la devuelve). hallada=false si no está
+// (barrida por el TTL, o id inválido).
+fn __ch_take(id: int) -> ChunkSrc {
+    var res: ChunkSrc = ChunkSrc { siguiente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada, hallada: false }
+    if id <= 0 or __ch_ready == 0 { return res }
+    mutex_lock(__ch_mu)
+    var i: int = 0
+    while i < __ch_ids.length() {
+        let cur: int = __ch_ids[i]
+        if cur == id {
+            let f: Fn() -> String = __ch_fns[i]
+            let lg: int = __ch_largos[i]
+            let cb: Fn() -> int = __ch_cierres[i]
+            res = ChunkSrc { siguiente: f, largo: lg, cierre: cb, hallada: true }
+            __ch_ids[i] = 0
+            __ch_fns[i] = __ch_vacio
+            __ch_cierres[i] = __ch_nada
+            i = __ch_ids.length()
+        }
+        i = i + 1
+    }
+    mutex_unlock(__ch_mu)
+    return res
+}
+
+fn __ch_marca_idx(headers: Array) -> int {
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        if k == __CH_MARCA {
+            return i
+        }
+        i = i + 2
+    }
+    return 0 - 1
+}
+
+fn __ch_sin_marca(headers: Array) -> Array {
+    var out: Array = []
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        if k != __CH_MARCA {
+            out.push(k)
+            out.push(v)
+        }
+        i = i + 2
+    }
+    return out
+}
+
+// Cabecera de una respuesta por trozos. Lleva las cabeceras de la Response
+// (incluidas las de hooks y after-hooks) salvo las que este formato fija: un
+// Content-Length / Transfer-Encoding / Connection que el handler haya puesto
+// a mano se descarta (se comparan sin distinguir mayúsculas) para no emitirlos
+// duplicados ni contradecir el marco que de verdad se usa.
+fn __format_chunks_head(r: Response, largo: int) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    sb.append("HTTP/1.1 ")
+    sb.append(int_to_string(r.status))
+    sb.append(" ")
+    sb.append(http_status_text(r.status))
+    sb.append("\r\n")
+    let headers: Array = r.headers_flat
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        let kl: String = k.toLower()
+        if kl != "content-length" and kl != "transfer-encoding" and kl != "connection" {
+            sb.append(k)
+            sb.append(": ")
+            sb.append(v)
+            sb.append("\r\n")
+        }
+        i = i + 2
+    }
+    if largo >= 0 {
+        sb.append("Content-Length: ")
+        sb.append(int_to_string(largo))
+        sb.append("\r\n")
+    } else {
+        sb.append("Transfer-Encoding: chunked\r\n")
+    }
+    sb.append("Connection: keep-alive\r\n")
+    sb.append(__serve_ka_linea)
+    sb.append("\r\n")
+    return sb.to_string()
+}
+
+fn __hex(n: int) -> String {
+    if n <= 0 { return "0" }
+    let dig: String = "0123456789abcdef"
+    var v: int = n
+    var s: String = ""
+    while v > 0 {
+        let d: int = v % 16
+        s = dig.substring(d, d + 1) + s
+        v = v / 16
+    }
+    return s
+}
+
+// Hasta este tamaño el trozo se pega a su marco (una sola escritura, una sola
+// copia chica); por encima se escribe prefijo, trozo y "\r\n" por separado para
+// no copiar un trozo grande solo para ponerle 8 bytes alrededor.
+let __CH_PEGAR_HASTA: int = 16384
+
+// Escribe un String completo; false si se escribió menos (error o plazo
+// NYX_HTTP_SEND_SECS vencido: tcp_write devuelve los bytes que alcanzó).
+fn __ch_escribir(client: int, s: String) -> bool {
+    return tcp_write(client, s) == str_byte_length(s)
+}
+
+fn __ch_escribir_marco(client: int, trozo: String, n: int) -> bool {
+    let prefijo: String = __hex(n) + "\r\n"
+    if n <= __CH_PEGAR_HASTA {
+        return __ch_escribir(client, prefijo + trozo + "\r\n")
+    }
+    if !__ch_escribir(client, prefijo) { return false }
+    if !__ch_escribir(client, trozo) { return false }
+    return __ch_escribir(client, "\r\n")
+}
+
+fn __ch_cortada(client: int, motivo: String, enviados: int) -> int {
+    print("[nyx-serve] respuesta por trozos cortada (" + motivo + ") tras " + int_to_string(enviados) + " bytes, cliente " + getpeername(client))
+    return 3
+}
+
+// Escribe una respuesta por trozos: cabecera, luego cada trozo de `siguiente`
+// hasta que devuelva "". 0 = completa y la conexión sigue utilizable; 3 = hubo
+// que cortarla (la cabecera ya salió, no hay cómo avisar de otra forma: el
+// cliente ve un cuerpo incompleto). Con largo conocido nunca se escriben más
+// bytes que `largo`; si la fuente entrega más, o menos, se corta.
+fn __escribir_trozos(client: int, out: ServeOutput) -> int {
+    let rc: int = __escribir_trozos_cuerpo(client, out)
+    // Termine como termine (completa, cortada, fuente que lanzó, escritura que
+    // falló), lo que la fuente retiene se libera aquí: es el único punto por el
+    // que pasan todas las salidas de la función de abajo.
+    let cierre: Fn() -> int = out.cierre
+    __ch_cerrar(cierre)
+    return rc
+}
+
+fn __escribir_trozos_cuerpo(client: int, out: ServeOutput) -> int {
+    let cabecera: String = out.wire
+    if !__ch_escribir(client, cabecera) { return __ch_cortada(client, "escribiendo la cabecera", 0) }
+    let siguiente: Fn() -> String = out.fuente
+    let largo: int = out.largo
+    var enviados: int = 0
+    var fin: bool = false
+    while !fin {
+        var trozo: String = ""
+        try {
+            trozo = siguiente()
+        } catch(e: String) {
+            return __ch_cortada(client, "la fuente lanzó: " + e, enviados)
+        }
+        let n: int = str_byte_length(trozo)
+        if n == 0 {
+            fin = true
+        } else {
+            if largo >= 0 {
+                if enviados + n > largo { return __ch_cortada(client, "la fuente entregó más que el largo declarado " + int_to_string(largo), enviados) }
+                if !__ch_escribir(client, trozo) { return __ch_cortada(client, "falló la escritura", enviados) }
+            } else {
+                if !__ch_escribir_marco(client, trozo, n) { return __ch_cortada(client, "falló la escritura", enviados) }
+            }
+            enviados = enviados + n
+        }
+    }
+    if largo >= 0 {
+        if enviados != largo { return __ch_cortada(client, "la fuente entregó menos que el largo declarado " + int_to_string(largo), enviados) }
+    } else {
+        if !__ch_escribir(client, "0\r\n\r\n") { return __ch_cortada(client, "falló el terminador", enviados) }
+    }
+    return 0
+}
+
+fn __response_trozos(status: int, tipo: String, largo: int, siguiente: Fn() -> String, cierre: Fn() -> int) -> Response {
+    let id: int = __ch_register(siguiente, largo, cierre)
+    var hdrs: Array = []
+    hdrs.push("Content-Type")
+    hdrs.push(tipo)
+    hdrs.push(__CH_MARCA)
+    hdrs.push(int_to_string(id))
+    return Response { status: status, headers_flat: hdrs, body: "" }
+}
+
+// Respuesta de largo desconocido, con Transfer-Encoding: chunked. El servidor
+// llama a `siguiente` en el hilo del worker, uno tras otro, y escribe cada trozo
+// al recibirlo; un String vacío termina la respuesta. El cuerpo nunca existe
+// entero en memoria. `tipo` es el Content-Type. Los after-hooks ven body "" y
+// pueden agregar cabeceras; si uno cambia el status, la fuente se descarta y
+// sale la respuesta normal. HEAD recibe solo la cabecera (la fuente no se
+// llama). gzip no actúa. Si `siguiente` lanza o la escritura falla, la
+// conexión se corta sin el terminador.
+pub fn response_chunks(status: int, tipo: String, siguiente: Fn() -> String) -> Response {
+    return __response_trozos(status, tipo, 0 - 1, siguiente, __ch_nada)
+}
+
+// Igual, con el largo total conocido: sale `Content-Length: largo` y los trozos
+// van crudos, sin marco. La fuente debe entregar EXACTAMENTE `largo` bytes; si
+// entrega más o menos, la conexión se corta. Un `largo` negativo se trata como
+// desconocido (chunked).
+pub fn response_chunks_len(status: int, tipo: String, largo: int, siguiente: Fn() -> String) -> Response {
+    return __response_trozos(status, tipo, largo, siguiente, __ch_nada)
+}
+
+// Descarta la fuente de una Response por trozos que NO va a salir (por ejemplo
+// un 304 que la reemplaza): la retira del registro y cierra lo que retenga. Sin
+// marca no hace nada.
+fn __ch_descartar(headers: Array) -> int {
+    let cm: int = __ch_marca_idx(headers)
+    if cm < 0 { return 0 }
+    let cid: String = headers[cm + 1]
+    let src: ChunkSrc = __ch_take(string_to_int_or(cid, 0))
+    if src.hallada {
+        let c: Fn() -> int = src.cierre
+        __ch_cerrar(c)
+    }
+    return 0
+}
+
+// ── response_from_stream: reenviar la respuesta de un origen sin juntarla ──
+
+// Content-Length válido: solo dígitos, sin signo ni espacios internos. -1 si no.
+fn __largo_valido(v: String) -> int {
+    let t: String = v.trim()
+    let n: int = str_byte_length(t)
+    if n == 0 or n > 15 { return 0 - 1 }
+    var i: int = 0
+    while i < n {
+        let c: int = t.charAt(i)
+        if c < 48 or c > 57 { return 0 - 1 }
+        i = i + 1
+    }
+    return string_to_int_or(t, 0 - 1)
+}
+
+// Cabeceras del origen que SÍ se copian a la respuesta (además de Content-Type
+// y del marco, que se deciden aparte). Son las que describen el CONTENIDO y su
+// caché, no la conexión entre el origen y este servidor. Se descartan, por
+// hop-by-hop o porque las fija el servidor: Connection, Keep-Alive,
+// Transfer-Encoding, Content-Length (el largo se decide aparte), TE, Trailer,
+// Upgrade, Proxy-*, y también Set-Cookie y Server (un origen interno no habla
+// por este servidor). Content-Encoding no hace falta: try_http_stream_opts
+// rechaza un origen que comprime, así que `read()` entrega siempre los bytes
+// tal cual y nunca hay una codificación que conservar.
+let __STREAM_COPIA: Array = ["Content-Disposition", "ETag", "Last-Modified", "Cache-Control", "Expires", "Content-Language", "Location", "Retry-After"]
+
+/// Reenvía la respuesta de un origen (un HttpStream de std/http) sin juntarla en memoria: el servidor lee un trozo, lo escribe al cliente y pide el siguiente, así que un cuerpo de cientos de MiB cuesta lo mismo que uno de pocos KiB. Copia el status, el Content-Type (application/octet-stream si el origen no trae), y Content-Disposition, ETag, Last-Modified, Cache-Control, Expires, Content-Language, Location y Retry-After. Con un Content-Length válido del origen sale con ese Content-Length (los bytes que entrega read() son exactamente esos); sin él, con Transfer-Encoding: chunked. El stream se cierra al terminar el cuerpo, si el origen falla a mitad (la conexión con el cliente se corta), si el cliente se va y si la respuesta se descarta sin enviar el cuerpo (HEAD, un after-hook que cambia el status). Un 3xx reenvía solo Location; un 204/304 no lleva cuerpo.
+pub fn response_from_stream(s: HttpStream) -> Response {
+    let st: int = s.status()
+    let hdrs: Array = s.headers()
+    var tipo: String = http_find_header(hdrs, "Content-Type")
+    if str_byte_length(tipo) == 0 { tipo = "application/octet-stream" }
+    // Content-Length vale solo si el cuerpo que entrega read() son esos bytes:
+    // con Transfer-Encoding el marco manda (y read() lo desarma), y un origen
+    // con Content-Encoding ni siquiera abre (ver arriba).
+    var largo: int = 0 - 1
+    let te: String = http_find_header(hdrs, "Transfer-Encoding")
+    let enc: String = http_find_header(hdrs, "Content-Encoding")
+    if str_byte_length(te) == 0 and str_byte_length(enc) == 0 {
+        largo = __largo_valido(http_find_header(hdrs, "Content-Length"))
+    }
+    let fuente: Fn() -> String = fn() -> String {
+        let r: Result<String, Error> = s.read()
+        if r.is_err() {
+            s.close()
+            let e: Error = r.unwrap_err()
+            panic("response_from_stream: el origen falló a mitad del cuerpo: " + e.msg)
+        }
+        let trozo: String = r.unwrap()
+        if str_byte_length(trozo) == 0 { s.close() }
+        return trozo
+    }
+    let cierre: Fn() -> int = fn() -> int {
+        s.close()
+        return 0
+    }
+    var resp: Response = __response_trozos(st, tipo, largo, fuente, cierre)
+    var i: int = 0
+    while i < __STREAM_COPIA.length() {
+        let nombre: String = __STREAM_COPIA[i]
+        let v: String = http_find_header(hdrs, nombre)
+        if str_byte_length(v) > 0 {
+            resp.headers_flat.push(nombre)
+            resp.headers_flat.push(v)
+        }
+        i = i + 1
+    }
+    return resp
+}
+
+// ── response_file: servir un archivo en bloques ──
+
+// Tamaño del bloque de lectura: 16 KiB, no 64 KiB. La única lectura por bloques
+// que hay desde Nyx es file_read_bytes, que arma un Array de enteros (16 bytes
+// por byte leído, más un buffer sin marcar como atómico): un bloque de 64 KiB
+// deja ~1 MiB de basura y el RSS se estabilizaba en 29 MiB tras 20 descargas;
+// con 16 KiB la basura por bloque es 4 veces menor y se estabiliza en 23 MiB
+// (medido, 4 workers). Sigue siendo muy superior a un segmento TCP.
+let __FILE_BLOQUE: int = 16384
+
+// Valor de Content-Disposition: filename entre comillas. Se descartan CR, LF y
+// los demás caracteres de control (inyección de cabeceras) y se escapan `"` y
+// `\`. Los bytes >= 128 pasan tal cual (nombres UTF-8; los navegadores actuales
+// los aceptan); no se emite filename* (RFC 6266).
+fn __nombre_adjunto(nombre: String) -> String {
+    var sb: StringBuilder = StringBuilder.new()
+    let n: int = str_byte_length(nombre)
+    var i: int = 0
+    while i < n {
+        let c: int = nombre.charAt(i)
+        if c >= 32 and c != 127 {
+            if c == 34 or c == 92 { sb.append("\\") }
+            sb.append(nombre.substring(i, i + 1))
+        }
+        i = i + 1
+    }
+    return "attachment; filename=\"" + sb.to_string() + "\""
+}
+
+/// Sirve un archivo del disco en bloques de 16 KiB, con Content-Length igual a su tamaño: el RSS del servidor no depende del tamaño del archivo. `tipo` es el Content-Type ("" = detectarlo por la extensión con detect_mime_type). `nombre` no vacío agrega Content-Disposition: attachment; filename="nombre" (se descartan CR/LF y otros caracteres de control, y se escapan comillas y barras); vacío = sin esa cabecera. Un archivo que no existe, no es regular o no se puede leer da una Response 404. El archivo se abre al pedir el primer bloque y se cierra al terminar, al fallar, al cortarse la conexión y si la respuesta se descarta; si cambia de tamaño mientras se sirve, la conexión se corta (el largo ya se anunció). No valida la ruta: quien la arma desde un pedido debe rechazar `..`.
+pub fn response_file(ruta: String, tipo: String, nombre: String) -> Response {
+    let info: Array = stat(ruta)
+    if info.length() < 5 { return response_text(404, "404 Not Found") }
+    let es_archivo: bool = info[4]
+    if !es_archivo { return response_text(404, "404 Not Found") }
+    let largo: int = info[0]
+    // Prueba de apertura ahora (permisos): un archivo ilegible tiene que dar 404
+    // ANTES de enviar la cabecera, no una conexión cortada. Se cierra enseguida;
+    // la apertura real es perezosa, así que una respuesta descartada (HEAD, 304,
+    // after-hook) no retiene ningún descriptor.
+    let prueba = file_open(ruta, "r")
+    let prueba_ok: bool = prueba != 0
+    if !prueba_ok { return response_text(404, "404 Not Found") }
+    file_close(prueba)
+
+    var mime: String = tipo
+    if str_byte_length(mime) == 0 { mime = detect_mime_type(ruta) }
+
+    // estado[0]: handle (se guarda en el Array como en std/owned), estado[1]:
+    // 0 sin abrir, 1 abierto, 2 terminado/cerrado. Un Array porque las closures
+    // comparten por referencia.
+    let estado: Array = [0, 0]
+    let cerrar: Fn() -> int = fn() -> int {
+        let e: int = estado[1]
+        if e == 1 {
+            let h: Map = estado[0]
+            file_close(h)
+        }
+        estado[1] = 2
+        return 0
+    }
+    let fuente: Fn() -> String = fn() -> String {
+        let e: int = estado[1]
+        if e == 2 { return "" }
+        if e == 0 {
+            let h0 = file_open(ruta, "r")
+            let ok: bool = h0 != 0
+            if !ok {
+                estado[1] = 2
+                panic("response_file: no se pudo abrir " + ruta)
+            }
+            estado[0] = h0
+            estado[1] = 1
+        }
+        let h: Map = estado[0]
+        let crudo: Array = file_read_bytes(h, __FILE_BLOQUE)
+        let n: int = crudo.length()
+        if n == 0 {
+            cerrar()
+            return ""
+        }
+        return string_from_bytes(crudo, 0, n)
+    }
+    var resp: Response = __response_trozos(200, mime, largo, fuente, cerrar)
+    if str_byte_length(nombre) > 0 {
+        resp.headers_flat.push("Content-Disposition")
+        resp.headers_flat.push(__nombre_adjunto(nombre))
+    }
+    return resp
 }
 
 // Cabecera de un canal SSE (spec §2.1, D-2 i: cerrado por conexión, sin
@@ -459,7 +1020,7 @@ fn __serve_mt_dispatch(raw: Array, remote_ip: String) -> ServeOutput {
 
     // Empty method = client disconnected
     if method.length() == 0 {
-        return ServeOutput { wire: "", sse: false, room: "", cuerpo: "" }
+        return ServeOutput { wire: "", sse: false, room: "", cuerpo: "", trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
     }
 
     // Clean path (strip query string for routing)
@@ -516,7 +1077,7 @@ fn __serve_mt_dispatch(raw: Array, remote_ip: String) -> ServeOutput {
     }
     // Unreachable: both try/catch branches return above — the toolchain's
     // return-path checker doesn't (yet) treat a try/catch as exhaustive.
-    return ServeOutput { wire: "", sse: false, room: "", cuerpo: "" }
+    return ServeOutput { wire: "", sse: false, room: "", cuerpo: "", trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
 }
 
 // Camino de error: handler registrable (app_error) con guard propio — si el
@@ -534,10 +1095,10 @@ fn __error_response(req: Request, err: String) -> ServeOutput {
         // never user/handler code, so there's nothing left here that can
         // panic — this is the reliable bottom of the fallback chain.
         let con_cuerpo: bool = req.method != "HEAD"
-        return ServeOutput { wire: __format_http_response_de(default_error(req, e2), con_cuerpo), sse: false, room: "", cuerpo: "" }
+        return ServeOutput { wire: __format_http_response_de(default_error(req, e2), con_cuerpo), sse: false, room: "", cuerpo: "", trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
     }
     // Unreachable: both try/catch branches return above — same checker gap.
-    return ServeOutput { wire: "", sse: false, room: "", cuerpo: "" }
+    return ServeOutput { wire: "", sse: false, room: "", cuerpo: "", trozos: false, fuente: __ch_vacio, largo: 0 - 1, cierre: __ch_nada }
 }
 
 // Motor de la cadena de wraps (contrato: Fn(Request, Fn) -> Response, con
@@ -843,6 +1404,38 @@ fn __drain_deadline_secs() -> int {
     return string_to_int_or(env, 10)
 }
 
+// Despacha UN pedido ya parseado y escribe su respuesta. Devuelve:
+//   0  respondido; la conexión sigue siendo del worker (keep-alive posible)
+//   1  canal SSE adjuntado: el fd ya no es del worker
+//   2  canal SSE no adjuntado (tope o drenaje): el worker cierra el fd
+//   3  respuesta por trozos cortada a mitad: el worker cierra el fd
+// Es una función aparte a propósito (ver el comentario en __serve_ka_worker).
+fn __serve_responder(client: int, request: Array) -> int {
+    let out: ServeOutput = __serve_mt_dispatch(request, getpeername(client))
+    let response: String = out.wire
+    if out.sse {
+        // Canal SSE: la decisión se tomó DESPUÉS del pipeline completo (hooks,
+        // middlewares, mounts, wraps y after-hooks), a diferencia del upgrade
+        // WS. Una conexión SSE no se reutiliza nunca.
+        if __sse_attach(client, response, out.room) == 1 {
+            return 1
+        }
+        return 2
+    }
+    if out.trozos {
+        return __escribir_trozos(client, out)
+    }
+    if response.length() > 0 {
+        tcp_write(client, response)
+    }
+    // Cuerpo grande: va después de su cabecera, sin copia (ver ServeOutput).
+    let cuerpo_ap: String = out.cuerpo
+    if cuerpo_ap.length() > 0 {
+        tcp_write(client, cuerpo_ap)
+    }
+    return 0
+}
+
 // Keep-alive worker: serves multiple requests per connection
 fn __serve_ka_worker() -> int {
     while 1 > 0 {
@@ -930,29 +1523,19 @@ fn __serve_ka_worker() -> int {
                     }
                     keep_alive = false
                 } else {
-                    let out: ServeOutput = __serve_mt_dispatch(request, getpeername(client))
-                    let response: String = out.wire
-                    let es_sse: bool = out.sse
-                    if es_sse {
-                        // Canal SSE: la decisión se tomó DESPUÉS del pipeline
-                        // completo (hooks, middlewares, mounts, wraps y
-                        // after-hooks), a diferencia del upgrade WS de arriba.
-                        // Una conexión SSE no se reutiliza nunca.
-                        let room: String = out.room
-                        if __sse_attach(client, response, room) == 1 {
-                            sse_owned = true
-                        }
+                    // El despacho y la escritura viven en __serve_responder, no
+                    // en este frame: mientras el worker queda estacionado en
+                    // nyx_http_park_next(), sus variables locales siguen siendo
+                    // raíces del recolector (pila conservadora), y un ServeOutput
+                    // o un cuerpo de decenas de MiB declarado acá quedaba retenido
+                    // hasta el pedido siguiente (spec serve-respuesta-por-trozos,
+                    // D7.2). Aquí solo se interpreta el código.
+                    let rc: int = __serve_responder(client, request)
+                    if rc == 1 {
+                        sse_owned = true
+                    }
+                    if rc != 0 {
                         keep_alive = false
-                    } else {
-                    if response.length() > 0 {
-                        tcp_write(client, response)
-                    }
-                    // Cuerpo grande: va después de su cabecera, sin copia
-                    // (ver ServeOutput).
-                    let cuerpo_ap: String = out.cuerpo
-                    if cuerpo_ap.length() > 0 {
-                        tcp_write(client, cuerpo_ap)
-                    }
                     }
                     let conn: String = http_find_header(headers, "Connection")
                     if conn == "close" {
@@ -1061,6 +1644,7 @@ pub fn serve_app_en(app: App, host: String, port: int, workers: int) -> int {
     // establishes happens-before for every worker, so this is race-free.
     ws_init_registry()
     __sse_init_registry()
+    __ch_init_registry()
     __gz_ensure()
     __rl_ensure()
     __body_init()
@@ -1665,6 +2249,50 @@ pub fn detect_mime_type(path: String) -> String {
     return "application/octet-stream"
 }
 
+// Umbral de los estáticos grandes: un archivo de MÁS de 1 MiB no se lee entero
+// (read_file lo subiría a la memoria del proceso, y el recolector no la devuelve:
+// ver el spec serve-respuesta-por-trozos) sino que sale por response_file, en
+// bloques de 16 KiB. Es el mismo 1 MiB hasta el que gzip puede actuar sobre un
+// cuerpo (__gz_max), así que para los de 1 MiB o menos NADA cambia: ni ETag, ni
+// caché, ni gzip. Por encima de 1 MiB gzip ya no actuaba, así que tampoco se pierde.
+let __ESTATICO_GRANDE: int = 1048576
+
+// ETag de un estático grande: tamaño y mtime, no el hash del contenido. Hashear
+// (sha256 de apply_etag) obligaría a leer el archivo entero en CADA pedido,
+// justo lo que este camino evita, y a hacerlo antes de poder contestar un 304.
+// Con tamaño+mtime la validación es un stat. Cambia de formato (`W/"<tamaño
+// hex>-<mtime hex>"`, con guion; el de contenido son 16 hex sin guion) solo por
+// encima del umbral. Es débil, como el otro: dos contenidos distintos del mismo
+// tamaño y mtime al segundo darían el mismo ETag; para un archivo que se
+// reemplaza por rename o se reescribe con mtime nuevo no pasa.
+fn __etag_grande(tam: int, mtime: int) -> String {
+    return "W/\"" + __hex(tam) + "-" + __hex(mtime) + "\""
+}
+
+// Respuesta 200 de un archivo estático: entero en el cuerpo si es chico, por
+// response_file (con su ETag de tamaño+mtime) si pasa el umbral. Un
+// llamador directo de try_serve_static que lea `resp.body` de un archivo grande
+// lo verá vacío: el cuerpo viaja por el mecanismo de trozos.
+fn __estatico_de(path: String, mime: String) -> Response {
+    let info: Array = stat(path)
+    if info.length() >= 3 {
+        let tam: int = info[0]
+        if tam > __ESTATICO_GRANDE {
+            var grande: Response = response_file(path, mime, "")
+            if grande.status == 200 {
+                let mt: int = info[2]
+                grande.headers_flat.push("ETag")
+                grande.headers_flat.push(__etag_grande(tam, mt))
+                return grande
+            }
+            // Ilegible: sigue por read_file, con lo que hacía antes.
+        }
+    }
+    let content: String = read_file(path)
+    let hdrs: Array = ["Content-Type", mime]
+    return Response { status: 200, headers_flat: hdrs, body: content }
+}
+
 // Try to serve a static file. Returns Response with status=0 if file not found.
 pub fn try_serve_static(base_dir: String, url_path: String) -> Response {
     let empty_hdrs: Array = []
@@ -1674,9 +2302,7 @@ pub fn try_serve_static(base_dir: String, url_path: String) -> Response {
     if url_path.endsWith("/") or url_path == "" {
         let index_path: String = base_dir + url_path + "index.html"
         if file_exists(index_path) {
-            let content: String = read_file(index_path)
-            let hdrs: Array = ["Content-Type", "text/html; charset=utf-8"]
-            return Response { status: 200, headers_flat: hdrs, body: content }
+            return __estatico_de(index_path, "text/html; charset=utf-8")
         }
         return not_found
     }
@@ -1688,9 +2314,7 @@ pub fn try_serve_static(base_dir: String, url_path: String) -> Response {
         // No extension — could be a directory, try with /index.html
         let dir_index: String = file_path + "/index.html"
         if file_exists(dir_index) {
-            let content: String = read_file(dir_index)
-            let hdrs: Array = ["Content-Type", "text/html; charset=utf-8"]
-            return Response { status: 200, headers_flat: hdrs, body: content }
+            return __estatico_de(dir_index, "text/html; charset=utf-8")
         }
         return not_found
     }
@@ -1699,10 +2323,8 @@ pub fn try_serve_static(base_dir: String, url_path: String) -> Response {
         return not_found
     }
 
-    let content: String = read_file(file_path)
     let mime: String = detect_mime_type(file_path)
-    let hdrs: Array = ["Content-Type", mime]
-    return Response { status: 200, headers_flat: hdrs, body: content }
+    return __estatico_de(file_path, mime)
 }
 
 // Register a directory as the static file root for the app.
@@ -1792,6 +2414,20 @@ pub fn compute_weak_etag(content: String) -> String {
 // Pass "" for if_none_match to just add the header without the 304 check.
 pub fn apply_etag(resp: Response, if_none_match: String) -> Response {
     if resp.status != 200 { return resp }
+    // Estático grande (o cualquier respuesta por trozos): el cuerpo no está en
+    // memoria, no se puede hashear. Trae su ETag puesto (tamaño+mtime, ver
+    // __etag_grande); sin él no se inventa uno (hashear "" daría el mismo ETag
+    // para todos los archivos). Si el cliente ya lo tiene, el 304 reemplaza la
+    // respuesta y la fuente se descarta (cierra lo que retenga).
+    if __ch_marca_idx(resp.headers_flat) >= 0 {
+        let propio: String = http_find_header(resp.headers_flat, "ETag")
+        if str_byte_length(propio) > 0 and if_none_match.length() > 0 and if_none_match == propio {
+            __ch_descartar(resp.headers_flat)
+            let hdrs_304g: Array = ["ETag", propio]
+            return Response { status: 304, headers_flat: hdrs_304g, body: "" }
+        }
+        return resp
+    }
     let etag: String = compute_weak_etag(resp.body)
     if if_none_match.length() > 0 {
         if if_none_match == etag {

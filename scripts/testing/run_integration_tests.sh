@@ -386,6 +386,36 @@ else
     fi
 fi
 
+# ── std/serve: respuesta por trozos (response_chunks) ────────────────────
+# Arco serve-respuesta-por-trozos, Task 3. Fixture server_chunks.nx (3
+# workers): el harness mira el cable con sockets crudos (chunked, Content-Length,
+# HEAD, after-hook que cambia el status, fuentes que fallan a mitad) y mide que
+# 70 respuestas de 24 MiB no hagan crecer el RSS. Puerto 13095 (SERVE_CHUNKS_PORT).
+echo -e "\n${BOLD}-- std/serve: respuesta por trozos --${NC}"
+SC_BIN="/tmp/nyx-serve-std-chunks-server"
+if [ ! -x ./nyx_bootstrap ]; then
+    echo -e "  SKIP: falta ./nyx_bootstrap (make bootstrap)"
+else
+    echo -e "  Compiling tests/integration/serve_std/server_chunks.nx..."
+    cp tests/integration/serve_std/server_chunks.nx script.nx
+    if ./nyx_bootstrap >/dev/null 2>&1 && \
+       clang -O2 script.ll ${NYX_RT_ARCHIVE:-runtime/*.c runtime/os/os_posix.c} -lgc -lpthread -ldl -lm -lssl -lcrypto -lz \
+           -o "$SC_BIN" 2>/dev/null; then
+        rm -f script.nx script.ll
+        if python3 tests/integration/test_serve_std_chunks.py "$SC_BIN"; then
+            echo -e "  ${GREEN}std/serve respuesta por trozos E2E passed${NC}"
+        else
+            echo -e "  ${RED}std/serve respuesta por trozos E2E failed${NC}"
+            OVERALL=1
+        fi
+        rm -f "$SC_BIN"
+    else
+        rm -f script.nx script.ll
+        echo -e "  ${RED}std/serve respuesta por trozos: no se pudo compilar el fixture${NC}"
+        OVERALL=1
+    fi
+fi
+
 # ── std/serve: smoke COMPLETO (los 64 checks de nyx-serve v0.7.1) ─────────
 # Fixture tests/integration/serve_std/standalone.nx = examples/standalone.nx
 # del producto con los imports en std/*; harness test_serve_std_smoke.py =

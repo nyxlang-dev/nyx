@@ -1,0 +1,38 @@
+// Nyx by Example: devolver memoria al sistema tras un pico con std/gc.
+//
+// El GC reutiliza la memoria que libera, pero no la devuelve al sistema por su
+// cuenta: tras un pico (una respuesta enorme, un lote grande) el proceso sigue
+// ocupando lo mapeado. En un servidor de larga vida, `gc_release()` colecta y
+// devuelve al sistema las páginas libres. Detiene todos los hilos mientras
+// corre: llámala tras el pico, no en cada pedido. No existe en wasm.
+// El GC es conservador: si justo después del pico un puntero viejo sigue en la
+// pila, la primera llamada puede no soltarlo; la segunda sí (ver std/gc).
+//
+// gc_heap_bytes() = heap mapeado; gc_free_bytes() = libre dentro de él.
+import "std/gc"
+
+fn pico() -> int {
+    var trozos: Array = []
+    var i = 0
+    while i < 32 {
+        trozos.push("y".repeat(1048576))
+        i = i + 1
+    }
+    return trozos.length()
+}
+
+fn main() -> int {
+    gc_release()
+    let antes: int = gc_heap_bytes()
+    println("antes del pico: heap > 0 = " + (antes > 0).to_string())
+    let n: int = pico()
+    let en_pico: int = gc_heap_bytes()
+    println("trozos alocados: " + int_to_string(n))
+    println("el heap creció: " + (en_pico > antes).to_string())
+    gc_release()
+    gc_release()
+    let despues: int = gc_heap_bytes()
+    println("tras gc_release el heap bajó: " + (despues < en_pico).to_string())
+    println("libre >= 0: " + (gc_free_bytes() >= 0).to_string())
+    return 0
+}

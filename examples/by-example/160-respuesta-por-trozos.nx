@@ -1,0 +1,116 @@
+// Nyx by Example: responder un cuerpo grande por trozos, sin armarlo entero en memoria.
+//
+// Un handler que devuelve un String grande lo retiene en memoria, y el recolector no devuelve
+// esa memoria al sistema: el servidor se queda en su pico (ver el gotcha serve-large-body-memory).
+// std/serve tiene tres formas de responder sin armar el cuerpo:
+//   - response_chunks(status, tipo, siguiente): `siguiente()` da un trozo por llamada y un String
+//     vacío termina la respuesta. Largo desconocido: sale Transfer-Encoding: chunked.
+//     response_chunks_len(status, tipo, largo, siguiente) es lo mismo con el largo conocido.
+//   - response_file(ruta, tipo, nombre): sirve un archivo en bloques; el RSS no depende de su
+//     tamaño. Con `nombre` agrega Content-Disposition: attachment.
+//   - response_from_stream(s): reenvía la respuesta de otro servidor (un HttpStream) trozo a
+//     trozo. Si el origen no contesta, el proxy decide su propia respuesta (aquí un 502).
+// El worker queda ocupado mientras dura la respuesta, y si la fuente falla a mitad del cuerpo la
+// conexión se corta sin el terminador.
+//
+// La receta corre sola: el servidor va en un hilo y el cliente es un socket que lee hasta el cierre.
+
+import "std/http"
+import "std/web"
+import "std/serve"
+import "std/error"
+
+var g_port: int = 18461
+var g_ruta: String = "/tmp/nyx-receta-160.txt"
+
+// La fuente: cuenta de 1 a 5, un trozo por llamada. El contador va en un Array porque las
+// closures comparten por referencia.
+fn fuente_cuenta() -> Fn() -> String {
+    let n: Array = [0]
+    return fn() -> String {
+        let i: int = n[0] + 1
+        if i > 5 { return "" }
+        n[0] = i
+        return "trozo " + int_to_string(i) + "\n"
+    }
+}
+
+fn contar(req: Request) -> Response {
+    return response_chunks(200, "text/plain", fuente_cuenta())
+}
+
+fn bajar(req: Request) -> Response {
+    return response_file(g_ruta, "", "datos.txt")
+}
+
+// El proxy: pide el origen (esta misma app, /contar) y reenvía lo que llega.
+fn proxear(url: String) -> Response {
+    let r: Result<HttpStream, Error> = try_http_stream_opts("GET", url, [], "", http_stream_opts())
+    if r.is_err() {
+        return response_text(502, "502 el origen no contesta")
+    }
+    return response_from_stream(r.unwrap())
+}
+
+fn proxy_ok(req: Request) -> Response {
+    return proxear("http://127.0.0.1:" + int_to_string(g_port) + "/contar")
+}
+
+fn proxy_caido(req: Request) -> Response {
+    return proxear("http://127.0.0.1:18469/contar")
+}
+
+fn conectar() -> int {
+    var fd: int = 0 - 1
+    var intentos: int = 0
+    while fd < 0 and intentos < 50 {
+        fd = tcp_connect("127.0.0.1", g_port)
+        if fd < 0 { sleep(100) }
+        intentos = intentos + 1
+    }
+    if fd >= 0 { tcp_set_timeout(fd, 5) }
+    return fd
+}
+
+// Un GET que lee la respuesta entera hasta el cierre (Connection: close).
+fn pedir(ruta: String) -> String {
+    let fd: int = conectar()
+    if fd < 0 { return "" }
+    tcp_write(fd, "GET " + ruta + " HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+    var todo: String = ""
+    var parte: String = tcp_read_partial(fd, 4096)
+    while str_byte_length(parte) > 0 {
+        todo = todo + parte
+        parte = tcp_read_partial(fd, 4096)
+    }
+    tcp_close(fd)
+    return todo
+}
+
+fn mostrar(titulo: String, resp: String) {
+    println("== " + titulo)
+    println(resp)
+}
+
+fn main() -> int {
+    write_file(g_ruta, "linea uno\nlinea dos\n")
+
+    let app: App = app_new()
+    app_get(app, "/contar", contar)
+    app_get(app, "/bajar", bajar)
+    app_get(app, "/proxy", proxy_ok)
+    app_get(app, "/proxy-caido", proxy_caido)
+
+    // El servidor corre en un hilo suelto que muere con el proceso.
+    spawn {
+        serve_app_en(app, "127.0.0.1", g_port, 4)
+    }
+
+    mostrar("response_chunks (chunked)", pedir("/contar"))
+    mostrar("response_file (Content-Length + Content-Disposition)", pedir("/bajar"))
+    mostrar("response_from_stream (proxy)", pedir("/proxy"))
+    mostrar("response_from_stream, origen caido -> 502", pedir("/proxy-caido"))
+
+    remove_file(g_ruta)
+    return 0
+}

@@ -3862,7 +3862,7 @@ fn module_category(name: String) -> String {
     if name == "array" or name == "map" or name == "collections" { return "Colecciones & estructuras" }
     if name == "set" or name == "deque" or name == "linkedlist" or name == "stack" or name == "btreemap" or name == "priorityqueue" or name == "graph" or name == "matrix" { return "Colecciones & estructuras" }
     if name == "statemachine" or name == "events" { return "Colecciones & estructuras" }
-    if name == "arena" or name == "box" or name == "rc" or name == "ownership" or name == "owned" or name == "wasm_mem" { return "Memoria" }
+    if name == "arena" or name == "gc" or name == "box" or name == "rc" or name == "ownership" or name == "owned" or name == "wasm_mem" { return "Memoria" }
     if name == "llm" { return "IA & LLM" }
     if name == "args" or name == "cli" or name == "log" or name == "logging" or name == "semver" or name == "testing" or name == "quickcheck" or name == "proptest" or name == "exec" or name == "process" { return "Tooling & CLI" }
     return ""

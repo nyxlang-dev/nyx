@@ -769,7 +769,20 @@ int64_t os_sock_send(int64_t fd, const void* buf, size_t len) {
     // EN: MSG_NOSIGNAL here is load-bearing -- this runtime has no global
     // SIGPIPE SIG_IGN, so writing to a peer that closed must return -EPIPE,
     // not kill the process via the signal's default disposition.
-    ssize_t n = send((int)fd, buf, len, MSG_NOSIGNAL);
+    //
+    // EINTR se reintenta acá. Un send() sobre un socket con SO_SNDTIMEO vuelve
+    // con EINTR ante CUALQUIER señal con handler, aunque el handler tenga
+    // SA_RESTART (signal(7): las llamadas de socket con plazo no se reinician),
+    // y Boehm detiene los hilos con una señal en cada colección. Sin el
+    // reintento, nyx_tcp_write tomaba ese EINTR por un error y dejaba la
+    // respuesta por la mitad: medido el 2026-11-10 con dos clientes a la vez
+    // contra std/serve, cuerpos de 24 MiB cortados a los 4-20 MiB. Cada
+    // reintento vuelve a contar el plazo desde cero; una colección dura
+    // milisegundos, así que el plazo efectivo casi no cambia.
+    ssize_t n;
+    do {
+        n = send((int)fd, buf, len, MSG_NOSIGNAL);
+    } while (n < 0 && errno == EINTR);
     return n < 0 ? -errno : (int64_t)n;
 }
 int64_t os_sock_sendv(int64_t fd, const os_iovec_t* iov, int n) {

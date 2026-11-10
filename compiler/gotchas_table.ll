@@ -1159,11 +1159,11 @@ target triple = "x86_64-pc-linux-gnu"
 @.str577.c = internal global %nyx_string* null
 @.str578 = private unnamed_addr constant [1 x i8] c"\00"
 @.str578.c = internal global %nyx_string* null
-@.str579 = private unnamed_addr constant [46 x i8] c"tests/integration/test_serve_std_keepalive.py\00"
+@.str579 = private unnamed_addr constant [121 x i8] c"tests/integration/test_serve_std_keepalive.py,tests/integration/test_serve_std_chunks.py,tests/ai-first/54-gc-release.nx\00"
 @.str579.c = internal global %nyx_string* null
-@.str580 = private unnamed_addr constant [168 x i8] c"A `std/serve` handler returns its whole body as one `String`, and the memory a large body needed does not go back to the system: a long-lived server stays at its peak.\00"
+@.str580 = private unnamed_addr constant [290 x i8] c"A `std/serve` handler that returns a large body as one `String` keeps all of it in memory, and the memory a large body needed does not go back to the system: a long-lived server stays at its peak. Answer big bodies with `response_from_stream`, `response_file` or `response_chunks` instead.\00"
 @.str580.c = internal global %nyx_string* null
-@.str581 = private unnamed_addr constant [180 x i8] c"Un handler de `std/serve` devuelve el cuerpo entero como un `String`, y la memoria que pidió un cuerpo grande no vuelve al sistema: un servidor de larga vida se queda en su pico.\00"
+@.str581 = private unnamed_addr constant [308 x i8] c"Un handler de `std/serve` que devuelve un cuerpo grande como un solo `String` lo tiene entero en memoria, y la memoria que pidió ese cuerpo no vuelve al sistema: un servidor de larga vida se queda en su pico. Los cuerpos grandes se responden con `response_from_stream`, `response_file` o `response_chunks`.\00"
 @.str581.c = internal global %nyx_string* null
 @.str582 = private unnamed_addr constant [33 x i8] c"implicit-monomorphization-nested\00"
 @.str582.c = internal global %nyx_string* null
@@ -5299,16 +5299,16 @@ define { i64, i8* }* @gotchas_table(
   %1948 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str578.c, i8* %1947, i64 0)
   %1949 = ptrtoint %nyx_string* %1948 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1922, i64 %1949, i64 2)
-  %1950 = getelementptr [46 x i8], [46 x i8]* @.str579, i32 0, i32 0
-  %1951 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str579.c, i8* %1950, i64 45)
+  %1950 = getelementptr [121 x i8], [121 x i8]* @.str579, i32 0, i32 0
+  %1951 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str579.c, i8* %1950, i64 120)
   %1952 = ptrtoint %nyx_string* %1951 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1922, i64 %1952, i64 2)
-  %1953 = getelementptr [168 x i8], [168 x i8]* @.str580, i32 0, i32 0
-  %1954 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str580.c, i8* %1953, i64 167)
+  %1953 = getelementptr [290 x i8], [290 x i8]* @.str580, i32 0, i32 0
+  %1954 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str580.c, i8* %1953, i64 289)
   %1955 = ptrtoint %nyx_string* %1954 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1922, i64 %1955, i64 2)
-  %1956 = getelementptr [180 x i8], [180 x i8]* @.str581, i32 0, i32 0
-  %1957 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str581.c, i8* %1956, i64 179)
+  %1956 = getelementptr [308 x i8], [308 x i8]* @.str581, i32 0, i32 0
+  %1957 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str581.c, i8* %1956, i64 307)
   %1958 = ptrtoint %nyx_string* %1957 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1922, i64 %1958, i64 2)
   %1959 = ptrtoint { i64, i8* }* %1922 to i64

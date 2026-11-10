@@ -2509,6 +2509,29 @@ unsafe {
 }
 ```
 
+### Control del recolector (`std/gc`)
+
+```nyx
+import "std/gc"
+
+gc_release()                       // tras un pico: colecta y devuelve páginas al sistema
+let heap: int = gc_heap_bytes()    // bytes mapeados del heap
+let libre: int = gc_free_bytes()   // bytes libres dentro del heap mapeado
+```
+
+| Función | Descripción |
+|---------|-------------|
+| `gc_collect()` | Colección completa: libera lo inalcanzable para reusarlo, pero NO devuelve páginas al sistema |
+| `gc_release()` | Colecta y devuelve al sistema las páginas libres del heap (`GC_gcollect_and_unmap` dos veces) |
+| `gc_heap_bytes() -> int` | Bytes del heap actualmente mapeados (ocupado más libre retenido) |
+| `gc_free_bytes() -> int` | Bytes libres dentro del heap mapeado; cifra aproximada, depende de la última colección |
+
+Ambas colecciones DETIENEN TODOS LOS HILOS mientras corren: sirven tras un pico (una respuesta muy
+grande ya enviada), no en cada pedido. Lo retenido por una variable viva o por la pila de otro hilo
+no se libera. El GC es conservador: un puntero viejo en un registro o en la pila de quien llama
+puede retener el pico, y `gc_release()` puede necesitar una segunda llamada (o hacerse desde un
+punto con la pila limpia). `std/gc` solo existe en los targets nativos: en `wasm32-wasi` no enlaza.
+
 ### Static Variables
 ```nyx
 static var counter: int = 0
@@ -5115,6 +5138,86 @@ Conducta:
   upstream cerraba (el cliente no recibía nada) y antes de 0.4.3 además podía mezclar el cuerpo con
   pedidos de OTROS usuarios a través de su pool. Con un proxy más viejo, exponer SSE solo en un
   servidor al que el cliente llega directo.
+
+---
+
+## Respuesta por trozos (`std/serve`)
+
+Un handler devuelve un `Response` cuyo cuerpo es un `String` entero. Para respuestas de decenas de
+MiB eso retiene el cuerpo en memoria (el recolector no lo devuelve al sistema), así que hay cuatro
+funciones que escriben el cuerpo trozo a trozo y nunca lo arman entero.
+
+```nyx
+import "std/web"
+import "std/serve"
+
+fn descarga(req: Request) -> Response {
+    return response_file("/datos/informe.pdf", "", "informe.pdf")
+}
+app_get(app, "/descargas/informe", descarga)
+```
+
+| Función | Descripción |
+|---------|-------------|
+| `response_chunks(status, tipo, siguiente: Fn() -> String) -> Response` | Largo desconocido, `Transfer-Encoding: chunked`. El worker llama a `siguiente` una y otra vez y escribe cada trozo al recibirlo; un `String` vacío termina la respuesta. `tipo` es el `Content-Type` |
+| `response_chunks_len(status, tipo, largo, siguiente) -> Response` | Igual, con `Content-Length: largo` y los trozos crudos, sin marco. La fuente debe entregar EXACTAMENTE `largo` bytes; más o menos corta la conexión. Un `largo` negativo se trata como desconocido (chunked) |
+| `response_from_stream(s: HttpStream) -> Response` | Reenvía la respuesta de un origen (`HttpStream` de `std/http`) sin juntarla: lee un trozo, lo escribe, pide el siguiente |
+| `response_file(ruta, tipo, nombre) -> Response` | Sirve un archivo en bloques de 16 KiB con `Content-Length` igual a su tamaño. `tipo` vacío = `detect_mime_type(ruta)`; `nombre` no vacío agrega `Content-Disposition: attachment; filename="nombre"` |
+
+Reglas comunes:
+- **Después del handler**: la respuesta pasa por hooks, middlewares y wraps como cualquier otra. Los
+  after-hooks la ven con `body` vacío y pueden agregar cabeceras. Si uno cambia el `status` o pone un
+  cuerpo, esa respuesta gana: la fuente se descarta sin llamarla y sale la respuesta normal.
+- **HEAD**: solo la cabecera (con el mismo `Content-Length` o `Transfer-Encoding` que llevaría el
+  `GET`); la fuente no se llama. Tampoco llevan cuerpo un `204`, `205`, `304` ni un `3xx`.
+- **gzip no actúa** sobre una respuesta por trozos (el cuerpo no existe entero y, con largo
+  declarado, los bytes deben coincidir uno a uno).
+- **Error a mitad**: si `siguiente` lanza, la escritura falla o (con largo) la fuente entrega más o
+  menos de lo declarado, el servidor registra una línea `[nyx-serve] respuesta por trozos cortada
+  (motivo)` y corta la conexión SIN el terminador: el cliente ve un cuerpo incompleto, porque la
+  cabecera ya salió y no hay otra forma de avisar.
+- **Cierre de recursos**: lo que retiene la fuente (el `HttpStream`, el archivo) se cierra al
+  terminar el cuerpo, al fallar, al cortarse la conexión y si la respuesta se descarta sin enviarse
+  (HEAD, 304, un after-hook que cambia el status). Una `Response` creada y nunca devuelta al
+  servidor (el handler lanza después de crearla) se barre a los 600 s.
+- **Un worker queda ocupado** mientras dura la respuesta. Es una descarga lenta, no un canal como
+  `sse_open`: usa `NYX_HTTP_SEND_SECS` para cortar al cliente que dejó de leer.
+
+`response_from_stream` copia el `status`, el `Content-Type` (`application/octet-stream` si el origen
+no trae) y estas cabeceras: `Content-Disposition`, `ETag`, `Last-Modified`, `Cache-Control`,
+`Expires`, `Content-Language`, `Location` y `Retry-After`. No copia `Connection`, `Keep-Alive`,
+`Transfer-Encoding`, `Content-Length` (el largo se decide aparte), `TE`, `Trailer`, `Upgrade`,
+`Proxy-*`, `Set-Cookie` ni `Server`. Con un `Content-Length` válido del origen sale con ese largo;
+sin él, chunked. Un 3xx reenvía solo `Location`. Si el origen falla a mitad del cuerpo, la conexión
+con el cliente se corta (regla de error a mitad). Un origen que comprime no llega aquí:
+`try_http_stream_opts` lo rechaza con `Err(unsupported)`, así que el proxy recibe un `Result.Err`
+y debe elegir su propia respuesta (típicamente 502).
+
+`response_file` devuelve una `Response` 404 si el archivo no existe, no es regular o no se puede
+leer (la prueba de apertura es antes de enviar la cabecera). Lo abre al pedir el primer bloque. Si
+cambia de tamaño mientras se sirve, la conexión se corta. **No valida la ruta**: quien la arma desde
+un pedido debe rechazar `..`.
+
+**Estáticos grandes**: `try_serve_static`, `app_static`, `app_static_cached` y
+`try_serve_static_prefix` sirven por `response_file` un archivo de MÁS de 1 MiB (para 1 MiB o menos
+nada cambia). Por encima de ese umbral el `ETag` pasa a ser débil de tamaño y mtime,
+`W/"<tamaño hex>-<mtime hex>"` (con guion), en lugar del hash del contenido de `apply_etag`, porque
+hashear obligaría a leer el archivo entero en cada pedido; el `If-None-Match` sigue dando 304. Quien
+llame a `try_serve_static` directamente y lea `resp.body` de un archivo grande lo verá vacío.
+
+**Cuerpo normal grande**: un `Response` con `body` de 64 KiB o más se escribe después de la cabecera
+sin concatenarlos (antes eran dos copias del cuerpo por respuesta).
+
+Medido el 2026-11-10 con 4 workers: 60 respuestas de 24 MiB con `response_from_stream` dejan el RSS
+en ~22 MB (juntando el cuerpo eran 455 MB); 20 descargas de 32 MiB con `response_file`, 23 MiB; un
+estático de 32 MiB no hace crecer el RSS; 70 respuestas de 24 MiB con `response_chunks`, +13 MiB.
+
+Límites:
+- A un cliente HTTP/1.0, una respuesta sin largo le sale chunked igual (no entiende el marco).
+- `response_file` lee de a 16 KiB: `file_read_bytes` arma un `Array` de enteros (16 bytes por byte
+  leído), así que un bloque mayor deja demasiada basura.
+- Si un after-hook lanza antes del final de la respuesta, la fuente se cierra recién por el barrido
+  de 600 s.
 
 ---
 

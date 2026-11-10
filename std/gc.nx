@@ -1,0 +1,60 @@
+// std/gc.nx — Control explícito del recolector de basura (Boehm GC)
+//
+// Envoltorio fino sobre símbolos de libgc, que ya se enlaza siempre. No hay
+// código C propio. Para un servidor de larga vida que tuvo un pico de memoria:
+// el GC suele reutilizar las páginas liberadas, pero no se las devuelve al
+// sistema operativo por su cuenta; `gc_release()` sí.
+//
+// Disponibilidad: solo en los targets nativos con libgc. Leído en
+// runtime/wasi/gc.h: el shim de wasm32-wasi no define GC_gcollect,
+// GC_gcollect_and_unmap, GC_get_heap_size ni GC_get_free_bytes (solo
+// GC_malloc*, GC_realloc, GC_INIT y unos setters que son no-ops), así que
+// importar std/gc en wasm no enlaza.
+
+extern "C" fn GC_gcollect()
+extern "C" fn GC_gcollect_and_unmap()
+extern "C" fn GC_get_heap_size() -> int
+extern "C" fn GC_get_free_bytes() -> int
+
+// Hace una colección completa del GC. Libera lo inalcanzable para que se
+// reutilice, pero NO devuelve páginas al sistema (el heap mapeado no baja; para
+// eso está gc_release). DETIENE TODOS LOS HILOS mientras corre: milisegundos
+// con poco heap vivo, más con mucho. Lo retenido por una variable viva, o por la
+// pila de otro hilo, no se libera. No conviene llamarla en cada pedido; sirve
+// tras un pico, o antes de medir gc_free_bytes().
+pub fn gc_collect() {
+    GC_gcollect()
+}
+
+// Colecta y devuelve al sistema operativo las páginas libres del heap. Pensada
+// para un servidor de larga vida tras un pico (por ejemplo, una respuesta muy
+// grande ya enviada); no para llamarla en cada pedido. Igual que gc_collect,
+// DETIENE TODOS LOS HILOS mientras corre, y lo que siga retenido por una
+// variable viva o por la pila de otro hilo no se libera.
+//
+// Se llama a GC_gcollect_and_unmap() DOS veces a propósito: medido el
+// 2026-11-10 con libgc 8.2.8, la primera colecta pero no desmapea lo que ella
+// misma acaba de liberar; la segunda sí lo devuelve.
+//
+// Ojo: el GC es conservador. Un puntero viejo que quedó en un registro o en un
+// hueco de la pila de quien llama (típico: justo después de volver de la
+// función que hizo el pico) puede retener el pico en esta llamada; medido,
+// ~77 MiB retenidos tras la primera llamada y liberados en la segunda, que
+// corre con esa pila ya reescrita. Si necesitas la devolución sí o sí, llama
+// gc_release() una segunda vez o hazlo desde un punto con la pila limpia.
+pub fn gc_release() {
+    GC_gcollect_and_unmap()
+    GC_gcollect_and_unmap()
+}
+
+// Bytes del heap del GC actualmente mapeados (lo ocupado más lo libre aún
+// retenido). No cuenta lo ya devuelto al sistema con gc_release.
+pub fn gc_heap_bytes() -> int {
+    return GC_get_heap_size()
+}
+
+// Bytes libres dentro del heap mapeado, reutilizables sin pedir más memoria
+// al sistema. Es una cifra aproximada: depende de la última colección.
+pub fn gc_free_bytes() -> int {
+    return GC_get_free_bytes()
+}
