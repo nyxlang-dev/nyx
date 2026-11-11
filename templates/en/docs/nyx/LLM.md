@@ -1732,7 +1732,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,interpolation-uses-nyx-type -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1962,6 +1962,16 @@ the checker let all three through and the build failed later in clang with «use
 For recursion, declare `fn fact(n: int) -> int { ... }` inside the function (nested fns see
 themselves and capture like a lambda). Top-level globals are the exception: they are visible to the
 whole module, including functions written above them. [test: compiler/errors/test-nyx1002-let-local-en-su-propio-valor]
+
+30. **Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `"${b}"` with `b: u8 = 65` is `65`, not `A`.**
+Interpolation and `String + x` convert by the Nyx type of the operand, exactly like `x.to_string()`:
+`u8`/`i8` print as numbers, `u16`/`u32` print unsigned, and a `char` (a variable, `s[0]`, a `-> char`
+call or a literal `'z'`) prints the character. Up to 0.44.0 only the LLVM type was looked at, so a
+`u8` printed as a character, an `i8` as a stray byte, a large `u32` came out negative and `"${'z'}"`
+was `122`. To get the character of a byte, hold it in a `char` variable. `arr.join(sep)` follows the
+same idea per element: ints, floats and bools are converted like `to_string()`, and an element that
+is an Array or a Map aborts with a message that names the index. An `Array`, `Map`, struct or tuple
+cannot be interpolated at all: NYX1010 (NYX2023 from codegen). [test: compiler/language/test-546-interpolar-por-tipo-nyx] [test: compiler/language/test-545-join-por-tag]
 
 <!-- /gen:gotchas -->
 
