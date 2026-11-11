@@ -11532,7 +11532,7 @@ merge17:
   %120 = ptrtoint { i64, i8* }* %119 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %116, i64 %120, i64 5)
   %121 = load i64, i64* %112
-  call void @nyx_array_push({ i64, i8* }* %116, i64 %121)
+  call void @nyx_array_push_tagged({ i64, i8* }* %116, i64 %121, i64 1)
   %122 = call { i64, i8* }* @make_astnode(%nyx_string* %115, { i64, i8* }* %116)
   %123 = alloca { i64, i8* }*
   store { i64, i8* }* %122, { i64, i8* }** %123

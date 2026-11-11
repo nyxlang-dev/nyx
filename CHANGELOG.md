@@ -11,6 +11,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`push` etiqueta el entero de una variable sin anotar**: `var a: Array = []`, `var x = 3`, `a.push(x)` dejaba la
+  casilla sin etiqueta de tipo y `a.join(",")` moría con SIGSEGV (el arreglo de `join` de este mismo día solo cubría
+  literales y Arrays con tipo). Un `let`/`var` sin anotar cuenta ahora como entero si arranca en un literal entero y
+  la función no lo reasigna con algo que no sea aritmética; también el acumulador `total = total + i`. Casos nuevos
+  en `language/test-545` [arco: texto-por-tipo].
 - **`nyx edit` y `nyx shell` sobreviven a una instalación**: los binarios compañeros viven en el `bin` de la
   versión activa de `~/.nyx`, y cada versión nueva (`make install-local`, `nyx update`, `install.sh`) nacía con su
   `bin` sin ellos, así que dejaban de andar tras cada actualización. Ahora la versión nueva hereda todo ejecutable del

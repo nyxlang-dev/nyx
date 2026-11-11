@@ -16,6 +16,21 @@ fn main() {
     a.push(true)
     a.push("x")
     assert(a.join("|") == "1|2.5|true|x")
+    // Enteros que llegan desde una VARIABLE sin anotar a un Array sin tipo de
+    // elemento: `push` los etiqueta si la variable arrancó en un literal entero
+    // y la función no la reasigna con otra cosa (D4). Antes la casilla quedaba
+    // sin etiqueta y join la leía como String (SIGSEGV).
+    var b2: Array = []
+    var x = 3
+    x = x * 2
+    b2.push(x)
+    b2.push(x + 1)
+    var total = 0
+    for i in 0..4 { total = total + i }
+    b2.push(total)
+    let k = -5
+    b2.push(k)
+    assert(b2.join(",") == "6,7,6,-5")
     // Receptor-expresión y negativos.
     assert(nums().join("-") == "7-8")
     assert([-1, 0].join(" ") == "-1 0")
