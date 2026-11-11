@@ -1,0 +1,30 @@
+// `.join(sep)` pasa cada casilla a texto por su tag. Hasta 2026-11-11 leía
+// toda casilla como puntero a String: `[1, 2, 3].join(", ")` compilaba sin un
+// aviso y moría con SIGSEGV. Spec 2026-11-11-texto-por-tipo, D1. El aborto
+// ordenado ante una casilla Array está en run_error_tests.sh (join-slot-array).
+fn nums() -> Array<int> { return [7, 8] }
+fn main() {
+    let xs = [1, 2, 3]
+    assert(xs.join(", ") == "1, 2, 3")
+    let fs = [1.5, 2.5]
+    assert(fs.join(",") == "1.5,2.5")
+    let bs = [true, false]
+    assert(bs.join("/") == "true/false")
+    var a: Array = []
+    a.push(1)
+    a.push(2.5)
+    a.push(true)
+    a.push("x")
+    assert(a.join("|") == "1|2.5|true|x")
+    // Receptor-expresión y negativos.
+    assert(nums().join("-") == "7-8")
+    assert([-1, 0].join(" ") == "-1 0")
+    // Los Arrays de String siguen igual, también los que arma split().
+    let ss = ["a", "b"]
+    assert(ss.join("-") == "a-b")
+    assert("a,b,c".split(",").join("+") == "a+b+c")
+    let v: Array<int> = []
+    assert(v.join(",") == "")
+    assert([5].join(",") == "5")
+    print("ok")
+}

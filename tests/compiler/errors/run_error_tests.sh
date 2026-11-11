@@ -2439,6 +2439,22 @@ else
   FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="join-slot-array-abort"
+# 2026-11-11 (spec texto-por-tipo, D1): `.join()` convierte cada casilla por su
+# tag; una casilla que guarda un Array no tiene texto y antes se leía como
+# String (SIGSEGV o basura). Ahora aborta nombrando el índice. El control
+# positivo de los tags con texto es language/test-545-join-por-tag.nx.
+jsa_bad=$(mktemp /tmp/jsa-XXXX.nx)
+printf 'fn main() -> int {\n    let nn = [[1], [2]]\n    print(nn.join(","))\n    return 0\n}\n' > "$jsa_bad"
+jsa_out=$(bash "$(pwd)/scripts/nyx" run "$jsa_bad" 2>&1); jsa_rc=$?
+rm -f "$jsa_bad"
+if [ "$jsa_rc" -ne 0 ] && [ "$jsa_rc" -ne 139 ] && echo "$jsa_out" | grep -qF "join() — el slot 0 del Array contiene un Array"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (rc=%d)\n" "$name" "$jsa_rc"
+  echo "$jsa_out" | tail -2 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="for-in-slot-string-leido-como-array-abort"
 # Fricción nyxerp 20260921-100001, variante dinámica: un String dentro de un
 # Array pelado, recorrido con `for g: Array in xs`, reventaba con SIGSEGV en el

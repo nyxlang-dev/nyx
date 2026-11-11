@@ -1,0 +1,31 @@
+// La interpolación (y `String + x`) usa el tipo NYX del operando, como
+// to_string(): un u8/i8 da el NÚMERO, un char el CARÁCTER, y el signo sale del
+// tipo. Hasta 2026-11-11 solo se miraba el tipo LLVM: `"${b}"` con `b: u8 = 65`
+// daba «A», un u32 grande salía negativo y `"${'z'}"` daba «122».
+// Spec 2026-11-11-texto-por-tipo, D2.
+fn letra() -> char { return 'q' }
+fn byte() -> u8 { return 66 }
+fn main() {
+    let b: u8 = 65
+    let i: i8 = -3
+    let w: u16 = 60000
+    let d: u32 = 4000000000
+    let c: char = 'z'
+    let s = "hola"
+    assert("${b}" == "65")
+    assert("${i}" == "-3")
+    assert("${w}" == "60000")
+    assert("${d}" == "4000000000")
+    assert("${byte()}" == "66")
+    assert("x" + b + "|" + w == "x65|60000")
+    // Lo mismo que to_string().
+    assert("${b}" == b.to_string())
+    assert("${d}" == d.to_string())
+    // Un char sigue dando el carácter, venga de donde venga.
+    assert("${c}" == "z")
+    assert("${'z'}" == "z")
+    assert("${s[0]}" == "h")
+    assert("${letra()}" == "q")
+    assert("a" + 'b' + c == "abz")
+    print("ok")
+}

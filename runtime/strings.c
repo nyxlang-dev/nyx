@@ -1016,44 +1016,70 @@ nyx_array_t* nyx_string_split(nyx_string* str, nyx_string* delimiter) {
     return result;
 }
 
-// Join: unir array de strings con separador
+// Join: unir los elementos de un array con separador.
+//
+// Cada casilla se pasa a texto por su TAG (runtime-arrays.h). Hasta 2026-11-11
+// se leía toda casilla como puntero a nyx_string, así que `[1, 2, 3].join(",")`
+// —que compila sin un aviso— moría con SIGSEGV (spec
+// docs/design/specs/2026-11-11-texto-por-tipo-design.md, D1).
+//   STRING / UNKNOWN / PTR  el puntero tal cual (conducta histórica: un
+//                           Array<String> llenado por una vía que no taguea, y
+//                           los Strings que entran por caminos opacos)
+//   INT / FLOAT / BOOL      el formateador de to_string() e interpolación
+//   ARRAY / MAP             aborto ordenado: no hay texto para eso, y leerlo
+//                           como String era basura o un SIGSEGV
+static nyx_string* nyx_join_slot_text(nyx_array_t* arr, int64_t i) {
+    int64_t tag = arr->tags ? (int64_t)arr->tags[i] : NYX_TAG_UNKNOWN;
+    if (tag == NYX_TAG_INT || tag == NYX_TAG_FLOAT || tag == NYX_TAG_BOOL) {
+        return nyx_string_from_tagged(arr->data[i], tag, tag);
+    }
+    if (tag == NYX_TAG_ARRAY || tag == NYX_TAG_MAP) {
+        fprintf(stderr,
+            "💥 Runtime Error: join() — el slot %" PRId64 " del Array contiene %s, que no tiene conversión a String\n"
+            "   (join() — slot %" PRId64 " of the Array holds %s, which has no conversion to String)\n"
+            "   convierte cada elemento antes: recorre el Array y arma el texto de cada uno\n",
+            i, tag == NYX_TAG_ARRAY ? "un Array" : "un Map",
+            i, tag == NYX_TAG_ARRAY ? "an Array" : "a Map");
+        NYX_FATAL_EXIT();
+    }
+    return (nyx_string*)arr->data[i];
+}
+
 nyx_string* nyx_string_join(nyx_array_t* strings, nyx_string* separator) {
     if (!strings || strings->length == 0) {
         return nyx_string_from_cstr("");
     }
-    
+
     if (!separator) separator = nyx_string_from_cstr("");
-    
-    // Calcular longitud total
+
+    // Una pasada convierte y mide; la otra copia. Los textos convertidos viven
+    // en `parts` (memoria del GC: los alcanza mientras dure la llamada).
+    int64_t n = strings->length;
+    nyx_string** parts = (nyx_string**)GC_malloc((size_t)n * sizeof(nyx_string*));
     size_t total_length = 0;
-    for (size_t i = 0; i < strings->length; i++) {
-        nyx_string* str = (nyx_string*)strings->data[i];
-        if (str) total_length += str->length;
-        
-        if (i < strings->length - 1) {
-            total_length += separator->length;
-        }
+    for (int64_t i = 0; i < n; i++) {
+        parts[i] = nyx_join_slot_text(strings, i);
+        if (parts[i]) total_length += parts[i]->length;
+        if (i < n - 1) total_length += separator->length;
     }
-    
-    // Construir resultado
+
     nyx_string* result = nyx_string_with_capacity(total_length + 1);
     result->length = total_length;
-    
+
     char* dest = result->data;
-    for (size_t i = 0; i < strings->length; i++) {
-        nyx_string* str = (nyx_string*)strings->data[i];
+    for (int64_t i = 0; i < n; i++) {
+        nyx_string* str = parts[i];
         if (str) {
             memcpy(dest, str->data, str->length);
             dest += str->length;
         }
-        
-        if (i < strings->length - 1) {
+        if (i < n - 1) {
             memcpy(dest, separator->data, separator->length);
             dest += separator->length;
         }
     }
     *dest = '\0';
-    
+
     return result;
 }
 

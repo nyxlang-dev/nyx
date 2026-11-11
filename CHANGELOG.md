@@ -11,6 +11,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`arr.join(sep)` convierte cada casilla por su tag**: `[1, 2, 3].join(", ")` compilaba y moría con SIGSEGV porque
+  `join` trataba toda casilla como puntero a String. Ahora int, float y bool salen como con `to_string()`, String
+  igual que antes, y una casilla que guarda un Array o un Map aborta con «join() — el slot N del Array contiene un
+  Array, que no tiene conversión a String». Límite: un Array sin tipo de elemento con enteros sin tag se sigue leyendo
+  como String. Tests: `language/test-545`, `errors/join-slot-array-abort`. [arco: texto-por-tipo]
+- **La interpolación y `String + x` usan el tipo Nyx del operando**: antes solo veían el tipo LLVM, donde `u8` y `char`
+  son el mismo `i8`. **Cambio de comportamiento**: `"${b}"` con `b: u8 = 65` pasa de `A` a `65`; quien quiera el
+  carácter usa una variable `char`. Además `u16`/`u32` salen sin signo y un literal `"${'z'}"` da `z` (antes `122`).
+  Un `char` sigue dando el carácter. Test: `language/test-546`. [arco: texto-por-tipo]
 - **Interpolar o concatenar un valor sin conversión a texto ya no llega a clang**: `"xs = ${xs}"` con un `Array`
   (o un `Map`, un struct, una tupla) pasaba `nyx check` y fallaba al enlazar con «'%N' defined with type 'ptr' but
   expected 'i64'». Ahora es `NYX1010` en `nyx check`, con la pista de recorrerlo o interpolar sus partes, y `NYX2023`

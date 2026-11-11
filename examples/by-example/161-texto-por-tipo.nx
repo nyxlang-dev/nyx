@@ -1,0 +1,18 @@
+// Nyx by Example: convertir a texto por el tipo real (join e interpolación).
+//
+// `join` convierte cada casilla por su tag: enteros, floats y bool salen igual
+// que con `to_string()`. Un Array o un Map dentro de la lista aborta con un
+// mensaje claro (no tienen conversión a String).
+//
+// La interpolación usa el tipo Nyx del operando: un `u8` da el NÚMERO y un
+// `char` da el carácter. Para ver el carácter de un byte, conviértelo a `char`.
+fn main() -> int {
+    let nums = [1, 2, 3]
+    print(nums.join(", "))
+
+    let b: u8 = 65
+    let c: char = 'A'
+    print("u8=${b} char=${c}")
+    print("literal=${'z'}")
+    return 0
+}

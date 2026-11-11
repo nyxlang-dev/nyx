@@ -1388,6 +1388,10 @@ Se convierten solos a texto `int`, `float`, `bool`, `char`, `String` y los enter
 pista de recorrerlos o interpolar sus partes (`"${xs.length()} elementos"`, `"${p.x}"`,
 `"${nombres.join(", ")}"` para un `Array<String>`).
 
+La conversión usa el tipo Nyx del operando, igual que `to_string()`: `u8` e `i8` dan el **número**
+(`b: u8 = 65` interpola `65`, no `A`), `u16`/`u32` salen sin signo, y un `char` (variable o literal
+`'z'`) da el carácter. Para ver el carácter de un byte, guárdalo en una variable `char`.
+
 ---
 
 ## Impl Blocks (Methods)
@@ -2351,6 +2355,9 @@ arr.slice(1, 3)            // [20, 30]
 arr.reverse()              // [50, 40, 30, 20, 10]
 arr.indexOf(30)            // 2
 arr.join(", ")             // "10, 20, 30, 40, 50"
+// join convierte cada casilla por su tag: int, float y bool como to_string(); String igual.
+// Una casilla que guarda un Array o un Map aborta en runtime (no tiene conversión a String).
+// Límite: un Array sin tipo de elemento con enteros sin tag se sigue leyendo como String.
 arr.insert(2, 25)          // inserts 25 at index 2
 let removed = arr.remove(0) // removes and returns element at index 0
 ```
