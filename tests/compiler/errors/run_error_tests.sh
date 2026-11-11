@@ -55,6 +55,11 @@ TESTS=(
   "tests/compiler/errors/test-nyx1010-int-mas-string-mixto.nx|'+' does not accept int and String; to concatenate, put the String first"
   "tests/compiler/errors/test-nyx1010-int-igual-string-mixto.nx|'==' does not accept int and String; convert one side"
   "tests/compiler/errors/test-nyx1010-string-menor-int-mixto.nx|'<' does not accept String and int"
+  # `String + x` / interpolación con un x sin conversión a texto (2026-11-11): era IR
+  # inválido que rechazaba clang. Control positivo: test-544-interpolar-enteros-angostos.nx.
+  "tests/compiler/errors/test-nyx1010-interpolar-array.nx|cannot concatenate or interpolate a Array<int> into a String; walk it with a for"
+  "tests/compiler/errors/test-nyx1010-interpolar-map.nx|cannot concatenate or interpolate a Map<String,int> into a String"
+  "tests/compiler/errors/test-nyx1010-concat-struct.nx|cannot concatenate or interpolate a Punto into a String"
   # NYX2012 en una expresión (2026-10-18): una variante inexistente pasaba `nyx check` y
   # recién el codegen la rechazaba, pidiendo una anotación de tipo (fricción nyxerp).
   "tests/compiler/errors/test-nyx2012-variante-inexistente.nx|enum 'Unidad' has no variant 'Litros' (did you mean 'Litro'?)"
@@ -2055,6 +2060,17 @@ if [ "$crs_rc" -ne 0 ] && echo "$crs_out" | grep -qF "NYX2001"; then
 else
   printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2001)\n" "$crs_rc"
   echo "$crs_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+# 4a-bis (2026-11-11): `"..." + tupla` — semantic no tipa las tuplas, así que
+# pasa check; antes llegaba a clang como IR inválido. Ahora NYX2023.
+name="codegen-interpolar-tupla"
+cit_out=$(NYX_SRC=tests/compiler/errors/fixtures/codegen-interpolar-tupla.nx ./nyx_bootstrap 2>&1); cit_rc=$?
+if [ "$cit_rc" -ne 0 ] && echo "$cit_out" | grep -qF "NYX2023"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2023)\n" "$cit_rc"
+  echo "$cit_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
 # 4b: método no reconocido sobre un global registrado SOLO en const_values

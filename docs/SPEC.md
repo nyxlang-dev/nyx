@@ -999,6 +999,7 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2019 | an Array element the compiler KNOWS is a `String` (the array is `Array<String>` by annotation or by its literal, or comes from `split()`) is stored in an integer or `bool` variable: `let n: int = fila[0]` over `["42"]`, or `n = fila[0]` with `n` declared `int`. It used to store the String's ADDRESS as if it were the number (rc 0), or produce invalid IR at link time for `bool` and for the assignment. Since 0.35.0 the `bool` `let` and every assignment are errors (they never linked); the `let` into an integer that is not `bool` — which compiled, with the wrong value — was a `⚠ warning` in 0.35.x and is an error since 0.36.0 (warning one release before rejecting, `docs/VERSIONING.md` rule 7). Convert explicitly (`string_to_int`) or declare the variable `String`. Complements NYX2014, which only acts at run time when the element type is NOT known; `float` keeps its run-time check (NYX2008) |
 | NYX2020 | **retirado en 0.36.0** (arco drop-por-declaracion): dos variables `#[affine]` con `Drop` y el mismo nombre en una función se rechazaban porque el drop compartía slot por nombre. Ahora cada declaración tiene su slot y su drop corre al cerrar su bloque; el código ya no se emite |
 | NYX2022 | RUNTIME slot-type mismatch, struct/enum side: an element of an Array **without element type** (`a[i]`, or the variable of `for p in a`) goes straight to a user `struct` or `enum` — a call or method argument, `let x: T = a[i]`, `x = a[i]` with `x: T`, `return a[i]` in a `-> T` function, a struct-literal field (`S { c: a[0] }`), or the annotated variable of `for p: T in a` — and the slot's runtime tag proves it is not one (`int`, `String`, `float`, `bool`, `Array`, `Map`). It used to be a SIGSEGV for a struct and, for an enum, a `match` that read the discriminant from another structure and matched no arm (empty output, exit 0). Structs and enums enter a slot untagged (`push`) or tagged as a pointer (literal), so the legitimate `var a: Array = []; a.push(caja); leer(a[0])` passes unchanged. Not covered: typed receivers (`Array<Caja>`). The message names the expected type and the tag found; `NYX_SLOT_CHECK=off` disables it |
+| NYX2023 | `String + x` (or the interpolation `"...${x}"`, which is the same thing) where `x` has no conversion to text and semantic could not see it: a tuple, a raw pointer, or an `Array`/`Map`/struct in unannotated code or under `NYX_SKIP_SEMANTIC=1`. The codegen twin of the NYX1010 that `nyx check` reports for a typed `Array`, `Map` or struct. It used to reach clang as invalid IR (`'%N' defined with type 'ptr' but expected 'i64'`) |
 
 **Interpreter-phase errors (NYX30xx series)** — emitted by `compiler/interpreter.nx`
 (the REPL's evaluator), printed in the message text like the NYX20xx series. The
@@ -1380,6 +1381,12 @@ print("pi = ${pi}")  // pi = 3.14
 ```
 
 La interpolación se desugarea en el lexer a concatenacion con `+`.
+
+Se convierten solos a texto `int`, `float`, `bool`, `char`, `String` y los enteros angostos y `f32`
+(`i16`, `i32`). Un `Array`, un `Map`, un struct o una tupla **no**: interpolarlos
+(o concatenarlos con `+`) es error `NYX1010` en `nyx check` —`NYX2023` si solo lo ve el codegen—, con la
+pista de recorrerlos o interpolar sus partes (`"${xs.length()} elementos"`, `"${p.x}"`,
+`"${nombres.join(", ")}"` para un `Array<String>`).
 
 ---
 

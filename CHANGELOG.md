@@ -9,6 +9,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Interpolar o concatenar un valor sin conversión a texto ya no llega a clang**: `"xs = ${xs}"` con un `Array`
+  (o un `Map`, un struct, una tupla) pasaba `nyx check` y fallaba al enlazar con «'%N' defined with type 'ptr' but
+  expected 'i64'». Ahora es `NYX1010` en `nyx check`, con la pista de recorrerlo o interpolar sus partes, y `NYX2023`
+  en codegen para lo que semantic no tipa (tuplas, código sin anotar). De paso, `i16`, `i32` y `f32` —que caían en
+  la misma rama y tampoco compilaban— se interpolan y concatenan con su valor. Nunca produjo un binario, así que es
+  error directo. Tests: `test-nyx1010-interpolar-array`/`-map`, `test-nyx1010-concat-struct`,
+  `codegen-interpolar-tupla` y `language/test-544` [dogfooding:landing].
+
 ---
 
 ## [0.44.0] — 2026-11-10

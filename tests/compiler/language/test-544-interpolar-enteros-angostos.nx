@@ -1,0 +1,20 @@
+// `String + x` y la interpolación con enteros angostos y f32: antes emitían
+// IR inválido (la rama final de la concatenación asumía i64) y solo clang lo
+// decía. Los que NO tienen conversión (Array, Map, struct, tupla) son error
+// de Nyx: tests/compiler/errors/test-nyx1010-interpolar-*.nx y
+// fixtures/codegen-interpolar-tupla.nx.
+fn main() {
+    let a: i32 = -5
+    let b: i16 = 300
+    let c: f32 = 0.5
+    assert("a=${a}" == "a=-5")
+    assert("b=${b}" == "b=300")
+    assert("c=${c}" == "c=0.5")
+    assert("s=" + a + "|" + b + "|" + c == "s=-5|300|0.5")
+    // Los que ya andaban siguen igual.
+    let xs = ["x", "y"]
+    let ns = [10, 20]
+    assert("${xs[0]}-${ns[1]}-${xs.join(",")}-${ns.length()}" == "x-20-x,y-2")
+    assert("n=${7} f=${2.5} t=${true}" == "n=7 f=2.5 t=true")
+    print("ok")
+}

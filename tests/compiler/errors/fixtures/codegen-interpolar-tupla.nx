@@ -1,0 +1,6 @@
+// Una tupla no tiene tipo en semantic (wildcard), así que `"..." + tupla`
+// pasa check y lo frena el respaldo de codegen (NYX2023) en vez de clang.
+fn main() {
+    let t = (1, 2)
+    print("t = ${t}")
+}

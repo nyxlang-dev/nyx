@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
-<!-- nyx-version: 0.43.0 -->
-<!-- nyx-stdlib: 3001664291-2166880 -->
+<!-- nyx-version: 0.44.0 -->
+<!-- nyx-stdlib: 809765619-2205405 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -366,10 +366,14 @@ Tipos (1) y métodos (0):
 
 ### `std/serve`
 
-`import "std/serve"` — 38 funciones:
+`import "std/serve"` — 42 funciones:
 
 - `pub fn app_ws(pattern: String, handler: Fn(Array) -> int)`
 - `pub fn serve_ws(handler: Fn(Array) -> int)`
+- `pub fn response_chunks(status: int, tipo: String, siguiente: Fn() -> String) -> Response`
+- `pub fn response_chunks_len(status: int, tipo: String, largo: int, siguiente: Fn() -> String) -> Response`
+- `pub fn response_from_stream(s: HttpStream) -> Response` — Reenvía la respuesta de un origen (un HttpStream de std/http) sin juntarla en memoria: el servidor lee un trozo, lo escribe al cliente y pide el siguiente, así que un cuerpo de cientos de MiB cuesta lo mismo que uno de pocos KiB. Copia el status, el Content-Type (application/octet-stream si el origen no trae), y Content-Disposition, ETag, Last-Modified, Cache-Control, Expires, Content-Language, Location y Retry-After. Con un Content-Length válido del origen sale con ese Content-Length (los bytes que entrega read() son exactamente esos); sin él, con Transfer-Encoding: chunked. El stream se cierra al terminar el cuerpo, si el origen falla a mitad (la conexión con el cliente se corta), si el cliente se va y si la respuesta se descarta sin enviar el cuerpo (HEAD, un after-hook que cambia el status). Un 3xx reenvía solo Location; un 204/304 no lleva cuerpo.
+- `pub fn response_file(ruta: String, tipo: String, nombre: String) -> Response` — Sirve un archivo del disco en bloques de 16 KiB, con Content-Length igual a su tamaño: el RSS del servidor no depende del tamaño del archivo. `tipo` es el Content-Type ("" = detectarlo por la extensión con detect_mime_type). `nombre` no vacío agrega Content-Disposition: attachment; filename="nombre" (se descartan CR/LF y otros caracteres de control, y se escapan comillas y barras); vacío = sin esa cabecera. Un archivo que no existe, no es regular o no se puede leer da una Response 404. El archivo se abre al pedir el primer bloque y se cierra al terminar, al fallar, al cortarse la conexión y si la respuesta se descarta; si cambia de tamaño mientras se sirve, la conexión se corta (el largo ya se anunció). No valida la ruta: quien la arma desde un pedido debe rechazar `..`.
 - `pub fn serve_idle_connections() -> int`
 - `pub fn serve_on_shutdown(handler: Fn)`
 - `pub fn serve_app(app: App, port: int, workers: int) -> int`
@@ -1791,6 +1795,15 @@ Tipos (1) y métodos (5):
 - `pub fn graph_dist(dijkstra_result: Array, end_node: int) -> int`
 
 ## Memoria
+
+### `std/gc`
+
+`import "std/gc"` — 4 funciones:
+
+- `pub fn gc_collect()`
+- `pub fn gc_release()`
+- `pub fn gc_heap_bytes() -> int`
+- `pub fn gc_free_bytes() -> int`
 
 ### `std/arena`
 

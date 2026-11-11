@@ -1,0 +1,6 @@
+// Interpolar un Array es `"..." + (xs)`: no hay conversión a texto y antes
+// salía IR que rechazaba clang (dogfooding de la landing, 2026-11-10).
+fn main() {
+    let xs = [1, 2, 3]
+    print("xs = ${xs}")
+}

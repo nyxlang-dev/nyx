@@ -1,0 +1,6 @@
+struct Punto { x: int }
+fn main() {
+    let p = Punto { x: 1 }
+    let s: String = "p = " + p
+    print(s)
+}

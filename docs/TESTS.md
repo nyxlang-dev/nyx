@@ -12,8 +12,8 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **553 archivos / 552 ARM64** | +1 el 11-10 (`systems/test-543` punteros crudos), +2 el 11-09 (`532`-`533`), +2 el 11-08 (`541`-`542`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **414** | +6 el 11-09 (NYX1048 ×2, NYX1049, firma sin `--shared`, `Result` sin prelude ×2); +1 el 11-08 (NYX2022 casilla sin tipo → struct/enum); +1 el 11-05 (NYX1031 crc32_bytes con int); altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **554 archivos / 553 ARM64** | +1 el 11-11 (`language/test-544` interpolación de i16/i32/f32), +1 el 11-10 (`systems/test-543`). `test-123-full-asm` se salta en ARM64 (arquitectura). Altas anteriores en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **418** | +4 el 11-11 (NYX1010 al interpolar Array, Map y struct; NYX2023 con una tupla); +6 el 11-09 (NYX1048 ×2, NYX1049, `--shared`, `Result` sin prelude ×2); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |

@@ -1,0 +1,4 @@
+fn main() {
+    let m: Map<String, int> = Map.new()
+    print("m = ${m}")
+}
