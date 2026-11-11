@@ -101,6 +101,19 @@ out=$(inst NYX_KEEP_VERSIONS=0); C="$(cat "$R/current")"
 [ ! -f "$R/versions/$C/.fijada" ] && ok "la versión nueva no hereda la .fijada de la activa" \
     || mal "la versión nueva $C heredó la .fijada de $B"
 
+# 4c. Los binarios COMPAÑEROS (nyx-edit, nyx-shell) los deja el `make install` de
+#     cada producto en ~/.nyx/bin, que es el bin de la versión ACTIVA. Hasta el
+#     2026-11-11 la versión nueva nacía sin ellos y `nyx edit` dejaba de andar
+#     tras cada instalación. Un binario del toolchain (nyx) NO se pisa con el viejo.
+printf '#!/bin/sh\necho companero-ok\n' > "$R/bin/nyx-falso"; chmod +x "$R/bin/nyx-falso"
+antes="$(cat "$R/current")"; out=$(inst); C="$(cat "$R/current")"
+if [ "$C" != "$antes" ] && [ "$("$R/versions/$C/bin/nyx-falso" 2>/dev/null)" = "companero-ok" ] \
+   && [ "$("$R/bin/nyx-falso" 2>/dev/null)" = "companero-ok" ] && cmp -s nyx_bootstrap "$R/versions/$C/bin/nyx"; then
+    ok "un binario compañero de ~/.nyx/bin pasa a la versión nueva"
+else
+    mal "la versión nueva $C perdió el compañero de $antes (o pisó bin/nyx): $(ls "$R/versions/$C/bin" | tr '\n' ' ')"
+fi
+
 # 5. Una SUITE de varios `nyx` sueltos (nyxerp, 2026-09-29): el wrapper fija la
 #    versión por proceso, así que una suite así se partía entre dos compiladores
 #    si otro install activaba una versión a mitad. `nyx exec -- <suite>` la fija

@@ -79,6 +79,24 @@ nyx_tc_con_flip() {
     fi
 }
 
+# Los binarios COMPAÑEROS (nyx-edit, nyx-shell: productos aparte que su propio
+# `make install` deja en ROOT/bin) viven en el bin de la versión ACTIVA, porque
+# ROOT/bin es un symlink a ella. Una versión nueva nacía con su bin sin ellos, así
+# que `nyx edit` / `nyx shell` dejaban de andar tras cada install-local o
+# `nyx update` (visto 2026-11-11: nyx-edit solo quedaba en una 0.34.0 fijada).
+# Se copia a STAGING todo ejecutable del bin activo que la versión nueva no trae.
+nyx_tc_heredar_companeros() {
+    local root="$1" staging="$2" viejo f n
+    viejo="$(tr -d '[:space:]' < "$root/current" 2>/dev/null)"
+    [ -n "$viejo" ] && [ -d "$root/versions/$viejo/bin" ] && [ -d "$staging/bin" ] || return 0
+    for f in "$root/versions/$viejo/bin"/*; do
+        [ -f "$f" ] && [ -x "$f" ] || continue
+        n="$(basename "$f")"
+        [ -e "$staging/bin/$n" ] && continue
+        cp -p "$f" "$staging/bin/$n"
+    done
+}
+
 # Publica STAGING (un árbol completo ya construido) como versions/<id> y lo
 # activa. Si <id> ya existe, solo se activa (y STAGING se descarta).
 nyx_tc_publicar() {
@@ -92,6 +110,7 @@ nyx_tc_publicar() {
         # arma el staging copiando la activa, y si esa estaba fijada, la copia se
         # llevaba la marca (2026-09-27: la versión nueva quedó fijada sin pedirlo).
         rm -f "$staging/.fijada"
+        nyx_tc_heredar_companeros "$root" "$staging"
         mv "$staging" "$root/versions/$id"
     fi
     nyx_tc_aviso_en_uso "$root" "$id"

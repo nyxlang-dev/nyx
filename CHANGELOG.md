@@ -11,6 +11,10 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`nyx edit` y `nyx shell` sobreviven a una instalación**: los binarios compañeros viven en el `bin` de la
+  versión activa de `~/.nyx`, y cada versión nueva (`make install-local`, `nyx update`, `install.sh`) nacía con su
+  `bin` sin ellos, así que dejaban de andar tras cada actualización. Ahora la versión nueva hereda todo ejecutable del
+  `bin` activo que ella no trae (`nyx_tc_heredar_companeros`). Caso nuevo en `make test-toolchain`.
 - **`arr.join(sep)` convierte cada casilla por su tag**: `[1, 2, 3].join(", ")` compilaba y moría con SIGSEGV porque
   `join` trataba toda casilla como puntero a String. Ahora int, float y bool salen como con `to_string()`, String
   igual que antes, y una casilla que guarda un Array o un Map aborta con «join() — el slot N del Array contiene un
