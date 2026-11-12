@@ -11,6 +11,25 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Enteros angostos mezclados con `int`, con otro ancho o en comparaciones**: `b + 1` con `b: u8`, `a * 2`,
+  `x == y` y `x < 5` con `i32`, `i16 + i32` y las operaciones de bits emitían IR inválido que rechazaba clang
+  (`'%N' defined with type 'i8' but expected 'i64'`). Esas combinaciones ensanchan ahora los dos lados a `int` con
+  el signo de su tipo Nyx. Lo que ya compilaba no cambia (`i32 + i32` y `u8 + u8` siguen en su ancho). Un campo
+  angosto acepta un literal (`S { b: 67 }` daba `inttoptr i64 67 to i8`). Test `language/test-547`; gotcha
+  `narrow-int-arithmetic`.
+- **El texto de un campo `u8` y de un `let` angosto sin anotar**: `"${s.b}"` y `s.b.to_string()` con `b: u8 = 67`
+  daban `C`, y `let x = 200u8` se registraba como `char`. Usan ahora el tipo del campo, del sufijo del literal o
+  del retorno de la función [arco: texto-por-tipo].
+- **Un índice de tupla que no existe es error `NYX2024`**: `let t = (1, 2)` y `t.5` compilaba y valía `0` (codegen
+  imprimía una línea y seguía). El ratchet de prints mudos de codegen baja de 6 a 5.
+- **`unwrap()` sobre un `Err` muestra el error**: `panic: called unwrap() on Err: io: mala (code 3)` para el
+  `Error` de `std/error` (o un struct con `kind`, `msg` y `code`) y `…on Err: <texto>` para un `String` o un `int`.
+  Antes el mensaje era fijo y el error real se perdía; dentro de un `try`, el `catch` recibe el mismo texto.
+- **`print` llega por líneas aunque stdout sea un pipe o un archivo**: el runtime pone stdout en modo por líneas al
+  arrancar. Un servidor bajo un supervisor no mostraba nada hasta terminar.
+- **Coma final en un literal de struct**: `P { a: 1, b: 2, }` (de una o varias líneas, con o sin genéricos) daba
+  `NYX0101`. Test `language/test-550`.
+
 - **`push` etiqueta el entero de una variable sin anotar**: `var a: Array = []`, `var x = 3`, `a.push(x)` dejaba la
   casilla sin etiqueta de tipo y `a.join(",")` moría con SIGSEGV (el arreglo de `join` de este mismo día solo cubría
   literales y Arrays con tipo). Un `let`/`var` sin anotar cuenta ahora como entero si arranca en un literal entero y
@@ -38,6 +57,15 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   `codegen-interpolar-tupla` y `language/test-544` [dogfooding:landing].
 
 ---
+
+### Added
+
+- **Notación científica en literales float**: `1.5e3`, `2.0E-2`, `1e3`, `6.02e+23`. Antes daba `NYX1002`
+  («'e3' not declared»). Test `language/test-549`.
+- **Struct tupla completo**: `struct Point(int, int)` acepta varios campos, se construye con `Point(3, 4)` y se lee
+  con `p.0` además de `p._0`. La declaración aceptaba un solo tipo y el constructor no existía, aunque `docs/SPEC.md`
+  los describía. Aridad equivocada: `NYX1006`; llamar a un struct de campos con nombre: `NYX1007`. Test
+  `language/test-548`, receta 162.
 
 ## [0.44.0] — 2026-11-10
 

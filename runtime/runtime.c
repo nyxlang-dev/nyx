@@ -732,6 +732,30 @@ void nyx_panic(nyx_string* msg) {
     }
 }
 
+// `unwrap()` sobre un Err cuyo payload se sabe pasar a texto: el pánico lleva el
+// error que traía (spec de errores tipados §3.1). Los emite codegen
+// (emit_unwrap_err_detalle); dentro de un `try` lanzan, igual que nyx_panic.
+void nyx_panic_unwrap_err(nyx_string* detalle) {
+    const char* d = (detalle && detalle->data) ? detalle->data : "";
+    int dl = (detalle && detalle->data) ? (int)detalle->length : 0;
+    size_t n = (size_t)dl + 64;
+    char* buf = (char*)GC_MALLOC_ATOMIC(n);
+    snprintf(buf, n, "called unwrap() on Err: %.*s", dl, d);
+    nyx_panic(nyx_string_from_cstr(buf));
+}
+
+// Mismo formato que `error_to_string` de std/error: «kind: msg (code N)».
+void nyx_panic_unwrap_error(nyx_string* kind, nyx_string* msg, int64_t code) {
+    const char* k = (kind && kind->data) ? kind->data : "";
+    int kl = (kind && kind->data) ? (int)kind->length : 0;
+    const char* m = (msg && msg->data) ? msg->data : "";
+    int ml = (msg && msg->data) ? (int)msg->length : 0;
+    size_t n = (size_t)kl + (size_t)ml + 96;
+    char* buf = (char*)GC_MALLOC_ATOMIC(n);
+    snprintf(buf, n, "called unwrap() on Err: %.*s: %.*s (code %lld)", kl, k, ml, m, (long long)code);
+    nyx_panic(nyx_string_from_cstr(buf));
+}
+
 // ===== TEST FRAMEWORK =====
 
 // Global flag used by assert to signal test failure
@@ -1021,6 +1045,17 @@ void nyx_set_args(int argc, char** argv) {
     // owning SIGSEGV without SA_ONSTACK. nyx_set_args is the first call of every
     // codegen-generated main, on the main thread, before any user code.
     (void)os_main_stack_guard_install();
+    // stdout por líneas SIEMPRE, también hacia un pipe o un archivo (el default
+    // de libc ahí es por bloques de 4-8 KB). Sin esto un servidor bajo un
+    // supervisor que captura stdout no mostraba sus `print` hasta terminar, y
+    // un `print` anterior a un crash se perdía. Mismo criterio que Rust. En
+    // una terminal no cambia nada: ahí libc ya bufferiza por líneas.
+    // En MSVC `_IOLBF` equivale a bloques y un tamaño 0 es inválido: se omite.
+    // EN: line-buffer stdout even into a pipe/file, so supervised servers show
+    // their prints as they happen (Rust's choice). Skipped on MSVC.
+#ifndef _WIN32
+    setvbuf(stdout, NULL, _IOLBF, 0);
+#endif
 }
 
 nyx_array_t* nyx_get_args(void) {

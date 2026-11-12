@@ -1,0 +1,22 @@
+// Literales float con exponente: `1.5e3`, `2.0E-2`, `1e3`, `6.02e+23`.
+// Hasta 2026-11-11 el lexer cortaba en la `e` y salía NYX1002 «'e3' not declared».
+fn main() {
+    let x: float = 1.5e3
+    assert(x == 1500.0)
+    let y = 2.0E-2
+    assert(y > 0.0199 and y < 0.0201)
+    let z = 1e3
+    assert(z + 0.5 == 1000.5)
+    assert(1.0e300 > 1.0e299)
+    assert(6.02e+23 / 1.0e23 > 6.0)
+    assert(5e-1 == 0.5)
+    // Un entero seguido de un identificador que empieza con `e` no es exponente.
+    let e2 = 7
+    let n = 2
+    assert(n + e2 == 9)
+    // Los sufijos y el hexadecimal siguen igual.
+    let b = 200u8
+    assert(b.to_string() == "200")
+    assert(0xE3 == 227)
+    print("ok")
+}

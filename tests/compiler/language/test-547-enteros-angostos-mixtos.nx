@@ -1,0 +1,58 @@
+// Un entero angosto (u8/i8/u16/i16/u32/i32) mezclado con un int, con otro
+// ancho, o en una comparación / operación de bits, se ensancha a int con el
+// signo de su tipo NYX. Hasta 2026-11-11 esas combinaciones emitían IR inválido
+// (`add i64 %<i8>, 1`, `icmp eq i64 %<i32>, %<i32>`) que rechazaba clang.
+// Lo que ya tenía emisor propio no cambia: i32 con i32 o con un literal opera
+// en 32 bits, y u8 + u8 envuelve.
+struct S { b: u8, w: i32, n: int }
+fn byte() -> u8 { return 250 }
+fn main() {
+    let a: u8 = 250
+    let i: i8 = -3
+    let u: u32 = 4000000000
+    let big: int = 10
+    assert(a + 1 == 251)
+    assert(a * 2 == 500)
+    assert(a / 2 == 125)
+    assert(a % 7 == 5)
+    assert(i + big == 7)
+    assert(u + big == 4000000010)
+    assert(byte() + 10 == 260)
+    assert((a & 15) == 10)
+    let x: i32 = 3
+    let y: i32 = 3
+    assert(x == y)
+    assert(x < 5)
+    assert(x <= y)
+    assert(not (x != y))
+    assert((x << 4) == 48)
+    let h: i16 = 7
+    assert(h + x == 10)
+    assert(big + x == 13)
+    // Ancho fijo donde ya lo había: no cambia.
+    let p: u8 = 200
+    let q: u8 = 100
+    let r: u8 = p + q
+    assert(r.to_string() == "44")
+    assert(x + y == 6)
+    assert(x + 1 == 4)
+    // Guardar de vuelta en un angosto trunca.
+    let c: u8 = a + 10
+    assert(c.to_string() == "4")
+    // Campo angosto inicializado con un literal (antes `inttoptr i64 67 to i8`).
+    let s = S { b: 67, w: 100000, n: 5 }
+    assert(s.b + 1 == 68)
+    assert(s.w * 3 == 300000)
+    // El texto de un campo angosto y de un `let` sin anotar sale por su tipo
+    // Nyx (antes un campo u8 daba el carácter «C»).
+    assert(s.b.to_string() == "67")
+    assert("${s.b}" == "67")
+    let sb = s.b
+    assert(sb.to_string() == "67")
+    let lit = 200u8
+    assert(lit.to_string() == "200")
+    assert("${lit}" == "200")
+    let de_fn = byte()
+    assert("${de_fn}" == "250")
+    print("ok")
+}

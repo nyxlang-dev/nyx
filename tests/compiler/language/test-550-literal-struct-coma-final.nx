@@ -1,0 +1,19 @@
+// Coma final opcional en un literal de struct, de una o varias líneas, con y
+// sin genéricos. Hasta 2026-11-11 daba NYX0101 «expected 'IDENTIFIER', found '}'»
+// aunque la declaración del struct y los literales de Array sí la aceptaban.
+struct P { a: int, b: int, }
+struct Caja<T> { v: T }
+fn main() {
+    let p = P {
+        a: 1,
+        b: 2,
+    }
+    assert(p.a + p.b == 3)
+    let q = P { a: 5, b: 6, }
+    assert(q.b == 6)
+    let c = Caja<int> {
+        v: 9,
+    }
+    assert(c.v == 9)
+    print("ok")
+}

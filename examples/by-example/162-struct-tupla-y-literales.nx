@@ -1,0 +1,32 @@
+// Nyx by Example: struct tupla, notación científica y enteros angostos.
+//
+// Un struct tupla tiene campos posicionales: se construye como una llamada y
+// se lee con `.0`, `.1` (o `._0`, `._1`). Sirve para un newtype (`Metros(float)`)
+// o para un par con nombre propio.
+//
+// Los float aceptan exponente (`1.5e3`). Un entero angosto (`u8`, `i32`…)
+// mezclado con un `int` da un `int`; al guardarlo de vuelta se trunca.
+struct Metros(float)
+struct Punto(int, int)
+
+fn distancia2(a: Punto, b: Punto) -> int {
+    let dx = a.0 - b.0
+    let dy = a.1 - b.1
+    return dx * dx + dy * dy
+}
+
+fn main() -> int {
+    let p = Punto(3, 4)
+    let origen = Punto(0, 0)
+    print(distancia2(p, origen))
+
+    let luz = Metros(2.998e8)
+    print(luz.0 / 1.0e3)
+
+    let b: u8 = 250
+    let n = b + 10
+    print(n)
+    let de_vuelta: u8 = b + 10
+    print(de_vuelta)
+    return 0
+}

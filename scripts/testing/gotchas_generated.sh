@@ -47,6 +47,7 @@ GOTCHA_IDS=(
   "string-escapes"
   "local-lambda-no-self-name"
   "interpolation-uses-nyx-type"
+  "narrow-int-arithmetic"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
   "prelude-frozen-snapshot"
@@ -146,6 +147,7 @@ ANCLAS=(
   "NYX1045|string-escapes"
   "closures|local-lambda-no-self-name"
   "u8|interpolation-uses-nyx-type"
+  "narrow|narrow-int-arithmetic"
 )
 
 MENTIRAS=(

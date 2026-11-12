@@ -1732,7 +1732,7 @@ These are deliberate design decisions. Knowing them is like knowing that
 Python indents. They fail LOUDLY (compile error) if you get them wrong.
 
 <!-- gen:gotchas kinds=rule lang=en form=long -->
-<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,interpolation-uses-nyx-type -->
+<!-- gen:ids await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,interpolation-uses-nyx-type,narrow-int-arithmetic -->
 
 1. **`await` of a `float`-returning function is gated (NYX1021)** — an ABI hazard in the goroutine join.
 `await` of int/bool/String/struct is fine. [test: compiler/errors/test-async-float-return]
@@ -1972,6 +1972,17 @@ was `122`. To get the character of a byte, hold it in a `char` variable. `arr.jo
 same idea per element: ints, floats and bools are converted like `to_string()`, and an element that
 is an Array or a Map aborts with a message that names the index. An `Array`, `Map`, struct or tuple
 cannot be interpolated at all: NYX1010 (NYX2023 from codegen). [test: compiler/language/test-546-interpolar-por-tipo-nyx] [test: compiler/language/test-545-join-por-tag]
+
+31. **Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44); mixing a narrow integer with an `int` or with another width gives an `int`.**
+The narrow types are `u8`/`i8`/`u16`/`i16`/`u32`/`i32`. Two `i32` (or `i16`) operands, or one of them
+with a literal (`x + 1`), compute in that width for `+ - * / %` and wrap on overflow. Two `u8` wrap
+only on `+`; every other `u8`/`i8` operation gives an `int`. Anything else —a narrow value with an
+`int` variable, two different widths, any comparison, `& | ^ << >>`— widens both sides to `int`
+using the sign of each Nyx type (`u8`/`u16`/`u32` zero-extend, `i8`/`i16`/`i32` sign-extend) and the
+result is an `int`. Storing an `int` back into a narrow variable or struct field truncates it. The
+safe habit: compute in `int` and narrow once at the end. Up to 0.44.0 the mixed forms (`b + 1` with
+`b: u8`, `x == y` with two `i32`, a `u8` struct field initialized with a literal) did not compile:
+they reached clang as invalid IR. [test: compiler/language/test-547-enteros-angostos-mixtos]
 
 <!-- /gen:gotchas -->
 

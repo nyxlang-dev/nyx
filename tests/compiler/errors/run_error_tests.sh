@@ -22,6 +22,8 @@ FAILED_TESTS=()
 TESTS=(
   "tests/compiler/errors/test-m08-type-mismatch.nx|type mismatch in 'x': expected int, got String"
   "tests/compiler/errors/test-nyx1032-struct-campos-faltantes.nx|struct literal 'P' is missing fields: b, c"
+  "tests/compiler/errors/test-nyx1006-struct-tupla-aridad.nx|'Point' expects 2 arguments, got 1"
+  "tests/compiler/errors/test-nyx1007-struct-con-nombre-llamado.nx|'P' is a struct with named fields, not a function"
   "tests/compiler/errors/test-nyx1003-builtin-void-ligado.nx|type mismatch in 'x': expected int, got ()"
   "tests/compiler/errors/test-nyx1013-colision-con-el-prelude.nx|'Error' is already declared by the prelude"
   "tests/compiler/errors/test-nyx1013-const-duplicada.nx|'LIMITE' already declared in this scope"
@@ -2073,6 +2075,18 @@ else
   echo "$cit_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+# 4a-ter (2026-11-11): `t.5` sobre una tupla de dos — semantic no tipa las
+# tuplas; antes codegen imprimía una línea suelta, devolvía `i64 0` y el
+# programa compilaba con `t.5 == 0`. Ahora NYX2024.
+name="codegen-indice-de-tupla-fuera-de-rango"
+cti_out=$(NYX_SRC=tests/compiler/errors/fixtures/codegen-indice-de-tupla-fuera-de-rango.nx ./nyx_bootstrap 2>&1); cti_rc=$?
+if [ "$cti_rc" -ne 0 ] && echo "$cti_out" | grep -qF "NYX2024"; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "    exit code: %d (esperado != 0 con NYX2024)\n" "$cti_rc"
+  echo "$cti_out" | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 # 4b: método no reconocido sobre un global registrado SOLO en const_values
 # (const literal a nivel de archivo) — rama separada del catch-all de 4a/8866.
 # Backstop NYX2007 del «campo no encontrado» (2026-09-24): lectura y escritura
@@ -2453,6 +2467,74 @@ if [ "$jsa_rc" -ne 0 ] && [ "$jsa_rc" -ne 139 ] && echo "$jsa_out" | grep -qF "j
 else
   printf "  ✗ %s (rc=%d)\n" "$name" "$jsa_rc"
   echo "$jsa_out" | tail -2 | sed 's/^/      /'; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+name="unwrap-sobre-err-muestra-el-error"
+# 2026-11-11: `unwrap()` sobre un Err muere mostrando el error que traía (spec
+# de errores tipados §3.1). Antes el mensaje era fijo, «called unwrap() on Err»,
+# y el `Error` real se perdía. Tres payloads: Error de std/error, String, y un
+# struct sin forma de Error (ese conserva el mensaje fijo). None no cambia.
+uwe_src=$(mktemp /tmp/uwe-XXXX.nx)
+cat > "$uwe_src" <<'UWE'
+import "std/error"
+struct Mio { n: int }
+fn f() -> Result<int, Error> { return Result.Err(err_new(3, "io", "mala")) }
+fn g() -> Result<int, String> { return Result.Err("texto plano") }
+fn k() -> Result<int, Mio> { return Result.Err(Mio { n: 1 }) }
+fn main() {
+    let a = get_args()
+    let cual: String = a[1]
+    if cual == "f" { let r: Result<int, Error> = f(); print(r.unwrap()) }
+    if cual == "g" { let r: Result<int, String> = g(); print(r.unwrap()) }
+    if cual == "k" { let r: Result<int, Mio> = k(); print(r.unwrap()) }
+    if cual == "t" {
+        let r: Result<int, String> = g()
+        try { print(r.unwrap()) } catch (e) { print("atrapado: " + e) }
+    }
+    if cual == "o" { let o: Option<int> = Option.None; print(o.unwrap()) }
+}
+UWE
+uwe_ok=1; uwe_log=""
+uwe_caso() {
+  local out; out=$(bash "$(pwd)/scripts/nyx" run "$uwe_src" "$1" 2>&1)
+  if ! echo "$out" | grep -qF "$2"; then uwe_ok=0; uwe_log="$uwe_log [$1: falta «$2»: $(echo "$out" | tail -1)]"; fi
+}
+uwe_caso f "panic: called unwrap() on Err: io: mala (code 3)"
+uwe_caso g "panic: called unwrap() on Err: texto plano"
+uwe_caso k "panic: called unwrap() on Err"
+uwe_caso t "atrapado: called unwrap() on Err: texto plano"
+uwe_caso o "panic: called unwrap() on None"
+rm -f "$uwe_src"
+if [ "$uwe_ok" -eq 1 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; echo "     $uwe_log"; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
+name="print-llega-por-lineas-bajo-un-pipe"
+# 2026-11-11: stdout va por líneas también hacia un pipe o un archivo. Antes
+# libc lo bufferizaba por bloques y un servidor bajo un supervisor no mostraba
+# sus `print` hasta terminar. El programa imprime y duerme 4 s: la línea tiene
+# que leerse del pipe ANTES de que termine (read -t 2).
+ppl_src=$(mktemp /tmp/ppl-XXXX.nx)
+printf 'fn main() {\n    print("arranca")\n    sleep(4000)\n    print("fin")\n}\n' > "$ppl_src"
+ppl_line=""
+exec 9< <(bash "$(pwd)/scripts/nyx" run "$ppl_src" 2>/dev/null)
+ppl_t0=$(date +%s)
+while [ $(( $(date +%s) - ppl_t0 )) -lt 60 ]; do
+  if IFS= read -r -t 2 ppl_line <&9; then break; fi
+done
+ppl_t1=$(date +%s)
+ppl_resto=$(cat <&9); exec 9<&-
+ppl_t2=$(date +%s)
+rm -f "$ppl_src"
+# La primera línea llegó, y el proceso siguió vivo al menos 2 s más (el sleep):
+# si stdout fuera por bloques, las dos líneas llegarían juntas al final.
+if [ "$ppl_line" = "arranca" ] && [ "$ppl_resto" = "fin" ] && [ $((ppl_t2 - ppl_t1)) -ge 2 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s (línea=«%s» resto=«%s» espera=%ds)\n" "$name" "$ppl_line" "$ppl_resto" "$((ppl_t2 - ppl_t1))"
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
 name="for-in-slot-string-leido-como-array-abort"

@@ -211,6 +211,7 @@ const PI: float = 3.14
 let sin_tipo = 42              // Inferido como int
 let con_tipo: int = 100        // Explicito
 let decimal: float = 3.14      // Float explicito
+let avogadro = 6.02e23         // Notación científica: 1.5e3, 2.0E-2, 1e3 (siempre float)
 ```
 
 ---
@@ -999,6 +1000,7 @@ message text, e.g. `error [NYX2001]: ...`, not as an NDJSON `code` field):
 | NYX2019 | an Array element the compiler KNOWS is a `String` (the array is `Array<String>` by annotation or by its literal, or comes from `split()`) is stored in an integer or `bool` variable: `let n: int = fila[0]` over `["42"]`, or `n = fila[0]` with `n` declared `int`. It used to store the String's ADDRESS as if it were the number (rc 0), or produce invalid IR at link time for `bool` and for the assignment. Since 0.35.0 the `bool` `let` and every assignment are errors (they never linked); the `let` into an integer that is not `bool` — which compiled, with the wrong value — was a `⚠ warning` in 0.35.x and is an error since 0.36.0 (warning one release before rejecting, `docs/VERSIONING.md` rule 7). Convert explicitly (`string_to_int`) or declare the variable `String`. Complements NYX2014, which only acts at run time when the element type is NOT known; `float` keeps its run-time check (NYX2008) |
 | NYX2020 | **retirado en 0.36.0** (arco drop-por-declaracion): dos variables `#[affine]` con `Drop` y el mismo nombre en una función se rechazaban porque el drop compartía slot por nombre. Ahora cada declaración tiene su slot y su drop corre al cerrar su bloque; el código ya no se emite |
 | NYX2022 | RUNTIME slot-type mismatch, struct/enum side: an element of an Array **without element type** (`a[i]`, or the variable of `for p in a`) goes straight to a user `struct` or `enum` — a call or method argument, `let x: T = a[i]`, `x = a[i]` with `x: T`, `return a[i]` in a `-> T` function, a struct-literal field (`S { c: a[0] }`), or the annotated variable of `for p: T in a` — and the slot's runtime tag proves it is not one (`int`, `String`, `float`, `bool`, `Array`, `Map`). It used to be a SIGSEGV for a struct and, for an enum, a `match` that read the discriminant from another structure and matched no arm (empty output, exit 0). Structs and enums enter a slot untagged (`push`) or tagged as a pointer (literal), so the legitimate `var a: Array = []; a.push(caja); leer(a[0])` passes unchanged. Not covered: typed receivers (`Array<Caja>`). The message names the expected type and the tag found; `NYX_SLOT_CHECK=off` disables it |
+| NYX2024 | `x.N` with an index that does not exist: `t.5` on a two-element tuple, or on a value that is neither a tuple nor a tuple struct. It used to compile and evaluate to `0` |
 | NYX2023 | `String + x` (or the interpolation `"...${x}"`, which is the same thing) where `x` has no conversion to text and semantic could not see it: a tuple, a raw pointer, or an `Array`/`Map`/struct in unannotated code or under `NYX_SKIP_SEMANTIC=1`. The codegen twin of the NYX1010 that `nyx check` reports for a typed `Array`, `Map` or struct. It used to reach clang as invalid IR (`'%N' defined with type 'ptr' but expected 'i64'`) |
 
 **Interpreter-phase errors (NYX30xx series)** — emitted by `compiler/interpreter.nx`
@@ -2386,6 +2388,11 @@ term_write(s)                  // write to stdout WITHOUT flush (buffered render
 term_flush()                   // build a frame, emit once, flush once)
 ```
 
+`print` reaches its destination line by line, whether stdout is a terminal, a pipe or a file: the
+runtime line-buffers stdout at startup (libc would block-buffer a pipe, and a server under a
+supervisor showed nothing until it exited). `term_write` without a newline still waits for
+`term_flush`.
+
 These builtins are implemented in `runtime/runtime.c` and declared in the compiler's semantic analysis.
 
 ---
@@ -2446,6 +2453,13 @@ con signo (`i8`, `i16`, `i32`) con su signo: `(200 as u8) as int` es 200 y `(-6 
 también para lo leído por un puntero (`*p as int`, `p[i] as int` con `p: *u8`).
 
 `as` se aplica despues de los prefijos `*`: `*p as int` es `(*p) as int`, como en Rust y C.
+
+**Aritmética con enteros angostos** (`u8`/`i8`/`u16`/`i16`/`u32`/`i32`). Dos operandos del mismo tipo
+`i16`/`i32` (o uno con un literal: `x + 1`) operan en ese ancho para `+ - * / %` y envuelven al desbordar;
+dos `u8` envuelven solo con `+` (`200 + 100` da `44`). Cualquier otra combinación —un angosto con un
+`int`, dos anchos distintos, una comparación, `& | ^ << >>`— ensancha los dos lados a `int` con el signo
+de cada tipo y el resultado es un `int`. Guardar un `int` en una variable o en un campo angosto lo trunca
+(`let c: u8 = a + 10`, `S { b: 67 }`). Lo seguro es calcular en `int` y angostar una vez al final.
 
 ---
 
@@ -2799,13 +2813,19 @@ let r: Result<int, String> = Result.Ok(42)
 
 r.is_ok()                    // true
 r.is_err()                   // false
-r.unwrap()                   // 42
+r.unwrap()                   // 42 — sobre un Err: panic mostrando el error (ver abajo)
 r.unwrap_or(0)               // 42
 r.unwrap_err()               // panic si es Ok
 r.map(fn(x: int) -> int { return x * 2 })    // Ok(84)
 r.map_err(fn(e: String) -> String { return "Error: " + e })
 r.and_then(fn(x: int) -> Result<int, String> { return Result.Ok(x + 1) })
 ```
+
+`unwrap()` sobre un `Err` aborta con el error que traía: `panic: called unwrap() on Err: <texto>` si el
+error es un `String` o un `int`, y `panic: called unwrap() on Err: kind: msg (code N)` —el formato de
+`error_to_string`— si es el `Error` de `std/error` (o cualquier struct con campos `kind: String`,
+`msg: String` y `code: int`). Con otro tipo de error el mensaje es el fijo `called unwrap() on Err`.
+Dentro de un `try`, ese mismo texto es lo que recibe el `catch`.
 
 ### Option Methods
 ```nyx
@@ -4465,10 +4485,17 @@ struct Point(int, int)
 // Desugars to:
 // struct Point { _0: int, _1: int }
 
-let p = Point(3, 4)
+let p = Point(3, 4)   // constructor posicional
 print(p._0)  // 3
 print(p._1)  // 4
+print(p.0)   // 3 — el índice `.N` vale igual que `._N`
 ```
+
+`Point { _0: 3, _1: 4 }` construye lo mismo. Pasarle al constructor otra cantidad de argumentos es
+`NYX1006`, y llamar como función a un struct de campos con nombre (`P(1, 2)`) es `NYX1007`. Un índice
+que no existe (`p.5`, o `t.5` sobre una tupla de dos) es `NYX2024`.
+
+Un literal de struct acepta una coma final, de una o de varias líneas: `P { a: 1, b: 2, }`.
 
 ---
 

@@ -138,7 +138,6 @@ fi
 # HOY (ver contexto de la Task 6). No se arreglan acá (fuera de scope).
 # Sitios (línea real puede correrse con el archivo, se recuenta cada
 # corrida — este número es SOLO la cuenta esperada):
-#   - "tuple index not found" (codegen_tuple_access)
 #   - "'<field>' is not a public member of module" (field_access)
 #   - "namespace member not found" (Warning)
 #   - "variable no definida en field_access"
@@ -162,7 +161,10 @@ fi
 # mudos era que parser.nx los disparaba ×3 al autocompilarse; eran lecturas de
 # `.node_type` sobre nodos Array que evaluaban a 0, o sea un silently-wrong
 # dentro del propio compilador, y parser.nx ya usa astnode_get_type.
-BASELINE=6
+# 2026-11-11: baja de 6 a 5 — «tuple index not found» (codegen_tuple_index)
+# aborta con NYX2024. Imprimía, devolvía `i64 0` y el programa compilaba con
+# `t.5 == 0`; ya había tapado meses un bug de tuplas en payloads de genéricos.
+BASELINE=5
 
 current=$(count_mute_prints compiler/codegen.nx)
 

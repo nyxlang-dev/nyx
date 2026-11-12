@@ -1,0 +1,5 @@
+struct Point(int, int)
+fn main() {
+    let p = Point(1)
+    print(p.0)
+}

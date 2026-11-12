@@ -1,0 +1,6 @@
+// `t.5` sobre una tupla de dos elementos: semantic no tipa las tuplas, así que
+// lo frena codegen (NYX2024). Antes compilaba y valía 0.
+fn main() {
+    let t = (1, 2)
+    print(t.5)
+}

@@ -85,19 +85,25 @@ cd "$ROOT" || exit 1
 #     emisión de la llamada directa pasó a emit_llamada_directa (un solo sitio con ctx); en
 #     línea, el marco de la closure la subía +416. codegen_method_call 475232 → 474560 (-672,
 #     BAJA): es lo que ya medía desde slot-eq. x86_64: a re-medir en la laptop.
+#   2026-11-11 enteros angostos, unwrap con detalle y ctor de struct tupla: BAJAN los tres.
+#     codegen_binop 8672 → 8656 (el cierre recibe `node.data`, un puntero, en vez de dos campos
+#     de `right`); codegen_call_expr 472064 → 465904 (el builtin `alloc<T>` salió a
+#     codegen_alloc_generico: catorce llamadas con `ctx`, ~480 B cada una, contra la única que
+#     agrega el constructor de struct tupla); codegen_method_call 474560 → 470928 (el camino
+#     Err/None de `unwrap()` salió a emit_unwrap_panico); por nivel 23408 → 23392.
 #   2026-11-08 crc32_bytes a emit_crc32_bytes: codegen_call_expr 474896 → 472064 (BAJA). La rama
 #     de String de crc32 (ee804f9f, 11-05) estaba en línea y lo había subido +1760 sobre el techo
 #     sin que nadie corriera esta guarda; en un helper queda en una llamada. x86_64: a re-medir.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=14736
-    [codegen_binop]=8672
+    [codegen_binop]=8656
     [codegen_binop_logico]=21984
-    [codegen_call_expr]=472064
-    [codegen_method_call]=474560
+    [codegen_call_expr]=465904
+    [codegen_method_call]=470928
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
-TECHO_NIVEL=23408
+TECHO_NIVEL=23392
 # Operandos que tienen que compilar con 8 MB, sin la subida de los lanzadores.
 # Techo real medido por bisección: 322 sin SROA, ~2.400 con SROA (Task 4). Se
 # pide lo que aguanta el compilador construido SIN opt, porque es el peor caso
