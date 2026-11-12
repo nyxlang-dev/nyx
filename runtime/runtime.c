@@ -245,8 +245,24 @@ NYX_EXPORT nyx_string* nyx_lib_string_from_bytes(const uint8_t* p, int64_t len) 
 
 // ===== FUNCIONES DE IMPRESIÓN =====
 
+// En POSIX stdout va por líneas (setvbuf en nyx_set_args). En Windows el CRT
+// no tiene ese modo —`_IOLBF` equivale a bloques—, así que cuando stdout NO es
+// una consola (pipe, archivo, supervisor) cada `print` vacía el buffer: el
+// mismo resultado visible, una línea por vez. Hacia la consola el CRT ya
+// escribe al momento y no hace falta.
+// EN: POSIX gets line buffering from setvbuf; the Windows CRT has no such
+// mode, so when stdout is not a console each `print` flushes instead.
+#ifdef _WIN32
+#include <io.h>
+static int nyx_print_vacia_stdout = 0;
+#define NYX_PRINT_SYNC() do { if (nyx_print_vacia_stdout) fflush(stdout); } while (0)
+#else
+#define NYX_PRINT_SYNC() ((void)0)
+#endif
+
 void nyx_print_int(int64_t value) {
     printf("%" PRId64 "\n", value);
+    NYX_PRINT_SYNC();
 }
 
 void nyx_print_float(double value) {
@@ -255,20 +271,24 @@ void nyx_print_float(double value) {
     char buffer[64];
     nyx_float_format(value, buffer, sizeof(buffer));
     printf("%s\n", buffer);
+    NYX_PRINT_SYNC();
 }
 
 void nyx_print_float32(float value) {
     char buffer[64];
     nyx_float32_format(value, buffer, sizeof(buffer));
     printf("%s\n", buffer);
+    NYX_PRINT_SYNC();
 }
 
 void nyx_print_string(const char* str) {
     printf("%s\n", str);
+    NYX_PRINT_SYNC();
 }
 
 void nyx_print_bool(int value) {
     printf("%s\n", value ? "true" : "false");
+    NYX_PRINT_SYNC();
 }
 
 // C3 (2026-08-11, fricción ERP/serve): esta fn era DOS llamadas stdio
@@ -284,6 +304,7 @@ void nyx_print_bool(int value) {
 void nyx_print_hstring(nyx_string* str) {
     if (!str) {
         fwrite("(null)\n", 1, 7, stdout);
+        NYX_PRINT_SYNC();
         return;
     }
     size_t len = (size_t)str->length;
@@ -293,6 +314,7 @@ void nyx_print_hstring(nyx_string* str) {
     memcpy(buf, str->data, len);
     buf[len] = '\n';
     fwrite(buf, 1, len + 1, stdout);
+    NYX_PRINT_SYNC();
 }
 
 // Imprime sin newline final (útil para prompts en el REPL)
@@ -1050,11 +1072,15 @@ void nyx_set_args(int argc, char** argv) {
     // supervisor que captura stdout no mostraba sus `print` hasta terminar, y
     // un `print` anterior a un crash se perdía. Mismo criterio que Rust. En
     // una terminal no cambia nada: ahí libc ya bufferiza por líneas.
-    // En MSVC `_IOLBF` equivale a bloques y un tamaño 0 es inválido: se omite.
+    // En Windows `_IOLBF` equivale a bloques y un tamaño 0 es inválido: ahí
+    // cada `print` vacía el buffer si stdout no es una consola (NYX_PRINT_SYNC).
     // EN: line-buffer stdout even into a pipe/file, so supervised servers show
-    // their prints as they happen (Rust's choice). Skipped on MSVC.
+    // their prints as they happen (Rust's choice). On Windows, where _IOLBF
+    // means full buffering, each print flushes instead when not on a console.
 #ifndef _WIN32
     setvbuf(stdout, NULL, _IOLBF, 0);
+#else
+    nyx_print_vacia_stdout = !_isatty(_fileno(stdout));
 #endif
 }
 

@@ -1,0 +1,83 @@
+// La aritmética de ancho fijo es pareja para los seis enteros angostos: dos
+// operandos del MISMO tipo declarado operan en ese ancho y envuelven en las
+// cinco operaciones, y los tipos sin signo dividen sin signo. Hasta 2026-11-12
+// `u32 / u32` usaba sdiv (4000000000 / 3 daba negativo), dos u8 solo envolvían
+// con `+`, y `i8 - i8` ensanchaba sin signo (-5 - 3 daba 248).
+struct Px { r: u8, g: u8 }
+fn mitad(x: u32) -> u32 { return x / 2 }
+fn a_int(i: i8) -> int { return i }
+fn u_a_int(u: u32) -> int { return u }
+fn a_byte(n: int) -> u8 { return n + 1 }
+fn main() {
+    // u32 / u16: división y resto sin signo.
+    let u: u32 = 4000000000
+    let v: u32 = 3
+    let d: u32 = u / v
+    assert(d.to_string() == "1333333333")
+    assert((u % v).to_string() == "1")
+    assert((u / 7).to_string() == "571428571")
+    assert((u % 1000).to_string() == "0")
+    assert(mitad(u).to_string() == "2000000000")
+    let s: u16 = 60000
+    let t: u16 = 7
+    assert((s / t).to_string() == "8571")
+    assert((s % t).to_string() == "3")
+    // Un literal a la izquierda también toma el tipo.
+    let w: u32 = 4000000000 / v
+    assert(w.to_string() == "1333333333")
+    // Con signo sigue siendo con signo.
+    let n: i32 = -7
+    let two: i32 = 2
+    assert(n / two == -3)
+    assert(n % two == -1)
+    // u8: las cinco envuelven en 8 bits.
+    let a: u8 = 200
+    let b: u8 = 100
+    assert((a + b).to_string() == "44")
+    assert((a * b).to_string() == "32")
+    assert((b - a).to_string() == "156")
+    assert((a / b).to_string() == "2")
+    assert((a % b).to_string() == "0")
+    let p = a * b
+    assert(p.to_string() == "32")
+    // Una cadena sigue en su ancho.
+    assert((a * b / b).to_string() == "0")
+    // i8: con signo.
+    let i: i8 = -5
+    let j: i8 = 3
+    assert((i - j).to_string() == "-8")
+    assert((i * j).to_string() == "-15")
+    assert((i / j).to_string() == "-1")
+    let h: i8 = 100
+    assert((h + h).to_string() == "-56")
+    // Campos de struct.
+    let px = Px { r: 250, g: 10 }
+    assert((px.r + px.g).to_string() == "4")
+    assert((px.g - px.r).to_string() == "16")
+    // Un u8 con un literal o con un int sigue dando int (armar enteros desde
+    // bytes: `hi * 256 + lo`).
+    assert(a * 256 + b == 51300)
+    assert(a + 100 == 300)
+    let k: int = 1000
+    assert(a + k == 1200)
+    // Guardar el resultado angosto en un int lo ensancha con su signo.
+    let ancho: int = a * b
+    assert(ancho == 32)
+    let neg: int = i - j
+    assert(neg == -8)
+    let grande: int = u
+    assert(grande == 4000000000)
+    var acum: int = 0
+    acum = i
+    assert(acum == -5)
+    acum = u
+    assert(acum == 4000000000)
+    // Devolver un angosto como int (era IR inválido) y un int como angosto.
+    assert(a_int(i) == -5)
+    assert(u_a_int(u) == 4000000000)
+    assert(a_byte(299).to_string() == "44")
+    // char no cambia.
+    let c: char = '7'
+    assert(c - '0' == 7)
+    print("ok")
+}

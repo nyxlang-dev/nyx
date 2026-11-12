@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **560 archivos / 559 ARM64** | +4 el 11-11 (`547`-`550`: enteros angostos mixtos, struct tupla, notación científica, coma final), +3 antes ese día (`544`-`546`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **562 archivos / 561 ARM64** | +2 el 11-12 (`551` ancho fijo de angostos, `552` métodos sobre una llamada), +7 el 11-11 (`544`-`550`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **424** | +5 el 11-11 (NYX2024, NYX1006/NYX1007 de struct tupla, `unwrap` muestra el error, `print` por líneas bajo pipe), +5 antes ese día (NYX1010 ×3, NYX2023, `join`); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |

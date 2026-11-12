@@ -85,6 +85,10 @@ cd "$ROOT" || exit 1
 #     emisión de la llamada directa pasó a emit_llamada_directa (un solo sitio con ctx); en
 #     línea, el marco de la closure la subía +416. codegen_method_call 475232 → 474560 (-672,
 #     BAJA): es lo que ya medía desde slot-eq. x86_64: a re-medir en la laptop.
+#   2026-11-12 métodos de Result/Option sobre una llamada (`f().unwrap()`): codegen_method_call
+#     470928 → 470816 (BAJA). La llamada nueva a codegen_metodo_sobre_enum_temporal costaba +528 B;
+#     la paga nombre_enum_a_construir, que se lleva la inferencia del enum genérico y deja un solo
+#     sitio de codegen_enum_construct donde había dos más un monomorphize_enum.
 #   2026-11-11 enteros angostos, unwrap con detalle y ctor de struct tupla: BAJAN los tres.
 #     codegen_binop 8672 → 8656 (el cierre recibe `node.data`, un puntero, en vez de dos campos
 #     de `right`); codegen_call_expr 472064 → 465904 (el builtin `alloc<T>` salió a
@@ -100,7 +104,7 @@ declare -A TECHO=(
     [codegen_binop]=8656
     [codegen_binop_logico]=21984
     [codegen_call_expr]=465904
-    [codegen_method_call]=470928
+    [codegen_method_call]=470816
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
 TECHO_NIVEL=23392

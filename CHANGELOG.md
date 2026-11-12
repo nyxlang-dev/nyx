@@ -17,6 +17,17 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   el signo de su tipo Nyx. Lo que ya compilaba no cambia (`i32 + i32` y `u8 + u8` siguen en su ancho). Un campo
   angosto acepta un literal (`S { b: 67 }` daba `inttoptr i64 67 to i8`). Test `language/test-547`; gotcha
   `narrow-int-arithmetic`.
+- **Aritmética de ancho fijo pareja para los seis enteros angostos**: dos operandos del mismo tipo operan en su
+  ancho en `+ - * / %`. Antes `u32 / u32` y `u16 % u16` usaban división con signo (`4000000000 / 3` daba un
+  negativo), dos `u8` solo envolvían con `+` (`*`, `-`, `/` y `%` daban `int`), e `i8 - i8` ensanchaba sin signo
+  (`-5 - 3` daba `248`). Guardar un angosto en un `int` (`let n: int = i - j`, `total = u`) lo ensancha con el
+  signo de su tipo. **Cambia conducta**: `u8 * u8` y `u8 - u8` ya no dan `int`. Test `language/test-551`.
+- **Métodos de `Result`/`Option` sobre el resultado de una llamada**: `f().unwrap()`, `obj.m().is_ok()` y los
+  demás (`unwrap_or`, `map`, `and_then`…) daban `NYX2002` y obligaban a bindear el receptor. Un `Err` con un
+  struct o enum propio como error nombra ahora su tipo: `called unwrap() on Err (MiError)`. Test
+  `language/test-552`.
+- **`print` por líneas también en Windows**: el CRT no tiene modo por líneas, así que cuando stdout no es una
+  consola cada `print` vacía el buffer.
 - **El texto de un campo `u8` y de un `let` angosto sin anotar**: `"${s.b}"` y `s.b.to_string()` con `b: u8 = 67`
   daban `C`, y `let x = 200u8` se registraba como `char`. Usan ahora el tipo del campo, del sufijo del literal o
   del retorno de la función [arco: texto-por-tipo].

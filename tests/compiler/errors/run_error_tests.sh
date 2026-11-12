@@ -2473,7 +2473,9 @@ name="unwrap-sobre-err-muestra-el-error"
 # 2026-11-11: `unwrap()` sobre un Err muere mostrando el error que traía (spec
 # de errores tipados §3.1). Antes el mensaje era fijo, «called unwrap() on Err»,
 # y el `Error` real se perdía. Tres payloads: Error de std/error, String, y un
-# struct sin forma de Error (ese conserva el mensaje fijo). None no cambia.
+# struct sin forma de Error (ese muestra su tipo, desde el 2026-11-12). None no
+# cambia. Desde el 2026-11-12 también sobre el resultado de una llamada sin
+# bindear (`f().unwrap()`, que era NYX2002): casos fl y gl.
 uwe_src=$(mktemp /tmp/uwe-XXXX.nx)
 cat > "$uwe_src" <<'UWE'
 import "std/error"
@@ -2492,6 +2494,8 @@ fn main() {
         try { print(r.unwrap()) } catch (e) { print("atrapado: " + e) }
     }
     if cual == "o" { let o: Option<int> = Option.None; print(o.unwrap()) }
+    if cual == "fl" { print(f().unwrap()) }
+    if cual == "gl" { print(g().unwrap()) }
 }
 UWE
 uwe_ok=1; uwe_log=""
@@ -2501,7 +2505,9 @@ uwe_caso() {
 }
 uwe_caso f "panic: called unwrap() on Err: io: mala (code 3)"
 uwe_caso g "panic: called unwrap() on Err: texto plano"
-uwe_caso k "panic: called unwrap() on Err"
+uwe_caso k "panic: called unwrap() on Err (Mio)"
+uwe_caso fl "panic: called unwrap() on Err: io: mala (code 3)"
+uwe_caso gl "panic: called unwrap() on Err: texto plano"
 uwe_caso t "atrapado: called unwrap() on Err: texto plano"
 uwe_caso o "panic: called unwrap() on None"
 rm -f "$uwe_src"

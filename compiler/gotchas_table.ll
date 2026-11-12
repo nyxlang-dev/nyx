@@ -943,11 +943,11 @@ target triple = "x86_64-pc-linux-gnu"
 @.str469.c = internal global %nyx_string* null
 @.str470 = private unnamed_addr constant [1 x i8] c"\00"
 @.str470.c = internal global %nyx_string* null
-@.str471 = private unnamed_addr constant [60 x i8] c"tests/compiler/language/test-547-enteros-angostos-mixtos.nx\00"
+@.str471 = private unnamed_addr constant [56 x i8] c"tests/compiler/language/test-551-angostos-ancho-fijo.nx\00"
 @.str471.c = internal global %nyx_string* null
-@.str472 = private unnamed_addr constant [191 x i8] c"Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44); mixing a narrow integer with an `int` or with another width gives an `int`.\00"
+@.str472 = private unnamed_addr constant [208 x i8] c"Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.\00"
 @.str472.c = internal global %nyx_string* null
-@.str473 = private unnamed_addr constant [188 x i8] c"La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44); mezclar un entero angosto con un `int` o con otro ancho da un `int`.\00"
+@.str473 = private unnamed_addr constant [205 x i8] c"La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44, 200 * 100 da 32); mezclar un entero angosto con un `int` o con otro ancho da un `int`.\00"
 @.str473.c = internal global %nyx_string* null
 @.str474 = private unnamed_addr constant [19 x i8] c"fork-gc-child-exec\00"
 @.str474.c = internal global %nyx_string* null
@@ -4881,16 +4881,16 @@ define { i64, i8* }* @gotchas_table(
   %1597 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str470.c, i8* %1596, i64 0)
   %1598 = ptrtoint %nyx_string* %1597 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1598, i64 2)
-  %1599 = getelementptr [60 x i8], [60 x i8]* @.str471, i32 0, i32 0
-  %1600 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str471.c, i8* %1599, i64 59)
+  %1599 = getelementptr [56 x i8], [56 x i8]* @.str471, i32 0, i32 0
+  %1600 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str471.c, i8* %1599, i64 55)
   %1601 = ptrtoint %nyx_string* %1600 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1601, i64 2)
-  %1602 = getelementptr [191 x i8], [191 x i8]* @.str472, i32 0, i32 0
-  %1603 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str472.c, i8* %1602, i64 190)
+  %1602 = getelementptr [208 x i8], [208 x i8]* @.str472, i32 0, i32 0
+  %1603 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str472.c, i8* %1602, i64 207)
   %1604 = ptrtoint %nyx_string* %1603 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1604, i64 2)
-  %1605 = getelementptr [188 x i8], [188 x i8]* @.str473, i32 0, i32 0
-  %1606 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str473.c, i8* %1605, i64 187)
+  %1605 = getelementptr [205 x i8], [205 x i8]* @.str473, i32 0, i32 0
+  %1606 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str473.c, i8* %1605, i64 204)
   %1607 = ptrtoint %nyx_string* %1606 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %1571, i64 %1607, i64 2)
   %1608 = ptrtoint { i64, i8* }* %1571 to i64

@@ -131,7 +131,7 @@ nombre que dice CUÁL reloj es.**
 NYX1045.**
 37. **Un `let` local es visible desde su línea, no en su propio valor: una lambda local no puede llamarse por su nombre — escribe una `fn` anidada.**
 38. **Interpolar un `u8` o un `i8` da el NÚMERO, un `char` da el carácter: `"${b}"` con `b: u8 = 65` es `65`, no `A`.**
-39. **La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44); mezclar un entero angosto con un `int` o con otro ancho da un `int`.**
+39. **La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44, 200 * 100 da 32); mezclar un entero angosto con un `int` o con otro ancho da un `int`.**
 
 <!-- /gen:gotchas -->
 

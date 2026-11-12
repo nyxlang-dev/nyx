@@ -1,0 +1,45 @@
+// Los métodos de Result/Option sobre el RESULTADO de una llamada, sin bindearlo
+// antes: `f().unwrap()`. Hasta 2026-11-12 era NYX2002.
+struct Caja { v: int }
+impl Caja {
+    fn leer(self, ok: bool) -> Result<int, String> {
+        if ok { return Result.Ok(self.v) }
+        return Result.Err("vacía")
+    }
+}
+fn f(ok: bool) -> Result<int, String> {
+    if ok { return Result.Ok(7) }
+    return Result.Err("falló")
+}
+fn nombre(ok: bool) -> Result<String, String> {
+    if ok { return Result.Ok("ana") }
+    return Result.Err("sin nombre")
+}
+fn buscar(n: int) -> Option<int> {
+    if n > 0 { return Option.Some(n * 2) }
+    return Option.None
+}
+fn main() {
+    assert(f(true).unwrap() == 7)
+    assert(f(true).is_ok())
+    assert(f(false).is_err())
+    assert(f(false).unwrap_or(9) == 9)
+    assert(nombre(true).unwrap() == "ana")
+    assert(nombre(true).unwrap().length() == 3)
+    assert(buscar(4).unwrap() == 8)
+    assert(buscar(0).is_none())
+    assert(buscar(1).is_some())
+    assert(buscar(0).unwrap_or(5) == 5)
+    let c = Caja { v: 41 }
+    assert(c.leer(true).unwrap() == 41)
+    assert(c.leer(false).is_err())
+    // En un bucle y dentro de una expresión.
+    var suma: int = 0
+    var i: int = 1
+    while i <= 3 {
+        suma = suma + buscar(i).unwrap() + f(true).unwrap()
+        i = i + 1
+    }
+    assert(suma == 33)
+    print("ok")
+}

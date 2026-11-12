@@ -124,7 +124,7 @@ WHICH clock.**
 36. **String escapes: `\xNN` and `\u{…}` exist since 0.37.0; any other unknown escape is NYX1045.**
 37. **A local `let` is visible from its own line on, not in its own value: a local lambda cannot call itself by name — write a nested `fn`.**
 38. **Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `"${b}"` with `b: u8 = 65` is `65`, not `A`.**
-39. **Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44); mixing a narrow integer with an `int` or with another width gives an `int`.**
+39. **Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.**
 
 <!-- /gen:gotchas -->
 

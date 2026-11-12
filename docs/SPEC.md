@@ -2390,8 +2390,9 @@ term_flush()                   // build a frame, emit once, flush once)
 
 `print` reaches its destination line by line, whether stdout is a terminal, a pipe or a file: the
 runtime line-buffers stdout at startup (libc would block-buffer a pipe, and a server under a
-supervisor showed nothing until it exited). `term_write` without a newline still waits for
-`term_flush`.
+supervisor showed nothing until it exited). On Windows, where the C runtime has no line-buffered
+mode, each `print` flushes instead when stdout is not a console. `term_write` without a newline
+still waits for `term_flush`.
 
 These builtins are implemented in `runtime/runtime.c` and declared in the compiler's semantic analysis.
 
@@ -2454,12 +2455,15 @@ también para lo leído por un puntero (`*p as int`, `p[i] as int` con `p: *u8`)
 
 `as` se aplica despues de los prefijos `*`: `*p as int` es `(*p) as int`, como en Rust y C.
 
-**Aritmética con enteros angostos** (`u8`/`i8`/`u16`/`i16`/`u32`/`i32`). Dos operandos del mismo tipo
-`i16`/`i32` (o uno con un literal: `x + 1`) operan en ese ancho para `+ - * / %` y envuelven al desbordar;
-dos `u8` envuelven solo con `+` (`200 + 100` da `44`). Cualquier otra combinación —un angosto con un
-`int`, dos anchos distintos, una comparación, `& | ^ << >>`— ensancha los dos lados a `int` con el signo
-de cada tipo y el resultado es un `int`. Guardar un `int` en una variable o en un campo angosto lo trunca
-(`let c: u8 = a + 10`, `S { b: 67 }`). Lo seguro es calcular en `int` y angostar una vez al final.
+**Aritmética con enteros angostos** (`u8`/`i8`/`u16`/`i16`/`u32`/`i32`). Dos operandos del MISMO tipo
+operan en ese ancho para `+ - * / %` y envuelven al desbordar (`u8` 200 + 100 da `44`, 200 * 100 da `32`);
+`/` y `%` son sin signo en `u8`/`u16`/`u32` y con signo en `i8`/`i16`/`i32`. Un `u16`/`i16`/`u32`/`i32` con
+un literal entero (`x + 1`, `1000 / x`) también se queda en su ancho. Un `u8`/`i8` con un literal da `int`
+(`hi * 256 + lo` arma un entero desde bytes), y `char` conserva su aritmética (`c - '0'` es un `int`).
+Cualquier otra combinación —un angosto con una variable `int`, dos anchos distintos, una comparación,
+`& | ^ << >>`— ensancha los dos lados a `int` con el signo de cada tipo y el resultado es un `int`. Guardar
+un `int` en una variable o en un campo angosto lo trunca (`let c: u8 = a + 10`, `S { b: 67 }`); guardar un
+angosto en un `int` lo ensancha con su signo. Lo seguro es calcular en `int` y angostar una vez al final.
 
 ---
 
@@ -2824,8 +2828,12 @@ r.and_then(fn(x: int) -> Result<int, String> { return Result.Ok(x + 1) })
 `unwrap()` sobre un `Err` aborta con el error que traía: `panic: called unwrap() on Err: <texto>` si el
 error es un `String` o un `int`, y `panic: called unwrap() on Err: kind: msg (code N)` —el formato de
 `error_to_string`— si es el `Error` de `std/error` (o cualquier struct con campos `kind: String`,
-`msg: String` y `code: int`). Con otro tipo de error el mensaje es el fijo `called unwrap() on Err`.
+`msg: String` y `code: int`). Con otro tipo de error el mensaje nombra el tipo: `called unwrap() on Err (MiError)`.
 Dentro de un `try`, ese mismo texto es lo que recibe el `catch`.
+
+Los métodos de `Result` y `Option` (`unwrap`, `unwrap_or`, `is_ok`, `is_err`, `is_some`, `is_none`, `map`,
+`map_err`, `and_then`, `ok_or`) se pueden llamar sobre el resultado de una llamada sin bindearlo antes:
+`leer(ruta).unwrap()`, `caja.buscar(k).is_some()`.
 
 ### Option Methods
 ```nyx
