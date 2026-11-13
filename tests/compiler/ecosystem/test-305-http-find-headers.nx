@@ -5,7 +5,7 @@
 // del plural: devuelve TODOS los valores en orden de aparición, con matching
 // case-insensitive de nombre (RFC 9110: los nombres de header no distinguen
 // mayúsculas; los servers HTTP/2 los mandan en minúscula). El singular queda
-// intacto (exact-match, primer valor) — sanity checks incluidos.
+// con su primer valor (sin distinguir mayúsculas desde el 2026-11-13) — sanity checks incluidos.
 // Self-checking con assert() (abortivo).
 
 import "std/http"
@@ -72,11 +72,17 @@ fn test_plural_array_impar_seguro() {
 }
 
 fn test_singular_intacto() {
-    // el singular sigue: exact-match, primer valor, "" si no está
+    // el singular: primer valor, "" si no está. Desde el 2026-11-13 el nombre
+    // se compara sin distinguir mayúsculas, como manda HTTP (antes era exacto, y
+    // un pedido con `cookie:` en minúsculas llegaba a std/serve sin sesión).
     let h: Array = mk_headers()
     assert(http_find_header(h, "Set-Cookie") == "sid=abc; Path=/")
-    assert(http_find_header(h, "set-cookie") == "theme=dark")   // exact: salta los "Set-Cookie"
+    assert(http_find_header(h, "set-cookie") == "sid=abc; Path=/")   // el primero, en cualquier caja
+    assert(http_find_header(h, "SET-COOKIE") == "sid=abc; Path=/")
     assert(http_find_header(h, "X-No-Existe") == "")
+    assert(http_header_name_eq("Content-Type", "content-type"))
+    assert(not http_header_name_eq("Content-Type", "Content-Typo"))
+    assert(not http_header_name_eq("Cookie", "Cookies"))
     print("singular intacto ok")
 }
 

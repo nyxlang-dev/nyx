@@ -107,7 +107,7 @@ fn forward_request(method: String, path: String, headers: Array, body: String, b
     while hi + 1 < headers.length() {
         let hk: String = headers[hi]
         let hv: String = headers[hi + 1]
-        if hk != "Host" and hk != "Connection" {
+        if not http_header_name_eq(hk, "Host") and not http_header_name_eq(hk, "Connection") {
             req = req + hk + ": " + hv + crlf
         }
         hi = hi + 2
@@ -173,7 +173,7 @@ fn forward_request(method: String, path: String, headers: Array, body: String, b
     while ri + 1 < resp_headers.length() {
         let rk: String = resp_headers[ri]
         let rv: String = resp_headers[ri + 1]
-        if rk != "Connection" {
+        if not http_header_name_eq(rk, "Connection") {
             response = response + rk + ": " + rv + crlf2
         }
         ri = ri + 2

@@ -11,6 +11,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Los nombres de cabecera HTTP ya no distinguen mayúsculas** `[dogfooding:nyxerp]`: `http_find_header` comparaba
+  el nombre tal cual y `std/web` armaba `req.cookies` solo si la cabecera se llamaba `Cookie`. Un pedido con
+  `cookie:` o `content-type:` en minúsculas —lo que reenvía un gateway desde HTTP/2, y varios clientes HTTP/1.1—
+  llegaba a `std/serve` sin sesión, sin formulario y sin `If-None-Match`; y un cliente leía como ausente el
+  `content-length:` de un servidor que responde en minúsculas. Todo en silencio. **Cambia conducta**:
+  `http_find_header(h, "Cookie")` encuentra ahora `cookie` y `COOKIE`. También las cabeceras que un handler
+  escribe (`content-type`, `location`) dejan de duplicarse con las que agrega `std/serve`. Nueva
+  `http_header_name_eq(a, b)`. Cinco casos en `tests/integration/test_serve_std.py`.
 - **Enteros angostos mezclados con `int`, con otro ancho o en comparaciones**: `b + 1` con `b: u8`, `a * 2`,
   `x == y` y `x < 5` con `i32`, `i16 + i32` y las operaciones de bits emitían IR inválido que rechazaba clang
   (`'%N' defined with type 'i8' but expected 'i64'`). Esas combinaciones ensanchan ahora los dos lados a `int` con

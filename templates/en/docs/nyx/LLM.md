@@ -2674,8 +2674,11 @@ fn main() -> int {
     `parse_query_string_all(path)` (both `std/web`).
   - `headers_flat: Array` — flat `[name, value, name, value, …]`. Read it with
     `http_find_header(req.headers_flat, "Content-Type")` (`""` if absent;
-    the match is EXACT-case — use `http_find_headers` for case-insensitive /
-    repeated headers such as `Set-Cookie`). Never index it by hand.
+    the name matches in any case, as HTTP requires — it was exact-case until
+    2026-11-13, which silently dropped `cookie:`/`content-type:` sent in
+    lowercase; use `http_find_headers` for repeated headers such as
+    `Set-Cookie`). Never index it by hand, and never compare a header name
+    with `==`: use `http_header_name_eq(a, b)`.
   - `body: String` — the raw bytes (binary-safe); JSON → parse it yourself
     (`std/json`). A body over `NYX_HTTP_MAX_BODY` (1 MiB default) gets a
     413 from the server before any handler runs.

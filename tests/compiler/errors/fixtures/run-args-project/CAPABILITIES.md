@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.44.0 -->
-<!-- nyx-stdlib: 138803079-2216696 -->
+<!-- nyx-stdlib: 3955628581-2217602 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -242,7 +242,7 @@ Tipos (1) y métodos (0):
 
 ### `std/http`
 
-`import "std/http"` — 35 funciones:
+`import "std/http"` — 36 funciones:
 
 - `pub fn http_status_text(code: int) -> String`
 - `pub fn http_response(status: int, body: String) -> String`
@@ -270,6 +270,7 @@ Tipos (1) y métodos (0):
 - `pub fn http_status(resp: Array) -> int`
 - `pub fn http_body(resp: Array) -> String`
 - `pub fn http_headers(resp: Array) -> Array<String>`
+- `pub fn http_header_name_eq(a: String, b: String) -> bool`
 - `pub fn http_find_header(headers: Array, name: String) -> String`
 - `pub fn http_find_headers(headers: Array, name: String) -> Array<String>`
 - `pub fn http_parse_request(client_fd: int) -> Array`

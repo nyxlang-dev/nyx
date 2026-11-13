@@ -146,7 +146,7 @@ fn __format_http_response_de(resp: Response, con_cuerpo: bool) -> String {
         while si + 1 < headers.length() {
             let sk: String = headers[si]
             let sv: String = headers[si + 1]
-            if sk == "Location" and sv.length() > 0 {
+            if http_header_name_eq(sk, "Location") and sv.length() > 0 {
                 explicit_location = sv
                 has_explicit_location = true
             }
@@ -179,7 +179,7 @@ fn __format_http_response_de(resp: Response, con_cuerpo: bool) -> String {
         while i + 1 < headers.length() {
             let k: String = headers[i]
             let v: String = headers[i + 1]
-            if k != "Location" and k != "Content-Length" {
+            if not http_header_name_eq(k, "Location") and not http_header_name_eq(k, "Content-Length") {
                 sb.append(k)
                 sb.append(": ")
                 sb.append(v)
@@ -231,7 +231,7 @@ fn __format_http_response_de(resp: Response, con_cuerpo: bool) -> String {
             sb.append(v)
             sb.append("\r\n")
         }
-        if k == "Content-Type" { has_content_type = true }
+        if http_header_name_eq(k, "Content-Type") { has_content_type = true }
         i = i + 2
     }
 

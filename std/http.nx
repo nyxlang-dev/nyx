@@ -1444,16 +1444,28 @@ fn parse_headers(client_fd: int) -> Array {
     return headers
 }
 
-// Find a header value by name in headers array, returns "" if not found
-// First value of a header, EXACT name match, "" if absent. Legacy contract —
-// kept as-is because existing consumers depend on it. For repeated headers
-// (Set-Cookie!) or case-insensitive lookup use http_find_headers below.
+// ¿Dos nombres de cabecera son el mismo? Sin distinguir mayúsculas, como manda
+// HTTP (RFC 9110 §5.1): "Cookie", "cookie" y "COOKIE" son la misma cabecera.
+// El caso común (mismas mayúsculas) no aloca.
+pub fn http_header_name_eq(a: String, b: String) -> bool {
+    if a == b { return true }
+    if a.length() != b.length() { return false }
+    return a.to_lower() == b.to_lower()
+}
+
+// Primer valor de una cabecera, "" si no está. El nombre se compara SIN
+// distinguir mayúsculas. Hasta el 2026-11-13 la comparación era exacta: un
+// pedido con `cookie:` o `content-type:` en minúsculas —lo que manda un cliente
+// HTTP/2 a través de un gateway, y varios clientes HTTP/1.1— llegaba a
+// std/serve sin tipo de contenido, sin formulario y sin `If-None-Match`, y una
+// respuesta con `content-length:` en minúsculas se leía como sin longitud. Todo
+// en silencio. Para cabeceras repetidas (Set-Cookie) usar http_find_headers.
 pub fn http_find_header(headers: Array, name: String) -> String {
     var i: int = 0
     let len: int = headers.length()
     while i + 1 < len {
         let k: String = headers[i]
-        if k == name {
+        if http_header_name_eq(k, name) {
             let v: String = headers[i + 1]
             return v
         }

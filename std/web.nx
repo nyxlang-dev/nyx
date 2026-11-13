@@ -238,7 +238,8 @@ pub fn parse_cookies(headers_flat: Array) -> Map {
     while i < headers_flat.length() - 1 {
         let hkey: String = headers_flat[i]
         let hval: String = headers_flat[i + 1]
-        if hkey == "Cookie" {
+        // Sin distinguir mayúsculas: un cliente puede mandar `cookie:`.
+        if http_header_name_eq(hkey, "Cookie") {
             let parts: Array = hval.split("; ")
             var j: int = 0
             while j < parts.length() {
