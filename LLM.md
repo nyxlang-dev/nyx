@@ -2810,7 +2810,7 @@ fn main() -> int {
   - **The 6-connection limit**: over HTTP/1.1 a browser opens at most 6 connections
     per domain, shared by ALL its tabs, and every open SSE channel holds one. With
     six screens open the next request waits in the browser's queue while the server
-    is idle. Fix: `nyx-proxy` 0.4.13+ with `http2 = true` in `[server]` — the browser
+    is idle. Fix: `nyx-proxy` 0.4.14+ with `http2 = true` in `[server]` — the browser
     then uses ONE connection with up to 100 streams, SSE included. Without it, share
     one `EventSource` across tabs (`SharedWorker`/`BroadcastChannel`).
   - **Behind a gateway**: `nyx-proxy` 0.4.4 tunnels SSE end to end (it detects

@@ -79,7 +79,7 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   validación de cabeceras y topes contra rapid reset, inundación de `PING`/`SETTINGS`, cabeceras gigantes y
   cuerpos sin límite. API nueva: `h2_serve_tls`, `h2_serve_tls_conn` y la sesión (`h2_session_new`, `h2_feed`,
   `h2_next_event`, `h2_respond_start`, `h2_send_data`, `h2_end`, `h2_take_output`…). `h2_serve` conserva su
-  firma. Lo usa `nyx-proxy` 0.4.13 (`http2 = true`). Detalle y topes: `docs/HTTP2.md`.
+  firma. Lo usa `nyx-proxy` 0.4.14 (`http2 = true`), encendido en el gateway de producción el 2026-11-13. Detalle y topes: `docs/HTTP2.md`.
 - **ALPN en el servidor TLS** (`std/tls`): `tls_server_alpn("h2,http/1.1")` y `tls_alpn(h)`. Apagado si no se
   llama. `tls_wait_any(h, fds, ms)` espera a la vez una conexión TLS y varios descriptores.
 - **`thread_detach(tid)`** (`std/sync`): suelta un hilo que nadie va a esperar con `thread_join`; sin eso, cada

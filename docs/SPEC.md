@@ -5186,7 +5186,7 @@ Conducta:
   sobre HTTP/2 lo da el gateway.
 - **El tope de 6 conexiones**: con HTTP/1.1 un navegador abre como mucho 6 conexiones por dominio,
   compartidas entre todas sus pestañas, y cada canal SSE ocupa una. Con seis pantallas abiertas la
-  petición siguiente espera en la cola del navegador. `nyx-proxy` 0.4.13 con `http2 = true` lo
+  petición siguiente espera en la cola del navegador. `nyx-proxy` 0.4.14 con `http2 = true` lo
   resuelve: una sola conexión con hasta 100 flujos, SSE incluido.
 - **HTTP/2**: `std/http2` es un servidor HTTP/2 (h2c y TLS con ALPN `h2`) con una API de sesión para
   responder por partes; ALPN del servidor TLS con `tls_server_alpn` / `tls_alpn` (`std/tls`). API y
