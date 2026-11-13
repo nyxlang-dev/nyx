@@ -1153,6 +1153,19 @@ single `Error` struct.
 - `tls_connect(host, port)`, `tls_read`, `tls_write`, `tls_close`
 - Server: `tls_server_init(cert, key)`, `tls_server_add_cert`,
   `tls_accept`, `tls_read_line`, `tls_write_conn`, `tls_close_conn`
+- **ALPN on the server** (`import "std/tls"`): `tls_server_alpn("h2,http/1.1") -> bool` after
+  `tls_server_init` (and after every `tls_server_add_cert`), then `tls_alpn(h) -> String` on an
+  accepted connection gives `"h2"`, `"http/1.1"` or `""` (client offered no ALPN: treat as
+  HTTP/1.1). Off unless you call it. `tls_wait_any(h, fds, timeout_ms) -> Array` waits on the TLS
+  connection AND plain fds at once: `[tls_state, i, j...]`, `tls_state` 1 readable / 0 not / -1
+  dead, then the indexes of `fds` that are readable. If it says 1 you MUST `tls_read_nonblock`.
+- **HTTP/2 server** (`import "std/http2"`, full API in `docs/HTTP2.md`): `h2_serve(port, workers,
+  cb)` (cleartext, prior knowledge) and `h2_serve_tls(port, workers, cert, key, cb)` (ALPN `h2`,
+  what browsers speak); `cb(method, path, headers, body) -> [status, headers, body]`. For streaming
+  responses or several streams at once use the session: `h2_session_new`, `h2_feed`,
+  `h2_next_event`, `h2_respond_start`/`h2_send_data`/`h2_end`, `h2_take_output`. No HTTP/2 client,
+  no server push, no WebSocket over HTTP/2. `std/serve` itself speaks HTTP/1.1: to give browsers
+  HTTP/2 put `nyx-proxy` in front with `http2 = true`.
 - `tls_server_add_cert(hostname, cert, key) -> int` registers an extra certificate chosen by SNI
   (up to 64). `hostname` is exact (case-insensitive) or a wildcard `*.example.com`, which covers ONE
   label (`a.example.com`, not `example.com` nor `a.b.example.com`, as RFC 6125); exact names win over
@@ -1249,7 +1262,9 @@ Todo lo de acá abajo **requiere `import "std/tls"`** — es la mitad que no vie
   condvar-based — no busy-poll) + **`wg_wait_timeout(wg, ms) -> bool`**
   (true = quiesced, false = timeout; the shutdown/drain idiom — exit as soon
   as workers finish, the deadline is only a ceiling), `sem_new/acquire/release`,
-  `once_new/once_do`.
+  `once_new/once_do`, and **`thread_detach(tid) -> bool`** for threads nobody will
+  `thread_join` (one per connection): a thread that ends with neither join nor
+  detach keeps its stack reserved forever.
 - `condvar_new()` → Map (opaque handle), `condvar_wait(cv, m)` (hold m locked), `condvar_signal(cv)`, `condvar_broadcast(cv)`, `condvar_timedwait(cv, m, ms)` → 0 signaled / 1 timeout
 - `rwlock_new()` → Map (opaque handle), `rwlock_rdlock(l)` / `rwlock_wrlock(l)`, `rwlock_tryrdlock(l)` / `rwlock_trywrlock(l)` → 0 acquired / 1 busy, `rwlock_unlock(l)`, `rwlock_destroy(l)` — multi-reader/single-writer; blocks the OS thread (like mutex — goroutines should prefer channels)
 - `channel_new(size)` → Map (NOT int!)
@@ -2790,7 +2805,14 @@ fn main() -> int {
   - SIGTERM drain: `sse_drain_close()` runs next to `ws_drain_close()`,
     before shutdown hooks — clients see the stream end.
   - Not in phase 1: `id:`, `retry:`, replay from `Last-Event-ID` (the header
-    is still visible in `req.headers_flat`), SSE over HTTP/2.
+    is still visible in `req.headers_flat`). `std/serve` speaks HTTP/1.1; SSE over
+    HTTP/2 comes from the gateway (next point).
+  - **The 6-connection limit**: over HTTP/1.1 a browser opens at most 6 connections
+    per domain, shared by ALL its tabs, and every open SSE channel holds one. With
+    six screens open the next request waits in the browser's queue while the server
+    is idle. Fix: `nyx-proxy` 0.4.13+ with `http2 = true` in `[server]` — the browser
+    then uses ONE connection with up to 100 streams, SSE included. Without it, share
+    one `EventSource` across tabs (`SharedWorker`/`BroadcastChannel`).
   - **Behind a gateway**: `nyx-proxy` 0.4.4 tunnels SSE end to end (it detects
     `Content-Type: text/event-stream` and stops buffering), so an SSE endpoint
     works behind the gateway with no special configuration. On 0.4.3 the proxy

@@ -1572,6 +1572,20 @@ int os_sock_error(int64_t fd) {
 //    Windows NO es un socket. Sigue siendo -ENOSYS limpio: esperar por la
 //    consola (WaitForSingleObject + PeekConsoleInput) o por un pipe
 //    (PeekNamedPipe) es otro dominio y queda fichado aparte.
+int os_sock_poll_many(const int64_t* fds, int n, int timeout_ms, unsigned char* ready) {
+    if (n <= 0 || n > OS_POLL_MANY_MAX || !fds || !ready) return -EINVAL;
+    WSAPOLLFD pf[OS_POLL_MANY_MAX];
+    for (int i = 0; i < n; i++) { pf[i].fd = WSOCK(fds[i]); pf[i].events = POLLRDNORM; pf[i].revents = 0; ready[i] = 0; }
+    int rc = WSAPoll(pf, (ULONG)n, timeout_ms);
+    if (rc == SOCKET_ERROR) { int e = wsa_errno(WSAGetLastError()); return -(e ? e : EIO); }
+    if (rc == 0) return 0;
+    int cnt = 0;
+    for (int i = 0; i < n; i++) {
+        if (pf[i].revents & (POLLRDNORM | POLLRDBAND | POLLHUP | POLLERR | POLLNVAL)) { ready[i] = 1; cnt++; }
+    }
+    return cnt;
+}
+
 int os_sock_poll1(int64_t fd, int events, int timeout_ms) {
     if (fd == 0) return -ENOSYS;
     WSAPOLLFD pfd; pfd.fd = WSOCK(fd); pfd.events = 0; pfd.revents = 0;

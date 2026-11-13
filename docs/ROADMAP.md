@@ -206,7 +206,7 @@ el 17-jul.
 | **Canal de fricción propio** (POST a `nyxlang.com/api/friction`) | S | **[DECISIÓN OTTAVIO — sigue pospuesta]** Plan completo escrito y aprobado técnicamente desde 2026-08-04: `docs/design/plans/2026-08-05-friccion-propia-nyxlang-api.md`. Hoy el canal monta sobre nyx-kv con TTL 24 h que ya perdió reportes |
 | **Cross-platform más allá de Windows** | M | macOS ARM64 pre-compilado (el job de CI está **desactivado** por decisión propia), imagen Docker, matriz de CI. Fuera del arco Windows por diseño |
 | **DX: REPL, `nyx fmt`, `nyx vet`** | S cada uno | Backlog de años sin tocar: multilínea e historial en el REPL, trailing commas y orden de imports en `fmt`, variables sin usar y código inalcanzable en `vet` |
-| **HTTP/2 real sobre TLS (ALPN)** | M | Hoy solo h2c. Heredado del ex-producto absorbido al core; ver `docs/HTTP2.md` |
+| **HTTP/2 nativo en `std/serve`** | M | `std/http2` ya es un servidor HTTP/2 real sobre TLS (ALPN, 2026-11-13) y `nyx-proxy` lo ofrece al navegador; falta que `std/serve` lo hable sin gateway. Ver `docs/HTTP2.md` |
 | **Auditoría FFI int-32** | S-M | Barrido de todos los `extern "C" ... -> int`. Destapada por E5.5 y **agravada por LLP64 en Windows** (spec §9.3) |
 | **Debugger** | L | **Cero menciones en todo el repo.** Ausencia total, dicha acá por primera vez |
 

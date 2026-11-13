@@ -1,34 +1,41 @@
-// nyx-http2 server — HTTP/2 with HPACK and multiplexing
-// Servidor nyx-http2 — HTTP/2 con HPACK y multiplexing
+// HTTP/2 server — one connection, many streams
+// Servidor HTTP/2 — una conexión, muchos flujos
 
 import "std/http2"
 
-fn on_request(fd: int, stream_id: int, method: String, path: String, body: String) -> int {
-    // HTTP/2 handler receives stream_id so one connection handles many streams
+// The callback gets one request and returns [status, headers, body].
+// El callback recibe una petición y devuelve [status, cabeceras, cuerpo].
+fn on_request(method: String, path: String, headers: Array, body: String) -> Array {
     let hdrs: Array = ["content-type", "application/json"]
-
     if path == "/" {
-        h2_send_response(fd, stream_id, 200, hdrs, "{\"message\": \"hello over HTTP/2\"}")
-    } else {
-        h2_send_response(fd, stream_id, 404, hdrs, "{\"error\": \"not found\"}")
+        return [200, hdrs, "{\"message\": \"hello over HTTP/2\"}"]
     }
-    return 0
+    return [404, hdrs, "{\"error\": \"not found\"}"]
 }
 
 fn main() -> int {
-    let port: int = 3004
-    let workers: int = 4
+    // The protocol engine also works without a socket: feed it the bytes a
+    // client would send and read the events out. Here, one GET.
+    // El motor del protocolo también funciona sin socket: se le dan los bytes
+    // que mandaría un cliente y se leen los eventos. Acá, un GET.
+    let sess: int = h2_session_new(1048576)
+    let get: String = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x03\x01\x05\x00\x00\x00\x01\x82\x87\x84"
+    assert(h2_feed(sess, get))
+    let ev: Array = h2_next_event(sess)
+    assert(h2_event_kind(ev) == H2_EV_REQUEST)
+    let req: H2Request = h2_event_request(ev)
+    print(req.method + " " + req.path + " (stream " + int_to_string(req.stream) + ")")
 
-    print("HTTP/2 server starting on :" + int_to_string(port))
-    print("  mode: h2c (HTTP/2 cleartext, no TLS)")
-    print("  multiplexing: multiple streams per connection")
-    print("  compression: HPACK for headers")
+    let r: Array = on_request(req.method, req.path, req.headers, req.body)
+    let st: int = r[0]
+    let hd: Array = r[1]
+    let bd: String = r[2]
+    h2_respond(sess, req.stream, st, hd, bd)
+    print("response frames: " + int_to_string(h2_take_output(sess).length()) + " bytes")
 
-    // h2_serve blocks accepting connections, handling HTTP/2 frames,
-    // dispatching streams to the handler.
-    // h2_serve(port, workers, on_request)
-
-    print("")
-    print("test with: curl --http2-prior-knowledge http://localhost:3004/")
+    // A real server is one call (it blocks, so it is not run here):
+    // Un servidor de verdad es una llamada (bloquea, por eso acá no se corre):
+    //   h2_serve(3004, 4, on_request)                              // curl --http2-prior-knowledge http://localhost:3004/
+    //   h2_serve_tls(8443, 4, "cert.pem", "key.pem", on_request)   // curl --http2 https://localhost:8443/
     return 0
 }

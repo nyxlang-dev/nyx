@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.44.0 -->
-<!-- nyx-stdlib: 809765619-2205405 -->
+<!-- nyx-stdlib: 138803079-2216696 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1078,11 +1078,37 @@ Tipos (6) y métodos (0):
 
 ### `std/http2`
 
-`import "std/http2"` — 3 funciones:
+`import "std/http2"` — 25 funciones:
 
 - `pub fn h2_check_upgrade(request: String) -> bool`
 - `pub fn h2_send_response(fd: int, stream_id: int, status: int, resp_headers: Array, body: String) -> int`
+- `pub fn h2_session_new(max_body: int) -> int`
+- `pub fn h2_feed(sess: int, data: String) -> bool`
+- `pub fn h2_next_event(sess: int) -> Array`
+- `pub fn h2_event_kind(ev: Array) -> int`
+- `pub fn h2_event_stream(ev: Array) -> int`
+- `pub fn h2_event_request(ev: Array) -> H2Request`
+- `pub fn h2_header(headers: Array, name: String) -> String`
+- `pub fn h2_respond_start(sess: int, stream: int, status: int, headers: Array) -> int`
+- `pub fn h2_send_data(sess: int, stream: int, data: String) -> int`
+- `pub fn h2_end(sess: int, stream: int) -> int`
+- `pub fn h2_respond(sess: int, stream: int, status: int, headers: Array, body: String) -> int`
+- `pub fn h2_cancel(sess: int, stream: int) -> int`
+- `pub fn h2_pending(sess: int, stream: int) -> int`
+- `pub fn h2_stream_open(sess: int, stream: int) -> bool`
+- `pub fn h2_take_output(sess: int) -> String`
+- `pub fn h2_closed(sess: int) -> bool`
+- `pub fn h2_goaway(sess: int) -> int`
+- `pub fn h2_open_streams(sess: int) -> int`
+- `pub fn h2_wake_signal(wfd: int) -> int`
+- `pub fn h2_wake_drain(rfd: int) -> int`
+- `pub fn h2_serve_tls_conn(tls: int, cb: Fn(String, String, Array, String) -> Array) -> int`
 - `pub fn h2_serve(port: int, num_workers: int, cb: Fn) -> int`
+- `pub fn h2_serve_tls(port: int, num_workers: int, cert: String, key: String, cb: Fn) -> int`
+
+Tipos (1) y métodos (0):
+
+- `pub struct H2Request`
 
 ### `std/net`
 
@@ -1219,7 +1245,7 @@ Tipos (3) y métodos (0):
 
 ### `std/sync`
 
-`import "std/sync"` — 22 funciones:
+`import "std/sync"` — 23 funciones:
 
 - `pub fn wg_new() -> WaitGroup` — Create a new WaitGroup with count 0.
 - `pub fn wg_add(wg: WaitGroup, delta: int)` — Add delta to WaitGroup counter. Call before spawning goroutines.
@@ -1243,6 +1269,7 @@ Tipos (3) y métodos (0):
 - `pub fn counter_dec(c: AtomicCounter) -> int` — Atomically decrement and return new value.
 - `pub fn counter_get(c: AtomicCounter) -> int` — Get current value atomically.
 - `pub fn counter_set(c: AtomicCounter, val: int)` — Set value atomically.
+- `pub fn thread_detach(tid: int) -> bool`
 
 Tipos (5) y métodos (0):
 
@@ -1348,7 +1375,7 @@ Tipos (4) y métodos (0):
 
 ### `std/tls`
 
-`import "std/tls"` — 32 funciones:
+`import "std/tls"` — 35 funciones:
 
 - `pub fn tls_version(h: int) -> String`
 - `pub fn tls_cipher(h: int) -> String`
@@ -1382,6 +1409,9 @@ Tipos (4) y métodos (0):
 - `pub fn try_tls_connect_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Result<int, Error>`
 - `pub fn try_tls_connect_mtls(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String, client_cert_pem: String, client_key_pem: String) -> Result<int, Error>`
 - `pub fn try_tls_read(h: int, max_bytes: int, timeout_ms: int) -> Result<String, Error>`
+- `pub fn tls_server_alpn(protos: String) -> bool`
+- `pub fn tls_alpn(h: int) -> String`
+- `pub fn tls_wait_any(h: int, fds: Array, timeout_ms: int) -> Array`
 
 ### `std/webpushcrypto`
 

@@ -354,6 +354,15 @@ int     os_sock_error(int64_t fd);                 // getsockopt SO_ERROR: errno
 // OS_POLLIN|OS_POLLHUP in the SAME wake — callers that distinguish EOF must
 // check IN before HUP (nyx_tls_wait_readable's contract).
 int     os_sock_poll1(int64_t fd, int events, int timeout_ms);
+// Espera lectura sobre VARIOS fds a la vez (hasta OS_POLL_MANY_MAX). Marca
+// ready[i] = 1 en cada uno legible o caído (IN, HUP o ERR: en los tres casos
+// un read no bloquea). Devuelve cuántos, 0 = timeout, -errno. Es el poll del
+// bucle de una conexión HTTP/2 de un gateway: el cliente más los sockets de
+// backend de sus flujos abiertos. En win32 solo sockets (WSAPoll).
+// EN: wait for readability on SEVERAL fds; ready[i] = 1 for each readable or
+// dead one. Returns the count, 0 on timeout, -errno. win32: sockets only.
+#define OS_POLL_MANY_MAX 256
+int     os_sock_poll_many(const int64_t* fds, int n, int timeout_ms, unsigned char* ready);
 
 // getifaddrs → cb(name, ip, mask) por interfaz IPv4 (loopback incluida);
 // devuelve n interfaces o -errno. win32 (W4): GetAdaptersAddresses.

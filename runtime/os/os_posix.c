@@ -1026,6 +1026,20 @@ int os_sock_error(int64_t fd) {
     return err;
 }
 
+int os_sock_poll_many(const int64_t* fds, int n, int timeout_ms, unsigned char* ready) {
+    if (n <= 0 || n > OS_POLL_MANY_MAX || !fds || !ready) return -EINVAL;
+    struct pollfd pf[OS_POLL_MANY_MAX];
+    for (int i = 0; i < n; i++) { pf[i].fd = (int)fds[i]; pf[i].events = POLLIN; pf[i].revents = 0; ready[i] = 0; }
+    int rc = poll(pf, (nfds_t)n, timeout_ms);
+    if (rc < 0) return -errno;
+    if (rc == 0) return 0;
+    int cnt = 0;
+    for (int i = 0; i < n; i++) {
+        if (pf[i].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) { ready[i] = 1; cnt++; }
+    }
+    return cnt;
+}
+
 int os_sock_poll1(int64_t fd, int events, int timeout_ms) {
     struct pollfd pfd; pfd.fd = (int)fd; pfd.events = 0; pfd.revents = 0;
     if (events & OS_POLLIN)  pfd.events |= POLLIN;

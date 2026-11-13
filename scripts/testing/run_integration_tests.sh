@@ -131,6 +131,14 @@ if NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap >/dev/null 2>&1 && \
     kill -TERM "$H2_PID" 2>/dev/null || true
     sleep 0.3
     kill -9 "$H2_PID" 2>/dev/null || true
+    # El mismo binario sobre TLS (ALPN h2), contra curl: tabla dinámica de
+    # HPACK, control de flujo en los dos sentidos y flujos en paralelo.
+    if bash tests/integration/test_h2_tls.sh "$H2_BIN" 13005; then
+        echo -e "  ${GREEN}HTTP/2 sobre TLS passed${NC}"
+    else
+        echo -e "  ${RED}HTTP/2 sobre TLS failed${NC}"
+        OVERALL=1
+    fi
     rm -f "$H2_BIN"
 else
     rm -f script.nx script.ll

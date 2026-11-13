@@ -1,6 +1,50 @@
-// std/http2.nx — HTTP/2 server for Nyx (h2c cleartext)
-// Binary framing, HPACK compression, stream multiplexing
-// C runtime: runtime/http2.c (frame I/O, HPACK encode/decode)
+// std/http2.nx — servidor HTTP/2 (RFC 9113): en claro (h2c) y sobre TLS (ALPN h2)
+//
+// Tres niveles, de más simple a más control:
+//
+//   1. h2_serve(port, workers, cb) / h2_serve_tls(port, workers, cert, key, cb)
+//      Un servidor entero. `cb` recibe (method, path, headers, body) y devuelve
+//      [status, headers, body].
+//
+//   2. h2_serve_tls_conn(tls, cb): atiende UNA conexión TLS ya aceptada que
+//      negoció "h2" (tls_alpn), para quien tiene su propio bucle de accept y
+//      sirve HTTP/1.1 por el mismo puerto.
+//
+//   3. La SESIÓN (h2_session_new, h2_feed, h2_next_event, h2_respond_start,
+//      h2_send_data, h2_end, h2_take_output): el motor del protocolo sin E/S.
+//      Entran los bytes que mandó el cliente, salen eventos y los bytes que hay
+//      que escribirle. Sirve para responder por partes (SSE, descargas) y para
+//      atender varios flujos a la vez desde un bucle propio: es lo que usa un
+//      gateway.
+//
+// Lo que el motor hace solo: HPACK con tabla dinámica, control de flujo,
+// CONTINUATION, validación de cabeceras y topes contra los abusos conocidos
+// (rapid reset, inundación de PING/SETTINGS, cabeceras gigantes). Detalle y
+// topes: runtime/http2.c, sección nyx_h2c_*.
+//
+// No hay: server push, prioridades, WebSocket sobre HTTP/2 ni h2c por Upgrade
+// (el modo en claro es «prior knowledge»).
+//
+// EN: HTTP/2 server. Three levels: whole server (h2_serve / h2_serve_tls), one
+// accepted TLS connection (h2_serve_tls_conn), or the sans-IO session for
+// streaming responses and custom loops.
+
+import "std/tls"
+
+extern "C" fn nyx_h2c_new(max_body: int) -> int
+extern "C" fn nyx_h2c_feed(h: int, data: String) -> int
+extern "C" fn nyx_h2c_next_event(h: int) -> Array
+extern "C" fn nyx_h2c_take_output(h: int) -> String
+extern "C" fn nyx_h2c_send_headers(h: int, sid: int, headers: Array, end_stream: int) -> int
+extern "C" fn nyx_h2c_send_data(h: int, sid: int, data: String, end_stream: int) -> int
+extern "C" fn nyx_h2c_reset(h: int, sid: int, code: int) -> int
+extern "C" fn nyx_h2c_pending(h: int, sid: int) -> int
+extern "C" fn nyx_h2c_stream_open(h: int, sid: int) -> int
+extern "C" fn nyx_h2c_goaway(h: int, code: int) -> int
+extern "C" fn nyx_h2c_closed(h: int) -> int
+extern "C" fn nyx_h2c_open_streams(h: int) -> int
+extern "C" fn nyx_h2_wake_signal(wfd: int) -> int
+extern "C" fn nyx_h2_wake_drain(rfd: int) -> int
 
 extern "C" fn nyx_h2_read_frame(fd: int) -> Array
 extern "C" fn nyx_h2_write_frame(fd: int, ftype: int, flags: int, sid: int, payload: String) -> int
@@ -26,9 +70,19 @@ let H2_FLAG_ACK: int = 1
 // Connection preface (24 bytes)
 let H2_PREFACE: String = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 
+// Eventos de una sesión (h2_event_kind)
+let H2_EV_NONE: int = 0
+let H2_EV_REQUEST: int = 1      // petición completa
+let H2_EV_CANCEL: int = 2       // el cliente canceló un flujo ya entregado
+
+// Tope del cuerpo de una petición en los servidores h2_serve*: 8 MiB.
+let H2_DEFAULT_MAX_BODY: int = 8388608
+
 // Multi-threaded server globals
 var __h2_ch: Map = Map.new()
 var __h2_cb: Fn = 0
+var __h2_tls_ch: Map = Map.new()
+var __h2_tls_cb: Fn = 0
 
 // ── Connection Preface ───────────────────────────────────────────────────────
 
@@ -119,94 +173,228 @@ pub fn h2_send_response(fd: int, stream_id: int, status: int, resp_headers: Arra
     return 0
 }
 
-// ── Frame Dispatch Loop ──────────────────────────────────────────────────────
+// ── Sesión: el motor del protocolo, sin E/S ──────────────────────────────────
+
+// Una petición HTTP/2 completa. `headers` son pares nombre/valor (nombres en
+// minúsculas) sin las pseudo-cabeceras, que van en sus campos.
+pub struct H2Request {
+    stream: int,
+    method: String,
+    path: String,
+    authority: String,
+    scheme: String,
+    headers: Array,
+    body: String
+}
+
+// Sesión nueva de servidor. `max_body`: tope en bytes del cuerpo de una
+// petición (pasado el tope el motor responde 413 solo).
+pub fn h2_session_new(max_body: int) -> int { return nyx_h2c_new(max_body) }
+
+// Bytes que llegaron del cliente. false = error de protocolo: escribir lo que
+// dé h2_take_output (lleva el GOAWAY) y cerrar.
+pub fn h2_feed(sess: int, data: String) -> bool { return nyx_h2c_feed(sess, data) == 0 }
+
+// Siguiente evento pendiente; h2_event_kind dice cuál (H2_EV_NONE si no hay).
+pub fn h2_next_event(sess: int) -> Array { return nyx_h2c_next_event(sess) }
+
+pub fn h2_event_kind(ev: Array) -> int {
+    if ev.length() < 4 { return H2_EV_NONE }
+    let k: int = ev[0]
+    return k
+}
+
+pub fn h2_event_stream(ev: Array) -> int {
+    if ev.length() < 4 { return 0 }
+    let sid: int = ev[1]
+    return sid
+}
+
+// La petición de un evento H2_EV_REQUEST.
+pub fn h2_event_request(ev: Array) -> H2Request {
+    var method: String = "GET"
+    var path: String = "/"
+    var authority: String = ""
+    var scheme: String = ""
+    var headers: Array = []
+    var body: String = ""
+    var sid: int = 0
+    if ev.length() >= 4 {
+        sid = ev[1]
+        let raw: Array = ev[2]
+        body = ev[3]
+        var i: int = 0
+        while i + 1 < raw.length() {
+            let k: String = raw[i]
+            let v: String = raw[i + 1]
+            if k == ":method" { method = v }
+            else if k == ":path" { path = v }
+            else if k == ":authority" { authority = v }
+            else if k == ":scheme" { scheme = v }
+            else {
+                headers.push(k)
+                headers.push(v)
+            }
+            i = i + 2
+        }
+    }
+    return H2Request { stream: sid, method: method, path: path, authority: authority, scheme: scheme, headers: headers, body: body }
+}
+
+// Valor de una cabecera (nombre en minúsculas), o "".
+pub fn h2_header(headers: Array, name: String) -> String {
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        if k == name {
+            let v: String = headers[i + 1]
+            return v
+        }
+        i = i + 2
+    }
+    return ""
+}
+
+fn h2_status_headers(status: int, headers: Array) -> Array {
+    var hdrs: Array = []
+    hdrs.push(":status")
+    hdrs.push(int_to_string(status))
+    var i: int = 0
+    while i + 1 < headers.length() {
+        let k: String = headers[i]
+        let v: String = headers[i + 1]
+        hdrs.push(k)
+        hdrs.push(v)
+        i = i + 2
+    }
+    return hdrs
+}
+
+// Respuesta por partes: primero las cabeceras, después h2_send_data las veces
+// que haga falta y h2_end. `headers` en pares nombre/valor; las propias de una
+// conexión HTTP/1.1 (Connection, Transfer-Encoding...) se descartan solas.
+// Devuelve 0, o -1 si el flujo ya no existe (el cliente lo canceló).
+pub fn h2_respond_start(sess: int, stream: int, status: int, headers: Array) -> int {
+    return nyx_h2c_send_headers(sess, stream, h2_status_headers(status, headers), 0)
+}
+
+// Un trozo del cuerpo. Se encola y sale cuando el control de flujo del cliente
+// lo permite: mirar h2_pending antes de encolar sin límite.
+pub fn h2_send_data(sess: int, stream: int, data: String) -> int {
+    return nyx_h2c_send_data(sess, stream, data, 0)
+}
+
+// Cierra la respuesta de un flujo.
+pub fn h2_end(sess: int, stream: int) -> int {
+    return nyx_h2c_send_data(sess, stream, "", 1)
+}
+
+// Respuesta entera de una vez (agrega content-length).
+pub fn h2_respond(sess: int, stream: int, status: int, headers: Array, body: String) -> int {
+    var hdrs: Array = h2_status_headers(status, headers)
+    if h2_header(headers, "content-length") == "" and h2_header(headers, "Content-Length") == "" {
+        hdrs.push("content-length")
+        hdrs.push(int_to_string(body.length()))
+    }
+    if body.length() == 0 { return nyx_h2c_send_headers(sess, stream, hdrs, 1) }
+    if nyx_h2c_send_headers(sess, stream, hdrs, 0) < 0 { return -1 }
+    return nyx_h2c_send_data(sess, stream, body, 1)
+}
+
+// Corta un flujo sin terminar la respuesta (RST_STREAM, error interno).
+pub fn h2_cancel(sess: int, stream: int) -> int { return nyx_h2c_reset(sess, stream, 2) }
+
+// Bytes de cuerpo encolados que el cliente todavía no dejó salir: de un flujo,
+// o de toda la sesión con stream 0.
+pub fn h2_pending(sess: int, stream: int) -> int { return nyx_h2c_pending(sess, stream) }
+
+// ¿Sigue abierto el flujo? false si ya se cerró o el cliente lo canceló.
+pub fn h2_stream_open(sess: int, stream: int) -> bool { return nyx_h2c_stream_open(sess, stream) == 1 }
+
+// Bytes listos para escribir al cliente. Llamar después de cada h2_feed y de
+// cada respuesta.
+pub fn h2_take_output(sess: int) -> String { return nyx_h2c_take_output(sess) }
+
+// true si hay que cerrar la conexión (error, o GOAWAY sin flujos en curso).
+pub fn h2_closed(sess: int) -> bool { return nyx_h2c_closed(sess) == 1 }
+
+// Cierre ordenado: no se aceptan flujos nuevos y los abiertos terminan.
+pub fn h2_goaway(sess: int) -> int { return nyx_h2c_goaway(sess, 0) }
+
+pub fn h2_open_streams(sess: int) -> int { return nyx_h2c_open_streams(sess) }
+
+// ── Despertador entre hilos ─────────────────────────────────────────────────
+// Para un bucle propio que reparte trabajo en hilos auxiliares: `pipe_new()` da
+// [lectura, escritura]. El bucle espera con tls_wait_any(tls, [lectura, ...]);
+// el hilo que terminó llama h2_wake_signal(escritura), y el bucle, al
+// despertar, h2_wake_drain(lectura). Así un solo hilo escribe al cliente.
+pub fn h2_wake_signal(wfd: int) -> int { return nyx_h2_wake_signal(wfd) }
+pub fn h2_wake_drain(rfd: int) -> int { return nyx_h2_wake_drain(rfd) }
+
+// ── Bucle de una conexión ────────────────────────────────────────────────────
+
+// Entrega cada petición pendiente a `cb` y encola su respuesta.
+fn h2_dispatch_events(sess: int, cb: Fn(String, String, Array, String) -> Array) {
+    var seguir: bool = true
+    while seguir {
+        let ev: Array = nyx_h2c_next_event(sess)
+        let kind: int = h2_event_kind(ev)
+        if kind == H2_EV_NONE { seguir = false }
+        if kind == H2_EV_REQUEST {
+            let req: H2Request = h2_event_request(ev)
+            let result: Array = cb(req.method, req.path, req.headers, req.body)
+            let resp_status: int = result[0]
+            let resp_hdrs: Array = result[1]
+            let resp_body: String = result[2]
+            h2_respond(sess, req.stream, resp_status, resp_hdrs, resp_body)
+        }
+    }
+}
 
 fn h2_connection_loop(fd: int, cb: Fn(String, String, Array, String) -> Array) -> int {
-    // Read client preface SETTINGS
-    let first_frame: Array = nyx_h2_read_frame(fd)
-    if first_frame.length() < 4 { tcp_close(fd); return -1 }
-
-    let first_type: int = first_frame[0]
-    if first_type == H2_SETTINGS {
-        // ACK client settings
-        let empty: String = ""
-        nyx_h2_write_frame(fd, H2_SETTINGS, H2_FLAG_ACK, 0, empty)
-    }
-
-    // Main frame loop
-    var running: int = 1
-    while running > 0 {
-        let frame: Array = nyx_h2_read_frame(fd)
-        if frame.length() < 4 {
-            running = 0
-        } else {
-            let ftype: int = frame[0]
-            let flags: int = frame[1]
-            let stream_id: int = frame[2]
-            let payload: String = frame[3]
-
-            if ftype == H2_SETTINGS {
-                let f_flags: int = flags
-                // If not ACK, send ACK
-                let is_ack: int = f_flags
-                if is_ack != H2_FLAG_ACK {
-                    let empty2: String = ""
-                    nyx_h2_write_frame(fd, H2_SETTINGS, H2_FLAG_ACK, 0, empty2)
-                }
-            }
-            if ftype == H2_HEADERS {
-                // Decode HPACK headers
-                let decoded: Array = nyx_h2_decode_headers(payload)
-                // Extract :method, :path, and other headers
-                var method: String = "GET"
-                var path: String = "/"
-                var req_headers: Array = []
-                var di: int = 0
-                while di < decoded.length() {
-                    let dk: String = decoded[di]
-                    let di_next: int = di + 1
-                    let dv: String = decoded[di_next]
-                    if dk == ":method" {
-                        method = dv
-                    }
-                    if dk == ":path" {
-                        path = dv
-                    }
-                    // Skip pseudo-headers for user headers
-                    let first_ch: int = dk.charAt(0)
-                    if first_ch != 58 {
-                        req_headers.push(dk)
-                        req_headers.push(dv)
-                    }
-                    di = di + 2
-                }
-
-                // Invoke callback: fn(method, path, headers, body) -> Array [status, resp_headers, body]
-                let req_body: String = ""
-                let result: Array = cb(method, path, req_headers, req_body)
-                let resp_status: int = result[0]
-                let resp_hdrs: Array = result[1]
-                let resp_body: String = result[2]
-                h2_send_response(fd, stream_id, resp_status, resp_hdrs, resp_body)
-            }
-            if ftype == H2_PING {
-                // Echo ping with ACK
-                nyx_h2_write_frame(fd, H2_PING, H2_FLAG_ACK, 0, payload)
-            }
-            if ftype == H2_WINDOW_UPDATE {
-                // Accept window update, no action needed for basic impl
-                let _wu: int = 0
-            }
-            if ftype == H2_GOAWAY {
-                running = 0
-            }
-            if ftype == H2_RST_STREAM {
-                // Stream reset, continue accepting other streams
-                let _rst: int = 0
+    let sess: int = nyx_h2c_new(H2_DEFAULT_MAX_BODY)
+    var vivo: bool = true
+    while vivo {
+        let out: String = nyx_h2c_take_output(sess)
+        if out.length() > 0 {
+            if tcp_write(fd, out) < 0 { vivo = false }
+        }
+        if vivo and nyx_h2c_closed(sess) == 1 { vivo = false }
+        if vivo {
+            let data: String = tcp_read_partial(fd, 16384)
+            if data.length() == 0 {
+                vivo = false
+            } else {
+                nyx_h2c_feed(sess, data)
+                h2_dispatch_events(sess, cb)
             }
         }
     }
     tcp_close(fd)
+    return 0
+}
+
+// Atiende UNA conexión TLS ya aceptada (tls_accept) que negoció "h2". Vuelve
+// cuando la conexión termina; NO la cierra (tls_close_conn es del que llama).
+pub fn h2_serve_tls_conn(tls: int, cb: Fn(String, String, Array, String) -> Array) -> int {
+    let sess: int = nyx_h2c_new(H2_DEFAULT_MAX_BODY)
+    var vivo: bool = true
+    while vivo {
+        let out: String = nyx_h2c_take_output(sess)
+        if out.length() > 0 {
+            if tls_write_conn(tls, out) < 0 { vivo = false }
+        }
+        if vivo and nyx_h2c_closed(sess) == 1 { vivo = false }
+        if vivo {
+            let data: String = tls_read_partial(tls, 16384)
+            if data.length() == 0 {
+                vivo = false
+            } else {
+                nyx_h2c_feed(sess, data)
+                h2_dispatch_events(sess, cb)
+            }
+        }
+    }
     return 0
 }
 
@@ -216,15 +404,26 @@ fn __h2_worker() -> int {
     while 1 > 0 {
         let client: int = channel_recv(__h2_ch)
         if client < 0 { return 0 }
+        h2_connection_loop(client, __h2_cb)
+    }
+    return 0
+}
 
-        // Read first bytes to detect h2c upgrade vs prior knowledge
-        // For simplicity, assume prior knowledge (direct HTTP/2 preface)
-        let valid: bool = h2_validate_preface(client)
-        if valid {
-            h2_send_server_preface(client)
-            h2_connection_loop(client, __h2_cb)
-        } else {
+fn __h2_tls_worker() -> int {
+    while 1 > 0 {
+        let client: int = channel_recv(__h2_tls_ch)
+        if client < 0 { return 0 }
+        let tls: int = tls_accept(client)
+        if tls == 0 {
             tcp_close(client)
+        } else {
+            if tls_alpn(tls) == "h2" {
+                h2_serve_tls_conn(tls, __h2_tls_cb)
+            } else {
+                // Cliente sin HTTP/2: este servidor no habla otra cosa.
+                tls_write_conn(tls, "HTTP/1.1 426 Upgrade Required\r\nUpgrade: h2\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+            }
+            tls_close_conn(tls)
         }
     }
     return 0
@@ -232,9 +431,10 @@ fn __h2_worker() -> int {
 
 // ── Public Server API ────────────────────────────────────────────────────────
 
-// Start HTTP/2 server (h2c cleartext, prior knowledge mode)
-// Callback signature: fn(method: String, path: String, headers: Array, body: String) -> Array
-// Return: [status: int, headers: Array, body: String]
+// Servidor HTTP/2 en claro (h2c, «prior knowledge»: el cliente arranca
+// directo con el prefacio HTTP/2, como `curl --http2-prior-knowledge`).
+// Callback: fn(method: String, path: String, headers: Array, body: String) -> Array
+// Devuelve: [status: int, headers: Array, body: String]
 pub fn h2_serve(port: int, num_workers: int, cb: Fn) -> int {
     __h2_ch = channel_new(512)
     __h2_cb = cb
@@ -249,6 +449,31 @@ pub fn h2_serve(port: int, num_workers: int, cb: Fn) -> int {
         let client: int = tcp_accept(server)
         if client >= 0 {
             channel_send(__h2_ch, client)
+        }
+    }
+    return 0
+}
+
+// Servidor HTTP/2 sobre TLS: negocia "h2" por ALPN, que es lo que usan los
+// navegadores. `cert` y `key`: rutas a los PEM. Mismo callback que h2_serve.
+// Cada trabajador atiende una conexión a la vez, con todos sus flujos.
+// Devuelve -1 si no pudo cargar el certificado o abrir el puerto.
+pub fn h2_serve_tls(port: int, num_workers: int, cert: String, key: String, cb: Fn) -> int {
+    if tls_server_init(cert, key) != 0 { return -1 }
+    if not tls_server_alpn("h2") { return -1 }
+    __h2_tls_ch = channel_new(512)
+    __h2_tls_cb = cb
+    let server: int = tcp_listen("0.0.0.0", port)
+    if server < 0 { return -1 }
+    var i: int = 0
+    while i < num_workers {
+        thread_spawn(__h2_tls_worker)
+        i = i + 1
+    }
+    while 1 > 0 {
+        let client: int = tcp_accept(server)
+        if client >= 0 {
+            channel_send(__h2_tls_ch, client)
         }
     }
     return 0

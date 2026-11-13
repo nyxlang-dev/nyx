@@ -935,6 +935,118 @@ static int sni_callback(SSL *ssl, int *al, void *arg) {
     return SSL_TLSEXT_ERR_OK; // use default ctx
 }
 
+// ===== ALPN del servidor =====
+// Lista de protocolos que el servidor acepta, en SU orden de preferencia, en el
+// formato de cable de ALPN (cada nombre precedido por su largo). Vacía = no se
+// negocia nada, que es la conducta de siempre.
+static unsigned char g_alpn_wire[128];
+static unsigned int  g_alpn_wire_len = 0;
+
+static int alpn_select_cb(SSL* ssl, const unsigned char** out, unsigned char* outlen,
+                          const unsigned char* in, unsigned int inlen, void* arg) {
+    (void)ssl; (void)arg;
+    for (unsigned int s = 0; s < g_alpn_wire_len; ) {
+        unsigned int slen = g_alpn_wire[s];
+        for (unsigned int c = 0; c < inlen; ) {
+            unsigned int clen = in[c];
+            if (c + 1 + clen > inlen) break;
+            if (clen == slen && memcmp(in + c + 1, g_alpn_wire + s + 1, slen) == 0) {
+                *out = in + c + 1;
+                *outlen = (unsigned char)clen;
+                return SSL_TLSEXT_ERR_OK;
+            }
+            c += 1 + clen;
+        }
+        s += 1 + slen;
+    }
+    // Sin protocolo en común: se sigue sin ALPN (el cliente habla HTTP/1.1),
+    // en vez de cortar el handshake.
+    return SSL_TLSEXT_ERR_NOACK;
+}
+
+static void alpn_apply(SSL_CTX* ctx) {
+    if (ctx && g_alpn_wire_len > 0) SSL_CTX_set_alpn_select_cb(ctx, alpn_select_cb, NULL);
+}
+
+// Activa ALPN en el servidor TLS. `protos`: nombres separados por coma, en
+// orden de preferencia ("h2,http/1.1"). Se llama DESPUÉS de tls_server_init;
+// cubre también los certificados SNI ya cargados y los que se agreguen. 0 bien,
+// -1 si la lista es inválida o no hay servidor.
+int64_t nyx_tls_server_alpn(nyx_string* protos) {
+    if (!protos || !g_ssl_server_ctx) return -1;
+    unsigned char wire[sizeof(g_alpn_wire)];
+    unsigned int wl = 0;
+    int64_t i = 0;
+    while (i < protos->length) {
+        int64_t j = i;
+        while (j < protos->length && protos->data[j] != ',') j++;
+        int64_t a = i, b = j;
+        while (a < b && protos->data[a] == ' ') a++;
+        while (b > a && protos->data[b - 1] == ' ') b--;
+        int64_t n = b - a;
+        if (n > 0) {
+            if (n > 255 || wl + 1 + (unsigned int)n > sizeof(wire)) return -1;
+            wire[wl++] = (unsigned char)n;
+            memcpy(wire + wl, protos->data + a, (size_t)n);
+            wl += (unsigned int)n;
+        }
+        i = j + 1;
+    }
+    if (wl == 0) return -1;
+    memcpy(g_alpn_wire, wire, wl);
+    g_alpn_wire_len = wl;
+    alpn_apply(g_ssl_server_ctx);
+    for (int k = 0; k < g_sni_count; k++) alpn_apply(g_sni_contexts[k]);
+    return 0;
+}
+
+// Protocolo que negoció ALPN en esta conexión ("h2", "http/1.1"), o "" si no
+// hubo negociación.
+nyx_string* nyx_tls_alpn(int64_t handle) {
+    if (!handle) return nyx_string_from_cstr("");
+    NyxTlsHandle* h = (NyxTlsHandle*)(uintptr_t)handle;
+    if (!h->ssl) return nyx_string_from_cstr("");
+    const unsigned char* p = NULL;
+    unsigned int n = 0;
+    SSL_get0_alpn_selected(h->ssl, &p, &n);
+    if (!p || n == 0) return nyx_string_from_cstr("");
+    return nyx_string_from_ptr((const char*)p, (int64_t)n);
+}
+
+// Espera hasta `timeout_ms` (-1 = sin plazo) a que haya algo que leer en la
+// conexión TLS o en alguno de los `fds` (sockets o pipes). Devuelve un Array:
+// [estado_tls, i, j, ...] con estado_tls = 1 legible, 0 nada, -1 la conexión
+// murió; y después los ÍNDICES de `fds` que están legibles (o cerrados: un
+// read sobre ellos no bloquea). Es el poll de un bucle que atiende a la vez un
+// cliente TLS y varios sockets de backend.
+nyx_array_t* nyx_tls_wait_any(int64_t handle, nyx_array_t* fds, int64_t timeout_ms) {
+    nyx_array_t* res = nyx_array_new(4);
+    NyxTlsHandle* h = (NyxTlsHandle*)(uintptr_t)handle;
+    if (!h || !h->ssl) { nyx_array_push_tagged(res, -1, NYX_TAG_INT); return res; }
+    int nf = fds ? (int)fds->length : 0;
+    if (nf > OS_POLL_MANY_MAX - 1) nf = OS_POLL_MANY_MAX - 1;
+    int64_t all[OS_POLL_MANY_MAX];
+    unsigned char ready[OS_POLL_MANY_MAX];
+    int tfd = SSL_get_fd(h->ssl);
+    int buffered = (h->buf_len - h->buf_pos > 0) || SSL_pending(h->ssl) > 0;
+    if (h->eof || tfd < 0) {
+        nyx_array_push_tagged(res, -1, NYX_TAG_INT);
+        return res;
+    }
+    all[0] = tfd;
+    for (int i = 0; i < nf; i++) all[i + 1] = fds->data[i];
+    int t = buffered ? 0 : (timeout_ms < 0 ? -1 : (timeout_ms > 2147483647 ? 2147483647 : (int)timeout_ms));
+    int rc = os_sock_poll_many(all, nf + 1, t, ready);
+    if (rc == -EINTR) rc = 0;
+    if (rc < 0) { nyx_array_push_tagged(res, -1, NYX_TAG_INT); return res; }
+    int tls_ready = buffered || (rc > 0 && ready[0]);
+    nyx_array_push_tagged(res, tls_ready ? 1 : 0, NYX_TAG_INT);
+    if (rc > 0) {
+        for (int i = 0; i < nf; i++) if (ready[i + 1]) nyx_array_push_tagged(res, (int64_t)i, NYX_TAG_INT);
+    }
+    return res;
+}
+
 int64_t nyx_tls_server_init(nyx_string* cert_path, nyx_string* key_path) {
     if (!cert_path || !key_path) return -1;
 
@@ -1020,6 +1132,7 @@ int64_t nyx_tls_server_add_cert(nyx_string* hostname, nyx_string* cert_path, nyx
         return -1;
     }
 
+    alpn_apply(ctx);
     g_sni_contexts[g_sni_count] = ctx;
     strncpy(g_sni_hostnames[g_sni_count], host, 255);
     g_sni_hostnames[g_sni_count][255] = '\0';

@@ -71,6 +71,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Added
 
+- **Servidor HTTP/2 real: TLS con ALPN `h2`, control de flujo y respuestas por partes** [arco: gateway-http2]
+  (fricción de nyxerp): con HTTP/1.1 un navegador abre 6 conexiones por dominio y cada canal SSE ocupa una, así
+  que la séptima petición esperaba. `std/http2` se rehízo sobre un motor de conexión sin E/S en el runtime
+  (`nyx_h2c_*`): HPACK con tabla dinámica y Huffman —el decodificador anterior no tenía tabla dinámica y un
+  navegador real fallaba en la segunda petición—, control de flujo en los dos sentidos, `CONTINUATION`,
+  validación de cabeceras y topes contra rapid reset, inundación de `PING`/`SETTINGS`, cabeceras gigantes y
+  cuerpos sin límite. API nueva: `h2_serve_tls`, `h2_serve_tls_conn` y la sesión (`h2_session_new`, `h2_feed`,
+  `h2_next_event`, `h2_respond_start`, `h2_send_data`, `h2_end`, `h2_take_output`…). `h2_serve` conserva su
+  firma. Lo usa `nyx-proxy` 0.4.13 (`http2 = true`). Detalle y topes: `docs/HTTP2.md`.
+- **ALPN en el servidor TLS** (`std/tls`): `tls_server_alpn("h2,http/1.1")` y `tls_alpn(h)`. Apagado si no se
+  llama. `tls_wait_any(h, fds, ms)` espera a la vez una conexión TLS y varios descriptores.
+- **`thread_detach(tid)`** (`std/sync`): suelta un hilo que nadie va a esperar con `thread_join`; sin eso, cada
+  hilo terminado dejaba su pila reservada.
 - **Notación científica en literales float**: `1.5e3`, `2.0E-2`, `1e3`, `6.02e+23`. Antes daba `NYX1002`
   («'e3' not declared»). Test `language/test-549`.
 - **Struct tupla completo**: `struct Point(int, int)` acepta varios campos, se construye con `Point(3, 4)` y se lee

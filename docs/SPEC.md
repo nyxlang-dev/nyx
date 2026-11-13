@@ -5182,7 +5182,15 @@ Conducta:
   (default 15). Un cliente que se fue sale del registro en a lo sumo dos heartbeats; uno que no lee
   se corta a los 2–4 s de ventana cero.
 - **Tope**: `NYX_SSE_MAX` (default 1024). El techo duro del servidor es de 4096 fds en total.
-- **Fase 1 sin** `id:`, `retry:` ni reenvío por `Last-Event-ID`; sin SSE sobre HTTP/2.
+- **Fase 1 sin** `id:`, `retry:` ni reenvío por `Last-Event-ID`. `std/serve` habla HTTP/1.1; SSE
+  sobre HTTP/2 lo da el gateway.
+- **El tope de 6 conexiones**: con HTTP/1.1 un navegador abre como mucho 6 conexiones por dominio,
+  compartidas entre todas sus pestañas, y cada canal SSE ocupa una. Con seis pantallas abiertas la
+  petición siguiente espera en la cola del navegador. `nyx-proxy` 0.4.13 con `http2 = true` lo
+  resuelve: una sola conexión con hasta 100 flujos, SSE incluido.
+- **HTTP/2**: `std/http2` es un servidor HTTP/2 (h2c y TLS con ALPN `h2`) con una API de sesión para
+  responder por partes; ALPN del servidor TLS con `tls_server_alpn` / `tls_alpn` (`std/tls`). API y
+  topes: `docs/HTTP2.md`.
 - **Detrás de un gateway**: `nyx-proxy` 0.4.4 tuneliza SSE de punta a punta —detecta
   `Content-Type: text/event-stream` y deja de acumular—, así que un endpoint SSE funciona detrás
   del gateway sin configuración especial. En 0.4.3 el proxy acumulaba la respuesta hasta que el

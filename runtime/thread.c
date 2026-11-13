@@ -107,6 +107,17 @@ int64_t nyx_thread_spawn(void* closure_pair) {
     return (int64_t)handle;
 }
 
+// Suelta un hilo: nadie va a hacerle thread_join y sus recursos se liberan
+// solos cuando termine. Para hilos de vida propia que se lanzan de a muchos
+// (uno por conexión): un hilo que termina sin join ni detach deja su pila
+// reservada para siempre. Después de esto el handle NO se puede usar más.
+// 0 bien, -1 si el handle es inválido.
+int64_t nyx_thread_detach(int64_t handle_i64) {
+    nyx_thread_handle_t* handle = (nyx_thread_handle_t*)(intptr_t)handle_i64;
+    if (!handle) return -1;
+    return os_thread_detach(&handle->thread) == 0 ? 0 : -1;
+}
+
 // Join a thread and return its result.
 int64_t nyx_thread_join(int64_t handle_i64) {
     nyx_thread_handle_t* handle = (nyx_thread_handle_t*)(intptr_t)handle_i64;

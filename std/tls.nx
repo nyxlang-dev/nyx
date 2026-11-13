@@ -38,6 +38,9 @@ extern "C" fn nyx_tls_connect_result(host: String, port: int, verify_mode: int, 
 extern "C" fn nyx_tls_connect_result_cas(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String) -> Array
 extern "C" fn nyx_tls_connect_result_mtls(host: String, port: int, verify_mode: int, connect_ms: int, cas_extra: String, cli_cert: String, cli_key: String) -> Array
 extern "C" fn nyx_tls_read_timed(h: int, max_bytes: int, timeout_ms: int) -> String
+extern "C" fn nyx_tls_server_alpn(protos: String) -> int
+extern "C" fn nyx_tls_alpn(h: int) -> String
+extern "C" fn nyx_tls_wait_any(h: int, fds: Array, timeout_ms: int) -> Array
 extern "C" fn nyx_tls_read_cause(h: int) -> int
 extern "C" fn nyx_tls_read_error(h: int) -> String
 
@@ -387,3 +390,22 @@ pub fn try_tls_read(h: int, max_bytes: int, timeout_ms: int) -> Result<String, E
     }
     return Result.Err(err_new(5, "io", nyx_tls_read_error(h)))
 }
+
+// ── ALPN del servidor ────────────────────────────────────────────────────────
+
+// Activa ALPN en el servidor TLS (después de tls_server_init). `protos`: los
+// protocolos que se aceptan, separados por coma y en orden de preferencia:
+// "h2,http/1.1". Cubre también los certificados de tls_server_add_cert. Un
+// cliente sin ninguno en común sigue conectando, sin protocolo negociado.
+pub fn tls_server_alpn(protos: String) -> bool { return nyx_tls_server_alpn(protos) == 0 }
+
+// El protocolo que negoció ALPN en una conexión aceptada: "h2", "http/1.1", o
+// "" si el cliente no ofreció ALPN (se lo trata como HTTP/1.1).
+pub fn tls_alpn(h: int) -> String { return nyx_tls_alpn(h) }
+
+// Espera hasta `timeout_ms` (-1 = sin plazo) a que haya algo que leer en la
+// conexión TLS `h` o en alguno de los `fds` (sockets o pipes; hasta 255).
+// Devuelve [estado, i, j, ...]: estado 1 = la conexión TLS tiene datos, 0 = no,
+// -1 = murió; después, los índices de `fds` listos para leer (o cerrados).
+// Para un bucle que atiende a la vez un cliente y varios sockets de backend.
+pub fn tls_wait_any(h: int, fds: Array, timeout_ms: int) -> Array { return nyx_tls_wait_any(h, fds, timeout_ms) }

@@ -172,6 +172,7 @@ int     os_sock_set_send_timeout(int64_t fd, int64_t seconds) { (void)fd; (void)
 int     os_sock_set_nonblocking(int64_t fd, int on) { (void)fd; (void)on; return -ENOSYS; }
 int     os_sock_error(int64_t fd) { (void)fd; return -ENOSYS; }
 int     os_sock_poll1(int64_t fd, int events, int timeout_ms) { (void)fd; (void)events; (void)timeout_ms; return -ENOSYS; }
+int     os_sock_poll_many(const int64_t* fds, int n, int timeout_ms, unsigned char* ready) { (void)fds; (void)n; (void)timeout_ms; (void)ready; return -ENOSYS; }
 int64_t os_net_ifaces4(void (*cb)(const char* name, const char* ip, const char* mask, void* ud), void* ud) { (void)cb; (void)ud; return -ENOSYS; }
 int     os_inet_ntop6(const unsigned char* bytes16, char* buf, int buflen) { (void)bytes16; (void)buf; (void)buflen; return -ENOSYS; }
 

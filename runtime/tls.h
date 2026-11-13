@@ -185,6 +185,13 @@ nyx_string* nyx_tls_read_partial(int64_t handle, int64_t max_bytes);
 // NewSessionTicket noise can make the SSL_read that follows still block).
 int64_t nyx_tls_wait_readable(int64_t handle, int64_t timeout_ms);
 
+// ALPN del servidor: lista por comas en orden de preferencia ("h2,http/1.1"),
+// después de nyx_tls_server_init. nyx_tls_alpn da lo negociado ("" si nada).
+int64_t nyx_tls_server_alpn(nyx_string* protos);
+nyx_string* nyx_tls_alpn(int64_t handle);
+// Espera sobre la conexión TLS y varios fds a la vez: [estado_tls, índices...].
+nyx_array_t* nyx_tls_wait_any(int64_t handle, nyx_array_t* fds, int64_t timeout_ms);
+
 // Non-blocking read: returns application data available RIGHT NOW (up to
 // max_bytes), NEVER blocking — the fd is switched to O_NONBLOCK only for the
 // duration of the single underlying SSL_read (fcntl save/set/restore, always

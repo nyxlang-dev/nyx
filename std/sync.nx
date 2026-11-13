@@ -282,3 +282,14 @@ pub fn counter_set(c: AtomicCounter, val: int) {
     c.value[0] = val
     mutex_unlock(c.mutex)
 }
+
+// ── Hilos sueltos ────────────────────────────────────────────────────────────
+
+extern "C" fn nyx_thread_detach(tid: int) -> int
+
+// Suelta un hilo de thread_spawn: nadie le va a hacer thread_join y sus
+// recursos se liberan solos cuando termine. Para hilos que se lanzan de a
+// muchos y viven por su cuenta (uno por conexión): sin join ni detach, cada
+// hilo que termina deja su pila reservada para siempre. Después de soltarlo,
+// el id NO se puede pasar a thread_join. true si se soltó.
+pub fn thread_detach(tid: int) -> bool { return nyx_thread_detach(tid) == 0 }
