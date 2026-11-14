@@ -159,13 +159,13 @@ arquitectura (`scripts/testing/run_bootstrap_tests.sh`). B resuelve las dos cosa
    y `user.email`. No hay remote compartido entre las máquinas: **todo el reparto viaja por GitHub**.
 4. **Clonar con el mismo layout que el servidor** — los docs del repo citan rutas `~/nyx/...`:
    ```bash
-   mkdir -p ~/nyx && git clone git@github.com:ocavallina/NyxLang.git ~/nyx/lang
+   mkdir -p ~/nyx && git clone git@github.com:ocavallina/NyxLang.git ~/nyxlang
    ```
-5. **Opcional**, solo si B va a construir stacks: `bash ~/nyx/lang/scripts/install.sh` (crea `~/.nyx`;
+5. **Opcional**, solo si B va a construir stacks: `bash ~/nyxlang/scripts/install.sh` (crea `~/.nyx`;
    `make install-local` aborta si no existe). Recordá que `~/.nyx` es **local a cada máquina**.
 6. **Solo para los arcos W** (Windows nativo): MSVC Build Tools, `clang`/`lld-link`, vcpkg con bdwgc
    y `llvm-nm` en el PATH.
-7. **Arrancar la sesión**: `cd ~/nyx/lang && claude`.
+7. **Arrancar la sesión**: `cd ~/nyxlang && claude`.
 
 No hace falta token de nyx-kv: el canal de encargos es git.
 
@@ -176,7 +176,7 @@ El coordinador emite el encargo con `bash scripts/sdd/brief <plan> N --remote`, 
 base, quién ejecuta, dónde va el reporte). Del lado de B:
 
 ```bash
-cd ~/nyx/lang
+cd ~/nyxlang
 git fetch origin && git checkout <rama-del-arco> && git pull --rebase
 cat docs/design/briefs/<plan-basename>/task-N.md      # el encargo entero
 # ... ejecutar ...
@@ -200,7 +200,7 @@ Estructura obligatoria del reporte, para que A lo consuma sin ida y vuelta:
    máquina. La otra los propone como texto en `## Para los archivos raíz (aplica A)`.
    Autochequeo antes de pushear: `git diff --name-only origin/main...HEAD` no lista ninguno.
 3. **Nada por chat.** Un encargo que no está commiteado en la rama no existe — un relay perdido costó
-   una task entera en W3 (2026-08-30) y `~/nyx/ops/handoff/` murió por vivir fuera del repo.
+   una task entera en W3 (2026-08-30) y `~/servidor/archivo/ops/handoff/` murió por vivir fuera del repo.
 
 ### Rojos en x86_64: esperados, y no siempre regresiones
 

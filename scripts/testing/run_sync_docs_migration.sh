@@ -20,7 +20,7 @@
 #   (c) correr --sync-docs dos veces → la segunda no migra nada (ni una línea
 #       "→" en la salida) y los checksums de los artefactos migrados no
 #       cambian entre corridas.
-#   (d) copia real de ~/nyx/web/sites/nyxlang.com (sin sello, consumidor vivo
+#   (d) copia real de ~/web/sites/nyxlang.com (sin sello, consumidor vivo
 #       citado en la spec) → solo AGENTS.md, CAPABILITIES.md y docs/nyx/**
 #       cambian o aparecen; el resto del proyecto queda intacto.
 #   (e) purga de templates/ legacy en install-local (scripts/
@@ -257,7 +257,7 @@ else
 fi
 
 # ── Escenario (d): copia real de un consumidor vivo ───────────────────────
-echo "== Escenario (d): copia de ~/nyx/web/sites/nyxlang.com =="
+echo "== Escenario (d): copia de ~/web/sites/nyxlang.com =="
 # Autotest del comparador de BORRADOS (Important #2 del review, fix round 1):
 # antes de confiar en el check real, probar que `comm -23 BEFORE AFTER` SÍ
 # detecta un archivo que estaba en BEFORE y ya no está en AFTER — si el
@@ -274,7 +274,7 @@ else
     printf "  ✗ autotest ROTO — el comparador de borrados no detectó ./b (comm -23 dio: «%s»)\n" "$AUTO_DELETED"
     FAIL=$((FAIL + 1))
 fi
-SITE_SRC="$HOME/nyx/web/sites/nyxlang.com"
+SITE_SRC="$HOME/web/sites/nyxlang.com"
 if [ ! -d "$SITE_SRC" ] || [ ! -f "$SITE_SRC/nyx.toml" ]; then
     printf "  ⊘ SKIP: %s no está clonado (o no es un proyecto Nyx) en esta máquina\n" "$SITE_SRC"
 else

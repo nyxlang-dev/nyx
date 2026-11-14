@@ -14,20 +14,20 @@
 Internet (HTTPS :443)
     │
     ▼
-nyx-gateway (~/nyx/web/gateway/gateway, consumes nyx-proxy lib) ← ~/nyx/web/gateway
+nyx-gateway (~/web/gateway/gateway, consumes nyx-proxy lib) ← ~/web/gateway
     │ TLS termination (Let's Encrypt, SNI multi-domain)
     │ Virtual host routing + path prefix routing
     │
     ├── nyxlang.com ──────→ nyx-landing-main (:3001)   ← ~/nyx-sites
     │   └── /playground ──→ nyx-playground (:8081)     ← monorepo
-    ├── nyxkv.com ────────→ nyx-kv-web (:3002)         ← ~/nyx/products/kv
+    ├── nyxkv.com ────────→ nyx-kv-web (:3002)         ← ~/products/kv
     ├── serve.nyxlang.com → nyx-serve-web (:3003)      ← ~/nyx-sites
     ├── proxy.nyxlang.com → nyx-proxy-web (:3005)      ← ~/nyx-sites
-    ├── dashboard.nyxkv.com → (:3007)                  ← ~/nyx/products/kv
+    ├── dashboard.nyxkv.com → (:3007)                  ← ~/products/kv
     └── venezuelainfo.org → (:3010)                    ← /home/admin/venezuelainfo.org
 
 Internal services (not public):
-    nyx-kv (:6380) — KV store RESP2/TLS (← ~/nyx/products/kv)
+    nyx-kv (:6380) — KV store RESP2/TLS (← ~/products/kv)
 ```
 
 ## Server
@@ -46,14 +46,14 @@ TLS:        Let's Encrypt (auto-renewal with certbot)
 
 | Componente | Repo | Deploy |
 |---|---|---|
-| nyx-gateway (:443/:80) | `~/nyx/web/gateway` (privado, split #7) | `make -C ~/nyx/web/gateway deploy` |
+| nyx-gateway (:443/:80) | `~/web/gateway` (privado, split #7) | `make -C ~/web/gateway deploy` |
 | nyx-playground (:8081) | monorepo `playground/` | `bash scripts/deploy.sh` |
 | 3 landings (:3001/:3003/:3005) | `~/nyx-sites` (público) | `make -C ~/nyx-sites deploy` |
-| nyx-kv + nyxkv.com + dashboard | `~/nyx/products/kv` (privado) | ver su CLAUDE.md |
+| nyx-kv + nyxkv.com + dashboard | `~/products/kv` (privado) | ver su CLAUDE.md |
 | venezuelainfo.org (:3010) | `/home/admin/venezuelainfo.org` | proyecto aparte — NO tocar |
 
 Units systemd: `deploy/` del monorepo solo conserva `nyx-playground.service`
-y backup; la unit del gateway vive en `~/nyx/web/gateway/deploy/`; las de los
+y backup; la unit del gateway vive en `~/web/gateway/deploy/`; las de los
 sites en `~/nyx-sites/deploy/`; las de kv en su stack.
 
 ---
@@ -72,7 +72,7 @@ bash scripts/deploy.sh
 2. Compiles playground to `bin/nyx-playground`
 3. Installs/restarts systemd unit `nyx-playground`
 
-El gateway se deploya desde su repo: `make -C ~/nyx/web/gateway deploy`
+El gateway se deploya desde su repo: `make -C ~/web/gateway deploy`
 (vendor de nyx-proxy desde `~/nyx-proxy-stack` + build + smoke HTTP
 efímero ANTES del restart + verificación por dominio después).
 
@@ -127,7 +127,7 @@ for h in nyxlang.com nyxkv.com serve.nyxlang.com proxy.nyxlang.com \
          dashboard.nyxkv.com venezuelainfo.org; do
   echo "$h → $(curl -sk -o /dev/null -w '%{http_code}' --resolve "$h:443:127.0.0.1" "https://$h/")"
 done
-redis-cli -p 6380 PING   # KV RESP2 (~/nyx/products/kv)
+redis-cli -p 6380 PING   # KV RESP2 (~/products/kv)
 ```
 
 Criterio: todos `active`; todos 2xx/3xx; `PING` → `PONG`. Si algo falla, ver
@@ -144,7 +144,7 @@ Troubleshooting abajo.
 ├── nyx_bootstrap               ← the compiler
 └── ... (source code)
 
-~/nyx/web/gateway/              ← HTTPS gateway (repo propio, split #7)
+~/web/gateway/              ← HTTPS gateway (repo propio, split #7)
 ├── gateway                     ← compiled binary (systemd WorkingDirectory acá)
 ├── proxy.toml                  ← production routing config (versioned)
 └── packages/nyx-proxy/         ← lib vendorizada COMMITEADA (make vendor)
@@ -165,8 +165,8 @@ sudo journalctl -u nyx-gateway -f
 sudo systemctl restart nyx-playground
 
 # Gateway: desde su repo
-make -C ~/nyx/web/gateway status    # is-active
-make -C ~/nyx/web/gateway deploy    # vendor + build + smoke + restart + verify
+make -C ~/web/gateway status    # is-active
+make -C ~/web/gateway deploy    # vendor + build + smoke + restart + verify
 
 # Sites: desde su repo
 make -C ~/nyx-sites status      # is-active de las 3 units
@@ -198,7 +198,7 @@ sudo systemctl restart nyx-gateway
 scripts/sync_to_public.sh all    # solo core (todos los productos extraídos)
 # serve/kv/edit/shell/queue/db/proxy: sync propio en cada ~/nyx-*-stack
 # ~/nyx-sites ES público directamente (nyxlang-dev/nyx-sites) — sin sync
-# ~/nyx/web/gateway es PRIVADO (config de producción) — sin sync
+# ~/web/gateway es PRIVADO (config de producción) — sin sync
 ```
 
 ---

@@ -6,7 +6,7 @@
 // `tests/test-01-primitives.nx` y `sites/nyxlang.com/static/...`, dos fixtures
 // del árbol que YA NO EXISTEN (el primero se movió a
 // tests/compiler/basics/ en el layout v0.13; el segundo desapareció con el
-// split del monorepo — `sites/` se fue a ~/nyx/web/sites). El test devolvía
+// split del monorepo — `sites/` se fue a ~/web/sites). El test devolvía
 // `false` en los tres chequeos y su expected/ (correcto: true/true/true/false)
 // lo delataba. Ahora el test CREA sus propios fixtures, así que verifica
 // file_exists() y no el contenido del repo.

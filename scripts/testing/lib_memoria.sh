@@ -7,7 +7,7 @@
 # línea de comandos en `ps`). Un build pesado que arranca mientras otra sesión
 # compila muere con 143 (SIGTERM) sin haber fallado de verdad.
 #
-# HISTORIA: esta lógica vivía en `~/nyx/ops/handoff/2026-09-14-lang/guardas/
+# HISTORIA: esta lógica vivía en `~/servidor/archivo/ops/handoff/2026-09-14-lang/guardas/
 # guarda_v2.sh`, medida contra earlyoom en este servidor. Ese archivo se borró
 # el 2026-11-11 junto con el canal handoff sin haberla rescatado antes (había
 # una ficha en TASKS.md que lo pedía). Lo que sigue es una REESCRITURA a partir

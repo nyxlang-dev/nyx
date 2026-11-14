@@ -42,7 +42,7 @@
 | Biblioteca `.so` (`--shared`) | `make test-build-shared` | **10 checks** (6 anfitrión + 4 Android) | `run_build_shared.sh`: `lib-min` por `dlopen` (tipos del borde, `fn init()`, 8 hilos ajenos bajo GC y su rojo, handler fatal, símbolos) y la `.so` de Android con `readelf` |
 | Dispatch matrix | `make test-dispatch-matrix` | **17/29 celdas (piso 17)** | invariancia por forma del receptor; celdas no verificables = rechazo ruidoso correcto, no hueco |
 | REPL / intérprete | `make test-repl` | **28 checks** | +2 el 2026-10-25 (literales enteros en el borde de 64 bits); +1 el 2026-09-20 (NYX3007); tree-walking interpreter, subconjunto declarado (ver LLM.md §5.4); rangos, `break`/`continue` y `return` dentro de bucles desde el 2026-09-14 |
-| Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 12 + e2e HTTP/2) | canario del compilador; SKIP limpio si un stack no está clonado en `~/nyx/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
+| Stacks extraídos | `make test-stacks` | **5 stacks** (db 7+Python, queue 17, edit 41, shell 2, proxy 12 + e2e HTTP/2) | canario del compilador; SKIP limpio si un stack no está clonado en `~/products/*`. serve salió el 2026-09-03 (absorbido al core: su smoke vive en integration) |
 | PostgreSQL E2E | (dentro de `make test-integration`, enganchado el 2026-09-14) `run_postgres_tests.sh` | **10 programas** (+1 el 10-26: saneo del pool) | contra un PostgreSQL real con scram-sha-256; SKIP limpio con la receta si no hay servidor |
 | Integration E2E | `make test-integration` | **18 sub-suites** (h2 TLS 9 + imap 107 + imap TLS 1 + keep-alive 28 + plazos 8 + cas_extra 5 + WS 6 + FFI 3 + slots 9 + llm 3 + h2 1 + body cap 6 + contrato 15 + bind 6-9 + smoke 108 + serve+kv 10 + trozos 88 + ocio 27) | altas en `CHANGELOG.md` |
 | Load gate | `make test-load` | **8 corridas** (5 normales + 3 con `GC_ENABLE_INCREMENTAL=1`) | verificado con corrida real 2026-08-30; compara la línea `LOAD_OK sum=...`, no solo el rc |
@@ -105,7 +105,7 @@ make test
 ```
 
 Error test: agregar en `tests/compiler/errors/` + entrada en su runner.
-Producto (stack extraído): agregar el archivo en `~/nyx/products/<stack>/tests/`
+Producto (stack extraído): agregar el archivo en `~/products/<stack>/tests/`
 y su nombre al runner de ese repo; `make test-stacks` lo recoge solo.
 
 ## Referencias

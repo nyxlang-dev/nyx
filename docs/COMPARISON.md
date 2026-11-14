@@ -103,7 +103,7 @@
 ### Native Full-Stack: 4
 - 6 products as PM libraries, each extracted to its own repo: nyx-kv, nyx-proxy, nyx-queue, nyx-db, nyx-edit, nyx-shell; http2 and serve absorbed into the core (`std/http2`, `std/serve`)
 - 2 services running in production: gateway (HTTPS :443, SNI routing), nyxkv (RESP2 :6380 with TLS)
-- Bilingual landing sites (repo ~/nyx/web/sites) consuming `std/serve` straight from the stdlib (no vendoring since 2026-09-03)
+- Bilingual landing sites (repo ~/web/sites) consuming `std/serve` straight from the stdlib (no vendoring since 2026-09-03)
 - Benchmarks documented: HTTP 73K req/s (multi-threaded), KV 6.76M SET ops/s / 21.57M GET ops/s
 - Core benchmarks re-measured v0.20.1+LICM with fair measurement (one-time GC lazy-init excluded via warmup): primes 0.80x C (Nyx faster), fibonacci ~1.02x, map ~1.0x, strings ~1.1x — **parity or better on all measured compute benchmarks** (the historical "~11-18x strings" was mostly the GC-init artifact inside the timed region)
 - Databases without leaving the language: `std/sqlite` (embedded SQL) and, since v0.31.0, `std/postgres` — a **native PostgreSQL client**: wire protocol v3 spoken in pure Nyx over `std/net`, SCRAM-SHA-256 auth, parameterized queries (values in the Bind message, never interpolated into the SQL), transactions, migrations and a connection pool, with **no libpq and no external dependency**. `#[derive(Fields)]` closes the loop: a struct describes its own schema, so a model is written once instead of twice
