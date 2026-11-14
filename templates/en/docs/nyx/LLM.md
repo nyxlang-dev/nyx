@@ -2096,7 +2096,7 @@ Older docs (and older model contexts) warn against these. They work now.
 Listed so you don't avoid a construct that is perfectly fine.
 
 <!-- gen:gotchas kinds=fixed lang=en form=long -->
-<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,for-untyped-slot-by-tag,map-get-or-default-array,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,array-row-read-as-string,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,untyped-slot-to-struct-enum-checked,wasm-method-slot-arg -->
+<!-- gen:ids implicit-monomorphization-nested,and-or-short-circuit,nested-arrays-work,for-untyped-slot-by-tag,map-get-or-default-array,map-remove-on-field,gc-exhaustion-ordered-error,chr-zero-nul-byte,contains-direct-slot,slot-eq-slot,array-elem-method-chaining,closure-capture-works,tcp-write-loops-until-sent,option-struct-multifield-link,udp-binary-payload-intact,tls-peer-cert-introspection,missing-method-compile-error,repl-declared-subset,bind-failure-loud,file-api-names,array-index-float-write,sync-global-init-reliable,array-row-read-as-string,continue-in-for-loop,http-host-header-port,json-truncated-rejected,nested-fn-sees-module,try-early-exit-pop,std-private-shadows-builtin,block-shadowing-restores-outer,closures-capture-block-vars,defer-runs-at-block-exit,drop-per-declaration,for-in-element-type,local-fn-var-shadows-global-fn,string-index-byte,closure-per-iteration,defer-not-on-throw,builtin-conversion-untyped-slot,float-slot-assign,http-header-one-element,http-response-streaming,map-insert-slot-string,pdf-page-to-image,untyped-slot-as-argument,untyped-slot-to-struct-enum-checked,wasm-method-slot-arg,local-closure-shadows-private -->
 
 1. **Implicit monomorphization works nested (v0.16.1)** — `id(42)` (a generic call with no turbofish)
 monomorphizes in `let`/`var`/statement position AND when nested inside another expression:
@@ -2437,6 +2437,16 @@ call and method arguments, `let x: T = a[i]`, `x = a[i]`, `return a[i]`, a struc
 still, annotate the Array (`Array<Caja>`). [test: 53-casilla-sin-tipo-a-struct-enum]
 
 47. **On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works** (fixed 2026-10-19, v0.37.0). Until 0.36.1 the method call passed the slot's raw integer where the method expected a pointer (`Array`, `String`, `Map`): natively it happened to work, on wasm32 the call signature did not match and the program died with «wasm trap: unreachable». Free functions already converted the argument; methods now do too. [test: wasm/test-wasm-58-metodo-casilla]
+
+48. **A local closure, variable or parameter named like a private function of another module no longer
+trips NYX1036.** In 0.44.0 the visibility check looked at the NAME of a call without asking what it
+resolved to: `let cerrar: Fn() -> int = fn() -> int { ... }` followed by `cerrar()` was rejected with
+«'cerrar' is not public in '<module>'» as soon as ANY module of the program declared a private
+`fn cerrar`. It surfaced through `std/serve`, whose `response_file` has such a local closure, so a
+project with a private `fn cerrar` of its own stopped compiling by importing `std/serve`, with an
+error naming a `__lambda_N` that was not in the project. Reported by a user on 2026-11-14. The check
+now applies only when the name resolves to a module-level function; a local name shadows it, as it
+always did in the generated code — the call reached the local closure even when the homonym was `pub`. [test: 56-closure-local-homonima-de-privada]
 
 <!-- /gen:gotchas -->
 

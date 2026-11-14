@@ -106,6 +106,7 @@ GOTCHA_IDS=(
   "untyped-slot-as-argument"
   "untyped-slot-to-struct-enum-checked"
   "wasm-method-slot-arg"
+  "local-closure-shadows-private"
 )
 
 ANCLAS=(

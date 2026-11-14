@@ -28,6 +28,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **`let cerrar = fn() {...}` + `cerrar()` daba NYX1036 si otro módulo tenía una `fn cerrar` privada** (regresión de
+  0.44.0, fricción de nyxerp 20261114-090003): el chequeo de visibilidad miraba el nombre de la llamada sin preguntar
+  a qué resolvía, así que una closure local, una variable o un parámetro homónimos de una privada ajena cortaban la
+  compilación. Llegó por `std/serve` (`response_file` tiene una closure local `cerrar`): importar el módulo rompía a
+  un proyecto con su propia `fn cerrar` privada. Ahora aplica solo cuando el nombre resuelve a una función de módulo;
+  el código generado ya llamaba a la closure local. Caso ai-first 56 (55 → 56 programas) y gotcha
+  `local-closure-shadows-private`.
+
 - **Los nombres de cabecera HTTP ya no distinguen mayúsculas** `[dogfooding:nyxerp]`: `http_find_header` comparaba
   el nombre tal cual y `std/web` armaba `req.cookies` solo si la cabecera se llamaba `Cookie`. Un pedido con
   `cookie:` o `content-type:` en minúsculas —lo que reenvía un gateway desde HTTP/2, y varios clientes HTTP/1.1—

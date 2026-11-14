@@ -162,6 +162,7 @@ pub fn gotchas_table() -> Array {
     rows.push(["untyped-slot-as-argument", "fixed", "n/a", "0.37.0", "0.37.0", "", "", "", "", "tests/ai-first/40-casilla-sin-tipo-como-argumento.nx", "A slot of an `Array` without `<T>` passed straight to a struct parameter, or used as a `Map` key, works", "Una casilla de un `Array` sin `<T>` pasada directo a un parámetro struct, o usada como clave de un `Map`, funciona"])
     rows.push(["untyped-slot-to-struct-enum-checked", "fixed", "silent-wrong", "0.37.0", "0.42.0", "", "", "", "", "tests/ai-first/53-casilla-sin-tipo-a-struct-enum.nx", "A slot of an `Array` without `<T>` that goes to a struct or enum is checked by its tag", "Una casilla de un `Array` sin `<T>` que va a un struct o un enum se chequea por su tag"])
     rows.push(["wasm-method-slot-arg", "fixed", "n/a", "0.37.0", "0.37.0", "", "", "", "", "tests/wasm/test-wasm-58-metodo-casilla.nx", "On wasm32, an untyped `Array` slot passed straight to an `impl` METHOD (`obj.m(a[i])`) works", "En wasm32, una casilla de un `Array` sin tipo pasada directo a un MÉTODO de `impl` (`obj.m(a[i])`) funciona"])
+    rows.push(["local-closure-shadows-private", "fixed", "loud", "0.44.0", "0.44.1", "", "", "NYX1036", "", "tests/ai-first/56-closure-local-homonima-de-privada.nx", "A local closure, variable or parameter named like a private function of another module no longer trips NYX1036.", "Una closure local, una variable o un parámetro que se llama igual que una función privada de otro módulo ya no dispara NYX1036."])
     return rows
 }
 
