@@ -794,24 +794,25 @@ fn __largo_valido(v: String) -> int {
 // hop-by-hop o porque las fija el servidor: Connection, Keep-Alive,
 // Transfer-Encoding, Content-Length (el largo se decide aparte), TE, Trailer,
 // Upgrade, Proxy-*, y también Set-Cookie y Server (un origen interno no habla
-// por este servidor). Content-Encoding no hace falta: try_http_stream_opts
-// rechaza un origen que comprime, así que `read()` entrega siempre los bytes
-// tal cual y nunca hay una codificación que conservar.
-let __STREAM_COPIA: Array = ["Content-Disposition", "ETag", "Last-Modified", "Cache-Control", "Expires", "Content-Language", "Location", "Retry-After"]
+// por este servidor). Content-Encoding y Vary viajan con el cuerpo: un origen
+// que comprime solo abre con opts.cuerpo_crudo, y ahí `read()` entrega los
+// bytes comprimidos tal cual, así que la codificación hay que conservarla (y
+// el Vary, para que una caché intermedia no le sirva gzip a quien no lo pidió).
+let __STREAM_COPIA: Array = ["Content-Disposition", "ETag", "Last-Modified", "Cache-Control", "Expires", "Content-Language", "Location", "Retry-After", "Content-Encoding", "Vary"]
 
-/// Reenvía la respuesta de un origen (un HttpStream de std/http) sin juntarla en memoria: el servidor lee un trozo, lo escribe al cliente y pide el siguiente, así que un cuerpo de cientos de MiB cuesta lo mismo que uno de pocos KiB. Copia el status, el Content-Type (application/octet-stream si el origen no trae), y Content-Disposition, ETag, Last-Modified, Cache-Control, Expires, Content-Language, Location y Retry-After. Con un Content-Length válido del origen sale con ese Content-Length (los bytes que entrega read() son exactamente esos); sin él, con Transfer-Encoding: chunked. El stream se cierra al terminar el cuerpo, si el origen falla a mitad (la conexión con el cliente se corta), si el cliente se va y si la respuesta se descarta sin enviar el cuerpo (HEAD, un after-hook que cambia el status). Un 3xx reenvía solo Location; un 204/304 no lleva cuerpo.
+/// Reenvía la respuesta de un origen (un HttpStream de std/http) sin juntarla en memoria: el servidor lee un trozo, lo escribe al cliente y pide el siguiente, así que un cuerpo de cientos de MiB cuesta lo mismo que uno de pocos KiB. Copia el status, el Content-Type (application/octet-stream si el origen no trae), y Content-Disposition, ETag, Last-Modified, Cache-Control, Expires, Content-Language, Location, Retry-After, Content-Encoding y Vary. Un origen que comprime se reenvía sin descomprimir si el stream se abrió con opts.cuerpo_crudo = true (reenviar también el Accept-Encoding del cliente). Con un Content-Length válido del origen sale con ese Content-Length (los bytes que entrega read() son exactamente esos); sin él, con Transfer-Encoding: chunked. El stream se cierra al terminar el cuerpo, si el origen falla a mitad (la conexión con el cliente se corta), si el cliente se va y si la respuesta se descarta sin enviar el cuerpo (HEAD, un after-hook que cambia el status). Un 3xx reenvía solo Location; un 204/304 no lleva cuerpo.
 pub fn response_from_stream(s: HttpStream) -> Response {
     let st: int = s.status()
     let hdrs: Array = s.headers()
     var tipo: String = http_find_header(hdrs, "Content-Type")
     if str_byte_length(tipo) == 0 { tipo = "application/octet-stream" }
     // Content-Length vale solo si el cuerpo que entrega read() son esos bytes:
-    // con Transfer-Encoding el marco manda (y read() lo desarma), y un origen
-    // con Content-Encoding ni siquiera abre (ver arriba).
+    // con Transfer-Encoding el marco manda (y read() lo desarma). Con
+    // Content-Encoding el stream solo existe en modo cuerpo_crudo, donde
+    // read() da los bytes comprimidos: el Content-Length del origen los cuenta.
     var largo: int = 0 - 1
     let te: String = http_find_header(hdrs, "Transfer-Encoding")
-    let enc: String = http_find_header(hdrs, "Content-Encoding")
-    if str_byte_length(te) == 0 and str_byte_length(enc) == 0 {
+    if str_byte_length(te) == 0 {
         largo = __largo_valido(http_find_header(hdrs, "Content-Length"))
     }
     let fuente: Fn() -> String = fn() -> String {

@@ -925,11 +925,14 @@ pub struct HttpStreamOpts {
     cas_extra: String,
     client_cert_pem: String,
     client_key_pem: String,
+    // Para reenviar: con true, una respuesta con Content-Encoding se acepta y
+    // read() entrega los bytes como llegaron (sin descomprimir).
+    cuerpo_crudo: bool,
 }
 
 /// Opciones por defecto para streams (verificación TLS según http_tls_inseguro).
 pub fn http_stream_opts() -> HttpStreamOpts {
-    return HttpStreamOpts { connect_ms: 10000, primer_byte_ms: 30000, lectura_ms: 60000, total_ms: 0, verificar_tls: g_http_tls_verificar, cas_extra: "", client_cert_pem: "", client_key_pem: "" }
+    return HttpStreamOpts { connect_ms: 10000, primer_byte_ms: 30000, lectura_ms: 60000, total_ms: 0, verificar_tls: g_http_tls_verificar, cas_extra: "", client_cert_pem: "", client_key_pem: "", cuerpo_crudo: false }
 }
 
 /// Un evento de un text/event-stream: `evento` ("message" si el servidor no manda `event:`), `datos` (las líneas `data:` unidas con \n) e `id` (el último `id:` visto). Un evento con `evento` vacío marca el fin del stream.
@@ -945,7 +948,8 @@ pub struct SseEvent {
 //         (0 Content-Length, 1 chunked, 2 hasta el cierre, 3 sin cuerpo),
 //         bytes que faltan (del cuerpo o del chunk actual), fase chunked
 //         (0 línea de tamaño, 1 datos, 2 CRLF tras los datos, 3 trailers,
-//         4 terminado), lectura_ms, límite total (monotonic_ms, 0 = sin), eof 0/1]
+//         4 terminado), lectura_ms, límite total (monotonic_ms, 0 = sin), eof 0/1,
+//         cuerpo codificado 0/1 (Content-Encoding aceptado por cuerpo_crudo)]
 //   meta: [esquema, host, port]
 //   hdrs: cabeceras [nombre, valor, ...]
 //   buf: [bytes crudos leídos y no consumidos]
@@ -1169,6 +1173,12 @@ impl HttpStream {
 
     /// Próximo evento de un text/event-stream (WHATWG): `event:`, `data:` (varias líneas unidas con \n), `id:`, comentarios `:` ignorados, finales de línea \n, \r\n o \r, y eventos partidos entre trozos. Al terminar el stream devuelve un SseEvent con `evento` vacío (un evento a medio llegar se descarta, como manda la norma).
     fn read_event(self) -> Result<SseEvent, Error> {
+        let st0: Array = self.st
+        let codificado: int = st0[10]
+        // Con cuerpo_crudo los bytes siguen comprimidos: no hay líneas que partir.
+        if codificado == 1 {
+            return Result.Err(__hs_err(self, "unsupported", 95, "read_event sobre un cuerpo con Content-Encoding (cuerpo_crudo): usar read()"))
+        }
         var ev: Array = self.ev
         var guard: int = 0
         while guard < 100000000 {
@@ -1240,7 +1250,7 @@ impl HttpStream {
     }
 }
 
-/// Abre un pedido y vuelve cuando llegaron el estado y las cabeceras; el cuerpo se lee después con read() o read_event(). Mismo contrato de dos niveles que try_http_request_opts: Ok para cualquier status HTTP, Err solo ante fallo de transporte o plazo vencido. No sigue redirecciones. Una respuesta con Content-Encoding da Err(unsupported) (el pedido no manda Accept-Encoding).
+/// Abre un pedido y vuelve cuando llegaron el estado y las cabeceras; el cuerpo se lee después con read() o read_event(). Mismo contrato de dos niveles que try_http_request_opts: Ok para cualquier status HTTP, Err solo ante fallo de transporte o plazo vencido. No sigue redirecciones. Una respuesta con Content-Encoding da Err(unsupported) (el pedido no manda Accept-Encoding), salvo con opts.cuerpo_crudo = true: ahí read() entrega los bytes comprimidos tal como llegaron, la cabecera queda en headers() y read_event() da Err(unsupported).
 pub fn try_http_stream_opts(method: String, url: String, headers: Array, body: String, opts: HttpStreamOpts) -> Result<HttpStream, Error> {
     let parsed: Array = http_parse_url(url)
     let host: String = parsed[1]
@@ -1294,7 +1304,7 @@ pub fn try_http_stream_opts(method: String, url: String, headers: Array, body: S
     }
     var vacio: Array = []
     let s: HttpStream = HttpStream {
-        st: [tls, h, 1, 0, 3, 0, 0, opts.lectura_ms, limite, 0],
+        st: [tls, h, 1, 0, 3, 0, 0, opts.lectura_ms, limite, 0, 0],
         meta: [esq, host, port],
         hdrs: vacio,
         buf: [""],
@@ -1358,9 +1368,9 @@ pub fn try_http_stream_opts(method: String, url: String, headers: Array, body: S
         let ce: String = http_header_ci(hs, "Content-Encoding").toLower()
         if method == "HEAD" or status == 204 or status == 304 or status == 101 {
             st[4] = 3
-        } else if ce.length() > 0 and ce != "identity" {
+        } else if ce.length() > 0 and ce != "identity" and not opts.cuerpo_crudo {
             s.close()
-            return Result.Err(__hs_err(s, "unsupported", 95, "la respuesta viene con Content-Encoding " + ce))
+            return Result.Err(__hs_err(s, "unsupported", 95, "la respuesta viene con Content-Encoding " + ce + " (para recibirla sin descomprimir: opts.cuerpo_crudo = true)"))
         } else if http_header_ci(hs, "Transfer-Encoding").toLower().indexOf("chunked") >= 0 {
             st[4] = 1
             st[6] = 0
@@ -1373,6 +1383,10 @@ pub fn try_http_stream_opts(method: String, url: String, headers: Array, body: S
                 st[4] = 2
             }
         }
+        // Solo llega acá con Content-Encoding si se pidió cuerpo_crudo: el marco
+        // (chunked, Content-Length o cierre) se resolvió igual que siempre.
+        let modo_cuerpo: int = st[4]
+        if ce.length() > 0 and ce != "identity" and modo_cuerpo != 3 { st[10] = 1 }
         return Result.Ok(s)
     }
     s.close()

@@ -4083,7 +4083,8 @@ lee después. `try_http_stream(...)` usa `http_stream_opts()`.
 
 ```
 http_stream_opts() -> HttpStreamOpts   // connect_ms 10000, primer_byte_ms 30000,
-                                       // lectura_ms 60000 (entre dos trozos), total_ms 0 (sin tope)
+                                       // lectura_ms 60000 (entre dos trozos), total_ms 0 (sin tope),
+                                       // cuerpo_crudo false
 impl HttpStream {
     fn status(self) -> int             fn headers(self) -> Array
     fn read(self) -> Result<String, Error>         // trozo del cuerpo sin el marco chunked; "" = fin
@@ -4096,7 +4097,11 @@ pub struct SseEvent { evento: String, datos: String, id: String }   // evento "m
 Cuerpo por `Transfer-Encoding: chunked` (un chunk partido entre lecturas sale entero), por
 `Content-Length` o hasta el cierre. Un plazo vencido es `Err(timeout)` y cierra el stream; un corte
 antes de completar el cuerpo es `Err(io)`; `Content-Encoding` es `Err(unsupported)` (el pedido no
-manda `Accept-Encoding`). No sigue redirecciones. Un `HttpStream` lo usa un hilo o goroutine a la
+manda `Accept-Encoding`), salvo con `opts.cuerpo_crudo = true`: ahí la respuesta se acepta, `read()`
+entrega los bytes comprimidos tal como llegaron (sin el marco chunked), la cabecera queda en
+`headers()` y es `read_event()` el que da `Err(unsupported)`. El cliente de respuesta entera
+(`try_http_request*`) nunca descomprime: entrega el cuerpo como llegó, con su `Content-Encoding`. No
+sigue redirecciones. Un `HttpStream` lo usa un hilo o goroutine a la
 vez. Para reenviar al navegador: `sse_open(req, room)` en la ruta y, en un hilo, `sse_wait_room(room,
 ms) -> bool` (de `std/serve`) antes del primer `sse_broadcast`, porque el canal entra al room recién
 después de que el handler devuelve.
@@ -5244,13 +5249,16 @@ Reglas comunes:
 
 `response_from_stream` copia el `status`, el `Content-Type` (`application/octet-stream` si el origen
 no trae) y estas cabeceras: `Content-Disposition`, `ETag`, `Last-Modified`, `Cache-Control`,
-`Expires`, `Content-Language`, `Location` y `Retry-After`. No copia `Connection`, `Keep-Alive`,
+`Expires`, `Content-Language`, `Location`, `Retry-After`, `Content-Encoding` y `Vary`. No copia `Connection`, `Keep-Alive`,
 `Transfer-Encoding`, `Content-Length` (el largo se decide aparte), `TE`, `Trailer`, `Upgrade`,
 `Proxy-*`, `Set-Cookie` ni `Server`. Con un `Content-Length` válido del origen sale con ese largo;
 sin él, chunked. Un 3xx reenvía solo `Location`. Si el origen falla a mitad del cuerpo, la conexión
-con el cliente se corta (regla de error a mitad). Un origen que comprime no llega aquí:
-`try_http_stream_opts` lo rechaza con `Err(unsupported)`, así que el proxy recibe un `Result.Err`
-y debe elegir su propia respuesta (típicamente 502).
+con el cliente se corta (regla de error a mitad). Un origen que comprime se reenvía **sin
+descomprimir** si el stream se abrió con `opts.cuerpo_crudo = true` (y el proxy pasó el
+`Accept-Encoding` del cliente al pedido de atrás): salen los bytes comprimidos con su
+`Content-Encoding`, su `Vary` y, si el origen lo dio, su `Content-Length`. Sin esa opción
+`try_http_stream_opts` lo rechaza con `Err(unsupported)` y el proxy recibe un `Result.Err` (receta
+163).
 
 `response_file` devuelve una `Response` 404 si el archivo no existe, no es regular o no se puede
 leer (la prueba de apertura es antes de enviar la cabecera). Lo abre al pedir el primer bloque. Si

@@ -2215,7 +2215,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str1105.c = internal global %nyx_string* null
 @.str1106 = private unnamed_addr constant [1 x i8] c"\00"
 @.str1106.c = internal global %nyx_string* null
-@.str1107 = private unnamed_addr constant [47 x i8] c"tests/ai-first/42-http-respuesta-por-partes.nx\00"
+@.str1107 = private unnamed_addr constant [93 x i8] c"tests/ai-first/42-http-respuesta-por-partes.nx,tests/ai-first/55-http-stream-cuerpo-crudo.nx\00"
 @.str1107.c = internal global %nyx_string* null
 @.str1108 = private unnamed_addr constant [119 x i8] c"An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`\00"
 @.str1108.c = internal global %nyx_string* null
@@ -7637,8 +7637,8 @@ define { i64, i8* }* @gotchas_table(
   %3664 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str1106.c, i8* %3663, i64 0)
   %3665 = ptrtoint %nyx_string* %3664 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3638, i64 %3665, i64 2)
-  %3666 = getelementptr [47 x i8], [47 x i8]* @.str1107, i32 0, i32 0
-  %3667 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str1107.c, i8* %3666, i64 46)
+  %3666 = getelementptr [93 x i8], [93 x i8]* @.str1107, i32 0, i32 0
+  %3667 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str1107.c, i8* %3666, i64 92)
   %3668 = ptrtoint %nyx_string* %3667 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %3638, i64 %3668, i64 2)
   %3669 = getelementptr [119 x i8], [119 x i8]* @.str1108, i32 0, i32 0

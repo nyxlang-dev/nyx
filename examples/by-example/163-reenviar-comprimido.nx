@@ -1,0 +1,87 @@
+// Nyx by Example: reenviar una respuesta comprimida sin descomprimirla.
+//
+// El caso real: un proxy escrito en Nyx recibe el pedido del navegador, lo repite contra un
+// servidor de atrás y devuelve la respuesta. Si el servidor de atrás ya comprime (gzip), lo
+// barato es pasar esos bytes tal cual: descomprimir para volver a comprimir cuesta CPU y memoria.
+//
+// Qué hace cada cliente de std/http con `Content-Encoding`:
+//   - try_http_request / try_http_request_opts (respuesta entera): entregan el cuerpo como llegó,
+//     comprimido, con la cabecera a la vista. Nunca descomprimen.
+//   - try_http_stream_opts (por partes): por defecto da Err(unsupported), porque read_event()
+//     no puede partir en líneas un cuerpo comprimido. Con `opts.cuerpo_crudo = true` la respuesta
+//     se acepta: read() entrega los bytes comprimidos, headers() muestra `Content-Encoding`, y
+//     read_event() es el que da Err(unsupported).
+//
+// En un servidor con std/serve el reenvío completo son tres pasos: pasar el `Accept-Encoding` del
+// cliente al pedido de atrás, abrir con `cuerpo_crudo`, y devolver `response_from_stream(s)`, que
+// copia `Content-Encoding` y `Vary` junto con el resto de las cabeceras del contenido.
+//
+// La receta corre sola: un hilo hace de servidor de atrás y comprime con zip_gzip.
+
+import "std/http"
+import "std/net"
+import "std/zip"
+import "std/error"
+
+var g_port: int = 18472
+var g_listo: Map = channel_new(1)
+
+fn texto() -> String {
+    return "una linea que se repite y por eso comprime muy bien\n".repeat(200)
+}
+
+// El servidor de atrás: contesta siempre comprimido (un servidor real mira Accept-Encoding).
+fn atras() -> int {
+    let l: int = tcp_listen("127.0.0.1", g_port)
+    channel_send(g_listo, 1)
+    let c: int = tcp_accept(l)
+    let _pedido: String = tcp_read_partial(c, 4096)
+    let gz: String = zip_gzip(texto())
+    let cab: String = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nVary: Accept-Encoding\r\nContent-Length: " + int_to_string(gz.length()) + "\r\n\r\n"
+    let _a: int = tcp_write(c, cab)
+    let _b: int = tcp_write(c, gz)
+    tcp_close(c)
+    tcp_close(l)
+    return 0
+}
+
+fn main() -> int {
+    thread_spawn(atras)
+    let _r: int = channel_recv(g_listo)
+
+    var opts: HttpStreamOpts = http_stream_opts()
+    opts.cuerpo_crudo = true
+    let cab: Array = ["Accept-Encoding", "gzip"]
+    let rs: Result<HttpStream, Error> = try_http_stream_opts("GET", "http://127.0.0.1:" + int_to_string(g_port) + "/a.txt", cab, "", opts)
+    if rs.is_err() {
+        println("no abrió: " + error_to_string(rs.unwrap_err()))
+        return 1
+    }
+    let s: HttpStream = rs.unwrap()
+    println("estado: " + int_to_string(s.status()))
+    println("Content-Encoding: " + http_find_header(s.headers(), "Content-Encoding"))
+
+    // Un proxy escribiría cada trozo al cliente; acá se juntan para mostrar los tamaños.
+    var sb: StringBuilder = StringBuilder.new()
+    while true {
+        let r: Result<String, Error> = s.read()
+        if r.is_err() {
+            println("corte: " + error_to_string(r.unwrap_err()))
+            return 1
+        }
+        let trozo: String = r.unwrap()
+        if trozo.length() == 0 { break }
+        sb.append(trozo)
+    }
+    s.close()
+    let comprimido: String = sb.to_string()
+    println("bytes recibidos: " + int_to_string(comprimido.length()))
+
+    // Los bytes son el gzip del origen, intactos: descomprimen al texto original.
+    let plano: Result<String, Error> = zip_gunzip(comprimido, 0)
+    assert(plano.is_ok())
+    let original: String = plano.unwrap()
+    assert(original == texto())
+    println("bytes al descomprimir: " + int_to_string(original.length()))
+    return 0
+}

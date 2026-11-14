@@ -2409,7 +2409,7 @@ their argument must have (`int` / `float`) while it is generated, like `string_t
 
 41. **A request header written as ONE element, `"Name: value"`, reaches the request** (fixed 2026-10-21, v0.37.0). Until 0.36.1 the `std/http` client only read flat pairs `[name, value, ...]`, so `["content-type: application/json"]` was dropped without any warning and the request went out without it (reported by nyxerp). Both forms work now, also mixed in the same list; a value with `:` in a pair (`"Bearer a:b"`) is never mistaken for a header, because a header NAME cannot contain `:`. A trailing name with no value is sent with an empty value instead of being lost. [test: 43-cabecera-en-un-elemento]
 
-42. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.37.0). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes]
+42. **An HTTP response can be read as it arrives: `try_http_stream` returns an `HttpStream` with `read()` and `read_event()`** (2026-10-19, v0.37.0). Until then the `std/http` client returned the body only when the whole response had arrived, so an LLM API answering with `text/event-stream` for several seconds could not be relayed piece by piece (reported by nyxerp). `read()` gives body pieces without the chunked framing, `read_event()` gives parsed server-sent events, and `lectura_ms` bounds the wait between two pieces. A response with `Content-Encoding` is `Err(unsupported)` unless the stream is opened with `opts.cuerpo_crudo = true`: then `read()` returns the compressed bytes untouched, which is what a proxy needs to forward them (`response_from_stream` copies `Content-Encoding` and `Vary`), and `read_event()` gives `Err(unsupported)`. To relay to a browser, call `sse_wait_room` (std/serve) before the first `sse_broadcast`: the channel joins its room only after the handler returns. [test: 42-http-respuesta-por-partes] [test: 55-http-stream-cuerpo-crudo]
 
 43. **`m.insert(a[0], a[1])` into a `Map<String>`, with `a` an `Array` without `<T>` filled at run time, stores the value as a String** (fixed 2026-10-31). Until 0.40.0 the slot reached `insert` as a raw integer: the map was stored and re-registered as `Map<int>`, so `let v: String = m.get(k)` worked but `print(m.get(k))` printed the pointer as a number, with no error (reported by nyxerp). An unannotated `var m: Map` with values that come from untyped slots still has no element type to go by: annotate the map (`Map<String>`) or the value. [test: 46-map-insert-casilla-string] [test: 49-map-clave-casilla-for]
 
@@ -2621,7 +2621,12 @@ s.close()
   mixed; since 2026-10-21 — before, the one-element form was silently dropped).
 - `http_stream_opts()`: `connect_ms` 10 s, `primer_byte_ms` 30 s (until the headers),
   `lectura_ms` 60 s **between two pieces**, `total_ms` 0 = no overall limit. A timeout is
-  `Err(timeout)` and closes the stream. No redirects; `Content-Encoding` is `Err(unsupported)`.
+  `Err(timeout)` and closes the stream. No redirects; `Content-Encoding` is `Err(unsupported)`
+  unless `opts.cuerpo_crudo = true`: then `read()` returns the compressed bytes as they arrived,
+  `headers()` shows `Content-Encoding`, and `read_event()` is the one that gives `Err(unsupported)`.
+  A proxy forwards the client's `Accept-Encoding`, opens with `cuerpo_crudo` and returns
+  `response_from_stream(s)`, which copies `Content-Encoding` and `Vary` (recipe 163). The
+  whole-response client (`try_http_request*`) never decompresses: the body comes as sent.
 - One goroutine/thread at a time per `HttpStream`.
 - To relay to a browser: the route returns `sse_open(req, room)` with a per-request room, and a
   `thread_spawn`ed relay calls `sse_wait_room(room, ms)` BEFORE the first `sse_broadcast` — the

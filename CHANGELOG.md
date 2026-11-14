@@ -79,6 +79,14 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Added
 
+- **`std/http`: `HttpStreamOpts.cuerpo_crudo` para reenviar una respuesta comprimida sin descomprimirla**
+  `[dogfooding:nyxerp]`: `try_http_stream_opts` cortaba con `Err(unsupported)` ante cualquier `Content-Encoding`,
+  así que un proxy escrito en Nyx tenía que pedir sin comprimir y comprimir él. Con `opts.cuerpo_crudo = true` la
+  respuesta se acepta, `read()` entrega los bytes como llegaron y `read_event()` es el que da `Err(unsupported)`.
+  `response_from_stream` (`std/serve`) copia ahora `Content-Encoding` y `Vary`, y conserva el `Content-Length` del
+  origen también en ese caso. Sin la opción nada cambia (el mensaje del error la nombra). Test 504, cuatro casos en
+  `test_serve_std_chunks.py`, `tests/ai-first/55` y receta 163.
+
 - **HTTP/2: el código Huffman de `{` estaba mal y mataba la conexión** [arco: gateway-http2] — la tabla de
   HPACK tenía `{` con 19 bits en vez de 15, así que cualquier cabecera comprimida que lo llevara terminaba en
   `GOAWAY COMPRESSION_ERROR`. Cloudflare manda `cf-visitor: {"scheme":"https"}` a todo origen: un sitio

@@ -90,6 +90,11 @@ fn servidor() -> int {
             sleep(800)
         } else if p == "/gzip" {
             manda(cli, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 3\r\n\r\nabc")
+        } else if p == "/gzip-chunked" {
+            manda(cli, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n")
+            manda(cli, chunk("ab") + chunk("c") + "0\r\n\r\n")
+        } else if p == "/gzip-evento" {
+            manda(cli, "HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: 9\r\n\r\ndata: x\n\n")
         } else if p == "/cortado" {
             manda(cli, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\na\r\n12345")
         } else if p == "/404" {
@@ -249,6 +254,33 @@ fn main() {
     assert(e6.kind == "timeout")
     let e7: Error = err_de("/gzip", o, false)
     assert(e7.kind == "unsupported")
+    assert(e7.msg.indexOf("cuerpo_crudo") >= 0)
+
+    // ── cuerpo_crudo: la misma respuesta se acepta y los bytes llegan sin tocar
+    //    (un proxy los reenvía con su Content-Encoding); read_event no aplica ──
+    var crudo: HttpStreamOpts = http_stream_opts()
+    crudo.cuerpo_crudo = true
+    let sg: HttpStream = abre("/gzip", crudo)
+    assert(sg.status() == 200)
+    assert(http_find_header(sg.headers(), "content-encoding") == "gzip")
+    let cg: Array = todo(sg)
+    let bg: String = cg[0]
+    assert(bg == "abc")
+    let sgc: HttpStream = abre("/gzip-chunked", crudo)
+    let cgc: Array = todo(sgc)
+    let bgc: String = cgc[0]
+    assert(bgc == "abc")
+    let sge: HttpStream = abre("/gzip-evento", crudo)
+    let rge: Result<SseEvent, Error> = sge.read_event()
+    assert(rge.is_err())
+    let ege: Error = rge.unwrap_err()
+    assert(ege.kind == "unsupported")
+    sge.close()
+    // Sin Content-Encoding la opción no cambia nada: los eventos se leen igual.
+    let sgs: HttpStream = abre("/sse", crudo)
+    let rgs: Result<SseEvent, Error> = sgs.read_event()
+    assert(rgs.is_ok())
+    sgs.close()
     let e8: Error = err_de("/cortado", o, true)
     assert(e8.kind == "io")
 
