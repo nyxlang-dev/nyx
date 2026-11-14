@@ -1,26 +1,95 @@
 // ============================================
-// Nyx Playground Server v0.10.0
+// Nyx Playground Server
 // ============================================
-// Web-based code editor that compiles and runs Nyx code
-// Usage: make playground (starts on port 8080)
+// Editor web que compila código Nyx a wasm32-wasi; el navegador lo ejecuta.
+//
+// Corre desde CUALQUIER directorio, sin el repo (2026-11-14, encargo de la
+// sesión del servidor: producción vive en /srv/nyx/<servicio>/current):
+//   - compila con un toolchain INSTALADO, no con ./nyx_bootstrap del árbol;
+//   - cada petición trabaja en un directorio temporal propio y lo borra al
+//     terminar: no toca script.nx/script.ll de la raíz del repo (los archivos
+//     de trabajo de `make`) ni usa nombres fijos en /tmp, así que dos peticiones
+//     a la vez no se pisan;
+//   - el puerto y las rutas salen del entorno.
+//
+// Entorno:
+//   PORT                       puerto (8081 por defecto); escucha solo en 127.0.0.1
+//   NYX_PLAYGROUND_DIR         directorio con static/ y examples/. Sin ella: el
+//                              directorio de trabajo si tiene static/index.html,
+//                              y si no ./playground (correr desde la raíz del repo)
+//   NYX_PLAYGROUND_TOOLCHAIN   toolchain con el que se compila. Sin ella:
+//                              ./toolchain si existe (uno copiado junto al
+//                              binario), y si no ~/.nyx/active
+//   WASI_SYSROOT               sysroot de wasi-libc (/usr por defecto)
+//
+// Uso en desarrollo: make playground
 
 import "std/http"
 import "std/json"
+import "std/fs"
 
-// Base directory for static files (relative to project root)
-let STATIC_DIR: String = "playground/static"
-let EXAMPLES_DIR: String = "playground/examples"
-let PORT: int = 8081
+var g_port: int = 8081
+var g_static_dir: String = "playground/static"
+var g_examples_dir: String = "playground/examples"
+var g_wasi_sysroot: String = "/usr"
 
-// Runtime sources needed for compilation
-let RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/file-io.c runtime/iterators.c runtime/net.c runtime/thread.c runtime/regex.c runtime/time.c runtime/crypto.c runtime/tls.c runtime/scheduler.c runtime/event_loop.c runtime/sqlite_adapter.c runtime/compress.c runtime/random.c runtime/url.c runtime/msgpack.c runtime/websocket.c runtime/os/os_posix.c"
-let LIBS: String = "-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+// Argumento de shell entre comillas simples (las rutas son nuestras, pero un
+// directorio temporal o un HOME con espacios no debe romper el comando).
+fn sh_quote(s: String) -> String {
+    return "'" + s.replace("'", "'\\''") + "'"
+}
 
-// WASM target (v0.19.0): el playground compila el código del usuario a wasm32-wasi
-// y lo manda al browser para correrlo SANDBOXEADO — el server NUNCA ejecuta código
-// de usuario. Subset portable del runtime (sin net/tls/thread/etc, que WASI no tiene).
-let WASM_CFLAGS: String = "--target=wasm32-wasi --sysroot=/usr -O2 -Iruntime/wasi -Wl,-z,stack-size=1048576 -Wl,--export-table"
-let WASM_RUNTIME_SRCS: String = "runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c runtime/maps.c runtime/iterators.c runtime/file-io.c runtime/time.c runtime/random.c runtime/url.c runtime/wasi/main_shim.c runtime/wasi/nyx_arena.c runtime/os/os_wasm.c"
+// Ruta real del toolchain, resuelta EN CADA PETICIÓN: ~/.nyx/active es un
+// enlace que `make install-local` y `nyx update` cambian con un rename, y la
+// poda borra las versiones viejas. Fijarla al arrancar dejaría al servidor
+// apuntando a una versión que un día desaparece.
+fn toolchain_home() -> String {
+    var cand: String = getenv("NYX_PLAYGROUND_TOOLCHAIN")
+    if cand == "" {
+        if file_exists("toolchain/nyx_bootstrap") {
+            cand = "toolchain"
+        } else {
+            cand = getenv("HOME") + "/.nyx/active"
+        }
+    }
+    let real: String = exec("readlink -f " + sh_quote(cand) + " 2>/dev/null").trim()
+    if real == "" or not file_exists(real + "/nyx_bootstrap") { return "" }
+    return real
+}
+
+// Fuentes C del runtime portable a wasm, con la ruta del toolchain delante.
+// La lista es runtime/wasm.srcs, la misma que usan `make wasm` y `nyx build
+// --target wasm32-wasi`: copiarla acá ya había divergido una vez.
+fn wasm_runtime_srcs(home: String) -> String {
+    let lineas: Array = read_file(home + "/runtime/wasm.srcs").split("\n")
+    var out: String = ""
+    var i: int = 0
+    while i < lineas.length() {
+        let cruda: String = lineas[i]
+        let l: String = cruda.trim()
+        if l.length() > 0 and not l.startsWith("#") {
+            out = out + " " + sh_quote(home + "/" + l)
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// Un nombre de archivo servible: sin "..", sin barra inicial ni bytes raros.
+// Las rutas salen del pedido; sin esto /api/example/../../x leía cualquier .nx
+// al que llegara el proceso.
+fn nombre_seguro(name: String) -> bool {
+    if name.length() == 0 or name.length() > 128 { return false }
+    if name.indexOf("..") >= 0 or name.startsWith("/") { return false }
+    var i: int = 0
+    while i < name.length() {
+        let c: int = name.charAt(i)
+        let ok: bool = (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) or c == 45 or c == 95 or c == 46 or c == 47
+        if not ok { return false }
+        i = i + 1
+    }
+    return true
+}
 
 fn content_type_for(path: String) -> String {
     if path.endsWith(".html") { return "text/html; charset=utf-8" }
@@ -53,36 +122,51 @@ fn run_error_response(err_output: String, label: String) -> String {
 // compilan bajo wasm (codegen_target_guard) → el error se devuelve y el frontend
 // lo muestra amable ("no corre en el sandbox del browser").
 fn handle_run(body: String) -> String {
-    let src_path: String = "/tmp/nyx_playground_src.nx"
-    let wasm_path: String = "/tmp/nyx_playground.wasm"
-    let b64_path: String = "/tmp/nyx_playground.b64"
-    let err_path: String = "/tmp/nyx_playground_err.txt"
+    let home: String = toolchain_home()
+    if home == "" {
+        return run_error_response("no hay toolchain de Nyx instalado (NYX_PLAYGROUND_TOOLCHAIN, ./toolchain o ~/.nyx/active)", "Internal error")
+    }
+    let dir: String = exec("mktemp -d " + sh_quote(temp_dir() + "/nyx-playground.XXXXXXXX") + " 2>/dev/null").trim()
+    // El directorio se borra con rm -rf: solo si es de verdad el que se pidió.
+    if dir.indexOf("/nyx-playground.") < 0 or dir.indexOf("\n") >= 0 {
+        return run_error_response("no se pudo crear el directorio de trabajo", "Internal error")
+    }
+    let resp: String = compilar_en(dir, home, body)
+    exec("rm -rf " + sh_quote(dir))
+    return resp
+}
 
-    write_file(src_path, body)
+// Lo que el usuario ve del error no nombra el directorio temporal.
+fn leer_error(dir: String) -> String {
+    return read_file(dir + "/err.txt").replace(dir + "/", "")
+}
 
-    // Step 1: source → script.nx
-    exec("cp " + src_path + " script.nx")
+fn compilar_en(dir: String, home: String, body: String) -> String {
+    let src: String = dir + "/main.nx"
+    let ll: String = dir + "/main.ll"
+    let wasm: String = dir + "/out.wasm"
+    let err: String = sh_quote(dir + "/err.txt")
+    write_file(src, body)
 
-    // Step 2: compilar a IR wasm32-wasi (guard de red/threads dispara acá)
-    let compile_cmd: String = "NYX_PROJECT_DIR=playground NYX_TARGET=wasm32-wasi NYX_NO_GC=1 ./nyx_bootstrap > " + err_path + " 2>&1"
-    let compile_rc: int = exec_code(compile_cmd)
-    if compile_rc != 0 {
-        return run_error_response(read_file(err_path), "Compilation error")
+    // Paso 1: IR wasm32-wasi (el guard de red/threads dispara acá). NYX_PROJECT_DIR
+    // es el directorio temporal: un import relativo no sale de ahí.
+    let compile_cmd: String = "cd " + sh_quote(dir) + " && NYX_HOME=" + sh_quote(home) + " NYX_SRC=" + sh_quote(src) + " NYX_PROJECT_DIR=" + sh_quote(dir) + " NYX_TARGET=wasm32-wasi NYX_NO_GC=1 timeout 60 " + sh_quote(home + "/nyx_bootstrap") + " > " + err + " 2>&1"
+    if exec_code(compile_cmd) != 0 {
+        return run_error_response(leer_error(dir), "Compilation error")
     }
 
-    // Step 3: linkear a .wasm (subset portable del runtime)
-    let link_cmd: String = "clang " + WASM_CFLAGS + " script.ll " + WASM_RUNTIME_SRCS + " -o " + wasm_path + " > " + err_path + " 2>&1"
-    let link_rc: int = exec_code(link_cmd)
-    if link_rc != 0 {
-        return run_error_response(read_file(err_path), "WASM link error")
+    // Paso 2: enlazar a .wasm con el subset portable del runtime.
+    let link_cmd: String = "timeout 120 clang --target=wasm32-wasi --sysroot=" + sh_quote(g_wasi_sysroot) + " -O2 -I" + sh_quote(home + "/runtime/wasi") + " -Wl,-z,stack-size=1048576 -Wl,--export-table " + sh_quote(ll) + wasm_runtime_srcs(home) + " -o " + sh_quote(wasm) + " > " + err + " 2>&1"
+    if exec_code(link_cmd) != 0 {
+        return run_error_response(leer_error(dir), "WASM link error")
     }
 
-    // Step 4: base64 del .wasm (ASCII seguro para JSON; -w0 = sin saltos de línea).
-    // NUNCA ejecutamos el wasm en el server: lo corre el browser.
-    exec("base64 -w0 " + wasm_path + " > " + b64_path)
+    // Paso 3: base64 del .wasm (ASCII seguro para JSON; -w0 = sin saltos de línea).
+    let b64: String = dir + "/out.b64"
+    exec("base64 -w0 " + sh_quote(wasm) + " > " + sh_quote(b64))
     var wasm_b64: String = ""
-    if file_exists(b64_path) {
-        wasm_b64 = read_file(b64_path)
+    if file_exists(b64) {
+        wasm_b64 = read_file(b64)
     }
     if wasm_b64.length() == 0 {
         return run_error_response("no se pudo generar el .wasm", "Internal error")
@@ -123,8 +207,8 @@ fn handle_examples_list() -> String {
 }
 
 fn handle_example(name: String) -> String {
-    let file_path: String = EXAMPLES_DIR + "/" + name + ".nx"
-    if file_exists(file_path) {
+    let file_path: String = g_examples_dir + "/" + name + ".nx"
+    if nombre_seguro(name) and name.indexOf("/") < 0 and file_exists(file_path) {
         let content: String = read_file(file_path)
         let json_body: String = "{\"name\":\"" + name + "\",\"code\":\"" + json_escape(content) + "\"}"
         let headers: Array = ["Content-Type", "application/json", "Access-Control-Allow-Origin", "*"]
@@ -141,13 +225,14 @@ fn playground_handler(request: Array) -> String {
 
     // Root -> serve index.html
     if method == "GET" and path == "/" {
-        return serve_static(STATIC_DIR + "/index.html")
+        return serve_static(g_static_dir + "/index.html")
     }
 
     // Static files
     if method == "GET" and path.startsWith("/static/") {
         let file_name: String = path.substring(8, path.length())
-        return serve_static(STATIC_DIR + "/" + file_name)
+        if not nombre_seguro(file_name) { return http_response(404, "Not Found") }
+        return serve_static(g_static_dir + "/" + file_name)
     }
 
     // API: compile and run
@@ -180,13 +265,35 @@ fn playground_handler(request: Array) -> String {
 }
 
 fn main() {
+    let p: String = getenv("PORT")
+    if p != "" {
+        g_port = string_to_int_or(p, 0)
+        if g_port < 1 or g_port > 65535 {
+            print("ERROR: PORT inválido: " + p)
+            exit(1)
+        }
+    }
+    var base: String = getenv("NYX_PLAYGROUND_DIR")
+    if base == "" {
+        if file_exists("static/index.html") { base = "." } else { base = "playground" }
+    }
+    g_static_dir = base + "/static"
+    g_examples_dir = base + "/examples"
+    let sr: String = getenv("WASI_SYSROOT")
+    if sr != "" { g_wasi_sysroot = sr }
+    if not file_exists(g_static_dir + "/index.html") {
+        print("ERROR: no existe " + g_static_dir + "/index.html (NYX_PLAYGROUND_DIR o el directorio de trabajo)")
+        exit(1)
+    }
+
     print("=== Nyx Playground Server ===")
-    print("Listening on http://localhost:" + int_to_string(PORT))
-    print("Press Ctrl+C to stop")
+    print("Listening on http://localhost:" + int_to_string(g_port))
+    print("Archivos: " + base + " · toolchain: " + toolchain_home())
     print("")
     // Solo localhost: en producción lo sirve el gateway (/playground), y en
     // desarrollo se abre en http://localhost:8081.
-    if http_serve_en("127.0.0.1", PORT, playground_handler) < 0 {
-        print("ERROR: no se pudo escuchar en 127.0.0.1:" + int_to_string(PORT))
+    if http_serve_en("127.0.0.1", g_port, playground_handler) < 0 {
+        print("ERROR: no se pudo escuchar en 127.0.0.1:" + int_to_string(g_port))
+        exit(1)
     }
 }

@@ -10,7 +10,7 @@
 # Prerequisites: el server web es std/serve (fixture compilado acá mismo con
 # el bootstrap — desde la absorción 2026-09-03 no hay binario nyx-serve
 # aparte); el daemon nyx-kv viene de su repo extraído
-# (~/products/kv/daemon/nyxkv, override NYX_KV_BIN). Si el daemon kv no
+# (~/productos/kv/daemon/nyxkv, override NYX_KV_BIN). Si el daemon kv no
 # está, el E2E serve+kv se SKIPEA con aviso (exit 0) — no es un fallo del
 # monorepo.
 # =============================================================================
@@ -492,11 +492,11 @@ fi
 # --port y expone /api/health, el contrato del daemon viejo); el daemon kv
 # viene de su repo extraído. SKIP limpio si falta cualquiera de los dos.
 echo -e "\n${BOLD}-- serve + kv --${NC}"
-KV_BIN="${NYX_KV_BIN:-$HOME/products/kv/daemon/nyxkv}"
+KV_BIN="${NYX_KV_BIN:-$HOME/productos/kv/daemon/nyxkv}"
 SERVE_BIN="${NYX_SERVE_BIN:-$SS_SMOKE_BIN}"
 if [ ! -x "$KV_BIN" ]; then
     echo -e "  SKIP: binario nyx-kv no encontrado en $KV_BIN"
-    echo -e "  (clonar ~/products/kv y buildear el daemon, o exportar NYX_KV_BIN)"
+    echo -e "  (clonar ~/productos/kv y buildear el daemon, o exportar NYX_KV_BIN)"
 elif [ ! -x "$SERVE_BIN" ]; then
     echo -e "  SKIP: server de std/serve no disponible en $SERVE_BIN (el smoke de arriba no compiló)"
 else

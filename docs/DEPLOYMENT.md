@@ -20,14 +20,14 @@ nyx-gateway (~/web/gateway/gateway, consumes nyx-proxy lib) ← ~/web/gateway
     │
     ├── nyxlang.com ──────→ nyx-landing-main (:3001)   ← ~/nyx-sites
     │   └── /playground ──→ nyx-playground (:8081)     ← monorepo
-    ├── nyxkv.com ────────→ nyx-kv-web (:3002)         ← ~/products/kv
+    ├── nyxkv.com ────────→ nyx-kv-web (:3002)         ← ~/productos/kv
     ├── serve.nyxlang.com → nyx-serve-web (:3003)      ← ~/nyx-sites
     ├── proxy.nyxlang.com → nyx-proxy-web (:3005)      ← ~/nyx-sites
-    ├── dashboard.nyxkv.com → (:3007)                  ← ~/products/kv
+    ├── dashboard.nyxkv.com → (:3007)                  ← ~/productos/kv
     └── venezuelainfo.org → (:3010)                    ← /home/admin/venezuelainfo.org
 
 Internal services (not public):
-    nyx-kv (:6380) — KV store RESP2/TLS (← ~/products/kv)
+    nyx-kv (:6380) — KV store RESP2/TLS (← ~/productos/kv)
 ```
 
 ## Server
@@ -49,7 +49,7 @@ TLS:        Let's Encrypt (auto-renewal with certbot)
 | nyx-gateway (:443/:80) | `~/web/gateway` (privado, split #7) | `make -C ~/web/gateway deploy` |
 | nyx-playground (:8081) | monorepo `playground/` | `bash scripts/deploy.sh` |
 | 3 landings (:3001/:3003/:3005) | `~/nyx-sites` (público) | `make -C ~/nyx-sites deploy` |
-| nyx-kv + nyxkv.com + dashboard | `~/products/kv` (privado) | ver su CLAUDE.md |
+| nyx-kv + nyxkv.com + dashboard | `~/productos/kv` (privado) | ver su CLAUDE.md |
 | venezuelainfo.org (:3010) | `/home/admin/venezuelainfo.org` | proyecto aparte — NO tocar |
 
 Units systemd: `deploy/` del monorepo solo conserva `nyx-playground.service`
@@ -77,6 +77,24 @@ El gateway se deploya desde su repo: `make -C ~/web/gateway deploy`
 efímero ANTES del restart + verificación por dominio después).
 
 **Note:** If new runtime .c files are added, update RUNTIME_SRCS in deploy.sh.
+
+### El playground fuera del repo (desde 2026-11-14)
+
+El playground ya no necesita el árbol: `make playground-dist DEST=<directorio>` deja ahí
+`nyx-playground`, `static/` y `examples/`, y el binario corre con ese directorio como directorio de
+trabajo. Cada petición compila en un directorio temporal propio (bajo `TMPDIR`) y lo borra al
+terminar: no toca `script.nx`/`script.ll` de la raíz del repo ni usa nombres fijos en `/tmp`.
+
+| Variable | Qué hace | Por defecto |
+|---|---|---|
+| `PORT` | puerto; escucha solo en `127.0.0.1` | `8081` |
+| `NYX_PLAYGROUND_DIR` | directorio con `static/` y `examples/` | el de trabajo si tiene `static/index.html`; si no, `./playground` |
+| `NYX_PLAYGROUND_TOOLCHAIN` | toolchain con el que compila el código del usuario | `./toolchain` si existe; si no, `~/.nyx/active` |
+| `WASI_SYSROOT` | sysroot de wasi-libc | `/usr` |
+
+El toolchain se resuelve en cada petición, así que un `make install-local` o un `nyx update` se toman
+sin reiniciar. La máquina necesita `clang` con `wasm32-wasi` (`wasi-libc`, `lld`) y `base64`. Guarda:
+`make test-playground`.
 
 **GOTCHA restart del gateway**: tras reiniciar un upstream, el gateway
 sirve 502 durante algunos requests (pool keep-alive con sockets stale que
@@ -127,7 +145,7 @@ for h in nyxlang.com nyxkv.com serve.nyxlang.com proxy.nyxlang.com \
          dashboard.nyxkv.com venezuelainfo.org; do
   echo "$h → $(curl -sk -o /dev/null -w '%{http_code}' --resolve "$h:443:127.0.0.1" "https://$h/")"
 done
-redis-cli -p 6380 PING   # KV RESP2 (~/products/kv)
+redis-cli -p 6380 PING   # KV RESP2 (~/productos/kv)
 ```
 
 Criterio: todos `active`; todos 2xx/3xx; `PING` → `PONG`. Si algo falla, ver

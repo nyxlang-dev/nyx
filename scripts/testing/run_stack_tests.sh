@@ -12,11 +12,11 @@
 set -uo pipefail
 
 declare -A STACKS=(
-    ["$HOME/products/db"]="test-db"
-    ["$HOME/products/queue"]="test-queue"
-    ["$HOME/products/edit"]="test-edit"
-    ["$HOME/products/shell"]="test-shell"
-    ["$HOME/products/proxy"]="test-proxy"
+    ["$HOME/productos/db"]="test-db"
+    ["$HOME/productos/queue"]="test-queue"
+    ["$HOME/productos/edit"]="test-edit"
+    ["$HOME/productos/shell"]="test-shell"
+    ["$HOME/productos/proxy"]="test-proxy"
 )
 
 fail=0

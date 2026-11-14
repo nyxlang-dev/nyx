@@ -378,6 +378,7 @@ test-runtime:
 test-wasm:
 	bash scripts/testing/run_wasm_tests.sh
 	bash scripts/testing/run_wasm_builtin_symbols.sh
+	bash scripts/testing/run_playground_fuera_del_arbol.sh
 
 ## Gate de carga permanente [arco:W3-paso0b]: 300 goroutines × Array<int> de
 ## 20k, N corridas normales + M con GC_ENABLE_INCREMENTAL=1 (override
@@ -795,12 +796,32 @@ bindgen:
 	@test -f nyx_bindgen || (echo "Primero ejecuta: make build-bindgen"; exit 1)
 	$(TESTROOT_LOCK) bash -c 'cp $(FILE) script.nx && ./nyx_bindgen'
 
-## Build and run the Nyx Playground web server (v0.10.0)
-## Compiles playground/server.nx and starts on port 8080
+## Build and run the Nyx Playground web server
+## Compila playground/server.nx y lo arranca en PORT (8081 por defecto). El
+## servidor compila el código del usuario con un toolchain INSTALADO; acá se le
+## pasa el árbol (nyx_bootstrap + runtime/ + std/) para probar el código actual.
 playground:
 	$(TESTROOT_LOCK) bash -c 'cp playground/server.nx script.nx && NYX_SKIP_SEMANTIC=1 ./nyx_bootstrap && $(CLANG) -O2 script.ll $(RUNTIME_SRCS) $(LIBS) -o nyx_playground'
 	@echo "✓ nyx_playground compilado"
-	./nyx_playground
+	NYX_PLAYGROUND_TOOLCHAIN=$(CURDIR) ./nyx_playground
+
+## Arma un directorio de versión del playground, copiable fuera del repo:
+## binario + static/ + examples/. No usa script.nx de la raíz (NYX_SRC propio).
+## Uso: make playground-dist DEST=/ruta/a/un/directorio/nuevo
+playground-dist:
+	@test -n "$(DEST)" || (echo "Uso: make playground-dist DEST=<directorio>"; exit 1)
+	@mkdir -p "$(DEST)/static" "$(DEST)/examples"
+	@B=$$(mktemp -d) && cp playground/server.nx "$$B/server.nx" \
+		&& { NYX_HOME=$(CURDIR) NYX_SRC="$$B/server.nx" ./nyx_bootstrap > "$$B/compile.log" 2>&1 || { cat "$$B/compile.log"; exit 1; }; } \
+		&& { $(CLANG) -O2 "$$B/server.ll" $(RUNTIME_SRCS) $(LIBS) -o "$(DEST)/nyx-playground.new" 2> "$$B/link.log" || { grep -v "warning:" "$$B/link.log"; exit 1; }; } \
+		&& mv "$(DEST)/nyx-playground.new" "$(DEST)/nyx-playground"
+	@cp -r playground/static/. "$(DEST)/static/" && cp -r playground/examples/. "$(DEST)/examples/"
+	@echo "✓ playground en $(DEST) (nyx-playground + static/ + examples/)"
+
+## El playground corre sin el repo: directorio de versión, toolchain al lado,
+## directorio temporal por petición, PORT (SKIP limpio sin wasi-libc)
+test-playground:
+	bash scripts/testing/run_playground_fuera_del_arbol.sh
 
 ## Ratchet del lock de la raíz: ninguna receta del Makefile puede tocar
 ## script.nx/script.ll/script_bin sin pasar por $(TESTROOT_LOCK) (la clase de
@@ -829,4 +850,4 @@ bench-test-cache:
 release-check:
 	bash scripts/release-check.sh --pre
 
-.PHONY: seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross test-android test-regex-diff test-build-shared build-repl repl release-check bench-test-cache
+.PHONY: test-playground playground-dist seeds-check win-seeds win-seeds-check builtins-index prelude prelude-check bootstrap install-local recompile recompile-all run compile compile-no-gc run-no-gc compile-debug run-debug test test-all test-stdlib test-unit test-one test-errors test-dispatch-matrix test-repl test-stacks test-lib-real test-toolchain test-integration test-runtime test-wasm build-test bootstrap-asan run-asan build-fmt fmt build-check check install build-doc doc build-vet vet build-gendocs gen-agent-docs cross wasm win-compile build-nyx-build nyx-build build-bindgen bindgen playground docs-health sdd-check test-m08-types test-load test-ai-first test-examples test-build-win-cross test-android test-regex-diff test-build-shared build-repl repl release-check bench-test-cache

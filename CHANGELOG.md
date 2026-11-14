@@ -9,6 +9,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **El playground corre sin el repo** (encargo de la sesión del servidor): `playground/server.nx` compilaba con
+  `./nyx_bootstrap` y las fuentes del runtime del árbol, escribía `script.nx`/`script.ll` en la raíz del repo en
+  cada petición —los archivos de trabajo de `make`: una petición en producción podía pisar una compilación de
+  desarrollo— y usaba nombres fijos en `/tmp`, así que dos peticiones a la vez se pisaban. Ahora compila con un
+  toolchain instalado (`NYX_PLAYGROUND_TOOLCHAIN`, `./toolchain` o `~/.nyx/active`, resuelto en cada petición),
+  trabaja en un directorio temporal por petición y lee `PORT` y `NYX_PLAYGROUND_DIR` del entorno. La lista de
+  fuentes wasm sale de `runtime/wasm.srcs` (la copia del servidor había divergido). `make playground-dist
+  DEST=<dir>` arma el directorio de versión. Guarda `make test-playground` (15 checks, también en `make test-wasm`).
+
+### Security
+
+- **El playground servía archivos fuera de `examples/` y `static/`**: `/api/example/<nombre>` y `/static/<ruta>`
+  pegaban el nombre del pedido a la ruta sin validarlo, así que `..` alcanzaba cualquier `.nx` (y cualquier
+  estático) legible por el proceso. Los nombres se validan ahora (sin `..`, solo letras, dígitos, `-`, `_`, `.`).
+
 ### Fixed
 
 - **Los nombres de cabecera HTTP ya no distinguen mayúsculas** `[dogfooding:nyxerp]`: `http_find_header` comparaba
