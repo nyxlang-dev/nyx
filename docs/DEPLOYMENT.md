@@ -47,13 +47,13 @@ TLS:        Let's Encrypt (auto-renewal with certbot)
 | Componente | Repo | Deploy |
 |---|---|---|
 | nyx-gateway (:443/:80) | `~/web/gateway` (privado, split #7) | `make -C ~/web/gateway deploy` |
-| nyx-playground (:8081) | monorepo `playground/` | `bash scripts/deploy.sh` |
+| nyx-playground (:8081) | monorepo `playground/` → `/srv/nyx/playground/current` | `bash scripts/deploy.sh` (arma y llama a `~/servidor/scripts/desplegar.sh playground`) |
 | 3 landings (:3001/:3003/:3005) | `~/nyx-sites` (público) | `make -C ~/nyx-sites deploy` |
 | nyx-kv + nyxkv.com + dashboard | `~/productos/kv` (privado) | ver su CLAUDE.md |
 | venezuelainfo.org (:3010) | `/home/admin/venezuelainfo.org` | proyecto aparte — NO tocar |
 
-Units systemd: `deploy/` del monorepo solo conserva `nyx-playground.service`
-y backup; la unit del gateway vive en `~/web/gateway/deploy/`; las de los
+Units systemd: `deploy/` del monorepo solo conserva las del drenaje de fricción;
+la del playground vive en `~/servidor/etc/systemd/system/` desde el 2026-11-14; la unit del gateway vive en `~/web/gateway/deploy/`; las de los
 sites en `~/nyx-sites/deploy/`; las de kv en su stack.
 
 ---
@@ -62,21 +62,23 @@ sites en `~/nyx-sites/deploy/`; las de kv en su stack.
 
 ```bash
 # On AWS:
-cd ~/NyxLang
+cd ~/nyxlang
 git pull origin main
 bash scripts/deploy.sh
 ```
 
 `deploy.sh` does:
 1. Compiles bootstrap
-2. Compiles playground to `bin/nyx-playground`
-3. Installs/restarts systemd unit `nyx-playground`
+2. Builds the release folder with `make playground-dist DEST=bin/playground-dist`
+3. Publishes it with `~/servidor/scripts/desplegar.sh playground` (copy to
+   `/srv/nyx/playground/releases/`, smoke test, switch `current`, restart)
+
+It installs no systemd unit and nothing runs from the repo. Roll back with
+`~/servidor/scripts/desplegar.sh playground volver`.
 
 El gateway se deploya desde su repo: `make -C ~/web/gateway deploy`
 (vendor de nyx-proxy desde `~/nyx-proxy-stack` + build + smoke HTTP
 efímero ANTES del restart + verificación por dominio después).
-
-**Note:** If new runtime .c files are added, update RUNTIME_SRCS in deploy.sh.
 
 ### El playground fuera del repo (desde 2026-11-14)
 
@@ -157,8 +159,8 @@ Troubleshooting abajo.
 
 ```
 ~/NyxLang/
-├── bin/nyx-playground          ← compiled playground
-├── deploy/                     ← systemd units (playground, backup)
+├── bin/playground-dist/        ← release folder built by `make playground-dist` (gitignored)
+├── deploy/                     ← systemd units (friction drain)
 ├── nyx_bootstrap               ← the compiler
 └── ... (source code)
 
