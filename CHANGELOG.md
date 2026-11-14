@@ -79,6 +79,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Added
 
+- **HTTP/2: el código Huffman de `{` estaba mal y mataba la conexión** [arco: gateway-http2] — la tabla de
+  HPACK tenía `{` con 19 bits en vez de 15, así que cualquier cabecera comprimida que lo llevara terminaba en
+  `GOAWAY COMPRESSION_ERROR`. Cloudflare manda `cf-visitor: {"scheme":"https"}` a todo origen: un sitio
+  detrás de Cloudflare con «HTTP/2 to Origin» daba 520 en cada petición. El test nuevo recorre los 255
+  símbolos contra un código reconstruido solo desde las longitudes (el código de HPACK es canónico).
+  Además, `NYX_H2_TRACE=1` escribe a stderr los frames y el motivo de cada rechazo (`docs/HTTP2.md`).
 - **Servidor HTTP/2 real: TLS con ALPN `h2`, control de flujo y respuestas por partes** [arco: gateway-http2]
   (fricción de nyxerp): con HTTP/1.1 un navegador abre 6 conexiones por dominio y cada canal SSE ocupa una, así
   que la séptima petición esperaba. `std/http2` se rehízo sobre un motor de conexión sin E/S en el runtime

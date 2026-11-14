@@ -123,7 +123,7 @@ static const struct { uint32_t code; uint8_t nbits; } huff_table[257] = {
     {0x28, 6}, {0x29, 6}, {0x2a, 6}, {0x7, 5},
     {0x2b, 6}, {0x76, 7}, {0x2c, 6}, {0x8, 5},
     {0x9, 5}, {0x2d, 6}, {0x77, 7}, {0x78, 7},
-    {0x79, 7}, {0x7a, 7}, {0x7b, 7}, {0x7fffe, 19},
+    {0x79, 7}, {0x7a, 7}, {0x7b, 7}, {0x7ffe, 15},
     {0x7fc, 11}, {0x3ffd, 14}, {0x1ffd, 13}, {0xffffffc, 28},
     // 128-255: extended characters (less common)
     {0xfffe6, 20}, {0x3fffd2, 22}, {0xfffe7, 20}, {0xfffe8, 20},
@@ -727,7 +727,42 @@ static void h2c_out(H2cConn* c, const uint8_t* p, size_t n) {
     c->out_len += n;
 }
 
+// Traza de diagnóstico: con NYX_H2_TRACE=1 en el entorno, cada frame que entra
+// o sale y cada rechazo se escribe a stderr. Existe porque un error de
+// protocolo en HTTP/2 es mudo por diseño —la conexión muere antes de que haya
+// una petición que registrar—, y sin esto un cliente que el motor no entiende
+// solo se ve como «no llegó nada» (Cloudflare, 2026-11-13). Se consulta el
+// entorno una vez; apagada cuesta una comparación por frame.
+static int h2c_trace_on = -1;
+static int h2c_trace(void) {
+    if (h2c_trace_on < 0) {
+        const char* e = getenv("NYX_H2_TRACE");
+        h2c_trace_on = (e && e[0] && e[0] != '0') ? 1 : 0;
+    }
+    return h2c_trace_on;
+}
+static void h2c_trace_frame(H2cConn* c, const char* dir, int type, int flags, int32_t sid, const uint8_t* p, size_t len) {
+    static const char* const nombres[] = { "DATA", "HEADERS", "PRIORITY", "RST_STREAM", "SETTINGS",
+                                           "PUSH_PROMISE", "PING", "GOAWAY", "WINDOW_UPDATE", "CONTINUATION" };
+    fprintf(stderr, "[h2 %p] %s %s(%d) flags=0x%02x flujo=%d len=%zu", (void*)c, dir,
+            (type >= 0 && type <= 9) ? nombres[type] : "?", type, flags, (int)sid, len);
+    // El contenido solo de los frames de control: nunca cabeceras ni cuerpos,
+    // que llevan cookies y datos de quien navega.
+    if (type == 3 || type == 4 || type == 7 || type == 8) {
+        fputs(" :", stderr);
+        for (size_t i = 0; i < len && i < 48; i++) fprintf(stderr, " %02x", p[i]);
+    }
+    fputc('\n', stderr);
+}
+static void h2c_trace_msg(H2cConn* c, const char* msg, nyx_string* detalle) {
+    if (!h2c_trace()) return;
+    fprintf(stderr, "[h2 %p] %s", (void*)c, msg);
+    if (detalle) fprintf(stderr, " «%.*s»", (int)(detalle->length > 80 ? 80 : detalle->length), detalle->data);
+    fputc('\n', stderr);
+}
+
 static void h2c_frame(H2cConn* c, int type, int flags, int32_t sid, const uint8_t* payload, size_t plen) {
+    if (h2c_trace()) h2c_trace_frame(c, "sale ", type, flags, sid, payload, plen);
     uint8_t h[9];
     h[0] = (plen >> 16) & 0xFF; h[1] = (plen >> 8) & 0xFF; h[2] = plen & 0xFF;
     h[3] = (uint8_t)type; h[4] = (uint8_t)flags;
@@ -1091,7 +1126,7 @@ static void h2c_request_done(H2cConn* c, H2cStream* s) {
 static int h2c_headers_done(H2cConn* c, int32_t sid, int end_stream) {
     nyx_array_t* h = h2c_hpack_decode(c, c->hblock, (int)c->hblock_len);
     c->hblock_len = 0;
-    if (!h) return h2c_die(c, H2E_COMPRESSION);
+    if (!h) { h2c_trace_msg(c, "bloque de cabeceras que HPACK no pudo decodificar", NULL); return h2c_die(c, H2E_COMPRESSION); }
 
     H2cStream* s = h2c_find(c, sid);
     if (s) {
@@ -1110,7 +1145,14 @@ static int h2c_headers_done(H2cConn* c, int32_t sid, int end_stream) {
     c->last_stream_id = sid;
     c->n_streams++;
     if (c->goaway_sent || c->open_streams >= H2C_MAX_OPEN) { h2c_rst(c, sid, H2E_REFUSED_STREAM); return 0; }
-    if (!h2c_request_ok(h)) { h2c_rst(c, sid, H2E_PROTOCOL); c->n_ctrl++; return 0; }
+    if (!h2c_request_ok(h)) {
+        if (h2c_trace()) {
+            // Solo los nombres: bastan para ver qué cabecera no pasó.
+            h2c_trace_msg(c, "petición rechazada por sus cabeceras; nombres recibidos:", NULL);
+            for (int64_t i = 0; i + 1 < h->length; i += 2) h2c_trace_msg(c, "  ", (nyx_string*)(uintptr_t)h->data[i]);
+        }
+        h2c_rst(c, sid, H2E_PROTOCOL); c->n_ctrl++; return 0;
+    }
     s = h2c_new_stream(c, sid);
     if (!s) { h2c_rst(c, sid, H2E_REFUSED_STREAM); return 0; }
     s->req_headers = h;
@@ -1321,7 +1363,7 @@ int64_t nyx_h2c_feed(int64_t h, nyx_string* data) {
     if (!c->preface_done) {
         static const char magic[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         size_t have = c->in_len < 24 ? c->in_len : 24;
-        if (memcmp(c->in, magic, have) != 0) return h2c_die(c, H2E_PROTOCOL);
+        if (memcmp(c->in, magic, have) != 0) { h2c_trace_msg(c, "prefacio inválido", NULL); return h2c_die(c, H2E_PROTOCOL); }
         if (c->in_len < 24) return 0;
         c->preface_done = 1;
         pos = 24;
@@ -1330,9 +1372,10 @@ int64_t nyx_h2c_feed(int64_t h, nyx_string* data) {
     while (c->in_len - pos >= 9) {
         const uint8_t* f = c->in + pos;
         size_t len = ((size_t)f[0] << 16) | ((size_t)f[1] << 8) | (size_t)f[2];
-        if (len > H2C_MAX_FRAME) { rc = h2c_die(c, H2E_FRAME_SIZE); break; }
+        if (len > H2C_MAX_FRAME) { h2c_trace_msg(c, "frame más grande que el máximo anunciado", NULL); rc = h2c_die(c, H2E_FRAME_SIZE); break; }
         if (c->in_len - pos < 9 + len) break;
         int32_t sid = (int32_t)(h2c_get32(f + 5) & 0x7FFFFFFF);
+        if (h2c_trace()) h2c_trace_frame(c, "entra", f[3], f[4], sid, f + 9, len);
         rc = h2c_on_frame(c, f[3], f[4], sid, f + 9, len);
         pos += 9 + len;
         if (rc != 0) break;
