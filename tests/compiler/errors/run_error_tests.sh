@@ -28,6 +28,10 @@ TESTS=(
   "tests/compiler/errors/test-nyx1013-colision-con-el-prelude.nx|'Error' is already declared by the prelude"
   "tests/compiler/errors/test-nyx1013-const-duplicada.nx|'LIMITE' already declared in this scope"
   "tests/compiler/errors/test-import-ya-inlineado-conserva-lineas.nx|in 'main' (line 11): type mismatch in 'x'"
+  # El diagnóstico de un módulo importado nombra el módulo; el del archivo
+  # principal queda como siempre (fricción nyxerp 20261114-090003-team-1).
+  "tests/compiler/errors/test-diag-nombra-modulo-semantico.nx|in 'aux_diag_mala' (tests/support/aux_diag_modulo_sem, line 5): 'aux_diag_no_existe' not declared"
+  "tests/compiler/errors/test-diag-nombra-modulo-semantico.nx|in 'main' (line 14): 'tampoco_existe' not declared"
   "tests/compiler/errors/test-m08-unknown-type.nx|unknown type 'Str'"
   "tests/compiler/errors/test-m08-array-mismatch.nx|type mismatch in 'nums': expected Array<int>, got Array<String>"
   "tests/compiler/errors/test-m08-arg-mismatch.nx|argument 1 of 'greet': expected String, got int"
@@ -336,6 +340,36 @@ if echo "$output" | grep '"severity":"error"' | grep -F '"line":3' | grep -qF 'N
 else
   printf "  ✗ %s\n" "json:nyx1045-error"
   echo "$output" | grep -a 'NYX1045' | sed 's/^/      /' | head -3; FAIL=$((FAIL + 1)); FAILED_TESTS+=("json:nyx1045-error")
+fi
+rm -f script.ll
+
+# El módulo en los diagnósticos, por las otras tres salidas: NDJSON del
+# semántico (campo "module" solo en el error del módulo), y parse en texto y
+# en NDJSON. La de texto del semántico va en la tabla de arriba.
+cp tests/compiler/errors/test-diag-nombra-modulo-semantico.nx script.nx; rm -f script.ll
+output=$(NYX_DIAG=json timeout 30 ./nyx_bootstrap 2>&1)
+if echo "$output" | grep -F '"function":"aux_diag_mala"' | grep -F '"line":5' | grep -qF '"module":"tests/support/aux_diag_modulo_sem"' \
+   && echo "$output" | grep -F '"function":"main"' | grep -qF '"line":14' \
+   && ! echo "$output" | grep -F '"function":"main"' | grep -qF '"module"'; then
+  printf "  ✓ %s\n" "json:diag-modulo-semantico"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "json:diag-modulo-semantico"
+  echo "$output" | grep -a 'NYX' | sed 's/^/      /' | head -4; FAIL=$((FAIL + 1)); FAILED_TESTS+=("json:diag-modulo-semantico")
+fi
+cp tests/compiler/errors/test-diag-nombra-modulo-parse.nx script.nx; rm -f script.ll
+output=$(timeout 30 ./nyx_bootstrap 2>&1)
+if [ ! -f script.ll ] && echo "$output" | grep -qF -- '--> tests/support/aux_diag_modulo_parse, line 4:'; then
+  printf "  ✓ %s\n" "parse:diag-modulo"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "parse:diag-modulo"
+  echo "$output" | grep -a 'NYX\|-->' | sed 's/^/      /' | head -4; FAIL=$((FAIL + 1)); FAILED_TESTS+=("parse:diag-modulo")
+fi
+output=$(NYX_DIAG=json timeout 30 ./nyx_bootstrap 2>&1)
+if echo "$output" | grep -F '"phase":"parse"' | grep -F '"line":4' | grep -qF '"module":"tests/support/aux_diag_modulo_parse"'; then
+  printf "  ✓ %s\n" "json:diag-modulo-parse"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "json:diag-modulo-parse"
+  echo "$output" | grep -a 'NYX' | sed 's/^/      /' | head -4; FAIL=$((FAIL + 1)); FAILED_TESTS+=("json:diag-modulo-parse")
 fi
 rm -f script.ll
 

@@ -13,7 +13,7 @@
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
 | Regression | `make test` | **562 archivos / 561 ARM64** | +2 el 11-12 (`551` ancho fijo de angostos, `552` métodos sobre una llamada), +7 el 11-11 (`544`-`550`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **424** | +5 el 11-11 (NYX2024, NYX1006/NYX1007 de struct tupla, `unwrap` muestra el error, `print` por líneas bajo pipe), +5 antes ese día (NYX1010 ×3, NYX2023, `join`); altas anteriores en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **429** | +5 el 11-14 (el diagnóstico nombra el módulo importado: semántico y parse, texto y NDJSON), +5 el 11-11 (NYX2024, struct tupla, `unwrap`, `print` bajo pipe); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |

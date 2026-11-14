@@ -1,0 +1,15 @@
+// Un diagnóstico dentro de un módulo importado NOMBRA el módulo, y uno del
+// archivo principal no cambia. Hasta el 2026-11-14 los dos salían igual
+// —«in 'f' (line N)»—, y la línea de un módulo se leía contra el archivo que
+// el usuario tenía abierto: nyxerp recibió «in '__lambda_3' (line 925)», que
+// era de std/serve (fricción 20261114-090003-team-1).
+// Expected stderr (contains): "in 'aux_diag_mala' (tests/support/aux_diag_modulo_sem, line 5)"
+// Expected stderr (contains): "in 'main' (line 14): 'tampoco_existe' not declared"
+// Expected exit: non-zero (semantic check fails)
+
+import "tests/support/aux_diag_modulo_sem"
+
+fn main() -> int {
+    let a: int = aux_diag_mala()
+    return a + tampoco_existe
+}

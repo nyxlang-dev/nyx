@@ -4317,7 +4317,8 @@ now honored by `nyx build` too, not just `nyx test`.
   NYX0101–NYX0105, semantic NYX1001–NYX1020; catalog in docs/SPEC.md
   §Structured Diagnostics), `severity`, `phase`, `line`/`column`
   (1-based, in the ORIGINAL source file — position of the node's last token),
-  `function`, `message`, `suggestion` (raw did-you-mean identifier, e.g. `"push"`
+  `module` (the imported module that line belongs to, e.g. `std/serve`; omitted
+  for the file being compiled), `function`, `message`, `suggestion` (raw did-you-mean identifier, e.g. `"push"`
   for `arr.psh(...)`). **If you are an AI agent compiling Nyx, set this** and parse
   lines starting with `{` instead of scraping error text. The raw driver writes the
   NDJSON to stdout; `nyx run` and `nyx build` capture the driver output and re-emit

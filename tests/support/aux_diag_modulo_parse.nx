@@ -1,0 +1,6 @@
+// aux de test-diag-nombra-modulo-parse: un error de PARSE en la línea 4 de un
+// módulo importado. El diagnóstico tiene que nombrar este módulo.
+pub fn aux_diag_rota() -> int {
+    let = 3
+    return 1
+}

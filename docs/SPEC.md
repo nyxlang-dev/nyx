@@ -875,12 +875,18 @@ Fields: `code` (stable identifier, see catalog), `severity` (`error` or `warning
 warning lines omit `code`),
 `phase` (`parse`, `semantic`, or `resolve`), `line`/`column` (1-based position in the ORIGINAL source file —
 the compiler rebases past the inlined prelude/imports via `//#line` markers; omitted
-when unknown, e.g. synthetic nodes), `function` (enclosing function, omitted at top
-level), `message` (in the active `NYX_LANG` language), `suggestion` (raw "did you
+when unknown, e.g. synthetic nodes), `module` (the imported module the position belongs to,
+written as in its `import` — `std/serve`, `src/util`; omitted for the main file, so a
+`line` without `module` is always a line of the file being compiled), `function` (enclosing
+function, omitted at top level), `message` (in the active `NYX_LANG` language), `suggestion` (raw "did you
 mean" identifier, omitted when there is none). The position is that of the LAST token
 of the offending node — exact for single-line statements (the vast majority of
 diagnostics); for multi-line blocks it points at the closing token. Human-readable
-output carries the same position: `error in 'main' (line 4): ...`.
+output carries the same position: `error in 'main' (line 4): ...`. Inside an imported
+module it names the module too — `error [NYX1002] in 'helper' (src/util, line 12): ...`, and
+for parse errors `--> src/util, line 12:5` — since v0.44.1; until then both read `(line N)`
+and a line of `std/serve` looked like a line of your file. Codegen errors (`NYX2xxx`) and the
+opt-in borrow checker do not carry the module yet.
 
 Parse-phase codes (`phase:"parse"`, since v0.16-dev). The parser recovers and keeps
 reporting sibling statements (multi-error); after 20 errors it aborts with NYX0103.

@@ -1,0 +1,6 @@
+// aux de test-diag-nombra-modulo-semantico: un error SEMÁNTICO en la línea 5
+// de un módulo importado. El diagnóstico tiene que nombrar este módulo.
+pub fn aux_diag_mala() -> int {
+    let n: int = 1
+    return n + aux_diag_no_existe
+}

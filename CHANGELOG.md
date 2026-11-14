@@ -11,6 +11,13 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Changed
 
+- **Un diagnóstico dentro de un módulo importado nombra el módulo** (fricción de nyxerp 20261114-090003): los
+  errores y avisos del semántico pasan de «in 'f' (line 925)» a «in 'f' (std/serve, line 925)», y los de parse de
+  «--> line 3:10» a «--> src/util, line 3:10». Bajo `NYX_DIAG=json` llevan un campo `module`. En el archivo
+  principal el texto no cambia y el campo se omite: una línea sin módulo es siempre del archivo que se compila.
+  Quien lea el texto con una expresión regular sobre «(line N)» tiene que admitir el módulo delante. Los errores
+  de codegen (`NYX2xxx`) y el borrow checker opcional todavía no lo llevan. `make test-errors` 424 → 429.
+
 - **El playground corre sin el repo** (encargo de la sesión del servidor): `playground/server.nx` compilaba con
   `./nyx_bootstrap` y las fuentes del runtime del árbol, escribía `script.nx`/`script.ll` en la raíz del repo en
   cada petición —los archivos de trabajo de `make`: una petición en producción podía pisar una compilación de

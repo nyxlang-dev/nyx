@@ -1,0 +1,10 @@
+// Un error de PARSE dentro de un módulo importado nombra el módulo en la
+// línea de posición: «--> tests/support/aux_diag_modulo_parse, line 4:9».
+// Expected stdout (contains): "--> tests/support/aux_diag_modulo_parse, line 4:"
+// Expected exit: non-zero (parse fails)
+
+import "tests/support/aux_diag_modulo_parse"
+
+fn main() -> int {
+    return aux_diag_rota()
+}
