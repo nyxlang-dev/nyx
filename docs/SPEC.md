@@ -4641,7 +4641,10 @@ fn entry_point() { /* exported with custom name */ }
 
 `#[export_name("x")]` (or `#[export_name = "x"]`, the same thing) gives the function the C symbol
 `x`. Outside wasm the function keeps its Nyx name (Nyx code calls it as usual) and `x` is an
-external alias; under wasm the function is renamed to `x` and exported from the module. In `nyx build --shared` it also decides what the
+external alias; under wasm it keeps its Nyx name too and the module exports it as `x`
+(`instance.exports.x`). An exported function can therefore be called from Nyx on every target, from the
+main file or from an imported module (fixed after 0.44.0: it used to fail in clang when the two names
+differed under wasm, or matched outside it). In `nyx build --shared` it also decides what the
 library exports: the `.so` exports exactly those functions plus the runtime border (`nyx_lib_init`,
 `nyx_lib_enter`, `nyx_lib_set_fatal_handler`, `nyx_buf_free`); a version script keeps every other
 symbol local, `pub` ones included. The compiler emits a C wrapper per exported function

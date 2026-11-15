@@ -35,6 +35,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **Una función `#[export_name]` se puede llamar desde Nyx en todos los targets** (reporte de venezuelainfo,
+  2026-11-15): el compilador daba `check OK` y el fallo salía recién en clang, sin nombrar la función ni el
+  atributo. En wasm el `define` salía con el nombre de export y las llamadas con el de Nyx, así que fallaba
+  siempre que diferían — en un módulo importado, siempre, porque ahí la función se llama `<módulo>__<fn>`
+  (`use of undefined value '@mod__saluda'`). Fuera de wasm, si los dos nombres coincidían, el alias externo
+  redefinía el símbolo (`redefinition of function '@saluda'`). Ahora la función conserva su nombre de Nyx en
+  todos los targets: en wasm el nombre de export lo pone solo el atributo `wasm-export-name`, y en nativo, con
+  nombres iguales, la función sale externa sin alias. El mapa de cobertura deja de traducir el nombre.
+  Guarda: `run_export_name_matrix.sh` (principal/módulo × nativo/wasm, 4 celdas) en `make test-ai-first`.
+
 - **`let cerrar = fn() {...}` + `cerrar()` daba NYX1036 si otro módulo tenía una `fn cerrar` privada** (regresión de
   0.44.0, fricción de nyxerp 20261114-090003): el chequeo de visibilidad miraba el nombre de la llamada sin preguntar
   a qué resolvía, así que una closure local, una variable o un parámetro homónimos de una privada ajena cortaban la
