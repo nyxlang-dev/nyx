@@ -9,6 +9,65 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.45.0] — 2026-11-16
+
+### Added
+
+- **`std/ndarray`: arreglos numéricos de `float`** [arco: numerico]: `import "std/ndarray"` trae `NDArray`, un
+  arreglo de una o más dimensiones sobre un buffer contiguo que administra el recolector, con los kernels escritos
+  en Nyx. Constructores `nd_zeros`, `nd_ones`, `nd_full`, `nd_arange`, `nd_linspace`, `nd_from_array`,
+  `nd_from_rows`, `nd_eye`; forma y acceso (`shape`, `reshape`, `transpose`, `get`/`get2`, `set`/`set2`, `row`,
+  `col`, `slice`); `a + b`, `a - b`, `a * b`, `a / b` entre arreglos de la misma forma; `add_scalar`,
+  `mul_scalar`, `add_scaled` (en el lugar), `map`, `sqrt`, `abs`, `exp`, `log`; reducciones (`sum`, `mean`,
+  `min`, `max`, `argmin`, `argmax`, `std`, `sum_axis`, `mean_axis`); `dot`, `matmul`, `norm`. La API pública
+  valida límites y formas; un error de programa es `panic` con las formas en el mensaje, y `try_reshape` /
+  `try_nd_from_rows` devuelven `Result`. Lo que el lenguaje no deja escribir: `a[i, j]`, `2.0 * a` y `a * 2.0`
+  (el escalar va por método). Tests: `stdlib-suite/test-556` a `558`. `make test` 565 → 568.
+
+- **`alloc_gc<T>(n)` y `#[fast_math]`** [arco: numerico]: dos piezas para cómputo numérico sobre punteros crudos.
+  `alloc_gc<T>(n)` devuelve un `*T` como `alloc<T>(n)`, pero sobre memoria del recolector: no se libera a mano y
+  el recolector no la recorre (es para buffers de escalares; no viene en cero). `#[fast_math]` sobre una función
+  deja reordenar y fundir su aritmética de `float` (`reassoc contract` de LLVM; `NaN` e infinitos conservan su
+  significado), que es lo que hace falta para que una suma vectorice: sobre 2048 floats, 33 ms sin el atributo y
+  8 ms con él, lo mismo que C con `-ffast-math`. El resultado puede diferir en los últimos dígitos. Tests:
+  `systems/test-553`, `systems/test-554`, y un check más en `run_alloca_entry_audit.sh`. `make test` 562 → 564.
+
+- **`std/http`: `HttpStreamOpts.cuerpo_crudo` para reenviar una respuesta comprimida sin descomprimirla**
+  `[dogfooding:nyxerp]`: `try_http_stream_opts` cortaba con `Err(unsupported)` ante cualquier `Content-Encoding`,
+  así que un proxy escrito en Nyx tenía que pedir sin comprimir y comprimir él. Con `opts.cuerpo_crudo = true` la
+  respuesta se acepta, `read()` entrega los bytes como llegaron y `read_event()` es el que da `Err(unsupported)`.
+  `response_from_stream` (`std/serve`) copia ahora `Content-Encoding` y `Vary`, y conserva el `Content-Length` del
+  origen también en ese caso. Sin la opción nada cambia (el mensaje del error la nombra). Test 504, cuatro casos en
+  `test_serve_std_chunks.py`, `tests/ai-first/55` y receta 163.
+
+- **HTTP/2: el código Huffman de `{` estaba mal y mataba la conexión** [arco: gateway-http2] — la tabla de
+  HPACK tenía `{` con 19 bits en vez de 15, así que cualquier cabecera comprimida que lo llevara terminaba en
+  `GOAWAY COMPRESSION_ERROR`. Cloudflare manda `cf-visitor: {"scheme":"https"}` a todo origen: un sitio
+  detrás de Cloudflare con «HTTP/2 to Origin» daba 520 en cada petición. El test nuevo recorre los 255
+  símbolos contra un código reconstruido solo desde las longitudes (el código de HPACK es canónico).
+  Además, `NYX_H2_TRACE=1` escribe a stderr los frames y el motivo de cada rechazo (`docs/HTTP2.md`).
+- **Servidor HTTP/2 real: TLS con ALPN `h2`, control de flujo y respuestas por partes** [arco: gateway-http2]
+  (fricción de nyxerp): con HTTP/1.1 un navegador abre 6 conexiones por dominio y cada canal SSE ocupa una, así
+  que la séptima petición esperaba. `std/http2` se rehízo sobre un motor de conexión sin E/S en el runtime
+  (`nyx_h2c_*`): HPACK con tabla dinámica y Huffman —el decodificador anterior no tenía tabla dinámica y un
+  navegador real fallaba en la segunda petición—, control de flujo en los dos sentidos, `CONTINUATION`,
+  validación de cabeceras y topes contra rapid reset, inundación de `PING`/`SETTINGS`, cabeceras gigantes y
+  cuerpos sin límite. API nueva: `h2_serve_tls`, `h2_serve_tls_conn` y la sesión (`h2_session_new`, `h2_feed`,
+  `h2_next_event`, `h2_respond_start`, `h2_send_data`, `h2_end`, `h2_take_output`…). `h2_serve` conserva su
+  firma. Lo usa `nyx-proxy` 0.4.14 (`http2 = true`), encendido en el gateway de producción el 2026-11-13. Detalle y topes: `docs/HTTP2.md`.
+- **ALPN en el servidor TLS** (`std/tls`): `tls_server_alpn("h2,http/1.1")` y `tls_alpn(h)`. Apagado si no se
+  llama. `tls_wait_any(h, fds, ms)` espera a la vez una conexión TLS y varios descriptores.
+- **`thread_detach(tid)`** (`std/sync`): suelta un hilo que nadie va a esperar con `thread_join`; sin eso, cada
+  hilo terminado dejaba su pila reservada.
+- **Notación científica en literales float**: `1.5e3`, `2.0E-2`, `1e3`, `6.02e+23`. Antes daba `NYX1002`
+  («'e3' not declared»). Test `language/test-549`.
+- **Struct tupla completo**: `struct Point(int, int)` acepta varios campos, se construye con `Point(3, 4)` y se lee
+  con `p.0` además de `p._0`. La declaración aceptaba un solo tipo y el constructor no existía, aunque `docs/SPEC.md`
+  los describía. Aridad equivocada: `NYX1006`; llamar a un struct de campos con nombre: `NYX1007`. Test
+  `language/test-548`, receta 162.
+
 ### Changed
 
 - **Los bucles de Nyx vectorizan y un `let` dentro de un bucle va a registro** [arco: allocas-al-entry]: el
@@ -39,12 +98,6 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   trabaja en un directorio temporal por petición y lee `PORT` y `NYX_PLAYGROUND_DIR` del entorno. La lista de
   fuentes wasm sale de `runtime/wasm.srcs` (la copia del servidor había divergido). `make playground-dist
   DEST=<dir>` arma el directorio de versión. Guarda `make test-playground` (15 checks, también en `make test-wasm`).
-
-### Security
-
-- **El playground servía archivos fuera de `examples/` y `static/`**: `/api/example/<nombre>` y `/static/<ruta>`
-  pegaban el nombre del pedido a la ruta sin validarlo, así que `..` alcanzaba cualquier `.nx` (y cualquier
-  estático) legible por el proceso. Los nombres se validan ahora (sin `..`, solo letras, dígitos, `-`, `_`, `.`).
 
 ### Fixed
 
@@ -144,62 +197,11 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
   error directo. Tests: `test-nyx1010-interpolar-array`/`-map`, `test-nyx1010-concat-struct`,
   `codegen-interpolar-tupla` y `language/test-544` [dogfooding:landing].
 
----
+### Security
 
-### Added
-
-- **`std/ndarray`: arreglos numéricos de `float`** [arco: numerico]: `import "std/ndarray"` trae `NDArray`, un
-  arreglo de una o más dimensiones sobre un buffer contiguo que administra el recolector, con los kernels escritos
-  en Nyx. Constructores `nd_zeros`, `nd_ones`, `nd_full`, `nd_arange`, `nd_linspace`, `nd_from_array`,
-  `nd_from_rows`, `nd_eye`; forma y acceso (`shape`, `reshape`, `transpose`, `get`/`get2`, `set`/`set2`, `row`,
-  `col`, `slice`); `a + b`, `a - b`, `a * b`, `a / b` entre arreglos de la misma forma; `add_scalar`,
-  `mul_scalar`, `add_scaled` (en el lugar), `map`, `sqrt`, `abs`, `exp`, `log`; reducciones (`sum`, `mean`,
-  `min`, `max`, `argmin`, `argmax`, `std`, `sum_axis`, `mean_axis`); `dot`, `matmul`, `norm`. La API pública
-  valida límites y formas; un error de programa es `panic` con las formas en el mensaje, y `try_reshape` /
-  `try_nd_from_rows` devuelven `Result`. Lo que el lenguaje no deja escribir: `a[i, j]`, `2.0 * a` y `a * 2.0`
-  (el escalar va por método). Tests: `stdlib-suite/test-556` a `558`. `make test` 565 → 568.
-
-- **`alloc_gc<T>(n)` y `#[fast_math]`** [arco: numerico]: dos piezas para cómputo numérico sobre punteros crudos.
-  `alloc_gc<T>(n)` devuelve un `*T` como `alloc<T>(n)`, pero sobre memoria del recolector: no se libera a mano y
-  el recolector no la recorre (es para buffers de escalares; no viene en cero). `#[fast_math]` sobre una función
-  deja reordenar y fundir su aritmética de `float` (`reassoc contract` de LLVM; `NaN` e infinitos conservan su
-  significado), que es lo que hace falta para que una suma vectorice: sobre 2048 floats, 33 ms sin el atributo y
-  8 ms con él, lo mismo que C con `-ffast-math`. El resultado puede diferir en los últimos dígitos. Tests:
-  `systems/test-553`, `systems/test-554`, y un check más en `run_alloca_entry_audit.sh`. `make test` 562 → 564.
-
-- **`std/http`: `HttpStreamOpts.cuerpo_crudo` para reenviar una respuesta comprimida sin descomprimirla**
-  `[dogfooding:nyxerp]`: `try_http_stream_opts` cortaba con `Err(unsupported)` ante cualquier `Content-Encoding`,
-  así que un proxy escrito en Nyx tenía que pedir sin comprimir y comprimir él. Con `opts.cuerpo_crudo = true` la
-  respuesta se acepta, `read()` entrega los bytes como llegaron y `read_event()` es el que da `Err(unsupported)`.
-  `response_from_stream` (`std/serve`) copia ahora `Content-Encoding` y `Vary`, y conserva el `Content-Length` del
-  origen también en ese caso. Sin la opción nada cambia (el mensaje del error la nombra). Test 504, cuatro casos en
-  `test_serve_std_chunks.py`, `tests/ai-first/55` y receta 163.
-
-- **HTTP/2: el código Huffman de `{` estaba mal y mataba la conexión** [arco: gateway-http2] — la tabla de
-  HPACK tenía `{` con 19 bits en vez de 15, así que cualquier cabecera comprimida que lo llevara terminaba en
-  `GOAWAY COMPRESSION_ERROR`. Cloudflare manda `cf-visitor: {"scheme":"https"}` a todo origen: un sitio
-  detrás de Cloudflare con «HTTP/2 to Origin» daba 520 en cada petición. El test nuevo recorre los 255
-  símbolos contra un código reconstruido solo desde las longitudes (el código de HPACK es canónico).
-  Además, `NYX_H2_TRACE=1` escribe a stderr los frames y el motivo de cada rechazo (`docs/HTTP2.md`).
-- **Servidor HTTP/2 real: TLS con ALPN `h2`, control de flujo y respuestas por partes** [arco: gateway-http2]
-  (fricción de nyxerp): con HTTP/1.1 un navegador abre 6 conexiones por dominio y cada canal SSE ocupa una, así
-  que la séptima petición esperaba. `std/http2` se rehízo sobre un motor de conexión sin E/S en el runtime
-  (`nyx_h2c_*`): HPACK con tabla dinámica y Huffman —el decodificador anterior no tenía tabla dinámica y un
-  navegador real fallaba en la segunda petición—, control de flujo en los dos sentidos, `CONTINUATION`,
-  validación de cabeceras y topes contra rapid reset, inundación de `PING`/`SETTINGS`, cabeceras gigantes y
-  cuerpos sin límite. API nueva: `h2_serve_tls`, `h2_serve_tls_conn` y la sesión (`h2_session_new`, `h2_feed`,
-  `h2_next_event`, `h2_respond_start`, `h2_send_data`, `h2_end`, `h2_take_output`…). `h2_serve` conserva su
-  firma. Lo usa `nyx-proxy` 0.4.14 (`http2 = true`), encendido en el gateway de producción el 2026-11-13. Detalle y topes: `docs/HTTP2.md`.
-- **ALPN en el servidor TLS** (`std/tls`): `tls_server_alpn("h2,http/1.1")` y `tls_alpn(h)`. Apagado si no se
-  llama. `tls_wait_any(h, fds, ms)` espera a la vez una conexión TLS y varios descriptores.
-- **`thread_detach(tid)`** (`std/sync`): suelta un hilo que nadie va a esperar con `thread_join`; sin eso, cada
-  hilo terminado dejaba su pila reservada.
-- **Notación científica en literales float**: `1.5e3`, `2.0E-2`, `1e3`, `6.02e+23`. Antes daba `NYX1002`
-  («'e3' not declared»). Test `language/test-549`.
-- **Struct tupla completo**: `struct Point(int, int)` acepta varios campos, se construye con `Point(3, 4)` y se lee
-  con `p.0` además de `p._0`. La declaración aceptaba un solo tipo y el constructor no existía, aunque `docs/SPEC.md`
-  los describía. Aridad equivocada: `NYX1006`; llamar a un struct de campos con nombre: `NYX1007`. Test
-  `language/test-548`, receta 162.
+- **El playground servía archivos fuera de `examples/` y `static/`**: `/api/example/<nombre>` y `/static/<ruta>`
+  pegaban el nombre del pedido a la ruta sin validarlo, así que `..` alcanzaba cualquier `.nx` (y cualquier
+  estático) legible por el proceso. Los nombres se validan ahora (sin `..`, solo letras, dígitos, `-`, `_`, `.`).
 
 ## [0.44.0] — 2026-11-10
 

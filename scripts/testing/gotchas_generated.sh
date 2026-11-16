@@ -47,9 +47,9 @@ GOTCHA_IDS=(
   "mixed-primitive-operators"
   "string-escapes"
   "local-lambda-no-self-name"
-  "ndarray-release-build"
   "interpolation-uses-nyx-type"
   "narrow-int-arithmetic"
+  "ndarray-release-build"
   "fork-gc-child-exec"
   "global-struct-zeroinitializer"
   "prelude-frozen-snapshot"
@@ -60,8 +60,8 @@ GOTCHA_IDS=(
   "cross-compile-arch"
   "regex-windows-motor"
   "shared-lib-fatal-mata-app"
-  "ndarray-scalar-by-method"
   "serve-large-body-memory"
+  "ndarray-scalar-by-method"
   "implicit-monomorphization-nested"
   "and-or-short-circuit"
   "nested-arrays-work"
@@ -151,9 +151,9 @@ ANCLAS=(
   "NYX1010|mixed-primitive-operators"
   "NYX1045|string-escapes"
   "closures|local-lambda-no-self-name"
-  "--release|ndarray-release-build"
   "u8|interpolation-uses-nyx-type"
   "narrow|narrow-int-arithmetic"
+  "--release|ndarray-release-build"
 )
 
 MENTIRAS=(

@@ -12,6 +12,197 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.0] — 2026-11-16
+
+### Added
+
+- **`std/ndarray`: numeric arrays of `float`** [arco: numerico]: `import "std/ndarray"` brings `NDArray`, an array
+  of one or more dimensions over a contiguous buffer managed by the collector, with the kernels written in Nyx.
+  Constructors `nd_zeros`, `nd_ones`, `nd_full`, `nd_arange`, `nd_linspace`, `nd_from_array`, `nd_from_rows`,
+  `nd_eye`; shape and access (`shape`, `reshape`, `transpose`, `get`/`get2`, `set`/`set2`, `row`, `col`, `slice`);
+  `a + b`, `a - b`, `a * b`, `a / b` between arrays of the same shape; `add_scalar`, `mul_scalar`, `add_scaled`
+  (in place), `map`, `sqrt`, `abs`, `exp`, `log`; reductions (`sum`, `mean`, `min`, `max`, `argmin`, `argmax`,
+  `std`, `sum_axis`, `mean_axis`); `dot`, `matmul`, `norm`. The public API validates bounds and shapes; a program
+  error is a `panic` with the shapes in the message, and `try_reshape` / `try_nd_from_rows` return a `Result`. What
+  the language does not let you write: `a[i, j]`, `2.0 * a` and `a * 2.0` (the scalar goes through a method).
+  Tests: `stdlib-suite/test-556` to `558`. `make test` 565 → 568.
+
+- **`alloc_gc<T>(n)` and `#[fast_math]`** [arco: numerico]: two pieces for numeric computing over raw pointers.
+  `alloc_gc<T>(n)` returns a `*T` like `alloc<T>(n)`, but over collector memory: it is not freed by hand and the
+  collector does not scan it (it is meant for buffers of scalars; it does not come zeroed). `#[fast_math]` on a
+  function lets its `float` arithmetic be reordered and fused (LLVM's `reassoc contract`; `NaN` and infinities keep
+  their meaning), which is what a sum needs in order to vectorize: over 2048 floats, 33 ms without the attribute
+  and 8 ms with it, the same as C with `-ffast-math`. The result may differ in the last digits. Tests:
+  `systems/test-553`, `systems/test-554`, and one more check in `run_alloca_entry_audit.sh`. `make test` 562 → 564.
+
+- **`std/http`: `HttpStreamOpts.cuerpo_crudo` to forward a compressed response without decompressing it**
+  `[dogfooding:nyxerp]`: `try_http_stream_opts` stopped with `Err(unsupported)` on any `Content-Encoding`, so a
+  proxy written in Nyx had to request uncompressed and compress by itself. With `opts.cuerpo_crudo = true` the
+  response is accepted, `read()` hands over the bytes as they arrived and `read_event()` is the one that gives
+  `Err(unsupported)`. `response_from_stream` (`std/serve`) now copies `Content-Encoding` and `Vary`, and keeps the
+  origin's `Content-Length` in that case too. Without the option nothing changes (the error message names it).
+  Test 504, four cases in `test_serve_std_chunks.py`, `tests/ai-first/55` and recipe 163.
+
+- **HTTP/2: the Huffman code of `{` was wrong and killed the connection** [arco: gateway-http2] — the HPACK table
+  had `{` with 19 bits instead of 15, so any compressed header carrying it ended in `GOAWAY COMPRESSION_ERROR`.
+  Cloudflare sends `cf-visitor: {"scheme":"https"}` to every origin: a site behind Cloudflare with «HTTP/2 to
+  Origin» gave 520 on every request. The new test walks the 255 symbols against a code rebuilt from the lengths
+  alone (the HPACK code is canonical). Also, `NYX_H2_TRACE=1` writes the frames and the reason for each rejection
+  to stderr (`docs/HTTP2.md`).
+- **A real HTTP/2 server: TLS with ALPN `h2`, flow control and responses in parts** [arco: gateway-http2] (nyxerp
+  friction): with HTTP/1.1 a browser opens 6 connections per domain and each SSE channel takes one, so the seventh
+  request waited. `std/http2` was rebuilt on a connection engine without I/O in the runtime (`nyx_h2c_*`): HPACK
+  with dynamic table and Huffman —the previous decoder had no dynamic table and a real browser failed on the second
+  request—, flow control in both directions, `CONTINUATION`, header validation and caps against rapid reset,
+  `PING`/`SETTINGS` floods, giant headers and unbounded bodies. New API: `h2_serve_tls`, `h2_serve_tls_conn` and
+  the session (`h2_session_new`, `h2_feed`, `h2_next_event`, `h2_respond_start`, `h2_send_data`, `h2_end`,
+  `h2_take_output`…). `h2_serve` keeps its signature. Used by `nyx-proxy` 0.4.14 (`http2 = true`), turned on in the
+  production gateway on 2026-11-13. Details and caps: `docs/HTTP2.md`.
+- **ALPN in the TLS server** (`std/tls`): `tls_server_alpn("h2,http/1.1")` and `tls_alpn(h)`. Off unless called.
+  `tls_wait_any(h, fds, ms)` waits on a TLS connection and several descriptors at once.
+- **`thread_detach(tid)`** (`std/sync`): releases a thread nobody is going to wait for with `thread_join`; without
+  it, each finished thread left its stack reserved.
+- **Scientific notation in float literals**: `1.5e3`, `2.0E-2`, `1e3`, `6.02e+23`. It used to give `NYX1002`
+  («'e3' not declared»). Test `language/test-549`.
+- **Complete tuple struct**: `struct Point(int, int)` accepts several fields, is built with `Point(3, 4)` and is
+  read with `p.0` as well as `p._0`. The declaration accepted a single type and the constructor did not exist,
+  although `docs/SPEC.md` described them. Wrong arity: `NYX1006`; calling a struct with named fields: `NYX1007`.
+  Test `language/test-548`, recipe 162.
+
+### Changed
+
+- **Nyx loops vectorize and a `let` inside a loop goes to a register** [arco: allocas-al-entry]: the compiler
+  emitted each local variable where it appeared and, so that this would not overflow the stack in a loop, added a
+  call (`llvm.stackrestore`) at the start of each iteration. That call survived `-O2`, so no loop vectorized, and
+  the variable stayed in memory. Now every fixed-size local variable is emitted in the function's entry block and
+  the call is gone. Measured with `--release` over `*float` (Neoverse-N1): 512×512 matrix multiplication from 129
+  to 50 ms (C: 47), `y = k*x + y` over 2048 elements ×20 000 from 41 to 14 ms (C: 12). Program behavior does not
+  change. What does change is the IR text: temporaries go from `%12` to `%t12`. Spike and measurement programs:
+  `docs/design/spikes/2026-11-16-numerico-vectorizacion.md`, `scripts/bench_numerico/`. New guard
+  `run_alloca_entry_audit.sh` in `make test-ai-first`. The ceilings of `run_stack_frame_audit.sh` go up by
+  accounting (the reservation that was dynamic is now static); the real limit of a long expression with 8 MB
+  stayed the same without SROA (310 operands) and went up with SROA (2362 → 2478).
+
+- **A diagnostic inside an imported module names the module** (nyxerp friction 20261114-090003): semantic errors
+  and warnings go from «in 'f' (line 925)» to «in 'f' (std/serve, line 925)», and parse errors from «--> line
+  3:10» to «--> src/util, line 3:10». Under `NYX_DIAG=json` they carry a `module` field. In the main file the text
+  does not change and the field is omitted: a line without a module always belongs to the file being compiled.
+  Whoever reads the text with a regular expression over «(line N)» has to allow the module in front. Codegen
+  errors (`NYX2xxx`) and the optional borrow checker do not carry it yet. `make test-errors` 424 → 429.
+
+- **The playground runs without the repo** (request from the server session): `playground/server.nx` compiled with
+  `./nyx_bootstrap` and the runtime sources of the tree, wrote `script.nx`/`script.ll` at the repo root on every
+  request —the working files of `make`: a request in production could overwrite a development build— and used
+  fixed names in `/tmp`, so two requests at once overwrote each other. Now it compiles with an installed toolchain
+  (`NYX_PLAYGROUND_TOOLCHAIN`, `./toolchain` or `~/.nyx/active`, resolved on each request), works in a temporary
+  directory per request and reads `PORT` and `NYX_PLAYGROUND_DIR` from the environment. The list of wasm sources
+  comes from `runtime/wasm.srcs` (the server's copy had diverged). `make playground-dist DEST=<dir>` assembles the
+  version directory. Guard `make test-playground` (15 checks, also in `make test-wasm`).
+
+### Fixed
+
+- **The right operand of an overloaded operator is checked against the signature of the `impl`** [arco: numerico]:
+  `a * 3.0` against `impl Mul for W { fn mul(self, other: W) }` compiled and codegen passed a `float` to a function
+  that expects a `W`: garbage with exit code 0, or a segmentation fault if the struct carries a pointer (that is
+  how it showed up, with `NDArray + 2.0`). Now it is NYX1005: «operando derecho de '*': 'W' implementa 'Mul' con un
+  W, se obtuvo float». An `impl` that declares a scalar on the right (`fn mul(self, k: float)`) keeps working. Code
+  that compiles today with the wrong type on the right of an operator stops compiling; it was already broken at
+  run time. Tests: `errors/test-operador-rhs-tipo`, `errors/positive-operador-rhs-escalar`.
+
+- **`!=` between floats with a `NaN` gave `false`** [arco: numerico]: it was emitted as «ordered and different»
+  (`fcmp one`) instead of as the negation of `==` (`fcmp une`). `x != x` did not detect a `NaN` and `nan != 1.0`
+  said they were equal, with no warning. It was found by the agent writing the core of `std/ndarray`, on seeing
+  that a `NaN` printed as `0.000`. `==`, `<` and `>` were already correct. Whoever wrote `not (x == x)` to detect a
+  `NaN` can leave it that way. Test: `language/test-555`. `make test` 564 → 565.
+
+- **A `#[export_name]` function can be called from Nyx on every target** (venezuelainfo report, 2026-11-15): the
+  compiler said `check OK` and the failure only came out in clang, naming neither the function nor the attribute.
+  On wasm the `define` came out with the export name and the calls with the Nyx one, so it failed whenever they
+  differed — in an imported module, always, because there the function is called `<module>__<fn>`
+  (`use of undefined value '@mod__saluda'`). Outside wasm, if the two names matched, the external alias redefined
+  the symbol (`redefinition of function '@saluda'`). Now the function keeps its Nyx name on every target: on wasm
+  the export name is set only by the `wasm-export-name` attribute, and on native, with equal names, the function
+  comes out external with no alias. The coverage map no longer translates the name. Guard:
+  `run_export_name_matrix.sh` (main/module × native/wasm, 4 cells) in `make test-ai-first`.
+
+- **`let cerrar = fn() {...}` + `cerrar()` gave NYX1036 if another module had a private `fn cerrar`** (regression
+  of 0.44.0, nyxerp friction 20261114-090003): the visibility check looked at the name of the call without asking
+  what it resolved to, so a local closure, a variable or a parameter with the same name as someone else's private
+  function stopped the build. It arrived through `std/serve` (`response_file` has a local closure `cerrar`):
+  importing the module broke a project with its own private `fn cerrar`. Now it applies only when the name resolves
+  to a module function; the generated code already called the local closure. ai-first case 56 (55 → 56 programs)
+  and gotcha `local-closure-shadows-private`.
+
+- **HTTP header names are no longer case-sensitive** `[dogfooding:nyxerp]`: `http_find_header` compared the name
+  as is and `std/web` built `req.cookies` only if the header was called `Cookie`. A request with `cookie:` or
+  `content-type:` in lowercase —what a gateway forwards from HTTP/2, and several HTTP/1.1 clients— reached
+  `std/serve` with no session, no form and no `If-None-Match`; and a client read as missing the `content-length:`
+  of a server that answers in lowercase. All in silence. **Changes behavior**: `http_find_header(h, "Cookie")` now
+  finds `cookie` and `COOKIE`. Also the headers a handler writes (`content-type`, `location`) are no longer
+  duplicated with the ones `std/serve` adds. New `http_header_name_eq(a, b)`. Five cases in
+  `tests/integration/test_serve_std.py`.
+- **Narrow integers mixed with `int`, with another width or in comparisons**: `b + 1` with `b: u8`, `a * 2`,
+  `x == y` and `x < 5` with `i32`, `i16 + i32` and the bit operations emitted invalid IR that clang rejected
+  (`'%N' defined with type 'i8' but expected 'i64'`). Those combinations now widen both sides to `int` with the
+  sign of their Nyx type. What already compiled does not change (`i32 + i32` and `u8 + u8` stay in their width). A
+  narrow field accepts a literal (`S { b: 67 }` gave `inttoptr i64 67 to i8`). Test `language/test-547`; gotcha
+  `narrow-int-arithmetic`.
+- **Even fixed-width arithmetic for the six narrow integers**: two operands of the same type operate in their
+  width in `+ - * / %`. Before, `u32 / u32` and `u16 % u16` used signed division (`4000000000 / 3` gave a
+  negative), two `u8` only wrapped with `+` (`*`, `-`, `/` and `%` gave `int`), and `i8 - i8` widened without sign
+  (`-5 - 3` gave `248`). Storing a narrow value in an `int` (`let n: int = i - j`, `total = u`) widens it with the
+  sign of its type. **Changes behavior**: `u8 * u8` and `u8 - u8` no longer give `int`. Test `language/test-551`.
+- **`Result`/`Option` methods on the result of a call**: `f().unwrap()`, `obj.m().is_ok()` and the rest
+  (`unwrap_or`, `map`, `and_then`…) gave `NYX2002` and forced binding the receiver. An `Err` with a user struct or
+  enum as its error now names its type: `called unwrap() on Err (MiError)`. Test `language/test-552`.
+- **Line-buffered `print` on Windows too**: the CRT has no line mode, so when stdout is not a console each `print`
+  flushes the buffer.
+- **The text of a `u8` field and of an unannotated narrow `let`**: `"${s.b}"` and `s.b.to_string()` with
+  `b: u8 = 67` gave `C`, and `let x = 200u8` was registered as `char`. They now use the type of the field, of the
+  literal's suffix or of the function's return [arco: texto-por-tipo].
+- **A tuple index that does not exist is error `NYX2024`**: `let t = (1, 2)` and `t.5` compiled and was worth `0`
+  (codegen printed a line and went on). The ratchet of silent codegen prints goes down from 6 to 5.
+- **`unwrap()` on an `Err` shows the error**: `panic: called unwrap() on Err: io: mala (code 3)` for the `Error` of
+  `std/error` (or a struct with `kind`, `msg` and `code`) and `…on Err: <text>` for a `String` or an `int`. Before,
+  the message was fixed and the real error was lost; inside a `try`, the `catch` receives the same text.
+- **`print` arrives line by line even if stdout is a pipe or a file**: the runtime puts stdout in line mode at
+  startup. A server under a supervisor showed nothing until it finished.
+- **Trailing comma in a struct literal**: `P { a: 1, b: 2, }` (on one or several lines, with or without generics)
+  gave `NYX0101`. Test `language/test-550`.
+
+- **`push` tags the integer of an unannotated variable**: `var a: Array = []`, `var x = 3`, `a.push(x)` left the
+  slot without a type tag and `a.join(",")` died with SIGSEGV (the `join` fix of that same day only covered
+  literals and typed Arrays). An unannotated `let`/`var` now counts as an integer if it starts from an integer
+  literal and the function does not reassign it with something other than arithmetic; also the accumulator
+  `total = total + i`. New cases in `language/test-545` [arco: texto-por-tipo].
+- **`nyx edit` and `nyx shell` survive an install**: the companion binaries live in the `bin` of the active version
+  of `~/.nyx`, and each new version (`make install-local`, `nyx update`, `install.sh`) was born with its `bin`
+  lacking them, so they stopped working after every update. Now the new version inherits every executable of the
+  active `bin` that it does not bring itself (`nyx_tc_heredar_companeros`). New case in `make test-toolchain`.
+- **`arr.join(sep)` converts each slot by its tag**: `[1, 2, 3].join(", ")` compiled and died with SIGSEGV because
+  `join` treated every slot as a pointer to String. Now int, float and bool come out as with `to_string()`, String
+  as before, and a slot holding an Array or a Map aborts with «join() — el slot N del Array contiene un Array, que
+  no tiene conversión a String». Limit: an Array with no element type holding untagged integers is still read as
+  String. Tests: `language/test-545`, `errors/join-slot-array-abort`. [arco: texto-por-tipo]
+- **Interpolation and `String + x` use the Nyx type of the operand**: before, they only saw the LLVM type, where
+  `u8` and `char` are the same `i8`. **Behavior change**: `"${b}"` with `b: u8 = 65` goes from `A` to `65`; whoever
+  wants the character uses a `char` variable. Also `u16`/`u32` come out unsigned and a literal `"${'z'}"` gives `z`
+  (it was `122`). A `char` still gives the character. Test: `language/test-546`. [arco: texto-por-tipo]
+- **Interpolating or concatenating a value with no conversion to text no longer reaches clang**: `"xs = ${xs}"`
+  with an `Array` (or a `Map`, a struct, a tuple) passed `nyx check` and failed at link time with «'%N' defined
+  with type 'ptr' but expected 'i64'». Now it is `NYX1010` in `nyx check`, with the hint to walk it or interpolate
+  its parts, and `NYX2023` in codegen for what semantic does not type (tuples, unannotated code). Along the way,
+  `i16`, `i32` and `f32` —which fell in the same branch and did not compile either— interpolate and concatenate
+  with their value. It never produced a binary, so it is a direct error. Tests:
+  `test-nyx1010-interpolar-array`/`-map`, `test-nyx1010-concat-struct`, `codegen-interpolar-tupla` and
+  `language/test-544` [dogfooding:landing].
+
+### Security
+
+- **The playground served files outside `examples/` and `static/`**: `/api/example/<name>` and `/static/<path>`
+  glued the requested name to the path without validating it, so `..` reached any `.nx` (and any static file)
+  readable by the process. Names are now validated (no `..`, only letters, digits, `-`, `_`, `.`).
+
 ## [0.44.0] — 2026-11-10
 
 ### Added

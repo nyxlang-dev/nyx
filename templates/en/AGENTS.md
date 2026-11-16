@@ -64,7 +64,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,ndarray-copy-shares-buffer,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,ndarray-release-build,interpolation-uses-nyx-type,narrow-int-arithmetic -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,ndarray-copy-shares-buffer,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,interpolation-uses-nyx-type,narrow-int-arithmetic,ndarray-release-build -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`**
 2. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
@@ -124,9 +124,9 @@ WHICH clock.**
 36. **Operators between primitives of different kinds are NYX1010**
 37. **String escapes: `\xNN` and `\u{…}` exist since 0.37.0; any other unknown escape is NYX1045.**
 38. **A local `let` is visible from its own line on, not in its own value: a local lambda cannot call itself by name — write a nested `fn`.**
-39. **Build numeric code with `nyx build --release`: without it nothing is optimized and `std/ndarray` loops run 4 to 15 times slower.**
-40. **Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `"${b}"` with `b: u8 = 65` is `65`, not `A`.**
-41. **Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.**
+39. **Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `"${b}"` with `b: u8 = 65` is `65`, not `A`.**
+40. **Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.**
+41. **Build numeric code with `nyx build --release`: without it nothing is optimized and `std/ndarray` loops run 4 to 15 times slower.**
 
 <!-- /gen:gotchas -->
 

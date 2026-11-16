@@ -211,7 +211,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str103.c = internal global %nyx_string* null
 @.str104 = private unnamed_addr constant [13 x i8] c"silent-wrong\00"
 @.str104.c = internal global %nyx_string* null
-@.str105 = private unnamed_addr constant [7 x i8] c"0.44.0\00"
+@.str105 = private unnamed_addr constant [7 x i8] c"0.45.0\00"
 @.str105.c = internal global %nyx_string* null
 @.str106 = private unnamed_addr constant [1 x i8] c"\00"
 @.str106.c = internal global %nyx_string* null
@@ -925,13 +925,13 @@ target triple = "x86_64-pc-linux-gnu"
 @.str460.c = internal global %nyx_string* null
 @.str461 = private unnamed_addr constant [145 x i8] c"Un `let` local es visible desde su línea, no en su propio valor: una lambda local no puede llamarse por su nombre — escribe una `fn` anidada.\00"
 @.str461.c = internal global %nyx_string* null
-@.str462 = private unnamed_addr constant [22 x i8] c"ndarray-release-build\00"
+@.str462 = private unnamed_addr constant [28 x i8] c"interpolation-uses-nyx-type\00"
 @.str462.c = internal global %nyx_string* null
 @.str463 = private unnamed_addr constant [5 x i8] c"rule\00"
 @.str463.c = internal global %nyx_string* null
-@.str464 = private unnamed_addr constant [4 x i8] c"n/a\00"
+@.str464 = private unnamed_addr constant [13 x i8] c"silent-wrong\00"
 @.str464.c = internal global %nyx_string* null
-@.str465 = private unnamed_addr constant [7 x i8] c"0.44.0\00"
+@.str465 = private unnamed_addr constant [7 x i8] c"0.44.1\00"
 @.str465.c = internal global %nyx_string* null
 @.str466 = private unnamed_addr constant [1 x i8] c"\00"
 @.str466.c = internal global %nyx_string* null
@@ -939,17 +939,17 @@ target triple = "x86_64-pc-linux-gnu"
 @.str467.c = internal global %nyx_string* null
 @.str468 = private unnamed_addr constant [1 x i8] c"\00"
 @.str468.c = internal global %nyx_string* null
-@.str469 = private unnamed_addr constant [10 x i8] c"--release\00"
+@.str469 = private unnamed_addr constant [3 x i8] c"u8\00"
 @.str469.c = internal global %nyx_string* null
 @.str470 = private unnamed_addr constant [1 x i8] c"\00"
 @.str470.c = internal global %nyx_string* null
-@.str471 = private unnamed_addr constant [36 x i8] c"tests/ai-first/57-ndarray-basico.nx\00"
+@.str471 = private unnamed_addr constant [109 x i8] c"tests/compiler/language/test-546-interpolar-por-tipo-nyx.nx,tests/compiler/language/test-545-join-por-tag.nx\00"
 @.str471.c = internal global %nyx_string* null
-@.str472 = private unnamed_addr constant [129 x i8] c"Build numeric code with `nyx build --release`: without it nothing is optimized and `std/ndarray` loops run 4 to 15 times slower.\00"
+@.str472 = private unnamed_addr constant [122 x i8] c"Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `\22${b}\22` with `b: u8 = 65` is `65`, not `A`.\00"
 @.str472.c = internal global %nyx_string* null
-@.str473 = private unnamed_addr constant [149 x i8] c"Compila el código numérico con `nyx build --release`: sin eso no se optimiza nada y los bucles de `std/ndarray` van entre 4 y 15 veces más lento.\00"
+@.str473 = private unnamed_addr constant [114 x i8] c"Interpolar un `u8` o un `i8` da el NÚMERO, un `char` da el carácter: `\22${b}\22` con `b: u8 = 65` es `65`, no `A`.\00"
 @.str473.c = internal global %nyx_string* null
-@.str474 = private unnamed_addr constant [28 x i8] c"interpolation-uses-nyx-type\00"
+@.str474 = private unnamed_addr constant [22 x i8] c"narrow-int-arithmetic\00"
 @.str474.c = internal global %nyx_string* null
 @.str475 = private unnamed_addr constant [5 x i8] c"rule\00"
 @.str475.c = internal global %nyx_string* null
@@ -963,23 +963,23 @@ target triple = "x86_64-pc-linux-gnu"
 @.str479.c = internal global %nyx_string* null
 @.str480 = private unnamed_addr constant [1 x i8] c"\00"
 @.str480.c = internal global %nyx_string* null
-@.str481 = private unnamed_addr constant [3 x i8] c"u8\00"
+@.str481 = private unnamed_addr constant [7 x i8] c"narrow\00"
 @.str481.c = internal global %nyx_string* null
 @.str482 = private unnamed_addr constant [1 x i8] c"\00"
 @.str482.c = internal global %nyx_string* null
-@.str483 = private unnamed_addr constant [109 x i8] c"tests/compiler/language/test-546-interpolar-por-tipo-nyx.nx,tests/compiler/language/test-545-join-por-tag.nx\00"
+@.str483 = private unnamed_addr constant [56 x i8] c"tests/compiler/language/test-551-angostos-ancho-fijo.nx\00"
 @.str483.c = internal global %nyx_string* null
-@.str484 = private unnamed_addr constant [122 x i8] c"Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `\22${b}\22` with `b: u8 = 65` is `65`, not `A`.\00"
+@.str484 = private unnamed_addr constant [208 x i8] c"Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.\00"
 @.str484.c = internal global %nyx_string* null
-@.str485 = private unnamed_addr constant [114 x i8] c"Interpolar un `u8` o un `i8` da el NÚMERO, un `char` da el carácter: `\22${b}\22` con `b: u8 = 65` es `65`, no `A`.\00"
+@.str485 = private unnamed_addr constant [205 x i8] c"La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44, 200 * 100 da 32); mezclar un entero angosto con un `int` o con otro ancho da un `int`.\00"
 @.str485.c = internal global %nyx_string* null
-@.str486 = private unnamed_addr constant [22 x i8] c"narrow-int-arithmetic\00"
+@.str486 = private unnamed_addr constant [22 x i8] c"ndarray-release-build\00"
 @.str486.c = internal global %nyx_string* null
 @.str487 = private unnamed_addr constant [5 x i8] c"rule\00"
 @.str487.c = internal global %nyx_string* null
-@.str488 = private unnamed_addr constant [13 x i8] c"silent-wrong\00"
+@.str488 = private unnamed_addr constant [4 x i8] c"n/a\00"
 @.str488.c = internal global %nyx_string* null
-@.str489 = private unnamed_addr constant [7 x i8] c"0.44.1\00"
+@.str489 = private unnamed_addr constant [7 x i8] c"0.45.0\00"
 @.str489.c = internal global %nyx_string* null
 @.str490 = private unnamed_addr constant [1 x i8] c"\00"
 @.str490.c = internal global %nyx_string* null
@@ -987,15 +987,15 @@ target triple = "x86_64-pc-linux-gnu"
 @.str491.c = internal global %nyx_string* null
 @.str492 = private unnamed_addr constant [1 x i8] c"\00"
 @.str492.c = internal global %nyx_string* null
-@.str493 = private unnamed_addr constant [7 x i8] c"narrow\00"
+@.str493 = private unnamed_addr constant [10 x i8] c"--release\00"
 @.str493.c = internal global %nyx_string* null
 @.str494 = private unnamed_addr constant [1 x i8] c"\00"
 @.str494.c = internal global %nyx_string* null
-@.str495 = private unnamed_addr constant [56 x i8] c"tests/compiler/language/test-551-angostos-ancho-fijo.nx\00"
+@.str495 = private unnamed_addr constant [36 x i8] c"tests/ai-first/57-ndarray-basico.nx\00"
 @.str495.c = internal global %nyx_string* null
-@.str496 = private unnamed_addr constant [208 x i8] c"Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.\00"
+@.str496 = private unnamed_addr constant [129 x i8] c"Build numeric code with `nyx build --release`: without it nothing is optimized and `std/ndarray` loops run 4 to 15 times slower.\00"
 @.str496.c = internal global %nyx_string* null
-@.str497 = private unnamed_addr constant [205 x i8] c"La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44, 200 * 100 da 32); mezclar un entero angosto con un `int` o con otro ancho da un `int`.\00"
+@.str497 = private unnamed_addr constant [149 x i8] c"Compila el código numérico con `nyx build --release`: sin eso no se optimiza nada y los bucles de `std/ndarray` van entre 4 y 15 veces más lento.\00"
 @.str497.c = internal global %nyx_string* null
 @.str498 = private unnamed_addr constant [19 x i8] c"fork-gc-child-exec\00"
 @.str498.c = internal global %nyx_string* null
@@ -1237,7 +1237,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str616.c = internal global %nyx_string* null
 @.str617 = private unnamed_addr constant [166 x i8] c"En una `.so` armada con `nyx build --shared`, un `assert` fallido, un `panic`, la falta de memoria o un NYX2022 matan la app anfitriona entera: no hay recuperación.\00"
 @.str617.c = internal global %nyx_string* null
-@.str618 = private unnamed_addr constant [25 x i8] c"ndarray-scalar-by-method\00"
+@.str618 = private unnamed_addr constant [24 x i8] c"serve-large-body-memory\00"
 @.str618.c = internal global %nyx_string* null
 @.str619 = private unnamed_addr constant [6 x i8] c"limit\00"
 @.str619.c = internal global %nyx_string* null
@@ -1251,23 +1251,23 @@ target triple = "x86_64-pc-linux-gnu"
 @.str623.c = internal global %nyx_string* null
 @.str624 = private unnamed_addr constant [1 x i8] c"\00"
 @.str624.c = internal global %nyx_string* null
-@.str625 = private unnamed_addr constant [11 x i8] c"add_scalar\00"
+@.str625 = private unnamed_addr constant [1 x i8] c"\00"
 @.str625.c = internal global %nyx_string* null
 @.str626 = private unnamed_addr constant [1 x i8] c"\00"
 @.str626.c = internal global %nyx_string* null
-@.str627 = private unnamed_addr constant [36 x i8] c"tests/ai-first/57-ndarray-basico.nx\00"
+@.str627 = private unnamed_addr constant [170 x i8] c"tests/integration/test_serve_std_keepalive.py,tests/integration/test_serve_std_chunks.py,tests/integration/test_serve_std_idle_release.py,tests/ai-first/54-gc-release.nx\00"
 @.str627.c = internal global %nyx_string* null
-@.str628 = private unnamed_addr constant [115 x i8] c"`std/ndarray`: the scalar goes by method (`a.add_scalar(2.0)`, `a.mul_scalar(2.0)`), never as an operator operand.\00"
+@.str628 = private unnamed_addr constant [290 x i8] c"A `std/serve` handler that returns a large body as one `String` keeps all of it in memory, and the memory a large body needed does not go back to the system: a long-lived server stays at its peak. Answer big bodies with `response_from_stream`, `response_file` or `response_chunks` instead.\00"
 @.str628.c = internal global %nyx_string* null
-@.str629 = private unnamed_addr constant [121 x i8] c"`std/ndarray`: el escalar va por método (`a.add_scalar(2.0)`, `a.mul_scalar(2.0)`), nunca como operando de un operador.\00"
+@.str629 = private unnamed_addr constant [308 x i8] c"Un handler de `std/serve` que devuelve un cuerpo grande como un solo `String` lo tiene entero en memoria, y la memoria que pidió ese cuerpo no vuelve al sistema: un servidor de larga vida se queda en su pico. Los cuerpos grandes se responden con `response_from_stream`, `response_file` o `response_chunks`.\00"
 @.str629.c = internal global %nyx_string* null
-@.str630 = private unnamed_addr constant [24 x i8] c"serve-large-body-memory\00"
+@.str630 = private unnamed_addr constant [25 x i8] c"ndarray-scalar-by-method\00"
 @.str630.c = internal global %nyx_string* null
 @.str631 = private unnamed_addr constant [6 x i8] c"limit\00"
 @.str631.c = internal global %nyx_string* null
 @.str632 = private unnamed_addr constant [5 x i8] c"loud\00"
 @.str632.c = internal global %nyx_string* null
-@.str633 = private unnamed_addr constant [7 x i8] c"0.44.0\00"
+@.str633 = private unnamed_addr constant [7 x i8] c"0.45.0\00"
 @.str633.c = internal global %nyx_string* null
 @.str634 = private unnamed_addr constant [1 x i8] c"\00"
 @.str634.c = internal global %nyx_string* null
@@ -1275,15 +1275,15 @@ target triple = "x86_64-pc-linux-gnu"
 @.str635.c = internal global %nyx_string* null
 @.str636 = private unnamed_addr constant [1 x i8] c"\00"
 @.str636.c = internal global %nyx_string* null
-@.str637 = private unnamed_addr constant [1 x i8] c"\00"
+@.str637 = private unnamed_addr constant [11 x i8] c"add_scalar\00"
 @.str637.c = internal global %nyx_string* null
 @.str638 = private unnamed_addr constant [1 x i8] c"\00"
 @.str638.c = internal global %nyx_string* null
-@.str639 = private unnamed_addr constant [170 x i8] c"tests/integration/test_serve_std_keepalive.py,tests/integration/test_serve_std_chunks.py,tests/integration/test_serve_std_idle_release.py,tests/ai-first/54-gc-release.nx\00"
+@.str639 = private unnamed_addr constant [36 x i8] c"tests/ai-first/57-ndarray-basico.nx\00"
 @.str639.c = internal global %nyx_string* null
-@.str640 = private unnamed_addr constant [290 x i8] c"A `std/serve` handler that returns a large body as one `String` keeps all of it in memory, and the memory a large body needed does not go back to the system: a long-lived server stays at its peak. Answer big bodies with `response_from_stream`, `response_file` or `response_chunks` instead.\00"
+@.str640 = private unnamed_addr constant [115 x i8] c"`std/ndarray`: the scalar goes by method (`a.add_scalar(2.0)`, `a.mul_scalar(2.0)`), never as an operator operand.\00"
 @.str640.c = internal global %nyx_string* null
-@.str641 = private unnamed_addr constant [308 x i8] c"Un handler de `std/serve` que devuelve un cuerpo grande como un solo `String` lo tiene entero en memoria, y la memoria que pidió ese cuerpo no vuelve al sistema: un servidor de larga vida se queda en su pico. Los cuerpos grandes se responden con `response_from_stream`, `response_file` o `response_chunks`.\00"
+@.str641 = private unnamed_addr constant [121 x i8] c"`std/ndarray`: el escalar va por método (`a.add_scalar(2.0)`, `a.mul_scalar(2.0)`), nunca como operando de un operador.\00"
 @.str641.c = internal global %nyx_string* null
 @.str642 = private unnamed_addr constant [33 x i8] c"implicit-monomorphization-nested\00"
 @.str642.c = internal global %nyx_string* null
@@ -4938,16 +4938,16 @@ define { i64, i8* }* @gotchas_table(
   call void @nyx_array_push_tagged({ i64, i8* }* %t1530, i64 %t1568, i64 5)
   %t1569 = load { i64, i8* }*, { i64, i8* }** %t86
   %t1570 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t1571 = getelementptr [22 x i8], [22 x i8]* @.str462, i32 0, i32 0
-  %t1572 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str462.c, i8* %t1571, i64 21)
+  %t1571 = getelementptr [28 x i8], [28 x i8]* @.str462, i32 0, i32 0
+  %t1572 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str462.c, i8* %t1571, i64 27)
   %t1573 = ptrtoint %nyx_string* %t1572 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1573, i64 2)
   %t1574 = getelementptr [5 x i8], [5 x i8]* @.str463, i32 0, i32 0
   %t1575 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str463.c, i8* %t1574, i64 4)
   %t1576 = ptrtoint %nyx_string* %t1575 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1576, i64 2)
-  %t1577 = getelementptr [4 x i8], [4 x i8]* @.str464, i32 0, i32 0
-  %t1578 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str464.c, i8* %t1577, i64 3)
+  %t1577 = getelementptr [13 x i8], [13 x i8]* @.str464, i32 0, i32 0
+  %t1578 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str464.c, i8* %t1577, i64 12)
   %t1579 = ptrtoint %nyx_string* %t1578 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1579, i64 2)
   %t1580 = getelementptr [7 x i8], [7 x i8]* @.str465, i32 0, i32 0
@@ -4966,32 +4966,32 @@ define { i64, i8* }* @gotchas_table(
   %t1590 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str468.c, i8* %t1589, i64 0)
   %t1591 = ptrtoint %nyx_string* %t1590 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1591, i64 2)
-  %t1592 = getelementptr [10 x i8], [10 x i8]* @.str469, i32 0, i32 0
-  %t1593 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str469.c, i8* %t1592, i64 9)
+  %t1592 = getelementptr [3 x i8], [3 x i8]* @.str469, i32 0, i32 0
+  %t1593 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str469.c, i8* %t1592, i64 2)
   %t1594 = ptrtoint %nyx_string* %t1593 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1594, i64 2)
   %t1595 = getelementptr [1 x i8], [1 x i8]* @.str470, i32 0, i32 0
   %t1596 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str470.c, i8* %t1595, i64 0)
   %t1597 = ptrtoint %nyx_string* %t1596 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1597, i64 2)
-  %t1598 = getelementptr [36 x i8], [36 x i8]* @.str471, i32 0, i32 0
-  %t1599 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str471.c, i8* %t1598, i64 35)
+  %t1598 = getelementptr [109 x i8], [109 x i8]* @.str471, i32 0, i32 0
+  %t1599 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str471.c, i8* %t1598, i64 108)
   %t1600 = ptrtoint %nyx_string* %t1599 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1600, i64 2)
-  %t1601 = getelementptr [129 x i8], [129 x i8]* @.str472, i32 0, i32 0
-  %t1602 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str472.c, i8* %t1601, i64 128)
+  %t1601 = getelementptr [122 x i8], [122 x i8]* @.str472, i32 0, i32 0
+  %t1602 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str472.c, i8* %t1601, i64 121)
   %t1603 = ptrtoint %nyx_string* %t1602 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1603, i64 2)
-  %t1604 = getelementptr [149 x i8], [149 x i8]* @.str473, i32 0, i32 0
-  %t1605 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str473.c, i8* %t1604, i64 148)
+  %t1604 = getelementptr [114 x i8], [114 x i8]* @.str473, i32 0, i32 0
+  %t1605 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str473.c, i8* %t1604, i64 113)
   %t1606 = ptrtoint %nyx_string* %t1605 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1570, i64 %t1606, i64 2)
   %t1607 = ptrtoint { i64, i8* }* %t1570 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1569, i64 %t1607, i64 5)
   %t1608 = load { i64, i8* }*, { i64, i8* }** %t86
   %t1609 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t1610 = getelementptr [28 x i8], [28 x i8]* @.str474, i32 0, i32 0
-  %t1611 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str474.c, i8* %t1610, i64 27)
+  %t1610 = getelementptr [22 x i8], [22 x i8]* @.str474, i32 0, i32 0
+  %t1611 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str474.c, i8* %t1610, i64 21)
   %t1612 = ptrtoint %nyx_string* %t1611 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1609, i64 %t1612, i64 2)
   %t1613 = getelementptr [5 x i8], [5 x i8]* @.str475, i32 0, i32 0
@@ -5018,24 +5018,24 @@ define { i64, i8* }* @gotchas_table(
   %t1629 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str480.c, i8* %t1628, i64 0)
   %t1630 = ptrtoint %nyx_string* %t1629 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1609, i64 %t1630, i64 2)
-  %t1631 = getelementptr [3 x i8], [3 x i8]* @.str481, i32 0, i32 0
-  %t1632 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str481.c, i8* %t1631, i64 2)
+  %t1631 = getelementptr [7 x i8], [7 x i8]* @.str481, i32 0, i32 0
+  %t1632 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str481.c, i8* %t1631, i64 6)
   %t1633 = ptrtoint %nyx_string* %t1632 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1609, i64 %t1633, i64 2)
   %t1634 = getelementptr [1 x i8], [1 x i8]* @.str482, i32 0, i32 0
   %t1635 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str482.c, i8* %t1634, i64 0)
   %t1636 = ptrtoint %nyx_string* %t1635 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1609, i64 %t1636, i64 2)
-  %t1637 = getelementptr [109 x i8], [109 x i8]* @.str483, i32 0, i32 0
-  %t1638 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str483.c, i8* %t1637, i64 108)
+  %t1637 = getelementptr [56 x i8], [56 x i8]* @.str483, i32 0, i32 0
+  %t1638 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str483.c, i8* %t1637, i64 55)
   %t1639 = ptrtoint %nyx_string* %t1638 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1609, i64 %t1639, i64 2)
-  %t1640 = getelementptr [122 x i8], [122 x i8]* @.str484, i32 0, i32 0
-  %t1641 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str484.c, i8* %t1640, i64 121)
+  %t1640 = getelementptr [208 x i8], [208 x i8]* @.str484, i32 0, i32 0
+  %t1641 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str484.c, i8* %t1640, i64 207)
   %t1642 = ptrtoint %nyx_string* %t1641 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1609, i64 %t1642, i64 2)
-  %t1643 = getelementptr [114 x i8], [114 x i8]* @.str485, i32 0, i32 0
-  %t1644 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str485.c, i8* %t1643, i64 113)
+  %t1643 = getelementptr [205 x i8], [205 x i8]* @.str485, i32 0, i32 0
+  %t1644 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str485.c, i8* %t1643, i64 204)
   %t1645 = ptrtoint %nyx_string* %t1644 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1609, i64 %t1645, i64 2)
   %t1646 = ptrtoint { i64, i8* }* %t1609 to i64
@@ -5050,8 +5050,8 @@ define { i64, i8* }* @gotchas_table(
   %t1653 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str487.c, i8* %t1652, i64 4)
   %t1654 = ptrtoint %nyx_string* %t1653 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1654, i64 2)
-  %t1655 = getelementptr [13 x i8], [13 x i8]* @.str488, i32 0, i32 0
-  %t1656 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str488.c, i8* %t1655, i64 12)
+  %t1655 = getelementptr [4 x i8], [4 x i8]* @.str488, i32 0, i32 0
+  %t1656 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str488.c, i8* %t1655, i64 3)
   %t1657 = ptrtoint %nyx_string* %t1656 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1657, i64 2)
   %t1658 = getelementptr [7 x i8], [7 x i8]* @.str489, i32 0, i32 0
@@ -5070,24 +5070,24 @@ define { i64, i8* }* @gotchas_table(
   %t1668 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str492.c, i8* %t1667, i64 0)
   %t1669 = ptrtoint %nyx_string* %t1668 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1669, i64 2)
-  %t1670 = getelementptr [7 x i8], [7 x i8]* @.str493, i32 0, i32 0
-  %t1671 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str493.c, i8* %t1670, i64 6)
+  %t1670 = getelementptr [10 x i8], [10 x i8]* @.str493, i32 0, i32 0
+  %t1671 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str493.c, i8* %t1670, i64 9)
   %t1672 = ptrtoint %nyx_string* %t1671 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1672, i64 2)
   %t1673 = getelementptr [1 x i8], [1 x i8]* @.str494, i32 0, i32 0
   %t1674 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str494.c, i8* %t1673, i64 0)
   %t1675 = ptrtoint %nyx_string* %t1674 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1675, i64 2)
-  %t1676 = getelementptr [56 x i8], [56 x i8]* @.str495, i32 0, i32 0
-  %t1677 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str495.c, i8* %t1676, i64 55)
+  %t1676 = getelementptr [36 x i8], [36 x i8]* @.str495, i32 0, i32 0
+  %t1677 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str495.c, i8* %t1676, i64 35)
   %t1678 = ptrtoint %nyx_string* %t1677 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1678, i64 2)
-  %t1679 = getelementptr [208 x i8], [208 x i8]* @.str496, i32 0, i32 0
-  %t1680 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str496.c, i8* %t1679, i64 207)
+  %t1679 = getelementptr [129 x i8], [129 x i8]* @.str496, i32 0, i32 0
+  %t1680 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str496.c, i8* %t1679, i64 128)
   %t1681 = ptrtoint %nyx_string* %t1680 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1681, i64 2)
-  %t1682 = getelementptr [205 x i8], [205 x i8]* @.str497, i32 0, i32 0
-  %t1683 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str497.c, i8* %t1682, i64 204)
+  %t1682 = getelementptr [149 x i8], [149 x i8]* @.str497, i32 0, i32 0
+  %t1683 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str497.c, i8* %t1682, i64 148)
   %t1684 = ptrtoint %nyx_string* %t1683 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t1648, i64 %t1684, i64 2)
   %t1685 = ptrtoint { i64, i8* }* %t1648 to i64
@@ -5614,8 +5614,8 @@ define { i64, i8* }* @gotchas_table(
   call void @nyx_array_push_tagged({ i64, i8* }* %t2037, i64 %t2075, i64 5)
   %t2076 = load { i64, i8* }*, { i64, i8* }** %t86
   %t2077 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t2078 = getelementptr [25 x i8], [25 x i8]* @.str618, i32 0, i32 0
-  %t2079 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str618.c, i8* %t2078, i64 24)
+  %t2078 = getelementptr [24 x i8], [24 x i8]* @.str618, i32 0, i32 0
+  %t2079 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str618.c, i8* %t2078, i64 23)
   %t2080 = ptrtoint %nyx_string* %t2079 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2077, i64 %t2080, i64 2)
   %t2081 = getelementptr [6 x i8], [6 x i8]* @.str619, i32 0, i32 0
@@ -5642,32 +5642,32 @@ define { i64, i8* }* @gotchas_table(
   %t2097 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str624.c, i8* %t2096, i64 0)
   %t2098 = ptrtoint %nyx_string* %t2097 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2077, i64 %t2098, i64 2)
-  %t2099 = getelementptr [11 x i8], [11 x i8]* @.str625, i32 0, i32 0
-  %t2100 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str625.c, i8* %t2099, i64 10)
+  %t2099 = getelementptr [1 x i8], [1 x i8]* @.str625, i32 0, i32 0
+  %t2100 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str625.c, i8* %t2099, i64 0)
   %t2101 = ptrtoint %nyx_string* %t2100 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2077, i64 %t2101, i64 2)
   %t2102 = getelementptr [1 x i8], [1 x i8]* @.str626, i32 0, i32 0
   %t2103 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str626.c, i8* %t2102, i64 0)
   %t2104 = ptrtoint %nyx_string* %t2103 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2077, i64 %t2104, i64 2)
-  %t2105 = getelementptr [36 x i8], [36 x i8]* @.str627, i32 0, i32 0
-  %t2106 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str627.c, i8* %t2105, i64 35)
+  %t2105 = getelementptr [170 x i8], [170 x i8]* @.str627, i32 0, i32 0
+  %t2106 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str627.c, i8* %t2105, i64 169)
   %t2107 = ptrtoint %nyx_string* %t2106 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2077, i64 %t2107, i64 2)
-  %t2108 = getelementptr [115 x i8], [115 x i8]* @.str628, i32 0, i32 0
-  %t2109 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str628.c, i8* %t2108, i64 114)
+  %t2108 = getelementptr [290 x i8], [290 x i8]* @.str628, i32 0, i32 0
+  %t2109 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str628.c, i8* %t2108, i64 289)
   %t2110 = ptrtoint %nyx_string* %t2109 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2077, i64 %t2110, i64 2)
-  %t2111 = getelementptr [121 x i8], [121 x i8]* @.str629, i32 0, i32 0
-  %t2112 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str629.c, i8* %t2111, i64 120)
+  %t2111 = getelementptr [308 x i8], [308 x i8]* @.str629, i32 0, i32 0
+  %t2112 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str629.c, i8* %t2111, i64 307)
   %t2113 = ptrtoint %nyx_string* %t2112 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2077, i64 %t2113, i64 2)
   %t2114 = ptrtoint { i64, i8* }* %t2077 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2076, i64 %t2114, i64 5)
   %t2115 = load { i64, i8* }*, { i64, i8* }** %t86
   %t2116 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t2117 = getelementptr [24 x i8], [24 x i8]* @.str630, i32 0, i32 0
-  %t2118 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str630.c, i8* %t2117, i64 23)
+  %t2117 = getelementptr [25 x i8], [25 x i8]* @.str630, i32 0, i32 0
+  %t2118 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str630.c, i8* %t2117, i64 24)
   %t2119 = ptrtoint %nyx_string* %t2118 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2116, i64 %t2119, i64 2)
   %t2120 = getelementptr [6 x i8], [6 x i8]* @.str631, i32 0, i32 0
@@ -5694,24 +5694,24 @@ define { i64, i8* }* @gotchas_table(
   %t2136 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str636.c, i8* %t2135, i64 0)
   %t2137 = ptrtoint %nyx_string* %t2136 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2116, i64 %t2137, i64 2)
-  %t2138 = getelementptr [1 x i8], [1 x i8]* @.str637, i32 0, i32 0
-  %t2139 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str637.c, i8* %t2138, i64 0)
+  %t2138 = getelementptr [11 x i8], [11 x i8]* @.str637, i32 0, i32 0
+  %t2139 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str637.c, i8* %t2138, i64 10)
   %t2140 = ptrtoint %nyx_string* %t2139 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2116, i64 %t2140, i64 2)
   %t2141 = getelementptr [1 x i8], [1 x i8]* @.str638, i32 0, i32 0
   %t2142 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str638.c, i8* %t2141, i64 0)
   %t2143 = ptrtoint %nyx_string* %t2142 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2116, i64 %t2143, i64 2)
-  %t2144 = getelementptr [170 x i8], [170 x i8]* @.str639, i32 0, i32 0
-  %t2145 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str639.c, i8* %t2144, i64 169)
+  %t2144 = getelementptr [36 x i8], [36 x i8]* @.str639, i32 0, i32 0
+  %t2145 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str639.c, i8* %t2144, i64 35)
   %t2146 = ptrtoint %nyx_string* %t2145 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2116, i64 %t2146, i64 2)
-  %t2147 = getelementptr [290 x i8], [290 x i8]* @.str640, i32 0, i32 0
-  %t2148 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str640.c, i8* %t2147, i64 289)
+  %t2147 = getelementptr [115 x i8], [115 x i8]* @.str640, i32 0, i32 0
+  %t2148 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str640.c, i8* %t2147, i64 114)
   %t2149 = ptrtoint %nyx_string* %t2148 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2116, i64 %t2149, i64 2)
-  %t2150 = getelementptr [308 x i8], [308 x i8]* @.str641, i32 0, i32 0
-  %t2151 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str641.c, i8* %t2150, i64 307)
+  %t2150 = getelementptr [121 x i8], [121 x i8]* @.str641, i32 0, i32 0
+  %t2151 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str641.c, i8* %t2150, i64 120)
   %t2152 = ptrtoint %nyx_string* %t2151 to i64
   call void @nyx_array_push_tagged({ i64, i8* }* %t2116, i64 %t2152, i64 2)
   %t2153 = ptrtoint { i64, i8* }* %t2116 to i64
