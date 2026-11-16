@@ -98,16 +98,25 @@ cd "$ROOT" || exit 1
 #   2026-11-08 crc32_bytes a emit_crc32_bytes: codegen_call_expr 474896 → 472064 (BAJA). La rama
 #     de String de crc32 (ee804f9f, 11-05) estaba en línea y lo había subido +1760 sobre el techo
 #     sin que nadie corriera esta guarda; en un helper queda en una llamada. x86_64: a re-medir.
+#   2026-11-16 allocas-al-entry: SUBEN todos, y es contabilidad, no pila. expr 14736 → 15392,
+#     binop 8656 → 9328, logico 21984 → 22544, call_expr 465904 → 479376, method_call
+#     470816 → 476432; por nivel 23392 → 24720, con SROA 2000 → 3360. Los `alloca` de un
+#     `let` dentro de un if o un bucle pasaron al bloque de entrada: antes eran reserva
+#     DINÁMICA, que -fstack-usage no cuenta (259 de 359 funciones salían «dynamic»; hoy 0).
+#     El techo REAL, por bisección con 8 MB: 310 → 310 operandos sin SROA y 2362 → 2478 con
+#     SROA. x86_64 medido por compilación cruzada desde aarch64 (`--target=x86_64-linux-gnu`,
+#     que reproduce los 18168 de expr declarados abajo); su techo real queda por medir en la
+#     laptop.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
-    [codegen_expr]=14736
-    [codegen_binop]=8656
-    [codegen_binop_logico]=21984
-    [codegen_call_expr]=465904
-    [codegen_method_call]=470816
+    [codegen_expr]=15392
+    [codegen_binop]=9328
+    [codegen_binop_logico]=22544
+    [codegen_call_expr]=479376
+    [codegen_method_call]=476432
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
-TECHO_NIVEL=23392
+TECHO_NIVEL=24720
 # Operandos que tienen que compilar con 8 MB, sin la subida de los lanzadores.
 # Techo real medido por bisección: 322 sin SROA, ~2.400 con SROA (Task 4). Se
 # pide lo que aguanta el compilador construido SIN opt, porque es el peor caso
@@ -118,7 +127,8 @@ OPERANDOS=250
 # compiladores distintos que se pueden construir.
 #   2026-09-23 Task 4: expr 800 + binop 1168.
 #   2026-10-09 alcance-de-bloque-codegen: 1968 → 2000 (+32, el campo `alcances`; ver arriba).
-TECHO_NIVEL_SROA=2000
+#   2026-11-16 allocas-al-entry: 2000 → 3360 (expr 1456 + binop 1904; ver arriba).
+TECHO_NIVEL_SROA=3360
 
 # x86_64 (2026-10-26, medido en la laptop con clang 19 sobre main@4c09dc7c; codegen no
 # cambió desde entonces). Los techos de arriba son de aarch64: en x86_64 los marcos -O0
@@ -130,14 +140,15 @@ TECHO_NIVEL_SROA=2000
 # siguen en `make test-ai-first` (spike de W5).
 if [ "$(uname -m)" = "x86_64" ]; then
     TECHO=(
-        [codegen_expr]=18168
-        [codegen_binop]=10184
-        [codegen_binop_logico]=23992
-        [codegen_call_expr]=544280  # +16 provisorio del 2026-10-30 (tag en dst[i] = src[j]), a re-medir en la laptop
-        [codegen_method_call]=541592
+        # 2026-11-16 allocas-al-entry: medidos por compilación cruzada desde aarch64.
+        [codegen_expr]=18840
+        [codegen_binop]=10872
+        [codegen_binop_logico]=24616
+        [codegen_call_expr]=548520
+        [codegen_method_call]=537208
     )
-    TECHO_NIVEL=28352
-    TECHO_NIVEL_SROA=23920
+    TECHO_NIVEL=29712
+    TECHO_NIVEL_SROA=26496
 fi
 
 fallos=0

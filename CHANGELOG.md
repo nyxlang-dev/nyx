@@ -11,6 +11,19 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Changed
 
+- **Los bucles de Nyx vectorizan y un `let` dentro de un bucle va a registro** [arco: allocas-al-entry]: el
+  compilador emitía cada variable local donde aparecía y, para que eso no desbordara el stack en un bucle,
+  agregaba una llamada (`llvm.stackrestore`) al inicio de cada iteración. Esa llamada sobrevivía a `-O2`, así
+  que ningún bucle vectorizaba, y la variable quedaba en memoria. Ahora todas las variables locales de tamaño
+  fijo se emiten en el bloque de entrada de la función y la llamada desaparece. Medido con `--release` sobre
+  `*float` (Neoverse-N1): multiplicación de matrices 512×512 de 129 a 50 ms (C: 47), `y = k*x + y` sobre 2048
+  elementos ×20 000 de 41 a 14 ms (C: 12). El comportamiento de los programas no cambia. Lo que sí cambia es el
+  texto del IR: los temporales pasan de `%12` a `%t12`. Spike y programas de medición:
+  `docs/design/spikes/2026-11-16-numerico-vectorizacion.md`, `scripts/bench_numerico/`. Guarda nueva
+  `run_alloca_entry_audit.sh` en `make test-ai-first`. Los techos de `run_stack_frame_audit.sh` suben por
+  contabilidad (la reserva que era dinámica ahora es estática); el límite real de una expresión larga con 8 MB
+  quedó igual sin SROA (310 operandos) y subió con SROA (2362 → 2478).
+
 - **Un diagnóstico dentro de un módulo importado nombra el módulo** (fricción de nyxerp 20261114-090003): los
   errores y avisos del semántico pasan de «in 'f' (line 925)» a «in 'f' (std/serve, line 925)», y los de parse de
   «--> line 3:10» a «--> src/util, line 3:10». Bajo `NYX_DIAG=json` llevan un campo `module`. En el archivo

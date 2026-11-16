@@ -3625,7 +3625,10 @@ API (all errors are `Result<_, Error>`; `Image`/`ImageInfo`/`ImageLimits` are st
   proportional to the page, not the target. CPU time of `image_thumbnail(page, 1600, 1600, 80)`:
   1275x1650 = 1.0 s built with `nyx build` (clang `-O0`) / 0.25 s with `--release` (`-O2`);
   2550x3300 = 2.4 s / 0.65 s. **A build without `--release` is ~4x slower than `--release`**
-  for this module: measure the way you ship. Previews (300 px) do reduce (1/2). The hot loops use
+  for this module: measure the way you ship. (Since the `allocas-al-entry` arc, 2026-11-16, loops over
+  raw pointers auto-vectorize with `--release` and a `let` declared inside a loop lives in a register;
+  before it, no Nyx loop vectorized. An indexed `Array<float>` loop is still 5-15x slower than a `*float`
+  one: every `a[i]` is a runtime call.) Previews (300 px) do reduce (1/2). The hot loops use
   raw pointers (native 64-bit only; wasm32 falls back to `charAt` loops, same bytes). Benchmark:
   `scripts/bench_image_thumb.nx`; fingerprints: test-497.
 - Tests: `tests/compiler/stdlib-suite/test-475..482-image-*.nx`, `test-497-image-rapido.nx`,

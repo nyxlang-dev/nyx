@@ -191,7 +191,7 @@ el 17-jul.
 | **GPU / tensores** | M | `c_fn_ptr` ya está hecho; falta bindings ggml. 3 fichas paradas desde 2026-07-17, incluida la validación contra `llama.cpp` real que mantiene abierto el arco de v0.21.0 |
 | **no_std stdlib** (P0: allocator + String afín) | L, multi-versión | Precondición de freestanding y de cualquier target embebido. Hallazgo vivo: **`NYX_NO_GC=1` es engañoso** — String/Array/Map llaman `GC_malloc` hardcodeado en 74 sitios de 11 archivos |
 | **Freestanding** (kernel de juguete) | L | Depende de no_std P0. Es el extremo «bare metal» de la misión |
-| **Optimización del compilador / vectorización** | S para el diagnóstico, L para el trabajo | Nadie midió la auto-vectorización actual. SIMD es condición para cualquier cosa de ML |
+| **Optimización del compilador / vectorización** | S para el diagnóstico, L para el trabajo | Medida el 2026-11-16 (`docs/design/spikes/2026-11-16-numerico-vectorizacion.md`): no vectorizaba nada por un `stackrestore` por bucle; arreglado en el arco `allocas-al-entry` y `*float` iguala a C a `-O2`. Quedan fast-math opcional, acceso en línea a `Array<float>` y SIMD explícito |
 
 ### 4.2 Direcciones mayores sin arco asignado
 
