@@ -1,0 +1,24 @@
+// Control positivo del chequeo del operando derecho: un impl que declara un
+// escalar a la derecha sigue aceptándolo, y `other: Self` también.
+struct V { x: float }
+
+impl Mul for V {
+    fn mul(self, k: float) -> V {
+        return V { x: self.x * k }
+    }
+}
+
+impl Add for V {
+    fn add(self, other: Self) -> Self {
+        return V { x: self.x + other.x }
+    }
+}
+
+fn main() -> int {
+    let a: V = V { x: 2.0 }
+    let b: V = a * 3.0
+    let c: V = a + b
+    assert(c.x == 8.0, "V * float y V + V")
+    print("positive-operador-rhs-escalar: PASS")
+    return 0
+}

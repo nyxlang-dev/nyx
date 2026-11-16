@@ -69,7 +69,7 @@ EN/ES), que es una página web.
 ## Trampas (los errores que más arruinan el primer intento)
 
 <!-- gen:gotchas kinds=trap,rule lang=es form=short -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,interpolation-uses-nyx-type,narrow-int-arithmetic -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,ndarray-copy-shares-buffer,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,ndarray-release-build,interpolation-uses-nyx-type,narrow-int-arithmetic -->
 
 1. **Callbacks: conviene preferir `Fn(Type) -> Ret`**
 2. **Maps anidados: funciona con una variable o un literal inline, pero CRASHEA con el retorno de una
@@ -90,48 +90,50 @@ modo)` para la forma `a*b/c`, que calcula el producto intermedio en 128 bits.**
 handshake TLS con un impostor sin chistar.**
 8. **`sort_int`, `sort_str` y `sort_by` ordenan EL ARREGLO QUE RECIBEN, en el lugar, y devuelven ese mismo
 arreglo, no una copia.**
-9. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
-10. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**
-11. **`charAt()` retorna int (ASCII/codepoint), NO String — hay que comparar contra números:
+9. **Copiar un `NDArray` (pasarlo a una función, guardarlo en un `Array`) COMPARTE el buffer: usa `copy()` para uno independiente.**
+10. **El `await` de una función que retorna `float` está bloqueado (NYX1021)**
+11. **Los channels deben ser Map, no int: `let ch: Map = channel_new(10)`, nunca `let ch: int`.**
+12. **`charAt()` retorna int (ASCII/codepoint), NO String — hay que comparar contra números:
 `if c == 65`.**
-12. **Las variantes de enum usan `.`, no `::`: `Shape.Circle(5)`, nunca `Shape::Circle(5)`.**
-13. **Las claves de un map literal deben ser STRINGS: `{"k": 1}` y `{}` funcionan (v0.16), pero
+13. **Las variantes de enum usan `.`, no `::`: `Shape.Circle(5)`, nunca `Shape::Circle(5)`.**
+14. **Las claves de un map literal deben ser STRINGS: `{"k": 1}` y `{}` funcionan (v0.16), pero
 `{ident: 1}` NO es un map literal y falla en voz alta con `NYX0106`.**
-14. **La API de String opera sobre BYTES (v0.14): `length()`, `substring()`, `indexOf()` y `charAt()`
+15. **La API de String opera sobre BYTES (v0.14): `length()`, `substring()`, `indexOf()` y `charAt()`
 operan todas sobre BYTES — para conteos de *caracteres* se usa `char_length()` (codepoints UTF-8).**
-15. **Hay que chequear el retorno de `http_serve`/`tcp_listen`/`udp_bind`: un bind que falla (puerto
+16. **Hay que chequear el retorno de `http_serve`/`tcp_listen`/`udp_bind`: un bind que falla (puerto
 ocupado) retorna `-1` — `if http_serve(8080, handler) < 0 { return 1 }`.**
-16. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
-17. **Un `return` sin valor funciona en una función que retorna `void`**
-18. **`toUpper()`/`toLower()` cubren ASCII + Latin-1 Supplement + Latin Extended-A — griego y cirílico
+17. **`assert()` aborta el proceso (`exit(1)`) en la primera falla**
+18. **Un `return` sin valor funciona en una función que retorna `void`**
+19. **`toUpper()`/`toLower()` cubren ASCII + Latin-1 Supplement + Latin Extended-A — griego y cirílico
 quedan intactos.**
-19. **`<Struct>_desde_fila()` acepta todas las formas de booleano que emiten sus dos productores
+20. **`<Struct>_desde_fila()` acepta todas las formas de booleano que emiten sus dos productores
 —`true`/`false`, `t`/`f` y `1`/`0`— y ABORTA nombrando el valor ante cualquier otra.**
-20. **Para guardar objetos de trait en una colección, tipa la colección: `Array<dyn Trait>`**
-21. **Un campo solo se lee desde un nombre o una cadena de campos: `f().x`, `a[0].x` y `T{...}.x` son error (NYX2003; escribirlos, NYX2006).**
-22. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
-23. **La lista de módulos que trae el prelude vive DENTRO del prelude, en la línea
+21. **Para guardar objetos de trait en una colección, tipa la colección: `Array<dyn Trait>`**
+22. **Un campo solo se lee desde un nombre o una cadena de campos: `f().x`, `a[0].x` y `T{...}.x` son error (NYX2003; escribirlos, NYX2006).**
+23. **Una columna NULL de `std/postgres` NO es un string vacío — se pregunta con `pg_is_null(v)`**
+24. **La lista de módulos que trae el prelude vive DENTRO del prelude, en la línea
 `//#prelude-modules:` — nunca hardcodeada en el compilador.**
-24. **Los nombres del prelude son GLOBALES: declarar uno propio con el mismo nombre es NYX1013.**
-25. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
+25. **Los nombres del prelude son GLOBALES: declarar uno propio con el mismo nombre es NYX1013.**
+26. **`random_bytes` (`std/random`) es un PRNG, no un CSPRNG — nunca lo uses para salts, tokens, claves,
 nonces, ni ningún otro material criptográfico; para eso usa `csprng_bytes`.**
-26. **Una columna NULL de `std/sqlite` NO es un string vacío — se pregunta con `sqlite_is_null(v)`**
-27. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
-28. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
-29. **`time()`, `time_ms()` y `time_us()` son nombres deprecados: usa `time_epoch()` para el reloj de
+27. **Una columna NULL de `std/sqlite` NO es un string vacío — se pregunta con `sqlite_is_null(v)`**
+28. **`<` `<=` `>` `>=` entre Strings comparan BYTES, no codepoints ni locale**
+29. **`throw(x)` es un alias deprecado de `panic(x)`: mismo canal, mismo `catch`, los mismos límites.**
+30. **`time()`, `time_ms()` y `time_us()` son nombres deprecados: usa `time_epoch()` para el reloj de
 pared y `monotonic_ms()` / `monotonic_us()` para el monotónico — misma llamada al runtime, con un
 nombre que dice CUÁL reloj es.**
-30. **Algunas builtins no devuelven NADA — ligar su resultado es error (NYX1003, `expected T, got ()`).**
-31. **Los nombres de `struct` y `enum` son GLOBALES al programa, aunque no sean `pub`: el mismo nombre declarado en dos módulos es NYX1040.**
-32. **`for c in s` sobre un `String` es error (NYX1038): recorre por índice —bytes con `for i in 0..s.length() { s.substring(i, i + 1) }`, caracteres UTF-8 con `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
-33. **Un elemento de Array que el compilador sabe `String` no entra en una variable `int`/`bool` (NYX2019): conviértelo — `let n: int = string_to_int(fila[0])`.**
-34. **`http_serve`/`http_serve_mt` escuchan en TODAS las interfaces (`0.0.0.0`); detrás de un proxy, usar `http_serve_en("127.0.0.1", puerto, handler)`.**
-35. **Los operadores entre primitivos de clases distintas son NYX1010**
-36. **Escapes de String: `\xNN` y `\u{…}` existen desde 0.37.0; cualquier otro escape desconocido es
+31. **Algunas builtins no devuelven NADA — ligar su resultado es error (NYX1003, `expected T, got ()`).**
+32. **Los nombres de `struct` y `enum` son GLOBALES al programa, aunque no sean `pub`: el mismo nombre declarado en dos módulos es NYX1040.**
+33. **`for c in s` sobre un `String` es error (NYX1038): recorre por índice —bytes con `for i in 0..s.length() { s.substring(i, i + 1) }`, caracteres UTF-8 con `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
+34. **Un elemento de Array que el compilador sabe `String` no entra en una variable `int`/`bool` (NYX2019): conviértelo — `let n: int = string_to_int(fila[0])`.**
+35. **`http_serve`/`http_serve_mt` escuchan en TODAS las interfaces (`0.0.0.0`); detrás de un proxy, usar `http_serve_en("127.0.0.1", puerto, handler)`.**
+36. **Los operadores entre primitivos de clases distintas son NYX1010**
+37. **Escapes de String: `\xNN` y `\u{…}` existen desde 0.37.0; cualquier otro escape desconocido es
 NYX1045.**
-37. **Un `let` local es visible desde su línea, no en su propio valor: una lambda local no puede llamarse por su nombre — escribe una `fn` anidada.**
-38. **Interpolar un `u8` o un `i8` da el NÚMERO, un `char` da el carácter: `"${b}"` con `b: u8 = 65` es `65`, no `A`.**
-39. **La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44, 200 * 100 da 32); mezclar un entero angosto con un `int` o con otro ancho da un `int`.**
+38. **Un `let` local es visible desde su línea, no en su propio valor: una lambda local no puede llamarse por su nombre — escribe una `fn` anidada.**
+39. **Compila el código numérico con `nyx build --release`: sin eso no se optimiza nada y los bucles de `std/ndarray` van entre 4 y 15 veces más lento.**
+40. **Interpolar un `u8` o un `i8` da el NÚMERO, un `char` da el carácter: `"${b}"` con `b: u8 = 65` es `65`, no `A`.**
+41. **La aritmética entre dos enteros angostos del MISMO tipo se queda en ese ancho y envuelve (`u8` 200 + `u8` 100 da 44, 200 * 100 da 32); mezclar un entero angosto con un `int` o con otro ancho da un `int`.**
 
 <!-- /gen:gotchas -->
 

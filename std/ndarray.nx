@@ -1,0 +1,1030 @@
+// ============================================================
+// STD/NDARRAY.NX — Arreglos numéricos de float
+// ============================================================
+// Arreglos de `float` (f64) de N dimensiones, guardados en un buffer
+// contiguo y en orden por filas (el último índice es el que corre más
+// rápido). Spec: docs/design/specs/2026-11-16-numerico-design.md (D1, D2,
+// D5, D6, D7).
+//
+// Uso:
+//   import "std/ndarray"
+//
+//   let a: NDArray = nd_from_rows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+//   let t: NDArray = a.transpose()          // forma [3, 2]
+//   print(t.to_string())
+//   let v: float = a.get2(1, 2)             // 6.0
+//
+// PUNTEROS CRUDOS — dónde se valida
+// ---------------------------------
+// El buffer es un `*float` pedido con `alloc_gc<float>(n)`: memoria del
+// recolector (no se libera a mano), que NO viene en cero y cuyo `p[i]` NO
+// chequea límites (un índice malo corrompe memoria en silencio). Por eso:
+//   - Todo constructor llena el buffer completo antes de devolverlo.
+//   - Toda función pública valida índices y formas ANTES de tocar el
+//     puntero; los bucles internos recorren `0..n` sin volver a chequear.
+//   - El struct guarda siempre el puntero al INICIO del buffer y se indexa
+//     desde la base (`p[i]`); nunca se guarda un puntero avanzado.
+//   - El módulo no usa bloques `unsafe`: un `return` dentro de uno no
+//     cuenta como retorno (NYX1008), y la regla de arriba es la que importa.
+//
+// Copias y buffers compartidos
+// ----------------------------
+// Copiar el struct (pasarlo por valor, guardarlo en un Array) COMPARTE el
+// buffer: `set` sobre la copia se ve en el original. Las operaciones que
+// devuelven un NDArray nuevo (`copy`, `reshape`, `transpose`, `row`,
+// `col`, `slice`) copian los datos y nunca comparten.
+//
+// Errores (D6): índice fuera de rango o forma inválida = `panic` con un
+// mensaje que nombra el método, el índice y la forma (error de programa).
+// Dato de entrada malo con alternativa razonable = `try_*` que devuelve
+// `Result<NDArray, Error>` con `err_new(22, "invalid", ...)`.
+// ============================================================
+
+import "std/error"
+import "std/math_ext"
+
+/// Arreglo numérico de float de N dimensiones, contiguo y en orden por filas.
+pub struct NDArray {
+    datos: *float,
+    n: int,
+    forma: Array<int>
+}
+
+// ===== AUXILIARES DE FORMA =====
+
+// "[2, 3]" — la forma como texto, para los mensajes y `to_string`.
+fn nd_forma_texto(forma: Array<int>) -> String {
+    var s: String = "["
+    var k: int = 0
+    while k < forma.length() {
+        if k > 0 { s = s + ", " }
+        let d: int = forma[k]
+        s = s + int_to_string(d)
+        k = k + 1
+    }
+    return s + "]"
+}
+
+// Copia de la forma: el struct nunca se queda con el Array del caller,
+// que podría modificarlo después y desincronizar `forma` de `n`.
+fn nd_forma_copia(forma: Array<int>) -> Array<int> {
+    var out: Array<int> = []
+    var k: int = 0
+    while k < forma.length() {
+        let d: int = forma[k]
+        out.push(d)
+        k = k + 1
+    }
+    return out
+}
+
+// Cantidad de elementos de una forma, o el motivo por el que es inválida.
+// El producto se acumula con checked_mul: `int` envuelve en silencio.
+fn nd_validar_forma(forma: Array<int>) -> Result<int, Error> {
+    if forma.length() == 0 {
+        return Result.Err(err_new(22, "invalid", "la forma está vacía; un arreglo tiene al menos una dimensión"))
+    }
+    var total: int = 1
+    var k: int = 0
+    while k < forma.length() {
+        let d: int = forma[k]
+        if d < 0 {
+            return Result.Err(err_new(22, "invalid", "la dimensión " + int_to_string(k) + " de la forma " + nd_forma_texto(forma) + " es negativa"))
+        }
+        let prod: Option<int> = checked_mul(total, d)
+        match prod {
+            Option.Some(v) => { total = v }
+            Option.None => {
+                return Result.Err(err_new(22, "invalid", "la forma " + nd_forma_texto(forma) + " tiene demasiados elementos (el producto desborda int)"))
+            }
+        }
+        k = k + 1
+    }
+    return Result.Ok(total)
+}
+
+// Como nd_validar_forma, pero una forma inválida es error de programa.
+fn nd_tamano(quien: String, forma: Array<int>) -> int {
+    let r: Result<int, Error> = nd_validar_forma(forma)
+    match r {
+        Result.Ok(v) => { return v }
+        Result.Err(e) => {
+            panic(quien + ": " + e.msg)
+            return 0
+        }
+    }
+}
+
+// Arreglo con la forma dada y el buffer SIN llenar: quien lo llama lo llena
+// entero antes de devolverlo. `n` ya viene validado contra `forma`.
+fn nd_crudo(forma: Array<int>, n: int) -> NDArray {
+    let p: *float = alloc_gc<float>(n)
+    return NDArray { datos: p, n: n, forma: nd_forma_copia(forma) }
+}
+
+fn nd_llenar(a: NDArray, v: float) {
+    let p: *float = a.datos
+    var i: int = 0
+    while i < a.n {
+        p[i] = v
+        i = i + 1
+    }
+}
+
+// NaN es el único float distinto de sí mismo.
+fn nd_es_nan(x: float) -> bool {
+    return x != x
+}
+
+// Un float como texto: `nan`, `inf` y `-inf` tal cual; con `decimales < 0`
+// los dígitos mínimos de float_to_string, si no float_to_fixed.
+fn nd_float_texto(x: float, decimales: int) -> String {
+    if nd_es_nan(x) { return "nan" }
+    if decimales < 0 { return float_to_string(x) }
+    let inf: float = 1.0 / 0.0
+    if x == inf { return "inf" }
+    if x == 0.0 - inf { return "-inf" }
+    return float_to_fixed(x, decimales)
+}
+
+// ===== CONSTRUCTORES =====
+
+/// Arreglo de ceros con la forma dada (por ejemplo `[3, 4]`).
+pub fn nd_zeros(forma: Array<int>) -> NDArray {
+    return nd_full_de("nd_zeros", forma, 0.0)
+}
+
+/// Arreglo de unos con la forma dada.
+pub fn nd_ones(forma: Array<int>) -> NDArray {
+    return nd_full_de("nd_ones", forma, 1.0)
+}
+
+/// Arreglo con la forma dada y todos los elementos iguales a `v`.
+pub fn nd_full(forma: Array<int>, v: float) -> NDArray {
+    return nd_full_de("nd_full", forma, v)
+}
+
+fn nd_full_de(quien: String, forma: Array<int>, v: float) -> NDArray {
+    let n: int = nd_tamano(quien, forma)
+    let a: NDArray = nd_crudo(forma, n)
+    nd_llenar(a, v)
+    return a
+}
+
+/// Valores `ini, ini+paso, ...` hasta `fin` EXCLUIDO (1-D). `paso` 0 o de signo contrario a `fin - ini` = panic.
+pub fn nd_arange(ini: float, fin: float, paso: float) -> NDArray {
+    let que: String = "nd_arange(" + float_to_string(ini) + ", " + float_to_string(fin) + ", " + float_to_string(paso) + ")"
+    if paso == 0.0 or nd_es_nan(paso) {
+        panic(que + ": el paso tiene que ser distinto de 0")
+    }
+    let span: float = fin - ini
+    if nd_es_nan(span) {
+        panic(que + ": los extremos no son números")
+    }
+    if (span > 0.0 and paso < 0.0) or (span < 0.0 and paso > 0.0) {
+        panic(que + ": el paso va en sentido contrario a fin - ini")
+    }
+    let cuenta: float = math_ceil(span / paso)
+    // 2^53: más allá un float ya no representa cada entero, y tampoco
+    // habría memoria para tantos elementos.
+    if nd_es_nan(cuenta) or cuenta > 9007199254740992.0 {
+        panic(que + ": demasiados elementos")
+    }
+    var n: int = float_to_int(cuenta)
+    if n < 0 { n = 0 }
+    let a: NDArray = nd_crudo([n], n)
+    let p: *float = a.datos
+    var i: int = 0
+    while i < n {
+        p[i] = ini + int_to_float(i) * paso
+        i = i + 1
+    }
+    return a
+}
+
+/// `n` valores equiespaciados de `ini` a `fin`, ambos INCLUIDOS (1-D). `n` negativo = panic.
+pub fn nd_linspace(ini: float, fin: float, n: int) -> NDArray {
+    if n < 0 {
+        panic("nd_linspace: n = " + int_to_string(n) + " es negativo")
+    }
+    let a: NDArray = nd_crudo([n], n)
+    let p: *float = a.datos
+    if n == 1 {
+        p[0] = ini
+        return a
+    }
+    if n > 1 {
+        let paso: float = (fin - ini) / int_to_float(n - 1)
+        var i: int = 0
+        while i < n - 1 {
+            p[i] = ini + int_to_float(i) * paso
+            i = i + 1
+        }
+        // El último es exactamente `fin`, sin el error de redondeo del producto.
+        p[n - 1] = fin
+    }
+    return a
+}
+
+/// Arreglo 1-D con una copia de los elementos de `xs`.
+pub fn nd_from_array(xs: Array<float>) -> NDArray {
+    let n: int = xs.length()
+    let a: NDArray = nd_crudo([n], n)
+    let p: *float = a.datos
+    var i: int = 0
+    while i < n {
+        let x: float = xs[i]
+        p[i] = x
+        i = i + 1
+    }
+    return a
+}
+
+/// Arreglo 2-D a partir de filas, copiando. Filas de largos distintos = panic (ver `try_nd_from_rows`).
+pub fn nd_from_rows(filas: Array<Array<float>>) -> NDArray {
+    let r: Result<NDArray, Error> = try_nd_from_rows(filas)
+    match r {
+        Result.Ok(a) => { return a }
+        Result.Err(e) => {
+            panic("nd_from_rows: " + e.msg)
+            return nd_zeros([0])
+        }
+    }
+}
+
+/// Como `nd_from_rows`, pero filas desparejas devuelven `Err` (kind "invalid") en vez de abortar.
+pub fn try_nd_from_rows(filas: Array<Array<float>>) -> Result<NDArray, Error> {
+    let nf: int = filas.length()
+    var nc: int = 0
+    if nf > 0 {
+        let f0: Array<float> = filas[0]
+        nc = f0.length()
+    }
+    var k: int = 1
+    while k < nf {
+        let f: Array<float> = filas[k]
+        if f.length() != nc {
+            return Result.Err(err_new(22, "invalid", "la fila " + int_to_string(k) + " tiene " + int_to_string(f.length()) + " elementos y la fila 0 tiene " + int_to_string(nc)))
+        }
+        k = k + 1
+    }
+    let forma: Array<int> = [nf, nc]
+    let tam: Result<int, Error> = nd_validar_forma(forma)
+    var n: int = 0
+    match tam {
+        Result.Ok(v) => { n = v }
+        Result.Err(e) => { return Result.Err(e) }
+    }
+    let a: NDArray = nd_crudo(forma, n)
+    let p: *float = a.datos
+    var i: int = 0
+    while i < nf {
+        let f: Array<float> = filas[i]
+        var j: int = 0
+        while j < nc {
+            let x: float = f[j]
+            p[i * nc + j] = x
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return Result.Ok(a)
+}
+
+/// Matriz identidad de `n` x `n`. `n` negativo = panic.
+pub fn nd_eye(n: int) -> NDArray {
+    if n < 0 {
+        panic("nd_eye: n = " + int_to_string(n) + " es negativo")
+    }
+    let a: NDArray = nd_full_de("nd_eye", [n, n], 0.0)
+    let p: *float = a.datos
+    var i: int = 0
+    while i < n {
+        p[i * n + i] = 1.0
+        i = i + 1
+    }
+    return a
+}
+
+// ===== MÉTODOS =====
+
+impl NDArray {
+    /// La forma, como una copia (modificarla no cambia el arreglo).
+    fn shape(self) -> Array<int> {
+        return nd_forma_copia(self.forma)
+    }
+
+    /// Cantidad de dimensiones.
+    fn ndim(self) -> int {
+        return self.forma.length()
+    }
+
+    /// Cantidad total de elementos.
+    fn size(self) -> int {
+        return self.n
+    }
+
+    /// Copia con otra forma del mismo tamaño. Forma inválida o tamaño distinto = panic (ver `try_reshape`).
+    fn reshape(self, forma: Array<int>) -> NDArray {
+        let r: Result<NDArray, Error> = self.try_reshape(forma)
+        match r {
+            Result.Ok(a) => { return a }
+            Result.Err(e) => {
+                panic("NDArray.reshape: " + e.msg)
+                return self
+            }
+        }
+    }
+
+    /// Como `reshape`, pero una forma inválida o de otro tamaño devuelve `Err` (kind "invalid").
+    fn try_reshape(self, forma: Array<int>) -> Result<NDArray, Error> {
+        let tam: Result<int, Error> = nd_validar_forma(forma)
+        var n: int = 0
+        match tam {
+            Result.Ok(v) => { n = v }
+            Result.Err(e) => { return Result.Err(e) }
+        }
+        if n != self.n {
+            return Result.Err(err_new(22, "invalid", "no se puede pasar de la forma " + nd_forma_texto(self.forma) + " (" + int_to_string(self.n) + " elementos) a " + nd_forma_texto(forma) + " (" + int_to_string(n) + " elementos)"))
+        }
+        let a: NDArray = nd_crudo(forma, n)
+        self.__copiar_en(a)
+        return Result.Ok(a)
+    }
+
+    /// Transpuesta de un arreglo 2-D (copia). Otra cantidad de dimensiones = panic.
+    fn transpose(self) -> NDArray {
+        if self.forma.length() != 2 {
+            panic("NDArray.transpose: solo para 2 dimensiones, la forma es " + nd_forma_texto(self.forma))
+        }
+        let nf: int = self.forma[0]
+        let nc: int = self.forma[1]
+        let a: NDArray = nd_crudo([nc, nf], self.n)
+        let src: *float = self.datos
+        let dst: *float = a.datos
+        var i: int = 0
+        while i < nf {
+            var j: int = 0
+            while j < nc {
+                dst[j * nf + i] = src[i * nc + j]
+                j = j + 1
+            }
+            i = i + 1
+        }
+        return a
+    }
+
+    /// Copia independiente: misma forma, otro buffer.
+    fn copy(self) -> NDArray {
+        let a: NDArray = nd_crudo(self.forma, self.n)
+        self.__copiar_en(a)
+        return a
+    }
+
+    /// Los elementos en orden por filas, como un `Array<float>` nuevo.
+    fn to_array(self) -> Array<float> {
+        var out: Array<float> = []
+        let p: *float = self.datos
+        var i: int = 0
+        while i < self.n {
+            let x: float = p[i]
+            out.push(x)
+            i = i + 1
+        }
+        return out
+    }
+
+    /// Elemento en la posición plana `i` (orden por filas). Fuera de rango = panic.
+    fn get(self, i: int) -> float {
+        self.__chequear_plano("get", i)
+        let p: *float = self.datos
+        return p[i]
+    }
+
+    /// Elemento (i, j) de un arreglo 2-D. Fuera de rango o no 2-D = panic.
+    fn get2(self, i: int, j: int) -> float {
+        let k: int = self.__plano2("get2", i, j)
+        let p: *float = self.datos
+        return p[k]
+    }
+
+    /// Escribe `v` en la posición plana `i`. Escribe en el buffer: se ve en toda copia por valor del struct.
+    fn set(self, i: int, v: float) {
+        self.__chequear_plano("set", i)
+        let p: *float = self.datos
+        p[i] = v
+    }
+
+    /// Escribe `v` en (i, j) de un arreglo 2-D. Fuera de rango o no 2-D = panic.
+    fn set2(self, i: int, j: int, v: float) {
+        let k: int = self.__plano2("set2", i, j)
+        let p: *float = self.datos
+        p[k] = v
+    }
+
+    /// Fila `i` de un arreglo 2-D, como un arreglo 1-D nuevo (copia).
+    fn row(self, i: int) -> NDArray {
+        self.__chequear_2d("row")
+        let nf: int = self.forma[0]
+        let nc: int = self.forma[1]
+        if i < 0 or i >= nf {
+            panic("NDArray.row(" + int_to_string(i) + "): fuera de rango para la forma " + nd_forma_texto(self.forma))
+        }
+        let a: NDArray = nd_crudo([nc], nc)
+        let src: *float = self.datos
+        let dst: *float = a.datos
+        var j: int = 0
+        while j < nc {
+            dst[j] = src[i * nc + j]
+            j = j + 1
+        }
+        return a
+    }
+
+    /// Columna `j` de un arreglo 2-D, como un arreglo 1-D nuevo (copia).
+    fn col(self, j: int) -> NDArray {
+        self.__chequear_2d("col")
+        let nf: int = self.forma[0]
+        let nc: int = self.forma[1]
+        if j < 0 or j >= nc {
+            panic("NDArray.col(" + int_to_string(j) + "): fuera de rango para la forma " + nd_forma_texto(self.forma))
+        }
+        let a: NDArray = nd_crudo([nf], nf)
+        let src: *float = self.datos
+        let dst: *float = a.datos
+        var i: int = 0
+        while i < nf {
+            dst[i] = src[i * nc + j]
+            i = i + 1
+        }
+        return a
+    }
+
+    /// Elementos `ini..fin` (fin EXCLUIDO) de un arreglo 1-D, como copia. Requiere 0 <= ini <= fin <= size().
+    fn slice(self, ini: int, fin: int) -> NDArray {
+        if self.forma.length() != 1 {
+            panic("NDArray.slice: solo para 1 dimensión, la forma es " + nd_forma_texto(self.forma))
+        }
+        if ini < 0 or fin < ini or fin > self.n {
+            panic("NDArray.slice(" + int_to_string(ini) + ", " + int_to_string(fin) + "): fuera de rango para la forma " + nd_forma_texto(self.forma))
+        }
+        let m: int = fin - ini
+        let a: NDArray = nd_crudo([m], m)
+        let src: *float = self.datos
+        let dst: *float = a.datos
+        var k: int = 0
+        while k < m {
+            dst[k] = src[ini + k]
+            k = k + 1
+        }
+        return a
+    }
+
+    /// Texto con la forma y los elementos: `NDArray [2, 3] [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]`. Más de 20 elementos: los 10 primeros, `...` y los 10 últimos, en plano.
+    fn to_string(self) -> String {
+        return self.__texto(0 - 1)
+    }
+
+    /// Como `to_string`, con `decimales` cifras fijas después del punto (`nan` e `inf` se imprimen tal cual).
+    fn to_string_fixed(self, decimales: int) -> String {
+        var d: int = decimales
+        if d < 0 { d = 0 }
+        return self.__texto(d)
+    }
+
+    // ----- privados -----
+
+    // Copia los n elementos de self en `a` (mismo tamaño, ya validado).
+    fn __copiar_en(self, a: NDArray) {
+        let src: *float = self.datos
+        let dst: *float = a.datos
+        var i: int = 0
+        while i < self.n {
+            dst[i] = src[i]
+            i = i + 1
+        }
+    }
+
+    fn __chequear_plano(self, metodo: String, i: int) {
+        if i < 0 or i >= self.n {
+            panic("NDArray." + metodo + "(" + int_to_string(i) + "): fuera de rango para la forma " + nd_forma_texto(self.forma))
+        }
+    }
+
+    fn __chequear_2d(self, metodo: String) {
+        if self.forma.length() != 2 {
+            panic("NDArray." + metodo + ": solo para 2 dimensiones, la forma es " + nd_forma_texto(self.forma))
+        }
+    }
+
+    // Posición plana de (i, j), chequeando que sea 2-D y que esté en rango.
+    fn __plano2(self, metodo: String, i: int, j: int) -> int {
+        self.__chequear_2d(metodo)
+        let nf: int = self.forma[0]
+        let nc: int = self.forma[1]
+        if i < 0 or i >= nf or j < 0 or j >= nc {
+            panic("NDArray." + metodo + "(" + int_to_string(i) + ", " + int_to_string(j) + "): fuera de rango para la forma " + nd_forma_texto(self.forma))
+        }
+        return i * nc + j
+    }
+
+    // decimales < 0: dígitos mínimos (to_string); >= 0: fijos.
+    fn __texto(self, decimales: int) -> String {
+        let sb: StringBuilder = StringBuilder.new()
+        sb.append("NDArray ")
+        sb.append(nd_forma_texto(self.forma))
+        sb.append(" ")
+        let p: *float = self.datos
+        if self.n > 20 {
+            // Recortado: en plano, sin anidar por filas (el anidado con
+            // huecos confunde más de lo que muestra).
+            sb.append("[")
+            var i: int = 0
+            while i < 10 {
+                if i > 0 { sb.append(", ") }
+                sb.append(nd_float_texto(p[i], decimales))
+                i = i + 1
+            }
+            sb.append(", ..., ")
+            i = self.n - 10
+            while i < self.n {
+                sb.append(nd_float_texto(p[i], decimales))
+                if i < self.n - 1 { sb.append(", ") }
+                i = i + 1
+            }
+            sb.append("]")
+        } else {
+            sb.append(self.__texto_anidado(0, 0, decimales))
+        }
+        return sb.to_string()
+    }
+
+    // La dimensión `dim` a partir de la posición plana `base`, anidada con
+    // corchetes como numpy. Solo se usa con <= 20 elementos.
+    fn __texto_anidado(self, dim: int, base: int, decimales: int) -> String {
+        let len: int = self.forma[dim]
+        var paso: int = 1
+        var k: int = dim + 1
+        while k < self.forma.length() {
+            let d: int = self.forma[k]
+            paso = paso * d
+            k = k + 1
+        }
+        let p: *float = self.datos
+        var s: String = "["
+        var i: int = 0
+        while i < len {
+            if i > 0 { s = s + ", " }
+            if dim == self.forma.length() - 1 {
+                s = s + nd_float_texto(p[base + i], decimales)
+            } else {
+                s = s + self.__texto_anidado(dim + 1, base + i * paso, decimales)
+            }
+            i = i + 1
+        }
+        return s + "]"
+    }
+}
+
+// ===== ELEMENTO A ELEMENTO (Task 3) =====
+// Operadores `+ - * /` entre dos arreglos de la MISMA forma (sin
+// broadcasting): el resultado es un arreglo nuevo, nunca comparte buffer con
+// los operandos. Forma distinta = panic que nombra el operador y las dos
+// formas. División por cero y `log` de negativos siguen IEEE (inf, -inf,
+// nan), no son error.
+//
+// Escalar: `a * 2.0` NO está disponible como operador. Un tipo tiene un solo
+// `impl Mul` (el trait es `fn mul(self, other: Self) -> Self`), y un segundo
+// impl con `k: float` hace que el compilador emita la función dos veces. Por
+// eso el escalar va por `add_scalar` y `mul_scalar`. Cuidado: hoy el
+// compilador NO rechaza `a + 2.0` contra el impl de arreglos; compila y se
+// cae en ejecución (hallazgo de la Task 3, fichado para el lenguaje).
+// `2.0 * a` tampoco existe: el despacho mira solo el operando izquierdo.
+
+// Misma forma o panic: `NDArray +: formas distintas, [2, 3] y [3, 2]`.
+fn nd_misma_forma(quien: String, a: NDArray, b: NDArray) {
+    var igual: bool = a.forma.length() == b.forma.length()
+    var k: int = 0
+    while igual and k < a.forma.length() {
+        let da: int = a.forma[k]
+        let db: int = b.forma[k]
+        if da != db { igual = false }
+        k = k + 1
+    }
+    if !igual {
+        panic(quien + ": formas distintas, " + nd_forma_texto(a.forma) + " y " + nd_forma_texto(b.forma))
+    }
+}
+
+// Kernels: recorren 0..n sin chequear; quien los llama ya validó las formas.
+// `op`: 0 suma, 1 resta, 2 producto, 3 división. Un bucle por operación, para
+// que la rama quede fuera del bucle y este vectorice.
+fn nd_k_binaria(op: int, dst: *float, x: *float, y: *float, n: int) {
+    var i: int = 0
+    if op == 0 {
+        while i < n {
+            dst[i] = x[i] + y[i]
+            i = i + 1
+        }
+    } else if op == 1 {
+        while i < n {
+            dst[i] = x[i] - y[i]
+            i = i + 1
+        }
+    } else if op == 2 {
+        while i < n {
+            dst[i] = x[i] * y[i]
+            i = i + 1
+        }
+    } else {
+        while i < n {
+            dst[i] = x[i] / y[i]
+            i = i + 1
+        }
+    }
+}
+
+// Dos kernels y no uno afín `x * k + c`: con c = 0.0, `-0.0 * k + 0.0`
+// daría +0.0 y numpy (y la aritmética) dan -0.0.
+fn nd_k_mas_escalar(dst: *float, x: *float, k: float, n: int) {
+    var i: int = 0
+    while i < n {
+        dst[i] = x[i] + k
+        i = i + 1
+    }
+}
+
+fn nd_k_por_escalar(dst: *float, x: *float, k: float, n: int) {
+    var i: int = 0
+    while i < n {
+        dst[i] = x[i] * k
+        i = i + 1
+    }
+}
+
+// y[i] = k * x[i] + y[i], en el lugar. Si x e y son el mismo buffer también
+// es correcto: cada posición se lee antes de escribirse.
+fn nd_k_axpy(y: *float, k: float, x: *float, n: int) {
+    var i: int = 0
+    while i < n {
+        y[i] = k * x[i] + y[i]
+        i = i + 1
+    }
+}
+
+// `op`: 0 sqrt, 1 abs, 2 exp, 3 log.
+fn nd_k_unaria(op: int, dst: *float, x: *float, n: int) {
+    var i: int = 0
+    if op == 0 {
+        while i < n {
+            dst[i] = math_sqrt(x[i])
+            i = i + 1
+        }
+    } else if op == 1 {
+        while i < n {
+            dst[i] = math_fabs(x[i])
+            i = i + 1
+        }
+    } else if op == 2 {
+        while i < n {
+            dst[i] = math_exp(x[i])
+            i = i + 1
+        }
+    } else {
+        while i < n {
+            dst[i] = math_log(x[i])
+            i = i + 1
+        }
+    }
+}
+
+fn nd_binaria(quien: String, op: int, a: NDArray, b: NDArray) -> NDArray {
+    nd_misma_forma(quien, a, b)
+    let r: NDArray = nd_crudo(a.forma, a.n)
+    nd_k_binaria(op, r.datos, a.datos, b.datos, a.n)
+    return r
+}
+
+fn nd_unaria(op: int, a: NDArray) -> NDArray {
+    let r: NDArray = nd_crudo(a.forma, a.n)
+    nd_k_unaria(op, r.datos, a.datos, a.n)
+    return r
+}
+
+impl Add for NDArray {
+    /// `a + b` elemento a elemento, misma forma; arreglo nuevo. Forma distinta = panic.
+    fn add(self, other: NDArray) -> NDArray {
+        return nd_binaria("NDArray +", 0, self, other)
+    }
+}
+
+impl Sub for NDArray {
+    /// `a - b` elemento a elemento, misma forma; arreglo nuevo. Forma distinta = panic.
+    fn sub(self, other: NDArray) -> NDArray {
+        return nd_binaria("NDArray -", 1, self, other)
+    }
+}
+
+impl Mul for NDArray {
+    /// `a * b` elemento a elemento (no es producto de matrices: ver `matmul`); arreglo nuevo. Forma distinta = panic.
+    fn mul(self, other: NDArray) -> NDArray {
+        return nd_binaria("NDArray *", 2, self, other)
+    }
+}
+
+impl Div for NDArray {
+    /// `a / b` elemento a elemento, misma forma; arreglo nuevo. Dividir por 0 da inf o nan (IEEE). Forma distinta = panic.
+    fn div(self, other: NDArray) -> NDArray {
+        return nd_binaria("NDArray /", 3, self, other)
+    }
+}
+
+impl NDArray {
+    /// Arreglo nuevo con `k` sumado a cada elemento (el `a + 2.0` que el lenguaje aún no deja escribir).
+    fn add_scalar(self, k: float) -> NDArray {
+        let r: NDArray = nd_crudo(self.forma, self.n)
+        nd_k_mas_escalar(r.datos, self.datos, k, self.n)
+        return r
+    }
+
+    /// Arreglo nuevo con cada elemento multiplicado por `k` (el `a * 2.0` que el lenguaje aún no deja escribir).
+    fn mul_scalar(self, k: float) -> NDArray {
+        let r: NDArray = nd_crudo(self.forma, self.n)
+        nd_k_por_escalar(r.datos, self.datos, k, self.n)
+        return r
+    }
+
+    /// EN EL LUGAR: `self = k * x + self`, sin temporal. Lo ven todas las copias por valor. Forma distinta = panic.
+    fn add_scaled(self, k: float, x: NDArray) {
+        nd_misma_forma("NDArray.add_scaled", self, x)
+        nd_k_axpy(self.datos, k, x.datos, self.n)
+    }
+
+    /// Arreglo nuevo con `f` aplicada a cada elemento, en orden por filas.
+    fn map(self, f: Fn(float) -> float) -> NDArray {
+        let r: NDArray = nd_crudo(self.forma, self.n)
+        let src: *float = self.datos
+        let dst: *float = r.datos
+        var i: int = 0
+        while i < self.n {
+            dst[i] = f(src[i])
+            i = i + 1
+        }
+        return r
+    }
+
+    /// Raíz cuadrada de cada elemento (arreglo nuevo); negativos dan nan.
+    fn sqrt(self) -> NDArray {
+        return nd_unaria(0, self)
+    }
+
+    /// Valor absoluto de cada elemento (arreglo nuevo).
+    fn abs(self) -> NDArray {
+        return nd_unaria(1, self)
+    }
+
+    /// `e` elevado a cada elemento (arreglo nuevo).
+    fn exp(self) -> NDArray {
+        return nd_unaria(2, self)
+    }
+
+    /// Logaritmo natural de cada elemento (arreglo nuevo); 0 da -inf y negativos nan.
+    fn log(self) -> NDArray {
+        return nd_unaria(3, self)
+    }
+}
+
+
+// ===== REDUCCIONES Y ÁLGEBRA (Task 4) =====
+// Las sumas (`sum`, `mean`, `std`, `dot`, `norm`) corren sobre kernels libres
+// marcados `#[fast_math]`: reordenar la suma es lo que la deja vectorizar, y
+// su último dígito puede diferir del de un bucle escrito a mano. El atributo
+// va en funciones libres que reciben el puntero y la cantidad (no en los
+// métodos) y los kernels no llaman a nada dentro del bucle.
+// `min`/`max`/`argmin`/`argmax` y `matmul` van sin el atributo: los primeros
+// comparan (no hay nada que reordenar) y `matmul` acumula en un orden fijo.
+// NaN: las sumas lo propagan solas; los extremos siguen a numpy (si hay un
+// NaN, `min`/`max` dan nan y `argmin`/`argmax` el índice del primero).
+
+// Suma de p[0..n].
+#[fast_math]
+fn nd_k_suma(p: *float, n: int) -> float {
+    var s: float = 0.0
+    var i: int = 0
+    while i < n {
+        s = s + p[i]
+        i = i + 1
+    }
+    return s
+}
+
+// Suma de (p[i] - m)^2: el segundo paso del desvío (dos pasadas, como numpy).
+#[fast_math]
+fn nd_k_suma_cuad_dif(p: *float, n: int, m: float) -> float {
+    var s: float = 0.0
+    var i: int = 0
+    while i < n {
+        let d: float = p[i] - m
+        s = s + d * d
+        i = i + 1
+    }
+    return s
+}
+
+// Producto escalar de p[0..n] y q[0..n].
+#[fast_math]
+fn nd_k_dot(p: *float, q: *float, n: int) -> float {
+    var s: float = 0.0
+    var i: int = 0
+    while i < n {
+        s = s + p[i] * q[i]
+        i = i + 1
+    }
+    return s
+}
+
+// Índice del mínimo (busca_max = false) o del máximo de p[0..n], n > 0.
+// Ante empates, el primero; un NaN gana y corta (el primero), como numpy.
+fn nd_arg_extremo(p: *float, n: int, busca_max: bool) -> int {
+    var mejor: int = 0
+    var v: float = p[0]
+    if v != v { return 0 }
+    var i: int = 1
+    while i < n {
+        let x: float = p[i]
+        if x != x { return i }
+        if busca_max {
+            if x > v {
+                v = x
+                mejor = i
+            }
+        } else {
+            if x < v {
+                v = x
+                mejor = i
+            }
+        }
+        i = i + 1
+    }
+    return mejor
+}
+
+impl NDArray {
+    /// Suma de todos los elementos (0.0 si está vacío). Usa `#[fast_math]`: el último dígito puede variar.
+    fn sum(self) -> float {
+        return nd_k_suma(self.datos, self.n)
+    }
+
+    /// Media de todos los elementos. Vacío = panic.
+    fn mean(self) -> float {
+        self.__chequear_no_vacio("mean")
+        return nd_k_suma(self.datos, self.n) / int_to_float(self.n)
+    }
+
+    /// Mínimo de todos los elementos (nan si hay algún NaN, como numpy). Vacío = panic.
+    fn min(self) -> float {
+        self.__chequear_no_vacio("min")
+        let p: *float = self.datos
+        return p[nd_arg_extremo(p, self.n, false)]
+    }
+
+    /// Máximo de todos los elementos (nan si hay algún NaN, como numpy). Vacío = panic.
+    fn max(self) -> float {
+        self.__chequear_no_vacio("max")
+        let p: *float = self.datos
+        return p[nd_arg_extremo(p, self.n, true)]
+    }
+
+    /// Índice plano del mínimo (el primero ante empates; el del primer NaN si hay alguno). Vacío = panic.
+    fn argmin(self) -> int {
+        self.__chequear_no_vacio("argmin")
+        return nd_arg_extremo(self.datos, self.n, false)
+    }
+
+    /// Índice plano del máximo (el primero ante empates; el del primer NaN si hay alguno). Vacío = panic.
+    fn argmax(self) -> int {
+        self.__chequear_no_vacio("argmax")
+        return nd_arg_extremo(self.datos, self.n, true)
+    }
+
+    /// Desvío estándar poblacional (divide por n, como `numpy.std` por omisión). Vacío = panic.
+    fn std(self) -> float {
+        self.__chequear_no_vacio("std")
+        let nf: float = int_to_float(self.n)
+        let m: float = nd_k_suma(self.datos, self.n) / nf
+        return math_sqrt(nd_k_suma_cuad_dif(self.datos, self.n, m) / nf)
+    }
+
+    /// Suma por eje de un arreglo 2-D: eje 0 reduce las filas (largo = columnas), eje 1 las columnas (largo = filas).
+    fn sum_axis(self, eje: int) -> NDArray {
+        return self.__suma_eje("sum_axis", eje, false)
+    }
+
+    /// Media por eje de un arreglo 2-D, con los ejes de `sum_axis`. Eje reducido de largo 0 = panic.
+    fn mean_axis(self, eje: int) -> NDArray {
+        return self.__suma_eje("mean_axis", eje, true)
+    }
+
+    /// Producto escalar de dos arreglos 1-D del mismo largo. Otra forma = panic. Usa `#[fast_math]`.
+    fn dot(self, b: NDArray) -> float {
+        if self.forma.length() != 1 or b.forma.length() != 1 or self.n != b.n {
+            panic("NDArray.dot: hacen falta dos arreglos 1-D del mismo largo, las formas son " + nd_forma_texto(self.forma) + " y " + nd_forma_texto(b.forma))
+        }
+        return nd_k_dot(self.datos, b.datos, self.n)
+    }
+
+    /// Producto de matrices 2-D: [m, k] por [k, n] da [m, n]. Formas incompatibles = panic.
+    fn matmul(self, b: NDArray) -> NDArray {
+        if self.forma.length() != 2 or b.forma.length() != 2 {
+            panic("NDArray.matmul: hacen falta dos arreglos 2-D, las formas son " + nd_forma_texto(self.forma) + " y " + nd_forma_texto(b.forma))
+        }
+        let m: int = self.forma[0]
+        let kk: int = self.forma[1]
+        let kb: int = b.forma[0]
+        let nc: int = b.forma[1]
+        if kk != kb {
+            panic("NDArray.matmul: formas incompatibles, " + nd_forma_texto(self.forma) + " y " + nd_forma_texto(b.forma) + " (las columnas de la primera tienen que ser las filas de la segunda)")
+        }
+        let tam: int = nd_tamano("NDArray.matmul", [m, nc])
+        let c: NDArray = nd_crudo([m, nc], tam)
+        nd_llenar(c, 0.0)
+        let pa: *float = self.datos
+        let pb: *float = b.datos
+        let pc: *float = c.datos
+        // Orden i-k-j: el bucle de adentro recorre una fila de b y una de c
+        // en memoria contigua.
+        var i: int = 0
+        while i < m {
+            var k: int = 0
+            while k < kk {
+                let aik: float = pa[i * kk + k]
+                var j: int = 0
+                while j < nc {
+                    pc[i * nc + j] = pc[i * nc + j] + aik * pb[k * nc + j]
+                    j = j + 1
+                }
+                k = k + 1
+            }
+            i = i + 1
+        }
+        return c
+    }
+
+    /// Norma euclídea: raíz de la suma de los cuadrados de todos los elementos. Usa `#[fast_math]`.
+    fn norm(self) -> float {
+        return math_sqrt(nd_k_dot(self.datos, self.datos, self.n))
+    }
+
+    // ----- privados (Task 4) -----
+
+    fn __chequear_no_vacio(self, metodo: String) {
+        if self.n == 0 {
+            panic("NDArray." + metodo + ": el arreglo está vacío (forma " + nd_forma_texto(self.forma) + ")")
+        }
+    }
+
+    // Suma (o media) por eje de un 2-D. Recorre el buffer en orden por filas.
+    fn __suma_eje(self, metodo: String, eje: int, media: bool) -> NDArray {
+        self.__chequear_2d(metodo)
+        if eje != 0 and eje != 1 {
+            panic("NDArray." + metodo + "(" + int_to_string(eje) + "): el eje tiene que ser 0 o 1 para la forma " + nd_forma_texto(self.forma))
+        }
+        let nf: int = self.forma[0]
+        let nc: int = self.forma[1]
+        var largo: int = nf
+        var cuenta: int = nc
+        if eje == 0 {
+            largo = nc
+            cuenta = nf
+        }
+        if media and cuenta == 0 {
+            panic("NDArray." + metodo + "(" + int_to_string(eje) + "): el eje reducido está vacío (forma " + nd_forma_texto(self.forma) + ")")
+        }
+        let r: NDArray = nd_crudo([largo], largo)
+        nd_llenar(r, 0.0)
+        let p: *float = self.datos
+        let q: *float = r.datos
+        var i: int = 0
+        while i < nf {
+            var j: int = 0
+            while j < nc {
+                if eje == 0 {
+                    q[j] = q[j] + p[i * nc + j]
+                } else {
+                    q[i] = q[i] + p[i * nc + j]
+                }
+                j = j + 1
+            }
+            i = i + 1
+        }
+        if media {
+            let c: float = int_to_float(cuenta)
+            var k: int = 0
+            while k < largo {
+                q[k] = q[k] / c
+                k = k + 1
+            }
+        }
+        return r
+    }
+}

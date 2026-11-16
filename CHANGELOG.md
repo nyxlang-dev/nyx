@@ -48,6 +48,20 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ### Fixed
 
+- **El operando derecho de un operador sobrecargado se chequea contra la firma del `impl`** [arco: numerico]:
+  `a * 3.0` contra `impl Mul for W { fn mul(self, other: W) }` compilaba y el codegen le pasaba un `float` a una
+  función que espera un `W`: basura con código de salida 0, o un fallo de segmento si el struct lleva un puntero
+  (así apareció, con `NDArray + 2.0`). Ahora es NYX1005: «operando derecho de '*': 'W' implementa 'Mul' con un W,
+  se obtuvo float». Un `impl` que declara un escalar a la derecha (`fn mul(self, k: float)`) sigue funcionando.
+  Código que hoy compile con el tipo equivocado a la derecha de un operador deja de compilar; ya estaba roto en
+  ejecución. Tests: `errors/test-operador-rhs-tipo`, `errors/positive-operador-rhs-escalar`.
+
+- **`!=` entre floats con un `NaN` daba `false`** [arco: numerico]: se emitía como «ordenados y distintos»
+  (`fcmp one`) en vez de como la negación de `==` (`fcmp une`). `x != x` no detectaba un `NaN` y `nan != 1.0`
+  decía que eran iguales, sin ningún aviso. Lo encontró el agente que escribía el núcleo de `std/ndarray`, al ver
+  que un `NaN` se imprimía como `0.000`. `==`, `<` y `>` ya eran correctos. Quien haya escrito `not (x == x)`
+  para detectar un `NaN` puede dejarlo así. Test: `language/test-555`. `make test` 564 → 565.
+
 - **Una función `#[export_name]` se puede llamar desde Nyx en todos los targets** (reporte de venezuelainfo,
   2026-11-15): el compilador daba `check OK` y el fallo salía recién en clang, sin nombrar la función ni el
   atributo. En wasm el `define` salía con el nombre de export y las llamadas con el de Nyx, así que fallaba
@@ -133,6 +147,25 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 ---
 
 ### Added
+
+- **`std/ndarray`: arreglos numéricos de `float`** [arco: numerico]: `import "std/ndarray"` trae `NDArray`, un
+  arreglo de una o más dimensiones sobre un buffer contiguo que administra el recolector, con los kernels escritos
+  en Nyx. Constructores `nd_zeros`, `nd_ones`, `nd_full`, `nd_arange`, `nd_linspace`, `nd_from_array`,
+  `nd_from_rows`, `nd_eye`; forma y acceso (`shape`, `reshape`, `transpose`, `get`/`get2`, `set`/`set2`, `row`,
+  `col`, `slice`); `a + b`, `a - b`, `a * b`, `a / b` entre arreglos de la misma forma; `add_scalar`,
+  `mul_scalar`, `add_scaled` (en el lugar), `map`, `sqrt`, `abs`, `exp`, `log`; reducciones (`sum`, `mean`,
+  `min`, `max`, `argmin`, `argmax`, `std`, `sum_axis`, `mean_axis`); `dot`, `matmul`, `norm`. La API pública
+  valida límites y formas; un error de programa es `panic` con las formas en el mensaje, y `try_reshape` /
+  `try_nd_from_rows` devuelven `Result`. Lo que el lenguaje no deja escribir: `a[i, j]`, `2.0 * a` y `a * 2.0`
+  (el escalar va por método). Tests: `stdlib-suite/test-556` a `558`. `make test` 565 → 568.
+
+- **`alloc_gc<T>(n)` y `#[fast_math]`** [arco: numerico]: dos piezas para cómputo numérico sobre punteros crudos.
+  `alloc_gc<T>(n)` devuelve un `*T` como `alloc<T>(n)`, pero sobre memoria del recolector: no se libera a mano y
+  el recolector no la recorre (es para buffers de escalares; no viene en cero). `#[fast_math]` sobre una función
+  deja reordenar y fundir su aritmética de `float` (`reassoc contract` de LLVM; `NaN` e infinitos conservan su
+  significado), que es lo que hace falta para que una suma vectorice: sobre 2048 floats, 33 ms sin el atributo y
+  8 ms con él, lo mismo que C con `-ffast-math`. El resultado puede diferir en los últimos dígitos. Tests:
+  `systems/test-553`, `systems/test-554`, y un check más en `run_alloca_entry_audit.sh`. `make test` 562 → 564.
 
 - **`std/http`: `HttpStreamOpts.cuerpo_crudo` para reenviar una respuesta comprimida sin descomprimirla**
   `[dogfooding:nyxerp]`: `try_http_stream_opts` cortaba con `Err(unsupported)` ante cualquier `Content-Encoding`,

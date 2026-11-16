@@ -1,0 +1,60 @@
+// test-554: #[fast_math] — la aritmética de float de la función admite
+// reordenarse (reassoc contract). El resultado coincide con el de la función
+// sin marcar salvo en los últimos dígitos, y NaN e infinito no cambian.
+
+#[fast_math]
+fn suma_rapida(p: *float, n: int) -> float {
+    var s: float = 0.0
+    var i: int = 0
+    unsafe {
+        while i < n {
+            s = s + p[i]
+            i = i + 1
+        }
+    }
+    return s
+}
+
+fn suma_normal(p: *float, n: int) -> float {
+    var s: float = 0.0
+    var i: int = 0
+    unsafe {
+        while i < n {
+            s = s + p[i]
+            i = i + 1
+        }
+    }
+    return s
+}
+
+#[fast_math]
+fn mezcla(a: float, b: float, c: float) -> float {
+    return a * b + c - a / b
+}
+
+fn main() -> int {
+    let n: int = 100000
+    unsafe {
+        let p: *float = alloc_gc<float>(n)
+        var i: int = 0
+        while i < n {
+            p[i] = 0.1 * int_to_float(i % 977) + 0.001
+            i = i + 1
+        }
+        let r: float = suma_rapida(p, n)
+        let m: float = suma_normal(p, n)
+        var dif: float = r - m
+        if dif < 0.0 { dif = 0.0 - dif }
+        assert(dif <= m * 0.000000001, "fast_math se aleja demasiado: " + float_to_string(r) + " vs " + float_to_string(m))
+        assert(m > 4800000.0 and m < 4900000.0, "suma fuera de rango: " + float_to_string(m))
+
+        p[5] = 1.0 / 0.0
+        assert(float_to_string(suma_rapida(p, n)) == "inf", "un infinito tiene que seguir dando inf")
+        let cero: float = 0.0
+        p[5] = cero / cero
+        assert(float_to_string(suma_rapida(p, n)) == "nan", "un NaN tiene que seguir dando nan")
+    }
+    assert(mezcla(2.0, 4.0, 1.0) == 8.5, "mezcla: " + float_to_string(mezcla(2.0, 4.0, 1.0)))
+    print("test-554-fast-math: PASS")
+    return 0
+}

@@ -107,12 +107,16 @@ cd "$ROOT" || exit 1
 #     SROA. x86_64 medido por compilación cruzada desde aarch64 (`--target=x86_64-linux-gnu`,
 #     que reproduce los 18168 de expr declarados abajo); su techo real queda por medir en la
 #     laptop.
+#   2026-11-16 numerico (`alloc_gc<T>`): codegen_call_expr 479376 → 479392 (+16, SUBE). El
+#     builtin entra por el MISMO sitio de llamada que `alloc<T>` (codegen_alloc_generico, que
+#     ahora recibe el nombre); lo que cuesta es la segunda comparación de `base_name`. x86_64
+#     (548520 → 548536) es +16 supuesto, a re-medir en la laptop.
 # codegen_binop_logico está en el camino recursivo de `a and b and …`.
 declare -A TECHO=(
     [codegen_expr]=15392
     [codegen_binop]=9328
     [codegen_binop_logico]=22544
-    [codegen_call_expr]=479376
+    [codegen_call_expr]=479392
     [codegen_method_call]=476432
 )
 # Costo de UN nivel de `a + b + …`: codegen_expr + codegen_binop.
@@ -144,7 +148,7 @@ if [ "$(uname -m)" = "x86_64" ]; then
         [codegen_expr]=18840
         [codegen_binop]=10872
         [codegen_binop_logico]=24616
-        [codegen_call_expr]=548520
+        [codegen_call_expr]=548536  # +16 supuesto del 2026-11-16 (alloc_gc), a re-medir en la laptop
         [codegen_method_call]=537208
     )
     TECHO_NIVEL=29712

@@ -119,6 +119,8 @@ TESTS=(
   "tests/compiler/errors/test-a8-string-arity-startswith.nx|'startsWith' accepts at most 1 argument(s), got 2"
   "tests/compiler/errors/test-a8-string-arity-trim.nx|'trim' accepts at most 0 argument(s), got 1"
   "tests/compiler/errors/test-a8-string-arity-length.nx|'length' accepts at most 0 argument(s), got 1"
+  # Arco numerico (2026-11-16): `a * 3.0` contra `fn mul(self, other: W)` compilaba y daba basura.
+  "tests/compiler/errors/test-operador-rhs-tipo.nx|right operand of '*': 'W' implements 'Mul' for W, got float"
   # SP4 Task 3: un import NO puede apagar NYX1001 en todo el archivo. La rama
   # `import` (llaves) ni siquiera escaneaba el módulo, y la forma `import "m"`
   # dejaba g_has_imports en true → todo nombre de tipo desconocido degradaba a
@@ -3064,6 +3066,7 @@ done
 # ==============================================================
 POSITIVE_TESTS=(
   "tests/compiler/errors/positive-nyx1032-struct-completo.nx"
+  "tests/compiler/errors/positive-operador-rhs-escalar.nx"
   "tests/compiler/errors/positive-nyx1003-builtin-void-sentencia.nx"
   "tests/compiler/errors/positive-nyx1013-nombre-propio-sin-colision.nx"
   # Control POSITIVO de NYX1039: String, Array de escalares y Array de Array

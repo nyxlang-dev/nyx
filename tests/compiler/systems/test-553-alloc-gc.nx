@@ -1,0 +1,47 @@
+// test-553: alloc_gc<T>(n) — un buffer de escalares que libera el recolector.
+// 200 buffers de 8 MB pedidos y soltados: si no se liberaran serían 1,6 GB y el
+// heap (tope 512 MB) reventaría; con el GC queda en decenas de MB.
+import "std/gc"
+
+fn llenar(n: int) -> float {
+    var ult: float = 0.0
+    unsafe {
+        let p: *float = alloc_gc<float>(n)
+        var i: int = 0
+        while i < n {
+            p[i] = int_to_float(i) * 0.5
+            i = i + 1
+        }
+        ult = p[n - 1]
+    }
+    return ult
+}
+
+fn main() -> int {
+    var r: int = 0
+    var ult: float = 0.0
+    while r < 200 {
+        ult = llenar(1000000)
+        r = r + 1
+    }
+    assert(ult == 499999.5, "el último elemento no es el esperado")
+    let mb: int = gc_heap_bytes() / 1048576
+    // Piso: los buffers viven en el heap del GC. Con malloc el heap del GC ni se
+    // entera (y el proceso pierde 1,6 GB sin que este número lo note).
+    assert(mb >= 7, "el heap del GC mide " + int_to_string(mb) + " MB: los buffers no salieron del recolector")
+    assert(mb < 256, "el heap creció a " + int_to_string(mb) + " MB: alloc_gc no se está liberando")
+
+    // Otros tipos de elemento, y escritura/lectura por índice.
+    unsafe {
+        let enteros: *int = alloc_gc<int>(4)
+        enteros[0] = 7
+        enteros[3] = 35
+        assert(enteros[0] + enteros[3] == 42, "alloc_gc<int>")
+        let bytes: *u8 = alloc_gc<u8>(2)
+        bytes[1] = 250
+        let b: int = bytes[1] as int
+        assert(b == 250, "alloc_gc<u8>")
+    }
+    print("test-553-alloc-gc: PASS")
+    return 0
+}

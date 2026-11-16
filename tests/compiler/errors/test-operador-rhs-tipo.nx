@@ -1,0 +1,17 @@
+// El operando derecho de un operador sobrecargado se chequea contra la firma
+// del impl. Hasta el 2026-11-16 `a * 3.0` compilaba y el codegen le pasaba un
+// double a una función que espera un W: basura con rc=0, o un SIGSEGV.
+struct W { x: float, y: float }
+
+impl Mul for W {
+    fn mul(self, other: W) -> W {
+        return W { x: self.x * other.x, y: self.y * other.y }
+    }
+}
+
+fn main() -> int {
+    let a: W = W { x: 2.0, y: 7.0 }
+    let d: W = a * 3.0
+    print(float_to_string(d.x))
+    return 0
+}

@@ -118,4 +118,22 @@ else
     echo "  ✗ clang -O2 rechazó el IR de axpy_ptr — $(grep -m1 error "$TMP/v.cl")"; FAIL=1
 fi
 
+# (4) #[fast_math] (arco numerico): las banderas salen SOLO en las funciones marcadas, y la
+# suma marcada vectoriza con -O2 (sin `reassoc` una suma de floats no puede).
+cp tests/compiler/systems/test-554-fast-math.nx "$TMP/fm.nx"
+if NYX_SRC="$TMP/fm.nx" ./nyx_bootstrap > "$TMP/fm.log" 2>&1; then
+    por_fn() { awk -v f="$1" '/^define / { en = ($0 ~ "@" f "\\(") } en && /reassoc contract/ { n++ } END { print n + 0 }' "$TMP/fm.ll"; }
+    r="$(por_fn suma_rapida)"; m="$(por_fn mezcla)"; n="$(por_fn suma_normal)"
+    # noinline no existe en Nyx: se mira el IR optimizado de la función suelta.
+    clang -O2 -w -S -emit-llvm "$TMP/fm.ll" -o "$TMP/fm.O2.ll" 2> /dev/null
+    vr="$(awk '/^define / { en = ($0 ~ /reassoc|fast/) } /<2 x double>/ && /fadd reassoc/ { v++ } END { print v + 0 }' "$TMP/fm.O2.ll")"
+    if [ "$r" -ge 1 ] && [ "$m" -eq 4 ] && [ "$n" -eq 0 ] && [ "$vr" -ge 1 ]; then
+        echo "  ✓ #[fast_math]: banderas solo en las funciones marcadas (suma $r, mezcla $m, sin marcar $n) y la suma vectoriza"
+    else
+        echo "  ✗ #[fast_math]: suma_rapida=$r (≥1), mezcla=$m (4), suma_normal=$n (0), sumas vectoriales con reassoc=$vr (≥1)"; FAIL=1
+    fi
+else
+    echo "  ✗ no compila test-554-fast-math.nx: $(grep -m1 -iE 'error|NYX[0-9]' "$TMP/fm.log")"; FAIL=1
+fi
+
 [ "$FAIL" -eq 0 ]

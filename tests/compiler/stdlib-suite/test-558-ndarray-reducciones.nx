@@ -1,0 +1,125 @@
+// Reducciones y álgebra de std/ndarray. Valores esperados calculados con numpy.
+import "std/ndarray"
+
+// Igualdad con tolerancia relativa 1e-9 (para lo que pasa por #[fast_math]).
+fn cerca(a: float, b: float) -> bool {
+    let d: float = math_fabs(a - b)
+    var escala: float = math_fabs(b)
+    if escala < 1.0 { escala = 1.0 }
+    return d <= 1e-9 * escala
+}
+
+fn es_nan(x: float) -> bool {
+    return x != x
+}
+
+fn main() -> int {
+    // ----- 1-D -----
+    let v: NDArray = nd_from_array([3.5, -1.25, 7.0, 0.1, 7.0, -1.25, 2.2])
+    assert(cerca(v.sum(), 17.3), "1-D sum")
+    assert(cerca(v.mean(), 2.4714285714285715), "1-D mean")
+    assert(v.min() == -1.25, "1-D min")
+    assert(v.max() == 7.0, "1-D max")
+    assert(v.argmin() == 1, "1-D argmin: el primero de los empates")
+    assert(v.argmax() == 2, "1-D argmax: el primero de los empates")
+    assert(cerca(v.std(), 3.2834930380027068), "1-D std poblacional")
+    assert(cerca(v.norm(), 10.87313202347879), "1-D norm")
+
+    // ----- 2-D (reducciones sobre todo) -----
+    let m: NDArray = nd_from_rows([[1.5, 2.0, -3.0], [4.0, 0.25, 6.0]])
+    assert(cerca(m.sum(), 10.75), "2-D sum")
+    assert(cerca(m.mean(), 1.7916666666666667), "2-D mean")
+    assert(m.min() == -3.0, "2-D min")
+    assert(m.max() == 6.0, "2-D max")
+    assert(m.argmin() == 2, "2-D argmin plano")
+    assert(m.argmax() == 5, "2-D argmax plano")
+    assert(cerca(m.std(), 2.829961228631155), "2-D std")
+    assert(cerca(m.norm(), 8.204419540710969), "2-D norm")
+
+    // ----- por eje -----
+    let s0: NDArray = m.sum_axis(0)
+    let f0: Array<int> = s0.shape()
+    assert(f0.length() == 1 and f0[0] == 3, "sum_axis(0) forma [3]")
+    assert(s0.get(0) == 5.5 and s0.get(1) == 2.25 and s0.get(2) == 3.0, "sum_axis(0) valores")
+    let s1: NDArray = m.sum_axis(1)
+    let f1: Array<int> = s1.shape()
+    assert(f1.length() == 1 and f1[0] == 2, "sum_axis(1) forma [2]")
+    assert(s1.get(0) == 0.5 and s1.get(1) == 10.25, "sum_axis(1) valores")
+    let m0: NDArray = m.mean_axis(0)
+    assert(m0.size() == 3, "mean_axis(0) largo")
+    assert(m0.get(0) == 2.75 and m0.get(1) == 1.125 and m0.get(2) == 1.5, "mean_axis(0) valores")
+    let m1: NDArray = m.mean_axis(1)
+    assert(m1.size() == 2, "mean_axis(1) largo")
+    assert(m1.get(0) == 0.16666666666666666 and m1.get(1) == 3.4166666666666665, "mean_axis(1) valores")
+
+    // ----- dot -----
+    let a: NDArray = nd_from_array([1.0, 2.0, 3.0, 4.0])
+    let b: NDArray = nd_from_array([0.5, -1.0, 2.5, 3.0])
+    assert(cerca(a.dot(b), 18.0), "dot")
+
+    // ----- matmul 2x3 por 3x4 -----
+    let ma: NDArray = nd_from_rows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let mb: NDArray = nd_from_rows([[7.0, 8.0, 9.0, 10.0], [11.0, 12.0, 13.0, 14.0], [15.0, 16.0, 17.0, 18.0]])
+    let mc: NDArray = ma.matmul(mb)
+    let fc: Array<int> = mc.shape()
+    assert(fc.length() == 2 and fc[0] == 2 and fc[1] == 4, "matmul forma [2, 4]")
+    let esperado: Array<float> = [74.0, 80.0, 86.0, 92.0, 173.0, 188.0, 203.0, 218.0]
+    var k: int = 0
+    while k < 8 {
+        let e: float = esperado[k]
+        assert(mc.get(k) == e, "matmul elemento " + int_to_string(k))
+        k = k + 1
+    }
+    // contra la identidad, por los dos lados
+    let i3: NDArray = nd_eye(3)
+    let ai: NDArray = ma.matmul(i3)
+    let i2: NDArray = nd_eye(2)
+    let ia: NDArray = i2.matmul(ma)
+    k = 0
+    while k < 6 {
+        assert(ai.get(k) == ma.get(k), "A x I = A en " + int_to_string(k))
+        assert(ia.get(k) == ma.get(k), "I x A = A en " + int_to_string(k))
+        k = k + 1
+    }
+    // matmul no toca a los operandos
+    assert(ma.get(0) == 1.0 and mb.get(11) == 18.0, "matmul no modifica los operandos")
+
+    // ----- NaN -----
+    let nan: float = 0.0 / 0.0
+    let vn: NDArray = nd_from_array([3.0, nan, 1.0, nan, 0.5])
+    assert(es_nan(vn.sum()), "sum propaga NaN")
+    assert(es_nan(vn.mean()), "mean propaga NaN")
+    assert(es_nan(vn.std()), "std propaga NaN")
+    assert(es_nan(vn.min()), "min con NaN da nan")
+    assert(es_nan(vn.max()), "max con NaN da nan")
+    assert(vn.argmin() == 1, "argmin con NaN: índice del primer NaN")
+    assert(vn.argmax() == 1, "argmax con NaN: índice del primer NaN")
+    let vn0: NDArray = nd_from_array([nan, 2.0])
+    assert(vn0.argmin() == 0 and vn0.argmax() == 0, "NaN en la posición 0")
+
+    // ----- suma larga (100 000 elementos) -----
+    let largo: int = 100000
+    let x: NDArray = nd_zeros([largo])
+    var i: int = 0
+    while i < largo {
+        x.set(i, int_to_float(i) * 0.001)
+        i = i + 1
+    }
+    assert(cerca(x.sum(), 4999950.0), "suma larga")
+    assert(cerca(x.mean(), 49.9995), "media larga")
+    assert(cerca(x.std(), 28.867513458037912), "std larga")
+    assert(cerca(x.norm(), 18257.281652809106), "norm larga")
+    assert(x.argmax() == largo - 1 and x.argmin() == 0, "argmax/argmin largos")
+
+    // ----- tamaño 0 -----
+    let vacio: NDArray = nd_zeros([0])
+    assert(vacio.sum() == 0.0, "sum de un vacío es 0.0")
+    assert(vacio.norm() == 0.0, "norm de un vacío es 0.0")
+    let vacio2: NDArray = nd_zeros([0, 3])
+    assert(vacio2.sum() == 0.0, "sum de un 2-D vacío es 0.0")
+    let sv: NDArray = vacio2.sum_axis(0)
+    assert(sv.size() == 3 and sv.get(0) == 0.0, "sum_axis(0) de [0, 3] da tres ceros")
+
+    print("test-558-ndarray-reducciones: PASS")
+    return 0
+}

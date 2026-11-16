@@ -6,6 +6,7 @@
 # destinos: "no-wasm" = no existe en wasm32-wasi (wasm_forbidden_builtin, codegen.nx).
 builtin	__go_spawn	1	Concurrencia		no-wasm
 builtin	alloc	1	Memoria		
+builtin	alloc_gc	1	Otros		
 builtin	arena_persist	1	Otros		
 builtin	atomic_add	2	Concurrencia		no-wasm
 builtin	atomic_cas	3	Concurrencia		no-wasm

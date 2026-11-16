@@ -64,7 +64,7 @@ a web page.
 ## Gotchas (the footguns that cause most first-try failures)
 
 <!-- gen:gotchas kinds=trap,rule lang=en form=short -->
-<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,interpolation-uses-nyx-type,narrow-int-arithmetic -->
+<!-- gen:ids fn-callback-typed,nested-map-from-call,small-channel-deadlock,ffi-c-int-no-sign-extend,clock-domain-time-builtins,int-wraps-silently,pg-require-no-verifica,sort-in-place,ndarray-copy-shares-buffer,await-float-gated,channel-is-map,charat-returns-int,enum-dot-not-colons,map-literal-string-keys,strings-are-bytes,check-bind-return,assert-aborts-process,bare-return-void,case-unicode-scope,derive-fields-pg-bool-text,dyn-trait-needs-annotation,field-access-complex-receiver,pg-null-sentinel,prelude-module-list-contract,prelude-names-are-global,random-bytes-not-crypto,sqlite-null-sentinel,string-order-is-bytewise,throw-deprecated,time-clock-names-deprecated,void-builtin-no-bind,type-names-are-global,for-in-string-rejected,string-element-into-scalar-rejected,http-serve-all-interfaces,mixed-primitive-operators,string-escapes,local-lambda-no-self-name,ndarray-release-build,interpolation-uses-nyx-type,narrow-int-arithmetic -->
 
 1. **Callbacks: prefer `Fn(Type) -> Ret`**
 2. **Nested Maps: OK for a variable or an inline literal, CRASHES for a function's return value — when in
@@ -85,46 +85,48 @@ mode)` for the `a*b/c` shape, which computes the intermediate product in 128 bit
 happily complete a TLS handshake with an impostor.**
 8. **`sort_int`, `sort_str` and `sort_by` sort THE ARRAY YOU PASS, in place, and return that same array — not a
 copy.**
-9. **`await` of a `float`-returning function is gated (NYX1021)**
-10. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**
-11. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.**
-12. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.**
-13. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
+9. **Copying an `NDArray` (passing it to a function, storing it in an `Array`) SHARES its buffer: use `copy()` for an independent one.**
+10. **`await` of a `float`-returning function is gated (NYX1021)**
+11. **Channels must be Map, not int: `let ch: Map = channel_new(10)`, never `let ch: int`.**
+12. **`charAt()` returns int (ASCII/codepoint), NOT String — compare with numbers: `if c == 65`.**
+13. **Enum variants use `.`, not `::`: `Shape.Circle(5)`, never `Shape::Circle(5)`.**
+14. **Map literal keys must be STRINGS: `{"k": 1}` and `{}` work (v0.16), but `{ident: 1}` is NOT a map
 literal and fails loudly with `NYX0106`.**
-14. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
+15. **String API is byte-based (v0.14): `length()`, `substring()`, `indexOf()` and `charAt()` all operate
 on BYTES — for *character* counts use `char_length()` (UTF-8 codepoints).**
-15. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
+16. **Check the return of `http_serve`/`tcp_listen`/`udp_bind`: a failed bind (port taken) returns `-1` —
 `if http_serve(8080, handler) < 0 { return 1 }`.**
-16. **`assert()` aborts the process (`exit(1)`) on the first failure**
-17. **A bare `return` (no value) works in a `void`-returning function**
-18. **`toUpper()`/`toLower()` cover ASCII + Latin-1 Supplement + Latin Extended-A — Greek and Cyrillic
+17. **`assert()` aborts the process (`exit(1)`) on the first failure**
+18. **A bare `return` (no value) works in a `void`-returning function**
+19. **`toUpper()`/`toLower()` cover ASCII + Latin-1 Supplement + Latin Extended-A — Greek and Cyrillic
 are left untouched.**
-19. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
+20. **`<Struct>_desde_fila()` accepts every boolean spelling its two producers emit — `true`/`false`,
 `t`/`f` and `1`/`0` — and ABORTS naming the value on anything else.**
-20. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
-21. **A field can only be read from a name or a chain of fields: `f().x`, `a[0].x` and `T{...}.x` are an error (NYX2003; writing them is NYX2006).**
-22. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
-23. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
+21. **To store trait objects in a collection, type the collection: `Array<dyn Trait>`**
+22. **A field can only be read from a name or a chain of fields: `f().x`, `a[0].x` and `T{...}.x` are an error (NYX2003; writing them is NYX2006).**
+23. **A NULL column from `std/postgres` is NOT an empty string — ask with `pg_is_null(v)`**
+24. **The list of modules the prelude carries lives INSIDE the prelude, on the `//#prelude-modules:`
 line — never hardcoded in the compiler.**
-24. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.**
-25. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
+25. **The prelude's names are GLOBAL: declaring one of your own with the same name is NYX1013.**
+26. **`random_bytes` (`std/random`) is a PRNG, not a CSPRNG — never use it for salts, tokens, keys,
 nonces, or any other cryptographic material; use `csprng_bytes` instead.**
-26. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`**
-27. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
-28. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
-29. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
+27. **A NULL column from `std/sqlite` is NOT an empty string — ask with `sqlite_is_null(v)`**
+28. **`<` `<=` `>` `>=` between Strings compare BYTES, not codepoints or locale**
+29. **`throw(x)` is a deprecated alias of `panic(x)`: same channel, same `catch`, same limits.**
+30. **`time()`, `time_ms()` and `time_us()` are deprecated names: use `time_epoch()` for the wall clock
 and `monotonic_ms()` / `monotonic_us()` for the monotonic one — same runtime call, a name that says
 WHICH clock.**
-30. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
-31. **`struct` and `enum` names are GLOBAL to the program, even without `pub`: the same name declared in two modules is NYX1040.**
-32. **`for c in s` over a `String` is an error (NYX1038): iterate by index — bytes with `for i in 0..s.length() { s.substring(i, i + 1) }`, UTF-8 characters with `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
-33. **An Array element the compiler knows is a `String` does not go into an `int`/`bool` variable (NYX2019): convert it — `let n: int = string_to_int(fila[0])`.**
-34. **`http_serve`/`http_serve_mt` listen on ALL interfaces (`0.0.0.0`); behind a proxy use `http_serve_en("127.0.0.1", port, handler)`.**
-35. **Operators between primitives of different kinds are NYX1010**
-36. **String escapes: `\xNN` and `\u{…}` exist since 0.37.0; any other unknown escape is NYX1045.**
-37. **A local `let` is visible from its own line on, not in its own value: a local lambda cannot call itself by name — write a nested `fn`.**
-38. **Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `"${b}"` with `b: u8 = 65` is `65`, not `A`.**
-39. **Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.**
+31. **Some builtins return NOTHING — binding their result is an error (NYX1003, `expected T, got ()`).**
+32. **`struct` and `enum` names are GLOBAL to the program, even without `pub`: the same name declared in two modules is NYX1040.**
+33. **`for c in s` over a `String` is an error (NYX1038): iterate by index — bytes with `for i in 0..s.length() { s.substring(i, i + 1) }`, UTF-8 characters with `for i in 0..s.char_length() { s.char_substring(i, i + 1) }`.**
+34. **An Array element the compiler knows is a `String` does not go into an `int`/`bool` variable (NYX2019): convert it — `let n: int = string_to_int(fila[0])`.**
+35. **`http_serve`/`http_serve_mt` listen on ALL interfaces (`0.0.0.0`); behind a proxy use `http_serve_en("127.0.0.1", port, handler)`.**
+36. **Operators between primitives of different kinds are NYX1010**
+37. **String escapes: `\xNN` and `\u{…}` exist since 0.37.0; any other unknown escape is NYX1045.**
+38. **A local `let` is visible from its own line on, not in its own value: a local lambda cannot call itself by name — write a nested `fn`.**
+39. **Build numeric code with `nyx build --release`: without it nothing is optimized and `std/ndarray` loops run 4 to 15 times slower.**
+40. **Interpolating a `u8` or `i8` gives the NUMBER, a `char` gives the character: `"${b}"` with `b: u8 = 65` is `65`, not `A`.**
+41. **Arithmetic between two narrow integers of the SAME type stays in that width and wraps (`u8` 200 + `u8` 100 is 44, 200 * 100 is 32); mixing a narrow integer with an `int` or with another width gives an `int`.**
 
 <!-- /gen:gotchas -->
 

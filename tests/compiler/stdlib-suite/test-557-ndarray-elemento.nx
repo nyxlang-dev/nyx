@@ -1,0 +1,221 @@
+// Test de std/ndarray: elemento a elemento, operadores y map (Task 3 del arco numerico).
+// Valores esperados calculados con numpy
+import "std/ndarray"
+
+// Igualdad exacta: + - * / y sqrt son operaciones IEEE correctamente
+// redondeadas, así que numpy y Nyx dan el mismo bit.
+fn iguales(a: NDArray, esperado: Array<float>, que: String) {
+    assert(a.size() == esperado.length(), que + ": tamaño " + int_to_string(a.size()))
+    var i: int = 0
+    while i < esperado.length() {
+        let e: float = esperado[i]
+        let x: float = a.get(i)
+        assert(x == e, que + ": posición " + int_to_string(i) + " da " + float_to_string(x) + ", numpy " + float_to_string(e))
+        i = i + 1
+    }
+}
+
+// exp y log vienen de libm: numpy puede usar otra implementación, así que se
+// tolera un error relativo de 1e-15.
+fn cercanos(a: NDArray, esperado: Array<float>, que: String) {
+    assert(a.size() == esperado.length(), que + ": tamaño " + int_to_string(a.size()))
+    var i: int = 0
+    while i < esperado.length() {
+        let e: float = esperado[i]
+        let x: float = a.get(i)
+        var d: float = x - e
+        if d < 0.0 { d = 0.0 - d }
+        var m: float = e
+        if m < 0.0 { m = 0.0 - m }
+        if m < 1.0 { m = 1.0 }
+        assert(d <= 1.0e-15 * m, que + ": posición " + int_to_string(i) + " da " + float_to_string(x) + ", numpy " + float_to_string(e))
+        i = i + 1
+    }
+}
+
+fn misma_forma(a: NDArray, forma: Array<int>, que: String) {
+    let f: Array<int> = a.shape()
+    assert(f.length() == forma.length(), que + ": ndim")
+    var k: int = 0
+    while k < forma.length() {
+        let x: int = f[k]
+        let y: int = forma[k]
+        assert(x == y, que + ": dimensión " + int_to_string(k))
+        k = k + 1
+    }
+}
+
+fn es_nan(x: float) -> bool {
+    return x != x
+}
+
+fn cubo(x: float) -> float {
+    return x * x * x
+}
+
+fn test_operadores_1d() {
+    let a: NDArray = nd_from_array([1.5, 0.0 - 2.0, 3.25, 0.1])
+    let b: NDArray = nd_from_array([0.5, 4.0, 0.0 - 1.25, 0.2])
+    let s: NDArray = a + b
+    iguales(s, [2.0, 2.0, 2.0, 0.30000000000000004], "1-D a + b")
+    let r: NDArray = a - b
+    iguales(r, [1.0, 0.0 - 6.0, 4.5, 0.0 - 0.1], "1-D a - b")
+    let p: NDArray = a * b
+    iguales(p, [0.75, 0.0 - 8.0, 0.0 - 4.0625, 0.020000000000000004], "1-D a * b")
+    let q: NDArray = a / b
+    iguales(q, [3.0, 0.0 - 0.5, 0.0 - 2.6, 0.5], "1-D a / b")
+    misma_forma(q, [4], "1-D forma del resultado")
+    // Encadenados: (a + b) * b - a
+    let c: NDArray = (a + b) * b - a
+    iguales(c, [1.0 - 1.5, 8.0 + 2.0, 0.0 - 2.5 - 3.25, 0.30000000000000004 * 0.2 - 0.1], "1-D encadenado")
+}
+
+fn test_operadores_2d() {
+    let a: NDArray = nd_from_rows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let b: NDArray = nd_from_rows([[0.5, 0.0 - 1.0, 2.0], [3.0, 0.25, 0.0 - 4.0]])
+    let s: NDArray = a + b
+    iguales(s, [1.5, 1.0, 5.0, 7.0, 5.25, 2.0], "2-D a + b")
+    misma_forma(s, [2, 3], "2-D forma de a + b")
+    let r: NDArray = a - b
+    iguales(r, [0.5, 3.0, 1.0, 1.0, 4.75, 10.0], "2-D a - b")
+    let p: NDArray = a * b
+    iguales(p, [0.5, 0.0 - 2.0, 6.0, 12.0, 1.25, 0.0 - 24.0], "2-D a * b")
+    let q: NDArray = a / b
+    iguales(q, [2.0, 0.0 - 2.0, 1.5, 1.3333333333333333, 20.0, 0.0 - 1.5], "2-D a / b")
+    misma_forma(q, [2, 3], "2-D forma de a / b")
+    assert(q.get2(1, 0) == 4.0 / 3.0, "2-D get2 sobre el resultado")
+}
+
+fn test_no_comparte_buffer() {
+    let a: NDArray = nd_from_array([1.0, 2.0, 3.0])
+    let b: NDArray = nd_from_array([10.0, 20.0, 30.0])
+    let ops: Array<NDArray> = [a + b, a - b, a * b, a / b, a.add_scalar(1.0), a.mul_scalar(2.0), a.sqrt(), a.abs(), a.exp(), a.log(), a.map(cubo)]
+    var k: int = 0
+    while k < ops.length() {
+        let c: NDArray = ops[k]
+        c.set(0, 99.0)
+        assert(a.get(0) == 1.0, "resultado " + int_to_string(k) + " comparte buffer con el operando izquierdo")
+        assert(b.get(0) == 10.0, "resultado " + int_to_string(k) + " comparte buffer con el operando derecho")
+        k = k + 1
+    }
+    // Y al revés: cambiar un operando no cambia un resultado ya calculado.
+    let s: NDArray = a + b
+    a.set(1, 0.0 - 100.0)
+    assert(s.get(1) == 22.0, "el resultado cambió al modificar el operando")
+}
+
+fn test_escalar() {
+    let a: NDArray = nd_from_array([1.5, 0.0 - 2.0, 3.25, 0.1])
+    let s: NDArray = a.add_scalar(2.5)
+    iguales(s, [4.0, 0.5, 5.75, 2.6], "add_scalar(2.5)")
+    let m: NDArray = a.mul_scalar(0.0 - 3.0)
+    iguales(m, [0.0 - 4.5, 6.0, 0.0 - 9.75, 0.0 - 0.30000000000000004], "mul_scalar(-3.0)")
+    let a2: NDArray = nd_from_rows([[1.0, 2.0], [3.0, 4.0]])
+    let m2: NDArray = a2.mul_scalar(0.5)
+    misma_forma(m2, [2, 2], "mul_scalar conserva la forma")
+    iguales(m2, [0.5, 1.0, 1.5, 2.0], "mul_scalar 2-D")
+    // -0.0 * 2 = -0.0 (como numpy): 1 / -0.0 = -inf.
+    let menos_cero: float = (0.0 - 1.0) * 0.0
+    let z: NDArray = nd_from_array([menos_cero])
+    assert(1.0 / z.get(0) == 0.0 - (1.0 / 0.0), "el test no construyó -0.0")
+    let z2: NDArray = z.mul_scalar(2.0)
+    let inf: float = 1.0 / 0.0
+    assert(1.0 / z2.get(0) == 0.0 - inf, "mul_scalar pierde el signo de -0.0")
+}
+
+fn test_add_scaled() {
+    let y: NDArray = nd_from_array([1.0, 2.0, 3.0, 4.0])
+    let x: NDArray = nd_from_array([0.5, 0.25, 0.0 - 1.0, 2.0])
+    let alias: NDArray = y          // copia por valor: comparte el buffer
+    y.add_scaled(1.5, x)
+    iguales(y, [1.75, 2.375, 1.5, 7.0], "add_scaled(1.5, x)")
+    // En el lugar: la copia por valor ve el cambio, así que no hubo arreglo nuevo.
+    iguales(alias, [1.75, 2.375, 1.5, 7.0], "add_scaled no escribió en el buffer original")
+    iguales(x, [0.5, 0.25, 0.0 - 1.0, 2.0], "add_scaled modificó x")
+    // x e y el mismo buffer: y = 2y + y = 3y.
+    let w: NDArray = nd_from_rows([[1.0, 2.0], [3.0, 4.0]])
+    w.add_scaled(2.0, w)
+    iguales(w, [3.0, 6.0, 9.0, 12.0], "add_scaled con x == self")
+}
+
+fn test_map() {
+    let a: NDArray = nd_from_rows([[1.0, 0.0 - 2.0], [3.0, 0.5]])
+    let c: NDArray = a.map(cubo)
+    iguales(c, [1.0, 0.0 - 8.0, 27.0, 0.125], "map(cubo)")
+    misma_forma(c, [2, 2], "map conserva la forma")
+    let sq: NDArray = a.map(fn(x: float) -> float { return x * x })
+    iguales(sq, [1.0, 4.0, 9.0, 0.25], "map(lambda x * x)")
+    // Lambda que captura una variable local.
+    let k: float = 10.0
+    let sk: NDArray = a.map(fn(x: float) -> float { return x + k })
+    iguales(sk, [11.0, 8.0, 13.0, 10.5], "map(lambda que captura k)")
+    iguales(a, [1.0, 0.0 - 2.0, 3.0, 0.5], "map modificó el original")
+}
+
+fn test_matematicas() {
+    let v: NDArray = nd_from_array([0.25, 1.0, 2.0, 10.0])
+    let s: NDArray = v.sqrt()
+    iguales(s, [0.5, 1.0, 1.4142135623730951, 3.1622776601683795], "sqrt")
+    let e: NDArray = v.exp()
+    cercanos(e, [1.2840254166877414, 2.718281828459045, 7.38905609893065, 22026.465794806718], "exp")
+    let l: NDArray = v.log()
+    cercanos(l, [0.0 - 1.3862943611198906, 0.0, 0.6931471805599453, 2.302585092994046], "log")
+    let m: NDArray = nd_from_rows([[0.0 - 1.5, 0.0], [2.0, 0.0 - 0.25]])
+    let ab: NDArray = m.abs()
+    iguales(ab, [1.5, 0.0, 2.0, 0.25], "abs")
+    misma_forma(ab, [2, 2], "abs conserva la forma")
+}
+
+fn test_ieee() {
+    let inf: float = 1.0 / 0.0
+    let num: NDArray = nd_from_array([1.0, 0.0 - 1.0, 0.0])
+    let cero: NDArray = nd_zeros([3])
+    let q: NDArray = num / cero
+    assert(q.get(0) == inf, "1 / 0 tiene que ser inf")
+    assert(q.get(1) == 0.0 - inf, "-1 / 0 tiene que ser -inf")
+    assert(es_nan(q.get(2)), "0 / 0 tiene que ser nan")
+    let l: NDArray = nd_from_array([0.0, 0.0 - 1.0])
+    let ll: NDArray = l.log()
+    assert(ll.get(0) == 0.0 - inf, "log(0) tiene que ser -inf")
+    assert(es_nan(ll.get(1)), "log(-1) tiene que ser nan")
+    let r: NDArray = nd_from_array([0.0 - 1.0])
+    let rr: NDArray = r.sqrt()
+    assert(es_nan(rr.get(0)), "sqrt(-1) tiene que ser nan")
+    // nan se propaga por los operadores.
+    let s: NDArray = q + num
+    assert(es_nan(s.get(2)), "nan + x tiene que ser nan")
+    assert(s.get(0) == inf, "inf + 1 tiene que ser inf")
+}
+
+fn test_vacio() {
+    let a: NDArray = nd_zeros([0])
+    let b: NDArray = nd_zeros([0])
+    let ops: Array<NDArray> = [a + b, a - b, a * b, a / b, a.add_scalar(1.0), a.mul_scalar(2.0), a.sqrt(), a.abs(), a.exp(), a.log(), a.map(cubo)]
+    var k: int = 0
+    while k < ops.length() {
+        let c: NDArray = ops[k]
+        assert(c.size() == 0, "vacío: resultado " + int_to_string(k) + " no tiene tamaño 0")
+        misma_forma(c, [0], "vacío: forma del resultado " + int_to_string(k))
+        k = k + 1
+    }
+    a.add_scaled(3.0, b)
+    assert(a.size() == 0, "vacío: add_scaled")
+    // 2-D con una dimensión 0.
+    let m: NDArray = nd_zeros([2, 0])
+    let m2: NDArray = m * m
+    misma_forma(m2, [2, 0], "vacío 2-D: forma de m * m")
+}
+
+fn main() -> int {
+    test_operadores_1d()
+    test_operadores_2d()
+    test_no_comparte_buffer()
+    test_escalar()
+    test_add_scaled()
+    test_map()
+    test_matematicas()
+    test_ieee()
+    test_vacio()
+    print("test-557-ndarray-elemento: PASS")
+    return 0
+}

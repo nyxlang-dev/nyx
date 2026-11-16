@@ -3858,7 +3858,7 @@ fn module_category(name: String) -> String {
     if name == "crypto" or name == "tls" or name == "hash" or name == "random" or name == "uuid" or name == "oauth2" or name == "rsa" or name == "webpushcrypto" { return "Cripto & seguridad" }
     if name == "time" or name == "datetime" { return "Tiempo" }
     if name == "string" or name == "strings" or name == "stringbuilder" or name == "regex" or name == "unicode" { return "Strings & texto" }
-    if name == "math" or name == "math_ext" or name == "expr" { return "Matemática" }
+    if name == "math" or name == "math_ext" or name == "expr" or name == "ndarray" { return "Matemática" }
     if name == "array" or name == "map" or name == "collections" { return "Colecciones & estructuras" }
     if name == "set" or name == "deque" or name == "linkedlist" or name == "stack" or name == "btreemap" or name == "priorityqueue" or name == "graph" or name == "matrix" { return "Colecciones & estructuras" }
     if name == "statemachine" or name == "events" { return "Colecciones & estructuras" }

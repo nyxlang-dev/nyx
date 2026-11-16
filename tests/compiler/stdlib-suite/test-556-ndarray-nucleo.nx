@@ -1,0 +1,288 @@
+// test-556-ndarray-nucleo — núcleo de std/ndarray: constructores, forma,
+// acceso con chequeo, copias contra buffers compartidos y texto.
+// Los casos que abortan (panic) no caben en un proceso que sigue: se
+// prueban aparte (ver el reporte de la task 2 del arco numerico).
+
+import "std/ndarray"
+import "std/error"
+
+fn mismos(a: Array<float>, b: Array<float>) -> bool {
+    if a.length() != b.length() { return false }
+    var i: int = 0
+    while i < a.length() {
+        let x: float = a[i]
+        let y: float = b[i]
+        if x != y { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn misma_forma(a: Array<int>, b: Array<int>) -> bool {
+    if a.length() != b.length() { return false }
+    var i: int = 0
+    while i < a.length() {
+        let x: int = a[i]
+        let y: int = b[i]
+        if x != y { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn cerca(x: float, y: float) -> bool {
+    var d: float = x - y
+    if d < 0.0 { d = 0.0 - d }
+    return d < 0.000000001
+}
+
+// Recibe el struct por valor y escribe: tiene que verse afuera.
+fn poner_en_cero(a: NDArray) {
+    a.set(0, 0.0)
+}
+
+fn devolver(a: NDArray) -> NDArray {
+    return a
+}
+
+fn test_constructores() {
+    let z: NDArray = nd_zeros([2, 3])
+    assert(z.size() == 6, "nd_zeros: size")
+    assert(z.ndim() == 2, "nd_zeros: ndim")
+    assert(misma_forma(z.shape(), [2, 3]), "nd_zeros: shape")
+    assert(mismos(z.to_array(), [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]), "nd_zeros: valores")
+
+    let o: NDArray = nd_ones([4])
+    assert(mismos(o.to_array(), [1.0, 1.0, 1.0, 1.0]), "nd_ones")
+
+    let f: NDArray = nd_full([2, 2, 2], 2.5)
+    assert(f.size() == 8 and f.ndim() == 3, "nd_full: forma 3-D")
+    assert(f.get(7) == 2.5, "nd_full: valor")
+
+    let r: NDArray = nd_arange(0.0, 5.0, 1.0)
+    assert(mismos(r.to_array(), [0.0, 1.0, 2.0, 3.0, 4.0]), "nd_arange: fin excluido")
+    let r2: NDArray = nd_arange(1.0, 2.0, 0.25)
+    assert(mismos(r2.to_array(), [1.0, 1.25, 1.5, 1.75]), "nd_arange: paso fraccionario")
+    let r3: NDArray = nd_arange(5.0, 0.0, 0.0 - 2.0)
+    assert(mismos(r3.to_array(), [5.0, 3.0, 1.0]), "nd_arange: paso negativo")
+    let r4: NDArray = nd_arange(3.0, 3.0, 1.0)
+    assert(r4.size() == 0, "nd_arange: vacío cuando ini == fin")
+    let r5: NDArray = nd_arange(0.0, 1.0, 0.3)
+    assert(r5.size() == 4, "nd_arange: cuenta con techo (0, .3, .6, .9)")
+
+    let l: NDArray = nd_linspace(0.0, 1.0, 5)
+    assert(mismos(l.to_array(), [0.0, 0.25, 0.5, 0.75, 1.0]), "nd_linspace: fin incluido")
+    let l3: NDArray = nd_linspace(0.0, 1.0, 3)
+    let l3b: float = l3.get(1)
+    assert(cerca(l3b, 0.5), "nd_linspace: medio")
+    let l1: NDArray = nd_linspace(7.0, 9.0, 1)
+    assert(mismos(l1.to_array(), [7.0]), "nd_linspace: n = 1")
+    let l0: NDArray = nd_linspace(7.0, 9.0, 0)
+    assert(l0.size() == 0, "nd_linspace: n = 0")
+    let l10: NDArray = nd_linspace(0.0, 0.3, 10)
+    assert(l10.get(9) == 0.3, "nd_linspace: el último es fin exacto")
+
+    var xs: Array<float> = [1.0, 2.0, 3.0]
+    let fa: NDArray = nd_from_array(xs)
+    xs[0] = 99.0
+    assert(fa.get(0) == 1.0, "nd_from_array copia: cambiar el Array no cambia el NDArray")
+    assert(misma_forma(fa.shape(), [3]), "nd_from_array: 1-D")
+
+    let m: NDArray = nd_from_rows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    assert(misma_forma(m.shape(), [2, 3]), "nd_from_rows: forma")
+    assert(mismos(m.to_array(), [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]), "nd_from_rows: orden por filas")
+
+    let ok: Result<NDArray, Error> = try_nd_from_rows([[1.0], [2.0]])
+    match ok {
+        Result.Ok(a) => { assert(misma_forma(a.shape(), [2, 1]), "try_nd_from_rows Ok: forma") }
+        Result.Err(e) => { assert(false, "try_nd_from_rows: no debía fallar: " + e.msg) }
+    }
+    let mal: Result<NDArray, Error> = try_nd_from_rows([[1.0, 2.0], [3.0]])
+    match mal {
+        Result.Ok(a) => { assert(false, "try_nd_from_rows: filas desparejas debían dar Err") }
+        Result.Err(e) => {
+            assert(e.kind == "invalid" and e.code == 22, "try_nd_from_rows Err: kind/code")
+            assert(e.msg.indexOf("fila 1") >= 0, "try_nd_from_rows Err: nombra la fila")
+        }
+    }
+
+    let e3: NDArray = nd_eye(3)
+    assert(mismos(e3.to_array(), [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]), "nd_eye")
+    let e0: NDArray = nd_eye(0)
+    assert(e0.size() == 0 and misma_forma(e0.shape(), [0, 0]), "nd_eye(0)")
+}
+
+fn test_forma() {
+    let a: NDArray = nd_arange(0.0, 6.0, 1.0)
+    let b: NDArray = a.reshape([2, 3])
+    assert(misma_forma(b.shape(), [2, 3]), "reshape: forma")
+    assert(b.get2(1, 0) == 3.0, "reshape: orden por filas")
+    b.set(0, 100.0)
+    assert(a.get(0) == 0.0, "reshape copia: no comparte el buffer")
+
+    let s: Array<int> = a.shape()
+    var s2: Array<int> = s
+    s2[0] = 77
+    assert(a.size() == 6 and misma_forma(a.shape(), [6]), "shape devuelve una copia")
+
+    let ok: Result<NDArray, Error> = a.try_reshape([3, 2])
+    match ok {
+        Result.Ok(x) => { assert(x.get2(2, 1) == 5.0, "try_reshape Ok") }
+        Result.Err(e) => { assert(false, "try_reshape no debía fallar: " + e.msg) }
+    }
+    let mal: Result<NDArray, Error> = a.try_reshape([4, 2])
+    match mal {
+        Result.Ok(x) => { assert(false, "try_reshape [6] -> [4, 2] debía dar Err") }
+        Result.Err(e) => {
+            assert(e.kind == "invalid" and e.code == 22, "try_reshape Err: kind/code")
+            assert(e.msg.indexOf("[6]") >= 0 and e.msg.indexOf("[4, 2]") >= 0, "try_reshape Err: nombra las dos formas")
+        }
+    }
+    let neg: Result<NDArray, Error> = a.try_reshape([0 - 2, 0 - 3])
+    match neg {
+        Result.Ok(x) => { assert(false, "try_reshape con dimensión negativa debía dar Err") }
+        Result.Err(e) => { assert(e.msg.indexOf("negativa") >= 0, "try_reshape Err: negativa") }
+    }
+    let vacia: Array<int> = []
+    let sin: Result<NDArray, Error> = a.try_reshape(vacia)
+    match sin {
+        Result.Ok(x) => { assert(false, "try_reshape a forma vacía debía dar Err") }
+        Result.Err(e) => { assert(e.kind == "invalid", "try_reshape Err: forma vacía") }
+    }
+    let grande: Result<NDArray, Error> = a.try_reshape([4294967296, 4294967296])
+    match grande {
+        Result.Ok(x) => { assert(false, "try_reshape con producto que desborda debía dar Err") }
+        Result.Err(e) => { assert(e.msg.indexOf("desborda") >= 0, "try_reshape Err: desborde") }
+    }
+
+    let m: NDArray = nd_from_rows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let t: NDArray = m.transpose()
+    assert(misma_forma(t.shape(), [3, 2]), "transpose: forma")
+    assert(mismos(t.to_array(), [1.0, 4.0, 2.0, 5.0, 3.0, 6.0]), "transpose: orden por filas")
+    assert(t.get2(2, 1) == 6.0 and t.get2(0, 1) == 4.0, "transpose: get2")
+    t.set2(0, 0, 50.0)
+    assert(m.get2(0, 0) == 1.0, "transpose copia")
+
+    let c: NDArray = m.copy()
+    c.set2(1, 2, 60.0)
+    assert(m.get2(1, 2) == 6.0, "copy: no comparte el buffer")
+    assert(c.get2(1, 2) == 60.0, "copy: la copia sí cambió")
+    assert(misma_forma(c.shape(), [2, 3]), "copy: misma forma")
+
+    let arr: Array<float> = m.to_array()
+    var arr2: Array<float> = arr
+    arr2[0] = 9.0
+    assert(m.get(0) == 1.0, "to_array: copia")
+}
+
+fn test_acceso() {
+    let m: NDArray = nd_zeros([3, 4])
+    m.set2(2, 3, 7.0)
+    assert(m.get(11) == 7.0, "set2/get: (2, 3) es la posición plana 11")
+    m.set(4, 3.5)
+    assert(m.get2(1, 0) == 3.5, "set/get2: la posición plana 4 es (1, 0)")
+
+    let p: NDArray = nd_from_rows([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    let f: NDArray = p.row(1)
+    assert(misma_forma(f.shape(), [2]) and mismos(f.to_array(), [3.0, 4.0]), "row")
+    f.set(0, 0.0)
+    assert(p.get2(1, 0) == 3.0, "row copia")
+    let c: NDArray = p.col(1)
+    assert(misma_forma(c.shape(), [3]) and mismos(c.to_array(), [2.0, 4.0, 6.0]), "col")
+    c.set(0, 0.0)
+    assert(p.get2(0, 1) == 2.0, "col copia")
+
+    let v: NDArray = nd_arange(10.0, 20.0, 1.0)
+    let s: NDArray = v.slice(2, 5)
+    assert(mismos(s.to_array(), [12.0, 13.0, 14.0]), "slice: fin excluido")
+    s.set(0, 0.0)
+    assert(v.get(2) == 12.0, "slice copia")
+    let s0: NDArray = v.slice(3, 3)
+    assert(s0.size() == 0, "slice vacío")
+    let st: NDArray = v.slice(0, 10)
+    assert(st.size() == 10, "slice completo")
+}
+
+fn test_compartir() {
+    let a: NDArray = nd_ones([3])
+    poner_en_cero(a)
+    assert(a.get(0) == 0.0, "por valor comparte el buffer")
+    let b: NDArray = devolver(a)
+    b.set(1, 5.0)
+    assert(a.get(1) == 5.0, "devolver el struct comparte el buffer")
+    let b2: NDArray = a
+    b2.set(2, 6.0)
+    assert(a.get(2) == 6.0, "asignar el struct comparte el buffer")
+    var xs: Array<NDArray> = []
+    xs.push(a)
+    xs.push(nd_zeros([2]))
+    let x0: NDArray = xs[0]
+    x0.set(0, 9.0)
+    assert(a.get(0) == 9.0, "guardado en un Array comparte el buffer")
+    let x1: NDArray = xs[1]
+    assert(x1.size() == 2, "Array<NDArray>: segundo elemento")
+}
+
+fn test_vacio() {
+    let v: NDArray = nd_zeros([0])
+    assert(v.size() == 0 and v.ndim() == 1, "tamaño 0")
+    assert(v.to_array().length() == 0, "tamaño 0: to_array")
+    let c: NDArray = v.copy()
+    assert(c.size() == 0, "tamaño 0: copy")
+    let r: NDArray = v.reshape([0, 5])
+    assert(misma_forma(r.shape(), [0, 5]), "tamaño 0: reshape a [0, 5]")
+    let t: NDArray = r.transpose()
+    assert(misma_forma(t.shape(), [5, 0]), "tamaño 0: transpose")
+    let vs: String = v.to_string()
+    assert(vs == "NDArray [0] []", "tamaño 0: to_string")
+    let ts: String = t.to_string()
+    assert(ts == "NDArray [5, 0] [[], [], [], [], []]", "tamaño 0: to_string 2-D")
+    let e: NDArray = nd_from_array([])
+    assert(e.size() == 0, "nd_from_array vacío")
+    let vacias: Array<Array<float>> = []
+    let fr: NDArray = nd_from_rows(vacias)
+    assert(misma_forma(fr.shape(), [0, 0]), "nd_from_rows sin filas")
+}
+
+fn test_texto() {
+    let m: NDArray = nd_from_rows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let s: String = m.to_string()
+    assert(s == "NDArray [2, 3] [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]", "to_string 2-D: " + s)
+    let v: NDArray = nd_from_array([0.5, 0.0 - 2.0])
+    let vs: String = v.to_string()
+    assert(vs == "NDArray [2] [0.5, -2.0]", "to_string 1-D: " + vs)
+    let f: String = m.to_string_fixed(2)
+    assert(f == "NDArray [2, 3] [[1.00, 2.00, 3.00], [4.00, 5.00, 6.00]]", "to_string_fixed: " + f)
+    let t3: NDArray = nd_arange(0.0, 8.0, 1.0)
+    let c: NDArray = t3.reshape([2, 2, 2])
+    let cs: String = c.to_string()
+    assert(cs == "NDArray [2, 2, 2] [[[0.0, 1.0], [2.0, 3.0]], [[4.0, 5.0], [6.0, 7.0]]]", "to_string 3-D: " + cs)
+
+    let cero: float = 0.0
+    let raros: NDArray = nd_from_array([cero / cero, 1.0 / cero, 0.0 - 1.0 / cero])
+    let rs: String = raros.to_string()
+    assert(rs == "NDArray [3] [nan, inf, -inf]", "to_string nan/inf: " + rs)
+    let rf: String = raros.to_string_fixed(3)
+    assert(rf == "NDArray [3] [nan, inf, -inf]", "to_string_fixed nan/inf: " + rf)
+
+    let veinte: NDArray = nd_arange(0.0, 20.0, 1.0)
+    let vt: String = veinte.to_string()
+    assert(vt.indexOf("...") < 0 and vt.indexOf("19.0]") >= 0, "20 elementos: sin recortar")
+    let largo: NDArray = nd_arange(0.0, 21.0, 1.0)
+    let lt: String = largo.to_string()
+    assert(lt == "NDArray [21] [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, ..., 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0]", "21 elementos: recortado: " + lt)
+    let big: NDArray = nd_zeros([100, 100])
+    let bt: String = big.to_string()
+    assert(bt.indexOf("NDArray [100, 100] [0.0,") == 0 and bt.indexOf("...") > 0, "recortado 2-D")
+}
+
+fn main() -> int {
+    test_constructores()
+    test_forma()
+    test_acceso()
+    test_compartir()
+    test_vacio()
+    test_texto()
+    print("test-556-ndarray-nucleo: PASS")
+    return 0
+}

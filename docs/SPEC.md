@@ -2532,6 +2532,24 @@ unsafe {
 
 Un puntero a struct (`*Point`) no se indexa así: sigue siendo `p.campo`.
 
+### `alloc_gc<T>(n)`: un buffer de escalares que libera el recolector
+
+`alloc<T>(n)` es `malloc`: quien lo pide lo libera con `free`. `alloc_gc<T>(n)` devuelve el mismo `*T`
+sobre memoria del recolector, así que no se libera a mano y el puntero se puede guardar en un struct,
+devolver y copiar como cualquier valor:
+
+```nyx
+unsafe {
+    let xs: *float = alloc_gc<float>(1000000)   // 8 MB; se liberan solos
+    xs[0] = 1.5
+}
+```
+
+Tres límites: **no viene en cero** (hay que llenarlo), **es solo para escalares** (`float`, `int`, `u8`…;
+el recolector no recorre ese buffer, así que un puntero a memoria del GC guardado ahí no mantiene vivo
+a su objeto), y hay que conservar el puntero al **inicio** del buffer. Sin recolector (`NYX_NO_GC=1`,
+wasm) es lo mismo que `alloc<T>`.
+
 ---
 
 ## Manual Memory
@@ -4637,7 +4655,17 @@ fn boot_entry() { /* placed in specific section */ }
 
 #[export_name("my_entry")]
 fn entry_point() { /* exported with custom name */ }
+
+#[fast_math]
+fn total(p: *float, n: int) -> float { /* float arithmetic may be reordered */ }
 ```
+
+`#[fast_math]` lets the compiler reorder and fuse the `float` arithmetic of that one function
+(`+ - * /` are emitted with LLVM's `reassoc contract`). A sum over a buffer can then be vectorized,
+which is impossible otherwise because reordering changes the last digits: measured on 2048 floats,
+33 ms without it and 8 ms with it (the same as C with `-ffast-math`). The result may differ from the
+unmarked function in the last digits. `NaN`, infinities and signed zero keep their meaning (it is not
+C's full `-ffast-math`). It applies to the function's own body, not to the functions it calls.
 
 `#[export_name("x")]` (or `#[export_name = "x"]`, the same thing) gives the function the C symbol
 `x`. Outside wasm the function keeps its Nyx name (Nyx code calls it as usual) and `x` is an
@@ -5015,6 +5043,79 @@ campos o una comilla sin cerrar dan `Err` con la fila (contando la cabecera) y l
 columna. Una columna `cat` llega como códigos `int` (`t.codes`) más un diccionario con
 cada valor distinto una vez, en orden de aparición (`t.dict`). Pedir una columna con
 otro tipo o un nombre inexistente aborta.
+
+### std/ndarray.nx
+
+Arreglos numéricos de `float` (f64) de una o más dimensiones, al estilo de numpy. `import "std/ndarray"`. El tipo `NDArray` guarda un buffer contiguo en orden por filas (el último índice corre más rápido), administrado por el recolector: no se libera a mano. Diseño: `docs/design/specs/2026-11-16-numerico-design.md`.
+
+```nyx
+import "std/ndarray"
+
+fn main() -> int {
+    let a: NDArray = nd_from_rows([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    let t: NDArray = a.transpose()          // forma [3, 2]
+    let b: NDArray = a * a                  // elemento a elemento
+    let c: NDArray = b.add_scalar(1.0)      // el escalar va por método
+    print(c.to_string())
+    print(float_to_string(t.get2(2, 1)) + " " + float_to_string(a.sum()))
+    return 0
+}
+```
+
+Constructores (todos devuelven un arreglo nuevo):
+
+| Función | Resultado |
+|---|---|
+| `nd_zeros(forma)`, `nd_ones(forma)`, `nd_full(forma, v)` | arreglo con esa forma (`[2, 3]`) |
+| `nd_arange(ini, fin, paso)` | `ini, ini+paso, ...` hasta `fin` excluido (1-D) |
+| `nd_linspace(ini, fin, n)` | `n` valores equiespaciados, extremos incluidos (1-D) |
+| `nd_from_array(xs)` | 1-D desde un `Array<float>` (copia) |
+| `nd_from_rows(filas)`, `try_nd_from_rows(filas)` | 2-D desde `Array<Array<float>>`; filas desparejas = panic / `Err` |
+| `nd_eye(n)` | matriz identidad `n` x `n` |
+
+Métodos, por grupo:
+
+| Grupo | Métodos |
+|---|---|
+| Forma | `shape()`, `ndim()`, `size()`, `reshape(forma)`, `try_reshape(forma)`, `transpose()` (2-D) |
+| Acceso | `get(i)`, `get2(i, j)`, `set(i, v)`, `set2(i, j, v)`, `row(i)`, `col(j)`, `slice(ini, fin)` (1-D, fin excluido) |
+| Copia y texto | `copy()`, `to_array()`, `to_string()`, `to_string_fixed(decimales)` |
+| Elemento a elemento | `a + b`, `a - b`, `a * b`, `a / b` (misma forma); `add_scalar(k)`, `mul_scalar(k)`; `add_scaled(k, x)` (EN EL LUGAR: `self = k*x + self`); `map(f)`, `sqrt()`, `abs()`, `exp()`, `log()` |
+| Reducciones | `sum()`, `mean()`, `min()`, `max()`, `argmin()`, `argmax()`, `std()`, `sum_axis(eje)`, `mean_axis(eje)` (2-D), `dot(b)`, `matmul(b)`, `norm()` |
+
+Reglas:
+
+- **Copias**: copiar el struct (pasarlo a una función, guardarlo en un `Array`) COMPARTE el buffer; un `set` sobre la copia se ve en el original. Las operaciones que devuelven un arreglo (`copy`, `reshape`, `transpose`, `row`, `col`, `slice`, los operadores, `map`, `sqrt`...) crean uno nuevo. `add_scaled` es la única que modifica en el lugar.
+- **Errores**: un índice fuera de rango o formas incompatibles hacen `panic` con un mensaje que nombra el método y las formas (error de programa). `try_reshape` y `try_nd_from_rows` devuelven `Result<NDArray, Error>` (kind `invalid`).
+- **NaN**: `sum`, `mean` y `std` lo propagan; `min` y `max` devuelven `nan` si hay alguno, y `argmin`/`argmax` el índice del primero (como numpy). `std()` es el desvío poblacional (divide por n).
+- **Kernels `#[fast_math]`**: `sum`, `mean`, `std`, `dot` y `norm` pueden diferir del bucle escrito a mano en el último dígito.
+- **Puente con CSV**: `nd_from_array(tabla.floats("columna"))` (ver `std/csv`).
+
+Lo que NO se puede escribir, y por qué:
+
+| Intento | Motivo | Alternativa |
+|---|---|---|
+| `a[i, j]`, `a[i] = x` | no hay trait de indexación | `get`/`get2`/`set`/`set2` |
+| `2.0 * a` | los operadores despachan por el operando izquierdo | `a.mul_scalar(2.0)` |
+| `a * 2.0` | un tipo admite un solo `impl Mul`: error `NYX1005` | `a.mul_scalar(2.0)` |
+| `f().reshape(..)` | método sobre el resultado de una llamada: `NYX2002` | ligar a una variable primero |
+
+No hay en esta versión: broadcasting, vistas sin copia, otros tipos de elemento (`f32`, `int`), más de 2 dimensiones en álgebra y ejes, descomposiciones (LU/QR/SVD) ni números aleatorios.
+
+Rendimiento: compilar con `nyx build --release`; sin eso no hay optimización y los bucles son entre 4 y 15 veces más lentos (suma de 10^7: 38 ms sin optimizar, 4.2 ms con `--release`). Medido en Neoverse-N1 aarch64, mejor de 5 corridas, en milisegundos (la máquina tenía carga ~7 en 4 núcleos: hay ruido):
+
+| Kernel | C `-O2` | `std/ndarray` (`--release`) | numpy 2.5 (1 hilo, OpenBLAS) |
+|---|---|---|---|
+| suma, 10^7 elementos | 8.3 | 4.2 | 4.3 |
+| producto punto, 10^7 | 8.8 | 8.5 | 10.2 |
+| `y = k*x + y`, 10^7 (`add_scaled`) | 8.5 | 8.5 | 22 o más |
+| raíz cuadrada, 10^7 | 28.4 | 35.2 | 28.2 |
+| multiplicación de matrices 512x512 | 45.1 | 59.7 | 15.4 |
+| suma de 2048 elementos, x20 000 | 33.0 | 8.4 | 41.9 |
+| producto punto de 2048, x20 000 | 34.3 | 10.3 | 35.0 |
+| `add_scaled` de 2048, x20 000 | 12.0 | 14.6 | 75.6 |
+
+Lectura: empate o ventaja en operaciones elemento a elemento y en reducciones; clara ventaja sobre arreglos pequeños (numpy paga ~2 us fijos por llamada); la raíz es más lenta porque `sqrt()` crea un arreglo nuevo y numpy escribía sobre uno existente; y en multiplicación de matrices numpy es unas 4 veces más rápido porque usa BLAS (por bloques, con kernels a mano) y `matmul` es un triple bucle. C con `-O2` no reordena sumas, por eso `std/ndarray` le gana en la suma. Se reproduce con `bash scripts/bench_numerico/run.sh <python-con-numpy>`. Receta: `examples/by-example/164-ndarray.nx`. [test: compiler/stdlib-suite/test-556-ndarray-nucleo, test-557-ndarray-elemento, test-558-ndarray-reducciones, ai-first/57-ndarray-basico]
 
 ### std/args.nx
 ```

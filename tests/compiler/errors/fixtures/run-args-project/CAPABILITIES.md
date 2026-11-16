@@ -1,7 +1,7 @@
 # CAPABILITIES — índice de la stdlib de Nyx
 
 <!-- nyx-version: 0.44.0 -->
-<!-- nyx-stdlib: 1059528976-2219059 -->
+<!-- nyx-stdlib: 3632169888-2253788 -->
 > Auto-generado por `nyx capabilities` desde la stdlib instalada — siempre en sync con tu versión.
 > Es el índice de QUÉ EXISTE: antes de escribir una función, busca aquí si un módulo ya lo hace,
 > impórtalo y úsalo. NO leas el fuente de `std/`. Ver `AGENTS.md` para cómo escribir Nyx.
@@ -1623,6 +1623,65 @@ Tipos (2) y métodos (4):
   - `fn set(&mut self, name: String, v: float) -> bool` — Variable desde un float, redondeado al 6.º decimal (mitad hacia afuera del cero). false si es NaN o fuera de rango. Para plata preferir set_dec (el float ya llega con su error de representación).
   - `fn has(&self, name: String) -> bool` — ¿Está definida la variable?
 
+### `std/ndarray`
+
+`import "std/ndarray"` — 9 funciones:
+
+- `pub fn nd_zeros(forma: Array<int>) -> NDArray` — Arreglo de ceros con la forma dada (por ejemplo `[3, 4]`).
+- `pub fn nd_ones(forma: Array<int>) -> NDArray` — Arreglo de unos con la forma dada.
+- `pub fn nd_full(forma: Array<int>, v: float) -> NDArray` — Arreglo con la forma dada y todos los elementos iguales a `v`.
+- `pub fn nd_arange(ini: float, fin: float, paso: float) -> NDArray` — Valores `ini, ini+paso, ...` hasta `fin` EXCLUIDO (1-D). `paso` 0 o de signo contrario a `fin - ini` = panic.
+- `pub fn nd_linspace(ini: float, fin: float, n: int) -> NDArray` — `n` valores equiespaciados de `ini` a `fin`, ambos INCLUIDOS (1-D). `n` negativo = panic.
+- `pub fn nd_from_array(xs: Array<float>) -> NDArray` — Arreglo 1-D con una copia de los elementos de `xs`.
+- `pub fn nd_from_rows(filas: Array<Array<float>>) -> NDArray` — Arreglo 2-D a partir de filas, copiando. Filas de largos distintos = panic (ver `try_nd_from_rows`).
+- `pub fn try_nd_from_rows(filas: Array<Array<float>>) -> Result<NDArray, Error>` — Como `nd_from_rows`, pero filas desparejas devuelven `Err` (kind "invalid") en vez de abortar.
+- `pub fn nd_eye(n: int) -> NDArray` — Matriz identidad de `n` x `n`. `n` negativo = panic.
+
+Tipos (1) y métodos (41):
+
+- `pub struct NDArray` — Arreglo numérico de float de N dimensiones, contiguo y en orden por filas.
+  - `fn shape(self) -> Array<int>` — La forma, como una copia (modificarla no cambia el arreglo).
+  - `fn ndim(self) -> int` — Cantidad de dimensiones.
+  - `fn size(self) -> int` — Cantidad total de elementos.
+  - `fn reshape(self, forma: Array<int>) -> NDArray` — Copia con otra forma del mismo tamaño. Forma inválida o tamaño distinto = panic (ver `try_reshape`).
+  - `fn try_reshape(self, forma: Array<int>) -> Result<NDArray, Error>` — Como `reshape`, pero una forma inválida o de otro tamaño devuelve `Err` (kind "invalid").
+  - `fn transpose(self) -> NDArray` — Transpuesta de un arreglo 2-D (copia). Otra cantidad de dimensiones = panic.
+  - `fn copy(self) -> NDArray` — Copia independiente: misma forma, otro buffer.
+  - `fn to_array(self) -> Array<float>` — Los elementos en orden por filas, como un `Array<float>` nuevo.
+  - `fn get(self, i: int) -> float` — Elemento en la posición plana `i` (orden por filas). Fuera de rango = panic.
+  - `fn get2(self, i: int, j: int) -> float` — Elemento (i, j) de un arreglo 2-D. Fuera de rango o no 2-D = panic.
+  - `fn set(self, i: int, v: float)` — Escribe `v` en la posición plana `i`. Escribe en el buffer: se ve en toda copia por valor del struct.
+  - `fn set2(self, i: int, j: int, v: float)` — Escribe `v` en (i, j) de un arreglo 2-D. Fuera de rango o no 2-D = panic.
+  - `fn row(self, i: int) -> NDArray` — Fila `i` de un arreglo 2-D, como un arreglo 1-D nuevo (copia).
+  - `fn col(self, j: int) -> NDArray` — Columna `j` de un arreglo 2-D, como un arreglo 1-D nuevo (copia).
+  - `fn slice(self, ini: int, fin: int) -> NDArray` — Elementos `ini..fin` (fin EXCLUIDO) de un arreglo 1-D, como copia. Requiere 0 <= ini <= fin <= size().
+  - `fn to_string(self) -> String` — Texto con la forma y los elementos: `NDArray [2, 3] [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]`. Más de 20 elementos: los 10 primeros, `...` y los 10 últimos, en plano.
+  - `fn to_string_fixed(self, decimales: int) -> String` — Como `to_string`, con `decimales` cifras fijas después del punto (`nan` e `inf` se imprimen tal cual).
+  - `fn add(self, other: NDArray) -> NDArray` — `a + b` elemento a elemento, misma forma; arreglo nuevo. Forma distinta = panic.
+  - `fn sub(self, other: NDArray) -> NDArray` — `a - b` elemento a elemento, misma forma; arreglo nuevo. Forma distinta = panic.
+  - `fn mul(self, other: NDArray) -> NDArray` — `a * b` elemento a elemento (no es producto de matrices: ver `matmul`); arreglo nuevo. Forma distinta = panic.
+  - `fn div(self, other: NDArray) -> NDArray` — `a / b` elemento a elemento, misma forma; arreglo nuevo. Dividir por 0 da inf o nan (IEEE). Forma distinta = panic.
+  - `fn add_scalar(self, k: float) -> NDArray` — Arreglo nuevo con `k` sumado a cada elemento (el `a + 2.0` que el lenguaje aún no deja escribir).
+  - `fn mul_scalar(self, k: float) -> NDArray` — Arreglo nuevo con cada elemento multiplicado por `k` (el `a * 2.0` que el lenguaje aún no deja escribir).
+  - `fn add_scaled(self, k: float, x: NDArray)` — EN EL LUGAR: `self = k * x + self`, sin temporal. Lo ven todas las copias por valor. Forma distinta = panic.
+  - `fn map(self, f: Fn(float) -> float) -> NDArray` — Arreglo nuevo con `f` aplicada a cada elemento, en orden por filas.
+  - `fn sqrt(self) -> NDArray` — Raíz cuadrada de cada elemento (arreglo nuevo); negativos dan nan.
+  - `fn abs(self) -> NDArray` — Valor absoluto de cada elemento (arreglo nuevo).
+  - `fn exp(self) -> NDArray` — `e` elevado a cada elemento (arreglo nuevo).
+  - `fn log(self) -> NDArray` — Logaritmo natural de cada elemento (arreglo nuevo); 0 da -inf y negativos nan.
+  - `fn sum(self) -> float` — Suma de todos los elementos (0.0 si está vacío). Usa `#[fast_math]`: el último dígito puede variar.
+  - `fn mean(self) -> float` — Media de todos los elementos. Vacío = panic.
+  - `fn min(self) -> float` — Mínimo de todos los elementos (nan si hay algún NaN, como numpy). Vacío = panic.
+  - `fn max(self) -> float` — Máximo de todos los elementos (nan si hay algún NaN, como numpy). Vacío = panic.
+  - `fn argmin(self) -> int` — Índice plano del mínimo (el primero ante empates; el del primer NaN si hay alguno). Vacío = panic.
+  - `fn argmax(self) -> int` — Índice plano del máximo (el primero ante empates; el del primer NaN si hay alguno). Vacío = panic.
+  - `fn std(self) -> float` — Desvío estándar poblacional (divide por n, como `numpy.std` por omisión). Vacío = panic.
+  - `fn sum_axis(self, eje: int) -> NDArray` — Suma por eje de un arreglo 2-D: eje 0 reduce las filas (largo = columnas), eje 1 las columnas (largo = filas).
+  - `fn mean_axis(self, eje: int) -> NDArray` — Media por eje de un arreglo 2-D, con los ejes de `sum_axis`. Eje reducido de largo 0 = panic.
+  - `fn dot(self, b: NDArray) -> float` — Producto escalar de dos arreglos 1-D del mismo largo. Otra forma = panic. Usa `#[fast_math]`.
+  - `fn matmul(self, b: NDArray) -> NDArray` — Producto de matrices 2-D: [m, k] por [k, n] da [m, n]. Formas incompatibles = panic.
+  - `fn norm(self) -> float` — Norma euclídea: raíz de la suma de los cuadrados de todos los elementos. Usa `#[fast_math]`.
+
 ### Builtins globales (sin `import`)
 
 - `math_acos` (1 arg)
@@ -2043,6 +2102,7 @@ Tipos (3) y métodos (0):
 
 ### Builtins globales (sin `import`)
 
+- `alloc_gc` (1 arg)
 - `arena_persist` (1 arg)
 - `c_fn_ptr` (1 arg)
 - `format` (-1 args)

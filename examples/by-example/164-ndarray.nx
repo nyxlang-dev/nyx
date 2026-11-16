@@ -1,0 +1,83 @@
+// Nyx by Example: arreglos numéricos con std/ndarray.
+//
+// NDArray es un arreglo de `float` de una o más dimensiones, en un buffer contiguo (orden por
+// filas) que administra el recolector. Esta receta recorre lo esencial: constructores, forma,
+// acceso, operadores, escalares, reducciones, matmul y el puente con un Array<float>.
+//
+// Tres límites que conviene conocer de entrada:
+//   - Los operadores + - * / son SOLO entre dos arreglos de la misma forma (sin broadcasting).
+//     El escalar va por método: a.add_scalar(2.0), a.mul_scalar(2.0).
+//   - No hay a[i, j] ni a[i] = x: se usa get / get2 / set / set2.
+//   - Copiar el struct (pasarlo a una función) COMPARTE el buffer; para una copia real, copy().
+//
+// Para medir velocidad se compila con `nyx build --release`; sin eso no hay optimización.
+
+import "std/ndarray"
+
+fn main() -> int {
+    // Constructores
+    let ceros: NDArray = nd_zeros([2, 3])
+    let rampa: NDArray = nd_arange(0.0, 6.0, 1.0)        // 0,1,2,3,4,5 (fin excluido)
+    let tramos: NDArray = nd_linspace(0.0, 1.0, 5)       // 5 valores, extremos incluidos
+    let m: NDArray = nd_from_rows([[1.0, 2.0], [3.0, 4.0]])
+    print("ceros: " + ceros.to_string())
+    print("linspace: " + tramos.to_string_fixed(2))
+
+    // Forma y reordenamiento (cada uno devuelve un arreglo nuevo)
+    let grid: NDArray = rampa.reshape([2, 3])
+    let t: NDArray = grid.transpose()
+    print("grid " + grid.to_string() + " ndim=" + int_to_string(grid.ndim()))
+    print("transpuesta " + t.to_string())
+
+    // Acceso: get/get2 leen, set/set2 escriben
+    print("grid[1][2] = " + float_to_string(grid.get2(1, 2)))
+    grid.set2(0, 0, 10.0)
+    let fila0: NDArray = grid.row(0)
+    let col2: NDArray = grid.col(2)
+    print("fila 0: " + fila0.to_string() + "  columna 2: " + col2.to_string())
+
+    // Operadores entre arreglos de la misma forma; el escalar va por método
+    let a: NDArray = nd_from_array([1.0, 2.0, 3.0])
+    let b: NDArray = nd_from_array([10.0, 20.0, 30.0])
+    // (el resultado de una llamada no admite métodos encadenados: se liga a una variable)
+    let suma: NDArray = a + b
+    let prod: NDArray = a * b
+    let mas2: NDArray = a.add_scalar(2.0)
+    let por2: NDArray = a.mul_scalar(2.0)
+    let raiz: NDArray = b.sqrt()
+    print("a + b = " + suma.to_string())
+    print("a * b = " + prod.to_string())
+    print("a + 2 = " + mas2.to_string())
+    print("a * 2 = " + por2.to_string())
+    print("sqrt  = " + raiz.to_string_fixed(3))
+
+    // Copias: pasar el struct comparte el buffer; copy() lo separa
+    let c: NDArray = a.copy()
+    c.set(0, 99.0)
+    print("a sigue en " + float_to_string(a.get(0)) + ", la copia en " + float_to_string(c.get(0)))
+
+    // Reducciones
+    let datos: NDArray = nd_from_array([2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0])
+    print("suma=" + float_to_string(datos.sum()) + " media=" + float_to_string(datos.mean()))
+    print("std=" + float_to_string(datos.std()) + " (poblacional)")
+    print("min=" + float_to_string(datos.min()) + " en " + int_to_string(datos.argmin())
+        + ", max=" + float_to_string(datos.max()) + " en " + int_to_string(datos.argmax()))
+    let por_col: NDArray = m.sum_axis(0)
+    let por_fila: NDArray = m.sum_axis(1)
+    print("suma por columnas: " + por_col.to_string() + ", por filas: " + por_fila.to_string())
+    print("a . b = " + float_to_string(a.dot(b)) + ", |a| = " + float_to_fixed(a.norm(), 4))
+
+    // Producto de matrices
+    let p: NDArray = m.matmul(nd_eye(2))
+    let m2: NDArray = m.matmul(m)
+    print("m @ I = " + p.to_string())
+    print("m @ m = " + m2.to_string())
+
+    // Puente con Array<float>: entra con nd_from_array, sale con to_array
+    let lista: Array<float> = [3.5, 1.5, 2.0]
+    let nd: NDArray = nd_from_array(lista)
+    let doble: NDArray = nd.mul_scalar(2.0)
+    let de_vuelta: Array<float> = doble.to_array()
+    print("de vuelta: " + float_to_string(de_vuelta[0]) + " " + float_to_string(de_vuelta[1]) + " " + float_to_string(de_vuelta[2]))
+    return 0
+}

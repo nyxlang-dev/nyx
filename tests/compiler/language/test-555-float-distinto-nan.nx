@@ -1,0 +1,37 @@
+// test-555: `!=` entre floats es la negación de `==`, también con un NaN.
+// Hasta el 2026-11-16 se emitía `fcmp one` (ordenados y distintos): `x != x`
+// daba false para un NaN y `nan != 1.0` también, en silencio.
+
+fn es_nan(x: float) -> bool {
+    return x != x
+}
+
+fn main() -> int {
+    let cero: float = 0.0
+    let nan: float = cero / cero
+    let inf: float = 1.0 / cero
+
+    assert(nan != nan, "nan != nan tiene que ser true")
+    assert(es_nan(nan), "x != x detecta un NaN")
+    assert(nan != 1.0, "nan != 1.0 tiene que ser true")
+    assert(1.0 != nan, "1.0 != nan tiene que ser true")
+    assert(not (nan == nan), "nan == nan tiene que ser false")
+    assert(not es_nan(1.5), "1.5 no es NaN")
+    assert(not es_nan(inf), "inf no es NaN")
+    assert(not (2.5 != 2.5), "2.5 != 2.5 tiene que ser false")
+    assert(2.5 != 3.5, "2.5 != 3.5 tiene que ser true")
+    assert(inf != 0.0 - inf, "inf != -inf")
+
+    // En una condición de bucle y en un Array<float>.
+    let xs: Array<float> = [1.0, nan, 3.0]
+    var nans: int = 0
+    var i: int = 0
+    while i < xs.length() {
+        let x: float = xs[i]
+        if x != x { nans = nans + 1 }
+        i = i + 1
+    }
+    assert(nans == 1, "un NaN en el arreglo")
+    print("test-555-float-distinto-nan: PASS")
+    return 0
+}
