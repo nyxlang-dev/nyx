@@ -6531,31 +6531,33 @@ define internal { i64, i8* }* @parse__parse_postfix(%SharedEnv_parse* %env.param
   %t45 = alloca i1
   %t59 = alloca { i64, i8* }*
   %t63 = alloca i1
-  %t101 = alloca i1
-  %t112 = alloca { i64, i8* }*
+  %t66 = alloca i1
+  %t105 = alloca i1
   %t116 = alloca { i64, i8* }*
   %t120 = alloca { i64, i8* }*
-  %t124 = alloca %nyx_string*
-  %t128 = alloca { i64, i8* }*
-  %t133 = alloca { i64, i8* }*
-  %t134 = alloca i1
-  %t155 = alloca %Token
-  %t160 = alloca { i64, i8* }*
-  %t179 = alloca i1
-  %t188 = alloca { i64, i8* }*
-  %t190 = alloca i64
-  %t191 = alloca i1
-  %t221 = alloca i64
-  %t223 = alloca { i64, i8* }*
-  %t244 = alloca %Token
-  %t247 = alloca %nyx_string*
-  %t259 = alloca %Token
-  %t262 = alloca %nyx_string*
-  %t264 = alloca { i64, i8* }*
-  %t265 = alloca i1
-  %t274 = alloca i1
-  %t306 = alloca { i64, i8* }*
-  %t307 = alloca i1
+  %t124 = alloca { i64, i8* }*
+  %t128 = alloca %nyx_string*
+  %t132 = alloca { i64, i8* }*
+  %t137 = alloca { i64, i8* }*
+  %t138 = alloca i1
+  %t159 = alloca %Token
+  %t164 = alloca { i64, i8* }*
+  %t183 = alloca i1
+  %t192 = alloca { i64, i8* }*
+  %t194 = alloca i64
+  %t195 = alloca i1
+  %t225 = alloca i64
+  %t227 = alloca { i64, i8* }*
+  %t248 = alloca %Token
+  %t251 = alloca %nyx_string*
+  %t263 = alloca %Token
+  %t266 = alloca %nyx_string*
+  %t268 = alloca { i64, i8* }*
+  %t269 = alloca i1
+  %t278 = alloca i1
+  %t281 = alloca i1
+  %t314 = alloca { i64, i8* }*
+  %t315 = alloca i1
   %t1 = getelementptr %SharedEnv_parse, %SharedEnv_parse* %env.param, i32 0, i32 0
   %t2 = getelementptr %SharedEnv_parse, %SharedEnv_parse* %env.param, i32 0, i32 1
   %t3 = getelementptr %SharedEnv_parse, %SharedEnv_parse* %env.param, i32 0, i32 2
@@ -6648,208 +6650,217 @@ while_cond14:
   %t65 = xor i1 %t64, true
   br i1 %t65, label %while_body15, label %while_end16
 while_body15:
-  %t66 = getelementptr [6 x i8], [6 x i8]* @.str217, i32 0, i32 0
-  %t67 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str217.c, i8* %t66, i64 5)
-  %t68 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t67)
-  br i1 %t68, label %then17, label %else18
-then17:
-  %t69 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t70 = load { i64, i8* }*, { i64, i8* }** %t59
-  %t71 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
-  %t72 = ptrtoint %nyx_string* %t71 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t70, i64 %t72, i64 2)
-  br label %merge19
-else18:
+  store i1 false, i1* %t66
+  %t67 = load i64, i64* %t5
+  %t68 = icmp eq i64 %t67, 0
+  br i1 %t68, label %sc_and_rhs17, label %sc_and_end18
+sc_and_rhs17:
+  %t69 = getelementptr [6 x i8], [6 x i8]* @.str217, i32 0, i32 0
+  %t70 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str217.c, i8* %t69, i64 5)
+  %t71 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t70)
+  store i1 %t71, i1* %t66
+  br label %sc_and_end18
+sc_and_end18:
+  %t72 = load i1, i1* %t66
+  br i1 %t72, label %then19, label %else20
+then19:
+  %t73 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t74 = load { i64, i8* }*, { i64, i8* }** %t59
+  %t75 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
+  %t76 = ptrtoint %nyx_string* %t75 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t74, i64 %t76, i64 2)
+  br label %merge21
+else20:
   store i1 1, i1* %t63
-  br label %merge19
-merge19:
+  br label %merge21
+merge21:
   br label %while_cond14
 while_end16:
-  %t73 = load i64, i64* %t5
-  %t74 = icmp sgt i64 %t73, 0
-  br i1 %t74, label %then20, label %else21
-then20:
-  %t75 = load i64, i64* %t5
-  %t76 = sub i64 %t75, 1
-  store i64 %t76, i64* %t5
-  br label %merge22
-else21:
-  %t77 = getelementptr [8 x i8], [8 x i8]* @.str218, i32 0, i32 0
-  %t78 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str218.c, i8* %t77, i64 7)
-  %t79 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t78)
-  br i1 %t79, label %then23, label %else24
-then23:
-  %t80 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  br label %merge25
-else24:
-  %t81 = getelementptr [12 x i8], [12 x i8]* @.str219, i32 0, i32 0
-  %t82 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str219.c, i8* %t81, i64 11)
+  %t77 = load i64, i64* %t5
+  %t78 = icmp sgt i64 %t77, 0
+  br i1 %t78, label %then22, label %else23
+then22:
+  %t79 = load i64, i64* %t5
+  %t80 = sub i64 %t79, 1
+  store i64 %t80, i64* %t5
+  br label %merge24
+else23:
+  %t81 = getelementptr [8 x i8], [8 x i8]* @.str218, i32 0, i32 0
+  %t82 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str218.c, i8* %t81, i64 7)
   %t83 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t82)
-  br i1 %t83, label %then26, label %else27
-then26:
+  br i1 %t83, label %then25, label %else26
+then25:
   %t84 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t85 = load i64, i64* %t5
-  %t86 = add i64 %t85, 1
-  store i64 %t86, i64* %t5
-  br label %merge28
-else27:
-  %t87 = getelementptr [8 x i8], [8 x i8]* @.str220, i32 0, i32 0
-  %t88 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str220.c, i8* %t87, i64 7)
-  %t89 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t88)
-  br label %merge28
-merge28:
-  br label %merge25
-merge25:
-  br label %merge22
-merge22:
-  %t90 = getelementptr [13 x i8], [13 x i8]* @.str221, i32 0, i32 0
-  %t91 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str221.c, i8* %t90, i64 12)
-  %t92 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t93 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t94 = ptrtoint { i64, i8* }* %t93 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t92, i64 %t94, i64 5)
-  %t95 = load { i64, i8* }*, { i64, i8* }** %t59
-  %t96 = ptrtoint { i64, i8* }* %t95 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t92, i64 %t96, i64 5)
-  %t97 = call { i64, i8* }* @make_astnode(%nyx_string* %t91, { i64, i8* }* %t92)
-  store { i64, i8* }* %t97, { i64, i8* }** %t32
-  %t98 = getelementptr [11 x i8], [11 x i8]* @.str222, i32 0, i32 0
-  %t99 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str222.c, i8* %t98, i64 10)
-  %t100 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t99)
-  br i1 %t100, label %then29, label %else30
-then29:
-  store i1 false, i1* %t101
-  %t102 = getelementptr [11 x i8], [11 x i8]* @.str223, i32 0, i32 0
-  %t103 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str223.c, i8* %t102, i64 10)
-  %t104 = call i1 @parse__check_at(%SharedEnv_parse* %env.param, i64 1, %nyx_string* %t103)
-  br i1 %t104, label %sc_and_rhs32, label %sc_and_end33
-sc_and_rhs32:
-  %t105 = getelementptr [6 x i8], [6 x i8]* @.str224, i32 0, i32 0
-  %t106 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str224.c, i8* %t105, i64 5)
-  %t107 = call i1 @parse__check_at(%SharedEnv_parse* %env.param, i64 2, %nyx_string* %t106)
-  store i1 %t107, i1* %t101
-  br label %sc_and_end33
-sc_and_end33:
-  %t108 = load i1, i1* %t101
-  br i1 %t108, label %then34, label %else35
-then34:
-  %t109 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t110 = call i64 @nyx_array_get({ i64, i8* }* %t109, i64 1)
-  %t111 = inttoptr i64 %t110 to { i64, i8* }*
-  store { i64, i8* }* %t111, { i64, i8* }** %t112
-  %t113 = load { i64, i8* }*, { i64, i8* }** %t112
-  %t114 = call i64 @nyx_array_get({ i64, i8* }* %t113, i64 0)
+  br label %merge27
+else26:
+  %t85 = getelementptr [12 x i8], [12 x i8]* @.str219, i32 0, i32 0
+  %t86 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str219.c, i8* %t85, i64 11)
+  %t87 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t86)
+  br i1 %t87, label %then28, label %else29
+then28:
+  %t88 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t89 = load i64, i64* %t5
+  %t90 = add i64 %t89, 1
+  store i64 %t90, i64* %t5
+  br label %merge30
+else29:
+  %t91 = getelementptr [8 x i8], [8 x i8]* @.str220, i32 0, i32 0
+  %t92 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str220.c, i8* %t91, i64 7)
+  %t93 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t92)
+  br label %merge30
+merge30:
+  br label %merge27
+merge27:
+  br label %merge24
+merge24:
+  %t94 = getelementptr [13 x i8], [13 x i8]* @.str221, i32 0, i32 0
+  %t95 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str221.c, i8* %t94, i64 12)
+  %t96 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t97 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t98 = ptrtoint { i64, i8* }* %t97 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t96, i64 %t98, i64 5)
+  %t99 = load { i64, i8* }*, { i64, i8* }** %t59
+  %t100 = ptrtoint { i64, i8* }* %t99 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t96, i64 %t100, i64 5)
+  %t101 = call { i64, i8* }* @make_astnode(%nyx_string* %t95, { i64, i8* }* %t96)
+  store { i64, i8* }* %t101, { i64, i8* }** %t32
+  %t102 = getelementptr [11 x i8], [11 x i8]* @.str222, i32 0, i32 0
+  %t103 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str222.c, i8* %t102, i64 10)
+  %t104 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t103)
+  br i1 %t104, label %then31, label %else32
+then31:
+  store i1 false, i1* %t105
+  %t106 = getelementptr [11 x i8], [11 x i8]* @.str223, i32 0, i32 0
+  %t107 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str223.c, i8* %t106, i64 10)
+  %t108 = call i1 @parse__check_at(%SharedEnv_parse* %env.param, i64 1, %nyx_string* %t107)
+  br i1 %t108, label %sc_and_rhs34, label %sc_and_end35
+sc_and_rhs34:
+  %t109 = getelementptr [6 x i8], [6 x i8]* @.str224, i32 0, i32 0
+  %t110 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str224.c, i8* %t109, i64 5)
+  %t111 = call i1 @parse__check_at(%SharedEnv_parse* %env.param, i64 2, %nyx_string* %t110)
+  store i1 %t111, i1* %t105
+  br label %sc_and_end35
+sc_and_end35:
+  %t112 = load i1, i1* %t105
+  br i1 %t112, label %then36, label %else37
+then36:
+  %t113 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t114 = call i64 @nyx_array_get({ i64, i8* }* %t113, i64 1)
   %t115 = inttoptr i64 %t114 to { i64, i8* }*
   store { i64, i8* }* %t115, { i64, i8* }** %t116
   %t117 = load { i64, i8* }*, { i64, i8* }** %t116
-  %t118 = call i64 @nyx_array_get({ i64, i8* }* %t117, i64 1)
+  %t118 = call i64 @nyx_array_get({ i64, i8* }* %t117, i64 0)
   %t119 = inttoptr i64 %t118 to { i64, i8* }*
   store { i64, i8* }* %t119, { i64, i8* }** %t120
   %t121 = load { i64, i8* }*, { i64, i8* }** %t120
-  %t122 = call i64 @nyx_array_get_checked({ i64, i8* }* %t121, i64 0, i64 2)
-  %t123 = inttoptr i64 %t122 to %nyx_string*
-  store %nyx_string* %t123, %nyx_string** %t124
-  %t125 = load { i64, i8* }*, { i64, i8* }** %t112
-  %t126 = call i64 @nyx_array_get({ i64, i8* }* %t125, i64 1)
-  %t127 = inttoptr i64 %t126 to { i64, i8* }*
-  store { i64, i8* }* %t127, { i64, i8* }** %t128
-  %t129 = getelementptr [11 x i8], [11 x i8]* @.str225, i32 0, i32 0
-  %t130 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str225.c, i8* %t129, i64 10)
-  %t131 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t130)
-  %t132 = call { i64, i8* }* @nyx_array_new_ptr()
-  store { i64, i8* }* %t132, { i64, i8* }** %t133
-  store i1 0, i1* %t134
-  br label %while_cond37
-while_cond37:
-  %t135 = load i1, i1* %t134
-  %t136 = xor i1 %t135, true
-  br i1 %t136, label %while_body38, label %while_end39
-while_body38:
-  %t137 = getelementptr [12 x i8], [12 x i8]* @.str226, i32 0, i32 0
-  %t138 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str226.c, i8* %t137, i64 11)
-  %t139 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t138)
-  br i1 %t139, label %then40, label %else41
-then40:
-  %t140 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  store i1 1, i1* %t134
-  br label %merge42
-else41:
-  %t141 = load { i64, i8* }*, { i64, i8* }** %t133
-  %t142 = call i64 @nyx_array_length({ i64, i8* }* %t141)
-  %t143 = icmp sgt i64 %t142, 0
-  br i1 %t143, label %then43, label %else44
-then43:
-  %t144 = getelementptr [6 x i8], [6 x i8]* @.str227, i32 0, i32 0
-  %t145 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str227.c, i8* %t144, i64 5)
-  %t146 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t145)
-  br i1 %t146, label %then46, label %else47
-then46:
-  %t147 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  br label %merge48
-else47:
-  br label %merge48
-merge48:
-  br label %merge45
-else44:
-  br label %merge45
-merge45:
-  %t148 = getelementptr [12 x i8], [12 x i8]* @.str228, i32 0, i32 0
-  %t149 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str228.c, i8* %t148, i64 11)
+  %t122 = call i64 @nyx_array_get({ i64, i8* }* %t121, i64 1)
+  %t123 = inttoptr i64 %t122 to { i64, i8* }*
+  store { i64, i8* }* %t123, { i64, i8* }** %t124
+  %t125 = load { i64, i8* }*, { i64, i8* }** %t124
+  %t126 = call i64 @nyx_array_get_checked({ i64, i8* }* %t125, i64 0, i64 2)
+  %t127 = inttoptr i64 %t126 to %nyx_string*
+  store %nyx_string* %t127, %nyx_string** %t128
+  %t129 = load { i64, i8* }*, { i64, i8* }** %t116
+  %t130 = call i64 @nyx_array_get({ i64, i8* }* %t129, i64 1)
+  %t131 = inttoptr i64 %t130 to { i64, i8* }*
+  store { i64, i8* }* %t131, { i64, i8* }** %t132
+  %t133 = getelementptr [11 x i8], [11 x i8]* @.str225, i32 0, i32 0
+  %t134 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str225.c, i8* %t133, i64 10)
+  %t135 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t134)
+  %t136 = call { i64, i8* }* @nyx_array_new_ptr()
+  store { i64, i8* }* %t136, { i64, i8* }** %t137
+  store i1 0, i1* %t138
+  br label %while_cond39
+while_cond39:
+  %t139 = load i1, i1* %t138
+  %t140 = xor i1 %t139, true
+  br i1 %t140, label %while_body40, label %while_end41
+while_body40:
+  %t141 = getelementptr [12 x i8], [12 x i8]* @.str226, i32 0, i32 0
+  %t142 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str226.c, i8* %t141, i64 11)
+  %t143 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t142)
+  br i1 %t143, label %then42, label %else43
+then42:
+  %t144 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  store i1 1, i1* %t138
+  br label %merge44
+else43:
+  %t145 = load { i64, i8* }*, { i64, i8* }** %t137
+  %t146 = call i64 @nyx_array_length({ i64, i8* }* %t145)
+  %t147 = icmp sgt i64 %t146, 0
+  br i1 %t147, label %then45, label %else46
+then45:
+  %t148 = getelementptr [6 x i8], [6 x i8]* @.str227, i32 0, i32 0
+  %t149 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str227.c, i8* %t148, i64 5)
   %t150 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t149)
-  br i1 %t150, label %then49, label %else50
-then49:
+  br i1 %t150, label %then48, label %else49
+then48:
   %t151 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  store i1 1, i1* %t134
-  br label %merge51
-else50:
-  %t152 = getelementptr [11 x i8], [11 x i8]* @.str229, i32 0, i32 0
-  %t153 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str229.c, i8* %t152, i64 10)
-  %t154 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t153)
-  store %Token %t154, %Token* %t155
-  %t156 = getelementptr [6 x i8], [6 x i8]* @.str230, i32 0, i32 0
-  %t157 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str230.c, i8* %t156, i64 5)
+  br label %merge50
+else49:
+  br label %merge50
+merge50:
+  br label %merge47
+else46:
+  br label %merge47
+merge47:
+  %t152 = getelementptr [12 x i8], [12 x i8]* @.str228, i32 0, i32 0
+  %t153 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str228.c, i8* %t152, i64 11)
+  %t154 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t153)
+  br i1 %t154, label %then51, label %else52
+then51:
+  %t155 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  store i1 1, i1* %t138
+  br label %merge53
+else52:
+  %t156 = getelementptr [11 x i8], [11 x i8]* @.str229, i32 0, i32 0
+  %t157 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str229.c, i8* %t156, i64 10)
   %t158 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t157)
-  %t159 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
-  store { i64, i8* }* %t159, { i64, i8* }** %t160
-  %t161 = load { i64, i8* }*, { i64, i8* }** %t133
-  %t162 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t163 = load %Token, %Token* %t155
-  %t164 = call %nyx_string* @get_token_value(%Token %t163)
-  %t165 = ptrtoint %nyx_string* %t164 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t162, i64 %t165, i64 2)
-  %t166 = load { i64, i8* }*, { i64, i8* }** %t160
-  %t167 = ptrtoint { i64, i8* }* %t166 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t162, i64 %t167, i64 5)
-  %t168 = ptrtoint { i64, i8* }* %t162 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t161, i64 %t168, i64 5)
-  br label %merge51
-merge51:
-  br label %merge42
-merge42:
-  br label %while_cond37
-while_end39:
-  %t169 = getelementptr [12 x i8], [12 x i8]* @.str231, i32 0, i32 0
-  %t170 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str231.c, i8* %t169, i64 11)
-  %t171 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t172 = load %nyx_string*, %nyx_string** %t124
-  %t173 = ptrtoint %nyx_string* %t172 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t171, i64 %t173, i64 2)
-  %t174 = load { i64, i8* }*, { i64, i8* }** %t133
-  %t175 = ptrtoint { i64, i8* }* %t174 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t171, i64 %t175, i64 5)
-  %t176 = load { i64, i8* }*, { i64, i8* }** %t128
-  %t177 = ptrtoint { i64, i8* }* %t176 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t171, i64 %t177, i64 5)
-  %t178 = call { i64, i8* }* @make_astnode(%nyx_string* %t170, { i64, i8* }* %t171)
-  store { i64, i8* }* %t178, { i64, i8* }** %t32
-  br label %merge36
-else35:
-  br label %merge36
-merge36:
-  br label %merge31
-else30:
-  br label %merge31
-merge31:
+  store %Token %t158, %Token* %t159
+  %t160 = getelementptr [6 x i8], [6 x i8]* @.str230, i32 0, i32 0
+  %t161 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str230.c, i8* %t160, i64 5)
+  %t162 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t161)
+  %t163 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
+  store { i64, i8* }* %t163, { i64, i8* }** %t164
+  %t165 = load { i64, i8* }*, { i64, i8* }** %t137
+  %t166 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t167 = load %Token, %Token* %t159
+  %t168 = call %nyx_string* @get_token_value(%Token %t167)
+  %t169 = ptrtoint %nyx_string* %t168 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t166, i64 %t169, i64 2)
+  %t170 = load { i64, i8* }*, { i64, i8* }** %t164
+  %t171 = ptrtoint { i64, i8* }* %t170 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t166, i64 %t171, i64 5)
+  %t172 = ptrtoint { i64, i8* }* %t166 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t165, i64 %t172, i64 5)
+  br label %merge53
+merge53:
+  br label %merge44
+merge44:
+  br label %while_cond39
+while_end41:
+  %t173 = getelementptr [12 x i8], [12 x i8]* @.str231, i32 0, i32 0
+  %t174 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str231.c, i8* %t173, i64 11)
+  %t175 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t176 = load %nyx_string*, %nyx_string** %t128
+  %t177 = ptrtoint %nyx_string* %t176 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t175, i64 %t177, i64 2)
+  %t178 = load { i64, i8* }*, { i64, i8* }** %t137
+  %t179 = ptrtoint { i64, i8* }* %t178 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t175, i64 %t179, i64 5)
+  %t180 = load { i64, i8* }*, { i64, i8* }** %t132
+  %t181 = ptrtoint { i64, i8* }* %t180 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t175, i64 %t181, i64 5)
+  %t182 = call { i64, i8* }* @make_astnode(%nyx_string* %t174, { i64, i8* }* %t175)
+  store { i64, i8* }* %t182, { i64, i8* }** %t32
+  br label %merge38
+else37:
+  br label %merge38
+merge38:
+  br label %merge33
+else32:
+  br label %merge33
+merge33:
   br label %merge13
 else12:
   br label %merge13
@@ -6858,368 +6869,377 @@ merge13:
 else9:
   br label %merge10
 merge10:
-  store i1 false, i1* %t179
-  %t180 = getelementptr [11 x i8], [11 x i8]* @.str232, i32 0, i32 0
-  %t181 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str232.c, i8* %t180, i64 10)
-  %t182 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t181)
-  br i1 %t182, label %sc_and_rhs52, label %sc_and_end53
-sc_and_rhs52:
-  %t183 = call i1 @parse__is_on_new_line(%SharedEnv_parse* %env.param)
-  %t184 = xor i1 %t183, true
-  store i1 %t184, i1* %t179
-  br label %sc_and_end53
-sc_and_end53:
-  %t185 = load i1, i1* %t179
-  br i1 %t185, label %then54, label %else55
-then54:
-  %t186 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t187 = call { i64, i8* }* @nyx_array_new_ptr()
-  store { i64, i8* }* %t187, { i64, i8* }** %t188
-  %t189 = load i64, i64* %t6
-  store i64 %t189, i64* %t190
+  store i1 false, i1* %t183
+  %t184 = getelementptr [11 x i8], [11 x i8]* @.str232, i32 0, i32 0
+  %t185 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str232.c, i8* %t184, i64 10)
+  %t186 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t185)
+  br i1 %t186, label %sc_and_rhs54, label %sc_and_end55
+sc_and_rhs54:
+  %t187 = call i1 @parse__is_on_new_line(%SharedEnv_parse* %env.param)
+  %t188 = xor i1 %t187, true
+  store i1 %t188, i1* %t183
+  br label %sc_and_end55
+sc_and_end55:
+  %t189 = load i1, i1* %t183
+  br i1 %t189, label %then56, label %else57
+then56:
+  %t190 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t191 = call { i64, i8* }* @nyx_array_new_ptr()
+  store { i64, i8* }* %t191, { i64, i8* }** %t192
+  %t193 = load i64, i64* %t6
+  store i64 %t193, i64* %t194
   store i64 0, i64* %t6
-  store i1 0, i1* %t191
-  br label %while_cond57
-while_cond57:
-  %t192 = load i1, i1* %t191
-  %t193 = xor i1 %t192, true
-  br i1 %t193, label %while_body58, label %while_end59
-while_body58:
-  %t194 = getelementptr [12 x i8], [12 x i8]* @.str233, i32 0, i32 0
-  %t195 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str233.c, i8* %t194, i64 11)
-  %t196 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t195)
-  br i1 %t196, label %then60, label %else61
-then60:
-  %t197 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  store i1 1, i1* %t191
-  br label %merge62
-else61:
-  %t198 = load { i64, i8* }*, { i64, i8* }** %t188
-  %t199 = call i64 @nyx_array_length({ i64, i8* }* %t198)
-  %t200 = icmp sgt i64 %t199, 0
-  br i1 %t200, label %then63, label %else64
-then63:
-  %t201 = getelementptr [6 x i8], [6 x i8]* @.str234, i32 0, i32 0
-  %t202 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str234.c, i8* %t201, i64 5)
-  %t203 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t202)
-  br label %merge65
-else64:
-  br label %merge65
-merge65:
-  %t204 = load { i64, i8* }*, { i64, i8* }** %t188
-  %t205 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
-  %t206 = ptrtoint { i64, i8* }* %t205 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t204, i64 %t206, i64 5)
-  br label %merge62
-merge62:
-  br label %while_cond57
-while_end59:
-  %t207 = load i64, i64* %t190
-  store i64 %t207, i64* %t6
-  %t208 = getelementptr [5 x i8], [5 x i8]* @.str235, i32 0, i32 0
-  %t209 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str235.c, i8* %t208, i64 4)
-  %t210 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t211 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t212 = ptrtoint { i64, i8* }* %t211 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t210, i64 %t212, i64 5)
-  %t213 = load { i64, i8* }*, { i64, i8* }** %t188
-  %t214 = ptrtoint { i64, i8* }* %t213 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t210, i64 %t214, i64 5)
-  %t215 = call { i64, i8* }* @make_astnode(%nyx_string* %t209, { i64, i8* }* %t210)
-  store { i64, i8* }* %t215, { i64, i8* }** %t32
-  br label %merge56
-else55:
-  %t216 = getelementptr [13 x i8], [13 x i8]* @.str236, i32 0, i32 0
-  %t217 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str236.c, i8* %t216, i64 12)
-  %t218 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t217)
-  br i1 %t218, label %then66, label %else67
-then66:
-  %t219 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t220 = load i64, i64* %t6
-  store i64 %t220, i64* %t221
+  store i1 0, i1* %t195
+  br label %while_cond59
+while_cond59:
+  %t196 = load i1, i1* %t195
+  %t197 = xor i1 %t196, true
+  br i1 %t197, label %while_body60, label %while_end61
+while_body60:
+  %t198 = getelementptr [12 x i8], [12 x i8]* @.str233, i32 0, i32 0
+  %t199 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str233.c, i8* %t198, i64 11)
+  %t200 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t199)
+  br i1 %t200, label %then62, label %else63
+then62:
+  %t201 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  store i1 1, i1* %t195
+  br label %merge64
+else63:
+  %t202 = load { i64, i8* }*, { i64, i8* }** %t192
+  %t203 = call i64 @nyx_array_length({ i64, i8* }* %t202)
+  %t204 = icmp sgt i64 %t203, 0
+  br i1 %t204, label %then65, label %else66
+then65:
+  %t205 = getelementptr [6 x i8], [6 x i8]* @.str234, i32 0, i32 0
+  %t206 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str234.c, i8* %t205, i64 5)
+  %t207 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t206)
+  br label %merge67
+else66:
+  br label %merge67
+merge67:
+  %t208 = load { i64, i8* }*, { i64, i8* }** %t192
+  %t209 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
+  %t210 = ptrtoint { i64, i8* }* %t209 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t208, i64 %t210, i64 5)
+  br label %merge64
+merge64:
+  br label %while_cond59
+while_end61:
+  %t211 = load i64, i64* %t194
+  store i64 %t211, i64* %t6
+  %t212 = getelementptr [5 x i8], [5 x i8]* @.str235, i32 0, i32 0
+  %t213 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str235.c, i8* %t212, i64 4)
+  %t214 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t215 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t216 = ptrtoint { i64, i8* }* %t215 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t214, i64 %t216, i64 5)
+  %t217 = load { i64, i8* }*, { i64, i8* }** %t192
+  %t218 = ptrtoint { i64, i8* }* %t217 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t214, i64 %t218, i64 5)
+  %t219 = call { i64, i8* }* @make_astnode(%nyx_string* %t213, { i64, i8* }* %t214)
+  store { i64, i8* }* %t219, { i64, i8* }** %t32
+  br label %merge58
+else57:
+  %t220 = getelementptr [13 x i8], [13 x i8]* @.str236, i32 0, i32 0
+  %t221 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str236.c, i8* %t220, i64 12)
+  %t222 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t221)
+  br i1 %t222, label %then68, label %else69
+then68:
+  %t223 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t224 = load i64, i64* %t6
+  store i64 %t224, i64* %t225
   store i64 0, i64* %t6
-  %t222 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
-  store { i64, i8* }* %t222, { i64, i8* }** %t223
-  %t224 = load i64, i64* %t221
-  store i64 %t224, i64* %t6
-  %t225 = getelementptr [14 x i8], [14 x i8]* @.str237, i32 0, i32 0
-  %t226 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str237.c, i8* %t225, i64 13)
-  %t227 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t226)
-  %t228 = getelementptr [6 x i8], [6 x i8]* @.str238, i32 0, i32 0
-  %t229 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str238.c, i8* %t228, i64 5)
-  %t230 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t231 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t232 = ptrtoint { i64, i8* }* %t231 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t230, i64 %t232, i64 5)
-  %t233 = load { i64, i8* }*, { i64, i8* }** %t223
-  %t234 = ptrtoint { i64, i8* }* %t233 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t230, i64 %t234, i64 5)
-  %t235 = call { i64, i8* }* @make_astnode(%nyx_string* %t229, { i64, i8* }* %t230)
-  store { i64, i8* }* %t235, { i64, i8* }** %t32
-  br label %merge68
-else67:
-  %t236 = getelementptr [4 x i8], [4 x i8]* @.str239, i32 0, i32 0
-  %t237 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str239.c, i8* %t236, i64 3)
-  %t238 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t237)
-  br i1 %t238, label %then69, label %else70
-then69:
-  %t239 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t240 = getelementptr [7 x i8], [7 x i8]* @.str240, i32 0, i32 0
-  %t241 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str240.c, i8* %t240, i64 6)
+  %t226 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
+  store { i64, i8* }* %t226, { i64, i8* }** %t227
+  %t228 = load i64, i64* %t225
+  store i64 %t228, i64* %t6
+  %t229 = getelementptr [14 x i8], [14 x i8]* @.str237, i32 0, i32 0
+  %t230 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str237.c, i8* %t229, i64 13)
+  %t231 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t230)
+  %t232 = getelementptr [6 x i8], [6 x i8]* @.str238, i32 0, i32 0
+  %t233 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str238.c, i8* %t232, i64 5)
+  %t234 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t235 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t236 = ptrtoint { i64, i8* }* %t235 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t234, i64 %t236, i64 5)
+  %t237 = load { i64, i8* }*, { i64, i8* }** %t227
+  %t238 = ptrtoint { i64, i8* }* %t237 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t234, i64 %t238, i64 5)
+  %t239 = call { i64, i8* }* @make_astnode(%nyx_string* %t233, { i64, i8* }* %t234)
+  store { i64, i8* }* %t239, { i64, i8* }** %t32
+  br label %merge70
+else69:
+  %t240 = getelementptr [4 x i8], [4 x i8]* @.str239, i32 0, i32 0
+  %t241 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str239.c, i8* %t240, i64 3)
   %t242 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t241)
-  br i1 %t242, label %then72, label %else73
-then72:
+  br i1 %t242, label %then71, label %else72
+then71:
   %t243 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  store %Token %t243, %Token* %t244
-  %t245 = load %Token, %Token* %t244
-  %t246 = call %nyx_string* @get_token_value(%Token %t245)
-  store %nyx_string* %t246, %nyx_string** %t247
-  %t248 = getelementptr [12 x i8], [12 x i8]* @.str241, i32 0, i32 0
-  %t249 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str241.c, i8* %t248, i64 11)
-  %t250 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t251 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t252 = ptrtoint { i64, i8* }* %t251 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t250, i64 %t252, i64 5)
-  %t253 = load %nyx_string*, %nyx_string** %t247
-  %t254 = ptrtoint %nyx_string* %t253 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t250, i64 %t254, i64 2)
-  %t255 = call { i64, i8* }* @make_astnode(%nyx_string* %t249, { i64, i8* }* %t250)
-  store { i64, i8* }* %t255, { i64, i8* }** %t32
-  br label %merge74
-else73:
-  %t256 = getelementptr [11 x i8], [11 x i8]* @.str242, i32 0, i32 0
-  %t257 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str242.c, i8* %t256, i64 10)
-  %t258 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t257)
-  store %Token %t258, %Token* %t259
-  %t260 = load %Token, %Token* %t259
-  %t261 = call %nyx_string* @get_token_value(%Token %t260)
-  store %nyx_string* %t261, %nyx_string** %t262
-  %t263 = call { i64, i8* }* @nyx_array_new_ptr()
-  store { i64, i8* }* %t263, { i64, i8* }** %t264
-  store i1 0, i1* %t265
-  %t266 = getelementptr [5 x i8], [5 x i8]* @.str243, i32 0, i32 0
-  %t267 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str243.c, i8* %t266, i64 4)
-  %t268 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t267)
-  br i1 %t268, label %then75, label %else76
-then75:
-  %t269 = call i1 @parse__is_generic_call_lookahead(%SharedEnv_parse* %env.param)
-  br i1 %t269, label %then78, label %else79
-then78:
-  %t270 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t271 = load { i64, i8* }*, { i64, i8* }** %t264
-  %t272 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
-  %t273 = ptrtoint %nyx_string* %t272 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t271, i64 %t273, i64 2)
-  store i1 0, i1* %t274
-  br label %while_cond81
-while_cond81:
-  %t275 = load i1, i1* %t274
-  %t276 = xor i1 %t275, true
-  br i1 %t276, label %while_body82, label %while_end83
-while_body82:
-  %t277 = getelementptr [6 x i8], [6 x i8]* @.str244, i32 0, i32 0
-  %t278 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str244.c, i8* %t277, i64 5)
-  %t279 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t278)
-  br i1 %t279, label %then84, label %else85
-then84:
-  %t280 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t281 = load { i64, i8* }*, { i64, i8* }** %t264
-  %t282 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
-  %t283 = ptrtoint %nyx_string* %t282 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t281, i64 %t283, i64 2)
-  br label %merge86
-else85:
-  store i1 1, i1* %t274
-  br label %merge86
-merge86:
-  br label %while_cond81
-while_end83:
-  %t284 = load i64, i64* %t5
-  %t285 = icmp sgt i64 %t284, 0
-  br i1 %t285, label %then87, label %else88
-then87:
-  %t286 = load i64, i64* %t5
-  %t287 = sub i64 %t286, 1
-  store i64 %t287, i64* %t5
-  br label %merge89
-else88:
-  %t288 = getelementptr [8 x i8], [8 x i8]* @.str245, i32 0, i32 0
-  %t289 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str245.c, i8* %t288, i64 7)
-  %t290 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t289)
-  br i1 %t290, label %then90, label %else91
-then90:
-  %t291 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  br label %merge92
-else91:
-  %t292 = getelementptr [12 x i8], [12 x i8]* @.str246, i32 0, i32 0
-  %t293 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str246.c, i8* %t292, i64 11)
-  %t294 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t293)
-  br i1 %t294, label %then93, label %else94
-then93:
-  %t295 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t296 = load i64, i64* %t5
-  %t297 = add i64 %t296, 1
-  store i64 %t297, i64* %t5
-  br label %merge95
-else94:
-  %t298 = getelementptr [8 x i8], [8 x i8]* @.str247, i32 0, i32 0
-  %t299 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str247.c, i8* %t298, i64 7)
-  %t300 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t299)
-  br label %merge95
-merge95:
-  br label %merge92
-merge92:
-  br label %merge89
-merge89:
-  store i1 1, i1* %t265
-  br label %merge80
-else79:
-  br label %merge80
-merge80:
-  br label %merge77
-else76:
-  br label %merge77
-merge77:
-  %t301 = getelementptr [11 x i8], [11 x i8]* @.str248, i32 0, i32 0
-  %t302 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str248.c, i8* %t301, i64 10)
-  %t303 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t302)
-  br i1 %t303, label %then96, label %else97
-then96:
-  %t304 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t305 = call { i64, i8* }* @nyx_array_new_ptr()
-  store { i64, i8* }* %t305, { i64, i8* }** %t306
-  store i1 0, i1* %t307
-  br label %while_cond99
-while_cond99:
-  %t308 = load i1, i1* %t307
-  %t309 = xor i1 %t308, true
-  br i1 %t309, label %while_body100, label %while_end101
-while_body100:
-  %t310 = getelementptr [12 x i8], [12 x i8]* @.str249, i32 0, i32 0
-  %t311 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str249.c, i8* %t310, i64 11)
-  %t312 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t311)
-  br i1 %t312, label %then102, label %else103
-then102:
-  %t313 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  store i1 1, i1* %t307
-  br label %merge104
-else103:
-  %t314 = load { i64, i8* }*, { i64, i8* }** %t306
-  %t315 = call i64 @nyx_array_length({ i64, i8* }* %t314)
-  %t316 = icmp sgt i64 %t315, 0
-  br i1 %t316, label %then105, label %else106
-then105:
-  %t317 = getelementptr [6 x i8], [6 x i8]* @.str250, i32 0, i32 0
-  %t318 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str250.c, i8* %t317, i64 5)
-  %t319 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t318)
-  br label %merge107
-else106:
-  br label %merge107
-merge107:
-  %t320 = load { i64, i8* }*, { i64, i8* }** %t306
-  %t321 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
-  %t322 = ptrtoint { i64, i8* }* %t321 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t320, i64 %t322, i64 5)
-  br label %merge104
-merge104:
-  br label %while_cond99
-while_end101:
-  %t323 = load i1, i1* %t265
-  br i1 %t323, label %then108, label %else109
-then108:
-  %t324 = getelementptr [12 x i8], [12 x i8]* @.str251, i32 0, i32 0
-  %t325 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str251.c, i8* %t324, i64 11)
-  %t326 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t327 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t328 = ptrtoint { i64, i8* }* %t327 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t326, i64 %t328, i64 5)
-  %t329 = load %nyx_string*, %nyx_string** %t262
-  %t330 = ptrtoint %nyx_string* %t329 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t326, i64 %t330, i64 2)
-  %t331 = load { i64, i8* }*, { i64, i8* }** %t306
-  %t332 = ptrtoint { i64, i8* }* %t331 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t326, i64 %t332, i64 5)
-  %t333 = load { i64, i8* }*, { i64, i8* }** %t264
-  %t334 = ptrtoint { i64, i8* }* %t333 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t326, i64 %t334, i64 5)
-  %t335 = call { i64, i8* }* @make_astnode(%nyx_string* %t325, { i64, i8* }* %t326)
-  store { i64, i8* }* %t335, { i64, i8* }** %t32
-  br label %merge110
-else109:
-  %t336 = getelementptr [12 x i8], [12 x i8]* @.str252, i32 0, i32 0
-  %t337 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str252.c, i8* %t336, i64 11)
-  %t338 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t339 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t244 = getelementptr [7 x i8], [7 x i8]* @.str240, i32 0, i32 0
+  %t245 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str240.c, i8* %t244, i64 6)
+  %t246 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t245)
+  br i1 %t246, label %then74, label %else75
+then74:
+  %t247 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  store %Token %t247, %Token* %t248
+  %t249 = load %Token, %Token* %t248
+  %t250 = call %nyx_string* @get_token_value(%Token %t249)
+  store %nyx_string* %t250, %nyx_string** %t251
+  %t252 = getelementptr [12 x i8], [12 x i8]* @.str241, i32 0, i32 0
+  %t253 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str241.c, i8* %t252, i64 11)
+  %t254 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t255 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t256 = ptrtoint { i64, i8* }* %t255 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t254, i64 %t256, i64 5)
+  %t257 = load %nyx_string*, %nyx_string** %t251
+  %t258 = ptrtoint %nyx_string* %t257 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t254, i64 %t258, i64 2)
+  %t259 = call { i64, i8* }* @make_astnode(%nyx_string* %t253, { i64, i8* }* %t254)
+  store { i64, i8* }* %t259, { i64, i8* }** %t32
+  br label %merge76
+else75:
+  %t260 = getelementptr [11 x i8], [11 x i8]* @.str242, i32 0, i32 0
+  %t261 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str242.c, i8* %t260, i64 10)
+  %t262 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t261)
+  store %Token %t262, %Token* %t263
+  %t264 = load %Token, %Token* %t263
+  %t265 = call %nyx_string* @get_token_value(%Token %t264)
+  store %nyx_string* %t265, %nyx_string** %t266
+  %t267 = call { i64, i8* }* @nyx_array_new_ptr()
+  store { i64, i8* }* %t267, { i64, i8* }** %t268
+  store i1 0, i1* %t269
+  %t270 = getelementptr [5 x i8], [5 x i8]* @.str243, i32 0, i32 0
+  %t271 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str243.c, i8* %t270, i64 4)
+  %t272 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t271)
+  br i1 %t272, label %then77, label %else78
+then77:
+  %t273 = call i1 @parse__is_generic_call_lookahead(%SharedEnv_parse* %env.param)
+  br i1 %t273, label %then80, label %else81
+then80:
+  %t274 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t275 = load { i64, i8* }*, { i64, i8* }** %t268
+  %t276 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
+  %t277 = ptrtoint %nyx_string* %t276 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t275, i64 %t277, i64 2)
+  store i1 0, i1* %t278
+  br label %while_cond83
+while_cond83:
+  %t279 = load i1, i1* %t278
+  %t280 = xor i1 %t279, true
+  br i1 %t280, label %while_body84, label %while_end85
+while_body84:
+  store i1 false, i1* %t281
+  %t282 = load i64, i64* %t5
+  %t283 = icmp eq i64 %t282, 0
+  br i1 %t283, label %sc_and_rhs86, label %sc_and_end87
+sc_and_rhs86:
+  %t284 = getelementptr [6 x i8], [6 x i8]* @.str244, i32 0, i32 0
+  %t285 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str244.c, i8* %t284, i64 5)
+  %t286 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t285)
+  store i1 %t286, i1* %t281
+  br label %sc_and_end87
+sc_and_end87:
+  %t287 = load i1, i1* %t281
+  br i1 %t287, label %then88, label %else89
+then88:
+  %t288 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t289 = load { i64, i8* }*, { i64, i8* }** %t268
+  %t290 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
+  %t291 = ptrtoint %nyx_string* %t290 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t289, i64 %t291, i64 2)
+  br label %merge90
+else89:
+  store i1 1, i1* %t278
+  br label %merge90
+merge90:
+  br label %while_cond83
+while_end85:
+  %t292 = load i64, i64* %t5
+  %t293 = icmp sgt i64 %t292, 0
+  br i1 %t293, label %then91, label %else92
+then91:
+  %t294 = load i64, i64* %t5
+  %t295 = sub i64 %t294, 1
+  store i64 %t295, i64* %t5
+  br label %merge93
+else92:
+  %t296 = getelementptr [8 x i8], [8 x i8]* @.str245, i32 0, i32 0
+  %t297 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str245.c, i8* %t296, i64 7)
+  %t298 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t297)
+  br i1 %t298, label %then94, label %else95
+then94:
+  %t299 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  br label %merge96
+else95:
+  %t300 = getelementptr [12 x i8], [12 x i8]* @.str246, i32 0, i32 0
+  %t301 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str246.c, i8* %t300, i64 11)
+  %t302 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t301)
+  br i1 %t302, label %then97, label %else98
+then97:
+  %t303 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t304 = load i64, i64* %t5
+  %t305 = add i64 %t304, 1
+  store i64 %t305, i64* %t5
+  br label %merge99
+else98:
+  %t306 = getelementptr [8 x i8], [8 x i8]* @.str247, i32 0, i32 0
+  %t307 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str247.c, i8* %t306, i64 7)
+  %t308 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t307)
+  br label %merge99
+merge99:
+  br label %merge96
+merge96:
+  br label %merge93
+merge93:
+  store i1 1, i1* %t269
+  br label %merge82
+else81:
+  br label %merge82
+merge82:
+  br label %merge79
+else78:
+  br label %merge79
+merge79:
+  %t309 = getelementptr [11 x i8], [11 x i8]* @.str248, i32 0, i32 0
+  %t310 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str248.c, i8* %t309, i64 10)
+  %t311 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t310)
+  br i1 %t311, label %then100, label %else101
+then100:
+  %t312 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t313 = call { i64, i8* }* @nyx_array_new_ptr()
+  store { i64, i8* }* %t313, { i64, i8* }** %t314
+  store i1 0, i1* %t315
+  br label %while_cond103
+while_cond103:
+  %t316 = load i1, i1* %t315
+  %t317 = xor i1 %t316, true
+  br i1 %t317, label %while_body104, label %while_end105
+while_body104:
+  %t318 = getelementptr [12 x i8], [12 x i8]* @.str249, i32 0, i32 0
+  %t319 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str249.c, i8* %t318, i64 11)
+  %t320 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t319)
+  br i1 %t320, label %then106, label %else107
+then106:
+  %t321 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  store i1 1, i1* %t315
+  br label %merge108
+else107:
+  %t322 = load { i64, i8* }*, { i64, i8* }** %t314
+  %t323 = call i64 @nyx_array_length({ i64, i8* }* %t322)
+  %t324 = icmp sgt i64 %t323, 0
+  br i1 %t324, label %then109, label %else110
+then109:
+  %t325 = getelementptr [6 x i8], [6 x i8]* @.str250, i32 0, i32 0
+  %t326 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str250.c, i8* %t325, i64 5)
+  %t327 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t326)
+  br label %merge111
+else110:
+  br label %merge111
+merge111:
+  %t328 = load { i64, i8* }*, { i64, i8* }** %t314
+  %t329 = call { i64, i8* }* @parse__parse_expression(%SharedEnv_parse* %env.param)
+  %t330 = ptrtoint { i64, i8* }* %t329 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t328, i64 %t330, i64 5)
+  br label %merge108
+merge108:
+  br label %while_cond103
+while_end105:
+  %t331 = load i1, i1* %t269
+  br i1 %t331, label %then112, label %else113
+then112:
+  %t332 = getelementptr [12 x i8], [12 x i8]* @.str251, i32 0, i32 0
+  %t333 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str251.c, i8* %t332, i64 11)
+  %t334 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t335 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t336 = ptrtoint { i64, i8* }* %t335 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t334, i64 %t336, i64 5)
+  %t337 = load %nyx_string*, %nyx_string** %t266
+  %t338 = ptrtoint %nyx_string* %t337 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t334, i64 %t338, i64 2)
+  %t339 = load { i64, i8* }*, { i64, i8* }** %t314
   %t340 = ptrtoint { i64, i8* }* %t339 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t338, i64 %t340, i64 5)
-  %t341 = load %nyx_string*, %nyx_string** %t262
-  %t342 = ptrtoint %nyx_string* %t341 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t338, i64 %t342, i64 2)
-  %t343 = load { i64, i8* }*, { i64, i8* }** %t306
-  %t344 = ptrtoint { i64, i8* }* %t343 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t338, i64 %t344, i64 5)
-  %t345 = call { i64, i8* }* @make_astnode(%nyx_string* %t337, { i64, i8* }* %t338)
-  store { i64, i8* }* %t345, { i64, i8* }** %t32
-  br label %merge110
-merge110:
-  br label %merge98
-else97:
-  %t346 = load i1, i1* %t265
-  br i1 %t346, label %then111, label %else112
-then111:
-  %t347 = getelementptr [11 x i8], [11 x i8]* @.str253, i32 0, i32 0
-  %t348 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str253.c, i8* %t347, i64 10)
-  %t349 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t348)
-  br label %merge113
-else112:
-  br label %merge113
-merge113:
-  %t350 = getelementptr [13 x i8], [13 x i8]* @.str254, i32 0, i32 0
-  %t351 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str254.c, i8* %t350, i64 12)
-  %t352 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t353 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t354 = ptrtoint { i64, i8* }* %t353 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t352, i64 %t354, i64 5)
-  %t355 = load %nyx_string*, %nyx_string** %t262
-  %t356 = ptrtoint %nyx_string* %t355 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t352, i64 %t356, i64 2)
-  %t357 = call { i64, i8* }* @make_astnode(%nyx_string* %t351, { i64, i8* }* %t352)
-  store { i64, i8* }* %t357, { i64, i8* }** %t32
-  br label %merge98
-merge98:
-  br label %merge74
-merge74:
-  br label %merge71
-else70:
-  %t358 = getelementptr [9 x i8], [9 x i8]* @.str255, i32 0, i32 0
-  %t359 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str255.c, i8* %t358, i64 8)
-  %t360 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t359)
-  br i1 %t360, label %then114, label %else115
-then114:
-  %t361 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t362 = getelementptr [7 x i8], [7 x i8]* @.str256, i32 0, i32 0
-  %t363 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str256.c, i8* %t362, i64 6)
-  %t364 = call { i64, i8* }* @nyx_array_new_ptr()
-  %t365 = load { i64, i8* }*, { i64, i8* }** %t32
-  %t366 = ptrtoint { i64, i8* }* %t365 to i64
-  call void @nyx_array_push_tagged({ i64, i8* }* %t364, i64 %t366, i64 5)
-  %t367 = call { i64, i8* }* @make_astnode(%nyx_string* %t363, { i64, i8* }* %t364)
-  store { i64, i8* }* %t367, { i64, i8* }** %t32
-  br label %merge116
-else115:
+  call void @nyx_array_push_tagged({ i64, i8* }* %t334, i64 %t340, i64 5)
+  %t341 = load { i64, i8* }*, { i64, i8* }** %t268
+  %t342 = ptrtoint { i64, i8* }* %t341 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t334, i64 %t342, i64 5)
+  %t343 = call { i64, i8* }* @make_astnode(%nyx_string* %t333, { i64, i8* }* %t334)
+  store { i64, i8* }* %t343, { i64, i8* }** %t32
+  br label %merge114
+else113:
+  %t344 = getelementptr [12 x i8], [12 x i8]* @.str252, i32 0, i32 0
+  %t345 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str252.c, i8* %t344, i64 11)
+  %t346 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t347 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t348 = ptrtoint { i64, i8* }* %t347 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t346, i64 %t348, i64 5)
+  %t349 = load %nyx_string*, %nyx_string** %t266
+  %t350 = ptrtoint %nyx_string* %t349 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t346, i64 %t350, i64 2)
+  %t351 = load { i64, i8* }*, { i64, i8* }** %t314
+  %t352 = ptrtoint { i64, i8* }* %t351 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t346, i64 %t352, i64 5)
+  %t353 = call { i64, i8* }* @make_astnode(%nyx_string* %t345, { i64, i8* }* %t346)
+  store { i64, i8* }* %t353, { i64, i8* }** %t32
+  br label %merge114
+merge114:
+  br label %merge102
+else101:
+  %t354 = load i1, i1* %t269
+  br i1 %t354, label %then115, label %else116
+then115:
+  %t355 = getelementptr [11 x i8], [11 x i8]* @.str253, i32 0, i32 0
+  %t356 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str253.c, i8* %t355, i64 10)
+  %t357 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t356)
+  br label %merge117
+else116:
+  br label %merge117
+merge117:
+  %t358 = getelementptr [13 x i8], [13 x i8]* @.str254, i32 0, i32 0
+  %t359 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str254.c, i8* %t358, i64 12)
+  %t360 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t361 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t362 = ptrtoint { i64, i8* }* %t361 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t360, i64 %t362, i64 5)
+  %t363 = load %nyx_string*, %nyx_string** %t266
+  %t364 = ptrtoint %nyx_string* %t363 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t360, i64 %t364, i64 2)
+  %t365 = call { i64, i8* }* @make_astnode(%nyx_string* %t359, { i64, i8* }* %t360)
+  store { i64, i8* }* %t365, { i64, i8* }** %t32
+  br label %merge102
+merge102:
+  br label %merge76
+merge76:
+  br label %merge73
+else72:
+  %t366 = getelementptr [9 x i8], [9 x i8]* @.str255, i32 0, i32 0
+  %t367 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str255.c, i8* %t366, i64 8)
+  %t368 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t367)
+  br i1 %t368, label %then118, label %else119
+then118:
+  %t369 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t370 = getelementptr [7 x i8], [7 x i8]* @.str256, i32 0, i32 0
+  %t371 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str256.c, i8* %t370, i64 6)
+  %t372 = call { i64, i8* }* @nyx_array_new_ptr()
+  %t373 = load { i64, i8* }*, { i64, i8* }** %t32
+  %t374 = ptrtoint { i64, i8* }* %t373 to i64
+  call void @nyx_array_push_tagged({ i64, i8* }* %t372, i64 %t374, i64 5)
+  %t375 = call { i64, i8* }* @make_astnode(%nyx_string* %t371, { i64, i8* }* %t372)
+  store { i64, i8* }* %t375, { i64, i8* }** %t32
+  br label %merge120
+else119:
   store i1 1, i1* %t33
-  br label %merge116
-merge116:
-  br label %merge71
-merge71:
-  br label %merge68
-merge68:
-  br label %merge56
-merge56:
+  br label %merge120
+merge120:
+  br label %merge73
+merge73:
+  br label %merge70
+merge70:
+  br label %merge58
+merge58:
   br label %while_cond0
 while_end2:
-  %t368 = load { i64, i8* }*, { i64, i8* }** %t32
-  ret { i64, i8* }* %t368
+  %t376 = load { i64, i8* }*, { i64, i8* }** %t32
+  ret { i64, i8* }* %t376
 }
 
 define internal { i64, i8* }* @parse__parse_primary(%SharedEnv_parse* %env.param) {
@@ -12491,6 +12511,7 @@ define internal %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %en
   %t248 = alloca %nyx_string*
   %t256 = alloca i1
   %t298 = alloca i1
+  %t301 = alloca i1
   %t1 = getelementptr %SharedEnv_parse, %SharedEnv_parse* %env.param, i32 0, i32 0
   %t2 = getelementptr %SharedEnv_parse, %SharedEnv_parse* %env.param, i32 0, i32 1
   %t3 = getelementptr %SharedEnv_parse, %SharedEnv_parse* %env.param, i32 0, i32 2
@@ -12948,76 +12969,85 @@ while_cond70:
   %t300 = xor i1 %t299, true
   br i1 %t300, label %while_body71, label %while_end72
 while_body71:
-  %t301 = getelementptr [6 x i8], [6 x i8]* @.str742, i32 0, i32 0
-  %t302 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str742.c, i8* %t301, i64 5)
-  %t303 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t302)
-  br i1 %t303, label %then73, label %else74
-then73:
-  %t304 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t305 = load %nyx_string*, %nyx_string** %t215
-  %t306 = getelementptr [2 x i8], [2 x i8]* @.str743, i32 0, i32 0
-  %t307 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str743.c, i8* %t306, i64 1)
-  %t308 = call %nyx_string* @nyx_string_concat(%nyx_string* %t305, %nyx_string* %t307)
-  store %nyx_string* %t308, %nyx_string** %t215
+  store i1 false, i1* %t301
+  %t302 = load i64, i64* %t5
+  %t303 = icmp eq i64 %t302, 0
+  br i1 %t303, label %sc_and_rhs73, label %sc_and_end74
+sc_and_rhs73:
+  %t304 = getelementptr [6 x i8], [6 x i8]* @.str742, i32 0, i32 0
+  %t305 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str742.c, i8* %t304, i64 5)
+  %t306 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t305)
+  store i1 %t306, i1* %t301
+  br label %sc_and_end74
+sc_and_end74:
+  %t307 = load i1, i1* %t301
+  br i1 %t307, label %then75, label %else76
+then75:
+  %t308 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
   %t309 = load %nyx_string*, %nyx_string** %t215
-  %t310 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
-  %t311 = call %nyx_string* @nyx_string_concat(%nyx_string* %t309, %nyx_string* %t310)
-  store %nyx_string* %t311, %nyx_string** %t215
-  br label %merge75
-else74:
+  %t310 = getelementptr [2 x i8], [2 x i8]* @.str743, i32 0, i32 0
+  %t311 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str743.c, i8* %t310, i64 1)
+  %t312 = call %nyx_string* @nyx_string_concat(%nyx_string* %t309, %nyx_string* %t311)
+  store %nyx_string* %t312, %nyx_string** %t215
+  %t313 = load %nyx_string*, %nyx_string** %t215
+  %t314 = call %nyx_string* @parse__parse_type_annotation(%SharedEnv_parse* %env.param)
+  %t315 = call %nyx_string* @nyx_string_concat(%nyx_string* %t313, %nyx_string* %t314)
+  store %nyx_string* %t315, %nyx_string** %t215
+  br label %merge77
+else76:
   store i1 1, i1* %t298
-  br label %merge75
-merge75:
+  br label %merge77
+merge77:
   br label %while_cond70
 while_end72:
-  %t312 = load i64, i64* %t5
-  %t313 = icmp sgt i64 %t312, 0
-  br i1 %t313, label %then76, label %else77
-then76:
-  %t314 = load i64, i64* %t5
-  %t315 = sub i64 %t314, 1
-  store i64 %t315, i64* %t5
-  br label %merge78
-else77:
-  %t316 = getelementptr [8 x i8], [8 x i8]* @.str744, i32 0, i32 0
-  %t317 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str744.c, i8* %t316, i64 7)
-  %t318 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t317)
-  br i1 %t318, label %then79, label %else80
-then79:
-  %t319 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  br label %merge81
-else80:
-  %t320 = getelementptr [12 x i8], [12 x i8]* @.str745, i32 0, i32 0
-  %t321 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str745.c, i8* %t320, i64 11)
+  %t316 = load i64, i64* %t5
+  %t317 = icmp sgt i64 %t316, 0
+  br i1 %t317, label %then78, label %else79
+then78:
+  %t318 = load i64, i64* %t5
+  %t319 = sub i64 %t318, 1
+  store i64 %t319, i64* %t5
+  br label %merge80
+else79:
+  %t320 = getelementptr [8 x i8], [8 x i8]* @.str744, i32 0, i32 0
+  %t321 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str744.c, i8* %t320, i64 7)
   %t322 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t321)
-  br i1 %t322, label %then82, label %else83
-then82:
+  br i1 %t322, label %then81, label %else82
+then81:
   %t323 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
-  %t324 = load i64, i64* %t5
-  %t325 = add i64 %t324, 1
-  store i64 %t325, i64* %t5
-  br label %merge84
-else83:
-  %t326 = getelementptr [8 x i8], [8 x i8]* @.str746, i32 0, i32 0
-  %t327 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str746.c, i8* %t326, i64 7)
-  %t328 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t327)
-  br label %merge84
-merge84:
-  br label %merge81
-merge81:
-  br label %merge78
-merge78:
-  %t329 = load %nyx_string*, %nyx_string** %t215
-  %t330 = getelementptr [2 x i8], [2 x i8]* @.str747, i32 0, i32 0
-  %t331 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str747.c, i8* %t330, i64 1)
-  %t332 = call %nyx_string* @nyx_string_concat(%nyx_string* %t329, %nyx_string* %t331)
-  store %nyx_string* %t332, %nyx_string** %t215
+  br label %merge83
+else82:
+  %t324 = getelementptr [12 x i8], [12 x i8]* @.str745, i32 0, i32 0
+  %t325 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str745.c, i8* %t324, i64 11)
+  %t326 = call i1 @parse__check(%SharedEnv_parse* %env.param, %nyx_string* %t325)
+  br i1 %t326, label %then84, label %else85
+then84:
+  %t327 = call %Token @parse__advance(%SharedEnv_parse* %env.param)
+  %t328 = load i64, i64* %t5
+  %t329 = add i64 %t328, 1
+  store i64 %t329, i64* %t5
+  br label %merge86
+else85:
+  %t330 = getelementptr [8 x i8], [8 x i8]* @.str746, i32 0, i32 0
+  %t331 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str746.c, i8* %t330, i64 7)
+  %t332 = call %Token @parse__expect(%SharedEnv_parse* %env.param, %nyx_string* %t331)
+  br label %merge86
+merge86:
+  br label %merge83
+merge83:
+  br label %merge80
+merge80:
+  %t333 = load %nyx_string*, %nyx_string** %t215
+  %t334 = getelementptr [2 x i8], [2 x i8]* @.str747, i32 0, i32 0
+  %t335 = call %nyx_string* @nyx_intern_ptr(%nyx_string** @.str747.c, i8* %t334, i64 1)
+  %t336 = call %nyx_string* @nyx_string_concat(%nyx_string* %t333, %nyx_string* %t335)
+  store %nyx_string* %t336, %nyx_string** %t215
   br label %merge69
 else68:
   br label %merge69
 merge69:
-  %t333 = load %nyx_string*, %nyx_string** %t215
-  ret %nyx_string* %t333
+  %t337 = load %nyx_string*, %nyx_string** %t215
+  ret %nyx_string* %t337
 }
 
 define internal { i64, i8* }* @parse__parse_let(%SharedEnv_parse* %env.param) {

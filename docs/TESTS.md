@@ -12,13 +12,13 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **568 archivos / 567 ARM64** | +6 el 11-16 (`553` `alloc_gc`, `554` `#[fast_math]`, `555` `!=` con NaN, `556`-`558` `std/ndarray`), +2 el 11-12 (`551`, `552`), +7 el 11-11 (`544`-`550`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **569 archivos / 568 ARM64** | +1 el 11-17 (`559` genérico anidado seguido de coma), +6 el 11-16 (`553` `alloc_gc`, `554` `#[fast_math]`, `555` `!=` con NaN, `556`-`558` `std/ndarray`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **431** | +2 el 11-16 (operando derecho de un operador), +5 el 11-14 (el diagnóstico nombra el módulo importado), +5 el 11-11 (NYX2024, struct tupla, `unwrap`, `print` bajo pipe); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |
 | Runtime C unit (B4) | `make test-runtime` | **48 suites / 2516 asserts** | +6 el 11-14 (tabla Huffman de HPACK símbolo por símbolo), +81 el 11-13 (motor HTTP/2 `nyx_h2c_*`: HPACK, control de flujo, topes, entradas aleatorias), +70 el 11-09, +20 el 11-02. Antes, en `CHANGELOG.md` |
-| AI-first (objetivo) | `make test-ai-first` | **57 programas + 6 casos stdin (x2) + 78 guardas + 4 celdas export_name** | 29 scripts: ai_first, stdin_io, export_name, alloca_entry, 24 guardas (templates 2, tooling 17, coverage 9, build_manifest 29, no_compiler_rt 2, voseo 1), selftest |
+| AI-first (objetivo) | `make test-ai-first` | **58 programas + 6 casos stdin (x2) + 78 guardas + 4 celdas export_name** | 29 scripts: ai_first, stdin_io, export_name, alloca_entry, 24 guardas (templates 2, tooling 17, coverage 9, build_manifest 29, no_compiler_rt 2, voseo 1), selftest |
 | Variables locales en el bloque de entrada | (en `make test-ai-first`) `run_alloca_entry_audit.sh` | **3 checks** + autotest | IR sin `alloca` fuera del bloque de entrada ni `llvm.stackrestore`; A9 con 256 KB de stack; un bucle `*float` vectoriza (`tests/alloca-entry/`) |
 | `#[export_name]` llamada desde Nyx | (en `make test-ai-first`) `run_export_name_matrix.sh` | **4 celdas** | principal / módulo importado × nativo / wasm (`tests/export-name/`): compila, corre y el símbolo C existe; wasm con SKIP limpio |
 | STDIN-IO (`read_line`/`stdin_eof`/`read_stdin_all`) | (dentro de `make test-ai-first`) `run_stdin_io_tests.sh` | **6 casos × 2 targets** | `tests/ai-first/stdin/`, self-asserting, nativo + wasm32-wasi (SKIP limpio sin toolchain); fix 2026-09-14 (detalle en `CHANGELOG.md`) |

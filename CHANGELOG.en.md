@@ -12,6 +12,23 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.1] — 2026-11-17
+
+### Fixed
+
+- **`"text" + f()[0]` concatenated the raw i64 of the slot even when `f` returned `Array<String>`** (friction
+  report nyxerp 20261117-190000): the pointer came out printed as a number, with no warning and with `nyx check`
+  green. The element type of `f(...)[i]` is now taken from `f`'s signature (String, int, float, bool, nested
+  Array, struct), in a concatenation and in any other use. The same defect reached `"text" + g[i][j]` with
+  `g: Array<Array<String>>`, and `f()[i]` when `f` returns an `Array` without `<T>`: there the slot is read by
+  its tag. Test: `tests/ai-first/58-indice-de-llamada-concatena-texto.nx`.
+- **A parameter or field after a nested generic did not parse**: `fn f(a: Array<Array<int>>, b: int)` and
+  `struct S { m: Map<String, Array<int>>, n: int }` gave `expected 'COMMA', found ':'`. The `>>` closed both
+  type-argument lists and the outer one, already closed, swallowed the following comma. It worked as the last
+  item of the list, and with a space (`> >`) too. Test: `test-559-generico-anidado-y-coma.nx`.
+
+---
+
 ## [0.45.0] — 2026-11-16
 
 ### Added

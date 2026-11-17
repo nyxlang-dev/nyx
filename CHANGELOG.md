@@ -11,6 +11,23 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.45.1] — 2026-11-17
+
+### Fixed
+
+- **`"texto" + f()[0]` concatenaba el i64 crudo de la casilla aunque `f` devolviera `Array<String>`** (fricción
+  nyxerp 20261117-190000): salía el puntero impreso como número, sin aviso y con `nyx check` en verde. El tipo
+  de elemento de `f(...)[i]` se toma ahora de la firma de `f` (String, int, float, bool, Array anidado, struct),
+  en la concatenación y en cualquier otro uso. El mismo defecto alcanzaba a `"texto" + g[i][j]` con
+  `g: Array<Array<String>>`, y a `f()[i]` cuando `f` devuelve un `Array` sin `<T>`: ahí la casilla se lee con
+  su tag. Test: `tests/ai-first/58-indice-de-llamada-concatena-texto.nx`.
+- **Un parámetro o campo después de un genérico anidado no parseaba**: `fn f(a: Array<Array<int>>, b: int)` y
+  `struct S { m: Map<String, Array<int>>, n: int }` daban `expected 'COMMA', found ':'`. El `>>` cerraba las
+  dos listas de argumentos de tipo y la externa, ya cerrada, se comía la coma siguiente. Como último de la
+  lista sí andaba, y con un espacio (`> >`) también. Test: `test-559-generico-anidado-y-coma.nx`.
+
+---
+
 ## [0.45.0] — 2026-11-16
 
 ### Added

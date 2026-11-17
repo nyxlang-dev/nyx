@@ -1,0 +1,47 @@
+// `>>` cierra dos listas de argumentos de tipo. Hasta el 2026-11-17 la lista
+// externa, ya cerrada por ese `>>`, se comía la coma siguiente como si viniera
+// otro argumento de tipo: un parámetro o campo DESPUÉS de un genérico
+// anidado no parseaba (`expected 'COMMA', found ':'`). Como último de la lista
+// sí andaba, y con un espacio (`> >`) también.
+
+struct Caja {
+    filas: Array<Array<String>>,
+    indice: Map<String, Array<int>>,
+    n: int
+}
+
+fn suma(m: Array<Array<int>>, extra: int) -> int {
+    var t = extra
+    for fila in m {
+        for v in fila { t = t + v }
+    }
+    return t
+}
+
+fn cuenta(idx: Map<String, Array<int>>, clave: String) -> int {
+    let xs: Array<int> = idx.get(clave)
+    return xs.length()
+}
+
+fn primero<T>(xs: Array<T>, n: int) -> T { return xs[n] }
+
+fn main() -> int {
+    let m: Array<Array<int>> = [[1, 2], [3, 4]]
+    assert(suma(m, 10) == 20)
+
+    let idx: Map<String, Array<int>> = Map.new()
+    idx.insert("a", [7, 8, 9])
+    assert(cuenta(idx, "a") == 3)
+
+    let c = Caja { filas: [["x", "y"]], indice: idx, n: 5 }
+    assert(c.n == 5)
+    assert(c.filas.length() == 1)
+
+    // La llamada genérica con un argumento de tipo anidado, seguida de más
+    // argumentos de VALOR separados por coma.
+    let fila: Array<int> = primero<Array<int>>(m, 1)
+    assert(fila[0] == 3)
+
+    println("ok")
+    return 0
+}
