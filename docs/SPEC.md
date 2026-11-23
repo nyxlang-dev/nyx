@@ -949,6 +949,7 @@ Semantic-phase codes (`phase:"semantic"`):
 | NYX1047 | `for x: dyn Trait in arr` or `let y: dyn Trait = arr[0]` over an `Array` that holds CONCRETE structs (declared `Array<A>`, or a `push` of a struct in the same function). The conversion to `dyn` (struct pointer to fat pointer `{ data, vtable }`) happens when the element is WRITTEN, never when it is read, so this used to pass `nyx check` and die with SIGSEGV. Declare the collection `Array<dyn Trait>` (each `push` converts) or convert before pushing (`let d: dyn Trait = x; arr.push(d)`); an untyped `Array` filled with already-`dyn` values keeps working (0.38.1) |
 | NYX1048 | in `nyx build --shared`, an `#[export_name]` function whose parameter or return type cannot cross into C. Allowed: `int` (`int64_t`), `float` (`double`), `bool`, raw pointers and `String` (in as `(const uint8_t*, int64_t)`, out as `nyx_buf*`). A struct, `Array`, `Map`, `Option`, `Result`, closure or `dyn` is rejected; long-lived state goes as an `int` that indexes a table on the Nyx side (0.42.2) |
 | NYX1049 | `fn main` in a `--shared` build. A `.so` has no entry point nobody calls; export functions with `#[export_name("...")]` and put start-up code in `fn init()` (0.42.2) |
+| NYX1050 | **Warning** (an error from the next minor version). `==` / `!=` between two values of an enum that has variants with data, where neither side is a literal variant without data: the variant is compared, not the data, so two `Circle(3)` built separately are different. Use `match`, or compare against a variant without data (0.45.2) |
 | NYX1033 | `include_bytes` with a path that is not a String literal — the file is read when COMPILING, so a variable or an interpolation cannot be known |
 | NYX1034 | `include_bytes` cannot read the file: no project root (`NYX_PROJECT_DIR` unset), an absolute path, a `..` escape, or the file is missing. The two middle ones are security checks: without them a program could read any file on the machine that compiles it. Every variant names the resolved path AND the root |
 | NYX1035 | `include_bytes` over the 8 MiB cap, with the real size in the message |
@@ -1219,6 +1220,17 @@ enum Shape {
 let c = Color.Red
 let s = Shape.Circle(5)
 ```
+
+### Igualdad (`==`, `!=`) — 0.45.2
+```nyx
+let a: Color = Color.Red
+if a == Color.Red { print("rojo") }      // compara la VARIANTE
+if s != Shape.Circle(5) { ... }          // aviso NYX1050: los datos no se comparan
+```
+`==` y `!=` comparan la variante. Es exacto en un enum sin datos y siempre que un lado sea una variante literal
+sin datos (`o == Option.None`). Dos valores de una variante **con datos** solo son iguales si son el mismo
+objeto: esa comparación da el aviso NYX1050 (error desde la próxima versión menor); para comparar los datos se
+usa `match`. Hasta 0.45.1 `==` comparaba el puntero de cada construcción y dos `Color.Red` daban `false`.
 
 ### Match como expresion (con `return`)
 ```nyx

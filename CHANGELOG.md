@@ -11,6 +11,32 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.45.2] — 2026-11-23
+
+### Fixed
+
+- **`a == b` entre dos valores de enum daba siempre `false`** (fricción nyxerp 20261118-200016): comparaba el
+  puntero de cada construcción, así que `if estado == Estado.Pagado` no se cumplía nunca, sin error ni aviso.
+  `==` y `!=` comparan ahora la variante, con el enum en una variable, un campo, el retorno de una llamada o
+  una casilla de `Array<Enum>`. Es exacto en un enum sin datos y siempre que un lado sea una variante literal
+  sin datos (`o == Option.None`). Si el enum tiene un `eq` propio en un `impl`, se llama a ese.
+  Tests: `test-560-enum-igualdad.nx`, `tests/ai-first/60-enum-igualdad.nx`.
+- **`get_args().contains("--x")` daba `false` con la bandera presente** (fricción nyxerp 20261119-200023), y
+  `indexOf` daba `-1`: el runtime llenaba ese arreglo sin marcar sus casillas como texto y la búsqueda
+  comparaba punteros. Un programa que lea banderas así empieza a verlas al recompilar con esta versión.
+  Test: `tests/ai-first/59-args-contains.nx`.
+- **`for c: Color in cs` sobre un `Array<Enum>` moría con SIGSEGV** al primer uso de `c`: el `for` tipado
+  leía la casilla como un struct por valor y le entregaba a la variable el número de variante en lugar del
+  valor. Lo mismo con `Array<Option<T>>`. Test: `test-561-for-sobre-array-de-enum.nx`.
+
+### Changed
+
+- **Aviso NYX1050**: `==` / `!=` entre dos valores de un enum con variantes **con datos**, sin una variante
+  literal sin datos a un lado ni `eq` propio. Se compara la variante, no los datos: dos `Circulo(3)`
+  construidos por separado son distintos. Usa `match`. Pasa a error en la próxima versión menor.
+
+---
+
 ## [0.45.1] — 2026-11-17
 
 ### Fixed

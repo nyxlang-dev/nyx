@@ -1088,7 +1088,11 @@ nyx_array_t* nyx_get_args(void) {
     nyx_array_t* arr = nyx_array_new_ptr();
     for (int i = 0; i < nyx_argc; i++) {
         nyx_string* s = nyx_string_from_cstr(nyx_argv[i]);
-        nyx_array_push_ptr(arr, (void*)s);
+        // Con tag: `contains`/`indexOf` con un texto solo comparan por CONTENIDO
+        // las casillas NYX_TAG_STRING. Con push_ptr quedaban UNKNOWN y
+        // `get_args().contains("--x")` daba false con la bandera presente
+        // (fricción nyxerp 20261119: un «modo en seco» ignorado en silencio).
+        nyx_array_push_tagged(arr, (int64_t)(intptr_t)s, NYX_TAG_STRING);
     }
     return arr;
 }

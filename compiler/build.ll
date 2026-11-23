@@ -3001,7 +3001,7 @@ target triple = "x86_64-pc-linux-gnu"
 @.str1520.c = internal global %nyx_string* null
 @.str1521 = private unnamed_addr constant [8 x i8] c"VERSION\00"
 @.str1521.c = internal global %nyx_string* null
-@.str1522 = private unnamed_addr constant [7 x i8] c"0.45.1\00"
+@.str1522 = private unnamed_addr constant [7 x i8] c"0.45.2\00"
 @.str1522.c = internal global %nyx_string* null
 @.str1523 = private unnamed_addr constant [51 x i8] c"# FRICTION — reporte para el mantenedor de Nyx\0a\0a\00"
 @.str1523.c = internal global %nyx_string* null
@@ -4320,6 +4320,7 @@ declare void @nyx_array_set_tagged({ i64, i8* }*, i64, i64, i64)
 declare i64 @nyx_array_contains_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_array_index_of_tagged({ i64, i8* }*, i64, i64)
 declare i64 @nyx_slot_eq({ i64, i8* }*, i64, { i64, i8* }*, i64)
+declare i64 @nyx_enum_eq(i8*, i8*)
 declare i64 @nyx_array_get_checked({ i64, i8* }*, i64, i64)
 declare i64 @nyx_slot_as_array_checked({ i64, i8* }*, i64)
 declare i64 @nyx_slot_as_value_checked({ i64, i8* }*, i64, i8*)

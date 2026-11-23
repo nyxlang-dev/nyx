@@ -1,0 +1,16 @@
+// CONTROL de NYX1050: nada de esto avisa. Enumeración pura, variante literal
+// sin datos a un lado, y `Option.None`.
+enum Color { Rojo, Verde }
+enum Forma { Punto, Circulo(int) }
+
+fn main() -> int {
+    let c: Color = Color.Rojo
+    let d: Color = Color.Rojo
+    let f: Forma = Forma.Circulo(3)
+    let o: Option<int> = Option.Some(1)
+    if c == d { print("1") }
+    if f != Forma.Punto { print("2") }
+    if Forma.Punto == f { print("3") }
+    if o == Option.None { print("4") }
+    return 0
+}

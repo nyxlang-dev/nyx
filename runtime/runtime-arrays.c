@@ -858,6 +858,25 @@ int64_t nyx_slot_eq(nyx_array_t* a, int64_t i, nyx_array_t* b, int64_t j) {
     return 0;
 }
 
+// ===== IGUALDAD DE VALORES DE ENUM =====
+// Un valor de enum es un puntero a { i64 tag, i8* datos } reservado en CADA
+// construcción, así que `a == b` comparaba identidad y dos `Color.Rojo` daban
+// false (fricción nyxerp 20261118-200016: `if estado == Estado.Pagado` nunca se
+// cumplía, sin error ni aviso). Iguales si son el mismo objeto, o si tienen la
+// misma variante y ninguna lleva datos. Dos variantes CON datos solo son
+// iguales si son el mismo objeto: el runtime no conoce el tipo del payload, y
+// decir «iguales» por el tag sería otro resultado equivocado en silencio —
+// semantic avisa en ese caso (NYX1050) y manda a `match`.
+typedef struct { int64_t tag; void* datos; } nyx_enum_valor;
+int64_t nyx_enum_eq(void* a, void* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    nyx_enum_valor* x = (nyx_enum_valor*)a;
+    nyx_enum_valor* y = (nyx_enum_valor*)b;
+    if (x->tag != y->tag) return 0;
+    return (x->datos == NULL && y->datos == NULL) ? 1 : 0;
+}
+
 int64_t nyx_array_contains_tagged(nyx_array_t* arr, int64_t value, int64_t needle_tag) {
     if (!arr) {
         // espeja el manejo de NULL de nyx_array_contains

@@ -295,6 +295,29 @@ for entry in \
   rm -f script.ll
 done
 
+# NYX1050 (AVISO, regla 7): `==` entre dos valores de un enum con variantes con
+# datos compara la variante, no los datos (fricción nyxerp 20261118-200016).
+# Compila y avisa; el control —enum puro, variante literal sin datos,
+# Option.None— compila SIN el aviso.
+cp tests/compiler/errors/test-nyx1050-enum-con-datos-aviso.nx script.nx; rm -f script.ll
+output=$(timeout 30 ./nyx_bootstrap 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -f script.ll ] && echo "$output" | grep -qF "warning [NYX1050]" \
+   && echo "$output" | grep -qF "compares the variant, not its data"; then
+  printf "  ✓ aviso:test-nyx1050-enum-con-datos-aviso\n"; PASS=$((PASS + 1))
+else
+  printf "  ✗ aviso:test-nyx1050-enum-con-datos-aviso (rc=%d, esperado 0 con el aviso)\n" "$rc"
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("aviso:test-nyx1050-enum-con-datos-aviso")
+fi
+cp tests/compiler/errors/test-nyx1050-control-sin-aviso.nx script.nx; rm -f script.ll
+output=$(timeout 30 ./nyx_bootstrap 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && [ -f script.ll ] && ! echo "$output" | grep -qF "NYX1050"; then
+  printf "  ✓ control:test-nyx1050-control-sin-aviso\n"; PASS=$((PASS + 1))
+else
+  printf "  ✗ control:test-nyx1050-control-sin-aviso (rc=%d, no debía avisar)\n" "$rc"
+  FAIL=$((FAIL + 1)); FAILED_TESTS+=("control:test-nyx1050-control-sin-aviso")
+fi
+rm -f script.ll
+
 # NYX1045 (arco escapes-de-string, 2026-10-17). Un escape MALFORMADO de los
 # nuevos (\x corto, \u{…} fuera de rango, surrogate, sin llaves, o de más de un
 # byte en un char) es error del lexer, con línea y columna: nunca compiló a lo

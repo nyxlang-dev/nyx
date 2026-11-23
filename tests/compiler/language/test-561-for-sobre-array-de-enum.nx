@@ -1,0 +1,79 @@
+// test-561-for-sobre-array-de-enum.nx — `for c: Color in cs` sobre un
+// Array<Enum>. El for trataba la casilla como puntero a un struct por valor y
+// hacía un load de más: `c` recibía el TAG de la variante como si fuera el
+// puntero, y el primer `match c` moría con SIGSEGV. Vale para todo elemento que
+// se representa como puntero (enum, Option<T>).
+enum Color { Rojo, Verde, Azul }
+enum Forma { Punto, Circulo(int) }
+struct Par { a: int, b: int }
+
+fn nombre(c: Color) -> String {
+    match c {
+        Color.Rojo => { return "rojo" }
+        Color.Verde => { return "verde" }
+        Color.Azul => { return "azul" }
+    }
+    return "?"
+}
+
+fn test_enum_puro() {
+    let cs: Array<Color> = [Color.Rojo, Color.Verde, Color.Azul, Color.Verde]
+    var s: String = ""
+    for c: Color in cs { s = s + nombre(c) + " " }
+    assert(s == "rojo verde azul verde ")
+    var sin: String = ""
+    for d in cs { sin = sin + nombre(d) + " " }
+    assert(sin == s)
+    var verdes: int = 0
+    for c: Color in cs { if c == Color.Verde { verdes = verdes + 1 } }
+    assert(verdes == 2)
+    print("enum puro ok")
+}
+
+fn test_enum_con_datos() {
+    let fs: Array<Forma> = [Forma.Circulo(5), Forma.Punto, Forma.Circulo(7)]
+    var suma: int = 0
+    var puntos: int = 0
+    for f: Forma in fs {
+        match f {
+            Forma.Circulo(r) => { suma = suma + r }
+            Forma.Punto => { puntos = puntos + 1 }
+        }
+    }
+    assert(suma == 12)
+    assert(puntos == 1)
+    print("enum con datos ok")
+}
+
+fn test_option() {
+    let os: Array<Option<int>> = [Option.Some(7), Option.None, Option.Some(3)]
+    var suma: int = 0
+    var nadas: int = 0
+    for o: Option<int> in os {
+        match o {
+            Option.Some(v) => { suma = suma + v }
+            Option.None => { nadas = nadas + 1 }
+        }
+    }
+    assert(suma == 10)
+    assert(nadas == 1)
+    print("option ok")
+}
+
+// Control: el struct por valor sigue leyéndose como antes.
+fn test_struct_control() {
+    let ps: Array<Par> = [Par { a: 1, b: 2 }, Par { a: 3, b: 4 }]
+    var suma: int = 0
+    for p: Par in ps { suma = suma + p.a * 10 + p.b }
+    assert(suma == 46)
+    print("struct ok")
+}
+
+fn main() -> int {
+    test_enum_puro()
+    test_enum_con_datos()
+    test_option()
+    test_struct_control()
+    print("for sobre array de enum ok")
+    return 0
+}

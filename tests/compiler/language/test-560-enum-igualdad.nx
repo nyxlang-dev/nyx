@@ -1,0 +1,123 @@
+// test-560-enum-igualdad.nx — `==` y `!=` entre valores de enum comparan la
+// VARIANTE. Antes comparaban el puntero de cada construcción: dos `Color.Rojo`
+// daban false y `if estado == Estado.Pagado` no se cumplía nunca, sin error ni
+// aviso (fricción nyxerp 20261118-200016).
+enum Color { Rojo, Verde, Azul }
+enum Forma { Punto, Circulo(int), Caja(int, int) }
+struct Pedido { id: int, estado: Color }
+
+var g_llamadas: int = 0
+fn dame(c: Color) -> Color { g_llamadas = g_llamadas + 1  return c }
+fn verde() -> Color { return Color.Verde }
+
+fn test_variables() {
+    let a: Color = Color.Rojo
+    let b: Color = Color.Rojo
+    let c: Color = Color.Verde
+    assert(a == b)
+    assert(not (a != b))
+    assert(a != c)
+    assert(not (a == c))
+    assert(a == a)
+    let sin_tipo = Color.Azul
+    assert(sin_tipo == Color.Azul)
+    assert(sin_tipo != Color.Rojo)
+    print("variables ok")
+}
+
+fn test_literal_a_cada_lado() {
+    let a: Color = Color.Verde
+    assert(a == Color.Verde)
+    assert(Color.Verde == a)
+    assert(a != Color.Azul)
+    assert(Color.Azul != a)
+    assert(Color.Rojo == Color.Rojo)
+    assert(Color.Rojo != Color.Verde)
+    print("literal ok")
+}
+
+fn test_campo() {
+    let p: Pedido = Pedido { id: 1, estado: Color.Verde }
+    let q: Pedido = Pedido { id: 2, estado: Color.Verde }
+    assert(p.estado == Color.Verde)
+    assert(p.estado != Color.Rojo)
+    assert(p.estado == q.estado)
+    var n: int = 0
+    if p.estado == Color.Verde { n = n + 1 }
+    if p.estado == Color.Rojo { n = n + 10 }
+    assert(n == 1)
+    print("campo ok")
+}
+
+fn test_llamada_una_vez() {
+    g_llamadas = 0
+    assert(dame(Color.Azul) == Color.Azul)
+    assert(g_llamadas == 1)
+    assert(verde() == verde())
+    assert(verde() != dame(Color.Rojo))
+    assert(g_llamadas == 2)
+    print("llamada ok")
+}
+
+fn test_casilla() {
+    let cs: Array<Color> = [Color.Rojo, Color.Verde, Color.Rojo]
+    assert(cs[0] == Color.Rojo)
+    assert(cs[1] != Color.Rojo)
+    assert(cs[0] == cs[2])
+    assert(cs[0] != cs[1])
+    print("casilla ok")
+}
+
+fn test_parametro(c: Color, d: Color) -> bool { return c == d }
+
+fn test_con_datos() {
+    // Variante sin datos de un enum que sí tiene variantes con datos: exacto.
+    let f: Forma = Forma.Punto
+    let g: Forma = Forma.Circulo(3)
+    assert(f == Forma.Punto)
+    assert(g != Forma.Punto)
+    assert(Forma.Punto != g)
+    let o: Option<int> = Option.None
+    let s: Option<int> = Option.Some(4)
+    assert(o == Option.None)
+    assert(s != Option.None)
+    print("con datos ok")
+}
+
+// Un enum con `eq` propio: manda el del usuario, que sí compara los datos.
+enum Medida { Nada, Metros(int) }
+trait Igual { fn eq(self, o: Medida) -> bool }
+impl Igual for Medida {
+    fn eq(self, o: Medida) -> bool {
+        match self {
+            Medida.Nada => { match o { Medida.Nada => { return true } Medida.Metros(x) => { return false } } }
+            Medida.Metros(a) => { match o { Medida.Nada => { return false } Medida.Metros(b) => { return a == b } } }
+        }
+        return false
+    }
+}
+
+fn test_eq_propio() {
+    let a: Medida = Medida.Metros(3)
+    let b: Medida = Medida.Metros(3)
+    let c: Medida = Medida.Metros(4)
+    assert(a == b)
+    assert(not (a != b))
+    assert(a != c)
+    assert(a != Medida.Nada)
+    print("eq propio ok")
+}
+
+fn main() -> int {
+    test_eq_propio()
+    test_variables()
+    test_literal_a_cada_lado()
+    test_campo()
+    test_llamada_una_vez()
+    test_casilla()
+    assert(test_parametro(Color.Azul, Color.Azul))
+    assert(not test_parametro(Color.Azul, Color.Rojo))
+    test_con_datos()
+    print("enum igualdad ok")
+    return 0
+}

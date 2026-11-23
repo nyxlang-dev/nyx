@@ -1,0 +1,12 @@
+// NYX1050 (AVISO en 0.45.x, error en el próximo MINOR — regla 7): `==` entre dos
+// valores de un enum con variantes CON datos compara la variante, no los datos.
+// Tiene que compilar y avisar. Comparar contra una variante literal sin datos
+// (`f == Forma.Punto`) es exacto y NO avisa.
+enum Forma { Punto, Circulo(int) }
+
+fn main() -> int {
+    let a: Forma = Forma.Circulo(3)
+    let b: Forma = Forma.Circulo(3)
+    if a == b { print("iguales") } else { print("distintos") }
+    return 0
+}

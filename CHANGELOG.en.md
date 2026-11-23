@@ -12,6 +12,32 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.2] — 2026-11-23
+
+### Fixed
+
+- **`a == b` between two enum values was always `false`** (friction report nyxerp 20261118-200016): it compared
+  the pointer of each construction, so `if state == State.Paid` was never true, with no error or warning.
+  `==` and `!=` now compare the variant, with the enum in a variable, a field, the return of a call or a slot
+  of an `Array<Enum>`. It is exact for an enum with no data and whenever one side is a literal variant without
+  data (`o == Option.None`). If the enum has its own `eq` in an `impl`, that one is called.
+  Tests: `test-560-enum-igualdad.nx`, `tests/ai-first/60-enum-igualdad.nx`.
+- **`get_args().contains("--x")` gave `false` with the flag present** (friction report nyxerp 20261119-200023),
+  and `indexOf` gave `-1`: the runtime filled that array without marking its slots as text and the search
+  compared pointers. A program that reads flags this way starts seeing them once rebuilt with this version.
+  Test: `tests/ai-first/59-args-contains.nx`.
+- **`for c: Color in cs` over an `Array<Enum>` died with SIGSEGV** on the first use of `c`: the typed `for`
+  read the slot as a by-value struct and handed the variable the variant number instead of the value. The
+  same with `Array<Option<T>>`. Test: `test-561-for-sobre-array-de-enum.nx`.
+
+### Changed
+
+- **Warning NYX1050**: `==` / `!=` between two values of an enum that has variants **with data**, with no
+  literal variant without data on either side and no `eq` of its own. The variant is compared, not the data:
+  two `Circle(3)` built separately are different. Use `match`. It becomes an error in the next minor version.
+
+---
+
 ## [0.45.1] — 2026-11-17
 
 ### Fixed

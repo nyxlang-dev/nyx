@@ -62,6 +62,7 @@ int64_t nyx_array_get_tag(nyx_array_t* arr, int64_t index);
 // otra combinación conserva la comparación cruda por i64 — nunca se
 // dereferencia un slot cuyo tipo no está garantizado por su tag.
 int64_t nyx_array_contains_tagged(nyx_array_t* arr, int64_t value, int64_t needle_tag);
+int64_t nyx_enum_eq(void* a, void* b);
 int64_t nyx_array_index_of_tagged(nyx_array_t* arr, int64_t value, int64_t needle_tag);
 // `a[i] == b[j]` entre dos Arrays sin tipo: contenido solo si los DOS slots son TAG_STRING.
 int64_t nyx_slot_eq(nyx_array_t* a, int64_t i, nyx_array_t* b, int64_t j);
