@@ -11,6 +11,25 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.45.4] — 2026-11-23
+
+### Changed
+
+- **El binario carga solo las bibliotecas que usa** (etapa 2 del plan «sin C y sin GC»; medición en
+  `docs/design/spikes/2026-11-23-sin-c-sin-gc.md`). `nyx build` enlazaba con una línea fija, así que todo
+  programa dependía de `libssl`, `libcrypto` y `libz` aunque no las tocara y arrastraba el runtime entero.
+  Ahora, en ejecutables de Linux, enlaza con `--as-needed` y poda de secciones (`--gc-sections`), y con
+  `lld` si está instalado. «hola»: de 240 KB y 6 bibliotecas dinámicas a 18 KB y 2 (`libgc`, `libc`), y de
+  2,4 ms a 0,8 ms de arranque. `nyx-proxy`: de 642 KB a 191 KB y de 6 bibliotecas a 3. Sin `lld` el binario
+  queda algo mayor y funciona igual. `NYX_NO_LINK_PRUNE=1` vuelve al enlace anterior. Windows, Android, wasm
+  y `--shared` no cambian. Guarda: tres checks `enlace-*` en `run_build_manifest.sh`.
+- **Las herramientas del toolchain arrancan en 1 ms en vez de 8,5 ms** (`nyx_bootstrap`, `nyx_check`,
+  `nyx_fmt`, `nyx_test`, `nyx_vet`, `nyx_build`): mismas banderas en el `Makefile` y en
+  `scripts/build_bootstrap.sh`; pasan de 6 bibliotecas dinámicas a 2. `nyx run` y `nyx test` enlazan con
+  `--as-needed`.
+
+---
+
 ## [0.45.3] — 2026-11-23
 
 ### Fixed

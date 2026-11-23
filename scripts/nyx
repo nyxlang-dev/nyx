@@ -979,6 +979,9 @@ RUNTIME_SRCS="$NYX_HOME/runtime/runtime.c $NYX_HOME/runtime/strings.c \
   $NYX_HOME/runtime/process.c $NYX_HOME/runtime/llama_adapter.c \
   $NYX_HOME/runtime/os/os_posix.c"
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+# Solo Linux: que una biblioteca quede como dependencia dinámica solo si el binario
+# la usa (el ld de macOS no conoce la bandera). Ver compiler/build.nx, run_build.
+[ "$(uname -s)" = "Linux" ] && LIBS="-Wl,--as-needed $LIBS"
 
 # El runtime de `nyx run` va precompilado con -O2 a la misma caché que usan
 # `nyx build` y `nyx test` (rt_cache_sh de compiler/build.nx; misma clave: flags,

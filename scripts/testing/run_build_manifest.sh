@@ -696,6 +696,46 @@ else
     fi
 fi
 
+# ── Enlace: el binario carga solo las bibliotecas que usa ────────────────────
+# Etapa 2 de «sin C y sin GC» (spike 2026-11-23): hasta 0.45.3 la línea de -l fija
+# dejaba libssl, libcrypto y libz como dependencias de TODO binario. Tres checks:
+# «hola» no las carga; con NYX_NO_LINK_PRUNE=1 vuelven (control: el primer check
+# mide lo que dice medir); y un programa que pide bytes aleatorios a OpenSSL SÍ conserva
+# libcrypto y corre (control: --as-needed no suelta lo que hace falta).
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "  ⏭️  enlace-* — SKIP: la poda de enlace es solo para ELF de Linux"
+else
+    P="$GATE_TMP/enlace"
+    mk_proj "$P" '[package]
+name = "enl"
+version = "0.1.0"'
+    necesita() { readelf -d "$1" 2>/dev/null | grep NEEDED | grep -c "$2"; }
+    nb "$P" build
+    if [ "$RC" -eq 0 ] && [ "$("$P/enl")" = "soy main" ] \
+       && [ "$(necesita "$P/enl" 'libssl\|libcrypto\|libz')" = 0 ]; then
+        ok "enlace-poda — «hola» no carga libssl, libcrypto ni libz ($(stat -c %s "$P/enl") bytes)"
+    else
+        bad "enlace-poda — rc $RC o el binario conserva bibliotecas que no usa" "enlace-poda"; muestra
+        readelf -d "$P/enl" 2>/dev/null | grep NEEDED | sed 's/^/      /'
+    fi
+    ( cd "$P" && NYX_NO_LINK_PRUNE=1 NYX_HOME="$ROOT" timeout 300 "$ROOT/nyx_build" build ) > "$GATE_TMP/out" 2>&1
+    RC=$?
+    if [ "$RC" -eq 0 ] && [ "$("$P/enl")" = "soy main" ] && [ "$(necesita "$P/enl" libssl)" = 1 ]; then
+        ok "enlace-escape — NYX_NO_LINK_PRUNE=1 vuelve al enlace completo (control del check anterior)"
+    else
+        bad "enlace-escape — rc $RC o NYX_NO_LINK_PRUNE=1 no restauró el enlace anterior" "enlace-escape"; muestra
+    fi
+    # csprng_bytes es RAND_bytes de OpenSSL (el SHA-256 es C propio del runtime y no
+    # sirve de control: no toca libcrypto).
+    printf 'import "std/crypto"\n\nfn main() -> int {\n    let b: String = csprng_bytes(16)\n    print(int_to_string(b.length()))\n    return 0\n}\n' > "$P/src/main.nx"
+    nb "$P" build
+    if [ "$RC" -eq 0 ] && [ "$(necesita "$P/enl" libcrypto)" = 1 ] && [ "$("$P/enl")" = "16" ]; then
+        ok "enlace-usa-cripto — un programa que pide bytes a OpenSSL conserva libcrypto y corre"
+    else
+        bad "enlace-usa-cripto — rc $RC, falta libcrypto o la salida no es 16" "enlace-usa-cripto"; muestra
+    fi
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  BUILD MANIFEST: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

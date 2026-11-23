@@ -12,6 +12,25 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.4] — 2026-11-23
+
+### Changed
+
+- **A binary only loads the libraries it uses** (stage 2 of the "no C, no GC" plan; measurements in
+  `docs/design/spikes/2026-11-23-sin-c-sin-gc.md`). `nyx build` used a fixed link line, so every program
+  depended on `libssl`, `libcrypto` and `libz` even when it never touched them, and carried the whole
+  runtime. Now, for Linux executables, it links with `--as-needed` and section pruning (`--gc-sections`),
+  and with `lld` when it is installed. Hello world: from 240 KB and 6 shared libraries to 18 KB and 2
+  (`libgc`, `libc`), and from 2.4 ms to 0.8 ms of startup. `nyx-proxy`: from 642 KB to 191 KB and from 6
+  libraries to 3. Without `lld` the binary is somewhat larger and works the same. `NYX_NO_LINK_PRUNE=1`
+  restores the previous link. Windows, Android, wasm and `--shared` are unchanged. Guard: three `enlace-*`
+  checks in `run_build_manifest.sh`.
+- **The toolchain binaries start in 1 ms instead of 8.5 ms** (`nyx_bootstrap`, `nyx_check`, `nyx_fmt`,
+  `nyx_test`, `nyx_vet`, `nyx_build`): same flags in the `Makefile` and in `scripts/build_bootstrap.sh`;
+  they go from 6 shared libraries to 2. `nyx run` and `nyx test` link with `--as-needed`.
+
+---
+
 ## [0.45.3] — 2026-11-23
 
 ### Fixed

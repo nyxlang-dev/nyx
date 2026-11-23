@@ -6,7 +6,11 @@ RUNTIME_SRCS = runtime/runtime.c runtime/strings.c runtime/runtime-arrays.c \
                runtime/random.c runtime/url.c runtime/msgpack.c runtime/csv.c runtime/websocket.c \
                runtime/persist.c runtime/http2.c runtime/process.c \
                runtime/llama_adapter.c runtime/os/os_posix.c
-LIBS         = -lgc -lpthread -ldl -lm -lssl -lcrypto -lz
+# $(AS_NEEDED) (solo Linux, definido más abajo junto a EXTRA_LDFLAGS): una biblioteca
+# queda como dependencia dinámica solo si el binario usa algún símbolo suyo. Sin eso
+# cada herramienta cargaba libssl, libcrypto y libz en cada arranque: 1,5 ms de los
+# 2,4 ms de un «hola» (docs/design/spikes/2026-11-23-sin-c-sin-gc.md §A).
+LIBS         = $(AS_NEEDED) -lgc -lpthread -ldl -lm -lssl -lcrypto -lz
 NO_GC_LIBS   = -lpthread -ldl -lm -lssl -lcrypto
 
 # ── Lock de los artefactos compartidos de la raíz ──────────────────────
@@ -67,7 +71,21 @@ ifeq ($(UNAME_S),Darwin)
     BREW_SSL  := $(shell brew --prefix openssl@3 2>/dev/null)
     EXTRA_CFLAGS  := -I$(BREW_GC)/include -I$(BREW_SSL)/include -D_XOPEN_SOURCE=700
     EXTRA_LDFLAGS := -L$(BREW_GC)/lib -L$(BREW_SSL)/lib
+    AS_NEEDED     :=
 else
+    # Solo Linux (ELF): ni el ld de macOS ni el enlace MSVC conocen estas banderas.
+    # Con lld además se poda por secciones: las herramientas enlazan el runtime en
+    # fuentes sueltas, así que sin poda tls.c y crypto.c retienen libssl y libcrypto
+    # aunque la herramienta no las llame (lld evalúa --as-needed después de podar; el
+    # ld de GNU, antes). Sin lld queda solo --as-needed, que suelta libz.
+    AS_NEEDED     :=
+    ifeq ($(UNAME_S),Linux)
+        ifneq ($(shell command -v ld.lld 2>/dev/null),)
+            AS_NEEDED := -fuse-ld=lld -ffunction-sections -fdata-sections -Wl,--as-needed -Wl,--gc-sections
+        else
+            AS_NEEDED := -Wl,--as-needed
+        endif
+    endif
     EXTRA_CFLAGS  :=
     EXTRA_LDFLAGS :=
 endif

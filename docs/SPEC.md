@@ -2307,6 +2307,13 @@ modules = ["src/util", "src/geo"]
   lo honra `nyx build` además de `nyx test`. Sin él, los dos arman y reutilizan solos un
   `libnyxrt.a` en `$XDG_CACHE_HOME/nyx/rt/<clave>/` (clave = contenido del runtime + banderas +
   versión de clang); `NYX_NO_RT_CACHE=1` lo apaga y `--coverage` no lo usa.
+- **El binario carga solo las bibliotecas que usa** (desde 0.45.4, ejecutables de Linux): `nyx build`
+  enlaza con `--as-needed` y poda de secciones (`-ffunction-sections -fdata-sections` +
+  `--gc-sections`), y con `lld` si está instalado. Un programa que no usa TLS, cripto de OpenSSL ni
+  zlib ya no depende de `libssl`, `libcrypto` ni `libz`, y no arrastra el runtime entero: «hola»
+  pasó de 240 KB y 6 bibliotecas dinámicas a 18 KB y 2 (`libgc`, `libc`), y de 2,4 ms a 0,8 ms de
+  arranque. Sin `lld` el resultado es el mismo con un binario algo mayor (conserva `libm`).
+  `NYX_NO_LINK_PRUNE=1` vuelve al enlace completo. Windows, Android, wasm y `--shared` no cambian.
 
 ---
 

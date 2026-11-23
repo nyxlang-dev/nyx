@@ -170,6 +170,11 @@ blame the wrong part of your build:
   sources. `NYX_NO_RT_CACHE=1` turns it off; `--coverage` never uses it.
   `NYX_RT_ARCHIVE=/abs/path/libnyxrt.a` still wins if set (a relative path is
   resolved against your project; a path that does not exist falls back).
+- **A binary only loads the libraries it uses** (since 0.45.4, Linux executables). `nyx build` links
+  with `--as-needed` and section pruning (`--gc-sections`), using `lld` when it is installed: a program
+  that never touches TLS, OpenSSL crypto or zlib no longer depends on `libssl`/`libcrypto`/`libz`
+  (hello world: 240 KB and 6 shared libraries → 18 KB and 2; startup 2.4 ms → 0.8 ms).
+  `NYX_NO_LINK_PRUNE=1` restores the full link line if you suspect the pruning.
 - **`nyx test` prints the compiler it tested with** (`compiler: nyx vX
   (nyx_bootstrap <sha256[:12]>)`) and warns at the end if the toolchain changed
   during the run — an install can land between two test files, and such a run

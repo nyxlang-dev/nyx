@@ -66,6 +66,15 @@ RUNTIME_SRCS="
 "
 
 LIBS="-lgc -lpthread -ldl -lm -lssl -lcrypto -lz"
+# Solo Linux: que una biblioteca quede como dependencia dinámica solo si el binario
+# la usa (el ld de macOS no conoce la bandera). Ver compiler/build.nx, run_build.
+if [ "$(uname -s)" = "Linux" ]; then
+    LIBS="-Wl,--as-needed $LIBS"
+    # Con lld, además poda por secciones (misma receta y motivo que el Makefile).
+    if command -v ld.lld >/dev/null 2>&1; then
+        LIBS="-fuse-ld=lld -ffunction-sections -fdata-sections -Wl,--gc-sections $LIBS"
+    fi
+fi
 
 # Platform-specific flags (mirror the Makefile logic)
 EXTRA_CFLAGS=""

@@ -3197,6 +3197,15 @@ fn env_de_prefijo(prefijo: String) -> Array {
 // con los que se pueden enlazar (un módulo que cae al inlining, NYX0302, no
 // aparece). Así una suite de pruebas compila cada biblioteca UNA vez y cada
 // archivo de prueba solo la enlaza — donde nyxerp paga el costo de hoy.
+// Banderas de compilación de la poda de enlace (ver run_build): una sección por
+// función y por dato, para que --gc-sections pueda descartar lo que nadie usa.
+// Vacías fuera de Linux o con NYX_NO_LINK_PRUNE. Las usan el build nativo y
+// `nyx_build libs`, que tienen que dar la misma huella de [lib] modules.
+fn poda_cc() -> String {
+    if host_os() != "linux" or getenv("NYX_NO_LINK_PRUNE") != "" { return "" }
+    return " -ffunction-sections -fdata-sections"
+}
+
 fn run_libs(config: ProjectConfig, release: bool) -> bool {
     let nyx_home: String = build_nyx_home()
     if nyx_home == "" {
@@ -3216,7 +3225,9 @@ fn run_libs(config: ProjectConfig, release: bool) -> bool {
     }
     let candado: FileLock = candado_toolchain(nyx_home)
     pila_compilador_subir()
-    let r: LibRes = lib_objetos(config, nyx_home, nyx_bin, opt_flags, gc_flag, env_de_prefijo(gc_flag), orig, tmpd)
+    // + poda_cc(): las mismas banderas que el build nativo, o la huella no coincide
+    // y `nyx test` recompila las bibliotecas que `nyx build` acaba de dejar.
+    let r: LibRes = lib_objetos(config, nyx_home, nyx_bin, opt_flags + poda_cc(), gc_flag, env_de_prefijo(gc_flag), orig, tmpd)
     pila_compilador_restaurar()
     if candado.handle >= 0 { unlock_file(candado) }
     borrar_arbol(tmpd, 0)
@@ -3348,6 +3359,31 @@ fn run_build(config: ProjectConfig, release: bool, target_flag: String) -> bool 
         // 4 KB no carga en esos dispositivos. En Linux no estorba.
         tgt_ld = tgt_ld + " -Wl,-z,max-page-size=16384"
         gc_flag = gc_flag + "NYX_SHARED=1 "
+    }
+    // Enlazar solo lo que el programa usa (etapa 2 de «sin C y sin GC»; medido en
+    // docs/design/spikes/2026-11-23-sin-c-sin-gc.md §A). La línea de -l es fija, así
+    // que sin esto todo binario cargaba libssl, libcrypto y libz aunque no las tocara,
+    // y arrastraba el runtime entero: «hola» pesaba 240 KB y arrancaba en 2,4 ms, de
+    // los que 1,5 ms eran el cargador dinámico. Tres piezas:
+    //   --as-needed    una biblioteca dinámica queda como dependencia solo si el
+    //                  programa usa algún símbolo suyo;
+    //   --gc-sections  con una sección por función (-ffunction-sections, también en
+    //                  el runtime cacheado y en los [lib] modules, por eso va en
+    //                  tgt_cc), el enlazador descarta lo que nadie alcanza;
+    //   lld            si está instalado: evalúa --as-needed después de podar, y por
+    //                  eso además suelta libm. Sin lld el binario queda algo más
+    //                  grande (75 KB contra 17 KB en «hola») y funciona igual.
+    // Solo ejecutables ELF de Linux: Windows, Android, wasm y --shared no están
+    // medidos y conservan su línea. NYX_NO_LINK_PRUNE=1 vuelve al enlace anterior.
+    if poda_cc() != "" and not android and not g_build_shared and not es_triple_windows(eff_target) and eff_target != "wasm32-wasi" {
+        tgt_cc = tgt_cc + poda_cc()
+        tgt_ld = tgt_ld + poda_cc() + " -Wl,--as-needed -Wl,--gc-sections"
+        if not cruzado {
+            match find_program("ld.lld") {
+                Option.Some(_p) => { tgt_ld = tgt_ld + " -fuse-ld=lld" }
+                Option.None => {}
+            }
+        }
     }
     let link_flags: String = opt_flags + tgt_ld
 
@@ -3724,7 +3760,7 @@ fn toolchain_version() -> String {
     }
     // B3: fallback solo si no hay VERSION ni NYX_HOME (no debería pasar en un
     // toolchain instalado). Mantenerlo al día igual — un fallback stale confunde.
-    return "0.45.3"
+    return "0.45.4"
 }
 
 // ===== FRICTION REPORT (v0.17, AI-first) =====
