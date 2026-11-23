@@ -736,6 +736,29 @@ version = "0.1.0"'
     fi
 fi
 
+# ── no_gc dice lo que hace ───────────────────────────────────────────────────
+# `no_gc = true` solo pasa a malloc las asignaciones del código del usuario; el
+# runtime sigue en el recolector. El build lo avisa, y sin la clave no dice nada.
+P="$GATE_TMP/nogc"
+mk_proj "$P" '[package]
+name = "ng"
+version = "0.1.0"
+no_gc = true'
+nb "$P" build
+if [ "$RC" -eq 0 ] && grep -q "no_gc = true no quita el recolector" "$GATE_TMP/out" && [ "$("$P/ng")" = "soy main" ]; then
+    mk_proj "$P" '[package]
+name = "ng"
+version = "0.1.0"'
+    nb "$P" build
+    if [ "$RC" -eq 0 ] && ! grep -q "no quita el recolector" "$GATE_TMP/out"; then
+        ok "no-gc-aviso — no_gc = true avisa que el recolector sigue; sin la clave no hay aviso"
+    else
+        bad "no-gc-aviso — el aviso sale también sin no_gc (rc $RC)" "no-gc-aviso"; muestra
+    fi
+else
+    bad "no-gc-aviso — rc $RC o falta el aviso con no_gc = true" "no-gc-aviso"; muestra
+fi
+
 echo "────────────────────────────────────────────────"
 echo "  BUILD MANIFEST: $PASS pasados, $FAIL fallidos"
 if [ "$FAIL" -gt 0 ]; then

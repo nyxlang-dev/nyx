@@ -4375,7 +4375,10 @@ now honored by `nyx build` too, not just `nyx test`.
   an AI agent, set this to find the highest-value annotations to add.
 - `NYX_VERBOSE=1` — detailed compiler output (default: compact)
 - `NYX_SKIP_SEMANTIC=1` — skip semantic checks (only for debugging the compiler itself)
-- `NYX_NO_GC=1` — build without Boehm GC (bare-metal / embedded)
+- `NYX_NO_GC=1` (or `no_gc = true` under `[package]` in `nyx.toml`) — your code's own allocations use `malloc` instead of
+  the collector, and nothing frees them unless you call `free`. It does NOT remove the GC: `String`,
+  `Array` and `Map` still live in the collector and the binary still links `libgc` (`nyx build` says so
+  since 0.45.5). Only on wasm is there truly no collector.
 - `NYX_TARGET=wasm32-wasi` — WebAssembly target (forces no_gc; `make wasm` sets it)
 - `NYX_BORROW=off|warn|error` — borrow checker mode (default `off`; see §6). `warn`
   prints diagnostics without failing the build, `error` fails on gating codes

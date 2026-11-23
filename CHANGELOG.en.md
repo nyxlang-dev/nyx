@@ -12,6 +12,18 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.5] — 2026-11-23
+
+### Changed
+
+- **`no_gc = true` says what it does** (stage 2 of the "no C, no GC" plan). The key and `NYX_NO_GC=1` only
+  move the allocations your own code emits to `malloc`; `String`, `Array` and `Map` still live in the
+  collector and the binary still links `libgc`. `nyx build` now says so in one line, `nyx info` no longer
+  calls it "no-GC (systems)" and `LLM.md` stopped describing it as "build without Boehm GC". On wasm, where
+  there really is no collector, there is no notice. Guard: `no-gc-aviso` check in `run_build_manifest.sh`.
+
+---
+
 ## [0.45.4] — 2026-11-23
 
 ### Changed

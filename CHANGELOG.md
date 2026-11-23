@@ -11,6 +11,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.45.5] — 2026-11-23
+
+### Changed
+
+- **`no_gc = true` dice lo que hace** (etapa 2 del plan «sin C y sin GC»). La clave y `NYX_NO_GC=1` solo
+  pasan a `malloc` las asignaciones que emite tu código; `String`, `Array` y `Map` siguen en el recolector y
+  el binario sigue enlazando `libgc`. `nyx build` ahora lo avisa en una línea, `nyx info` ya no lo llama
+  «no-GC (systems)» y `LLM.md` dejó de describirlo como «build without Boehm GC». En wasm, donde de verdad
+  no hay recolector, no hay aviso. Guarda: check `no-gc-aviso` en `run_build_manifest.sh`.
+
+---
+
 ## [0.45.4] — 2026-11-23
 
 ### Changed
