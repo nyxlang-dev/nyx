@@ -93349,7 +93349,7 @@ then6306:
   store %ASTNode %t49100, %ASTNode* %t49101
   %t49102 = load %ASTNode, %ASTNode* %t49101
   %t49103 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %t49104 = call %nyx_string* @codegen_expr(%ASTNode %t49102, %CodegenContext %t49103)
+  %t49104 = call %nyx_string* @codegen_map_key(%ASTNode %t49102, %CodegenContext %t49103)
   store %nyx_string* %t49104, %nyx_string** %t49105
   %t49106 = load %nyx_string*, %nyx_string** %t49105
   %t49107 = call %nyx_string* @get_type(%nyx_string* %t49106)
@@ -94576,7 +94576,7 @@ merge6425:
   store %ASTNode %t50050, %ASTNode* %t50051
   %t50052 = load %ASTNode, %ASTNode* %t50051
   %t50053 = load %CodegenContext, %CodegenContext* %ctx.ptr
-  %t50054 = call %nyx_string* @codegen_expr(%ASTNode %t50052, %CodegenContext %t50053)
+  %t50054 = call %nyx_string* @codegen_map_key(%ASTNode %t50052, %CodegenContext %t50053)
   store %nyx_string* %t50054, %nyx_string** %t50055
   %t50056 = load %nyx_string*, %nyx_string** %t50055
   %t50057 = call %nyx_string* @get_type(%nyx_string* %t50056)

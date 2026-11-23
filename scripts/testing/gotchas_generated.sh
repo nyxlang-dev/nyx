@@ -75,6 +75,7 @@ GOTCHA_IDS=(
   "enum-equality"
   "for-over-enum-array"
   "index-on-call-concat"
+  "map-has-slot-key"
   "slot-eq-slot"
   "array-elem-method-chaining"
   "closure-capture-works"

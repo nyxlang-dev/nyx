@@ -12,6 +12,18 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.3] — 2026-11-23
+
+### Fixed
+
+- **`m.has(c[0])` with `c: Array` (no `<T>`) passed `nyx check` and failed in clang** (friction report nyxerp
+  20261121-190000): «defined with type 'i64' but expected 'ptr'», with no source line. `has` evaluated the
+  key without the step that turns an untyped slot into text, which `get`, `get_or`, `contains`, `insert` and
+  `remove` already used. Fixed on a local Map, a global one and one in a field.
+  Test: `tests/ai-first/61-map-has-clave-de-casilla.nx`.
+
+---
+
 ## [0.45.2] — 2026-11-23
 
 ### Fixed

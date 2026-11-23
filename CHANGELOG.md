@@ -11,6 +11,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.45.3] — 2026-11-23
+
+### Fixed
+
+- **`m.has(c[0])` con `c: Array` (sin `<T>`) pasaba `nyx check` y fallaba en clang** (fricción nyxerp
+  20261121-190000): «defined with type 'i64' but expected 'ptr'», sin línea del fuente. `has` evaluaba la
+  clave sin el paso que convierte una casilla sin tipo en texto, que `get`, `get_or`, `contains`, `insert` y
+  `remove` ya usaban. Arreglado sobre un Map local, global y en un campo.
+  Test: `tests/ai-first/61-map-has-clave-de-casilla.nx`.
+
+---
+
 ## [0.45.2] — 2026-11-23
 
 ### Fixed
