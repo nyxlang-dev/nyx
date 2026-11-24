@@ -11,6 +11,22 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.45.6] — 2026-11-24
+
+### Changed
+
+- **`a[i]` sobre `Array<int>`, `Array<float>` y `Array<bool>` se emite en línea** (etapa 2 del plan «sin C y
+  sin GC») [arco: array-en-linea]. Cada lectura y cada escritura era una llamada al runtime; ahora el
+  compilador emite el acceso en el lugar y conserva los dos chequeos: límites y tag de la casilla. Un índice
+  fuera de rango o una casilla con otro tipo fallan con el mismo mensaje de antes. Con `--release`, los
+  kernels de `scripts/bench_numerico/` sobre `Array<float>` corren entre 2,7 y 3 veces más rápido (suma de
+  10⁷ elementos: 44 → 16 ms; producto punto: 85 → 28 ms; multiplicación de matrices de 512: 1,57 → 0,55 s).
+  Sigue entre 2 y 5 veces por detrás de un bucle sobre `*float`, que no chequea nada y vectoriza. Un `Array`
+  sin `<T>` no cambia. Guardas: `language/test-562-array-en-linea` y el caso `array-en-linea-errores` de
+  `run_error_tests.sh`, que además revisa que el IR del kernel no llame al runtime por casilla.
+
+---
+
 ## [0.45.5] — 2026-11-23
 
 ### Changed

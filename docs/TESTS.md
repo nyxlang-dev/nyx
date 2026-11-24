@@ -12,8 +12,8 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **571 archivos / 570 ARM64** | +2 el 11-23 (`560` igualdad de enums, `561` `for` sobre `Array<Enum>`), +1 el 11-17 (`559` genérico anidado seguido de coma), +6 el 11-16 (`553`-`558`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
-| Error paths (parse+semantic) | `make test-errors` | **433** | +2 el 11-23 (NYX1050: aviso y control), +2 el 11-16 (operando derecho de un operador), +5 el 11-14 (el diagnóstico nombra el módulo importado); altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **572 archivos / 571 ARM64** | +1 el 11-24 (`562` acceso en línea a `Array<T>`), +2 el 11-23 (`560`, `561`), +1 el 11-17 (`559`), +6 el 11-16 (`553`-`558`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
+| Error paths (parse+semantic) | `make test-errors` | **434** | +1 el 11-24 (`array-en-linea-errores`), +2 el 11-23 (NYX1050), +2 el 11-16 (operando derecho de un operador), +5 el 11-14 (el diagnóstico nombra el módulo importado); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
 | Stdlib | `make test-stdlib` | **17** + verificación externa de zip | math, array, integración, template, multipart, oauth2, aes-gcm, net multicast, mdns codec, ping (10-26) + smtp ×7 (arco `std-smtp`, 2026-09-20; el de TLS SKIPea sin `openssl`) |

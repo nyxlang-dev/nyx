@@ -705,14 +705,11 @@ double nyx_slot_as_float_checked(nyx_array_t* arr, int64_t index) {
 // Tag ESTÁTICO de fallback (spec 2026-08-03, arco "la anotación manda").
 // Tabla de decisión completa en runtime-arrays.h. La regla estructural que
 // evita una quinta ronda de precedencias: st SOLO gana ante rt UNKNOWN.
-double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag) {
-    if (!arr) {
-        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        NYX_FATAL_EXIT();
-    }
-    nyx_array_bounds_check(arr, index);
-    int64_t v = arr->data[index];
-    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+// La parte de nyx_slot_as_float_st que ya no mira el arreglo: recibe el valor
+// crudo y el tag de la casilla. El acceso en línea de `a[i]` (codegen,
+// emit_slot_read_inline) resuelve por su cuenta el caso tag == FLOAT y llama
+// acá para todos los demás, así la tabla de decisión vive en un solo lugar.
+double nyx_slot_float_conv(int64_t v, int64_t t, int64_t static_tag, int64_t index) {
     if (t == NYX_TAG_FLOAT) {
         double d;
         memcpy(&d, &v, sizeof(double));
@@ -744,6 +741,16 @@ double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag)
     return (double)v;
 }
 
+double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag) {
+    if (!arr) {
+        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
+        NYX_FATAL_EXIT();
+    }
+    nyx_array_bounds_check(arr, index);
+    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+    return nyx_slot_float_conv(arr->data[index], t, static_tag, index);
+}
+
 // Lectura INT chequeada (hermana de nyx_slot_as_float_checked/_st). NO se
 // puede reutilizar nyx_array_get_checked con expected_tag=INT: su regla
 // «definido/definido» abortaría también sobre un slot BOOL, y `let b: int =
@@ -754,13 +761,8 @@ double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag)
 // (`let x: int = a[0]` sobre "hola" imprimía el puntero, exit 0). BOOL, INT,
 // UNKNOWN y los tags opacos (ARRAY/MAP/PTR) pasan con el valor crudo, igual
 // que antes.
-int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
-    if (!arr) {
-        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
-        NYX_FATAL_EXIT();
-    }
-    nyx_array_bounds_check(arr, index);
-    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+// Hermana de nyx_slot_float_conv para la lectura como int: valor y tag ya leídos.
+int64_t nyx_slot_int_conv(int64_t v, int64_t t, int64_t index) {
     if ((t == NYX_TAG_STRING || t == NYX_TAG_FLOAT) && !nyx_slot_check_off()) {
         fprintf(stderr,
             "💥 Runtime Error [NYX2014]: el slot %" PRId64 " del Array contiene %s"
@@ -769,7 +771,17 @@ int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
             index, nyx_tag_name(t));
         NYX_FATAL_EXIT();
     }
-    return arr->data[index];
+    return v;
+}
+
+int64_t nyx_slot_as_int_checked(nyx_array_t* arr, int64_t index) {
+    if (!arr) {
+        fprintf(stderr, "💥 Runtime Error: Array es NULL\n");
+        NYX_FATAL_EXIT();
+    }
+    nyx_array_bounds_check(arr, index);
+    int64_t t = arr->tags ? (int64_t)arr->tags[index] : NYX_TAG_UNKNOWN;
+    return nyx_slot_int_conv(arr->data[index], t, index);
 }
 
 // Lectura como Array chequeada — ver runtime-arrays.h. Espejo de la de int:

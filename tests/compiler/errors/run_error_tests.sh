@@ -2512,6 +2512,82 @@ else
   FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
 fi
 
+name="array-en-linea-errores"
+# 2026-11-24 (spec array-en-linea): `a[i]` sobre Array<int|float|bool> se emite
+# en línea, pero el ERROR sigue saliendo de la función del runtime de siempre
+# (el bloque frío la llama). Cada caso compara la línea de error COMPLETA, que
+# es la que salía cuando el acceso era una llamada: si el codegen dejara de
+# chequear algo, el programa seguiría de largo y este caso lo vería.
+# El último control mira el IR: el kernel tiene que salir sin llamadas al
+# runtime por casilla (es lo único que justifica el arco).
+ael_dir=$(mktemp -d /tmp/ael-XXXX)
+ael_caso() { # $1=cuerpo de main  →  deja la salida en ael_out y el rc en ael_rc
+  printf 'fn main() -> int {\n%s\n    print("sigue de largo")\n    return 0\n}\n' "$1" > "$ael_dir/c.nx"
+  ael_out=$(bash "$(pwd)/scripts/nyx" run "$ael_dir/c.nx" 2>&1); ael_rc=$?
+}
+ael_ok=1; ael_log=""
+ael_espera() { # $1=etiqueta $2=línea exacta esperada
+  if [ "$ael_rc" -eq 0 ] || [ "$ael_rc" -eq 139 ] || ! echo "$ael_out" | grep -qxF "$2" \
+     || echo "$ael_out" | grep -qF "sigue de largo"; then
+    ael_ok=0; ael_log="$ael_log\n      $1: rc=$ael_rc — $(echo "$ael_out" | tail -1)"
+  fi
+}
+ael_caso '    var a: Array<float> = [1.5, 2.5]
+    let i: int = 5
+    print(float_to_string(a[i]))'
+ael_espera "float fuera de rango" "💥 Runtime Error: Índice 5 fuera de rango [0..2)"
+ael_caso '    var a: Array<int> = [1, 2, 3]
+    let i: int = 3
+    let x: int = a[i]
+    print(x)'
+ael_espera "int fuera de rango (let)" "💥 Runtime Error: Índice 3 fuera de rango [0..3)"
+ael_caso '    var a: Array<int> = [1, 2, 3]
+    let i: int = 0 - 1
+    print(a[i] + 1)'
+ael_espera "int índice negativo" "💥 Runtime Error: Índice negativo: -1"
+ael_caso '    var a: Array<bool> = [true]
+    let i: int = 1
+    if a[i] { print("x") }'
+ael_espera "bool fuera de rango" "💥 Runtime Error: Índice 1 fuera de rango [0..1)"
+ael_caso '    var a: Array<float> = [1.5]
+    let i: int = 1
+    a[i] = 2.0'
+ael_espera "escritura fuera de rango" "💥 Runtime Error: Índice 1 fuera de rango [0..1)"
+ael_caso '    var a: Array<int> = []
+    let i: int = 0 - 2
+    a[i] = 7'
+ael_espera "escritura índice negativo" "💥 Runtime Error: Índice negativo: -2"
+ael_caso '    var u: Array = []
+    u.push("hola")
+    let w: Array<float> = u
+    print(float_to_string(w[0]))'
+ael_espera "String leído como float" "💥 Runtime Error [NYX2008]: el slot 0 del Array contiene String pero se leyó como float — anota el tipo real o convierte explícito (string_to_float, ...); NYX_SLOT_CHECK=off lo desactiva"
+ael_caso '    var u: Array = []
+    u.push(1)
+    u.push(2.5)
+    let w: Array<int> = u
+    let x: int = w[1]
+    print(x)'
+ael_espera "float leído como int" "💥 Runtime Error [NYX2014]: el slot 1 del Array contiene float pero se leyó como int — anota el tipo real o convierte explícito (string_to_int, float_to_int, ...); NYX_SLOT_CHECK=off lo desactiva"
+# El IR del kernel: en línea, sin llamada al runtime dentro del bucle.
+printf 'fn nucleo(a: Array<float>, b: Array<int>, n: int) -> float {\n    var s: float = 0.0\n    var i: int = 0\n    while i < n {\n        a[i] = a[i] + 1.0\n        b[i] = b[i] + 1\n        s = s + a[i]\n        i = i + 1\n    }\n    return s\n}\nfn main() -> int {\n    var a: Array<float> = [1.0]\n    var b: Array<int> = [1]\n    print(float_to_string(nucleo(a, b, 1)))\n    return 0\n}\n' > "$ael_dir/k.nx"
+NYX_SRC="$ael_dir/k.nx" ./nyx_bootstrap > "$ael_dir/k.log" 2>&1
+ael_fn=$(awk '/^define .*@nucleo\(/,/^}/' "$ael_dir/k.ll" 2>/dev/null)
+ael_vivas=$(echo "$ael_fn" | grep -c "call .*@nyx_" || true)
+ael_muertas=$(echo "$ael_fn" | grep -A1 "call .*@nyx_\(slot_as_float_st\|array_get\|array_set_tagged\)(" | grep -c "unreachable" || true)
+ael_conv=$(echo "$ael_fn" | grep -c "call double @nyx_slot_float_conv(" || true)
+# 5 accesos (2 lecturas de float, 1 de int y 2 escrituras): 5 bloques fríos, y
+# toda llamada al runtime es un bloque frío o la conversión de un tag ajeno.
+if [ -z "$ael_fn" ] || [ "$ael_muertas" -ne 5 ] || [ "$ael_vivas" -ne $((ael_muertas + ael_conv)) ]; then
+  ael_ok=0; ael_log="$ael_log\n      IR: $ael_vivas llamadas al runtime en el kernel, $ael_muertas en bloques fríos, $ael_conv conversiones (se esperan 5 frías y ninguna otra)"
+fi
+rm -f "$ael_dir/c.nx" "$ael_dir/k.nx" "$ael_dir/k.ll" "$ael_dir/k.log"; rmdir "$ael_dir" 2>/dev/null
+if [ "$ael_ok" -eq 1 ]; then
+  printf "  ✓ %s\n" "$name"; PASS=$((PASS + 1))
+else
+  printf "  ✗ %s\n" "$name"; printf "$ael_log\n"; FAIL=$((FAIL + 1)); FAILED_TESTS+=("$name")
+fi
+
 name="join-slot-array-abort"
 # 2026-11-11 (spec texto-por-tipo, D1): `.join()` convierte cada casilla por su
 # tag; una casilla que guarda un Array no tiene texto y antes se leía como

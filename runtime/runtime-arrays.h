@@ -16,6 +16,16 @@ typedef struct {
     uint8_t* tags;       // Etapa 1 slots-tag: 1 byte de TIPO por slot, paralelo a data
 } nyx_array_t;
 
+// La disposición es CONTRATO con el codegen: `a[i]` sobre Array<int|float|bool>
+// se emite en línea (compiler/codegen.nx, emit_slot_read_inline y
+// emit_slot_write_inline) y lee estos campos como { i64, i64, i64*, i8* }.
+// Reordenar o agregar un campo antes de `tags` exige tocar los dos lados.
+#include <stddef.h>
+_Static_assert(offsetof(nyx_array_t, length) == 0, "nyx_array_t.length: el codegen lo lee en el campo 0");
+_Static_assert(offsetof(nyx_array_t, capacity) == 8, "nyx_array_t.capacity: el codegen lo espera en el campo 1");
+_Static_assert(offsetof(nyx_array_t, data) == 16, "nyx_array_t.data: el codegen lo lee en el campo 2");
+_Static_assert(offsetof(nyx_array_t, tags) == 16 + sizeof(int64_t*), "nyx_array_t.tags: el codegen lo lee en el campo 3");
+
 // ===== TAGS DE SLOT (Etapa 1, 2026-07-26) =====
 // Un slot de Array es un int64_t CRUDO: el compilador tenía que ADIVINAR si
 // contiene un int, un puntero a String, un float bit-casteado, etc. Esa
@@ -117,6 +127,10 @@ int64_t nyx_slot_as_value_checked(nyx_array_t* arr, int64_t index, const char* t
 //   rt puntero (STRING/ARRAY/MAP/PTR) → abort NYX2008 (bits de puntero = basura)
 //   rt UNKNOWN: st FLOAT → bits (la anotación manda); si no → widening histórico
 double nyx_slot_as_float_st(nyx_array_t* arr, int64_t index, int64_t static_tag);
+// Conversión de una casilla ya leída (valor y tag), para el acceso en línea
+// del codegen. Misma tabla que nyx_slot_as_float_st / nyx_slot_as_int_checked.
+double  nyx_slot_float_conv(int64_t v, int64_t t, int64_t static_tag, int64_t index);
+int64_t nyx_slot_int_conv(int64_t v, int64_t t, int64_t index);
 
 // Pisa los tags UNKNOWN de un array con el tipo DECLARADO de su destino (para
 // literales con anotación: `var b: Array<String> = [src[1]]`). Solo UNKNOWN;

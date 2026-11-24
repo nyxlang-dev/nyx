@@ -1,0 +1,121 @@
+// test-562-array-en-linea.nx — `a[i]` sobre Array<int>, Array<float> y
+// Array<bool> se emite en línea (spec 2026-11-23-array-en-linea). Lo que no
+// puede cambiar es lo que se lee y se escribe: cada caso de acá daba lo mismo
+// cuando cada acceso era una llamada al runtime.
+struct Caja { vals: Array<float>, cuenta: Array<int>, marcas: Array<bool> }
+
+fn suma(a: Array<float>, n: int) -> float {
+    var s: float = 0.0
+    var i: int = 0
+    while i < n {
+        s = s + a[i]
+        i = i + 1
+    }
+    return s
+}
+
+fn test_float() {
+    var a: Array<float> = [1.5, 2.5, 4.0]
+    a[1] = a[0] + 1.0
+    let f: float = a[1]
+    assert(f == 2.5)
+    assert(a[2] == 4.0)
+    assert(suma(a, 3) == 8.0)
+    // Un int escrito en un Array<float> se guarda como float.
+    let k: int = 7
+    a[0] = k
+    assert(a[0] == 7.0)
+    // El último y el primero: los límites son [0, length).
+    a[2] = a[0] * 2.0
+    assert(a[a.length() - 1] == 14.0)
+    print("float ok")
+}
+
+fn test_int() {
+    var b: Array<int> = [1, 2, 3]
+    b[2] = b[0] + b[1] * 10
+    let x: int = b[2]
+    assert(x == 21)
+    assert(b[0] + b[1] == 3)
+    b[0] = 0 - 5
+    assert(b[0] == 0 - 5)
+    var i: int = 0
+    var t: int = 0
+    while i < b.length() {
+        t = t + b[i]
+        i = i + 1
+    }
+    assert(t == 18)
+    print("int ok")
+}
+
+fn test_bool() {
+    var c: Array<bool> = [true, false]
+    c[1] = not c[1]
+    assert(c[1])
+    c[0] = false
+    assert(not c[0])
+    if c[1] and not c[0] { print("bool ok") }
+}
+
+// El tag de la casilla sigue mandando: un arreglo llenado sin tipo y leído
+// como Array<float> ensancha el int; el bool leído como int da 1.
+fn test_tag_ajeno() {
+    var u: Array = []
+    u.push(7)
+    u.push(2.5)
+    let w: Array<float> = u
+    assert(w[0] == 7.0)
+    assert(w[1] == 2.5)
+    assert(suma(w, 2) == 9.5)
+    var v: Array = []
+    v.push(true)
+    v.push(41)
+    let n: Array<int> = v
+    let uno: int = n[0]
+    assert(uno + n[1] == 42)
+    print("tag ajeno ok")
+}
+
+fn test_campo() {
+    var caja = Caja { vals: [0.5, 0.25], cuenta: [10, 20], marcas: [false, false] }
+    caja.vals[1] = caja.vals[0] + caja.vals[1]
+    caja.cuenta[0] = caja.cuenta[0] + caja.cuenta[1]
+    caja.marcas[1] = true
+    assert(caja.vals[1] == 0.75)
+    assert(caja.cuenta[0] == 30)
+    assert(caja.marcas[1] and not caja.marcas[0])
+    print("campo ok")
+}
+
+// El arreglo crece (data y tags se reubican) entre accesos.
+fn test_crece() {
+    var a: Array<float> = []
+    var i: int = 0
+    while i < 1000 {
+        a.push(int_to_float(i))
+        a[i] = a[i] + 0.5
+        i = i + 1
+    }
+    assert(a[999] == 999.5)
+    assert(a[0] == 0.5)
+    // Lo escrito en línea conserva el tag: join lo imprime como float.
+    var c: Array<float> = [1.0, 2.0]
+    c[0] = 3.5
+    assert(c.join(",") == "3.5,2.0")
+    var d: Array<int> = [1, 2]
+    d[1] = 9
+    assert(d.join(",") == "1,9")
+    assert(d.contains(9))
+    print("crece ok")
+}
+
+fn main() -> int {
+    test_float()
+    test_int()
+    test_bool()
+    test_tag_ajeno()
+    test_campo()
+    test_crece()
+    return 0
+}

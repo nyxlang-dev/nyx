@@ -12,6 +12,22 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.6] — 2026-11-24
+
+### Changed
+
+- **`a[i]` on `Array<int>`, `Array<float>` and `Array<bool>` is emitted inline** (stage 2 of the "no C, no
+  GC" plan) [arco: array-en-linea]. Every read and every write used to be a runtime call; the compiler now
+  emits the access in place and keeps both checks: bounds and slot tag. An out-of-range index or a slot
+  holding another type fail with the same message as before. With `--release`, the `scripts/bench_numerico/`
+  kernels over `Array<float>` run 2.7 to 3 times faster (sum of 10⁷ elements: 44 → 16 ms; dot product:
+  85 → 28 ms; 512 matrix multiply: 1.57 → 0.55 s). It is still 2 to 5 times behind a loop over `*float`,
+  which checks nothing and vectorizes. An `Array` without `<T>` does not change. Guards:
+  `language/test-562-array-en-linea` and the `array-en-linea-errores` case of `run_error_tests.sh`, which
+  also checks that the kernel's IR makes no per-slot runtime call.
+
+---
+
 ## [0.45.5] — 2026-11-23
 
 ### Changed

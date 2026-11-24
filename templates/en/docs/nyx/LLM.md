@@ -3667,8 +3667,9 @@ API (all errors are `Result<_, Error>`; `Image`/`ImageInfo`/`ImageLimits` are st
   2550x3300 = 2.4 s / 0.65 s. **A build without `--release` is ~4x slower than `--release`**
   for this module: measure the way you ship. (Since the `allocas-al-entry` arc, 2026-11-16, loops over
   raw pointers auto-vectorize with `--release` and a `let` declared inside a loop lives in a register;
-  before it, no Nyx loop vectorized. An indexed `Array<float>` loop is still 5-15x slower than a `*float`
-  one: every `a[i]` is a runtime call.) Previews (300 px) do reduce (1/2). The hot loops use
+  before it, no Nyx loop vectorized. Since 0.45.6, `a[i]` on a declared `Array<int>`, `Array<float>` or
+  `Array<bool>` is emitted inline, with the bounds and slot-tag checks kept: ~3x faster than before, still
+  2-5x slower than a `*float` loop and not vectorized. On an `Array` without `<T>` every `a[i]` is a runtime call.) Previews (300 px) do reduce (1/2). The hot loops use
   raw pointers (native 64-bit only; wasm32 falls back to `charAt` loops, same bytes). Benchmark:
   `scripts/bench_image_thumb.nx`; fingerprints: test-497.
 - Tests: `tests/compiler/stdlib-suite/test-475..482-image-*.nx`, `test-497-image-rapido.nx`,
