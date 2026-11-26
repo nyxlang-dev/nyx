@@ -11,6 +11,18 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.45.7] — 2026-11-26
+
+### Fixed
+
+- **`v.ptr[i]` sobre un campo puntero lee y escribe la memoria apuntada.** Con `struct Vec { ptr: *int }`,
+  indexar el campo directamente (`v.ptr[i]`, `c.v.ptr[i] = x`) no veía el tipo declarado del campo y trataba
+  el bloque como un `Array`: el programa moría con SIGSEGV. Solo funcionaba pasando antes el puntero a una
+  variable (`let p: *int = v.ptr`). Lo encontró el spike «sin C y sin GC» (caso 29 del catálogo de propiedad).
+  Guarda: `language/test-563-indexar-campo-puntero`.
+
+---
+
 ## [0.45.6] — 2026-11-24
 
 ### Changed

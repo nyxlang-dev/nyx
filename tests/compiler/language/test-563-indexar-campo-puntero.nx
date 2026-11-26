@@ -1,0 +1,44 @@
+// test-563-indexar-campo-puntero.nx — `v.ptr[i]` sobre un campo puntero lee y
+// escribe la memoria apuntada. Hasta 0.45.6 el índice no veía el tipo del campo
+// y caía al camino de Array: `nyx_array_get` leía el bloque crudo como si fuera
+// un arreglo y el programa moría con SIGSEGV. Con el puntero en una variable
+// (`let p: *int = v.ptr`) ya funcionaba. Spike sin-c-sin-gc, caso 29.
+struct Vec { ptr: *int, len: int }
+struct Caja { v: Vec, f: *float, b: *u8 }
+
+fn suma(v: &Vec) -> int {
+    var s = 0
+    var i = 0
+    while i < v.len { s = s + v.ptr[i]  i = i + 1 }
+    return s
+}
+fn suma_valor(v: Vec) -> int { return v.ptr[0] + v.ptr[2] }
+fn escribe(v: &mut Vec) { v.ptr[1] = 20 }
+
+fn main() -> int {
+    let p: *int = alloc<int>(3)
+    p[0] = 1  p[1] = 2  p[2] = 3
+    let v: Vec = Vec { ptr: p, len: 3 }
+    assert(suma(&v) == 6)
+    assert(suma_valor(v) == 4)
+    var w: Vec = Vec { ptr: p, len: 3 }
+    escribe(&mut w)
+    w.ptr[2] = 30
+    assert(w.ptr[1] == 20)
+    assert(w.ptr[2] == 30)
+    assert(p[1] == 20)
+    // Campo anidado, y punteros a float y a byte.
+    let q: *float = alloc<float>(2)
+    let r: *u8 = alloc<u8>(4)
+    let c: Caja = Caja { v: w, f: q, b: r }
+    c.f[1] = 2.5
+    c.b[3] = 200 as u8
+    c.v.ptr[0] = 7
+    assert(c.v.ptr[0] == 7)
+    assert(c.f[1] == 2.5)
+    let x: int = c.b[3] as int
+    assert(x == 200)
+    assert(p[0] == 7)
+    print("campo puntero ok")
+    return 0
+}

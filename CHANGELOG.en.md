@@ -12,6 +12,18 @@ history; the translation starts at 0.33.0. Format based on
 
 ---
 
+## [0.45.7] — 2026-11-26
+
+### Fixed
+
+- **`v.ptr[i]` on a pointer field reads and writes the pointed-to memory.** With `struct Vec { ptr: *int }`,
+  indexing the field directly (`v.ptr[i]`, `c.v.ptr[i] = x`) did not see the field's declared type and treated
+  the block as an `Array`: the program died with SIGSEGV. It only worked by first binding the pointer to a
+  variable (`let p: *int = v.ptr`). Found by the "no C, no GC" spike (case 29 of the ownership catalogue).
+  Guard: `language/test-563-indexar-campo-puntero`.
+
+---
+
 ## [0.45.6] — 2026-11-24
 
 ### Changed

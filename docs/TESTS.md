@@ -12,7 +12,7 @@
 
 | Suite | Comando | Conteo | Nota |
 |-------|---------|--------|------|
-| Regression | `make test` | **572 archivos / 571 ARM64** | +1 el 11-24 (`562` acceso en línea a `Array<T>`), +2 el 11-23 (`560`, `561`), +1 el 11-17 (`559`), +6 el 11-16 (`553`-`558`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
+| Regression | `make test` | **573 archivos / 572 ARM64** | +1 el 11-26 (`563` campo puntero), +1 el 11-24 (`562`), +2 el 11-23 (`560`, `561`), +1 el 11-17 (`559`), +6 el 11-16 (`553`-`558`). `test-123-full-asm` se salta en ARM64. Altas anteriores en `CHANGELOG.md` |
 | Error paths (parse+semantic) | `make test-errors` | **434** | +1 el 11-24 (`array-en-linea-errores`), +2 el 11-23 (NYX1050), +2 el 11-16 (operando derecho de un operador), +5 el 11-14 (el diagnóstico nombra el módulo importado); altas anteriores en `CHANGELOG.md` |
 | M-08 happy types | `make test-m08-types` | **18** | verificado con corrida real 2026-08-30 |
 | Advanced | (dentro de `make test-all`, `tests/advanced/`) | **30** | A01–A30, stress + algoritmos |
